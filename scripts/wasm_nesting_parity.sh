@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# wasm_nesting_parity.sh [ax59|ax60|ax61] — the wasm32 interpreter
+# wasm_nesting_parity.sh [ax59|ax60|ax61|ax62|ax65] — the wasm32 interpreter
 # (axon-run.wasm under wasmtime's default 512 KiB stack, both engines) neither
-# traps nor diverges from native on deep values and deep source
-# (compilebench AX-59, AX-60, AX-61). Exit 134 is `wasm trap: call stack
+# traps nor diverges from native on deep values, deep source and long literals
+# (compilebench AX-59, AX-60, AX-61, AX-62, AX-65). Exit 134 is `wasm trap: call stack
 # exhausted`, which I-4 forbids; every case names the exit it requires.
 #
 #   ax59  dropping a value 100,000 levels deep (an enum list, a dict of
@@ -54,11 +54,23 @@
 #         is refused with the same message (and path) as native; a `str`
 #         payload still round-trips through stdin, byte-identical to native.
 #
+#   ax62  `==` on values 100,000 levels deep (an enum list, a dict of dicts,
+#         an array chain, a tuple chain, a struct chain), and a `Some` and an
+#         `Ok` chain 1,000 deep: compared equal, unequal at the bottom and
+#         with `!=`, at the top level and (the enum list) under 100 levels of
+#         recursion. Exit 0 with the program's output, identical to native.
+#   ax65  long literals (the lexer's generated state machine recursed once
+#         per character): strings of 12,000 and 100,000 characters (plain,
+#         escape-heavy), block comments of 50,000 and 500,000 characters, and
+#         integer, float, decimal, hex and underscore literals of 20,000
+#         digits. Each exits as native does, with native's stdout; exit 134
+#         is never an answer.
+#
 # Every case runs on both the debug and the release axon-run.wasm, under
 # both engines; each output line names the run as `<profile>/<engine>`.
 # AXON_RUN_WASM=<path> runs only that module instead (named `given`).
 #
-# With no argument (as parity_all.sh runs every harness) it runs all three.
+# With no argument (as parity_all.sh runs every harness) it runs all five.
 # Requires: rustup target wasm32-wasip1 + wasmtime on PATH. Skips if absent.
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib/harness_skip.sh"
@@ -67,7 +79,7 @@ set -u
 # (each run takes it). A skip is environmental, the same for every case.
 if [ $# -eq 0 ]; then
   rc=0
-  for c in ax59 ax60 ax61; do
+  for c in ax59 ax60 ax61 ax62 ax65; do
     out="$(bash "${BASH_SOURCE[0]}" "$c" 2>&1)"; r=$?
     printf '%s\n' "$out"
     case "$(printf '%s\n' "$out" | tail -n 1)" in
@@ -90,8 +102,8 @@ cd "$ROOT"
 name=wasm_nesting_parity
 case="${1:-}"
 case "$case" in
-  ax59|ax60|ax61) ;;
-  *) echo "usage: $0 [ax59|ax60|ax61]" >&2; exit 2 ;;
+  ax59|ax60|ax61|ax62|ax65) ;;
+  *) echo "usage: $0 [ax59|ax60|ax61|ax62|ax65]" >&2; exit 2 ;;
 esac
 
 rust_target_installed wasm32-wasip1; _rt=$?
@@ -585,6 +597,130 @@ EOF
     else
       fail "ax61 $e str payload" "wasm[$RC] '$(head -c 80 out)' != native[$native_str_rc] '$(head -c 80 native.out)'"
     fi
+  done
+  ;;
+ax62)
+  # Each program builds a, b (equal) and c (unequal at the bottom) and prints
+  # `a == b`, `a == c` and `a != c`.
+  cmpmain() {
+    cat <<EOF
+fn main() -> i64 {
+    let a = build($1, 0)
+    let b = build($1, 0)
+    let c = build($1, 1)
+    println(if a == b { "eq" } else { "ne" })
+    println(if a == c { "eq" } else { "ne" })
+    println(to_str(a != c))
+    0
+}
+EOF
+  }
+  {
+    cat <<'EOF'
+enum L { Nil, Cons { h: i64, t: L } }
+fn build(n: i64, bottom: i64) -> L {
+    let l = L::Nil
+    for i in 0..n {
+        let h = if i == 0 { bottom } else { i }
+        l = L::Cons { h: h, t: l }
+    }
+    l
+}
+EOF
+    cmpmain 100000
+  } >list.ax
+  {
+    cat <<'EOF'
+fn build(n: i64, bottom: i64) -> i64 {
+    let d = dict_new()
+    dict_set(d, "k", bottom)
+    for i in 0..n {
+        let e = dict_new()
+        dict_set(e, "k", d)
+        d = e
+    }
+    d
+}
+EOF
+    cmpmain 100000
+  } >dict.ax
+  # chain <name> <wrap> <n>: <n> levels of <wrap> around the bottom value,
+  # read back from an untyped dict.
+  chain() {
+    {
+      cat <<EOF
+fn build(n: i64, bottom: i64) -> i64 {
+    let d = dict_new()
+    dict_set(d, "k", bottom)
+    for i in 0..n { let v = dict_get(d, "k") dict_set(d, "k", $2) }
+    d
+}
+EOF
+      cmpmain "$3"
+    } >"$1.ax"
+  }
+  chain array '[v]' 100000
+  chain tuple '(v, i)' 100000
+  chain option 'Some(v)' 1000
+  chain result 'Ok(v)' 1000
+  {
+    cat <<'EOF'
+type S = { v: i64, next: Option<S> }
+fn build(n: i64, bottom: i64) -> S {
+    let s = S { v: bottom, next: None }
+    for i in 0..n { s = S { v: i, next: Some(s) } }
+    s
+}
+EOF
+    cmpmain 100000
+  } >struct.ax
+  # The same comparison 100 levels down the call stack.
+  sed 's/^fn main() -> i64 {$/fn body() -> i64 {/' list.ax >deep.ax
+  cat >>deep.ax <<'EOF'
+fn r(k: i64) -> i64 {
+    if k == 0 { body() } else { r(k - 1) }
+}
+fn main() -> i64 { r(100) }
+EOF
+  for p in list dict array tuple option result struct deep; do
+    "$INTERP" run "$p.ax" >"$p.native" 2>/dev/null </dev/null
+    native_rc=$?
+    for e in "${RUNS[@]}"; do
+      wasm "$e" "$p.ax"
+      if [ "$RC" = "$native_rc" ] && [ "$(tr '\n' ' ' <out)" = "eq ne true " ] && cmp -s out "$p.native"; then
+        echo "  ok  [ax62 $e $p] exit $RC, eq/ne/true, identical to native"
+      else
+        fail "ax62 $e $p" "exit $RC, stdout '$(head -c 40 out | tr '\n' ' ')' (want native's exit $native_rc and 'eq ne true')"
+      fi
+    done
+  done
+  ;;
+ax65)
+  lit() { printf 'fn main() -> i64 {\n    %s\n    0\n}\n' "$2" >"$1.ax"; }
+  lit str12000 "let s = \"$(rep a 12000)\" println(to_str(str_len(s)))"
+  lit str100000 "let s = \"$(rep a 100000)\" println(to_str(str_len(s)))"
+  lit esc100000 "let s = \"$(rep '\\n' 100000)\" println(to_str(str_len(s)))"
+  lit cmt50000 "/* $(rep x 50000) */ println(\"ok\")"
+  lit cmt500000 "/* $(rep x 500000) */ println(\"ok\")"
+  lit cmtstar "/* $(rep '*x' 100000) */ println(\"ok\")"
+  lit int20000 "let n = $(rep 1 20000) println(to_str(n))"
+  lit float20000 "let n = 1.$(rep 1 20000) println(to_str(n))"
+  lit dec20000 "let n = $(rep 1 20000)d println(to_str(n))"
+  lit decfrac20000 "let n = 1.$(rep 1 20000)d println(to_str(n))"
+  lit hex20000 "let n = 0x$(rep 1 20000) println(to_str(n))"
+  lit us20000 "let n = 1$(rep _ 20000) println(to_str(n))"
+  for p in str12000 str100000 esc100000 cmt50000 cmt500000 cmtstar int20000 float20000 dec20000 \
+    decfrac20000 hex20000 us20000; do
+    "$INTERP" run "$p.ax" >"$p.native" 2>/dev/null </dev/null
+    native_rc=$?
+    for e in "${RUNS[@]}"; do
+      wasm "$e" "$p.ax"
+      if [ "$RC" = "$native_rc" ] && [ "$RC" != 134 ] && cmp -s out "$p.native"; then
+        echo "  ok  [ax65 $e $p] exit $RC, stdout identical to native"
+      else
+        fail "ax65 $e $p" "exit $RC, stdout '$(head -c 40 out)' (want native's exit $native_rc and stdout '$(head -c 40 "$p.native")')"
+      fi
+    done
   done
   ;;
 esac

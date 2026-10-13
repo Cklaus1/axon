@@ -861,40 +861,87 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
 }
 
 /// Structural equality for runtime values.
+///
+/// AX-62: iterative. A value is as deep as the program built it (a 100,000-node
+/// enum list, a dict nested 100,000 deep), and recursing once per level spent
+/// native stack no budget charged: on wasm32 it trapped the 512 KiB stack
+/// (exit 134), on native it would overflow the thread's. The walk keeps its
+/// own work list on the heap instead: [`eq_node`] settles what it can in place
+/// and queues each nested container pair (an `Rc` bump per side), which
+/// [`eq_children`] opens one at a time. The answer is the recursive one: every
+/// pair is compared, in a different order, and the walk stops at the first
+/// mismatch.
 pub(super) fn values_equal(a: &Value, b: &Value) -> bool {
+    let mut pending: Vec<(Value, Value)> = Vec::new();
+    if !eq_node(a, b, &mut pending) {
+        return false;
+    }
+    while let Some((x, y)) = pending.pop() {
+        if !eq_children(&x, &y, &mut pending) {
+            return false;
+        }
+    }
+    true
+}
+
+/// One pair of [`values_equal`]'s walk. A scalar pair is decided here. `Some`,
+/// `Ok` and `Err` hold exactly one value, so a chain of them is followed in a
+/// loop (cloning one would copy it whole). Any other container pair is queued
+/// for [`eq_children`], and counts as equal until it is opened.
+fn eq_node(a: &Value, b: &Value, pending: &mut Vec<(Value, Value)>) -> bool {
+    use Value::*;
+    let (mut a, mut b) = (a, b);
+    loop {
+        match (a, b) {
+            (Int(x), Int(y)) => return x == y,
+            // SizedInt equality: compare by value within the width's representable range.
+            (SizedInt { val: x, ty: tx }, SizedInt { val: y, .. }) => {
+                return to_display_val(*x, *tx) == to_display_val(*y, *tx)
+            }
+            (SizedInt { val: x, ty }, Int(y)) => return to_display_val(*x, *ty) == *y,
+            (Int(x), SizedInt { val: y, ty }) => return *x == to_display_val(*y, *ty),
+            (Float(x), Float(y)) => return x == y,
+            (Decimal(x), Decimal(y)) => return x == y,
+            (Bool(x), Bool(y)) => return x == y,
+            (Str(x), Str(y)) => return x == y,
+            (Unit, Unit) => return true,
+            (None, None) => return true,
+            (Some(x), Some(y)) | (Ok(x), Ok(y)) | (Err(x), Err(y)) => {
+                a = x;
+                b = y;
+            }
+            (Array(_), Array(_))
+            | (Struct(_), Struct(_))
+            | (Enum(_), Enum(_))
+            | (Tuple(_), Tuple(_))
+            | (Dict(_), Dict(_)) => {
+                pending.push((a.clone(), b.clone()));
+                return true;
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// Open a container pair [`eq_node`] queued: compare its shape (length, names,
+/// variant) and hand each pair of children to [`eq_node`]. Never recurses.
+fn eq_children(a: &Value, b: &Value, pending: &mut Vec<(Value, Value)>) -> bool {
     use Value::*;
     match (a, b) {
-        (Int(x), Int(y)) => x == y,
-        // SizedInt equality: compare by value within the width's representable range.
-        (SizedInt { val: x, ty: tx }, SizedInt { val: y, .. }) => {
-            to_display_val(*x, *tx) == to_display_val(*y, *tx)
-        }
-        (SizedInt { val: x, ty }, Int(y)) => to_display_val(*x, *ty) == *y,
-        (Int(x), SizedInt { val: y, ty }) => *x == to_display_val(*y, *ty),
-        (Float(x), Float(y)) => x == y,
-        (Decimal(x), Decimal(y)) => x == y,
-        (Bool(x), Bool(y)) => x == y,
-        (Str(x), Str(y)) => x == y,
-        (Unit, Unit) => true,
-        (None, None) => true,
-        (Some(x), Some(y)) | (Ok(x), Ok(y)) | (Err(x), Err(y)) => values_equal(x, y),
-        (Array(x), Array(y)) => {
+        (Array(x), Array(y)) | (Tuple(x), Tuple(y)) => {
             x.len() == y.len()
                 && x.vals()
                     .iter()
                     .zip(y.vals().iter())
-                    .all(|(p, q)| values_equal(p, q))
+                    .all(|(p, q)| eq_node(p, q, pending))
         }
-        (Struct(x), Struct(y)) => x.name == y.name && x.fields.equal(&y.fields),
+        (Struct(x), Struct(y)) => {
+            x.name == y.name && x.fields.equal_by(&y.fields, |p, q| eq_node(p, q, pending))
+        }
         (Enum(x), Enum(y)) => {
-            x.enum_name == y.enum_name && x.variant == y.variant && x.fields.equal(&y.fields)
-        }
-        (Tuple(x), Tuple(y)) => {
-            x.len() == y.len()
-                && x.vals()
-                    .iter()
-                    .zip(y.vals().iter())
-                    .all(|(p, q)| values_equal(p, q))
+            x.enum_name == y.enum_name
+                && x.variant == y.variant
+                && x.fields.equal_by(&y.fields, |p, q| eq_node(p, q, pending))
         }
         (Dict(d1), Dict(d2)) => {
             // Two dicts are equal iff they have the same key set and the
@@ -906,9 +953,9 @@ pub(super) fn values_equal(a: &Value, b: &Value) -> bool {
                 && m1
                     .iter()
                     .zip(m2.iter())
-                    .all(|((k1, v1), (k2, v2))| k1 == k2 && values_equal(v1, v2))
+                    .all(|((k1, v1), (k2, v2))| k1 == k2 && eq_node(v1, v2, pending))
         }
-        _ => false,
+        _ => unreachable!("eq_node queues only container pairs of one kind"),
     }
 }
 

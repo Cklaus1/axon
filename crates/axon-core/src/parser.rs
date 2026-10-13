@@ -336,14 +336,15 @@ const MAX_EXPR_DEPTH: usize = 4_000;
 /// limit is that budget over the worst frame chain between two charges
 /// (`scripts/wasm_stack_budget.py` checks it on each build), and
 /// [`NEST_ALL`] also bounds what native leaves unbounded: statement-level
-/// nesting, `else if` chains, patterns, types and the height of an operator
-/// chain the parser builds in a loop.
+/// nesting, patterns, types and the height of an operator chain the parser
+/// builds in a loop. (An `else if` chain is charged on every target.)
 #[cfg(target_arch = "wasm32")]
 const MAX_EXPR_DEPTH: usize = 224;
 
 /// AX-60: whether every recursive descent (`parse_expr`, `parse_primary`,
-/// `parse_pattern`, `parse_type_atom`, `parse_attr_atom`, an `else if`
-/// link, a match subject or guard) charges [`MAX_EXPR_DEPTH`], and every
+/// `parse_pattern`, `parse_type_atom`, `parse_attr_atom`, a match subject or
+/// guard; an `else if` link is charged on every target) charges
+/// [`MAX_EXPR_DEPTH`], and every
 /// root expression's AST height is checked against it (wasm32 only; native
 /// keeps its limits).
 const NEST_ALL: bool = cfg!(target_arch = "wasm32");
@@ -2500,13 +2501,12 @@ impl Parser {
         let then = self.parse_block()?;
         let else_ = if self.eat(&Token::Else) {
             Some(Box::new(if self.at(&Token::If) {
-                // AX-60: an `else if` chain recurses here once per link,
-                // past every other charge, so on wasm32 each link is one.
-                if NEST_ALL {
-                    self.nested(Self::parse_if)?
-                } else {
-                    self.parse_if()?
-                }
+                // An `else if` chain recurses here once per link, and so does
+                // every later pass over the `If` it builds, so each link is a
+                // nesting level on every target (AX-60 on wasm32; AX-67 on
+                // native, where an uncharged chain overflowed the stack at
+                // 30,000 links in a debug build).
+                self.nested(Self::parse_if)?
             } else {
                 self.parse_block()?
             }))

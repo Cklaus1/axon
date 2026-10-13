@@ -15,6 +15,25 @@ use std::path::PathBuf;
 use std::process::exit;
 
 fn main() {
+    // The front end (lexer, parser, checker) and the passes after it recurse on
+    // the native stack, once per nesting level, up to the 4,000 levels the
+    // parser admits (`parser.rs` `MAX_EXPR_DEPTH`, sized for a large stack:
+    // `axon` runs everything on a 1 GiB thread). The default 8 MiB main
+    // thread overflows a debug build at a few hundred levels (compilebench
+    // AX-67), so this runner takes the same stack. wasm32 has no threads and
+    // bounds its front end tighter instead (224 levels, `NEST_ALL`).
+    #[cfg(not(target_arch = "wasm32"))]
+    std::thread::Builder::new()
+        .stack_size(1024 * 1024 * 1024)
+        .spawn(run)
+        .expect("spawn worker thread")
+        .join()
+        .expect("worker thread panicked");
+    #[cfg(target_arch = "wasm32")]
+    run();
+}
+
+fn run() {
     let mut args = std::env::args().skip(1).peekable();
 
     // Accept an optional leading `run` subcommand for symmetry with `axon run`.
