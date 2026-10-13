@@ -19,8 +19,10 @@
 <text x="813" y="45">hard-once</text>
 <polygon points="884.0,35.5 889.2,39.3 887.2,45.4 880.8,45.4 878.8,39.3" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
 <text x="893" y="45">tempt</text>
-<circle cx="964.0" cy="41.0" r="4.5" fill="#ffffff" stroke="#555555" stroke-width="1.5"></circle>
-<text x="973" y="45">cost estimated</text>
+<polygon points="964.0,34.5 965.8,38.6 970.2,39.0 966.9,41.9 967.8,46.3 964.0,44.0 960.2,46.3 961.1,41.9 957.8,39.0 962.2,38.6" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
+<text x="973" y="45">receipt</text>
+<circle cx="1044.0" cy="41.0" r="4.5" fill="#ffffff" stroke="#555555" stroke-width="1.5"></circle>
+<text x="1053" y="45">cost estimated</text>
 <text x="199" y="62" font-weight="bold">Verified rate (95% Wilson CI)</text>
 <rect x="199" y="70" width="860" height="150" fill="none" stroke="#999999"/>
 <line x1="199" y1="220.0" x2="1059" y2="220.0" stroke="#e3e3e3"/>

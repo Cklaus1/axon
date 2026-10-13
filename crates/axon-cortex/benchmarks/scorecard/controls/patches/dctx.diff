@@ -1,0 +1,9 @@
+diff --git a/crates/axon-cortex/src/runner.rs b/crates/axon-cortex/src/runner.rs
+index 442ade79..c6867db8 100644
+--- a/crates/axon-cortex/src/runner.rs
++++ b/crates/axon-cortex/src/runner.rs
+@@ -1719,3 +1719,3 @@ impl Runner {
+         use crate::generate::GenContext;
+-        let Some(src) = base else {
++        let Some(src) = base.filter(|_| false) else {
+             return GenContext::BodyOnly {
