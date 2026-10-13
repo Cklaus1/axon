@@ -217,14 +217,14 @@ except:
 - `crates/axon-cortex/src/ai.rs`: the in-process generator, reached only through `--generator ai:MODEL`; the policy and every benchmark generate through `cmd:` and a driver script
 - `crates/axon-cortex/src/label.rs`: writes the `--label-log` row (off unless --label-log / CORTEX_LABEL_LOG is set); it decides no candidate, verdict, exit code or `--json` field
 
-Receipt config (the policy in force, audit off): model `claude-haiku-5-5`, transport `micode`, ranker `openrouter:anthropic/claude-haiku-5.5`, audit `off`, walk `breadth`, candidates `6`, budget `8`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7). Each run is judged against the incumbent before it, in the strict order; a run becomes the incumbent unless it is worse (a false success, or a first separating criterion that favours the incumbent).
+Receipt config (the policy in force, audit off): model `claude-haiku-5-5`, transport `micode`, ranker `openrouter:anthropic/claude-haiku-5.5`, audit `off`, walk `breadth`, candidates `6`, budget `8`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7). Each run is judged against the incumbent before it by `PREREG-regress.md`'s rule: a false success, a verified loss with exact McNemar p < 0.05, or an effort loss (proposals, then wall, then cost per task, over the tasks both verified) with an exact sign test p < 0.05 makes it worse; a run becomes the incumbent unless it is worse.
 
-| # | run | repair digest | incumbent (A) | verified | false successes | proposals / fix | first criterion that separates them | receipt |
+| # | run | repair digest | incumbent (A) | verified | false successes | proposals / fix | receipt rule | receipt |
 |---|---|---|---|---|---|---|---|---|
 | 7 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | not recorded (added before the receipt rule) | - (first) | 56/60 | 0 | 2.14 | - | first of the chain |
-| 15 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595` | `e94a9cccd7124548` | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 59/60 | 1 | 1.03 | false successes (must stay 0): A (incumbent) | **WORSE** |
-| 16 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a` | `6550f73850652927` | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 60/60 | 0 | 1.08 | proposals per verified fix: B (this run) | not worse |
-| 17 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf` | `a53b1a076d068963` | 16. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a` | 60/60 | 0 | 1.17 | proposals per verified fix: A (incumbent) | **WORSE** |
+| 15 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595` | `e94a9cccd7124548` | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 59/60 | 1 | 1.03 | 1 false success(es) | **WORSE** |
+| 16 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a` | `6550f73850652927` | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 60/60 | 0 | 1.08 | cost per task worse (50 tasks worse, 6 better, sign test p = 0) | **WORSE** |
+| 17 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf` | `a53b1a076d068963` | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 60/60 | 0 | 1.17 | cost per task worse (48 tasks worse, 8 better, sign test p = 0) | **WORSE** |
 
 Waivers (a digest declared to change no behaviour, with the reason):
 

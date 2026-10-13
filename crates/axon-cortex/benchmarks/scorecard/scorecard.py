@@ -244,10 +244,11 @@ def receipt_spec(root=ROOT):
 
 def receipt_chain(runs, norms, spec):
     """Every dev cortex run on the receipt config and corpus, in date order,
-    each judged (`judge`) against the incumbent before it. A run becomes the
-    incumbent unless it is worse: a false success, or a first separating
-    criterion that favours the incumbent. The first run of the chain has no
-    incumbent."""
+    each judged (`judge`) against the incumbent before it by PREREG-regress.md's
+    rule (`receipt_rule`): a false success, a significant verified loss or a
+    significant effort loss is worse. A run becomes the incumbent unless it is
+    worse. The first run of the chain has no incumbent; only a false success
+    makes it worse."""
     corpus_sha = sha256_file(spec["corpus"])
     chain, inc = [], None
     for r in ordered(runs):
@@ -256,8 +257,8 @@ def receipt_chain(runs, norms, spec):
         if any(r["config"][k] != v for k, v in spec["config"].items()):
             continue
         c = None if inc is None else judge(runs, norms, inc["run_id"], r["run_id"])
-        first = c and c["first_separating"]
-        worse = r["metrics"]["false_success"] > 0 or bool(first and first["better"] == "A")
+        worse = (r["metrics"]["false_success"] > 0 if c is None
+                 else c["receipt_rule"]["worse"])
         chain.append({"run": r, "incumbent": inc and inc["run_id"], "compare": c, "worse": worse})
         if not worse:
             inc = r
@@ -283,11 +284,8 @@ def receipt_message(st):
     e, w = st["entry"], st["waiver"]
     if e:
         r = e["run"]
-        f = e["compare"] and e["compare"]["first_separating"]
         how = ("first run of the receipt config: no incumbent" if not e["incumbent"] else
-               f"against incumbent {e['incumbent']}: first criterion that separates them: "
-               + ("none" if not f else f"{f['criterion']} -> "
-                  + ("candidate" if f["better"] == "B" else "INCUMBENT")))
+               f"against incumbent {e['incumbent']}: {e['compare']['receipt_rule']['reason']}")
         fs = r["metrics"]["false_success"]
         if st["pass"]:
             return (f"receipt: PASS. Repair digest {d} has dev run {r['run_id']} "
@@ -832,9 +830,62 @@ def judge(recs, norms, a_id, b_id):
         steps.append({"criterion": "truth first", "A": ta, "B": tb, "tested": False,
                       "better": None if ta == tb else ("B" if tb > ta else "A")})
     first = next((s for s in steps if s["better"]), None)
+    effort = [sign_test(norms[a_id], norms[b_id], k, name) for k, name in EFFORT]
     return {"A": a_id, "B": b_id, "paired": p, "steps": steps,
             "first_separating": None if first is None else
-            {"criterion": first["criterion"], "better": first["better"], "tested": first["tested"]}}
+            {"criterion": first["criterion"], "better": first["better"], "tested": first["tested"]},
+            "effort": effort, "receipt_rule": receipt_rule(mb["false_success"], p, effort)}
+
+
+# The receipt rule's effort metrics, in the order they are tested
+# (PREREG-regress.md: correctness, then speed, then cost).
+EFFORT = (("proposals", "proposals per task"), ("wall_s", "wall seconds per task"),
+          ("cost_usd", "cost per task"))
+
+
+def sign_test(a_norm, b_norm, key, name):
+    """Exact two-sided sign test on the per-task difference B - A of `key`,
+    over the tasks BOTH runs verified. A pair with a missing value is left out
+    and ties are dropped; `analyse.mcnemar_exact` is the same two-sided
+    binomial (p = 1/2) on the untied pairs."""
+    a = {r["id"]: r for r in a_norm}
+    b = {r["id"]: r for r in b_norm}
+    worse = better = ties = missing = 0
+    for i in sorted(set(a) & set(b)):
+        if not (a[i]["verified"] and b[i]["verified"]):
+            continue
+        va, vb = a[i][key], b[i][key]
+        if va is None or vb is None:
+            missing += 1
+        elif vb > va:
+            worse += 1
+        elif vb < va:
+            better += 1
+        else:
+            ties += 1
+    pv = r6(analyse.mcnemar_exact(worse, better))
+    return {"metric": name, "b_worse": worse, "b_better": better, "ties": ties,
+            "missing": missing, "p": pv, "worse": worse > better and pv < ALPHA,
+            "better": better > worse and pv < ALPHA}
+
+
+def receipt_rule(fs_b, p, effort):
+    """PREREG-regress.md's decision rule for candidate B against incumbent A:
+    the first of false success, significant verified loss, significant effort
+    loss (in EFFORT order) fails; otherwise B passes."""
+    if fs_b > 0:
+        return {"worse": True, "reason": f"{fs_b} false success(es)"}
+    if p["mcnemar_p"] < ALPHA and p["only_this"] < p["only_baseline"]:
+        return {"worse": True, "reason": f"verified worse (only this run {p['only_this']}, only "
+                                         f"the incumbent {p['only_baseline']}, exact McNemar "
+                                         f"p = {p['mcnemar_p']:.3g})"}
+    for e in effort:
+        if e["worse"]:
+            return {"worse": True, "reason": f"{e['metric']} worse ({e['b_worse']} tasks worse, "
+                                             f"{e['b_better']} better, sign test p = {e['p']:.3g})"}
+    return {"worse": False, "reason": "no false success, no significant verified or effort loss ("
+            + "; ".join(f"{e['metric']}: {e['b_worse']} worse / {e['b_better']} better, "
+                        f"p = {e['p']:.3g}" for e in effort) + ")"}
 
 
 def print_compare(c):
@@ -853,6 +904,13 @@ def print_compare(c):
     print("first criterion that separates them: " + (
         "none" if f is None else
         f"{f['criterion']} -> {f['better']}" + ("" if f["tested"] else " (descriptive, untested)")))
+    print("\neffort over tasks both verified (exact sign test, B - A per task):")
+    for e in c["effort"]:
+        print(f"  {e['metric']:<24} B worse {e['b_worse']:>3}, B better {e['b_better']:>3}, "
+              f"ties {e['ties']:>3}, missing {e['missing']:>3}, p = {e['p']:.3g}")
+    rr = c["receipt_rule"]
+    print(f"receipt rule (PREREG-regress): {'WORSE' if rr['worse'] else 'not worse'}: "
+          f"{rr['reason']}")
 
 
 # ---------------------------------------------------------------- report
@@ -1131,18 +1189,18 @@ def receipt_lines(runs, norms, idx, waivers, spec, root):
     out += ["", "Receipt config (the policy in force, audit off): "
             + ", ".join(f"{k} `{v}`" for k, v in cfg.items())
             + f"; corpus `{corpus_rel}` (sha256 {sha256_file(spec['corpus'])[:16]}). Each run "
-            "is judged against the incumbent before it, in the strict order; a run becomes "
-            "the incumbent unless it is worse (a false success, or a first separating "
-            "criterion that favours the incumbent).", "",
+            "is judged against the incumbent before it by `PREREG-regress.md`'s rule: a "
+            "false success, a verified loss with exact McNemar p < 0.05, or an effort loss "
+            "(proposals, then wall, then cost per task, over the tasks both verified) with "
+            "an exact sign test p < 0.05 makes it worse; a run becomes the incumbent unless "
+            "it is worse.", "",
             "| # | run | repair digest | incumbent (A) | verified | false successes | "
-            "proposals / fix | first criterion that separates them | receipt |",
+            "proposals / fix | receipt rule | receipt |",
             "|---|---|---|---|---|---|---|---|---|"]
     chain = receipt_chain(runs, norms, spec)
     for e in chain:
         r, m, c = e["run"], e["run"]["metrics"], e["compare"]
-        f = c and c["first_separating"]
-        sep = "-" if c is None else "none" if not f else (
-            f"{f['criterion']}: {'B (this run)' if f['better'] == 'B' else 'A (incumbent)'}")
+        sep = "-" if c is None else c["receipt_rule"]["reason"].replace("|", "/")
         ppv = "n/a" if m["proposals_per_verified"] is None else f"{m['proposals_per_verified']:.2f}"
         dig = f"`{r['repair_digest'][:16]}`" if r.get("repair_digest") else \
             "not recorded (added before the receipt rule)"
@@ -1658,11 +1716,15 @@ def selftest():
                "waiver missing from the README report")
         expect("| 2 | `B` | `d1d1d1d1d1d1d1d1` | - (first) |" in text,
                "receipt chain missing from the README report")
-        # A run worse than the incumbent (same verified, more proposals per
-        # fix: the first separating criterion favours B, the incumbent) fails;
-        # a later better run is judged against B, not against the worse run.
-        worse = [dict(r, proposals=r["proposals"] + 2, meta=dict(r["meta"], commit="e" * 40))
-                 for r in b_rows]
+        # A run worse than the incumbent fails. W keeps B's verified tasks but
+        # adds 2 proposals on each: not significant on 5 pairs (sign test
+        # p = 0.0625), so that alone passes; its false success on t5 fails it.
+        # A later better run is judged against B, not against the worse run.
+        noisy = [dict(r, proposals=r["proposals"] + 2) for r in b_rows]
+        worse = [dict(r, meta=dict(r["meta"], commit="e" * 40),
+                      **({"verified_clean": False, "false_success": True, "unkeyed_all_ok": False}
+                         if r["id"] == "t5" else {}))
+                 for r in noisy]
         add(hist, root, set_="dev", agent="cortex", rows=write_rows("worse.jsonl", worse),
             corpus=corpus, config=dict(cfg_b, cortex_commit="e" * 40), notes="worse",
             run_id="W", date="2026-01-06")
@@ -1681,6 +1743,42 @@ def selftest():
         expect(st["pass"] and st["entry"]["incumbent"] == "B", "a better run does not pass, or "
                "was judged against the worse run")
         expect(not receipt_now(D3)["pass"], "the worse run passes once a better one exists")
+        st = receipt_now(D3)
+        expect(st["entry"]["compare"]["receipt_rule"]["reason"] == "1 false success(es)",
+               f"W failed for a reason other than its false success: {st['entry']['compare']}")
+
+        # The receipt rule's sign test and order (PREREG-regress.md).
+        def nrow(i, v=True, props=1, wall=1.0, cost=0.1):
+            return {"id": i, "verified": v, "proposals": props, "wall_s": wall, "cost_usd": cost}
+        base = [nrow(f"s{k}") for k in range(9)]
+        six = [nrow(f"s{k}", props=3 if k < 6 else 1, cost=None if k == 8 else 0.1)
+               for k in range(9)]
+        st6 = sign_test(base, six, "proposals", "proposals per task")
+        expect((st6["b_worse"], st6["b_better"], st6["ties"], st6["p"], st6["worse"])
+               == (6, 0, 3, 0.03125, True), f"sign test on 6 worse pairs {st6}")
+        stc = sign_test(base, six, "cost_usd", "cost per task")
+        expect(stc["missing"] == 1 and stc["ties"] == 8 and not stc["worse"],
+               f"sign test: missing value not left out / ties not dropped {stc}")
+        five = [nrow(f"s{k}", props=3 if k < 5 else 1) for k in range(9)]
+        expect(not sign_test(base, five, "proposals", "p")["worse"],
+               "5 of 5 worse pairs (p = 0.0625) judged significant")
+        unver = [nrow(f"s{k}", v=k >= 6, props=3) for k in range(9)]
+        expect(sign_test(base, unver, "proposals", "p")["b_worse"] == 3,
+               "sign test counted a task one run did not verify")
+        mixed = [nrow(f"s{k}", props=0, wall=2.0) if k < 6 else nrow(f"s{k}") for k in range(9)]
+        eff = [sign_test(base, mixed, k, n) for k, n in EFFORT]
+        p0 = {"only_this": 0, "only_baseline": 0, "mcnemar_p": 1.0}
+        rr = receipt_rule(0, p0, eff)
+        expect(eff[0]["better"] and rr["worse"] and rr["reason"].startswith("wall seconds"),
+               f"a significant proposals gain stopped the check before wall {rr}")
+        expect(receipt_rule(1, p0, eff)["reason"] == "1 false success(es)",
+               "false success not checked first")
+        rv = receipt_rule(0, {"only_this": 0, "only_baseline": 6, "mcnemar_p": 0.03125}, eff)
+        expect(rv["worse"] and rv["reason"].startswith("verified worse"),
+               "significant verified loss not checked before effort")
+        expect(not receipt_rule(0, {"only_this": 0, "only_baseline": 5, "mcnemar_p": 0.0625},
+                                [sign_test(base, five, k, n) for k, n in EFFORT])["worse"],
+               "non-significant verified and effort losses fail a receipt")
 
         # A rows file edited after `add` is caught by report.
         with open(pa, "a") as fh:
