@@ -2234,12 +2234,14 @@ def main(argv=None):
                                      "behaviour")
     w.add_argument("--reason", required=True)
     w.add_argument("--date")
-    g = sub.add_parser("regress", help="the paid dev run that produces a receipt (build, "
+    g = sub.add_parser("regress", help="the paid receipt run that produces a receipt (build, "
                                        "run_ab.py --arm B, add, report, compare)")
-    g.add_argument("--cap-usd", type=float, default=0.50)
+    g.add_argument("--cap-usd", type=float, default=RECEIPT_CAP_USD)
     g.add_argument("--parallel", type=int, default=3)
     g.add_argument("--again", action="store_true",
                    help="run again for a digest already measured")
+    g.add_argument("--main-only", action="store_true",
+                   help="measure main's own run (or a replicate with --again) and stop")
     g.add_argument("--date")
     g.add_argument("--notes", default="")
     args = ap.parse_args(argv)
@@ -2287,7 +2289,8 @@ def main(argv=None):
                   "scorecard.py report, and commit history.jsonl with the change")
         elif args.cmd == "regress":
             st = regress(args.history, ROOT, cap_usd=args.cap_usd, parallel=args.parallel,
-                         again=args.again, date=args.date, notes=args.notes)
+                         again=args.again, main_only=args.main_only, date=args.date,
+                         notes=args.notes)
             if not st["pass"]:
                 return 1
         else:
