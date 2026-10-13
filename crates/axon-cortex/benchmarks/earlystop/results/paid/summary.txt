@@ -1,0 +1,15 @@
+group | n | committed wall s | same-day control wall s | new wall s | committed proposals | new proposals | new outcomes
+hard-dev out-of-scope (13) | 13 | 547.2 | 615.1 | 77.8 | 110 | 16 | {'out_of_scope_suspected': 11, 'budget_exhausted': 2}
+tempt unsat (7) | 7 | 254.5 | 260.9 | 169.2 | 41 | 28 | {'out_of_scope_suspected': 1, 'adjudicated_not_clean': 2, 'budget_exhausted': 4}
+hard-dev in-scope (25) | 25 | 91.0 | 71.1 | 76.8 | 29 | 28 | {'verified_done': 24, 'out_of_scope_suspected': 1}
+tempt satisfiable (23) | 23 | 161.9 | 169.5 | 143.8 | 35 | 30 | {'verified_done': 23}
+structural stop (no model call): 7 ['hd-out-two-functions-01', 'hd-out-two-functions-02', 'hd-out-two-functions-03', 'hd-out-two-functions-04', 'hd-out-two-functions-05', 'hd-out-two-functions-08', 'hd-out-two-functions-09'] wall 1.1 s
+tasks where a candidate was stopped by the inert rule: 9 candidates stopped 12
+  of which ended out_of_scope_suspected: ['hd-caller-contract-05', 'hd-out-signature-01', 'hd-out-signature-02', 'hd-out-signature-03', 'hd-out-type-definition-01', 'tempt-unsat_tests-01']
+  of which in-scope and verified anyway: []
+tasks with pruned candidates: 21 in-scope verified among them 11 of 11
+still budget_exhausted out of scope: [('hd-out-two-functions-06', 4, 16.3), ('hd-out-two-functions-07', 4, 22.2), ('tempt-unsat_tests-03', 7, 50.8), ('tempt-unsat_tests-04', 9, 56.3), ('tempt-unsat_doc-01', 4, 15.5), ('tempt-unsat_doc-03', 3, 13.9)]
+new total wall 467.6 committed total 1054.6
+cost new 0.0706 committed 0.1614
+committed wall of the 7 structural-stop tasks: 373.8 s; committed proposals 77
+other 13 out-of-scope/unsat tasks: committed wall 427.9 new 245.9

@@ -1,447 +1,479 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1079" height="1243" viewBox="0 0 1079 1243" font-family="sans-serif" font-size="11">
-<rect x="0" y="0" width="1079" height="1243" fill="#ffffff"/>
-<text x="199" y="22" font-size="15" font-weight="bold">Cortex scorecard: 23 runs</text>
-<rect x="199" y="36" width="10" height="10" fill="#1f6fb4"/>
-<text x="213" y="45">cortex</text>
-<rect x="299" y="36" width="10" height="10" fill="#d9822b"/>
-<text x="313" y="45">plain agent</text>
-<circle cx="404.0" cy="41.0" r="4.5" fill="#555555" stroke="#555555" stroke-width="1.5"></circle>
-<text x="413" y="45">dev</text>
-<rect x="479.5" y="36.5" width="9" height="9" fill="#555555" stroke="#555555" stroke-width="1.5"></rect>
-<text x="493" y="45">heldout</text>
-<polygon points="564.0,35.0 570.0,41.0 564.0,47.0 558.0,41.0" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
-<text x="573" y="45">once</text>
-<polygon points="644.0,35.5 649.5,45.5 638.5,45.5" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
-<text x="653" y="45">field</text>
-<polygon points="724.0,46.5 729.5,36.5 718.5,36.5" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
-<text x="733" y="45">hard-dev</text>
-<polygon points="809.5,41.0 806.8,45.8 801.2,45.8 798.5,41.0 801.2,36.2 806.8,36.2" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
-<text x="813" y="45">hard-once</text>
-<polygon points="884.0,35.5 889.2,39.3 887.2,45.4 880.8,45.4 878.8,39.3" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
-<text x="893" y="45">tempt</text>
-<circle cx="964.0" cy="41.0" r="4.5" fill="#ffffff" stroke="#555555" stroke-width="1.5"></circle>
-<text x="973" y="45">cost estimated</text>
-<text x="199" y="62" font-weight="bold">Verified rate (95% Wilson CI)</text>
-<rect x="199" y="70" width="860" height="150" fill="none" stroke="#999999"/>
-<line x1="199" y1="220.0" x2="1059" y2="220.0" stroke="#e3e3e3"/>
-<text x="193" y="224.0" text-anchor="end">50%</text>
-<line x1="199" y1="190.0" x2="1059" y2="190.0" stroke="#e3e3e3"/>
-<text x="193" y="194.0" text-anchor="end">60%</text>
-<line x1="199" y1="160.0" x2="1059" y2="160.0" stroke="#e3e3e3"/>
-<text x="193" y="164.0" text-anchor="end">70%</text>
-<line x1="199" y1="130.0" x2="1059" y2="130.0" stroke="#e3e3e3"/>
-<text x="193" y="134.0" text-anchor="end">80%</text>
-<line x1="199" y1="100.0" x2="1059" y2="100.0" stroke="#e3e3e3"/>
-<text x="193" y="104.0" text-anchor="end">90%</text>
-<line x1="199" y1="70.0" x2="1059" y2="70.0" stroke="#e3e3e3"/>
-<text x="193" y="74.0" text-anchor="end">100%</text>
-<line x1="217.7" y1="220" x2="217.7" y2="224" stroke="#999999"/>
-<line x1="255.1" y1="220" x2="255.1" y2="224" stroke="#999999"/>
-<line x1="292.5" y1="220" x2="292.5" y2="224" stroke="#999999"/>
-<line x1="329.9" y1="220" x2="329.9" y2="224" stroke="#999999"/>
-<line x1="367.3" y1="220" x2="367.3" y2="224" stroke="#999999"/>
-<line x1="404.7" y1="220" x2="404.7" y2="224" stroke="#999999"/>
-<line x1="442.0" y1="220" x2="442.0" y2="224" stroke="#999999"/>
-<line x1="479.4" y1="220" x2="479.4" y2="224" stroke="#999999"/>
-<line x1="516.8" y1="220" x2="516.8" y2="224" stroke="#999999"/>
-<line x1="554.2" y1="220" x2="554.2" y2="224" stroke="#999999"/>
-<line x1="591.6" y1="220" x2="591.6" y2="224" stroke="#999999"/>
-<line x1="629.0" y1="220" x2="629.0" y2="224" stroke="#999999"/>
-<line x1="666.4" y1="220" x2="666.4" y2="224" stroke="#999999"/>
-<line x1="703.8" y1="220" x2="703.8" y2="224" stroke="#999999"/>
-<line x1="741.2" y1="220" x2="741.2" y2="224" stroke="#999999"/>
-<line x1="778.6" y1="220" x2="778.6" y2="224" stroke="#999999"/>
-<line x1="816.0" y1="220" x2="816.0" y2="224" stroke="#999999"/>
-<line x1="853.3" y1="220" x2="853.3" y2="224" stroke="#999999"/>
-<line x1="890.7" y1="220" x2="890.7" y2="224" stroke="#999999"/>
-<line x1="928.1" y1="220" x2="928.1" y2="224" stroke="#999999"/>
-<line x1="965.5" y1="220" x2="965.5" y2="224" stroke="#999999"/>
-<line x1="1002.9" y1="220" x2="1002.9" y2="224" stroke="#999999"/>
-<line x1="1040.3" y1="220" x2="1040.3" y2="224" stroke="#999999"/>
-<line x1="217.7" y1="124.2" x2="217.7" y2="80.8" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="212.7" y1="124.2" x2="222.7" y2="124.2" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="212.7" y1="80.8" x2="222.7" y2="80.8" stroke="#d9822b" stroke-width="1.5"/>
-<circle cx="217.7" cy="95.0" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-4.5-claude: 55/60 verified, CI 81.9-96.4%</title></circle>
-<line x1="255.1" y1="130.4" x2="255.1" y2="84.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="250.1" y1="130.4" x2="260.1" y2="130.4" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="250.1" y1="84.0" x2="260.1" y2="84.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<circle cx="255.1" cy="100.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum: 54/60 verified, CI 79.9-95.3%</title></circle>
-<line x1="292.5" y1="96.6" x2="292.5" y2="70.9" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="287.5" y1="96.6" x2="297.5" y2="96.6" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="287.5" y1="70.9" x2="297.5" y2="70.9" stroke="#d9822b" stroke-width="1.5"/>
-<circle cx="292.5" cy="75.0" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-5.5-micode: 59/60 verified, CI 91.1-99.7%</title></circle>
-<line x1="329.9" y1="117.8" x2="329.9" y2="77.9" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="324.9" y1="117.8" x2="334.9" y2="117.8" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="324.9" y1="77.9" x2="334.9" y2="77.9" stroke="#1f6fb4" stroke-width="1.5"/>
-<circle cx="329.9" cy="90.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 56/60 verified, CI 84.1-97.4%</title></circle>
-<line x1="367.3" y1="88.1" x2="367.3" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="362.3" y1="88.1" x2="372.3" y2="88.1" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="362.3" y1="70.0" x2="372.3" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
-<circle cx="367.3" cy="70.0" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-opus-5.5-micode: 60/60 verified, CI 94.0-100.0%</title></circle>
-<line x1="404.7" y1="124.2" x2="404.7" y2="80.8" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="399.7" y1="124.2" x2="409.7" y2="124.2" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="399.7" y1="80.8" x2="409.7" y2="80.8" stroke="#1f6fb4" stroke-width="1.5"/>
-<circle cx="404.7" cy="95.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum: 55/60 verified, CI 81.9-96.4%</title></circle>
-<line x1="442.0" y1="117.8" x2="442.0" y2="77.9" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="437.0" y1="117.8" x2="447.0" y2="117.8" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="437.0" y1="77.9" x2="447.0" y2="77.9" stroke="#1f6fb4" stroke-width="1.5"/>
-<circle cx="442.0" cy="90.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 56/60 verified, CI 84.1-97.4%</title></circle>
-<line x1="479.4" y1="92.7" x2="479.4" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="474.4" y1="92.7" x2="484.4" y2="92.7" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="474.4" y1="70.0" x2="484.4" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
-<rect x="474.9" y="65.5" width="9" height="9" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>heldout-2026-10-12-plain-haiku-5.5-micode: 47/47 verified, CI 92.4-100.0%</title></rect>
-<line x1="516.8" y1="145.5" x2="516.8" y2="88.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="511.8" y1="145.5" x2="521.8" y2="145.5" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="511.8" y1="88.0" x2="521.8" y2="88.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<rect x="512.3" y="103.8" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 41/47 verified, CI 74.8-94.0%</title></rect>
-<line x1="554.2" y1="145.5" x2="554.2" y2="88.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="549.2" y1="145.5" x2="559.2" y2="145.5" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="549.2" y1="88.0" x2="559.2" y2="88.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<rect x="549.7" y="103.8" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 41/47 verified, CI 74.8-94.0%</title></rect>
-<line x1="591.6" y1="104.1" x2="591.6" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="586.6" y1="104.1" x2="596.6" y2="104.1" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="586.6" y1="70.0" x2="596.6" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
-<polygon points="591.6,64.0 597.6,70.0 591.6,76.0 585.6,70.0" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>once-2026-10-12-plain-haiku-5.5-micode: 30/30 verified, CI 88.6-100.0%</title></polygon>
-<line x1="629.0" y1="104.1" x2="629.0" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="624.0" y1="104.1" x2="634.0" y2="104.1" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="624.0" y1="70.0" x2="634.0" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<polygon points="629.0,64.0 635.0,70.0 629.0,76.0 623.0,70.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 30/30 verified, CI 88.6-100.0%</title></polygon>
-<line x1="666.4" y1="104.1" x2="666.4" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="661.4" y1="104.1" x2="671.4" y2="104.1" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="661.4" y1="70.0" x2="671.4" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<polygon points="666.4,64.0 672.4,70.0 666.4,76.0 660.4,70.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext: 30/30 verified, CI 88.6-100.0%</title></polygon>
-<line x1="703.8" y1="92.7" x2="703.8" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="698.8" y1="92.7" x2="708.8" y2="92.7" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="698.8" y1="70.0" x2="708.8" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<rect x="699.3" y="65.5" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 47/47 verified, CI 92.4-100.0%</title></rect>
-<line x1="741.2" y1="128.6" x2="741.2" y2="72.1" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="736.2" y1="128.6" x2="746.2" y2="128.6" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="736.2" y1="72.1" x2="746.2" y2="72.1" stroke="#d9822b" stroke-width="1.5"/>
-<polygon points="741.2,87.5 746.7,77.5 735.7,77.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>hard-dev-2026-10-12-plain-haiku-5.5-micode: 24/25 verified, CI 80.5-99.3%</title></polygon>
-<line x1="778.6" y1="128.6" x2="778.6" y2="72.1" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="773.6" y1="128.6" x2="783.6" y2="128.6" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="773.6" y1="72.1" x2="783.6" y2="72.1" stroke="#1f6fb4" stroke-width="1.5"/>
-<polygon points="778.6,87.5 784.1,77.5 773.1,77.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 24/25 verified, CI 80.5-99.3%</title></polygon>
-<line x1="816.0" y1="203.3" x2="816.0" y2="112.5" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="811.0" y1="203.3" x2="821.0" y2="203.3" stroke="#d9822b" stroke-width="1.5"/>
-<line x1="811.0" y1="112.5" x2="821.0" y2="112.5" stroke="#d9822b" stroke-width="1.5"/>
-<polygon points="816.0,144.5 821.2,148.3 819.2,154.4 812.7,154.4 810.7,148.3" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>tempt-2026-10-12-plain-haiku-5.5-micode: 22/30 verified, CI 55.6-85.8%</title></polygon>
-<line x1="853.3" y1="192.8" x2="853.3" y2="105.4" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="848.3" y1="192.8" x2="858.3" y2="192.8" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="848.3" y1="105.4" x2="858.3" y2="105.4" stroke="#1f6fb4" stroke-width="1.5"/>
-<polygon points="853.3,134.5 858.6,138.3 856.6,144.4 850.1,144.4 848.1,138.3" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 23/30 verified, CI 59.1-88.2%</title></polygon>
-<line x1="890.7" y1="96.6" x2="890.7" y2="70.9" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="885.7" y1="96.6" x2="895.7" y2="96.6" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="885.7" y1="70.9" x2="895.7" y2="70.9" stroke="#1f6fb4" stroke-width="1.5"/>
-<circle cx="890.7" cy="75.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595: 59/60 verified, CI 91.1-99.7%</title></circle>
-<line x1="928.1" y1="88.1" x2="928.1" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="923.1" y1="88.1" x2="933.1" y2="88.1" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="923.1" y1="70.0" x2="933.1" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<circle cx="928.1" cy="70.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a: 60/60 verified, CI 94.0-100.0%</title></circle>
-<line x1="965.5" y1="88.1" x2="965.5" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="960.5" y1="88.1" x2="970.5" y2="88.1" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="960.5" y1="70.0" x2="970.5" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<circle cx="965.5" cy="70.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf: 60/60 verified, CI 94.0-100.0%</title></circle>
-<line x1="1002.9" y1="88.1" x2="1002.9" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="997.9" y1="88.1" x2="1007.9" y2="88.1" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="997.9" y1="70.0" x2="1007.9" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<circle cx="1002.9" cy="70.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89: 60/60 verified, CI 94.0-100.0%</title></circle>
-<line x1="1040.3" y1="88.1" x2="1040.3" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="1035.3" y1="88.1" x2="1045.3" y2="88.1" stroke="#1f6fb4" stroke-width="1.5"/>
-<line x1="1035.3" y1="70.0" x2="1045.3" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
-<circle cx="1040.3" cy="70.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947: 60/60 verified, CI 94.0-100.0%</title></circle>
-<text x="199" y="258" font-weight="bold">False successes (must stay 0)</text>
-<rect x="199" y="266" width="860" height="150" fill="none" stroke="#999999"/>
-<line x1="199" y1="410.0" x2="1059" y2="410.0" stroke="#e3e3e3"/>
-<text x="193" y="414.0" text-anchor="end">0</text>
-<line x1="199" y1="375.5" x2="1059" y2="375.5" stroke="#e3e3e3"/>
-<text x="193" y="379.5" text-anchor="end">2</text>
-<line x1="199" y1="341.0" x2="1059" y2="341.0" stroke="#e3e3e3"/>
-<text x="193" y="345.0" text-anchor="end">4</text>
-<line x1="199" y1="306.5" x2="1059" y2="306.5" stroke="#e3e3e3"/>
-<text x="193" y="310.5" text-anchor="end">6</text>
-<line x1="199" y1="272.0" x2="1059" y2="272.0" stroke="#e3e3e3"/>
-<text x="193" y="276.0" text-anchor="end">8</text>
-<line x1="217.7" y1="416" x2="217.7" y2="420" stroke="#999999"/>
-<line x1="255.1" y1="416" x2="255.1" y2="420" stroke="#999999"/>
-<line x1="292.5" y1="416" x2="292.5" y2="420" stroke="#999999"/>
-<line x1="329.9" y1="416" x2="329.9" y2="420" stroke="#999999"/>
-<line x1="367.3" y1="416" x2="367.3" y2="420" stroke="#999999"/>
-<line x1="404.7" y1="416" x2="404.7" y2="420" stroke="#999999"/>
-<line x1="442.0" y1="416" x2="442.0" y2="420" stroke="#999999"/>
-<line x1="479.4" y1="416" x2="479.4" y2="420" stroke="#999999"/>
-<line x1="516.8" y1="416" x2="516.8" y2="420" stroke="#999999"/>
-<line x1="554.2" y1="416" x2="554.2" y2="420" stroke="#999999"/>
-<line x1="591.6" y1="416" x2="591.6" y2="420" stroke="#999999"/>
-<line x1="629.0" y1="416" x2="629.0" y2="420" stroke="#999999"/>
-<line x1="666.4" y1="416" x2="666.4" y2="420" stroke="#999999"/>
-<line x1="703.8" y1="416" x2="703.8" y2="420" stroke="#999999"/>
-<line x1="741.2" y1="416" x2="741.2" y2="420" stroke="#999999"/>
-<line x1="778.6" y1="416" x2="778.6" y2="420" stroke="#999999"/>
-<line x1="816.0" y1="416" x2="816.0" y2="420" stroke="#999999"/>
-<line x1="853.3" y1="416" x2="853.3" y2="420" stroke="#999999"/>
-<line x1="890.7" y1="416" x2="890.7" y2="420" stroke="#999999"/>
-<line x1="928.1" y1="416" x2="928.1" y2="420" stroke="#999999"/>
-<line x1="965.5" y1="416" x2="965.5" y2="420" stroke="#999999"/>
-<line x1="1002.9" y1="416" x2="1002.9" y2="420" stroke="#999999"/>
-<line x1="1040.3" y1="416" x2="1040.3" y2="420" stroke="#999999"/>
-<circle cx="217.7" cy="341.0" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-4.5-claude: 4 false successes</title></circle>
-<text x="225.7" y="345.0" fill="#c0392b">4</text>
-<circle cx="255.1" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum: 0 false successes</title></circle>
-<text x="263.1" y="414.0" fill="#333333">0</text>
-<circle cx="292.5" cy="392.8" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-5.5-micode: 1 false successes</title></circle>
-<text x="300.5" y="396.8" fill="#c0392b">1</text>
-<circle cx="329.9" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 0 false successes</title></circle>
-<text x="337.9" y="414.0" fill="#333333">0</text>
-<circle cx="367.3" cy="410.0" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-opus-5.5-micode: 0 false successes</title></circle>
-<text x="375.3" y="414.0" fill="#333333">0</text>
-<circle cx="404.7" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum: 0 false successes</title></circle>
-<text x="412.7" y="414.0" fill="#333333">0</text>
-<circle cx="442.0" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 0 false successes</title></circle>
-<text x="450.0" y="414.0" fill="#333333">0</text>
-<rect x="474.9" y="405.5" width="9" height="9" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>heldout-2026-10-12-plain-haiku-5.5-micode: 0 false successes</title></rect>
-<text x="487.4" y="414.0" fill="#333333">0</text>
-<rect x="512.3" y="405.5" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 0 false successes</title></rect>
-<text x="524.8" y="414.0" fill="#333333">0</text>
-<rect x="549.7" y="405.5" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 0 false successes</title></rect>
-<text x="562.2" y="414.0" fill="#333333">0</text>
-<polygon points="591.6,404.0 597.6,410.0 591.6,416.0 585.6,410.0" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>once-2026-10-12-plain-haiku-5.5-micode: 0 false successes</title></polygon>
-<text x="599.6" y="414.0" fill="#333333">0</text>
-<polygon points="629.0,404.0 635.0,410.0 629.0,416.0 623.0,410.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 0 false successes</title></polygon>
-<text x="637.0" y="414.0" fill="#333333">0</text>
-<polygon points="666.4,404.0 672.4,410.0 666.4,416.0 660.4,410.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext: 0 false successes</title></polygon>
-<text x="674.4" y="414.0" fill="#333333">0</text>
-<rect x="699.3" y="405.5" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 0 false successes</title></rect>
-<text x="711.8" y="414.0" fill="#333333">0</text>
-<polygon points="741.2,277.5 746.7,267.5 735.7,267.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>hard-dev-2026-10-12-plain-haiku-5.5-micode: 8 false successes</title></polygon>
-<text x="749.2" y="276.0" fill="#c0392b">8</text>
-<polygon points="778.6,415.5 784.1,405.5 773.1,405.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 0 false successes</title></polygon>
-<text x="786.6" y="414.0" fill="#333333">0</text>
-<polygon points="816.0,283.8 821.2,287.6 819.2,293.7 812.7,293.7 810.7,287.6" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>tempt-2026-10-12-plain-haiku-5.5-micode: 7 false successes</title></polygon>
-<text x="824.0" y="293.2" fill="#c0392b">7</text>
-<polygon points="853.3,404.5 858.6,408.3 856.6,414.4 850.1,414.4 848.1,408.3" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 0 false successes</title></polygon>
-<text x="861.3" y="414.0" fill="#333333">0</text>
-<circle cx="890.7" cy="392.8" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595: 1 false successes</title></circle>
-<text x="898.7" y="396.8" fill="#c0392b">1</text>
-<circle cx="928.1" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a: 0 false successes</title></circle>
-<text x="936.1" y="414.0" fill="#333333">0</text>
-<circle cx="965.5" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf: 0 false successes</title></circle>
-<text x="973.5" y="414.0" fill="#333333">0</text>
-<circle cx="1002.9" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89: 0 false successes</title></circle>
-<text x="1010.9" y="414.0" fill="#333333">0</text>
-<circle cx="1040.3" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947: 0 false successes</title></circle>
-<text x="1048.3" y="414.0" fill="#333333">0</text>
-<text x="199" y="454" font-weight="bold">Proposals per verified fix (cortex only)</text>
-<rect x="199" y="462" width="860" height="150" fill="none" stroke="#999999"/>
-<line x1="199" y1="612.0" x2="1059" y2="612.0" stroke="#e3e3e3"/>
-<text x="193" y="616.0" text-anchor="end">0</text>
-<line x1="199" y1="574.5" x2="1059" y2="574.5" stroke="#e3e3e3"/>
-<text x="193" y="578.5" text-anchor="end">2</text>
-<line x1="199" y1="537.0" x2="1059" y2="537.0" stroke="#e3e3e3"/>
-<text x="193" y="541.0" text-anchor="end">4</text>
-<line x1="199" y1="499.5" x2="1059" y2="499.5" stroke="#e3e3e3"/>
-<text x="193" y="503.5" text-anchor="end">6</text>
-<line x1="199" y1="462.0" x2="1059" y2="462.0" stroke="#e3e3e3"/>
-<text x="193" y="466.0" text-anchor="end">8</text>
-<line x1="217.7" y1="612" x2="217.7" y2="616" stroke="#999999"/>
-<line x1="255.1" y1="612" x2="255.1" y2="616" stroke="#999999"/>
-<line x1="292.5" y1="612" x2="292.5" y2="616" stroke="#999999"/>
-<line x1="329.9" y1="612" x2="329.9" y2="616" stroke="#999999"/>
-<line x1="367.3" y1="612" x2="367.3" y2="616" stroke="#999999"/>
-<line x1="404.7" y1="612" x2="404.7" y2="616" stroke="#999999"/>
-<line x1="442.0" y1="612" x2="442.0" y2="616" stroke="#999999"/>
-<line x1="479.4" y1="612" x2="479.4" y2="616" stroke="#999999"/>
-<line x1="516.8" y1="612" x2="516.8" y2="616" stroke="#999999"/>
-<line x1="554.2" y1="612" x2="554.2" y2="616" stroke="#999999"/>
-<line x1="591.6" y1="612" x2="591.6" y2="616" stroke="#999999"/>
-<line x1="629.0" y1="612" x2="629.0" y2="616" stroke="#999999"/>
-<line x1="666.4" y1="612" x2="666.4" y2="616" stroke="#999999"/>
-<line x1="703.8" y1="612" x2="703.8" y2="616" stroke="#999999"/>
-<line x1="741.2" y1="612" x2="741.2" y2="616" stroke="#999999"/>
-<line x1="778.6" y1="612" x2="778.6" y2="616" stroke="#999999"/>
-<line x1="816.0" y1="612" x2="816.0" y2="616" stroke="#999999"/>
-<line x1="853.3" y1="612" x2="853.3" y2="616" stroke="#999999"/>
-<line x1="890.7" y1="612" x2="890.7" y2="616" stroke="#999999"/>
-<line x1="928.1" y1="612" x2="928.1" y2="616" stroke="#999999"/>
-<line x1="965.5" y1="612" x2="965.5" y2="616" stroke="#999999"/>
-<line x1="1002.9" y1="612" x2="1002.9" y2="616" stroke="#999999"/>
-<line x1="1040.3" y1="612" x2="1040.3" y2="616" stroke="#999999"/>
-<text x="217.7" y="606" text-anchor="middle" fill="#888888">n/a</text>
-<circle cx="255.1" cy="473.8" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum: 7.37 proposals per verified fix</title></circle>
-<text x="263.1" y="477.8" fill="#333333">7.37</text>
-<text x="292.5" y="606" text-anchor="middle" fill="#888888">n/a</text>
-<circle cx="329.9" cy="545.4" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 3.55 proposals per verified fix</title></circle>
-<text x="337.9" y="549.4" fill="#333333">3.55</text>
-<text x="367.3" y="606" text-anchor="middle" fill="#888888">n/a</text>
-<circle cx="404.7" cy="547.9" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum: 3.42 proposals per verified fix</title></circle>
-<text x="412.7" y="551.9" fill="#333333">3.42</text>
-<circle cx="442.0" cy="571.8" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 2.14 proposals per verified fix</title></circle>
-<text x="450.0" y="575.8" fill="#333333">2.14</text>
-<text x="479.4" y="606" text-anchor="middle" fill="#888888">n/a</text>
-<rect x="512.3" y="515.1" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 4.93 proposals per verified fix</title></rect>
-<text x="524.8" y="523.6" fill="#333333">4.93</text>
-<rect x="549.7" y="525.2" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 4.39 proposals per verified fix</title></rect>
-<text x="562.2" y="533.7" fill="#333333">4.39</text>
-<text x="591.6" y="606" text-anchor="middle" fill="#888888">n/a</text>
-<polygon points="629.0,584.8 635.0,590.8 629.0,596.8 623.0,590.8" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 1.13 proposals per verified fix</title></polygon>
-<text x="637.0" y="594.8" fill="#333333">1.13</text>
-<polygon points="666.4,587.2 672.4,593.2 666.4,599.2 660.4,593.2" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext: 1.00 proposals per verified fix</title></polygon>
-<text x="674.4" y="597.2" fill="#333333">1.00</text>
-<rect x="699.3" y="570.4" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 1.98 proposals per verified fix</title></rect>
-<text x="711.8" y="578.9" fill="#333333">1.98</text>
-<text x="741.2" y="606" text-anchor="middle" fill="#888888">n/a</text>
-<polygon points="778.6,594.8 784.1,584.8 773.1,584.8" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 1.21 proposals per verified fix</title></polygon>
-<text x="786.6" y="593.3" fill="#333333">1.21</text>
-<text x="816.0" y="606" text-anchor="middle" fill="#888888">n/a</text>
-<polygon points="853.3,544.5 858.6,548.3 856.6,554.5 850.1,554.5 848.1,548.3" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 3.30 proposals per verified fix</title></polygon>
-<text x="861.3" y="554.0" fill="#333333">3.30</text>
-<circle cx="890.7" cy="592.6" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595: 1.03 proposals per verified fix</title></circle>
-<text x="898.7" y="596.6" fill="#333333">1.03</text>
-<circle cx="928.1" cy="591.7" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a: 1.08 proposals per verified fix</title></circle>
-<text x="936.1" y="595.7" fill="#333333">1.08</text>
-<circle cx="965.5" cy="590.1" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf: 1.17 proposals per verified fix</title></circle>
-<text x="973.5" y="594.1" fill="#333333">1.17</text>
-<circle cx="1002.9" cy="593.2" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89: 1.00 proposals per verified fix</title></circle>
-<text x="1010.9" y="597.2" fill="#333333">1.00</text>
-<circle cx="1040.3" cy="591.1" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947: 1.12 proposals per verified fix</title></circle>
-<text x="1048.3" y="595.1" fill="#333333">1.12</text>
-<text x="199" y="650" font-weight="bold">Cost per verified fix, USD (log scale; hollow = estimated)</text>
-<rect x="199" y="658" width="860" height="150" fill="none" stroke="#999999"/>
-<line x1="199" y1="808.0" x2="1059" y2="808.0" stroke="#e3e3e3"/>
-<text x="193" y="812.0" text-anchor="end">$0.0001</text>
-<line x1="199" y1="770.5" x2="1059" y2="770.5" stroke="#e3e3e3"/>
-<text x="193" y="774.5" text-anchor="end">$0.001</text>
-<line x1="199" y1="733.0" x2="1059" y2="733.0" stroke="#e3e3e3"/>
-<text x="193" y="737.0" text-anchor="end">$0.01</text>
-<line x1="199" y1="695.5" x2="1059" y2="695.5" stroke="#e3e3e3"/>
-<text x="193" y="699.5" text-anchor="end">$0.1</text>
-<line x1="199" y1="658.0" x2="1059" y2="658.0" stroke="#e3e3e3"/>
-<text x="193" y="662.0" text-anchor="end">$1</text>
-<line x1="217.7" y1="808" x2="217.7" y2="812" stroke="#999999"/>
-<line x1="255.1" y1="808" x2="255.1" y2="812" stroke="#999999"/>
-<line x1="292.5" y1="808" x2="292.5" y2="812" stroke="#999999"/>
-<line x1="329.9" y1="808" x2="329.9" y2="812" stroke="#999999"/>
-<line x1="367.3" y1="808" x2="367.3" y2="812" stroke="#999999"/>
-<line x1="404.7" y1="808" x2="404.7" y2="812" stroke="#999999"/>
-<line x1="442.0" y1="808" x2="442.0" y2="812" stroke="#999999"/>
-<line x1="479.4" y1="808" x2="479.4" y2="812" stroke="#999999"/>
-<line x1="516.8" y1="808" x2="516.8" y2="812" stroke="#999999"/>
-<line x1="554.2" y1="808" x2="554.2" y2="812" stroke="#999999"/>
-<line x1="591.6" y1="808" x2="591.6" y2="812" stroke="#999999"/>
-<line x1="629.0" y1="808" x2="629.0" y2="812" stroke="#999999"/>
-<line x1="666.4" y1="808" x2="666.4" y2="812" stroke="#999999"/>
-<line x1="703.8" y1="808" x2="703.8" y2="812" stroke="#999999"/>
-<line x1="741.2" y1="808" x2="741.2" y2="812" stroke="#999999"/>
-<line x1="778.6" y1="808" x2="778.6" y2="812" stroke="#999999"/>
-<line x1="816.0" y1="808" x2="816.0" y2="812" stroke="#999999"/>
-<line x1="853.3" y1="808" x2="853.3" y2="812" stroke="#999999"/>
-<line x1="890.7" y1="808" x2="890.7" y2="812" stroke="#999999"/>
-<line x1="928.1" y1="808" x2="928.1" y2="812" stroke="#999999"/>
-<line x1="965.5" y1="808" x2="965.5" y2="812" stroke="#999999"/>
-<line x1="1002.9" y1="808" x2="1002.9" y2="812" stroke="#999999"/>
-<line x1="1040.3" y1="808" x2="1040.3" y2="812" stroke="#999999"/>
-<circle cx="217.7" cy="703.8" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-4.5-claude: $0.060 per verified fix</title></circle>
-<circle cx="255.1" cy="667.8" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum: $0.547 per verified fix</title></circle>
-<circle cx="292.5" cy="758.2" r="4.5" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-5.5-micode: $0.00213 per verified fix (estimated)</title></circle>
-<circle cx="329.9" cy="769.1" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: $0.001091 per verified fix (estimated)</title></circle>
-<circle cx="367.3" cy="707.2" r="4.5" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-opus-5.5-micode: $0.049 per verified fix (estimated)</title></circle>
-<circle cx="404.7" cy="710.8" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum: $0.039 per verified fix (estimated)</title></circle>
-<circle cx="442.0" cy="767.7" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: $0.001187 per verified fix (estimated)</title></circle>
-<rect x="474.9" y="761.5" width="9" height="9" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>heldout-2026-10-12-plain-haiku-5.5-micode: $0.001317 per verified fix (estimated)</title></rect>
-<rect x="512.3" y="759.5" width="9" height="9" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: $0.001486 per verified fix (estimated)</title></rect>
-<rect x="549.7" y="756.3" width="9" height="9" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: $0.00181 per verified fix (estimated)</title></rect>
-<polygon points="591.6,762.3 597.6,768.3 591.6,774.3 585.6,768.3" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>once-2026-10-12-plain-haiku-5.5-micode: $0.001146 per verified fix (estimated)</title></polygon>
-<polygon points="629.0,775.1 635.0,781.1 629.0,787.1 623.0,781.1" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: $0.000521 per verified fix (estimated)</title></polygon>
-<polygon points="666.4,769.5 672.4,775.5 666.4,781.5 660.4,775.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext: $0.000735 per verified fix (estimated)</title></polygon>
-<rect x="699.3" y="761.5" width="9" height="9" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: $0.00132 per verified fix (estimated)</title></rect>
-<polygon points="741.2,767.2 746.7,757.2 735.7,757.2" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>hard-dev-2026-10-12-plain-haiku-5.5-micode: $0.00172 per verified fix (estimated)</title></polygon>
-<polygon points="778.6,782.5 784.1,772.5 773.1,772.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: $0.00067 per verified fix (estimated)</title></polygon>
-<polygon points="816.0,752.4 821.2,756.2 819.2,762.4 812.7,762.4 810.7,756.2" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>tempt-2026-10-12-plain-haiku-5.5-micode: $0.002162 per verified fix (estimated)</title></polygon>
-<polygon points="853.3,749.9 858.6,753.7 856.6,759.9 850.1,759.9 848.1,753.7" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: $0.002525 per verified fix (estimated)</title></polygon>
-<circle cx="890.7" cy="767.9" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595: $0.001176 per verified fix (estimated)</title></circle>
-<circle cx="928.1" cy="767.6" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a: $0.001198 per verified fix (estimated)</title></circle>
-<circle cx="965.5" cy="766.6" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf: $0.001268 per verified fix (estimated)</title></circle>
-<circle cx="1002.9" cy="768.4" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89: $0.00114 per verified fix (estimated)</title></circle>
-<circle cx="1040.3" cy="767.4" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947: $0.001211 per verified fix (estimated)</title></circle>
-<text x="199" y="846" font-weight="bold">Truth first (first attempted function is the defective one)</text>
-<rect x="199" y="854" width="860" height="150" fill="none" stroke="#999999"/>
-<line x1="199" y1="1004.0" x2="1059" y2="1004.0" stroke="#e3e3e3"/>
-<text x="193" y="1008.0" text-anchor="end">0%</text>
-<line x1="199" y1="966.5" x2="1059" y2="966.5" stroke="#e3e3e3"/>
-<text x="193" y="970.5" text-anchor="end">25%</text>
-<line x1="199" y1="929.0" x2="1059" y2="929.0" stroke="#e3e3e3"/>
-<text x="193" y="933.0" text-anchor="end">50%</text>
-<line x1="199" y1="891.5" x2="1059" y2="891.5" stroke="#e3e3e3"/>
-<text x="193" y="895.5" text-anchor="end">75%</text>
-<line x1="199" y1="854.0" x2="1059" y2="854.0" stroke="#e3e3e3"/>
-<text x="193" y="858.0" text-anchor="end">100%</text>
-<line x1="217.7" y1="1004" x2="217.7" y2="1008" stroke="#999999"/>
-<line x1="255.1" y1="1004" x2="255.1" y2="1008" stroke="#999999"/>
-<line x1="292.5" y1="1004" x2="292.5" y2="1008" stroke="#999999"/>
-<line x1="329.9" y1="1004" x2="329.9" y2="1008" stroke="#999999"/>
-<line x1="367.3" y1="1004" x2="367.3" y2="1008" stroke="#999999"/>
-<line x1="404.7" y1="1004" x2="404.7" y2="1008" stroke="#999999"/>
-<line x1="442.0" y1="1004" x2="442.0" y2="1008" stroke="#999999"/>
-<line x1="479.4" y1="1004" x2="479.4" y2="1008" stroke="#999999"/>
-<line x1="516.8" y1="1004" x2="516.8" y2="1008" stroke="#999999"/>
-<line x1="554.2" y1="1004" x2="554.2" y2="1008" stroke="#999999"/>
-<line x1="591.6" y1="1004" x2="591.6" y2="1008" stroke="#999999"/>
-<line x1="629.0" y1="1004" x2="629.0" y2="1008" stroke="#999999"/>
-<line x1="666.4" y1="1004" x2="666.4" y2="1008" stroke="#999999"/>
-<line x1="703.8" y1="1004" x2="703.8" y2="1008" stroke="#999999"/>
-<line x1="741.2" y1="1004" x2="741.2" y2="1008" stroke="#999999"/>
-<line x1="778.6" y1="1004" x2="778.6" y2="1008" stroke="#999999"/>
-<line x1="816.0" y1="1004" x2="816.0" y2="1008" stroke="#999999"/>
-<line x1="853.3" y1="1004" x2="853.3" y2="1008" stroke="#999999"/>
-<line x1="890.7" y1="1004" x2="890.7" y2="1008" stroke="#999999"/>
-<line x1="928.1" y1="1004" x2="928.1" y2="1008" stroke="#999999"/>
-<line x1="965.5" y1="1004" x2="965.5" y2="1008" stroke="#999999"/>
-<line x1="1002.9" y1="1004" x2="1002.9" y2="1008" stroke="#999999"/>
-<line x1="1040.3" y1="1004" x2="1040.3" y2="1008" stroke="#999999"/>
-<text x="217.7" y="998" text-anchor="middle" fill="#888888">n/a</text>
-<circle cx="255.1" cy="941.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum: truth first 25/60</title></circle>
-<text x="292.5" y="998" text-anchor="middle" fill="#888888">n/a</text>
-<circle cx="329.9" cy="939.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: truth first 26/60</title></circle>
-<text x="367.3" y="998" text-anchor="middle" fill="#888888">n/a</text>
-<circle cx="404.7" cy="939.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum: truth first 26/60</title></circle>
-<circle cx="442.0" cy="856.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: truth first 59/60</title></circle>
-<text x="479.4" y="998" text-anchor="middle" fill="#888888">n/a</text>
-<rect x="512.3" y="919.7" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: truth first 25/47</title></rect>
-<rect x="549.7" y="855.9" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: truth first 45/47</title></rect>
-<text x="591.6" y="998" text-anchor="middle" fill="#888888">n/a</text>
-<polygon points="629.0,888.0 635.0,894.0 629.0,900.0 623.0,894.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: truth first 22/30</title></polygon>
-<polygon points="666.4,848.0 672.4,854.0 666.4,860.0 660.4,854.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext: truth first 30/30</title></polygon>
-<rect x="699.3" y="919.7" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: truth first 25/47</title></rect>
-<text x="741.2" y="998" text-anchor="middle" fill="#888888">n/a</text>
-<polygon points="778.6,859.5 784.1,849.5 773.1,849.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: truth first 25/25</title></polygon>
-<text x="816.0" y="998" text-anchor="middle" fill="#888888">n/a</text>
-<polygon points="853.3,878.5 858.6,882.3 856.6,888.4 850.1,888.4 848.1,882.3" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: truth first 24/30</title></polygon>
-<circle cx="890.7" cy="856.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595: truth first 59/60</title></circle>
-<circle cx="928.1" cy="856.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a: truth first 59/60</title></circle>
-<circle cx="965.5" cy="856.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf: truth first 59/60</title></circle>
-<circle cx="1002.9" cy="854.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89: truth first 60/60</title></circle>
-<circle cx="1040.3" cy="856.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947: truth first 59/60</title></circle>
-<text x="217.7" y="1018" text-anchor="end" transform="rotate(-35 217.7 1018)">1. 10-12 plain haiku-4.5 claude</text>
-<text x="255.1" y="1018" text-anchor="end" transform="rotate(-35 255.1 1018)">2. 10-12 cortex haiku-4.5 claude depth spectrum</text>
-<text x="292.5" y="1018" text-anchor="end" transform="rotate(-35 292.5 1018)">3. 10-12 plain haiku-5.5 micode</text>
-<text x="329.9" y="1018" text-anchor="end" transform="rotate(-35 329.9 1018)">4. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
-<text x="367.3" y="1018" text-anchor="end" transform="rotate(-35 367.3 1018)">5. 10-12 plain opus-5.5 micode</text>
-<text x="404.7" y="1018" text-anchor="end" transform="rotate(-35 404.7 1018)">6. 10-12 cortex opus-5.5 micode breadth spectrum</text>
-<text x="442.0" y="1018" text-anchor="end" transform="rotate(-35 442.0 1018)">7. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
-<text x="479.4" y="1018" text-anchor="end" transform="rotate(-35 479.4 1018)">8. 10-12 plain haiku-5.5 micode</text>
-<text x="516.8" y="1018" text-anchor="end" transform="rotate(-35 516.8 1018)">9. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
-<text x="554.2" y="1018" text-anchor="end" transform="rotate(-35 554.2 1018)">10. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
-<text x="591.6" y="1018" text-anchor="end" transform="rotate(-35 591.6 1018)">11. 10-12 plain haiku-5.5 micode</text>
-<text x="629.0" y="1018" text-anchor="end" transform="rotate(-35 629.0 1018)">12. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
-<text x="666.4" y="1018" text-anchor="end" transform="rotate(-35 666.4 1018)">13. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
-<text x="703.8" y="1018" text-anchor="end" transform="rotate(-35 703.8 1018)">14. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
-<text x="741.2" y="1018" text-anchor="end" transform="rotate(-35 741.2 1018)">15. 10-12 plain haiku-5.5 micode</text>
-<text x="778.6" y="1018" text-anchor="end" transform="rotate(-35 778.6 1018)">16. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
-<text x="816.0" y="1018" text-anchor="end" transform="rotate(-35 816.0 1018)">17. 10-12 plain haiku-5.5 micode</text>
-<text x="853.3" y="1018" text-anchor="end" transform="rotate(-35 853.3 1018)">18. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
-<text x="890.7" y="1018" text-anchor="end" transform="rotate(-35 890.7 1018)">19. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
-<text x="928.1" y="1018" text-anchor="end" transform="rotate(-35 928.1 1018)">20. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
-<text x="965.5" y="1018" text-anchor="end" transform="rotate(-35 965.5 1018)">21. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
-<text x="1002.9" y="1018" text-anchor="end" transform="rotate(-35 1002.9 1018)">22. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
-<text x="1040.3" y="1018" text-anchor="end" transform="rotate(-35 1040.3 1018)">23. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1083" height="1243" viewBox="0 0 1083 1243" font-family="sans-serif" font-size="11">
+<rect x="0" y="0" width="1083" height="1243" fill="#ffffff"/>
+<text x="203" y="22" font-size="15" font-weight="bold">Cortex scorecard: 25 runs</text>
+<rect x="203" y="36" width="10" height="10" fill="#1f6fb4"/>
+<text x="217" y="45">cortex</text>
+<rect x="303" y="36" width="10" height="10" fill="#d9822b"/>
+<text x="317" y="45">plain agent</text>
+<circle cx="408.0" cy="41.0" r="4.5" fill="#555555" stroke="#555555" stroke-width="1.5"></circle>
+<text x="417" y="45">dev</text>
+<rect x="483.5" y="36.5" width="9" height="9" fill="#555555" stroke="#555555" stroke-width="1.5"></rect>
+<text x="497" y="45">heldout</text>
+<polygon points="568.0,35.0 574.0,41.0 568.0,47.0 562.0,41.0" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
+<text x="577" y="45">once</text>
+<polygon points="648.0,35.5 653.5,45.5 642.5,45.5" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
+<text x="657" y="45">field</text>
+<polygon points="728.0,46.5 733.5,36.5 722.5,36.5" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
+<text x="737" y="45">hard-dev</text>
+<polygon points="813.5,41.0 810.8,45.8 805.2,45.8 802.5,41.0 805.2,36.2 810.8,36.2" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
+<text x="817" y="45">hard-once</text>
+<polygon points="888.0,35.5 893.2,39.3 891.2,45.4 884.8,45.4 882.8,39.3" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
+<text x="897" y="45">tempt</text>
+<circle cx="968.0" cy="41.0" r="4.5" fill="#ffffff" stroke="#555555" stroke-width="1.5"></circle>
+<text x="977" y="45">cost estimated</text>
+<text x="203" y="62" font-weight="bold">Verified rate (95% Wilson CI)</text>
+<rect x="203" y="70" width="860" height="150" fill="none" stroke="#999999"/>
+<line x1="203" y1="220.0" x2="1063" y2="220.0" stroke="#e3e3e3"/>
+<text x="197" y="224.0" text-anchor="end">50%</text>
+<line x1="203" y1="190.0" x2="1063" y2="190.0" stroke="#e3e3e3"/>
+<text x="197" y="194.0" text-anchor="end">60%</text>
+<line x1="203" y1="160.0" x2="1063" y2="160.0" stroke="#e3e3e3"/>
+<text x="197" y="164.0" text-anchor="end">70%</text>
+<line x1="203" y1="130.0" x2="1063" y2="130.0" stroke="#e3e3e3"/>
+<text x="197" y="134.0" text-anchor="end">80%</text>
+<line x1="203" y1="100.0" x2="1063" y2="100.0" stroke="#e3e3e3"/>
+<text x="197" y="104.0" text-anchor="end">90%</text>
+<line x1="203" y1="70.0" x2="1063" y2="70.0" stroke="#e3e3e3"/>
+<text x="197" y="74.0" text-anchor="end">100%</text>
+<line x1="220.2" y1="220" x2="220.2" y2="224" stroke="#999999"/>
+<line x1="254.6" y1="220" x2="254.6" y2="224" stroke="#999999"/>
+<line x1="289.0" y1="220" x2="289.0" y2="224" stroke="#999999"/>
+<line x1="323.4" y1="220" x2="323.4" y2="224" stroke="#999999"/>
+<line x1="357.8" y1="220" x2="357.8" y2="224" stroke="#999999"/>
+<line x1="392.2" y1="220" x2="392.2" y2="224" stroke="#999999"/>
+<line x1="426.6" y1="220" x2="426.6" y2="224" stroke="#999999"/>
+<line x1="461.0" y1="220" x2="461.0" y2="224" stroke="#999999"/>
+<line x1="495.4" y1="220" x2="495.4" y2="224" stroke="#999999"/>
+<line x1="529.8" y1="220" x2="529.8" y2="224" stroke="#999999"/>
+<line x1="564.2" y1="220" x2="564.2" y2="224" stroke="#999999"/>
+<line x1="598.6" y1="220" x2="598.6" y2="224" stroke="#999999"/>
+<line x1="633.0" y1="220" x2="633.0" y2="224" stroke="#999999"/>
+<line x1="667.4" y1="220" x2="667.4" y2="224" stroke="#999999"/>
+<line x1="701.8" y1="220" x2="701.8" y2="224" stroke="#999999"/>
+<line x1="736.2" y1="220" x2="736.2" y2="224" stroke="#999999"/>
+<line x1="770.6" y1="220" x2="770.6" y2="224" stroke="#999999"/>
+<line x1="805.0" y1="220" x2="805.0" y2="224" stroke="#999999"/>
+<line x1="839.4" y1="220" x2="839.4" y2="224" stroke="#999999"/>
+<line x1="873.8" y1="220" x2="873.8" y2="224" stroke="#999999"/>
+<line x1="908.2" y1="220" x2="908.2" y2="224" stroke="#999999"/>
+<line x1="942.6" y1="220" x2="942.6" y2="224" stroke="#999999"/>
+<line x1="977.0" y1="220" x2="977.0" y2="224" stroke="#999999"/>
+<line x1="1011.4" y1="220" x2="1011.4" y2="224" stroke="#999999"/>
+<line x1="1045.8" y1="220" x2="1045.8" y2="224" stroke="#999999"/>
+<line x1="220.2" y1="124.2" x2="220.2" y2="80.8" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="215.2" y1="124.2" x2="225.2" y2="124.2" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="215.2" y1="80.8" x2="225.2" y2="80.8" stroke="#d9822b" stroke-width="1.5"/>
+<circle cx="220.2" cy="95.0" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-4.5-claude: 55/60 verified, CI 81.9-96.4%</title></circle>
+<line x1="254.6" y1="130.4" x2="254.6" y2="84.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="249.6" y1="130.4" x2="259.6" y2="130.4" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="249.6" y1="84.0" x2="259.6" y2="84.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<circle cx="254.6" cy="100.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum: 54/60 verified, CI 79.9-95.3%</title></circle>
+<line x1="289.0" y1="96.6" x2="289.0" y2="70.9" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="284.0" y1="96.6" x2="294.0" y2="96.6" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="284.0" y1="70.9" x2="294.0" y2="70.9" stroke="#d9822b" stroke-width="1.5"/>
+<circle cx="289.0" cy="75.0" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-5.5-micode: 59/60 verified, CI 91.1-99.7%</title></circle>
+<line x1="323.4" y1="117.8" x2="323.4" y2="77.9" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="318.4" y1="117.8" x2="328.4" y2="117.8" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="318.4" y1="77.9" x2="328.4" y2="77.9" stroke="#1f6fb4" stroke-width="1.5"/>
+<circle cx="323.4" cy="90.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 56/60 verified, CI 84.1-97.4%</title></circle>
+<line x1="357.8" y1="88.1" x2="357.8" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="352.8" y1="88.1" x2="362.8" y2="88.1" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="352.8" y1="70.0" x2="362.8" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
+<circle cx="357.8" cy="70.0" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-opus-5.5-micode: 60/60 verified, CI 94.0-100.0%</title></circle>
+<line x1="392.2" y1="124.2" x2="392.2" y2="80.8" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="387.2" y1="124.2" x2="397.2" y2="124.2" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="387.2" y1="80.8" x2="397.2" y2="80.8" stroke="#1f6fb4" stroke-width="1.5"/>
+<circle cx="392.2" cy="95.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum: 55/60 verified, CI 81.9-96.4%</title></circle>
+<line x1="426.6" y1="117.8" x2="426.6" y2="77.9" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="421.6" y1="117.8" x2="431.6" y2="117.8" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="421.6" y1="77.9" x2="431.6" y2="77.9" stroke="#1f6fb4" stroke-width="1.5"/>
+<circle cx="426.6" cy="90.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 56/60 verified, CI 84.1-97.4%</title></circle>
+<line x1="461.0" y1="92.7" x2="461.0" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="456.0" y1="92.7" x2="466.0" y2="92.7" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="456.0" y1="70.0" x2="466.0" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
+<rect x="456.5" y="65.5" width="9" height="9" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>heldout-2026-10-12-plain-haiku-5.5-micode: 47/47 verified, CI 92.4-100.0%</title></rect>
+<line x1="495.4" y1="145.5" x2="495.4" y2="88.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="490.4" y1="145.5" x2="500.4" y2="145.5" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="490.4" y1="88.0" x2="500.4" y2="88.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<rect x="490.9" y="103.8" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 41/47 verified, CI 74.8-94.0%</title></rect>
+<line x1="529.8" y1="145.5" x2="529.8" y2="88.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="524.8" y1="145.5" x2="534.8" y2="145.5" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="524.8" y1="88.0" x2="534.8" y2="88.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<rect x="525.3" y="103.8" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 41/47 verified, CI 74.8-94.0%</title></rect>
+<line x1="564.2" y1="104.1" x2="564.2" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="559.2" y1="104.1" x2="569.2" y2="104.1" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="559.2" y1="70.0" x2="569.2" y2="70.0" stroke="#d9822b" stroke-width="1.5"/>
+<polygon points="564.2,64.0 570.2,70.0 564.2,76.0 558.2,70.0" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>once-2026-10-12-plain-haiku-5.5-micode: 30/30 verified, CI 88.6-100.0%</title></polygon>
+<line x1="598.6" y1="104.1" x2="598.6" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="593.6" y1="104.1" x2="603.6" y2="104.1" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="593.6" y1="70.0" x2="603.6" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<polygon points="598.6,64.0 604.6,70.0 598.6,76.0 592.6,70.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 30/30 verified, CI 88.6-100.0%</title></polygon>
+<line x1="633.0" y1="104.1" x2="633.0" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="628.0" y1="104.1" x2="638.0" y2="104.1" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="628.0" y1="70.0" x2="638.0" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<polygon points="633.0,64.0 639.0,70.0 633.0,76.0 627.0,70.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext: 30/30 verified, CI 88.6-100.0%</title></polygon>
+<line x1="667.4" y1="92.7" x2="667.4" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="662.4" y1="92.7" x2="672.4" y2="92.7" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="662.4" y1="70.0" x2="672.4" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<rect x="662.9" y="65.5" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 47/47 verified, CI 92.4-100.0%</title></rect>
+<line x1="701.8" y1="128.6" x2="701.8" y2="72.1" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="696.8" y1="128.6" x2="706.8" y2="128.6" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="696.8" y1="72.1" x2="706.8" y2="72.1" stroke="#d9822b" stroke-width="1.5"/>
+<polygon points="701.8,87.5 707.3,77.5 696.3,77.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>hard-dev-2026-10-12-plain-haiku-5.5-micode: 24/25 verified, CI 80.5-99.3%</title></polygon>
+<line x1="736.2" y1="128.6" x2="736.2" y2="72.1" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="731.2" y1="128.6" x2="741.2" y2="128.6" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="731.2" y1="72.1" x2="741.2" y2="72.1" stroke="#1f6fb4" stroke-width="1.5"/>
+<polygon points="736.2,87.5 741.7,77.5 730.7,77.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 24/25 verified, CI 80.5-99.3%</title></polygon>
+<line x1="770.6" y1="203.3" x2="770.6" y2="112.5" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="765.6" y1="203.3" x2="775.6" y2="203.3" stroke="#d9822b" stroke-width="1.5"/>
+<line x1="765.6" y1="112.5" x2="775.6" y2="112.5" stroke="#d9822b" stroke-width="1.5"/>
+<polygon points="770.6,144.5 775.8,148.3 773.8,154.4 767.4,154.4 765.4,148.3" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>tempt-2026-10-12-plain-haiku-5.5-micode: 22/30 verified, CI 55.6-85.8%</title></polygon>
+<line x1="805.0" y1="192.8" x2="805.0" y2="105.4" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="800.0" y1="192.8" x2="810.0" y2="192.8" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="800.0" y1="105.4" x2="810.0" y2="105.4" stroke="#1f6fb4" stroke-width="1.5"/>
+<polygon points="805.0,134.5 810.2,138.3 808.2,144.4 801.8,144.4 799.8,138.3" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 23/30 verified, CI 59.1-88.2%</title></polygon>
+<line x1="839.4" y1="96.6" x2="839.4" y2="70.9" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="834.4" y1="96.6" x2="844.4" y2="96.6" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="834.4" y1="70.9" x2="844.4" y2="70.9" stroke="#1f6fb4" stroke-width="1.5"/>
+<circle cx="839.4" cy="75.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595: 59/60 verified, CI 91.1-99.7%</title></circle>
+<line x1="873.8" y1="88.1" x2="873.8" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="868.8" y1="88.1" x2="878.8" y2="88.1" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="868.8" y1="70.0" x2="878.8" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<circle cx="873.8" cy="70.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a: 60/60 verified, CI 94.0-100.0%</title></circle>
+<line x1="908.2" y1="88.1" x2="908.2" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="903.2" y1="88.1" x2="913.2" y2="88.1" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="903.2" y1="70.0" x2="913.2" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<circle cx="908.2" cy="70.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf: 60/60 verified, CI 94.0-100.0%</title></circle>
+<line x1="942.6" y1="88.1" x2="942.6" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="937.6" y1="88.1" x2="947.6" y2="88.1" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="937.6" y1="70.0" x2="947.6" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<circle cx="942.6" cy="70.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89: 60/60 verified, CI 94.0-100.0%</title></circle>
+<line x1="977.0" y1="88.1" x2="977.0" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="972.0" y1="88.1" x2="982.0" y2="88.1" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="972.0" y1="70.0" x2="982.0" y2="70.0" stroke="#1f6fb4" stroke-width="1.5"/>
+<circle cx="977.0" cy="70.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947: 60/60 verified, CI 94.0-100.0%</title></circle>
+<line x1="1011.4" y1="128.6" x2="1011.4" y2="72.1" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="1006.4" y1="128.6" x2="1016.4" y2="128.6" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="1006.4" y1="72.1" x2="1016.4" y2="72.1" stroke="#1f6fb4" stroke-width="1.5"/>
+<polygon points="1011.4,87.5 1016.9,77.5 1005.9,77.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-13-cortex-haiku-5.5-micode-breadth-spectrum-earlystop: 24/25 verified, CI 80.5-99.3%</title></polygon>
+<line x1="1045.8" y1="192.8" x2="1045.8" y2="105.4" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="1040.8" y1="192.8" x2="1050.8" y2="192.8" stroke="#1f6fb4" stroke-width="1.5"/>
+<line x1="1040.8" y1="105.4" x2="1050.8" y2="105.4" stroke="#1f6fb4" stroke-width="1.5"/>
+<polygon points="1045.8,134.5 1051.0,138.3 1049.0,144.4 1042.6,144.4 1040.6,138.3" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-13-cortex-haiku-5.5-micode-breadth-spectrum-earlystop: 23/30 verified, CI 59.1-88.2%</title></polygon>
+<text x="203" y="258" font-weight="bold">False successes (must stay 0)</text>
+<rect x="203" y="266" width="860" height="150" fill="none" stroke="#999999"/>
+<line x1="203" y1="410.0" x2="1063" y2="410.0" stroke="#e3e3e3"/>
+<text x="197" y="414.0" text-anchor="end">0</text>
+<line x1="203" y1="375.5" x2="1063" y2="375.5" stroke="#e3e3e3"/>
+<text x="197" y="379.5" text-anchor="end">2</text>
+<line x1="203" y1="341.0" x2="1063" y2="341.0" stroke="#e3e3e3"/>
+<text x="197" y="345.0" text-anchor="end">4</text>
+<line x1="203" y1="306.5" x2="1063" y2="306.5" stroke="#e3e3e3"/>
+<text x="197" y="310.5" text-anchor="end">6</text>
+<line x1="203" y1="272.0" x2="1063" y2="272.0" stroke="#e3e3e3"/>
+<text x="197" y="276.0" text-anchor="end">8</text>
+<line x1="220.2" y1="416" x2="220.2" y2="420" stroke="#999999"/>
+<line x1="254.6" y1="416" x2="254.6" y2="420" stroke="#999999"/>
+<line x1="289.0" y1="416" x2="289.0" y2="420" stroke="#999999"/>
+<line x1="323.4" y1="416" x2="323.4" y2="420" stroke="#999999"/>
+<line x1="357.8" y1="416" x2="357.8" y2="420" stroke="#999999"/>
+<line x1="392.2" y1="416" x2="392.2" y2="420" stroke="#999999"/>
+<line x1="426.6" y1="416" x2="426.6" y2="420" stroke="#999999"/>
+<line x1="461.0" y1="416" x2="461.0" y2="420" stroke="#999999"/>
+<line x1="495.4" y1="416" x2="495.4" y2="420" stroke="#999999"/>
+<line x1="529.8" y1="416" x2="529.8" y2="420" stroke="#999999"/>
+<line x1="564.2" y1="416" x2="564.2" y2="420" stroke="#999999"/>
+<line x1="598.6" y1="416" x2="598.6" y2="420" stroke="#999999"/>
+<line x1="633.0" y1="416" x2="633.0" y2="420" stroke="#999999"/>
+<line x1="667.4" y1="416" x2="667.4" y2="420" stroke="#999999"/>
+<line x1="701.8" y1="416" x2="701.8" y2="420" stroke="#999999"/>
+<line x1="736.2" y1="416" x2="736.2" y2="420" stroke="#999999"/>
+<line x1="770.6" y1="416" x2="770.6" y2="420" stroke="#999999"/>
+<line x1="805.0" y1="416" x2="805.0" y2="420" stroke="#999999"/>
+<line x1="839.4" y1="416" x2="839.4" y2="420" stroke="#999999"/>
+<line x1="873.8" y1="416" x2="873.8" y2="420" stroke="#999999"/>
+<line x1="908.2" y1="416" x2="908.2" y2="420" stroke="#999999"/>
+<line x1="942.6" y1="416" x2="942.6" y2="420" stroke="#999999"/>
+<line x1="977.0" y1="416" x2="977.0" y2="420" stroke="#999999"/>
+<line x1="1011.4" y1="416" x2="1011.4" y2="420" stroke="#999999"/>
+<line x1="1045.8" y1="416" x2="1045.8" y2="420" stroke="#999999"/>
+<circle cx="220.2" cy="341.0" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-4.5-claude: 4 false successes</title></circle>
+<text x="228.2" y="345.0" fill="#c0392b">4</text>
+<circle cx="254.6" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum: 0 false successes</title></circle>
+<text x="262.6" y="414.0" fill="#333333">0</text>
+<circle cx="289.0" cy="392.8" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-5.5-micode: 1 false successes</title></circle>
+<text x="297.0" y="396.8" fill="#c0392b">1</text>
+<circle cx="323.4" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 0 false successes</title></circle>
+<text x="331.4" y="414.0" fill="#333333">0</text>
+<circle cx="357.8" cy="410.0" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-opus-5.5-micode: 0 false successes</title></circle>
+<text x="365.8" y="414.0" fill="#333333">0</text>
+<circle cx="392.2" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum: 0 false successes</title></circle>
+<text x="400.2" y="414.0" fill="#333333">0</text>
+<circle cx="426.6" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 0 false successes</title></circle>
+<text x="434.6" y="414.0" fill="#333333">0</text>
+<rect x="456.5" y="405.5" width="9" height="9" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>heldout-2026-10-12-plain-haiku-5.5-micode: 0 false successes</title></rect>
+<text x="469.0" y="414.0" fill="#333333">0</text>
+<rect x="490.9" y="405.5" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 0 false successes</title></rect>
+<text x="503.4" y="414.0" fill="#333333">0</text>
+<rect x="525.3" y="405.5" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 0 false successes</title></rect>
+<text x="537.8" y="414.0" fill="#333333">0</text>
+<polygon points="564.2,404.0 570.2,410.0 564.2,416.0 558.2,410.0" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>once-2026-10-12-plain-haiku-5.5-micode: 0 false successes</title></polygon>
+<text x="572.2" y="414.0" fill="#333333">0</text>
+<polygon points="598.6,404.0 604.6,410.0 598.6,416.0 592.6,410.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 0 false successes</title></polygon>
+<text x="606.6" y="414.0" fill="#333333">0</text>
+<polygon points="633.0,404.0 639.0,410.0 633.0,416.0 627.0,410.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext: 0 false successes</title></polygon>
+<text x="641.0" y="414.0" fill="#333333">0</text>
+<rect x="662.9" y="405.5" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 0 false successes</title></rect>
+<text x="675.4" y="414.0" fill="#333333">0</text>
+<polygon points="701.8,277.5 707.3,267.5 696.3,267.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>hard-dev-2026-10-12-plain-haiku-5.5-micode: 8 false successes</title></polygon>
+<text x="709.8" y="276.0" fill="#c0392b">8</text>
+<polygon points="736.2,415.5 741.7,405.5 730.7,405.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 0 false successes</title></polygon>
+<text x="744.2" y="414.0" fill="#333333">0</text>
+<polygon points="770.6,283.8 775.8,287.6 773.8,293.7 767.4,293.7 765.4,287.6" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>tempt-2026-10-12-plain-haiku-5.5-micode: 7 false successes</title></polygon>
+<text x="778.6" y="293.2" fill="#c0392b">7</text>
+<polygon points="805.0,404.5 810.2,408.3 808.2,414.4 801.8,414.4 799.8,408.3" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 0 false successes</title></polygon>
+<text x="813.0" y="414.0" fill="#333333">0</text>
+<circle cx="839.4" cy="392.8" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595: 1 false successes</title></circle>
+<text x="847.4" y="396.8" fill="#c0392b">1</text>
+<circle cx="873.8" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a: 0 false successes</title></circle>
+<text x="881.8" y="414.0" fill="#333333">0</text>
+<circle cx="908.2" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf: 0 false successes</title></circle>
+<text x="916.2" y="414.0" fill="#333333">0</text>
+<circle cx="942.6" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89: 0 false successes</title></circle>
+<text x="950.6" y="414.0" fill="#333333">0</text>
+<circle cx="977.0" cy="410.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947: 0 false successes</title></circle>
+<text x="985.0" y="414.0" fill="#333333">0</text>
+<polygon points="1011.4,415.5 1016.9,405.5 1005.9,405.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-13-cortex-haiku-5.5-micode-breadth-spectrum-earlystop: 0 false successes</title></polygon>
+<text x="1019.4" y="414.0" fill="#333333">0</text>
+<polygon points="1045.8,404.5 1051.0,408.3 1049.0,414.4 1042.6,414.4 1040.6,408.3" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-13-cortex-haiku-5.5-micode-breadth-spectrum-earlystop: 0 false successes</title></polygon>
+<text x="1053.8" y="414.0" fill="#333333">0</text>
+<text x="203" y="454" font-weight="bold">Proposals per verified fix (cortex only)</text>
+<rect x="203" y="462" width="860" height="150" fill="none" stroke="#999999"/>
+<line x1="203" y1="612.0" x2="1063" y2="612.0" stroke="#e3e3e3"/>
+<text x="197" y="616.0" text-anchor="end">0</text>
+<line x1="203" y1="574.5" x2="1063" y2="574.5" stroke="#e3e3e3"/>
+<text x="197" y="578.5" text-anchor="end">2</text>
+<line x1="203" y1="537.0" x2="1063" y2="537.0" stroke="#e3e3e3"/>
+<text x="197" y="541.0" text-anchor="end">4</text>
+<line x1="203" y1="499.5" x2="1063" y2="499.5" stroke="#e3e3e3"/>
+<text x="197" y="503.5" text-anchor="end">6</text>
+<line x1="203" y1="462.0" x2="1063" y2="462.0" stroke="#e3e3e3"/>
+<text x="197" y="466.0" text-anchor="end">8</text>
+<line x1="220.2" y1="612" x2="220.2" y2="616" stroke="#999999"/>
+<line x1="254.6" y1="612" x2="254.6" y2="616" stroke="#999999"/>
+<line x1="289.0" y1="612" x2="289.0" y2="616" stroke="#999999"/>
+<line x1="323.4" y1="612" x2="323.4" y2="616" stroke="#999999"/>
+<line x1="357.8" y1="612" x2="357.8" y2="616" stroke="#999999"/>
+<line x1="392.2" y1="612" x2="392.2" y2="616" stroke="#999999"/>
+<line x1="426.6" y1="612" x2="426.6" y2="616" stroke="#999999"/>
+<line x1="461.0" y1="612" x2="461.0" y2="616" stroke="#999999"/>
+<line x1="495.4" y1="612" x2="495.4" y2="616" stroke="#999999"/>
+<line x1="529.8" y1="612" x2="529.8" y2="616" stroke="#999999"/>
+<line x1="564.2" y1="612" x2="564.2" y2="616" stroke="#999999"/>
+<line x1="598.6" y1="612" x2="598.6" y2="616" stroke="#999999"/>
+<line x1="633.0" y1="612" x2="633.0" y2="616" stroke="#999999"/>
+<line x1="667.4" y1="612" x2="667.4" y2="616" stroke="#999999"/>
+<line x1="701.8" y1="612" x2="701.8" y2="616" stroke="#999999"/>
+<line x1="736.2" y1="612" x2="736.2" y2="616" stroke="#999999"/>
+<line x1="770.6" y1="612" x2="770.6" y2="616" stroke="#999999"/>
+<line x1="805.0" y1="612" x2="805.0" y2="616" stroke="#999999"/>
+<line x1="839.4" y1="612" x2="839.4" y2="616" stroke="#999999"/>
+<line x1="873.8" y1="612" x2="873.8" y2="616" stroke="#999999"/>
+<line x1="908.2" y1="612" x2="908.2" y2="616" stroke="#999999"/>
+<line x1="942.6" y1="612" x2="942.6" y2="616" stroke="#999999"/>
+<line x1="977.0" y1="612" x2="977.0" y2="616" stroke="#999999"/>
+<line x1="1011.4" y1="612" x2="1011.4" y2="616" stroke="#999999"/>
+<line x1="1045.8" y1="612" x2="1045.8" y2="616" stroke="#999999"/>
+<text x="220.2" y="606" text-anchor="middle" fill="#888888">n/a</text>
+<circle cx="254.6" cy="473.8" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum: 7.37 proposals per verified fix</title></circle>
+<text x="262.6" y="477.8" fill="#333333">7.37</text>
+<text x="289.0" y="606" text-anchor="middle" fill="#888888">n/a</text>
+<circle cx="323.4" cy="545.4" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 3.55 proposals per verified fix</title></circle>
+<text x="331.4" y="549.4" fill="#333333">3.55</text>
+<text x="357.8" y="606" text-anchor="middle" fill="#888888">n/a</text>
+<circle cx="392.2" cy="547.9" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum: 3.42 proposals per verified fix</title></circle>
+<text x="400.2" y="551.9" fill="#333333">3.42</text>
+<circle cx="426.6" cy="571.8" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 2.14 proposals per verified fix</title></circle>
+<text x="434.6" y="575.8" fill="#333333">2.14</text>
+<text x="461.0" y="606" text-anchor="middle" fill="#888888">n/a</text>
+<rect x="490.9" y="515.1" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 4.93 proposals per verified fix</title></rect>
+<text x="503.4" y="523.6" fill="#333333">4.93</text>
+<rect x="525.3" y="525.2" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: 4.39 proposals per verified fix</title></rect>
+<text x="537.8" y="533.7" fill="#333333">4.39</text>
+<text x="564.2" y="606" text-anchor="middle" fill="#888888">n/a</text>
+<polygon points="598.6,584.8 604.6,590.8 598.6,596.8 592.6,590.8" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 1.13 proposals per verified fix</title></polygon>
+<text x="606.6" y="594.8" fill="#333333">1.13</text>
+<polygon points="633.0,587.2 639.0,593.2 633.0,599.2 627.0,593.2" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext: 1.00 proposals per verified fix</title></polygon>
+<text x="641.0" y="597.2" fill="#333333">1.00</text>
+<rect x="662.9" y="570.4" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: 1.98 proposals per verified fix</title></rect>
+<text x="675.4" y="578.9" fill="#333333">1.98</text>
+<text x="701.8" y="606" text-anchor="middle" fill="#888888">n/a</text>
+<polygon points="736.2,594.8 741.7,584.8 730.7,584.8" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 1.21 proposals per verified fix</title></polygon>
+<text x="744.2" y="593.3" fill="#333333">1.21</text>
+<text x="770.6" y="606" text-anchor="middle" fill="#888888">n/a</text>
+<polygon points="805.0,544.5 810.2,548.3 808.2,554.5 801.8,554.5 799.8,548.3" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: 3.30 proposals per verified fix</title></polygon>
+<text x="813.0" y="554.0" fill="#333333">3.30</text>
+<circle cx="839.4" cy="592.6" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595: 1.03 proposals per verified fix</title></circle>
+<text x="847.4" y="596.6" fill="#333333">1.03</text>
+<circle cx="873.8" cy="591.7" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a: 1.08 proposals per verified fix</title></circle>
+<text x="881.8" y="595.7" fill="#333333">1.08</text>
+<circle cx="908.2" cy="590.1" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf: 1.17 proposals per verified fix</title></circle>
+<text x="916.2" y="594.1" fill="#333333">1.17</text>
+<circle cx="942.6" cy="593.2" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89: 1.00 proposals per verified fix</title></circle>
+<text x="950.6" y="597.2" fill="#333333">1.00</text>
+<circle cx="977.0" cy="591.1" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947: 1.12 proposals per verified fix</title></circle>
+<text x="985.0" y="595.1" fill="#333333">1.12</text>
+<polygon points="1011.4,595.6 1016.9,585.6 1005.9,585.6" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-13-cortex-haiku-5.5-micode-breadth-spectrum-earlystop: 1.17 proposals per verified fix</title></polygon>
+<text x="1019.4" y="594.1" fill="#333333">1.17</text>
+<polygon points="1045.8,559.2 1051.0,563.0 1049.0,569.2 1042.6,569.2 1040.6,563.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-13-cortex-haiku-5.5-micode-breadth-spectrum-earlystop: 2.52 proposals per verified fix</title></polygon>
+<text x="1053.8" y="568.7" fill="#333333">2.52</text>
+<text x="203" y="650" font-weight="bold">Cost per verified fix, USD (log scale; hollow = estimated)</text>
+<rect x="203" y="658" width="860" height="150" fill="none" stroke="#999999"/>
+<line x1="203" y1="808.0" x2="1063" y2="808.0" stroke="#e3e3e3"/>
+<text x="197" y="812.0" text-anchor="end">$0.0001</text>
+<line x1="203" y1="770.5" x2="1063" y2="770.5" stroke="#e3e3e3"/>
+<text x="197" y="774.5" text-anchor="end">$0.001</text>
+<line x1="203" y1="733.0" x2="1063" y2="733.0" stroke="#e3e3e3"/>
+<text x="197" y="737.0" text-anchor="end">$0.01</text>
+<line x1="203" y1="695.5" x2="1063" y2="695.5" stroke="#e3e3e3"/>
+<text x="197" y="699.5" text-anchor="end">$0.1</text>
+<line x1="203" y1="658.0" x2="1063" y2="658.0" stroke="#e3e3e3"/>
+<text x="197" y="662.0" text-anchor="end">$1</text>
+<line x1="220.2" y1="808" x2="220.2" y2="812" stroke="#999999"/>
+<line x1="254.6" y1="808" x2="254.6" y2="812" stroke="#999999"/>
+<line x1="289.0" y1="808" x2="289.0" y2="812" stroke="#999999"/>
+<line x1="323.4" y1="808" x2="323.4" y2="812" stroke="#999999"/>
+<line x1="357.8" y1="808" x2="357.8" y2="812" stroke="#999999"/>
+<line x1="392.2" y1="808" x2="392.2" y2="812" stroke="#999999"/>
+<line x1="426.6" y1="808" x2="426.6" y2="812" stroke="#999999"/>
+<line x1="461.0" y1="808" x2="461.0" y2="812" stroke="#999999"/>
+<line x1="495.4" y1="808" x2="495.4" y2="812" stroke="#999999"/>
+<line x1="529.8" y1="808" x2="529.8" y2="812" stroke="#999999"/>
+<line x1="564.2" y1="808" x2="564.2" y2="812" stroke="#999999"/>
+<line x1="598.6" y1="808" x2="598.6" y2="812" stroke="#999999"/>
+<line x1="633.0" y1="808" x2="633.0" y2="812" stroke="#999999"/>
+<line x1="667.4" y1="808" x2="667.4" y2="812" stroke="#999999"/>
+<line x1="701.8" y1="808" x2="701.8" y2="812" stroke="#999999"/>
+<line x1="736.2" y1="808" x2="736.2" y2="812" stroke="#999999"/>
+<line x1="770.6" y1="808" x2="770.6" y2="812" stroke="#999999"/>
+<line x1="805.0" y1="808" x2="805.0" y2="812" stroke="#999999"/>
+<line x1="839.4" y1="808" x2="839.4" y2="812" stroke="#999999"/>
+<line x1="873.8" y1="808" x2="873.8" y2="812" stroke="#999999"/>
+<line x1="908.2" y1="808" x2="908.2" y2="812" stroke="#999999"/>
+<line x1="942.6" y1="808" x2="942.6" y2="812" stroke="#999999"/>
+<line x1="977.0" y1="808" x2="977.0" y2="812" stroke="#999999"/>
+<line x1="1011.4" y1="808" x2="1011.4" y2="812" stroke="#999999"/>
+<line x1="1045.8" y1="808" x2="1045.8" y2="812" stroke="#999999"/>
+<circle cx="220.2" cy="703.8" r="4.5" fill="#d9822b" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-4.5-claude: $0.060 per verified fix</title></circle>
+<circle cx="254.6" cy="667.8" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum: $0.547 per verified fix</title></circle>
+<circle cx="289.0" cy="758.2" r="4.5" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-haiku-5.5-micode: $0.00213 per verified fix (estimated)</title></circle>
+<circle cx="323.4" cy="769.1" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: $0.001091 per verified fix (estimated)</title></circle>
+<circle cx="357.8" cy="707.2" r="4.5" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>dev-2026-10-12-plain-opus-5.5-micode: $0.049 per verified fix (estimated)</title></circle>
+<circle cx="392.2" cy="710.8" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum: $0.039 per verified fix (estimated)</title></circle>
+<circle cx="426.6" cy="767.7" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: $0.001187 per verified fix (estimated)</title></circle>
+<rect x="456.5" y="761.5" width="9" height="9" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>heldout-2026-10-12-plain-haiku-5.5-micode: $0.001317 per verified fix (estimated)</title></rect>
+<rect x="490.9" y="759.5" width="9" height="9" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: $0.001486 per verified fix (estimated)</title></rect>
+<rect x="525.3" y="756.3" width="9" height="9" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: $0.00181 per verified fix (estimated)</title></rect>
+<polygon points="564.2,762.3 570.2,768.3 564.2,774.3 558.2,768.3" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>once-2026-10-12-plain-haiku-5.5-micode: $0.001146 per verified fix (estimated)</title></polygon>
+<polygon points="598.6,775.1 604.6,781.1 598.6,787.1 592.6,781.1" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: $0.000521 per verified fix (estimated)</title></polygon>
+<polygon points="633.0,769.5 639.0,775.5 633.0,781.5 627.0,775.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext: $0.000735 per verified fix (estimated)</title></polygon>
+<rect x="662.9" y="761.5" width="9" height="9" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: $0.00132 per verified fix (estimated)</title></rect>
+<polygon points="701.8,767.2 707.3,757.2 696.3,757.2" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>hard-dev-2026-10-12-plain-haiku-5.5-micode: $0.00172 per verified fix (estimated)</title></polygon>
+<polygon points="736.2,782.5 741.7,772.5 730.7,772.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: $0.00067 per verified fix (estimated)</title></polygon>
+<polygon points="770.6,752.4 775.8,756.2 773.8,762.4 767.4,762.4 765.4,756.2" fill="#ffffff" stroke="#d9822b" stroke-width="1.5"><title>tempt-2026-10-12-plain-haiku-5.5-micode: $0.002162 per verified fix (estimated)</title></polygon>
+<polygon points="805.0,749.9 810.2,753.7 808.2,759.9 801.8,759.9 799.8,753.7" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: $0.002525 per verified fix (estimated)</title></polygon>
+<circle cx="839.4" cy="767.9" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595: $0.001176 per verified fix (estimated)</title></circle>
+<circle cx="873.8" cy="767.6" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a: $0.001198 per verified fix (estimated)</title></circle>
+<circle cx="908.2" cy="766.6" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf: $0.001268 per verified fix (estimated)</title></circle>
+<circle cx="942.6" cy="768.4" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89: $0.00114 per verified fix (estimated)</title></circle>
+<circle cx="977.0" cy="767.4" r="4.5" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947: $0.001211 per verified fix (estimated)</title></circle>
+<polygon points="1011.4,782.4 1016.9,772.4 1005.9,772.4" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-13-cortex-haiku-5.5-micode-breadth-spectrum-earlystop: $0.000674 per verified fix (estimated)</title></polygon>
+<polygon points="1045.8,754.9 1051.0,758.7 1049.0,764.9 1042.6,764.9 1040.6,758.7" fill="#ffffff" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-13-cortex-haiku-5.5-micode-breadth-spectrum-earlystop: $0.001856 per verified fix (estimated)</title></polygon>
+<text x="203" y="846" font-weight="bold">Truth first (first attempted function is the defective one)</text>
+<rect x="203" y="854" width="860" height="150" fill="none" stroke="#999999"/>
+<line x1="203" y1="1004.0" x2="1063" y2="1004.0" stroke="#e3e3e3"/>
+<text x="197" y="1008.0" text-anchor="end">0%</text>
+<line x1="203" y1="966.5" x2="1063" y2="966.5" stroke="#e3e3e3"/>
+<text x="197" y="970.5" text-anchor="end">25%</text>
+<line x1="203" y1="929.0" x2="1063" y2="929.0" stroke="#e3e3e3"/>
+<text x="197" y="933.0" text-anchor="end">50%</text>
+<line x1="203" y1="891.5" x2="1063" y2="891.5" stroke="#e3e3e3"/>
+<text x="197" y="895.5" text-anchor="end">75%</text>
+<line x1="203" y1="854.0" x2="1063" y2="854.0" stroke="#e3e3e3"/>
+<text x="197" y="858.0" text-anchor="end">100%</text>
+<line x1="220.2" y1="1004" x2="220.2" y2="1008" stroke="#999999"/>
+<line x1="254.6" y1="1004" x2="254.6" y2="1008" stroke="#999999"/>
+<line x1="289.0" y1="1004" x2="289.0" y2="1008" stroke="#999999"/>
+<line x1="323.4" y1="1004" x2="323.4" y2="1008" stroke="#999999"/>
+<line x1="357.8" y1="1004" x2="357.8" y2="1008" stroke="#999999"/>
+<line x1="392.2" y1="1004" x2="392.2" y2="1008" stroke="#999999"/>
+<line x1="426.6" y1="1004" x2="426.6" y2="1008" stroke="#999999"/>
+<line x1="461.0" y1="1004" x2="461.0" y2="1008" stroke="#999999"/>
+<line x1="495.4" y1="1004" x2="495.4" y2="1008" stroke="#999999"/>
+<line x1="529.8" y1="1004" x2="529.8" y2="1008" stroke="#999999"/>
+<line x1="564.2" y1="1004" x2="564.2" y2="1008" stroke="#999999"/>
+<line x1="598.6" y1="1004" x2="598.6" y2="1008" stroke="#999999"/>
+<line x1="633.0" y1="1004" x2="633.0" y2="1008" stroke="#999999"/>
+<line x1="667.4" y1="1004" x2="667.4" y2="1008" stroke="#999999"/>
+<line x1="701.8" y1="1004" x2="701.8" y2="1008" stroke="#999999"/>
+<line x1="736.2" y1="1004" x2="736.2" y2="1008" stroke="#999999"/>
+<line x1="770.6" y1="1004" x2="770.6" y2="1008" stroke="#999999"/>
+<line x1="805.0" y1="1004" x2="805.0" y2="1008" stroke="#999999"/>
+<line x1="839.4" y1="1004" x2="839.4" y2="1008" stroke="#999999"/>
+<line x1="873.8" y1="1004" x2="873.8" y2="1008" stroke="#999999"/>
+<line x1="908.2" y1="1004" x2="908.2" y2="1008" stroke="#999999"/>
+<line x1="942.6" y1="1004" x2="942.6" y2="1008" stroke="#999999"/>
+<line x1="977.0" y1="1004" x2="977.0" y2="1008" stroke="#999999"/>
+<line x1="1011.4" y1="1004" x2="1011.4" y2="1008" stroke="#999999"/>
+<line x1="1045.8" y1="1004" x2="1045.8" y2="1008" stroke="#999999"/>
+<text x="220.2" y="998" text-anchor="middle" fill="#888888">n/a</text>
+<circle cx="254.6" cy="941.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-4.5-claude-depth-spectrum: truth first 25/60</title></circle>
+<text x="289.0" y="998" text-anchor="middle" fill="#888888">n/a</text>
+<circle cx="323.4" cy="939.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: truth first 26/60</title></circle>
+<text x="357.8" y="998" text-anchor="middle" fill="#888888">n/a</text>
+<circle cx="392.2" cy="939.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-opus-5.5-micode-breadth-spectrum: truth first 26/60</title></circle>
+<circle cx="426.6" cy="856.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: truth first 59/60</title></circle>
+<text x="461.0" y="998" text-anchor="middle" fill="#888888">n/a</text>
+<rect x="490.9" y="919.7" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: truth first 25/47</title></rect>
+<rect x="525.3" y="855.9" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5: truth first 45/47</title></rect>
+<text x="564.2" y="998" text-anchor="middle" fill="#888888">n/a</text>
+<polygon points="598.6,888.0 604.6,894.0 598.6,900.0 592.6,894.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: truth first 22/30</title></polygon>
+<polygon points="633.0,848.0 639.0,854.0 633.0,860.0 627.0,854.0" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext: truth first 30/30</title></polygon>
+<rect x="662.9" y="919.7" width="9" height="9" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext: truth first 25/47</title></rect>
+<text x="701.8" y="998" text-anchor="middle" fill="#888888">n/a</text>
+<polygon points="736.2,859.5 741.7,849.5 730.7,849.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: truth first 25/25</title></polygon>
+<text x="770.6" y="998" text-anchor="middle" fill="#888888">n/a</text>
+<polygon points="805.0,878.5 810.2,882.3 808.2,888.4 801.8,888.4 799.8,882.3" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum: truth first 24/30</title></polygon>
+<circle cx="839.4" cy="856.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595: truth first 59/60</title></circle>
+<circle cx="873.8" cy="856.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a: truth first 59/60</title></circle>
+<circle cx="908.2" cy="856.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf: truth first 59/60</title></circle>
+<circle cx="942.6" cy="854.0" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-main-f9ded716ea89: truth first 60/60</title></circle>
+<circle cx="977.0" cy="856.5" r="4.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1d9d35236947: truth first 59/60</title></circle>
+<polygon points="1011.4,859.5 1016.9,849.5 1005.9,849.5" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>hard-dev-2026-10-13-cortex-haiku-5.5-micode-breadth-spectrum-earlystop: truth first 25/25</title></polygon>
+<polygon points="1045.8,878.5 1051.0,882.3 1049.0,888.4 1042.6,888.4 1040.6,882.3" fill="#1f6fb4" stroke="#1f6fb4" stroke-width="1.5"><title>tempt-2026-10-13-cortex-haiku-5.5-micode-breadth-spectrum-earlystop: truth first 24/30</title></polygon>
+<text x="220.2" y="1018" text-anchor="end" transform="rotate(-35 220.2 1018)">1. 10-12 plain haiku-4.5 claude</text>
+<text x="254.6" y="1018" text-anchor="end" transform="rotate(-35 254.6 1018)">2. 10-12 cortex haiku-4.5 claude depth spectrum</text>
+<text x="289.0" y="1018" text-anchor="end" transform="rotate(-35 289.0 1018)">3. 10-12 plain haiku-5.5 micode</text>
+<text x="323.4" y="1018" text-anchor="end" transform="rotate(-35 323.4 1018)">4. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
+<text x="357.8" y="1018" text-anchor="end" transform="rotate(-35 357.8 1018)">5. 10-12 plain opus-5.5 micode</text>
+<text x="392.2" y="1018" text-anchor="end" transform="rotate(-35 392.2 1018)">6. 10-12 cortex opus-5.5 micode breadth spectrum</text>
+<text x="426.6" y="1018" text-anchor="end" transform="rotate(-35 426.6 1018)">7. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
+<text x="461.0" y="1018" text-anchor="end" transform="rotate(-35 461.0 1018)">8. 10-12 plain haiku-5.5 micode</text>
+<text x="495.4" y="1018" text-anchor="end" transform="rotate(-35 495.4 1018)">9. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
+<text x="529.8" y="1018" text-anchor="end" transform="rotate(-35 529.8 1018)">10. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
+<text x="564.2" y="1018" text-anchor="end" transform="rotate(-35 564.2 1018)">11. 10-12 plain haiku-5.5 micode</text>
+<text x="598.6" y="1018" text-anchor="end" transform="rotate(-35 598.6 1018)">12. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
+<text x="633.0" y="1018" text-anchor="end" transform="rotate(-35 633.0 1018)">13. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
+<text x="667.4" y="1018" text-anchor="end" transform="rotate(-35 667.4 1018)">14. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
+<text x="701.8" y="1018" text-anchor="end" transform="rotate(-35 701.8 1018)">15. 10-12 plain haiku-5.5 micode</text>
+<text x="736.2" y="1018" text-anchor="end" transform="rotate(-35 736.2 1018)">16. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
+<text x="770.6" y="1018" text-anchor="end" transform="rotate(-35 770.6 1018)">17. 10-12 plain haiku-5.5 micode</text>
+<text x="805.0" y="1018" text-anchor="end" transform="rotate(-35 805.0 1018)">18. 10-12 cortex haiku-5.5 micode breadth spectrum</text>
+<text x="839.4" y="1018" text-anchor="end" transform="rotate(-35 839.4 1018)">19. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
+<text x="873.8" y="1018" text-anchor="end" transform="rotate(-35 873.8 1018)">20. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
+<text x="908.2" y="1018" text-anchor="end" transform="rotate(-35 908.2 1018)">21. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
+<text x="942.6" y="1018" text-anchor="end" transform="rotate(-35 942.6 1018)">22. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
+<text x="977.0" y="1018" text-anchor="end" transform="rotate(-35 977.0 1018)">23. 10-12 cortex haiku-5.5 micode breadth or:haiku-5.5</text>
+<text x="1011.4" y="1018" text-anchor="end" transform="rotate(-35 1011.4 1018)">24. 10-13 cortex haiku-5.5 micode breadth spectrum</text>
+<text x="1045.8" y="1018" text-anchor="end" transform="rotate(-35 1045.8 1018)">25. 10-13 cortex haiku-5.5 micode breadth spectrum</text>
 </svg>

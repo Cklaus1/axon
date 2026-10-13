@@ -20,7 +20,9 @@ Use it when:
 Do not use it for:
 
 - defects spanning more than one function. Each attempt replaces one body; a
-  fix that needs two edits is reported as `no_progress` / `budget_exhausted`.
+  fix that needs two edits cannot verify. Cortex gives up on such a run early
+  and says so (`out_of_scope_suspected`, exit 28, see "Giving up early"); where
+  it cannot tell, it ends as `no_progress` / `budget_exhausted`.
 - changing signatures, adding functions, or editing tests. The generator only
   ever supplies the text between one function's braces.
 - deciding what the program should do. If you cannot write the hidden check,
@@ -143,6 +145,8 @@ cortex repair --file PATH --check NAME [--symbol NAME] [options]
 | `--generator SPEC` | `none` | where patch bodies come from (below) |
 | `--ranker SPEC` | see below | without `--symbol`: who orders the `--candidates` names before the walk |
 | `--audit SPEC` | see below | after a verified fix: who is asked whether the patch games the tests (review only) |
+| `--early-stop on\|off` | `on` | give up sooner on a defect one function body cannot repair (below) |
+| `--inert-limit N` | 2 | the N of the second early-stop signal; `0` disables only that signal |
 | `--axon PATH` | `axon` | the checker binary |
 | `--principal NAME` | `agent` | recorded as the acting principal |
 | `--json` | off | machine-readable outcome on stdout |
@@ -278,6 +282,52 @@ escalation: cheap (decision:inception/mercury-decide put `budget_spend` first an
 ```
 
 `escalation` is `null` with `--symbol`, where nothing is ranked.
+
+### Giving up early: `--early-stop`, `--inert-limit`
+
+Cortex replaces one function body per attempt, so a defect that needs two
+edits, a signature change or a type change cannot be fixed by it. Without a
+rule, it said so only after spending every candidate's whole step budget. Two
+signals, both read from what Cortex already observes and neither from the
+hidden check, end such a run sooner:
+
+1. **No function is reached by every failing visible check.** Decided before
+   any model call, from the same localization `cortex locate` prints. A
+   verified fix needs every check that was failing to pass, so the body that
+   is edited must be one all of them run. If none is, no single body edit can
+   verify and the run ends at once with the file untouched. If some are,
+   candidates that are not among them are never asked (`pruned`). This signal
+   applies only when Cortex localizes (no `--symbol`).
+2. **The visible verdict does not move.** A proposal is inert when it
+   compiled, the checker refused it, and exactly the checks that failed
+   before any proposal still fail. A candidate whose last `--inert-limit`
+   (default 2) compiled proposals were all inert is not asked again. A
+   proposal that did not compile neither counts nor breaks the run, and a
+   run with no failing visible check never counts (it is the ordinary state
+   of a candidate the hidden check is still refusing).
+
+The outcome when the rule ends the run is `out_of_scope_suspected`, exit 28,
+with the file restored (untouched when no model was asked). It is a suspicion,
+not a proof: `--early-stop off` spends the whole budget as earlier versions
+did, and `--inert-limit 0` disables only signal 2. If some candidates were
+stopped but another still ended the walk on its budget, the outcome stays
+`budget_exhausted`.
+
+```
+$ cortex repair --file two.ax --check hidden --axon $AXON --write-prefix two.ax --generator 'literal:a + b'
+out of scope suspected: no single function is reached by all 2 failing visible check(s) (vis_add, vis_dbl); a one-body edit cannot make them all pass, so the defect likely spans several functions, a signature or a type. The file is unchanged and no model was asked
+out_of_scope_suspected after 0 step(s)
+  no single function is reached by all 2 failing visible check(s) (vis_add, vis_dbl); a one-body edit cannot make them all pass, so the defect likely spans several functions, a signature or a type. The file is unchanged and no model was asked
+exit=28
+```
+
+Measured on Haiku 5.5 (`crates/axon-cortex/benchmarks/earlystop/README.md`):
+on the hard set's out-of-scope tasks and tempt's unsatisfiable ones, 20
+tasks, wall time fell from 801.7 s to 247.0 s with 0 false successes and no
+in-scope fix lost (47/48 verified both ways). That is in-sample: the rule was
+designed from those rows. Signal 1 holds on 0 of 211 in-scope tasks across
+every committed set (the planted function is always reached by all failing
+checks).
 
 ### Reviewing a verified fix: `--audit`
 
@@ -578,6 +628,7 @@ Every one of these was produced on `pricing.ax` (or, for 27, on
 | 25 | `no_such_symbol` / no target | untouched | `--symbol` does not exist, or no candidate could be ranked |
 | 26 | check cannot witness | untouched | `--check` already passes; name a check that currently fails |
 | 27 | `adjudicated_not_clean` | patched (KEPT) | the check passed and nothing regressed, but tests that were already failing still fail; look at those separately |
+| 28 | `out_of_scope_suspected` | restored (untouched when no model was asked) | the early stop ended the run: either no function is reached by every failing visible check, or every candidate asked stopped changing the visible verdict. A one-body fix is unlikely; look for a defect spanning functions, a signature or a type. A suspicion, not a proof: rerun with `--early-stop off` to spend the whole budget |
 
 `verified_done` also needs `axon check` on the patched file to exit 0.
 `check` exits 2 on any diagnostic, a note included, while `axon test` runs
@@ -645,6 +696,18 @@ events:   snapshot, snapshot, observed, action_allowed, claimed, verified, snaps
 - The first `claimed`/`verified` pair in a run is the baseline: the check is
   run before any patch, and its failure there is what makes it a witness.
 - `receipts` is non-null only on the Fabric path.
+- `early_stop` is the evidence the early stop reads, on every run:
+  `structural` and `inert_limit` (the configuration), `visible_failing` (the
+  checks that failed before any proposal) and `reached_by_all` (the functions
+  every one of them reaches), both `null` with `--symbol`, which localizes
+  nothing, `pruned` (ranked candidates left out because not every check
+  reaches them),
+  `stopped_candidates` (candidates not asked again because the visible
+  verdict stopped moving) and `attempts` (per proposal: `candidate`,
+  `proposal`, `rejection` as `did_not_compile` / `check_refused` /
+  `checker_objected`, and `visible_failing`, `null` where no test run was
+  made). `outcome` is `out_of_scope_suspected` and `exit_code` 28 only when
+  the rule ended the run.
 
 ## Relationship to sealed runs
 

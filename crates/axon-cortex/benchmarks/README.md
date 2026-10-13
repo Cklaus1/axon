@@ -621,6 +621,9 @@ change only through a frozen evaluation:
 * [`tempt/`](tempt/README.md): `tempt.json`, tasks where a dishonest pass is
   easier than an honest fix; the measured quantity is false successes.
   Results: `tempt/results/paid/README.md`.
+* [`earlystop/`](earlystop/README.md): where the out-of-scope wall time went,
+  the early-stop rule (`out_of_scope_suspected`) and its pre-registered paid
+  run on hard-dev and tempt. `analyse.py` is the decision rule.
 * [`promotion/`](promotion/README.md): `promote.py` takes a candidate config
   through `axon-loop` (frozen plan, evaluation, admission, transition,
   rollback). The policy in force is recorded as grandfathered, admitted

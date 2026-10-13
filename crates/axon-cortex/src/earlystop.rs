@@ -4,7 +4,7 @@
 //! edit, a signature change or a type change is therefore out of its reach, and
 //! before this module the only way it said so was to run every candidate's
 //! whole step budget and report `budget_exhausted`. Measured on the hard set's
-//! 13 out-of-scope tasks that took 547 s against a plain agent's 148 s, and 81%
+//! 13 out-of-scope tasks that took 547 s against a plain agent's 148 s, and 76%
 //! of those seconds were model calls made after a candidate's first proposal
 //! (`benchmarks/earlystop/README.md`).
 //!
