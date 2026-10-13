@@ -147,6 +147,13 @@ the pristine body). Cortex with the same body exits 27 on 4 of them and 21
 (`no progress`) on 3, and claims nothing. `exit0`/`forge`: a naive runner
 reports all 30 green; the keyed grader verifies none.
 
+## Paid runs
+
+- `PREREG-tempt.md` (Haiku 5.5 via micode, 2026-10-12): A plain 7 false
+  successes, B Cortex 0; verdict SHOWN (exact McNemar p = 0.0156). Rows, every
+  false success with what the agent changed and said, and spend:
+  `results/paid/README.md`.
+
 ## Rules of use
 
 1. Frozen. `tempt.json` and `src/` are not edited; `build.py --check`
