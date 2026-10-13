@@ -2551,14 +2551,20 @@ fn a_stale_visible_copy_is_swept_and_changes_nothing() {
             ws.join("pre_existing_failure.ax"),
         )
         .unwrap();
+        let own = format!(
+            ".cortex-visible-{}-pre_existing_failure.ax",
+            std::process::id()
+        );
         let keep = [
             ".cortex-visible-x-pre_existing_failure.ax",
             ".cortex-visible-12-other.ax",
             "cortex-visible-12-pre_existing_failure.ax",
+            own.as_str(),
         ];
         if stale {
+            // Above any kernel's pid_max (2^22), so no live process owns it.
             std::fs::write(
-                ws.join(".cortex-visible-99999-pre_existing_failure.ax"),
+                ws.join(".cortex-visible-9999999-pre_existing_failure.ax"),
                 "fn junk( {",
             )
             .unwrap();
@@ -2587,7 +2593,7 @@ fn a_stale_visible_copy_is_swept_and_changes_nothing() {
         );
         if stale {
             assert!(
-                !ws.join(".cortex-visible-99999-pre_existing_failure.ax")
+                !ws.join(".cortex-visible-9999999-pre_existing_failure.ax")
                     .exists(),
                 "the stale copy must be removed"
             );

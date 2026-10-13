@@ -1898,8 +1898,10 @@ impl Runner {
 
 /// Remove `.cortex-visible-*-<name>` files left beside `rel_path` by a run
 /// that crashed before its own cleanup. Only that exact prefix and suffix, only
-/// in that directory. A removal that fails is reported once on stderr and the
-/// run goes on: a stale copy is never read by the episode.
+/// in that directory, and never a copy whose pid is this process or (on unix)
+/// a process still alive: that copy belongs to a run in flight. A removal that
+/// fails is reported once on stderr and the run goes on: a stale copy is never
+/// read by the episode.
 fn sweep_stale_visible_copies(workspace: &Path, rel_path: &str) {
     let abs = workspace.join(rel_path);
     let (Some(dir), Some(name)) = (abs.parent(), abs.file_name()) else {
@@ -1921,6 +1923,9 @@ fn sweep_stale_visible_copies(workspace: &Path, rel_path: &str) {
         if mid.is_empty() || !mid.bytes().all(|b| b.is_ascii_digit()) {
             continue;
         }
+        if visible_copy_owner_alive(mid) {
+            continue;
+        }
         if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
             continue;
         }
@@ -1930,6 +1935,31 @@ fn sweep_stale_visible_copies(workspace: &Path, rel_path: &str) {
     }
     if let Some(f) = failed {
         eprintln!("cortex: could not remove a stale visible copy ({f})");
+    }
+}
+
+/// Whether the pid written in a visible copy's name is this process or one
+/// still running. A pid that does not fit a `pid_t` names no process.
+fn visible_copy_owner_alive(pid: &str) -> bool {
+    let Ok(pid) = pid.parse::<u32>() else {
+        return false;
+    };
+    if pid == std::process::id() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
+        // Signal 0 checks existence only. EPERM: alive, owned by someone else.
+        // SAFETY: kill with signal 0 sends nothing.
+        let alive = unsafe { libc::kill(pid, 0) } == 0;
+        alive || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        false
     }
 }
 
