@@ -1,0 +1,151 @@
+// Classic algorithms as an Axon integration test
+
+fn gcd(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
+}
+
+fn lcm(a: i64, b: i64) -> i64 {
+    a / gcd(a, b) * b
+}
+
+fn is_prime(n: i64) -> bool {
+    if n < 2 {
+        false
+    } else {
+        let i = 2
+        let result = true
+        while i * i <= n {
+            if n % i == 0 {
+                result = false
+            }
+            i = i + 1
+        }
+        result
+    }
+}
+
+fn collatz_steps(n: i64) -> i64 {
+    let steps = 0
+    let x = n
+    while x != 1 {
+        if x % 2 == 0 {
+            x = x / 2
+        } else {
+            x = x * 3 + 1
+        }
+        steps = steps + 1
+    }
+    steps
+}
+
+fn pow_i64(base: i64, exp: i64) -> i64 {
+    let result = 1
+    let i = 0
+    while i < exp {
+        result = result * base
+        i = i + 1
+    }
+    result
+}
+
+fn main() {
+    println(to_str(gcd(48, 18)))        // 6
+    println(to_str(lcm(4, 6)))          // 12
+    println(to_str(collatz_steps(27)))  // 111
+    println(to_str(pow_i64(2, 10)))     // 1024
+
+    // first 10 primes
+    let count = 0
+    let n = 2
+    while count < 10 {
+        if is_prime(n) {
+            println(to_str(n))
+            count = count + 1
+        }
+        n = n + 1
+    }
+}
+
+@[test]
+fn test_gcd_documented_and_edges() {
+    assert_eq(gcd(48, 18), 6)
+    assert_eq(gcd(18, 48), 6)
+    assert_eq(gcd(17, 5), 1)
+    assert_eq(gcd(12, 0), 12)
+    assert_eq(gcd(0, 9), 9)
+    assert_eq(gcd(100, 75), 25)
+}
+
+@[test]
+fn test_gcd_divides_both_inputs() {
+    assert_eq(gcd(1071, 462), 21)
+    assert_eq(1071 % gcd(1071, 462), 0)
+    assert_eq(462 % gcd(1071, 462), 0)
+    assert_eq(gcd(7, 7), 7)
+}
+
+@[test]
+fn test_lcm_documented_and_cases() {
+    assert_eq(lcm(4, 6), 12)
+    assert_eq(lcm(6, 4), 12)
+    assert_eq(lcm(3, 5), 15)
+    assert_eq(lcm(7, 7), 7)
+    assert_eq(lcm(1, 9), 9)
+    assert_eq(lcm(12, 18), 36)
+}
+
+@[test]
+fn test_lcm_times_gcd_is_product() {
+    assert_eq(lcm(21, 6) * gcd(21, 6), 126)
+    assert_eq(lcm(8, 12) * gcd(8, 12), 96)
+    assert_eq(lcm(10, 4), 20)
+}
+
+@[test]
+fn test_is_prime_small_values() {
+    assert(!is_prime(0))
+    assert(!is_prime(1))
+    assert(is_prime(2))
+    assert(is_prime(3))
+    assert(!is_prime(4))
+    assert(is_prime(5))
+    assert(!is_prime(9))
+    assert(!is_prime(-7))
+}
+
+@[test]
+fn test_is_prime_first_ten_primes_and_squares() {
+    let primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29]
+    let count = 0
+    let n = 0
+    while n <= 29 {
+        if is_prime(n) {
+            assert_eq(n, primes[count])
+            count = count + 1
+        }
+        n = n + 1
+    }
+    assert_eq(count, 10)
+    assert(!is_prime(25))
+    assert(!is_prime(49))
+    assert(is_prime(97))
+}
+
+@[test]
+fn test_collatz_steps_documented() {
+    assert_eq(collatz_steps(27), 111)
+    assert_eq(collatz_steps(1), 0)
+    assert_eq(collatz_steps(2), 1)
+}
+
+@[test]
+fn test_collatz_steps_small_chains() {
+    assert_eq(collatz_steps(3), 7)
+    assert_eq(collatz_steps(6), 8)
+    assert_eq(collatz_steps(16), 4)
+    assert_eq(collatz_steps(7), 16)
+}

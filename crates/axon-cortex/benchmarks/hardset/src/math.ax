@@ -1,0 +1,44 @@
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
+
+fn square(n: i64) -> i64 {
+    n * n
+}
+
+fn main() {
+    let result = add(3, 4)
+    let sq = square(result)
+    println(to_str(sq))
+}
+
+@[test]
+fn test_add_values() {
+    assert_eq(add(3, 4), 7)
+    assert_eq(add(0, 0), 0)
+    assert_eq(add(-5, 2), -3)
+    assert_eq(add(4, 3), 7)
+}
+
+@[test]
+fn test_add_identity_and_negatives() {
+    assert_eq(add(9, 0), 9)
+    assert_eq(add(0, 9), 9)
+    assert_eq(add(-1, -1), -2)
+    assert_eq(add(100, -100), 0)
+}
+
+@[test]
+fn test_square_values() {
+    assert_eq(square(0), 0)
+    assert_eq(square(1), 1)
+    assert_eq(square(5), 25)
+    assert_eq(square(-6), 36)
+}
+
+@[test]
+fn test_square_of_sum_documented() {
+    assert_eq(square(add(3, 4)), 49)
+    assert_eq(square(add(-2, 2)), 0)
+    assert_eq(square(add(10, 2)), 144)
+}

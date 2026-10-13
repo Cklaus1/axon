@@ -1,0 +1,31 @@
+// hello.ax — the classic first program in Axon
+//
+// Key concepts shown here:
+//   • fn with an explicit return type
+//   • string interpolation with {expr} inside a string literal
+//   • println for output; the entry point returns i64 (0 = success)
+
+fn greet(name: str) -> str {
+    "Hello, {name}!"
+}
+
+fn main() -> i64 {
+    let msg = greet("Axon")
+    println(msg)
+    0
+}
+
+@[test]
+fn test_greet_documented() {
+    assert(greet("Axon") == "Hello, Axon!")
+    assert(greet("World") == "Hello, World!")
+    assert(len(greet("Axon")) == 12)
+}
+
+@[test]
+fn test_greet_edge_names() {
+    assert(greet("") == "Hello, !")
+    assert(greet("a b") == "Hello, a b!")
+    assert(str_starts_with(greet("Zed"), "Hello, "))
+    assert(str_ends_with(greet("Zed"), "Zed!"))
+}

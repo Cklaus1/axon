@@ -1,0 +1,30 @@
+// R27 example: a killable agent. Loops doing pure computation until killed.
+// Run with: axon-os run examples/r27/killable_agent.axjob --killable --out ./runs
+
+fn fib(n: i64) -> i64 {
+    if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() {
+    let i = 0
+    while i < 1000000000 {
+        let _ = fib(10)
+        i = i + 1
+    }
+}
+
+@[test]
+fn test_fib_base_cases() {
+    assert_eq(fib(0), 0)
+    assert_eq(fib(1), 1)
+    assert_eq(fib(2), 1)
+    assert_eq(fib(3), 2)
+}
+
+@[test]
+fn test_fib_known_values() {
+    assert_eq(fib(10), 55)
+    assert_eq(fib(15), 610)
+    assert_eq(fib(20), 6765)
+    assert_eq(fib(9) + fib(8), fib(10))
+}
