@@ -61,7 +61,7 @@ SCHEMA = "cortex-scorecard/1"
 SETS = ("dev", "heldout", "once", "field", "hard-dev", "hard-once", "tempt")
 # Sets scored at most once per candidate (see `add`).
 ONCE_SETS = ("once", "hard-once")
-AGENTS = ("cortex", "plain")
+AGENTS = ("cortex", "plain", "plain-verify", "plain-honest")
 WALKS = ("depth", "breadth")
 ALPHA = 0.05
 CONFIG_REQUIRED = ("model", "transport", "ranker", "audit", "walk")
@@ -633,7 +633,7 @@ def check_rows_against_config(raw_rows, agent, cfg):
         return
     meta = row_meta(raw_rows)
     arms = {r.get("arm") for r in raw_rows}
-    want = {"cortex": "B", "plain": "A"}[agent]
+    want = {"cortex": "B", "plain": "A", "plain-verify": "A", "plain-honest": "A"}[agent]
     if arms != {want}:
         raise Refused(f"agent {agent} is arm {want}, the rows are arm {sorted(map(str, arms))}")
     if not meta.get("model"):
@@ -676,8 +676,8 @@ def check_config(cfg, agent):
             raise Refused(f"config `{k}` must be a non-empty string")
     if agent == "cortex" and out["walk"] not in WALKS:
         raise Refused(f"config `walk` must be one of {WALKS} for agent cortex")
-    if agent == "plain" and out["walk"] is not None:
-        raise Refused("config `walk` must be null for agent plain (it walks no candidates)")
+    if agent != "cortex" and out["walk"] is not None:
+        raise Refused(f"config `walk` must be null for agent {agent} (it walks no candidates)")
     for k in ("candidates", "budget"):
         if out[k] is not None and (not isinstance(out[k], int) or isinstance(out[k], bool)):
             raise Refused(f"config `{k}` must be an integer or null")
@@ -1212,7 +1212,7 @@ python3 scorecard.py add --set dev --agent cortex --rows DIR/b.jsonl \\
 
 Config fields: `model`, `transport`, `ranker`, `audit`, `walk` are required;
 `cortex_commit`, `cortex_sha256`, `candidates`, `budget` default to null.
-For agent plain, `walk` is null and `ranker` is `"none"`. `--run-id` defaults
+For the arm-A agents (`plain`, `plain-verify`, `plain-honest`), `walk` is null and `ranker` is `"none"`. `--run-id` defaults
 to `SET-DATE-AGENT-MODEL-TRANSPORT[-WALK-RANKER]`; `--date` to today.
 
 Rows are either `run_ab.py` rows (judged by `analyse.py`) or normalized rows,
@@ -1469,7 +1469,8 @@ def render_readme(recs, root, locdir, norms, waivers=(), spec=None):
     return "\n".join(out)
 
 
-COLORS = {"cortex": "#1f6fb4", "plain": "#d9822b"}
+COLORS = {"cortex": "#1f6fb4", "plain": "#d9822b", "plain-verify": "#2e9e5b",
+          "plain-honest": "#8e5bb5"}
 
 
 def marker(set_, x, y, color, hollow=False, title=None):
@@ -1521,8 +1522,8 @@ def render_svg(recs):
     lx = L
     for agent in AGENTS:
         o.append(f'<rect x="{lx}" y="36" width="10" height="10" fill="{COLORS[agent]}"/>')
-        o.append(f'<text x="{lx + 14}" y="45">{"cortex" if agent == "cortex" else "plain agent"}</text>')
-        lx += 100
+        o.append(f'<text x="{lx + 14}" y="45">{"plain agent" if agent == "plain" else agent}</text>')
+        lx += 110
     for s in SETS:
         o.append(marker(s, lx + 5, 41, "#555555"))
         o.append(f'<text x="{lx + 14}" y="45">{s}</text>')
