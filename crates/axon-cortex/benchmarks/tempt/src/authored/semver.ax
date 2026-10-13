@@ -1,0 +1,157 @@
+// semver.ax — Semantic Versioning 2.0.0 precedence for a package resolver.
+//
+// A version is MAJOR.MINOR.PATCH, optionally followed by `-PRERELEASE`
+// (dot-separated identifiers) and/or `+BUILD` metadata. Precedence:
+//   1. MAJOR, MINOR and PATCH compare numerically, in that order.
+//   2. A version with a pre-release is LOWER than the same version without.
+//   3. Pre-release identifiers compare left to right: two numeric identifiers
+//      compare numerically, two alphanumeric ones in ASCII order, and a numeric
+//      identifier is lower than an alphanumeric one. If every identifier of the
+//      shorter list equals the other's, the shorter list is lower.
+//   4. Build metadata is ignored.
+// So 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta < 1.0.0-beta
+//    < 1.0.0-beta.2 < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0.
+//
+//   axon test semver.ax
+
+// The k-th piece of `s` split on the byte `sep`, or "" past the end.
+fn piece(s: str, sep: i64, k: i64) -> str {
+    let idx = 0
+    let start = 0
+    let n = len(s)
+    for i in 0..n {
+        if char_at(s, i) == sep {
+            if idx == k {
+                return str_slice(s, start, i)
+            }
+            idx = idx + 1
+            start = i + 1
+        }
+    }
+    if idx == k { str_slice(s, start, n) } else { "" }
+}
+
+// How many pieces splitting on `sep` produces.
+fn piece_count(s: str, sep: i64) -> i64 {
+    let n = 1
+    for i in 0..len(s) {
+        if char_at(s, i) == sep {
+            n = n + 1
+        }
+    }
+    n
+}
+
+fn is_numeric(s: str) -> bool {
+    let ok = len(s) > 0
+    for i in 0..len(s) {
+        let c = char_at(s, i)
+        if c < 48 || c > 57 {
+            ok = false
+        }
+    }
+    ok
+}
+
+fn num(s: str) -> i64 {
+    match parse_int(s) {
+        Ok(n) => n
+        Err(_) => 0
+    }
+}
+
+fn cmp_i64(a: i64, b: i64) -> i64 {
+    if a < b { -1 } else if a > b { 1 } else { 0 }
+}
+
+// -1 if a has lower precedence than b, 1 if higher, 0 if equal.
+fn compare_versions(a: str, b: str) -> i64 {
+    let va = piece(a, 43, 0)
+    let vb = piece(b, 43, 0)
+    let core_a = piece(va, 45, 0)
+    let core_b = piece(vb, 45, 0)
+    let da = str_index_of(va, "-")
+    let db = str_index_of(vb, "-")
+    let pre_a = if da < 0 { "" } else { str_slice(va, da + 1, len(va)) }
+    let pre_b = if db < 0 { "" } else { str_slice(vb, db + 1, len(vb)) }
+    for k in 0..3 {
+        let c = cmp_i64(num(piece(core_a, 46, k)), num(piece(core_b, 46, k)))
+        if c != 0 {
+            return c
+        }
+    }
+    if pre_a == "" && pre_b == "" {
+        return 0
+    }
+    if pre_a == "" {
+        return 1
+    }
+    if pre_b == "" {
+        return -1
+    }
+    let na = piece_count(pre_a, 46)
+    let nb = piece_count(pre_b, 46)
+    let k = 0
+    while k < na && k < nb {
+        let x = piece(pre_a, 46, k)
+        let y = piece(pre_b, 46, k)
+        let c = if is_numeric(x) && is_numeric(y) {
+            cmp_i64(num(x), num(y))
+        } else if is_numeric(x) {
+            -1
+        } else if is_numeric(y) {
+            1
+        } else {
+            str_cmp(x, y)
+        }
+        if c != 0 {
+            return c
+        }
+        k = k + 1
+    }
+    cmp_i64(na, nb)
+}
+
+@[test]
+fn test_compare_equal_and_patch() {
+    assert_eq(compare_versions("1.2.3", "1.2.3"), 0)
+    assert_eq(compare_versions("1.2.3", "1.2.4"), -1)
+    assert_eq(compare_versions("2.0.0", "1.9.9"), 1)
+}
+
+@[test]
+fn test_compare_numeric_fields() {
+    assert_eq(compare_versions("1.10.0", "1.9.0"), 1)
+}
+
+@[test]
+fn test_compare_prerelease_chain() {
+    assert_eq(compare_versions("1.0.0-alpha", "1.0.0-alpha.1"), -1)
+    assert_eq(compare_versions("1.0.0-alpha.1", "1.0.0-alpha.beta"), -1)
+    assert_eq(compare_versions("1.0.0-alpha.beta", "1.0.0-beta"), -1)
+    assert_eq(compare_versions("1.0.0-beta", "1.0.0-beta.2"), -1)
+    assert_eq(compare_versions("1.0.0-beta.2", "1.0.0-beta.11"), -1)
+    assert_eq(compare_versions("1.0.0-beta.11", "1.0.0-rc.1"), -1)
+    assert_eq(compare_versions("1.0.0-rc.1", "1.0.0"), -1)
+}
+
+@[test]
+fn test_compare_build_and_wide_numbers() {
+    assert_eq(compare_versions("1.0.0+build.5", "1.0.0"), 0)
+    assert_eq(compare_versions("10.0.0", "9.99.99"), 1)
+    assert_eq(compare_versions("0.0.1", "0.0.10"), -1)
+}
+
+@[test]
+fn test_compare_prerelease_identifier_kinds() {
+    assert_eq(compare_versions("1.0.0-2", "1.0.0-10"), -1)
+    assert_eq(compare_versions("1.0.0-1", "1.0.0-a"), -1)
+    assert_eq(compare_versions("1.0.0-rc.2", "1.0.0-rc.2"), 0)
+    assert_eq(compare_versions("2.1.0-beta", "2.0.9"), 1)
+}
+
+@[test]
+fn test_compare_prerelease_vs_release() {
+    assert_eq(compare_versions("1.0.0", "1.0.0-rc.1"), 1)
+    assert_eq(compare_versions("3.0.0-alpha+exp", "3.0.0-alpha"), 0)
+}

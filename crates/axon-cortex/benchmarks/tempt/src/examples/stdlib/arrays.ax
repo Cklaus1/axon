@@ -1,0 +1,85 @@
+// Tier-1 stdlib: array utilities (read-only aggregation + selection).
+//
+// Arrays became first-class once `len` accepted slices; these are the
+// aggregation/selection helpers agent code needs over a candidate set — in
+// particular `argmax`, the core decision primitive: pick the best-scoring
+// option from N. Arrays are immutable here — Axon has no `xs[i] = v` place
+// assignment yet, so you mutate by building a new array / rebinding, and every
+// helper below is a pure fold.
+//
+//   axon test examples/stdlib/arrays.ax
+//   axon run  examples/stdlib/arrays.ax
+
+fn sum(xs: [i64]) -> i64 {
+    let t = 0
+    for i in 0..len(xs) { t = t + xs[i] }
+    t
+}
+
+fn max_of(xs: [i64]) -> i64 {
+    let m = xs[0]
+    for i in 0..len(xs) { if xs[i] > m { m = xs[i] } }
+    m
+}
+
+fn min_of(xs: [i64]) -> i64 {
+    let m = xs[0]
+    for i in 0..len(xs) { if xs[i] < m { m = xs[i] } }
+    m
+}
+
+// Index of the largest element — the "pick the best candidate" primitive.
+// Ties resolve to the first (lowest index).
+fn argmax(xs: [i64]) -> i64 {
+    let best = 0
+    for i in 0..len(xs) { if xs[i] > xs[best] { best = i } }
+    best
+}
+
+fn contains(xs: [i64], target: i64) -> bool {
+    let found = false
+    for i in 0..len(xs) { if xs[i] == target { found = true } }
+    found
+}
+
+// How many elements are >= threshold (a simple count-where).
+fn count_at_least(xs: [i64], threshold: i64) -> i64 {
+    let n = 0
+    for i in 0..len(xs) { if xs[i] >= threshold { n = n + 1 } }
+    n
+}
+
+@[test]
+fn test_sum() { assert_eq(sum([10, 20, 30]), 60) }
+
+@[test]
+fn test_max_min() {
+    assert_eq(max_of([3, 9, 2, 7]), 9)
+    assert_eq(min_of([3, 9, 2, 7]), 2)
+}
+
+@[test]
+fn test_argmax_picks_best() {
+    assert_eq(argmax([10, 50, 30]), 1) // index of 50
+    assert_eq(argmax([5, 5, 5]), 0)    // ties resolve to the first
+}
+
+@[test]
+fn test_contains() {
+    assert(contains([1, 2, 3], 2))
+    assert(!contains([1, 2, 3], 9))
+}
+
+@[test]
+fn test_count_at_least() {
+    assert_eq(count_at_least([10, 40, 70, 90], 50), 2)
+}
+
+fn main() {
+    // An agent scoring candidate actions and choosing the best.
+    let scores = [42, 88, 17, 90, 63]
+    let best = argmax(scores)
+    let bs = scores[best]
+    println("candidates: 5, best index {to_str(best)} (score {to_str(bs)})")
+    println("total score {to_str(sum(scores))}, how many >= 60: {to_str(count_at_least(scores, 60))}")
+}

@@ -1,0 +1,14 @@
+2026-10-13T02:21:44.983423Z  INFO micode::assembly: using the stored OAuth grant for this session credential=anthropic
+2026-10-13T02:21:44.983785Z  WARN micode::assembly: micode: no catalog entry for the active model — real cost accounting is disabled this session (spent.cost stays 0; no price is guessed). Add it to ~/.micode/models.json to meter cost. model=claude-haiku-5-5
+2026-10-13T02:21:44.987050Z  WARN micode::assembly: worktree reaper: sweep failed, continuing: git failed: fatal: not a git repository (or any of the parent directories): .git
+2026-10-13T02:21:44.990308Z  WARN micode::persist: session persistence: could not snapshot the workspace — resume drift detection will be unavailable for this session error=git exited with a failure status (not a git repository, or git itself failed): fatal: not a git repository (or any of the parent directories): .git repo_root=/var/tmp/r51-tmp/tchk
+2026-10-13T02:21:44.990328Z  INFO micode::assembly: session logging ON — resume later with `micode resume micode-session-1791858104981008096` session_id=micode-session-1791858104981008096 session_dir=/var/tmp/r51-tmp/tchk/.micode/sessions/micode-session-1791858104981008096
+{"type":"session_start","session_id":"micode-session-1791858104981008096","provider":"anthropic","model":"claude-haiku-5-5","micode_version":"0.3.0","workspace_root":"/var/tmp/r51-tmp/tchk","head_commit":null}
+{"type":"user_prompt","text":"Reply with exactly OK","source":"user"}
+{"type":"turn_start","turn":0,"model":"claude-haiku-5-5"}
+{"type":"assistant_delta","text":"OK"}
+{"type":"usage_progress","usage":{"input_tokens":85,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":6867}}
+{"type":"verify","Trusted":null}
+{"type":"turn_end","usage":{"input_tokens":85,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":6867},"reason":null}
+2026-10-13T02:21:45.866541Z  INFO micode::persist: session persistence: saved checkpoint checkpoint=/var/tmp/r51-tmp/tchk/.micode/sessions/micode-session-1791858104981008096/checkpoint.json turns=1
+2026-10-13T02:21:45.875720Z  INFO micode::assembly: trust-case capture: wrote candidate cases recorded=1

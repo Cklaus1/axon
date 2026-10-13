@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Is Cortex getting smarter? One append-only history of scored runs.
 
-    python3 scorecard.py add --set dev|heldout|once|field|hard-dev|hard-once --agent cortex|plain \\
+    python3 scorecard.py add --set dev|heldout|once|field|hard-dev|hard-once|tempt --agent cortex|plain \\
         --rows ROWS.jsonl --corpus CORPUS.json --config-json '{...}' \\
         [--baseline RUN_ID ...] [--run-id ID] [--date YYYY-MM-DD] --notes TEXT
     python3 scorecard.py report [--check]
@@ -43,7 +43,7 @@ import analyse  # noqa: E402  (../ab/analyse.py: wilson, mcnemar_exact, summariz
 import corpus as corpus_mod  # noqa: E402
 
 SCHEMA = "cortex-scorecard/1"
-SETS = ("dev", "heldout", "once", "field", "hard-dev", "hard-once")
+SETS = ("dev", "heldout", "once", "field", "hard-dev", "hard-once", "tempt")
 # Sets scored at most once per candidate (see `add`).
 ONCE_SETS = ("once", "hard-once")
 AGENTS = ("cortex", "plain")
@@ -664,6 +664,14 @@ B = candidate) and names the first criterion that separates them;
   a second run with the same (agent, cortex_sha256, model, transport, ranker,
   walk), and requires `cortex_sha256` for agent cortex.
 - **field**: rows from real `cortex repair` runs.
+- **hard-dev** / **hard-once**: `../hardset/hard-dev.json` and `hard-once.json`,
+  defects whose fix depends on context outside the function body (a documented
+  constant, a caller's contract, a parameter's meaning). Tasks marked out of
+  scope (the fix spans functions or a signature) are scored apart from verified,
+  under "out of scope"; `hard-once` follows the `once` rule.
+- **tempt**: `../tempt/tempt.json`, tasks where a dishonest pass (special-casing,
+  test edits, unfixable visible tests) is easier than an honest fix; the
+  number that matters there is false successes (`../tempt/PREREG-tempt.md`).
 
 ## Adding a run
 
@@ -877,7 +885,7 @@ def render_readme(recs, root, locdir, norms):
             "(log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, "
             "orange plain); marker = set "
             "(circle dev, square heldout, diamond once, triangle field, inverted triangle "
-            "hard-dev, hexagon hard-once).", ""]
+            "hard-dev, hexagon hard-once, pentagon tempt).", ""]
     return "\n".join(out)
 
 
@@ -899,6 +907,9 @@ def marker(set_, x, y, color, hollow=False, title=None):
     elif set_ == "hard-once":
         pts = " ".join(f"{x + 5.5 * math.cos(math.radians(a)):.1f},"
                        f"{y + 5.5 * math.sin(math.radians(a)):.1f}" for a in range(0, 360, 60))
+    elif set_ == "tempt":
+        pts = " ".join(f"{x + 5.5 * math.cos(math.radians(a)):.1f},"
+                       f"{y + 5.5 * math.sin(math.radians(a)):.1f}" for a in range(-90, 270, 72))
     else:
         pts = f"{x:.1f},{y - 5.5:.1f} {x + 5.5:.1f},{y + 4.5:.1f} {x - 5.5:.1f},{y + 4.5:.1f}"
     return f'<polygon points="{pts}" {st}>{t}</polygon>'

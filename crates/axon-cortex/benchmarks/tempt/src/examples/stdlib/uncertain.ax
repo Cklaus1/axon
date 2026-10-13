@@ -1,0 +1,83 @@
+// Tier-1 stdlib: Uncertain combinators — reasoning under calibrated confidence.
+//
+// Axon's Uncertain<T> carries a value plus a self-reported confidence in
+// [0,1]. The runtime constructs them (uncertain_new, ai_extract_uncertain_*);
+// these helpers COMBINE them, so goal/agent code can reason about how sure it
+// is, not just what it computed.
+//
+//   axon test examples/stdlib/uncertain.ax
+//   axon run  examples/stdlib/uncertain.ax
+
+fn u_i64(value: i64, confidence: f64) -> Uncertain<i64> {
+    uncertain_new(value, confidence)
+}
+
+fn u_val(u: Uncertain<i64>) -> i64 {
+    u.value
+}
+
+fn u_conf(u: Uncertain<i64>) -> f64 {
+    u.confidence
+}
+
+// Does this estimate clear a confidence bar?
+fn u_confident(u: Uncertain<i64>, threshold: f64) -> bool {
+    u.confidence >= threshold
+}
+
+// Joint confidence of two independent estimates (probabilistic AND).
+fn u_and(a: Uncertain<i64>, b: Uncertain<i64>) -> f64 {
+    a.confidence * b.confidence
+}
+
+// Confidence that at least one holds (probabilistic OR, independence).
+fn u_or(a: Uncertain<i64>, b: Uncertain<i64>) -> f64 {
+    a.confidence + b.confidence - a.confidence * b.confidence
+}
+
+// Pick the more-confident of two estimates.
+fn u_max_conf(a: Uncertain<i64>, b: Uncertain<i64>) -> Uncertain<i64> {
+    if a.confidence >= b.confidence { a } else { b }
+}
+
+@[test]
+fn test_u_accessors() {
+    let u = u_i64(42, 0.9)
+    assert_eq(u_val(u), 42)
+    assert_eq_f64(u_conf(u), 0.9)
+}
+
+@[test]
+fn test_u_confident() {
+    let u = u_i64(5, 0.9)
+    assert(u_confident(u, 0.8))
+    assert(!u_confident(u, 0.95))
+}
+
+@[test]
+fn test_u_and() {
+    assert_eq_f64(u_and(u_i64(1, 0.5), u_i64(1, 0.8)), 0.4)
+}
+
+@[test]
+fn test_u_or() {
+    // 0.5 + 0.8 - 0.4 = 0.9
+    assert_eq_f64(u_or(u_i64(1, 0.5), u_i64(1, 0.8)), 0.9)
+}
+
+@[test]
+fn test_u_max_conf() {
+    let m = u_max_conf(u_i64(1, 0.3), u_i64(2, 0.7))
+    assert_eq(u_val(m), 2)
+    assert_eq_f64(u_conf(m), 0.7)
+}
+
+fn main() {
+    let a = u_i64(1, 0.7)
+    let b = u_i64(1, 0.85)
+    println("a: value {to_str(u_val(a))} conf {to_str_f64(u_conf(a))}")
+    println("joint confidence (both agree): {to_str_f64(u_and(a, b))}")
+    println("either holds: {to_str_f64(u_or(a, b))}")
+    let best = u_max_conf(a, b)
+    println("more confident estimate: value {to_str(u_val(best))} conf {to_str_f64(u_conf(best))}")
+}

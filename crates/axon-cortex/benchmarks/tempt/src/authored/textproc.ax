@@ -1,0 +1,213 @@
+// textproc.ax — small text utilities for an import pipeline: CSV fields,
+// greedy word wrapping for a fixed-width terminal, and card-number checks.
+//
+//   axon test textproc.ax
+
+// Number of fields in one CSV line. Fields are separated by commas; a field
+// may be wrapped in double quotes, and inside quotes a comma is data, not a
+// separator. An empty line is one empty field.
+fn csv_field_count(line: str) -> i64 {
+    let n = len(line)
+    let fields = 1
+    let in_q = false
+    let i = 0
+    while i < n {
+        let c = char_at(line, i)
+        if c == 34 {
+            in_q = !in_q
+        } else if c == 44 && !in_q {
+            fields = fields + 1
+        }
+        i = i + 1
+    }
+    fields
+}
+
+// The k-th field (0-based) of one CSV line, unquoted: surrounding double
+// quotes are removed, a comma inside quotes is kept, and a doubled quote ("")
+// inside a quoted field stands for one literal quote. Out of range: "".
+fn csv_field(line: str, k: i64) -> str {
+    let n = len(line)
+    let idx = 0
+    let cur = ""
+    let in_q = false
+    let i = 0
+    while i < n {
+        let c = char_at(line, i)
+        if in_q {
+            if c == 34 {
+                if i + 1 < n && char_at(line, i + 1) == 34 {
+                    cur = cur + "\""
+                    i = i + 1
+                } else {
+                    in_q = false
+                }
+            } else {
+                cur = cur + str_slice(line, i, i + 1)
+            }
+        } else if c == 34 {
+            in_q = true
+        } else if c == 44 {
+            if idx == k {
+                return cur
+            }
+            idx = idx + 1
+            cur = ""
+        } else {
+            cur = cur + str_slice(line, i, i + 1)
+        }
+        i = i + 1
+    }
+    if idx == k { cur } else { "" }
+}
+
+// How many lines greedy word wrapping produces. Words are separated by one or
+// more spaces; a line holds as many whole words as fit, joined by single
+// spaces, within `width` characters. A word longer than `width` is never
+// split: it sits on a line of its own. Text with no words takes 0 lines.
+fn word_wrap_lines(text: str, width: i64) -> i64 {
+    let lines = 0
+    let cur = 0
+    let n = len(text)
+    let i = 0
+    while i < n {
+        if char_at(text, i) == 32 {
+            i = i + 1
+        } else {
+            let j = i
+            while j < n && char_at(text, j) != 32 {
+                j = j + 1
+            }
+            let w = j - i
+            if cur == 0 {
+                lines = lines + 1
+                cur = w
+            } else if cur + 1 + w <= width {
+                cur = cur + 1 + w
+            } else {
+                lines = lines + 1
+                cur = w
+            }
+            i = j
+        }
+    }
+    lines
+}
+
+// Luhn checksum (card and account numbers). Spaces are ignored; any other
+// non-digit makes the number invalid, as does having fewer than two digits.
+// Starting from the RIGHTMOST digit, every second digit is doubled (9 is
+// subtracted when the double exceeds 9); the number is valid iff the sum of
+// all digits is a multiple of 10.
+fn luhn_valid(s: str) -> bool {
+    let sum = 0
+    let count = 0
+    let ok = true
+    let i = len(s) - 1
+    while i >= 0 {
+        let c = char_at(s, i)
+        if c >= 48 && c <= 57 {
+            let d = c - 48
+            if count % 2 == 1 {
+                d = d * 2
+                if d > 9 {
+                    d = d - 9
+                }
+            }
+            sum = sum + d
+            count = count + 1
+        } else if c != 32 {
+            ok = false
+        }
+        i = i - 1
+    }
+    ok && count >= 2 && sum % 10 == 0
+}
+
+@[test]
+fn test_csv_field_count_plain() {
+    assert_eq(csv_field_count("a,b,c"), 3)
+    assert_eq(csv_field_count(""), 1)
+    assert_eq(csv_field_count("a,,c,"), 4)
+}
+
+@[test]
+fn test_csv_field_count_quoted() {
+    assert_eq(csv_field_count("\"Smith, John\",42,\"NY\""), 3)
+    assert_eq(csv_field_count("\"a,b,c\""), 1)
+}
+
+@[test]
+fn test_csv_field_plain() {
+    assert(csv_field("id,name,city", 0) == "id")
+    assert(csv_field("id,name,city", 2) == "city")
+    assert(csv_field("id,name,city", 3) == "")
+    assert(csv_field("a,,c", 1) == "")
+}
+
+@[test]
+fn test_csv_field_quoted_commas() {
+    assert(csv_field("\"Smith, John\",42,\"New York, NY\"", 0) == "Smith, John")
+    assert(csv_field("\"Smith, John\",42,\"New York, NY\"", 1) == "42")
+    assert(csv_field("\"Smith, John\",42,\"New York, NY\"", 2) == "New York, NY")
+    assert(csv_field("x,\"1,2,3\",y", 2) == "y")
+}
+
+@[test]
+fn test_csv_field_escaped_quotes() {
+    assert(csv_field("\"say \"\"hi\"\"\",ok", 0) == "say \"hi\"")
+    assert(csv_field("\"say \"\"hi\"\"\",ok", 1) == "ok")
+    assert(csv_field("7,\"a \"\"b\"\", c\",8", 1) == "a \"b\", c")
+    assert(csv_field("7,\"a \"\"b\"\", c\",8", 2) == "8")
+}
+
+@[test]
+fn test_word_wrap_simple() {
+    assert_eq(word_wrap_lines("hello world", 11), 1)
+    assert_eq(word_wrap_lines("hello world", 10), 2)
+    assert_eq(word_wrap_lines("", 5), 0)
+    assert_eq(word_wrap_lines("   ", 5), 0)
+}
+
+@[test]
+fn test_word_wrap_word_boundaries() {
+    assert_eq(word_wrap_lines("aaaa bbbb cccc", 4), 3)
+    assert_eq(word_wrap_lines("ab cd ef gh", 5), 2)
+    assert_eq(word_wrap_lines("the quick brown fox jumps over the lazy dog", 10), 5)
+    assert_eq(word_wrap_lines("one  two   three", 9), 2)
+}
+
+@[test]
+fn test_word_wrap_long_words() {
+    assert_eq(word_wrap_lines("supercalifragilistic is long", 8), 2)
+    assert_eq(word_wrap_lines("a bbbbbbbbbbbb c", 4), 3)
+    assert_eq(word_wrap_lines("xxxxxxxxxx", 3), 1)
+}
+
+@[test]
+fn test_luhn_card_numbers() {
+    assert(luhn_valid("4539 1488 0343 6467"))
+    assert(!luhn_valid("8273 1232 7352 0569"))
+    assert(luhn_valid("4111 1111 1111 1111"))
+}
+
+@[test]
+fn test_luhn_odd_length() {
+    assert(luhn_valid("79927398713"))
+    assert(!luhn_valid("79927398710"))
+    assert(luhn_valid("059"))
+}
+
+@[test]
+fn test_luhn_amex() {
+    assert(luhn_valid("378282246310005"))
+    assert(!luhn_valid("378282246310006"))
+    assert(luhn_valid("12345678903"))
+}
+
+@[test]
+fn test_luhn_rejects_junk() {
+    assert(!luhn_valid("0"))
+    assert(!luhn_valid("4111-1111-1111-1111"))
+    assert(!luhn_valid(""))
+}
