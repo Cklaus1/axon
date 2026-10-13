@@ -138,21 +138,27 @@ def render(history):
             "Each build is `main` plus the one-line patch in `patches/`. A cell is "
             "`main verified -> build verified`. The old rule sees the dev leg only; the "
             "new rule sees all 115 tasks pooled. Both are `receipt_rule` (a false success, a "
-            "significant verified loss, then a significant effort loss).", "",
-            "| build | dev | hard-dev | tempt | pooled only main / only build, McNemar p | "
-            "old rule (dev alone) | new rule (pooled) |", "|---|---|---|---|---|---|---|"]
+            "significant verified loss, then a significant effort loss). The pairing columns "
+            "show the verified step alone, which is what a loss of fixes moves; the effort "
+            "tests compare wall seconds across runs made at different times on a shared "
+            "machine, so a wall verdict is not evidence of a loss of fixes (the replicate above "
+            "reached wall p = 0.0886 against itself).", "",
+            "| build | dev | hard-dev | tempt | dev alone: only main / only build, McNemar p | "
+            "pooled: only main / only build, McNemar p | old rule (dev alone) | "
+            "new rule (pooled) |", "|---|---|---|---|---|---|---|---|"]
     for name, _what, stem in BUILDS:
         b = load_build(stem, legs, truth)
-        cells, per = [], {}
+        cells, per, pp = [], {}, {}
         for leg, ids in legs.items():
             s = set(ids)
             v, p, nn, x, y = judge_rows([r for r in a if r["id"] in s], [r for r in b if r["id"] in s])
             cells.append(f"{x} -> {y} of {nn}")
-            per[leg] = v
+            per[leg], pp[leg] = v, p
         v, p, nn, x, y = judge_rows(a, b)
-        old = per["dev"]
-        out.append(f"| {name} | " + " | ".join(cells) + f" | {p['only_baseline']} / "
-                   f"{p['only_this']}, p = {p['mcnemar_p']:.3g} | "
+        old, dp = per["dev"], pp["dev"]
+        out.append(f"| {name} | " + " | ".join(cells)
+                   + f" | {dp['only_baseline']} / {dp['only_this']}, p = {dp['mcnemar_p']:.3g}"
+                   f" | {p['only_baseline']} / {p['only_this']}, p = {p['mcnemar_p']:.3g} | "
                    f"{'**WORSE**' if old['worse'] else 'not worse'}: {old['reason']} | "
                    f"{'**WORSE**' if v['worse'] else 'not worse'}: {v['reason']} |")
     out += ["", "What each patch does:", ""]
@@ -160,22 +166,32 @@ def render(history):
     dev = set(legs["dev"])
     dn = judge_rows([r for r in a if r["id"] in dev], [r for r in rb if r["id"] in dev])[1]
     dnz = dn["only_this"] + dn["only_baseline"]
+    nzs = (("measured", nz), ("assumed", 4), ("assumed", 10))
     out += ["", "## Power of the pooled receipt", "",
-            f"Two runs of the same code differ on {nz} of {n} tasks (above). Model: those "
-            f"{nz} discordant pairs fall either way with probability 1/2, and k further tasks "
-            "are truly lost. P(reject) is the exact probability that the exact two-sided "
-            f"McNemar test gives p < {S.ALPHA} with more losses than gains (the verified step "
-            f"of `receipt_rule`). The dev leg alone shows {dnz} discordant pairs: main scores "
-            f"{sum(r['verified'] for r in a if r['id'] in dev)}/60 there, so even with no gains "
-            f"{min_k(0, 1.0)} fixes ({100 * min_k(0, 1.0) / 60:.0f}% of the leg) must be lost "
-            "before the verified step can fire.", "",
-            "| true loss k | P(reject), pooled | P(reject), dev leg alone |", "|---|---|---|"]
-    for k in (0, 1, 2, 3, 4, 5, 6, 8, 10, 12):
-        out.append(f"| {k} | {power(nz, k):.3f} | {power(dnz, k):.3f} |")
-    out += ["", f"Smallest true loss detected with probability at least 0.5 / 0.8 / 0.95: "
-            f"pooled {min_k(nz, 0.5)} / {min_k(nz, 0.8)} / {min_k(nz, 0.95)} tasks "
-            f"(of {n}); dev leg alone {min_k(dnz, 0.5)} / {min_k(dnz, 0.8)} / "
-            f"{min_k(dnz, 0.95)} tasks (of 60).", ""]
+            f"Two runs of the same code differ on {nz} of {n} tasks (above; one replicate, so "
+            f"the true rate is bounded, not known: [INFERENCE] at most about {3 * 100 / n:.1f}% "
+            "of tasks at 95% confidence by the rule of three). Model: the discordant pairs of two "
+            "same-code runs fall either way with probability 1/2, and k further tasks are truly "
+            "lost. P(reject) is the exact probability that the exact two-sided McNemar test "
+            f"gives p < {S.ALPHA} with more losses than gains (the verified step of "
+            "`receipt_rule`). Only the first noise level is measured; the others are assumed, "
+            "to show how the threshold moves. Main scores "
+            f"{sum(r['verified'] for r in a if r['id'] in dev)}/60 on the dev leg, so there no gain "
+            f"is possible: {min_k(0, 1.0)} fixes ({100 * min_k(0, 1.0) / 60:.0f}% of the leg) "
+            "must be lost before the verified step can fire. Pooled, the same count is "
+            f"{100 * min_k(0, 1.0) / sum(r['verified'] for r in a):.1f}% of main's "
+            f"{sum(r['verified'] for r in a)} fixes: pooling does not lower the number of tasks "
+            "that must be lost, it adds tasks where a real degradation loses them (above).", "",
+            "| true loss k | " + " | ".join(f"pooled, {w} {z} discordant" for w, z in nzs)
+            + f" | dev alone, {dnz} discordant |", "|---|" + "---|" * (len(nzs) + 1)]
+    for k in (0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12):
+        out.append(f"| {k} | " + " | ".join(f"{power(z, k):.3f}" for _w, z in nzs)
+                   + f" | {power(dnz, k):.3f} |")
+    out += ["", "Smallest true loss detected with probability at least 0.5 / 0.8 / 0.95:", ""]
+    out += [f"- pooled, {w} {z} discordant: {min_k(z, 0.5)} / {min_k(z, 0.8)} / "
+            f"{min_k(z, 0.95)} tasks (of {n})" for w, z in nzs]
+    out += [f"- dev leg alone, {dnz} discordant: {min_k(dnz, 0.5)} / {min_k(dnz, 0.8)} / "
+            f"{min_k(dnz, 0.95)} tasks (of 60)", ""]
     return "\n".join(out) + "\n"
 
 

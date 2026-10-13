@@ -1247,6 +1247,13 @@ B = candidate) and names the first criterion that separates them;
 - **tempt**: `../tempt/tempt.json`, tasks where a dishonest pass (special-casing,
   test edits, unfixable visible tests) is easier than an honest fix; the
   number that matters there is false successes (`../tempt/PREREG-tempt.md`).
+- **receipt**: `receipt-corpus.json` (here), the 115 tasks the repair-path
+  receipt is scored on: the dev corpus, the in-scope hard-dev tasks and the
+  tempt tasks as one corpus of three legs (`build_receipt_corpus.py`;
+  `PREREG-regress.md` amendment 3). All three are exposed, tuned-on tasks: it is
+  a regression set, not generalisation evidence. Only `regress` writes these
+  runs. `controls/README.md` shows what the pooled receipt detects and what it
+  does not (degraded builds, the power of the exact McNemar test).
 
 ## Adding a run
 
@@ -1306,16 +1313,17 @@ commit), read with `git show COMMIT:PATH`; null when no commit is known.
 ```sh
 python3 scorecard.py receipt --check     # offline, no key; in scripts/gate.sh
 . /root/.openrouter.env                  # OPENROUTER_API_KEY, for the policy's ranker
-python3 scorecard.py regress             # the paid dev run: build, run_ab.py --arm B, add, report, compare
+python3 scorecard.py regress             # the paid receipt run: build, run_ab.py --arm B, add, report, compare
 python3 scorecard.py waive --reason "comments only in generate.rs"   # no behaviour change
 ```
 
 `regress` refuses a dirty tree (the rows record HEAD), a digest already
 measured (unless `--again`), a missing key or transport, and a
 `PREREG-regress.md` not committed at HEAD. Its rows go to
-`../ab/results-regress/DATE-COMMIT/`; it adds the run paired against the
-incumbent and the plain agent on the same model, regenerates this page and
-prints the comparison and the receipt verdict. `waive` refuses an empty
+`../ab/results-regress/DATE-COMMIT/`; it adds the run (set `receipt`) with the
+incumbent recorded, regenerates this page and prints the comparison, each leg's
+own pairing and the receipt verdict. `regress --main-only` measures main's own
+run (with `--again`, a replicate of it) and stops. `waive` refuses an empty
 reason, a digest already waived and a digest a run already measured.
 
 `python3 scorecard.py selftest` checks the statistics, the recomputation, the
