@@ -42,9 +42,9 @@ comes from `OPENROUTER_API_KEY`.
 ## Decision rule (amended; see "Amendment 1")
 
 The run is added with `scorecard.py add --set dev --agent cortex`. Its
-incumbent is the latest earlier dev cortex run on this configuration and corpus
-that was not itself judged worse. Checked in this order, the first that applies
-decides:
+incumbent is main's measured run (Amendment 2): the latest dev cortex run, on
+this configuration and corpus, at the repair digest of `git merge-base HEAD
+origin/main`. Checked in this order, the first that applies decides:
 
 1. The run has any false success: FAIL.
 2. Verified is worse: fewer tasks are verified only by the run than only by
@@ -93,6 +93,36 @@ stay catchable, now only when a test shows them. All three runs are re-judged
 under the amended rule, and the verdicts are reported. A `regress --again` at
 run 3's code was started under the first rule and cancelled after 1 of 60
 rows ($0.0002, committed in b1de8e7e). It is not in the scorecard.
+
+## Amendment 2 (2026-10-12), written after seeing run 3 and the amendment-1 verdicts
+
+Under amendment 1, every run's incumbent was the best earlier run, and that was
+the 56/60 run from BEFORE the generator-context change. So all three runs
+failed on cost per task (sign test p < 1e-6; over the tasks both verified,
+cost rose from $0.0508 to $0.0657 for run 2 and $0.0700 for run 3). That
+compared the code against history, not against the code on main.
+Generator context is already on main.
+
+Amended: the INCUMBENT for a receipt is the latest dev cortex run, on this
+configuration and corpus, whose repair digest equals the repair digest at
+`git merge-base HEAD origin/main`. If no such run exists, `regress` first
+measures main: it builds and runs `run_ab.py` in a detached worktree at the
+merge-base, adds that run, and then measures HEAD against it. Each run
+records the incumbent it was judged against (`receipt_incumbent`), so a
+verdict never changes after the fact. `receipt --check` accepts a run only if
+its recorded incumbent is at the CURRENT merge-base digest. When HEAD's repair
+digest equals the merge-base's, there is no repair-path change to receipt, and
+the check passes. The incumbent moves only when main moves, which removes the
+ratchet. The amendment-1 rule (false success, verified McNemar, then the
+sign tests on proposals, wall and cost) is otherwise unchanged.
+
+Accepted, explicitly, by the operator: generator context's cost increase.
+Per the priority order (correctness, then speed, then cost), it bought a
+significant correctness gain on heldout: 41 to 47 verified, all 6 discordant
+pairs in its favour, exact McNemar p = 0.031. It also took once to 30/30.
+That code is the baseline on main, so the receipt for this branch is judged
+against main's own measured run. The cost delta stays visible in the
+amendment-1 figures above and in the scorecard notes of the main-baseline run.
 
 ## Spend cap
 
