@@ -1,0 +1,360 @@
+{
+ "defects": [
+  {
+   "source": "asi/pricing.ax",
+   "symbol": "margin_compliance",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "if price_cents >= price_floor_cents() { 30 } else { 0 }",
+     "new": "if price_cents >= price_floor_cents() { 70 } else { 0 }"
+    }
+   ],
+   "context": "The margin term is worth 30 points (header: 'score = round(70 x demand ... + 30 x margin_compliance)', section banner 'hard 0/30'); 70 is the demand weight used by demand_score."
+  },
+  {
+   "source": "asi/pricing.ax",
+   "symbol": "margin_compliance",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "if price_cents >= price_floor_cents() { 30 } else { 0 }",
+     "new": "if price_cents >= 2500 { 30 } else { 0 }"
+    }
+   ],
+   "context": "The floor is 2400 cents, defined by the sibling price_floor_cents() ('do not deploy under this'); the body hard-codes a $25.00 floor instead."
+  },
+  {
+   "source": "asi/ad_optimizer.ax",
+   "symbol": "roas_with_confidence",
+   "scope": "in",
+   "shape": "sibling-unit",
+   "edits": [
+    {
+     "old": "let conf_pts = if score >= 300 { 92 } else if score >= 240 { 78 } else { 55 }",
+     "new": "let conf_pts = if score >= 30 { 92 } else if score >= 24 { 78 } else { 55 }"
+    }
+   ],
+   "context": "Scores are ROAS x100 (comment above variant_roas: '320 = 3.2x'; optimize_campaign's '3.0x floor (300)'), so the tier cut-offs must be 300/240, not x10 values."
+  },
+  {
+   "source": "asi/ad_optimizer.ax",
+   "symbol": "recommend_spend",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "let safe = if raw > 500 { 500 } else { raw }",
+     "new": "let safe = if raw > 400 { 400 } else { raw }"
+    }
+   ],
+   "context": "The daily budget cap is 500, stated only outside the body: the @[verify(value <= 500)] attribute and the comment '$500/day cap'."
+  },
+  {
+   "source": "asi/risk_monitor.ax",
+   "symbol": "agent_risk",
+   "scope": "in",
+   "shape": "enum-convention",
+   "edits": [
+    {
+     "old": "else if str_eq(effects, \"Net_Exec\") { 2 }",
+     "new": "else if str_eq(effects, \"Net_Exec\") { 3 }"
+    }
+   ],
+   "context": "The convention comment above agent_risk maps \"Net_Exec\" to high, and risk levels are 0=Low,1=Medium,2=High,3=Critical; 3 is reserved for irreversible actions."
+  },
+  {
+   "source": "asi/risk_monitor.ax",
+   "symbol": "risk_name",
+   "scope": "in",
+   "shape": "enum-convention",
+   "edits": [
+    {
+     "old": "    if r <= 0 { \"Low\" }\n    else if r == 1 { \"Medium\" }\n    else if r == 2 { \"High\" }",
+     "new": "    if r <= 1 { \"Low\" }\n    else if r == 2 { \"Medium\" }\n    else if r == 3 { \"High\" }"
+    }
+   ],
+   "context": "Risk levels are 0-based (comment '// risk: 0=Low, 1=Medium, 2=High, 3=Critical' and agent_risk's return values); the body maps them as if 1-based."
+  },
+  {
+   "source": "asi/summarize.ax",
+   "symbol": "length_score",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "    if words <= 12 {\n        12\n    } else if words >= 30 {\n        0\n    } else {\n        12 - (words - 12)\n    }",
+     "new": "    if words <= 12 {\n        10\n    } else if words >= 30 {\n        0\n    } else {\n        10 - (words - 12)\n    }"
+    }
+   ],
+   "context": "The length component is worth 12 points (comment above: '12 points when <= 12 words'; 3 samples x (12 length + 21 coverage) = the 99 target); the body awards 10."
+  },
+  {
+   "source": "asi/summarize.ax",
+   "symbol": "length_score",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "    if words <= 12 {\n        12\n    } else if words >= 30 {\n        0\n    } else {\n        12 - (words - 12)\n    }",
+     "new": "    if words <= 10 {\n        12\n    } else if words >= 30 {\n        0\n    } else {\n        12 - (words - 10)\n    }"
+    }
+   ],
+   "context": "The word limit is 12 (comment above length_score, the file header '(<= 12 words)' and the prompt variants); the body uses a 10-word limit."
+  },
+  {
+   "source": "asi/summarize.ax",
+   "symbol": "deploy_gate",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "    let conf = best_score / 99.0\n    let clamped = if best_score < 0.0 { 0.0 }\n                  else if best_score > 99.0 { 99.0 }",
+     "new": "    let conf = best_score / 100.0\n    let clamped = if best_score < 0.0 { 0.0 }\n                  else if best_score > 100.0 { 100.0 }"
+    }
+   ],
+   "context": "The maximum score is 99, not 100: try_variant's @[adaptive(target: 99)], main's goal_run(..., 99.0, ...) and '/ 99' output."
+  },
+  {
+   "source": "asi/world_model.ax",
+   "symbol": "predict",
+   "scope": "in",
+   "shape": "struct-field",
+   "edits": [
+    {
+     "old": "{ w.a * x + w.b }",
+     "new": "{ w.b * x + w.a }"
+    }
+   ],
+   "context": "World's comment defines the model as y = a*x + b (a slope, b offset); the body reads the fields the other way round (y = a + b*x is an equally common convention)."
+  },
+  {
+   "source": "asi/world_model.ax",
+   "symbol": "predict",
+   "scope": "in",
+   "shape": "struct-field",
+   "edits": [
+    {
+     "old": "{ w.a * x + w.b }",
+     "new": "{ w.a * x + w.n }"
+    }
+   ],
+   "context": "The type World = { a, b, n } and its comment say b is the offset and n the number of observations; the body adds n."
+  },
+  {
+   "source": "asi/world_model.ax",
+   "symbol": "truth",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "{ 3 * x }",
+     "new": "{ 3 * x + 1 }"
+    }
+   ],
+   "context": "The comment above truth states the ground truth is y = 3x 'slope 3, NO offset' (and world_model's premise is that the offset is unnecessary)."
+  },
+  {
+   "source": "asi/world_model.ax",
+   "symbol": "fit_error",
+   "scope": "in",
+   "shape": "struct-field",
+   "edits": [
+    {
+     "old": "for i in 0..w.n {",
+     "new": "for i in 0..10 {"
+    }
+   ],
+   "context": "World has a sample-count field n (type World = { a, b, n }); 10 is only the count main and learn_slope happen to use."
+  },
+  {
+   "source": "asi/world_model.ax",
+   "symbol": "world_bits",
+   "scope": "in",
+   "shape": "struct-field",
+   "edits": [
+    {
+     "old": "description_bits(w.a) + description_bits(w.b)",
+     "new": "description_bits(w.a) + description_bits(w.n)"
+    }
+   ],
+   "context": "The MDL term is over the learned parameters a and b (comments: 'description length of the learned parameters', 'a model that uses the offset costs more'); n is the observation count."
+  },
+  {
+   "source": "asi/world_model.ax",
+   "symbol": "fitness",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "100000 - 1000 * fit_error(w) - world_bits(w)",
+     "new": "100000 - 100 * fit_error(w) - world_bits(w)"
+    }
+   ],
+   "context": "The comment above fitness states 'fit dominates (x1000)'."
+  },
+  {
+   "source": "asi/world_model.ax",
+   "symbol": "fitness",
+   "scope": "in",
+   "shape": "caller-contract",
+   "edits": [
+    {
+     "old": "100000 - 1000 * fit_error(w) - world_bits(w)",
+     "new": "100000 - 1000 * fit_error(w) + world_bits(w)"
+    }
+   ],
+   "context": "Description length is a PENALTY (header 'fitness = fit - lambda*complexity', comment 'the MDL penalty only breaks ties toward simplicity'), so bits must be subtracted."
+  },
+  {
+   "source": "asi/learn_linear.ax",
+   "symbol": "n_pts",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "fn n_pts() -> i64 { 8 }",
+     "new": "fn n_pts() -> i64 { 7 }"
+    }
+   ],
+   "context": "The dataset has eight points (header 'eight points on y = 3x + 1'; dataset_x/dataset_y list 8 values, indices 0..7)."
+  },
+  {
+   "source": "asi/learn_linear.ax",
+   "symbol": "neg_loss",
+   "scope": "in",
+   "shape": "param-meaning",
+   "edits": [
+    {
+     "old": "let pred = a * dataset_x(i) + b",
+     "new": "let pred = b * dataset_x(i) + a"
+    }
+   ],
+   "context": "Parameter a is the slope and b the intercept: the header '(a*, b*)' on y = 3x + 1 and main's 'y = {a}*x + {b}' / 'a == 3 && b == 1' check; the body uses the y = a + b*x convention."
+  },
+  {
+   "source": "asi/learn_linear.ax",
+   "symbol": "neg_loss",
+   "scope": "in",
+   "shape": "caller-contract",
+   "edits": [
+    {
+     "old": "-total",
+     "new": "total"
+    }
+   ],
+   "context": "The optimizer maximizes toward target 0, so the function must return the NEGATED loss (comment above: 'We return its negation'; main computes best_loss = -goal_run(...))."
+  },
+  {
+   "source": "asi/self_improve.ax",
+   "symbol": "objective",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "let d = x - 137",
+     "new": "let d = x - 173"
+    }
+   ],
+   "context": "The peak is documented at x = 137 (banner '(peak at x = 137)', main prints 'peak is at 137')."
+  },
+  {
+   "source": "asi/self_improve.ax",
+   "symbol": "objective",
+   "scope": "in",
+   "shape": "documented-constant",
+   "edits": [
+    {
+     "old": "1000 - d * d / 4 + 0",
+     "new": "100 - d * d / 4 + 0"
+    }
+   ],
+   "context": "The peak score must equal the target 1000 (main's target = 1000.0 and 'the optimizer reaches score = 1000, confidence = 1.0')."
+  },
+  {
+   "source": "asi/self_improve.ax",
+   "symbol": "deploy_gate",
+   "scope": "in",
+   "shape": "caller-contract",
+   "edits": [
+    {
+     "old": "confidence_from_score(best_score, target)",
+     "new": "confidence_from_score(target, best_score)"
+    }
+   ],
+   "context": "The sibling confidence_from_score takes (score, target) (its signature and comment 'at target/2, confidence = 0.5'); the body passes them reversed."
+  },
+  {
+   "source": "asi/risk_monitor.ax",
+   "symbol": "risk_name",
+   "scope": "out",
+   "shape": "two-functions",
+   "edits": [
+    {
+     "old": "else if str_eq(effects, \"Net\") || str_eq(effects, \"Exec\") { 1 }",
+     "new": "else if str_eq(effects, \"Net\") || str_eq(effects, \"Exec\") { 2 }"
+    },
+    {
+     "old": "    if r <= 0 { \"Low\" }",
+     "new": "    if r < 0 { \"Low\" }"
+    }
+   ],
+   "context": "agent_risk (Net/Exec -> 2) and risk_name (level 0 -> Critical) are each broken and each has its own tests (test_agent_risk_by_effect_set, test_risk_name_levels); the hidden test composes them, so fixing either body leaves the other's tests failing.",
+   "visible": "test_agent_risk_by_effect_set",
+   "hidden": "test_risk_name_of_agent_risk"
+  },
+  {
+   "source": "asi/summarize.ax",
+   "symbol": "length_score",
+   "scope": "out",
+   "shape": "two-functions",
+   "edits": [
+    {
+     "old": "    count + 1\n}",
+     "new": "    count\n}"
+    },
+    {
+     "old": "        12 - (words - 12)",
+     "new": "        12 - (words - 11)"
+    }
+   ],
+   "context": "word_count drops the +1 and length_score decays from 11 words; each is tested directly (test_word_count_simple, test_length_score_decay_and_floor) and the hidden test feeds word_count into length_score, so no single body edit can make all pass.",
+   "visible": "test_length_score_decay_and_floor",
+   "hidden": "test_length_score_of_word_count"
+  },
+  {
+   "source": "asi/ad_optimizer.ax",
+   "symbol": "recommend_spend",
+   "scope": "out",
+   "shape": "signature",
+   "edits": [
+    {
+     "old": "@[verify(value <= 500)]",
+     "new": "@[verify(value <= 400)]"
+    }
+   ],
+   "context": "The @[verify] bound in recommend_spend's declaration rejects any value above 400 at runtime, but the tests require 499/500; no body edit can return those without the gate rejecting them, and no other function's body is involved."
+  },
+  {
+   "source": "asi/world_model.ax",
+   "symbol": "world_bits",
+   "scope": "out",
+   "shape": "two-functions",
+   "edits": [
+    {
+     "old": "{ w.a * x + w.b }",
+     "new": "{ w.a * x - w.b }"
+    },
+    {
+     "old": "description_bits(w.a) + description_bits(w.b)",
+     "new": "description_bits(w.a) + description_bits(w.a)"
+    }
+   ],
+   "context": "predict negates the offset and world_bits double-counts the slope; each has its own direct test (test_predict_linear, test_world_bits_offset_costs_more) and fitness depends on both, so fixing one body leaves the other's tests failing.",
+   "visible": "test_predict_linear",
+   "hidden": "test_fitness_values"
+  }
+ ]
+}
