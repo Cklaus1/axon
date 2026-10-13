@@ -514,7 +514,9 @@ def regress(history, root, *, cap_usd=0.50, parallel=3, again=False, date=None, 
         runs, _ = load_records(history)
 
     out_dir, sfx = _out_dir(runs, f"{date}-{head[:12]}")
-    rows, cortex = _measure(root, out_dir, spec, cap_usd=cap_usd, parallel=parallel)
+    # The cap is per invocation (PREREG-regress.md): main's run, if made, spent part.
+    rows, cortex = _measure(root, out_dir, spec, cap_usd=round(cap_usd - spent, 6),
+                            parallel=parallel)
     spend = run_ab.spent(out_dir)
     spent += spend
     rec = add(history, root, set_="dev", agent="cortex", rows=rows, corpus=spec["corpus"],
