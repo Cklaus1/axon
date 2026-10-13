@@ -1,0 +1,208 @@
+// sequences.ax — dynamic-programming helpers for a diff/merge tool and a
+// vending-machine change module.
+//
+//   axon test sequences.ax
+
+// Edit distance: the minimum number of single-character insertions,
+// deletions and substitutions that turn `a` into `b`.
+fn levenshtein(a: str, b: str) -> i64 {
+    let n = len(a)
+    let m = len(b)
+    let prev = []
+    for j in 0..m + 1 {
+        prev = arr_push(prev, j)
+    }
+    for i in 1..n + 1 {
+        let cur = arr_push([], i)
+        for j in 1..m + 1 {
+            let cost = if char_at(a, i - 1) == char_at(b, j - 1) { 0 } else { 1 }
+            let best = min_i64(prev[j] + 1, cur[j - 1] + 1)
+            cur = arr_push(cur, min_i64(best, prev[j - 1] + cost))
+        }
+        prev = cur
+    }
+    prev[m]
+}
+
+// Length of the longest common subsequence of `a` and `b` (characters in the
+// same order, not necessarily adjacent).
+fn lcs_len(a: str, b: str) -> i64 {
+    let n = len(a)
+    let m = len(b)
+    let prev = []
+    for j in 0..m + 1 {
+        prev = arr_push(prev, 0)
+    }
+    for i in 1..n + 1 {
+        let cur = arr_push([], 0)
+        for j in 1..m + 1 {
+            if char_at(a, i - 1) == char_at(b, j - 1) {
+                cur = arr_push(cur, prev[j - 1] + 1)
+            } else {
+                cur = arr_push(cur, max_i64(prev[j], cur[j - 1]))
+            }
+        }
+        prev = cur
+    }
+    prev[m]
+}
+
+// Length of the longest strictly increasing subsequence of `xs` (elements in
+// order, not necessarily adjacent).
+fn lis_len(xs: &[i64]) -> i64 {
+    let n = len(xs)
+    let best = []
+    let answer = 0
+    for i in 0..n {
+        let b = 1
+        for j in 0..i {
+            if xs[j] < xs[i] && best[j] + 1 > b {
+                b = best[j] + 1
+            }
+        }
+        best = arr_push(best, b)
+        if b > answer {
+            answer = b
+        }
+    }
+    answer
+}
+
+// Fewest coins (unlimited supply of each denomination in `coins`) that add up
+// to exactly `amount`, or -1 if no combination does. 0 for amount 0.
+fn min_coins(coins: &[i64], amount: i64) -> i64 {
+    let none = amount + 1
+    let best = arr_push([], 0)
+    for v in 1..amount + 1 {
+        let b = none
+        for k in 0..len(coins) {
+            let c = coins[k]
+            if c <= v && best[v - c] + 1 < b {
+                b = best[v - c] + 1
+            }
+        }
+        best = arr_push(best, b)
+    }
+    if best[amount] >= none { -1 } else { best[amount] }
+}
+
+// Number of different multisets of coins from `coins` (unlimited supply)
+// that add up to `amount`. Order does not matter: 1+2 and 2+1 are the same
+// way. There is exactly one way to make 0 (no coins).
+fn count_ways(coins: &[i64], amount: i64) -> i64 {
+    let ways = arr_push([], 1)
+    for v in 1..amount + 1 {
+        ways = arr_push(ways, 0)
+    }
+    for k in 0..len(coins) {
+        let c = coins[k]
+        for v in c..amount + 1 {
+            ways[v] = ways[v] + ways[v - c]
+        }
+    }
+    ways[amount]
+}
+
+@[test]
+fn test_levenshtein_basics() {
+    assert_eq(levenshtein("kitten", "sitting"), 3)
+    assert_eq(levenshtein("", "abc"), 3)
+    assert_eq(levenshtein("same", "same"), 0)
+    assert_eq(levenshtein("book", "back"), 2)
+}
+
+@[test]
+fn test_levenshtein_flaw_lawn() {
+    assert_eq(levenshtein("flaw", "lawn"), 2)
+}
+
+@[test]
+fn test_levenshtein_shifted() {
+    assert_eq(levenshtein("abc", "bc"), 1)
+    assert_eq(levenshtein("sunday", "saturday"), 3)
+    assert_eq(levenshtein("abcdef", "azced"), 3)
+}
+
+@[test]
+fn test_lcs_identical_and_disjoint() {
+    assert_eq(lcs_len("abc", "abc"), 3)
+    assert_eq(lcs_len("abc", "def"), 0)
+    assert_eq(lcs_len("", "x"), 0)
+    assert_eq(lcs_len("axbycz", "abc"), 3)
+}
+
+@[test]
+fn test_lcs_classic() {
+    assert_eq(lcs_len("ABCBDAB", "BDCABA"), 4)
+    assert_eq(lcs_len("AGGTAB", "GXTXAYB"), 4)
+    assert_eq(lcs_len("XMJYAUZ", "MZJAWXU"), 4)
+    assert_eq(lcs_len("zabc", "abcz"), 3)
+}
+
+@[test]
+fn test_lcs_words() {
+    assert_eq(lcs_len("banana", "atana"), 4)
+    assert_eq(lcs_len("thisisatest", "testing123testing"), 7)
+}
+
+@[test]
+fn test_lis_simple() {
+    assert_eq(lis_len(&[1, 2, 3, 4]), 4)
+    assert_eq(lis_len(&[5, 4, 3]), 1)
+    assert_eq(lis_len(&[]), 0)
+    assert_eq(lis_len(&[7, 7, 7]), 1)
+}
+
+@[test]
+fn test_lis_classic() {
+    assert_eq(lis_len(&[10, 9, 2, 5, 3, 7, 101, 18]), 4)
+}
+
+@[test]
+fn test_lis_more() {
+    assert_eq(lis_len(&[0, 8, 4, 12, 2, 10, 6, 14, 1, 9]), 4)
+    assert_eq(lis_len(&[3, 10, 2, 1, 20]), 3)
+    assert_eq(lis_len(&[2, 2, 3, 1, 4]), 3)
+}
+
+@[test]
+fn test_min_coins_us() {
+    assert_eq(min_coins(&[1, 5, 10, 25], 63), 6)
+    assert_eq(min_coins(&[1, 5, 10], 0), 0)
+    assert_eq(min_coins(&[2], 3), -1)
+    assert_eq(min_coins(&[2, 5], 3), -1)
+}
+
+@[test]
+fn test_min_coins_non_greedy() {
+    assert_eq(min_coins(&[1, 3, 4], 6), 2)
+}
+
+@[test]
+fn test_min_coins_more() {
+    assert_eq(min_coins(&[1, 5, 6, 9], 11), 2)
+    assert_eq(min_coins(&[1, 7, 10], 14), 2)
+    assert_eq(min_coins(&[5, 7], 24), 4)
+    assert_eq(min_coins(&[4, 3], 6), 2)
+}
+
+@[test]
+fn test_count_ways_single_coin() {
+    assert_eq(count_ways(&[5], 10), 1)
+    assert_eq(count_ways(&[2], 3), 0)
+    assert_eq(count_ways(&[1], 4), 1)
+    assert_eq(count_ways(&[3], 0), 1)
+}
+
+@[test]
+fn test_count_ways_two_coins() {
+    assert_eq(count_ways(&[1, 2], 3), 2)
+}
+
+@[test]
+fn test_count_ways_more() {
+    assert_eq(count_ways(&[1, 2, 5], 5), 4)
+    assert_eq(count_ways(&[2, 3], 7), 1)
+    assert_eq(count_ways(&[1, 2, 5], 11), 11)
+    assert_eq(count_ways(&[2, 5, 3, 6], 10), 5)
+}

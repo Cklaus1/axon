@@ -1,0 +1,94 @@
+// scheduler.ax — CPU-scheduling estimates for a job dashboard.
+//
+// Every job arrives at time 0; `bursts[i]` is job i's run time. A job with a
+// burst of 0 completes at time 0. "Completion time" is when the job's last
+// unit of work finishes.
+//
+//   axon test scheduler.ax
+
+// First-come-first-served: jobs run to completion in index order.
+fn fcfs_finish(bursts: &[i64], job: i64) -> i64 {
+    let t = 0
+    for i in 0..job + 1 {
+        t = t + bursts[i]
+    }
+    t
+}
+
+// Shortest-job-first, non-preemptive: jobs run to completion in order of
+// burst, ties broken by the lower index.
+fn sjf_finish(bursts: &[i64], job: i64) -> i64 {
+    let t = 0
+    for i in 0..len(bursts) {
+        if bursts[i] < bursts[job] || (bursts[i] == bursts[job] && i <= job) {
+            t = t + bursts[i]
+        }
+    }
+    t
+}
+
+// Round robin with time slice `quantum`: the ready queue starts in index
+// order; the job at the head runs for min(quantum, remaining) and, if it is
+// not finished, goes to the back of the queue. Returns job `job`'s completion
+// time.
+fn round_robin_finish(bursts: &[i64], quantum: i64, job: i64) -> i64 {
+    if bursts[job] == 0 {
+        return 0
+    }
+    let rem = []
+    for i in 0..len(bursts) {
+        rem = arr_push(rem, bursts[i])
+    }
+    let t = 0
+    while true {
+        for i in 0..len(rem) {
+            if rem[i] > 0 {
+                let run = min_i64(quantum, rem[i])
+                t = t + run
+                rem[i] = rem[i] - run
+                if rem[i] == 0 && i == job {
+                    return t
+                }
+            }
+        }
+    }
+    t
+}
+
+@[test]
+fn test_fcfs() {
+    assert_eq(fcfs_finish(&[3, 4, 5], 0), 3)
+    assert_eq(fcfs_finish(&[3, 4, 5], 2), 12)
+}
+
+@[test]
+fn test_sjf() {
+    assert_eq(sjf_finish(&[6, 2, 8, 3], 0), 11)
+    assert_eq(sjf_finish(&[6, 2, 8, 3], 2), 19)
+    assert_eq(sjf_finish(&[4, 4, 1], 1), 9)
+}
+
+@[test]
+fn test_rr_trivial() {
+    assert_eq(round_robin_finish(&[5], 2, 0), 5)
+    assert_eq(round_robin_finish(&[0, 4], 2, 0), 0)
+    assert_eq(round_robin_finish(&[0, 4], 2, 1), 4)
+}
+
+@[test]
+fn test_rr_quantum_two() {
+    assert_eq(round_robin_finish(&[5, 3, 1], 2, 0), 9)
+    assert_eq(round_robin_finish(&[5, 3, 1], 2, 1), 8)
+    assert_eq(round_robin_finish(&[5, 3, 1], 2, 2), 5)
+    assert_eq(round_robin_finish(&[1, 8, 3, 5], 2, 0), 1)
+    assert_eq(round_robin_finish(&[1, 8, 3, 5], 2, 3), 15)
+}
+
+@[test]
+fn test_rr_larger_quanta() {
+    assert_eq(round_robin_finish(&[10, 4, 7, 2], 3, 1), 15)
+    assert_eq(round_robin_finish(&[10, 4, 7, 2], 3, 2), 22)
+    assert_eq(round_robin_finish(&[10, 4, 7, 2], 3, 3), 11)
+    assert_eq(round_robin_finish(&[6, 6, 6], 4, 0), 14)
+    assert_eq(round_robin_finish(&[2, 3], 5, 0), 2)
+}

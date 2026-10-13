@@ -1,0 +1,75 @@
+// tax.ax — progressive income tax for a payroll estimate (whole currency units).
+//
+// Brackets (marginal rates):
+//   income below 10000            0%
+//   the part from 10000 to 40000  10%
+//   the part from 40000 to 100000 25%
+//   the part above 100000         40%
+// Each rate applies only to the slice of income inside its bracket, so a raise
+// never lowers take-home pay. Each slice's tax is rounded down to a whole unit.
+//
+//   axon test tax.ax
+
+// Index of the bracket the LAST unit of `income` falls in: 0..3.
+fn bracket_of(income: i64) -> i64 {
+    if income < 10000 {
+        0
+    } else if income < 40000 {
+        1
+    } else if income < 100000 {
+        2
+    } else {
+        3
+    }
+}
+
+// The rate, in percent, applied to the next unit earned.
+fn marginal_rate(income: i64) -> i64 {
+    let rates = [0, 10, 25, 40]
+    rates[bracket_of(income)]
+}
+
+// Total tax owed on `income`.
+fn income_tax(income: i64) -> i64 {
+    let limits = [10000, 40000, 100000]
+    let rates = [0, 10, 25, 40]
+    let tax = 0
+    let lower = 0
+    for k in 0..4 {
+        let upper = if k < 3 { limits[k] } else { max_i64(income, lower) }
+        if income > lower {
+            let top = min_i64(income, upper)
+            tax = tax + (top - lower) * rates[k] / 100
+        }
+        lower = upper
+    }
+    tax
+}
+
+@[test]
+fn test_brackets() {
+    assert_eq(bracket_of(0), 0)
+    assert_eq(bracket_of(10000), 1)
+    assert_eq(bracket_of(99999), 2)
+    assert_eq(marginal_rate(250000), 40)
+}
+
+@[test]
+fn test_tax_below_threshold() {
+    assert_eq(income_tax(0), 0)
+    assert_eq(income_tax(8000), 0)
+    assert_eq(income_tax(9999), 0)
+}
+
+@[test]
+fn test_tax_middle_income() {
+    assert_eq(income_tax(50000), 5500)
+}
+
+@[test]
+fn test_tax_across_brackets() {
+    assert_eq(income_tax(25000), 1500)
+    assert_eq(income_tax(40000), 3000)
+    assert_eq(income_tax(100000), 18000)
+    assert_eq(income_tax(150000), 38000)
+}

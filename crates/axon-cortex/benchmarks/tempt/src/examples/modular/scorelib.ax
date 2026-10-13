@@ -1,0 +1,29 @@
+// scorelib.ax — an importable Axon library (no `main`, so it can be `use`d).
+//
+// Demonstrates that Axon programs are modular: another file declares
+// `mod scorelib` + `use scorelib.{…}` and the module is resolved from
+// AXON_PATH at compile time, then run by the interpreter. See agent.ax.
+//
+//   axon test examples/modular/scorelib.ax     # the @[test]s below
+
+// Weighted blend of a quality score and a confidence percentage (0..100).
+fn weighted(quality: i64, qw: i64, confidence_pct: i64, cw: i64) -> i64 {
+    (quality * qw + confidence_pct * cw) / max_i64(qw + cw, 1)
+}
+
+// Approve iff the combined score clears the floor.
+fn approve(combined: i64, floor: i64) -> bool {
+    combined >= floor
+}
+
+@[test]
+fn test_weighted() {
+    // (90*6 + 80*4) / 10 = 86
+    assert_eq(weighted(90, 6, 80, 4), 86)
+}
+
+@[test]
+fn test_approve() {
+    assert(approve(86, 70))
+    assert(!approve(60, 70))
+}
