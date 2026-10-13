@@ -744,25 +744,33 @@ change to `generate.rs`, `rank.rs` and `runner.rs` became everyone's default
 with no scored dev comparison. The receipt rule closes that gap.
 `python3 crates/axon-cortex/benchmarks/scorecard/scorecard.py receipt --check`
 runs in `scripts/gate.sh` (the gate and `--fast`). It works offline and needs
-no key. It fails unless `scorecard/history.jsonl` holds, for the working
-tree's REPAIR DIGEST, one of these:
+no key. It passes when the working tree's REPAIR DIGEST equals main's (the
+digest at `git merge-base HEAD origin/main`: nothing changed). Otherwise
+`scorecard/history.jsonl` must hold, for the working tree's digest, one of
+these:
 
 - a **dev run** by agent `cortex` at that digest, on the receipt config (the
   policy in force with the audit off: today Haiku 5.5 via micode, the Haiku
   5.5 ranker, breadth walk, `--candidates 6`, budget 8) and on
-  `ab/corpus.json`. The run must not be judged worse than its incumbent: it
-  has 0 false successes, and `compare INCUMBENT RUN` names no first
-  separating criterion that favours the incumbent. The criteria come in the
-  strict order: false successes, verified (exact McNemar), proposals, cost
-  and wall time per fix, then truth first. The incumbent is the latest
-  earlier run on that config that was not itself judged worse. When several
-  runs share a digest, the latest one decides. `scorecard.py regress` makes
-  this run (`. /root/.openrouter.env` first). It builds both binaries at
-  HEAD, runs `run_ab.py --arm B`, adds the run with `add --set dev` (paired
-  against the incumbent and the plain agent), runs `report`, then prints
-  the comparison and the verdict. A whole dev run costs a few cents. The
-  procedure, rule and cap are preregistered once, in
-  [`scorecard/PREREG-regress.md`](../crates/axon-cortex/benchmarks/scorecard/PREREG-regress.md).
+  `ab/corpus.json`, judged not worse than **main's run**: the latest run at
+  the merge-base digest, which `add --incumbent` records with the run
+  (`receipt_incumbent`), so a verdict never moves afterwards. The rule,
+  checked in order: any false success fails; fewer verified with exact
+  McNemar p < 0.05 fails; then proposals, wall and cost per task over the
+  tasks both verified, each with an exact two-sided sign test, and the first
+  one significantly worse (p < 0.05) fails. Otherwise it passes, and the
+  effort deltas are reported, not gated. When several runs share a digest,
+  the latest one decides. A run judged against an older main no longer
+  counts once main moves: `regress --again` renews it. `scorecard.py
+  regress` makes this run (`. /root/.openrouter.env` first). When main has
+  no run, it first measures main in a detached worktree at the merge-base.
+  Then it builds both binaries at HEAD, runs `run_ab.py --arm B`, adds the
+  run with `add --set dev` (paired against main's run and the plain agent),
+  runs `report`, then prints the comparison and the verdict. A whole dev run
+  costs a few cents. The procedure, rule and cap are preregistered once, in
+  [`scorecard/PREREG-regress.md`](../crates/axon-cortex/benchmarks/scorecard/PREREG-regress.md)
+  (amendments 1 and 2 changed the rule and the incumbent; each is dated and
+  says what had been seen when it was written).
 - a **waiver** for that digest:
   `scorecard.py waive --reason "comments only in generate.rs"`. It is for a
   change that cannot alter behaviour. The reason is printed in the scorecard
@@ -809,6 +817,7 @@ Limits. A receipt is a regression check on the set development is tuned on,
 not evidence that a change generalises. The audit is off in the receipt run,
 so an audit-prompt change is receipted without the audit being exercised.
 The model ranker is exercised only as the policy uses it. A receipt is one
-run against one incumbent, and the steps after verified are untested, so a
-noisy proposal count can fail a receipt. Rerunning with `regress --again` is
-allowed, and every rerun stays visible in the history.
+run against one incumbent (main's), so a small effort regression can pass
+unseen, and a lucky or unlucky main run moves every verdict judged against
+it. Rerunning with `regress --again` is allowed, and every rerun stays
+visible in the history.

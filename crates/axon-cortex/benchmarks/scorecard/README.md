@@ -84,7 +84,8 @@ model:
 
 ```sh
 python3 scorecard.py add --set dev --agent cortex --rows DIR/b.jsonl \
-  --corpus ../ab/corpus.json --baseline INCUMBENT-RUN-ID --baseline PLAIN-RUN-ID \
+  --corpus ../ab/corpus.json --baseline MAIN-RUN-ID --baseline PLAIN-RUN-ID \
+  --incumbent MAIN-RUN-ID \
   --config-json '{"cortex_commit":"<git sha>","cortex_sha256":"<hex>","model":"claude-haiku-5-5","transport":"micode","ranker":"openrouter:anthropic/claude-haiku-5.5","audit":"off","walk":"breadth","candidates":6,"budget":8}' \
   --notes "..."
 ```
@@ -204,7 +205,7 @@ Per set, the latest cortex run (B) against the earliest cortex run on the same c
 
 ## Repair-path receipts
 
-`python3 scorecard.py receipt --check` (in `scripts/gate.sh`, the gate and `--fast`) passes only when this history holds, for the REPAIR DIGEST of the working tree, a dev run below that is not judged worse than its incumbent, or a waiver. The latest run at a digest decides; a waiver counts only for a digest no run measured. `python3 scorecard.py regress` produces the run, `python3 scorecard.py waive --reason TEXT` the waiver (see docs/CORTEX.md, "Repair-path receipts").
+`python3 scorecard.py receipt --check` (in `scripts/gate.sh`, the gate and `--fast`) passes when the REPAIR DIGEST of the working tree equals main's (the digest at `git merge-base HEAD origin/main`), or when this history holds, for the working tree's digest, a dev run below judged not worse than main's run (the incumbent it recorded), or a waiver. The latest such run at a digest decides; a run judged against an older main no longer counts; a waiver counts only for a digest no run measured. `python3 scorecard.py regress` produces the run (measuring main first when main has no run), `python3 scorecard.py waive --reason TEXT` the waiver (see docs/CORTEX.md, "Repair-path receipts").
 
 The repair digest is sha256 over (path, content), in path order, of the files matching:
 
@@ -217,14 +218,14 @@ except:
 - `crates/axon-cortex/src/ai.rs`: the in-process generator, reached only through `--generator ai:MODEL`; the policy and every benchmark generate through `cmd:` and a driver script
 - `crates/axon-cortex/src/label.rs`: writes the `--label-log` row (off unless --label-log / CORTEX_LABEL_LOG is set); it decides no candidate, verdict, exit code or `--json` field
 
-Receipt config (the policy in force, audit off): model `claude-haiku-5-5`, transport `micode`, ranker `openrouter:anthropic/claude-haiku-5.5`, audit `off`, walk `breadth`, candidates `6`, budget `8`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7). Each run is judged against the incumbent before it by `PREREG-regress.md`'s rule: a false success, a verified loss with exact McNemar p < 0.05, or an effort loss (proposals, then wall, then cost per task, over the tasks both verified) with an exact sign test p < 0.05 makes it worse; a run becomes the incumbent unless it is worse.
+Receipt config (the policy in force, audit off): model `claude-haiku-5-5`, transport `micode`, ranker `openrouter:anthropic/claude-haiku-5.5`, audit `off`, walk `breadth`, candidates `6`, budget `8`; corpus `crates/axon-cortex/benchmarks/ab/corpus.json` (sha256 3c7bc7bd4ea106f7). A run is judged against its recorded incumbent (main's run, `PREREG-regress.md` amendment 2) by that file's rule: a false success, a verified loss with exact McNemar p < 0.05, or an effort loss (proposals, then wall, then cost per task, over the tasks both verified) with an exact sign test p < 0.05 makes it worse. A run with no incumbent (main's own, or one added before amendment 2) is judged on false successes only.
 
 | # | run | repair digest | incumbent (A) | verified | false successes | proposals / fix | receipt rule | receipt |
 |---|---|---|---|---|---|---|---|---|
-| 7 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | not recorded (added before the receipt rule) | - (first) | 56/60 | 0 | 2.14 | - | first of the chain |
-| 15 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595` | `e94a9cccd7124548` | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 59/60 | 1 | 1.03 | 1 false success(es) | **WORSE** |
-| 16 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a` | `6550f73850652927` | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 60/60 | 0 | 1.08 | cost per task worse (50 tasks worse, 6 better, sign test p = 0) | **WORSE** |
-| 17 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf` | `a53b1a076d068963` | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 60/60 | 0 | 1.17 | cost per task worse (48 tasks worse, 8 better, sign test p = 0) | **WORSE** |
+| 7 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | not recorded (added before the receipt rule) | - (none) | 56/60 | 0 | 2.14 | - | no incumbent (false successes only) |
+| 15 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-1fd4b31bf595` | `e94a9cccd7124548` | - (none) | 59/60 | 1 | 1.03 | - | **WORSE** |
+| 16 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-3503e4342a6a` | `6550f73850652927` | - (none) | 60/60 | 0 | 1.08 | - | no incumbent (false successes only) |
+| 17 | `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-2c837a12daaf` | `a53b1a076d068963` | - (none) | 60/60 | 0 | 1.17 | - | no incumbent (false successes only) |
 
 Waivers (a digest declared to change no behaviour, with the reason):
 
