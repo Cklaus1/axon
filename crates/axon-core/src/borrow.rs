@@ -81,6 +81,12 @@ fn is_copy(ty: &Type) -> bool {
 /// without access to the full inference context.
 /// Returns `None` when the type cannot be determined (caller treats as Copy).
 fn infer_expr_type(expr: &Expr, known: &HashMap<String, Type>) -> Option<Type> {
+    // A `BinOp` has its left operand's type: skip down a long left-nested chain
+    // with a loop, not one frame per term (AX-64).
+    let mut expr = expr;
+    while let Expr::BinOp { left, .. } = expr {
+        expr = left;
+    }
     match expr {
         Expr::Literal(crate::ast::Literal::Int(_)) => Some(Type::I64),
         Expr::Literal(crate::ast::Literal::Float(_)) => Some(Type::F64),
@@ -101,7 +107,7 @@ fn infer_expr_type(expr: &Expr, known: &HashMap<String, Type>) -> Option<Type> {
             }
             None
         }
-        Expr::BinOp { left, .. } => infer_expr_type(left, known),
+        Expr::BinOp { .. } => unreachable!("the loop above stops at a non-BinOp"),
         Expr::Comptime(inner) => infer_expr_type(inner, known),
         Expr::Block(stmts) if !stmts.is_empty() => {
             infer_expr_type(&stmts.last().unwrap().expr, known)
@@ -369,9 +375,18 @@ impl OwnershipGraph {
                 self.check_move_expr(v);
             }
 
+            // The left spine of a long chain is walked with a loop (AX-64).
             Expr::BinOp { left, right, .. } => {
-                self.check_read(left);
-                self.check_read(right);
+                let mut rights = vec![&**right];
+                let mut cur = &**left;
+                while let Expr::BinOp { left, right, .. } = cur {
+                    rights.push(&**right);
+                    cur = left;
+                }
+                self.check_read(cur);
+                for r in rights.into_iter().rev() {
+                    self.check_read(r);
+                }
             }
 
             Expr::UnaryOp { operand, .. } => self.check_read(operand),

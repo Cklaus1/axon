@@ -1077,13 +1077,73 @@ fn collect_caps_expr(expr: &Expr, caps: &mut std::collections::BTreeSet<String>)
     }
 }
 
-fn check_stmts<'a>(stmts: &'a [Stmt], ctx: &mut CapCtx<'a, '_>) {
-    for stmt in stmts {
-        check_expr(&stmt.expr, ctx);
+/// One pending step of the `@[contained]` walk. The walk is a loop over an
+/// explicit work stack, not a recursion (AX-66): following a helper call means
+/// walking the helper's body, so a chain of `N` helpers (`f1` calls `f0`, `f2`
+/// calls `f1`, …, flat source) was `N` nested walks, a native stack overflow at
+/// 3,000 links and a wasm32 trap at 600. Steps are pushed in reverse so they
+/// pop in the order the recursive walk visited them, and the enter/leave pairs
+/// keep `visited`/`site` exactly what they were on the recursive path.
+enum Walk<'a> {
+    /// Check one expression, then (pushed below it) its children.
+    Expr(&'a Expr),
+    /// Follow a call (or a value reference) into the user fn `name`, unless it
+    /// is already on the current path.
+    Helper(&'a str, &'a FnDef),
+    /// Leave `name`: take it off the path and restore the site.
+    LeaveHelper(&'a str, Span),
+    /// Follow `x.go()` into every impl method named `method`, unless that name
+    /// is already on the current path.
+    Methods(&'a str, &'a [&'a FnDef]),
+    /// Leave the method name: take it off the path.
+    LeaveMethods(&'a str),
+    /// A diagnostic raised between two walks of the dispatch loop.
+    Report(CapabilityError),
+}
+
+/// Queue `exprs` so they are checked in iteration order.
+fn push_exprs<'a>(work: &mut Vec<Walk<'a>>, exprs: impl DoubleEndedIterator<Item = &'a Expr>) {
+    for e in exprs.rev() {
+        work.push(Walk::Expr(e));
     }
 }
 
-fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
+fn check_expr<'a>(root: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
+    let mut work = vec![Walk::Expr(root)];
+    while let Some(step) = work.pop() {
+        match step {
+            Walk::Expr(e) => visit_expr(e, ctx, &mut work),
+            Walk::Helper(name, helper) => {
+                if ctx.visited.insert(name) {
+                    // A helper with its OWN @[contained] is checked under
+                    // its own spec elsewhere; still descend so a stricter
+                    // CALLER spec also constrains it (defense in depth).
+                    let outer = ctx.site;
+                    ctx.site = helper.span;
+                    work.push(Walk::LeaveHelper(name, outer));
+                    work.push(Walk::Expr(&helper.body));
+                }
+            }
+            Walk::LeaveHelper(name, outer) => {
+                ctx.site = outer;
+                ctx.visited.remove(name);
+            }
+            Walk::Methods(method, impls) => {
+                if ctx.visited_methods.insert(method) {
+                    work.push(Walk::LeaveMethods(method));
+                    push_exprs(&mut work, impls.iter().map(|m| &m.body));
+                }
+            }
+            Walk::LeaveMethods(method) => {
+                ctx.visited_methods.remove(method);
+            }
+            Walk::Report(err) => ctx.errors.push(err),
+        }
+    }
+}
+
+/// The node's own checks, and its children queued on `work`.
+fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<'a>>) {
     match expr {
         Expr::Call { callee, args, .. } => {
             // Plain-ident call sites:    `ai_extract_uncertain_i64(p)`
@@ -1096,6 +1156,9 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
                 Expr::StructLit { name, fields } if fields.is_empty() => Some(name.as_str()),
                 _ => None,
             };
+            // What the call walks, in order: dispatch targets, then the callee's own
+            // helper (see below), before the callee expression and the arguments.
+            let mut follow: Vec<Walk<'a>> = Vec::new();
             if let Some(name) = callee_name {
                 // A builtin I/O call is checked against the spec directly.
                 check_call(name, args, ctx.spec, ctx.site, ctx.errors);
@@ -1128,7 +1191,7 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
                         Some(Expr::Literal(crate::ast::Literal::Str(t))) => t,
                         None => continue,
                         Some(_) => {
-                            ctx.errors.push(CapabilityError::new(
+                            follow.push(Walk::Report(CapabilityError::new(
                                 E1001,
                                 format!(
                                     "`{name}(<dynamic function name>)` is not permitted by \
@@ -1138,22 +1201,14 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
                                      allowlist); pass a string literal"
                                 ),
                                 Span::dummy(),
-                            ));
+                            )));
                             continue;
                         }
                     };
-                    if let Some(helper) = ctx.fn_map.get(target.as_str()) {
-                        // `ctx.visited` keys on &str borrowed from the fn_map key,
-                        // so re-look-up the canonical key rather than the literal.
-                        if let Some((canon, _)) = ctx.fn_map.get_key_value(target.as_str()) {
-                            if ctx.visited.insert(canon) {
-                                let outer = ctx.site;
-                                ctx.site = helper.span;
-                                check_expr(&helper.body, ctx);
-                                ctx.site = outer;
-                                ctx.visited.remove(canon);
-                            }
-                        }
+                    // `ctx.visited` keys on &str borrowed from the fn_map key, so
+                    // look up the canonical key rather than the literal.
+                    if let Some((canon, helper)) = ctx.fn_map.get_key_value(target.as_str()) {
+                        follow.push(Walk::Helper(canon, helper));
                     }
                 }
                 // A USER fn call escapes the sandbox unless we follow it: the
@@ -1161,16 +1216,7 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
                 // the caller's containment). Guard against recursion via `visited`.
                 if classify_call(name).is_none() {
                     if let Some(helper) = ctx.fn_map.get(name) {
-                        if ctx.visited.insert(name) {
-                            // A helper with its OWN @[contained] is checked under
-                            // its own spec elsewhere; still descend so a stricter
-                            // CALLER spec also constrains it (defense in depth).
-                            let outer = ctx.site;
-                            ctx.site = helper.span;
-                            check_expr(&helper.body, ctx);
-                            ctx.site = outer;
-                            ctx.visited.remove(name);
-                        }
+                        follow.push(Walk::Helper(name, helper));
                     }
                 }
             }
@@ -1179,45 +1225,43 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
             // (builtin via check_call, user fn via the helper-follow), and the
             // Ident arm below now flags builtin VALUE references — so recursing a
             // plain-ident callee here would double-report it as an alias.
+            push_exprs(work, args.iter());
+            // (`push_exprs` queues in reverse so the first argument pops first;
+            // the callee, then the follow steps, go on top of it.)
             if !matches!(callee.as_ref(), Expr::Ident(_)) {
-                check_expr(callee, ctx);
+                work.push(Walk::Expr(callee));
             }
-            for arg in args {
-                check_expr(arg, ctx);
-            }
+            work.extend(follow.into_iter().rev());
         }
 
         // Recurse into all compound expressions.
-        Expr::Block(stmts) => check_stmts(stmts, ctx),
+        Expr::Block(stmts) => push_exprs(work, stmts.iter().map(|s| &s.expr)),
         // Phase 6: capability checks must see through a `with` block — both the
         // handler arm bodies and the wrapped body can make capability-relevant
         // calls.
         Expr::WithHandler { handler, body } => {
-            if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
-                for arm in arms.iter().chain(return_arm.as_deref()) {
-                    check_expr(&arm.body, ctx);
+            let arms = match handler.as_ref() {
+                crate::ast::HandlerExpr::Inline { arms, return_arm } => {
+                    arms.iter().chain(return_arm.as_deref())
                 }
-            }
-            check_expr(body, ctx);
+                _ => [].iter().chain(Option::None),
+            };
+            push_exprs(
+                work,
+                arms.map(|arm| &arm.body).chain(std::iter::once(&**body)),
+            );
         }
         Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
-            check_expr(value, ctx)
+            work.push(Walk::Expr(value))
         }
-        Expr::BinOp { left, right, .. } => {
-            check_expr(left, ctx);
-            check_expr(right, ctx);
-        }
-        Expr::UnaryOp { operand, .. } => check_expr(operand, ctx),
-        Expr::Question(inner) => check_expr(inner, ctx),
+        Expr::BinOp { left, right, .. } => push_exprs(work, [&**left, &**right].into_iter()),
+        Expr::UnaryOp { operand, .. } => work.push(Walk::Expr(operand)),
+        Expr::Question(inner) => work.push(Walk::Expr(inner)),
         Expr::MethodCall {
             receiver,
             method,
             args,
         } => {
-            check_expr(receiver, ctx);
-            for arg in args {
-                check_expr(arg, ctx);
-            }
             // Follow the dispatch into the impl method body so a contained fn
             // cannot launder a forbidden call through `x.go()`. Dispatch is
             // over-approximated by NAME (no receiver type statically): every impl
@@ -1226,90 +1270,63 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
             // method with its OWN @[contained] is also checked under its own spec
             // elsewhere; descending here additionally constrains it by the
             // (possibly stricter) CALLER spec — defense in depth, same as helpers.
-            if let Some(impls) = ctx.method_map.get(method.as_str()) {
-                if ctx.visited_methods.insert(method.as_str()) {
-                    for m in impls {
-                        check_expr(&m.body, ctx);
-                    }
-                    ctx.visited_methods.remove(method.as_str());
-                }
+            //
+            // Walked after the receiver and the arguments, so pushed first.
+            let methods = ctx.method_map;
+            if let Some(impls) = methods.get(method.as_str()) {
+                work.push(Walk::Methods(method.as_str(), impls));
             }
+            push_exprs(work, std::iter::once(&**receiver).chain(args.iter()));
         }
         Expr::If { cond, then, else_ } => {
-            check_expr(cond, ctx);
-            check_expr(then, ctx);
-            if let Some(e) = else_ {
-                check_expr(e, ctx);
-            }
+            push_exprs(work, [&**cond, &**then].into_iter().chain(else_.as_deref()))
         }
-        Expr::Match { subject, arms } => {
-            check_expr(subject, ctx);
-            for arm in arms {
-                if let Some(g) = &arm.guard {
-                    check_expr(g, ctx);
-                }
-                check_expr(&arm.body, ctx);
-            }
-        }
-        Expr::While { cond, body } => {
-            check_expr(cond, ctx);
-            check_stmts(body, ctx);
-        }
-        Expr::WhileLet { expr, body, .. } => {
-            check_expr(expr, ctx);
-            check_stmts(body, ctx);
-        }
+        Expr::Match { subject, arms } => push_exprs(
+            work,
+            std::iter::once(&**subject).chain(
+                arms.iter()
+                    .flat_map(|arm| arm.guard.iter().chain(std::iter::once(&arm.body))),
+            ),
+        ),
+        Expr::While { cond, body } => push_exprs(
+            work,
+            std::iter::once(&**cond).chain(body.iter().map(|s| &s.expr)),
+        ),
+        Expr::WhileLet { expr, body, .. } => push_exprs(
+            work,
+            std::iter::once(&**expr).chain(body.iter().map(|s| &s.expr)),
+        ),
         Expr::For {
             start, end, body, ..
-        } => {
-            check_expr(start, ctx);
-            check_expr(end, ctx);
-            check_stmts(body, ctx);
-        }
-        Expr::Assign { value, .. } => check_expr(value, ctx),
-        Expr::AssignTo { place, value } => {
-            check_expr(place, ctx);
-            check_expr(value, ctx);
-        }
-        Expr::Return(inner) => {
-            if let Some(e) = inner {
-                check_expr(e, ctx);
-            }
-        }
-        Expr::FieldAccess { receiver, .. } => check_expr(receiver, ctx),
-        Expr::Index { receiver, index } => {
-            check_expr(receiver, ctx);
-            check_expr(index, ctx);
-        }
-        Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => {
-            check_expr(inner, ctx);
-        }
-        Expr::Array(elems) | Expr::Tuple(elems) => {
-            for e in elems {
-                check_expr(e, ctx);
-            }
-        }
-        Expr::StructLit { fields, .. } => {
-            for (_, v) in fields {
-                check_expr(v, ctx);
-            }
-        }
-        Expr::FmtStr { parts } => {
-            for part in parts {
-                if let crate::ast::FmtPart::Expr(e) = part {
-                    check_expr(e, ctx);
-                }
-            }
-        }
-        Expr::Lambda { body, .. } => check_expr(body, ctx),
-        Expr::Spawn(body) => check_expr(body, ctx),
-        Expr::Select(arms) => {
-            for arm in arms {
-                check_expr(&arm.recv, ctx);
-                check_expr(&arm.body, ctx);
-            }
-        }
-        Expr::Comptime(inner) => check_expr(inner, ctx),
+        } => push_exprs(
+            work,
+            [&**start, &**end]
+                .into_iter()
+                .chain(body.iter().map(|s| &s.expr)),
+        ),
+        Expr::Assign { value, .. } => work.push(Walk::Expr(value)),
+        Expr::AssignTo { place, value } => push_exprs(work, [&**place, &**value].into_iter()),
+        Expr::Return(inner) => push_exprs(work, inner.as_deref().into_iter()),
+        Expr::FieldAccess { receiver, .. } => work.push(Walk::Expr(receiver)),
+        Expr::Index { receiver, index } => push_exprs(work, [&**receiver, &**index].into_iter()),
+        Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => work.push(Walk::Expr(inner)),
+        Expr::Array(elems) | Expr::Tuple(elems) => push_exprs(work, elems.iter()),
+        Expr::StructLit { fields, .. } => push_exprs(work, fields.iter().map(|(_, v)| v)),
+        Expr::FmtStr { parts } => push_exprs(
+            work,
+            parts.iter().filter_map(|part| match part {
+                crate::ast::FmtPart::Expr(e) => Some(&**e),
+                _ => None,
+            }),
+        ),
+        Expr::Lambda { body, .. } => work.push(Walk::Expr(body)),
+        Expr::Spawn(body) => work.push(Walk::Expr(body)),
+        Expr::Select(arms) => push_exprs(
+            work,
+            arms.iter()
+                .flat_map(|arm| [&arm.recv, &arm.body].into_iter()),
+        ),
+        Expr::Comptime(inner) => work.push(Walk::Expr(inner)),
         // A capability-bearing builtin referenced as a VALUE (not called) —
         // `let f = read_file; f(p)`. Closes the builtin-aliasing route
         // (THREAT_MODEL.md §8); permitted only if the spec grants the category.
@@ -1321,13 +1338,7 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
             // `Call` arm). Without this the value route launders the sandbox.
             if classify_call(name).is_none() {
                 if let Some(helper) = ctx.fn_map.get(name.as_str()) {
-                    if ctx.visited.insert(name) {
-                        let outer = ctx.site;
-                        ctx.site = helper.span;
-                        check_expr(&helper.body, ctx);
-                        ctx.site = outer;
-                        ctx.visited.remove(name.as_str());
-                    }
+                    work.push(Walk::Helper(name, helper));
                 }
             }
         }

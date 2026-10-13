@@ -1944,9 +1944,20 @@ impl<'a> Resolver<'a> {
             }
 
             // ── Binary / unary operators ──────────────────────────────────
-            Expr::BinOp { left, right, .. } => {
-                self.resolve_expr(left);
-                self.resolve_expr(right);
+            // AX-64: no frame per link of a left-nested chain (`a + b + c + …`,
+            // built in a loop by the parser): operands in source order, the
+            // innermost left one first.
+            Expr::BinOp { .. } => {
+                let mut rights = Vec::new();
+                let mut cur = expr;
+                while let Expr::BinOp { left, right, .. } = cur {
+                    rights.push(&**right);
+                    cur = left;
+                }
+                self.resolve_expr(cur);
+                for r in rights.into_iter().rev() {
+                    self.resolve_expr(r);
+                }
             }
             Expr::UnaryOp { operand, .. } => {
                 self.resolve_expr(operand);
@@ -2534,9 +2545,20 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
         Expr::Block(stmts) => fill_captures_stmts(stmts, outer),
         Expr::Let { value, .. } | Expr::Own { value, .. } => fill_captures_expr(value, outer),
         Expr::RefBind { value, .. } => fill_captures_expr(value, outer),
-        Expr::BinOp { left, right, .. } => {
-            fill_captures_expr(left, outer);
-            fill_captures_expr(right, outer);
+        // AX-64: no frame per link of a left-nested chain (`a + b + c + …`,
+        // built in a loop by the parser): operands in source order, the
+        // innermost left one first.
+        Expr::BinOp { .. } => {
+            let mut rights = Vec::new();
+            let mut cur = expr;
+            while let Expr::BinOp { left, right, .. } = cur {
+                rights.push(&mut **right);
+                cur = &mut **left;
+            }
+            fill_captures_expr(cur, outer);
+            for r in rights.into_iter().rev() {
+                fill_captures_expr(r, outer);
+            }
         }
         Expr::UnaryOp { operand, .. } => fill_captures_expr(operand, outer),
         Expr::Call { callee, args, .. } => {
@@ -2691,9 +2713,20 @@ pub(crate) fn collect_free_vars(
         Expr::Block(stmts) => collect_free_vars_stmts(stmts, bound, free),
         Expr::Let { value, .. } | Expr::Own { value, .. } => collect_free_vars(value, bound, free),
         Expr::RefBind { value, .. } => collect_free_vars(value, bound, free),
-        Expr::BinOp { left, right, .. } => {
-            collect_free_vars(left, bound, free);
-            collect_free_vars(right, bound, free);
+        // AX-64: no frame per link of a left-nested chain (`a + b + c + …`,
+        // built in a loop by the parser): operands in source order, the
+        // innermost left one first.
+        Expr::BinOp { .. } => {
+            let mut rights = Vec::new();
+            let mut cur = expr;
+            while let Expr::BinOp { left, right, .. } = cur {
+                rights.push(&**right);
+                cur = left;
+            }
+            collect_free_vars(cur, bound, free);
+            for r in rights.into_iter().rev() {
+                collect_free_vars(r, bound, free);
+            }
         }
         Expr::UnaryOp { operand, .. } => collect_free_vars(operand, bound, free),
         Expr::Call { callee, args, .. } => {
@@ -2931,9 +2964,18 @@ fn collect_binds_and_uses(
                 collect_binds_and_uses(a, bound, bound_count, used);
             }
         }
-        E::BinOp { left, right, .. } => {
-            collect_binds_and_uses(left, bound, bound_count, used);
-            collect_binds_and_uses(right, bound, bound_count, used);
+        // AX-64: no frame per link of a left-nested chain (see `resolve_expr`).
+        E::BinOp { .. } => {
+            let mut rights = Vec::new();
+            let mut cur = e;
+            while let E::BinOp { left, right, .. } = cur {
+                rights.push(&**right);
+                cur = left;
+            }
+            collect_binds_and_uses(cur, bound, bound_count, used);
+            for r in rights.into_iter().rev() {
+                collect_binds_and_uses(r, bound, bound_count, used);
+            }
         }
         E::UnaryOp { operand, .. } => collect_binds_and_uses(operand, bound, bound_count, used),
         E::Question(inner) | E::Spawn(inner) | E::Comptime(inner) => {

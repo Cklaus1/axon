@@ -248,6 +248,38 @@ impl Type {
         }
     }
 
+    /// Whether this type nests more than `limit` levels (`i64` is one level,
+    /// `[i64]` two, `[[i64]]` three, …). Walks with an explicit stack and stops
+    /// as soon as one path passes `limit`, so it is safe on a type deeper than
+    /// the native stack could hold and costs at most the nodes it visits.
+    pub fn nests_deeper_than(&self, limit: usize) -> bool {
+        let mut pending: Vec<(&Type, usize)> = vec![(self, 1)];
+        while let Some((ty, depth)) = pending.pop() {
+            if depth > limit {
+                return true;
+            }
+            match ty {
+                Type::Option(i)
+                | Type::Slice(i)
+                | Type::Chan(i)
+                | Type::Uncertain(i)
+                | Type::Temporal(i)
+                | Type::RawPtr(i) => pending.push((i, depth + 1)),
+                Type::Result(o, e) => {
+                    pending.push((o, depth + 1));
+                    pending.push((e, depth + 1));
+                }
+                Type::Tuple(ts) => pending.extend(ts.iter().map(|t| (t, depth + 1))),
+                Type::Fn(ps, r) => {
+                    pending.extend(ps.iter().map(|p| (p, depth + 1)));
+                    pending.push((r, depth + 1));
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Rebuild the type with `f` applied to every non-container node.
     ///
     /// Containers (`Option`, `Result`, `Slice`, `Tuple`, `Fn`, `Chan`,
@@ -607,5 +639,34 @@ mod tests {
     fn chan_display() {
         assert_eq!(Type::Chan(Box::new(Type::I64)).display(), "chan<i64>");
         assert_eq!(Type::Chan(Box::new(Type::Str)).display(), "chan<str>");
+    }
+
+    #[test]
+    fn nests_deeper_than_counts_levels_and_stops_at_the_limit() {
+        // `i64` is one level, `[i64]` two, `[[i64]]` three.
+        let slice = |t: Type| Type::Slice(Box::new(t));
+        assert!(!Type::I64.nests_deeper_than(1));
+        assert!(Type::I64.nests_deeper_than(0));
+        let two = slice(Type::I64);
+        assert!(!two.nests_deeper_than(2));
+        assert!(two.nests_deeper_than(1));
+        // Every container shape is walked, the deepest child decides.
+        let wide = Type::Tuple(vec![
+            Type::I64,
+            Type::Result(Box::new(Type::Str), Box::new(slice(slice(Type::Bool)))),
+            Type::Fn(vec![Type::I64], Box::new(Type::Unit)),
+        ]);
+        // tuple(1) > result(2) > slice(3) > slice(4) > bool(5)
+        assert!(!wide.nests_deeper_than(5));
+        assert!(wide.nests_deeper_than(4));
+        // Deep, but built and torn down iteratively enough for a test thread:
+        // a type 5,000 levels deep is refused at limit 224 after 225 steps, not
+        // by walking all of it.
+        let mut t = Type::I64;
+        for _ in 0..5_000 {
+            t = slice(t);
+        }
+        assert!(t.nests_deeper_than(224));
+        assert!(!t.nests_deeper_than(5_001));
     }
 }
