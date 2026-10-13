@@ -123,6 +123,8 @@ refusals and the report's determinism on fixtures.
 | 12 | `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` | 2026-10-12 | once | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 30/30 (100.0%, 88.6%-100.0%) | 0 | 1.13 | $0.000521* | 2.5s | 22/30 |
 | 13 | `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext` | 2026-10-12 | once | cortex | claude-haiku-5-5 / micode | openrouter:anthropic/claude-haiku-5.5 / off / breadth | 30/30 (100.0%, 88.6%-100.0%) | 0 | 1.00 | $0.000735* | 3.0s | 30/30 |
 | 14 | `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` | 2026-10-12 | heldout | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 47/47 (100.0%, 92.4%-100.0%) | 0 | 1.98 | $0.00132* | 6.4s | 25/47 |
+| 15 | `hard-dev-2026-10-12-plain-haiku-5.5-micode` | 2026-10-12 | hard-dev | plain | claude-haiku-5-5 / micode | none / off / - | 24/25 (96.0%, 80.5%-99.3%) | 8 | n/a | $0.00172* | 10.7s | n/a |
+| 16 | `hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 2026-10-12 | hard-dev | cortex | claude-haiku-5-5 / micode | spectrum / off / breadth | 24/25 (96.0%, 80.5%-99.3%) | 0 | 1.21 | $0.00067* | 3.8s | 25/25 |
 
 Per run: configuration hashes, corpus and notes.
 
@@ -140,6 +142,8 @@ Per run: configuration hashes, corpus and notes.
 - **12. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext`**: rows `crates/axon-cortex/benchmarks/heldout/results/gencontext/once/b-spectrum.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/once.json` (sha256 3c66ddd64c0af066, n=30); cortex commit e9bc5d0a7dd2; cortex sha256 b7cc897251b2484a; candidates 6; budget 8; total cost $0.016*. PREREG-gencontext.md arm B: generator sees the ranker's view (file minus hidden check) + visible feedback
 - **13. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext`**: rows `crates/axon-cortex/benchmarks/heldout/results/gencontext/once/b-ranker.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/once.json` (sha256 3c66ddd64c0af066, n=30); cortex commit e9bc5d0a7dd2; cortex sha256 b7cc897251b2484a; candidates 6; budget 8; total cost $0.022*. PREREG-gencontext.md arm B' (B + Haiku 5.5 ranker)
 - **14. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext`**: rows `crates/axon-cortex/benchmarks/heldout/results/gencontext/heldout-exploratory/b-spectrum.jsonl`; corpus `crates/axon-cortex/benchmarks/heldout/heldout.json` (sha256 2b977f7d5cbede6f, n=47); cortex commit e9bc5d0a7dd2; cortex sha256 b7cc897251b2484a; candidates 6; budget 8; total cost $0.062*. EXPLORATORY (set inspected): PREREG-gencontext.md B on heldout, compare old 41/47
+- **15. `hard-dev-2026-10-12-plain-haiku-5.5-micode`**: rows `crates/axon-cortex/benchmarks/hardset/results/hard-dev/a.jsonl`; corpus `crates/axon-cortex/benchmarks/hardset/hard-dev.json` (sha256 f74526b19fa1aaec, n=38); total cost $0.041*; out of scope (not in verified): 13 tasks, 2 fixed, 0 honest failures (no claim, file unchanged), 3 not claimed, 8 false successes. hardset/PREREG-hard-dev.md arm A (plain micode agent); first use of hard-dev
+- **16. `hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum`**: rows `crates/axon-cortex/benchmarks/hardset/results/hard-dev/b-spectrum.jsonl`; corpus `crates/axon-cortex/benchmarks/hardset/hard-dev.json` (sha256 f74526b19fa1aaec, n=38); cortex commit 50bb1aac2242; cortex sha256 51509bb1ae470556; candidates 6; budget 8; total cost $0.016*; out of scope (not in verified): 13 tasks, 0 fixed, 12 honest failures (no claim, file unchanged), 13 not claimed, 0 false successes. hardset/PREREG-hard-dev.md arm B (cortex default, spectrum order); cortex sources = main f9ded716
 
 ## Which differences are significant
 
@@ -155,6 +159,7 @@ Paired on the tasks both runs scored. Significant = two-sided exact McNemar p < 
 | 9. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 8. `heldout-2026-10-12-plain-haiku-5.5-micode` | 47 | 41 | 0 | 6 | 0 | 0.0312 | **yes** |
 | 10. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 9. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 47 | 41 | 0 | 0 | 6 | 1 | no |
 | 10. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 8. `heldout-2026-10-12-plain-haiku-5.5-micode` | 47 | 41 | 0 | 6 | 0 | 0.0312 | **yes** |
+| 16. `hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 15. `hard-dev-2026-10-12-plain-haiku-5.5-micode` | 25 | 24 | 0 | 0 | 1 | 1 | no |
 
 ## Trend
 
@@ -166,6 +171,7 @@ Per set, the latest cortex run (B) against the earliest cortex run on the same c
 | dev | 7. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5` | 4. `dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (baseline) | 0 → 0 | 56/60 → 56/60 (p = 1) | 3.55 → 2.14 | $0.001091* → $0.001187* | 11.3s → 8.7s | 26/60 → 59/60 | proposals / fix: B (latest), untested |
 | heldout | 14. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` | 9. `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` (earliest cortex) | 0 → 0 | 41/47 → 47/47 (p = 0.0312) | 4.93 → 1.98 | $0.001486* → $0.00132* | 16.1s → 6.4s | 25/47 → 25/47 | verified: B (latest) |
 | once | 13. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext` | 12. `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext` (earliest cortex) | 0 → 0 | 30/30 → 30/30 (p = 1) | 1.13 → 1.00 | $0.000521* → $0.000735* | 2.5s → 3.0s | 22/30 → 30/30 | proposals / fix: B (latest), untested |
+| hard-dev | 16. `hard-dev-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum` | 15. `hard-dev-2026-10-12-plain-haiku-5.5-micode` (baseline) | 8 → 0 | 24/25 → 24/25 (p = 1) | n/a → 1.21 | $0.00172* → $0.00067* | 10.7s → 3.8s | n/a → 25/25 | false successes: B (latest), untested |
 
 ## Held-out and once-set use
 
