@@ -1563,6 +1563,13 @@ _LBL = (_CTX + "; label.rs, `cortex repair --label-log`: the row is written afte
         "never changes a verdict, an exit code, a file or the walk (an empty --label-log flag "
         "is a usage error before any of them runs); no protected crate names "
         "axon_cortex::label (grep `axon_cortex::label` crates/*/src)")
+_GCX = (_CTX + "; generator context (generate.rs GenContext, rank.rs RankView::is_complete, runner.rs "
+        "visible_feedback/visible_run and their renderers): every refusal here only narrows what "
+        "the GENERATOR is shown (the body-only prompt instead of the ranker's view, or a rejection "
+        "with no visible-test/compiler feedback, or fewer lines of it); acceptance is still decided "
+        "only by the hidden check on the patched file, and the visible copy runs through the "
+        "registered CheckExecutor (tests) or `axon check` (no program execution); no protected "
+        "crate names visible_run, visible_feedback, GenContext or RankView (grep crates/*/src)")
 _EXE = ("NOT ON THE PROTECTED ROUTE (checkable): a registered EXECUTOR. A protected request's "
         "executable is the qualified guest interpreter (submit.rs: LINUX_GUEST_AXON_ID, pinned by "
         "the qualification's guest_axon_sha256); the registry's executors are read only by "
@@ -2595,6 +2602,36 @@ EXEMPT += [
     ('crates/axon-cortex/src/label.rs',
      '        return Err(format!("short write: {n} of {} bytes", line.len()));',
      _LBL),
+    ('crates/axon-cortex/src/generate.rs',
+     '    pub fn fallback_reason(&self) -> Option<&str> {',
+     _GCX),
+    ('crates/axon-cortex/src/generate.rs',
+     'pub const MAX_FEEDBACK_BYTES: usize = 2048;',
+     _GCX),
+    ('crates/axon-cortex/src/rank.rs',
+     '    pub fn is_complete(&self) -> bool {',
+     _GCX),
+    ('crates/axon-cortex/src/runner.rs',
+     '    pub fn generator_context(&self) -> Option<&crate::generate::GenContext> {',
+     _GCX),
+    ('crates/axon-cortex/src/runner.rs',
+     '    fn visible_feedback(&self, rel_path: &str, hidden: &str, what: VisibleRun) -> Option<String> {',
+     _GCX),
+    ('crates/axon-cortex/src/runner.rs',
+     '        if crate::rank::mentions(&cut, hidden) {',
+     _GCX),
+    ('crates/axon-cortex/src/runner.rs',
+     '.ok_or_else(|| format!("{rel_path} names no file"))?;',
+     _GCX),
+    ('crates/axon-cortex/src/runner.rs',
+     'VisibleRun::Compile => std::process::Command::new(&self.axon_bin)',
+     _GCX),
+    ('crates/axon-cortex/src/runner.rs',
+     '.take(MAX_PRINTED_LINES)',
+     _GCX),
+    ('crates/axon-cortex/src/runner.rs',
+     '.take(MAX_DIAGNOSTICS)',
+     _GCX),
     ('crates/axon-cortex/src/rank.rs',
      'fn mentions(text: &str, name: &str) -> bool {',
      _RNK),
@@ -4168,6 +4205,7 @@ VALUE_EXEMPT += [
 # Hand-judged NOTROUTE value sites (not from a survey).
 VALUE_EXEMPT += [
     ('crates/axon-cortex/src/label.rs', 'append', 1, '0o600', 'NOTROUTE', _LBL),
+    ('crates/axon-cortex/src/runner.rs', 'visible_run', 1, '"check"', 'NOTROUTE', _GCX),
 ]
 
 
@@ -5728,6 +5766,7 @@ EXEC_CONSTRUCTORS = {
     ("crates/axon-cortex/src/generate.rs", "propose"): "builder: own .arg/.stdin sites (not a protected route)",
     ("crates/axon-cortex/src/runner.rs", "observe"): "builder: own .arg sites",
     ("crates/axon-cortex/src/runner.rs", "run_checks"): "builder: own .arg sites",
+    ("crates/axon-cortex/src/runner.rs", "visible_run"): "builder: own .arg sites (`axon check <copy>`; not a protected route)",
     ("crates/axon-core/src/host.rs", "exec"): "OUT OF SCOPE: the language host seam",
     ("crates/axon-core/src/main.rs", "try_link_wasm"): "OUT OF SCOPE: the language CLI",
     ("crates/axon-core/src/main.rs", "run_quorum_gate"): "OUT OF SCOPE: the language CLI",
