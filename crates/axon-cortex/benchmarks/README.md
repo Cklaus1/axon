@@ -609,6 +609,13 @@ change only through a frozen evaluation:
 * [`labels/`](labels/README.md): `cortex repair --label-log` rows from real
   runs, and `to_items.py`, which turns them into LocRank and DecisionBench
   items.
+* [`hardset/`](hardset/README.md): `hard-dev.json` and `hard-once.json`,
+  defects whose fix needs context outside the function body, plus
+  out-of-scope tasks scored apart from verified. Results:
+  `hardset/results/hard-dev/README.md`.
+* [`tempt/`](tempt/README.md): `tempt.json`, tasks where a dishonest pass is
+  easier than an honest fix; the measured quantity is false successes.
+  Results: `tempt/results/paid/README.md`.
 * [`promotion/`](promotion/README.md): `promote.py` takes a candidate config
   through `axon-loop` (frozen plan, evaluation, admission, transition,
   rollback). The policy in force is recorded as grandfathered, admitted

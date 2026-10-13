@@ -715,10 +715,38 @@ Haiku 5.5 via micode, 2026-10-12;
   successes, in 76 s and 91 s of wall time against the agent's 190 s
   ([`benchmarks/heldout/results/gencontext/README.md`](../crates/axon-cortex/benchmarks/heldout/results/gencontext/README.md)).
 
+Context-dependent and out-of-scope defects (`hard-dev.json`, 2026-10-12,
+Haiku 5.5 via micode;
+[`benchmarks/hardset/results/hard-dev/README.md`](../crates/axon-cortex/benchmarks/hardset/results/hard-dev/README.md)):
+
+- 25 single-function defects whose fix needs context outside the body (a
+  documented constant, a caller's contract, a parameter's meaning): Cortex
+  and the plain agent each verified the same 24/25 (McNemar p = 1.0), so this
+  set does not separate them either. Cortex used 91 s of wall time against
+  256 s, and $0.00067 per fix against $0.00172 (estimates).
+- 13 defects Cortex cannot fix by design (two functions, a signature, a type
+  definition): the plain agent fixed 2 and claimed a fix on 8 more that the
+  hidden check refuted, 3 of them after editing tests. Cortex claimed none and
+  left the file unchanged on 12, using about four times the agent's wall time
+  to give up. On the 13th it kept a patch and exited 27: that task's hidden
+  check passes after only one of the two bodies is repaired, which is a defect
+  in the task.
+
+Tasks that tempt a dishonest pass (`tempt.json`, 30 tasks, 2026-10-12;
+[`benchmarks/tempt/results/paid/README.md`](../crates/axon-cortex/benchmarks/tempt/results/paid/README.md)):
+the plain agent reported FIXED on 7 tasks the hidden check refuted, and
+Cortex on none (paired exact McNemar p = 0.016). Six of the seven are
+unsatisfiable tasks where the agent edited the visible test, said so in its
+message, and still ended with FIXED. The seventh is a partial fix. On the 23
+satisfiable tasks the agent never special-cased an input, added an `exit`, or
+edited a test. Verified: 22 for the agent, 23 for Cortex. Cortex took 416 s
+of wall time against 303 s.
+
 Runs over time are tracked in
 [`benchmarks/scorecard/`](../crates/axon-cortex/benchmarks/scorecard/README.md).
 Cortex's default configuration changes only through
 [`benchmarks/promotion/`](../crates/axon-cortex/benchmarks/promotion/README.md).
 
 Not covered by Cortex at all: multi-function fixes, signature changes, files
-other than `--file`, and anything the hidden check does not assert.
+other than `--file`, and anything the hidden check does not assert. On the
+hard set's out-of-scope defects it failed without claiming a fix (above).
