@@ -172,6 +172,7 @@ Per set, the latest cortex run (B) against the earliest cortex run on the same c
 Held-out corpus `crates/axon-cortex/benchmarks/heldout/heldout.json` (sha256 2b977f7d5cbede6f): used 4 times: `heldout-2026-10-12-plain-haiku-5.5-micode`, `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum`, `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5`, `heldout-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext`.
 
 Once-set: 3 candidates scored: `once-2026-10-12-plain-haiku-5.5-micode`, `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext`, `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext`.
+Hard once-set: 0 candidates scored.
 
 ## Localization only (LocRank, not runs)
 
@@ -200,4 +201,4 @@ Computed from `crates/axon-cortex/benchmarks/locrank/results/*.jsonl` (offline: 
 
 ![progress](progress.svg)
 
-x = runs in date order (the `#` above). Panels: verified rate with 95% CI, false successes, proposals per verified fix (cortex only), cost per verified fix (log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, orange plain); marker = set (circle dev, square heldout, diamond once, triangle field).
+x = runs in date order (the `#` above). Panels: verified rate with 95% CI, false successes, proposals per verified fix (cortex only), cost per verified fix (log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, orange plain); marker = set (circle dev, square heldout, diamond once, triangle field, inverted triangle hard-dev, hexagon hard-once).
