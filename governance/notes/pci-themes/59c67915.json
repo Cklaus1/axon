@@ -1,0 +1,4 @@
+{
+  "theme": "R51 checker depth",
+  "text": "outside the interpreter (checker.rs, infer.rs, resolver.rs, borrow.rs, mut_borrow.rs, capabilities.rs, types.rs, new checker_path.rs): checker depth and complexity (compilebench AX-63/AX-64/AX-66): node paths are a shared linked list (no quadratic path strings), operator-chain walks are loops, the call-graph and refinement-chain walks use an explicit stack, the mutual-recursion probe is one SCC pass, a refinement cycle is E0308, and on wasm32 a type nested past 224 levels is refused with E0301; diagnostics of programs that checked before are unchanged; the interpreter is untouched"
+}
