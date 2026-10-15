@@ -11,29 +11,27 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 . "$ROOT/scripts/lib/axon_bin.sh"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 if [ -n "${AXON:-}" ]; then
   named_bin AXON dict_parity
 else
   echo "dict_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "dict_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip dict_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon dict_parity
 if [ -n "${AXON_RUN:-}" ]; then
   named_bin AXON_RUN dict_parity
 else
-  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-    echo "dict_parity: interp build unavailable — skipping"; exit 0
-  fi
+  cargo_build_or_skip dict_parity interp cargo build -q -p axon-core --no-default-features --bin axon-run
   use_built AXON_RUN axon-run
 fi
 INTERP="$AXON_RUN"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 fail=0
+ran=0   # rows that actually COMPARED the two engines
 # Compares BOTH stdout and exit code. Exit code alone is not enough: exit codes
 # 2..=15 and 101 are RESERVED (governance/EXIT_CODES.md), so a `main` returning
 # any of them is remapped to 1 with a note on stderr. Most rows here return a
@@ -55,6 +53,7 @@ check() {
   local berr; berr="$("$AXON" build "$WORK/$name.ax" -o "$WORK/$name" 2>&1)"
   if [ -f "$WORK/$name" ]; then
     local no; no="$("$WORK/$name" 2>/dev/null)"; local n=$?
+    ran=$((ran+1))
     if [ "$i" = "$n" ] && [ "$io" = "$no" ]; then
       echo "  OK   $name: interp=$i native=$n out=[$(printf '%s' "$io" | tr '\n' '/')]"
     else
@@ -63,18 +62,18 @@ check() {
       echo "        native out=[$no]"
       fail=1
     fi
-  elif printf '%s' "$berr" | grep -qE 'IR verification failed|LLVM ERROR|E0910'; then
-    # A COMPILER refusal or bug, NOT an unavailable toolchain. This used to
-    # discard stderr entirely (`>/dev/null 2>&1`), so every codegen failure --
-    # including invalid IR -- printed SKIP and the harness still summarised
-    # PASS. A sibling harness hid a real `arr_max_by`-over-structs IR bug
-    # exactly this way.
-    echo "  FAIL $name (native build error, not unavailability):"
-    printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
-    fail=1
-  else
+  elif native_build_unavailable "$berr"; then
+    # Only a PROVEN reason (scripts/lib/harness_skip.sh's allow-list) skips a
+    # row. This used to be a deny-list -- only IR-verifier / LLVM / E0910 text
+    # failed, so any other compiler error printed SKIP and the harness still
+    # summarised PASS. A sibling harness hid a real `arr_max_by`-over-structs
+    # IR bug exactly this way.
     echo "  SKIP $name (native build unavailable):"
     printf '%s\n' "$berr" | head -2 | sed 's/^/        /'
+  else
+    echo "  FAIL $name (native build FAILED — a build error is not a skip):"
+    printf '%s\n' "$berr" | head -5 | sed 's/^/        /'
+    fail=1
   fi
 }
 
@@ -194,5 +193,10 @@ check_refused mphi_rm_f64 'fn main() -> i64 { let d = dict_new()  dict_set(d, "a
 check mphi_get_i64 'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 7)  match dict_get(d, "a") { Some(v) => v  None => 0 - 1 } }'
 
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
+# Vacuity guard: if every `check` row took the SKIP branch this would print
+# PASS for zero comparisons. A harness that compared nothing is a SKIP.
+if [ "$ran" -eq 0 ]; then
+  harness_skip dict_parity "nothing ran (native build unavailable for every case)"
+fi
 echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values/dict_merge/dict_from_pairs/dict_to_pairs/dict_map_values/dict_to_str/dict_filter/dict_each (int values, BTreeMap order) match the interpreter ✓"
 exit 0
