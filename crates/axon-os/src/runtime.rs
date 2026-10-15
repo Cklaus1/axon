@@ -134,9 +134,12 @@ pub trait Runtime {
 use crate::gate::DeclaredEffects as Decl;
 use crate::grant::Label;
 use crate::record::RawEvent as RE;
+use std::os::fd::{AsRawFd, RawFd};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// The real `Runtime`: runs programs by invoking the canonical `axon`
@@ -268,13 +271,25 @@ impl Drop for StagingDir {
 /// Head AND tail, not just head: the wrapper's completion marker is the LAST
 /// line of stdout, and a job that printed more than the bound before it would
 /// otherwise lose the marker and be sealed as not-completed.
-fn read_bounded<R: std::io::Read>(mut r: R, cap: usize) -> (String, u64) {
+///
+/// `readable` is asked before every read and returns false to stop reading
+/// before EOF (G2c: see [`join_drains`]); the capture then says so.
+fn read_bounded<R: std::io::Read>(
+    mut r: R,
+    cap: usize,
+    mut readable: impl FnMut() -> bool,
+) -> (String, u64) {
     let half = (cap / 2).max(1);
     let mut head: Vec<u8> = Vec::new();
     let mut tail: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
     let mut dropped: u64 = 0;
+    let mut stopped = false;
     let mut buf = [0u8; 8192];
     loop {
+        if !readable() {
+            stopped = true;
+            break;
+        }
         let n = match r.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => n,
@@ -303,6 +318,13 @@ fn read_bounded<R: std::io::Read>(mut r: R, cap: usize) -> (String, u64) {
     }
     let tail: Vec<u8> = tail.into_iter().collect();
     out.push_str(&String::from_utf8_lossy(&tail));
+    if stopped {
+        out.push_str(&format!(
+            "\n[axon-os: capture stopped {} ms after the job ended: a process outside \
+             the job's process group still holds this stream open]\n",
+            DRAIN_GRACE.as_millis()
+        ));
+    }
     (out, dropped)
 }
 
@@ -553,6 +575,69 @@ fn job_has_exited(child: &Child) -> std::io::Result<bool> {
     Ok(unsafe { info.si_pid() } != 0)
 }
 
+// ── G2c: the drains end even if the pipes do not ────────────────────────────
+
+/// How long the drains may run on once the job has been reaped. Normally no
+/// time is spent here: every writer is gone, so both pipes are already at EOF.
+/// A descendant that left the job's group (`setsid`) and kept stdout or stderr
+/// open is the exception — after a kill and after a normal exit alike — and it
+/// used to block the join, and so the supervisor, until it chose to exit.
+const DRAIN_GRACE: Duration = Duration::from_secs(2);
+
+/// Wait until `fd` is readable or at EOF (true), or `stop` is set (false).
+fn wait_readable(fd: RawFd, stop: &AtomicBool) -> bool {
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return false;
+        }
+        let mut p = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd for a descriptor the calling drain owns.
+        let n = unsafe { libc::poll(&mut p, 1, 50) };
+        if n > 0 {
+            return true; // data, EOF or an error: the read says which
+        }
+        if n < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+            return true; // poll itself failed: let the read fail and end the drain
+        }
+    }
+}
+
+/// Drain one child pipe on its own thread (T25), bounded (B259) and stoppable.
+fn spawn_drain<R>(pipe: Option<R>, max_capture: usize, stop: Arc<AtomicBool>) -> JoinHandle<String>
+where
+    R: std::io::Read + AsRawFd + Send + 'static,
+{
+    std::thread::spawn(move || {
+        pipe.map(|p| {
+            let fd = p.as_raw_fd();
+            read_bounded(p, max_capture, || wait_readable(fd, &stop)).0
+        })
+        .unwrap_or_default()
+    })
+}
+
+/// Join both drains, waiting at most [`DRAIN_GRACE`] for their EOF, then stop
+/// them: each returns what it read within one poll interval.
+fn join_drains(
+    out_h: JoinHandle<String>,
+    err_h: JoinHandle<String>,
+    stop: &AtomicBool,
+) -> (String, String) {
+    let deadline = Instant::now() + DRAIN_GRACE;
+    while !(out_h.is_finished() && err_h.is_finished()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    stop.store(true, Ordering::Release);
+    (
+        out_h.join().unwrap_or_default(),
+        err_h.join().unwrap_or_default(),
+    )
+}
+
 /// Run a command with a hard wall-clock timeout. On expiry the child is killed
 /// and reaped (no leaked handle/zombie). Hermetic: a minimal explicit env.
 /// stdout + stderr are captured (the interpreter prints fault diagnostics to
@@ -642,16 +727,11 @@ fn run_bounded_capped(
     // B259: and BOUNDED. `read_to_string` retained everything a job printed,
     // so a job could make the supervisor allocate without limit. The pipes are
     // still drained to EOF; only `max_capture` bytes per stream are kept.
-    let out_h = std::thread::spawn(move || {
-        stdout_pipe
-            .map(|s| read_bounded(s, max_capture).0)
-            .unwrap_or_default()
-    });
-    let err_h = std::thread::spawn(move || {
-        stderr_pipe
-            .map(|s| read_bounded(s, max_capture).0)
-            .unwrap_or_default()
-    });
+    //
+    // G2c: and STOPPABLE, so the join below cannot wait on a pipe forever.
+    let stop = Arc::new(AtomicBool::new(false));
+    let out_h = spawn_drain(stdout_pipe, max_capture, Arc::clone(&stop));
+    let err_h = spawn_drain(stderr_pipe, max_capture, Arc::clone(&stop));
 
     let start = Instant::now();
     let watched = loop {
@@ -686,9 +766,7 @@ fn run_bounded_capped(
     // Free the slot, THEN reap (see `JobGroupSlot`).
     drop(slot);
     let reaped = child.wait();
-    // Join the drainers: both pipes are at EOF once the child has exited.
-    let stdout = out_h.join().unwrap_or_default(); // drained concurrently (T25)
-    let stderr = err_h.join().unwrap_or_default();
+    let (stdout, stderr) = join_drains(out_h, err_h, &stop);
     let end = watched?;
     let status = reaped?;
 
@@ -1361,13 +1439,13 @@ mod runtime_tests {
     #[test]
     fn read_bounded_keeps_head_and_tail_and_counts_the_rest() {
         let data: Vec<u8> = (0..10_000u32).map(|i| b'a' + (i % 26) as u8).collect();
-        let (s, dropped) = read_bounded(&data[..], 100);
+        let (s, dropped) = read_bounded(&data[..], 100, || true);
         assert_eq!(dropped, 10_000 - 100);
         assert!(s.starts_with(std::str::from_utf8(&data[..50]).unwrap()));
         assert!(s.ends_with(std::str::from_utf8(&data[10_000 - 50..]).unwrap()));
         assert!(s.contains("9900 bytes of output omitted"));
         // Under the bound: byte-identical, no annotation.
-        let (s, dropped) = read_bounded(&b"hello\n"[..], 100);
+        let (s, dropped) = read_bounded(&b"hello\n"[..], 100, || true);
         assert_eq!((s.as_str(), dropped), ("hello\n", 0));
     }
 

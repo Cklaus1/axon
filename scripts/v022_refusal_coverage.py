@@ -3423,13 +3423,15 @@ EXEMPT += [
     ("crates/axon-os/src/runtime.rs", "        .process_group(0)", _ACR),
 ]
 
-# G2d (gap closure, lane gaps-cancel): `axon-os run` forwards SIGINT/SIGTERM/SIGHUP to the
-# job's process group. All of it sits under run_bounded_capped (AxonCoreRuntime) or in
-# cmd_run, so _ACR holds for each site; the behaviour is observed by
-# crates/axon-os/tests/supervisor_signals.rs and crates/axon-os/tests/legacy_adapter.rs.
+# G2d/G2c (gap closure, lane gaps-cancel): `axon-os run` forwards SIGINT/SIGTERM/SIGHUP to
+# the job's process group, and the drains of the job's pipes are bounded in time. All of it
+# sits under run_bounded_capped (AxonCoreRuntime) or in cmd_run, so _ACR holds for each site;
+# the behaviour is observed by crates/axon-os/tests/supervisor_signals.rs and the G2a/G2c/G2d
+# tests in crates/axon-os/tests/legacy_adapter.rs.
 _G2D = (_ACR + "; G2d signal forwarding for `axon-os run`: its only callers are run_bounded_capped "
         "and cli.rs cmd_run (`grep -rn 'forward_termination_signals\\|termination_signal\\|"
         "spawn_registered' crates/*/src`)")
+_G2C = (_ACR + "; G2c: the drain of a job pipe, called only by run_bounded_capped's spawn_drain")
 EXEMPT += [
     ("crates/axon-os/src/runtime.rs", "            unsafe { libc::killpg(pgid, libc::SIGKILL) };", _G2D),
     ("crates/axon-os/src/runtime.rs",
@@ -3447,6 +3449,7 @@ EXEMPT += [
     ("crates/axon-os/src/runtime.rs",
      "            Verdict::Halted {\n                reason: format!(\n"
      "                    \"the supervisor received {} and killed the job's process group\",", _G2D),
+    ("crates/axon-os/src/runtime.rs", "fn wait_readable(fd: RawFd, stop: &AtomicBool) -> bool {", _G2C),
 ]
 
 

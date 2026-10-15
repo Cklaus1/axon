@@ -163,6 +163,73 @@ fn captured_output_is_bounded_and_the_verdict_survives_it() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// G2c: a descendant that leaves the job's process group (`setsid`, out of
+/// reach of the group kill) and keeps the job's stdout/stderr open held the
+/// supervisor's drain join — and so the supervisor — until it chose to exit.
+///
+/// Runs a job whose interpreter stand-in starts such a descendant and then
+/// runs `rest`; returns how long the supervisor took and the verdict.
+fn run_with_an_escaped_descendant(tag: &str, rest: &str, timeout: Duration) -> (Duration, Verdict) {
+    let d = tmp(tag);
+    let m = job(&d);
+    let pid_file = d.join("escaped.pid");
+    // The job goes on only once the escape is complete (its pid is written
+    // after `setsid`), so the timeout kill cannot pre-empt it.
+    let bin = script(
+        &d,
+        &format!(
+            "setsid sh -c 'echo $$ > \"{pf}\"; exec sleep 25' &\n\
+             while [ ! -s '{pf}' ]; do sleep 0.05; done\n{rest}",
+            pf = pid_file.display()
+        ),
+    );
+    let rt = AxonCoreRuntime::with_bin_and_timeout(bin, timeout);
+    let started = std::time::Instant::now();
+    let rec = supervise(&m, &d.join("job.axjob"), &m.grant.clone(), "rid", &rt);
+    let took = started.elapsed();
+    // Still running if the supervisor came back first: the escape is real,
+    // and ending it is not what is tested. Dropping the handle kills it.
+    if took < Duration::from_secs(25) {
+        drop(common::Tracked::wait_alive(&pid_file, &["sleep", "25"]));
+    }
+    let _ = std::fs::remove_dir_all(&d);
+    (took, rec.verdict)
+}
+
+/// G2c, the job exits on its own. What it printed is still captured: the
+/// completion marker decides its verdict.
+#[test]
+fn an_escaped_descendant_cannot_hold_the_supervisor_after_the_job_exits() {
+    let (took, verdict) = run_with_an_escaped_descendant(
+        "escape-exit",
+        "grep -o '__axon_os_done:[0-9a-f]*' \"$2\"\nexit 0",
+        Duration::from_secs(30),
+    );
+    assert!(
+        took < Duration::from_secs(12),
+        "ATTACK: the supervisor waited {took:?} on a pipe held open by an escaped descendant"
+    );
+    assert_eq!(verdict, Verdict::Completed { value: 0 });
+}
+
+/// G2c, the job is killed at its timeout.
+#[test]
+fn an_escaped_descendant_cannot_hold_the_supervisor_after_the_timeout_kill() {
+    let (took, verdict) = run_with_an_escaped_descendant(
+        "escape-kill",
+        "exec sleep 3626",
+        Duration::from_millis(1500),
+    );
+    assert!(
+        took < Duration::from_secs(12),
+        "ATTACK: the supervisor waited {took:?} on a pipe held open by an escaped descendant"
+    );
+    assert!(
+        matches!(&verdict, Verdict::Denied { axis, .. } if axis == "time"),
+        "{verdict:?}"
+    );
+}
+
 /// G2d blocks the termination signals in the spawning thread around the
 /// spawn; the interpreter child must not inherit that. A job with SIGTERM and
 /// SIGINT blocked cannot be stopped by them — nor can anything it starts, so
