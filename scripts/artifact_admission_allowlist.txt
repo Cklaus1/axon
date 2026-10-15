@@ -25,3 +25,8 @@ docs/axon_cortex_v0_22/axon-cortex-build-v0_22/fixtures/neural_programs/minimal.
 # entry above (cmp, 2026-10-12). Upstream package content, not build output.
 # No gate re-checks this copy's digest; the v0.22 copy above is the verified one.
 docs/axon_cortex_v0_23/axon-cortex-build-v0_23/parent/axon-cortex-build-v0_22/fixtures/neural_programs/minimal.np
+# DecisionBench item set (37c8f460, 2.4MB > MAX_BYTES). Built by
+# crates/axon-reflex/benchmarks/decisions/build_set.py, which needs the PoC
+# checker binary that is not in this repo, so it cannot be regenerated here;
+# its README pins the original 222 items as byte-identical. Checked-in fixture.
+crates/axon-reflex/benchmarks/decisions/decision_set.jsonl
