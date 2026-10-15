@@ -49,3 +49,71 @@ pub fn write_executable(path: &Path, bytes: impl AsRef<[u8]>, mode: u32) {
 pub fn copy_executable(src: impl AsRef<Path>, dst: impl AsRef<Path>, mode: u32) {
     cp(src.as_ref(), dst.as_ref(), mode);
 }
+
+/// G2a/G2c/G2d: a process a test started, known by pid AND command line
+/// (`/proc/<pid>/cmdline`), so a pid the kernel has reused is never taken for
+/// it, nor killed by the cleanup. A zombie's cmdline reads empty, so a killed
+/// but unreaped process counts as gone. Dropping it SIGKILLs the process if it
+/// is still there, so a failing test leaks nothing.
+pub struct Tracked {
+    pub pid: i32,
+    cmdline: Vec<u8>,
+}
+
+impl Tracked {
+    /// Wait (at most 20 s) until `pid_file` names a live process running
+    /// exactly `argv`.
+    pub fn wait_alive(pid_file: &Path, argv: &[&str]) -> Tracked {
+        let mut cmdline = Vec::new();
+        for a in argv {
+            cmdline.extend_from_slice(a.as_bytes());
+            cmdline.push(0);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let pid = std::fs::read_to_string(pid_file)
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok());
+            if let Some(pid) = pid.filter(|&p| runs(p, &cmdline)) {
+                return Tracked { pid, cmdline };
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{} never named a live `{}`",
+                pid_file.display(),
+                argv.join(" ")
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    pub fn alive(&self) -> bool {
+        runs(self.pid, &self.cmdline)
+    }
+
+    /// Gone within `d` (a SIGKILL is delivered asynchronously).
+    pub fn gone_within(&self, d: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + d;
+        while self.alive() {
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        true
+    }
+}
+
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        if self.alive() {
+            // SAFETY: plain syscall; the pid was just checked to be ours.
+            unsafe { libc::kill(self.pid, libc::SIGKILL) };
+        }
+    }
+}
+
+/// Is `pid` a live process whose command line is exactly `cmdline`?
+fn runs(pid: i32, cmdline: &[u8]) -> bool {
+    std::fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|c| c == cmdline)
+}

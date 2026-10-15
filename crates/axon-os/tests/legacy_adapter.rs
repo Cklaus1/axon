@@ -163,6 +163,144 @@ fn captured_output_is_bounded_and_the_verdict_survives_it() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// G2a, through the production path: the job's timeout kill takes the
+/// processes the job started with it. Before 821cf767 the kill reached the
+/// interpreter process alone, and its grandchild outlived the run.
+#[test]
+fn the_timeout_kill_reaches_a_process_the_job_started() {
+    let d = tmp("grandchild");
+    let m = job(&d);
+    let pid_file = d.join("grandchild.pid");
+    // The grandchild's stdio is /dev/null: it holds none of the job's pipes,
+    // so this is about the kill, not the drain.
+    let bin = script(
+        &d,
+        &format!(
+            "sleep 3624 </dev/null >/dev/null 2>&1 &\necho $! > '{}'\nexec sleep 3625",
+            pid_file.display()
+        ),
+    );
+    let rt = AxonCoreRuntime::with_bin_and_timeout(bin, Duration::from_secs(3));
+    let job_path = d.join("job.axjob");
+    let run = std::thread::spawn(move || supervise(&m, &job_path, &m.grant.clone(), "rid", &rt));
+    let grandchild = common::Tracked::wait_alive(&pid_file, &["sleep", "3624"]);
+    let rec = run.join().unwrap();
+    assert!(
+        matches!(&rec.verdict, Verdict::Denied { axis, .. } if axis == "time"),
+        "premise: the job is killed at its timeout, got {:?}",
+        rec.verdict
+    );
+    assert!(
+        grandchild.gone_within(Duration::from_secs(5)),
+        "ATTACK: a process the job started (pid {}) outlived the timeout kill",
+        grandchild.pid
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// G2c: a descendant that leaves the job's process group (`setsid`, out of
+/// reach of the group kill) and keeps the job's stdout/stderr open held the
+/// supervisor's drain join — and so the supervisor — until it chose to exit.
+///
+/// Runs a job whose interpreter stand-in starts such a descendant and then
+/// runs `rest`; returns how long the supervisor took and the verdict.
+fn run_with_an_escaped_descendant(tag: &str, rest: &str, timeout: Duration) -> (Duration, Verdict) {
+    let d = tmp(tag);
+    let m = job(&d);
+    let pid_file = d.join("escaped.pid");
+    // The job goes on only once the escape is complete (its pid is written
+    // after `setsid`), so the timeout kill cannot pre-empt it.
+    let bin = script(
+        &d,
+        &format!(
+            "setsid sh -c 'echo $$ > \"{pf}\"; exec sleep 25' &\n\
+             while [ ! -s '{pf}' ]; do sleep 0.05; done\n{rest}",
+            pf = pid_file.display()
+        ),
+    );
+    let rt = AxonCoreRuntime::with_bin_and_timeout(bin, timeout);
+    let started = std::time::Instant::now();
+    let rec = supervise(&m, &d.join("job.axjob"), &m.grant.clone(), "rid", &rt);
+    let took = started.elapsed();
+    // Still running if the supervisor came back first: the escape is real,
+    // and ending it is not what is tested. Dropping the handle kills it.
+    if took < Duration::from_secs(25) {
+        drop(common::Tracked::wait_alive(&pid_file, &["sleep", "25"]));
+    }
+    let _ = std::fs::remove_dir_all(&d);
+    (took, rec.verdict)
+}
+
+/// G2c, the job exits on its own. What it printed is still captured: the
+/// completion marker decides its verdict.
+#[test]
+fn an_escaped_descendant_cannot_hold_the_supervisor_after_the_job_exits() {
+    let (took, verdict) = run_with_an_escaped_descendant(
+        "escape-exit",
+        "grep -o '__axon_os_done:[0-9a-f]*' \"$2\"\nexit 0",
+        Duration::from_secs(30),
+    );
+    assert!(
+        took < Duration::from_secs(12),
+        "ATTACK: the supervisor waited {took:?} on a pipe held open by an escaped descendant"
+    );
+    assert_eq!(verdict, Verdict::Completed { value: 0 });
+}
+
+/// G2c, the job is killed at its timeout.
+#[test]
+fn an_escaped_descendant_cannot_hold_the_supervisor_after_the_timeout_kill() {
+    let (took, verdict) = run_with_an_escaped_descendant(
+        "escape-kill",
+        "exec sleep 3626",
+        Duration::from_millis(1500),
+    );
+    assert!(
+        took < Duration::from_secs(12),
+        "ATTACK: the supervisor waited {took:?} on a pipe held open by an escaped descendant"
+    );
+    assert!(
+        matches!(&verdict, Verdict::Denied { axis, .. } if axis == "time"),
+        "{verdict:?}"
+    );
+}
+
+/// G2d blocks the termination signals in the spawning thread around the
+/// spawn; the interpreter child must not inherit that. A job with SIGTERM and
+/// SIGINT blocked cannot be stopped by them — nor can anything it starts, so
+/// `timeout`, or a job ending its own helpers, would hang.
+///
+/// The stand-in is awk, not sh: dash clears the signal mask it inherits, so a
+/// shell stand-in would read an empty mask either way.
+#[test]
+fn the_interpreter_child_starts_with_no_termination_signal_blocked() {
+    let d = tmp("sigmask");
+    let m = job(&d);
+    let seen = d.join("sigblk.txt");
+    let bin = d.join("fake-axon.awk");
+    common::write_executable(
+        &bin,
+        format!(
+            "#!/usr/bin/awk -f\nBEGIN {{ while ((getline l < \"/proc/self/status\") > 0) \
+             if (l ~ /^SigBlk:/) print l > \"{}\"; exit }}\n",
+            seen.display()
+        ),
+        0o755,
+    );
+    let rt = AxonCoreRuntime::with_bin_and_timeout(bin, Duration::from_secs(5));
+    let _ = supervise(&m, &d.join("job.axjob"), &m.grant.clone(), "rid", &rt);
+    let line = std::fs::read_to_string(&seen).expect("the interpreter stand-in ran");
+    let blocked = u64::from_str_radix(line.trim_start_matches("SigBlk:").trim(), 16).unwrap();
+    for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        assert_eq!(
+            blocked & (1 << (sig - 1)),
+            0,
+            "ATTACK: the interpreter child starts with signal {sig} blocked ({line})"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 // ── C9 round 7, EQGATE3 (amendment 91): what the interpreter child is built with
 //
 // The child starts from an EMPTY environment and gets the seed, the PATH, the

@@ -2928,7 +2928,7 @@ EXEMPT += [
      '                    verdict: Verdict::Denied {\n                        reason: format!("could not launch interpreter: {e}"),',
      _ACR),
     ('crates/axon-os/src/runtime.rs',
-     '            Verdict::Halted {',
+     '            Verdict::Halted {\n                reason: "kill-switch tripped by supervisor".into(),',
      _ACR),
     ('crates/axon-os/src/runtime.rs',
      '            Verdict::Denied {\n                reason: format!("timed out after {} ms", self.timeout.as_millis()),',
@@ -3444,6 +3444,35 @@ EXEMPT += [
     ("crates/axon-os/src/runtime.rs", "            .mode(0o600)", _ACR),
     ("crates/axon-os/src/runtime.rs", "        let rc = unsafe { libc::killpg(pid, libc::SIGKILL) };", _ACR),
     ("crates/axon-os/src/runtime.rs", "        .process_group(0)", _ACR),
+]
+
+# G2d/G2c (gap closure, lane gaps-cancel): `axon-os run` forwards SIGINT/SIGTERM/SIGHUP to
+# the job's process group, and the drains of the job's pipes are bounded in time. All of it
+# sits under run_bounded_capped (AxonCoreRuntime) or in cmd_run, so _ACR holds for each site;
+# the behaviour is observed by crates/axon-os/tests/supervisor_signals.rs and the G2a/G2c/G2d
+# tests in crates/axon-os/tests/legacy_adapter.rs.
+_G2D = (_ACR + "; G2d signal forwarding for `axon-os run`: its only callers are run_bounded_capped "
+        "and cli.rs cmd_run (`grep -rn 'forward_termination_signals\\|termination_signal\\|"
+        "spawn_registered' crates/*/src`)")
+_G2C = (_ACR + "; G2c: the drain of a job pipe, called only by run_bounded_capped's spawn_drain")
+EXEMPT += [
+    ("crates/axon-os/src/runtime.rs", "            unsafe { libc::killpg(pgid, libc::SIGKILL) };", _G2D),
+    ("crates/axon-os/src/runtime.rs",
+     "unsafe fn disposition(sig: libc::c_int) -> Option<libc::sighandler_t> {", _G2D),
+    ("crates/axon-os/src/runtime.rs",
+     "    (libc::sigaction(sig, std::ptr::null(), &mut cur) == 0).then_some(cur.sa_sigaction)", _G2D),
+    ("crates/axon-os/src/runtime.rs", "    libc::sigaction(sig, &act, std::ptr::null_mut());", _G2D),
+    ("crates/axon-os/src/runtime.rs", "    libc::pthread_sigmask(how, set, &mut old);", _G2D),
+    ("crates/axon-os/src/runtime.rs", "pub fn termination_signal() -> Option<i32> {", _G2D),
+    ("crates/axon-os/src/runtime.rs", "        cmd.pre_exec(move || {", _G2D),
+    ("crates/axon-os/src/runtime.rs",
+     "        if e.kind() == std::io::ErrorKind::Interrupted {\n            return Ok(false);", _G2D),
+    ("crates/axon-os/src/runtime.rs",
+     "            Err(e) => {\n                kill_group(&mut child);\n                break Err(e);", _ACR),
+    ("crates/axon-os/src/runtime.rs",
+     "            Verdict::Halted {\n                reason: format!(\n"
+     "                    \"the supervisor received {} and killed the job's process group\",", _G2D),
+    ("crates/axon-os/src/runtime.rs", "fn wait_readable(fd: RawFd, stop: &AtomicBool) -> bool {", _G2C),
 ]
 
 

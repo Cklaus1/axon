@@ -134,9 +134,13 @@ pub trait Runtime {
 use crate::gate::DeclaredEffects as Decl;
 use crate::grant::Label;
 use crate::record::RawEvent as RE;
+use std::os::fd::{AsRawFd, RawFd};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::Arc;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 /// The real `Runtime`: runs programs by invoking the canonical `axon`
 /// interpreter in a fresh, time-bounded subprocess (R21 §4.4). The only impure
@@ -267,13 +271,25 @@ impl Drop for StagingDir {
 /// Head AND tail, not just head: the wrapper's completion marker is the LAST
 /// line of stdout, and a job that printed more than the bound before it would
 /// otherwise lose the marker and be sealed as not-completed.
-fn read_bounded<R: std::io::Read>(mut r: R, cap: usize) -> (String, u64) {
+///
+/// `readable` is asked before every read and returns false to stop reading
+/// before EOF (G2c: see [`join_drains`]); the capture then says so.
+fn read_bounded<R: std::io::Read>(
+    mut r: R,
+    cap: usize,
+    mut readable: impl FnMut() -> bool,
+) -> (String, u64) {
     let half = (cap / 2).max(1);
     let mut head: Vec<u8> = Vec::new();
     let mut tail: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
     let mut dropped: u64 = 0;
+    let mut stopped = false;
     let mut buf = [0u8; 8192];
     loop {
+        if !readable() {
+            stopped = true;
+            break;
+        }
         let n = match r.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => n,
@@ -302,6 +318,13 @@ fn read_bounded<R: std::io::Read>(mut r: R, cap: usize) -> (String, u64) {
     }
     let tail: Vec<u8> = tail.into_iter().collect();
     out.push_str(&String::from_utf8_lossy(&tail));
+    if stopped {
+        out.push_str(&format!(
+            "\n[axon-os: capture stopped {} ms after the job ended: a process outside \
+             the job's process group still holds this stream open]\n",
+            DRAIN_GRACE.as_millis()
+        ));
+    }
     (out, dropped)
 }
 
@@ -316,7 +339,8 @@ fn absolutize(p: PathBuf) -> PathBuf {
         .unwrap_or_else(|_| std::env::current_dir().map(|d| d.join(&p)).unwrap_or(p))
 }
 
-/// Outcome of a bounded subprocess: the exit code (None ⇒ killed by timeout).
+/// Outcome of a bounded subprocess: the exit code (None ⇒ killed by timeout
+/// or by a signal to the supervisor).
 struct ProcOutcome {
     code: Option<i32>,
     /// AUDIT T44: stdout was drained (T25) but DISCARDED. It carries the
@@ -328,6 +352,290 @@ struct ProcOutcome {
     /// R27/R29: true if the process was killed because the kill file latch was
     /// tripped (by `axon-os kill` for R27, or by the R29 ComplianceMonitor).
     killed_by_latch: bool,
+    /// G2d: the termination signal the supervisor received, if that is what
+    /// ended the job (see [`forward_termination_signals`]).
+    killed_by_signal: Option<i32>,
+}
+
+// ── G2d: a signal to the supervisor reaches the job ─────────────────────────
+//
+// `process_group(0)` (below) takes the job OUT of the supervisor's process
+// group, which is what lets one `killpg` reach all of it — and also what keeps
+// the terminal's Ctrl-C (SIGINT to the FOREGROUND group) from reaching it.
+// Before this, Ctrl-C, SIGTERM or SIGHUP to `axon-os run` killed the supervisor
+// and left the job running, re-parented to init, with nothing left to kill it
+// at its timeout or on its latch, and no record of the run.
+
+/// The signals forwarded to every running job, as SIGKILL to its group.
+const TERMINATION_SIGNALS: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
+
+/// The process groups of the jobs running now, read by the signal handler.
+/// Fixed-size and lock-free because a handler may neither allocate nor lock;
+/// `0` is a free slot. Several `run_bounded_capped` calls can be in flight at
+/// once (the test suites run them on parallel threads). A job that finds every
+/// slot taken runs unregistered: the handler cannot reach it, and the poll loop
+/// kills it on its next pass instead (it checks [`termination_signal`]).
+static JOB_GROUPS: [AtomicI32; 64] = [const { AtomicI32::new(0) }; 64];
+
+/// The first termination signal received (0: none).
+static TERMINATION: AtomicI32 = AtomicI32::new(0);
+
+/// The signal handler. Async-signal-safe calls only: atomics, `killpg`, and
+/// errno, which it saves and restores (a handler must not clobber the errno of
+/// the code it interrupted).
+extern "C" fn on_termination_signal(sig: libc::c_int) {
+    // SAFETY: `__errno_location` returns this thread's errno slot.
+    let errno = unsafe { *libc::__errno_location() };
+    // The flag FIRST: the poll loop that sees the job die must see why.
+    let _ = TERMINATION.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
+    for slot in &JOB_GROUPS {
+        let pgid = slot.load(Ordering::SeqCst);
+        // `killpg(0)` is the SUPERVISOR's own group and 1 is init's: a free
+        // slot (0) must never reach the call.
+        if pgid > 1 {
+            // SAFETY: plain syscall on a pgid registered by `spawn_registered`.
+            unsafe { libc::killpg(pgid, libc::SIGKILL) };
+        }
+    }
+    // SAFETY: as above.
+    unsafe { *libc::__errno_location() = errno };
+}
+
+fn handler_address() -> libc::sighandler_t {
+    on_termination_signal as extern "C" fn(libc::c_int) as libc::sighandler_t
+}
+
+/// The current disposition of `sig` (None if it cannot be read).
+///
+/// # Safety
+/// Async-signal-safe (`sigaction` only); callable in a forked child.
+unsafe fn disposition(sig: libc::c_int) -> Option<libc::sighandler_t> {
+    let mut cur: libc::sigaction = std::mem::zeroed();
+    (libc::sigaction(sig, std::ptr::null(), &mut cur) == 0).then_some(cur.sa_sigaction)
+}
+
+/// Set `sig`'s disposition to `handler`, with every termination signal blocked
+/// while it runs and interrupted syscalls restarted.
+///
+/// # Safety
+/// Async-signal-safe (`sigaction` only); callable in a forked child.
+unsafe fn set_disposition(sig: libc::c_int, handler: libc::sighandler_t) {
+    let mut act: libc::sigaction = std::mem::zeroed();
+    act.sa_sigaction = handler;
+    act.sa_flags = libc::SA_RESTART;
+    act.sa_mask = termination_mask();
+    libc::sigaction(sig, &act, std::ptr::null_mut());
+}
+
+/// The set of [`TERMINATION_SIGNALS`].
+fn termination_mask() -> libc::sigset_t {
+    // SAFETY: `sigemptyset` initialises the set before `sigaddset` reads it.
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        for sig in TERMINATION_SIGNALS {
+            libc::sigaddset(&mut set, sig);
+        }
+        set
+    }
+}
+
+/// Set this thread's signal mask (`how`: `SIG_BLOCK` / `SIG_SETMASK`) and
+/// return the previous one.
+///
+/// # Safety
+/// Async-signal-safe (`pthread_sigmask` only); callable in a forked child.
+unsafe fn swap_thread_mask(how: libc::c_int, set: &libc::sigset_t) -> libc::sigset_t {
+    let mut old: libc::sigset_t = std::mem::zeroed();
+    libc::pthread_sigmask(how, set, &mut old);
+    old
+}
+
+/// G2d: forward SIGINT, SIGTERM and SIGHUP to every running job, as SIGKILL
+/// to its process group, instead of letting them kill the supervisor alone.
+///
+/// For a process that owns its signal handling — `axon-os run`, which calls
+/// this before the job starts, lets the poll loop observe the job's death,
+/// writes the run record, and only then exits 128+signal
+/// ([`termination_signal`]). A signal already IGNORED stays ignored, so
+/// `nohup axon-os run` still outlives its terminal.
+pub fn forward_termination_signals() {
+    for sig in TERMINATION_SIGNALS {
+        // SAFETY: reads and sets this process's dispositions; the handler is
+        // async-signal-safe.
+        unsafe {
+            if disposition(sig) == Some(libc::SIG_IGN) {
+                continue;
+            }
+            set_disposition(sig, handler_address());
+        }
+    }
+}
+
+/// The termination signal this process has received since
+/// [`forward_termination_signals`], if any (the first, if several).
+pub fn termination_signal() -> Option<i32> {
+    match TERMINATION.load(Ordering::SeqCst) {
+        0 => None,
+        sig => Some(sig),
+    }
+}
+
+fn signal_name(sig: i32) -> String {
+    match sig {
+        libc::SIGINT => "SIGINT".into(),
+        libc::SIGTERM => "SIGTERM".into(),
+        libc::SIGHUP => "SIGHUP".into(),
+        other => format!("signal {other}"),
+    }
+}
+
+/// A job's slot in [`JOB_GROUPS`]; dropping it frees the slot.
+///
+/// Dropped BEFORE the job is reaped: while its leader is an unreaped zombie
+/// the pid cannot be reused, so the handler can never signal a group that the
+/// kernel has since given to an unrelated process.
+struct JobGroupSlot(Option<&'static AtomicI32>);
+
+impl JobGroupSlot {
+    fn register(pgid: i32) -> JobGroupSlot {
+        JobGroupSlot(JOB_GROUPS.iter().find(|s| {
+            s.compare_exchange(0, pgid, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        }))
+    }
+}
+
+impl Drop for JobGroupSlot {
+    fn drop(&mut self) {
+        if let Some(slot) = self.0 {
+            slot.store(0, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Spawn `cmd` and register its process group, with the termination signals
+/// blocked in this thread across both, so the handler cannot run HERE between
+/// the fork and the registration. (Another thread can take the signal in that
+/// window; the poll loop's check of [`termination_signal`] covers it.)
+///
+/// The child inherits the blocked mask — std no longer resets the mask on
+/// spawn — so its `pre_exec` restores the mask this thread had, after
+/// resetting any disposition that is our handler to the default: the forked
+/// copy would otherwise run it, against its copy of the registry, between the
+/// unblock and the exec.
+fn spawn_registered(cmd: &mut Command) -> std::io::Result<(Child, JobGroupSlot)> {
+    // SAFETY: changes only this thread's mask; restored below on every path.
+    let restore = unsafe { swap_thread_mask(libc::SIG_BLOCK, &termination_mask()) };
+    let handler = handler_address();
+    // SAFETY: the hook runs in the forked child before exec and calls only
+    // `sigaction` and `pthread_sigmask`, both async-signal-safe.
+    unsafe {
+        cmd.pre_exec(move || {
+            for sig in TERMINATION_SIGNALS {
+                if disposition(sig) == Some(handler) {
+                    set_disposition(sig, libc::SIG_DFL);
+                }
+            }
+            swap_thread_mask(libc::SIG_SETMASK, &restore);
+            Ok(())
+        });
+    }
+    let spawned = cmd.spawn().map(|child| {
+        let slot = JobGroupSlot::register(child.id() as i32);
+        (child, slot)
+    });
+    // SAFETY: as above.
+    unsafe { swap_thread_mask(libc::SIG_SETMASK, &restore) };
+    spawned
+}
+
+/// Has the job's leader exited? Asked WITHOUT reaping it (`WNOWAIT`), so its
+/// registry slot can be freed before the reap ([`JobGroupSlot`]).
+fn job_has_exited(child: &Child) -> std::io::Result<bool> {
+    // SAFETY: a zeroed siginfo_t is valid; waitid fills it for a child of ours.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id(),
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if rc != 0 {
+        let e = std::io::Error::last_os_error();
+        if e.kind() == std::io::ErrorKind::Interrupted {
+            return Ok(false);
+        }
+        return Err(e);
+    }
+    // WNOHANG with nothing to report leaves si_pid zero (the struct was zeroed).
+    // SAFETY: si_pid is valid to read for a SIGCHLD-shaped siginfo.
+    Ok(unsafe { info.si_pid() } != 0)
+}
+
+// ── G2c: the drains end even if the pipes do not ────────────────────────────
+
+/// How long the drains may run on once the job has been reaped. Normally no
+/// time is spent here: every writer is gone, so both pipes are already at EOF.
+/// A descendant that left the job's group (`setsid`) and kept stdout or stderr
+/// open is the exception — after a kill and after a normal exit alike — and it
+/// used to block the join, and so the supervisor, until it chose to exit.
+const DRAIN_GRACE: Duration = Duration::from_secs(2);
+
+/// Wait until `fd` is readable or at EOF (true), or `stop` is set (false).
+fn wait_readable(fd: RawFd, stop: &AtomicBool) -> bool {
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return false;
+        }
+        let mut p = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd for a descriptor the calling drain owns.
+        let n = unsafe { libc::poll(&mut p, 1, 50) };
+        if n > 0 {
+            return true; // data, EOF or an error: the read says which
+        }
+        if n < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+            return true; // poll itself failed: let the read fail and end the drain
+        }
+    }
+}
+
+/// Drain one child pipe on its own thread (T25), bounded (B259) and stoppable.
+fn spawn_drain<R>(pipe: Option<R>, max_capture: usize, stop: Arc<AtomicBool>) -> JoinHandle<String>
+where
+    R: std::io::Read + AsRawFd + Send + 'static,
+{
+    std::thread::spawn(move || {
+        pipe.map(|p| {
+            let fd = p.as_raw_fd();
+            read_bounded(p, max_capture, || wait_readable(fd, &stop)).0
+        })
+        .unwrap_or_default()
+    })
+}
+
+/// Join both drains, waiting at most [`DRAIN_GRACE`] for their EOF, then stop
+/// them: each returns what it read within one poll interval.
+fn join_drains(
+    out_h: JoinHandle<String>,
+    err_h: JoinHandle<String>,
+    stop: &AtomicBool,
+) -> (String, String) {
+    let deadline = Instant::now() + DRAIN_GRACE;
+    while !(out_h.is_finished() && err_h.is_finished()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    stop.store(true, Ordering::Release);
+    (
+        out_h.join().unwrap_or_default(),
+        err_h.join().unwrap_or_default(),
+    )
 }
 
 /// Run a command with a hard wall-clock timeout. On expiry the child is killed
@@ -356,7 +664,8 @@ fn run_bounded_capped(
     kill_file: Option<&std::path::Path>,
     max_capture: usize,
 ) -> std::io::Result<ProcOutcome> {
-    /// SIGKILL the child's whole process GROUP, then reap the child.
+    /// SIGKILL the child's whole process GROUP. Does not reap: the caller
+    /// frees the job's registry slot first (G2d).
     ///
     /// Falls back to killing the child alone if the group signal fails, so a
     /// platform or permission quirk degrades to the previous behaviour rather
@@ -371,7 +680,14 @@ fn run_bounded_capped(
         if rc != 0 {
             let _ = child.kill();
         }
-        let _ = child.wait();
+    }
+
+    /// What ended the job's watch.
+    enum End {
+        Exited,
+        TimedOut,
+        Latch,
+        Signal(i32),
     }
 
     // KILL THE JOB, NOT A PID.
@@ -387,12 +703,12 @@ fn run_bounded_capped(
     // ordinary case, and BOTH the operator kill switch (R27) and the compliance
     // monitor (R29) terminate through this path — so neither stopped a job that
     // had spawned a subprocess.
-    let mut child = cmd
+    let cmd = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn()?;
+        .process_group(0);
+    let (mut child, slot) = spawn_registered(cmd)?;
 
     let stdout_pipe = child.stdout.take();
     let stderr_pipe = child.stderr.take();
@@ -411,49 +727,68 @@ fn run_bounded_capped(
     // B259: and BOUNDED. `read_to_string` retained everything a job printed,
     // so a job could make the supervisor allocate without limit. The pipes are
     // still drained to EOF; only `max_capture` bytes per stream are kept.
-    let out_h = std::thread::spawn(move || {
-        stdout_pipe
-            .map(|s| read_bounded(s, max_capture).0)
-            .unwrap_or_default()
-    });
-    let err_h = std::thread::spawn(move || {
-        stderr_pipe
-            .map(|s| read_bounded(s, max_capture).0)
-            .unwrap_or_default()
-    });
-    let start = std::time::Instant::now();
-    let mut killed_by_latch = false;
-    let code = loop {
-        match child.try_wait()? {
-            Some(status) => break Some(status.code().unwrap_or(-1)),
-            None => {
-                if start.elapsed() >= timeout {
-                    kill_group(&mut child);
-                    break None;
-                }
-                // R27/R29 poll-before-progress: check the kill file if set.
-                if let Some(kf) = kill_file {
-                    if is_kill_file_tripped(kf) {
-                        killed_by_latch = true;
-                        kill_group(&mut child);
-                        break Some(4); // HALTED_EXIT_CODE (R27); R29 overrides to 12 in cmd_run
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(100));
+    //
+    // G2c: and STOPPABLE, so the join below cannot wait on a pipe forever.
+    let stop = Arc::new(AtomicBool::new(false));
+    let out_h = spawn_drain(stdout_pipe, max_capture, Arc::clone(&stop));
+    let err_h = spawn_drain(stderr_pipe, max_capture, Arc::clone(&stop));
+
+    let start = Instant::now();
+    let watched = loop {
+        match job_has_exited(&child) {
+            Ok(true) => break Ok(End::Exited),
+            Ok(false) => {}
+            Err(e) => {
+                kill_group(&mut child);
+                break Err(e);
             }
         }
+        // G2d: normally the handler has already killed the group; this reaches
+        // a job it could not (signalled before registration, registry full).
+        if let Some(sig) = termination_signal() {
+            kill_group(&mut child);
+            break Ok(End::Signal(sig));
+        }
+        if start.elapsed() >= timeout {
+            kill_group(&mut child);
+            break Ok(End::TimedOut);
+        }
+        // R27/R29 poll-before-progress: check the kill file if set.
+        if let Some(kf) = kill_file {
+            if is_kill_file_tripped(kf) {
+                kill_group(&mut child);
+                break Ok(End::Latch);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
     };
 
-    // Join the drainers: both pipes are at EOF once the child has exited.
-    let stdout = out_h.join().unwrap_or_default(); // drained concurrently (T25)
-    let stderr = err_h.join().unwrap_or_default();
+    // Free the slot, THEN reap (see `JobGroupSlot`).
+    drop(slot);
+    let reaped = child.wait();
+    let (stdout, stderr) = join_drains(out_h, err_h, &stop);
+    let end = watched?;
+    let status = reaped?;
 
+    let killed_by_signal = match end {
+        End::Signal(sig) => Some(sig),
+        // The handler killed the group before the loop looked. A job that had
+        // exited on its own keeps its own outcome.
+        End::Exited if status.code().is_none() => termination_signal(),
+        _ => None,
+    };
+    let code = match end {
+        End::Exited => Some(status.code().unwrap_or(-1)),
+        End::Latch => Some(4), // HALTED_EXIT_CODE (R27); R29 overrides to 12 in cmd_run
+        End::TimedOut | End::Signal(_) => None,
+    };
     Ok(ProcOutcome {
         code,
         stdout,
         stderr,
-        timed_out: code.is_none(),
-        killed_by_latch,
+        timed_out: matches!(end, End::TimedOut),
+        killed_by_latch: matches!(end, End::Latch),
+        killed_by_signal,
     })
 }
 
@@ -883,7 +1218,16 @@ impl Runtime for AxonCoreRuntime {
         // otherwise collide with the carved fault codes (a program returning 7
         // is NOT budget exhaustion). A clean run ⇒ Completed{value = exit code}.
         let err = &proc.stderr;
-        let verdict = if proc.killed_by_latch {
+        let verdict = if let Some(sig) = proc.killed_by_signal {
+            // G2d: the supervisor was told to stop and took the job with it.
+            // `axon-os run` writes this record and then exits 128+signal.
+            Verdict::Halted {
+                reason: format!(
+                    "the supervisor received {} and killed the job's process group",
+                    signal_name(sig)
+                ),
+            }
+        } else if proc.killed_by_latch {
             // Kill file tripped: R27 operator kill → Halted (exit 4).
             // R29 monitor kill → cmd_run overrides the final exit code to 12
             // via the `containment_violation` flag (checked after supervisor::run).
@@ -1092,16 +1436,179 @@ mod runtime_tests {
         );
     }
 
+    // ── G2a: a kill reaches the JOB, every process in it, and nothing else ──
+
+    /// A process a test started, known by pid AND command line: a pid the
+    /// kernel has reused is never taken for it, nor killed by the cleanup. A
+    /// zombie's cmdline reads empty, so killed-but-unreaped counts as gone.
+    /// Dropping it SIGKILLs the process if it is still there, so a failing
+    /// test leaks nothing.
+    struct Tracked {
+        pid: i32,
+        cmdline: Vec<u8>,
+    }
+
+    impl Tracked {
+        /// Wait (at most 20 s) until `pid_file` names a live process running
+        /// exactly `argv`.
+        fn wait_alive(pid_file: &Path, argv: &[&str]) -> Tracked {
+            let mut cmdline = Vec::new();
+            for a in argv {
+                cmdline.extend_from_slice(a.as_bytes());
+                cmdline.push(0);
+            }
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                let pid = std::fs::read_to_string(pid_file)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<i32>().ok());
+                if let Some(pid) = pid.filter(|&p| runs(p, &cmdline)) {
+                    return Tracked { pid, cmdline };
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "{} never named a live `{}`",
+                    pid_file.display(),
+                    argv.join(" ")
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn alive(&self) -> bool {
+            runs(self.pid, &self.cmdline)
+        }
+
+        /// Gone within `d` (a SIGKILL is delivered asynchronously).
+        fn gone_within(&self, d: Duration) -> bool {
+            let deadline = Instant::now() + d;
+            while self.alive() {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            true
+        }
+    }
+
+    /// Is `pid` a live process whose command line is exactly `cmdline`?
+    fn runs(pid: i32, cmdline: &[u8]) -> bool {
+        std::fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|c| c == cmdline)
+    }
+
+    impl Drop for Tracked {
+        fn drop(&mut self) {
+            if self.alive() {
+                // SAFETY: plain syscall; the pid was just checked to be ours.
+                unsafe { libc::kill(self.pid, libc::SIGKILL) };
+            }
+        }
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("axon-os-g2a-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// A shell job that starts a grandchild `sleep <secs>` and waits on it.
+    /// The grandchild's stdio is /dev/null, so it holds none of the job's
+    /// pipes: what is tested is the kill, not the drain.
+    fn job_with_grandchild(pid_file: &Path, secs: &str) -> Command {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(format!(
+            "sleep {secs} </dev/null >/dev/null 2>&1 & echo $! > '{}'; wait",
+            pid_file.display()
+        ));
+        cmd
+    }
+
+    /// The timeout kill takes the job's grandchild with it. Before 821cf767 it
+    /// signalled the direct child only, and the grandchild outlived the run.
+    #[test]
+    fn the_timeout_kill_reaches_the_jobs_grandchild() {
+        let d = scratch("timeout");
+        let pid_file = d.join("grandchild.pid");
+        let mut cmd = job_with_grandchild(&pid_file, "3621");
+        let run = std::thread::spawn(move || run_bounded(&mut cmd, Duration::from_secs(3), None));
+        let grandchild = Tracked::wait_alive(&pid_file, &["sleep", "3621"]);
+        let out = run.join().unwrap().expect("spawn sh");
+        assert!(
+            out.timed_out,
+            "the job itself must be killed at the timeout"
+        );
+        assert!(
+            grandchild.gone_within(Duration::from_secs(5)),
+            "ATTACK: the job's grandchild (pid {}) outlived the timeout kill",
+            grandchild.pid
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The kill-latch path (R27 operator kill, R29 monitor) takes the job's
+    /// grandchild with it too.
+    #[test]
+    fn the_latch_kill_reaches_the_jobs_grandchild() {
+        let d = scratch("latch");
+        let pid_file = d.join("grandchild.pid");
+        let latch = d.join("run.kill");
+        std::fs::write(&latch, r#"{"latch":"clear"}"#).unwrap();
+        let mut cmd = job_with_grandchild(&pid_file, "3622");
+        let polled = latch.clone();
+        let run = std::thread::spawn(move || {
+            run_bounded(&mut cmd, Duration::from_secs(60), Some(&polled))
+        });
+        let grandchild = Tracked::wait_alive(&pid_file, &["sleep", "3622"]);
+        std::fs::write(&latch, r#"{"latch":"tripped","reason":"g2a"}"#).unwrap();
+        let out = run.join().unwrap().expect("spawn sh");
+        assert!(
+            out.killed_by_latch,
+            "the job itself must be killed by the latch"
+        );
+        assert!(
+            grandchild.gone_within(Duration::from_secs(5)),
+            "ATTACK: the job's grandchild (pid {}) outlived the latch kill",
+            grandchild.pid
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The group kill reaches ONLY the job's group: a process in another
+    /// group survives it (the `kill(-1)` class of bug, see axon-intent
+    /// synth.rs `the_timeout_kill_reaches_only_the_childs_own_group`).
+    #[test]
+    fn the_timeout_kill_spares_a_bystander_in_another_group() {
+        let mut bystander = Command::new("sleep");
+        bystander.arg("30").process_group(0);
+        let mut bystander = bystander.spawn().expect("spawn bystander");
+        let mut cmd = Command::new("sleep");
+        cmd.arg("3623");
+        let out = run_bounded(&mut cmd, Duration::from_millis(300), None).expect("spawn sleep");
+        assert!(out.timed_out);
+        // `try_wait`, not `kill(pid, 0)`: an unreaped SIGKILLed child is a
+        // zombie, and kill(pid, 0) succeeds on a zombie.
+        let state = bystander.try_wait().expect("poll bystander");
+        let _ = bystander.kill();
+        let _ = bystander.wait();
+        assert!(
+            state.is_none(),
+            "ATTACK: a process in an UNRELATED group was killed by the job's \
+             timeout kill ({state:?})"
+        );
+    }
+
     #[test]
     fn read_bounded_keeps_head_and_tail_and_counts_the_rest() {
         let data: Vec<u8> = (0..10_000u32).map(|i| b'a' + (i % 26) as u8).collect();
-        let (s, dropped) = read_bounded(&data[..], 100);
+        let (s, dropped) = read_bounded(&data[..], 100, || true);
         assert_eq!(dropped, 10_000 - 100);
         assert!(s.starts_with(std::str::from_utf8(&data[..50]).unwrap()));
         assert!(s.ends_with(std::str::from_utf8(&data[10_000 - 50..]).unwrap()));
         assert!(s.contains("9900 bytes of output omitted"));
         // Under the bound: byte-identical, no annotation.
-        let (s, dropped) = read_bounded(&b"hello\n"[..], 100);
+        let (s, dropped) = read_bounded(&b"hello\n"[..], 100, || true);
         assert_eq!((s.as_str(), dropped), ("hello\n", 0));
     }
 
