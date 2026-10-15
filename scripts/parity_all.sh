@@ -72,32 +72,15 @@ note_skip() {
 }
 
 # ── THE skip rule ────────────────────────────────────────────────────────────
-# Kept byte-for-byte in step with `harness_skipped` in
-# crates/axon-core/tests/cli_run.rs — the two used to DISAGREE: this file judged
-# by `tail -1` alone while cli_run.rs scanned the last three non-empty lines, so
-# a harness that printed its skip prose and then elaborated (handler_resume,
-# exit_code_parity's catch-all — both ended on build-error text) was SKIP to one
-# reader and PASS to the other. Same run, two verdicts.
-#
-# Preferred shape is the EXPLICIT final marker `<name>: SKIP — <reason>` that
-# `harness_skip` emits; the prose forms are grandfathered for harnesses that
-# have not been converted. A non-zero exit is a FAILURE and never a skip — that
-# is decided on `$rc` before this is consulted.
-# A skip line is HARNESS-LEVEL: it starts at column 0. An indented
-# "  SKIP <case>" is one case of many and says nothing about the verdict —
-# that distinction is why a whole-output grep was wrong in the first place.
-_skip_re=': SKIP|skipping|this is a SKIP'
-_verdict_re='PASS|FAILED|FAIL|: OK|OK —'
-harness_says_skip() { # <output>
-  local body final
-  body="$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$')"
-  final="$(printf '%s\n' "$body" | tail -1)"
-  # 1. The final line decides when it states anything at all.
-  printf '%s\n' "$final" | grep -qE "^[^[:space:]].*($_skip_re)" && return 0
-  printf '%s\n' "$final" | grep -qE "^[^[:space:]].*($_verdict_re)" && return 1
-  # 2. Otherwise a skip may have been followed by elaboration (up to 2 lines).
-  printf '%s\n' "$body" | tail -3 | grep -qE "^[^[:space:]].*($_skip_re)"
-}
+# `harness_says_skip` lives in scripts/lib/harness_skip.sh (sourced above), the
+# one shell copy of the rule; scripts/test_harness_skip.sh pins it against the
+# same rows as `skip_rule_table` in crates/axon-core/tests/cli_run.rs. A broken
+# detector would misfile every harness, so it is checked before any runs.
+if ! bash "$ROOT/scripts/test_harness_skip.sh" >/dev/null; then
+  echo "parity_all: FAILED — the skip detector disagrees with its rule table:" >&2
+  bash "$ROOT/scripts/test_harness_skip.sh" >&2
+  exit 2
+fi
 
 QUIET=0
 for arg in "$@"; do
@@ -128,12 +111,12 @@ for h in scripts/*_parity.sh; do
   out="$(bash "$h" 2>&1)"
   rc=$?
 
-  # A harness's VERDICT is its FINAL summary line (`<name>: PASS …` /
-  # `<name>: … skipping`). Detecting "skip" anywhere in the output is wrong: a
-  # passing harness may print a per-case "SKIP <case>" line (e.g. wasm_aot_run
-  # skips a single loop program) while its overall result is PASS — grepping the
-  # whole output then false-labels the harness as skipped and DROPS real
-  # coverage. Judge by the last line only.
+  # A harness's VERDICT is its exit status, then `harness_says_skip` (the rule
+  # in scripts/lib/harness_skip.sh): the final non-empty line decides when it
+  # states a skip or a verdict, else a column-0 skip in the last three lines.
+  # Detecting "skip" anywhere in the output is wrong: a passing harness may
+  # print a per-case "  SKIP <case>" line (e.g. wasm_aot_run skips a single loop
+  # program) while its overall result is PASS. `last_line` is only for display.
   last_line="$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -1)"
   if [ "$rc" -ne 0 ]; then
     printf "  FAIL  %-30s (exit %d)\n" "$name" "$rc"
