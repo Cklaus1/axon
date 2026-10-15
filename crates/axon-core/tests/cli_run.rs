@@ -3658,6 +3658,509 @@ fn deploy_approval_binds_the_program_text_not_the_filename() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// ── G1: approval binds the import graph ─────────────────────────────────────
+
+/// A program `main.ax` that imports `lib` from `<dir>/mods`, which holds a
+/// benign `lib.ax`. Returns `(dir, main.ax, mods/lib.ax)`.
+fn g1_program(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("axon_g1_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("mods")).unwrap();
+    let main = dir.join("main.ax");
+    let lib = dir.join("mods").join("lib.ax");
+    std::fs::write(
+        &main,
+        "mod lib\nuse lib.{helper}\nfn main() {\n    println(\"main says {helper()}\")\n}\n",
+    )
+    .unwrap();
+    std::fs::write(&lib, "fn helper() -> i64 { 41 }\n").unwrap();
+    (dir, main, lib)
+}
+
+/// `lib.ax` rewritten to grant itself everything and write `marker`.
+fn g1_hostile_lib(marker: &std::path::Path) -> String {
+    format!(
+        "@[contained(fs: [write(\"/\")], net: [\"*\"], exec: any)]\n\
+         fn helper() -> i64 {{\n    let _ = write_file(\"{}\", \"pwned\")\n    41\n}}\n",
+        marker.display()
+    )
+}
+
+fn g1_axon(dir: &std::path::Path) -> Command {
+    let mut c = axon();
+    c.current_dir(dir)
+        .env("AXON_PATH", dir.join("mods"))
+        .env("AXON_PATH_EXCLUSIVE", "1")
+        .env_remove("AXON_REQUIRE_IMPORTS_DIGEST");
+    c
+}
+
+fn g1_out(out: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+fn g1_imports_digest(dir: &std::path::Path) -> String {
+    let out = g1_axon(dir)
+        .args(["imports", "main.ax", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "imports: {}", g1_out(&out));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    v["imports_digest"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn deploy_refuses_an_imported_module_rewritten_after_approval() {
+    // G1 (P0). `ast approve` hashed the entry file alone and `deploy` compared
+    // the entry file alone, then re-resolved every `use` from the search path.
+    // Rewriting an IMPORTED module to grant itself `write:[/] net:[*]
+    // exec:any` left the approval valid and the deploy ran it.
+    let (dir, _main, lib) = g1_program("deploy");
+    let marker = dir.join("PWNED");
+    let approve = g1_axon(&dir)
+        .args(["ast", "approve", "main.ax"])
+        .output()
+        .unwrap();
+    assert_eq!(approve.status.code(), Some(0), "{}", g1_out(&approve));
+    let rec = std::fs::read_to_string(dir.join("main.ax.approved")).unwrap();
+    let rec: serde_json::Value = serde_json::from_str(&rec).unwrap();
+    assert_eq!(rec["schema"], "axon-ast-approved/2");
+    assert_eq!(
+        rec["imports_digest"].as_str().unwrap(),
+        g1_imports_digest(&dir)
+    );
+    assert_eq!(rec["modules"][0]["name"], "lib", "{rec}");
+
+    // Unchanged: approved, deploys, runs.
+    let clean = g1_axon(&dir)
+        .args(["deploy", "main.ax", "--json"])
+        .output()
+        .unwrap();
+    let c = g1_out(&clean);
+    assert_eq!(clean.status.code(), Some(0), "{c}");
+    assert!(
+        c.contains("\"approved\":true") && c.contains("main says 41"),
+        "{c}"
+    );
+
+    // The attack: only the imported module changes.
+    std::fs::write(&lib, g1_hostile_lib(&marker)).unwrap();
+    let attacked = g1_axon(&dir)
+        .args(["deploy", "main.ax", "--json"])
+        .output()
+        .unwrap();
+    let a = g1_out(&attacked);
+    assert_eq!(attacked.status.code(), Some(8), "{a}");
+    assert!(a.contains("\"status\":\"blocked_approval\""), "{a}");
+    assert!(
+        a.contains("module `lib` changed"),
+        "the refusal must name the module: {a}"
+    );
+    assert!(!marker.exists(), "the rewritten module must never run: {a}");
+    assert!(!a.contains("main says"), "{a}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ast_approve_refuses_a_program_whose_imports_do_not_load() {
+    let (dir, _main, lib) = g1_program("approve_missing");
+    std::fs::remove_file(&lib).unwrap();
+    let out = g1_axon(&dir)
+        .args(["ast", "approve", "main.ax"])
+        .output()
+        .unwrap();
+    let o = g1_out(&out);
+    assert_eq!(out.status.code(), Some(2), "{o}");
+    assert!(o.contains("E0901"), "{o}");
+    assert!(!dir.join("main.ax.approved").exists(), "{o}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_v1_approval_record_binds_the_entry_but_no_longer_approves() {
+    // A `/1` record knows nothing of imports: matching entry → not approved,
+    // non-blocking (no better than no record); differing entry → tampered.
+    let (dir, main, _lib) = g1_program("v1");
+    let src = std::fs::read(&main).unwrap();
+    use sha2::{Digest, Sha256};
+    let hash = format!("axsha256:{:x}", Sha256::digest(&src));
+    std::fs::write(
+        dir.join("main.ax.approved"),
+        format!(
+            "{{\"schema\":\"axon-ast-approved/1\",\"file\":\"main.ax\",\"hash\":\"{hash}\",\"approved_at_unix\":1}}\n"
+        ),
+    )
+    .unwrap();
+    let out = g1_axon(&dir)
+        .args(["deploy", "main.ax", "--json"])
+        .output()
+        .unwrap();
+    let o = g1_out(&out);
+    assert_eq!(out.status.code(), Some(0), "{o}");
+    assert!(o.contains("\"approved\":false"), "{o}");
+    let human = g1_axon(&dir).args(["deploy", "main.ax"]).output().unwrap();
+    let h = g1_out(&human);
+    assert_eq!(human.status.code(), Some(0), "{h}");
+    assert!(h.contains("approved before import binding"), "{h}");
+
+    std::fs::write(&main, "fn main() {\n    println(\"edited\")\n}\n").unwrap();
+    let out = g1_axon(&dir).args(["deploy", "main.ax"]).output().unwrap();
+    let o = g1_out(&out);
+    assert_eq!(out.status.code(), Some(8), "{o}");
+    assert!(
+        o.contains("digest mismatch") && !o.contains("edited\n"),
+        "{o}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn axon_imports_reports_the_loaded_closure() {
+    let (dir, _main, lib) = g1_program("imports");
+    let out = g1_axon(&dir)
+        .args(["imports", "main.ax", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", g1_out(&out));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["schema"], "axon-imports/1");
+    assert_eq!(v["file"], "main.ax");
+    let m = &v["modules"][0];
+    assert_eq!(v["modules"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(m["name"], "lib");
+    assert_eq!(m["sealed"], false);
+    assert_eq!(
+        m["hash"].as_str().unwrap(),
+        axon_core::lockfile::module_hash(&std::fs::read(&lib).unwrap())
+    );
+    assert_eq!(
+        std::path::Path::new(m["path"].as_str().unwrap()),
+        lib.as_path(),
+        "the file the search chose: {v}"
+    );
+    let expected =
+        axon_core::lockfile::imports_digest(&[("lib", &std::fs::read(&lib).unwrap(), false)]);
+    assert_eq!(v["imports_digest"].as_str().unwrap(), expected);
+
+    // No imports: the empty closure's known digest.
+    std::fs::write(dir.join("plain.ax"), "fn main() {}\n").unwrap();
+    let out = g1_axon(&dir)
+        .args(["imports", "plain.ax", "--json"])
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v["imports_digest"],
+        "axsha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+    assert_eq!(v["modules"], serde_json::json!([]));
+
+    // An import that resolves nowhere: exit 2, no digest.
+    std::fs::remove_file(&lib).unwrap();
+    let out = g1_axon(&dir)
+        .args(["imports", "main.ax", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", g1_out(&out));
+    assert!(out.stdout.is_empty(), "{}", g1_out(&out));
+
+    // A `use` with NO search directory at all used to be skipped silently;
+    // a digest over it would read as "no imports".
+    std::fs::write(&lib, "fn helper() -> i64 { 41 }\n").unwrap();
+    let out = axon()
+        .current_dir(&dir)
+        .env_remove("AXON_PATH")
+        .env_remove("AXON_REQUIRE_IMPORTS_DIGEST")
+        .env("AXON_PATH_EXCLUSIVE", "1")
+        .args(["imports", "main.ax", "--json"])
+        .output()
+        .unwrap();
+    let o = g1_out(&out);
+    assert_eq!(out.status.code(), Some(2), "{o}");
+    assert!(o.contains("never resolved"), "{o}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn require_imports_digest_refuses_any_other_closure_before_running() {
+    let (dir, main, lib) = g1_program("require");
+    let approved = g1_imports_digest(&dir);
+    let marker = dir.join("PWNED");
+
+    // Matching closure: runs.
+    let ok = g1_axon(&dir)
+        .env("AXON_REQUIRE_IMPORTS_DIGEST", &approved)
+        .args(["run", "main.ax"])
+        .output()
+        .unwrap();
+    assert_eq!(ok.status.code(), Some(0), "{}", g1_out(&ok));
+    assert!(g1_out(&ok).contains("main says 41"));
+
+    // A rewritten module: refused, exit 8, nothing executed — on every
+    // executing verb that loads modules.
+    std::fs::write(&lib, g1_hostile_lib(&marker)).unwrap();
+    std::fs::write(
+        dir.join("t.ax"),
+        "mod lib\nuse lib.{helper}\n@[test]\nfn t() { assert(helper() == 41) }\n",
+    )
+    .unwrap();
+    for args in [
+        vec!["run", "main.ax"],
+        vec!["deploy", "main.ax"],
+        vec!["test", "t.ax"],
+    ] {
+        let out = g1_axon(&dir)
+            .env("AXON_REQUIRE_IMPORTS_DIGEST", &approved)
+            .args(&args)
+            .output()
+            .unwrap();
+        let o = g1_out(&out);
+        assert_eq!(out.status.code(), Some(8), "{args:?}: {o}");
+        assert!(o.contains("AXON_REQUIRE_IMPORTS_DIGEST"), "{args:?}: {o}");
+        assert!(!marker.exists(), "{args:?} executed the module: {o}");
+    }
+
+    // A verb that cannot check imports refuses rather than ignore it.
+    let out = g1_axon(&dir)
+        .env("AXON_REQUIRE_IMPORTS_DIGEST", &approved)
+        .args(["check", "main.ax"])
+        .output()
+        .unwrap();
+    let o = g1_out(&out);
+    assert_eq!(out.status.code(), Some(2), "{o}");
+    assert!(o.contains("AXON_REQUIRE_IMPORTS_DIGEST"), "{o}");
+
+    // The digest binds THIS process: a different program the approved one
+    // exec()s is not refused by it.
+    std::fs::write(&lib, "fn helper() -> i64 { 41 }\n").unwrap();
+    std::fs::write(
+        dir.join("inner.ax"),
+        "fn main() {\n    println(\"INNER RAN\")\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &main,
+        format!(
+            "mod lib\nuse lib.{{helper}}\nfn main() {{\n    match exec(\"{}\", [\"run\", \"inner.ax\"]) {{\n        Ok(o) => println(\"nested: {{o}}\")\n        Err(e) => println(\"nested failed: {{e}}\")\n    }}\n    println(\"main says {{helper()}}\")\n}}\n",
+            env!("CARGO_BIN_EXE_axon")
+        ),
+    )
+    .unwrap();
+    let out = g1_axon(&dir)
+        .env("AXON_REQUIRE_IMPORTS_DIGEST", &approved)
+        .args(["run", "main.ax"])
+        .output()
+        .unwrap();
+    let o = g1_out(&out);
+    assert_eq!(out.status.code(), Some(0), "{o}");
+    assert!(o.contains("nested: INNER RAN"), "{o}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ast_review_names_the_module_each_imported_fn_came_from() {
+    let (dir, _main, _lib) = g1_program("review");
+    let out = g1_axon(&dir)
+        .args(["ast", "review", "main.ax", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", g1_out(&out));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["schema"], "axon-ast-review/2");
+    let origin = |name: &str| {
+        v["fns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == name)
+            .unwrap_or_else(|| panic!("no fn {name}: {v}"))["origin"]
+            .clone()
+    };
+    assert_eq!(origin("helper"), "lib");
+    assert_eq!(origin("main"), serde_json::Value::Null);
+
+    let human = g1_axon(&dir)
+        .args(["ast", "review", "main.ax"])
+        .output()
+        .unwrap();
+    let h = g1_out(&human);
+    let line = |name: &str| {
+        h.lines()
+            .find(|l| l.trim_start().starts_with(&format!("fn {name}(")))
+            .unwrap_or_else(|| panic!("no fn {name}: {h}"))
+            .to_string()
+    };
+    assert!(line("helper").contains("[from lib]"), "{h}");
+    assert!(!line("main").contains("[from"), "{h}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn imports_closure_agrees_with_transitive_resolution_on_every_example() {
+    // G1a extra gate: for every example with a `use`, the closure the LOADER
+    // records (`axon imports`) names exactly the modules
+    // `resolve_use_files_transitive` finds, and its digest is the same from two
+    // processes in two working directories. AXON_PATH is the union the
+    // examples parity sweep uses, made absolute.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let dirs: Vec<std::path::PathBuf> = ["stdlib", "asi", "modular", "domain"]
+        .iter()
+        .map(|d| root.join("examples").join(d))
+        .collect();
+    let axon_path = std::env::join_paths(&dirs).unwrap();
+    let other_cwd = std::env::temp_dir().join(format!("axon_g1_cwd_{}", std::process::id()));
+    std::fs::create_dir_all(&other_cwd).unwrap();
+
+    fn walk(d: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in std::fs::read_dir(d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "ax") {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(&root.join("examples"), &mut files);
+    files.sort();
+    let mut compared = 0;
+    let mut with_modules = 0;
+    for f in files {
+        let src = std::fs::read_to_string(&f).unwrap();
+        if !src.lines().any(|l| l.trim_start().starts_with("use ")) {
+            continue;
+        }
+        let imports = |cwd: &std::path::Path| {
+            axon()
+                .current_dir(cwd)
+                .env("AXON_PATH", &axon_path)
+                .env("AXON_PATH_EXCLUSIVE", "1")
+                .env_remove("AXON_REQUIRE_IMPORTS_DIGEST")
+                .args(["imports", f.to_str().unwrap(), "--json"])
+                .output()
+                .unwrap()
+        };
+        let a = imports(&root);
+        let b = imports(&other_cwd);
+        assert_eq!(a.status.code(), b.status.code(), "{}", f.display());
+        let Ok(program) = axon_core::parse_source(&src) else {
+            assert_eq!(a.status.code(), Some(2), "{}", f.display());
+            continue;
+        };
+        let (resolved, unresolved) = axon_core::resolve_use_files_transitive(&program, &dirs);
+        if a.status.code() != Some(0) {
+            assert!(
+                !unresolved.is_empty(),
+                "{}: the loader refused what resolution found complete: {}",
+                f.display(),
+                g1_out(&a)
+            );
+            continue;
+        }
+        assert!(unresolved.is_empty(), "{}: {unresolved:?}", f.display());
+        let va: serde_json::Value = serde_json::from_slice(&a.stdout).unwrap();
+        let vb: serde_json::Value = serde_json::from_slice(&b.stdout).unwrap();
+        assert_eq!(
+            va["imports_digest"],
+            vb["imports_digest"],
+            "{}",
+            f.display()
+        );
+        let mut loaded: Vec<(String, String)> = va["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| {
+                (
+                    m["name"].as_str().unwrap().to_string(),
+                    m["path"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        loaded.sort();
+        let mut expect: Vec<(String, String)> = resolved
+            .iter()
+            .map(|m| (m.name.clone(), m.path.display().to_string()))
+            .collect();
+        expect.sort();
+        assert_eq!(loaded, expect, "{}", f.display());
+        let entries: Vec<(&str, &[u8], bool)> = resolved
+            .iter()
+            .map(|m| (m.name.as_str(), m.bytes.as_slice(), false))
+            .collect();
+        assert_eq!(
+            va["imports_digest"].as_str().unwrap(),
+            axon_core::lockfile::imports_digest(&entries),
+            "{}",
+            f.display()
+        );
+        compared += 1;
+        with_modules += usize::from(!loaded.is_empty());
+    }
+    let _ = std::fs::remove_dir_all(&other_cwd);
+    assert!(
+        compared >= 8 && with_modules >= 4,
+        "the sweep compared {compared} examples ({with_modules} with modules) — too few to mean anything"
+    );
+}
+
+#[test]
+fn a_built_binary_refuses_require_imports_digest_rather_than_ignore_it() {
+    // G1d: a binary cannot recompute the closure it was linked from, so under
+    // AXON_REQUIRE_IMPORTS_DIGEST it must refuse — at build time and at run
+    // time — instead of running unchecked code as if the check had passed.
+    let dir = std::env::temp_dir().join(format!("axon_g1_native_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("p.ax");
+    std::fs::write(&src, "fn main() {\n    println(\"BINARY RAN\")\n}\n").unwrap();
+    let bin = dir.join("pbin");
+    let build = |with: bool| {
+        let mut c = axon();
+        c.args(["build", src.to_str().unwrap(), "-o", bin.to_str().unwrap()]);
+        if with {
+            c.env("AXON_REQUIRE_IMPORTS_DIGEST", "axsha256:00");
+        } else {
+            c.env_remove("AXON_REQUIRE_IMPORTS_DIGEST");
+        }
+        c.output().unwrap()
+    };
+    let refused = build(true);
+    assert_eq!(refused.status.code(), Some(2), "{}", g1_out(&refused));
+    assert!(!bin.exists());
+
+    let control = build(false);
+    if !control.status.success() {
+        note_harness_skip("a_built_binary_refuses_require_imports_digest (no codegen)");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    let free = Command::new(&bin)
+        .env_remove("AXON_REQUIRE_IMPORTS_DIGEST")
+        .output()
+        .unwrap();
+    assert!(g1_out(&free).contains("BINARY RAN"), "{}", g1_out(&free));
+    let ran = Command::new(&bin)
+        .env("AXON_REQUIRE_IMPORTS_DIGEST", "axsha256:00")
+        .output()
+        .unwrap();
+    let o = g1_out(&ran);
+    assert_eq!(ran.status.code(), Some(2), "{o}");
+    assert!(
+        !o.contains("BINARY RAN") && o.contains("AXON_REQUIRE_IMPORTS_DIGEST"),
+        "{o}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn fmt_preserves_mod_declarations_and_the_program_still_runs() {
     // DATA LOSS (audit T9, findings P5-ECO-01 / P5-31). `mod` declarations were

@@ -562,6 +562,22 @@ enum Command {
         json: bool,
     },
 
+    /// List the modules a program's `use` declarations load (G1c).
+    ///
+    /// The closure the shared loader records — for each module, its name, the
+    /// file the search CHOSE, its content hash (`axh1:`) and whether it lies in
+    /// a sealed directory — and the `imports_digest` an approval binds
+    /// (`axon ast approve`, `AXON_REQUIRE_IMPORTS_DIGEST`). The digest covers
+    /// names and bytes, never paths. Exit 2 when an import does not load.
+    Imports {
+        #[arg(help = "Path to .ax source file")]
+        file: PathBuf,
+
+        /// Emit the closure as stable JSON (`axon-imports/1`).
+        #[arg(long, help = "Machine-readable JSON output")]
+        json: bool,
+    },
+
     // ── Phase 10 CLI verbs ────────────────────────────────────────────────────
     /// Compile a structured-prose intent file (*.md) to a typed .ax skeleton.
     ///
@@ -909,7 +925,87 @@ fn main() {
         .expect("worker thread panicked");
 }
 
+/// G1d: the import-closure digest an executing verb must load, or refuse.
+const REQUIRE_IMPORTS_DIGEST_ENV: &str = "AXON_REQUIRE_IMPORTS_DIGEST";
+
+/// The value of [`REQUIRE_IMPORTS_DIGEST_ENV`] this process started with.
+/// Held here, not in the environment: see [`take_required_imports_digest`].
+static REQUIRED_IMPORTS_DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Read `AXON_REQUIRE_IMPORTS_DIGEST` once, before any verb runs, and remove
+/// it from the environment.
+///
+/// Removed so it binds THIS process only: the approved program may itself
+/// `exec` an `axon run` of a different program (the host passes the whole
+/// environment to a child), which the digest does not describe. Held for the
+/// whole process, not consumed by the first check, because `axon test` with
+/// several files and `axon session` load more than once and every load is
+/// checked ([`enforce_required_imports_digest`]).
+///
+/// Only the verbs that load the program's modules through the shared loader
+/// before executing it can honour it — `run`, `test`, `goal`, `session`,
+/// `deploy`. Every other verb refuses rather than ignore a control the caller
+/// set (a native binary from `axon build` could never check its imports).
+fn take_required_imports_digest(command: &Command) {
+    let Some(raw) = std::env::var_os(REQUIRE_IMPORTS_DIGEST_ENV) else {
+        return;
+    };
+    std::env::remove_var(REQUIRE_IMPORTS_DIGEST_ENV);
+    let honoured = matches!(
+        command,
+        Command::Run { .. }
+            | Command::Test { .. }
+            | Command::Goal { .. }
+            | Command::Session { .. }
+            | Command::Deploy { .. }
+    );
+    if !honoured {
+        eprintln!(
+            "error: `{REQUIRE_IMPORTS_DIGEST_ENV}` is set, but this verb does not load and \
+             check a program's imports before running it — only `axon run`, `test`, `goal`, \
+             `session` and `deploy` honour it (a native binary cannot check its imports at \
+             all). Refusing rather than ignore it; unset it for this command."
+        );
+        process::exit(2);
+    }
+    let Some(digest) = raw.to_str() else {
+        eprintln!("error: `{REQUIRE_IMPORTS_DIGEST_ENV}` is not valid UTF-8");
+        process::exit(2);
+    };
+    let _ = REQUIRED_IMPORTS_DIGEST.set(digest.to_string());
+}
+
+/// Refuse (exit 8, before anything executes) when `AXON_REQUIRE_IMPORTS_DIGEST`
+/// was set and the modules just loaded are not the closure it names. Called by
+/// [`run_check_pipeline_located`] after every load.
+fn enforce_required_imports_digest(closure: &axon_core::ImportClosure) {
+    let Some(required) = REQUIRED_IMPORTS_DIGEST.get() else {
+        return;
+    };
+    let loaded = match closure.digest() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: {REQUIRE_IMPORTS_DIGEST_ENV}: {e}; refusing to run");
+            process::exit(8);
+        }
+    };
+    if &loaded != required {
+        let names: Vec<&str> = closure.modules.iter().map(|m| m.name.as_str()).collect();
+        eprintln!(
+            "error: {REQUIRE_IMPORTS_DIGEST_ENV}: the imports loaded are not the approved \
+             closure; refusing to run\n  required: {required}\n  loaded:   {loaded} (modules: {})",
+            if names.is_empty() {
+                "none".to_string()
+            } else {
+                names.join(", ")
+            }
+        );
+        process::exit(8);
+    }
+}
+
 fn dispatch(command: Command) {
+    take_required_imports_digest(&command);
     // R28: if AXON_AUDIT_LEDGER is set, open (or create) the ledger before any
     // command executes, so capability-bearing actions are recorded. flush_ledger()
     // is called at process exit via std::process::exit — but since we use thread
@@ -1035,6 +1131,7 @@ fn dispatch(command: Command) {
             }
         }
         Command::Complexity { file, json } => cmd_complexity(file, json),
+        Command::Imports { file, json } => cmd_imports(file, json),
         Command::Intent { action } => cmd_intent(action),
         Command::Ast { action } => cmd_ast(action),
         Command::Deploy {
@@ -1188,6 +1285,41 @@ fn cmd_complexity(file: PathBuf, json: bool) {
     }
 }
 
+// ── imports ─────────────────────────────────────────────────────────────────
+
+/// `axon imports <file> [--json]` (G1c): the import closure the shared loader
+/// records and its `imports_digest` (schema `axon-imports/1`). Before this,
+/// nothing recorded which file a `use` resolved to.
+fn cmd_imports(file: PathBuf, json: bool) {
+    validate_ax_extension(&file);
+    let src = read_source(&file);
+    let (closure, digest) = import_closure_of(&src, &file);
+    if json {
+        println!(
+            "{{\"schema\":\"axon-imports/1\",\"file\":{},\"imports_digest\":\"{digest}\",\"modules\":{}}}",
+            json_str(&file.display().to_string()),
+            closure_modules_json(&closure),
+        );
+        return;
+    }
+    println!("{}", file.display());
+    println!("  imports_digest: {digest}");
+    let mut mods: Vec<&axon_core::LoadedModule> = closure.modules.iter().collect();
+    mods.sort_by(|a, b| a.name.cmp(&b.name));
+    if mods.is_empty() {
+        println!("  no imported modules");
+    }
+    for m in mods {
+        println!(
+            "  {}  {}  {}{}",
+            m.name,
+            axon_core::lockfile::module_hash(&m.bytes),
+            m.path.display(),
+            if m.sealed { "  [sealed]" } else { "" }
+        );
+    }
+}
+
 // ── check ─────────────────────────────────────────────────────────────────────
 
 fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool) {
@@ -1266,7 +1398,7 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // Type-check pipeline. R8 typed end-to-end: use the LOCATED form so the
     // JSON a tool/agent consumes carries file/line/col (resolved from each
     // typed diagnostic's byte-span against the source), not just code+message.
-    let (located, _infer_ctx) = run_check_pipeline_located(&mut program, &src, &file);
+    let (located, _infer_ctx, _closure) = run_check_pipeline_located(&mut program, &src, &file);
     // M5: accepted-`mut` notes ride on the same channel and schema as every
     // other diagnostic, so a host parsing axon-diag/1 sees them without a
     // special case.
@@ -5411,7 +5543,7 @@ fn run_cell(
             };
         }
     };
-    let (errors, _) = run_check_pipeline_located(&mut program, &src, &path);
+    let (errors, _, _) = run_check_pipeline_located(&mut program, &src, &path);
     if !errors.is_empty() {
         let _ = std::fs::remove_file(&path);
         set_session_prelude_lines(None);
@@ -5769,7 +5901,7 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
     // `found` were all dropped, so a model in a run-and-see loop was told
     // neither what was wrong nor where. The located variant differs only in
     // being handed `src`.
-    let (errors, _infer_ctx) = run_check_pipeline_located(&mut program, &src, &file);
+    let (errors, _infer_ctx, _closure) = run_check_pipeline_located(&mut program, &src, &file);
     // M5: notes are emitted even when the program is otherwise clean — `run`
     // must not be the quiet path again (that was §2's whole defect).
     for note in floor_division_warnings(&src, &file) {
@@ -6659,11 +6791,13 @@ fn run_check_pipeline_located(
 ) -> (
     Vec<axon_core::PipelineDiagnostic>,
     axon_core::infer::InferCtx,
+    axon_core::ImportClosure,
 ) {
+    let mut closure = axon_core::ImportClosure::default();
     let sealed = axon_core::resolver::sealed_module_dirs();
     if sealed.is_empty() {
         let mut dropped = Vec::new();
-        return run_check_pipeline_inner(
+        let (diags, ictx) = run_check_pipeline_inner(
             program,
             src,
             source_path,
@@ -6671,7 +6805,10 @@ fn run_check_pipeline_located(
             SealView::Whole,
             None,
             &mut dropped,
+            &mut closure,
         );
+        enforce_required_imports_digest(&closure);
+        return (diags, ictx, closure);
     }
     // `axon test --seal`: the candidate's items are judged by a check that
     // never saw the operator's (C9 round 13, amendment 114). Run on the merged
@@ -6707,6 +6844,7 @@ fn run_check_pipeline_located(
         SealView::OperatorsOnly,
         Some(&decls.uses),
         &mut dropped_merged,
+        &mut closure,
     );
     let mut iso = axon_core::ast::Program {
         items: program
@@ -6725,6 +6863,7 @@ fn run_check_pipeline_located(
         SealView::SealedOnly,
         None,
         &mut none,
+        &mut axon_core::ImportClosure::default(),
     );
     let mut diags = merged;
     if !iso_diags.iter().any(|d| d.severity == "error") {
@@ -6737,7 +6876,17 @@ fn run_check_pipeline_located(
     }
     axon_core::collapse_refined_type_errors(&mut diags);
     axon_core::collapse_unresolved_duplicates(&mut diags);
-    (diags, ictx)
+    enforce_required_imports_digest(&closure);
+    (diags, ictx, closure)
+}
+
+/// The one module load every verb shares (G1a): the `use` search over
+/// [`axon_core::axon_search_dirs`], returning what it merged.
+fn load_program_modules(
+    program: &mut axon_core::ast::Program,
+) -> (Vec<axon_core::MergeError>, axon_core::ImportClosure) {
+    let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+    axon_core::load_use_decls_recorded(program, &search_dirs)
 }
 
 /// Which diagnostics a run of the pipeline keeps (see
@@ -6806,6 +6955,7 @@ fn run_check_pipeline_inner(
     view: SealView,
     hide_uses: Option<&std::collections::HashSet<(Vec<String>, Vec<String>)>>,
     dropped: &mut Vec<axon_core::PipelineDiagnostic>,
+    closure: &mut axon_core::ImportClosure,
 ) -> (
     Vec<axon_core::PipelineDiagnostic>,
     axon_core::infer::InferCtx,
@@ -6920,9 +7070,10 @@ fn run_check_pipeline_inner(
 
     // Step 0: load modules referenced by `use` declarations (AXON_PATH search).
     // MergeErrors carry no span (they're file-level), so line/col stay 0.
-    let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
     let load_errors = if load_modules {
-        axon_core::load_use_decls(program, &search_dirs)
+        let (errors, loaded) = load_program_modules(program);
+        *closure = loaded;
+        errors
     } else {
         Vec::new()
     };
@@ -7749,7 +7900,8 @@ fn check_program_located(
     let src = axon_core::time_passes::time("read", || {
         std::fs::read_to_string(source_path).unwrap_or_default()
     });
-    run_check_pipeline_located(program, &src, source_path)
+    let (diags, ictx, _closure) = run_check_pipeline_located(program, &src, source_path);
+    (diags, ictx)
 }
 
 /// The `[CODE] message` string form, for the two JSON reports that publish
@@ -8084,7 +8236,7 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
         }
     };
 
-    let (errors, _ctx) = run_check_pipeline_located(&mut program, &src, &file);
+    let (errors, _ctx, closure) = run_check_pipeline_located(&mut program, &src, &file);
 
     // Collect the functions for the review report.
     //
@@ -8162,8 +8314,16 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
                 Some(t) => json_str(t),
                 None => "null".to_string(),
             };
+            // `origin` is null for a fn of the entry file and the module NAME
+            // (never its path, which would reach axon-web clients) for one an
+            // import brought in: a reviewer signing off must see which file
+            // granted a capability.
+            let origin_json = match closure.module_of(f.span.source) {
+                Some(m) => json_str(m),
+                None => "null".to_string(),
+            };
             format!(
-                "{{\"name\":{},\"owner\":{owner_json},\"sig\":\"fn {}({params}){ret}\",\"attrs\":[{}],\"verified\":{},\"effects\":{},\"effect_set\":{},\"contained\":{}}}",
+                "{{\"name\":{},\"owner\":{owner_json},\"origin\":{origin_json},\"sig\":\"fn {}({params}){ret}\",\"attrs\":[{}],\"verified\":{},\"effects\":{},\"effect_set\":{},\"contained\":{}}}",
                 json_str(&f.name),
                 f.name,
                 attrs.join(","),
@@ -8212,9 +8372,13 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
             Some(t) => format!("  [method of {t}]"),
             None => String::new(),
         };
+        let origin_str = match closure.module_of(f.span.source) {
+            Some(m) => format!("  [from {m}]"),
+            None => String::new(),
+        };
         println!(
-            "  fn {}({}){}{}{}",
-            f.name, params, ret, owner_str, attr_str
+            "  fn {}({}){}{}{}{}",
+            f.name, params, ret, owner_str, origin_str, attr_str
         );
         if let Some(v) = &f.verify {
             println!("    @[verify]: {}", fmt_verify(v));
@@ -8241,6 +8405,53 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
     }
 }
 
+/// Parse `src` and load its imports through the shared loader: the closure the
+/// program would run with and its `imports_digest`. A parse error, an import
+/// that does not load (E0901/E0902), or a closure that cannot be digested is
+/// printed and exits 2 — an approval or a listing of a program whose imports
+/// nobody resolved would vouch for nothing.
+fn import_closure_of(src: &str, file: &Path) -> (axon_core::ImportClosure, String) {
+    let mut program = match parse_source_located_cli(src, file) {
+        Ok(p) => p,
+        Err(diag) => {
+            emit_pipeline_diag(&diag);
+            process::exit(2);
+        }
+    };
+    let (errors, closure) = load_program_modules(&mut program);
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("error[{}]: {}", e.code, e.message);
+        }
+        process::exit(2);
+    }
+    let digest = closure.digest().unwrap_or_else(|e| {
+        eprintln!("error: {e}");
+        process::exit(2);
+    });
+    (closure, digest)
+}
+
+/// `[{"name","path","hash","sealed"}]` for a closure, sorted by name — the
+/// audit trail of which file the search chose for each module.
+fn closure_modules_json(closure: &axon_core::ImportClosure) -> String {
+    let mut mods: Vec<&axon_core::LoadedModule> = closure.modules.iter().collect();
+    mods.sort_by(|a, b| a.name.cmp(&b.name));
+    let items: Vec<String> = mods
+        .iter()
+        .map(|m| {
+            format!(
+                "{{\"name\":{},\"path\":{},\"hash\":\"{}\",\"sealed\":{}}}",
+                json_str(&m.name),
+                json_str(&m.path.display().to_string()),
+                axon_core::lockfile::module_hash(&m.bytes),
+                m.sealed
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
 fn cmd_ast_approve(file: PathBuf) {
     validate_ax_extension(&file);
     let src = std::fs::read_to_string(&file).unwrap_or_else(|e| {
@@ -8255,6 +8466,10 @@ fn cmd_ast_approve(file: PathBuf) {
     // format as `axon_intent::approval::program_digest`, so the two approval
     // stacks agree.
     let hash = program_digest_hex(src.as_bytes());
+    // G1: the entry hash alone left every imported module free to change after
+    // approval — rewrite `lib.ax` to grant `write:[/] net:[*] exec:any` and the
+    // approval stayed valid. The record binds the loaded closure too.
+    let (closure, imports_digest) = import_closure_of(&src, &file);
 
     let approved_path = PathBuf::from(format!("{}.approved", file.display()));
     let now_secs = std::time::SystemTime::now()
@@ -8262,8 +8477,10 @@ fn cmd_ast_approve(file: PathBuf) {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let content = format!(
-        "{{\"schema\":\"axon-ast-approved/1\",\"file\":{},\"hash\":\"{hash}\",\"approved_at_unix\":{now_secs}}}\n",
+        "{{\"schema\":\"axon-ast-approved/2\",\"file\":{},\"hash\":\"{hash}\",\
+         \"imports_digest\":\"{imports_digest}\",\"modules\":{},\"approved_at_unix\":{now_secs}}}\n",
         json_str(&file.display().to_string()),
+        closure_modules_json(&closure),
     );
     std::fs::write(&approved_path, &content).unwrap_or_else(|e| {
         eprintln!("error writing {}: {e}", approved_path.display());
@@ -8619,6 +8836,135 @@ fn derive_risk_from_ast(program: &axon_core::ast::Program) -> i64 {
     }
 }
 
+/// Judge a `.approved` record against the program `deploy` is about to run:
+/// `(approved, detail, tampered)`. `entry_hash` is the digest of the bytes
+/// deploy parsed; `closure` is what its load merged.
+///
+/// * `axon-ast-approved/2` binds the entry AND the import closure: either
+///   differing is tampering, and the detail names the module that changed.
+/// * `/1` (or no schema) binds the entry only. A differing entry is tampering
+///   exactly as before; a matching one is NOT approved — it says nothing about
+///   the imports — but is non-blocking, the same as having no record, so an
+///   old record buys nothing a missing one would not.
+/// * A legacy (FNV, unprefixed) hash is non-blocking and unapproved (T17).
+fn judge_approval_record(
+    rec: &str,
+    entry_hash: &str,
+    closure: &axon_core::ImportClosure,
+) -> (bool, String, bool) {
+    let parsed: Option<serde_json::Value> = serde_json::from_str(rec).ok();
+    let field = |k: &str| parsed.as_ref().and_then(|v| v.get(k));
+    let Some(recorded) = field("hash").and_then(|h| h.as_str()) else {
+        // A record with no readable hash cannot bind anything. Treat as
+        // tampered rather than falling back to mere existence — falling back
+        // is exactly how this defect would return.
+        return (
+            false,
+            String::from("approval record has no usable hash field"),
+            true,
+        );
+    };
+    // AUDIT T17: a record written by an older axon used FNV-1a and has no
+    // `axsha256:` prefix. That is NOT evidence of tampering — the source may be
+    // untouched and only the hash FORMAT changed — so it must not be treated as
+    // one. Not approved (nothing verified it), but non-blocking, like an
+    // absent record.
+    if !recorded.starts_with("axsha256:") {
+        return (
+            false,
+            String::from(
+                "approval record uses a legacy hash format — re-run \
+                 `axon ast approve` to bind it to the current source",
+            ),
+            false,
+        );
+    }
+    // The file was approved and THEN changed. Unambiguous.
+    if recorded != entry_hash {
+        return (
+            false,
+            String::from("source changed since approval (digest mismatch)"),
+            true,
+        );
+    }
+    match field("schema").and_then(|s| s.as_str()) {
+        None | Some("axon-ast-approved/1") => (
+            false,
+            String::from(
+                "approved before import binding — re-approve with `axon ast approve` \
+                 to bind the imported modules too",
+            ),
+            false,
+        ),
+        Some("axon-ast-approved/2") => {
+            let Some(approved) = field("imports_digest").and_then(|d| d.as_str()) else {
+                return (
+                    false,
+                    String::from("approval record has no usable imports_digest field"),
+                    true,
+                );
+            };
+            let current = match closure.digest() {
+                Ok(d) => d,
+                Err(e) => return (false, e, true),
+            };
+            if current == approved {
+                return (true, String::new(), false);
+            }
+            (
+                false,
+                imports_changed_detail(field("modules"), closure),
+                true,
+            )
+        }
+        Some(other) => (
+            false,
+            format!("approval record has an unknown schema `{other}`"),
+            true,
+        ),
+    }
+}
+
+/// Name what differs between an approval record's `modules` and the closure
+/// just loaded: the module changed, added or removed since approval.
+fn imports_changed_detail(
+    recorded: Option<&serde_json::Value>,
+    closure: &axon_core::ImportClosure,
+) -> String {
+    use std::collections::BTreeMap;
+    let before: BTreeMap<&str, &str> = recorded
+        .and_then(|m| m.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|m| Some((m.get("name")?.as_str()?, m.get("hash")?.as_str()?)))
+        .collect();
+    let now: BTreeMap<&str, String> = closure
+        .modules
+        .iter()
+        .map(|m| (m.name.as_str(), axon_core::lockfile::module_hash(&m.bytes)))
+        .collect();
+    let mut parts: Vec<String> = Vec::new();
+    for (name, hash) in &now {
+        match before.get(name) {
+            Some(h) if *h == hash.as_str() => {}
+            Some(_) => parts.push(format!("module `{name}` changed")),
+            None => parts.push(format!("module `{name}` added")),
+        }
+    }
+    for name in before.keys().filter(|n| !now.contains_key(*n)) {
+        parts.push(format!("module `{name}` removed"));
+    }
+    if parts.is_empty() {
+        // Names and bytes agree, so what moved is a module's sealed bit, or the
+        // record's module list does not describe its own digest.
+        parts.push(String::from("the closure's sealed set differs"));
+    }
+    format!(
+        "imported modules changed since approval (imports digest mismatch): {}",
+        parts.join(", ")
+    )
+}
+
 /// `axon deploy` — run a .ax program through the risk-gated safety pipeline.
 ///
 /// Phase 11: risk is derived from what the program DOES and what it declares,
@@ -8695,7 +9041,7 @@ fn cmd_deploy(
         }
     };
 
-    let (errors, _ctx) = run_check_pipeline_located(&mut program, &src, &file);
+    let (errors, _ctx, closure) = run_check_pipeline_located(&mut program, &src, &file);
     if !errors.is_empty() {
         if json_flag {
             // The `errors` array is part of the published schema that axon-web
@@ -8782,52 +9128,15 @@ fn cmd_deploy(
     // same CLI.
     //
     // Approval now binds the exact program text: recompute the digest of the
-    // CURRENT source and compare. A tampered file is not approved.
+    // CURRENT source and compare. A tampered file is not approved. G1: it binds
+    // the bytes this deploy PARSED (a second read could see a different file)
+    // and, for an `axon-ast-approved/2` record, the import closure the program
+    // was just loaded with — the modules it is about to run.
     let approved_path = PathBuf::from(format!("{}.approved", file.display()));
     let (is_approved, approval_detail, approval_tampered) =
         match std::fs::read_to_string(&approved_path) {
             Err(_) => (false, String::from("no .approved file"), false),
-            Ok(rec) => {
-                let recorded = json_field(&rec, "hash");
-                let cur_src = std::fs::read_to_string(&file).unwrap_or_default();
-                let current = program_digest_hex(cur_src.as_bytes());
-                match recorded {
-                    Some(h) if h == current => (true, String::new(), false),
-                    // AUDIT T17: a record written by an older axon used FNV-1a
-                    // and has no `axsha256:` prefix. That is NOT evidence of
-                    // tampering — the source may be untouched and only the hash
-                    // FORMAT changed — so it must not be treated as one. T10
-                    // introduced this hazard by switching the algorithm without
-                    // handling pre-existing records; blocking on it would have
-                    // told upgrading users "source changed since approval" about
-                    // a file nobody had edited.
-                    //
-                    // Not approved (correctly — nothing verified it), but
-                    // non-blocking, like an absent record.
-                    Some(h) if !h.starts_with("axsha256:") => (
-                        false,
-                        String::from(
-                            "approval record uses a legacy hash format — re-run \
-                             `axon ast approve` to bind it to the current source",
-                        ),
-                        false,
-                    ),
-                    // The file was approved and THEN changed. Unambiguous.
-                    Some(_) => (
-                        false,
-                        String::from("source changed since approval (digest mismatch)"),
-                        true,
-                    ),
-                    // A record with no readable hash cannot bind anything. Treat
-                    // as tampered rather than falling back to mere existence —
-                    // falling back is exactly how this defect would return.
-                    None => (
-                        false,
-                        String::from("approval record has no usable hash field"),
-                        true,
-                    ),
-                }
-            }
+            Ok(rec) => judge_approval_record(&rec, &program_digest_hex(src.as_bytes()), &closure),
         };
 
     // AUDIT T10: refuse to deploy a TAMPERED artifact. A missing approval stays
@@ -9227,7 +9536,7 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
         }
     };
 
-    let (errors, _ctx) = run_check_pipeline_located(&mut program, &src, &file);
+    let (errors, _ctx, _closure) = run_check_pipeline_located(&mut program, &src, &file);
     if !errors.is_empty() {
         if json_flag {
             // The `errors` array is part of the published schema that axon-web
@@ -9342,19 +9651,6 @@ fn program_digest_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     format!("axsha256:{:x}", h.finalize())
-}
-
-/// Extract a top-level string field from the flat JSON records this CLI writes.
-/// Deliberately minimal — these records are produced a few lines away in this
-/// same file and are not general JSON — but it returns `None` rather than a
-/// default when the field is absent, so a malformed record cannot read as a
-/// match.
-fn json_field(src: &str, key: &str) -> Option<String> {
-    let pat = format!("\"{key}\":\"");
-    let start = src.find(&pat)? + pat.len();
-    let rest = &src[start..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
 }
 
 /// As [`json_lit`] — including the U+0000..U+001F arm a replace-chain cannot

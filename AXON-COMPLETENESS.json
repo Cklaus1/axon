@@ -1797,6 +1797,20 @@
       "evidence": "crates/axon-core/src/codegen/link.rs",
       "note": "Build-time input to `axon build`: the directory holding the prebuilt native runtime staticlibs (libaxon_rt.a, libaxon_rt_ai.a). When set it is the only place searched.",
       "open": " READER (verified): codegen/link.rs (RUNTIME_DIR_VAR, read in the runtime locator), tested by cli_run `native_build_with_a_built_runtime_runs_no_cargo_and_ignores_the_callers_toolchain` and link.rs unit tests asserting the error names the variable. [wasm: not-applicable] the wasip1 AOT link picks its runtime through AXON_WASM_RT (main.rs find_wasm_axon_rt), never this variable. A program never reads it under any engine."
+    },
+    {
+      "name": "AXON_REQUIRE_IMPORTS_DIGEST",
+      "category": "approval/attestation",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "explicitly-refused",
+        "wasm": "explicitly-refused",
+        "guest": "blocked-by-open-defect"
+      },
+      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
+      "note": "G1d. Interpreter: run/test/goal/session/deploy compare the import closure the shared loader recorded against the value and exit 8 before anything executes; read once at dispatch and removed from the environment, so it binds that process only. Every other verb refuses it with exit 2 (including `axon build`). Tests: cli_run require_imports_digest_refuses_any_other_closure_before_running.",
+      "open": "Native and wasm AOT refuse at run time through the axon-rt REFUSED table (source audit; not separately measured on wasip1). A built binary cannot recompute the closure it was linked from, so refusal is the only honest state. GUEST: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH, so nothing delivers this variable into a guest. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route), the same defect as its sibling controls."
     }
   ],
   "false_greens": [

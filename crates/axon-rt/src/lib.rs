@@ -2101,6 +2101,11 @@ pub extern "C" fn __axon_rt_refuse_interp_only_env() {
             "spend AI tokens past a cap the operator set and the program \
              cannot raise",
         ),
+        (
+            "AXON_REQUIRE_IMPORTS_DIGEST",
+            "run imported code no one checked against the approved closure — \
+             a built binary cannot recompute the modules it was linked from",
+        ),
     ];
     for (var, consequence) in REFUSED {
         if std::env::var_os(var).is_some() {
