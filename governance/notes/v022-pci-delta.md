@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 642be1520096f25e9822590ff9f336d4353869f3
+generated-at: ca49d5373f3345860ecbba37bbff488a06660e2a
 
-`git diff --numstat 31413ca7..642be152 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..ca49d537 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -40,7 +40,7 @@ generated-at: 642be1520096f25e9822590ff9f336d4353869f3
 | `crates/axon-core/src/codegen/enum_layout.rs` | 451 | 0 |
 | `crates/axon-core/src/codegen/escape.rs` | 509 | 0 |
 | `crates/axon-core/src/codegen/expr.rs` | 2305 | 680 |
-| `crates/axon-core/src/codegen/link.rs` | 1610 | 337 |
+| `crates/axon-core/src/codegen/link.rs` | 1620 | 337 |
 | `crates/axon-core/src/codegen/match_pat.rs` | 335 | 147 |
 | `crates/axon-core/src/codegen/mod.rs` | 363 | 106 |
 | `crates/axon-core/src/codegen/option_result.rs` | 11 | 6 |
@@ -87,7 +87,7 @@ generated-at: 642be1520096f25e9822590ff9f336d4353869f3
 | `crates/axon-core/src/lib.rs` | 262 | 73 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 105 | 14 |
-| `crates/axon-core/src/main.rs` | 1206 | 324 |
+| `crates/axon-core/src/main.rs` | 1218 | 325 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
 | `crates/axon-core/src/parser.rs` | 457 | 31 |
@@ -98,9 +98,9 @@ generated-at: 642be1520096f25e9822590ff9f336d4353869f3
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 55400 | 7699 |
+| total | 55422 | 7700 |
 
-`git log --reverse 31413ca7..642be152 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..ca49d537 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -380,7 +380,8 @@ generated-at: 642be1520096f25e9822590ff9f336d4353869f3
 | 82cda128 | gaps G1 import binding | CLI ONLY (main.rs verbs; the interpreter is untouched): `ast approve` writes axon-ast-approved/2 binding the import closure and refuses an unloadable one; `deploy` judges the record against the bytes it parsed and the closure it loaded (exit 8 naming the changed module; a /1 record no longer approves); new verb `axon imports`; AXON_REQUIRE_IMPORTS_DIGEST is read once at dispatch, removed from the environment, and refuses a different closure with exit 8 before execution on run/test/goal/session/deploy (other verbs exit 2); `ast review` reports each fn's origin module |
 | 0b03f198 | gaps G1 import binding | lint attribute only (#[allow(clippy::too_many_arguments)] on load_module_recursive and run_check_pipeline_inner); no change in what any run computes, accepts or refuses |
 | 642be152 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 276 commits | | |
+| ca49d537 | gaps wasm runtime lookup | BUILD TOOLING (axon build --target wasm32-*: which libaxon_rt.a is linked): the running compiler's own cargo target dir is searched before walking up from the cwd, the same dir the native link uses; no change in what any program computes, accepts or refuses |
+| 277 commits | | |
 <!-- END MECHANICAL -->
 
 

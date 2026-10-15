@@ -1,0 +1,4 @@
+{
+  "theme": "gaps wasm runtime lookup",
+  "text": "BUILD TOOLING (axon build --target wasm32-*: which libaxon_rt.a is linked): the running compiler's own cargo target dir is searched before walking up from the cwd, the same dir the native link uses; no change in what any program computes, accepts or refuses"
+}
