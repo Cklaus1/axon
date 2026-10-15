@@ -277,10 +277,11 @@ refused. `/2` is reserved by R24.
 ␟ risk`, no closure) is refused under a key; keyless it is accepted only when the program's import
 closure, as the job's interpreter environment resolves it, is empty — and that run is then pinned to
 the empty closure. Otherwise: "re-approve: this token predates import binding". Fabric resolves no
-closure at admission (its executors are not handed the digest), so it decides emptiness textually: an
-entry with no `use`/`mod` line has the empty closure. It admits a `/3` approval only of the empty
-closure for such an entry, and applies the `/1` rule with the same check (refused under a key;
-keyless, admitted only for an entry that declares no module).
+closure at admission (its executors are not handed the digest), so it decides emptiness textually and
+deny-by-default: an entry in which `use` or `mod` occurs nowhere as a whole word (comments and strings
+included) has the empty closure. It admits a `/3` approval only of the empty closure for such an
+entry, and applies the `/1` rule with the same check (refused under a key; keyless, admitted only
+for such an entry).
 
 **R21 handoff contract (R21 honors this):** R21's `run` MUST, when a `.approval` is present, recompute
 `program_digest` and `grant_digest` from the on-disk `(program, grant)` and assert they equal the

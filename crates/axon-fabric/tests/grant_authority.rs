@@ -551,3 +551,99 @@ fn a_keyless_legacy_token_is_admitted_for_an_import_free_program() {
         "a keyless /1 token for an import-free program runs: {s:?}"
     );
 }
+
+/// Review finding (G1g): the module check is deny-by-default, not a
+/// line-prefix test. Each form below declares a module the interpreter would
+/// load; with a keyless legacy `/1` token and with an empty-closure `/3`
+/// token alike, the job is Denied with nothing spawned and no launch record.
+#[test]
+fn fabric_refuses_every_form_of_a_module_declaration() {
+    // GRANT_OPEN: the effect scan (which already refuses a `mod` line under a
+    // grant withholding effects) must not mask the module check.
+    let gated = format!("require_approval = true\n{GRANT_OPEN}");
+    let forms: [(&str, &str); 10] = [
+        ("pub use", "pub use lib.{helper}\n"),
+        ("pub mod", "pub mod lib\npub use lib.{helper}\n"),
+        ("use, tab", "use\tlib.{helper}\n"),
+        ("mod, tab", "mod\tlib\n"),
+        ("comment before use", "/**/ use lib.{helper}\n"),
+        ("comment before mod", "/**/ mod lib\n"),
+        ("attribute before use", "@[doc] use lib.{helper}\n"),
+        (
+            "use after `}` on one line",
+            "fn h() -> i64 { 1 } use lib.{helper}\n",
+        ),
+        (
+            "use after a lone \\r",
+            "fn h() -> i64 { 1 }\ruse lib.{helper}\n",
+        ),
+        ("mod after a lone \\r", "fn h() -> i64 { 1 }\rmod lib\n"),
+    ];
+    type Tok = fn(&str, &axon_os::Grant) -> String;
+    let toks: [(&str, Tok); 2] = [
+        ("keyless /1", |s, g| legacy_token(s, g)),
+        ("empty-closure /3", |s, g| token(s, g)),
+    ];
+    for (form, prefix) in forms {
+        for (tname, tok) in toks {
+            let env = Env::new();
+            let cfg = with_grants(&env, &[("grant:test", PRINCIPAL, &gated)]);
+            let g = cfg.grants.resolve("grant:test", PRINCIPAL).unwrap();
+            let f = env.ws.join("f.ax");
+            let src = format!("{prefix}{}", std::fs::read_to_string(&f).unwrap());
+            std::fs::write(&f, &src).unwrap();
+            std::fs::write(
+                env.grant_registry
+                    .parent()
+                    .unwrap()
+                    .join("grant_test.approval"),
+                tok(&src, g.grant()),
+            )
+            .unwrap();
+            let s = submit(&request(&env, "op-form", "t_ok").to_string(), &cfg).unwrap();
+            assert!(
+                s.receipt.status == ReceiptStatus::Denied && spawn_count(&env.spawns) == 0,
+                "ATTACK: a program declaring a module ({form}) was admitted under a {tname} token: {s:?}"
+            );
+            assert_eq!(env.launch_records(), 0, "{form}/{tname}: no launch record");
+        }
+    }
+}
+
+/// The boundary of that check: an identifier that merely CONTAINS `use` or
+/// `mod` (`user`, `modulo`) declares no module, so a keyless `/1` token and
+/// an empty-closure `/3` token for such a program are still admitted.
+#[test]
+fn an_identifier_containing_use_or_mod_is_not_a_module_declaration() {
+    // GRANT_OPEN: the effect scan (which already refuses a `mod` line under a
+    // grant withholding effects) must not mask the module check.
+    let gated = format!("require_approval = true\n{GRANT_OPEN}");
+    let prefix = "fn user() -> i64 { 1 }\nfn modulo(a: i64, b: i64) -> i64 { a % b }\n";
+    type Tok = fn(&str, &axon_os::Grant) -> String;
+    let toks: [(&str, Tok); 2] = [
+        ("keyless /1", |s, g| legacy_token(s, g)),
+        ("empty-closure /3", |s, g| token(s, g)),
+    ];
+    for (tname, tok) in toks {
+        let env = Env::new();
+        let cfg = with_grants(&env, &[("grant:test", PRINCIPAL, &gated)]);
+        let g = cfg.grants.resolve("grant:test", PRINCIPAL).unwrap();
+        let f = env.ws.join("f.ax");
+        let src = format!("{prefix}{}", std::fs::read_to_string(&f).unwrap());
+        std::fs::write(&f, &src).unwrap();
+        std::fs::write(
+            env.grant_registry
+                .parent()
+                .unwrap()
+                .join("grant_test.approval"),
+            tok(&src, g.grant()),
+        )
+        .unwrap();
+        let s = submit(&request(&env, "op-ident", "t_ok").to_string(), &cfg).unwrap();
+        assert_eq!(
+            s.receipt.verification,
+            ReceiptVerification::Passed,
+            "{tname}: `user`/`modulo` are identifiers, not module declarations: {s:?}"
+        );
+    }
+}

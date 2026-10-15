@@ -895,18 +895,28 @@ fn check_suite_target(
 struct AdmissionProbe(axon_os::Isolation, Option<String>);
 
 impl AdmissionProbe {
-    /// Whether the entry declares a module — a `use`/`mod` line — on the
-    /// scanned source. An entry that cannot be read counts as declaring one
-    /// (deny by default).
+    /// Whether the entry may declare a module, on the scanned source: whether
+    /// `use` or `mod` occurs ANYWHERE in it as a whole word (on an identifier
+    /// boundary) — deny by default, like `axon_os::runtime::calls_name`. Not a
+    /// parse: a line-prefix test missed `pub mod`, `use\tlib`, a comment or
+    /// attribute before the keyword, an item after `}` on the same line, and
+    /// lone-`\r` separators, all of which the interpreter loads. Comments and
+    /// strings count too: a false positive only refuses (re-approve), a false
+    /// negative runs an unbound module. An entry that cannot be read counts
+    /// as declaring one.
     fn declares_module(&self, p: &Path) -> bool {
         let src = match &self.1 {
             Some(s) => Some(s.clone()),
             None => std::fs::read_to_string(p).ok(),
         };
-        src.as_deref().is_none_or(|s| {
-            s.lines().any(|l| {
-                let l = l.trim_start();
-                l.starts_with("use ") || l.starts_with("mod ")
+        src.as_deref().is_none_or(|src| {
+            let b = src.as_bytes();
+            let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+            ["use", "mod"].iter().any(|kw| {
+                src.match_indices(kw).any(|(at, _)| {
+                    let end = at + kw.len();
+                    (at == 0 || !word(b[at - 1])) && (end == b.len() || !word(b[end]))
+                })
             })
         })
     }
