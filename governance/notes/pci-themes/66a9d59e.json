@@ -1,0 +1,4 @@
+{
+  "theme": "gaps G3 LSP locations",
+  "text": "TOOLING (axon lsp only): a module path from a relative AXON_PATH entry is made absolute against the server's cwd before it is encoded as a file:// URI; no change in what any run computes, accepts or refuses"
+}

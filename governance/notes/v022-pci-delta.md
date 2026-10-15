@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: ca49d5373f3345860ecbba37bbff488a06660e2a
+generated-at: 66a9d59e9f8675fb03bcf9049191f481b6b12ec3
 
-`git diff --numstat 31413ca7..ca49d537 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..66a9d59e -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -86,7 +86,7 @@ generated-at: ca49d5373f3345860ecbba37bbff488a06660e2a
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
 | `crates/axon-core/src/lib.rs` | 262 | 73 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
-| `crates/axon-core/src/lsp.rs` | 105 | 14 |
+| `crates/axon-core/src/lsp.rs` | 108 | 14 |
 | `crates/axon-core/src/main.rs` | 1218 | 325 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
@@ -98,9 +98,9 @@ generated-at: ca49d5373f3345860ecbba37bbff488a06660e2a
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 55422 | 7700 |
+| total | 55425 | 7700 |
 
-`git log --reverse 31413ca7..ca49d537 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..66a9d59e -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -381,7 +381,8 @@ generated-at: ca49d5373f3345860ecbba37bbff488a06660e2a
 | 0b03f198 | gaps G1 import binding | lint attribute only (#[allow(clippy::too_many_arguments)] on load_module_recursive and run_check_pipeline_inner); no change in what any run computes, accepts or refuses |
 | 642be152 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | ca49d537 | gaps wasm runtime lookup | BUILD TOOLING (axon build --target wasm32-*: which libaxon_rt.a is linked): the running compiler's own cargo target dir is searched before walking up from the cwd, the same dir the native link uses; no change in what any program computes, accepts or refuses |
-| 277 commits | | |
+| 66a9d59e | gaps G3 LSP locations | TOOLING (axon lsp only): a module path from a relative AXON_PATH entry is made absolute against the server's cwd before it is encoded as a file:// URI; no change in what any run computes, accepts or refuses |
+| 278 commits | | |
 <!-- END MECHANICAL -->
 
 
