@@ -2499,3 +2499,10 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
   anyway. Constrain `run_id` to the record's directory.
 - **[P3] Load-dependent test seen once:** `operator_code_a_sealed_frame_runs_never_draws_the_operator_rng` failed in the
   gaps-cancel lane's `gate.sh --fast` while five lanes built concurrently; passed 3/3 alone. Not yet tallied across gate logs.
+- **[P3] Parity harness leftovers (from G4):** `wasm_host_await` and `browser_compute` use a relative
+  `CARGO_TARGET_DIR=target/interp-only` (leaves a dir in the worktree); `parity_all` prints the skip reason from the
+  last line, which can be elaboration text; the "nothing linked" skips in wasm_aot_run/wasm_examples/browser harnesses
+  don't prove the linker is missing; `wasm_fs`, `wasm_parity`, `vm_parity`, `decimal_parity`, `suspend_resume`,
+  `browser_compute` FAIL on build errors but drop the compiler's stderr; `a_skip_that_elaborates_is_still_a_skip` and
+  `a_failing_harness_is_never_a_skip_gate_04` re-implement the skip rule locally; `wasm_aot_stdout` treats a
+  per-example wasm build failure as a sweep skip, held only by its floor.
