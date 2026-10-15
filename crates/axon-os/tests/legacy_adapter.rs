@@ -163,6 +163,42 @@ fn captured_output_is_bounded_and_the_verdict_survives_it() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// G2d blocks the termination signals in the spawning thread around the
+/// spawn; the interpreter child must not inherit that. A job with SIGTERM and
+/// SIGINT blocked cannot be stopped by them — nor can anything it starts, so
+/// `timeout`, or a job ending its own helpers, would hang.
+///
+/// The stand-in is awk, not sh: dash clears the signal mask it inherits, so a
+/// shell stand-in would read an empty mask either way.
+#[test]
+fn the_interpreter_child_starts_with_no_termination_signal_blocked() {
+    let d = tmp("sigmask");
+    let m = job(&d);
+    let seen = d.join("sigblk.txt");
+    let bin = d.join("fake-axon.awk");
+    common::write_executable(
+        &bin,
+        format!(
+            "#!/usr/bin/awk -f\nBEGIN {{ while ((getline l < \"/proc/self/status\") > 0) \
+             if (l ~ /^SigBlk:/) print l > \"{}\"; exit }}\n",
+            seen.display()
+        ),
+        0o755,
+    );
+    let rt = AxonCoreRuntime::with_bin_and_timeout(bin, Duration::from_secs(5));
+    let _ = supervise(&m, &d.join("job.axjob"), &m.grant.clone(), "rid", &rt);
+    let line = std::fs::read_to_string(&seen).expect("the interpreter stand-in ran");
+    let blocked = u64::from_str_radix(line.trim_start_matches("SigBlk:").trim(), 16).unwrap();
+    for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        assert_eq!(
+            blocked & (1 << (sig - 1)),
+            0,
+            "ATTACK: the interpreter child starts with signal {sig} blocked ({line})"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 // ── C9 round 7, EQGATE3 (amendment 91): what the interpreter child is built with
 //
 // The child starts from an EMPTY environment and gets the seed, the PATH, the
