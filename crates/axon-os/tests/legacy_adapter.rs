@@ -163,6 +163,41 @@ fn captured_output_is_bounded_and_the_verdict_survives_it() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// G2a, through the production path: the job's timeout kill takes the
+/// processes the job started with it. Before 821cf767 the kill reached the
+/// interpreter process alone, and its grandchild outlived the run.
+#[test]
+fn the_timeout_kill_reaches_a_process_the_job_started() {
+    let d = tmp("grandchild");
+    let m = job(&d);
+    let pid_file = d.join("grandchild.pid");
+    // The grandchild's stdio is /dev/null: it holds none of the job's pipes,
+    // so this is about the kill, not the drain.
+    let bin = script(
+        &d,
+        &format!(
+            "sleep 3624 </dev/null >/dev/null 2>&1 &\necho $! > '{}'\nexec sleep 3625",
+            pid_file.display()
+        ),
+    );
+    let rt = AxonCoreRuntime::with_bin_and_timeout(bin, Duration::from_secs(3));
+    let job_path = d.join("job.axjob");
+    let run = std::thread::spawn(move || supervise(&m, &job_path, &m.grant.clone(), "rid", &rt));
+    let grandchild = common::Tracked::wait_alive(&pid_file, &["sleep", "3624"]);
+    let rec = run.join().unwrap();
+    assert!(
+        matches!(&rec.verdict, Verdict::Denied { axis, .. } if axis == "time"),
+        "premise: the job is killed at its timeout, got {:?}",
+        rec.verdict
+    );
+    assert!(
+        grandchild.gone_within(Duration::from_secs(5)),
+        "ATTACK: a process the job started (pid {}) outlived the timeout kill",
+        grandchild.pid
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 /// G2c: a descendant that leaves the job's process group (`setsid`, out of
 /// reach of the group kill) and keeps the job's stdout/stderr open held the
 /// supervisor's drain join — and so the supervisor — until it chose to exit.

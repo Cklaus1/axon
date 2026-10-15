@@ -1436,6 +1436,169 @@ mod runtime_tests {
         );
     }
 
+    // ── G2a: a kill reaches the JOB, every process in it, and nothing else ──
+
+    /// A process a test started, known by pid AND command line: a pid the
+    /// kernel has reused is never taken for it, nor killed by the cleanup. A
+    /// zombie's cmdline reads empty, so killed-but-unreaped counts as gone.
+    /// Dropping it SIGKILLs the process if it is still there, so a failing
+    /// test leaks nothing.
+    struct Tracked {
+        pid: i32,
+        cmdline: Vec<u8>,
+    }
+
+    impl Tracked {
+        /// Wait (at most 20 s) until `pid_file` names a live process running
+        /// exactly `argv`.
+        fn wait_alive(pid_file: &Path, argv: &[&str]) -> Tracked {
+            let mut cmdline = Vec::new();
+            for a in argv {
+                cmdline.extend_from_slice(a.as_bytes());
+                cmdline.push(0);
+            }
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                let pid = std::fs::read_to_string(pid_file)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<i32>().ok());
+                if let Some(pid) = pid.filter(|&p| runs(p, &cmdline)) {
+                    return Tracked { pid, cmdline };
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "{} never named a live `{}`",
+                    pid_file.display(),
+                    argv.join(" ")
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn alive(&self) -> bool {
+            runs(self.pid, &self.cmdline)
+        }
+
+        /// Gone within `d` (a SIGKILL is delivered asynchronously).
+        fn gone_within(&self, d: Duration) -> bool {
+            let deadline = Instant::now() + d;
+            while self.alive() {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            true
+        }
+    }
+
+    /// Is `pid` a live process whose command line is exactly `cmdline`?
+    fn runs(pid: i32, cmdline: &[u8]) -> bool {
+        std::fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|c| c == cmdline)
+    }
+
+    impl Drop for Tracked {
+        fn drop(&mut self) {
+            if self.alive() {
+                // SAFETY: plain syscall; the pid was just checked to be ours.
+                unsafe { libc::kill(self.pid, libc::SIGKILL) };
+            }
+        }
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("axon-os-g2a-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// A shell job that starts a grandchild `sleep <secs>` and waits on it.
+    /// The grandchild's stdio is /dev/null, so it holds none of the job's
+    /// pipes: what is tested is the kill, not the drain.
+    fn job_with_grandchild(pid_file: &Path, secs: &str) -> Command {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(format!(
+            "sleep {secs} </dev/null >/dev/null 2>&1 & echo $! > '{}'; wait",
+            pid_file.display()
+        ));
+        cmd
+    }
+
+    /// The timeout kill takes the job's grandchild with it. Before 821cf767 it
+    /// signalled the direct child only, and the grandchild outlived the run.
+    #[test]
+    fn the_timeout_kill_reaches_the_jobs_grandchild() {
+        let d = scratch("timeout");
+        let pid_file = d.join("grandchild.pid");
+        let mut cmd = job_with_grandchild(&pid_file, "3621");
+        let run = std::thread::spawn(move || run_bounded(&mut cmd, Duration::from_secs(3), None));
+        let grandchild = Tracked::wait_alive(&pid_file, &["sleep", "3621"]);
+        let out = run.join().unwrap().expect("spawn sh");
+        assert!(
+            out.timed_out,
+            "the job itself must be killed at the timeout"
+        );
+        assert!(
+            grandchild.gone_within(Duration::from_secs(5)),
+            "ATTACK: the job's grandchild (pid {}) outlived the timeout kill",
+            grandchild.pid
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The kill-latch path (R27 operator kill, R29 monitor) takes the job's
+    /// grandchild with it too.
+    #[test]
+    fn the_latch_kill_reaches_the_jobs_grandchild() {
+        let d = scratch("latch");
+        let pid_file = d.join("grandchild.pid");
+        let latch = d.join("run.kill");
+        std::fs::write(&latch, r#"{"latch":"clear"}"#).unwrap();
+        let mut cmd = job_with_grandchild(&pid_file, "3622");
+        let polled = latch.clone();
+        let run = std::thread::spawn(move || {
+            run_bounded(&mut cmd, Duration::from_secs(60), Some(&polled))
+        });
+        let grandchild = Tracked::wait_alive(&pid_file, &["sleep", "3622"]);
+        std::fs::write(&latch, r#"{"latch":"tripped","reason":"g2a"}"#).unwrap();
+        let out = run.join().unwrap().expect("spawn sh");
+        assert!(
+            out.killed_by_latch,
+            "the job itself must be killed by the latch"
+        );
+        assert!(
+            grandchild.gone_within(Duration::from_secs(5)),
+            "ATTACK: the job's grandchild (pid {}) outlived the latch kill",
+            grandchild.pid
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The group kill reaches ONLY the job's group: a process in another
+    /// group survives it (the `kill(-1)` class of bug, see axon-intent
+    /// synth.rs `the_timeout_kill_reaches_only_the_childs_own_group`).
+    #[test]
+    fn the_timeout_kill_spares_a_bystander_in_another_group() {
+        let mut bystander = Command::new("sleep");
+        bystander.arg("30").process_group(0);
+        let mut bystander = bystander.spawn().expect("spawn bystander");
+        let mut cmd = Command::new("sleep");
+        cmd.arg("3623");
+        let out = run_bounded(&mut cmd, Duration::from_millis(300), None).expect("spawn sleep");
+        assert!(out.timed_out);
+        // `try_wait`, not `kill(pid, 0)`: an unreaped SIGKILLed child is a
+        // zombie, and kill(pid, 0) succeeds on a zombie.
+        let state = bystander.try_wait().expect("poll bystander");
+        let _ = bystander.kill();
+        let _ = bystander.wait();
+        assert!(
+            state.is_none(),
+            "ATTACK: a process in an UNRELATED group was killed by the job's \
+             timeout kill ({state:?})"
+        );
+    }
+
     #[test]
     fn read_bounded_keeps_head_and_tail_and_counts_the_rest() {
         let data: Vec<u8> = (0..10_000u32).map(|i| b'a' + (i % 26) as u8).collect();
