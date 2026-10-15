@@ -454,9 +454,11 @@ fn an_approval_token_admits_only_what_it_approved() {
 /// imports nothing. Refused, each with nothing spawned and no launch record:
 /// a token binding a NON-empty closure (it would be ignored where the modules
 /// load); a token claiming the empty closure for a program that declares a
-/// module; and a legacy `/1` token, whose empty closure Fabric cannot
-/// establish at admission. Control: the empty-closure `/3` token runs (the
-/// `control` case of `an_approval_token_admits_only_what_it_approved`).
+/// module; and a legacy `/1` token for a program that declares a module
+/// (re-approve). Controls: the empty-closure `/3` token runs (the `control`
+/// case of `an_approval_token_admits_only_what_it_approved`), and so does a
+/// keyless `/1` token for an import-free program
+/// (`a_keyless_legacy_token_is_admitted_for_an_import_free_program`).
 #[test]
 fn fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce() {
     let gated = format!("require_approval = true\n{GRANT_FS}");
@@ -478,7 +480,7 @@ fn fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce() {
             "declares a module",
         ),
         (
-            "of the legacy /1 schema",
+            "of a legacy /1 token for a program that declares a module",
             |s, g, _| legacy_token(s, g),
             "predates import binding",
         ),
@@ -488,7 +490,7 @@ fn fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce() {
         let cfg = with_grants(&env, &[("grant:test", PRINCIPAL, &gated)]);
         let g = cfg.grants.resolve("grant:test", PRINCIPAL).unwrap();
         let f = env.ws.join("f.ax");
-        if why == "declares a module" {
+        if why != "imports nothing" {
             let src = std::fs::read_to_string(&f).unwrap();
             // `use` alone: a `mod` line is already refused by the effect scan
             // (an unread module could do anything), `use` is not.
@@ -514,4 +516,38 @@ fn fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce() {
         );
         assert_eq!(env.launch_records(), 0, "{what}: no launch record");
     }
+}
+
+/// The spec's `/1` rule on the Fabric route: keyless, a legacy token is
+/// admitted for a program that declares no module (its closure is empty, and
+/// the run is pinned to the empty closure). The keyed refusal is
+/// `approval_key_route::a_legacy_token_is_refused_under_a_key`; the refusal
+/// for a program that declares a module is a case of
+/// `fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce`.
+#[test]
+fn a_keyless_legacy_token_is_admitted_for_an_import_free_program() {
+    let gated = format!("require_approval = true\n{GRANT_FS}");
+    let env = Env::new();
+    let cfg = with_grants(&env, &[("grant:test", PRINCIPAL, &gated)]);
+    let g = cfg.grants.resolve("grant:test", PRINCIPAL).unwrap();
+    let src = std::fs::read_to_string(env.ws.join("f.ax")).unwrap();
+    assert!(
+        !src.lines()
+            .any(|l| l.trim_start().starts_with("use ") || l.trim_start().starts_with("mod ")),
+        "fixture: the program imports nothing"
+    );
+    std::fs::write(
+        env.grant_registry
+            .parent()
+            .unwrap()
+            .join("grant_test.approval"),
+        legacy_token(&src, g.grant()),
+    )
+    .unwrap();
+    let s = submit(&request(&env, "op-legacy", "t_ok").to_string(), &cfg).unwrap();
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "a keyless /1 token for an import-free program runs: {s:?}"
+    );
 }

@@ -2670,7 +2670,7 @@ ATTACK_MARKERS.update({
     'M3568': r'ATTACK: a module rewritten after approval ran',
     'M3570': r'ATTACK: an approval binding a non-empty import closure admitted the job',
     'M3571': r'ATTACK: an approval claiming the empty closure for a program that declares a module admitted the job',
-    'M3572': r'ATTACK: an approval of the legacy /1 schema admitted the job',
+    'M3572': r'ATTACK: an approval claiming the empty closure for a program that declares a module admitted the job',
     'M3573': r'signing KAT approval token formula',
     'M3574': r'ATTACK: a /1 token was authorized for an importing program',
     'M3575': r'ATTACK: a module rewritten after approval ran',

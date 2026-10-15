@@ -3995,11 +3995,13 @@ EXEMPT += [
 VALUE_EXEMPT += [
     ('crates/axon-os/src/runtime.rs', 'query_imports_digest', 1, '"imports"', 'DOMINATED', _IMPD),
     ('crates/axon-os/src/runtime.rs', 'query_imports_digest', 2, '"--json"', 'DOMINATED', _IMPD),
-    ('crates/axon-fabric/src/submit.rs', 'run_sandboxed~comb', 1, '.is_none_or(', 'DOMINATED',
-     "DOMINATED BY M1767 (checkable): the `None` arm (the program source unreadable) is unreachable with an "
-     "approval: `authorize` reads the same program to verify the token's program digest and refuses an unreadable "
-     "one (it hashes as empty, `program was edited after approval`), so `is_none_or` and `is_some_and` decide "
-     "alike on every reachable input"),
+]
+EXEMPT += [
+    ('crates/axon-fabric/src/submit.rs', '        if self.declares_module(p) {\n            return Err(',
+     "DOMINATED BY M3571 (checkable): this refusal only names the reason (re-approve: a /1 token predates import "
+     "binding). Without it the probe answers the EMPTY closure, `authorize` pins the /1 run to EMPTY "
+     "(required_imports), and the probe's run_sandboxed refuses an empty-closure approval for a program that "
+     "declares a module (M3571) — the same program, the same scanned source: nothing is admitted either way"),
 ]
 
 

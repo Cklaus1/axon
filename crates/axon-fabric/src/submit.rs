@@ -894,6 +894,24 @@ fn check_suite_target(
 /// after the journal's launch record, bounded by the same grant's ceiling.
 struct AdmissionProbe(axon_os::Isolation, Option<String>);
 
+impl AdmissionProbe {
+    /// Whether the entry declares a module — a `use`/`mod` line — on the
+    /// scanned source. An entry that cannot be read counts as declaring one
+    /// (deny by default).
+    fn declares_module(&self, p: &Path) -> bool {
+        let src = match &self.1 {
+            Some(s) => Some(s.clone()),
+            None => std::fs::read_to_string(p).ok(),
+        };
+        src.as_deref().is_none_or(|s| {
+            s.lines().any(|l| {
+                let l = l.trim_start();
+                l.starts_with("use ") || l.starts_with("mod ")
+            })
+        })
+    }
+}
+
 impl axon_os::Runtime for AdmissionProbe {
     fn isolation(&self) -> axon_os::Isolation {
         self.0
@@ -913,10 +931,19 @@ impl axon_os::Runtime for AdmissionProbe {
     /// Fabric resolves no import closure at admission: its executors load
     /// modules in their own environment (the sealed `check:candidate` path,
     /// or a microVM guest), not the axon-os job environment `axon imports`
-    /// answers for. So a legacy `axon-approval/1` token, which is admitted
-    /// only for a closure shown to be empty, is refused here.
-    fn imports_digest(&self, _p: &Path, _g: &axon_os::Grant) -> Result<String, String> {
-        Err("Fabric does not resolve a program's import closure at admission".into())
+    /// answers for. What it CAN establish is that the entry declares no
+    /// module: then the closure is empty, which is the one closure a legacy
+    /// `axon-approval/1` token (keyless only) is admitted for. Otherwise the
+    /// closure is undetermined and the /1 token is refused (re-approve).
+    fn imports_digest(&self, p: &Path, _g: &axon_os::Grant) -> Result<String, String> {
+        if self.declares_module(p) {
+            return Err(
+                "Fabric resolves no import closure, and the program declares a module (a \
+                 `use`/`mod` line) or could not be read"
+                    .into(),
+            );
+        }
+        Ok(axon_os::EMPTY_IMPORTS_DIGEST.into())
     }
     /// G1g: Fabric's executors are NOT handed an approval's `imports_digest`
     /// (the guest route has no environment channel for it), so an approval
@@ -948,17 +975,7 @@ impl axon_os::Runtime for AdmissionProbe {
                      program that imports nothing"
                 ));
             }
-            let src = match &self.1 {
-                Some(s) => Some(s.clone()),
-                None => std::fs::read_to_string(p).ok(),
-            };
-            let declares_module = src.as_deref().is_none_or(|s| {
-                s.lines().any(|l| {
-                    let l = l.trim_start();
-                    l.starts_with("use ") || l.starts_with("mod ")
-                })
-            });
-            if declares_module {
+            if self.declares_module(p) {
                 return refuse(
                     "the approval binds the empty import closure, but the program declares a \
                      module (or could not be read)"
