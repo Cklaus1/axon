@@ -104,7 +104,7 @@ pub fn run_requiring(
     //    Step 3 below already demonstrates the pattern: `admit` sits here and
     //    every caller gets it whether or not they remember. A check in a CALLER
     //    is opt-in per call site.
-    let approval = match crate::approval::authorize(job_path, manifest) {
+    let approval = match crate::approval::authorize(job_path, manifest, key, rt) {
         Ok(a) => a,
         Err(reason) => {
             let denial = RawEvent::new("denied", "approval", EffectSet::default(), "");
@@ -142,7 +142,7 @@ pub fn run_requiring(
             manifest.seed,
             std::slice::from_ref(&denial),
             Verdict::Denied { reason, axis },
-            approval.as_str(),
+            approval.status.as_str(),
             key,
         );
     }
@@ -150,13 +150,15 @@ pub fn run_requiring(
     // 4. Mint a Principal holding exactly the effective grant.
     let principal = rt.mint_principal(&eff);
 
-    // 5. Run sandboxed to the effective ceiling + budget + seed.
+    // 5. Run sandboxed to the effective ceiling + budget + seed, loading only
+    //    the import closure the approval bound (G1e).
     let outcome = rt.run_sandboxed(
         &manifest.program,
         &principal,
         &eff,
         &eff.budget,
         manifest.seed,
+        approval.required_imports.as_deref(),
     );
 
     // 6. Seal a tamper-evident record from the observed events + verdict.
@@ -166,7 +168,7 @@ pub fn run_requiring(
         manifest.seed,
         &outcome.events,
         outcome.verdict,
-        approval.as_str(),
+        approval.status.as_str(),
         key,
     )
 }

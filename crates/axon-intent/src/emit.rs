@@ -9,6 +9,7 @@ use crate::approval::{build_token, ApprovalToken};
 use crate::intent::Intent;
 use crate::pipeline::Resolved;
 use crate::refusal::Decision;
+use axon_os::approval::ApprovalKey;
 use axon_os::manifest::{to_axjob, JobManifest};
 use std::path::{Path, PathBuf};
 
@@ -40,9 +41,18 @@ pub fn manifest_text(resolved: &Resolved, intent: &Intent, name: &str) -> String
     to_axjob(&build_manifest(resolved, intent, name))
 }
 
-/// The canonical approval-token JSON for a resolved job + decision.
-pub fn approval_text(resolved: &Resolved, approved_by: &str, decision: Decision) -> String {
-    let token = build_token(&resolved.request, approved_by, decision);
+/// The canonical approval-token JSON for a resolved job + decision, binding
+/// the emitted program's import closure (`imports_digest`, as
+/// `axon imports --json` reports it for `<name>.ax`) under `key`
+/// (`AXON_APPROVAL_KEY`, when set).
+pub fn approval_text(
+    resolved: &Resolved,
+    imports_digest: &str,
+    approved_by: &str,
+    decision: Decision,
+    key: Option<&ApprovalKey>,
+) -> String {
+    let token = token_for(resolved, imports_digest, approved_by, decision, key);
     crate::approval::to_json(&token)
 }
 
@@ -71,19 +81,36 @@ pub fn write_approval(
     resolved: &Resolved,
     out_dir: &Path,
     name: &str,
+    imports_digest: &str,
     approved_by: &str,
     decision: Decision,
+    key: Option<&ApprovalKey>,
 ) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(out_dir)?;
     let path = out_dir.join(format!("{name}.approval"));
-    std::fs::write(&path, approval_text(resolved, approved_by, decision))?;
+    std::fs::write(
+        &path,
+        approval_text(resolved, imports_digest, approved_by, decision, key),
+    )?;
     Ok(path)
 }
 
 /// Build the `ApprovalToken` for a resolved job (no I/O) — used by callers that
 /// want the token without writing it (e.g. the R21-handoff cross-spec test).
-pub fn token_for(resolved: &Resolved, approved_by: &str, decision: Decision) -> ApprovalToken {
-    build_token(&resolved.request, approved_by, decision)
+pub fn token_for(
+    resolved: &Resolved,
+    imports_digest: &str,
+    approved_by: &str,
+    decision: Decision,
+    key: Option<&ApprovalKey>,
+) -> ApprovalToken {
+    build_token(
+        &resolved.request,
+        imports_digest,
+        approved_by,
+        decision,
+        key,
+    )
 }
 
 #[cfg(test)]
@@ -140,8 +167,20 @@ Summarize ./data/report.txt into ./out/summary.txt.
             manifest_text(&r2, &it(), "s")
         );
         assert_eq!(
-            approval_text(&r1, "alice", Decision::Approved),
-            approval_text(&r2, "alice", Decision::Approved)
+            approval_text(
+                &r1,
+                axon_os::EMPTY_IMPORTS_DIGEST,
+                "alice",
+                Decision::Approved,
+                None
+            ),
+            approval_text(
+                &r2,
+                axon_os::EMPTY_IMPORTS_DIGEST,
+                "alice",
+                Decision::Approved,
+                None
+            )
         );
         assert_eq!(r1.draft.source, r2.draft.source);
     }

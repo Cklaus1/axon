@@ -248,23 +248,47 @@ ApprovalRequest {
 }
 ```
 
-### 3.5 `ApprovalToken` (the tamper-evident handoff to R21; JSON, schema `axon-approval/1`)
+### 3.5 `ApprovalToken` (the tamper-evident handoff to R21; JSON, schema `axon-approval/3`)
 ```
 ApprovalToken {
-    schema:         "axon-approval/1",
-    program_digest: String,   // binds the EXACT program source
+    schema:         "axon-approval/3",
+    program_digest: String,   // binds the EXACT entry-file source
     grant_digest:   String,   // binds the EXACT grant
+    imports_digest: String,   // binds the import closure: `axon imports <program> --json`, run in the
+                              // job's own child environment (axon-os `job_child_command`)
     approved_by:    String,   // operator id supplied at approve time (recorded, not authenticated)
     decision:       "approved" | "rejected",
     risk:           Risk,
-    token_digest:   String,   // "axtok1:"+sha256(canonical(program_digest,grant_digest,approved_by,decision,risk))
+    token_digest:   String,   // see the formula below
 }
 ```
+**Token formula.** `canonical = "axon-approval/3" ␟ program_digest ␟ grant_digest ␟ imports_digest ␟
+approved_by ␟ decision ␟ risk` (`␟` = U+001F). With `AXON_APPROVAL_KEY` set (hex, ≥16 bytes),
+`token_digest = "axmac1:" + hex(HMAC-SHA256(token_subkey, canonical))`, the token subkey being
+`HMAC-SHA256(operator_key, "axon-approval token v1")`; without it, `token_digest = "axtok3:" +
+hex(sha256(canonical))`. One implementation (`axon_os::TokenFields`) serves both crates. The
+verifier's key decides which digest it accepts, compared in constant time: a keyed verifier accepts
+only `axmac1:` (an unkeyed token is what anyone can mint); a keyless one accepts `axtok3:` and
+labels it **integrity only** (it shows the program, grant and closure are unedited, not who
+approved them), and refuses `axmac1:` (it cannot be checked). A schema other than `/3` or `/1` is
+refused. `/2` is reserved by R24.
+
+**Legacy `axon-approval/1`** (`axtok1:` over `program_digest ␟ grant_digest ␟ approved_by ␟ decision
+␟ risk`, no closure) is refused under a key; keyless it is accepted only when the program's import
+closure, as the job's interpreter environment resolves it, is empty — and that run is then pinned to
+the empty closure. Otherwise: "re-approve: this token predates import binding". Fabric resolves no
+closure at admission (its executors are not handed the digest), so it decides emptiness textually: an
+entry with no `use`/`mod` line has the empty closure. It admits a `/3` approval only of the empty
+closure for such an entry, and applies the `/1` rule with the same check (refused under a key;
+keyless, admitted only for an entry that declares no module).
+
 **R21 handoff contract (R21 honors this):** R21's `run` MUST, when a `.approval` is present, recompute
 `program_digest` and `grant_digest` from the on-disk `(program, grant)` and assert they equal the
-token's, and that `decision=="approved"`, and that `token_digest` re-hashes correctly — else
-`Verdict::Denied{"unapproved or edited after approval"}` exit 8, **before** running. (This is the one
-small addition R21 gains; specify it here, implement the R21 side under R21's gate.)
+token's, and that `decision=="approved"`, and that `token_digest` recomputes under the rule above —
+else `Verdict::Denied` exit 8, **before** running. It then hands `imports_digest` to the job's
+interpreter as `AXON_REQUIRE_IMPORTS_DIGEST` (set after `env_clear`, hermetic and non-hermetic
+alike), which refuses (exit 8, nothing executed) to run a closure that differs: a module rewritten
+after approval is refused at run.
 
 ### 3.6 `Refusal` + exit codes (consistent with R21's carved scheme)
 ```
@@ -331,12 +355,16 @@ The grant is the **intersection of what the program needs and what the intent pe
   raise), build the **legible** string ("This program WILL be allowed to: read ./data/, write ./out/.
   It may NOT: use the network, spawn processes. Budget ≤ … . Confidentiality ceiling: internal. Risk:
   Low. Confidence: 92/100.").
-- `build(request, approved_by, decision) -> ApprovalToken`: bind both digests + decision + risk into
-  `token_digest`.
-- `verify(token, program_src, grant) -> Result<(), Mismatch>`: recompute both digests from the *actual*
-  on-disk content and the `token_digest`; any mismatch → `Err` (this is what R21 calls on handoff).
-  **Editing the program or grant by one byte after approval invalidates the token**
-  (`approval_invalidated_by_any_edit`).
+- `build(request, imports_digest, approved_by, decision, key) -> ApprovalToken`: bind both digests,
+  the import closure (`approve` asks `$AXON_BIN imports <program> --json` in the job's child
+  environment; a closure that does not load refuses the approval, exit 2) + decision + risk into
+  `token_digest` (§3.5: `axmac1:` under `AXON_APPROVAL_KEY`, else `axtok3:`).
+- `verify(token, program_src, grant, key) -> Result<VerifiedToken, Mismatch>`: recompute both digests
+  from the *actual* on-disk content and the `token_digest` under the verifier's key; any mismatch →
+  `Err`. It delegates to axon-os's `verify_approval` (what R21 calls on handoff), so the two cannot
+  drift. **Editing the program or grant by one byte after approval invalidates the token**
+  (`approval_invalidated_by_any_edit`); a module rewritten after approval is refused at run
+  (`a_module_rewritten_after_approval_is_refused_at_run`).
 
 ### 4.5 Hermetic, isolated synthesis (`RealSynthesizer`) — the impure seam (A4)
 - Synthesis invokes the canonical `axon` entrypoint (resolved by absolute path from `AXON_BIN`, not

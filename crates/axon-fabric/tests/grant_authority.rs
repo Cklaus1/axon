@@ -222,21 +222,49 @@ fn sha256_hex(b: &[u8]) -> String {
     format!("{:x}", Sha256::digest(b))
 }
 
-/// An `axon-approval/1` token as axon-intent emits it.
-fn token(program_src: &str, g: &axon_os::Grant) -> String {
-    const U: char = '\u{1f}';
+/// An `axon-approval/3` token as `axon-intent approve` emits it keyless,
+/// binding `imports` as the program's import closure, with its `approved_by`
+/// replaced AFTER its own digest was taken when `edited`. These tokens are
+/// unkeyed, so the ambient `AXON_APPROVAL_KEY` (which would rightly refuse
+/// them) is cleared — every caller in this binary clears, none sets it.
+fn mint(
+    program_src: &str,
+    g: &axon_os::Grant,
+    imports: &str,
+    decision: &str,
+    edited: bool,
+) -> String {
+    std::env::remove_var(axon_os::APPROVAL_KEY_ENV);
     let pd = format!("axsha256:{}", sha256_hex(program_src.as_bytes()));
     let gd = format!(
         "axsha256:{}",
         sha256_hex(axon_os::canonical_grant(g).as_bytes())
     );
-    let td = format!(
-        "axtok1:{}",
-        sha256_hex(format!("{pd}{U}{gd}{U}alice{U}approved{U}low").as_bytes())
-    );
-    json!({"schema":"axon-approval/1","program_digest":pd,"grant_digest":gd,
-           "approved_by":"alice","decision":"approved","risk":"low","token_digest":td})
+    let td = axon_os::TokenFields {
+        program_digest: &pd,
+        grant_digest: &gd,
+        imports_digest: imports,
+        approved_by: "alice",
+        decision,
+        risk: "low",
+    }
+    .digest(None);
+    let by = if edited { "mallory" } else { "alice" };
+    json!({"schema":"axon-approval/3","program_digest":pd,"grant_digest":gd,
+           "imports_digest":imports,"approved_by":by,"decision":decision,"risk":"low",
+           "token_digest":td})
     .to_string()
+}
+
+/// An approval of `program_src` (which imports nothing) under `g`.
+fn token(program_src: &str, g: &axon_os::Grant) -> String {
+    mint(
+        program_src,
+        g,
+        axon_os::EMPTY_IMPORTS_DIGEST,
+        "approved",
+        false,
+    )
 }
 
 /// The grant's `require_approval` policy is honoured, with the axon-os table:
@@ -332,10 +360,22 @@ fn grants_no_backend_can_enforce_are_unsupported_not_weakened() {
     }
 }
 
-/// An `axon-approval/1` token over (program, grant, decision), with its
+/// An approval over (program, grant, decision) of the empty closure, with its
 /// `approved_by` replaced AFTER its own digest was taken when `edited`.
 fn token_as(program_src: &str, g: &axon_os::Grant, decision: &str, edited: bool) -> String {
+    mint(
+        program_src,
+        g,
+        axon_os::EMPTY_IMPORTS_DIGEST,
+        decision,
+        edited,
+    )
+}
+
+/// A legacy `axon-approval/1` token (`axtok1:`, no import binding).
+fn legacy_token(program_src: &str, g: &axon_os::Grant) -> String {
     const U: char = '\u{1f}';
+    std::env::remove_var(axon_os::APPROVAL_KEY_ENV);
     let pd = format!("axsha256:{}", sha256_hex(program_src.as_bytes()));
     let gd = format!(
         "axsha256:{}",
@@ -343,11 +383,10 @@ fn token_as(program_src: &str, g: &axon_os::Grant, decision: &str, edited: bool)
     );
     let td = format!(
         "axtok1:{}",
-        sha256_hex(format!("{pd}{U}{gd}{U}alice{U}{decision}{U}low").as_bytes())
+        sha256_hex(format!("{pd}{U}{gd}{U}alice{U}approved{U}low").as_bytes())
     );
-    let by = if edited { "mallory" } else { "alice" };
     json!({"schema":"axon-approval/1","program_digest":pd,"grant_digest":gd,
-           "approved_by":by,"decision":decision,"risk":"low","token_digest":td})
+           "approved_by":"alice","decision":"approved","risk":"low","token_digest":td})
     .to_string()
 }
 
@@ -408,4 +447,107 @@ fn an_approval_token_admits_only_what_it_approved() {
         );
         assert_eq!(env.launch_records(), 0, "{what}: no launch record");
     }
+}
+
+/// G1g: Fabric's executors are not handed an approval's `imports_digest`, so
+/// Fabric admits approval only where none needs enforcing — a program that
+/// imports nothing. Refused, each with nothing spawned and no launch record:
+/// a token binding a NON-empty closure (it would be ignored where the modules
+/// load); a token claiming the empty closure for a program that declares a
+/// module; and a legacy `/1` token for a program that declares a module
+/// (re-approve). Controls: the empty-closure `/3` token runs (the `control`
+/// case of `an_approval_token_admits_only_what_it_approved`), and so does a
+/// keyless `/1` token for an import-free program
+/// (`a_keyless_legacy_token_is_admitted_for_an_import_free_program`).
+#[test]
+fn fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce() {
+    let gated = format!("require_approval = true\n{GRANT_FS}");
+    let lib = "axsha256:1111111111111111111111111111111111111111111111111111111111111111";
+    type Case = (
+        &'static str,
+        fn(&str, &axon_os::Grant, &str) -> String,
+        &'static str,
+    );
+    let cases: [Case; 3] = [
+        (
+            "binding a non-empty import closure",
+            |s, g, lib| mint(s, g, lib, "approved", false),
+            "imports nothing",
+        ),
+        (
+            "claiming the empty closure for a program that declares a module",
+            |s, g, _| token(s, g),
+            "declares a module",
+        ),
+        (
+            "of a legacy /1 token for a program that declares a module",
+            |s, g, _| legacy_token(s, g),
+            "predates import binding",
+        ),
+    ];
+    for (what, tok, why) in cases {
+        let env = Env::new();
+        let cfg = with_grants(&env, &[("grant:test", PRINCIPAL, &gated)]);
+        let g = cfg.grants.resolve("grant:test", PRINCIPAL).unwrap();
+        let f = env.ws.join("f.ax");
+        if why != "imports nothing" {
+            let src = std::fs::read_to_string(&f).unwrap();
+            // `use` alone: a `mod` line is already refused by the effect scan
+            // (an unread module could do anything), `use` is not.
+            std::fs::write(&f, format!("use lib\n{src}")).unwrap();
+        }
+        let src = std::fs::read_to_string(&f).unwrap();
+        std::fs::write(
+            env.grant_registry
+                .parent()
+                .unwrap()
+                .join("grant_test.approval"),
+            tok(&src, g.grant(), lib),
+        )
+        .unwrap();
+        let s = submit(&request(&env, "op-imp", "t_ok").to_string(), &cfg).unwrap();
+        assert!(
+            s.receipt.status == ReceiptStatus::Denied && spawn_count(&env.spawns) == 0,
+            "ATTACK: an approval {what} admitted the job: {s:?}"
+        );
+        assert!(
+            s.reason.as_deref().unwrap_or("").contains(why),
+            "{what}: the refusal says why: {s:?}"
+        );
+        assert_eq!(env.launch_records(), 0, "{what}: no launch record");
+    }
+}
+
+/// The spec's `/1` rule on the Fabric route: keyless, a legacy token is
+/// admitted for a program that declares no module (its closure is empty, and
+/// the run is pinned to the empty closure). The keyed refusal is
+/// `approval_key_route::a_legacy_token_is_refused_under_a_key`; the refusal
+/// for a program that declares a module is a case of
+/// `fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce`.
+#[test]
+fn a_keyless_legacy_token_is_admitted_for_an_import_free_program() {
+    let gated = format!("require_approval = true\n{GRANT_FS}");
+    let env = Env::new();
+    let cfg = with_grants(&env, &[("grant:test", PRINCIPAL, &gated)]);
+    let g = cfg.grants.resolve("grant:test", PRINCIPAL).unwrap();
+    let src = std::fs::read_to_string(env.ws.join("f.ax")).unwrap();
+    assert!(
+        !src.lines()
+            .any(|l| l.trim_start().starts_with("use ") || l.trim_start().starts_with("mod ")),
+        "fixture: the program imports nothing"
+    );
+    std::fs::write(
+        env.grant_registry
+            .parent()
+            .unwrap()
+            .join("grant_test.approval"),
+        legacy_token(&src, g.grant()),
+    )
+    .unwrap();
+    let s = submit(&request(&env, "op-legacy", "t_ok").to_string(), &cfg).unwrap();
+    assert_eq!(
+        s.receipt.verification,
+        ReceiptVerification::Passed,
+        "a keyless /1 token for an import-free program runs: {s:?}"
+    );
 }

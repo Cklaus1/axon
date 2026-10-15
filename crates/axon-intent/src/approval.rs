@@ -2,22 +2,27 @@
 //! approval token. Pure (no I/O, no clock). The token is a content-binding
 //! digest + the recorded human decision — NOT a PKI signature (R22 §1.2 / A6).
 //!
-//! `build_token` binds the EXACT `(program_digest, grant_digest, approved_by,
-//! decision, risk)` into a `token_digest`. `verify_token` recomputes the program
-//! and grant digests from the ACTUAL on-disk content and re-hashes the token;
+//! `build_token` binds the EXACT `(program_digest, grant_digest, imports_digest,
+//! approved_by, decision, risk)` into a `token_digest` — through the ONE formula
+//! in `axon_os::approval::TokenFields`, so the gateway and the run boundary
+//! cannot drift. Under `AXON_APPROVAL_KEY` the digest is a MAC (`axmac1:`),
+//! otherwise an unkeyed sha256 (`axtok3:`). `verify_token` IS the run
+//! boundary's check (`axon_os::verify_approval`): it recomputes the program and
+//! grant digests from the ACTUAL on-disk content and re-derives the token's;
 //! editing the program OR the grant by one byte after approval invalidates the
-//! token (this is the cross-crate contract R21 honors on handoff). Authenticated:
-//! that the approved (program, grant) is byte-for-byte the one that runs. NOT
-//! authenticated: WHO approved (the `approved_by` is recorded, not signed).
+//! token. The import closure (`imports_digest`, from `axon imports --json`) is
+//! enforced where the modules load: axon-os hands it to the interpreter as
+//! `AXON_REQUIRE_IMPORTS_DIGEST`. NOT authenticated: WHICH human approved (the
+//! `approved_by` is recorded; a keyed token shows only that a key holder made
+//! it).
 
 use crate::confidence::Confidence;
 use crate::intent::Intent;
 use crate::refusal::Decision;
 use crate::synth::ProgramDraft;
+use axon_os::approval::{ApprovalKey, TokenFields, VerifiedToken, TOKEN_SCHEMA};
 use axon_os::grant::{ExecPolicy, Grant};
 use sha2::{Digest, Sha256};
-
-const UNIT: char = '\u{1f}'; // canonical field separator
 
 /// Phase-11 risk level (R22 §3.4), derived from the grant's effect axes. The
 /// `--risk` flag may only RAISE this, never lower it.
@@ -80,12 +85,16 @@ pub struct ApprovalRequest {
     pub uncertainty: Vec<String>,
 }
 
-/// The tamper-evident handoff token (R22 §3.5); JSON schema `axon-approval/1`.
+/// The tamper-evident handoff token (R22 §3.5); JSON schema `axon-approval/3`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ApprovalToken {
     pub schema: String,
     pub program_digest: String,
     pub grant_digest: String,
+    /// The `imports_digest` (`axon imports --json`) of the closure approved
+    /// with the program. Absent only in a legacy `axon-approval/1` token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imports_digest: Option<String>,
     pub approved_by: String,
     pub decision: Decision,
     pub risk: Risk,
@@ -122,25 +131,29 @@ pub fn grant_digest(g: &Grant) -> String {
     format!("axsha256:{}", sha256_hex(canonical_grant(g).as_bytes()))
 }
 
-/// The token digest: `"axtok1:"+sha256(canonical(program_digest, grant_digest,
-/// approved_by, decision, risk))`.
+/// The token digest, through axon-os's single formula. The decision and risk
+/// enter as their SERIALIZED (lowercase) forms — exactly what appears in the
+/// token JSON — so the run boundary reproduces the digest from the JSON alone.
+/// (`as_str()` stays capitalized for the human display; serde renders these
+/// lowercase.)
 fn compute_token_digest(
     program_digest: &str,
     grant_digest: &str,
+    imports_digest: &str,
     approved_by: &str,
     decision: Decision,
     risk: Risk,
+    key: Option<&ApprovalKey>,
 ) -> String {
-    // Hash the SERIALIZED (lowercase) field representations — exactly what
-    // appears in the token JSON — so any reader (e.g. axon-os at the run
-    // boundary) can reproduce the digest from the JSON alone. (`as_str()` stays
-    // capitalized for the human display; serde renders these lowercase.)
-    let canon = format!(
-        "{program_digest}{UNIT}{grant_digest}{UNIT}{approved_by}{UNIT}{}{UNIT}{}",
-        decision.as_str().to_lowercase(),
-        risk.as_str().to_lowercase(),
-    );
-    format!("axtok1:{}", sha256_hex(canon.as_bytes()))
+    TokenFields {
+        program_digest,
+        grant_digest,
+        imports_digest,
+        approved_by,
+        decision: &decision.as_str().to_lowercase(),
+        risk: &risk.as_str().to_lowercase(),
+    }
+    .digest(key)
 }
 
 /// The human-readable "may / may NOT / budget / label / risk / confidence"
@@ -210,75 +223,74 @@ pub fn render_request(
     }
 }
 
-/// Build an approval token binding the request's content + the human's decision
-/// (R22 §4.4).
-pub fn build_token(req: &ApprovalRequest, approved_by: &str, decision: Decision) -> ApprovalToken {
-    let token_digest = compute_token_digest(
+/// Build an approval token binding the request's content, the import closure
+/// the program loads (`imports_digest`) and the human's decision (R22 §4.4).
+/// `key` is `AXON_APPROVAL_KEY` when set: the token is then an `axmac1:` MAC
+/// only a key holder can make.
+pub fn build_token(
+    req: &ApprovalRequest,
+    imports_digest: &str,
+    approved_by: &str,
+    decision: Decision,
+    key: Option<&ApprovalKey>,
+) -> ApprovalToken {
+    build_token_raw(
         &req.program_digest,
         &req.grant_digest,
+        imports_digest,
         approved_by,
         decision,
         req.risk,
+        key,
+    )
+}
+
+/// [`build_token`] from the digests themselves (the `approve` path, which has
+/// no rendered request).
+pub fn build_token_raw(
+    program_digest: &str,
+    grant_digest: &str,
+    imports_digest: &str,
+    approved_by: &str,
+    decision: Decision,
+    risk: Risk,
+    key: Option<&ApprovalKey>,
+) -> ApprovalToken {
+    let token_digest = compute_token_digest(
+        program_digest,
+        grant_digest,
+        imports_digest,
+        approved_by,
+        decision,
+        risk,
+        key,
     );
     ApprovalToken {
-        schema: "axon-approval/1".to_string(),
-        program_digest: req.program_digest.clone(),
-        grant_digest: req.grant_digest.clone(),
+        schema: TOKEN_SCHEMA.to_string(),
+        program_digest: program_digest.to_string(),
+        grant_digest: grant_digest.to_string(),
+        imports_digest: Some(imports_digest.to_string()),
         approved_by: approved_by.to_string(),
         decision,
-        risk: req.risk,
+        risk,
         token_digest,
     }
 }
 
-/// Verify a token against the ACTUAL on-disk `(program, grant)` (R22 §4.4). This
-/// is what R21 calls on handoff. Any of: the program edited, the grant edited,
-/// the decision/risk/approver flipped, or the token not "approved" → `Err`.
-/// Editing the program OR grant by one byte invalidates the token.
+/// Verify a token against the ACTUAL on-disk `(program, grant)` (R22 §4.4),
+/// under the verifier's key. This IS the run boundary's check
+/// (`axon_os::verify_approval`), not a second implementation of it. Any of:
+/// the program edited, the grant edited, the decision/risk/approver/imports
+/// flipped, a digest the key does not accept, or the token not "approved" →
+/// `Err`.
 pub fn verify_token(
     token: &ApprovalToken,
     program_src: &str,
     grant: &Grant,
-) -> Result<(), Mismatch> {
-    if token.schema != "axon-approval/1" {
-        return Err(Mismatch {
-            detail: format!("unknown token schema `{}`", token.schema),
-        });
-    }
-    // 1. the program must be byte-for-byte the approved one.
-    let pd = program_digest(program_src);
-    if pd != token.program_digest {
-        return Err(Mismatch {
-            detail: "program edited after approval (digest mismatch)".to_string(),
-        });
-    }
-    // 2. the grant must be byte-for-byte the approved one.
-    let gd = grant_digest(grant);
-    if gd != token.grant_digest {
-        return Err(Mismatch {
-            detail: "grant edited after approval (digest mismatch)".to_string(),
-        });
-    }
-    // 3. the token must self-consistently re-hash (no field flipped).
-    let expect = compute_token_digest(
-        &token.program_digest,
-        &token.grant_digest,
-        &token.approved_by,
-        token.decision,
-        token.risk,
-    );
-    if expect != token.token_digest {
-        return Err(Mismatch {
-            detail: "token_digest does not re-hash (a bound field was tampered)".to_string(),
-        });
-    }
-    // 4. only an APPROVED token authorizes a run.
-    if token.decision != Decision::Approved {
-        return Err(Mismatch {
-            detail: "token decision is not `approved`".to_string(),
-        });
-    }
-    Ok(())
+    key: Option<&ApprovalKey>,
+) -> Result<VerifiedToken, Mismatch> {
+    axon_os::verify_approval(&to_json(token), program_src, grant, key)
+        .map_err(|detail| Mismatch { detail })
 }
 
 /// Serialize a token to canonical JSON (deterministic; A5).
@@ -403,42 +415,71 @@ Summarize ./data/report.txt into ./out/summary.txt.
         assert_eq!(derive_risk(&pure), Risk::Low);
     }
 
+    const IMP: &str = axon_os::EMPTY_IMPORTS_DIGEST;
+
     // R22 §7 `acc_a6_approval_token_binds_and_tamper_detected` (pure half).
     #[test]
     fn acc_a6_approval_token_binds_and_tamper_detected() {
-        let token = build_token(&req(), "alice", Decision::Approved);
+        let token = build_token(&req(), IMP, "alice", Decision::Approved, None);
+        assert_eq!(token.schema, "axon-approval/3");
+        assert!(token.token_digest.starts_with("axtok3:"), "{token:?}");
         // The unedited (program, grant) verifies.
-        assert!(verify_token(&token, PROG, &grant()).is_ok());
+        assert!(verify_token(&token, PROG, &grant(), None).is_ok());
 
         // (a) one program byte flipped → fail.
         let edited_prog = PROG.replace("0 }", "1 }");
-        assert!(verify_token(&token, &edited_prog, &grant()).is_err());
+        assert!(verify_token(&token, &edited_prog, &grant(), None).is_err());
 
         // (b) one grant field changed → fail.
         let mut g2 = grant();
         g2.budget.tokens += 1;
-        assert!(verify_token(&token, PROG, &g2).is_err());
+        assert!(verify_token(&token, PROG, &g2, None).is_err());
 
         // (c) the token's decision field flipped → re-hash fails.
         let mut t = token.clone();
         t.decision = Decision::Rejected;
-        assert!(verify_token(&t, PROG, &grant()).is_err());
+        assert!(verify_token(&t, PROG, &grant(), None).is_err());
 
         // (d) the risk field flipped → re-hash fails.
         let mut t = token.clone();
         t.risk = Risk::Critical;
-        assert!(verify_token(&t, PROG, &grant()).is_err());
+        assert!(verify_token(&t, PROG, &grant(), None).is_err());
+
+        // (e) the import closure swapped → re-hash fails.
+        let mut t = token.clone();
+        t.imports_digest = Some(format!("axsha256:{}", "0".repeat(64)));
+        assert!(verify_token(&t, PROG, &grant(), None).is_err());
 
         // JSON round-trips.
         let parsed = from_json(&to_json(&token)).unwrap();
         assert_eq!(parsed, token);
-        assert!(verify_token(&parsed, PROG, &grant()).is_ok());
+        assert!(verify_token(&parsed, PROG, &grant(), None).is_ok());
+    }
+
+    // G5a: under AXON_APPROVAL_KEY the token is a MAC, and the key decides
+    // which digest verifies — the same rule as the run boundary, because it
+    // IS the run boundary's check.
+    #[test]
+    fn a_keyed_token_verifies_only_under_its_key() {
+        let k = ApprovalKey::derive(&[3u8; 16]).unwrap();
+        let keyed = build_token(&req(), IMP, "alice", Decision::Approved, Some(&k));
+        assert!(keyed.token_digest.starts_with("axmac1:"), "{keyed:?}");
+        assert!(
+            verify_token(&keyed, PROG, &grant(), Some(&k))
+                .unwrap()
+                .keyed
+        );
+        assert!(verify_token(&keyed, PROG, &grant(), None).is_err());
+        let other = ApprovalKey::derive(&[4u8; 16]).unwrap();
+        assert!(verify_token(&keyed, PROG, &grant(), Some(&other)).is_err());
+        let unkeyed = build_token(&req(), IMP, "alice", Decision::Approved, None);
+        assert!(verify_token(&unkeyed, PROG, &grant(), Some(&k)).is_err());
     }
 
     // R22 §7 `approval_invalidated_by_any_edit`.
     #[test]
     fn approval_invalidated_by_any_edit() {
-        let token = build_token(&req(), "alice", Decision::Approved);
+        let token = build_token(&req(), IMP, "alice", Decision::Approved, None);
         // Flip ONE byte of the program.
         for i in 0..PROG.len() {
             let mut bytes = PROG.as_bytes().to_vec();
@@ -447,7 +488,7 @@ Summarize ./data/report.txt into ./out/summary.txt.
             if let Ok(edited) = String::from_utf8(bytes) {
                 if edited != PROG {
                     assert!(
-                        verify_token(&token, &edited, &grant()).is_err(),
+                        verify_token(&token, &edited, &grant(), None).is_err(),
                         "editing program byte {i} must invalidate the token"
                     );
                 }
@@ -456,13 +497,13 @@ Summarize ./data/report.txt into ./out/summary.txt.
         // Flip the grant (every axis once).
         let mut g = grant();
         g.fs_write = vec!["./elsewhere/".into()];
-        assert!(verify_token(&token, PROG, &g).is_err());
+        assert!(verify_token(&token, PROG, &g, None).is_err());
     }
 
     #[test]
     fn rejected_token_does_not_authorize() {
-        let token = build_token(&req(), "alice", Decision::Rejected);
+        let token = build_token(&req(), IMP, "alice", Decision::Rejected, None);
         // Even with an intact program+grant, a rejected token is not honored.
-        assert!(verify_token(&token, PROG, &grant()).is_err());
+        assert!(verify_token(&token, PROG, &grant(), None).is_err());
     }
 }

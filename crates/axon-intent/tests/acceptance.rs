@@ -70,12 +70,19 @@ struct Out {
 }
 
 /// Invoke `axon-intent` under the deterministic mock (offline). `extra_env`
-/// overrides/adds environment.
+/// overrides/adds environment. `approve`/`emit` ask the interpreter for the
+/// program's import closure, so `AXON_BIN` is always wired in; keyless unless
+/// a test passes `AXON_APPROVAL_KEY` explicitly (the tokens verified below with
+/// `None` are unkeyed).
 fn ai(args: &[&str], extra_env: &[(&str, &str)]) -> Out {
     let mut cmd = Command::new(intent_bin());
     cmd.args(args);
     cmd.env("AXON_AI_MOCK", "1");
     cmd.current_dir(workspace_root());
+    if let Some(axon) = axon_bin() {
+        cmd.env("AXON_BIN", axon);
+    }
+    cmd.env_remove("AXON_APPROVAL_KEY");
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -86,12 +93,14 @@ fn ai(args: &[&str], extra_env: &[(&str, &str)]) -> Out {
     }
 }
 
-/// Invoke the R21 supervisor with the interpreter wired in.
+/// Invoke the R21 supervisor with the interpreter wired in (keyless, like
+/// [`ai`]).
 fn os(bin: &Path, args: &[&str], axon: &Path) -> Out {
     let mut cmd = Command::new(bin);
     cmd.args(args);
     cmd.env("AXON_BIN", axon);
     cmd.current_dir(workspace_root());
+    cmd.env_remove("AXON_APPROVAL_KEY");
     let out = cmd.output().expect("spawn axon-os");
     Out {
         stdout: String::from_utf8_lossy(&out.stdout).to_string(),
@@ -482,14 +491,14 @@ fn acc_a6_approval_token_binds_and_tamper_detected() {
 
     // The intact triple verifies.
     assert!(
-        verify_token(&token, &prog, &m.grant).is_ok(),
+        verify_token(&token, &prog, &m.grant, None).is_ok(),
         "intact triple verifies"
     );
 
     // (a) one program byte appended → fail.
     let edited = format!("{prog}// x");
     assert!(
-        verify_token(&token, &edited, &m.grant).is_err(),
+        verify_token(&token, &edited, &m.grant, None).is_err(),
         "edited program rejected"
     );
 
@@ -497,7 +506,7 @@ fn acc_a6_approval_token_binds_and_tamper_detected() {
     let mut g = m.grant.clone();
     g.budget.tokens += 1;
     assert!(
-        verify_token(&token, &prog, &g).is_err(),
+        verify_token(&token, &prog, &g, None).is_err(),
         "edited grant rejected"
     );
 
@@ -505,7 +514,7 @@ fn acc_a6_approval_token_binds_and_tamper_detected() {
     let mut t = token.clone();
     t.decision = axon_intent::Decision::Rejected;
     assert!(
-        verify_token(&t, &prog, &m.grant).is_err(),
+        verify_token(&t, &prog, &m.grant, None).is_err(),
         "flipped decision rejected"
     );
 }
@@ -626,7 +635,7 @@ fn approval_invalidated_by_any_edit() {
         if let Ok(edited) = String::from_utf8(b) {
             if edited != prog {
                 assert!(
-                    verify_token(&token, &edited, &m.grant).is_err(),
+                    verify_token(&token, &edited, &m.grant, None).is_err(),
                     "editing program byte {i} must invalidate the token"
                 );
             }
@@ -636,7 +645,7 @@ fn approval_invalidated_by_any_edit() {
     let mut g = m.grant.clone();
     g.fs_read = vec!["./elsewhere/".into()];
     assert!(
-        verify_token(&token, &prog, &g).is_err(),
+        verify_token(&token, &prog, &g, None).is_err(),
         "grant edit invalidates"
     );
 }
@@ -690,7 +699,7 @@ fn r21_refuses_edited_program_after_approval() {
     // Before editing: the on-disk program verifies (R21 would run it).
     let prog = std::fs::read_to_string(dir.join("summarize.ax")).unwrap();
     assert!(
-        verify_token(&token, &prog, &m.grant).is_ok(),
+        verify_token(&token, &prog, &m.grant, None).is_ok(),
         "approved triple is honored"
     );
 
@@ -702,7 +711,7 @@ fn r21_refuses_edited_program_after_approval() {
     .unwrap();
     let edited = std::fs::read_to_string(dir.join("summarize.ax")).unwrap();
     assert!(
-        verify_token(&token, &edited, &m.grant).is_err(),
+        verify_token(&token, &edited, &m.grant, None).is_err(),
         "R21's handoff check (verify_token) refuses an edited-after-approval program"
     );
 
@@ -798,4 +807,261 @@ fn r21_refuses_edited_program_after_approval() {
             refused.stdout
         );
     }
+}
+
+// ── G1e/G5a: the approval binds the import closure, end to end ───────────────
+
+/// One job dir whose program `use`s a module, for the import-binding checks.
+/// `hermetic`: the run forwards no `AXON_PATH`, so the module sits where the
+/// interpreter finds it unconditionally — `<dir of the axon binary>/../lib/axon/`
+/// of a private copy of the interpreter. Otherwise it is on `AXON_PATH`, which a
+/// non-reproducible run forwards. Returns (job, module, marker, interpreter,
+/// extra env every `approve`/`run` gets).
+fn stage_importing_job(
+    tag: &str,
+    hermetic: bool,
+    axon: &Path,
+) -> (PathBuf, PathBuf, PathBuf, PathBuf, Vec<(String, String)>) {
+    let d = tmp(tag);
+    let (interp, moddir, env) = if hermetic {
+        let bin = d.join("inst/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let copy = bin.join("axon");
+        std::fs::copy(axon, &copy).unwrap();
+        (copy, d.join("inst/lib/axon"), vec![])
+    } else {
+        let m = d.join("mods");
+        let env = vec![("AXON_PATH".to_string(), m.display().to_string())];
+        (axon.to_path_buf(), m, env)
+    };
+    std::fs::create_dir_all(&moddir).unwrap();
+    std::fs::create_dir_all(d.join("out")).unwrap();
+    let module = moddir.join("lib.ax");
+    std::fs::write(&module, "fn helper() -> i64 { 41 }\n").unwrap();
+    let prog = d.join("main.ax");
+    std::fs::write(
+        &prog,
+        "mod lib\nuse lib.{helper}\nfn main() -> i64 {\n    match write_file(\"./out/marker.txt\", \"helper {to_str(helper())}\") {\n        Ok(_) => 0\n        Err(_) => 1\n    }\n}\n",
+    )
+    .unwrap();
+    let job = d.join("main.axjob");
+    std::fs::write(
+        &job,
+        // A `mod` line makes axon-os's effect scan answer "every effect" (the
+        // module is unread), so the grant must allow every effect for the
+        // job to run at all; the sandbox still confines the write to ./out/.
+        format!(
+            "program = \"{}\"\nintent = \"t\"\nseed = 1\nrequire_approval = true\n\
+             [grant]\nreproducible = {hermetic}\nfs_read = [\"./\"]\nfs_write = [\"./out/\"]\n\
+             net = [\"*\"]\nexec = \"any\"\nmax_label = \"internal\"\n[grant.budget]\ncalls = 5\n",
+            prog.display()
+        ),
+    )
+    .unwrap();
+    (job, module, d.join("out/marker.txt"), interp, env)
+}
+
+fn run_cmd(bin: &Path, args: &[&str], interp: &Path, env: &[(String, String)]) -> (i32, String) {
+    let mut cmd = Command::new(bin);
+    cmd.args(args)
+        .env("AXON_AI_MOCK", "1")
+        .env("AXON_BIN", interp)
+        .env_remove("AXON_APPROVAL_KEY")
+        .env_remove("AXON_PATH")
+        .current_dir(workspace_root());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let o = cmd.output().expect("spawn");
+    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+    s.push_str(&String::from_utf8_lossy(&o.stderr));
+    (o.status.code().unwrap_or(-1), s)
+}
+
+/// G1e acceptance: `approve` binds the closure the program loads; a module
+/// rewritten after approval is refused at `axon-os run` (exit 8) with no
+/// program effect; unchanged, the job runs — under a hermetic grant and a
+/// non-hermetic one alike.
+#[test]
+fn a_module_rewritten_after_approval_is_refused_at_run() {
+    let (Some(os_bin), Some(axon)) = (axon_os_bin(), axon_bin()) else {
+        return;
+    };
+    for hermetic in [false, true] {
+        let mode = if hermetic { "hermetic" } else { "restricted" };
+        let (job, module, marker, interp, env) =
+            stage_importing_job(&format!("g1e-{mode}"), hermetic, &axon);
+        let store = job.parent().unwrap().join("runs");
+        let job_s = job.to_str().unwrap();
+        let store_s = store.to_str().unwrap();
+
+        let (code, out) = run_cmd(
+            &intent_bin(),
+            &["approve", job_s, "--by", "alice", "--accept"],
+            &interp,
+            &env,
+        );
+        assert_eq!(code, 0, "{mode}: approve: {out}");
+        let token = std::fs::read_to_string(job.with_extension("approval")).unwrap();
+        assert!(
+            token.contains("\"schema\":\"axon-approval/3\"")
+                && !token.contains(axon_os::EMPTY_IMPORTS_DIGEST),
+            "{mode}: the token binds a non-empty closure: {token}"
+        );
+
+        // Unchanged → runs, with its effect.
+        let (code, out) = run_cmd(
+            &os_bin,
+            &["run", job_s, "--run-id", "ok", "--out", store_s],
+            &interp,
+            &env,
+        );
+        assert_eq!(code, 0, "{mode}: the approved closure runs: {out}");
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap_or_default(),
+            "helper 41",
+            "{mode}: {out}"
+        );
+        std::fs::remove_file(&marker).unwrap();
+
+        // The module rewritten after approval → refused before anything runs.
+        std::fs::write(&module, "fn helper() -> i64 { 666 }\n").unwrap();
+        let (code, out) = run_cmd(
+            &os_bin,
+            &["run", job_s, "--run-id", "swapped", "--out", store_s],
+            &interp,
+            &env,
+        );
+        assert_eq!(
+            code, 8,
+            "{mode}: ATTACK: a module rewritten after approval ran: {out}"
+        );
+        assert!(
+            !marker.exists(),
+            "{mode}: ATTACK: the rewritten closure had an effect: {out}"
+        );
+        assert!(
+            out.contains("imports changed since approval"),
+            "{mode}: the refusal names the closure: {out}"
+        );
+
+        // Restored → runs again: the refusal was about the change, nothing else.
+        std::fs::write(&module, "fn helper() -> i64 { 41 }\n").unwrap();
+        let (code, out) = run_cmd(
+            &os_bin,
+            &["run", job_s, "--run-id", "restored", "--out", store_s],
+            &interp,
+            &env,
+        );
+        assert_eq!(code, 0, "{mode}: {out}");
+        assert!(marker.exists(), "{mode}: {out}");
+    }
+}
+
+/// G5a + the /1 rule, through the real binaries: which token a run accepts
+/// depends on `AXON_APPROVAL_KEY`, and a legacy `/1` token is accepted only
+/// keyless for a program that imports nothing.
+#[test]
+fn the_approval_key_and_legacy_tokens_are_enforced_at_run() {
+    let (Some(os_bin), Some(axon)) = (axon_os_bin(), axon_bin()) else {
+        return;
+    };
+    let key = [("AXON_APPROVAL_KEY".to_string(), "5a".repeat(32))];
+    let (job, _module, marker, interp, env) = stage_importing_job("g5a", false, &axon);
+    let keyed_env: Vec<(String, String)> = env.iter().cloned().chain(key.clone()).collect();
+    let job_s = job.to_str().unwrap();
+    let store = job.parent().unwrap().join("runs");
+    let run = |id: &str, env: &[(String, String)]| {
+        run_cmd(
+            &os_bin,
+            &[
+                "run",
+                job_s,
+                "--run-id",
+                id,
+                "--out",
+                store.to_str().unwrap(),
+            ],
+            &interp,
+            env,
+        )
+    };
+    let approve = |env: &[(String, String)]| {
+        let (code, out) = run_cmd(
+            &intent_bin(),
+            &["approve", job_s, "--by", "alice", "--accept"],
+            &interp,
+            env,
+        );
+        assert_eq!(code, 0, "approve: {out}");
+        std::fs::read_to_string(job.with_extension("approval")).unwrap()
+    };
+
+    // Keyed approval: an axmac1 token, accepted only under the key.
+    assert!(approve(&keyed_env).contains("\"token_digest\":\"axmac1:"));
+    let (code, out) = run("keyed-without-key", &env);
+    assert_eq!(code, 8, "an axmac1 token was accepted keyless: {out}");
+    assert!(!marker.exists(), "{out}");
+    let (code, out) = run("keyed", &keyed_env);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("keyed"), "{out}");
+    std::fs::remove_file(&marker).unwrap();
+
+    // Unkeyed approval (what anyone can mint without the key): accepted only
+    // keyless, and labelled integrity-only.
+    assert!(approve(&env).contains("\"token_digest\":\"axtok3:"));
+    let (code, out) = run("forged", &keyed_env);
+    assert_eq!(
+        code, 8,
+        "ATTACK: an unkeyed token passed a keyed run: {out}"
+    );
+    assert!(!marker.exists(), "{out}");
+    let (code, out) = run("unkeyed", &env);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("integrity only"), "{out}");
+    std::fs::remove_file(&marker).unwrap();
+
+    // A legacy /1 token over this (importing) program: refused, keyless too.
+    let manifest = axon_os::manifest::parse(
+        &std::fs::read_to_string(&job).unwrap(),
+        job.parent().unwrap(),
+    )
+    .unwrap();
+    let legacy = |src: &str| {
+        let pd = axon_intent::approval::program_digest(src);
+        let gd = axon_intent::approval::grant_digest(&manifest.grant);
+        let canon = format!("{pd}\u{1f}{gd}\u{1f}alice\u{1f}approved\u{1f}low");
+        let td = {
+            use sha2::{Digest, Sha256};
+            format!("axtok1:{:x}", Sha256::digest(canon.as_bytes()))
+        };
+        format!(
+            "{{\"schema\":\"axon-approval/1\",\"program_digest\":\"{pd}\",\
+             \"grant_digest\":\"{gd}\",\"approved_by\":\"alice\",\"decision\":\"approved\",\
+             \"risk\":\"low\",\"token_digest\":\"{td}\"}}"
+        )
+    };
+    let prog_src = std::fs::read_to_string(&manifest.program).unwrap();
+    std::fs::write(job.with_extension("approval"), legacy(&prog_src)).unwrap();
+    let (code, out) = run("legacy-imports", &env);
+    assert_eq!(
+        code, 8,
+        "ATTACK: a /1 token ran an importing program: {out}"
+    );
+    assert!(out.contains("predates import binding"), "{out}");
+    assert!(!marker.exists(), "{out}");
+
+    // The same program without its import: the /1 token (re-minted for it)
+    // is accepted keyless and refused keyed.
+    let free = "fn main() -> i64 {\n    match write_file(\"./out/marker.txt\", \"free\") {\n        Ok(_) => 0\n        Err(_) => 1\n    }\n}\n";
+    std::fs::write(&manifest.program, free).unwrap();
+    std::fs::write(job.with_extension("approval"), legacy(free)).unwrap();
+    let (code, out) = run("legacy-keyed", &keyed_env);
+    assert_eq!(code, 8, "ATTACK: a /1 token passed a keyed run: {out}");
+    assert!(out.contains("predates import binding"), "{out}");
+    assert!(!marker.exists(), "{out}");
+    let (code, out) = run("legacy-free", &env);
+    assert_eq!(code, 0, "a /1 token for an import-free program runs: {out}");
+    assert!(out.contains("legacy axon-approval/1"), "{out}");
+    assert!(marker.exists(), "{out}");
 }

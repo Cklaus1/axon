@@ -27,7 +27,10 @@ pub mod runtime;
 pub mod supervisor;
 pub mod verdict;
 
-pub use approval::{canonical_grant, verify_approval, ApprovalKey, APPROVAL_KEY_ENV};
+pub use approval::{
+    canonical_grant, verify_approval, ApprovalKey, TokenFields, VerifiedToken, APPROVAL_KEY_ENV,
+    EMPTY_IMPORTS_DIGEST, TOKEN_SCHEMA,
+};
 pub use gate::{admit, Admission, DeclaredEffects};
 pub use grant::{Budget, EffectSet, ExecPolicy, Grant, Label};
 pub use manifest::{parse as parse_manifest, JobManifest};

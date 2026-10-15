@@ -3203,10 +3203,6 @@ _RCP = ("DOMINATED BY NAMED ROWS (checkable): a Failed read as Passed at this li
         "(and the unnamed one) was REFUSED_ELSEWHERE by that demotion, verification Unknown, never "
         "Passed; those two rows are therefore not kept (tests/submit.rs "
         "a_failing_check_is_never_receipted_passed pins the receipt)")
-_APR = ("NOT A REFUSAL (checkable): AdmissionProbe::run_sandboxed is reached only after gate::admit "
-        "admitted (supervisor.rs step 5) and states success by construction, so that "
-        "`supervisor_admits` reads Completed; any other value could only refuse. It performs no "
-        "effect")
 _CNO = ("DOMINATED BY NAMED ROWS (checkable): the nonce is read from the custodian's reply, whose "
         "writer is one process (M1727), and the custodian issues 32-hex nonces; its spend then goes "
         "through the custodian again, which spends only a nonce recorded as issued (M196, M622), so "
@@ -3287,9 +3283,6 @@ EXEMPT += [
     ('crates/axon-fabric/src/submit.rs',
      '                ReceiptVerification::Unknown',
      _JNV),
-    ('crates/axon-fabric/src/submit.rs',
-     '    fn run_sandboxed(',
-     _APR),
     ('crates/axon-fabric/src/custodian.rs',
      '            .ok_or("custodian issued no well-formed nonce")?;',
      _CNO),
@@ -3519,7 +3512,7 @@ EXEMPT += [
      "ROWED ELSEWHERE (checkable): the call's flags argument is M1916 (RENAME_NOREPLACE); removing the call itself makes every publish fail, which every workspace test sees"),
     ('crates/axon-fabric/src/custodian.rs', '            None => {\n                let mut text = Vec::new();\n                (&s).take(MAX_MESSAGE)',
      'DEVELOPMENT ROUTE (checkable): the arm runs only for a custodian with no pinned program (`self.sha256` None); a production helper refuses a custodian with no pin (privileged_launcher.rs, a_production_helper_launched_with_no_custodian_program_pin_...), and the pinned arm reads through read_from_pinned with the same bound'),
-    ('crates/axon-os/src/runtime.rs', '            cmd.env("PATH", p); // cc/linker discovery for the interpreter',
+    ('crates/axon-os/src/runtime.rs', '        cmd.env("PATH", p); // cc/linker discovery for the interpreter',
      "NO EFFECT (checkable): the interpreter child's PATH is for `cc`/linker discovery by `axon run`, and the legacy process adapter is not on the protected route (_ACR); a missing PATH cannot widen what the child may do"),
     ('crates/axon-vm/src/firecracker.rs', '        .stdin(Stdio::null())\n        .stdout(Stdio::piped())',
      "NOT ON THE PROTECTED ROUTE (checkable): axon-vm's firecracker spawn; the protected crates use axon_vm only for BACKEND_PROFILE and embed_policy_in_cmdline/MmdsPayload (grep `axon_vm::`), never the spawn"),
@@ -3953,7 +3946,7 @@ EXEMPT += [
      _OSO),
     ('crates/axon-os/src/cli.rs', '    if let Err(e) = std::fs::create_dir_all(&out) {\n        eprintln!("axon-os run: cannot create',
      _OSO),
-    ('crates/axon-os/src/runtime.rs', '            // what the profile promises it will not do.\n            cmd.env(',
+    ('crates/axon-os/src/runtime.rs', '        // what the profile promises it will not do.\n        cmd.env(',
      _OSO),
     ('crates/axon-psv/src/lib.rs', 'pub const LAUNCH_MANIFEST_SCHEMA: &str = "axon-launch-manifest/2";',
      _A95['const_tag']),
@@ -3972,6 +3965,45 @@ EXEMPT += [
     ('crates/axon-fabric/src/privileged_launcher.rs', '                    .mode(mode)',
      _A95['create_mode_window']),
 ]
+
+_IMPD = ("DOMINATED BY M3561 (checkable): `query_imports_digest` only ever (a) binds a closure into a token at "
+         "`axon-intent approve`, and every run hands that digest to the job's interpreter, which refuses to run a "
+         "closure that differs (AXON_REQUIRE_IMPORTS_DIGEST, M3561/M3568: a module rewritten after approval is "
+         "refused), so a wrong or forged answer here can only make the approved run refuse; or (b) decides that a "
+         "legacy /1 token's program imports nothing, and that run is then pinned to the EMPTY closure in the same "
+         "child environment, so a wrong `empty` answer is refused by the child too. Its own refusals (failed "
+         "command, wrong schema, no digest) therefore protect nothing the child does not")
+_KEYB = ("DOMINATED BY M1769 (checkable): the token digest is recomputed under the verifier's key and compared in "
+         "constant time; with a key it is an `axmac1:` HMAC, which no unkeyed `axtok3:`/`axtok1:` string equals, "
+         "and without one an unkeyed `axtok3:` sha256, which no `axmac1:` string equals. This early refusal only "
+         "names the reason (the_key_decides_which_token_digest_is_accepted asserts the message); removing it "
+         "leaves the same token refused as a digest mismatch")
+_IMPV = ("DOMINATED (checkable): without this arm a child that the loader stopped (exit 8, no completion marker) "
+         "reaches the exit-code arm below (AUDIT T44), which seals exit 8 as Denied (axis sandbox); this arm only "
+         "names the reason and the `approval` axis. Nothing ran either way: the interpreter refuses before "
+         "executing (M3561)")
+EXEMPT += [
+    ('crates/axon-os/src/approval.rs', '        if key.is_some() && !keyed {', _KEYB),
+    ('crates/axon-os/src/approval.rs', '        if key.is_none() && keyed {', _KEYB),
+    ('crates/axon-os/src/runtime.rs', '    if out.timed_out || out.code != Some(0) {\n        let why = out', _IMPD),
+    ('crates/axon-os/src/runtime.rs', '    if v["schema"] != "axon-imports/1" {', _IMPD),
+    ('crates/axon-os/src/runtime.rs', '        _ => Err("`axon imports --json` printed no axsha256: imports_digest".into()),', _IMPD),
+    ('crates/axon-os/src/runtime.rs', 'fn imports_refusal(stderr: &str, code: Option<i32>, stdout: &str, nonce: &str) -> Option<String> {', _IMPV),
+    ('crates/axon-os/src/runtime.rs', '        } else if let Some(line) = imports_refusal(err, proc.code, &proc.stdout, &nonce) {', _IMPV),
+    ('crates/axon-os/src/runtime.rs', 'pub const DEFAULT_MAX_CAPTURE_BYTES: usize = 1 << 20;', _A95['const_bound']),
+]
+VALUE_EXEMPT += [
+    ('crates/axon-os/src/runtime.rs', 'query_imports_digest', 1, '"imports"', 'DOMINATED', _IMPD),
+    ('crates/axon-os/src/runtime.rs', 'query_imports_digest', 2, '"--json"', 'DOMINATED', _IMPD),
+]
+EXEMPT += [
+    ('crates/axon-fabric/src/submit.rs', '        if self.declares_module(p) {\n            return Err(',
+     "DOMINATED BY M3571 (checkable): this refusal only names the reason (re-approve: a /1 token predates import "
+     "binding). Without it the probe answers the EMPTY closure, `authorize` pins the /1 run to EMPTY "
+     "(required_imports), and the probe's run_sandboxed refuses an empty-closure approval for a program that "
+     "declares a module (M3571) — the same program, the same scanned source: nothing is admitted either way"),
+]
+
 
 TERM_EXEMPT += [
     ("crates/axon-fabric/src/custodian.rs", "!m.is_file()",
@@ -5876,7 +5908,7 @@ EXEC_CONSTRUCTORS = {
     ("crates/axon-core/src/host.rs", "exec"): "OUT OF SCOPE: the language host seam",
     ("crates/axon-core/src/main.rs", "try_link_wasm"): "OUT OF SCOPE: the language CLI",
     ("crates/axon-core/src/main.rs", "run_quorum_gate"): "OUT OF SCOPE: the language CLI",
-    ("crates/axon-os/src/runtime.rs", "run_sandboxed"): "builder: own .arg sites (axon-os, not a protected route)",
+    ("crates/axon-os/src/runtime.rs", "job_child_command"): "builder: own .env/.current_dir sites; callers (run_sandboxed, query_imports_digest) add .arg/.env sites (axon-os, not a protected route)",
     ("crates/axon-vm/src/firecracker.rs", "run_in_firecracker"): "builder: own .arg sites (axon-vm, not a protected route)",
 }
 _FLOW_LOCAL = re.compile(

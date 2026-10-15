@@ -2,13 +2,14 @@
 //! emit. Thin I/O shell over the pure core + the `Synthesizer`. Output is
 //! human-legible (not just exit codes); every subcommand has `--help`.
 
-use crate::approval::{from_json, verify_token, ApprovalToken, Risk};
+use crate::approval::{build_token_raw, from_json, verify_token, ApprovalToken, Risk};
 use crate::emit;
 use crate::intent::{self, Intent};
 use crate::pipeline::{self, GenMode, Resolved};
 use crate::refusal::{Decision, Refusal};
 use crate::synth::{MockSynthOrReal, RealSynthesizer};
 use axon_os::manifest::{self, JobManifest};
+use axon_os::runtime::{AxonCoreRuntime, Runtime};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -308,17 +309,38 @@ fn cmd_approve(rest: &[&str]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if decision == Decision::Rejected {
+        println!("\u{2717} rejected by {by}");
+        return ExitCode::from(3);
+    }
+    let key = match axon_os::ApprovalKey::from_env() {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("axon-intent approve: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    // G1e: the closure the program loads, resolved by the interpreter in the
+    // SAME environment shape axon-os gives the job's run (env_clear + the
+    // reproducible-branch forwarding + the program's directory as cwd), so
+    // the digest approved is the digest the run is pinned to.
+    let prog_path = program.unwrap_or_else(|| manifest.program.clone());
+    let imports = match AxonCoreRuntime::from_env().imports_digest(&prog_path, &manifest.grant) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!(
+                "axon-intent approve: cannot determine the program's import closure, so there \
+                 is nothing to bind it to: {e}"
+            );
+            return ExitCode::from(2);
+        }
+    };
     // Build the token directly from the on-disk (program, grant) — the content we
     // bind is EXACTLY what is on disk, so a later one-byte edit invalidates it.
     let risk = crate::approval::derive_risk(&manifest.grant);
     let pd = crate::approval::program_digest(&prog_src);
     let gd = crate::approval::grant_digest(&manifest.grant);
-    let token = build_token_raw(&pd, &gd, by, decision, risk);
-
-    if decision == Decision::Rejected {
-        println!("\u{2717} rejected by {by}");
-        return ExitCode::from(3);
-    }
+    let token = build_token_raw(&pd, &gd, &imports, by, decision, risk, key.as_ref());
 
     let name = name_of(Path::new(job));
     let out = Path::new(job).parent().unwrap_or(Path::new("."));
@@ -328,49 +350,21 @@ fn cmd_approve(rest: &[&str]) -> ExitCode {
         return ExitCode::from(2);
     }
     println!(
-        "\u{2713} approved by {by} \u{2014} token bound to program {} grant {}",
+        "\u{2713} approved by {by} \u{2014} token bound to program {} grant {} imports {}",
         short(&pd),
-        short(&gd)
+        short(&gd),
+        short(&imports)
+    );
+    println!(
+        "  {}",
+        if key.is_some() {
+            "keyed (axmac1): only an AXON_APPROVAL_KEY holder could have made it"
+        } else {
+            "unkeyed (axtok3): integrity only — anyone can mint one; set AXON_APPROVAL_KEY to key it"
+        }
     );
     println!("  Wrote {}", path.display());
     ExitCode::from(0)
-}
-
-/// Build a token from raw digests (the approve path binds on-disk content).
-fn build_token_raw(
-    program_digest: &str,
-    grant_digest: &str,
-    by: &str,
-    decision: Decision,
-    risk: Risk,
-) -> ApprovalToken {
-    let req = crate::approval::ApprovalRequest {
-        program_digest: program_digest.to_string(),
-        grant: empty_grant(),
-        grant_digest: grant_digest.to_string(),
-        intent_goal: String::new(),
-        risk,
-        confidence: 0,
-        legible: String::new(),
-        uncertainty: Vec::new(),
-    };
-    crate::approval::build_token(&req, by, decision)
-}
-
-fn empty_grant() -> axon_os::grant::Grant {
-    axon_os::grant::Grant {
-        reproducible: false,
-        fs_read: vec![],
-        fs_write: vec![],
-        net: vec![],
-        exec: axon_os::grant::ExecPolicy::None,
-        max_label: axon_os::grant::Label::Public,
-        budget: axon_os::grant::Budget {
-            calls: 0,
-            tokens: 0,
-            cost_micro: 0,
-        },
-    }
 }
 
 fn short(digest: &str) -> String {
@@ -434,16 +428,44 @@ fn cmd_emit(rest: &[&str]) -> ExitCode {
         }
     };
     let name = name_of(path);
-    if let Err(e) = emit::write_compiled(&resolved, &intent, &out, &name) {
-        eprintln!("axon-intent emit: cannot write triple: {e}");
-        return ExitCode::from(2);
-    }
+    let triple = match emit::write_compiled(&resolved, &intent, &out, &name) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("axon-intent emit: cannot write triple: {e}");
+            return ExitCode::from(2);
+        }
+    };
     print_resolved(&resolved);
     if !yes {
         eprintln!("axon-intent emit: pass --yes to approve non-interactively");
         return ExitCode::from(2);
     }
-    match emit::write_approval(&resolved, &out, &name, by, Decision::Approved) {
+    let key = match axon_os::ApprovalKey::from_env() {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("axon-intent emit: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    // The closure of the program as WRITTEN, resolved in the run's environment
+    // shape (see `approve`).
+    let imports = match AxonCoreRuntime::from_env().imports_digest(&triple.program, &resolved.grant)
+    {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("axon-intent emit: cannot determine the program's import closure: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    match emit::write_approval(
+        &resolved,
+        &out,
+        &name,
+        &imports,
+        by,
+        Decision::Approved,
+        key.as_ref(),
+    ) {
         Ok(p) => {
             println!("\u{2713} approved by {by} \u{2014} wrote {}", p.display());
             ExitCode::from(0)
@@ -456,7 +478,10 @@ fn cmd_emit(rest: &[&str]) -> ExitCode {
 }
 
 /// Library helper for the R21-handoff contract (R22 §3.5): given an emitted
-/// triple on disk, verify the approval token binds the actual (program, grant).
+/// triple on disk, verify the approval token binds the actual (program, grant)
+/// under the environment's `AXON_APPROVAL_KEY`. The import closure is enforced
+/// by the run itself (axon-os pins the interpreter to the token's
+/// `imports_digest`).
 /// This is the substance R21's `run` calls (see the CROSS-CRATE HOOK).
 pub fn verify_triple(job: &Path) -> Result<(), String> {
     let name = name_of(job);
@@ -466,7 +491,10 @@ pub fn verify_triple(job: &Path) -> Result<(), String> {
         .map_err(|e| format!("cannot read approval {}: {e}", approval_path.display()))?;
     let token: ApprovalToken = from_json(&token_src).map_err(|m| m.detail)?;
     let (manifest, prog_src) = load_job(job, None)?;
-    verify_token(&token, &prog_src, &manifest.grant).map_err(|m| m.detail)
+    let key = axon_os::ApprovalKey::from_env()?;
+    verify_token(&token, &prog_src, &manifest.grant, key.as_ref())
+        .map(|_| ())
+        .map_err(|m| m.detail)
 }
 
 // keep the Refusal type referenced so the legible() rendering is exercised.

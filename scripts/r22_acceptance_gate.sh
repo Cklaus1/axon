@@ -10,6 +10,11 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# The gate's tokens are minted unkeyed (`axtok3:`) and the tests hand-mint
+# unkeyed ones: an AXON_APPROVAL_KEY inherited from the operator's shell would
+# make `approve` emit `axmac1:` and every keyless check refuse. Pinned: no key.
+unset AXON_APPROVAL_KEY
+
 CRATE="crates/axon-intent"
 SRC="$CRATE/src $CRATE/tests"
 fail=0
@@ -26,6 +31,8 @@ REQUIRED=(
   grant_is_least_privilege
   low_confidence_synthesis_refused
   approval_invalidated_by_any_edit
+  a_module_rewritten_after_approval_is_refused_at_run
+  the_approval_key_and_legacy_tokens_are_enforced_at_run
 )
 
 echo "r22_acceptance_gate: (1) presence check…"
@@ -63,13 +70,18 @@ if ! cargo build -q -p axon-intent --bin axon-intent 2>/dev/null; then
   echo "  axon-intent build failed"; exit 1
 fi
 if ! cargo build -q -p axon-os --bin axon-os 2>/dev/null; then
-  echo "  axon-os build failed (cross-spec run leg will be skipped by the tests)"
+  echo "  axon-os build failed"; exit 1
 fi
+# `approve` asks the interpreter for the program's import closure (G1e), so
+# without it nothing can be approved: a missing interpreter FAILS the gate.
 if ! cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
-  echo "r22_acceptance_gate: interpreter build unavailable — run leg skips cleanly"
+  echo "r22_acceptance_gate: FAILED — the interpreter (axon) did not build"; exit 1
 fi
 . "$ROOT/scripts/lib/axon_bin.sh"
 AXON_BIN=""; use_built AXON_BIN axon; export AXON_BIN  # the interpreter just built
+if [ ! -f "$AXON_BIN" ] || [ ! -x "$AXON_BIN" ]; then
+  echo "r22_acceptance_gate: FAILED — AXON_BIN=$AXON_BIN is not an executable file"; exit 1
+fi
 
 echo "r22_acceptance_gate: (4) full suite (unit + acceptance, incl. the real-CLI journey)…"
 if ! cargo test -q -p axon-intent; then

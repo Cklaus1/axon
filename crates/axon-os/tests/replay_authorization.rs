@@ -37,7 +37,8 @@ fn manifest_src(require: bool) -> String {
 #[test]
 fn a_job_requiring_approval_without_a_token_is_refused() {
     let m = parse(&manifest_src(true), Path::new(".")).expect("parse");
-    let err = authorize(Path::new("/nonexistent/job.axjob"), &m)
+    let rt = axon_os::runtime::AxonCoreRuntime::from_env();
+    let err = authorize(Path::new("/nonexistent/job.axjob"), &m, None, &rt)
         .expect_err("a job requiring approval with no token must be refused");
     assert!(
         err.contains("approval required but missing"),
@@ -49,9 +50,11 @@ fn a_job_requiring_approval_without_a_token_is_refused() {
 #[test]
 fn a_job_not_requiring_approval_authorizes_as_not_required() {
     let m = parse(&manifest_src(false), Path::new(".")).expect("parse");
-    let status = authorize(Path::new("/nonexistent/job.axjob"), &m)
+    let rt = axon_os::runtime::AxonCoreRuntime::from_env();
+    let auth = authorize(Path::new("/nonexistent/job.axjob"), &m, None, &rt)
         .expect("a job that does not require approval must authorize");
-    assert_eq!(status, ApprovalStatus::NotRequired);
+    assert_eq!(auth.status, ApprovalStatus::NotRequired);
+    assert_eq!(auth.required_imports, None);
 }
 
 /// The authorization decision must be REACHABLE from the archived record.
@@ -125,24 +128,32 @@ fn the_approval_token_is_archived_beside_the_job_it_approved() {
     )
     .unwrap();
 
-    // Mint a token that verifies against this exact program + grant.
+    // Mint a token that verifies against this exact program + grant (an
+    // unkeyed /3 token binding the empty import closure: `p.ax` uses nothing).
     let m =
         axon_os::manifest::parse(&std::fs::read_to_string(&job).unwrap(), &d).expect("manifest");
     let src = std::fs::read_to_string(&prog).unwrap();
-    let unit = "\u{1f}";
     let pd = format!("axsha256:{}", sha256_hex(src.as_bytes()));
     let gd = format!(
         "axsha256:{}",
         sha256_hex(axon_os::approval::canonical_grant(&m.grant).as_bytes())
     );
-    let canon = format!("{pd}{unit}{gd}{unit}auditor{unit}approved{unit}low");
-    let td = format!("axtok1:{}", sha256_hex(canon.as_bytes()));
+    let td = axon_os::TokenFields {
+        program_digest: &pd,
+        grant_digest: &gd,
+        imports_digest: axon_os::EMPTY_IMPORTS_DIGEST,
+        approved_by: "auditor",
+        decision: "approved",
+        risk: "low",
+    }
+    .digest(None);
     std::fs::write(
         job.with_extension("approval"),
         format!(
-            "{{\"schema\":\"axon-approval/1\",\"program_digest\":\"{pd}\",\
-             \"grant_digest\":\"{gd}\",\"approved_by\":\"auditor\",\
-             \"decision\":\"approved\",\"risk\":\"low\",\"token_digest\":\"{td}\"}}"
+            "{{\"schema\":\"axon-approval/3\",\"program_digest\":\"{pd}\",\
+             \"grant_digest\":\"{gd}\",\"imports_digest\":\"{}\",\"approved_by\":\"auditor\",\
+             \"decision\":\"approved\",\"risk\":\"low\",\"token_digest\":\"{td}\"}}",
+            axon_os::EMPTY_IMPORTS_DIGEST
         ),
     )
     .unwrap();
@@ -166,6 +177,8 @@ fn the_approval_token_is_archived_beside_the_job_it_approved() {
         "axon",
     ));
     let mut cmd = Command::new(bin);
+    // The token is hand-minted unkeyed: an ambient key would (rightly) refuse it.
+    cmd.env_remove(axon_os::APPROVAL_KEY_ENV);
     cmd.args(["run"])
         .arg(&job)
         .arg("--run-id")
@@ -213,6 +226,7 @@ fn the_approval_token_is_archived_beside_the_job_it_approved() {
         "the approved run must succeed before replay means anything: {run_txt}"
     );
     let rep = Command::new(bin)
+        .env_remove(axon_os::APPROVAL_KEY_ENV)
         .args(["replay", "r1", "--store"])
         .arg(&store)
         .env("AXON_BIN", interp.as_ref().unwrap())

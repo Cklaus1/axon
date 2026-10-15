@@ -27,7 +27,8 @@ AXON_AI_MOCK=1 target/debug/axon-intent compile examples/intents/summarize.inten
 # 2. See, in plain English, exactly what it will be allowed to do + the risk:
 target/debug/axon-intent review ./jobs/summarize.axjob --program ./jobs/summarize.ax
 
-# 3. Approve the PROOF (binds the exact program+grant):
+# 3. Approve the PROOF (binds the exact program+grant+import closure; needs the
+#    interpreter: AXON_BIN=<absolute path to axon>):
 target/debug/axon-intent approve ./jobs/summarize.axjob --by alice --accept
 
 # 4. Watch an under-specified intent get REFUSED, not best-efforted (exit 5):
@@ -84,7 +85,17 @@ refusal · `8` not-admissible / grant-exceeds-ceiling.
 
 ## The R21 handoff (tamper-evidence)
 
-The `.approval` token binds the exact `(program, grant)` digests. Editing the
-program or grant by one byte after approval invalidates it; `axon-os run` honors
-a valid token and refuses an edited job. The binding check is
-`axon_intent::approval::verify_token` (and the `verify_triple` convenience).
+The `.approval` token (`axon-approval/3`) binds the exact `(program, grant)`
+digests and the program's import closure (`imports_digest`, from
+`$AXON_BIN imports <program> --json` in the job's own environment). Editing the
+program or grant by one byte, or rewriting an imported module, after approval
+invalidates it: `axon-os run` refuses the job (exit 8) before it runs.
+
+With `AXON_APPROVAL_KEY` (hex, ≥16 bytes) set, `approve` emits a keyed
+`axmac1:` token and a keyed run accepts only those; without it the token is an
+unkeyed `axtok3:` digest, accepted only by a keyless run and labelled
+"integrity only". Legacy `axon-approval/1` tokens are refused under a key and,
+keyless, accepted only for a program that imports nothing ("re-approve: this
+token predates import binding" otherwise). Formula: R22 spec §3.5. The binding
+check is `axon_intent::approval::verify_token` (which delegates to axon-os's
+`verify_approval`; `verify_triple` is the convenience).
