@@ -532,13 +532,23 @@ mod tests {
     // when every digest in it is internally consistent.
     #[test]
     fn unknown_token_schema_is_refused() {
-        let tok = token_for(SRC, &grant(), LIB_IMPORTS, None)
-            .replace("axon-approval/3", "axon-approval/9");
-        let e = verify_approval(&tok, SRC, &grant(), None)
+        // The attack the schema check alone stops: a token whose digest DOES
+        // recompute (the legacy /1 formula binds no schema tag), relabelled
+        // with a schema axon-os does not know. Without the check it would be
+        // verified under the /1 rules.
+        let relabelled =
+            legacy_token_for(SRC, &grant()).replace("axon-approval/1", "axon-approval/9");
+        let e = verify_approval(&relabelled, SRC, &grant(), None)
             .expect_err("ATTACK: a token of an unknown schema was verified");
         assert!(
             e.contains("axon-approval/9"),
             "the refusal names the schema: {e}"
+        );
+        let tok = token_for(SRC, &grant(), LIB_IMPORTS, None)
+            .replace("axon-approval/3", "axon-approval/9");
+        assert!(
+            verify_approval(&tok, SRC, &grant(), None).is_err(),
+            "a relabelled /3 token must be refused"
         );
         let no_schema = token_for(SRC, &grant(), LIB_IMPORTS, None)
             .replace("\"schema\":\"axon-approval/3\",", "");
