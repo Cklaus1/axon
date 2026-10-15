@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 82cda128e956fa241c87b09803678c63f1cd51b6
+generated-at: 0b03f198b9cda0e28bc4ae0b2b2f18dfa2a35895
 
-`git diff --numstat 31413ca7..82cda128 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..0b03f198 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -84,9 +84,9 @@ generated-at: 82cda128e956fa241c87b09803678c63f1cd51b6
 | `crates/axon-core/src/interp/vm/tests.rs` | 2688 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
-| `crates/axon-core/src/lib.rs` | 261 | 73 |
+| `crates/axon-core/src/lib.rs` | 262 | 73 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
-| `crates/axon-core/src/main.rs` | 1205 | 324 |
+| `crates/axon-core/src/main.rs` | 1206 | 324 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
 | `crates/axon-core/src/parser.rs` | 457 | 31 |
@@ -97,9 +97,9 @@ generated-at: 82cda128e956fa241c87b09803678c63f1cd51b6
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 55292 | 7685 |
+| total | 55294 | 7685 |
 
-`git log --reverse 31413ca7..82cda128 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..0b03f198 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -374,7 +374,8 @@ generated-at: 82cda128e956fa241c87b09803678c63f1cd51b6
 | cb8d6508 | fix/runtime-depth merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 960d803c | gaps G1 import binding | FRONT END (module loader only; no change in what any run computes, accepts or refuses): load_use_decls_recorded records each module the shared loader merges (name, chosen path, bytes, sealed bit, interned SourceId) and every `use` left unsearched because no search directory exists; load_use_decls returns its diagnostics unchanged; lockfile::imports_digest hashes the closure (name, axh1 module hash, sealed bit), order-free, path-free |
 | 82cda128 | gaps G1 import binding | CLI ONLY (main.rs verbs; the interpreter is untouched): `ast approve` writes axon-ast-approved/2 binding the import closure and refuses an unloadable one; `deploy` judges the record against the bytes it parsed and the closure it loaded (exit 8 naming the changed module; a /1 record no longer approves); new verb `axon imports`; AXON_REQUIRE_IMPORTS_DIGEST is read once at dispatch, removed from the environment, and refuses a different closure with exit 8 before execution on run/test/goal/session/deploy (other verbs exit 2); `ast review` reports each fn's origin module |
-| 271 commits | | |
+| 0b03f198 | gaps G1 import binding | lint attribute only (#[allow(clippy::too_many_arguments)] on load_module_recursive and run_check_pipeline_inner); no change in what any run computes, accepts or refuses |
+| 272 commits | | |
 <!-- END MECHANICAL -->
 
 
