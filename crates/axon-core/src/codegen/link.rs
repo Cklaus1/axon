@@ -1456,6 +1456,16 @@ fn workspace_target_dir(root: &Path, exe: Option<&Path>) -> PathBuf {
         .unwrap_or_else(|| root.join("target"))
 }
 
+/// The target dir the running compiler was built into (see
+/// [`workspace_target_dir`]), for runtimes other than the hosted one, e.g. the
+/// wasm `libaxon_rt.a` under `<dir>/<triple>/<profile>/`. `None` outside a
+/// workspace checkout.
+pub fn compiler_target_dir() -> Option<PathBuf> {
+    let root = workspace_root()?;
+    let exe = std::env::current_exe().ok();
+    Some(workspace_target_dir(&root, exe.as_deref()))
+}
+
 /// The cargo to rebuild the runtime with, rustup's proxy first because the
 /// proxy is what honours the workspace's `rust-toolchain.toml`:
 /// `$CARGO_HOME/bin/cargo` (`~/.cargo/bin/cargo`), then `cargo` on `PATH`, then

@@ -58,7 +58,7 @@ pub use output::TestResult;
 
 // Re-export the public path that main.rs expects: the build cache stores a
 // `HostedObject` and a cache hit calls `link_hosted_object` (AX-34).
-pub use link::{link_hosted_object, HostedObject, OptLevel};
+pub use link::{compiler_target_dir, link_hosted_object, HostedObject, OptLevel};
 
 /// Phase 4 `@[adaptive]`: returns true if the attribute list contains an
 /// `adaptive` annotation (regardless of its argument list).  Used by

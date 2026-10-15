@@ -3231,7 +3231,18 @@ fn find_wasm_axon_rt(target_subdir: &str) -> Option<PathBuf> {
             }
         }
     }
-    // Walk up from CWD looking for target/<subdir>/{debug,release}/libaxon_rt.a.
+    // The running compiler's own target dir first (`<dir>/<subdir>/<profile>`),
+    // the dir the native link uses too: a compiler built with an outside
+    // CARGO_TARGET_DIR has no `target/` above any cwd.
+    if let Some(dir) = axon_core::codegen::compiler_target_dir() {
+        for profile in ["debug", "release"] {
+            let cand = dir.join(target_subdir).join(profile).join("libaxon_rt.a");
+            if cand.exists() {
+                return Some(cand);
+            }
+        }
+    }
+    // Then walk up from CWD looking for target/<subdir>/{debug,release}/libaxon_rt.a.
     let mut dir = std::env::current_dir().ok()?;
     loop {
         for profile in ["debug", "release"] {
