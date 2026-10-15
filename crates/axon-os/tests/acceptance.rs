@@ -79,6 +79,9 @@ fn os(args: &[&str], axon: &Path, extra_env: &[(&str, &str)]) -> Out {
     cmd.args(args);
     cmd.env("AXON_BIN", axon);
     cmd.current_dir(workspace_root()); // so `examples/jobs/...` resolves
+                                       // Keyless unless a test passes AXON_APPROVAL_KEY explicitly: an operator's
+                                       // ambient key would change every record's seal format.
+    cmd.env_remove("AXON_APPROVAL_KEY");
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -711,7 +714,7 @@ fn acc_a6b_verdict_seed_and_run_id_are_sealed_into_the_chain_p6_exit_03() {
     // The pre-seal `axrec1:` format is REFUSED, not accepted. An attacker picks
     // which format to present, so accepting the old one is a free downgrade back
     // to an unauthenticated verdict.
-    std::fs::write(&rec_path, original.replace("axrec2:", "axrec1:")).unwrap();
+    std::fs::write(&rec_path, original.replace("axrec3:", "axrec1:")).unwrap();
     let v = os(&["verify", rec_path.to_str().unwrap()], &axon, &[]);
     assert_eq!(
         v.code, 11,
@@ -720,6 +723,169 @@ fn acc_a6b_verdict_seed_and_run_id_are_sealed_into_the_chain_p6_exit_03() {
     );
 
     let _ = std::fs::remove_dir_all(&store);
+}
+
+/// Run `summarize.axjob` into a fresh store as run-id `t`, with `env`.
+fn sealed_run(axon: &Path, name: &str, env: &[(&str, &str)]) -> PathBuf {
+    let store = tmp(name);
+    let r = os(
+        &[
+            "run",
+            "examples/jobs/summarize.axjob",
+            "--run-id",
+            "t",
+            "--out",
+            store.to_str().unwrap(),
+        ],
+        axon,
+        env,
+    );
+    assert_eq!(r.code, 0, "fixture run must complete: {}", r.stdout);
+    store
+}
+
+// G5c: `verify` checked the chain against the record's OWN manifest_digest and
+// never read the job, so a record paired with a different job — or a forger
+// who re-chained a record from an edited job — verified `✓ intact`.
+#[test]
+fn verify_binds_the_record_to_its_archived_job() {
+    let Some(axon) = axon_bin() else {
+        return;
+    };
+    let store = sealed_run(&axon, "g5c-job", &[]);
+    let rec_path = store.join("t.json");
+    let job_path = store.join("t.axjob");
+    let v = os(&["verify", rec_path.to_str().unwrap()], &axon, &[]);
+    assert_eq!(
+        v.code, 0,
+        "untouched record + job must verify: {}",
+        v.stdout
+    );
+
+    // The archived job widened after the run: the record no longer describes it.
+    let job = std::fs::read_to_string(&job_path).unwrap();
+    let widened = job.replace("net = []", "net = [\"evil.com\"]");
+    assert_ne!(job, widened, "fixture shape changed:\n{job}");
+    std::fs::write(&job_path, &widened).unwrap();
+    let v = os(&["verify", rec_path.to_str().unwrap()], &axon, &[]);
+    assert_eq!(
+        v.code, 11,
+        "a record whose archived job does not match must be refused: {}",
+        v.stdout
+    );
+
+    // `--job` names the job explicitly; the original verifies again.
+    let orig = store.join("orig.axjob");
+    std::fs::write(&orig, &job).unwrap();
+    let v = os(
+        &[
+            "verify",
+            rec_path.to_str().unwrap(),
+            "--job",
+            orig.to_str().unwrap(),
+        ],
+        &axon,
+        &[],
+    );
+    assert_eq!(
+        v.code, 0,
+        "--job with the real job must verify: {}",
+        v.stdout
+    );
+
+    // No job at all: refused, not waved through.
+    std::fs::remove_file(&job_path).unwrap();
+    let v = os(&["verify", rec_path.to_str().unwrap()], &axon, &[]);
+    assert_eq!(
+        v.code, 11,
+        "a record with no job must be refused: {}",
+        v.stdout
+    );
+    let _ = std::fs::remove_dir_all(&store);
+}
+
+// G5c: `approval` was stamped AFTER the seal, so it could be rewritten freely.
+#[test]
+fn verify_refuses_an_edited_approval_field() {
+    let Some(axon) = axon_bin() else {
+        return;
+    };
+    let store = sealed_run(&axon, "g5c-appr", &[]);
+    let rec_path = store.join("t.json");
+    let original = std::fs::read_to_string(&rec_path).unwrap();
+    assert!(
+        original.contains("\"record_digest\":\"axrec3:"),
+        "a keyless run seals as axrec3: {original}"
+    );
+    let v = os(&["verify", rec_path.to_str().unwrap()], &axon, &[]);
+    assert_eq!(v.code, 0, "keyless axrec3 verifies: {}", v.stdout);
+    assert!(v.stdout.contains("intact"), "{}", v.stdout);
+    let from = "\"approval\":\"not_required\"";
+    assert!(original.contains(from), "fixture shape changed: {original}");
+    std::fs::write(
+        &rec_path,
+        original.replace(from, "\"approval\":\"verified_required\""),
+    )
+    .unwrap();
+    let v = os(&["verify", rec_path.to_str().unwrap()], &axon, &[]);
+    assert_eq!(
+        v.code, 11,
+        "a rewritten approval field must be refused: {}",
+        v.stdout
+    );
+    let _ = std::fs::remove_dir_all(&store);
+}
+
+// G5c: with AXON_APPROVAL_KEY set the seal is a MAC (`axrmac1:`); only the same
+// key verifies it, and a keyed verifier refuses unkeyed records (downgrade).
+#[test]
+fn keyed_records_verify_only_under_their_key() {
+    let Some(axon) = axon_bin() else {
+        return;
+    };
+    const K1: &str = "00112233445566778899aabbccddeeff";
+    const K2: &str = "ffeeddccbbaa99887766554433221100";
+    let store = sealed_run(&axon, "g5c-key", &[("AXON_APPROVAL_KEY", K1)]);
+    let rec_path = store.join("t.json");
+    let rec = rec_path.to_str().unwrap();
+    let original = std::fs::read_to_string(&rec_path).unwrap();
+    assert!(
+        original.contains("\"record_digest\":\"axrmac1:"),
+        "a keyed run seals as axrmac1: {original}"
+    );
+    let v = os(&["verify", rec], &axon, &[("AXON_APPROVAL_KEY", K1)]);
+    assert_eq!(v.code, 0, "the sealing key verifies: {}", v.stdout);
+    let v = os(&["verify", rec], &axon, &[("AXON_APPROVAL_KEY", K2)]);
+    assert_eq!(v.code, 11, "a wrong key must be refused: {}", v.stdout);
+    let v = os(&["verify", rec], &axon, &[]);
+    assert_eq!(
+        v.code, 11,
+        "a keyless verifier cannot check a MAC and must refuse: {}",
+        v.stdout
+    );
+
+    // A keyless record presented to a keyed verifier: refused (downgrade).
+    let plain = sealed_run(&axon, "g5c-key-plain", &[]);
+    let v = os(
+        &["verify", plain.join("t.json").to_str().unwrap()],
+        &axon,
+        &[("AXON_APPROVAL_KEY", K1)],
+    );
+    assert_eq!(
+        v.code, 11,
+        "a keyed verifier must refuse an unkeyed axrec3 record: {}",
+        v.stdout
+    );
+
+    // A malformed key is a clear refusal, not a silent fall back to keyless.
+    let v = os(&["verify", rec], &axon, &[("AXON_APPROVAL_KEY", "abc")]);
+    assert_eq!(
+        v.code, 2,
+        "a malformed key is a usage refusal: {}",
+        v.stdout
+    );
+    let _ = std::fs::remove_dir_all(&store);
+    let _ = std::fs::remove_dir_all(&plain);
 }
 
 // ── The spec-aware adversarial test (from the ASI-alignment review): an effect

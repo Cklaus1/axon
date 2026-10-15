@@ -1283,6 +1283,20 @@
       "open": " READER (verified this pass, not inherited from the category note): axon-vm `attest` only (crates/axon-vm/src/main.rs); signs reports ABOUT a guest kernel and is not consulted by the run gate."
     },
     {
+      "name": "AXON_APPROVAL_KEY",
+      "category": "launcher-side",
+      "status": "resolved",
+      "engines": {
+        "interpreter": "not-applicable",
+        "native": "not-applicable",
+        "wasm": "not-applicable",
+        "guest": "not-applicable"
+      },
+      "evidence": "crates/axon-os/src/approval.rs",
+      "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
+      "open": " READER: axon-os only (approval::ApprovalKey::from_env, called by supervisor::run_requiring to seal the record, replay::replay and `axon-os verify` to check it)."
+    },
+    {
       "name": "AXON_VM_DEBUG",
       "category": "launcher-side",
       "status": "resolved",

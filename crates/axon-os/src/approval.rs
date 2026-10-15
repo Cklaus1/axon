@@ -292,8 +292,12 @@ mod tests {
     fn unknown_token_schema_is_refused() {
         let src = "fn main() { 0 }";
         let tok = token_for(src, &grant()).replace("axon-approval/1", "axon-approval/9");
-        let e = verify_approval(&tok, src, &grant()).expect_err("unknown schema must be refused");
-        assert!(e.contains("axon-approval/9"), "the refusal names the schema: {e}");
+        let e = verify_approval(&tok, src, &grant())
+            .expect_err("ATTACK: a token of an unknown schema was verified");
+        assert!(
+            e.contains("axon-approval/9"),
+            "the refusal names the schema: {e}"
+        );
         let no_schema = token_for(src, &grant()).replace("\"schema\":\"axon-approval/1\",", "");
         assert!(
             verify_approval(&no_schema, src, &grant()).is_err(),
@@ -313,11 +317,13 @@ mod tests {
         let k = ApprovalKey::derive(&(0u8..16).collect::<Vec<_>>()).unwrap();
         assert_eq!(
             hex(&k.token_mac(b"x")),
-            "8fd45308a38214c9c818302f427aa059121e0a5069b0620de1680be37229ace3"
+            "8fd45308a38214c9c818302f427aa059121e0a5069b0620de1680be37229ace3",
+            "signing KAT approval token subkey derivation label"
         );
         assert_eq!(
             hex(&k.record_mac(b"x")),
-            "81d692c315dd0baec42afb3ca84a5c0dc938050c90706da85541609dd0aff7ca"
+            "81d692c315dd0baec42afb3ca84a5c0dc938050c90706da85541609dd0aff7ca",
+            "signing KAT approval record subkey derivation label"
         );
         assert_eq!(format!("{k:?}"), "ApprovalKey(<redacted>)");
     }
@@ -357,6 +363,10 @@ pub enum ApprovalStatus {
     /// to stamp: the record of a run refused for want of sign-off then said
     /// the job did not need sign-off, contradicting the verdict beside it.
     Denied,
+    /// The run was refused BEFORE authorization ran (the isolation check), so
+    /// no approval decision exists. Distinct from `unknown`, the default for a
+    /// record built outside the supervisor.
+    NotChecked,
 }
 
 impl ApprovalStatus {
@@ -366,6 +376,7 @@ impl ApprovalStatus {
             ApprovalStatus::VerifiedRequired => "verified_required",
             ApprovalStatus::VerifiedNotRequired => "verified_not_required",
             ApprovalStatus::Denied => "denied",
+            ApprovalStatus::NotChecked => "not_checked",
         }
     }
 }

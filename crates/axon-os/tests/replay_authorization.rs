@@ -72,6 +72,8 @@ fn the_run_record_carries_the_authorization_decision() {
         1,
         &[],
         axon_os::Verdict::Completed { value: 0 },
+        "not_required",
+        None,
     );
     let mut v: serde_json::Value = serde_json::to_value(&real).expect("a record must serialize");
     v.as_object_mut().expect("object").remove("approval");
