@@ -38,10 +38,17 @@ fn parse_frames(mut raw: &[u8]) -> Vec<Value> {
 }
 
 /// Run one session: open `main_uri` with `main_src`, send `extra` requests,
-/// shut down; return every message the server wrote.
-fn session(axon_path: &Path, main_uri: &str, main_src: &str, extra: &[Value]) -> Vec<Value> {
+/// shut down; return every message the server wrote. The server runs in `cwd`.
+fn session_in(
+    cwd: &Path,
+    axon_path: &Path,
+    main_uri: &str,
+    main_src: &str,
+    extra: &[Value],
+) -> Vec<Value> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_axon"))
         .arg("lsp")
+        .current_dir(cwd)
         .env("AXON_PATH", axon_path)
         .env("AXON_PATH_EXCLUSIVE", "1")
         .stdin(Stdio::piped())
@@ -67,6 +74,10 @@ fn session(axon_path: &Path, main_uri: &str, main_src: &str, extra: &[Value]) ->
     child.stdout.take().unwrap().read_to_end(&mut raw).unwrap();
     child.wait().unwrap();
     parse_frames(&raw)
+}
+
+fn session(axon_path: &Path, main_uri: &str, main_src: &str, extra: &[Value]) -> Vec<Value> {
+    session_in(&std::env::temp_dir(), axon_path, main_uri, main_src, extra)
 }
 
 /// A module dir whose name needs percent-encoding, holding a `lib.ax` with a
@@ -152,4 +163,31 @@ fn definition_of_an_imported_fn_jumps_into_its_own_file() {
     assert_eq!(loc["uri"], lib_uri(&dir).as_str(), "{resp:#}");
     assert_eq!(loc["range"]["start"]["line"], 0, "{resp:#}");
     assert_eq!(loc["range"]["start"]["character"], 0, "{resp:#}");
+}
+
+#[test]
+fn a_relative_module_dir_still_yields_an_absolute_file_uri() {
+    // `AXON_PATH=mods` (relative, the repo's usual `AXON_PATH=examples/stdlib`
+    // style) stored `mods/lib.ax`, which became `file://mods/lib.ax`: host
+    // `mods`, path `/lib.ax` — a jump to the wrong file.
+    let dir = module_dir("rel");
+    let parent = dir.parent().unwrap();
+    let rel = Path::new(dir.file_name().unwrap());
+    let main_uri = format!("file://{}/main.ax", dir.display()).replace(' ', "%20");
+    let req = json!({"jsonrpc":"2.0","id":7,"method":"textDocument/definition",
+        "params":{"textDocument":{"uri":main_uri},"position":{"line":5,"character":6}}});
+    let msgs = session_in(parent, rel, &main_uri, MAIN, &[req]);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let resp = msgs
+        .iter()
+        .find(|m| m["id"] == 7)
+        .expect("definition reply");
+    assert_eq!(resp["result"]["uri"], lib_uri(&dir).as_str(), "{resp:#}");
+    let publish = msgs
+        .iter()
+        .find(|m| m["method"] == "textDocument/publishDiagnostics")
+        .expect("diagnostics published");
+    let rel_uri = &publish["params"]["diagnostics"][0]["relatedInformation"][0]["location"]["uri"];
+    assert_eq!(rel_uri, lib_uri(&dir).as_str(), "{publish:#}");
 }

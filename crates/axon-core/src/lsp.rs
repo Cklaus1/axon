@@ -832,11 +832,14 @@ fn use_line_range(source: &str, path: &str) -> Value {
     })
 }
 
-/// `file://` URI for an absolute path, percent-encoding every byte outside the
-/// RFC 3986 unreserved set (and `/`), as LSP clients compare URIs textually.
+/// `file://` URI for a path, percent-encoding every byte outside the RFC 3986
+/// unreserved set (and `/`), as LSP clients compare URIs textually. A relative
+/// path (an `AXON_PATH` entry like `mods`) is made absolute against the
+/// server's cwd first: `file://mods/lib.ax` would name host `mods`.
 fn path_to_file_uri(path: &str) -> String {
+    let abs = std::path::absolute(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
     let mut uri = String::from("file://");
-    for &b in path.as_bytes() {
+    for &b in abs.to_string_lossy().as_bytes() {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/') {
             uri.push(b as char);
         } else {
