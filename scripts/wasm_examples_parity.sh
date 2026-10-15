@@ -44,9 +44,7 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_examples_parity
 else
   echo "wasm_examples_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "wasm_examples_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_examples_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 # The wasm runtime must be built for str/dict/array examples to link.
@@ -77,13 +75,19 @@ PROBE="$(mktemp -d)/probe.ax"; printf 'fn main() -> i64 { 0 }\n' > "$PROBE"
 # E0907 means this `axon` has no codegen backend: a skip when $AXON is an
 # interp-only build (require_codegen_axon), a FAIL when it can build native code
 # and still answers E0907. Neither is an absent toolchain.
-_probe_err="$("$AXON" target build "$PROBE" --target wasm32-wasip1 2>&1)"
+_probe_err="$("$AXON" target build "$PROBE" --target wasm32-wasip1 2>&1)"; _probe_rc=$?
 if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
   if echo "$_probe_err" | grep -q E0907; then
     require_codegen_axon wasm_examples_parity
     echo "wasm_examples_parity: FAIL — \$AXON ($AXON) builds native code yet answered E0907:"
     printf '%s\n' "$_probe_err" | head -5 | sed 's/^/        /'
     exit 1
+  fi
+  # The target and axon-rt for it were proven above. A build that FAILED is a
+  # result; only a build that succeeded without producing a linked module (the
+  # environment's wasm link is unavailable) is a skip.
+  if [ "$_probe_rc" -ne 0 ]; then
+    native_build_failed wasm_examples_parity "wasm probe build" "$_probe_err" || exit 1
   fi
   echo "wasm_examples_parity: AOT-wasm link unavailable here — skipping"; exit 0
 fi

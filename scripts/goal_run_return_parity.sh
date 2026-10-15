@@ -28,9 +28,7 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON goal_run_return_parity
 else
   echo "goal_run_return_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "goal_run_return_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip goal_run_return_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 

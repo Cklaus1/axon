@@ -249,7 +249,7 @@ cargo_build_or_skip() {
     interp) ;;
     *) echo "$name: FAIL — cargo_build_or_skip: unknown prerequisite '$prereq'"; exit 2 ;;
   esac
-  echo "$name: FAIL — \`$*\` failed with its prerequisite ($prereq) present (a build error is not a skip):"
+  echo "$name: FAIL — \`$*\` failed and its prerequisite ($prereq) is not proven missing (a build error is not a skip):"
   printf '%s\n' "$err" | grep -v '^[[:space:]]*$' | head -20 | sed 's/^/        /'
   exit 1
 }

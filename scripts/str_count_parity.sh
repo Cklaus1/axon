@@ -25,9 +25,7 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON str_count_parity
 else
   echo "str_count_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "str_count_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip str_count_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon str_count_parity

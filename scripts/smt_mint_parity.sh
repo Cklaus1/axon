@@ -38,17 +38,13 @@ echo "smt_mint_parity: building default + smt binaries…"
 # Own target dir -- a --no-default-features `axon` at the SHARED target/debug
 # path is codegen-less but executable, so later harnesses' `[ -x ]` guards pass
 # and their builds answer E0907. See smt_discharge_parity.sh.
-if ! CARGO_TARGET_DIR="$WORK/def-target" \
-     cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
-  echo "smt_mint_parity: default build failed — skipping"
-  exit 0
-fi
+# libz3 was proven above; neither build has any other prerequisite, so a
+# failure is a broken tree: FAIL with the compiler's stderr, never a skip.
+cargo_build_or_skip smt_mint_parity interp env CARGO_TARGET_DIR="$WORK/def-target" \
+  cargo build -q -p axon-core --no-default-features --bin axon
 DEF="$WORK/def-target/debug/axon"
-if ! CARGO_TARGET_DIR="$WORK/smt-target" \
-     cargo build -q -p axon-core --no-default-features --features smt --bin axon 2>/dev/null; then
-  echo "smt_mint_parity: smt build failed — skipping"
-  exit 0
-fi
+cargo_build_or_skip smt_mint_parity z3 env CARGO_TARGET_DIR="$WORK/smt-target" \
+  cargo build -q -p axon-core --no-default-features --features smt --bin axon
 SMT="$WORK/smt-target/debug/axon"
 
 fail=0

@@ -33,9 +33,7 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON all_examples_parity
 else
   echo "all_examples_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "all_examples_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip all_examples_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon all_examples_parity

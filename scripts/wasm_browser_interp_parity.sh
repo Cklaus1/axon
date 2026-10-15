@@ -43,8 +43,8 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 echo "wasm_browser_interp_parity: building axon-wasm (wasm32-unknown-unknown) + native axon…"
-cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release 2>/dev/null \
-  || { echo "axon-wasm wasm build failed — skipping"; exit 0; }
+cargo_build_or_skip wasm_browser_interp_parity target:wasm32-unknown-unknown \
+  cargo build -q -p axon-wasm --target wasm32-unknown-unknown --release
 # The native side only needs an interpreter: the caller's AXON (the binary
 # under test), else the default (codegen) axon, the one configuration every
 # harness builds - a --no-default-features build here would replace the shared
@@ -53,9 +53,7 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_browser_interp_parity
 else
   echo "wasm_browser_interp_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "wasm_browser_interp_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_browser_interp_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 WASM=""; use_built WASM axon_wasm.wasm wasm32-unknown-unknown release  # the wasm build above

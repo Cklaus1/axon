@@ -33,18 +33,14 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_aot_env_parity
 else
   echo "wasm_aot_env_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "wasm_aot_env_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_aot_env_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon wasm_aot_env_parity
 if [ -n "${AXON_RUN:-}" ]; then
   named_bin AXON_RUN wasm_aot_env_parity
 else
-  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-    echo "wasm_aot_env_parity: interp build unavailable — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_aot_env_parity interp cargo build -q -p axon-core --no-default-features --bin axon-run
   use_built AXON_RUN axon-run
 fi
 INTERP="$AXON_RUN"
@@ -110,8 +106,11 @@ else
 fi
 
 # AOT-wasm — the strlen size_t bridge under test.
-if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$SRC" >/dev/null 2>&1; then
-  echo "wasm_aot_env_parity: wasm build unavailable — skipping"; exit 0
+# Every prerequisite (wasmtime, the wasm32-wasip1 target, axon-rt for it) was
+# proven above, so a failed build here is a result: FAIL, unless stderr proves an
+# unavailability (native_build_failed's allow-list).
+if ! werr="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$SRC" 2>&1)"; then
+  native_build_failed wasm_aot_env_parity "AOT-wasm build" "$werr" || exit 1
 fi
 L="${SRC%.ax}.linked.wasm"
 if [ ! -f "$L" ]; then

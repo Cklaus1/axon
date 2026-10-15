@@ -20,6 +20,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 if ! echo 'int main(){return 0;}' | cc -xc - -lz3 -o /dev/null 2>/dev/null; then
   echo "smt_discharge_parity: libz3 not found — skipping (install to enable)"
@@ -39,17 +40,13 @@ echo "smt_discharge_parity: building default + smt binaries…"
 # `[ -x "$AXON" ]` guards pass and nobody rebuilds, and their next native or
 # wasm build answers E0907. This harness's own comment already prescribed
 # separate target dirs -- it just wasn't applied to this build too.
-if ! CARGO_TARGET_DIR="$WORK/def-target" \
-     cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
-  echo "smt_discharge_parity: default build failed — skipping"
-  exit 0
-fi
+# libz3 was proven above; neither build has any other prerequisite, so a
+# failure is a broken tree: FAIL with the compiler's stderr, never a skip.
+cargo_build_or_skip smt_discharge_parity interp env CARGO_TARGET_DIR="$WORK/def-target" \
+  cargo build -q -p axon-core --no-default-features --bin axon
 DEF="$WORK/def-target/debug/axon"
-if ! CARGO_TARGET_DIR="$WORK/smt-target" \
-     cargo build -q -p axon-core --no-default-features --features smt --bin axon 2>/dev/null; then
-  echo "smt_discharge_parity: smt build failed — skipping"
-  exit 0
-fi
+cargo_build_or_skip smt_discharge_parity z3 env CARGO_TARGET_DIR="$WORK/smt-target" \
+  cargo build -q -p axon-core --no-default-features --features smt --bin axon
 SMT="$WORK/smt-target/debug/axon"
 
 fail=0

@@ -37,18 +37,14 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_aot_stdout_parity
 else
   echo "wasm_aot_stdout_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "wasm_aot_stdout_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_aot_stdout_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon wasm_aot_stdout_parity
 if [ -n "${AXON_RUN:-}" ]; then
   named_bin AXON_RUN wasm_aot_stdout_parity
 else
-  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-    echo "wasm_aot_stdout_parity: interp build unavailable — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_aot_stdout_parity interp cargo build -q -p axon-core --no-default-features --bin axon-run
   use_built AXON_RUN axon-run
 fi
 INTERP="$AXON_RUN"

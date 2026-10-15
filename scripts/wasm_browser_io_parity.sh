@@ -34,9 +34,7 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_browser_io_parity
 else
   echo "wasm_browser_io_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "wasm_browser_io_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_browser_io_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be
@@ -65,13 +63,19 @@ PROBE="$(mktemp -d)/p.ax"; printf 'fn main() { println("ok") }\n' > "$PROBE"
 # E0907 means this `axon` has no codegen backend: a skip when $AXON is an
 # interp-only build (require_codegen_axon), a FAIL when it can build native code
 # and still answers E0907. Neither is an absent toolchain.
-_probe_err="$("$AXON" target build "$PROBE" --target wasm32-unknown-unknown 2>&1)"
+_probe_err="$("$AXON" target build "$PROBE" --target wasm32-unknown-unknown 2>&1)"; _probe_rc=$?
 if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
   if echo "$_probe_err" | grep -q E0907; then
     require_codegen_axon wasm_browser_io_parity
     echo "wasm_browser_io_parity: FAIL — \$AXON ($AXON) builds native code yet answered E0907:"
     printf '%s\n' "$_probe_err" | head -5 | sed 's/^/        /'
     exit 1
+  fi
+  # The target and axon-rt for it were proven above. A build that FAILED is a
+  # result; only a build that succeeded without producing a linked module (the
+  # environment's wasm link is unavailable) is a skip.
+  if [ "$_probe_rc" -ne 0 ]; then
+    native_build_failed wasm_browser_io_parity "browser probe build" "$_probe_err" || exit 1
   fi
   echo "wasm_browser_io_parity: browser println link unavailable — skipping"; exit 0
 fi
@@ -89,8 +93,15 @@ pass=0; fail=0; ran=0
 for name in "${!PROGS[@]}"; do
   src="$WORK/$name.ax"; printf '%s\n' "${PROGS[$name]}" > "$src"
   I_OUT="$("$AXON" run "$src" 2>/dev/null)"
-  if ! "$AXON" target build "$src" --target wasm32-unknown-unknown >/dev/null 2>&1; then
-    echo "  SKIP $name (build failed)"; continue
+  if ! werr="$("$AXON" target build "$src" --target wasm32-unknown-unknown 2>&1)"; then
+    # The probe above linked a module, so the toolchain is here: a failed
+    # build is a result unless stderr proves an unavailability.
+    if native_build_unavailable "$werr"; then
+      echo "  SKIP $name (build unavailable)"; continue
+    fi
+    echo "  FAIL $name: browser-wasm build FAILED (a build error is not a skip):"
+    printf '%s\n' "$werr" | head -5 | sed 's/^/        /'
+    fail=$((fail+1)); continue
   fi
   linked="${src%.ax}.linked.wasm"
   [ -f "$linked" ] || { echo "  SKIP $name (object-only)"; continue; }
@@ -112,7 +123,12 @@ DEMO="examples/browser/demo.ax"
 if [ -f "$DEMO" ]; then
   D_I="$("$AXON" run "$DEMO" 2>/dev/null)"
   rm -f examples/browser/demo.linked.wasm examples/browser/demo.wasm
-  if "$AXON" target build "$DEMO" --target wasm32-unknown-unknown >/dev/null 2>&1 && [ -f examples/browser/demo.linked.wasm ]; then
+  if ! derr="$("$AXON" target build "$DEMO" --target wasm32-unknown-unknown 2>&1)" \
+     && ! native_build_unavailable "$derr"; then
+    echo "  FAIL demo: browser-wasm build FAILED (a build error is not a skip):"
+    printf '%s\n' "$derr" | head -5 | sed 's/^/        /'
+    fail=$((fail+1))
+  elif [ -f examples/browser/demo.linked.wasm ]; then
     ran=$((ran+1))
     D_W="$(node "$HOSTJS" examples/browser/demo.linked.wasm 2>/dev/null)"
     if [ "$D_I" = "$D_W" ]; then
@@ -127,8 +143,9 @@ if [ -f "$DEMO" ]; then
 fi
 
 echo "wasm_browser_io_parity: $pass/$ran stdout-matched (wasi-free), $fail bad"
-if [ "$ran" -eq 0 ]; then echo "wasm_browser_io_parity: nothing linked — skipping"; exit 0; fi
+# A failure decides first: with every case FAILED, ran is 0 too.
 [ "$fail" -eq 0 ] || exit 1
+if [ "$ran" -eq 0 ]; then echo "wasm_browser_io_parity: nothing linked — skipping"; exit 0; fi
 if [ "$ran" -lt "${#PROGS[@]}" ]; then
   echo "wasm_browser_io_parity: FAIL — only $ran/${#PROGS[@]} linked; a browser println-link regression silently skipped the rest"; exit 1
 fi

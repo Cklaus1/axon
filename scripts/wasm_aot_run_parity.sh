@@ -13,6 +13,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 . "$ROOT/scripts/lib/axon_bin.sh"
+. "$ROOT/scripts/lib/harness_skip.sh"
 # Serialize the wasm parity scripts under one shared lock: each builds its
 # wasm artifacts next to the source (examples/$base.*.wasm), so concurrent runs
 # (cargo's parallel test threads invoke several of these at once) clobber each
@@ -31,18 +32,14 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_aot_run_parity
 else
   echo "wasm_aot_run_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "wasm_aot_run_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_aot_run_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon wasm_aot_run_parity
 if [ -n "${AXON_RUN:-}" ]; then
   named_bin AXON_RUN wasm_aot_run_parity
 else
-  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-    echo "wasm_aot_run_parity: interp build unavailable — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_aot_run_parity interp cargo build -q -p axon-core --no-default-features --bin axon-run
   use_built AXON_RUN axon-run
 fi
 INTERP="$AXON_RUN"
@@ -127,8 +124,15 @@ for name in "${!PROGS[@]}"; do
     echo "  DIFF $name: interp printed nothing (probe build broken?)"; fail=$((fail+1)); continue
   fi
   # AOT-wasm: build (which links if pure-int) then run.
-  if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$probe_src" >/dev/null 2>&1; then
-    echo "  SKIP $name (wasm build failed)"; continue
+  # Codegen was proven above (require_codegen_axon) and the object emit is
+  # in-tree: a failed build is a result unless stderr proves an unavailability.
+  if ! werr="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$probe_src" 2>&1)"; then
+    if native_build_unavailable "$werr"; then
+      echo "  SKIP $name (wasm build unavailable)"; continue
+    fi
+    echo "  FAIL $name: AOT-wasm build FAILED (a build error is not a skip):"
+    printf '%s\n' "$werr" | head -5 | sed 's/^/        /'
+    fail=$((fail+1)); continue
   fi
   linked="${probe_src%.ax}.linked.wasm"
   if [ ! -f "$linked" ]; then echo "  SKIP $name (not linkable — has runtime externs)"; continue; fi
@@ -149,6 +153,9 @@ for name in "${!PROGS[@]}"; do
 done
 
 echo "wasm_aot_run_parity: $pass/$ran ran-and-matched, $fail differ"
+# A failure decides first: with every case FAILED, ran is 0 too, and checking
+# ran first reported that as "nothing linked — skipping".
+[ "$fail" -eq 0 ] || { echo "wasm_aot_run_parity: FAIL — $fail case(s) failed"; exit 1; }
 if [ "$ran" -eq 0 ]; then echo "wasm_aot_run_parity: nothing linked — skipping"; exit 0; fi
 # Vacuous-skip guard: every PROGS entry is PURE-INT and MUST link+run. If the
 # env works (ran>0) but some program silently skipped (build/link failure — e.g.
@@ -157,6 +164,5 @@ total=${#PROGS[@]}
 if [ "$ran" -lt "$total" ]; then
   echo "wasm_aot_run_parity: FAIL — only $ran/$total pure-int programs linked+ran; the rest silently skipped (a build/link failure on a pure-int program is a regression, not a skip)"; exit 1
 fi
-[ "$fail" -eq 0 ] || exit 1
 echo "wasm_aot_run_parity: PASS — AOT wasm runs identically to the interpreter across the linkable subset (recursion/loop/f64/array+closure/full dict API incl. map_values/filter/each) ✓"
 exit 0

@@ -33,9 +33,7 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_browser_examples_parity
 else
   echo "wasm_browser_examples_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "wasm_browser_examples_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_browser_examples_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 # Distinguish an ABSENT target from a BROKEN build. The probe used to be
@@ -60,7 +58,7 @@ if ! _rt_err="$(cargo build -q -p axon-rt --target wasm32-unknown-unknown 2>&1)"
   exit 1
 fi
 PROBE="$(mktemp -d)/p.ax"; printf 'fn main() { println("ok") }\n' > "$PROBE"
-_probe_err="$("$AXON" target build "$PROBE" --target wasm32-unknown-unknown 2>&1)"
+_probe_err="$("$AXON" target build "$PROBE" --target wasm32-unknown-unknown 2>&1)"; _probe_rc=$?
 if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
   # E0907: this `axon` has no codegen backend. An interp-only $AXON is a skip
   # (require_codegen_axon says so and exits); E0907 from a binary that CAN build
@@ -70,6 +68,12 @@ if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
     echo "wasm_browser_examples_parity: FAIL — \$AXON ($AXON) builds native code yet answered E0907:"
     printf '%s\n' "$_probe_err" | head -5 | sed 's/^/        /'
     exit 1
+  fi
+  # The target and axon-rt for it were proven above. A build that FAILED is a
+  # result; only a build that succeeded without producing a linked module (the
+  # environment's wasm link is unavailable) is a skip.
+  if [ "$_probe_rc" -ne 0 ]; then
+    native_build_failed wasm_browser_examples_parity "wasm probe build" "$_probe_err" || exit 1
   fi
   echo "wasm_browser_examples_parity: browser link unavailable — skipping"; exit 0
 fi

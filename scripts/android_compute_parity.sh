@@ -24,6 +24,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/axon_bin.sh"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 skip() { echo "android_compute_parity: SKIP — $1"; exit 0; }
 fail() { echo "android_compute_parity: FAIL — $1"; exit 1; }
@@ -55,9 +56,7 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON android_compute_parity
 else
   echo "android_compute_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "android_compute_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip android_compute_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon android_compute_parity
