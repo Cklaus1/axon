@@ -107,7 +107,10 @@ fi
 echo ""
 echo "4. Unit test suite (cargo test -p axon-vm quorum)"
 
-if (cd "$REPO_ROOT" && cargo test -p axon-vm quorum --quiet 2>&1); then
+# `cargo test <filter>` exits 0 when the filter matches nothing: require a
+# PASSED count (cargo_test_must_run), not just the exit status.
+. "$REPO_ROOT/scripts/lib/harness_skip.sh"
+if (cd "$REPO_ROOT" && cargo_test_must_run quorum cargo test -p axon-vm quorum --quiet); then
     pass "all quorum unit tests pass"
 else
     fail "quorum unit tests FAILED"

@@ -90,14 +90,13 @@ fi
 echo ""
 echo "3. Unit test suite: cargo test -p axon-vm chain::"
 
-if cargo test -p axon-vm --no-default-features --quiet chain:: 2>&1 | tee /tmp/r34_chain_tests.log | tail -5; then
-    if grep -q "test result: ok" /tmp/r34_chain_tests.log; then
-        pass "cargo test -p axon-vm chain::  — all chain tests pass"
-    else
-        fail "cargo test -p axon-vm chain::  — did not report 'test result: ok'"
-    fi
+# `cargo test <filter>` exits 0 when the filter matches nothing, and "test
+# result: ok" is printed for "0 passed" too: require a PASSED count.
+. "$REPO_ROOT/scripts/lib/harness_skip.sh"
+if cargo_test_must_run chain:: cargo test -p axon-vm --no-default-features --quiet chain::; then
+    pass "cargo test -p axon-vm chain::  — all chain tests pass"
 else
-    fail "cargo test -p axon-vm chain::  — FAILED"
+    fail "cargo test -p axon-vm chain::  — FAILED or matched no test"
 fi
 
 # ── 4. R31/R26 regression check (axon-attest untouched by R34) ─────────────
