@@ -155,7 +155,11 @@ fn a_building_harness_runs_the_binary_cargo_built_not_one_left_in_target() {
     let root = scratch("built");
     copy_from_repo(
         &root,
-        &["scripts/clock_parity.sh", "scripts/lib/axon_bin.sh"],
+        &[
+            "scripts/clock_parity.sh",
+            "scripts/lib/axon_bin.sh",
+            "scripts/lib/harness_skip.sh",
+        ],
     );
     let built_ran = root.join("built-ran");
     let stale_ran = root.join("stale-ran");
