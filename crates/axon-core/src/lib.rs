@@ -561,10 +561,82 @@ pub fn axon_search_dirs(binary_path: Option<&std::path::Path>) -> Vec<std::path:
 /// Returns E0901 errors for any modules that could not be found and E0902 errors
 /// for circular imports. Parse errors inside found module files are also returned
 /// as E0901 errors. Already-loaded module paths are skipped (no double-loading).
+///
+/// The modules merged are not reported; [`load_use_decls_recorded`] is the
+/// same load and also returns them.
 pub fn load_use_decls(
     program: &mut ast::Program,
     search_dirs: &[std::path::PathBuf],
 ) -> Vec<MergeError> {
+    load_use_decls_recorded(program, search_dirs).0
+}
+
+/// One module the loader actually merged into a program (G1a): the module
+/// file it CHOSE, the exact bytes it parsed, and whether that file lies in a
+/// sealed directory. This, not a second resolution, is what an approval binds:
+/// a re-resolution can disagree with what ran.
+pub struct LoadedModule {
+    /// The `use` path joined with `::`, e.g. `scorelib::metric`.
+    pub name: String,
+    /// The file the search chose (search dir joined with the module's path).
+    pub path: std::path::PathBuf,
+    /// The bytes that were parsed and merged.
+    pub bytes: Vec<u8>,
+    /// The file lies in a sealed module directory (`axon test --seal`).
+    pub sealed: bool,
+    /// The source id its items' spans carry, so an item can be traced back
+    /// to the module it came from.
+    pub source: span::SourceId,
+}
+
+/// The import closure one load produced (G1a).
+#[derive(Default)]
+pub struct ImportClosure {
+    /// Every module merged, each once.
+    pub modules: Vec<LoadedModule>,
+    /// `use` names that were never searched for because there was no search
+    /// directory at all — the one case the loader skips without an error.
+    pub unsearched: Vec<String>,
+}
+
+impl ImportClosure {
+    /// The `imports_digest` over the merged modules
+    /// ([`lockfile::imports_digest`]). Refused when a `use` was skipped
+    /// unsearched: a digest of the modules that happened to load would then
+    /// vouch for a program whose imports nobody resolved.
+    pub fn digest(&self) -> Result<String, String> {
+        if !self.unsearched.is_empty() {
+            return Err(format!(
+                "no module search directory exists, so `use {}` was never resolved; \
+                 an import digest cannot vouch for it (set AXON_PATH)",
+                self.unsearched.join("`, `use ")
+            ));
+        }
+        let entries: Vec<(&str, &[u8], bool)> = self
+            .modules
+            .iter()
+            .map(|m| (m.name.as_str(), m.bytes.as_slice(), m.sealed))
+            .collect();
+        Ok(lockfile::imports_digest(&entries))
+    }
+
+    /// The name of the module whose items carry `source`, if any.
+    pub fn module_of(&self, source: span::SourceId) -> Option<&str> {
+        if source.is_unknown() {
+            return None;
+        }
+        self.modules
+            .iter()
+            .find(|m| m.source == source)
+            .map(|m| m.name.as_str())
+    }
+}
+
+/// [`load_use_decls`], also returning the modules it merged.
+pub fn load_use_decls_recorded(
+    program: &mut ast::Program,
+    search_dirs: &[std::path::PathBuf],
+) -> (Vec<MergeError>, ImportClosure) {
     let use_paths: Vec<Vec<String>> = program
         .items
         .iter()
@@ -578,8 +650,19 @@ pub fn load_use_decls(
         })
         .collect();
 
-    if use_paths.is_empty() || search_dirs.is_empty() {
-        return Vec::new();
+    let mut closure = ImportClosure::default();
+    if use_paths.is_empty() {
+        return (Vec::new(), closure);
+    }
+    if search_dirs.is_empty() {
+        // Nothing to search, so nothing is loaded and nothing is reported —
+        // but it is recorded, so a digest cannot pass this off as "no imports".
+        closure.unsearched = use_paths
+            .iter()
+            .filter(|p| p.first().map(String::as_str) != Some("native"))
+            .map(|p| p.join("::"))
+            .collect();
+        return (Vec::new(), closure);
     }
 
     let mut errors: Vec<MergeError> = Vec::new();
@@ -596,6 +679,7 @@ pub fn load_use_decls(
             &mut already_loaded,
             &mut loading_stack,
             &mut loaded_items,
+            &mut closure.modules,
             &mut errors,
         );
     }
@@ -607,7 +691,7 @@ pub fn load_use_decls(
         program.items = new_items;
     }
 
-    errors
+    (errors, closure)
 }
 
 /// A module referenced by a `use`, resolved to its file on disk and its bytes.
@@ -783,6 +867,7 @@ fn load_module_recursive(
     already_loaded: &mut std::collections::HashSet<String>,
     loading_stack: &mut Vec<String>,
     loaded_items: &mut Vec<ast::Item>,
+    merged: &mut Vec<LoadedModule>,
     errors: &mut Vec<MergeError>,
 ) {
     // R13: `use native::M` is a curated registry import, not a `.ax` file — it
@@ -901,59 +986,67 @@ fn load_module_recursive(
             // file wearing no identity at all, and the renderer resolves them
             // against the ENTRY file's SourceMap — which is how an error truly
             // at `lib.ax:14` came out as `main.ax:6`.
-            Ok(src) => match parse_source_in(
-                &src,
-                span::intern_source(&candidate.display().to_string(), &src),
-            ) {
-                Ok(mod_prog) => {
-                    // Mark as in-progress before recursing to detect cycles.
-                    loading_stack.push(path_str.clone());
+            Ok(src) => {
+                let source = span::intern_source(&candidate.display().to_string(), &src);
+                match parse_source_in(&src, source) {
+                    Ok(mod_prog) => {
+                        // Mark as in-progress before recursing to detect cycles.
+                        loading_stack.push(path_str.clone());
 
-                    // Collect transitive `use` declarations from this module
-                    // and load them first (depth-first).
-                    let nested_uses: Vec<Vec<String>> = mod_prog
-                        .items
-                        .iter()
-                        .filter_map(|item| {
-                            if let ast::Item::UseDecl(u) = item {
-                                if !u.path.is_empty() {
-                                    return Some(u.path.clone());
+                        // Collect transitive `use` declarations from this module
+                        // and load them first (depth-first).
+                        let nested_uses: Vec<Vec<String>> = mod_prog
+                            .items
+                            .iter()
+                            .filter_map(|item| {
+                                if let ast::Item::UseDecl(u) = item {
+                                    if !u.path.is_empty() {
+                                        return Some(u.path.clone());
+                                    }
                                 }
-                            }
-                            None
-                        })
-                        .collect();
+                                None
+                            })
+                            .collect();
 
-                    for nested in nested_uses {
-                        load_module_recursive(
-                            &nested,
-                            search_dirs,
-                            in_sealed(&candidate),
-                            already_loaded,
-                            loading_stack,
-                            loaded_items,
-                            errors,
-                        );
+                        for nested in nested_uses {
+                            load_module_recursive(
+                                &nested,
+                                search_dirs,
+                                in_sealed(&candidate),
+                                already_loaded,
+                                loading_stack,
+                                loaded_items,
+                                merged,
+                                errors,
+                            );
+                        }
+
+                        // Add this module's items after its dependencies.
+                        loaded_items.extend(mod_prog.items);
+
+                        loading_stack.pop();
+                        already_loaded.insert(path_str.clone());
+                        merged.push(LoadedModule {
+                            name: path_str.clone(),
+                            sealed: in_sealed(&candidate),
+                            path: candidate,
+                            bytes: src.into_bytes(),
+                            source,
+                        });
+                        found = true;
+                        break;
                     }
-
-                    // Add this module's items after its dependencies.
-                    loaded_items.extend(mod_prog.items);
-
-                    loading_stack.pop();
-                    already_loaded.insert(path_str.clone());
-                    found = true;
-                    break;
+                    Err(e) => {
+                        errors.push(MergeError {
+                            code: error::E0901,
+                            message: format!("module `{path_str}` at {}: {e}", candidate.display()),
+                            file: candidate.display().to_string(),
+                        });
+                        found = true; // file found but broken — don't also report not-found
+                        break;
+                    }
                 }
-                Err(e) => {
-                    errors.push(MergeError {
-                        code: error::E0901,
-                        message: format!("module `{path_str}` at {}: {e}", candidate.display()),
-                        file: candidate.display().to_string(),
-                    });
-                    found = true; // file found but broken — don't also report not-found
-                    break;
-                }
-            },
+            }
             Err(e) => {
                 errors.push(MergeError {
                     code: error::E0901,
