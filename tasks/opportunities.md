@@ -2485,3 +2485,17 @@ named contention rows (M2266, M2331-M2333, M2511, M2632, M2636, M2880-M2892, M30
 M3402-M3438) -- alone in shard 0, and a host flock (exclusive for it, shared for the
 others) keeps it from overlapping another shard; `v022_mut_select.py --shards=N` prints the plan. The merge
 cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop; Merge `main` often).
+
+## gaps run (2026-10-15) — deferred, not acted on
+
+- **[P2] Other supervisors kill only their direct child.** `axon-cortex/src/runner.rs:3095`, `axon-cortex/src/generate.rs:552`,
+  `axon-psv/src/runner.rs:410`, `axon-reflex/src/lib.rs:610`, `axon-fabric/src/git_data.rs:396`, `axon-vm/src/firecracker.rs:223,448,466`.
+  Same class as G2; the fix pattern is `axon-os` `run_bounded_capped` (process_group + killpg + bounded drains).
+- **[P3] LSP hover and completion read imported items' spans against the open document** (G3 fixed diagnostics and
+  definition only). `compute_definition` (byte-offset API) still returns a bare span with no file. `UseDecl` has no span,
+  so the LSP finds `use` lines by scanning text.
+- **[P3] `axon-os verify` default job path is built from the record's `run_id` without cleaning path separators.** A forged
+  unkeyed record can name a job elsewhere; under `AXON_APPROVAL_KEY` the seal stops this, without a key forgery is possible
+  anyway. Constrain `run_id` to the record's directory.
+- **[P3] Load-dependent test seen once:** `operator_code_a_sealed_frame_runs_never_draws_the_operator_rng` failed in the
+  gaps-cancel lane's `gate.sh --fast` while five lanes built concurrently; passed 3/3 alone. Not yet tallied across gate logs.
