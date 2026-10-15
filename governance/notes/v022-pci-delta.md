@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 0b03f198b9cda0e28bc4ae0b2b2f18dfa2a35895
+generated-at: 642be1520096f25e9822590ff9f336d4353869f3
 
-`git diff --numstat 31413ca7..0b03f198 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..642be152 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,7 +49,7 @@ generated-at: 0b03f198b9cda0e28bc4ae0b2b2f18dfa2a35895
 | `crates/axon-core/src/complexity.rs` | 1 | 0 |
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
 | `crates/axon-core/src/effects.rs` | 291 | 108 |
-| `crates/axon-core/src/env_registry.rs` | 10 | 2 |
+| `crates/axon-core/src/env_registry.rs` | 11 | 2 |
 | `crates/axon-core/src/error.rs` | 22 | 13 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
@@ -86,6 +86,7 @@ generated-at: 0b03f198b9cda0e28bc4ae0b2b2f18dfa2a35895
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
 | `crates/axon-core/src/lib.rs` | 262 | 73 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
+| `crates/axon-core/src/lsp.rs` | 105 | 14 |
 | `crates/axon-core/src/main.rs` | 1206 | 324 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
@@ -97,9 +98,9 @@ generated-at: 0b03f198b9cda0e28bc4ae0b2b2f18dfa2a35895
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 55294 | 7685 |
+| total | 55400 | 7699 |
 
-`git log --reverse 31413ca7..0b03f198 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..642be152 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -372,10 +373,14 @@ generated-at: 0b03f198b9cda0e28bc4ae0b2b2f18dfa2a35895
 | 59c67915 | R51 checker depth | outside the interpreter (checker.rs, infer.rs, resolver.rs, borrow.rs, mut_borrow.rs, capabilities.rs, types.rs, new checker_path.rs): checker depth and complexity (compilebench AX-63/AX-64/AX-66): node paths are a shared linked list (no quadratic path strings), operator-chain walks are loops, the call-graph and refinement-chain walks use an explicit stack, the mutual-recursion probe is one SCC pass, a refinement cycle is E0308, and on wasm32 a type nested past 224 levels is refused with E0301; diagnostics of programs that checked before are unchanged; the interpreter is untouched |
 | bbc40c58 | R51 checker depth | outside the interpreter (infer.rs unit test only): fixes the deep-let-chain unit test added by 59c67915; the interpreter is untouched |
 | cb8d6508 | fix/runtime-depth merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 66b43e54 | gaps G3 LSP locations | TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): a diagnostic or definition whose span belongs to an imported module is reported against that module's own file (diagnostic on the importing `use` line with relatedInformation at the module's URI and line; definition returns the module's URI), and byte-offset to position conversion rounds down to a character boundary instead of slicing mid-character |
+| e8b949e5 | gaps G5 record binding | REGISTRY TEXT ONLY in crates/axon-core/src (env_registry.rs gains the AXON_APPROVAL_KEY row read by axon-os/axon-intent; no interpreter behaviour change) |
+| 4bbb5563 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 960d803c | gaps G1 import binding | FRONT END (module loader only; no change in what any run computes, accepts or refuses): load_use_decls_recorded records each module the shared loader merges (name, chosen path, bytes, sealed bit, interned SourceId) and every `use` left unsearched because no search directory exists; load_use_decls returns its diagnostics unchanged; lockfile::imports_digest hashes the closure (name, axh1 module hash, sealed bit), order-free, path-free |
 | 82cda128 | gaps G1 import binding | CLI ONLY (main.rs verbs; the interpreter is untouched): `ast approve` writes axon-ast-approved/2 binding the import closure and refuses an unloadable one; `deploy` judges the record against the bytes it parsed and the closure it loaded (exit 8 naming the changed module; a /1 record no longer approves); new verb `axon imports`; AXON_REQUIRE_IMPORTS_DIGEST is read once at dispatch, removed from the environment, and refuses a different closure with exit 8 before execution on run/test/goal/session/deploy (other verbs exit 2); `ast review` reports each fn's origin module |
 | 0b03f198 | gaps G1 import binding | lint attribute only (#[allow(clippy::too_many_arguments)] on load_module_recursive and run_check_pipeline_inner); no change in what any run computes, accepts or refuses |
-| 272 commits | | |
+| 642be152 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 276 commits | | |
 <!-- END MECHANICAL -->
 
 

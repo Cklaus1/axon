@@ -1,0 +1,4 @@
+{
+  "theme": "gaps G5 record binding",
+  "text": "REGISTRY TEXT ONLY in crates/axon-core/src (env_registry.rs gains the AXON_APPROVAL_KEY row read by axon-os/axon-intent; no interpreter behaviour change)"
+}

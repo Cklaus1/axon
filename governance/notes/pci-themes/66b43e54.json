@@ -1,0 +1,4 @@
+{
+  "theme": "gaps G3 LSP locations",
+  "text": "TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): a diagnostic or definition whose span belongs to an imported module is reported against that module's own file (diagnostic on the importing `use` line with relatedInformation at the module's URI and line; definition returns the module's URI), and byte-offset to position conversion rounds down to a character boundary instead of slicing mid-character"
+}
