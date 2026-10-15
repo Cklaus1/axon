@@ -1,0 +1,4 @@
+{
+  "theme": "gaps G1 import binding",
+  "text": "FRONT END (module loader only; no change in what any run computes, accepts or refuses): load_use_decls_recorded records each module the shared loader merges (name, chosen path, bytes, sealed bit, interned SourceId) and every `use` left unsearched because no search directory exists; load_use_decls returns its diagnostics unchanged; lockfile::imports_digest hashes the closure (name, axh1 module hash, sealed bit), order-free, path-free"
+}

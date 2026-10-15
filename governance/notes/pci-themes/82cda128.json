@@ -1,0 +1,4 @@
+{
+  "theme": "gaps G1 import binding",
+  "text": "CLI ONLY (main.rs verbs; the interpreter is untouched): `ast approve` writes axon-ast-approved/2 binding the import closure and refuses an unloadable one; `deploy` judges the record against the bytes it parsed and the closure it loaded (exit 8 naming the changed module; a /1 record no longer approves); new verb `axon imports`; AXON_REQUIRE_IMPORTS_DIGEST is read once at dispatch, removed from the environment, and refuses a different closure with exit 8 before execution on run/test/goal/session/deploy (other verbs exit 2); `ast review` reports each fn's origin module"
+}
