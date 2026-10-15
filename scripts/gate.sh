@@ -792,6 +792,14 @@ cargo check --locked --no-default-features --features serde-json -p axon-core \
 # JSON test (beside codegen, the combination once thought to collide) does.
 cargo test --locked -p axon-core --features serde-json --lib program_json_tests \
   || fail "serde-json + codegen build and AST JSON round-trip"
+# The LSP's own tests (lsp.rs unit tests + tests/lsp_multi_file.rs) compile only
+# under serde-json, so the default test stage never ran them: the check above
+# proves lsp.rs BUILDS, not that an imported module's diagnostic lands in the
+# right file. G3 (gaps-spec) wired them here.
+cargo test --locked -p axon-core --no-default-features --features serde-json \
+  --lib lsp::tests || fail "lsp unit tests (serde-json)"
+cargo test --locked -p axon-core --no-default-features --features serde-json \
+  --test lsp_multi_file || fail "lsp multi-file tests (serde-json)"
 
 echo "── gate: clippy (lib, -D warnings) ────────────────────────────────"
 cargo clippy --locked --no-default-features -p axon-core -- -D warnings || fail "lib clippy"
