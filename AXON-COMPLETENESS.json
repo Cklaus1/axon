@@ -47,10 +47,12 @@
       "docs": "yes",
       "evidence": [
         "scripts/parity_all.sh",
+        "scripts/lib/harness_skip.sh",
+        "scripts/test_harness_skip.sh",
         "scripts/exit_code_parity.sh",
         "scripts/checked_arith_parity.sh"
       ],
-      "gap": "AUDITED, and softer than this row read. Nothing asserts the '52 harnesses' figure: there are 54 files and parity_all's floor is 40, so 4-9 harnesses can silently flip to SKIP and still pass. ~19 harnesses treat a per-case NATIVE BUILD FAILURE as a skip with stderr to /dev/null \u2014 so a codegen regression in the builtin under test reads as 'skipping'. dict_parity and arr_reduce_parity were fixed to FAIL on that; the fix was never propagated. Cores are strong; the classification of non-results is where green means less than it reads."
+      "gap": "gaps run (G4): a per-case native build failure is FAIL unless the toolchain is provably unavailable (dict, arr_reduce, bitwise_cast, parse_or; all-skipped reads 'nothing ran'); a top-level build failure skips only when its prerequisite is proven missing (`cargo_build_or_skip llvm|target:|z3|interp`, 52 harnesses; an interp-only build failure is always FAIL); `gate.sh --strict` runs parity_all with AXON_HARNESS_STRICT=1; the pass floor is the harness count minus parity_allowed_skips.txt (55 of 57). Strict run at gaps/int with an outside CARGO_TARGET_DIR: 55 passed, 2 allow-listed skips, 0 failed (needed the wasm runtime lookup fix ca49d537: before it, 4 failed and 5 skipped). Residue in tasks/opportunities.md: some 'nothing linked' wasm skips do not prove the linker is missing; wasm_aot_stdout's per-example skip is held only by its floor."
     },
     {
       "area": "compiler",
@@ -67,14 +69,17 @@
     {
       "area": "compiler",
       "subsystem": "MULTI-FILE source identity",
-      "implementation": "absent",
-      "production_proof": "no",
-      "mutation": "no",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "partial",
       "docs": "no",
       "evidence": [
-        "scripts/diagnostic_location_gate.sh"
+        "crates/axon-core/src/span.rs",
+        "scripts/diagnostic_location_gate.sh",
+        "crates/axon-core/src/lsp.rs",
+        "crates/axon-core/tests/lsp_multi_file.rs"
       ],
-      "gap": "Span is (start,end) with NO file id. REPRODUCED: an error at lib.ax:14 reports as main.ax:6:112, in a 5-line file. scripts/diagnostic_location_gate.sh is RED on HEAD and NOT yet wired into gate.sh. Design landed: ~110 edits, and the HARM is removable first without touching Span, by making SourceMap::line_col refuse instead of clamp."
+      "gap": "This row was stale: Span has carried a SourceId since 937ad3f1 and diagnostic_location_gate.sh runs in the strict tier (gaps/int: 59 located diagnostics over 13 files, 0 impossible). The gaps run (G3) fixed the LSP, which still converted every span against the open document: an imported module's diagnostic now lands on the importing `use` line with relatedInformation at the module's URI and line; go-to-definition returns the module's file; offset-to-position never slices mid-character; a relative AXON_PATH entry yields an absolute URI. The LSP tests compile only under serde-json and were never run by any gate stage; gate.sh now runs them. Residue: hover and completion of imported items are unverified against the module's own text (tasks/opportunities.md)."
     },
     {
       "area": "compiler",
@@ -104,12 +109,19 @@
     {
       "area": "authority",
       "subsystem": "approval binds IMPORT GRAPH",
-      "implementation": "absent",
-      "production_proof": "no",
-      "mutation": "no",
-      "docs": "no",
-      "evidence": [],
-      "gap": "DEMONSTRATED: approve main.ax, then rewrite an imported module to write:[/] net:[*] exec:any \u2014 the approval still validates. End-to-end deploy exploitability NOT established."
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "yes",
+      "evidence": [
+        "crates/axon-core/src/lockfile.rs",
+        "crates/axon-core/src/main.rs",
+        "crates/axon-os/src/approval.rs",
+        "crates/axon-os/src/runtime.rs",
+        "crates/axon-intent/tests/acceptance.rs",
+        "crates/axon-fabric/src/submit.rs"
+      ],
+      "gap": "gaps run (G1). The shared loader records every module it merges; `imports_digest` = sha256 over (name, axh1 hash, sealed) sorted by name, path-free. `axon ast approve` writes axon-ast-approved/2 with the digest and modules; `deploy` blocks (exit 8) naming the module changed/added/removed; a /1 record still binds the entry (mismatch exit 8) and on a match reads approved:false 're-approve'. `axon imports --json` (axon-imports/1). AXON_REQUIRE_IMPORTS_DIGEST is enforced by run/test/goal/session/deploy after every load and removed from the env; other verbs, native and wasm binaries refuse it. axon-intent approve binds the closure into the axon-approval/3 token and axon-os hands it to the job child after env_clear, so a module rewritten after approval is refused at run (acceptance e2e). Fabric cannot deliver the digest to its executors or the guest, so it refuses import-bound approvals and admits only programs with no `use` or `mod` word anywhere in the source (deny by default). Residue: `axon session` exits 8 for the whole session on a mismatching cell; entry-directory module search (NH1) undecided."
     },
     {
       "area": "authority",
@@ -537,7 +549,7 @@
       "subsystem": "crate axon-intent",
       "implementation": "complete",
       "production_proof": "yes",
-      "mutation": "no",
+      "mutation": "yes",
       "docs": "yes",
       "evidence": [
         "crates/axon-intent/src/approval.rs",
@@ -545,7 +557,7 @@
         "crates/axon-intent/tests/acceptance.rs",
         "scripts/r22_acceptance_gate.sh"
       ],
-      "gap": "ASSESSED, and the strongest crate here: acceptance.rs drives the real binaries end-to-end and r22 is wired into gate.sh. But the token is an UNKEYED sha256 chain \u2014 anyone who edits the program recomputes all three digests and produces a token that verifies. Tamper-EVIDENT against accident, not forgery. program_digest covers the entry file only, so the import graph is unbound. axon-os's verifier does not check `schema` while axon-intent's does: the ENFORCEMENT side is weaker than the producer."
+      "gap": "gaps run (G5): tokens are axon-approval/3 and bind the import closure. With AXON_APPROVAL_KEY (hex, >=16 bytes; subkeys HMAC(key,'axon-approval token v1') / 'axon-os record v1') the digest is `axmac1:` HMAC and a keyed verifier accepts nothing else; without a key it is `axtok3:` sha256, labelled integrity only, still forgeable by anyone who can edit the program and the token. /1 tokens: refused under a key; keyless only for an import-free program, pinned to the empty closure. axon-os now checks `schema` like axon-intent; both call one formula (axon_os::approval). Mutation rows M3540-M3543, M3560-M3575 killed."
     },
     {
       "area": "evidence",
@@ -571,7 +583,7 @@
       "evidence": [
         "crates/axon-os"
       ],
-      "gap": "AUDITED. verify_approval is an UNKEYED sha256 over public inputs, presented to the operator as 'someone signed this and the signature does not hold' \u2014 anyone who can write <job>.approval mints a valid token. `axon-os verify` prints 'intact' for a fully forged record (the chain is seeded from the record's OWN stored manifest_digest, never compared to the .axjob). The run record holds ONE event whose caps_used is the CEILING, advertised as N events of observed activity. The signed Budget line gates nothing: only `calls` is propagated and even that is debited by no ordinary builtin. scan_effects returns Label::Internal in BOTH branches, so the confidentiality denial states a fact about the program derived from a constant. v0.22 CANDIDATE (d1e2900, 925fa85): runtime.rs adds Isolation labels and IsolationRequirement with the weakest default, run() delegating to run_requiring(Any) so existing callers are unchanged (tests/legacy_adapter.rs). Its only new non-test caller is axon-fabric's admission probe, which since Stage 2 runs under the request's registry-resolved grant (see crate axon-fabric)."
+      "gap": "AUDITED; gaps run (G2, G5) closed three findings. Approval tokens are keyed under AXON_APPROVAL_KEY (axmac1; unkeyed axtok3 is labelled integrity only) and the schema is checked. `axon-os verify` recomputes manifest_digest from the sibling .axjob (or --job) and exits 11 on mismatch or no job; the approval verdict is sealed into the record (axrec3 unkeyed, axrmac1 keyed; a keyed verifier refuses unkeyed records; axrec2 verifies keyless as 'approval not sealed'). Cancellation and SIGINT/SIGTERM/SIGHUP kill the job's process group (see 'cancellation reaches the whole job'). Still open: The run record holds ONE event whose caps_used is the CEILING, advertised as N events of observed activity. The signed Budget line gates nothing: only `calls` is propagated and even that is debited by no ordinary builtin. scan_effects returns Label::Internal in BOTH branches, so the confidentiality denial states a fact about the program derived from a constant. v0.22 CANDIDATE (d1e2900, 925fa85): runtime.rs adds Isolation labels and IsolationRequirement with the weakest default, run() delegating to run_requiring(Any) so existing callers are unchanged (tests/legacy_adapter.rs). Its only new non-test caller is axon-fabric's admission probe, which since Stage 2 runs under the request's registry-resolved grant (see crate axon-fabric)."
     },
     {
       "area": "compiler",
@@ -679,15 +691,17 @@
     {
       "area": "evidence",
       "subsystem": "harness skip classification",
-      "implementation": "partial",
-      "production_proof": "no",
-      "mutation": "no",
-      "docs": "partial",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "partial",
+      "docs": "yes",
       "evidence": [
+        "scripts/lib/harness_skip.sh",
+        "scripts/test_harness_skip.sh",
         "scripts/parity_all.sh",
         "crates/axon-core/tests/cli_run.rs"
       ],
-      "gap": "Two skip detectors disagree: parity_all judges by `tail -1`, cli_run's harness_skipped scans the last 3 lines. A harness whose skip marker is not last is SKIP to one and PASS to the other \u2014 handler_resume_parity and exit_code_parity's catch-all both exit 0 with build-error text last, so total codegen breakage classifies as PASS. Also: `cargo test <filter>` exits 0 when the filter matches NOTHING, which increments the very `ran` counter several harnesses use as their vacuity guard. browser_compute_parity has the correct pattern (require >=1 passed) and it was not generalised."
+      "gap": "gaps run (G4c/G4e): one shell skip detector (harness_says_skip in scripts/lib/harness_skip.sh, the same 3-line window as cli_run's harness_skipped), pinned by scripts/test_harness_skip.sh mirroring skip_rule_table row for row and run first by parity_all; r26/r33/r34 prove their cargo-test filters ran via cargo_test_must_run. Residue: two older cli_run tests re-implement the rule locally."
     },
     {
       "area": "evidence",
@@ -738,13 +752,15 @@
     {
       "area": "authority",
       "subsystem": "cancellation reaches the whole job",
-      "implementation": "absent",
-      "production_proof": "no",
-      "mutation": "no",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
       "docs": "no",
       "evidence": [
         "crates/axon-os/src/runtime.rs",
-        "governance/cortex-v015/DISCREPANCIES.md"
+        "crates/axon-os/src/cli.rs",
+        "crates/axon-os/tests/supervisor_signals.rs",
+        "crates/axon-os/tests/legacy_adapter.rs"
       ],
       "engines": {
         "interpreter": "n/a",
@@ -752,7 +768,7 @@
         "wasm": "n/a",
         "guest": "not-enforced"
       },
-      "gap": "PROVEN BY EXECUTION. axon-os cancellation calls child.kill() on the DIRECT CHILD only (runtime.rs:183 timeout path, :191 kill-latch path), not the process group. Measured: a job that execs `sh -c \"nohup sleep 4002 &\"` then loops is killed by the supervisor at the timeout, and the grandchild SURVIVES (0 before, 1 after). Under the `developer` default `exec: any` this is the normal case. The operator kill switch (R27) and the compliance monitor (R29) both terminate through this path, so neither stops a job that spawned a subprocess. Remedy: setsid at spawn + killpg in the existing run_bounded \u2014 the repo's own lesson 'kill the job, not a PID'."
+      "gap": "This row was stale: 821cf767 made run_bounded_capped spawn the job as its own process group and kill it with killpg. The gaps run (G2) added the proof and the remaining path: grandchild-death tests through the timeout, the kill latch and the production supervise/run_sandboxed path, a bystander that survives; SIGINT/SIGTERM/SIGHUP to `axon-os run` SIGKILL every registered job group, seal a Halted record and exit 128+signal (signals already ignored stay ignored); both pipe drains are bounded (2 s). Mutation: dropping process_group(0) or replacing killpg with child.kill() turns the tests red. Residue: other supervisors (axon-cortex runner/generate, axon-psv, axon-reflex, axon-fabric git_data, axon-vm firecracker) still kill only their direct child (tasks/opportunities.md)."
     },
     {
       "area": "compiler",

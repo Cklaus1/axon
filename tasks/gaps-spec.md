@@ -205,3 +205,15 @@ r22 gate passes.
 
 - Other supervisors that kill only their direct child (`axon-cortex` runner/generate, `axon-psv`, `axon-reflex`,
   `axon-fabric` git_data, `axon-vm` firecracker) — not in the tracker row; logged to opportunities.
+
+## Status (end of run)
+
+| Item | Status | Lane / merge |
+|---|---|---|
+| G1a-d, f | done | gaps/core → 642be152 |
+| G1e, G1g | done (Fabric refuses import-bound approvals; module check deny-by-default after review) | gaps/token |
+| G2a, c, d | done | gaps/cancel |
+| G3a-d | done (+ relative AXON_PATH URI fix from review; LSP tests wired into gate.sh) | gaps/lsp + integrator |
+| G4a-e | done (+ wasm runtime lookup fix ca49d537 so strict parity holds with an outside target dir) | gaps/parity + integrator |
+| G5 key, a, b, c | done | gaps/record, gaps/token |
+| NH1 entry-directory module search | needs-human, not built | — |
