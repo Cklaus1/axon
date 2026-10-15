@@ -910,14 +910,62 @@ impl axon_os::Runtime for AdmissionProbe {
     fn mint_principal(&self, _g: &axon_os::Grant) -> axon_os::PrincipalHandle {
         axon_os::PrincipalHandle(0)
     }
+    /// Fabric resolves no import closure at admission: its executors load
+    /// modules in their own environment (the sealed `check:candidate` path,
+    /// or a microVM guest), not the axon-os job environment `axon imports`
+    /// answers for. So a legacy `axon-approval/1` token, which is admitted
+    /// only for a closure shown to be empty, is refused here.
+    fn imports_digest(&self, _p: &Path, _g: &axon_os::Grant) -> Result<String, String> {
+        Err("Fabric does not resolve a program's import closure at admission".into())
+    }
+    /// G1g: Fabric's executors are NOT handed an approval's `imports_digest`
+    /// (the guest route has no environment channel for it), so an approval
+    /// binding a non-empty closure cannot be enforced where the modules load —
+    /// and is refused rather than ignored. An approval of the EMPTY closure
+    /// needs no enforcement beyond the entry digest, provided the entry really
+    /// declares no module: checked here on the scanned source.
     fn run_sandboxed(
         &self,
-        _p: &Path,
+        p: &Path,
         _h: &axon_os::PrincipalHandle,
         _g: &axon_os::Grant,
         _b: &axon_os::Budget,
         _s: u64,
+        required_imports: Option<&str>,
     ) -> axon_os::RunOutcome {
+        let refuse = |reason: String| axon_os::RunOutcome {
+            events: vec![],
+            verdict: axon_os::Verdict::Denied {
+                reason,
+                axis: "approval".into(),
+            },
+        };
+        if let Some(bound) = required_imports {
+            if bound != axon_os::EMPTY_IMPORTS_DIGEST {
+                return refuse(format!(
+                    "the approval binds import closure {bound}, and Fabric's executors are not \
+                     handed an approval's imports_digest — Fabric admits approval only for a \
+                     program that imports nothing"
+                ));
+            }
+            let src = match &self.1 {
+                Some(s) => Some(s.clone()),
+                None => std::fs::read_to_string(p).ok(),
+            };
+            let declares_module = src.as_deref().is_none_or(|s| {
+                s.lines().any(|l| {
+                    let l = l.trim_start();
+                    l.starts_with("use ") || l.starts_with("mod ")
+                })
+            });
+            if declares_module {
+                return refuse(
+                    "the approval binds the empty import closure, but the program declares a \
+                     module (or could not be read)"
+                        .into(),
+                );
+            }
+        }
         axon_os::RunOutcome {
             events: vec![],
             verdict: axon_os::Verdict::Completed { value: 0 },
