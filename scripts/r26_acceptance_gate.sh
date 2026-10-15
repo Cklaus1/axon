@@ -219,7 +219,10 @@ fi
 # ─ (10) Reproducibility — measure_kernel_bytes is deterministic ───────────────
 echo ""
 echo "r26_acceptance_gate: (10) reproducibility check (acc_a5)…"
-if cargo test -q -p axon-attest -- acc_a5_measurement_and_record_byte_identical 2>&1; then
+# `cargo test <filter>` exits 0 when the filter matches nothing: require a
+# PASSED count (cargo_test_must_run), not just the exit status.
+. "$ROOT/scripts/lib/harness_skip.sh"
+if cargo_test_must_run acc_a5 cargo test -q -p axon-attest -- acc_a5_measurement_and_record_byte_identical; then
   echo "  ✓ acc_a5_measurement_and_record_byte_identical passes"
 else
   echo "  FAIL: reproducibility test failed"

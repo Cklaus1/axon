@@ -1,6 +1,7 @@
 # harness_skip.sh — shared classification of a NON-RESULT.
 #
-# Two separate jobs, deliberately not conflated:
+# Separate jobs, deliberately not conflated (3. `rust_target_installed` and the
+# `cargo test` vacuity guard are documented at their definitions below):
 #
 #   1. `native_build_unavailable <stderr>` — decide whether a failed
 #      `axon build` means "this environment cannot attempt a native build"
@@ -24,6 +25,12 @@
 #      printed BEFORE it. Harnesses that printed the marker first and then
 #      elaborated were read as SKIP by `cli_run.rs` (3-line window) and as
 #      PASS by `parity_all.sh` (last line only) — the same run, two verdicts.
+#
+#   4. `harness_says_skip <output>` — the READER side: did a harness that
+#      exited 0 skip? The one shell copy of the rule; see its definition.
+#
+#   5. `cargo_build_or_skip <name> <prereq> <command...>` — a harness's own
+#      top-level `cargo build`. Skips only on a PROVEN missing prerequisite.
 
 # native_build_unavailable <stderr-text>
 #   0 (true)  → genuinely could not attempt the build
@@ -150,4 +157,99 @@ rust_target_installed() {
   [ -n "$out" ] || { echo "rustup target list produced no output" >&2; return 2; }
   printf '%s\n' "$out" | grep -qx -- "$target" && return 0
   return 1
+}
+
+# ── 4. harness_says_skip <output> — the skip DETECTOR ───────────────────────
+# Rule-identical to `tail_says_skipping` in crates/axon-core/tests/cli_run.rs
+# (that file reads stdout and stderr separately; parity_all.sh hands this the
+# combined output). The two used to DISAGREE: parity_all.sh judged by `tail -1`
+# alone while cli_run.rs scanned the last three non-empty lines, so a harness
+# that printed its skip prose and then elaborated (handler_resume,
+# exit_code_parity's catch-all — both ended on build-error text) was SKIP to one
+# reader and PASS to the other. Same run, two verdicts. scripts/
+# test_harness_skip.sh holds the same rows as cli_run.rs's `skip_rule_table`;
+# change the rule in both places and both tables, or neither.
+#
+# A non-zero exit is a FAILURE and never a skip — callers decide that on the
+# exit status before consulting this. Rules, in order:
+#   1. A skip line is HARNESS-LEVEL: it starts at column 0. An indented
+#      "  SKIP <case>" is one case of many and says nothing about the verdict.
+#   2. The FINAL non-empty line decides whenever it states anything: a skip
+#      marker means skip, a verdict (PASS/FAIL/OK) means not-skip.
+#   3. Otherwise a skip may have been followed by elaboration: look at the last
+#      three non-empty lines.
+# Preferred shape is the explicit final marker `<name>: SKIP — <reason>` that
+# `harness_skip` emits; the prose forms are grandfathered.
+_skip_re=': SKIP|skipping|this is a SKIP'
+_verdict_re='PASS|FAILED|FAIL|: OK|OK —'
+harness_says_skip() { # <output>
+  local body final
+  body="$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$')"
+  final="$(printf '%s\n' "$body" | tail -1)"
+  printf '%s\n' "$final" | grep -qE "^[^[:space:]].*($_skip_re)" && return 0
+  printf '%s\n' "$final" | grep -qE "^[^[:space:]].*($_verdict_re)" && return 1
+  printf '%s\n' "$body" | tail -3 | grep -qE "^[^[:space:]].*($_skip_re)"
+}
+
+# ── 5. cargo_build_or_skip <name> <prereq> <command...> ─────────────────────
+#
+# A harness's own top-level build, e.g.
+#
+#     cargo_build_or_skip dict_parity llvm cargo build -q -p axon-core --bin axon
+#
+# Forty-odd harnesses used `cargo build … 2>/dev/null || { echo "codegen build
+# unavailable (LLVM absent) — skipping"; exit 0; }`: ANY build failure — a
+# compile error in the tree, a broken Cargo.lock — was reported as a missing
+# toolchain it never checked for, and the suite stayed green. The rule here is
+# the one `native_build_unavailable` applies to `axon build`: a skip must PROVE
+# its reason. <prereq> names the one thing whose absence may excuse a failure:
+#
+#   llvm             LLVM 17 (codegen links llvm-sys 170): skip only when no
+#                    $LLVM_SYS_170_PREFIX/bin/llvm-config, llvm-config-17 or
+#                    llvm-config reports a 17.x version.
+#   target:<triple>  rustup reports <triple> not installed (rust_target_installed;
+#                    a probe that cannot run is a FAIL).
+#   z3               libz3 cannot be linked (the `smt` feature needs it).
+#   interp           nothing: a --no-default-features build has no external
+#                    prerequisite, so its failure is ALWAYS a FAIL.
+#
+# Success → returns 0 silently. Proven-missing prerequisite → harness_skip (exit
+# 0). Anything else → prints a FAIL with the build's stderr and exits 1. Runs in
+# the caller's shell (never inside `$(…)`), so the exit ends the harness.
+llvm17_present() {
+  local c v
+  for c in ${LLVM_SYS_170_PREFIX:+"$LLVM_SYS_170_PREFIX/bin/llvm-config"} llvm-config-17 llvm-config; do
+    command -v "$c" >/dev/null 2>&1 || continue
+    v="$("$c" --version 2>/dev/null)" || continue
+    case "$v" in 17.*) return 0 ;; esac
+  done
+  return 1
+}
+libz3_present() {
+  command -v cc >/dev/null 2>&1 || return 1
+  echo 'int main(){return 0;}' | cc -xc - -lz3 -o /dev/null >/dev/null 2>&1
+}
+cargo_build_or_skip() {
+  local name="$1" prereq="$2" err rc
+  shift 2
+  err="$("$@" 2>&1)" && return 0
+  case "$prereq" in
+    llvm)
+      llvm17_present || harness_skip "$name" \
+        "\`$*\` failed and no LLVM 17 llvm-config was found (\$LLVM_SYS_170_PREFIX, llvm-config-17, llvm-config)" \
+        "codegen build unavailable (LLVM 17 absent)"
+      ;;
+    target:*)
+      rc=0; rust_target_installed "${prereq#target:}" 2>/dev/null || rc=$?
+      [ "$rc" -eq 1 ] && harness_skip "$name" "rust target ${prereq#target:} not installed"
+      ;;
+    z3)
+      libz3_present || harness_skip "$name" "libz3 not found (install to enable)"
+      ;;
+    interp) ;;
+    *) echo "$name: FAIL — cargo_build_or_skip: unknown prerequisite '$prereq'"; exit 2 ;;
+  esac
+  echo "$name: FAIL — \`$*\` failed and its prerequisite ($prereq) is not proven missing (a build error is not a skip):"
+  printf '%s\n' "$err" | grep -v '^[[:space:]]*$' | head -20 | sed 's/^/        /'
+  exit 1
 }

@@ -34,18 +34,14 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_str_abi_parity
 else
   echo "wasm_str_abi_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "wasm_str_abi_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_str_abi_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon wasm_str_abi_parity
 if [ -n "${AXON_RUN:-}" ]; then
   named_bin AXON_RUN wasm_str_abi_parity
 else
-  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-    echo "wasm_str_abi_parity: interp build unavailable — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_str_abi_parity interp cargo build -q -p axon-core --no-default-features --bin axon-run
   use_built AXON_RUN axon-run
 fi
 INTERP="$AXON_RUN"
@@ -126,8 +122,11 @@ else
 fi
 
 # 3) AOT-wasm — the bridge under test. Must LINK (no signature mismatch) and RUN.
-if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$SRC" >/dev/null 2>&1; then
-  echo "wasm_str_abi_parity: wasm build unavailable — skipping wasm leg"; exit 0
+# Every prerequisite (wasmtime, the wasm32-wasip1 target, axon-rt for it) was
+# proven above, so a failed build here is a result: FAIL, unless stderr proves an
+# unavailability (native_build_failed's allow-list).
+if ! werr="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$SRC" 2>&1)"; then
+  native_build_failed wasm_str_abi_parity "AOT-wasm build" "$werr" || exit 1
 fi
 LINKED="${SRC%.ax}.linked.wasm"
 if [ ! -f "$LINKED" ]; then
@@ -181,7 +180,10 @@ elif ! native_build_unavailable "$berr"; then
   exit 1
 fi
 
-if "$AXON" target build --engine codegen --target wasm32-wasip1 "$CMP" >/dev/null 2>&1; then
+if ! cerr="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$CMP" 2>&1)"; then
+  # This leg used to be skipped in silence when its build failed.
+  native_build_failed wasm_str_abi_parity "AOT-wasm str_cmp build" "$cerr" || exit 1
+else
   C_LINKED="${CMP%.ax}.linked.wasm"
   if [ ! -f "$C_LINKED" ]; then
     echo "wasm_str_abi_parity: FAIL — str_cmp did NOT link (wasm32 ABI arm regressed)"; exit 1

@@ -122,9 +122,7 @@ for c in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do command -v "$c" >/dev/null 
 if [ -n "${AXON_RUN:-}" ]; then
   named_bin AXON_RUN "$name"
 else
-  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-    harness_skip "$name" "interp build unavailable"
-  fi
+  cargo_build_or_skip "$name" interp cargo build -q -p axon-core --no-default-features --bin axon-run
   use_built AXON_RUN axon-run
 fi
 INTERP="$AXON_RUN"

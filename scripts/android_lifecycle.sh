@@ -34,6 +34,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/lib/axon_bin.sh"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 skip() { echo "android_lifecycle: SKIP — $1"; exit 0; }
 fail() { echo "android_lifecycle: FAIL — $1"; exit 1; }
@@ -60,9 +61,7 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON android_lifecycle
 else
   echo "android_lifecycle: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "android_lifecycle: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip android_lifecycle llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon android_lifecycle

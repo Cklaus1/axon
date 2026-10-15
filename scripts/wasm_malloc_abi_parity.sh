@@ -33,18 +33,14 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_malloc_abi_parity
 else
   echo "wasm_malloc_abi_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "wasm_malloc_abi_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_malloc_abi_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon wasm_malloc_abi_parity
 if [ -n "${AXON_RUN:-}" ]; then
   named_bin AXON_RUN wasm_malloc_abi_parity
 else
-  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-    echo "wasm_malloc_abi_parity: interp build unavailable — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_malloc_abi_parity interp cargo build -q -p axon-core --no-default-features --bin axon-run
   use_built AXON_RUN axon-run
 fi
 INTERP="$AXON_RUN"
@@ -119,8 +115,15 @@ for name in arr tostr interp eprint combo; do
     fail=1
   fi
   # AOT-wasm
-  if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$SRC" >/dev/null 2>&1; then
-    echo "  SKIP $name (wasm build unavailable)"; continue
+  # The wasm32-wasip1 target and axon-rt for it were proven above: a failed
+  # build is a result unless stderr proves an unavailability.
+  if ! werr="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$SRC" 2>&1)"; then
+    if native_build_unavailable "$werr"; then
+      echo "  SKIP $name (wasm build unavailable)"; continue
+    fi
+    echo "  FAIL $name: AOT-wasm build FAILED (a build error is not a skip):"
+    printf '%s\n' "$werr" | head -5 | sed 's/^/        /'
+    fail=1; continue
   fi
   L="${SRC%.ax}.linked.wasm"
   if [ ! -f "$L" ]; then echo "  FAIL $name: did NOT link (size_t ABI regressed)"; fail=1; continue; fi
@@ -143,7 +146,8 @@ for name in arr tostr interp eprint combo; do
   fi
 done
 
-if [ "$ran" -eq 0 ]; then echo "wasm_malloc_abi_parity: nothing linked — skipping"; exit 0; fi
+# A failure decides first: with every case FAILED, ran is 0 too.
 [ "$fail" -eq 0 ] || { echo "wasm_malloc_abi_parity: FAIL"; exit 1; }
+if [ "$ran" -eq 0 ]; then echo "wasm_malloc_abi_parity: nothing linked — skipping"; exit 0; fi
 echo "wasm_malloc_abi_parity: PASS — array + to_str + string-interpolation + eprintln (malloc/snprintf/memcpy/write size_t) run identically on interp, native, AOT-wasm ✓"
 exit 0

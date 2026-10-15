@@ -24,12 +24,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 . "$ROOT/scripts/lib/harness_skip.sh"
 
-if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-  echo "closure_capture_parity: codegen build unavailable — skipping"; exit 0
-fi
-if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-  echo "closure_capture_parity: interp build unavailable — skipping"; exit 0
-fi
+cargo_build_or_skip closure_capture_parity llvm cargo build -q -p axon-core --bin axon
+cargo_build_or_skip closure_capture_parity interp cargo build -q -p axon-core --no-default-features --bin axon-run
 # Resolve through CARGO_TARGET_DIR: the `cargo build` above honours it, so a
 # hardcoded `target/debug/...` points at a binary that was never written and the
 # interpreter half "runs" with exit 127 — which then reads as a parity

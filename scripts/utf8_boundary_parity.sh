@@ -30,10 +30,7 @@ cd "$(dirname "$0")/.."
 # The binary the caller names, or the one THIS harness builds (C9 round 4:
 # a binary that merely sits in target/ was built from some other tree).
 if [ -z "${AXON:-}" ]; then
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "utf8_boundary_parity: SKIP — codegen build unavailable (LLVM absent)"
-    exit 0
-  fi
+  cargo_build_or_skip utf8_boundary_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 [ -x "$AXON" ] || { echo "utf8_boundary_parity: FAIL — \$AXON ($AXON) is not an executable"; exit 1; }

@@ -20,25 +20,27 @@ if command -v flock >/dev/null 2>&1; then exec 9>"${TMPDIR:-/tmp}/axon_wasm_pari
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 . "$ROOT/scripts/lib/axon_bin.sh"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_object_prune
 else
   echo "wasm_object_prune: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "wasm_object_prune: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip wasm_object_prune llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon wasm_object_prune
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 PROG="$WORK/triv.ax"; printf 'fn main() -> i64 { 21 + 21 }\n' > "$PROG"
 
-if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$PROG" >/dev/null 2>&1; then
-  echo "wasm_object_prune: wasm object emit unavailable — skipping"; exit 0
+# Codegen was proven above (require_codegen_axon) and the wasm object emit is
+# in-tree LLVM (no sysroot, no linker): a failed emit, or a "successful" one that
+# wrote no object, is a result -- FAIL, unless stderr proves an unavailability.
+if ! werr="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$PROG" 2>&1)"; then
+  native_build_failed wasm_object_prune "wasm object emit" "$werr" || exit 1
 fi
 OBJ="${PROG%.ax}.wasm"
-[ -f "$OBJ" ] || { echo "wasm_object_prune: no emitted object — skipping"; exit 0; }
+[ -f "$OBJ" ] || { echo "wasm_object_prune: FAIL — the build succeeded but emitted no object at $OBJ"; exit 1; }
 
 # Count __axon_* symbols in the object, EXCLUDING the ones deliberately kept
 # live. The bare "must be ZERO" form was a proxy for the property that actually

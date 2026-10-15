@@ -1001,7 +1001,7 @@ if [ "$STRICT" = 1 ]; then
   # suite; a real divergence fails the gate, toolchain-absent harnesses skip
   # cleanly. Under --strict only (links LLVM + may run wasmtime; ~2 min).
   echo "── gate: parity suite (interp ↔ codegen / AOT-wasm) ─────────────"
-  ./scripts/parity_all.sh --quiet || fail "parity suite"
+  AXON_HARNESS_STRICT=1 ./scripts/parity_all.sh --quiet || fail "parity suite"
 
   # The WASI env-control refusal. Separate from parity_all because it is not a
   # parity question: it asserts that a wasm32-wasip1 build REFUSES the

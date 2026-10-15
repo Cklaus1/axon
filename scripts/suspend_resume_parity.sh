@@ -125,7 +125,8 @@ echo "── codegen refusal (host_await_val is interp-only) ──────�
 prog="$WORK/cg_refuse.ax"
 printf '%s\n' 'type P = { x: i64, y: i64 }
 fn main() -> i64 { let p = P { x: 1, y: 2 }  let r = host_await_val(p)  0 }' > "$prog"
-if cargo build -q -p axon-core --bin axon 2>/dev/null; then
+. scripts/lib/harness_skip.sh
+if cg_err="$(cargo build -q -p axon-core --bin axon 2>&1)"; then
   . scripts/lib/axon_bin.sh
   CGAXON=""; use_built CGAXON axon  # the codegen build just made
   msg="$("$CGAXON" build "$prog" -o "$WORK/cg_refuse.bin" --no-cache 2>&1)"
@@ -140,8 +141,14 @@ if cargo build -q -p axon-core --bin axon 2>/dev/null; then
     echo "$msg" | head -3
     fail=1
   fi
+elif llvm17_present; then
+  # LLVM 17 is installed, so the build had what it needs: a failure is a
+  # broken tree, never "codegen unavailable".
+  echo "suspend_resume_parity: FAIL [codegen_refuses_host_await_val]: codegen build failed with LLVM 17 present:"
+  printf '%s\n' "$cg_err" | head -10 | sed 's/^/        /'
+  fail=1
 else
-  echo "  skip [codegen_refuses_host_await_val] (codegen build unavailable — LLVM absent)"
+  echo "  skip [codegen_refuses_host_await_val] (codegen build unavailable — no LLVM 17 llvm-config)"
 fi
 
 # ── vacuous-pass guard + verdict ──────────────────────────────────────────────

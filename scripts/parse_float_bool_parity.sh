@@ -50,9 +50,7 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON parse_float_bool_parity
 else
   echo "parse_float_bool_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "parse_float_bool_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip parse_float_bool_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon parse_float_bool_parity

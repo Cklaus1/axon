@@ -52,11 +52,8 @@ if [ "$axon_was_overridden" -eq 0 ]; then
   # twice, and both times looked like an interp<->native divergence rather than
   # two builds racing). Same remedy `smt_discharge_parity.sh` already uses for
   # its differently-featured build.
-  if ! CARGO_TARGET_DIR="$WORK/cg-target" \
-       cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "exit_code_parity: codegen build unavailable (LLVM absent) — skipping"
-    exit 0
-  fi
+  cargo_build_or_skip exit_code_parity llvm env CARGO_TARGET_DIR="$WORK/cg-target" \
+    cargo build -q -p axon-core --bin axon
   AXON="$WORK/cg-target/debug/axon"
 fi
 

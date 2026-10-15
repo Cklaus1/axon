@@ -59,11 +59,12 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_host_await_parity
   NATIVE="$AXON"
 else
-  CARGO_TARGET_DIR="target/interp-only" \
-    cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null || { echo "native build failed — skipping"; exit 0; }
+  cargo_build_or_skip wasm_host_await_parity interp env CARGO_TARGET_DIR="target/interp-only" \
+    cargo build -q -p axon-core --no-default-features --bin axon
   NATIVE="target/interp-only/debug/axon"
 fi
-cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1 2>/dev/null || { echo "wasm build failed — skipping"; exit 0; }
+cargo_build_or_skip wasm_host_await_parity target:wasm32-wasip1 \
+  cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1
 WASM=""; use_built WASM axon-run.wasm wasm32-wasip1  # the wasm build just made
 
 # (program, piped-stdin) pairs covering: a fixed-exchange prompt, EOF, and a

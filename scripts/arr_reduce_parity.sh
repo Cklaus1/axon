@@ -14,29 +14,27 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 . "$ROOT/scripts/lib/axon_bin.sh"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 if [ -n "${AXON:-}" ]; then
   named_bin AXON arr_reduce_parity
 else
   echo "arr_reduce_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "arr_reduce_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip arr_reduce_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon arr_reduce_parity
 if [ -n "${AXON_RUN:-}" ]; then
   named_bin AXON_RUN arr_reduce_parity
 else
-  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-    echo "arr_reduce_parity: interp build unavailable — skipping"; exit 0
-  fi
+  cargo_build_or_skip arr_reduce_parity interp cargo build -q -p axon-core --no-default-features --bin axon-run
   use_built AXON_RUN axon-run
 fi
 INTERP="$AXON_RUN"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 fail=0
+ran=0   # rows that actually COMPARED the two engines
 # Compares BOTH stdout and exit code. Exit code alone is not enough: exit codes
 # 2..=15 and 101 are RESERVED (governance/EXIT_CODES.md), so a `main` returning
 # one is remapped to 1 with a note on stderr — and most rows here return a small
@@ -53,6 +51,7 @@ check() {
   local berr; berr="$("$AXON" build "$WORK/$name.ax" -o "$WORK/$name" 2>&1)"
   if [ -f "$WORK/$name" ]; then
     local no; no="$("$WORK/$name" 2>/dev/null)"; local n=$?
+    ran=$((ran+1))
     if [ "$i" = "$n" ] && [ "$io" = "$no" ]; then
       echo "  OK   $name: interp=$i native=$n out=[$(printf '%s' "$io" | tr '\n' '/')]"
     else
@@ -64,22 +63,20 @@ check() {
   elif printf '%s' "$berr" | grep -q "E0910"; then
     # A regression: these MUST be lowered (not E0910-gated) — hard fail.
     echo "  FAIL $name (E0910 — arr_sum_i64/arr_contains lowering regressed)"; fail=1
-  elif printf '%s' "$berr" | grep -qE 'IR verification failed|error: could not compile|LLVM ERROR'; then
-    # A COMPILER bug, not an unavailable toolchain. This branch used to fall
-    # through to SKIP, and that is how `arr_max_by` over an array of structs
-    # emitted invalid IR ("Incorrect number of arguments passed to called
-    # function") while this harness printed a green PASS. A build that FAILS is
-    # not a build that could not be ATTEMPTED -- collapsing the two makes the
-    # harness vacuous exactly where it is most needed.
-    echo "  FAIL $name (native build error, not unavailability):"
-    printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
-    fail=1
-  else
-    # Transient native-build unavailability (e.g. nested cargo-lock under
-    # `cargo test`) — skip, like the sibling parity harnesses. Keep the reason
-    # visible: a silent skip and a pass look identical in the summary line.
+  elif native_build_unavailable "$berr"; then
+    # Only a PROVEN reason (scripts/lib/harness_skip.sh's allow-list) skips a
+    # row. This used to be a deny-list: only IR-verifier / LLVM / "could not
+    # compile" text failed, and before that everything fell through to SKIP --
+    # which is how `arr_max_by` over an array of structs emitted invalid IR
+    # ("Incorrect number of arguments passed to called function") while this
+    # harness printed a green PASS. A build that FAILS is not a build that could
+    # not be ATTEMPTED.
     echo "  SKIP $name (native build unavailable):"
     printf '%s\n' "$berr" | head -2 | sed 's/^/        /'
+  else
+    echo "  FAIL $name (native build FAILED — a build error is not a skip):"
+    printf '%s\n' "$berr" | head -5 | sed 's/^/        /'
+    fail=1
   fi
 }
 
@@ -276,5 +273,10 @@ check_refused contains_b  'fn main() -> i64 { let a = [false, true]  println(to_
 check_refused indexof_i32 'fn main() -> i64 { let a = [as_i32(1), as_i32(2)]  let k = match arr_index_of(&a, as_i32(2)) { Some(i) => i, None => 0 }  println(to_str(k))  0 }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
+# Vacuity guard: if every `check` row took the SKIP branch this would print
+# PASS for zero comparisons. A harness that compared nothing is a SKIP.
+if [ "$ran" -eq 0 ]; then
+  harness_skip arr_reduce_parity "nothing ran (native build unavailable for every case)"
+fi
 echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat/unique/find/std/enumerate/zip/flatten/chunk/partition match the interpreter ✓"
 exit 0

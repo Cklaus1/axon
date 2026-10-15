@@ -12,29 +12,27 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 . "$ROOT/scripts/lib/axon_bin.sh"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 if [ -n "${AXON:-}" ]; then
   named_bin AXON bitwise_cast_parity
 else
   echo "bitwise_cast_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "bitwise_cast_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip bitwise_cast_parity llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
 require_codegen_axon bitwise_cast_parity
 if [ -n "${AXON_RUN:-}" ]; then
   named_bin AXON_RUN bitwise_cast_parity
 else
-  if ! cargo build -q -p axon-core --no-default-features --bin axon-run 2>/dev/null; then
-    echo "bitwise_cast_parity: interp build unavailable — skipping"; exit 0
-  fi
+  cargo_build_or_skip bitwise_cast_parity interp cargo build -q -p axon-core --no-default-features --bin axon-run
   use_built AXON_RUN axon-run
 fi
 INTERP="$AXON_RUN"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 fail=0
+ran=0   # rows that actually COMPARED the two engines
 check() {
   local name="$1" src="$2"
   # The value under test travels on STDOUT, not through the exit code.
@@ -51,22 +49,23 @@ check() {
   local berr; berr="$("$AXON" build "$WORK/$name.ax" -o "$WORK/$name" 2>&1)"
   if [ -f "$WORK/$name" ]; then
     local no; no="$("$WORK/$name" 2>&1)"; local n=$?
+    ran=$((ran+1))
     if [ "$i" = "$n" ] && [ "$io" = "$no" ]; then echo "  OK   $name: interp==native (exit=$i out=$io)"
     else
       echo "  FAIL $name: interp(exit=$i out=[$io]) native(exit=$n out=[$no])"; fail=1
     fi
-  elif printf '%s' "$berr" | grep -qE 'IR verification failed|LLVM ERROR|E0910'; then
-    # A COMPILER refusal or bug, NOT an unavailable toolchain. This used to
-    # discard stderr entirely (`>/dev/null 2>&1`), so every codegen failure --
-    # including invalid IR -- printed SKIP and the harness still summarised
-    # PASS. A sibling harness hid a real `arr_max_by`-over-structs IR bug
-    # exactly this way.
-    echo "  FAIL $name (native build error, not unavailability):"
-    printf '%s\n' "$berr" | head -3 | sed 's/^/        /'
-    fail=1
-  else
+  elif native_build_unavailable "$berr"; then
+    # Only a PROVEN reason (scripts/lib/harness_skip.sh's allow-list) skips a
+    # row. This used to be a deny-list -- only IR-verifier / LLVM / E0910 text
+    # failed, so any other compiler error printed SKIP and the harness still
+    # summarised PASS. A sibling harness hid a real `arr_max_by`-over-structs
+    # IR bug exactly this way.
     echo "  SKIP $name (native build unavailable):"
     printf '%s\n' "$berr" | head -2 | sed 's/^/        /'
+  else
+    echo "  FAIL $name (native build FAILED — a build error is not a skip):"
+    printf '%s\n' "$berr" | head -5 | sed 's/^/        /'
+    fail=1
   fi
 }
 
@@ -83,5 +82,10 @@ check asf_i  'fn main() -> i64 { f64_to_i64(as_f64(7) * 2.0) }'
 check asf_b  'fn main() -> i64 { f64_to_i64(as_f64(true) * 10.0) }'
 
 [ "$fail" -eq 0 ] || { echo "bitwise_cast_parity: FAIL"; exit 1; }
+# Vacuity guard: if every `check` row took the SKIP branch this would print
+# PASS for zero comparisons. A harness that compared nothing is a SKIP.
+if [ "$ran" -eq 0 ]; then
+  harness_skip bitwise_cast_parity "nothing ran (native build unavailable for every case)"
+fi
 echo "bitwise_cast_parity: PASS — bitwise/shift + as_i64/as_f64 match the interpreter ✓"
 exit 0

@@ -27,9 +27,7 @@ if [ -n "${AXON:-}" ]; then
   named_bin AXON checked_arith_parity
 else
   echo "checked_arith_parity: building codegen axon binary…"
-  if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
-    echo "checked_arith_parity: codegen build unavailable (LLVM absent) — skipping"; exit 0
-  fi
+  cargo_build_or_skip checked_arith_parity llvm cargo build -q -p axon-core --bin axon
   cargo build -q -p axon-rt 2>/dev/null || true
   use_built AXON axon
 fi

@@ -78,10 +78,10 @@ fn harness(script: &str) -> Command {
 ///   1. **A non-zero exit is a FAILURE, never a skip.** A harness that means to
 ///      skip exits 0; anything else is a result, and a word in a diagnostic must
 ///      not launder it.
-///   2. A skip is recognised from the harness's **final** output line, not by
-///      scanning everything — mirroring `scripts/parity_all.sh`, which already
-///      gets this right. A mid-run "skipping N of M cases" note is not a skipped
-///      harness.
+///   2. A skip is recognised from the harness's **tail**, not by scanning
+///      everything: `tail_says_skipping` below, the same rule as
+///      `harness_says_skip` in `scripts/lib/harness_skip.sh`. A mid-run
+///      "skipping N of M cases" note is not a skipped harness.
 fn harness_skipped(out: &std::process::Output, stdout: &str, stderr: &str, what: &str) -> bool {
     let name = std::path::Path::new(what)
         .file_name()
@@ -113,8 +113,8 @@ fn harness_skipped(out: &std::process::Output, stdout: &str, stderr: &str, what:
     tail_says_skipping(stdout) || tail_says_skipping(stderr)
 }
 
-/// The skip rule, kept byte-for-byte in step with `harness_says_skip` in
-/// `scripts/parity_all.sh`.
+/// The skip rule, kept rule-identical to `harness_says_skip` in
+/// `scripts/lib/harness_skip.sh` (which `scripts/parity_all.sh` sources).
 ///
 /// The two USED to disagree: `parity_all.sh` judged by `tail -1` alone, this
 /// function scanned the last three non-empty lines. A harness that printed its
@@ -33419,9 +33419,10 @@ fn eprint_writes_to_stderr_without_a_newline() {
 /// than a local re-implementation (the two tests above re-implement it, which
 /// is precisely how they stayed green while the function was wrong).
 ///
-/// Every row here is also a row in the shell unit check for
-/// `harness_says_skip` in `scripts/parity_all.sh`. If you change one, change
-/// both — a harness must not be a SKIP to one reader and a PASS to the other.
+/// Every row here is also a row in `scripts/test_harness_skip.sh`, the shell
+/// unit check for `harness_says_skip` in `scripts/lib/harness_skip.sh`. If you
+/// change one, change both — a harness must not be a SKIP to one reader and a
+/// PASS to the other.
 #[cfg(test)]
 mod skip_rule_table {
     use super::tail_says_skipping;
