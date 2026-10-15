@@ -305,6 +305,30 @@ fn strip_comment(line: &str) -> &str {
     line
 }
 
+/// The import-closure digest (G1a): what an approval binds besides the entry
+/// file. One entry per module the LOADER merged — `(name, raw bytes, sealed)`
+/// — sorted by name, each contributing
+/// `name ␟ module_hash(bytes) ␟ sealed(0|1) ␞` (U+001F / U+001E) to one
+/// SHA-256. The module's absolute PATH is deliberately not an input: the same
+/// program checked out in two places binds to the same digest, and only the
+/// name and the bytes decide what runs. The sealed bit is, because loading
+/// depends on it. An empty closure is SHA-256 of the empty string.
+pub fn imports_digest(modules: &[(&str, &[u8], bool)]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut sorted: Vec<&(&str, &[u8], bool)> = modules.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    let mut h = Sha256::new();
+    for (name, bytes, sealed) in sorted {
+        h.update(name.as_bytes());
+        h.update(b"\x1f");
+        h.update(module_hash(bytes).as_bytes());
+        h.update(b"\x1f");
+        h.update(if *sealed { b"1" } else { b"0" });
+        h.update(b"\x1e");
+    }
+    format!("axsha256:{:x}", h.finalize())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,6 +351,37 @@ mod tests {
         let a = module_hash(b"fn main() -> i64 { 0 }");
         let b = module_hash(b"fn main() -> i64 { 1 }");
         assert_ne!(a, b, "a one-byte change must change the hash");
+    }
+
+    #[test]
+    fn the_empty_closure_digest_is_sha256_of_nothing() {
+        assert_eq!(
+            imports_digest(&[]),
+            "axsha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn the_closure_digest_is_order_free_and_binds_name_bytes_and_seal() {
+        let a: (&str, &[u8], bool) = ("alib", b"fn a() {}", false);
+        let b: (&str, &[u8], bool) = ("blib", b"fn b() {}", false);
+        let d = imports_digest(&[a, b]);
+        assert_eq!(
+            d,
+            imports_digest(&[b, a]),
+            "order of loading must not matter"
+        );
+        // Known value: sha256("alib␟<axh1 a>␟0␞blib␟<axh1 b>␟0␞").
+        let mut pre = String::new();
+        for (n, src) in [("alib", &b"fn a() {}"[..]), ("blib", &b"fn b() {}"[..])] {
+            pre.push_str(&format!("{n}\u{1f}{}\u{1f}0\u{1e}", module_hash(src)));
+        }
+        use sha2::{Digest, Sha256};
+        assert_eq!(d, format!("axsha256:{:x}", Sha256::digest(pre.as_bytes())));
+        assert_ne!(d, imports_digest(&[("alib", b"fn a() { }", false), b]));
+        assert_ne!(d, imports_digest(&[("clib", b"fn a() {}", false), b]));
+        assert_ne!(d, imports_digest(&[("alib", b"fn a() {}", true), b]));
+        assert_ne!(d, imports_digest(&[b]));
     }
 
     #[test]

@@ -5,11 +5,11 @@
 
 # Axon Reference
 
-The complete surface of this build — 25 CLI verbs, 344 builtins, 24 attributes, 146 diagnostic codes (133 live, 13 reserved), 63 environment variables.
+The complete surface of this build — 26 CLI verbs, 344 builtins, 24 attributes, 146 diagnostic codes (133 live, 13 reserved), 64 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
-## CLI verbs (25)
+## CLI verbs (26)
 
 | Verb | Purpose |
 |---|---|
@@ -23,6 +23,7 @@ Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap
 | `axon doc` | Generate Markdown documentation from `///` doc comments |
 | `axon fmt` | Format one or more .ax files to canonical Axon style |
 | `axon goal` | Compile a structured-prose goal file (`*.md`) to AST and run it |
+| `axon imports` | List the modules a program's `use` declarations load (G1c) |
 | `axon improve` | Self-improving compiler: verify and graduate learned optimization passes (R10) |
 | `axon intent` | Compile a structured-prose intent file (*.md) to a typed .ax skeleton |
 | `axon lock` | Write `axon.lock` pinning each `use`d module to its content hash (R6) |
@@ -68,7 +69,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (63)
+## Environment variables (64)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -105,6 +106,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_ALLOWED_EFFECTS` | ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset. Interpreter-only |
 | `AXON_PRINCIPAL` | the principal a run executes as — audit ATTRIBUTION only; it grants and withholds nothing |
 | `AXON_GUEST_ALLOW_NO_POLICY` | axon-guest-init: start the guest even though no capability policy could be loaded from the kernel cmdline (`axon.policy=`) or MMDS (no effect ceiling, no token cap, no seccomp). READ ONLY in builds with the non-default cargo feature `dev-allow-no-policy`; a default build ignores it and REFUSES, because Linux copies `NAME=value` cmdline words into init's environment, so a runtime flag would be reachable by whoever can append one |
+| `AXON_REQUIRE_IMPORTS_DIGEST` | the `axsha256:` imports_digest (`axon imports --json`) a run must load: `axon run`/`test`/`goal`/`session`/`deploy` compare the import closure they loaded and exit 8 before executing anything when it differs. Read once and removed from the environment, so it binds that process only, not programs it spawns. Any other verb refuses it (exit 2); a built binary refuses it at start (exit 2). Interpreter-only |
 | `AXON_REQUIRE_CERTS` | fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass |
 | `AXON_ATTEST_KEY` | operator-provisioned attestation key (hex, >=16 bytes). When set, axon-vm signs AND verifies the attestation report under it, so a report signed by anyone else fails. Unset falls back to an ephemeral per-process key, where signer and verifier are the same process — real integrity over the measurement, but attesting nothing to a third party |
 | `AXON_APPROVAL_KEY` | operator approval key (hex, >=16 bytes), separate from AXON_ATTEST_KEY. When set, axon-os seals run records as `axrmac1:` (HMAC under a derived record subkey) and its verifier refuses unkeyed `axrec2:`/`axrec3:` records, so records archived before the key was set no longer verify or replay. Unset or blank = unkeyed (`axrec3:`, integrity only); malformed or short = refused, never a silent fall back. Symmetric: every holder can mint |

@@ -1,0 +1,4 @@
+{
+  "theme": "gaps G1 import binding",
+  "text": "lint attribute only (#[allow(clippy::too_many_arguments)] on load_module_recursive and run_check_pipeline_inner); no change in what any run computes, accepts or refuses"
+}
