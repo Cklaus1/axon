@@ -26,5 +26,7 @@ axon-audit = { path = "../axon-audit" }
 # R27/R29: killpg, so cancelling a job reaches the processes it spawned.
 # Already a direct dependency of axon-core, axon-rt, axon-vm and axon-guest-init.
 libc = "0.2"
+# G5: HMAC + constant-time compare for AXON_APPROVAL_KEY tokens and record seals.
+axon-attest = { path = "../axon-attest" }
 
 [dev-dependencies]
