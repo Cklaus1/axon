@@ -166,12 +166,22 @@ fi
 # gate.sh's own comment names ad-hoc parity running as how bugs
 # #27/#36/#38/#39/parse_*_or reached main.
 #
-# The floor is deliberately below the observed healthy count (44 passed / 5
-# skipped of 49 on 2026-08-04; the 5 are android + browser/wasm-browser, which
-# need an NDK or headless Chrome) so an ordinary box missing a couple of
-# toolchains still passes — but "nothing ran" and "half the suite vanished"
-# cannot.
-EXPECT_MIN_PASS="${EXPECT_MIN_PASS:-40}"
+# The floor defaults to every harness that is not allow-listed to skip: the count
+# of scripts/*_parity.sh minus the entries of scripts/parity_allowed_skips.txt
+# that name one. It used to be a hard-coded 40 under a 44-of-49 healthy count,
+# so a harness could stop running (and new harnesses accumulate) with nobody
+# told. A box that genuinely lacks a toolchain sets EXPECT_MIN_PASS and says why.
+if [ -z "${EXPECT_MIN_PASS:-}" ]; then
+  _harnesses=0; _exempt=0
+  for h in scripts/*_parity.sh; do _harnesses=$((_harnesses+1)); done
+  if [ -f "$ALLOWED_SKIPS_FILE" ]; then
+    while read -r _name _; do
+      case "$_name" in ''|'#'*) continue ;; esac
+      [ -f "scripts/$_name.sh" ] && _exempt=$((_exempt+1))
+    done <"$ALLOWED_SKIPS_FILE"
+  fi
+  EXPECT_MIN_PASS=$((_harnesses - _exempt))
+fi
 if [ "$pass" -lt "$EXPECT_MIN_PASS" ]; then
   echo "parity_all: FAILED — only $pass harness(es) actually PASSED, expected >= $EXPECT_MIN_PASS"
   echo "parity_all: a suite that skips everything is not a green suite. If this box"
