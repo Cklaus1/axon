@@ -6947,6 +6947,7 @@ fn sealed_module_decls(sealed: &[PathBuf]) -> axon_core::resolver::SealedDecls {
     d
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_check_pipeline_inner(
     program: &mut axon_core::ast::Program,
     src: &str,

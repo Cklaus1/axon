@@ -859,6 +859,7 @@ pub fn resolve_use_files_transitive(
 /// `loading_stack` tracks the chain of modules currently being loaded.  If a
 /// module is found in the stack, that is a cycle (E0902).  `already_loaded`
 /// prevents any module from being loaded more than once.
+#[allow(clippy::too_many_arguments)]
 fn load_module_recursive(
     use_path: &[String],
     search_dirs: &[std::path::PathBuf],
