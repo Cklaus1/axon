@@ -320,60 +320,68 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
     // Absent policy means NOT required, so existing jobs keep working; an
     // operator who wants the gate says so with `require_approval = true`.
     let approval_path = job_path.with_extension("approval");
-    if approval_path.exists() {
-        let token = std::fs::read_to_string(&approval_path).unwrap_or_default();
-        let program_src = std::fs::read_to_string(&manifest.program).unwrap_or_default();
-        if let Err(reason) = crate::approval::verify_approval(&token, &program_src, &manifest.grant)
-        {
-            // An INVALID token is a failure whether or not policy required
-            // one. Note what that does and does not mean: `verify_approval`
-            // re-hashes an UNKEYED sha256 over public inputs, so this proves
-            // the program and grant are byte-identical to whatever the token's
-            // author hashed — NOT that a particular human approved anything.
-            // Anyone who can write this file can mint a token that verifies.
+    // The SAME authorization the supervisor performs (approval::authorize),
+    // run here first so a refusal is reported before any kill channel is
+    // created; the supervisor repeats it at the point every route converges.
+    let rt = AxonCoreRuntime::from_env();
+    let key = match crate::approval::ApprovalKey::from_env() {
+        Ok(k) => k,
+        Err(reason) => {
             println!("\u{26a0} DENIED: {reason}");
             return ExitCode::from(8);
         }
-        if manifest.require_approval {
-            println!("Approval: required and verified (program + grant unedited since sign-off)");
-        } else {
-            println!("Approval: verified (not required by this job)");
+    };
+    match crate::approval::authorize(job_path, &manifest, key.as_ref(), &rt) {
+        // An INVALID token is a failure whether or not policy required one,
+        // and so is a token required but missing.
+        Err(reason) => {
+            println!("\u{26a0} DENIED: {reason}");
+            return ExitCode::from(8);
         }
-        // Say what the check is WORTH, not just that it passed. The digest is
-        // unkeyed and every input to it is public, so it establishes integrity
-        // since sign-off and nothing about WHO signed. An operator reading
-        // "verified" beside a named approver would otherwise reasonably infer
-        // authentication that is not happening.
-        println!(
-            "  (integrity only: the approval digest is unkeyed, so this shows \
-             the program and grant are unedited — not who approved them)"
-        );
-    } else if manifest.require_approval {
-        println!(
-            "\u{26a0} DENIED: approval required but missing — this job sets \
-             `require_approval = true` and there is no token at {}",
-            approval_path.display()
-        );
-        return ExitCode::from(8);
-    } else {
-        // An ABSENT token is not a verified one. The gate is opt-in by the
-        // presence of the very artifact it checks (triage OSK-P4-H8), and until
-        // now an unapproved run printed nothing about sign-off and archived a
-        // record with no approval field at all — so a reviewer reading that
-        // record could not tell "signed off" from "nobody checked". That is the
-        // absent-vs-verified collapse, in the artifact whose whole job is to be
-        // the evidence.
-        //
-        // This says so; it deliberately does NOT refuse. Making a missing token
-        // exit 8 is a policy change (the finding's own fix sketch proposes
-        // driving it from risk level or a manifest field), and that is the
-        // operator's decision, not this function's.
-        // NOT a warning. The job did not ask for approval and is behaving
-        // exactly as configured; "⚠ NOT APPROVED" read as a degraded or unsafe
-        // state and would train operators to ignore the line. State the policy,
-        // so the output tracks configuration rather than treating absence as
-        // inherently abnormal.
-        println!("Approval: not required");
+        Ok(auth) => match auth.token {
+            Some(token) => {
+                if manifest.require_approval {
+                    println!(
+                        "Approval: required and verified (program + grant unedited since sign-off)"
+                    );
+                } else {
+                    println!("Approval: verified (not required by this job)");
+                }
+                // Say what the check is WORTH, not just that it passed. An
+                // unkeyed digest is over public inputs: it establishes
+                // integrity since sign-off and nothing about WHO signed. A
+                // keyed one establishes that a holder of AXON_APPROVAL_KEY made
+                // it — still not which human: the key is symmetric and
+                // `approved_by` is not signed.
+                if token.keyed {
+                    println!(
+                        "  (keyed: the token was made under AXON_APPROVAL_KEY, so a key holder \
+                         approved this program, grant and import closure — `approved_by` is not \
+                         authenticated)"
+                    );
+                } else {
+                    println!(
+                        "  (integrity only: the approval digest is unkeyed, so this shows \
+                         the program and grant are unedited — not who approved them)"
+                    );
+                }
+                if token.imports_digest.is_none() {
+                    println!(
+                        "  (legacy axon-approval/1 token: accepted because the program imports \
+                         nothing; re-approve to bind the import closure)"
+                    );
+                }
+            }
+            // An ABSENT token is not a verified one. The gate is opt-in by the
+            // presence of the very artifact it checks (triage OSK-P4-H8), and
+            // an unapproved run used to print nothing about sign-off, so a
+            // reviewer could not tell "signed off" from "nobody checked".
+            //
+            // This says so; it deliberately does NOT refuse — that is the
+            // operator's policy (`require_approval`), not this function's. And
+            // NOT a warning: the job is behaving exactly as configured.
+            None => println!("Approval: not required"),
+        },
     }
 
     // ── Kill-file setup (R27 + R29) ───────────────────────────────────────────
@@ -512,7 +520,6 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
     // instead of only this process; the run still ends through the record
     // below, and the exit status says which signal stopped it.
     crate::runtime::forward_termination_signals();
-    let rt = AxonCoreRuntime::from_env();
     let sup = broad_supervisor_grant();
     let rec = supervisor::run(&manifest, job_path, &sup, &run_id, &rt);
 

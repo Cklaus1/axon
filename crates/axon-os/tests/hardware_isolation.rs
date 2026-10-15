@@ -52,6 +52,9 @@ impl Runtime for Probe {
         self.minted.set(self.minted.get() + 1);
         PrincipalHandle(0)
     }
+    fn imports_digest(&self, _p: &Path, _g: &Grant) -> Result<String, String> {
+        Err("a probe resolves no imports".into())
+    }
     fn run_sandboxed(
         &self,
         _p: &Path,
@@ -59,6 +62,7 @@ impl Runtime for Probe {
         _g: &Grant,
         _b: &Budget,
         _s: u64,
+        _i: Option<&str>,
     ) -> RunOutcome {
         self.ran.set(self.ran.get() + 1);
         RunOutcome {

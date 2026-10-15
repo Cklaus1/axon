@@ -119,6 +119,11 @@ pub trait Runtime {
     /// prefixes and host allowlists — so the ceiling could only ever express
     /// "may write SOMEWHERE", never "may write ./out/". The scoped runtime
     /// needs the allowlists themselves.
+    ///
+    /// G1e: `required_imports` is the `imports_digest` the approval token
+    /// bound. The process that loads the program's modules must refuse to run
+    /// a different closure; a runtime that cannot make it do so must refuse
+    /// the run rather than ignore the binding.
     fn run_sandboxed(
         &self,
         program: &Path,
@@ -126,7 +131,15 @@ pub trait Runtime {
         grant: &Grant,
         budget: &Budget,
         seed: u64,
+        required_imports: Option<&str>,
     ) -> RunOutcome;
+
+    /// The `imports_digest` of `program`'s import closure as THIS runtime's
+    /// interpreter would load it under `grant` (`axon imports --json` in the
+    /// job's environment). Used to admit a legacy `axon-approval/1` token,
+    /// which binds no closure, only for an import-free program. `Err` when it
+    /// cannot be determined — which refuses such a token.
+    fn imports_digest(&self, program: &Path, grant: &Grant) -> Result<String, String>;
 }
 
 // ── S6: the real runtime — hermetic, isolated subprocess execution (A4) ──────
@@ -1042,6 +1055,147 @@ fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> St
     )
 }
 
+/// G1d/G1e: the variable a job's interpreter compares its loaded import
+/// closure against (axon-core `env_registry`).
+pub const REQUIRE_IMPORTS_DIGEST_ENV: &str = "AXON_REQUIRE_IMPORTS_DIGEST";
+
+/// The environment SHAPE of every interpreter child axon-os starts for a job:
+/// `env_clear`, then `PATH`, then either the operator's forwarded AXON_*
+/// controls (restricted) or the virtual clock (hermetic), with the program's
+/// directory as cwd. The caller adds the verb and its arguments.
+///
+/// ONE definition, shared by the run ([`AxonCoreRuntime::run_sandboxed`]) and
+/// by every question asked about the program ahead of it — notably the import
+/// closure `axon-intent approve` binds into the token
+/// ([`query_imports_digest`]). An approver resolving modules under a
+/// different `AXON_PATH`, `HOME` or cwd than the run would bind a closure the
+/// run never loads.
+pub fn job_child_command(axon_bin: &Path, program: &Path, grant: &Grant) -> Command {
+    let mut cmd = Command::new(axon_bin);
+    cmd.env_clear();
+    if let Some(p) = std::env::var_os("PATH") {
+        cmd.env("PATH", p); // cc/linker discovery for the interpreter
+    }
+    // AUDIT T23 (findings OSK-P4-H4 / O017 / O018). `env_clear` is correct
+    // and stays — but the allowlist omitted every AXON_* control an operator
+    // legitimately sets, so they were silently dropped:
+    //
+    //   AXON_AUDIT_LEDGER — the R28 capability-audit ledger was NEVER
+    //     written for a job run under the supervisor: exactly the execution
+    //     path where an operator most wants that trail.
+    //   AXON_AI_MOCK / AXON_AI_REPLAY — the deterministic stub and the
+    //     record/replay cache were inert here, so a job fell through to the
+    //     live path (observed: it then hit the AI-policy refusal, exit 5),
+    //     making replay-reproducibility non-functional through axon-os,
+    //     which is where it is meant to hold.
+    //
+    // Silent in every case: the operator sets the variable, the run
+    // succeeds, and the artifact simply never appears.
+    // A REPRODUCIBLE run (profile = "hermetic") is the one case where this
+    // forwarding must NOT happen. Each of these can change what the run
+    // does — a replay cache, a ledger path, a module search path — so a job
+    // that must give the same bytes on two machines cannot inherit them
+    // from whichever shell launched it.
+    //
+    // This, plus the virtual clock below, is the entire difference between
+    // `hermetic` and `restricted`. They previously had byte-identical
+    // grants, which is two names for one behaviour.
+    if !grant.reproducible {
+        for key in [
+            "AXON_AUDIT_LEDGER",
+            "AXON_AI_MOCK",
+            "AXON_AI_REPLAY",
+            "AXON_PATH",
+            "AXON_MAX_DEPTH",
+        ] {
+            if let Some(v) = std::env::var_os(key) {
+                cmd.env(key, v);
+            }
+        }
+    } else {
+        // Deterministic virtual clock: `now_ms()` becomes a function of the
+        // run rather than of when it happened, and `sleep_ms(n)` advances it
+        // without really sleeping. Without this, a hermetic run reading the
+        // clock produces different bytes every time — which is precisely
+        // what the profile promises it will not do.
+        cmd.env(
+            "AXON_CLOCK",
+            crate::profile::Profile::Hermetic.virtual_clock().unwrap(),
+        );
+    }
+    // Relative paths in the program resolve against the job's directory, so
+    // an example runs the same wherever it is invoked from (hermetic).
+    if let Some(dir) = program.parent() {
+        if !dir.as_os_str().is_empty() {
+            cmd.current_dir(dir);
+        }
+    }
+    cmd
+}
+
+/// `axon imports <program> --json` in the job's environment
+/// ([`job_child_command`]): the `imports_digest` of the closure a run of
+/// `program` under `grant` would load. `Err` when an import does not load
+/// (exit 2), the interpreter cannot start, or its answer is not
+/// `axon-imports/1`.
+pub fn query_imports_digest(
+    axon_bin: &Path,
+    program: &Path,
+    grant: &Grant,
+    timeout: Duration,
+) -> Result<String, String> {
+    // Absolute: the child's cwd is the program's directory.
+    let program = absolutize(program.to_path_buf());
+    let mut cmd = job_child_command(axon_bin, &program, grant);
+    cmd.arg("imports").arg(&program).arg("--json");
+    let out = run_bounded_capped(&mut cmd, timeout, None, DEFAULT_MAX_CAPTURE_BYTES)
+        .map_err(|e| format!("cannot run `{} imports`: {e}", axon_bin.display()))?;
+    if out.timed_out || out.code != Some(0) {
+        let why = out
+            .stderr
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("no diagnostic")
+            .trim()
+            .to_string();
+        return Err(format!(
+            "`axon imports {}` failed ({}): {why}",
+            program.display(),
+            if out.timed_out {
+                "timed out".to_string()
+            } else {
+                format!("exit {:?}", out.code)
+            }
+        ));
+    }
+    let v: serde_json::Value = serde_json::from_str(out.stdout.trim())
+        .map_err(|e| format!("`axon imports --json` printed no JSON: {e}"))?;
+    if v["schema"] != "axon-imports/1" {
+        return Err(format!(
+            "`axon imports --json` answered schema {}, not axon-imports/1",
+            v["schema"]
+        ));
+    }
+    match v["imports_digest"].as_str() {
+        Some(d) if d.starts_with("axsha256:") => Ok(d.to_string()),
+        _ => Err("`axon imports --json` printed no axsha256: imports_digest".into()),
+    }
+}
+
+/// The interpreter's G1d refusal line, when the run stopped on it: exit 8, the
+/// wrapper never completed, and stderr carries
+/// `error: AXON_REQUIRE_IMPORTS_DIGEST: …`.
+fn imports_refusal(stderr: &str, code: Option<i32>, stdout: &str, nonce: &str) -> Option<String> {
+    if code != Some(8) || ran_to_completion(stdout, nonce) {
+        return None;
+    }
+    let prefix = format!("error: {REQUIRE_IMPORTS_DIGEST_ENV}:");
+    stderr
+        .lines()
+        .find(|l| l.starts_with(&prefix))
+        .map(|l| l.trim().to_string())
+}
+
 impl Runtime for AxonCoreRuntime {
     /// Stated explicitly, not inherited from the default, so a change to the
     /// trait default cannot silently relabel the legacy adapter.
@@ -1062,6 +1216,10 @@ impl Runtime for AxonCoreRuntime {
         PrincipalHandle(0)
     }
 
+    fn imports_digest(&self, program: &Path, grant: &Grant) -> Result<String, String> {
+        query_imports_digest(&self.axon_bin, program, grant, self.timeout)
+    }
+
     fn run_sandboxed(
         &self,
         program: &Path,
@@ -1069,6 +1227,7 @@ impl Runtime for AxonCoreRuntime {
         grant: &Grant,
         budget: &Budget,
         seed: u64,
+        required_imports: Option<&str>,
     ) -> RunOutcome {
         let ceiling = grant.effect_set();
         // RUNTIME ENFORCEMENT (the sound fence). Rather than running the program
@@ -1130,66 +1289,16 @@ impl Runtime for AxonCoreRuntime {
             };
         debug_assert!(wrapper_path.starts_with(staging.path()));
 
-        let mut cmd = Command::new(&self.axon_bin);
+        let mut cmd = job_child_command(&self.axon_bin, program, grant);
         cmd.arg("run").arg(&wrapper_path);
-        cmd.env_clear();
         cmd.env("AXON_SEED", seed.to_string());
-        if let Some(p) = std::env::var_os("PATH") {
-            cmd.env("PATH", p); // cc/linker discovery for the interpreter
-        }
-        // AUDIT T23 (findings OSK-P4-H4 / O017 / O018). `env_clear` is correct
-        // and stays — but the allowlist omitted every AXON_* control an operator
-        // legitimately sets, so they were silently dropped:
-        //
-        //   AXON_AUDIT_LEDGER — the R28 capability-audit ledger was NEVER
-        //     written for a job run under the supervisor: exactly the execution
-        //     path where an operator most wants that trail.
-        //   AXON_AI_MOCK / AXON_AI_REPLAY — the deterministic stub and the
-        //     record/replay cache were inert here, so a job fell through to the
-        //     live path (observed: it then hit the AI-policy refusal, exit 5),
-        //     making replay-reproducibility non-functional through axon-os,
-        //     which is where it is meant to hold.
-        //
-        // Silent in every case: the operator sets the variable, the run
-        // succeeds, and the artifact simply never appears.
-        // A REPRODUCIBLE run (profile = "hermetic") is the one case where this
-        // forwarding must NOT happen. Each of these can change what the run
-        // does — a replay cache, a ledger path, a module search path — so a job
-        // that must give the same bytes on two machines cannot inherit them
-        // from whichever shell launched it.
-        //
-        // This, plus the virtual clock below, is the entire difference between
-        // `hermetic` and `restricted`. They previously had byte-identical
-        // grants, which is two names for one behaviour.
-        if !grant.reproducible {
-            for key in [
-                "AXON_AUDIT_LEDGER",
-                "AXON_AI_MOCK",
-                "AXON_AI_REPLAY",
-                "AXON_PATH",
-                "AXON_MAX_DEPTH",
-            ] {
-                if let Some(v) = std::env::var_os(key) {
-                    cmd.env(key, v);
-                }
-            }
-        } else {
-            // Deterministic virtual clock: `now_ms()` becomes a function of the
-            // run rather than of when it happened, and `sleep_ms(n)` advances it
-            // without really sleeping. Without this, a hermetic run reading the
-            // clock produces different bytes every time — which is precisely
-            // what the profile promises it will not do.
-            cmd.env(
-                "AXON_CLOCK",
-                crate::profile::Profile::Hermetic.virtual_clock().unwrap(),
-            );
-        }
-        // Relative paths in the program resolve against the job's directory, so
-        // an example runs the same wherever it is invoked from (hermetic).
-        if let Some(dir) = program.parent() {
-            if !dir.as_os_str().is_empty() {
-                cmd.current_dir(dir);
-            }
+        // G1e: the closure the approval bound. Set AFTER the helper's
+        // `env_clear`, whichever reproducible branch it took, so the child's
+        // loader compares what it actually loaded and refuses (exit 8, nothing
+        // executed) when a module changed since approval. The interpreter
+        // removes it from its own environment after the check.
+        if let Some(digest) = required_imports {
+            cmd.env(REQUIRE_IMPORTS_DIGEST_ENV, digest);
         }
 
         // R27/R29: if AXON_KILL_FILE is set, poll it during run_bounded.
@@ -1238,6 +1347,14 @@ impl Runtime for AxonCoreRuntime {
             Verdict::Denied {
                 reason: format!("timed out after {} ms", self.timeout.as_millis()),
                 axis: "time".into(),
+            }
+        } else if let Some(line) = imports_refusal(err, proc.code, &proc.stdout, &nonce) {
+            // G1e: the loader refused the closure before executing anything —
+            // a module changed since approval. An approval failure, not a
+            // sandbox one.
+            Verdict::Denied {
+                reason: format!("imports changed since approval: {line}"),
+                axis: "approval".into(),
             }
         } else if err.contains("sandbox violation")
             || err.contains("SandboxViolation")
@@ -1379,6 +1496,10 @@ pub struct MockRuntime {
     pub outcome: RunOutcome,
     pub mint_calls: std::cell::Cell<usize>,
     pub run_calls: std::cell::Cell<usize>,
+    /// What [`Runtime::imports_digest`] answers (default: the empty closure).
+    pub imports: Result<String, String>,
+    /// The `required_imports` the last `run_sandboxed` call was handed.
+    pub last_required_imports: std::cell::RefCell<Option<String>>,
 }
 
 #[cfg(any(test, feature = "mock"))]
@@ -1389,6 +1510,8 @@ impl MockRuntime {
             outcome,
             mint_calls: std::cell::Cell::new(0),
             run_calls: std::cell::Cell::new(0),
+            imports: Ok(crate::approval::EMPTY_IMPORTS_DIGEST.to_string()),
+            last_required_imports: std::cell::RefCell::new(None),
         }
     }
 }
@@ -1402,6 +1525,9 @@ impl Runtime for MockRuntime {
         self.mint_calls.set(self.mint_calls.get() + 1);
         PrincipalHandle(0)
     }
+    fn imports_digest(&self, _program: &Path, _grant: &Grant) -> Result<String, String> {
+        self.imports.clone()
+    }
     fn run_sandboxed(
         &self,
         _program: &Path,
@@ -1409,8 +1535,10 @@ impl Runtime for MockRuntime {
         _grant: &Grant,
         _budget: &Budget,
         _seed: u64,
+        required_imports: Option<&str>,
     ) -> RunOutcome {
         self.run_calls.set(self.run_calls.get() + 1);
+        *self.last_required_imports.borrow_mut() = required_imports.map(str::to_string);
         self.outcome.clone()
     }
 }
