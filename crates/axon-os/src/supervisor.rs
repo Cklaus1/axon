@@ -46,6 +46,30 @@ pub fn run_requiring(
     required: IsolationRequirement,
     rt: &impl Runtime,
 ) -> RunRecord {
+    use crate::approval::{ApprovalKey, ApprovalStatus};
+    // The record seal key (G5c). Every return below passes the approval
+    // decision INTO `build`, so it is sealed: it used to be stamped on the
+    // record afterwards and could be rewritten freely. A malformed key is a
+    // refusal, never a silent fall back to an unkeyed seal.
+    let key = match ApprovalKey::from_env() {
+        Ok(k) => k,
+        Err(reason) => {
+            let denial = RawEvent::new("denied", "approval", EffectSet::default(), "");
+            return build(
+                run_id,
+                manifest,
+                manifest.seed,
+                std::slice::from_ref(&denial),
+                Verdict::Denied {
+                    reason,
+                    axis: "approval".to_string(),
+                },
+                ApprovalStatus::Denied.as_str(),
+                None,
+            );
+        }
+    };
+    let key = key.as_ref();
     let iso = rt.isolation();
     if !required.satisfied_by(iso) {
         let denial = RawEvent::new("denied", "isolation", EffectSet::default(), "");
@@ -62,6 +86,9 @@ pub fn run_requiring(
                 ),
                 axis: "isolation".to_string(),
             },
+            // Refused before authorization ran: say so rather than `unknown`.
+            ApprovalStatus::NotChecked.as_str(),
+            key,
         );
     }
     // 0. AUTHORIZATION — before anything else, at the point every execution
@@ -81,7 +108,7 @@ pub fn run_requiring(
         Ok(a) => a,
         Err(reason) => {
             let denial = RawEvent::new("denied", "approval", EffectSet::default(), "");
-            let mut rec = build(
+            return build(
                 run_id,
                 manifest,
                 manifest.seed,
@@ -90,9 +117,9 @@ pub fn run_requiring(
                     reason,
                     axis: "approval".to_string(),
                 },
+                ApprovalStatus::Denied.as_str(),
+                key,
             );
-            rec.approval = crate::approval::ApprovalStatus::Denied.as_str().to_string();
-            return rec;
         }
     };
     // 1. What does the program declare it may do? (deny-by-default via the runtime)
@@ -103,23 +130,21 @@ pub fn run_requiring(
 
     // 3. Static admission — fail closed BEFORE any execution.
     // The authorization decision travels with the record, so a reader can tell
-    // afterward whether the run was authorized. Stamped on EVERY exit path —
-    // the first version computed it and used it on none, and the compiler said
-    // so in a warning I walked past. A record field that is always `unknown` is
-    // exactly the absent-vs-verified collapse this field exists to close.
-    let approval_str = approval.as_str().to_string();
-
+    // afterward whether the run was authorized. Sealed on EVERY exit path — the
+    // first version computed it and used it on none. A record field that is
+    // always `unknown` is exactly the absent-vs-verified collapse this field
+    // exists to close.
     if let Admission::Deny { reason, axis } = admit(&declared, &eff) {
         let denial = RawEvent::new("denied", &axis, EffectSet::default(), "");
-        let mut rec = build(
+        return build(
             run_id,
             manifest,
             manifest.seed,
             std::slice::from_ref(&denial),
             Verdict::Denied { reason, axis },
+            approval.as_str(),
+            key,
         );
-        rec.approval = approval_str;
-        return rec;
     }
 
     // 4. Mint a Principal holding exactly the effective grant.
@@ -135,15 +160,15 @@ pub fn run_requiring(
     );
 
     // 6. Seal a tamper-evident record from the observed events + verdict.
-    let mut rec = build(
+    build(
         run_id,
         manifest,
         manifest.seed,
         &outcome.events,
         outcome.verdict,
-    );
-    rec.approval = approval_str;
-    rec
+        approval.as_str(),
+        key,
+    )
 }
 
 #[cfg(test)]
@@ -161,7 +186,11 @@ mod tests {
     use super::*;
     use crate::gate::DeclaredEffects;
     use crate::grant::{Budget, ExecPolicy, Grant, Label};
-    use crate::record::verify;
+    /// Verify under the same key the supervisor sealed with (the ambient one).
+    fn verify(rec: &RunRecord) -> Result<crate::record::Sealing, crate::record::VerifyMismatch> {
+        let key = crate::approval::ApprovalKey::from_env().unwrap();
+        crate::record::verify(rec, key.as_ref())
+    }
     use crate::runtime::{MockRuntime, RunOutcome};
     use std::path::PathBuf;
 

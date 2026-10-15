@@ -8,6 +8,7 @@
 //! manifest they ran under. NOT authenticated: *who* produced the record (no
 //! signature) — that is a later spec (HW root of trust).
 
+use crate::approval::ApprovalKey;
 use crate::grant::EffectSet;
 use crate::manifest::JobManifest;
 use crate::verdict::Verdict;
@@ -189,6 +190,9 @@ fn canonical_verdict(v: &Verdict) -> String {
 /// to forge, and silent on the one that decides whether the run was allowed.
 /// Folding them in as a terminal pseudo-event keeps the chain shape (each link
 /// still hashes its predecessor) and needs no schema field.
+///
+/// This is the LEGACY (`axrec2:`) seal, which does not cover `approval`; it is
+/// kept only so old records still verify, labelled as such.
 fn seal_hash(prev: &str, run_id: &str, seed: u64, verdict: &Verdict) -> String {
     let canon = format!(
         "seal{UNIT}{run_id}{UNIT}{seed}{UNIT}{}",
@@ -197,20 +201,50 @@ fn seal_hash(prev: &str, run_id: &str, seed: u64, verdict: &Verdict) -> String {
     sha256_hex(format!("{prev}{UNIT}{canon}").as_bytes())
 }
 
+/// The bytes the current seal covers: the chain head plus run_id, seed,
+/// verdict AND approval (G5c). `approval` used to be stamped after the seal,
+/// so it could be rewritten from `denied` to `verified_required` without
+/// breaking anything.
+fn seal_input(prev: &str, run_id: &str, seed: u64, verdict: &Verdict, approval: &str) -> String {
+    format!(
+        "{prev}{UNIT}seal{UNIT}{run_id}{UNIT}{seed}{UNIT}{}{UNIT}approval{UNIT}{approval}",
+        canonical_verdict(verdict)
+    )
+}
+
+fn hex32(b: &[u8; 32]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// The record_digest for the current formats: `axrmac1:` + HMAC under the
+/// record subkey when keyed, `axrec3:` + sha256 otherwise.
+fn seal_digest(seal: &str, key: Option<&ApprovalKey>) -> String {
+    match key {
+        Some(k) => format!("axrmac1:{}", hex32(&k.record_mac(seal.as_bytes()))),
+        None => format!("axrec3:{}", sha256_hex(seal.as_bytes())),
+    }
+}
+
+/// `axsha256:` digest of the canonical manifest — the chain's seed. The ONE
+/// definition `build` seals and `verify_job` recomputes.
+pub fn manifest_digest(m: &JobManifest) -> String {
+    format!("axsha256:{}", sha256_hex(canonical_manifest(m).as_bytes()))
+}
+
 /// Build a hash-chained record (R21 §4.3). `manifest_digest` seeds the chain
-/// (it is the `prev_hash` of event 0); `record_digest` is the chain head, which
-/// since T47 includes a terminal seal over run_id/seed/verdict.
+/// (it is the `prev_hash` of event 0); `record_digest` is the chain head plus
+/// a terminal seal over run_id/seed/verdict/approval — keyed (`axrmac1:`) when
+/// `key` is given, `axrec3:` otherwise.
 pub fn build(
     run_id: &str,
     manifest: &JobManifest,
     seed: u64,
     raw: &[RawEvent],
     verdict: Verdict,
+    approval: &str,
+    key: Option<&ApprovalKey>,
 ) -> RunRecord {
-    let manifest_digest = format!(
-        "axsha256:{}",
-        sha256_hex(canonical_manifest(manifest).as_bytes())
-    );
+    let manifest_digest = manifest_digest(manifest);
     let mut events = Vec::with_capacity(raw.len());
     let mut prev = manifest_digest.clone();
     for (seq, e) in raw.iter().enumerate() {
@@ -227,11 +261,10 @@ pub fn build(
         });
         prev = hash;
     }
-    // T47: seal run_id/seed/verdict into the chain head. The `axrec2:` prefix
-    // marks the change — an `axrec1:` record is REFUSED by `verify` rather than
-    // accepted, because accepting it would be a trivial downgrade: strip the
-    // seal, present the old format, forge the verdict freely.
-    let record_digest = format!("axrec2:{}", seal_hash(&prev, run_id, seed, &verdict));
+    // T47 sealed run_id/seed/verdict (`axrec2:`); G5c adds `approval` and the
+    // optional key (`axrec3:` / `axrmac1:`). An `axrec1:` record is REFUSED by
+    // `verify`: accepting it would be a trivial downgrade.
+    let record_digest = seal_digest(&seal_input(&prev, run_id, seed, &verdict, approval), key);
     RunRecord {
         schema: "axon-os-record/1".to_string(),
         run_id: run_id.to_string(),
@@ -239,18 +272,47 @@ pub fn build(
         seed,
         events,
         verdict,
-        // Overwritten by `supervisor::run` with the authorization boundary's
-        // actual decision. `unknown` is the honest default for any record
-        // built outside that path — an absent statement is not a positive one.
-        approval: unknown_approval(),
+        approval: approval.to_string(),
         record_digest,
+    }
+}
+
+/// How a record that verified was sealed — what the `✓` actually vouches for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sealing {
+    /// `axrmac1:` — MAC under the record subkey of `AXON_APPROVAL_KEY`.
+    Keyed,
+    /// `axrec3:` — unkeyed: integrity only, anyone can re-seal an edit.
+    Unkeyed,
+    /// Legacy `axrec2:` — the seal does not cover `approval`.
+    ApprovalNotSealed,
+}
+
+impl Sealing {
+    pub fn label(self) -> &'static str {
+        match self {
+            Sealing::Keyed => "sealed with AXON_APPROVAL_KEY",
+            Sealing::Unkeyed => "integrity only: unkeyed seal",
+            Sealing::ApprovalNotSealed => "legacy axrec2: approval not sealed",
+        }
+    }
+}
+
+fn mismatch(detail: &str) -> VerifyMismatch {
+    VerifyMismatch {
+        detail: detail.to_string(),
     }
 }
 
 /// Verify a record's integrity (R21 §4.3): recompute the chain from the stored
 /// events + manifest_digest and assert every `hash`, every `prev_hash` link, and
 /// the `record_digest` match. Any tamper → `Err`. Pure.
-pub fn verify(rec: &RunRecord) -> Result<(), VerifyMismatch> {
+///
+/// `key` is the verifier's `AXON_APPROVAL_KEY`. Keyed, only `axrmac1:` is
+/// accepted (an unkeyed record is a downgrade). Keyless, `axrmac1:` cannot be
+/// checked and is refused; `axrec3:` and legacy `axrec2:` verify, labelled.
+/// This checks the record against ITSELF; [`verify_job`] binds it to a job.
+pub fn verify(rec: &RunRecord, key: Option<&ApprovalKey>) -> Result<Sealing, VerifyMismatch> {
     let mut prev = rec.manifest_digest.clone();
     for (i, ev) in rec.events.iter().enumerate() {
         if ev.seq != i as u64 {
@@ -288,13 +350,57 @@ pub fn verify(rec: &RunRecord) -> Result<(), VerifyMismatch> {
                 .to_string(),
         });
     }
-    let expect_seal = seal_hash(&prev, &rec.run_id, rec.seed, &rec.verdict);
-    if rec.record_digest != format!("axrec2:{expect_seal}") {
-        return Err(VerifyMismatch {
-            detail: "record_digest does not match the chain head (run_id, seed, verdict or an \
-                     event was tampered)"
-                .to_string(),
-        });
+    const TAMPERED: &str = "record_digest does not match the chain head (run_id, seed, verdict, \
+                            approval or an event was tampered)";
+    let seal = seal_input(&prev, &rec.run_id, rec.seed, &rec.verdict, &rec.approval);
+    match key {
+        Some(k) => {
+            let Some(mac) = rec.record_digest.strip_prefix("axrmac1:") else {
+                return Err(mismatch(
+                    "record is not keyed (`axrmac1:`) but AXON_APPROVAL_KEY is set: a keyed \
+                     verifier refuses unkeyed records, which anyone can re-seal",
+                ));
+            };
+            let expect = hex32(&k.record_mac(seal.as_bytes()));
+            if !axon_attest::constant_time_eq(mac.as_bytes(), expect.as_bytes()) {
+                return Err(mismatch(
+                    "record seal does not verify under AXON_APPROVAL_KEY (wrong key, or run_id, \
+                     seed, verdict, approval or an event was tampered)",
+                ));
+            }
+            Ok(Sealing::Keyed)
+        }
+        None => {
+            if rec.record_digest.starts_with("axrmac1:") {
+                return Err(mismatch(
+                    "record is keyed (`axrmac1:`) and AXON_APPROVAL_KEY is not set: its seal \
+                     cannot be checked",
+                ));
+            }
+            if let Some(legacy) = rec.record_digest.strip_prefix("axrec2:") {
+                let expect_seal = seal_hash(&prev, &rec.run_id, rec.seed, &rec.verdict);
+                if legacy != expect_seal {
+                    return Err(mismatch(TAMPERED));
+                }
+                return Ok(Sealing::ApprovalNotSealed);
+            }
+            if rec.record_digest != seal_digest(&seal, None) {
+                return Err(mismatch(TAMPERED));
+            }
+            Ok(Sealing::Unkeyed)
+        }
+    }
+}
+
+/// Bind a record to the job it claims to have run (G5c): its `manifest_digest`
+/// must be the digest `build` computes for `manifest`. Without this a record
+/// re-chained from an edited job, or paired with another job, verifies.
+pub fn verify_job(rec: &RunRecord, manifest: &JobManifest) -> Result<(), VerifyMismatch> {
+    if rec.manifest_digest != manifest_digest(manifest) {
+        return Err(mismatch(
+            "record's manifest_digest does not match the job (the job was edited, or the record \
+             belongs to another job)",
+        ));
     }
     Ok(())
 }
@@ -317,6 +423,15 @@ mod tests {
     use super::*;
     use crate::grant::{Budget, ExecPolicy, Grant, Label};
     use std::path::PathBuf;
+
+    // The pre-G5c call shapes, keyless with a `not_required` approval, so the
+    // T47 tests below read as before.
+    fn build(r: &str, m: &JobManifest, seed: u64, raw: &[RawEvent], v: Verdict) -> RunRecord {
+        super::build(r, m, seed, raw, v, "not_required", None)
+    }
+    fn verify(r: &RunRecord) -> Result<Sealing, VerifyMismatch> {
+        super::verify(r, None)
+    }
 
     fn manifest() -> JobManifest {
         JobManifest {
@@ -376,7 +491,7 @@ mod tests {
         assert_eq!(rec.events.len(), 2);
         assert_eq!(rec.events[0].prev_hash, rec.manifest_digest);
         assert_eq!(rec.events[1].prev_hash, rec.events[0].hash);
-        assert!(rec.record_digest.starts_with("axrec2:"));
+        assert!(rec.record_digest.starts_with("axrec3:"));
         // JSON round-trips and re-verifies.
         let parsed = from_json(&to_json(&rec)).unwrap();
         assert_eq!(parsed, rec);
@@ -442,7 +557,7 @@ mod tests {
 
         // (f) tamper the record_digest head.
         let mut m = good.clone();
-        m.record_digest = "axrec2:0".into();
+        m.record_digest = "axrec3:0".into();
         assert!(verify(&m).is_err(), "tampered head must be detected");
 
         // (g) AUDIT T47 (P6-EXIT-03): the head must also seal run_id, seed and
@@ -523,15 +638,117 @@ mod tests {
             },
         );
         // T47: the head is now the SEAL over (manifest_digest, run_id, seed,
-        // verdict) rather than the bare manifest digest — an empty run still has
-        // a verdict, and that verdict must be attested.
+        // verdict, approval) rather than the bare manifest digest — an empty
+        // run still has a verdict, and that verdict must be attested.
         assert_eq!(
             rec.record_digest,
             format!(
-                "axrec2:{}",
-                seal_hash(&rec.manifest_digest, "r", 42, &rec.verdict)
+                "axrec3:{}",
+                sha256_hex(
+                    seal_input(&rec.manifest_digest, "r", 42, &rec.verdict, "not_required")
+                        .as_bytes()
+                )
             )
         );
         assert!(verify(&rec).is_ok());
+    }
+
+    fn key(b: u8) -> ApprovalKey {
+        ApprovalKey::derive(&[b; 16]).unwrap()
+    }
+
+    fn completed() -> RunRecord {
+        build(
+            "r",
+            &manifest(),
+            42,
+            &events(),
+            Verdict::Completed { value: 0 },
+        )
+    }
+
+    // G5c: `approval` is inside the seal, in both the keyless and keyed forms.
+    #[test]
+    fn a_rewritten_approval_field_is_refused() {
+        let mut m = completed();
+        m.approval = "verified_required".into();
+        assert!(verify(&m).is_err(), "keyless: rewritten approval refused");
+
+        let k = key(1);
+        let rec = super::build(
+            "r",
+            &manifest(),
+            42,
+            &events(),
+            Verdict::Completed { value: 0 },
+            "denied",
+            Some(&k),
+        );
+        assert_eq!(super::verify(&rec, Some(&k)), Ok(Sealing::Keyed));
+        let mut m = rec;
+        m.approval = "verified_required".into();
+        assert!(
+            super::verify(&m, Some(&k)).is_err(),
+            "keyed: rewritten approval refused"
+        );
+    }
+
+    #[test]
+    fn keyed_seal_verifies_only_under_its_key_and_formats_do_not_downgrade() {
+        let k = key(1);
+        let rec = super::build(
+            "r",
+            &manifest(),
+            42,
+            &events(),
+            Verdict::Completed { value: 0 },
+            "not_required",
+            Some(&k),
+        );
+        assert!(rec.record_digest.starts_with("axrmac1:"));
+        assert_eq!(super::verify(&rec, Some(&k)), Ok(Sealing::Keyed));
+        assert!(
+            super::verify(&rec, Some(&key(2))).is_err(),
+            "wrong key refused"
+        );
+        assert!(
+            super::verify(&rec, None).is_err(),
+            "keyless cannot check a MAC"
+        );
+
+        // Unkeyed axrec3 under a key: refused (anyone can re-seal it).
+        let plain = completed();
+        assert_eq!(verify(&plain), Ok(Sealing::Unkeyed));
+        assert!(super::verify(&plain, Some(&k)).is_err());
+
+        // A legacy axrec2 record: verifies keyless, labelled; refused keyed.
+        let mut legacy = completed();
+        let head = legacy.events.last().unwrap().hash.clone();
+        legacy.record_digest = format!(
+            "axrec2:{}",
+            seal_hash(&head, &legacy.run_id, legacy.seed, &legacy.verdict)
+        );
+        assert_eq!(verify(&legacy), Ok(Sealing::ApprovalNotSealed));
+        assert!(Sealing::ApprovalNotSealed
+            .label()
+            .contains("approval not sealed"));
+        assert!(
+            super::verify(&legacy, Some(&k)).is_err(),
+            "keyed verifier refuses axrec2"
+        );
+    }
+
+    #[test]
+    fn a_record_is_bound_to_its_job() {
+        let rec = completed();
+        assert!(verify_job(&rec, &manifest()).is_ok());
+        let mut other = manifest();
+        other.grant.net = vec!["evil.com".into()];
+        assert!(verify_job(&rec, &other).is_err());
+        // A forger who re-chains a record from the edited job gets an intact
+        // record — which the ORIGINAL job still refuses.
+        let forged = build("r", &other, 42, &events(), Verdict::Completed { value: 0 });
+        assert!(verify(&forged).is_ok());
+        assert!(verify_job(&forged, &manifest()).is_err());
     }
 }

@@ -25,8 +25,13 @@ pub fn replay(
     supervisor_grant: &crate::grant::Grant,
     rt: &impl Runtime,
 ) -> Result<RunRecord, VerifyMismatch> {
-    // 1. The stored record must be intact before we trust it.
-    verify(stored)?;
+    // 1. The stored record must be intact before we trust it — under the same
+    //    `AXON_APPROVAL_KEY` the fresh run will be sealed with. A key set after
+    //    the run was archived therefore makes it unreplayable: the keyed
+    //    verifier refuses the unkeyed record (downgrade protection).
+    let key =
+        crate::approval::ApprovalKey::from_env().map_err(|detail| VerifyMismatch { detail })?;
+    verify(stored, key.as_ref())?;
 
     // 2. Re-execute with the recorded seed (the manifest carries it) under the
     //    stored run-id, then compare byte-for-byte.

@@ -6,7 +6,7 @@ use crate::gate::{admit, Admission};
 use crate::grant::{Budget, ExecPolicy, Grant, Label};
 use crate::manifest::{parse as parse_manifest, JobManifest};
 use crate::monitor::{ComplianceMonitor, MonitorResult, CONTAINMENT_VIOLATION_EXIT_CODE};
-use crate::record::{from_json, to_json, verify};
+use crate::record::{from_json, to_json, verify, verify_job};
 use crate::runtime::{AxonCoreRuntime, Runtime};
 use crate::{replay, supervisor};
 use std::path::{Path, PathBuf};
@@ -24,7 +24,7 @@ USAGE:
     axon-os run     <job.axjob> [--run-id ID] [--out DIR]
                     [--killable] [--coalition ROOT]
                     [--monitor <effects>] [--ledger <path>]
-    axon-os verify  <record.json>
+    axon-os verify  <record.json> [--job PATH]
     axon-os replay  <run-id> [--store DIR]
     axon-os kill    <run-id> [--store DIR] [--reason REASON]    (R27)
     axon-os status  [--store DIR] [--latest] [--json]           (R27)
@@ -135,7 +135,7 @@ pub fn run(args: Vec<String>) -> ExitCode {
             "run <job.axjob> [--run-id ID] [--out DIR] [--killable] [--monitor EFFECTS] [--ledger PATH]  — gate→run→record"
         ),
         ["verify", "--help"] => {
-            help("verify <record.json>  — recompute the hash chain; detect tamper")
+            help("verify <record.json> [--job PATH]  — recompute the hash chain and bind it to its job (default: the sibling <run_id>.axjob); detect tamper")
         }
         ["replay", "--help"] => {
             help("replay <run-id> [--store DIR]  — verify + re-run + assert identical")
@@ -151,7 +151,7 @@ pub fn run(args: Vec<String>) -> ExitCode {
         }
         ["explain", job] => cmd_explain(Path::new(job)),
         ["run", rest @ ..] => cmd_run(rest),
-        ["verify", record] => cmd_verify(Path::new(record)),
+        ["verify", rest @ ..] => cmd_verify(rest),
         ["replay", rest @ ..] => cmd_replay(rest),
         ["kill", rest @ ..] => cmd_kill(rest),
         ["status", rest @ ..] => cmd_status(rest),
@@ -586,7 +586,17 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
     ExitCode::from(rec.verdict.exit_code() as u8)
 }
 
-fn cmd_verify(record: &Path) -> ExitCode {
+fn cmd_verify(rest: &[&str]) -> ExitCode {
+    let (record, job) = match rest {
+        [record] => (Path::new(*record), None),
+        [record, "--job", job] | ["--job", job, record] => {
+            (Path::new(*record), Some(PathBuf::from(job)))
+        }
+        _ => {
+            eprintln!("axon-os verify: usage: verify <record.json> [--job PATH]");
+            return ExitCode::from(2);
+        }
+    };
     let src = match std::fs::read_to_string(record) {
         Ok(s) => s,
         Err(e) => {
@@ -601,12 +611,30 @@ fn cmd_verify(record: &Path) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match verify(&rec) {
-        Ok(()) => {
+    let key = match crate::approval::ApprovalKey::from_env() {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("axon-os verify: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    // G5c: the chain is checked against the record's OWN manifest_digest, so
+    // on its own it says nothing about which job ran. Bind it to the archived
+    // job (`run` writes `<run_id>.axjob` beside the record); no job ⇒ refused.
+    let job = job.unwrap_or_else(|| record.with_file_name(format!("{}.axjob", rec.run_id)));
+    let bound = read_manifest(&job)
+        .map_err(|e| crate::record::VerifyMismatch {
+            detail: format!("no usable job to bind the record to: {e}"),
+        })
+        .and_then(|m| verify(&rec, key.as_ref()).and_then(|s| verify_job(&rec, &m).map(|()| s)));
+    match bound {
+        Ok(sealing) => {
             println!(
-                "\u{2713} intact ({} events, digest {})",
+                "\u{2713} intact ({} events, digest {}; job {}; {})",
                 rec.events.len(),
-                rec.record_digest
+                rec.record_digest,
+                job.display(),
+                sealing.label()
             );
             ExitCode::from(0)
         }

@@ -27,12 +27,13 @@ pub mod runtime;
 pub mod supervisor;
 pub mod verdict;
 
-pub use approval::{canonical_grant, verify_approval};
+pub use approval::{canonical_grant, verify_approval, ApprovalKey, APPROVAL_KEY_ENV};
 pub use gate::{admit, Admission, DeclaredEffects};
 pub use grant::{Budget, EffectSet, ExecPolicy, Grant, Label};
 pub use manifest::{parse as parse_manifest, JobManifest};
 pub use record::{
-    build as build_record, verify as verify_record, AuditEvent, RawEvent, RunRecord, VerifyMismatch,
+    build as build_record, verify as verify_record, verify_job as verify_record_job, AuditEvent,
+    RawEvent, RunRecord, Sealing, VerifyMismatch,
 };
 pub use runtime::{Isolation, IsolationRequirement, PrincipalHandle, RunOutcome, Runtime};
 pub use supervisor::run as supervise;

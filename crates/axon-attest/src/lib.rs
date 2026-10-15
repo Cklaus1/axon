@@ -168,7 +168,10 @@ pub fn measure_kernel(
 /// A `==` on the signature would return as soon as the first byte differs,
 /// leaking how much of a forged signature was correct. The cost of doing this
 /// properly is one pass over 32 bytes.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+///
+/// Public so every MAC check in the workspace (axon-os approval tokens and run
+/// records) uses this one comparison rather than a `==` of its own.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

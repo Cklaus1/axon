@@ -748,6 +748,17 @@ EXEMPT += [
     (EV, '.ok_or_else(|| refused(format!("evaluation has no arm for policy {p}")))?;',
      "NOTHING TO ADMIT: no arm ran the policy, so there is no arm to return"),
 ]
+_OAK = ("OPERATOR-AUTHORED: AXON_APPROVAL_KEY is the operator's environment for the axon-os process "
+        "(ApprovalKey::from_env, as LedgerKey's AXON_ATTEST_KEY); the refusal only fails closed (the "
+        "run is denied on the approval axis, verify/replay refuse), never a fall back to unkeyed")
+EXEMPT += [
+    ('crates/axon-os/src/approval.rs', '        if operator_key.len() < 16 {', _OAK),
+    ('crates/axon-os/src/approval.rs', '            Ok(v) if !v.trim().is_empty() => {', _OAK),
+    ('crates/axon-os/src/approval.rs', '            Err(std::env::VarError::NotUnicode(_)) => {', _OAK),
+    ('crates/axon-os/src/approval.rs', 'fn decode_hex(s: &str) -> Option<Vec<u8>> {', _OAK),
+    ('crates/axon-os/src/supervisor.rs', '                Verdict::Denied {\n                    reason,\n                    axis: "approval".to_string(),\n                },\n                ApprovalStatus::Denied.as_str(),\n                None,', _OAK),
+    ('crates/axon-os/src/supervisor.rs', '                ApprovalStatus::Denied.as_str(),\n                None,', _OAK),
+]
 ST = "crates/axon-loop/src/store.rs"
 EXEMPT += [
     (ST, "        if operator_key.len() < 16 {",
@@ -1796,8 +1807,20 @@ EXEMPT += [
      _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
     (_SOR, '    if rec.record_digest.starts_with("axrec1:") {',
      _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
-    (_SOR, '    if rec.record_digest != format!("axrec2:{expect_seal}") {',
+    (_SOR, '            let Some(mac) = rec.record_digest.strip_prefix("axrmac1:") else {',
      _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
+    (_SOR, '            if !axon_attest::constant_time_eq(mac.as_bytes(), expect.as_bytes()) {',
+     _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
+    (_SOR, '            if rec.record_digest.starts_with("axrmac1:") {',
+     _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
+    (_SOR, '                if legacy != expect_seal {',
+     _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
+    (_SOR, '            if rec.record_digest != seal_digest(&seal, None) {',
+     _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
+    (_SOR, '    const TAMPERED: &str = "record_digest does not match the chain head (run_id, seed, verdict, \\',
+     _OSO + "; record::verify (a stored RunRecord's chain), whose callers are replay::replay and the `axon-os` CLI; supervise_requiring builds a record (record::build) and verifies none"),
+    (_SOR, '    if rec.manifest_digest != manifest_digest(manifest) {',
+     _OSO + "; record::verify_job (binds a stored RunRecord to its job), whose only caller is the `axon-os verify` CLI"),
     # axon-os/src/replay.rs
     (_SORP, '        Err(VerifyMismatch {',
      _OSO + "; replay::replay, called only by cli.rs cmd_replay"),
@@ -2391,8 +2414,8 @@ EXEMPT += [
 # amendment 74's integration note).
 EXEMPT += [
     ('crates/axon-attest/src/lib.rs',
-     'fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {',
-     _ATT + "; constant_time_eq, used only by axon-attest's own verify functions"),
+     'pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {',
+     _ATT + "; constant_time_eq, used by axon-attest's own verify functions and by axon-os record::verify (the keyed `axrmac1:` seal), which is " + _OSO),
     ('crates/axon-audit/src/lib.rs',
      '    fn from_str(s: &str) -> Option<EffectKind> {',
      _AUD + "; from_str (a ledger-file reader/helper)"),
@@ -3340,7 +3363,7 @@ _OSCLI = ("NOT ON THE PROTECTED ROUTE (checkable): the `axon-os` binary's own co
 EXEMPT += [
     ("crates/axon-os/src/cli.rs", head, _OSCLI) for head in (
         "pub fn run(args: Vec<String>) -> ExitCode {", "fn help(line: &str) -> ExitCode {",
-        "fn cmd_explain(job: &Path) -> ExitCode {", "fn cmd_verify(record: &Path) -> ExitCode {",
+        "fn cmd_explain(job: &Path) -> ExitCode {", "fn cmd_verify(rest: &[&str]) -> ExitCode {",
         "fn cmd_replay(rest: &[&str]) -> ExitCode {", "fn cmd_kill(rest: &[&str]) -> ExitCode {",
         "fn cmd_status(rest: &[&str]) -> ExitCode {",
         "fn status_all(store: &Path, latest_only: bool, json_out: bool) -> ExitCode {",
