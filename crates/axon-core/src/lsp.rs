@@ -732,11 +732,17 @@ fn compute_definition_lsp(
             continue; // dummy span — no location info
         }
 
-        let range = span_to_lsp_range(source, decl_span);
-        return Some(json!({
-            "uri": uri,
-            "range": range
-        }));
+        // An imported item's span indexes ITS file, not the open document.
+        return Some(match foreign_file(decl_span) {
+            Some((path, map)) => json!({
+                "uri": path_to_file_uri(&path),
+                "range": span_to_lsp_range(&map.source, decl_span)
+            }),
+            None => json!({
+                "uri": uri,
+                "range": span_to_lsp_range(source, decl_span)
+            }),
+        });
     }
 
     None
@@ -748,18 +754,32 @@ fn push_diagnostics(out: &mut impl Write, uri: &str, diagnostics: &[LspDiagnosti
     let diags: Vec<Value> = diagnostics
         .iter()
         .map(|d| {
-            let range = if d.span.start == 0 && d.span.end == 0 {
-                json!({"start":{"line":0,"character":0},"end":{"line":0,"character":0}})
-            } else {
-                span_to_lsp_range(source, d.span)
-            };
-            json!({
-                "range": range,
+            let mut diag = json!({
                 "severity": d.severity,
                 "code": d.code,
                 "source": "axon",
                 "message": d.message
-            })
+            });
+            if d.span.start == 0 && d.span.end == 0 {
+                diag["range"] =
+                    json!({"start":{"line":0,"character":0},"end":{"line":0,"character":0}});
+            } else if let Some((path, map)) = foreign_file(d.span) {
+                // Diagnostics are published for the open document only (a
+                // foreign URI would never be cleared on didChange/didClose), so
+                // anchor it at the `use` that brought the module in and point
+                // at the real location through relatedInformation.
+                diag["range"] = use_line_range(source, &path);
+                diag["relatedInformation"] = json!([{
+                    "location": {
+                        "uri": path_to_file_uri(&path),
+                        "range": span_to_lsp_range(&map.source, d.span)
+                    },
+                    "message": d.message
+                }]);
+            } else {
+                diag["range"] = span_to_lsp_range(source, d.span);
+            }
+            diag
         })
         .collect();
 
@@ -772,6 +792,58 @@ fn push_diagnostics(out: &mut impl Write, uri: &str, diagnostics: &[LspDiagnosti
         }
     });
     send_message(out, &notification);
+}
+
+/// The file a span belongs to, when that is not the open document. The open
+/// document is parsed without a source id; every imported module is interned.
+fn foreign_file(sp: span::Span) -> Option<(String, std::sync::Arc<span::SourceMap>)> {
+    let path = span::source_path_of(sp.source)?;
+    let map = span::source_map_of(sp.source)?;
+    Some((path, map))
+}
+
+/// Range of the `use` line in `source` that imports the module at `path`
+/// (`use a.b.{x}` / `use a::b` → `…/a/b.ax`). A module reached only
+/// transitively has no `use` of its own here: the first `use` brought it in.
+fn use_line_range(source: &str, path: &str) -> Value {
+    let mut first: Option<(usize, &str)> = None;
+    for (i, line) in source.lines().enumerate() {
+        let Some(rest) = line.trim_start().strip_prefix("use ") else {
+            continue;
+        };
+        first.get_or_insert((i, line));
+        let module: String = rest
+            .trim_start()
+            .chars()
+            .take_while(|c| !matches!(c, '{' | ';') && !c.is_whitespace())
+            .collect();
+        let segs: Vec<&str> = module.split(['.', ':']).filter(|s| !s.is_empty()).collect();
+        let rel = format!("{}.ax", segs.join("/"));
+        if path == rel || path.ends_with(&format!("/{rel}")) {
+            first = Some((i, line));
+            break;
+        }
+    }
+    let (line_no, text) = first.unwrap_or((0, ""));
+    let indent = text.len() - text.trim_start().len();
+    json!({
+        "start": {"line": line_no, "character": text[..indent].encode_utf16().count()},
+        "end": {"line": line_no, "character": text.encode_utf16().count()}
+    })
+}
+
+/// `file://` URI for an absolute path, percent-encoding every byte outside the
+/// RFC 3986 unreserved set (and `/`), as LSP clients compare URIs textually.
+fn path_to_file_uri(path: &str) -> String {
+    let mut uri = String::from("file://");
+    for &b in path.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/') {
+            uri.push(b as char);
+        } else {
+            uri.push_str(&format!("%{b:02X}"));
+        }
+    }
+    uri
 }
 
 // ── JSON-RPC framing ──────────────────────────────────────────────────────────
@@ -890,7 +962,12 @@ fn span_to_lsp_range(source: &str, sp: span::Span) -> Value {
 }
 
 fn byte_offset_to_lsp_pos(source: &str, byte_offset: usize) -> Value {
-    let clamped = byte_offset.min(source.len());
+    // A span end may fall inside a multi-byte char (`offset + 1` after a parse
+    // error); round down to the char's start rather than slice mid-char.
+    let mut clamped = byte_offset.min(source.len());
+    while !source.is_char_boundary(clamped) {
+        clamped -= 1;
+    }
     let prefix = &source[..clamped];
     let line = prefix.chars().filter(|&c| c == '\n').count() as u32;
     let last_newline = prefix.rfind('\n').map(|i| i + 1).unwrap_or(0);
@@ -1108,5 +1185,19 @@ mod tests {
             "expected unknown type error, got: {:?}",
             result.diagnostics
         );
+    }
+
+    #[test]
+    fn a_mid_character_offset_converts_without_panicking() {
+        // `é` is two bytes; offset 1 is inside it. A parse error right before a
+        // multi-byte char yields exactly such an end offset (`offset + 1`).
+        let src = "let x = \"é\"\nz";
+        let mid = src.find('é').unwrap() + 1;
+        let r = span_to_lsp_range(src, span::Span::new(mid - 1, mid));
+        assert_eq!(r["start"], json!({"line": 0, "character": 9}));
+        // Rounded down to the char's start: never past it, never a panic.
+        assert_eq!(r["end"], json!({"line": 0, "character": 9}));
+        let r = span_to_lsp_range(src, span::Span::new(mid, src.len() + 5));
+        assert_eq!(r["end"], json!({"line": 1, "character": 1}));
     }
 }
