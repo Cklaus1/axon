@@ -2506,3 +2506,6 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
   `browser_compute` FAIL on build errors but drop the compiler's stderr; `a_skip_that_elaborates_is_still_a_skip` and
   `a_failing_harness_is_never_a_skip_gate_04` re-implement the skip rule locally; `wasm_aot_stdout` treats a
   per-example wasm build failure as a sweep skip, held only by its floor.
+- **[P3] `axon session` under `AXON_REQUIRE_IMPORTS_DIGEST`** exits 8 for the whole session at the first cell whose
+  accumulated closure differs from the required digest (fail-closed, but it leaves the probe temp file and gives no
+  per-cell refusal). From the wave-1 implementation review, [INFERENCE] not reproduced. Turn the mismatch into a cell error.
