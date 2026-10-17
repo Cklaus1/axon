@@ -3781,6 +3781,37 @@ fn ast_approve_refuses_a_program_whose_imports_do_not_load() {
 }
 
 #[test]
+fn imports_and_ast_approve_refuse_a_use_without_mod_as_run_does() {
+    // AR4. `imports` and `ast approve` loaded the closure but never ran the
+    // resolver rule that makes `run` refuse a `use` whose module the program
+    // never declares (E0003), so they vouched for a program `run` refuses.
+    let (dir, main, _lib) = g1_program("use_without_mod");
+    std::fs::write(
+        &main,
+        "use lib.{helper}\nfn main() {\n    println(\"main says {helper()}\")\n}\n",
+    )
+    .unwrap();
+    for args in [
+        vec!["imports", "main.ax"],
+        vec!["imports", "main.ax", "--json"],
+        vec!["ast", "approve", "main.ax"],
+        vec!["run", "main.ax"],
+    ] {
+        let out = g1_axon(&dir).args(&args).output().unwrap();
+        let o = g1_out(&out);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "ATTACK: {args:?} vouched for a `use` that `run` refuses: {o}"
+        );
+        assert!(o.contains("E0003"), "{args:?}: {o}");
+        assert!(o.contains("module `lib` not found"), "{args:?}: {o}");
+        assert!(!dir.join("main.ax.approved").exists(), "{args:?}: {o}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_v1_approval_record_binds_the_entry_but_no_longer_approves() {
     // A `/1` record knows nothing of imports: matching entry → not approved,
     // non-blocking (no better than no record); differing entry → tampered.

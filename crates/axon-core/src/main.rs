@@ -8419,9 +8419,11 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
 
 /// Parse `src` and load its imports through the shared loader: the closure the
 /// program would run with and its `imports_digest`. A parse error, an import
-/// that does not load (E0901/E0902), or a closure that cannot be digested is
-/// printed and exits 2 — an approval or a listing of a program whose imports
-/// nobody resolved would vouch for nothing.
+/// that does not load (E0901/E0902), a `use` of a module the program never
+/// declares (E0003, which `run` refuses — AR4), or a closure that cannot be
+/// digested is printed and exits 2 — an approval or a listing of a program
+/// whose imports nobody resolved would vouch for nothing. Only E0003: other
+/// resolve or type errors are a verdict on the program, not on its closure.
 fn import_closure_of(src: &str, file: &Path) -> (axon_core::ImportClosure, String) {
     let mut program = match parse_source_located_cli(src, file) {
         Ok(p) => p,
@@ -8434,6 +8436,41 @@ fn import_closure_of(src: &str, file: &Path) -> (axon_core::ImportClosure, Strin
     if !errors.is_empty() {
         for e in &errors {
             eprintln!("error[{}]: {}", e.code, e.message);
+        }
+        process::exit(2);
+    }
+    let unresolved: Vec<axon_core::resolver::Diagnostic> =
+        axon_core::resolver::resolve_program(&program, &file.display().to_string())
+            .errors
+            .into_iter()
+            .filter(|d| d.code == axon_core::error::E0003)
+            .collect();
+    if !unresolved.is_empty() {
+        let source_map = axon_core::span::SourceMap::new(src.to_string());
+        for d in &unresolved {
+            let (line, col, dfile) = if d.span.is_dummy() {
+                (0, 0, file.display().to_string())
+            } else if let Some(map) = axon_core::span::source_map_of(d.span.source) {
+                let (l, c) = map.line_col(d.span.start);
+                let p = axon_core::span::source_path_of(d.span.source)
+                    .unwrap_or_else(|| file.display().to_string());
+                (l as u32, c as u32, p)
+            } else {
+                let (l, c) = source_map.line_col(d.span.start);
+                (l as u32, c as u32, file.display().to_string())
+            };
+            emit_pipeline_diag(&axon_core::PipelineDiagnostic {
+                code: d.code.to_string(),
+                message: d.message.clone(),
+                file: dfile,
+                line,
+                col,
+                severity: "error".to_string(),
+                caret: String::new(),
+                expected: None,
+                found: None,
+                help: d.fix.clone(),
+            });
         }
         process::exit(2);
     }

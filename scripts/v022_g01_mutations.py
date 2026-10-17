@@ -11337,6 +11337,13 @@ MUTATIONS += [
      'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
 ]
 
+# gaps2 run — core lane (AR4/AR5, ids M3640-M3659).
+MUTATIONS += [
+    ('M3640', "AR4: `imports`/`ast approve` refuse a `use` whose module the program never declares (E0003), as `run` does", 'crates/axon-core/src/main.rs',
+     '    if !unresolved.is_empty() {\n        let source_map', '    if false {\n        let source_map',
+     'axon-core', '--no-default-features --test cli_run', 'imports_and_ast_approve_refuse_a_use_without_mod_as_run_does'),
+]
+
 
 # C9 round 15 (amendment 121): M3260 is retired under the four-cell rule against M3456. The
 # candidate's `use` declarations are set aside for the merged check (M3260's guard) AND a merged
