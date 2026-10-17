@@ -709,37 +709,19 @@ fn compute_definition_lsp(
     character: u32,
 ) -> Option<Value> {
     let byte_offset = lsp_pos_to_byte_offset(source, line, character)?;
-    let word = word_at_offset(source, byte_offset)?;
+    let decl_span = compute_definition(result.program.as_ref()?, source, byte_offset)?;
 
-    let program = result.program.as_ref()?;
-
-    for item in &program.items {
-        let decl_span = match item {
-            ast::Item::FnDef(f) if f.name == word => f.span,
-            ast::Item::TypeDef(t) if t.name == word => t.span,
-            ast::Item::EnumDef(e) if e.name == word => e.span,
-            ast::Item::TraitDef(t) if t.name == word => t.span,
-            _ => continue,
-        };
-
-        if decl_span.start == 0 && decl_span.end == 0 {
-            continue; // dummy span — no location info
-        }
-
-        // An imported item's span indexes ITS file, not the open document.
-        return Some(match foreign_file(decl_span) {
-            Some((path, map)) => json!({
-                "uri": path_to_file_uri(&path),
-                "range": span_to_lsp_range(&map.source, decl_span)
-            }),
-            None => json!({
-                "uri": uri,
-                "range": span_to_lsp_range(source, decl_span)
-            }),
-        });
-    }
-
-    None
+    // An imported item's span indexes ITS file, not the open document.
+    Some(match foreign_file(decl_span) {
+        Some((path, map)) => json!({
+            "uri": path_to_file_uri(&path),
+            "range": span_to_lsp_range(&map.source, decl_span)
+        }),
+        None => json!({
+            "uri": uri,
+            "range": span_to_lsp_range(source, decl_span)
+        }),
+    })
 }
 
 // ── Diagnostics push ──────────────────────────────────────────────────────────
@@ -1030,7 +1012,10 @@ pub fn compute_hover(
 /// Compute a go-to-definition location for the identifier at `byte_offset`.
 ///
 /// Returns `None` if no definition is found or if span information is not
-/// available.
+/// available. The span may index an imported module's file rather than
+/// `source` (after `load_use_decls`): `span::source_path_of(span.source)` and
+/// `span::source_map_of(span.source)` name that file and its text, and only a
+/// span neither resolves belongs to `source`.
 pub fn compute_definition(
     program: &ast::Program,
     source: &str,
@@ -1145,13 +1130,18 @@ mod tests {
     fn lsp_definition_no_crash() {
         let src = "fn helper() -> i64 {\n    42\n}\nfn main() -> i64 {\n    helper()\n}\n";
         let result = analyse_source(src, "test.ax");
-        if let Some(prog) = &result.program {
-            if let Some(pos) = src.rfind("helper") {
-                let def = compute_definition(prog, src, pos);
-                // May be None if spans not tracked; just ensure no panic
-                let _ = def;
-            }
-        }
+        let prog = result.program.as_ref().expect("clean source parses");
+        let pos = src.rfind("helper").unwrap();
+        let def = compute_definition(prog, src, pos).expect("a local fn has a definition");
+        assert!(
+            def.start < def.end && def.end <= src.len(),
+            "the definition span lies inside src: {def:?}"
+        );
+        assert!(
+            src[def.start..def.end].contains("fn helper"),
+            "the definition span covers the fn: {:?}",
+            &src[def.start..def.end]
+        );
     }
 
     #[test]
