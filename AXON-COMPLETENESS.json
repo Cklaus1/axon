@@ -560,6 +560,23 @@
       "gap": "gaps run (G5): tokens are axon-approval/3 and bind the import closure. With AXON_APPROVAL_KEY (hex, >=16 bytes; subkeys HMAC(key,'axon-approval token v1') / 'axon-os record v1') the digest is `axmac1:` HMAC and a keyed verifier accepts nothing else; without a key it is `axtok3:` sha256, labelled integrity only, still forgeable by anyone who can edit the program and the token. /1 tokens: refused under a key; keyless only for an import-free program, pinned to the empty closure. axon-os now checks `schema` like axon-intent; both call one formula (axon_os::approval). Mutation rows M3540-M3543, M3560-M3575 killed."
     },
     {
+      "area": "authority",
+      "subsystem": "crate axon-jobctl",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "partial",
+      "evidence": [
+        "crates/axon-jobctl/src/lib.rs",
+        "crates/axon-os/src/runtime.rs",
+        "crates/axon-cortex/src/generate.rs",
+        "crates/axon-cortex/tests/cli.rs",
+        "crates/axon-intent/tests/signals.rs",
+        "crates/axon-os/tests/supervisor_signals.rs"
+      ],
+      "gap": "gaps2 run (KG1-KG3, KG5): one libc-only crate owns process-group jobs (process_group(0), killpg with a pid>1 guard, DRAIN_GRACE-bounded drains, kill-then-reap on Drop) and termination-signal forwarding (only a binary's main installs it; a second, different mode panics). axon-os `run`, axon-intent's synthesizer and cortex's `cmd:` generator run on it; cortex and axon-intent forward SIGINT/SIGTERM/SIGHUP and die by the same signal. Production proof: the cortex repair-path receipt (108/115, 0 false successes, no lost fix) ran the generator through it. Mutation rows M3600-M3605 killed. NOT covered: SIGQUIT is not forwarded; axon-reflex's sidecar still dies alone (KG4 excluded by human decision); axon-intent synth's own pipe reads (opportunities)."
+    },
+    {
       "area": "evidence",
       "subsystem": "crate axon-ledger",
       "implementation": "partial",
