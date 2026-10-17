@@ -2509,3 +2509,12 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
 - **[P3] `axon session` under `AXON_REQUIRE_IMPORTS_DIGEST`** exits 8 for the whole session at the first cell whose
   accumulated closure differs from the required digest (fail-closed, but it leaves the probe temp file and gives no
   per-cell refusal). From the wave-1 implementation review, [INFERENCE] not reproduced. Turn the mismatch into a cell error.
+- **[P3] Approval residue from the token lane (G1e/G5, not acted on):** `authorize` and the supervisor each read the
+  token and the program, so the program can change between the two reads (the child's imports digest covers modules,
+  not the entry); `axon-intent approve --program <other>` resolves imports from a different cwd than the manifest's
+  program; `verify_triple` checks program and grant only, imports are enforced only at run; `axon imports` counts a
+  `use` with no `mod` as loading a module while `axon run` fails on it; the Fabric microVM guest has no channel for the
+  digest, so Fabric refuses instead of binding; R24/R36/R41 docs may still name `axtok1`.
+- **[P3] `cargo clippy --features serde-json -p axon-core -- -D warnings` fails on lsp.rs** (4 lints: needless `&mut`
+  at :115 and :145, `loop` → `while let` at :274, redundant closure at :543), present before this run; the gate's clippy
+  stage runs `--no-default-features` only, so lsp.rs is never linted.
