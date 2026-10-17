@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 66a9d59e9f8675fb03bcf9049191f481b6b12ec3
+generated-at: 1149db800fafab7295f359e6131aa0f5337d9438
 
-`git diff --numstat 31413ca7..66a9d59e -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..1149db80 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -55,7 +55,7 @@ generated-at: 66a9d59e9f8675fb03bcf9049191f481b6b12ec3
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 396 | 146 |
-| `crates/axon-core/src/interp.rs` | 7468 | 2798 |
+| `crates/axon-core/src/interp.rs` | 7581 | 2874 |
 | `crates/axon-core/src/interp/builtins.rs` | 746 | 594 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
@@ -64,7 +64,7 @@ generated-at: 66a9d59e9f8675fb03bcf9049191f481b6b12ec3
 | `crates/axon-core/src/interp/env.rs` | 1230 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 2194 | 606 |
 | `crates/axon-core/src/interp/goal.rs` | 87 | 42 |
-| `crates/axon-core/src/interp/kernel_tests.rs` | 336 | 0 |
+| `crates/axon-core/src/interp/kernel_tests.rs` | 363 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 99 | 63 |
@@ -98,9 +98,9 @@ generated-at: 66a9d59e9f8675fb03bcf9049191f481b6b12ec3
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 55425 | 7700 |
+| total | 55565 | 7776 |
 
-`git log --reverse 31413ca7..66a9d59e -- crates/axon-core/src`:
+`git log --reverse 31413ca7..1149db80 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -382,7 +382,8 @@ generated-at: 66a9d59e9f8675fb03bcf9049191f481b6b12ec3
 | 642be152 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | ca49d537 | gaps wasm runtime lookup | BUILD TOOLING (axon build --target wasm32-*: which libaxon_rt.a is linked): the running compiler's own cargo target dir is searched before walking up from the cwd, the same dir the native link uses; no change in what any program computes, accepts or refuses |
 | 66a9d59e | gaps G3 LSP locations | TOOLING (axon lsp only): a module path from a relative AXON_PATH entry is made absolute against the server's cwd before it is encoded as a file:// URI; no change in what any run computes, accepts or refuses |
-| 278 commits | | |
+| 43971d40 | gaps harness hygiene | TEST-ONLY (cfg(test) operator-RNG override; the non-test build is unchanged) |
+| 279 commits | | |
 <!-- END MECHANICAL -->
 
 
