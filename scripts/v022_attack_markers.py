@@ -3041,3 +3041,8 @@ ATTACK_MARKERS.update({
     'M3497': r"ATTACK: sealed code reached the operator \(module-level initializer\): Ok\(Completed\)",
     'M3498': r"ATTACK: sealed code reached the operator \(a candidate struct's where, built by the operator\): Ok\(Completed\)",
 })
+
+# gaps2 run, harness lane (tasks/harness-hygiene-spec.md), ids M3680-M3699.
+ATTACK_MARKERS.update({
+    'M3680': r'ATTACK: a skip line outside the three-line window decided the verdict',
+})

@@ -11337,6 +11337,16 @@ MUTATIONS += [
      'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
 ]
 
+# gaps2 run, harness lane (tasks/harness-hygiene-spec.md), ids M3680-M3699.
+MUTATIONS += [
+    # H5: the skip detector's window bound in cli_run's `tail_says_skipping`. `harness_skipped`'s
+    # exit-status assert has no row: its killer is a should_panic test, whose failure ("did not
+    # panic") leaves no panic block for a marker to match; that mutation is verified by hand.
+    ('M3680', 'HARNESS (gaps2 H5): the skip detector looks back three non-empty lines, no more', 'crates/axon-core/tests/cli_run.rs',
+     '    body.iter().rev().take(3).any(|l| says_skip(l))', '    body.iter().rev().take(10).any(|l| says_skip(l))',
+     'axon-core', '--no-default-features --test cli_run', 'skip_rule_table::detectors_agree_on_every_shape'),
+]
+
 
 # C9 round 15 (amendment 121): M3260 is retired under the four-cell rule against M3456. The
 # candidate's `use` declarations are set aside for the merged check (M3260's guard) AND a merged

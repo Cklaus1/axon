@@ -39,6 +39,10 @@ row noskip "indented case skips, OK"    '  SKIP split(3): codegen unavailable\n 
 row noskip "mid-run note then PASS"     'foo_parity: skipping 2 of 40 cases\nfoo_parity: PASS — 38 cases agree\n'
 row noskip "plain PASS"                 'foo_parity: PASS — all good\n'
 row noskip "empty output"               ''
+# The window BOUND: a column-0 skip line four non-empty lines from the end.
+row noskip "skip outside the window"    'foo_parity: native build failed — skipping\nfoo_parity: note a\nfoo_parity: note b\nfoo_parity: note c\n'
+# A grandfathered prose skip as the FINAL line.
+row skip   "final-line prose skip"      'foo_parity: codegen build unavailable (LLVM absent) — skipping\n'
 
 if [ "$bad" -ne 0 ]; then
   echo "test_harness_skip: FAIL — harness_says_skip disagrees with the rule table"

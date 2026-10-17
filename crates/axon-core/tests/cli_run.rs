@@ -161,84 +161,6 @@ fn tail_says_skipping(s: &str) -> bool {
     body.iter().rev().take(3).any(|l| says_skip(l))
 }
 
-#[cfg(test)]
-mod harness_skip_rules {
-    /// AUDIT T51. The two rules `harness_skipped` enforces, tested directly
-    /// rather than through a real harness — a harness that both fails AND says
-    /// "skipping" is exactly the state that is hard to produce on demand and was
-    /// the one that shipped.
-    #[test]
-    fn a_failing_harness_is_never_a_skip_gate_04() {
-        let last_line = |s: &str| {
-            s.lines()
-                .rev()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or("")
-                .to_string()
-        };
-
-        // The shape random_i64_parity.sh actually produced: a FAIL line and a
-        // skip line together, non-zero exit. The OLD rule (substring anywhere)
-        // called this a skip and the test reported green.
-        let out = "some_parity: FAIL — a real divergence\n                   some_parity: codegen unavailable — skipping\n";
-        assert!(
-            out.contains("skipping"),
-            "fixture must reproduce the substring the old rule matched"
-        );
-        // The new rule's FIRST gate is the exit status, which this fixture
-        // fails — `harness_skipped` would panic. That ordering is the fix; the
-        // last-line rule below is the second, independent tightening.
-
-        // A mid-run note must not read as a skipped harness.
-        let midrun = "parity: skipping 2 of 40 cases (unsupported)\n                      parity: PASS — 38 cases agree\n";
-        assert!(
-            !last_line(midrun).contains("skipping"),
-            "a mid-run 'skipping N cases' note is not a skipped harness"
-        );
-
-        // A genuine skip announces itself last.
-        let real_skip = "parity: building codegen axon binary…\n                         parity: codegen build unavailable (LLVM absent) — skipping\n";
-        assert!(
-            last_line(real_skip).contains("skipping"),
-            "a real skip is recognisable from the final line"
-        );
-    }
-
-    /// The case that broke `gate.sh --strict` twice (2026-09-08). This test and
-    /// the one above both re-implement the rule locally instead of calling
-    /// `harness_skipped`, which is exactly why they stayed green while the real
-    /// function was wrong — so this one states the rule as a shared closure and
-    /// checks the SHAPE production must handle.
-    #[test]
-    fn a_skip_that_elaborates_is_still_a_skip() {
-        // Mirror of the window rule in `harness_skipped`. Keep the two in step.
-        let tail_says_skipping = |s: &str| {
-            s.lines()
-                .rev()
-                .filter(|l| !l.trim().is_empty())
-                .take(3)
-                .any(|l| l.contains("skipping") || l.contains("this is a SKIP"))
-        };
-
-        // Verbatim from all_examples_parity.sh. The skip line is SECOND-to-last;
-        // the clarification added to make it unmissable to a human is what hid it
-        // from a last-line-only rule.
-        let elaborated = "all_examples_parity: locating codegen axon binary…\n             all_examples_parity: `target/debug/axon` cannot codegen (interp-only build, or LLVM absent) — skipping\n             all_examples_parity: this is a SKIP, not a pass: set AXON=<codegen binary> to actually run it.\n";
-        assert!(
-            tail_says_skipping(elaborated),
-            "a skip followed by an explanation of the skip is still a skip"
-        );
-
-        // The tightening above must not be given away: a mid-run note far from
-        // the end is still not a skipped harness.
-        let midrun = "parity: skipping 2 of 40 cases (unsupported)\n             parity: case a ok\n             parity: case b ok\n             parity: case c ok\n             parity: PASS — 38 cases agree\n";
-        assert!(
-            !tail_says_skipping(midrun),
-            "a 'skipping N cases' note outside the tail window is not a skipped harness"
-        );
-    }
-}
-
 /// it believes it is running actually ran.
 /// Attempt `axon build <fixture>` and return its combined output, or `None` when
 /// THIS axon has no codegen backend at all (in which case the caller must skip,
@@ -33415,9 +33337,10 @@ fn eprint_writes_to_stderr_without_a_newline() {
     );
 }
 
-/// The skip-rule table, checked against the REAL `tail_says_skipping` rather
-/// than a local re-implementation (the two tests above re-implement it, which
-/// is precisely how they stayed green while the function was wrong).
+/// The skip-rule table, checked against the REAL `tail_says_skipping` and
+/// `harness_skipped`. Two older tests re-implemented the rule as local
+/// closures and stayed green while the real function was wrong; they were
+/// deleted, and every shape they covered is a row here.
 ///
 /// Every row here is also a row in `scripts/test_harness_skip.sh`, the shell
 /// unit check for `harness_says_skip` in `scripts/lib/harness_skip.sh`. If you
@@ -33460,6 +33383,36 @@ mod skip_rule_table {
         ));
         assert!(!tail_says_skipping("foo_parity: PASS — all good\n"));
         assert!(!tail_says_skipping(""));
+        // The window BOUND: a column-0 skip line four non-empty lines from the
+        // end, followed by notes that state neither a skip nor a verdict.
+        assert!(
+            !tail_says_skipping(
+                "foo_parity: native build failed — skipping\nfoo_parity: note a\nfoo_parity: note b\nfoo_parity: note c\n"
+            ),
+            "ATTACK: a skip line outside the three-line window decided the verdict"
+        );
+        // A grandfathered prose skip as the FINAL line.
+        assert!(
+            tail_says_skipping("foo_parity: codegen build unavailable (LLVM absent) — skipping\n"),
+            "ATTACK: a final-line prose skip was not read as a skip"
+        );
+    }
+
+    /// The exit-status rule, `harness_skipped`'s first gate: a harness that
+    /// exited non-zero FAILED, whatever its tail says. The fixture ends on the
+    /// explicit marker, so only the status can refuse it.
+    #[cfg(unix)]
+    #[test]
+    #[should_panic(expected = "a failure is never a skip")]
+    fn a_failing_harness_is_never_a_skip() {
+        use std::os::unix::process::ExitStatusExt;
+        let out = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        let stdout = "foo_parity: FAIL — a real divergence\nfoo_parity: SKIP — x\n";
+        super::harness_skipped(&out, stdout, "", "scripts/foo_parity.sh");
     }
 }
 
