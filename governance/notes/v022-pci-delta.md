@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: a91a68a9d270c8ecb7ee0cce075eecc43bdf3466
+generated-at: c691a51b8c6dba78ff3b5c44436d2a781fbb0c80
 
-`git diff --numstat 31413ca7..a91a68a9 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..c691a51b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -84,9 +84,9 @@ generated-at: a91a68a9d270c8ecb7ee0cce075eecc43bdf3466
 | `crates/axon-core/src/interp/vm/tests.rs` | 2688 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
-| `crates/axon-core/src/lib.rs` | 262 | 73 |
+| `crates/axon-core/src/lib.rs` | 300 | 75 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
-| `crates/axon-core/src/lsp.rs` | 108 | 14 |
+| `crates/axon-core/src/lsp.rs` | 179 | 57 |
 | `crates/axon-core/src/main.rs` | 1327 | 328 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
@@ -98,9 +98,9 @@ generated-at: a91a68a9d270c8ecb7ee0cce075eecc43bdf3466
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 55536 | 7703 |
+| total | 55645 | 7748 |
 
-`git log --reverse 31413ca7..a91a68a9 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..c691a51b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -382,9 +382,13 @@ generated-at: a91a68a9d270c8ecb7ee0cce075eecc43bdf3466
 | 642be152 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | ca49d537 | gaps wasm runtime lookup | BUILD TOOLING (axon build --target wasm32-*: which libaxon_rt.a is linked): the running compiler's own cargo target dir is searched before walking up from the cwd, the same dir the native link uses; no change in what any program computes, accepts or refuses |
 | 66a9d59e | gaps G3 LSP locations | TOOLING (axon lsp only): a module path from a relative AXON_PATH entry is made absolute against the server's cwd before it is encoded as a file:// URI; no change in what any run computes, accepts or refuses |
+| 69f8e755 | gaps LSP residue | TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): the four clippy lints of the serde-json configuration are fixed (needless &mut on resolve_program/infer_program, loop to while let in run_lsp, a redundant closure in format_fn_hover); the program stays mutable for load_use_decls and fill_captures |
 | b46327e5 | gaps2 AR4 import closure E0003 | CLI (`axon imports`, `axon ast approve`): import_closure_of now runs the resolver on the loaded program and, on any E0003 (a `use` of a module the program never declares), prints the diagnostic as `axon run` does and exits 2 before listing the closure or writing `.approved`. Other resolve or type errors are unchanged (imports reports a closure, not a verdict). Knock-on: `axon-intent approve` on such a program exits 2 where it minted a token for a program `run` refuses. |
+| b440517f | gaps LSP residue | TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): the server's go-to-definition calls the public compute_definition instead of repeating its item loop (the two loops were identical, dummy-span skip included); compute_definition's doc says the span may index an imported module's file; lsp_definition_no_crash asserts the span it gets |
 | b65b837e | gaps2 AR5 session imports digest | CLI (`axon session` under AXON_REQUIRE_IMPORTS_DIGEST only): the digest check is split into imports_digest_mismatch (non-exiting) and the exiting enforce_required_imports_digest every other verb keeps unchanged; run_check_pipeline_located wraps check_pipeline_located_unenforced. The session's trailing-expression probe treats a mismatch as a failed probe (its temp file is removed); the real check refuses the cell with new code E2404 before it executes or accumulates, removes its temp file, marks the transcript, emits the cell's frame or human render, reads no further input and ends through the normal end path (ledger flush with its truncation check, replay-divergence check), then exits 8. Equality stays the rule. No change to what any run computes or which closures are accepted. |
-| 280 commits | | |
+| 4c21fa9a | gaps LSP residue | TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): the loader records which entry `use` reached each module; the digest, `axon imports` and every CLI output are unchanged (LoadedModule.via: the entry `use` whose load first merged the module, overridden by the entry's own `use` of it; ImportClosure::via_of; AnalysisResult carries the closure). The LSP anchors an imported module's diagnostic on that `use`, located in the token stream segment for segment, instead of on a text line matched by path suffix (which misanchored transitive modules, `use` lines inside block comments and modules whose path ends like another's) |
+| c691a51b | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 284 commits | | |
 <!-- END MECHANICAL -->
 
 
