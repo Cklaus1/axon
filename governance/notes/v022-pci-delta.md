@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 1149db800fafab7295f359e6131aa0f5337d9438
+generated-at: 5d35a00b37d04a25a8358e559956f2dae1d7761b
 
-`git diff --numstat 31413ca7..1149db80 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..5d35a00b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -87,7 +87,7 @@ generated-at: 1149db800fafab7295f359e6131aa0f5337d9438
 | `crates/axon-core/src/lib.rs` | 262 | 73 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 108 | 14 |
-| `crates/axon-core/src/main.rs` | 1218 | 325 |
+| `crates/axon-core/src/main.rs` | 1296 | 343 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
 | `crates/axon-core/src/parser.rs` | 457 | 31 |
@@ -98,9 +98,9 @@ generated-at: 1149db800fafab7295f359e6131aa0f5337d9438
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 55565 | 7776 |
+| total | 55643 | 7794 |
 
-`git log --reverse 31413ca7..1149db80 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..5d35a00b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -383,7 +383,8 @@ generated-at: 1149db800fafab7295f359e6131aa0f5337d9438
 | ca49d537 | gaps wasm runtime lookup | BUILD TOOLING (axon build --target wasm32-*: which libaxon_rt.a is linked): the running compiler's own cargo target dir is searched before walking up from the cwd, the same dir the native link uses; no change in what any program computes, accepts or refuses |
 | 66a9d59e | gaps G3 LSP locations | TOOLING (axon lsp only): a module path from a relative AXON_PATH entry is made absolute against the server's cwd before it is encoded as a file:// URI; no change in what any run computes, accepts or refuses |
 | 43971d40 | gaps harness hygiene | TEST-ONLY (cfg(test) operator-RNG override; the non-test build is unchanged) |
-| 279 commits | | |
+| 4694410b | gaps harness hygiene | TOOLING (wasm link diagnostics on stderr only; no change in what any run computes, accepts or links) |
+| 280 commits | | |
 <!-- END MECHANICAL -->
 
 
