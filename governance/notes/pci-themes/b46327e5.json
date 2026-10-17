@@ -1,0 +1,4 @@
+{
+  "theme": "gaps2 AR4 import closure E0003",
+  "text": "CLI (`axon imports`, `axon ast approve`): import_closure_of now runs the resolver on the loaded program and, on any E0003 (a `use` of a module the program never declares), prints the diagnostic as `axon run` does and exits 2 before listing the closure or writing `.approved`. Other resolve or type errors are unchanged (imports reports a closure, not a verdict). Knock-on: `axon-intent approve` on such a program exits 2 where it minted a token for a program `run` refuses."
+}
