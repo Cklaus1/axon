@@ -157,11 +157,10 @@ cargo_discard_hits() {
     }' "$@" | grep -E -- "$CARGO_DISCARD_RE"
 }
 # The detector's own rows: forms that must be caught, and forms that must not.
-_shape_fx="$(mktemp)"; trap 'rm -f "$_shape_fx"' EXIT
 fxrow() { # fxrow <expect: hit|clean> <label> <script text (printf %b)>
   local got=clean
-  printf '%b' "$3" > "$_shape_fx"
-  [ -n "$(cargo_discard_hits "$_shape_fx")" ] && got=hit
+  # Fed through process substitution, not a temp file: the gate's drift check refuses a test script's redirection into a real path.
+  [ -n "$(cargo_discard_hits <(printf '%b' "$3"))" ] && got=hit
   if [ "$got" = "$1" ]; then echo "  ok    shape row: $2"; else echo "  WRONG shape row: $2 — detector said $got"; shape_bad=1; fi
 }
 fxrow hit   "2>/dev/null"                 'cargo build -q -p x 2>/dev/null || exit 0\n'

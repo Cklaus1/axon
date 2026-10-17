@@ -862,3 +862,9 @@ lines, instead of guessing where literals are.
 - Mistake (gaps2 harness lane): passed worktree-relative paths (`scripts/…`) to the read/edit tools from a lane worktree; they resolve against the session's root repo (`/home/cklaus/projects/axon`), so reads showed main's file and an edit would have landed in the wrong tree. Rule: in a lane worktree, give the file tools absolute paths, every call.
 - Mistake (gaps2 jobs, KG1): named the re-exec role variables of axon-jobctl's unit tests `AXON_JOBCTL_TEST_*`. axon-core's `env_registry` guard scans every `crates/*/src` file as text, `#[cfg(test)]` modules included, so `gate.sh --fast` failed on two unregistered `AXON_*` reads that no shipped binary makes. Renamed to `JOBCTL_TEST_*`. Rule: a test-only environment variable in a `src/` file never starts with `AXON_`; that prefix is reserved for controls the reference lists.
 - Mistake (gaps2 jobs, KG2): recorded a scorecard `waive` for a change to the cortex `cmd:` generator because I judged it process-control only. The integrator overruled it: the change alters how the generator's output is read, and a cut-off read would change candidates, which is exactly what the receipt measures. The waiver was reverted before commit and the paid `regress` run (PASS, $0.14) recorded instead. Rule: any change to how cortex reads, bounds or kills a generator gets a receipt run, not a waiver; a waiver is for changes that cannot touch a proposal's bytes.
+
+## gaps2 — integrator
+- **A lane's `gate.sh --fast` does not run the drift checkers.** `opkit_ns_drift` (full and strict) refused the H4 review fix's
+  temp-file fixture (`printf … > "$_shape_fx"` in a test script). Process substitution avoids the write. Also: the bare
+  string `opkit_ns` anywhere in a script, even in a comment, makes the file kit-related and switches on the stricter
+  dynamic-command rule. Run `python3 -B scripts/opkit_ns_drift.py` after any `scripts/test_*.sh` edit.
