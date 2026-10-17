@@ -975,31 +975,41 @@ fn take_required_imports_digest(command: &Command) {
     let _ = REQUIRED_IMPORTS_DIGEST.set(digest.to_string());
 }
 
-/// Refuse (exit 8, before anything executes) when `AXON_REQUIRE_IMPORTS_DIGEST`
-/// was set and the modules just loaded are not the closure it names. Called by
-/// [`run_check_pipeline_located`] after every load.
-fn enforce_required_imports_digest(closure: &axon_core::ImportClosure) {
-    let Some(required) = REQUIRED_IMPORTS_DIGEST.get() else {
-        return;
-    };
+/// Why the modules just loaded are not the closure `AXON_REQUIRE_IMPORTS_DIGEST`
+/// names, or `None` when the variable was not set or they are. The first line is
+/// the reason; the rest names the required and loaded digests and the modules.
+fn imports_digest_mismatch(closure: &axon_core::ImportClosure) -> Option<String> {
+    let required = REQUIRED_IMPORTS_DIGEST.get()?;
     let loaded = match closure.digest() {
         Ok(d) => d,
-        Err(e) => {
-            eprintln!("error: {REQUIRE_IMPORTS_DIGEST_ENV}: {e}; refusing to run");
-            process::exit(8);
-        }
+        Err(e) => return Some(format!("{REQUIRE_IMPORTS_DIGEST_ENV}: {e}")),
     };
-    if &loaded != required {
-        let names: Vec<&str> = closure.modules.iter().map(|m| m.name.as_str()).collect();
-        eprintln!(
-            "error: {REQUIRE_IMPORTS_DIGEST_ENV}: the imports loaded are not the approved \
-             closure; refusing to run\n  required: {required}\n  loaded:   {loaded} (modules: {})",
-            if names.is_empty() {
-                "none".to_string()
-            } else {
-                names.join(", ")
-            }
-        );
+    if &loaded == required {
+        return None;
+    }
+    let names: Vec<&str> = closure.modules.iter().map(|m| m.name.as_str()).collect();
+    Some(format!(
+        "{REQUIRE_IMPORTS_DIGEST_ENV}: the imports loaded are not the approved closure\n  \
+         required: {required}\n  loaded:   {loaded} (modules: {})",
+        if names.is_empty() {
+            "none".to_string()
+        } else {
+            names.join(", ")
+        }
+    ))
+}
+
+/// Refuse (exit 8, before anything executes) when `AXON_REQUIRE_IMPORTS_DIGEST`
+/// was set and the modules just loaded are not the closure it names. Called by
+/// [`run_check_pipeline_located`] after every load. `axon session` checks
+/// [`imports_digest_mismatch`] itself, so a refused cell gets its frame and the
+/// session ends through its normal end path (AR5).
+fn enforce_required_imports_digest(closure: &axon_core::ImportClosure) {
+    if let Some(why) = imports_digest_mismatch(closure) {
+        match why.split_once('\n') {
+            Some((head, rest)) => eprintln!("error: {head}; refusing to run\n{rest}"),
+            None => eprintln!("error: {why}; refusing to run"),
+        }
         process::exit(8);
     }
 }
@@ -4673,6 +4683,9 @@ struct Session {
     /// Names the previous cell could NOT persist, with the reason (R44 §4 S10).
     skipped: Vec<String>,
     cell_no: usize,
+    /// A cell's import closure was not the `AXON_REQUIRE_IMPORTS_DIGEST` one
+    /// (E2404): the session reads no further input and ends with exit 8 (AR5).
+    imports_refused: bool,
 }
 
 impl Session {
@@ -4682,6 +4695,7 @@ impl Session {
             prelude: String::new(),
             skipped: Vec::new(),
             cell_no: 0,
+            imports_refused: false,
         }
     }
 
@@ -5269,6 +5283,9 @@ fn cmd_session(protocol: Option<String>, show_program: bool, transcript: Option<
             }
             let r = run_cell(&mut sess, &cell, show_program, transcript.as_ref());
             println!("{}", render_cell_jsonl(&sess, &r));
+            if sess.imports_refused {
+                break;
+            }
             continue;
         }
         if line.trim().is_empty() {
@@ -5278,6 +5295,9 @@ fn cmd_session(protocol: Option<String>, show_program: bool, transcript: Option<
             let r = run_cell(&mut sess, &buf, show_program, transcript.as_ref());
             render_cell_human(&r);
             buf.clear();
+            if sess.imports_refused {
+                break;
+            }
             continue;
         }
         buf.push_str(&line);
@@ -5311,6 +5331,12 @@ fn cmd_session(protocol: Option<String>, show_program: bool, transcript: Option<
             std::env::var(axon_core::replay::RECORD_ENV_VAR).unwrap_or_default()
         );
     }
+    // AR5: the first cell whose import closure is not the required one ends the
+    // session, exit 8 — after its frame, the ledger's end check and the replay
+    // check above, so nothing a refusal skips is left unsaid.
+    if sess.imports_refused {
+        process::exit(8);
+    }
 }
 
 /// Check, then run, then accumulate — in that order, and only advancing on success.
@@ -5328,9 +5354,12 @@ fn session_probe_checks(src: &str, cell_no: usize) -> bool {
     }
     let prev = set_session_quiet(true);
     let ok = match parse_source_located_cli(src, &path) {
-        Ok(mut program) => run_check_pipeline_located(&mut program, src, &path)
-            .0
-            .is_empty(),
+        // A closure that is not the required one fails the probe (AR5): the real
+        // check then refuses the cell with E2404, and this file is still removed.
+        Ok(mut program) => {
+            let (errors, _, closure) = check_pipeline_located_unenforced(&mut program, src, &path);
+            errors.is_empty() && imports_digest_mismatch(&closure).is_none()
+        }
         Err(_) => false,
     };
     set_session_quiet(prev);
@@ -5554,7 +5583,32 @@ fn run_cell(
             };
         }
     };
-    let (errors, _, _) = run_check_pipeline_located(&mut program, &src, &path);
+    let (errors, _, closure) = check_pipeline_located_unenforced(&mut program, &src, &path);
+    // AR5: a closure that is not the `AXON_REQUIRE_IMPORTS_DIGEST` one refuses
+    // the cell before it executes or accumulates, and ends the session (exit 8
+    // at its end path) — the same contract `run` keeps, with a frame.
+    if let Some(why) = imports_digest_mismatch(&closure) {
+        let _ = std::fs::remove_file(&path);
+        set_session_prelude_lines(None);
+        sess.imports_refused = true;
+        mark_transcript(
+            transcript,
+            sess.cell_no,
+            "REFUSED (imports digest) — did not execute, did not accumulate",
+        );
+        return CellResult {
+            ok: false,
+            abort: None,
+            stdout: String::new(),
+            diagnostics: vec![format!(
+                "[{}] {why}\n  the session ends here (exit 8): a session's import closure must \
+                 equal the approved one, so `use` the approved modules in the first cell",
+                axon_core::error::E2404
+            )],
+            skipped: Vec::new(),
+            value: None,
+        };
+    }
     if !errors.is_empty() {
         let _ = std::fs::remove_file(&path);
         set_session_prelude_lines(None);
@@ -6804,6 +6858,23 @@ fn run_check_pipeline_located(
     axon_core::infer::InferCtx,
     axon_core::ImportClosure,
 ) {
+    let checked = check_pipeline_located_unenforced(program, src, source_path);
+    enforce_required_imports_digest(&checked.2);
+    checked
+}
+
+/// [`run_check_pipeline_located`] without the `AXON_REQUIRE_IMPORTS_DIGEST`
+/// exit: the caller MUST check [`imports_digest_mismatch`] on the returned
+/// closure before anything executes (only `axon session` does, AR5).
+fn check_pipeline_located_unenforced(
+    program: &mut axon_core::ast::Program,
+    src: &str,
+    source_path: &Path,
+) -> (
+    Vec<axon_core::PipelineDiagnostic>,
+    axon_core::infer::InferCtx,
+    axon_core::ImportClosure,
+) {
     let mut closure = axon_core::ImportClosure::default();
     let sealed = axon_core::resolver::sealed_module_dirs();
     if sealed.is_empty() {
@@ -6818,7 +6889,6 @@ fn run_check_pipeline_located(
             &mut dropped,
             &mut closure,
         );
-        enforce_required_imports_digest(&closure);
         return (diags, ictx, closure);
     }
     // `axon test --seal`: the candidate's items are judged by a check that
@@ -6887,7 +6957,6 @@ fn run_check_pipeline_located(
     }
     axon_core::collapse_refined_type_errors(&mut diags);
     axon_core::collapse_unresolved_duplicates(&mut diags);
-    enforce_required_imports_digest(&closure);
     (diags, ictx, closure)
 }
 

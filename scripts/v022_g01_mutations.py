@@ -11342,6 +11342,12 @@ MUTATIONS += [
     ('M3640', "AR4: `imports`/`ast approve` refuse a `use` whose module the program never declares (E0003), as `run` does", 'crates/axon-core/src/main.rs',
      '    if !unresolved.is_empty() {\n        let source_map', '    if false {\n        let source_map',
      'axon-core', '--no-default-features --test cli_run', 'imports_and_ast_approve_refuse_a_use_without_mod_as_run_does'),
+    ('M3641', "AR5: a session cell whose import closure is not AXON_REQUIRE_IMPORTS_DIGEST's is refused before it executes", 'crates/axon-core/src/main.rs',
+     '    if let Some(why) = imports_digest_mismatch(&closure) {\n        let _ = std::fs::remove_file(&path);', '    if let Some(why) = None::<String> {\n        let _ = std::fs::remove_file(&path);',
+     'axon-core', '--no-default-features --test cli_run', 'session_refuses_a_mismatching_cell_with_a_frame_and_no_leftovers'),
+    ('M3642', "AR5: the session's digest-refused cell removes its composed temp file", 'crates/axon-core/src/main.rs',
+     '        let _ = std::fs::remove_file(&path);\n        set_session_prelude_lines(None);\n        sess.imports_refused = true;', '        set_session_prelude_lines(None);\n        sess.imports_refused = true;',
+     'axon-core', '--no-default-features --test cli_run', 'session_refuses_a_mismatching_cell_with_a_frame_and_no_leftovers'),
 ]
 
 
