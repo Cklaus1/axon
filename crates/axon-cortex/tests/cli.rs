@@ -2033,3 +2033,231 @@ fn cli_names_the_candidates_it_tried_when_it_fails() {
         "a refusal must not claim attempts that never ran: {text2}"
     );
 }
+
+// ── KG2/KG3: the `cmd:` generator is a process-group job ────────────────────
+//
+// A generator is any program the operator names, typically a script that runs
+// a model CLI, so it can have descendants. Measured on this host before KG2:
+// SIGKILL to a `#!/bin/sh` script running `sleep` (dash, not exec'd) leaves the
+// `sleep` running, re-parented to init. These rows drive the production
+// `cortex repair --generator cmd:` path and check the descendants by
+// `/proc/<pid>/cmdline` (a zombie or a reused pid reads as gone).
+
+/// A process named by a pid file. `argv`: the exact command line it must run
+/// (`None`: whatever it runs when first seen). Dropping it kills it if it is
+/// still that process, so a failing row leaks nothing.
+struct Proc {
+    pid: i32,
+    cmdline: Vec<u8>,
+}
+
+impl Proc {
+    fn cmdline_of(pid: i32) -> Option<Vec<u8>> {
+        std::fs::read(format!("/proc/{pid}/cmdline"))
+            .ok()
+            .filter(|c| !c.is_empty())
+    }
+
+    /// Wait (at most 60 s: the generator runs only after the first checks)
+    /// until `pid_file` names a live process running `argv`.
+    fn wait_alive(pid_file: &Path, argv: Option<&[&str]>) -> Proc {
+        let want: Option<Vec<u8>> =
+            argv.map(|a| a.iter().flat_map(|s| s.bytes().chain([0])).collect());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            let pid = std::fs::read_to_string(pid_file)
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok());
+            if let Some((pid, c)) = pid.and_then(|p| Proc::cmdline_of(p).map(|c| (p, c))) {
+                if want.as_ref().is_none_or(|w| *w == c) {
+                    return Proc { pid, cmdline: c };
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{} never named a live process",
+                pid_file.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// The process `pid_file` names, as `argv`, whether or not it still runs.
+    fn named(pid_file: &Path, argv: &[&str]) -> Proc {
+        let pid = std::fs::read_to_string(pid_file)
+            .unwrap_or_else(|e| panic!("{}: {e} (did the generator run?)", pid_file.display()))
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+        Proc {
+            pid,
+            cmdline: argv.iter().flat_map(|s| s.bytes().chain([0])).collect(),
+        }
+    }
+
+    fn alive(&self) -> bool {
+        Proc::cmdline_of(self.pid).is_some_and(|c| c == self.cmdline)
+    }
+
+    fn gone_within(&self, d: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + d;
+        while self.alive() {
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        true
+    }
+}
+
+impl Drop for Proc {
+    fn drop(&mut self) {
+        if self.alive() {
+            // SAFETY: plain syscall; the pid was just checked to be ours.
+            unsafe { libc::kill(self.pid, libc::SIGKILL) };
+        }
+    }
+}
+
+/// A generator that records its own pid and a background `sleep <gc>`'s
+/// (stdio on /dev/null, so it holds no pipe of cortex's) and then waits.
+fn job_generator(ws: &Path, gc: &str) -> PathBuf {
+    let p = ws.join("job-gen.sh");
+    common::write_executable(
+        &p,
+        format!(
+            "#!/bin/sh\necho $$ > '{}'\nsleep {gc} </dev/null >/dev/null 2>&1 &\n\
+             echo $! > '{}'\nwait\n",
+            ws.join("gen.pid").display(),
+            ws.join("gc.pid").display()
+        ),
+        0o755,
+    );
+    p
+}
+
+/// `cortex repair` on `ws` with the `cmd:` generator `gen`.
+fn repair_with_generator(ws: &Path, gen: &Path, timeout_ms: &str) -> Command {
+    let mut c = common::cortex();
+    c.args(["repair", "--workspace"])
+        .arg(ws)
+        .args([
+            "--file",
+            "broken.ax",
+            "--check",
+            "hidden_completion",
+            "--axon",
+        ])
+        .arg(axon_bin())
+        .args(["--write-prefix", "broken.ax", "--generator"])
+        .arg(format!("cmd:{}", gen.display()))
+        .env("AXON_CORTEX_GENERATOR_TIMEOUT_MS", timeout_ms);
+    c
+}
+
+/// KG2 (a): the deadline kills the generator's whole job. Before KG2 only the
+/// shell was killed and its `sleep` ran on in cortex's own process group.
+#[test]
+fn kg2_the_generator_deadline_kills_its_whole_job() {
+    let ws = workspace("kg2_deadline");
+    let gen = job_generator(&ws, "4720");
+    let out = repair_with_generator(&ws, &gen, "700").output().unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let grandchild = Proc::named(&ws.join("gc.pid"), &["sleep", "4720"]);
+    assert_eq!(out.status.code(), Some(24), "{said}");
+    assert!(said.contains("did not answer within"), "{said}");
+    assert!(
+        grandchild.gone_within(std::time::Duration::from_secs(5)),
+        "ATTACK: the timed-out generator's grandchild (pid {}) outlived the deadline",
+        grandchild.pid
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// KG2 (b): a generator that answers and exits, leaving a background process
+/// that still holds its stdout and stderr, does not stall the loop. Leftovers
+/// after a normal exit are left alone (NH1): only the reads are bounded.
+#[test]
+fn kg2_a_leftover_holding_the_generators_pipes_does_not_stall_the_loop() {
+    let ws = workspace("kg2_leftover");
+    let gen = ws.join("leftover-gen.sh");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\nsleep 60 &\necho $! > '{}'\nprintf '    n * 2\\n'\nexit 0\n",
+            ws.join("left.pid").display()
+        ),
+        0o755,
+    );
+    let began = std::time::Instant::now();
+    let out = repair_with_generator(&ws, &gen, "120000").output().unwrap();
+    let took = began.elapsed();
+    let leftover = Proc::named(&ws.join("left.pid"), &["sleep", "60"]);
+    assert!(
+        took < std::time::Duration::from_secs(20),
+        "ATTACK: a leftover holding the generator's pipes stalled `cortex repair` for {took:?} \
+         (exit {:?}: {}{})",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    drop(leftover);
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// KG3: SIGTERM to `cortex` reaches the generator's job, and cortex still dies
+/// by SIGTERM. SIGTERM, not SIGINT: a background job of a non-interactive
+/// shell (gate.sh's `par`) starts with SIGINT ignored, which would make a
+/// SIGINT row vacuous. Cortex runs in its OWN process group, so a misdirected
+/// `killpg(0)` could reach only it.
+#[test]
+fn kg3_sigterm_to_cortex_kills_the_generators_job_and_cortex_dies_by_it() {
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    let ws = workspace("kg3_sigterm");
+    let gen = job_generator(&ws, "4721");
+    let mut cortex = repair_with_generator(&ws, &gen, "120000")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let generator = Proc::wait_alive(&ws.join("gen.pid"), None);
+    let grandchild = Proc::wait_alive(&ws.join("gc.pid"), Some(&["sleep", "4721"]));
+
+    // SAFETY: plain syscall to a child this test spawned and has not reaped.
+    assert_eq!(unsafe { libc::kill(cortex.id() as i32, libc::SIGTERM) }, 0);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let status = loop {
+        if let Some(st) = cortex.try_wait().unwrap() {
+            break st;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = cortex.kill();
+            let _ = cortex.wait();
+            panic!("cortex did not exit within 20 s of SIGTERM");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(
+        status.signal(),
+        Some(libc::SIGTERM),
+        "ATTACK: cortex must still die by the SIGTERM it was sent ({status:?})"
+    );
+    for (who, p) in [
+        ("the generator", &generator),
+        ("the generator's grandchild", &grandchild),
+    ] {
+        assert!(
+            p.gone_within(std::time::Duration::from_secs(5)),
+            "ATTACK: {who} (pid {}) outlived SIGTERM to cortex",
+            p.pid
+        );
+    }
+    let _ = std::fs::remove_dir_all(&ws);
+}

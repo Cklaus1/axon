@@ -463,6 +463,38 @@ impl CommandGenerator {
     }
 }
 
+/// Drain one of a generator's pipes on its own thread, keeping at most `cap`
+/// bytes. Each read waits for data through [`axon_jobctl::wait_readable`], so
+/// the thread gives up once `stop` is set (KG2): a descendant the generator
+/// left running can hold the pipe open, and EOF then never comes.
+fn drain_capped<R>(
+    pipe: Option<R>,
+    cap: u64,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> std::thread::JoinHandle<Vec<u8>>
+where
+    R: std::io::Read + std::os::fd::AsRawFd + Send + 'static,
+{
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        if let Some(p) = pipe {
+            let fd = p.as_raw_fd();
+            let mut p = p.take(cap);
+            let mut chunk = [0u8; 8192];
+            while axon_jobctl::wait_readable(fd, &stop) {
+                match p.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+        }
+        buf
+    })
+}
+
 impl PatchGenerator for CommandGenerator {
     fn id(&self) -> String {
         // The program as written, so the episode records WHICH generator ran.
@@ -478,19 +510,28 @@ impl PatchGenerator for CommandGenerator {
         target: &SymbolRef,
         constraints: &PatchConstraints,
     ) -> Result<ProposedPatch, GenerationFailure> {
-        use std::io::{Read, Write};
+        use std::io::Write;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
         let prompt = build_prompt(observation, target, constraints);
-        let mut child = std::process::Command::new(&self.program)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            // Could not be STARTED: missing, not executable, wrong path. An
-            // infrastructure fact about the operator's setup, not a statement
-            // about the task — the same class as a missing API key.
-            .map_err(|e| {
-                GenerationFailure::Unavailable(format!("cannot run `{}`: {e}", self.program))
-            })?;
+        // A PROCESS-GROUP JOB (KG2): the generator is any program, typically a
+        // script that runs a model CLI, so it can have descendants. Killing
+        // only the direct child at the deadline left them running. The job is
+        // out of the terminal's foreground group: a generator that reads
+        // /dev/tty is stopped (SIGTTIN) until the deadline, and terminal
+        // Ctrl-C reaches it only through `cortex`'s forwarding handler (KG3).
+        let mut job = axon_jobctl::Job::spawn(
+            std::process::Command::new(&self.program)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped()),
+        )
+        // Could not be STARTED: missing, not executable, wrong path. An
+        // infrastructure fact about the operator's setup, not a statement
+        // about the task — the same class as a missing API key.
+        .map_err(|e| {
+            GenerationFailure::Unavailable(format!("cannot run `{}`: {e}", self.program))
+        })?;
 
         // ALL THREE PIPES ARE SERVICED CONCURRENTLY.
         //
@@ -500,70 +541,84 @@ impl PatchGenerator for CommandGenerator {
         // exit without draining stdout has the same failure — measured, a
         // program emitting 200 KB before reading stdin sat until the deadline
         // instead of answering.
+        //
+        // And every one is joined within a TIME BOUND (KG2): a descendant the
+        // generator left running after it answered (NH1: it is left alone)
+        // can hold all three pipes open for as long as it likes.
         let bytes = prompt.into_bytes();
-        let mut stdin = child.stdin.take();
+        let mut stdin = job.child_mut().stdin.take();
+        // Typed as a drain (it returns no bytes) so one `join_within` bounds
+        // all three threads. If it is still blocked when that bound runs out
+        // — a leftover holds the stdin pipe's read end and the prompt is
+        // larger than the pipe buffer — it is DETACHED: in the `cortex`
+        // binary that ends with the episode; a long-lived host would keep one
+        // blocked thread per such generator.
         let writer = std::thread::spawn(move || {
             if let Some(mut w) = stdin.take() {
                 let _ = w.write_all(&bytes);
                 // Dropped here, closing the pipe: a generator reading to EOF
                 // would otherwise wait forever for input already written.
             }
+            Vec::new()
         });
-        let drain = |pipe: Option<std::process::ChildStdout>| {
-            std::thread::spawn(move || {
-                let mut buf = Vec::new();
-                if let Some(p) = pipe {
-                    // CAPPED. `validate` applies `max_bytes` after the read
-                    // completes, so it bounds what is APPLIED and never what
-                    // is buffered; a child writing gigabytes would abort the
-                    // process on allocation failure and take the episode
-                    // record with it.
-                    let _ = p.take(MAX_GENERATOR_READ as u64).read_to_end(&mut buf);
-                }
-                buf
-            })
-        };
-        let out_t = drain(child.stdout.take());
-        let mut err_pipe = child.stderr.take();
-        let err_t = std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            if let Some(p) = err_pipe.take() {
-                let _ = p.take(MAX_GENERATOR_READ as u64).read_to_end(&mut buf);
-            }
-            buf
-        });
+        let stop = Arc::new(AtomicBool::new(false));
+        // CAPPED. `validate` applies `max_bytes` after the read completes, so
+        // it bounds what is APPLIED and never what is buffered; a child
+        // writing gigabytes would abort the process on allocation failure and
+        // take the episode record with it.
+        let out_t = drain_capped(
+            job.child_mut().stdout.take(),
+            MAX_GENERATOR_READ as u64,
+            Arc::clone(&stop),
+        );
+        let err_t = drain_capped(
+            job.child_mut().stderr.take(),
+            MAX_GENERATOR_READ as u64,
+            Arc::clone(&stop),
+        );
 
         // A DEADLINE. `--budget` bounds STEPS, not wall time, and no budget
         // applies to a child process — so without this, one program that never
         // exits stops the loop forever.
         let limit = Self::timeout();
         let deadline = std::time::Instant::now() + limit;
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(st)) => break st,
-                Err(e) => {
-                    return Err(GenerationFailure::Unavailable(format!(
-                        "`{}` could not be waited on: {e}",
-                        self.program
-                    )))
+        let watched = loop {
+            match job.has_exited() {
+                Ok(true) => break Ok(false),
+                Ok(false) if std::time::Instant::now() >= deadline => {
+                    job.kill();
+                    break Ok(true);
                 }
-                Ok(None) => {
-                    if std::time::Instant::now() >= deadline {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(GenerationFailure::Unavailable(format!(
-                            "`{}` did not answer within {}ms",
-                            self.program,
-                            limit.as_millis()
-                        )));
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(20));
+                Ok(false) => std::thread::sleep(std::time::Duration::from_millis(20)),
+                Err(e) => {
+                    job.kill();
+                    break Err(e);
                 }
             }
         };
-        let stdout = out_t.join().unwrap_or_default();
-        let stderr = err_t.join().unwrap_or_default();
-        let _ = writer.join();
+        let reaped = job.reap();
+        let mut joined =
+            axon_jobctl::join_within(axon_jobctl::DRAIN_GRACE, vec![out_t, err_t, writer], &stop)
+                .into_iter()
+                .map(Option::unwrap_or_default);
+        let stdout = joined.next().unwrap_or_default();
+        let stderr = joined.next().unwrap_or_default();
+        let status = match watched.and_then(|timed_out| reaped.map(|st| (timed_out, st))) {
+            Ok((false, st)) => st,
+            Ok((true, _)) => {
+                return Err(GenerationFailure::Unavailable(format!(
+                    "`{}` did not answer within {}ms",
+                    self.program,
+                    limit.as_millis()
+                )))
+            }
+            Err(e) => {
+                return Err(GenerationFailure::Unavailable(format!(
+                    "`{}` could not be waited on: {e}",
+                    self.program
+                )))
+            }
+        };
 
         if !status.success() {
             // It RAN and refused. Declined, not Unavailable: the remedy is the

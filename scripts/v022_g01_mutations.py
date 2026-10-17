@@ -8164,12 +8164,12 @@ MUTATIONS += [
      '                        kept.extend_from_slice(&buf[..n]);',
      'axon-cortex', '--test check_executor', 'the_local_check_child_cannot_make_the_launcher_buffer_its_whole_output'),
     ('M2303', "CAP (eqgate3): a generator's stdout is read through its cap", 'crates/axon-cortex/src/generate.rs',
-     '                    let _ = p.take(MAX_GENERATOR_READ as u64).read_to_end(&mut buf);\n                }\n                buf\n            })\n        };',
-     '                    let _ = p.take(u64::MAX).read_to_end(&mut buf);\n                }\n                buf\n            })\n        };',
+     '            job.child_mut().stdout.take(),\n            MAX_GENERATOR_READ as u64,',
+     '            job.child_mut().stdout.take(),\n            u64::MAX,',
      'axon-cortex', '--test generator_cap', 'a_generators_stdout_is_never_buffered_past_its_cap'),
     ('M2304', "CAP (eqgate3): a generator's stderr is read through its cap", 'crates/axon-cortex/src/generate.rs',
-     '                let _ = p.take(MAX_GENERATOR_READ as u64).read_to_end(&mut buf);\n            }\n            buf\n        });',
-     '                let _ = p.take(u64::MAX).read_to_end(&mut buf);\n            }\n            buf\n        });',
+     '            job.child_mut().stderr.take(),\n            MAX_GENERATOR_READ as u64,',
+     '            job.child_mut().stderr.take(),\n            u64::MAX,',
      'axon-cortex', '--test generator_cap', 'a_generators_stderr_is_never_buffered_past_its_cap'),
     ('M2305', 'CAP (eqgate3): a custodian request line is read through MAX_MESSAGE', 'crates/axon-fabric/src/custodian.rs',
      '                let mut r = (&s).take(MAX_MESSAGE);\n                let mut byte',
@@ -11385,6 +11385,39 @@ MUTATIONS += [
     ('M3681', 'HARNESS (gaps2 H7): a thread with the test RNG override draws its own operator stream', 'crates/axon-core/src/interp.rs',
      '    if let Some(mut x) = TEST_RNG_OVERRIDE.with(Cell::get) {', '    if let Some(mut x) = TEST_RNG_OVERRIDE.with(Cell::get).filter(|_| false) {',
      'axon-core', '--no-default-features --lib', 'interp::kernel_tests::a_thread_own_operator_stream_is_not_advanced_by_another_threads_draw'),
+]
+
+# gaps2 run — jobs lane (tasks/killgroup-spec.md KG2/KG3/KG5): a cortex `cmd:` generator and the
+# axon-intent synthesizer run as axon-jobctl process-group jobs, and both binaries forward
+# termination signals to them (OnSignal::Die). Every row runs a fail-first test of its item.
+MUTATIONS += [
+    ('M3600', "KG2: a job leads its own process group, so a group kill reaches the generator's descendants",
+     'crates/axon-jobctl/src/lib.rs',
+     '        cmd.process_group(0);\n', '\n',
+     'axon-cortex', '--test cli', 'kg2_the_generator_deadline_kills_its_whole_job'),
+    ('M3601', "KG2: a job is killed by killpg, not by a SIGKILL to its leader alone", 'crates/axon-jobctl/src/lib.rs',
+     '        let rc = unsafe { libc::killpg(pid, libc::SIGKILL) };',
+     '        let rc = -1;',
+     'axon-cortex', '--test cli', 'kg2_the_generator_deadline_kills_its_whole_job'),
+    ('M3602', "KG2: a generator's pipe drains are joined within DRAIN_GRACE, not until a leftover's EOF",
+     'crates/axon-cortex/src/generate.rs',
+     '            axon_jobctl::join_within(axon_jobctl::DRAIN_GRACE, vec![out_t, err_t, writer], &stop)\n'
+     '                .into_iter()\n                .map(Option::unwrap_or_default);',
+     '            [out_t, err_t, writer]\n'
+     '                .into_iter()\n                .map(|h| h.join().unwrap_or_default());',
+     'axon-cortex', '--test cli', 'kg2_a_leftover_holding_the_generators_pipes_does_not_stall_the_loop'),
+    ('M3603', "KG3: cortex forwards termination signals to its generator jobs", 'crates/axon-cortex/src/bin/cortex.rs',
+     '    axon_jobctl::forward_termination_signals(axon_jobctl::OnSignal::Die);\n    let mut args',
+     '    let mut args',
+     'axon-cortex', '--test cli', 'kg3_sigterm_to_cortex_kills_the_generators_job_and_cortex_dies_by_it'),
+    ('M3604', "KG3: OnSignal::Die re-raises the signal, so the supervisor still dies by it", 'crates/axon-jobctl/src/lib.rs',
+     '            set_disposition(sig, libc::SIG_DFL);\n            libc::raise(sig);',
+     '            set_disposition(sig, libc::SIG_DFL);',
+     'axon-cortex', '--test cli', 'kg3_sigterm_to_cortex_kills_the_generators_job_and_cortex_dies_by_it'),
+    ('M3605', "KG5: axon-intent forwards termination signals to its synthesizer job", 'crates/axon-intent/src/main.rs',
+     '    axon_jobctl::forward_termination_signals(axon_jobctl::OnSignal::Die);\n    axon_intent::cli::run(',
+     '    axon_intent::cli::run(',
+     'axon-intent', '--test signals', 'kg5_sigterm_to_axon_intent_kills_the_synthesizers_job_and_it_dies_by_it'),
 ]
 
 

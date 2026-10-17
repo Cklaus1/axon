@@ -4,5 +4,9 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    // KG5: a termination signal first SIGKILLs the synthesizer's process-group
+    // job, then kills `axon-intent` by that same signal. Before this, the
+    // synthesizer and its descendants ran on after `axon-intent` died.
+    axon_jobctl::forward_termination_signals(axon_jobctl::OnSignal::Die);
     axon_intent::cli::run(std::env::args().collect())
 }

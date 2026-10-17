@@ -28,5 +28,8 @@ axon-audit = { path = "../axon-audit" }
 libc = "0.2"
 # G5: HMAC + constant-time compare for AXON_APPROVAL_KEY tokens and record seals.
 axon-attest = { path = "../axon-attest" }
+# G2: the job runs as a process-group job (killed whole on its timeout, its
+# latch and a termination signal to `axon-os run`), with time-bounded drains.
+axon-jobctl = { path = "../axon-jobctl" }
 
 [dev-dependencies]

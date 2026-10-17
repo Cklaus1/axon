@@ -189,6 +189,7 @@ name = "axon-cortex"
 version = "0.1.0"
 dependencies = [
  "axon-ai",
+ "axon-jobctl",
  "axon-workspace-recipe",
  "hex",
  "libc",
@@ -261,11 +262,19 @@ version = "0.1.0"
 name = "axon-intent"
 version = "0.1.0"
 dependencies = [
+ "axon-jobctl",
  "axon-os",
  "libc",
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "axon-jobctl"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -315,6 +324,7 @@ version = "0.1.0"
 dependencies = [
  "axon-attest",
  "axon-audit",
+ "axon-jobctl",
  "libc",
  "serde",
  "serde_json",

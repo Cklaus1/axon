@@ -411,6 +411,20 @@
       "verified_by": "crates/axon-fabric/tests/workspace.rs: the cross-language vector and the_guest_tree_digest_is_the_store_reference (the crate has no tests of its own; its behaviour is pinned where both sides meet).",
       "gate_compiles": true,
       "gate_tests": true
+    },
+    "axon-jobctl": {
+      "class": "A",
+      "why": "Whole-job cancellation for the supervisors: the job's process group, its SIGKILL at a deadline, latch or termination signal, the process-global signal handler and job registry, and the time bounds on draining a job's pipes. axon-os's supervisor kills its jobs through it.",
+      "surfaces": [
+        "process-group kill (Job::spawn / kill / reap)",
+        "termination-signal forwarding (OnSignal)",
+        "time-bounded pipe drains"
+      ],
+      "required": [
+        "cargo test --locked -p axon-jobctl"
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
     }
   },
   "inventory_note": "gate_compiles: the strict gate builds this crate (clippy --all-targets builds its tests too). gate_tests: the strict gate RUNS its required commands. The distinction is the point \u2014 before 2026-09-22 the gate compiled 20 of 22 crates and ran the tests of 5, and nothing recorded the gap."

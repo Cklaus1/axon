@@ -324,6 +324,11 @@ fn registered_runner(
 }
 
 fn main() {
+    // KG3: a termination signal to cortex first SIGKILLs every running
+    // generator's process group, then kills cortex by that same signal (so its
+    // caller still sees e.g. "killed by SIGTERM"). Before this, a generator ran
+    // on after cortex died. Installed before anything can spawn a job.
+    axon_jobctl::forward_termination_signals(axon_jobctl::OnSignal::Die);
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("repair") => {}

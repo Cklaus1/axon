@@ -3060,3 +3060,13 @@ ATTACK_MARKERS.update({
     'M3680': r'ATTACK: a skip line outside the three-line window decided the verdict',
     'M3681': r"ATTACK: another thread's draw advanced this thread's operator stream between srand\(7\) and its next draw",
 })
+
+# gaps2 run — jobs lane (tasks/killgroup-spec.md KG2/KG3/KG5).
+ATTACK_MARKERS.update({
+    'M3600': r"ATTACK: the timed-out generator's grandchild \(pid \d+\) outlived the deadline",
+    'M3601': r"ATTACK: the timed-out generator's grandchild \(pid \d+\) outlived the deadline",
+    'M3602': r"ATTACK: a leftover holding the generator's pipes stalled `cortex repair`",
+    'M3603': r"ATTACK: the generator \(pid \d+\) outlived SIGTERM to cortex",
+    'M3604': r"ATTACK: cortex must still die by the SIGTERM it was sent",
+    'M3605': r"ATTACK: the synthesizer \(pid \d+\) outlived SIGTERM to axon-intent",
+})
