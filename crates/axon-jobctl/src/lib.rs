@@ -22,13 +22,16 @@
 //!
 //! # Who installs the handler
 //!
-//! Library code never does. Only a binary's `main` calls
-//! [`forward_termination_signals`], with the [`OnSignal`] mode that binary's exit
-//! semantics need (`axon-os`: [`OnSignal::Continue`]; `cortex` and
-//! `axon-intent`: [`OnSignal::Die`]). A binary that spawns a [`Job`] and wants
-//! signals to reach it must make that call in its `main`; without it a [`Job`]
-//! is still killed as a group at its caller's deadline, but a signal to the
-//! process leaves it running. [`Job::spawn`]'s blocked-signal window and the
+//! A binary's entry point calls [`forward_termination_signals`], with the
+//! [`OnSignal`] mode that binary's exit semantics need: `cortex` and
+//! `axon-intent` from `main` ([`OnSignal::Die`]). The one library caller is
+//! `axon_os::cli::cmd_run` (the `axon-os run` verb, [`OnSignal::Continue`]),
+//! which installs it just before it runs the job, so other `axon-os` verbs and
+//! library users of axon-os keep their default dispositions. A binary that
+//! spawns a [`Job`] and wants signals to reach it must make that call itself;
+//! without it a [`Job`] is still killed as a group at its caller's deadline,
+//! but a signal to the process leaves it running. [`Job::spawn`]'s
+//! blocked-signal window and the
 //! child's disposition reset are unconditional, so they are correct whether or
 //! not a handler is installed.
 //!
@@ -257,9 +260,14 @@ impl Job {
     ///
     /// The termination signals are blocked in this thread across the spawn
     /// and the registration, so the handler cannot run HERE between the fork
-    /// and the registration. (Another thread can take the signal in that
-    /// window; a caller's poll loop that checks [`termination_signal`] covers
-    /// it.)
+    /// and the registration. Another thread can take the signal in that
+    /// window, and the handler then does not see the new group. Under
+    /// [`OnSignal::Continue`] the caller's poll loop that checks
+    /// [`termination_signal`] covers it (it kills the job itself). Under
+    /// [`OnSignal::Die`] nothing does: the process dies by the signal and the
+    /// just-spawned job is ORPHANED, running on in its own group.
+    /// Any thread that does not block the signal can take it: a pipe-drain
+    /// thread, a detached stdin writer, a thread of the caller's own.
     ///
     /// The child inherits the blocked mask — std no longer resets the mask on
     /// spawn — so its `pre_exec` restores the mask this thread had, after
@@ -382,7 +390,7 @@ impl Job {
     }
 
     /// Free the job's registry slot, THEN wait for its leader (see
-    /// [`JobGroupSlot`]). Blocks until the leader exits; descendants that are
+    /// `JobGroupSlot`). Blocks until the leader exits; descendants that are
     /// still running are not waited for.
     pub fn reap(mut self) -> std::io::Result<ExitStatus> {
         self.slot = None;
@@ -438,7 +446,7 @@ pub fn wait_readable(fd: RawFd, stop: &AtomicBool) -> bool {
 }
 
 /// Join `handles`, waiting at most `grace` for all of them to finish, then set
-/// `stop` and give them [`STOP_GRACE`] more. A handle that finished is joined
+/// `stop` and give them `STOP_GRACE` more. A handle that finished is joined
 /// (`Some`, or `None` if its thread panicked); one that has not is DETACHED
 /// (`None`) — it can no longer hold the caller up.
 ///
