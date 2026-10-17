@@ -497,6 +497,16 @@ trusted) — a HW root of trust + signing is `VISION_OS.md` §5, out of scope.
 
 ### 3.5 `MultiApprovalToken` (the friction-bearing handoff; supersedes R22's `ApprovalToken` for
 threshold > 1; JSON `axon-approval/2`)
+> **Correction (2026-10-17, gaps2 AR7).** Every "R22 `axon-approval/1` token" in this spec (this
+> section, the `TokenOut` sketch, §4 steps 1/3, the Low-path rows, `low_risk_token_is_r22_byte_compatible`,
+> I-7 and acceptance item 5) describes the token as it was when this draft was written. The gateway now
+> emits `axon-approval/3`: it binds the program and grant digests **and the program's import closure**
+> (`imports_digest`; imported modules are bound since G1), keyed as `axmac1:` under `AXON_APPROVAL_KEY`
+> or unkeyed as `axtok3:` ("integrity only"). `/1` is legacy: refused under a key and, keyless, accepted
+> only for a program that imports nothing. Read "the Low path emits the R22 token verbatim" as "emits the
+> current R22 gateway token". Current facts: `README-axon-intent.md` ("The R21 handoff"). This note does
+> not redesign R24's unbuilt `/2` schema.
+
 Backward-compatible with R22's `axon-approval/1`: for `threshold == 1` and no TTL/revocation the
 gateway still emits the R22 `axon-approval/1` token verbatim (so the Low-risk path is byte-unchanged).
 For friction-bearing grants it emits:

@@ -281,6 +281,12 @@ requires the embedding host to register credentials for `S3`/`GDrive` out of ban
      would move a program's semantics outside the artifact ROADMAP §2.4 declares to be *the* legal/audit
      contract ("the typed AST — not the English — is the legal/audit artifact"). §12 Q7 fixes whether the
      digest extends `program_digest` or lands as an adjacent `artifact_digest`.
+     > **Correction (2026-10-17, gaps2 AR7).** "binds the `.ax` file *only*" (here and in §12 Q7) is out
+     > of date: the gateway's `axon-approval/3` token also binds the program's import closure
+     > (`imports_digest`; imported Axon modules are bound since G1), keyed as `axmac1:` or unkeyed as
+     > `axtok3:`; `/1` is legacy (refused under a key; keyless, only for a program that imports nothing).
+     > Foreign entry scripts are still not in the binding — §12 Q7 stays open for them. Current facts:
+     > `README-axon-intent.md` ("The R21 handoff").
 - **Subprocess stdout/stderr cross back as untrusted data** *(added 2026-07-31 — §6's E2003 governs what may
   *cross* the boundary, i.e. representability; nothing governed the **trust** of what comes back, and §4's own
   worked example pipes `outcome.stdout` straight into `write_file`):* the foreign process is not only something

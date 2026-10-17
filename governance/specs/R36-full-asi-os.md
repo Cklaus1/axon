@@ -163,6 +163,13 @@ the program digest *and* the canonical grant digest, via the deliberately single
 edited after approval, is refused **before boot** (§9 clause (e)). See §5's authorship limit for why
 this matters more, not less, as authorship becomes machine-scale.
 
+> **Correction (2026-10-17, gaps2 AR7).** "`verify_approval` checks an `axon-approval/1` token" was true
+> when this was written. The gateway now emits `axon-approval/3`, which binds the program and grant
+> digests **and the program's import closure** (`imports_digest`; imported modules are bound since G1),
+> keyed as `axmac1:` under `AXON_APPROVAL_KEY` or unkeyed as `axtok3:` ("integrity only").
+> `verify_approval` treats `/1` as legacy: refused under a key and, keyless, accepted only for a program
+> that imports nothing. Current facts: `README-axon-intent.md` ("The R21 handoff").
+
 ### 3. The product story (target state)
 
 One command, five enforcement layers, one vocabulary:
