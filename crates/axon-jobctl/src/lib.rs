@@ -483,9 +483,11 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::process::Stdio;
 
-    /// Selects the re-executed copy of this test binary's role.
-    const ROLE: &str = "AXON_JOBCTL_TEST_ROLE";
-    const DIR: &str = "AXON_JOBCTL_TEST_DIR";
+    /// Selects the re-executed copy of this test binary's role. Test-only, so
+    /// not `AXON_*`: the env registry (axon-core `env_registry.rs`) lists the
+    /// controls a shipped binary reads, and no shipped binary reads these.
+    const ROLE: &str = "JOBCTL_TEST_ROLE";
+    const DIR: &str = "JOBCTL_TEST_DIR";
 
     fn tmp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("axon-jobctl-{}-{tag}", std::process::id()));
