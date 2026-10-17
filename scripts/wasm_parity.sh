@@ -67,11 +67,12 @@ echo "wasm_parity: building axon-run (native + wasm32-wasip1)…"
 if [ -n "${AXON_RUN:-}" ]; then
   named_bin AXON_RUN wasm_parity
 else
-  cargo build -q -p axon-core --no-default-features --bin axon-run || { echo "native build failed"; exit 1; }
+  cargo_build_or_skip wasm_parity interp cargo build -q -p axon-core --no-default-features --bin axon-run
   use_built AXON_RUN axon-run
 fi
 NATIVE="$AXON_RUN"
-cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1 || { echo "wasm build failed"; exit 1; }
+cargo_build_or_skip wasm_parity target:wasm32-wasip1 \
+  cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1
 
 WASM=""; use_built WASM axon-run.wasm wasm32-wasip1  # the wasm build just made
 

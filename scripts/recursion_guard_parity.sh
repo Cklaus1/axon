@@ -37,7 +37,7 @@ if [ -n "${AXON:-}" ]; then
 else
   echo "recursion_guard_parity: building codegen axon binary…"
   cargo_build_or_skip recursion_guard_parity llvm cargo build -q -p axon-core --bin axon
-  cargo build -q -p axon-rt 2>/dev/null || true
+  cargo_build_or_skip recursion_guard_parity interp cargo build -q -p axon-rt
   use_built AXON axon
 fi
 require_codegen_axon recursion_guard_parity

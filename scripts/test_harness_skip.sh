@@ -101,6 +101,14 @@ done
 # an absolute `$WORK/...`.
 shape "no relative CARGO_TARGET_DIR= literal in scripts/*.sh" \
   "CARGO_TARGET_DIR=[\"']?[^\"'\$/[:space:]]" "${scripts_sh[@]}"
+# H4: a `cargo build … 2>/dev/null` in a parity harness throws away the
+# compiler's own error and leaves only a "build failed"/"skipping" line. Use
+# `cargo_build_or_skip <name> <prereq> cargo build …` (lib/harness_skip.sh),
+# which proves a skip's reason and prints the stderr on a FAIL. Exceptions: none.
+parity_sh=()
+for f in "$HERE"/*_parity.sh; do parity_sh+=("$f"); done
+shape "no \`cargo build … 2>/dev/null\` in scripts/*_parity.sh" \
+  'cargo build.*2>/dev/null' "${parity_sh[@]}"
 
 if [ "$bad" -ne 0 ]; then
   echo "test_harness_skip: FAIL [detector] — the skip detector or its reason disagrees with the rule table"

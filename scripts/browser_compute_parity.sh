@@ -82,9 +82,8 @@ echo "browser_compute_parity: building native axon (oracle)…"
 # caller's target dir.
 . scripts/lib/axon_bin.sh
 ITD="$(interp_target_dir)" || exit 2
-env CARGO_TARGET_DIR="$ITD" \
-  cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null \
-  || { echo "browser_compute_parity: native build failed"; exit 1; }
+cargo_build_or_skip browser_compute_parity interp env CARGO_TARGET_DIR="$ITD" \
+  cargo build -q -p axon-core --no-default-features --bin axon
 NATIVE="$ITD/debug/axon"
 
 # ── Generate the live native oracle table → tests/oracle.rs ──────────────────
