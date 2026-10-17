@@ -211,6 +211,7 @@ pub const E2302: &str = "E2302"; // @[bpf(kind: K)] has an unknown program kind
 pub const E2400: &str = "E2400"; // redefining a name in a session breaks an item an earlier cell wrote
 pub const E2402: &str = "E2402"; // a session cell is not a usable fragment (today: it declares its own `fn main`)
 pub const E2403: &str = "E2403"; // malformed `axon session --protocol jsonl` input frame
+pub const E2404: &str = "E2404"; // a session cell's import closure is not the AXON_REQUIRE_IMPORTS_DIGEST one; the session ends (exit 8)
 
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
@@ -564,6 +565,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E2400", "redefining a name in a session breaks an item an earlier cell wrote"),
     ("E2402", "a session cell is not a usable fragment — today this means it declares its own `fn main`, which collides with the one the session composes around the cell's statements"),
     ("E2403", "malformed `axon session --protocol jsonl` input frame"),
+    ("E2404", "a session cell's import closure is not the one `AXON_REQUIRE_IMPORTS_DIGEST` names — the cell is refused before it executes and the session ends with exit 8; `use` the approved modules in the first cell"),
     ("W0001", "unknown attribute"),
     ("W0002", "variable shadowing"),
     ("W0003", "user fn shadows a builtin (builtin takes precedence)"),
@@ -750,9 +752,9 @@ mod tests {
             E1209, E1300, E1301, E1302, E1303, E1306, E1310, E1316, E1401, E1402, E1403, E1404,
             E1405, E1406, E1407, E1408, E1409, E1411, E1412, E1413, E1500, E1503, E1504, E1505,
             E1700, E1701, E1702, E1703, E1704, E1706, E1707, E1710, E1711, E1712, E1800, E1801,
-            E1802, E1803, E1810, E1900, E2300, E2301, E2302, E2400, E2402, E2403, E2200, E2201,
-            E2202, E2203, E2204, E2205, W0001, W0002, W0003, W0004, W0005, W0006, W0007, W0008,
-            W0701, W0913, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
+            E1802, E1803, E1810, E1900, E2300, E2301, E2302, E2400, E2402, E2403, E2404, E2200,
+            E2201, E2202, E2203, E2204, E2205, W0001, W0002, W0003, W0004, W0005, W0006, W0007,
+            W0008, W0701, W0913, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
         ];
         let mut seen = std::collections::HashSet::new();
         for code in &codes {

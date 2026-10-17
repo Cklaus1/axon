@@ -3781,6 +3781,169 @@ fn ast_approve_refuses_a_program_whose_imports_do_not_load() {
 }
 
 #[test]
+fn imports_and_ast_approve_refuse_a_use_without_mod_as_run_does() {
+    // AR4. `imports` and `ast approve` loaded the closure but never ran the
+    // resolver rule that makes `run` refuse a `use` whose module the program
+    // never declares (E0003), so they vouched for a program `run` refuses.
+    let (dir, main, _lib) = g1_program("use_without_mod");
+    std::fs::write(
+        &main,
+        "use lib.{helper}\nfn main() {\n    println(\"main says {helper()}\")\n}\n",
+    )
+    .unwrap();
+    for args in [
+        vec!["imports", "main.ax"],
+        vec!["imports", "main.ax", "--json"],
+        vec!["ast", "approve", "main.ax"],
+        vec!["run", "main.ax"],
+    ] {
+        let out = g1_axon(&dir).args(&args).output().unwrap();
+        let o = g1_out(&out);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "ATTACK: {args:?} vouched for a `use` that `run` refuses: {o}"
+        );
+        assert!(o.contains("E0003"), "{args:?}: {o}");
+        assert!(o.contains("module `lib` not found"), "{args:?}: {o}");
+        assert!(!dir.join("main.ax.approved").exists(), "{args:?}: {o}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `axon session --protocol jsonl` under `AXON_REQUIRE_IMPORTS_DIGEST`, with a
+/// private `TMPDIR` and ledger: (exit code, stdout frames, stderr, files left in
+/// `TMPDIR` named `axon_session_*`).
+fn ar5_session(
+    dir: &std::path::Path,
+    digest: &str,
+    cells: &[&str],
+) -> (Option<i32>, Vec<serde_json::Value>, String, Vec<String>) {
+    use std::io::Write;
+    let tmp = dir.join("tmp");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut child = g1_axon(dir)
+        .env("AXON_REQUIRE_IMPORTS_DIGEST", digest)
+        .env("TMPDIR", &tmp)
+        .env("AXON_AUDIT_LEDGER", dir.join("ledger.ndjson"))
+        .args(["session", "--protocol", "jsonl"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        for c in cells {
+            // The session may already have ended: a closed pipe is the point.
+            let _ = writeln!(stdin, "{}", serde_json::json!({ "cell": c }));
+        }
+    }
+    let out = child.wait_with_output().unwrap();
+    let frames = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| l.trim_start().starts_with('{'))
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let left = std::fs::read_dir(&tmp)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("axon_session_"))
+        .collect();
+    (
+        out.status.code(),
+        frames,
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        left,
+    )
+}
+
+#[test]
+fn session_refuses_a_mismatching_cell_with_a_frame_and_no_leftovers() {
+    // AR5. A session cell whose closure is not the required digest exited 8 at
+    // once (inside the trailing-expression probe): no frame, no diagnostic, a
+    // leaked `axon_session_probe_*` file, and the ledger's end check skipped.
+    // Canon keeps "the first mismatching cell ends the session, exit 8".
+    let (dir, _main, lib) = g1_program("session_digest");
+    let digest = g1_imports_digest(&dir);
+    let ledger = dir.join("ledger.ndjson");
+
+    // A rewritten module named by the first cell's `use`: refused before it
+    // executes, with a frame, exit 8.
+    let marker = dir.join("PWNED");
+    std::fs::write(&lib, g1_hostile_lib(&marker)).unwrap();
+    let (code, frames, err, left) = ar5_session(
+        &dir,
+        &digest,
+        &[
+            "mod lib\nuse lib.{helper}\nlet v = helper()",
+            "let y = 2\ny",
+        ],
+    );
+    let ctx = format!("frames={frames:?} stderr={err} left={left:?}");
+    assert!(
+        !marker.exists(),
+        "ATTACK: a refused session cell executed the module: {ctx}"
+    );
+    assert_eq!(code, Some(8), "{ctx}");
+    assert_eq!(frames.len(), 1, "{ctx}");
+    assert_eq!(frames[0]["ok"], serde_json::json!(false), "{ctx}");
+    assert!(
+        frames[0]["diagnostics"].to_string().contains("E2404"),
+        "{ctx}"
+    );
+    assert!(
+        left.is_empty(),
+        "ATTACK: the refused cell left temp files: {ctx}"
+    );
+    std::fs::write(&lib, "fn helper() -> i64 { 41 }\n").unwrap();
+
+    // A cell before the approved `use`: its closure (none) is not the
+    // required one.
+    let (code, frames, err, left) = ar5_session(
+        &dir,
+        &digest,
+        &["let x = 1\nx", "mod lib\nuse lib.{helper}\nhelper()"],
+    );
+    let ctx = format!("frames={frames:?} stderr={err} left={left:?}");
+    assert_eq!(code, Some(8), "{ctx}");
+    assert_eq!(
+        frames.len(),
+        1,
+        "exactly one frame, then the session ends: {ctx}"
+    );
+    assert_eq!(frames[0]["ok"], serde_json::json!(false), "{ctx}");
+    let diags = frames[0]["diagnostics"].to_string();
+    assert!(diags.contains("E2404"), "{ctx}");
+    assert!(
+        diags.contains(&digest),
+        "the frame names the required digest: {ctx}"
+    );
+    assert!(
+        left.is_empty(),
+        "ATTACK: the refused cell left temp files: {ctx}"
+    );
+    if ledger.exists() {
+        let l = axon_audit::Ledger::open(&ledger).unwrap();
+        l.verify().unwrap();
+    }
+
+    // Control: the approved closure in the first cell runs as before.
+    let (code, frames, err, _) = ar5_session(
+        &dir,
+        &digest,
+        &["mod lib\nuse lib.{helper}\nhelper()", "helper() + 1"],
+    );
+    let ctx = format!("frames={frames:?} stderr={err}");
+    assert_eq!(code, Some(0), "{ctx}");
+    assert_eq!(frames.len(), 2, "{ctx}");
+    assert_eq!(frames[1]["ok"], serde_json::json!(true), "{ctx}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_v1_approval_record_binds_the_entry_but_no_longer_approves() {
     // A `/1` record knows nothing of imports: matching entry → not approved,
     // non-blocking (no better than no record); differing entry → tampered.

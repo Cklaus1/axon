@@ -3040,4 +3040,8 @@ ATTACK_MARKERS.update({
     'M3496': 'goal_eval name of a &mut fn: the text differs',
     'M3497': r"ATTACK: sealed code reached the operator \(module-level initializer\): Ok\(Completed\)",
     'M3498': r"ATTACK: sealed code reached the operator \(a candidate struct's where, built by the operator\): Ok\(Completed\)",
+    # gaps2 run — core lane (AR4/AR5).
+    'M3640': r'ATTACK: \[.*\] vouched for a `use` that `run` refuses',
+    'M3641': r'ATTACK: a refused session cell executed the module',
+    'M3642': r'ATTACK: the refused cell left temp files',
 })
