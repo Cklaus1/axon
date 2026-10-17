@@ -11360,6 +11360,12 @@ MUTATIONS += [
      '    if !run_id_is_plain(&run_id) {\n        eprintln!(\n            "axon-os run: --run-id must be a plain file name',
      '    if false && !run_id_is_plain(&run_id) {\n        eprintln!(\n            "axon-os run: --run-id must be a plain file name',
      'axon-os', '--test acceptance', 'run_refuses_a_run_id_that_is_not_a_plain_file_name'),
+    ('M3625', 'AR3 VERIFY_TRIPLE: the closure the program loads is not compared with the one the token binds', 'crates/axon-intent/src/cli.rs',
+     '        if &loaded != bound {', '        if false && &loaded != bound {',
+     'axon-intent', '--test acceptance', 'verify_triple_refuses_a_closure_other_than_the_one_the_token_binds'),
+    ('M3626', 'AR3 VERIFY_TRIPLE (end to end): a module rewritten after approval verifies (the comparison dropped)', 'crates/axon-intent/src/cli.rs',
+     '        if &loaded != bound {', '        if loaded.is_empty() && &loaded != bound {',
+     'axon-intent', '--test acceptance', 'verify_triple_refuses_a_module_rewritten_after_approval'),
 ]
 
 

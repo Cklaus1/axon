@@ -1065,3 +1065,106 @@ fn the_approval_key_and_legacy_tokens_are_enforced_at_run() {
     assert!(out.contains("legacy axon-approval/1"), "{out}");
     assert!(marker.exists(), "{out}");
 }
+
+// ── AR3: verify_triple binds the import closure too ──────────────────────────
+
+/// A test-local runtime (no `mock` feature): reads the program from disk and
+/// answers a fixed import closure. Never runs anything.
+struct FixedImports(String);
+
+impl axon_os::Runtime for FixedImports {
+    fn declared_effects(&self, p: &axon_os::ProgramSource) -> axon_os::DeclaredEffects {
+        axon_os::runtime::scan_effects(p.text)
+    }
+    fn mint_principal(&self, _g: &axon_os::Grant) -> axon_os::PrincipalHandle {
+        axon_os::PrincipalHandle(0)
+    }
+    fn imports_digest(&self, _p: &Path, _g: &axon_os::Grant) -> Result<String, String> {
+        Ok(self.0.clone())
+    }
+    fn run_sandboxed(
+        &self,
+        _p: &axon_os::ProgramSource,
+        _h: &axon_os::PrincipalHandle,
+        _g: &axon_os::Grant,
+        _b: &axon_os::Budget,
+        _s: u64,
+        _i: Option<&str>,
+    ) -> axon_os::RunOutcome {
+        unreachable!("verify_triple runs nothing")
+    }
+}
+
+/// AR3 regression: a `/3` triple whose token binds closure A verifies only
+/// while the program loads A; loading B is `Err` naming the imports.
+#[test]
+fn verify_triple_refuses_a_closure_other_than_the_one_the_token_binds() {
+    use axon_intent::approval::{build_token_raw, grant_digest, program_digest, to_json, Risk};
+    let d = tmp("ar3-fixed");
+    let src = "fn main() -> i64 { 0 }\n";
+    std::fs::write(d.join("p.ax"), src).unwrap();
+    let job = d.join("p.axjob");
+    let job_src = "program = \"p.ax\"\nintent = \"t\"\nseed = 1\nrequire_approval = true\n\
+         [grant]\nmax_label = \"internal\"\n\
+         [grant.budget]\ncalls = 1\ntokens = 1\ncost_micro = 0\n";
+    std::fs::write(&job, job_src).unwrap();
+    let m = axon_os::manifest::parse(job_src, &d).unwrap();
+    let a = format!("axsha256:{}", "a".repeat(64));
+    let b = format!("axsha256:{}", "b".repeat(64));
+    let key = axon_os::ApprovalKey::from_env().unwrap();
+    let token = build_token_raw(
+        &program_digest(src),
+        &grant_digest(&m.grant),
+        &a,
+        "alice",
+        axon_intent::refusal::Decision::Approved,
+        Risk::Low,
+        key.as_ref(),
+    );
+    std::fs::write(job.with_extension("approval"), to_json(&token)).unwrap();
+
+    axon_intent::cli::verify_triple_with(&job, &FixedImports(a.clone()))
+        .expect("the closure the token binds verifies");
+    let err = axon_intent::cli::verify_triple_with(&job, &FixedImports(b.clone()))
+        .err()
+        .unwrap_or_else(|| panic!("ATTACK: a closure the token does not bind verified"));
+    assert!(err.contains("imports") && err.contains(&b), "{err}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// AR3 fail-first: `verify_triple` checked program and grant only, so a module
+/// rewritten after approval verified `Ok` and a caller running the triple
+/// outside axon-os ran an unbound module. Needs the interpreter (`axon
+/// imports`): panics, never skips, without one.
+#[test]
+fn verify_triple_refuses_a_module_rewritten_after_approval() {
+    let Some(axon) = axon_bin() else {
+        panic!("the axon interpreter is required (verify_triple starts `axon imports`)")
+    };
+    // Hermetic: the module sits beside a private copy of the interpreter, so
+    // the only thing `verify_triple` needs from the environment is AXON_BIN.
+    let (job, module, _marker, interp, env) = stage_importing_job("ar3-triple", true, &axon);
+    let (code, out) = run_cmd(
+        &intent_bin(),
+        &[
+            "approve",
+            job.to_str().unwrap(),
+            "--by",
+            "alice",
+            "--accept",
+        ],
+        &interp,
+        &env,
+    );
+    assert_eq!(code, 0, "approve: {out}");
+    std::env::set_var("AXON_BIN", &interp);
+    std::env::remove_var("AXON_APPROVAL_KEY");
+    axon_intent::cli::verify_triple(&job).expect("premise: the approved triple verifies");
+
+    std::fs::write(&module, "fn helper() -> i64 { 666 }\n").unwrap();
+    let r = axon_intent::cli::verify_triple(&job);
+    let err = r.err().unwrap_or_else(|| {
+        panic!("ATTACK: verify_triple accepted a module rewritten after approval")
+    });
+    assert!(err.contains("imports"), "{err}");
+}

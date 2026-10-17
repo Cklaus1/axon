@@ -3049,4 +3049,6 @@ ATTACK_MARKERS.update({
     'M3622': r'ATTACK: a record with run_id "\.\./elsewhere/x" was verified against a job outside its directory',
     'M3623': r'ATTACK: a record with run_id "\.\./elsewhere/x" was verified against a job outside its directory',
     'M3624': r'ATTACK: --run-id \.\./escaped wrote outside --out',
+    'M3625': r'ATTACK: a closure the token does not bind verified',
+    'M3626': r'ATTACK: verify_triple accepted a module rewritten after approval',
 })
