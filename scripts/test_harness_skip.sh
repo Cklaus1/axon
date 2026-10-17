@@ -137,10 +137,52 @@ shape "no relative CARGO_TARGET_DIR= literal in scripts/*.sh" \
 # compiler's own error and leaves only a "build failed"/"skipping" line. Use
 # `cargo_build_or_skip <name> <prereq> cargo build …` (lib/harness_skip.sh),
 # which proves a skip's reason and prints the stderr on a FAIL. Exceptions: none.
+# Matched per LOGICAL line (`\`-continued lines joined), so a continuation
+# cannot split `cargo build` from its redirection; every way of discarding
+# stderr counts (`2>/dev/null`, `&>/dev/null`, `>/dev/null 2>&1`), and so does
+# `|| true`, which discards the failure itself.
+CARGO_DISCARD_RE='cargo[[:space:]]+(build|test)([^#]*)(2>[[:space:]]*/dev/null|&>[[:space:]]*/dev/null|>[[:space:]]*/dev/null[[:space:]]+2>&1|\|\|[[:space:]]*true)'
+# cargo_discard_hits <files...> — prints `file:line: text` for each logical
+# line (non-comment) that runs `cargo build|test` and discards its stderr.
+cargo_discard_hits() {
+  awk '
+    FNR == 1 { buf = ""; start = 0 }
+    {
+      line = $0
+      if (buf == "") start = FNR
+      if (line ~ /\\$/) { sub(/\\$/, " ", line); buf = buf line; next }
+      buf = buf line
+      if (buf !~ /^[[:space:]]*#/) print FILENAME ":" start ":" buf
+      buf = ""
+    }' "$@" | grep -E -- "$CARGO_DISCARD_RE"
+}
+# The detector's own rows: forms that must be caught, and forms that must not.
+_shape_fx="$(mktemp)"; trap 'rm -f "$_shape_fx"' EXIT
+fxrow() { # fxrow <expect: hit|clean> <label> <script text (printf %b)>
+  local got=clean
+  printf '%b' "$3" > "$_shape_fx"
+  [ -n "$(cargo_discard_hits "$_shape_fx")" ] && got=hit
+  if [ "$got" = "$1" ]; then echo "  ok    shape row: $2"; else echo "  WRONG shape row: $2 — detector said $got"; shape_bad=1; fi
+}
+fxrow hit   "2>/dev/null"                 'cargo build -q -p x 2>/dev/null || exit 0\n'
+fxrow hit   ">/dev/null 2>&1 || skip"     'cargo build -q -p x >/dev/null 2>&1 || { echo skipping; exit 0; }\n'
+fxrow hit   "backslash-continued 2>/dev/null" 'cargo build -q -p x \\\n  --target wasm32-wasip1 \\\n  2>/dev/null || exit 0\n'
+fxrow hit   "&>/dev/null"                 'if ! cargo build -q -p x &>/dev/null; then exit 0; fi\n'
+fxrow hit   "cargo test … || true"        'cargo test -q -p x || true\n'
+fxrow clean "cargo_build_or_skip"         'cargo_build_or_skip foo llvm cargo build -q -p x\n'
+fxrow clean "stderr captured"             'if ! e="$(cargo build -q -p x 2>&1)"; then echo "$e"; exit 1; fi\n'
+fxrow clean "comment"                     '# cargo build -q 2>/dev/null used to be here\n'
+fxrow clean "redirect on the next command" 'cargo build -q -p x || exit 1\nrm -f y 2>/dev/null\n'
 parity_sh=()
 for f in "$HERE"/*_parity.sh; do parity_sh+=("$f"); done
-shape "no \`cargo build … 2>/dev/null\` in scripts/*_parity.sh" \
-  'cargo build.*2>/dev/null' "${parity_sh[@]}"
+_hits="$(cargo_discard_hits "${parity_sh[@]}")"
+if [ -n "$_hits" ]; then
+  echo "  WRONG no \`cargo build|test\` that discards stderr in scripts/*_parity.sh:"
+  printf '%s\n' "$_hits" | sed "s|^$HERE/|        scripts/|"
+  shape_bad=1
+else
+  echo "  ok    no \`cargo build|test\` that discards stderr in scripts/*_parity.sh"
+fi
 
 if [ "$bad" -ne 0 ]; then
   echo "test_harness_skip: FAIL [detector] — the skip detector or its reason disagrees with the rule table"
