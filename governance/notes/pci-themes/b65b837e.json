@@ -1,0 +1,4 @@
+{
+  "theme": "gaps2 AR5 session imports digest",
+  "text": "CLI (`axon session` under AXON_REQUIRE_IMPORTS_DIGEST only): the digest check is split into imports_digest_mismatch (non-exiting) and the exiting enforce_required_imports_digest every other verb keeps unchanged; run_check_pipeline_located wraps check_pipeline_located_unenforced. The session's trailing-expression probe treats a mismatch as a failed probe (its temp file is removed); the real check refuses the cell with new code E2404 before it executes or accumulates, removes its temp file, marks the transcript, emits the cell's frame or human render, reads no further input and ends through the normal end path (ledger flush with its truncation check, replay-divergence check), then exits 8. Equality stays the rule. No change to what any run computes or which closures are accepted."
+}

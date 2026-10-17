@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: b46327e59a100d95f83f3c334d7d83daaecc319a
+generated-at: a91a68a9d270c8ecb7ee0cce075eecc43bdf3466
 
-`git diff --numstat 31413ca7..b46327e5 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..a91a68a9 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -50,7 +50,7 @@ generated-at: b46327e59a100d95f83f3c334d7d83daaecc319a
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
 | `crates/axon-core/src/effects.rs` | 291 | 108 |
 | `crates/axon-core/src/env_registry.rs` | 11 | 2 |
-| `crates/axon-core/src/error.rs` | 22 | 13 |
+| `crates/axon-core/src/error.rs` | 24 | 13 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
@@ -87,7 +87,7 @@ generated-at: b46327e59a100d95f83f3c334d7d83daaecc319a
 | `crates/axon-core/src/lib.rs` | 262 | 73 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 108 | 14 |
-| `crates/axon-core/src/main.rs` | 1255 | 325 |
+| `crates/axon-core/src/main.rs` | 1327 | 328 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
 | `crates/axon-core/src/parser.rs` | 457 | 31 |
@@ -98,9 +98,9 @@ generated-at: b46327e59a100d95f83f3c334d7d83daaecc319a
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 55462 | 7700 |
+| total | 55536 | 7703 |
 
-`git log --reverse 31413ca7..b46327e5 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..a91a68a9 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -383,7 +383,8 @@ generated-at: b46327e59a100d95f83f3c334d7d83daaecc319a
 | ca49d537 | gaps wasm runtime lookup | BUILD TOOLING (axon build --target wasm32-*: which libaxon_rt.a is linked): the running compiler's own cargo target dir is searched before walking up from the cwd, the same dir the native link uses; no change in what any program computes, accepts or refuses |
 | 66a9d59e | gaps G3 LSP locations | TOOLING (axon lsp only): a module path from a relative AXON_PATH entry is made absolute against the server's cwd before it is encoded as a file:// URI; no change in what any run computes, accepts or refuses |
 | b46327e5 | gaps2 AR4 import closure E0003 | CLI (`axon imports`, `axon ast approve`): import_closure_of now runs the resolver on the loaded program and, on any E0003 (a `use` of a module the program never declares), prints the diagnostic as `axon run` does and exits 2 before listing the closure or writing `.approved`. Other resolve or type errors are unchanged (imports reports a closure, not a verdict). Knock-on: `axon-intent approve` on such a program exits 2 where it minted a token for a program `run` refuses. |
-| 279 commits | | |
+| b65b837e | gaps2 AR5 session imports digest | CLI (`axon session` under AXON_REQUIRE_IMPORTS_DIGEST only): the digest check is split into imports_digest_mismatch (non-exiting) and the exiting enforce_required_imports_digest every other verb keeps unchanged; run_check_pipeline_located wraps check_pipeline_located_unenforced. The session's trailing-expression probe treats a mismatch as a failed probe (its temp file is removed); the real check refuses the cell with new code E2404 before it executes or accumulates, removes its temp file, marks the transcript, emits the cell's frame or human render, reads no further input and ends through the normal end path (ledger flush with its truncation check, replay-divergence check), then exits 8. Equality stays the rule. No change to what any run computes or which closures are accepted. |
+| 280 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -542,7 +543,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 445 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483-M3498, M3640
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 447 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483-M3498, M3640-M3642
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
