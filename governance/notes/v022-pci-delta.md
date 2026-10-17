@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: c691a51b8c6dba78ff3b5c44436d2a781fbb0c80
+generated-at: 8afc76bac0c24f48ab9b7bd36e5c72e6fd2da711
 
-`git diff --numstat 31413ca7..c691a51b -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..8afc76ba -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -55,7 +55,7 @@ generated-at: c691a51b8c6dba78ff3b5c44436d2a781fbb0c80
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 396 | 146 |
-| `crates/axon-core/src/interp.rs` | 7468 | 2798 |
+| `crates/axon-core/src/interp.rs` | 7581 | 2874 |
 | `crates/axon-core/src/interp/builtins.rs` | 746 | 594 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
@@ -64,7 +64,7 @@ generated-at: c691a51b8c6dba78ff3b5c44436d2a781fbb0c80
 | `crates/axon-core/src/interp/env.rs` | 1230 | 0 |
 | `crates/axon-core/src/interp/eval.rs` | 2194 | 606 |
 | `crates/axon-core/src/interp/goal.rs` | 87 | 42 |
-| `crates/axon-core/src/interp/kernel_tests.rs` | 336 | 0 |
+| `crates/axon-core/src/interp/kernel_tests.rs` | 363 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 99 | 63 |
@@ -87,7 +87,7 @@ generated-at: c691a51b8c6dba78ff3b5c44436d2a781fbb0c80
 | `crates/axon-core/src/lib.rs` | 300 | 75 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 179 | 57 |
-| `crates/axon-core/src/main.rs` | 1327 | 328 |
+| `crates/axon-core/src/main.rs` | 1405 | 346 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
 | `crates/axon-core/src/parser.rs` | 457 | 31 |
@@ -98,9 +98,9 @@ generated-at: c691a51b8c6dba78ff3b5c44436d2a781fbb0c80
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 55645 | 7748 |
+| total | 55863 | 7842 |
 
-`git log --reverse 31413ca7..c691a51b -- crates/axon-core/src`:
+`git log --reverse 31413ca7..8afc76ba -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -387,8 +387,11 @@ generated-at: c691a51b8c6dba78ff3b5c44436d2a781fbb0c80
 | b440517f | gaps LSP residue | TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): the server's go-to-definition calls the public compute_definition instead of repeating its item loop (the two loops were identical, dummy-span skip included); compute_definition's doc says the span may index an imported module's file; lsp_definition_no_crash asserts the span it gets |
 | b65b837e | gaps2 AR5 session imports digest | CLI (`axon session` under AXON_REQUIRE_IMPORTS_DIGEST only): the digest check is split into imports_digest_mismatch (non-exiting) and the exiting enforce_required_imports_digest every other verb keeps unchanged; run_check_pipeline_located wraps check_pipeline_located_unenforced. The session's trailing-expression probe treats a mismatch as a failed probe (its temp file is removed); the real check refuses the cell with new code E2404 before it executes or accumulates, removes its temp file, marks the transcript, emits the cell's frame or human render, reads no further input and ends through the normal end path (ledger flush with its truncation check, replay-divergence check), then exits 8. Equality stays the rule. No change to what any run computes or which closures are accepted. |
 | 4c21fa9a | gaps LSP residue | TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): the loader records which entry `use` reached each module; the digest, `axon imports` and every CLI output are unchanged (LoadedModule.via: the entry `use` whose load first merged the module, overridden by the entry's own `use` of it; ImportClosure::via_of; AnalysisResult carries the closure). The LSP anchors an imported module's diagnostic on that `use`, located in the token stream segment for segment, instead of on a text line matched by path suffix (which misanchored transitive modules, `use` lines inside block comments and modules whose path ends like another's) |
+| 43971d40 | gaps harness hygiene | TEST-ONLY (cfg(test) operator-RNG override; the non-test build is unchanged) |
 | c691a51b | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 284 commits | | |
+| 4694410b | gaps harness hygiene | TOOLING (wasm link diagnostics on stderr only; no change in what any run computes, accepts or links) |
+| 8afc76ba | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 287 commits | | |
 <!-- END MECHANICAL -->
 
 
