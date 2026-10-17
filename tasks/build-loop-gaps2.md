@@ -36,3 +36,13 @@ Wave 1: all five lanes in parallel. Integrator merges in order jobs, approval, c
 smoke per spec; adversarial implementation review; fixes verified findings; strict gate (parity_all) at the end;
 tracker/changelog/reference; ff main, push.
 Poison ceiling: 3 failed attempts on an item → park blocked, log, continue.
+
+## Status (end of run)
+| Item | Status |
+|---|---|
+| KG1, KG2, KG3, KG5 | done (KG2 leftover test made load-independent after review) |
+| KG4 | excluded (human: no Ctrl-C behaviour change) |
+| AR1, AR2, AR3, AR4, AR5, AR7 | done (AR5 ledger test strengthened after review) |
+| AR6, AR H1, AR5 continue-session | excluded (human) |
+| L1, L2 (reduced), L3 | done |
+| H1-H7 | done (H4 shape check hardened after review) |

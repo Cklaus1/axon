@@ -2569,3 +2569,12 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
   process then dies by the signal, so the just-spawned job runs on in its own group. Continue mode is covered by the
   caller's poll loop. A fix would block the termination signals in every thread a caller starts (or register the pgid
   from the child's `pre_exec` side via a pipe) — not done; documented on `Job::spawn`. Not reproduced.
+
+## gaps2 run — integrator (implementation review)
+
+- **[P3] `verify_triple_with` reads the entry a second time** (`crates/axon-intent/src/cli.rs:516`): the token is
+  checked against `load_program`'s text, but `rt.imports_digest(&manifest.program)` re-reads the file, and the caller
+  must read it again to run it. Normal check-then-use window [INFERENCE, not reproduced]; return the verified text.
+- **[P3] The AR3 fail-first test mutates process env** (`crates/axon-intent/tests/acceptance.rs:1160-1161`,
+  `set_var("AXON_BIN")`, `remove_var("AXON_APPROVAL_KEY")`) while sibling tests in the binary run in parallel.
+  Flake risk only today [INFERENCE]; pass the binary and key explicitly.
