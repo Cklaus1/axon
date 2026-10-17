@@ -228,7 +228,15 @@ fn cmd_explain(job: &Path) -> ExitCode {
         }
     };
     let rt = AxonCoreRuntime::from_env();
-    let declared = rt.declared_effects(&manifest.program);
+    // An unreadable program declares nothing it may be trusted with:
+    // deny-by-default, as the supervisor's read refusal does for a run.
+    let declared = match rt.load_program(&manifest.program) {
+        Ok(text) => rt.declared_effects(&crate::runtime::ProgramSource {
+            path: &manifest.program,
+            text: &text,
+        }),
+        Err(_) => crate::gate::DeclaredEffects::unknown(),
+    };
     let eff = manifest.grant.intersect(&broad_supervisor_grant());
     println!("Intent: {}", manifest.intent);
     println!("{}", legible_grant(&eff));
@@ -331,7 +339,16 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
             return ExitCode::from(8);
         }
     };
-    match crate::approval::authorize(job_path, &manifest, key.as_ref(), &rt) {
+    // Its own advisory read of the program; the supervisor reads it again,
+    // once, and that read is the one verified, scanned and run (AR1).
+    let program_text = rt.load_program(&manifest.program).ok();
+    match crate::approval::authorize(
+        job_path,
+        &manifest,
+        program_text.as_deref(),
+        key.as_ref(),
+        &rt,
+    ) {
         // An INVALID token is a failure whether or not policy required one,
         // and so is a token required but missing.
         Err(reason) => {

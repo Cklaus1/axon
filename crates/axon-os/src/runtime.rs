@@ -94,6 +94,16 @@ impl IsolationRequirement {
     }
 }
 
+/// The entry program of a supervised run, read ONCE (AR1). `text` is what
+/// `authorize` verified the token against, what the static scan judges, and
+/// what the sandbox stages: no runtime re-reads the entry. `path` names the
+/// entry (the wrapper's file stem, the child's cwd); it is never read again.
+#[derive(Debug, Clone, Copy)]
+pub struct ProgramSource<'a> {
+    pub path: &'a Path,
+    pub text: &'a str,
+}
+
 /// The seam. Every method that touches the model/interpreter/OS lives here.
 pub trait Runtime {
     /// What confinement this runtime provides. Defaults to the WEAKEST label,
@@ -102,16 +112,23 @@ pub trait Runtime {
         Isolation::ProcessScoped
     }
 
-    /// The effect row a program declares it may perform. An error / absent
+    /// Read the entry program: the supervisor's one read per run (AR1).
+    /// `Err` names why it cannot be read; the supervisor refuses the run on
+    /// the `io` axis.
+    fn load_program(&self, path: &Path) -> Result<String, String> {
+        std::fs::read_to_string(path).map_err(|e| e.to_string())
+    }
+
+    /// The effect row the program text declares it may perform. An absent
     /// declaration MUST map to `DeclaredEffects::unknown()` (deny-by-default).
-    fn declared_effects(&self, program: &Path) -> DeclaredEffects;
+    fn declared_effects(&self, program: &ProgramSource) -> DeclaredEffects;
 
     /// Mint a Principal holding exactly `grant`. Attenuation (no authority the
     /// supervisor lacks) is guaranteed by the caller passing the effective
     /// grant `J ∩ S`; the runtime mints to that, no more.
     fn mint_principal(&self, grant: &Grant) -> PrincipalHandle;
 
-    /// Run `program` as `principal` inside a sandbox enforcing `ceiling` +
+    /// Run `program.text` as `principal` inside a sandbox enforcing `ceiling` +
     /// `budget` with a fixed `seed`. Returns the observed events and the verdict
     /// (mapping any runtime over-reach to Denied/BudgetExhausted/RefineViolation).
     /// AUDIT T3: takes the full `Grant`, not just its induced `EffectSet`.
@@ -124,9 +141,12 @@ pub trait Runtime {
     /// bound. The process that loads the program's modules must refuse to run
     /// a different closure; a runtime that cannot make it do so must refuse
     /// the run rather than ignore the binding.
+    ///
+    /// AR1: the runtime executes `program.text`, the bytes the approval
+    /// verified, and never re-reads `program.path`.
     fn run_sandboxed(
         &self,
-        program: &Path,
+        program: &ProgramSource,
         principal: &PrincipalHandle,
         grant: &Grant,
         budget: &Budget,
@@ -1203,11 +1223,8 @@ impl Runtime for AxonCoreRuntime {
         Isolation::ProcessScoped
     }
 
-    fn declared_effects(&self, program: &Path) -> DeclaredEffects {
-        match std::fs::read_to_string(program) {
-            Ok(src) => scan_effects(&src),
-            Err(_) => DeclaredEffects::unknown(), // deny-by-default
-        }
+    fn declared_effects(&self, program: &ProgramSource) -> DeclaredEffects {
+        scan_effects(program.text)
     }
 
     fn mint_principal(&self, _grant: &Grant) -> PrincipalHandle {
@@ -1222,7 +1239,7 @@ impl Runtime for AxonCoreRuntime {
 
     fn run_sandboxed(
         &self,
-        program: &Path,
+        program: &ProgramSource,
         _principal: &PrincipalHandle,
         grant: &Grant,
         budget: &Budget,
@@ -1237,24 +1254,16 @@ impl Runtime for AxonCoreRuntime {
         // builtin-dispatch level, so an effect cannot be hidden by renaming or
         // indirection the way the static-gate source scan could be fooled. The
         // static gate is a best-effort PRE-check; THIS is what actually contains.
-        let src = match std::fs::read_to_string(program) {
-            Ok(s) => s,
-            Err(e) => {
-                return RunOutcome {
-                    events: vec![],
-                    verdict: Verdict::Denied {
-                        reason: format!("cannot read program: {e}"),
-                        axis: "io".into(),
-                    },
-                }
-            }
-        };
+        //
+        // AR1: the text staged is the text the approval verified and the static
+        // scan judged; the entry file is not read again.
         let nonce = done_nonce();
-        let wrapper_src = wrap_in_sandbox(&src, grant, budget, &nonce);
+        let wrapper_src = wrap_in_sandbox(program.text, grant, budget, &nonce);
         // B259: a PRIVATE per-run 0700 directory, removed on every exit path
         // when `staging` drops. The wrapper name inside it is fixed; its
         // uniqueness comes from the directory.
         let stem = program
+            .path
             .file_stem()
             .and_then(|s| s.to_str())
             .filter(|s| {
@@ -1289,7 +1298,7 @@ impl Runtime for AxonCoreRuntime {
             };
         debug_assert!(wrapper_path.starts_with(staging.path()));
 
-        let mut cmd = job_child_command(&self.axon_bin, program, grant);
+        let mut cmd = job_child_command(&self.axon_bin, program.path, grant);
         cmd.arg("run").arg(&wrapper_path);
         cmd.env("AXON_SEED", seed.to_string());
         // G1e: the closure the approval bound. Set AFTER the helper's
@@ -1481,7 +1490,7 @@ impl Runtime for AxonCoreRuntime {
         // A single audit event recording the bounded run under the ceiling.
         let events = vec![RE::new(
             "run",
-            &program.display().to_string(),
+            &program.path.display().to_string(),
             ceiling,
             "internal",
         )];
@@ -1500,6 +1509,9 @@ pub struct MockRuntime {
     pub imports: Result<String, String>,
     /// The `required_imports` the last `run_sandboxed` call was handed.
     pub last_required_imports: std::cell::RefCell<Option<String>>,
+    /// What [`Runtime::load_program`] answers, whatever the path (default: a
+    /// trivial program), so a supervisor test needs no file on disk.
+    pub source: Result<String, String>,
 }
 
 #[cfg(any(test, feature = "mock"))]
@@ -1512,13 +1524,17 @@ impl MockRuntime {
             run_calls: std::cell::Cell::new(0),
             imports: Ok(crate::approval::EMPTY_IMPORTS_DIGEST.to_string()),
             last_required_imports: std::cell::RefCell::new(None),
+            source: Ok("fn main() -> i64 { 0 }\n".to_string()),
         }
     }
 }
 
 #[cfg(any(test, feature = "mock"))]
 impl Runtime for MockRuntime {
-    fn declared_effects(&self, _program: &Path) -> DeclaredEffects {
+    fn load_program(&self, _path: &Path) -> Result<String, String> {
+        self.source.clone()
+    }
+    fn declared_effects(&self, _program: &ProgramSource) -> DeclaredEffects {
         self.declared
     }
     fn mint_principal(&self, _grant: &Grant) -> PrincipalHandle {
@@ -1530,7 +1546,7 @@ impl Runtime for MockRuntime {
     }
     fn run_sandboxed(
         &self,
-        _program: &Path,
+        _program: &ProgramSource,
         _principal: &PrincipalHandle,
         _grant: &Grant,
         _budget: &Budget,

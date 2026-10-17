@@ -903,13 +903,11 @@ impl AdmissionProbe {
     /// lone-`\r` separators, all of which the interpreter loads. Comments and
     /// strings count too: a false positive only refuses (re-approve), a false
     /// negative runs an unbound module. An entry that cannot be read counts
-    /// as declaring one.
-    fn declares_module(&self, p: &Path) -> bool {
-        let src = match &self.1 {
-            Some(s) => Some(s.clone()),
-            None => std::fs::read_to_string(p).ok(),
-        };
-        src.as_deref().is_none_or(|src| {
+    /// as declaring one. Scans `self.1` when the probe carries a scan source;
+    /// otherwise `entry`, the entry text (`None`: unreadable).
+    fn declares_module(&self, entry: Option<&str>) -> bool {
+        let src = self.1.as_deref().or(entry);
+        src.is_none_or(|src| {
             let b = src.as_bytes();
             let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
             ["use", "mod"].iter().any(|kw| {
@@ -926,14 +924,11 @@ impl axon_os::Runtime for AdmissionProbe {
     fn isolation(&self) -> axon_os::Isolation {
         self.0
     }
-    fn declared_effects(&self, p: &Path) -> axon_os::DeclaredEffects {
-        if let Some(src) = &self.1 {
-            return axon_os::runtime::scan_effects(src);
-        }
-        match std::fs::read_to_string(p) {
-            Ok(src) => axon_os::runtime::scan_effects(&src),
-            Err(_) => axon_os::DeclaredEffects::unknown(),
-        }
+    /// The probe keeps the default `load_program` (the entry bytes, which the
+    /// supervisor verifies the token against); a check suite's scan source
+    /// (`self.1`, the entry with its modules inlined) is what is scanned.
+    fn declared_effects(&self, p: &axon_os::ProgramSource) -> axon_os::DeclaredEffects {
+        axon_os::runtime::scan_effects(self.1.as_deref().unwrap_or(p.text))
     }
     fn mint_principal(&self, _g: &axon_os::Grant) -> axon_os::PrincipalHandle {
         axon_os::PrincipalHandle(0)
@@ -946,7 +941,11 @@ impl axon_os::Runtime for AdmissionProbe {
     /// `axon-approval/1` token (keyless only) is admitted for. Otherwise the
     /// closure is undetermined and the /1 token is refused (re-approve).
     fn imports_digest(&self, p: &Path, _g: &axon_os::Grant) -> Result<String, String> {
-        if self.declares_module(p) {
+        let entry = match &self.1 {
+            Some(_) => None,
+            None => std::fs::read_to_string(p).ok(),
+        };
+        if self.declares_module(entry.as_deref()) {
             return Err(
                 "Fabric resolves no import closure, and the program declares a module (a \
                  `use`/`mod` line) or could not be read"
@@ -963,7 +962,7 @@ impl axon_os::Runtime for AdmissionProbe {
     /// declares no module: checked here on the scanned source.
     fn run_sandboxed(
         &self,
-        p: &Path,
+        p: &axon_os::ProgramSource,
         _h: &axon_os::PrincipalHandle,
         _g: &axon_os::Grant,
         _b: &axon_os::Budget,
@@ -985,7 +984,7 @@ impl axon_os::Runtime for AdmissionProbe {
                      program that imports nothing"
                 ));
             }
-            if self.declares_module(p) {
+            if self.declares_module(Some(p.text)) {
                 return refuse(
                     "the approval binds the empty import closure, but the program declares a \
                      module (or could not be read)"

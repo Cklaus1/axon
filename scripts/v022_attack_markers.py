@@ -3041,3 +3041,9 @@ ATTACK_MARKERS.update({
     'M3497': r"ATTACK: sealed code reached the operator \(module-level initializer\): Ok\(Completed\)",
     'M3498': r"ATTACK: sealed code reached the operator \(a candidate struct's where, built by the operator\): Ok\(Completed\)",
 })
+
+# gaps2 run, approval lane (AR1-AR3; ids M3620-M3639)
+ATTACK_MARKERS.update({
+    'M3620': r'ATTACK: the entry swapped after authorization ran under the token',
+    'M3621': r'ATTACK: an unreadable program was run',
+})

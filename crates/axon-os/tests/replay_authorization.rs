@@ -38,7 +38,7 @@ fn manifest_src(require: bool) -> String {
 fn a_job_requiring_approval_without_a_token_is_refused() {
     let m = parse(&manifest_src(true), Path::new(".")).expect("parse");
     let rt = axon_os::runtime::AxonCoreRuntime::from_env();
-    let err = authorize(Path::new("/nonexistent/job.axjob"), &m, None, &rt)
+    let err = authorize(Path::new("/nonexistent/job.axjob"), &m, None, None, &rt)
         .expect_err("a job requiring approval with no token must be refused");
     assert!(
         err.contains("approval required but missing"),
@@ -51,7 +51,7 @@ fn a_job_requiring_approval_without_a_token_is_refused() {
 fn a_job_not_requiring_approval_authorizes_as_not_required() {
     let m = parse(&manifest_src(false), Path::new(".")).expect("parse");
     let rt = axon_os::runtime::AxonCoreRuntime::from_env();
-    let auth = authorize(Path::new("/nonexistent/job.axjob"), &m, None, &rt)
+    let auth = authorize(Path::new("/nonexistent/job.axjob"), &m, None, None, &rt)
         .expect("a job that does not require approval must authorize");
     assert_eq!(auth.status, ApprovalStatus::NotRequired);
     assert_eq!(auth.required_imports, None);

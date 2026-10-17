@@ -7,7 +7,7 @@ use axon_os::manifest::parse;
 use axon_os::verdict::Verdict;
 use axon_os::{
     supervise_requiring, Budget, DeclaredEffects, Grant, Isolation, IsolationRequirement,
-    PrincipalHandle, RunOutcome, Runtime,
+    PrincipalHandle, ProgramSource, RunOutcome, Runtime,
 };
 
 /// A runtime that states `iso` and records every call made to it. When it is
@@ -37,7 +37,7 @@ impl Runtime for Probe {
     fn isolation(&self) -> Isolation {
         self.iso
     }
-    fn declared_effects(&self, _p: &Path) -> DeclaredEffects {
+    fn declared_effects(&self, _p: &ProgramSource) -> DeclaredEffects {
         self.declared.set(self.declared.get() + 1);
         axon_os::runtime::scan_effects("fn main() -> i64 { 0 }\n")
     }
@@ -50,7 +50,7 @@ impl Runtime for Probe {
     }
     fn run_sandboxed(
         &self,
-        _p: &Path,
+        _p: &ProgramSource,
         _h: &PrincipalHandle,
         _g: &Grant,
         _b: &Budget,

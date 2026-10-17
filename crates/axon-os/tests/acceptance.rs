@@ -1063,3 +1063,152 @@ fn t44_verdict_is_decided_by_exit_code_not_stderr_prose() {
 
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// ── AR1: the approved entry bytes are the bytes that run ─────────────────────
+
+/// Delegates every method to the real runtime, but its static scan first
+/// rewrites the entry on disk: the swap lands after `authorize` verified the
+/// token and before the run.
+struct SwapAfterAuthorize {
+    inner: axon_os::runtime::AxonCoreRuntime,
+    program: PathBuf,
+    hostile: &'static str,
+}
+
+impl axon_os::Runtime for SwapAfterAuthorize {
+    fn isolation(&self) -> axon_os::Isolation {
+        self.inner.isolation()
+    }
+    fn load_program(&self, p: &Path) -> Result<String, String> {
+        self.inner.load_program(p)
+    }
+    fn declared_effects(&self, p: &axon_os::ProgramSource) -> axon_os::DeclaredEffects {
+        std::fs::write(&self.program, self.hostile).unwrap();
+        self.inner.declared_effects(p)
+    }
+    fn mint_principal(&self, g: &axon_os::Grant) -> axon_os::PrincipalHandle {
+        self.inner.mint_principal(g)
+    }
+    fn run_sandboxed(
+        &self,
+        p: &axon_os::ProgramSource,
+        h: &axon_os::PrincipalHandle,
+        g: &axon_os::Grant,
+        b: &axon_os::Budget,
+        seed: u64,
+        required_imports: Option<&str>,
+    ) -> axon_os::RunOutcome {
+        self.inner.run_sandboxed(p, h, g, b, seed, required_imports)
+    }
+    fn imports_digest(&self, p: &Path, g: &axon_os::Grant) -> Result<String, String> {
+        self.inner.imports_digest(p, g)
+    }
+}
+
+/// AR1: an entry rewritten between the approval check and the run used to
+/// run under the token that verified the other bytes. The supervisor now
+/// reads the entry once, and the approved text is what is scanned and staged.
+#[test]
+fn the_entry_bytes_the_token_verified_are_the_bytes_that_run() {
+    let axon = axon_bin().expect("AR1 needs the interpreter; it never skips");
+    let d = tmp("ar1-swap");
+    let out = d.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let marker = out.join("marker.txt");
+    let _ = std::fs::remove_file(&marker);
+    let prog = d.join("p.ax");
+    let job = d.join("p.axjob");
+    let _ = std::fs::remove_file(job.with_extension("approval"));
+    const BENIGN: &str = "fn main() -> i64 {\n  7\n}\n";
+    const HOSTILE: &str = "fn main() -> i64 {\n  match write_file(\"./out/marker.txt\", \"swapped\") {\n    Ok(_) => 0\n    Err(_) => 1\n  }\n}\n";
+    let grant = axon_os::grant::Grant {
+        reproducible: false,
+        fs_read: vec![],
+        fs_write: vec!["./out/".into()],
+        net: vec![],
+        exec: axon_os::grant::ExecPolicy::None,
+        max_label: axon_os::grant::Label::Internal,
+        budget: axon_os::grant::Budget {
+            calls: 100,
+            tokens: 0,
+            cost_micro: 0,
+        },
+    };
+    let manifest = axon_os::JobManifest {
+        require_approval: true,
+        program: prog.clone(),
+        intent: "ar1".into(),
+        seed: 1,
+        grant: grant.clone(),
+    };
+    let inner = || {
+        axon_os::runtime::AxonCoreRuntime::with_bin_and_timeout(
+            axon.clone(),
+            std::time::Duration::from_secs(60),
+        )
+    };
+
+    // Premise: under this supervisor and grant, the hostile program, run
+    // directly (no approval required), writes the marker.
+    std::fs::write(&prog, HOSTILE).unwrap();
+    let direct = axon_os::JobManifest {
+        require_approval: false,
+        ..manifest.clone()
+    };
+    let rec = axon_os::supervise(&direct, &job, &grant, "ar1-premise", &inner());
+    assert!(
+        marker.exists(),
+        "premise: the grant lets the hostile program write the marker: {:?}",
+        rec.verdict
+    );
+    std::fs::remove_file(&marker).unwrap();
+
+    // A /3 token for the BENIGN program, over the empty closure.
+    std::fs::write(&prog, BENIGN).unwrap();
+    let key = axon_os::approval::ApprovalKey::from_env().unwrap();
+    let pd = format!("axsha256:{}", sha256_hex(BENIGN.as_bytes()));
+    let gd = format!(
+        "axsha256:{}",
+        sha256_hex(axon_os::approval::canonical_grant(&grant).as_bytes())
+    );
+    let fields = axon_os::approval::TokenFields {
+        program_digest: &pd,
+        grant_digest: &gd,
+        imports_digest: axon_os::EMPTY_IMPORTS_DIGEST,
+        approved_by: "auditor",
+        decision: "approved",
+        risk: "low",
+    };
+    let td = fields.digest(key.as_ref());
+    std::fs::write(
+        job.with_extension("approval"),
+        format!(
+            "{{\"schema\":\"axon-approval/3\",\"program_digest\":\"{pd}\",\
+             \"grant_digest\":\"{gd}\",\"imports_digest\":\"{}\",\
+             \"approved_by\":\"auditor\",\"decision\":\"approved\",\"risk\":\"low\",\
+             \"token_digest\":\"{td}\"}}",
+            axon_os::EMPTY_IMPORTS_DIGEST
+        ),
+    )
+    .unwrap();
+
+    let rt = SwapAfterAuthorize {
+        inner: inner(),
+        program: prog.clone(),
+        hostile: HOSTILE,
+    };
+    let rec = axon_os::supervise(&manifest, &job, &grant, "ar1-swap", &rt);
+    assert_eq!(
+        std::fs::read_to_string(&prog).unwrap(),
+        HOSTILE,
+        "the swap happened"
+    );
+    assert!(
+        !marker.exists(),
+        "ATTACK: the entry swapped after authorization ran under the token: {:?}",
+        rec.verdict
+    );
+    assert_eq!(rec.verdict, axon_os::Verdict::Completed { value: 7 });
+    assert_eq!(rec.approval, "verified_required");
+    let _ = std::fs::remove_dir_all(&d);
+}
