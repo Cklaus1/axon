@@ -1,0 +1,4 @@
+{
+  "theme": "gaps LSP residue",
+  "text": "TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): the server's go-to-definition calls the public compute_definition instead of repeating its item loop (the two loops were identical, dummy-span skip included); compute_definition's doc says the span may index an imported module's file; lsp_definition_no_crash asserts the span it gets"
+}

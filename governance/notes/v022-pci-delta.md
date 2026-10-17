@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 69f8e75568668b4382b86657c473f1bdfaf5e6dc
+generated-at: b440517f4541b031a103506831760e67d4c02b31
 
-`git diff --numstat 31413ca7..69f8e755 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..b440517f -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -86,7 +86,7 @@ generated-at: 69f8e75568668b4382b86657c473f1bdfaf5e6dc
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
 | `crates/axon-core/src/lib.rs` | 262 | 73 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
-| `crates/axon-core/src/lsp.rs` | 112 | 24 |
+| `crates/axon-core/src/lsp.rs` | 129 | 51 |
 | `crates/axon-core/src/main.rs` | 1218 | 325 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
@@ -98,9 +98,9 @@ generated-at: 69f8e75568668b4382b86657c473f1bdfaf5e6dc
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 55429 | 7710 |
+| total | 55446 | 7737 |
 
-`git log --reverse 31413ca7..69f8e755 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..b440517f -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -383,7 +383,8 @@ generated-at: 69f8e75568668b4382b86657c473f1bdfaf5e6dc
 | ca49d537 | gaps wasm runtime lookup | BUILD TOOLING (axon build --target wasm32-*: which libaxon_rt.a is linked): the running compiler's own cargo target dir is searched before walking up from the cwd, the same dir the native link uses; no change in what any program computes, accepts or refuses |
 | 66a9d59e | gaps G3 LSP locations | TOOLING (axon lsp only): a module path from a relative AXON_PATH entry is made absolute against the server's cwd before it is encoded as a file:// URI; no change in what any run computes, accepts or refuses |
 | 69f8e755 | gaps LSP residue | TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): the four clippy lints of the serde-json configuration are fixed (needless &mut on resolve_program/infer_program, loop to while let in run_lsp, a redundant closure in format_fn_hover); the program stays mutable for load_use_decls and fill_captures |
-| 279 commits | | |
+| b440517f | gaps LSP residue | TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): the server's go-to-definition calls the public compute_definition instead of repeating its item loop (the two loops were identical, dummy-span skip included); compute_definition's doc says the span may index an imported module's file; lsp_definition_no_crash asserts the span it gets |
+| 280 commits | | |
 <!-- END MECHANICAL -->
 
 
