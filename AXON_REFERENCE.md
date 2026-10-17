@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 26 CLI verbs, 344 builtins, 24 attributes, 146 diagnostic codes (133 live, 13 reserved), 64 environment variables.
+The complete surface of this build — 26 CLI verbs, 344 builtins, 24 attributes, 147 diagnostic codes (134 live, 13 reserved), 64 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -106,7 +106,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_ALLOWED_EFFECTS` | ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset. Interpreter-only |
 | `AXON_PRINCIPAL` | the principal a run executes as — audit ATTRIBUTION only; it grants and withholds nothing |
 | `AXON_GUEST_ALLOW_NO_POLICY` | axon-guest-init: start the guest even though no capability policy could be loaded from the kernel cmdline (`axon.policy=`) or MMDS (no effect ceiling, no token cap, no seccomp). READ ONLY in builds with the non-default cargo feature `dev-allow-no-policy`; a default build ignores it and REFUSES, because Linux copies `NAME=value` cmdline words into init's environment, so a runtime flag would be reachable by whoever can append one |
-| `AXON_REQUIRE_IMPORTS_DIGEST` | the `axsha256:` imports_digest (`axon imports --json`) a run must load: `axon run`/`test`/`goal`/`session`/`deploy` compare the import closure they loaded and exit 8 before executing anything when it differs. Read once and removed from the environment, so it binds that process only, not programs it spawns. Any other verb refuses it (exit 2); a built binary refuses it at start (exit 2). Interpreter-only |
+| `AXON_REQUIRE_IMPORTS_DIGEST` | the `axsha256:` imports_digest (`axon imports --json`) a run must load: `axon run`/`test`/`goal`/`session`/`deploy` compare the import closure they loaded and exit 8 before executing anything when it differs. In `axon session` the first cell whose closure differs is refused with E2404 (its frame or human render is emitted; it does not execute or accumulate), no further input is read, and the session ends through its normal end path with exit 8 — so `use` the approved modules in the first cell. Read once and removed from the environment, so it binds that process only, not programs it spawns. Any other verb refuses it (exit 2); a built binary refuses it at start (exit 2). Interpreter-only |
 | `AXON_REQUIRE_CERTS` | fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass |
 | `AXON_ATTEST_KEY` | operator-provisioned attestation key (hex, >=16 bytes). When set, axon-vm signs AND verifies the attestation report under it, so a report signed by anyone else fails. Unset falls back to an ephemeral per-process key, where signer and verifier are the same process — real integrity over the measurement, but attesting nothing to a third party |
 | `AXON_APPROVAL_KEY` | operator approval key (hex, >=16 bytes), separate from AXON_ATTEST_KEY. When set, axon-os seals run records as `axrmac1:` (HMAC under a derived record subkey) and its verifier refuses unkeyed `axrec2:`/`axrec3:` records, so records archived before the key was set no longer verify or replay. Unset or blank = unkeyed (`axrec3:`, integrity only); malformed or short = refused, never a silent fall back. Symmetric: every holder can mint |
@@ -140,7 +140,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEE_ENCLAVE` | R24 TEE: set to 1 by the gramine-direct manifest to signal the workload is executing inside an enclave; this is what makes `tee_in_enclave()` return true. Read through the host seam, so it is recorded and replayed |
 | `AXON_TEE_MEASUREMENT` | R24 TEE: the simulated enclave launch measurement returned by `tee_attest_measurement()` when set, a stub otherwise. A genuine hardware-rooted quote comes only from confidential hardware. Read through the host seam |
 
-## Diagnostic codes (146, of which 133 live)
+## Diagnostic codes (147, of which 134 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -275,6 +275,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E2400` | redefining a name in a session breaks an item an earlier cell wrote |
 | `E2402` | a session cell is not a usable fragment — today this means it declares its own `fn main`, which collides with the one the session composes around the cell's statements |
 | `E2403` | malformed `axon session --protocol jsonl` input frame |
+| `E2404` | a session cell's import closure is not the one `AXON_REQUIRE_IMPORTS_DIGEST` names — the cell is refused before it executes and the session ends with exit 8; `use` the approved modules in the first cell |
 | `W0001` | unknown attribute |
 | `W0002` | variable shadowing |
 | `W0003` | user fn shadows a builtin (builtin takes precedence) |
