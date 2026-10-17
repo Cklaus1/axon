@@ -2491,7 +2491,7 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
 - **[P2] Other supervisors kill only their direct child.** `axon-cortex/src/runner.rs:3095`, `axon-cortex/src/generate.rs:552`,
   `axon-psv/src/runner.rs:410`, `axon-reflex/src/lib.rs:610`, `axon-fabric/src/git_data.rs:396`, `axon-vm/src/firecracker.rs:223,448,466`.
   Same class as G2; the fix pattern is `axon-os` `run_bounded_capped` (process_group + killpg + bounded drains).
-- **[P3] LSP hover and completion read imported items' spans against the open document** (G3 fixed diagnostics and
+- **[DONE/DROPPED gaps2 lsp, see `## gaps2 run — lsp`] [P3] LSP hover and completion read imported items' spans against the open document** (G3 fixed diagnostics and
   definition only). `compute_definition` (byte-offset API) still returns a bare span with no file. `UseDecl` has no span,
   so the LSP finds `use` lines by scanning text.
 - **[P3] `axon-os verify` default job path is built from the record's `run_id` without cleaning path separators.** A forged
@@ -2515,6 +2515,22 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
   program; `verify_triple` checks program and grant only, imports are enforced only at run; `axon imports` counts a
   `use` with no `mod` as loading a module while `axon run` fails on it; the Fabric microVM guest has no channel for the
   digest, so Fabric refuses instead of binding; R24/R36/R41 docs may still name `axtok1`.
-- **[P3] `cargo clippy --features serde-json -p axon-core -- -D warnings` fails on lsp.rs** (4 lints: needless `&mut`
+- **[DONE gaps2 lsp L3] [P3] `cargo clippy --features serde-json -p axon-core -- -D warnings` fails on lsp.rs** (4 lints: needless `&mut`
   at :115 and :145, `loop` → `while let` at :274, redundant closure at :543), present before this run; the gate's clippy
   stage runs `--no-default-features` only, so lsp.rs is never linted.
+
+## gaps2 run — lsp
+
+- **Status of the two gaps-run items above** (tasks/lsp-residue-spec.md). Clippy: L3 fixed the four lints; `gate.sh`'s
+  serde-json stage is now `clippy --all-targets -D warnings` (it replaces the `cargo check`), and `--fast` runs it when
+  axon-core changed. LSP residue: hover/completion DROPPED on re-measurement (neither reads a span, D1).
+  `compute_definition`'s file: reduced to one shared lookup plus a doc comment (L2). The `use`-line text scan is
+  replaced by a token locator over the loader's `LoadedModule.via` (L1).
+- **[P3] `use a.{nope}` published no LSP diagnostic** (observed once while the spec was written; the CLI was not
+  checked). An item missing from an imported module should be reported in the editor as `axon check` reports it.
+- **[P3] Locate E0003/E1800 with a `UseDecl` span** (H1, decided against for this round). The resolver's
+  `use` diagnostics carry a file and no span. They surface at LSP 0:0, and `axon check --json` gives them no `line`.
+  A span changes the `--seal` merged-check premise (`main.rs:6835`, `seal_split.rs`, the M3260/M3456 equivalence
+  argument), so it belongs in a spec with the seal-check work.
+- **[P3] The serde-json clippy stage can exceed its 30 s cold budget under lane load.** First run in this lane's
+  target dir, 5 lanes building: 35 s to the four errors, then 8 s for the clean `--all-targets` run. Warm: 2-8 s.
