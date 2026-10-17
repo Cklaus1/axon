@@ -3041,3 +3041,13 @@ ATTACK_MARKERS.update({
     'M3497': r"ATTACK: sealed code reached the operator \(module-level initializer\): Ok\(Completed\)",
     'M3498': r"ATTACK: sealed code reached the operator \(a candidate struct's where, built by the operator\): Ok\(Completed\)",
 })
+
+# gaps2 run — jobs lane (tasks/killgroup-spec.md KG2/KG3/KG5).
+ATTACK_MARKERS.update({
+    'M3600': r"ATTACK: the timed-out generator's grandchild \(pid \d+\) outlived the deadline",
+    'M3601': r"ATTACK: the timed-out generator's grandchild \(pid \d+\) outlived the deadline",
+    'M3602': r"ATTACK: a leftover holding the generator's pipes stalled `cortex repair`",
+    'M3603': r"ATTACK: the generator \(pid \d+\) outlived SIGTERM to cortex",
+    'M3604': r"ATTACK: cortex must still die by the SIGTERM it was sent",
+    'M3605': r"ATTACK: the synthesizer \(pid \d+\) outlived SIGTERM to axon-intent",
+})

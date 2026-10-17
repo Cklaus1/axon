@@ -1700,8 +1700,13 @@ EXEMPT += [
      _CTX + "; generate::validate, the Cortex patch generators' output check (bin/cortex.rs, ai.rs)"),
     (_SG, '                Err(e) => {',
      _CTX + "; CommandGenerator::propose (bin/cortex.rs `cmd:` generators)"),
-    (_SG, '                        return Err(GenerationFailure::Unavailable(format!(',
+    (_SG, '                return Err(GenerationFailure::Unavailable(format!(\n                    "`{}` did not answer within {}ms",',
      _CTX + "; CommandGenerator::propose (bin/cortex.rs `cmd:` generators)"),
+    (_SG, '                return Err(GenerationFailure::Unavailable(format!(\n                    "`{}` could not be waited on: {e}",',
+     _CTX + "; CommandGenerator::propose (bin/cortex.rs `cmd:` generators)"),
+    (_SG, '            let mut p = p.take(cap);',
+     _CTX + "; generate.rs drain_capped, the pipe reader of CommandGenerator::propose; the cap is "
+     "MAX_GENERATOR_READ at both callers (rowed M2303/M2304)"),
     (_SG, '            return Err(GenerationFailure::Declined(format!(',
      _CTX + "; CommandGenerator::propose (bin/cortex.rs `cmd:` generators)"),
     # axon-cortex/src/runner.rs
@@ -3445,10 +3450,11 @@ EXEMPT += [
 # bystander spared, OnSignal::Die), crates/axon-os/tests/supervisor_signals.rs and the
 # G2a/G2c/G2d tests in crates/axon-os/tests/legacy_adapter.rs.
 _JOB = ("NOT ON THE PROTECTED ROUTE (checkable): axon-jobctl is the process-control helper of "
-        "two callers, neither on the protected route: axon-os's legacy adapter (run_bounded_capped "
-        "under AxonCoreRuntime and cli.rs cmd_run; see the AxonCoreRuntime reason) and axon-intent "
-        "(synth.rs run_bounded; not a protected crate). `grep -rn axon_jobctl crates/*/src` lists "
-        "every caller; axon-fabric, axon-loop, axon-psv and axon-vm spawn no Job")
+        "three callers, none on the protected route: axon-os's legacy adapter (run_bounded_capped "
+        "under AxonCoreRuntime and cli.rs cmd_run; see the AxonCoreRuntime reason), axon-intent "
+        "(synth.rs run_bounded and main.rs; not a protected crate) and axon-cortex (generate.rs "
+        "CommandGenerator::propose and bin/cortex.rs main; " + _CTX + "). `grep -rn axon_jobctl "
+        "crates/*/src` lists every caller; axon-fabric, axon-loop, axon-psv and axon-vm spawn no Job")
 # The Halted record below is built only when run_bounded_capped saw a forwarded signal
 # (axon_jobctl::termination_signal), which only a process that installed the handler can
 # see: `axon-os run` (cmd_run, OnSignal::Continue) — the record path this verdict is.
@@ -3456,8 +3462,6 @@ _G2D = (_ACR + "; G2d: killed_by_signal is Some only after a forwarded terminati
         "only process that installs the handler and keeps running is `axon-os run` (cli.rs cmd_run, "
         "OnSignal::Continue: `grep -rn forward_termination_signals crates/*/src`)")
 EXEMPT += [
-    ("crates/axon-jobctl/src/lib.rs", "        let rc = unsafe { libc::killpg(pid, libc::SIGKILL) };", _JOB),
-    ("crates/axon-jobctl/src/lib.rs", "        cmd.process_group(0);", _JOB),
     ("crates/axon-jobctl/src/lib.rs", "            unsafe { libc::killpg(pgid, libc::SIGKILL) };", _JOB),
     ("crates/axon-jobctl/src/lib.rs",
      "unsafe fn disposition(sig: libc::c_int) -> Option<libc::sighandler_t> {", _JOB),
@@ -3471,6 +3475,8 @@ EXEMPT += [
      "            if e.kind() == std::io::ErrorKind::Interrupted {\n                return Ok(false);", _JOB),
     ("crates/axon-jobctl/src/lib.rs", "pub fn wait_readable(fd: RawFd, stop: &AtomicBool) -> bool {",
      _JOB + "; G2c: the drain of a job pipe"),
+    ("crates/axon-jobctl/src/lib.rs", "pub const DRAIN_GRACE: Duration = Duration::from_secs(2);",
+     _JOB + "; the time a caller's pipe drains get after the job is reaped"),
     ("crates/axon-os/src/runtime.rs",
      "            Err(e) => {\n                job.kill();\n                break Err(e);", _ACR),
     ("crates/axon-os/src/runtime.rs",

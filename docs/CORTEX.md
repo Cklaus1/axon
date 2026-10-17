@@ -437,11 +437,19 @@ refused after 2 step(s)
 |---|---|
 | `none` (default) | nowhere; a run that needs a patch stops with exit 24 |
 | `literal:BODY` | the text you give, unchanged |
-| `cmd:PATH` | your program: prompt on stdin, body on stdout; 120 s per call (`AXON_CORTEX_GENERATOR_TIMEOUT_MS`) |
+| `cmd:PATH` | your program: prompt on stdin, body on stdout; 120 s per call (`AXON_CORTEX_GENERATOR_TIMEOUT_MS`), then killed with its process group |
 | `ai:MODEL` | a model through `axon-ai`; only in a `--features ai` build |
 
 Whatever the source, the body goes through the same grant check, compile check
 and hidden check.
+
+A `cmd:` generator runs in its own process group. At the deadline, or when
+`cortex` gets SIGTERM, SIGINT or SIGHUP, the whole group is killed,
+its descendants included; `cortex` then dies by that same signal. Anything the
+program leaves running after it answers is left alone, and its output is
+waited for at most 2 s. Being outside the terminal's foreground group, a
+generator that reads `/dev/tty` (an interactive login prompt, say) is stopped
+until the deadline; its stdin is a pipe, so no other generator is affected.
 
 #### What a generator sees, and what it never sees
 

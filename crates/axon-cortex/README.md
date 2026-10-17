@@ -146,7 +146,7 @@ line is not accepted. See [`docs/CORTEX.md`](../../docs/CORTEX.md).
 |---|---|
 | `none` (default) | observe and adjudicate only; a needed patch reports exit 24 |
 | `ai:MODEL` | a language model through `axon-ai`; only in a build with `--features ai` (otherwise exit 2). Key from `ANTHROPIC_API_KEY` or `AXON_AI_API_KEY` |
-| `cmd:PATH` | your own program — prompt on its stdin, proposed body on its stdout; 120 s per call (`AXON_CORTEX_GENERATOR_TIMEOUT_MS`) |
+| `cmd:PATH` | your own program — prompt on its stdin, proposed body on its stdout; 120 s per call (`AXON_CORTEX_GENERATOR_TIMEOUT_MS`), then killed with its process group |
 | `literal:BODY` | a body you already know, pushed through the same grant check and the same hidden check a model's would face |
 
 `cmd:` exists so Cortex can be driven by whatever model you already have — a
@@ -156,6 +156,12 @@ discipline that a model never chooses an action: YOU name the command, on the
 command line, before any model is involved. A model cannot select it, change
 it, or reach past it; what comes back is text, validated and adjudicated like
 any other proposal.
+
+The program runs as a process-group job: the deadline, or a termination signal
+to `cortex` (which then dies by that signal), kills it and everything it
+started. What it leaves running after answering is not killed, and its output
+is waited for at most 2 s. It is outside the terminal's foreground group, so a
+program that reads `/dev/tty` is stopped until the deadline.
 
 `literal:` is not a test double. Knowing the answer is a reason to skip the
 model, not a reason to skip the adjudication — and hand-editing the file runs
