@@ -201,47 +201,6 @@ fn absolutize(p: PathBuf) -> PathBuf {
         .unwrap_or_else(|_| std::env::current_dir().map(|d| d.join(&p)).unwrap_or(p))
 }
 
-/// Best-effort SIGKILL of the child's process GROUP (negative pid), so a shell
-/// that forked a grandchild is taken down too, via `killpg(2)`. The pipe-close
-/// in `run_bounded` is the load-bearing guard; this stops orphaned grandchildren.
-#[cfg(unix)]
-fn kill_group(pid: i32) {
-    // `killpg(2)` DIRECTLY — never an external `kill -KILL -<pid>`.
-    //
-    // That form was here, and it took down whole machines. procps `kill`
-    // parses `-<pid>` as ANOTHER OPTION, not a process group: it reads the
-    // leading digit(s) of it as a SIGNAL NUMBER and then uses that as the pid.
-    // Traced with strace on this host:
-    //
-    //     kill -CONT -5881   ->  kill(-5, SIGCONT)
-    //     kill -CONT -6032   ->  kill(-6, SIGCONT)
-    //     kill -CONT -12345  ->  kill(-1, SIGCONT)      <- EVERY process
-    //     kill -CONT -- -5881 -> kill(-5881, SIGCONT)   <- what was meant
-    //
-    // So a timed-out child with pid 5881 sent SIGKILL to process GROUP 5, and
-    // many pids sent it to `-1` — every process the caller may signal, which as
-    // root is all of them. That is what happened at 2026-09-25 11:39:18: the
-    // journal records cron, dbus, journald, sshd, docker, tailscaled and seven
-    // more services "code=killed, status=9/KILL" in the same second the gate
-    // reached this test, with 105 GB of memory free and no OOM. It happened
-    // again when this test was run on its own, and closed every WSL window.
-    //
-    // The syscall takes the group id as a typed integer, so there is nothing to
-    // misparse; and it refuses a non-positive id outright, because `killpg(0)`
-    // is the CALLER's own group and a negative value is not a group at all.
-    if pid <= 1 {
-        return;
-    }
-    // SAFETY: killpg takes a process-group id and a signal; `pid` is the pgid
-    // of a child we spawned with `process_group(0)`. ESRCH (already gone) is
-    // not actionable here.
-    unsafe {
-        libc::killpg(pid, libc::SIGKILL);
-    }
-}
-#[cfg(not(unix))]
-fn kill_group(_pid: i32) {}
-
 /// Outcome of a bounded subprocess (None code ⇒ killed by timeout).
 struct ProcOutcome {
     code: Option<i32>,
@@ -253,39 +212,30 @@ struct ProcOutcome {
 /// leaked child). Mirrors R21's `run_bounded`. Hermetic: a minimal explicit env.
 fn run_bounded(cmd: &mut Command, timeout: Duration) -> std::io::Result<ProcOutcome> {
     use std::io::Read;
-    // Put the child in its own process GROUP so a timeout kill takes down the
-    // whole subtree (e.g. a shell that spawned `sleep`) — otherwise a grandchild
-    // can keep the stdout pipe open and deadlock the drain (hermetic kill, A4).
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let pid = child.id() as i32;
-    let mut stdout = child.stdout.take();
-    let mut stderr = child.stderr.take();
+    // A process-group JOB, so a timeout kill takes down the whole subtree
+    // (e.g. a shell that spawned `sleep`) — otherwise a grandchild can keep
+    // the stdout pipe open and deadlock the drain (hermetic kill, A4). Never an
+    // external `kill` binary: see `axon_jobctl::Job::kill`.
+    let mut job = axon_jobctl::Job::spawn(
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )?;
+    let mut stdout = job.child_mut().stdout.take();
+    let mut stderr = job.child_mut().stderr.take();
     let start = std::time::Instant::now();
-    let mut killed = false;
-    let code = loop {
-        match child.try_wait()? {
-            Some(status) => break Some(status.code().unwrap_or(-1)),
-            None => {
-                if start.elapsed() >= timeout {
-                    kill_group(pid);
-                    let _ = child.kill();
-                    let _ = child.wait(); // reap — no zombie
-                    killed = true;
-                    break None;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
+    let killed = loop {
+        if job.has_exited()? {
+            break false;
         }
+        if start.elapsed() >= timeout {
+            job.kill();
+            break true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
     };
+    let status = job.reap()?; // no zombie
+    let code = (!killed).then(|| status.code().unwrap_or(-1));
     // Close our read ends if we killed, so the drain can't block on a grandchild
     // that still holds the pipe (we already have the verdict).
     if killed {

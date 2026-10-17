@@ -28,6 +28,7 @@ members = [
   "crates/axon-guest-kernel",
   "crates/axon-attest",
   "crates/axon-fabric",
+  "crates/axon-jobctl",
 ]
 resolver = "2"
 

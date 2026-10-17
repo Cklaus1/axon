@@ -14,6 +14,9 @@ hex = "0.4"
 # PR_SET_PDEATHSIG for the check worker (G13-r22-restart-matrix): a worker must not
 # outlive the supervisor that journalled its launch.
 libc = "0.2"
+# The `cmd:` generator runs as a process-group job, killed whole at its deadline
+# (KG2), and `cortex` forwards termination signals to it (KG3).
+axon-jobctl = { path = "../axon-jobctl" }
 axon-ai = { path = "../axon-ai", optional = true }
 
 [features]

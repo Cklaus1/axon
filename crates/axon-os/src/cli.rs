@@ -519,7 +519,7 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
     // G2d: from here on SIGINT/SIGTERM/SIGHUP kill the job's process group
     // instead of only this process; the run still ends through the record
     // below, and the exit status says which signal stopped it.
-    crate::runtime::forward_termination_signals();
+    axon_jobctl::forward_termination_signals(axon_jobctl::OnSignal::Continue);
     let sup = broad_supervisor_grant();
     let rec = supervisor::run(&manifest, job_path, &sup, &run_id, &rt);
 
@@ -587,7 +587,7 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
         rec.verdict.legible(),
         rec_path.display()
     );
-    if let Some(sig) = crate::runtime::termination_signal() {
+    if let Some(sig) = axon_jobctl::termination_signal() {
         // G2d: the record is written and staging is gone; only now exit, as
         // the signal's default action would have (128+signal). `writeln!`,
         // not `println!`: after a SIGHUP the terminal may be gone, and a

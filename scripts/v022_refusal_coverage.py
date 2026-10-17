@@ -3435,37 +3435,47 @@ EXEMPT += [
      "re-check and execveat of the verified program (M527, M528); removing the hook is those rows' attack"),
     ("crates/axon-os/src/runtime.rs", "match std::fs::DirBuilder::new().mode(0o700)", _ACR),
     ("crates/axon-os/src/runtime.rs", "            .mode(0o600)", _ACR),
-    ("crates/axon-os/src/runtime.rs", "        let rc = unsafe { libc::killpg(pid, libc::SIGKILL) };", _ACR),
-    ("crates/axon-os/src/runtime.rs", "        .process_group(0)", _ACR),
 ]
 
-# G2d/G2c (gap closure, lane gaps-cancel): `axon-os run` forwards SIGINT/SIGTERM/SIGHUP to
-# the job's process group, and the drains of the job's pipes are bounded in time. All of it
-# sits under run_bounded_capped (AxonCoreRuntime) or in cmd_run, so _ACR holds for each site;
-# the behaviour is observed by crates/axon-os/tests/supervisor_signals.rs and the G2a/G2c/G2d
-# tests in crates/axon-os/tests/legacy_adapter.rs.
-_G2D = (_ACR + "; G2d signal forwarding for `axon-os run`: its only callers are run_bounded_capped "
-        "and cli.rs cmd_run (`grep -rn 'forward_termination_signals\\|termination_signal\\|"
-        "spawn_registered' crates/*/src`)")
-_G2C = (_ACR + "; G2c: the drain of a job pipe, called only by run_bounded_capped's spawn_drain")
+# G2d/G2c (gap closure, lane gaps-cancel), moved by KG1 (gaps2) into crates/axon-jobctl: a
+# supervisor's child runs as a process-group job (Job::spawn/kill/reap), SIGINT/SIGTERM/SIGHUP
+# to the supervisor become SIGKILL to every registered job group, and the drains of a job's
+# pipes are bounded in time. The crate decides nothing about a run: it starts, kills and reaps
+# what a caller hands it. Its behaviour is observed by its own unit tests (grandchild killed,
+# bystander spared, OnSignal::Die), crates/axon-os/tests/supervisor_signals.rs and the
+# G2a/G2c/G2d tests in crates/axon-os/tests/legacy_adapter.rs.
+_JOB = ("NOT ON THE PROTECTED ROUTE (checkable): axon-jobctl is the process-control helper of "
+        "two callers, neither on the protected route: axon-os's legacy adapter (run_bounded_capped "
+        "under AxonCoreRuntime and cli.rs cmd_run; see the AxonCoreRuntime reason) and axon-intent "
+        "(synth.rs run_bounded; not a protected crate). `grep -rn axon_jobctl crates/*/src` lists "
+        "every caller; axon-fabric, axon-loop, axon-psv and axon-vm spawn no Job")
+# The Halted record below is built only when run_bounded_capped saw a forwarded signal
+# (axon_jobctl::termination_signal), which only a process that installed the handler can
+# see: `axon-os run` (cmd_run, OnSignal::Continue) — the record path this verdict is.
+_G2D = (_ACR + "; G2d: killed_by_signal is Some only after a forwarded termination signal, and the "
+        "only process that installs the handler and keeps running is `axon-os run` (cli.rs cmd_run, "
+        "OnSignal::Continue: `grep -rn forward_termination_signals crates/*/src`)")
 EXEMPT += [
-    ("crates/axon-os/src/runtime.rs", "            unsafe { libc::killpg(pgid, libc::SIGKILL) };", _G2D),
+    ("crates/axon-jobctl/src/lib.rs", "        let rc = unsafe { libc::killpg(pid, libc::SIGKILL) };", _JOB),
+    ("crates/axon-jobctl/src/lib.rs", "        cmd.process_group(0);", _JOB),
+    ("crates/axon-jobctl/src/lib.rs", "            unsafe { libc::killpg(pgid, libc::SIGKILL) };", _JOB),
+    ("crates/axon-jobctl/src/lib.rs",
+     "unsafe fn disposition(sig: libc::c_int) -> Option<libc::sighandler_t> {", _JOB),
+    ("crates/axon-jobctl/src/lib.rs",
+     "    (libc::sigaction(sig, std::ptr::null(), &mut cur) == 0).then_some(cur.sa_sigaction)", _JOB),
+    ("crates/axon-jobctl/src/lib.rs", "    libc::sigaction(sig, &act, std::ptr::null_mut());", _JOB),
+    ("crates/axon-jobctl/src/lib.rs", "    libc::pthread_sigmask(how, set, &mut old);", _JOB),
+    ("crates/axon-jobctl/src/lib.rs", "pub fn termination_signal() -> Option<i32> {", _JOB),
+    ("crates/axon-jobctl/src/lib.rs", "            cmd.pre_exec(move || {", _JOB),
+    ("crates/axon-jobctl/src/lib.rs",
+     "            if e.kind() == std::io::ErrorKind::Interrupted {\n                return Ok(false);", _JOB),
+    ("crates/axon-jobctl/src/lib.rs", "pub fn wait_readable(fd: RawFd, stop: &AtomicBool) -> bool {",
+     _JOB + "; G2c: the drain of a job pipe"),
     ("crates/axon-os/src/runtime.rs",
-     "unsafe fn disposition(sig: libc::c_int) -> Option<libc::sighandler_t> {", _G2D),
-    ("crates/axon-os/src/runtime.rs",
-     "    (libc::sigaction(sig, std::ptr::null(), &mut cur) == 0).then_some(cur.sa_sigaction)", _G2D),
-    ("crates/axon-os/src/runtime.rs", "    libc::sigaction(sig, &act, std::ptr::null_mut());", _G2D),
-    ("crates/axon-os/src/runtime.rs", "    libc::pthread_sigmask(how, set, &mut old);", _G2D),
-    ("crates/axon-os/src/runtime.rs", "pub fn termination_signal() -> Option<i32> {", _G2D),
-    ("crates/axon-os/src/runtime.rs", "        cmd.pre_exec(move || {", _G2D),
-    ("crates/axon-os/src/runtime.rs",
-     "        if e.kind() == std::io::ErrorKind::Interrupted {\n            return Ok(false);", _G2D),
-    ("crates/axon-os/src/runtime.rs",
-     "            Err(e) => {\n                kill_group(&mut child);\n                break Err(e);", _ACR),
+     "            Err(e) => {\n                job.kill();\n                break Err(e);", _ACR),
     ("crates/axon-os/src/runtime.rs",
      "            Verdict::Halted {\n                reason: format!(\n"
      "                    \"the supervisor received {} and killed the job's process group\",", _G2D),
-    ("crates/axon-os/src/runtime.rs", "fn wait_readable(fd: RawFd, stop: &AtomicBool) -> bool {", _G2C),
 ]
 
 

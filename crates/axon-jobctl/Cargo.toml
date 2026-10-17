@@ -1,0 +1,11 @@
+[package]
+name = "axon-jobctl"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Whole-job cancellation: a child in its own process group, killed as a group, reachable from a termination signal to its supervisor, with time-bounded pipe drains."
+
+[dependencies]
+# killpg, sigaction, pthread_sigmask, waitid, poll, raise.
+libc = "0.2"

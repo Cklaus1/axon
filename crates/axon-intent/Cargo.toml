@@ -22,10 +22,10 @@ axon-os = { path = "../axon-os" }
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# killpg(2) for the timeout kill. The previous `Command::new("kill")` form was
-# misparsed by procps into kill(-1, SIGKILL) — see `kill_group` in synth.rs.
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
+# The synthesizer's and the imports digest's children run as process-group
+# jobs: a timeout kills the whole job, and `main` forwards termination signals.
+axon-jobctl = { path = "../axon-jobctl" }
 
 [dev-dependencies]
+# kill(2) and /proc liveness in the signal test (tests/signals.rs).
+libc = "0.2"
