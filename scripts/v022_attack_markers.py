@@ -3070,3 +3070,14 @@ ATTACK_MARKERS.update({
     'M3604': r"ATTACK: cortex must still die by the SIGTERM it was sent",
     'M3605': r"ATTACK: the synthesizer \(pid \d+\) outlived SIGTERM to axon-intent",
 })
+
+# gaps2 run, approval lane (AR1-AR3; ids M3620-M3639)
+ATTACK_MARKERS.update({
+    'M3620': r'ATTACK: the entry swapped after authorization ran under the token',
+    'M3621': r'ATTACK: an unreadable program was run',
+    'M3622': r'ATTACK: a record with run_id "\.\./elsewhere/x" was verified against a job outside its directory',
+    'M3623': r'ATTACK: a record with run_id "\.\./elsewhere/x" was verified against a job outside its directory',
+    'M3624': r'ATTACK: --run-id \.\./escaped wrote outside --out',
+    'M3625': r'ATTACK: a closure the token does not bind verified',
+    'M3626': r'ATTACK: verify_triple accepted a module rewritten after approval',
+})

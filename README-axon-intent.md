@@ -98,4 +98,10 @@ unkeyed `axtok3:` digest, accepted only by a keyless run and labelled
 keyless, accepted only for a program that imports nothing ("re-approve: this
 token predates import binding" otherwise). Formula: R22 spec §3.5. The binding
 check is `axon_intent::approval::verify_token` (which delegates to axon-os's
-`verify_approval`; `verify_triple` is the convenience).
+`verify_approval`) for program and grant. `axon_intent::cli::verify_triple` is
+the whole check on a triple on disk: axon-os's `authorize` (the `/1` rule
+included) plus the import closure the program loads now, compared with the one
+the token binds. It therefore starts the interpreter (`axon imports`, via
+`AXON_BIN`) for every `/3` token, and returns `Err` when it cannot determine the
+closure or the closure changed since approval (`verify_triple_with` takes the
+runtime explicitly).

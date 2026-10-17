@@ -10595,7 +10595,7 @@ MUTATIONS += [
     ('M3567', 'LEGACY TOKEN (/1): an undeterminable import closure reads as empty', 'crates/axon-os/src/approval.rs', '    let loaded = rt\n        .imports_digest(&manifest.program, &manifest.grant)\n', '    let loaded = rt\n        .imports_digest(&manifest.program, &manifest.grant)\n        .or_else(|_| Ok::<_, String>(EMPTY_IMPORTS_DIGEST.to_string()))\n', 'axon-os', '--lib', 'approval::tests::a_legacy_token_is_authorized_only_for_an_import_free_program'),
     ('M3568', 'IMPORT BINDING (G1e): the supervisor does not hand the approved closure to the run', 'crates/axon-os/src/supervisor.rs', '        approval.required_imports.as_deref(),', '        None,', 'axon-intent', '--test acceptance', 'a_module_rewritten_after_approval_is_refused_at_run'),
     ('M3570', 'FABRIC APPROVAL (G1g): Fabric admits an approval binding a non-empty import closure it cannot enforce', 'crates/axon-fabric/src/submit.rs', '            if bound != axon_os::EMPTY_IMPORTS_DIGEST {', '            if false && bound != axon_os::EMPTY_IMPORTS_DIGEST {', 'axon-fabric', '--test grant_authority', 'fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce'),
-    ('M3571', 'FABRIC APPROVAL (G1g): Fabric admits an empty-closure approval for a program that declares a module', 'crates/axon-fabric/src/submit.rs', '            if self.declares_module(p) {\n                return refuse(', '            if false && self.declares_module(p) {\n                return refuse(', 'axon-fabric', '--test grant_authority', 'fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce'),
+    ('M3571', 'FABRIC APPROVAL (G1g): Fabric admits an empty-closure approval for a program that declares a module', 'crates/axon-fabric/src/submit.rs', '            if self.declares_module(Some(p.text)) {\n                return refuse(', '            if false && self.declares_module(Some(p.text)) {\n                return refuse(', 'axon-fabric', '--test grant_authority', 'fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce'),
     ('M3572', 'FABRIC APPROVAL (G1g/1): `use` no longer counts as declaring a module', 'crates/axon-fabric/src/submit.rs', '            ["use", "mod"].iter().any(|kw| {', '            ["mod"].iter().any(|kw| {', 'axon-fabric', '--test grant_authority', 'fabric_refuses_every_form_of_a_module_declaration'),
     ('M3573', 'SIGNING CONTEXT (G5a): the token formula is domain-separated under another schema tag', 'crates/axon-os/src/approval.rs', 'pub const TOKEN_SCHEMA: &str = "axon-approval/3";', 'pub const TOKEN_SCHEMA: &str = "axon-approval/2";', 'axon-os', '--lib', 'approval::tests::token_formula_known_answer'),
     ('M3574', 'LEGACY TOKEN (/1): the closure a /1 token is admitted for is a non-empty one', 'crates/axon-os/src/approval.rs', '    "axsha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";', '    "axsha256:1111111111111111111111111111111111111111111111111111111111111111";', 'axon-os', '--lib', 'approval::tests::a_legacy_token_is_authorized_only_for_an_import_free_program'),
@@ -11418,6 +11418,37 @@ MUTATIONS += [
      '    axon_jobctl::forward_termination_signals(axon_jobctl::OnSignal::Die);\n    axon_intent::cli::run(',
      '    axon_intent::cli::run(',
      'axon-intent', '--test signals', 'kg5_sigterm_to_axon_intent_kills_the_synthesizers_job_and_it_dies_by_it'),
+]
+
+
+# ── gaps2 run, approval lane (AR1-AR3; ids M3620-M3639) ──────────────────────────
+MUTATIONS += [
+    ('M3620', 'AR1 SINGLE READ: the sandbox stages the entry re-read from disk, not the text the token verified and the scan judged', 'crates/axon-os/src/runtime.rs',
+     '        let wrapper_src = wrap_in_sandbox(program.text, grant, budget, &nonce);',
+     '        let wrapper_src = wrap_in_sandbox(&std::fs::read_to_string(program.path).unwrap_or_default(), grant, budget, &nonce);',
+     'axon-os', '--test acceptance', 'the_entry_bytes_the_token_verified_are_the_bytes_that_run'),
+    ('M3621', 'AR1 READ REFUSAL: an unreadable entry runs as the empty program instead of being refused on the io axis', 'crates/axon-os/src/supervisor.rs',
+     '        Err(e) => {\n            let denial = RawEvent::new("denied", "io", EffectSet::default(), "");',
+     '        Err(_) if true => String::new(),\n        Err(e) => {\n            let denial = RawEvent::new("denied", "io", EffectSet::default(), "");',
+     'axon-os', '--lib', 'supervisor::tests::an_unreadable_program_is_refused_on_the_io_axis_after_authorization'),
+    ('M3622', 'AR2 VERIFY: the default job path is built from a run_id that is not a plain file name (the predicate dropped in cmd_verify)', 'crates/axon-os/src/cli.rs',
+     '        None => {\n            let detail = "record run_id is not a plain file name; pass --job".to_string();',
+     '        None => record.with_file_name(format!("{}.axjob", rec.run_id)),\n        #[allow(unreachable_patterns)]\n        None => {\n            let detail = "record run_id is not a plain file name; pass --job".to_string();',
+     'axon-os', '--test acceptance', 'verify_refuses_a_record_whose_run_id_names_a_path_outside_its_directory'),
+    ('M3623', 'AR2 PREDICATE: a run_id with a path separator counts as a plain file name', 'crates/axon-os/src/cli.rs',
+     "    !run_id.is_empty() && !run_id.contains(['/', '\\0'])",
+     "    !run_id.is_empty() && !run_id.contains(['\\0'])",
+     'axon-os', '--test acceptance', 'verify_refuses_a_record_whose_run_id_names_a_path_outside_its_directory'),
+    ('M3624', 'AR2 RUN: run --run-id is joined into --out without the plain-file-name check', 'crates/axon-os/src/cli.rs',
+     '    if !run_id_is_plain(&run_id) {\n        eprintln!(\n            "axon-os run: --run-id must be a plain file name',
+     '    if false && !run_id_is_plain(&run_id) {\n        eprintln!(\n            "axon-os run: --run-id must be a plain file name',
+     'axon-os', '--test acceptance', 'run_refuses_a_run_id_that_is_not_a_plain_file_name'),
+    ('M3625', 'AR3 VERIFY_TRIPLE: the closure the program loads is not compared with the one the token binds', 'crates/axon-intent/src/cli.rs',
+     '        if &loaded != bound {', '        if false && &loaded != bound {',
+     'axon-intent', '--test acceptance', 'verify_triple_refuses_a_closure_other_than_the_one_the_token_binds'),
+    ('M3626', 'AR3 VERIFY_TRIPLE (end to end): a module rewritten after approval verifies (the comparison dropped)', 'crates/axon-intent/src/cli.rs',
+     '        if &loaded != bound {', '        if loaded.is_empty() && &loaded != bound {',
+     'axon-intent', '--test acceptance', 'verify_triple_refuses_a_module_rewritten_after_approval'),
 ]
 
 

@@ -38,7 +38,9 @@ pub use record::{
     build as build_record, verify as verify_record, verify_job as verify_record_job, AuditEvent,
     RawEvent, RunRecord, Sealing, VerifyMismatch,
 };
-pub use runtime::{Isolation, IsolationRequirement, PrincipalHandle, RunOutcome, Runtime};
+pub use runtime::{
+    Isolation, IsolationRequirement, PrincipalHandle, ProgramSource, RunOutcome, Runtime,
+};
 pub use supervisor::run as supervise;
 pub use supervisor::run_requiring as supervise_requiring;
 pub use verdict::Verdict;

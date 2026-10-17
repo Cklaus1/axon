@@ -2,7 +2,7 @@
 //! emit. Thin I/O shell over the pure core + the `Synthesizer`. Output is
 //! human-legible (not just exit codes); every subcommand has `--help`.
 
-use crate::approval::{build_token_raw, from_json, verify_token, ApprovalToken, Risk};
+use crate::approval::{build_token_raw, Risk};
 use crate::emit;
 use crate::intent::{self, Intent};
 use crate::pipeline::{self, GenMode, Resolved};
@@ -478,23 +478,54 @@ fn cmd_emit(rest: &[&str]) -> ExitCode {
 }
 
 /// Library helper for the R21-handoff contract (R22 §3.5): given an emitted
-/// triple on disk, verify the approval token binds the actual (program, grant)
-/// under the environment's `AXON_APPROVAL_KEY`. The import closure is enforced
-/// by the run itself (axon-os pins the interpreter to the token's
-/// `imports_digest`).
+/// triple on disk, check that its approval token binds what would run under
+/// the environment's `AXON_APPROVAL_KEY`: the program and grant, AND the
+/// import closure. It runs axon-os's one authorization
+/// ([`axon_os::approval::authorize`], the `/1` empty-closure rule included)
+/// and then compares the closure the token binds with the one the program
+/// loads now (`axon imports`, via [`AxonCoreRuntime::from_env`]).
+///
+/// So it starts the interpreter for every token, and returns `Err` when the
+/// closure cannot be determined (no interpreter, a module that does not
+/// resolve) or has changed since approval. A triple with no token is `Err`.
 /// This is the substance R21's `run` calls (see the CROSS-CRATE HOOK).
 pub fn verify_triple(job: &Path) -> Result<(), String> {
-    let name = name_of(job);
-    let dir = job.parent().unwrap_or(Path::new("."));
-    let approval_path = dir.join(format!("{name}.approval"));
-    let token_src = std::fs::read_to_string(&approval_path)
-        .map_err(|e| format!("cannot read approval {}: {e}", approval_path.display()))?;
-    let token: ApprovalToken = from_json(&token_src).map_err(|m| m.detail)?;
-    let (manifest, prog_src) = load_job(job, None)?;
+    verify_triple_with(job, &AxonCoreRuntime::from_env())
+}
+
+/// [`verify_triple`] against the runtime `rt`, which reads the program
+/// (once: the token is verified against that text) and resolves its import
+/// closure.
+pub fn verify_triple_with(job: &Path, rt: &impl Runtime) -> Result<(), String> {
+    let src =
+        std::fs::read_to_string(job).map_err(|e| format!("cannot read {}: {e}", job.display()))?;
+    let base = job.parent().unwrap_or(Path::new("."));
+    let manifest = manifest::parse(&src, base).map_err(|v| v.legible())?;
+    let prog_src = rt
+        .load_program(&manifest.program)
+        .map_err(|e| format!("cannot read program {}: {e}", manifest.program.display()))?;
     let key = axon_os::ApprovalKey::from_env()?;
-    verify_token(&token, &prog_src, &manifest.grant, key.as_ref())
-        .map(|_| ())
-        .map_err(|m| m.detail)
+    let auth = axon_os::approval::authorize(job, &manifest, Some(&prog_src), key.as_ref(), rt)?;
+    if auth.token.is_none() {
+        return Err(format!(
+            "no approval token at {}",
+            job.with_extension("approval").display()
+        ));
+    }
+    if let Some(bound) = &auth.required_imports {
+        let loaded = rt
+            .imports_digest(&manifest.program, &manifest.grant)
+            .map_err(|e| {
+                format!("the program's imports could not be determined (imports_digest): {e}")
+            })?;
+        if &loaded != bound {
+            return Err(format!(
+                "imports changed since approval: the token binds imports_digest {bound}, the \
+                 program loads {loaded}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 // keep the Refusal type referenced so the legible() rendering is exercised.

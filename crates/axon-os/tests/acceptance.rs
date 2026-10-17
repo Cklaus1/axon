@@ -1063,3 +1063,267 @@ fn t44_verdict_is_decided_by_exit_code_not_stderr_prose() {
 
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// ── AR1: the approved entry bytes are the bytes that run ─────────────────────
+
+/// Delegates every method to the real runtime, but its static scan first
+/// rewrites the entry on disk: the swap lands after `authorize` verified the
+/// token and before the run.
+struct SwapAfterAuthorize {
+    inner: axon_os::runtime::AxonCoreRuntime,
+    program: PathBuf,
+    hostile: &'static str,
+}
+
+impl axon_os::Runtime for SwapAfterAuthorize {
+    fn isolation(&self) -> axon_os::Isolation {
+        self.inner.isolation()
+    }
+    fn load_program(&self, p: &Path) -> Result<String, String> {
+        self.inner.load_program(p)
+    }
+    fn declared_effects(&self, p: &axon_os::ProgramSource) -> axon_os::DeclaredEffects {
+        std::fs::write(&self.program, self.hostile).unwrap();
+        self.inner.declared_effects(p)
+    }
+    fn mint_principal(&self, g: &axon_os::Grant) -> axon_os::PrincipalHandle {
+        self.inner.mint_principal(g)
+    }
+    fn run_sandboxed(
+        &self,
+        p: &axon_os::ProgramSource,
+        h: &axon_os::PrincipalHandle,
+        g: &axon_os::Grant,
+        b: &axon_os::Budget,
+        seed: u64,
+        required_imports: Option<&str>,
+    ) -> axon_os::RunOutcome {
+        self.inner.run_sandboxed(p, h, g, b, seed, required_imports)
+    }
+    fn imports_digest(&self, p: &Path, g: &axon_os::Grant) -> Result<String, String> {
+        self.inner.imports_digest(p, g)
+    }
+}
+
+/// AR1: an entry rewritten between the approval check and the run used to
+/// run under the token that verified the other bytes. The supervisor now
+/// reads the entry once, and the approved text is what is scanned and staged.
+#[test]
+fn the_entry_bytes_the_token_verified_are_the_bytes_that_run() {
+    let axon = axon_bin().expect("AR1 needs the interpreter; it never skips");
+    let d = tmp("ar1-swap");
+    let out = d.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let marker = out.join("marker.txt");
+    let _ = std::fs::remove_file(&marker);
+    let prog = d.join("p.ax");
+    let job = d.join("p.axjob");
+    let _ = std::fs::remove_file(job.with_extension("approval"));
+    const BENIGN: &str = "fn main() -> i64 {\n  7\n}\n";
+    const HOSTILE: &str = "fn main() -> i64 {\n  match write_file(\"./out/marker.txt\", \"swapped\") {\n    Ok(_) => 0\n    Err(_) => 1\n  }\n}\n";
+    let grant = axon_os::grant::Grant {
+        reproducible: false,
+        fs_read: vec![],
+        fs_write: vec!["./out/".into()],
+        net: vec![],
+        exec: axon_os::grant::ExecPolicy::None,
+        max_label: axon_os::grant::Label::Internal,
+        budget: axon_os::grant::Budget {
+            calls: 100,
+            tokens: 0,
+            cost_micro: 0,
+        },
+    };
+    let manifest = axon_os::JobManifest {
+        require_approval: true,
+        program: prog.clone(),
+        intent: "ar1".into(),
+        seed: 1,
+        grant: grant.clone(),
+    };
+    let inner = || {
+        axon_os::runtime::AxonCoreRuntime::with_bin_and_timeout(
+            axon.clone(),
+            std::time::Duration::from_secs(60),
+        )
+    };
+
+    // Premise: under this supervisor and grant, the hostile program, run
+    // directly (no approval required), writes the marker.
+    std::fs::write(&prog, HOSTILE).unwrap();
+    let direct = axon_os::JobManifest {
+        require_approval: false,
+        ..manifest.clone()
+    };
+    let rec = axon_os::supervise(&direct, &job, &grant, "ar1-premise", &inner());
+    assert!(
+        marker.exists(),
+        "premise: the grant lets the hostile program write the marker: {:?}",
+        rec.verdict
+    );
+    std::fs::remove_file(&marker).unwrap();
+
+    // A /3 token for the BENIGN program, over the empty closure.
+    std::fs::write(&prog, BENIGN).unwrap();
+    let key = axon_os::approval::ApprovalKey::from_env().unwrap();
+    let pd = format!("axsha256:{}", sha256_hex(BENIGN.as_bytes()));
+    let gd = format!(
+        "axsha256:{}",
+        sha256_hex(axon_os::approval::canonical_grant(&grant).as_bytes())
+    );
+    let fields = axon_os::approval::TokenFields {
+        program_digest: &pd,
+        grant_digest: &gd,
+        imports_digest: axon_os::EMPTY_IMPORTS_DIGEST,
+        approved_by: "auditor",
+        decision: "approved",
+        risk: "low",
+    };
+    let td = fields.digest(key.as_ref());
+    std::fs::write(
+        job.with_extension("approval"),
+        format!(
+            "{{\"schema\":\"axon-approval/3\",\"program_digest\":\"{pd}\",\
+             \"grant_digest\":\"{gd}\",\"imports_digest\":\"{}\",\
+             \"approved_by\":\"auditor\",\"decision\":\"approved\",\"risk\":\"low\",\
+             \"token_digest\":\"{td}\"}}",
+            axon_os::EMPTY_IMPORTS_DIGEST
+        ),
+    )
+    .unwrap();
+
+    let rt = SwapAfterAuthorize {
+        inner: inner(),
+        program: prog.clone(),
+        hostile: HOSTILE,
+    };
+    let rec = axon_os::supervise(&manifest, &job, &grant, "ar1-swap", &rt);
+    assert_eq!(
+        std::fs::read_to_string(&prog).unwrap(),
+        HOSTILE,
+        "the swap happened"
+    );
+    assert!(
+        !marker.exists(),
+        "ATTACK: the entry swapped after authorization ran under the token: {:?}",
+        rec.verdict
+    );
+    assert_eq!(rec.verdict, axon_os::Verdict::Completed { value: 7 });
+    assert_eq!(rec.approval, "verified_required");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// AR2 fixture: a validly sealed (keyless) record whose run_id is `run_id`,
+/// in `<d>/store/r.json`, and a job matching it at `<d>/elsewhere/<name>.axjob`
+/// (outside the store). Returns the record path.
+fn record_naming_an_outside_job(d: &Path, run_id: &str, name: &str) -> PathBuf {
+    let store = d.join("store");
+    let elsewhere = d.join("elsewhere");
+    std::fs::create_dir_all(&store).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("p.ax"), "fn main() -> i64 { 0 }\n").unwrap();
+    let job_src = "program = \"p.ax\"\nintent = \"t\"\nseed = 1\n\
+         [grant]\nmax_label = \"internal\"\n\
+         [grant.budget]\ncalls = 1\ntokens = 1\ncost_micro = 0\n";
+    std::fs::write(elsewhere.join(format!("{name}.axjob")), job_src).unwrap();
+    let mut m = axon_os::manifest::parse(job_src, &elsewhere).unwrap();
+    m.program = std::fs::canonicalize(&m.program).unwrap();
+    let rec = axon_os::record::build(
+        run_id,
+        &m,
+        m.seed,
+        &[],
+        axon_os::Verdict::Completed { value: 0 },
+        "not_required",
+        None,
+    );
+    let rec_path = store.join("r.json");
+    std::fs::write(&rec_path, axon_os::record::to_json(&rec)).unwrap();
+    rec_path
+}
+
+/// AR2: `verify` without `--job` built the job path from the record's run_id,
+/// which a keyless forger re-seals at will: `../elsewhere/x` (or an absolute
+/// id) read a job outside the record's directory and printed `✓ intact`. Now
+/// an id that is not a plain file name is refused (exit 11) before any read,
+/// and the refusal does not echo the outside path.
+#[test]
+fn verify_refuses_a_record_whose_run_id_names_a_path_outside_its_directory() {
+    let Some(axon) = axon_bin() else {
+        panic!("axon interpreter required")
+    };
+    let d = tmp("ar2-verify");
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let absolute = d.join("elsewhere").join("y").display().to_string();
+    for (run_id, name) in [("../elsewhere/x", "x"), (absolute.as_str(), "y")] {
+        let rec = record_naming_an_outside_job(&d, run_id, name);
+        let v = os(&["verify", rec.to_str().unwrap()], &axon, &[]);
+        assert!(
+            v.code == 11 && !v.stdout.contains("intact"),
+            "ATTACK: a record with run_id {run_id:?} was verified against a job outside its \
+             directory (exit {}): {}",
+            v.code,
+            v.stdout
+        );
+        assert!(
+            v.stdout.contains("not a plain file name; pass --job"),
+            "{}",
+            v.stdout
+        );
+        assert!(!v.stdout.contains("elsewhere"), "{}", v.stdout);
+        // `--job` names the job explicitly: the run_id names no path then.
+        let job = d.join("elsewhere").join(format!("{name}.axjob"));
+        let v = os(
+            &[
+                "verify",
+                rec.to_str().unwrap(),
+                "--job",
+                job.to_str().unwrap(),
+            ],
+            &axon,
+            &[],
+        );
+        assert_eq!(v.code, 0, "{}", v.stdout);
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// AR2: `run --run-id` was joined into `--out` unchecked, so `../x` wrote the
+/// record, job copy and token outside `--out`. Now refused (exit 2) before
+/// anything is created.
+#[test]
+fn run_refuses_a_run_id_that_is_not_a_plain_file_name() {
+    let Some(axon) = axon_bin() else {
+        panic!("axon interpreter required")
+    };
+    let d = tmp("ar2-run");
+    let _ = std::fs::remove_dir_all(&d);
+    let out = d.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let r = os(
+        &[
+            "run",
+            "examples/jobs/summarize.axjob",
+            "--run-id",
+            "../escaped",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+        &axon,
+        &[],
+    );
+    assert!(
+        !d.join("escaped.json").exists() && !d.join("escaped.axjob").exists(),
+        "ATTACK: --run-id ../escaped wrote outside --out (exit {}): {}",
+        r.code,
+        r.stdout
+    );
+    assert_eq!(r.code, 2, "{}", r.stdout);
+    assert_eq!(
+        std::fs::read_dir(&out).unwrap().count(),
+        0,
+        "nothing created"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}

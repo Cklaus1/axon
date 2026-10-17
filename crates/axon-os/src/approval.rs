@@ -668,12 +668,12 @@ mod tests {
     #[test]
     fn authorize_hands_the_tokens_closure_to_the_run() {
         let (job, m) = job_with("v3", Some(token_for(SRC, &grant(), LIB_IMPORTS, None)));
-        let a = authorize(&job, &m, None, &mock(Err("not consulted"))).unwrap();
+        let a = authorize(&job, &m, Some(SRC), None, &mock(Err("not consulted"))).unwrap();
         assert_eq!(a.status, ApprovalStatus::VerifiedRequired);
         assert_eq!(a.required_imports.as_deref(), Some(LIB_IMPORTS));
         let k = key(7);
         let (job, m) = job_with("v3k", Some(token_for(SRC, &grant(), LIB_IMPORTS, Some(&k))));
-        let a = authorize(&job, &m, Some(&k), &mock(Err("not consulted"))).unwrap();
+        let a = authorize(&job, &m, Some(SRC), Some(&k), &mock(Err("not consulted"))).unwrap();
         assert!(a.token.unwrap().keyed);
         assert_eq!(a.required_imports.as_deref(), Some(LIB_IMPORTS));
     }
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn a_legacy_token_is_authorized_only_for_an_import_free_program() {
         let (job, m) = job_with("v1", Some(legacy_token_for(SRC, &grant())));
-        let a = authorize(&job, &m, None, &mock(Ok(EMPTY_IMPORTS_DIGEST))).unwrap();
+        let a = authorize(&job, &m, Some(SRC), None, &mock(Ok(EMPTY_IMPORTS_DIGEST))).unwrap();
         assert_eq!(a.required_imports.as_deref(), Some(EMPTY_IMPORTS_DIGEST));
         for (what, rt, k) in [
             ("an importing program", mock(Ok(LIB_IMPORTS)), None),
@@ -696,7 +696,7 @@ mod tests {
                 Some(key(7)),
             ),
         ] {
-            let e = match authorize(&job, &m, k.as_ref(), &rt) {
+            let e = match authorize(&job, &m, Some(SRC), k.as_ref(), &rt) {
                 Ok(a) => panic!("ATTACK: a /1 token was authorized for {what}: {a:?}"),
                 Err(e) => e,
             };
@@ -763,19 +763,27 @@ impl ApprovalStatus {
 /// the job's own interpreter environment resolves it, [`Runtime::imports_digest`]
 /// — is empty, and the run is then pinned to the empty closure.
 ///
+/// AR1: `program_src` is the entry text the caller read ONCE (the supervisor
+/// via [`Runtime::load_program`]); the same text is then scanned and run.
+/// This function reads no program file. `None` (unreadable) verifies against
+/// `""`, so a token over a missing program is refused here, on the approval
+/// axis, and a required-but-missing token is still reported as such.
+///
 /// [`Runtime::imports_digest`]: crate::runtime::Runtime::imports_digest
+/// [`Runtime::load_program`]: crate::runtime::Runtime::load_program
 pub fn authorize(
     job_path: &Path,
     manifest: &crate::manifest::JobManifest,
+    program_src: Option<&str>,
     key: Option<&ApprovalKey>,
     rt: &impl crate::runtime::Runtime,
 ) -> Result<Authorization, String> {
     let approval_path = job_path.with_extension("approval");
     if approval_path.exists() {
         let token = std::fs::read_to_string(&approval_path).unwrap_or_default();
-        let program_src = std::fs::read_to_string(&manifest.program).unwrap_or_default();
+        let program_src = program_src.unwrap_or_default();
         // An INVALID token is a failure whether or not policy required one.
-        let verified = verify_approval(&token, &program_src, &manifest.grant, key)?;
+        let verified = verify_approval(&token, program_src, &manifest.grant, key)?;
         let required_imports = match &verified.imports_digest {
             Some(d) => d.clone(),
             None => legacy_closure_is_empty(manifest, rt)?,

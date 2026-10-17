@@ -6,7 +6,7 @@ use crate::gate::{admit, Admission};
 use crate::grant::EffectSet;
 use crate::manifest::JobManifest;
 use crate::record::{build, RawEvent, RunRecord};
-use crate::runtime::{IsolationRequirement, Runtime};
+use crate::runtime::{IsolationRequirement, ProgramSource, Runtime};
 use crate::verdict::Verdict;
 
 /// Run a job under the supervisor (R21 §4.2). `supervisor_grant` is the
@@ -104,7 +104,14 @@ pub fn run_requiring(
     //    Step 3 below already demonstrates the pattern: `admit` sits here and
     //    every caller gets it whether or not they remember. A check in a CALLER
     //    is opt-in per call site.
-    let approval = match crate::approval::authorize(job_path, manifest, key, rt) {
+    //
+    //    AR1: the entry is read ONCE, here. The token is verified against this
+    //    text, the static scan judges it and the sandbox stages it; no runtime
+    //    re-reads the file, so an entry rewritten after this point cannot run
+    //    under a token that verified other bytes.
+    let program_text = rt.load_program(&manifest.program);
+    let src = program_text.as_deref().ok();
+    let approval = match crate::approval::authorize(job_path, manifest, src, key, rt) {
         Ok(a) => a,
         Err(reason) => {
             let denial = RawEvent::new("denied", "approval", EffectSet::default(), "");
@@ -122,8 +129,32 @@ pub fn run_requiring(
             );
         }
     };
+    // An unreadable program never runs. Authorization ran, so its status is
+    // sealed (not `not_checked`).
+    let program_text = match program_text {
+        Ok(t) => t,
+        Err(e) => {
+            let denial = RawEvent::new("denied", "io", EffectSet::default(), "");
+            return build(
+                run_id,
+                manifest,
+                manifest.seed,
+                std::slice::from_ref(&denial),
+                Verdict::Denied {
+                    reason: format!("cannot read program: {e}"),
+                    axis: "io".to_string(),
+                },
+                approval.status.as_str(),
+                key,
+            );
+        }
+    };
+    let program = ProgramSource {
+        path: &manifest.program,
+        text: &program_text,
+    };
     // 1. What does the program declare it may do? (deny-by-default via the runtime)
-    let declared = rt.declared_effects(&manifest.program);
+    let declared = rt.declared_effects(&program);
 
     // 2. The effective grant: you cannot delegate authority you lack.
     let eff = manifest.grant.intersect(supervisor_grant);
@@ -153,7 +184,7 @@ pub fn run_requiring(
     // 5. Run sandboxed to the effective ceiling + budget + seed, loading only
     //    the import closure the approval bound (G1e).
     let outcome = rt.run_sandboxed(
-        &manifest.program,
+        &program,
         &principal,
         &eff,
         &eff.budget,
@@ -263,6 +294,39 @@ mod tests {
         assert_eq!(rec.events.len(), 1);
         assert!(verify(&rec).is_ok());
         assert_eq!(rt.run_calls.get(), 1);
+    }
+
+    /// AR1: the supervisor reads the entry once; an unreadable entry is
+    /// refused on the `io` axis after authorization (sealed with its status),
+    /// before admission, mint or run, even when the declared effects would be
+    /// admitted.
+    #[test]
+    fn an_unreadable_program_is_refused_on_the_io_axis_after_authorization() {
+        let mut rt = MockRuntime::new(
+            declares(false),
+            RunOutcome {
+                events: vec![],
+                verdict: Verdict::Completed { value: 0 },
+            },
+        );
+        rt.source = Err("No such file or directory (os error 2)".into());
+        let rec = run(
+            &manifest(true),
+            no_approval_path(),
+            &grant(true),
+            "unreadable",
+            &rt,
+        );
+        match &rec.verdict {
+            Verdict::Denied { axis, reason } => {
+                assert_eq!(axis, "io");
+                assert!(reason.starts_with("cannot read program: "), "{reason}");
+            }
+            other => panic!("ATTACK: an unreadable program was run: {other:?}"),
+        }
+        assert_eq!(rec.approval, "not_required");
+        assert_eq!((rt.mint_calls.get(), rt.run_calls.get()), (0, 0));
+        assert!(verify(&rec).is_ok());
     }
 
     #[test]

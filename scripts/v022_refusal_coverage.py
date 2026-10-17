@@ -920,9 +920,6 @@ EXEMPT += [
      "OPERATOR-AUTHORED: entry and tree are fields of the operator's registry entry, the tree "
      "equal to the registered ref (M1061); a missing entry gives the interpreter nothing to run, so "
      "no PASS (fails closed)"),
-    (FS, '            Err(_) => axon_os::DeclaredEffects::unknown(),',
-     "NOT A SITE: the deny-by-default effect row (an unreadable program declares every effect), "
-     "not the `unknown(` refusal constructor"),
     (FS, '            if let Err(e) = journal.reserve_within(&req.operation_id, exp.regime, move |i| {',
      _JNV + " (a branch's budget regime; an op left Intended is refused by mark_launched)"),
     (FS, '                    &format!("profile no longer qualified: {e}"),',
@@ -1834,8 +1831,6 @@ EXEMPT += [
      _OSO + "; StagingDir::create, used by AxonCoreRuntime (the `axon-os` binary's runtime: cli.rs); Fabric admits through its own AdmissionProbe (submit.rs), which stages nothing"),
     (_SOT, '        Err(last.unwrap_or_else(|| std::io::Error::other("staging dir collision")))',
      _OSO + "; StagingDir::create, used by AxonCoreRuntime (the `axon-os` binary's runtime: cli.rs); Fabric admits through its own AdmissionProbe (submit.rs), which stages nothing"),
-    (_SOT, '            Err(_) => DeclaredEffects::unknown(), // deny-by-default',
-     _OSO + "; AxonCoreRuntime::declared_effects; Fabric's AdmissionProbe implements declared_effects itself (submit.rs, the same deny-by-default unknown())"),
     # axon-psv/src/bin/axon-psv-runner.rs
     (_SPR, '        std::process::exit(3);',
      ("NOTHING TO ADMIT (checkable): start() fails either BEFORE proceed (an argument; the prctl, M313), when "
@@ -2921,9 +2916,6 @@ EXEMPT += [
      'fn host_matches(pat: &str, host: &str) -> bool {',
      _GRN),
     ('crates/axon-os/src/runtime.rs',
-     '                    verdict: Verdict::Denied {\n                        reason: format!("cannot read program: {e}"),',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
      '                    verdict: Verdict::Denied {\n                        reason: format!("cannot create private staging dir: {e}"),',
      _ACR),
     ('crates/axon-os/src/runtime.rs',
@@ -2984,7 +2976,7 @@ EXEMPT += [
      '                    other => Verdict::Denied {',
      _ACR),
     ('crates/axon-os/src/runtime.rs',
-     '    fn run_sandboxed(\n        &self,\n        _program: &Path,',
+     '    fn run_sandboxed(\n        &self,\n        _program: &ProgramSource,',
      _ACR),
     ('crates/axon-fabric/src/journal.rs',
      '                v.state = OpState::Failed;',
@@ -3361,7 +3353,7 @@ _OSCLI = ("NOT ON THE PROTECTED ROUTE (checkable): the `axon-os` binary's own co
 EXEMPT += [
     ("crates/axon-os/src/cli.rs", head, _OSCLI) for head in (
         "pub fn run(args: Vec<String>) -> ExitCode {", "fn help(line: &str) -> ExitCode {",
-        "fn cmd_explain(job: &Path) -> ExitCode {", "fn cmd_verify(rest: &[&str]) -> ExitCode {",
+        "fn cmd_explain(job: &Path) -> ExitCode {",
         "fn cmd_replay(rest: &[&str]) -> ExitCode {", "fn cmd_kill(rest: &[&str]) -> ExitCode {",
         "fn cmd_status(rest: &[&str]) -> ExitCode {",
         "fn status_all(store: &Path, latest_only: bool, json_out: bool) -> ExitCode {",
@@ -4013,7 +4005,7 @@ VALUE_EXEMPT += [
     ('crates/axon-os/src/runtime.rs', 'query_imports_digest', 2, '"--json"', 'DOMINATED', _IMPD),
 ]
 EXEMPT += [
-    ('crates/axon-fabric/src/submit.rs', '        if self.declares_module(p) {\n            return Err(',
+    ('crates/axon-fabric/src/submit.rs', '        if self.declares_module(entry.as_deref()) {\n            return Err(',
      "DOMINATED BY M3571 (checkable): this refusal only names the reason (re-approve: a /1 token predates import "
      "binding). Without it the probe answers the EMPTY closure, `authorize` pins the /1 run to EMPTY "
      "(required_imports), and the probe's run_sandboxed refuses an empty-closure approval for a program that "
@@ -4621,6 +4613,14 @@ EXEMPT += [
      "only in the `else` of `let local = if is_linux { None } else { .. }`, i.e. never for the protected profile this "
      "line serves. Any other value for the path changes no decision (survey, amendment 98: `/bin/true` here left "
      "the whole axon-fabric suite green)"),
+]
+
+# ── gaps2 run, approval lane (AR1-AR3; mutation ids M3620-M3639) ──────────────
+EXEMPT += [
+    ('crates/axon-os/src/cli.rs', '        Err(_) => crate::gate::DeclaredEffects::unknown(),',
+     "NOT A SITE: the deny-by-default effect row (an unreadable program declares every effect), not the "
+     "`unknown(` refusal constructor; `axon-os explain` (cmd_explain) prints the gate's answer and runs "
+     "nothing. The run's own read refusal is supervisor.rs (`cannot read program`, rowed)"),
 ]
 
 
