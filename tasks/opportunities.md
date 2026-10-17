@@ -2518,3 +2518,13 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
 - **[P3] `cargo clippy --features serde-json -p axon-core -- -D warnings` fails on lsp.rs** (4 lints: needless `&mut`
   at :115 and :145, `loop` → `while let` at :274, redundant closure at :543), present before this run; the gate's clippy
   stage runs `--no-default-features` only, so lsp.rs is never linted.
+
+## gaps2 run — jobs
+
+- **[P3] axon-intent `synth.rs` `run_bounded` polls for exit without draining its pipes** (`has_exited` loop, then
+  sequential `read_to_string` of stdout and stderr after the reap). A synthesizer that writes more than one pipe buffer
+  (64 KiB) before exiting blocks on the full pipe until the timeout kills it; a leftover descendant holding stdout or
+  stderr after a normal exit stalls the post-exit reads until it exits. KG2's shape (`wait_readable` drains on threads,
+  `join_within(DRAIN_GRACE)`) would fix both. Not in KG1's behaviour-preserving move. [INFERENCE: by reading; not run.]
+- **[P3] `OnSignal::Die` processes ignore SIGQUIT.** `axon_jobctl::TERMINATION_SIGNALS` is SIGINT/SIGTERM/SIGHUP (as G2d
+  was); SIGQUIT (terminal Ctrl-\) to `cortex`/`axon-intent` kills them and leaves their jobs running.
