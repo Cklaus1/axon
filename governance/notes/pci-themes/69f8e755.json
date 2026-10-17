@@ -1,0 +1,4 @@
+{
+  "theme": "gaps LSP residue",
+  "text": "TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): the four clippy lints of the serde-json configuration are fixed (needless &mut on resolve_program/infer_program, loop to while let in run_lsp, a redundant closure in format_fn_hover); the program stays mutable for load_use_decls and fill_captures"
+}
