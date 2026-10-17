@@ -11337,6 +11337,28 @@ MUTATIONS += [
      'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
 ]
 
+# gaps2 run, lane lsp (M3660-M3679; tasks/lsp-residue-spec.md L1/L2): an imported module's
+# diagnostic is anchored on the entry `use` that brought it in, and the server's definition
+# answers in the file the span indexes. TOOLING (axon lsp), not a refusal guard; rowed so a
+# refactor cannot silently undo the anchor. The tests drive the real serde-json server.
+MUTATIONS += [
+    ('M3660', "LSP DEFINITION (L2): the server's definition of an imported fn answers in the open document", 'crates/axon-core/src/lsp.rs',
+     '    Some(match foreign_file(decl_span) {', '    Some(match None::<(String, std::sync::Arc<span::SourceMap>)> {',
+     'axon-core', '--no-default-features --features serde-json --test lsp_multi_file', 'definition_of_an_imported_fn_jumps_into_its_own_file'),
+    ('M3661', "LSP ANCHOR (L1a): the imported module's via is ignored; the first `use` is the anchor", 'crates/axon-core/src/lsp.rs',
+     '        .find(|(segs, _)| segs.iter().copied().eq(via.iter().map(String::as_str)))', '        .find(|_| true)',
+     'axon-core', '--no-default-features --features serde-json --test lsp_multi_file', 'a_transitive_module_anchors_on_the_use_that_reached_it'),
+    ('M3662', "LSP ANCHOR (L1c): a `use` inside a block comment is read as a declaration", 'crates/axon-core/src/lsp.rs',
+     '    let Ok(toks) = crate::lexer::Lexer::tokenize(source) else {', '    let Ok(toks) = crate::lexer::Lexer::tokenize(&source.replace("/*", "  ").replace("*/", "  ")) else {',
+     'axon-core', '--no-default-features --features serde-json --test lsp_multi_file', 'a_use_inside_a_block_comment_is_never_the_anchor'),
+    ('M3663', "LSP ANCHOR (L1c): a `use` path matches a module whose path merely ends like it", 'crates/axon-core/src/lsp.rs',
+     '        .find(|(segs, _)| segs.iter().copied().eq(via.iter().map(String::as_str)))', '        .find(|(segs, _)| via.iter().map(String::as_str).rev().zip(segs.iter().rev()).all(|(v, s)| v == *s))',
+     'axon-core', '--no-default-features --features serde-json --test lsp_multi_file', 'a_module_path_that_ends_like_another_is_not_its_use'),
+    ('M3664', "LSP ANCHOR (L1a): no direct-import pass; a module the entry imports keeps the transitive loader as via", 'crates/axon-core/src/lib.rs',
+     '        if let Some(direct) = direct {', '        if let Some(direct) = direct.filter(|_| false) {',
+     'axon-core', '--no-default-features --features serde-json --test lsp_multi_file', 'a_module_the_entry_imports_directly_anchors_on_its_own_use'),
+]
+
 
 # C9 round 15 (amendment 121): M3260 is retired under the four-cell rule against M3456. The
 # candidate's `use` declarations are set aside for the merged check (M3260's guard) AND a merged

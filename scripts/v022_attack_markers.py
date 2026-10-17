@@ -3041,3 +3041,12 @@ ATTACK_MARKERS.update({
     'M3497': r"ATTACK: sealed code reached the operator \(module-level initializer\): Ok\(Completed\)",
     'M3498': r"ATTACK: sealed code reached the operator \(a candidate struct's where, built by the operator\): Ok\(Completed\)",
 })
+
+# gaps2 run, lane lsp (M3660-M3679): the attack is a location answered in the wrong place.
+ATTACK_MARKERS.update({
+    'M3660': r'left: String\("file://[^"]*/main\.ax"\)\s+right: "file://[^"]*/lib\.ax"',
+    'M3661': r"MISANCHOR \(transitive\): c\.ax's diagnostic is not on main\.ax's line 3",
+    'M3662': r"MISANCHOR \(block comment\): lib\.ax's diagnostic is not on main\.ax's line 4",
+    'M3663': r"MISANCHOR \(path suffix\): util/lib\.ax's diagnostic is not on main\.ax's line 3",
+    'M3664': r"MISANCHOR \(direct import\): c\.ax's diagnostic is not on main\.ax's line 3",
+})
