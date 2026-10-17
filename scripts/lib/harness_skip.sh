@@ -31,6 +31,10 @@
 #
 #   5. `cargo_build_or_skip <name> <prereq> <command...>` — a harness's own
 #      top-level `cargo build`. Skips only on a PROVEN missing prerequisite.
+#
+#   6. `wasm_link_unavailable`, `wasm_unlinked_probe`, `wasm_case` — what a
+#      wasm `axon target build` that exited 0 without linking means; the skip
+#      is only the compiler's own `wasm link unavailable:` line.
 
 # native_build_unavailable <stderr-text>
 #   0 (true)  → genuinely could not attempt the build
@@ -270,4 +274,104 @@ cargo_build_or_skip() {
   echo "$name: FAIL — \`$*\` failed and its prerequisite ($prereq) is not proven missing (a build error is not a skip):"
   printf '%s\n' "$err" | grep -v '^[[:space:]]*$' | head -20 | sed 's/^/        /'
   exit 1
+}
+
+# ── 6. the outcome of `axon target build --target wasm32-*` ─────────────────
+# The build exits 0 whether or not it LINKED: no `.linked.wasm` means
+# "object-only", and the compiler says why on stderr (main.rs try_link_wasm):
+#   `wasm link unavailable: <rust-lld|wasi libc|rustup toolchains> not found
+#    (searched …)`   the toolchain is absent — the ONLY skip;
+#   `wasm runtime not found: libaxon_rt.a for <triple> (searched …)`
+#                    the harness built axon-rt somewhere the compiler does not
+#                    look — a misconfiguration, never a skip;
+#   `wasm link failed …`   the linker ran and refused — a result.
+# Harnesses used to read every missing `.linked.wasm` as "link unavailable —
+# skipping", which hid a compiler that could not find its own runtime (five
+# harness SKIPs and 29 per-example ones in one strict run, 2026-10-15).
+
+# wasm_link_unavailable <stderr> — 0 iff stderr carries the unavailable marker.
+wasm_link_unavailable() {
+  printf '%s\n' "$1" | grep -q '^wasm link unavailable:'
+}
+
+# wasm_unlinked_probe <name> <stderr> — a harness's link PROBE exited 0 and
+# linked nothing: the marker → `harness_skip` with the marker line as the
+# reason (exit 0); anything else → FAIL with the stderr (exit 1).
+wasm_unlinked_probe() {
+  local name="$1" err="$2"
+  wasm_link_unavailable "$err" \
+    && harness_skip "$name" "$(printf '%s\n' "$err" | grep -m1 '^wasm link unavailable:')"
+  echo "$name: FAIL — the wasm probe built but linked nothing, and the compiler does not say the link is unavailable:"
+  printf '%s\n' "$err" | grep -v '^[[:space:]]*$' | head -20 | sed 's/^/        /'
+  exit 1
+}
+
+# scripts/wasm_object_only.txt: the cases that build for a wasm triple but do
+# not link, pinned (NH1, decided A). Rows `<triple> <case> <reason>`; `#` lines
+# and blank lines are ignored. An unlisted object-only case FAILs, a listed
+# case that links FAILs (stale entry), a row without a reason FAILs.
+_wasm_object_only_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/wasm_object_only.txt"
+
+# wasm_object_only_check <name> — every row has a reason; prints the bad rows
+# and returns 1 otherwise.
+wasm_object_only_check() {
+  local name="$1" bad
+  [ -f "$_wasm_object_only_file" ] || { echo "$name: FAIL — $_wasm_object_only_file is missing"; return 1; }
+  bad="$(grep -vE '^[[:space:]]*(#|$)' "$_wasm_object_only_file" | awk 'NF < 3')"
+  [ -z "$bad" ] && return 0
+  echo "$name: FAIL — scripts/wasm_object_only.txt rows without a reason (\`<triple> <case> <reason>\`):"
+  printf '%s\n' "$bad" | sed 's/^/        /'
+  return 1
+}
+
+# wasm_object_only_reason <triple> <case> — prints the listed reason; 1 if unlisted.
+wasm_object_only_reason() {
+  awk -v t="$1" -v c="$2" '$1 == t && $2 == c && NF >= 3 { $1 = ""; $2 = ""; sub(/^ +/, ""); print; f = 1; exit } END { exit !f }' \
+    "$_wasm_object_only_file" 2>/dev/null
+}
+
+# wasm_case <triple> <case> <rc> <stderr> <linked-path> — classify one case of
+# a sweep or a per-case harness. Sets WASM_CASE to:
+#   linked   built and linked (and not listed as object-only);
+#   refused  exit != 0 with E0910, the honest "no native lowering" refusal;
+#   skip     exit != 0 that `native_build_unavailable` proves, or exit 0 with
+#            the unavailable marker;
+#   objonly  exit 0, no link, listed in wasm_object_only.txt;
+#   fail     anything else: a build error, `wasm runtime not found`, an
+#            unlisted object-only case, or a listed case that now links.
+# Prints one indented line for every outcome but `linked` (with the stderr,
+# first 20 lines, for `fail`). For `skip`, WASM_CASE_WHY is the proven reason
+# (a harness that skipped every case skips with it). Never exits.
+wasm_case() {
+  local triple="$1" c="$2" rc="$3" err="$4" linked="$5" why
+  WASM_CASE=fail; WASM_CASE_WHY=""
+  if [ "$rc" -ne 0 ]; then
+    if printf '%s\n' "$err" | grep -q 'E0910'; then
+      WASM_CASE=refused
+      echo "  REFUSED $c ($(printf '%s\n' "$err" | grep -m1 'E0910' | cut -c1-160))"
+      return 0
+    fi
+    if native_build_unavailable "$err"; then
+      WASM_CASE=skip; WASM_CASE_WHY="wasm build unavailable"
+      echo "  SKIP $c ($WASM_CASE_WHY)"; return 0
+    fi
+    echo "  FAIL $c: $triple build FAILED (a build error is not a skip):"
+  elif [ -f "$linked" ]; then
+    if why="$(wasm_object_only_reason "$triple" "$c")"; then
+      echo "  FAIL $c: linked, but scripts/wasm_object_only.txt lists it as object-only for $triple (stale entry: $why)"
+      return 0
+    fi
+    WASM_CASE=linked; return 0
+  elif wasm_link_unavailable "$err"; then
+    WASM_CASE=skip; WASM_CASE_WHY="$(printf '%s\n' "$err" | grep -m1 '^wasm link unavailable:')"
+    echo "  SKIP $c ($WASM_CASE_WHY)"
+    return 0
+  elif printf '%s\n' "$err" | grep -q '^wasm runtime not found:'; then
+    echo "  FAIL $c: built but did not link — the compiler did not find its wasm runtime:"
+  elif why="$(wasm_object_only_reason "$triple" "$c")"; then
+    WASM_CASE=objonly; echo "  OBJECT-ONLY $c (listed: $why)"; return 0
+  else
+    echo "  FAIL $c: built but did not link, and scripts/wasm_object_only.txt does not list it for $triple:"
+  fi
+  printf '%s\n' "$err" | grep -v '^[[:space:]]*$' | head -20 | sed 's/^/        /'
 }

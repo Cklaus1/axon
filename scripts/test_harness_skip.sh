@@ -6,8 +6,9 @@
 # tables differ only by the REASON column here: every skip row also pins the
 # line `harness_skip_reason` reports (the one parity_all.sh prints). cli_run.rs
 # prints no reasons, so that column is shell-only.
-# A second, separate `shape` section (below the table) greps scripts/*.sh for
-# shapes the harness rules refuse; it has its own FAIL line.
+# A second section, `wasm`, holds shell-only rows for the wasm link classifier
+# (`wasm_link_unavailable`, `wasm_case`). A third, `shape` (below), greps
+# scripts/*.sh for shapes the harness rules refuse. Each has its own FAIL line.
 # parity_all.sh runs this before any harness, and gate.sh's fast tier runs it;
 # it can also be run alone. Exit 0 every row and shape held; 1 otherwise (the
 # message names the row and the section).
@@ -73,6 +74,37 @@ row noskip "skip outside the window"    'foo_parity: native build failed — ski
 row skip   "final-line prose skip"      'foo_parity: codegen build unavailable (LLVM absent) — skipping\n' \
   'foo_parity: codegen build unavailable (LLVM absent) — skipping'
 
+# ── wasm: the `axon target build --target wasm32-*` outcome ─────────────────
+# Shell-only (no build): `wasm_link_unavailable` is true ONLY on the
+# compiler's `wasm link unavailable:` marker, and `wasm_case` classifies one
+# case against scripts/wasm_object_only.txt. Its own FAIL line.
+wasm_bad=0
+# wrow <expect: true|false> <label> <stderr (printf %b escapes)>
+wrow() {
+  local got=false
+  wasm_link_unavailable "$(printf '%b' "$3")" && got=true
+  if [ "$got" = "$1" ]; then echo "  ok    $2"; else echo "  WRONG $2: wasm_link_unavailable said $got"; wasm_bad=1; fi
+}
+wrow true  "unavailable marker"   'wasm link unavailable: rust-lld not found (searched /h/.rustup/toolchains/*/lib/rustlib/*/bin/rust-lld)\nwasm object: p.wasm (target wasm32-wasip1) — ...\n'
+wrow false "runtime not found"    'wasm runtime not found: libaxon_rt.a for wasm32-wasip1 (searched /t/wasm32-wasip1/{debug,release})\nwasm link failed (exit status: 1):\nrust-lld: error: p.wasm: undefined symbol: __axon_rt_seed_rng\n'
+wrow false "link failed"          'wasm link failed (exit status: 1):\nrust-lld: error: p.wasm: undefined symbol: foo\n'
+wrow false "empty stderr"         ''
+wrow false "marker text not at column 0" '  note: wasm link unavailable: quoted\n'
+# crow <expect WASM_CASE> <label> <rc> <stderr> <linked: yes|no> — the case
+# key is never listed (`gaps2:unlisted`), so object-only is a FAIL.
+crow() {
+  local linked=/nonexistent/x.linked.wasm
+  [ "$5" = yes ] && linked="$HERE/test_harness_skip.sh"
+  wasm_case wasm32-wasip1 gaps2:unlisted "$3" "$(printf '%b' "$4")" "$linked" >/dev/null
+  if [ "$WASM_CASE" = "$1" ]; then echo "  ok    $2"; else echo "  WRONG $2: wasm_case said $WASM_CASE, expected $1"; wasm_bad=1; fi
+}
+crow linked  "case: linked"                       0 '' yes
+crow skip    "case: unavailable marker"           0 'wasm link unavailable: rustup toolchains not found (searched /x)\n' no
+crow fail    "case: runtime not found"            0 'wasm runtime not found: libaxon_rt.a for wasm32-wasip1 (searched /x)\n' no
+crow fail    "case: unlisted object-only"         0 'wasm link failed (exit status: 1):\n' no
+crow refused "case: E0910 refusal"                2 'codegen error [E0910]: builtin `http_get` is not yet supported\nerror: 1 codegen error(s); wasm build aborted\n' no
+crow fail    "case: other build error"            2 'error: IR verification failed\n' no
+
 # ── shape: script shapes the harness rules refuse ───────────────────────────
 # Not rule-table rows (cli_run.rs has no counterpart): a grep over the scripts
 # for a shape that once let a harness misbehave. Comment lines are ignored,
@@ -113,8 +145,11 @@ shape "no \`cargo build … 2>/dev/null\` in scripts/*_parity.sh" \
 if [ "$bad" -ne 0 ]; then
   echo "test_harness_skip: FAIL [detector] — the skip detector or its reason disagrees with the rule table"
 fi
+if [ "$wasm_bad" -ne 0 ]; then
+  echo "test_harness_skip: FAIL [wasm] — the wasm link classifier disagrees with its rows"
+fi
 if [ "$shape_bad" -ne 0 ]; then
   echo "test_harness_skip: FAIL [shape] — a script has a shape the harness rules refuse"
 fi
-[ "$bad" -eq 0 ] && [ "$shape_bad" -eq 0 ] || exit 1
-echo "test_harness_skip: PASS — harness_says_skip and harness_skip_reason match every rule-table row; no refused script shape"
+[ "$bad" -eq 0 ] && [ "$wasm_bad" -eq 0 ] && [ "$shape_bad" -eq 0 ] || exit 1
+echo "test_harness_skip: PASS — harness_says_skip and harness_skip_reason match every rule-table row; the wasm link classifier matches its rows; no refused script shape"

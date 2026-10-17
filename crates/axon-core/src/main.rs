@@ -3208,18 +3208,14 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
     }
 }
 
-/// R7: link a wasm object into a runnable `.wasm` via `rust-lld -flavor wasm`
-/// against the wasi libc, in reactor mode (`--no-entry --export=main`). Returns
-/// the linked path on success, or `None` when the toolchain is absent OR the
-/// link fails (e.g. an str/array program whose i64-ABI helpers clash with
-/// wasm32's i32 libc — the remaining ABI gap). Best-effort: a failed link is
-/// not an error, just "object-only".
 /// Locate the wasm32 build of `libaxon_rt.a`, the runtime carrying the
 /// scalar-ABI bridge for str/array externs. Checks `$AXON_WASM_RT` first (an
-/// explicit override), then the conventional cargo target layout. Returns None
-/// if the wasm runtime hasn't been built — callers degrade to libc-only linking.
+/// explicit override), then the conventional cargo target layout. `Err` names
+/// the places searched, for the caller's `wasm runtime not found` line; the
+/// caller then links libc-only.
 #[cfg(feature = "codegen")]
-fn find_wasm_axon_rt(target_subdir: &str) -> Option<PathBuf> {
+fn find_wasm_axon_rt(target_subdir: &str) -> Result<PathBuf, String> {
+    let mut searched = Vec::new();
     // AXON_WASM_RT overrides only for the (default) wasip1 path — a browser link
     // needs the unknown-unknown build specifically, so don't let a wasip1 override
     // leak into it.
@@ -3227,8 +3223,9 @@ fn find_wasm_axon_rt(target_subdir: &str) -> Option<PathBuf> {
         if let Ok(p) = std::env::var("AXON_WASM_RT") {
             let pb = PathBuf::from(p);
             if pb.exists() {
-                return Some(pb);
+                return Ok(pb);
             }
+            searched.push(format!("AXON_WASM_RT={}", pb.display()));
         }
     }
     // The running compiler's own target dir first (`<dir>/<subdir>/<profile>`),
@@ -3238,12 +3235,23 @@ fn find_wasm_axon_rt(target_subdir: &str) -> Option<PathBuf> {
         for profile in ["debug", "release"] {
             let cand = dir.join(target_subdir).join(profile).join("libaxon_rt.a");
             if cand.exists() {
-                return Some(cand);
+                return Ok(cand);
             }
         }
+        searched.push(format!(
+            "{}/{{debug,release}}",
+            dir.join(target_subdir).display()
+        ));
     }
     // Then walk up from CWD looking for target/<subdir>/{debug,release}/libaxon_rt.a.
-    let mut dir = std::env::current_dir().ok()?;
+    let Ok(mut dir) = std::env::current_dir() else {
+        searched.push("no current directory to walk up from".to_string());
+        return Err(searched.join(", "));
+    };
+    searched.push(format!(
+        "{}/target/{target_subdir}/{{debug,release}} and its ancestors' target/",
+        dir.display()
+    ));
     loop {
         for profile in ["debug", "release"] {
             let cand = dir
@@ -3252,15 +3260,26 @@ fn find_wasm_axon_rt(target_subdir: &str) -> Option<PathBuf> {
                 .join(profile)
                 .join("libaxon_rt.a");
             if cand.exists() {
-                return Some(cand);
+                return Ok(cand);
             }
         }
         if !dir.pop() {
-            return None;
+            return Err(searched.join(", "));
         }
     }
 }
 
+/// R7: link a wasm object into a runnable `.wasm` via `rust-lld -flavor wasm`
+/// against the wasi libc, in reactor mode (`--no-entry --export=main`). Returns
+/// the linked path on success, or `None` when the toolchain is absent OR the
+/// link fails (e.g. an str/array program whose i64-ABI helpers clash with
+/// wasm32's i32 libc — the remaining ABI gap). Best-effort: a failed link is
+/// not an error, just "object-only". Every `None` first prints one stderr line
+/// saying why: `wasm link unavailable: <rust-lld|wasi libc|rustup toolchains>
+/// not found (searched …)` when the toolchain is absent (the one line the
+/// harnesses read as a skip, `wasm_link_unavailable` in
+/// scripts/lib/harness_skip.sh), `wasm link failed…` when it is present. A
+/// runtime miss prints `wasm runtime not found: …` and the link goes on.
 #[cfg(feature = "codegen")]
 fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
     use std::process::Command;
@@ -3270,8 +3289,18 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
     // wasip1 axon-rt, runnable under wasmtime.
     let is_browser = triple.contains("unknown-unknown");
     // Locate rust-lld + the wasi libc under the active rustup toolchain.
-    let home = std::env::var("HOME").ok()?;
+    let Ok(home) = std::env::var("HOME") else {
+        eprintln!("wasm link unavailable: rustup toolchains not found (searched $HOME/.rustup/toolchains; HOME is unset)");
+        return None;
+    };
     let toolchains = PathBuf::from(&home).join(".rustup/toolchains");
+    if !toolchains.is_dir() {
+        eprintln!(
+            "wasm link unavailable: rustup toolchains not found (searched {})",
+            toolchains.display()
+        );
+        return None;
+    }
     let find = |needle: &str, host_seg: bool| -> Option<PathBuf> {
         // Shallow scan: look for the first matching path under any toolchain.
         for entry in std::fs::read_dir(&toolchains).ok()?.flatten() {
@@ -3299,7 +3328,13 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
         }
         None
     };
-    let rust_lld = find("", true)?;
+    let Some(rust_lld) = find("", true) else {
+        eprintln!(
+            "wasm link unavailable: rust-lld not found (searched {}/*/lib/rustlib/*/bin/rust-lld)",
+            toolchains.display()
+        );
+        return None;
+    };
 
     // Locate the wasm build of axon-rt (the `__axon_*` runtime, carrying the
     // scalar-ABI bridge under `#[cfg(target_arch="wasm32")]`). The BROWSER target
@@ -3311,7 +3346,13 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
     } else {
         ("wasm32-wasip1", true)
     };
-    let rt_lib = find_wasm_axon_rt(rt_subdir);
+    let rt_lib = match find_wasm_axon_rt(rt_subdir) {
+        Ok(rt) => Some(rt),
+        Err(searched) => {
+            eprintln!("wasm runtime not found: libaxon_rt.a for {rt_subdir} (searched {searched})");
+            None
+        }
+    };
 
     let linked = obj.with_extension("linked.wasm");
     let mut cmd = Command::new(&rust_lld);
@@ -3331,13 +3372,28 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
     }
     if link_wasi_libc {
         // Headless wasip1: the wasi libc provides malloc/memcpy + fd_write etc.
-        let libc = find("libc.a", false)?;
+        let Some(libc) = find("libc.a", false) else {
+            eprintln!(
+                "wasm link unavailable: wasi libc not found (searched {}/*/lib/rustlib/wasm32-wasip1/lib/self-contained/libc.a)",
+                toolchains.display()
+            );
+            return None;
+        };
         cmd.arg(libc);
     }
     if let Some(rt) = &rt_lib {
         cmd.arg(rt);
     }
-    let status = cmd.arg(obj).arg("-o").arg(&linked).output().ok()?;
+    let status = match cmd.arg(obj).arg("-o").arg(&linked).output() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "wasm link failed: could not run {}: {e}",
+                rust_lld.display()
+            );
+            return None;
+        }
+    };
     // rust-lld can succeed-with-warnings; treat a produced + non-empty file as
     // the success signal, but reject if there were signature mismatches (the
     // wasm would trap), so we only claim "runnable" when it genuinely is.
@@ -3364,6 +3420,10 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
     {
         Some(linked)
     } else {
+        eprintln!(
+            "wasm link failed: rust-lld exited 0 but wrote no {} (or an empty one)",
+            linked.display()
+        );
         None
     }
 }

@@ -72,12 +72,12 @@ if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
     exit 1
   fi
   # The target and axon-rt for it were proven above. A build that FAILED is a
-  # result; only a build that succeeded without producing a linked module (the
-  # environment's wasm link is unavailable) is a skip.
+  # result. A build that succeeded without a linked module is a skip only when
+  # the compiler says the link is unavailable (wasm_unlinked_probe).
   if [ "$_probe_rc" -ne 0 ]; then
     native_build_failed wasm_browser_io_parity "browser probe build" "$_probe_err" || exit 1
   fi
-  echo "wasm_browser_io_parity: browser println link unavailable — skipping"; exit 0
+  wasm_unlinked_probe wasm_browser_io_parity "$_probe_err"
 fi
 
 # String-println programs (the path that lowers to puts → host write).
@@ -89,22 +89,22 @@ PROGS[nums]='fn main() { println(to_str(42))  println(to_str(0 - 7))  println("s
 PROGS[floats]='fn main() { println(to_str_f64(3.14))  println(to_str_f64(1000000.0))  println("pi={3.14159}") }'
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
-pass=0; fail=0; ran=0
+pass=0; fail=0; ran=0; skip_why=""
 for name in "${!PROGS[@]}"; do
   src="$WORK/$name.ax"; printf '%s\n' "${PROGS[$name]}" > "$src"
   I_OUT="$("$AXON" run "$src" 2>/dev/null)"
-  if ! werr="$("$AXON" target build "$src" --target wasm32-unknown-unknown 2>&1)"; then
-    # The probe above linked a module, so the toolchain is here: a failed
-    # build is a result unless stderr proves an unavailability.
-    if native_build_unavailable "$werr"; then
-      echo "  SKIP $name (build unavailable)"; continue
-    fi
-    echo "  FAIL $name: browser-wasm build FAILED (a build error is not a skip):"
-    printf '%s\n' "$werr" | head -5 | sed 's/^/        /'
-    fail=$((fail+1)); continue
-  fi
+  # The probe above linked a module, so the toolchain is here: a failed build
+  # (an E0910 refusal included) or a missing link is a result unless the
+  # compiler proves an unavailability (wasm_case).
+  werr="$("$AXON" target build "$src" --target wasm32-unknown-unknown 2>&1)"; wrc=$?
   linked="${src%.ax}.linked.wasm"
-  [ -f "$linked" ] || { echo "  SKIP $name (object-only)"; continue; }
+  wasm_case wasm32-unknown-unknown "wasm_browser_io:$name" "$wrc" "$werr" "$linked"
+  case "$WASM_CASE" in
+    linked) ;;
+    skip) skip_why="$WASM_CASE_WHY"; continue ;;
+    objonly) continue ;;
+    *) fail=$((fail+1)); continue ;;
+  esac
   ran=$((ran+1))
   if strings "$linked" | grep -qi wasi_snapshot; then
     echo "  FAIL $name: imports WASI — not browser-safe"; fail=$((fail+1)); continue
@@ -123,29 +123,31 @@ DEMO="examples/browser/demo.ax"
 if [ -f "$DEMO" ]; then
   D_I="$("$AXON" run "$DEMO" 2>/dev/null)"
   rm -f examples/browser/demo.linked.wasm examples/browser/demo.wasm
-  if ! derr="$("$AXON" target build "$DEMO" --target wasm32-unknown-unknown 2>&1)" \
-     && ! native_build_unavailable "$derr"; then
-    echo "  FAIL demo: browser-wasm build FAILED (a build error is not a skip):"
-    printf '%s\n' "$derr" | head -5 | sed 's/^/        /'
-    fail=$((fail+1))
-  elif [ -f examples/browser/demo.linked.wasm ]; then
-    ran=$((ran+1))
-    D_W="$(node "$HOSTJS" examples/browser/demo.linked.wasm 2>/dev/null)"
-    if [ "$D_I" = "$D_W" ]; then
-      echo "  OK   demo (examples/browser/demo.ax): stdout matches via JS host"; pass=$((pass+1))
-    else
-      echo "  DIFF demo: interp=[$D_I] browser=[$D_W]"; fail=$((fail+1))
-    fi
-    rm -f examples/browser/demo.linked.wasm examples/browser/demo.wasm
-  else
-    echo "  SKIP demo (object-only)"
-  fi
+  derr="$("$AXON" target build "$DEMO" --target wasm32-unknown-unknown 2>&1)"; drc=$?
+  wasm_case wasm32-unknown-unknown "wasm_browser_io:demo" "$drc" "$derr" examples/browser/demo.linked.wasm
+  case "$WASM_CASE" in
+    linked)
+      ran=$((ran+1))
+      D_W="$(node "$HOSTJS" examples/browser/demo.linked.wasm 2>/dev/null)"
+      if [ "$D_I" = "$D_W" ]; then
+        echo "  OK   demo (examples/browser/demo.ax): stdout matches via JS host"; pass=$((pass+1))
+      else
+        echo "  DIFF demo: interp=[$D_I] browser=[$D_W]"; fail=$((fail+1))
+      fi ;;
+    skip) skip_why="$WASM_CASE_WHY" ;;
+    objonly) ;;
+    *) fail=$((fail+1)) ;;
+  esac
+  rm -f examples/browser/demo.linked.wasm examples/browser/demo.wasm
 fi
 
 echo "wasm_browser_io_parity: $pass/$ran stdout-matched (wasi-free), $fail bad"
 # A failure decides first: with every case FAILED, ran is 0 too.
 [ "$fail" -eq 0 ] || exit 1
-if [ "$ran" -eq 0 ]; then echo "wasm_browser_io_parity: nothing linked — skipping"; exit 0; fi
+if [ "$ran" -eq 0 ]; then
+  [ -n "$skip_why" ] && harness_skip wasm_browser_io_parity "$skip_why"
+  echo "wasm_browser_io_parity: FAIL — nothing linked and no case proved the link unavailable"; exit 1
+fi
 if [ "$ran" -lt "${#PROGS[@]}" ]; then
   echo "wasm_browser_io_parity: FAIL — only $ran/${#PROGS[@]} linked; a browser println-link regression silently skipped the rest"; exit 1
 fi

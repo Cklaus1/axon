@@ -70,12 +70,12 @@ if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
     exit 1
   fi
   # The target and axon-rt for it were proven above. A build that FAILED is a
-  # result; only a build that succeeded without producing a linked module (the
-  # environment's wasm link is unavailable) is a skip.
+  # result. A build that succeeded without a linked module is a skip only when
+  # the compiler says the link is unavailable (wasm_unlinked_probe).
   if [ "$_probe_rc" -ne 0 ]; then
     native_build_failed wasm_browser_examples_parity "wasm probe build" "$_probe_err" || exit 1
   fi
-  echo "wasm_browser_examples_parity: browser link unavailable — skipping"; exit 0
+  wasm_unlinked_probe wasm_browser_examples_parity "$_probe_err"
 fi
 
 pass=0; diff=0; objonly=0; total=0

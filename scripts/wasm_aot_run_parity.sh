@@ -45,16 +45,12 @@ fi
 INTERP="$AXON_RUN"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
-# AUDIT O013: give this harness its OWN cargo target directory for the wasm
-# builds below. Several wasm harnesses run `--target wasm32-*` concurrently under
-# the full test suite and contended on the shared target/, so some builds failed
-# and their cases reported "wasm build failed" — the test then correctly refused
-# to pass on partial coverage, but the cause was contention, not a real parity
-# break. Set AFTER the two host `cargo build` calls above so those still reuse
-# the shared cache and are not rebuilt into the temp dir.
-#
-# Same isolation the SMT harnesses already use (smt_discharge_parity.sh:41).
-export CARGO_TARGET_DIR="$WORK/wasm-target"
+# The wasm32-wasip1 runtime the dict/array cases link against. Built into the
+# caller's target dir, which is where the compiler looks when $AXON was built
+# there too (parity_all, gate.sh); `axon target build` itself never runs cargo.
+# Without this the cases linked only when an earlier harness had built it.
+cargo_build_or_skip wasm_aot_run_parity target:wasm32-wasip1 \
+  cargo build -q -p axon-rt --target wasm32-wasip1
 
 # The AOT-wasm-linkable subset: programs that, after dead-function pruning, have
 # no SURVIVING i64-ABI `__axon_*` import that clashes with wasm32's i32 libc — so
@@ -103,7 +99,7 @@ PROGS[dict_closure]='fn main() -> i64 {
 # (build-failed → SKIP), never actually testing a loop on wasm (a vacuous skip).
 PROGS[loop]='fn main() -> i64 { let s = 0  let i = 1  while i <= 10 { s = s + i  i = i + 1 }  s }'
 
-pass=0; fail=0; ran=0
+pass=0; fail=0; ran=0; skip_why=""
 for name in "${!PROGS[@]}"; do
   src="$WORK/$name.ax"; printf '%s\n' "${PROGS[$name]}" > "$src"
   # Read the interpreter's answer by INVOKING main the same way wasmtime does,
@@ -126,16 +122,15 @@ for name in "${!PROGS[@]}"; do
   # AOT-wasm: build (which links if pure-int) then run.
   # Codegen was proven above (require_codegen_axon) and the object emit is
   # in-tree: a failed build is a result unless stderr proves an unavailability.
-  if ! werr="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$probe_src" 2>&1)"; then
-    if native_build_unavailable "$werr"; then
-      echo "  SKIP $name (wasm build unavailable)"; continue
-    fi
-    echo "  FAIL $name: AOT-wasm build FAILED (a build error is not a skip):"
-    printf '%s\n' "$werr" | head -5 | sed 's/^/        /'
-    fail=$((fail+1)); continue
-  fi
+  werr="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$probe_src" 2>&1)"; wrc=$?
   linked="${probe_src%.ax}.linked.wasm"
-  if [ ! -f "$linked" ]; then echo "  SKIP $name (not linkable — has runtime externs)"; continue; fi
+  wasm_case wasm32-wasip1 "wasm_aot_run:$name" "$wrc" "$werr" "$linked"
+  case "$WASM_CASE" in
+    linked) ;;
+    skip) skip_why="$WASM_CASE_WHY"; continue ;;
+    objonly) continue ;;
+    *) fail=$((fail+1)); continue ;;  # refused: a pure-int case must lower
+  esac
   ran=$((ran+1))
   # `--invoke` prints the callee's return value AFTER the experimental warning.
   # The probe's main returns nothing and PRINTS the answer, so cut at the warning
@@ -156,7 +151,11 @@ echo "wasm_aot_run_parity: $pass/$ran ran-and-matched, $fail differ"
 # A failure decides first: with every case FAILED, ran is 0 too, and checking
 # ran first reported that as "nothing linked — skipping".
 [ "$fail" -eq 0 ] || { echo "wasm_aot_run_parity: FAIL — $fail case(s) failed"; exit 1; }
-if [ "$ran" -eq 0 ]; then echo "wasm_aot_run_parity: nothing linked — skipping"; exit 0; fi
+# Nothing ran and nothing failed: every case skipped (or is listed object-only).
+if [ "$ran" -eq 0 ]; then
+  [ -n "$skip_why" ] && harness_skip wasm_aot_run_parity "$skip_why"
+  echo "wasm_aot_run_parity: FAIL — nothing linked and no case proved the link unavailable"; exit 1
+fi
 # Vacuous-skip guard: every PROGS entry is PURE-INT and MUST link+run. If the
 # env works (ran>0) but some program silently skipped (build/link failure — e.g.
 # a syntax break like the old `let mut`), that's a REGRESSION, not a skip.
