@@ -105,6 +105,14 @@ fn legible_grant(g: &Grant) -> String {
     )
 }
 
+/// AR2: a run id names `<out>/<run_id>.{json,axjob,approval}`, so it must be a
+/// plain file name: non-empty, no path separator, no NUL. `.`/`..` are fine
+/// (a suffix is always appended). An absolute id or one with a `/` would
+/// escape `--out`, or (in `verify`) the directory of the record.
+fn run_id_is_plain(run_id: &str) -> bool {
+    !run_id.is_empty() && !run_id.contains(['/', '\0']) && !(cfg!(windows) && run_id.contains('\\'))
+}
+
 fn read_manifest(path: &Path) -> Result<JobManifest, String> {
     let src = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
@@ -306,6 +314,12 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
         eprintln!("axon-os run: missing <job.axjob>");
         return ExitCode::from(2);
     };
+    if !run_id_is_plain(&run_id) {
+        eprintln!(
+            "axon-os run: --run-id must be a plain file name (non-empty, no path separator, no NUL)"
+        );
+        return ExitCode::from(2);
+    }
     let job_path = Path::new(job);
     let manifest = match read_manifest(job_path) {
         Ok(m) => m,
@@ -663,7 +677,23 @@ fn cmd_verify(rest: &[&str]) -> ExitCode {
     // G5c: the chain is checked against the record's OWN manifest_digest, so
     // on its own it says nothing about which job ran. Bind it to the archived
     // job (`run` writes `<run_id>.axjob` beside the record); no job ⇒ refused.
-    let job = job.unwrap_or_else(|| record.with_file_name(format!("{}.axjob", rec.run_id)));
+    // AR2: the record's run_id is forgeable (keyless anyone can re-seal), so it
+    // names the default job only when it is a plain file name; checked before
+    // any read, and the refusal does not echo it.
+    let job = match job {
+        Some(job) => job,
+        None if run_id_is_plain(&rec.run_id) => record
+            .parent()
+            .unwrap_or(Path::new(""))
+            .join(format!("{}.axjob", rec.run_id)),
+        None => {
+            let detail = "record run_id is not a plain file name; pass --job".to_string();
+            println!("\u{2717} TAMPERED: {detail}");
+            return ExitCode::from(
+                crate::verdict::Verdict::VerifyMismatch { detail }.exit_code() as u8,
+            );
+        }
+    };
     let bound = read_manifest(&job)
         .map_err(|e| crate::record::VerifyMismatch {
             detail: format!("no usable job to bind the record to: {e}"),

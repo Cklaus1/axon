@@ -11348,6 +11348,18 @@ MUTATIONS += [
      '        Err(e) => {\n            let denial = RawEvent::new("denied", "io", EffectSet::default(), "");',
      '        Err(_) if true => String::new(),\n        Err(e) => {\n            let denial = RawEvent::new("denied", "io", EffectSet::default(), "");',
      'axon-os', '--lib', 'supervisor::tests::an_unreadable_program_is_refused_on_the_io_axis_after_authorization'),
+    ('M3622', 'AR2 VERIFY: the default job path is built from a run_id that is not a plain file name (the predicate dropped in cmd_verify)', 'crates/axon-os/src/cli.rs',
+     '        None => {\n            let detail = "record run_id is not a plain file name; pass --job".to_string();',
+     '        None => record.with_file_name(format!("{}.axjob", rec.run_id)),\n        #[allow(unreachable_patterns)]\n        None => {\n            let detail = "record run_id is not a plain file name; pass --job".to_string();',
+     'axon-os', '--test acceptance', 'verify_refuses_a_record_whose_run_id_names_a_path_outside_its_directory'),
+    ('M3623', 'AR2 PREDICATE: a run_id with a path separator counts as a plain file name', 'crates/axon-os/src/cli.rs',
+     "    !run_id.is_empty() && !run_id.contains(['/', '\\0'])",
+     "    !run_id.is_empty() && !run_id.contains(['\\0'])",
+     'axon-os', '--test acceptance', 'verify_refuses_a_record_whose_run_id_names_a_path_outside_its_directory'),
+    ('M3624', 'AR2 RUN: run --run-id is joined into --out without the plain-file-name check', 'crates/axon-os/src/cli.rs',
+     '    if !run_id_is_plain(&run_id) {\n        eprintln!(\n            "axon-os run: --run-id must be a plain file name',
+     '    if false && !run_id_is_plain(&run_id) {\n        eprintln!(\n            "axon-os run: --run-id must be a plain file name',
+     'axon-os', '--test acceptance', 'run_refuses_a_run_id_that_is_not_a_plain_file_name'),
 ]
 
 

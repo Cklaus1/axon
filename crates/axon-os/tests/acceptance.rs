@@ -1212,3 +1212,118 @@ fn the_entry_bytes_the_token_verified_are_the_bytes_that_run() {
     assert_eq!(rec.approval, "verified_required");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// AR2 fixture: a validly sealed (keyless) record whose run_id is `run_id`,
+/// in `<d>/store/r.json`, and a job matching it at `<d>/elsewhere/<name>.axjob`
+/// (outside the store). Returns the record path.
+fn record_naming_an_outside_job(d: &Path, run_id: &str, name: &str) -> PathBuf {
+    let store = d.join("store");
+    let elsewhere = d.join("elsewhere");
+    std::fs::create_dir_all(&store).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("p.ax"), "fn main() -> i64 { 0 }\n").unwrap();
+    let job_src = "program = \"p.ax\"\nintent = \"t\"\nseed = 1\n\
+         [grant]\nmax_label = \"internal\"\n\
+         [grant.budget]\ncalls = 1\ntokens = 1\ncost_micro = 0\n";
+    std::fs::write(elsewhere.join(format!("{name}.axjob")), job_src).unwrap();
+    let mut m = axon_os::manifest::parse(job_src, &elsewhere).unwrap();
+    m.program = std::fs::canonicalize(&m.program).unwrap();
+    let rec = axon_os::record::build(
+        run_id,
+        &m,
+        m.seed,
+        &[],
+        axon_os::Verdict::Completed { value: 0 },
+        "not_required",
+        None,
+    );
+    let rec_path = store.join("r.json");
+    std::fs::write(&rec_path, axon_os::record::to_json(&rec)).unwrap();
+    rec_path
+}
+
+/// AR2: `verify` without `--job` built the job path from the record's run_id,
+/// which a keyless forger re-seals at will: `../elsewhere/x` (or an absolute
+/// id) read a job outside the record's directory and printed `✓ intact`. Now
+/// an id that is not a plain file name is refused (exit 11) before any read,
+/// and the refusal does not echo the outside path.
+#[test]
+fn verify_refuses_a_record_whose_run_id_names_a_path_outside_its_directory() {
+    let Some(axon) = axon_bin() else {
+        panic!("axon interpreter required")
+    };
+    let d = tmp("ar2-verify");
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let absolute = d.join("elsewhere").join("y").display().to_string();
+    for (run_id, name) in [("../elsewhere/x", "x"), (absolute.as_str(), "y")] {
+        let rec = record_naming_an_outside_job(&d, run_id, name);
+        let v = os(&["verify", rec.to_str().unwrap()], &axon, &[]);
+        assert!(
+            v.code == 11 && !v.stdout.contains("intact"),
+            "ATTACK: a record with run_id {run_id:?} was verified against a job outside its \
+             directory (exit {}): {}",
+            v.code,
+            v.stdout
+        );
+        assert!(
+            v.stdout.contains("not a plain file name; pass --job"),
+            "{}",
+            v.stdout
+        );
+        assert!(!v.stdout.contains("elsewhere"), "{}", v.stdout);
+        // `--job` names the job explicitly: the run_id names no path then.
+        let job = d.join("elsewhere").join(format!("{name}.axjob"));
+        let v = os(
+            &[
+                "verify",
+                rec.to_str().unwrap(),
+                "--job",
+                job.to_str().unwrap(),
+            ],
+            &axon,
+            &[],
+        );
+        assert_eq!(v.code, 0, "{}", v.stdout);
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// AR2: `run --run-id` was joined into `--out` unchecked, so `../x` wrote the
+/// record, job copy and token outside `--out`. Now refused (exit 2) before
+/// anything is created.
+#[test]
+fn run_refuses_a_run_id_that_is_not_a_plain_file_name() {
+    let Some(axon) = axon_bin() else {
+        panic!("axon interpreter required")
+    };
+    let d = tmp("ar2-run");
+    let _ = std::fs::remove_dir_all(&d);
+    let out = d.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let r = os(
+        &[
+            "run",
+            "examples/jobs/summarize.axjob",
+            "--run-id",
+            "../escaped",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+        &axon,
+        &[],
+    );
+    assert!(
+        !d.join("escaped.json").exists() && !d.join("escaped.axjob").exists(),
+        "ATTACK: --run-id ../escaped wrote outside --out (exit {}): {}",
+        r.code,
+        r.stdout
+    );
+    assert_eq!(r.code, 2, "{}", r.stdout);
+    assert_eq!(
+        std::fs::read_dir(&out).unwrap().count(),
+        0,
+        "nothing created"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}

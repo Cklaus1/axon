@@ -3046,4 +3046,7 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M3620': r'ATTACK: the entry swapped after authorization ran under the token',
     'M3621': r'ATTACK: an unreadable program was run',
+    'M3622': r'ATTACK: a record with run_id "\.\./elsewhere/x" was verified against a job outside its directory',
+    'M3623': r'ATTACK: a record with run_id "\.\./elsewhere/x" was verified against a job outside its directory',
+    'M3624': r'ATTACK: --run-id \.\./escaped wrote outside --out',
 })

@@ -3348,7 +3348,7 @@ _OSCLI = ("NOT ON THE PROTECTED ROUTE (checkable): the `axon-os` binary's own co
 EXEMPT += [
     ("crates/axon-os/src/cli.rs", head, _OSCLI) for head in (
         "pub fn run(args: Vec<String>) -> ExitCode {", "fn help(line: &str) -> ExitCode {",
-        "fn cmd_explain(job: &Path) -> ExitCode {", "fn cmd_verify(rest: &[&str]) -> ExitCode {",
+        "fn cmd_explain(job: &Path) -> ExitCode {",
         "fn cmd_replay(rest: &[&str]) -> ExitCode {", "fn cmd_kill(rest: &[&str]) -> ExitCode {",
         "fn cmd_status(rest: &[&str]) -> ExitCode {",
         "fn status_all(store: &Path, latest_only: bool, json_out: bool) -> ExitCode {",
