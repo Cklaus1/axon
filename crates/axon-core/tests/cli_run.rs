@@ -3877,7 +3877,10 @@ fn session_refuses_a_mismatching_cell_with_a_frame_and_no_leftovers() {
     let (code, frames, err, left) = ar5_session(
         &dir,
         &digest,
-        &["mod lib\nuse lib.{helper}\nhelper()", "let y = 2\ny"],
+        &[
+            "mod lib\nuse lib.{helper}\nlet v = helper()",
+            "let y = 2\ny",
+        ],
     );
     let ctx = format!("frames={frames:?} stderr={err} left={left:?}");
     assert!(
