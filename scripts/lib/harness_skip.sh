@@ -167,8 +167,10 @@ rust_target_installed() {
 # that printed its skip prose and then elaborated (handler_resume,
 # exit_code_parity's catch-all — both ended on build-error text) was SKIP to one
 # reader and PASS to the other. Same run, two verdicts. scripts/
-# test_harness_skip.sh holds the same rows as cli_run.rs's `skip_rule_table`;
-# change the rule in both places and both tables, or neither.
+# test_harness_skip.sh holds the same verdict rows as cli_run.rs's
+# `skip_rule_table`; change the rule in both places and both tables, or neither.
+# Its reason rows (`harness_skip_reason`, below) are shell-only: cli_run.rs
+# prints no reasons.
 #
 # A non-zero exit is a FAILURE and never a skip — callers decide that on the
 # exit status before consulting this. Rules, in order:
@@ -189,6 +191,22 @@ harness_says_skip() { # <output>
   printf '%s\n' "$final" | grep -qE "^[^[:space:]].*($_skip_re)" && return 0
   printf '%s\n' "$final" | grep -qE "^[^[:space:]].*($_verdict_re)" && return 1
   printf '%s\n' "$body" | tail -3 | grep -qE "^[^[:space:]].*($_skip_re)"
+}
+
+# harness_skip_reason <output> — the line `harness_says_skip`'s rule matched,
+# for a harness it calls a skip: the final non-empty line when that decided,
+# else the LAST column-0 skip line in the three-line window. parity_all.sh
+# prints it as the reason; the final line alone named build-error text that
+# followed the skip (`error: IR verification failed`) as the skip's reason.
+harness_skip_reason() { # <output>
+  local body final
+  body="$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$')"
+  final="$(printf '%s\n' "$body" | tail -1)"
+  if printf '%s\n' "$final" | grep -qE "^[^[:space:]].*($_skip_re|$_verdict_re)"; then
+    printf '%s\n' "$final"
+    return 0
+  fi
+  printf '%s\n' "$body" | tail -3 | grep -E "^[^[:space:]].*($_skip_re)" | tail -1
 }
 
 # ── 5. cargo_build_or_skip <name> <prereq> <command...> ─────────────────────

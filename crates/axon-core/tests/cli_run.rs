@@ -33342,10 +33342,12 @@ fn eprint_writes_to_stderr_without_a_newline() {
 /// closures and stayed green while the real function was wrong; they were
 /// deleted, and every shape they covered is a row here.
 ///
-/// Every row here is also a row in `scripts/test_harness_skip.sh`, the shell
-/// unit check for `harness_says_skip` in `scripts/lib/harness_skip.sh`. If you
-/// change one, change both — a harness must not be a SKIP to one reader and a
-/// PASS to the other.
+/// Every verdict row here is also a row in `scripts/test_harness_skip.sh`, the
+/// shell unit check for `harness_says_skip` in `scripts/lib/harness_skip.sh`.
+/// If you change one, change both — a harness must not be a SKIP to one reader
+/// and a PASS to the other. The shell table also pins each skip row's REASON
+/// line (`harness_skip_reason`, what `parity_all.sh` prints); this file prints
+/// no reasons, so that column is shell-only.
 #[cfg(test)]
 mod skip_rule_table {
     use super::tail_says_skipping;
