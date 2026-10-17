@@ -1,0 +1,4 @@
+{
+  "theme": "gaps LSP residue",
+  "text": "TOOLING (axon lsp only; no change in what any run computes, accepts or refuses): the loader records which entry `use` reached each module; the digest, `axon imports` and every CLI output are unchanged (LoadedModule.via: the entry `use` whose load first merged the module, overridden by the entry's own `use` of it; ImportClosure::via_of; AnalysisResult carries the closure). The LSP anchors an imported module's diagnostic on that `use`, located in the token stream segment for segment, instead of on a text line matched by path suffix (which misanchored transitive modules, `use` lines inside block comments and modules whose path ends like another's)"
+}
