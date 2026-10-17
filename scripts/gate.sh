@@ -1000,7 +1000,8 @@ if [ "$STRICT" = 1 ]; then
   # this, but were historically run ad hoc — which is how the silent-divergence
   # bugs (#27/#36/#38/#39/parse_*_or) reached main. parity_all.sh runs the whole
   # suite; a real divergence fails the gate, toolchain-absent harnesses skip
-  # cleanly. Under --strict only (links LLVM + may run wasmtime; ~2 min).
+  # cleanly. Under --strict only (links LLVM + runs wasmtime; 21m42s strict
+  # standalone, 55/2/0 of 57, 2026-10-15; part of a 43m24s --strict gate).
   echo "── gate: parity suite (interp ↔ codegen / AOT-wasm) ─────────────"
   AXON_HARNESS_STRICT=1 ./scripts/parity_all.sh --quiet || fail "parity suite"
 
@@ -1319,9 +1320,10 @@ echo ""
 # pass shape this repo has now hit three times.
 #
 # Deliberately NOT silently changed: promoting parity_all.sh into the default
-# path costs 7m49s on this box (measured 2026-08-04: 44 passed / 5 skipped of
-# 49). That is a real decision about gate latency, not one to make as a side
-# effect of a bug fix. What this does is refuse to let the vacuity be silent.
+# path costs 21m42s on this box (strict standalone, 55/2/0 of 57, 2026-10-15;
+# part of a 43m24s --strict gate). That is a real decision about gate latency,
+# not one to make as a side effect of a bug fix. What this does is refuse to
+# let the vacuity be silent.
 # ($SKIPLOG is truncated at the top of this script so this reflects THIS run.)
 # The skip list is printed in BOTH modes. It used to sit inside the non-strict
 # branch only, so a --strict run ended "✅ gate PASSED" while the v0.22 pack's
@@ -1334,7 +1336,7 @@ if [ "$STRICT" != 1 ]; then
   echo "  The test stage is --no-default-features, so the codegen parity wrappers"
   echo "  cannot assert. To actually check I-2:"
   echo "      ./scripts/gate.sh --strict      # full gate incl. the parity suite"
-  echo "      ./scripts/parity_all.sh         # parity suite alone (~8 min)"
+  echo "      ./scripts/parity_all.sh         # parity suite alone (~22 min)"
   echo "      AXON_HARNESS_STRICT=1 ...       # make any skipped harness FATAL"
 fi
 
