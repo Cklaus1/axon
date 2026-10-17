@@ -74,11 +74,14 @@ note_skip() {
 # ── THE skip rule ────────────────────────────────────────────────────────────
 # `harness_says_skip` lives in scripts/lib/harness_skip.sh (sourced above), the
 # one shell copy of the rule; scripts/test_harness_skip.sh pins it against the
-# same rows as `skip_rule_table` in crates/axon-core/tests/cli_run.rs. A broken
-# detector would misfile every harness, so it is checked before any runs.
-if ! bash "$ROOT/scripts/test_harness_skip.sh" >/dev/null; then
-  echo "parity_all: FAILED — the skip detector disagrees with its rule table:" >&2
-  bash "$ROOT/scripts/test_harness_skip.sh" >&2
+# same rows as `skip_rule_table` in crates/axon-core/tests/cli_run.rs, and
+# greps the scripts for refused shapes. A broken detector would misfile every
+# harness, so it is checked before any runs; the message names the section.
+if ! ths_out="$(bash "$ROOT/scripts/test_harness_skip.sh" 2>&1)"; then
+  ths_failed="$(printf '%s\n' "$ths_out" | grep -oE '^test_harness_skip: FAIL \[[a-z]+\]' \
+                | grep -oE '\[[a-z]+\]' | paste -sd ' ')"
+  echo "parity_all: FAILED — scripts/test_harness_skip.sh failed in section(s) ${ths_failed:-unknown}:" >&2
+  printf '%s\n' "$ths_out" >&2
   exit 2
 fi
 

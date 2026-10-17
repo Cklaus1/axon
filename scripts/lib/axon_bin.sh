@@ -43,6 +43,21 @@ cargo_target_dir() {
   printf '%s\n' "$d"
 }
 
+# interp_target_dir — the directory a harness builds its private
+# interpreter-only `axon` into: `interp-only/` under whatever cargo_target_dir
+# resolves. A relative `CARGO_TARGET_DIR="target/interp-only"` resolved
+# against the harness's `cd "$ROOT"` and overrode a caller's outside target
+# dir, so a lane building elsewhere got a second full axon-core build inside
+# its worktree. Stable path so cargo can reuse. Use it as
+#     ITD="$(interp_target_dir)" || exit 2
+#     … env CARGO_TARGET_DIR="$ITD" cargo build … ; NATIVE="$ITD/debug/axon"
+# (the shape crates/axon-core/tests/harness_binaries.rs accepts).
+interp_target_dir() {
+  local t
+  t="$(cargo_target_dir)" || return 1
+  printf '%s/interp-only\n' "$t"
+}
+
 # built_bin <name> [<triple>] [<profile>] — print the path cargo built <name>
 # at. <profile> is `debug` (default) or `release`; <triple> is empty for the
 # host. Prefer `use_built`, which cannot lose a failure in a `$(…)`.

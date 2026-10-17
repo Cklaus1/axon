@@ -382,6 +382,7 @@ if [ "$FAST" = 1 ]; then
   cargo test --locked -p axon-psv || fail "axon-psv suite"
   echo "── fast: vm_parity.sh (tree vs VM) ──"
   ./scripts/vm_parity.sh || fail "vm_parity.sh"
+  bash scripts/test_harness_skip.sh || fail "harness skip rules/shapes"
 
   echo ""
   skip_notice

@@ -6,8 +6,11 @@
 # tables differ only by the REASON column here: every skip row also pins the
 # line `harness_skip_reason` reports (the one parity_all.sh prints). cli_run.rs
 # prints no reasons, so that column is shell-only.
-# parity_all.sh runs this before any harness; it can also be run alone.
-# Exit 0 every row held; 1 a row disagreed (the message names it).
+# A second, separate `shape` section (below the table) greps scripts/*.sh for
+# shapes the harness rules refuse; it has its own FAIL line.
+# parity_all.sh runs this before any harness, and gate.sh's fast tier runs it;
+# it can also be run alone. Exit 0 every row and shape held; 1 otherwise (the
+# message names the row and the section).
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/lib/harness_skip.sh"
@@ -70,8 +73,40 @@ row noskip "skip outside the window"    'foo_parity: native build failed — ski
 row skip   "final-line prose skip"      'foo_parity: codegen build unavailable (LLVM absent) — skipping\n' \
   'foo_parity: codegen build unavailable (LLVM absent) — skipping'
 
+# ── shape: script shapes the harness rules refuse ───────────────────────────
+# Not rule-table rows (cli_run.rs has no counterpart): a grep over the scripts
+# for a shape that once let a harness misbehave. Comment lines are ignored,
+# and this file is not scanned (its own patterns would match themselves).
+shape_bad=0
+# shape <label> <ERE> <files...> — no non-comment line of <files> matches <ERE>.
+shape() {
+  local label="$1" re="$2" hits
+  shift 2
+  hits="$(grep -HnE -- "$re" "$@" 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#')"
+  if [ -n "$hits" ]; then
+    echo "  WRONG $label:"
+    printf '%s\n' "$hits" | sed "s|^$HERE/|        scripts/|"
+    shape_bad=1
+  else
+    echo "  ok    $label"
+  fi
+}
+scripts_sh=()
+for f in "$HERE"/*.sh; do
+  [ "$f" = "$HERE/test_harness_skip.sh" ] || scripts_sh+=("$f")
+done
+# H1: a relative CARGO_TARGET_DIR resolves against the script's `cd "$ROOT"`
+# and overrides the caller's target dir (a second full build inside the
+# worktree). Use `interp_target_dir` / `cargo_target_dir` (lib/axon_bin.sh) or
+# an absolute `$WORK/...`.
+shape "no relative CARGO_TARGET_DIR= literal in scripts/*.sh" \
+  "CARGO_TARGET_DIR=[\"']?[^\"'\$/[:space:]]" "${scripts_sh[@]}"
+
 if [ "$bad" -ne 0 ]; then
-  echo "test_harness_skip: FAIL — the skip detector or its reason disagrees with the rule table"
-  exit 1
+  echo "test_harness_skip: FAIL [detector] — the skip detector or its reason disagrees with the rule table"
 fi
-echo "test_harness_skip: PASS — harness_says_skip and harness_skip_reason match every rule-table row"
+if [ "$shape_bad" -ne 0 ]; then
+  echo "test_harness_skip: FAIL [shape] — a script has a shape the harness rules refuse"
+fi
+[ "$bad" -eq 0 ] && [ "$shape_bad" -eq 0 ] || exit 1
+echo "test_harness_skip: PASS — harness_says_skip and harness_skip_reason match every rule-table row; no refused script shape"
