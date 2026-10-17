@@ -3045,3 +3045,12 @@ ATTACK_MARKERS.update({
     'M3641': r'ATTACK: a refused session cell executed the module',
     'M3642': r'ATTACK: the refused cell left temp files',
 })
+
+# gaps2 run, lane lsp (M3660-M3679): the attack is a location answered in the wrong place.
+ATTACK_MARKERS.update({
+    'M3660': r'left: String\("file://[^"]*/main\.ax"\)\s+right: "file://[^"]*/lib\.ax"',
+    'M3661': r"MISANCHOR \(transitive\): c\.ax's diagnostic is not on main\.ax's line 3",
+    'M3662': r"MISANCHOR \(block comment\): lib\.ax's diagnostic is not on main\.ax's line 4",
+    'M3663': r"MISANCHOR \(path suffix\): util/lib\.ax's diagnostic is not on main\.ax's line 3",
+    'M3664': r"MISANCHOR \(direct import\): c\.ax's diagnostic is not on main\.ax's line 3",
+})

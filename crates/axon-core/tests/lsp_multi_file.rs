@@ -191,3 +191,127 @@ fn a_relative_module_dir_still_yields_an_absolute_file_uri() {
     let rel_uri = &publish["params"]["diagnostics"][0]["relatedInformation"][0]["location"]["uri"];
     assert_eq!(rel_uri, lib_uri(&dir).as_str(), "{publish:#}");
 }
+
+/// A fresh module dir holding `files` (relative path, text); a relative path
+/// with a `/` makes the nested directory.
+fn modules(tag: &str, files: &[(&str, &str)]) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("axon lsp {tag} {}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for (rel, text) in files {
+        let f = dir.join(rel);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, text).unwrap();
+    }
+    dir
+}
+
+fn file_uri(p: &Path) -> String {
+    format!("file://{}", p.display()).replace(' ', "%20")
+}
+
+/// Open `main` against the module dir; every diagnostic published must be the
+/// imported module `module`'s (relatedInformation at its URI and line
+/// `module_line`), anchored on main's line `use_line`, from column 0 to
+/// `use_end` (the `use` declaration's closing brace).
+fn assert_anchored(
+    case: &str,
+    dir: &Path,
+    main: &str,
+    module: &str,
+    module_line: u64,
+    use_line: u64,
+    use_end: u64,
+) {
+    let main_uri = file_uri(&dir.join("main.ax"));
+    let msgs = session(dir, &main_uri, main, &[]);
+    let _ = std::fs::remove_dir_all(dir);
+
+    let publish = msgs
+        .iter()
+        .find(|m| m["method"] == "textDocument/publishDiagnostics")
+        .expect("diagnostics published");
+    assert_eq!(publish["params"]["uri"], main_uri.as_str());
+    let diags = publish["params"]["diagnostics"].as_array().unwrap();
+    assert!(
+        !diags.is_empty(),
+        "{case}: {module}'s type error must be published"
+    );
+    for d in diags {
+        // relatedInformation still names the module's own file and line.
+        let rel = &d["relatedInformation"][0];
+        assert_eq!(
+            rel["location"]["uri"],
+            file_uri(&dir.join(module)).as_str(),
+            "{case}: only {module}'s diagnostics are published, each pointing into it: {diags:#?}"
+        );
+        assert_eq!(
+            rel["location"]["range"]["start"]["line"], module_line,
+            "{case}: {d:#}"
+        );
+        assert_eq!(
+            d["range"]["start"]["line"], use_line,
+            "MISANCHOR ({case}): {module}'s diagnostic is not on main.ax's line {use_line}: {d:#}"
+        );
+        assert_eq!(
+            d["range"],
+            json!({"start": {"line": use_line, "character": 0},
+                   "end": {"line": use_line, "character": use_end}}),
+            "{case}: the anchor spans the `use` declaration: {d:#}"
+        );
+    }
+}
+
+/// A type error on line 2 of the module that holds it.
+const BROKEN_C: &str = "fn fc() -> i64 { 3 }\n// pad\nfn bad(a: i64) -> i64 { a + \"s\" }\n";
+
+#[test]
+fn a_transitive_module_anchors_on_the_use_that_reached_it() {
+    // c.ax is reached only through b.ax; `use b` is main's SECOND `use`.
+    let dir = modules(
+        "transitive",
+        &[
+            ("a.ax", "fn fa() -> i64 { 1 }\n"),
+            ("b.ax", "mod c\nuse c.{fc}\nfn fb() -> i64 { fc() }\n"),
+            ("c.ax", BROKEN_C),
+        ],
+    );
+    let main = "mod a\nmod b\nuse a.{fa}\nuse b.{fb}\nfn main() -> i64 { fa() + fb() }\n";
+    assert_anchored("transitive", &dir, main, "c.ax", 2, 3, 10);
+}
+
+#[test]
+fn a_use_inside_a_block_comment_is_never_the_anchor() {
+    let dir = modules("comment", &[("lib.ax", BROKEN_C)]);
+    let main = "mod lib\n/*\nuse lib.{fc}\n*/\nuse lib.{fc}\nfn main() -> i64 { fc() }\n";
+    assert_anchored("block comment", &dir, main, "lib.ax", 2, 4, 12);
+}
+
+#[test]
+fn a_module_path_that_ends_like_another_is_not_its_use() {
+    // `util/lib.ax` ends with `/lib.ax`; only `use util.lib` imports it.
+    let dir = modules(
+        "suffix",
+        &[
+            ("lib.ax", "fn ok_one() -> i64 { 1 }\n"),
+            ("util/lib.ax", BROKEN_C),
+        ],
+    );
+    let main = "mod lib\nmod util\nuse lib.{ok_one}\nuse util.lib.{fc}\n\
+                fn main() -> i64 { ok_one() + fc() }\n";
+    assert_anchored("path suffix", &dir, main, "util/lib.ax", 2, 3, 17);
+}
+
+#[test]
+fn a_module_the_entry_imports_directly_anchors_on_its_own_use() {
+    // The loader merges c.ax while loading `use a` (a.ax imports it first);
+    // the entry's own `use c` is still where c.ax's diagnostic belongs.
+    let dir = modules(
+        "direct",
+        &[
+            ("a.ax", "use c.{fc}\nfn fa() -> i64 { fc() }\n"),
+            ("c.ax", BROKEN_C),
+        ],
+    );
+    let main = "mod a\nmod c\nuse a.{fa}\nuse c.{fc}\nfn main() -> i64 { fa() + fc() }\n";
+    assert_anchored("direct import", &dir, main, "c.ax", 2, 3, 10);
+}

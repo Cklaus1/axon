@@ -21,7 +21,7 @@ use std::io::{BufRead, BufReader, Write};
 
 use serde_json::{json, Value};
 
-use crate::{ast, checker, infer, resolver, span};
+use crate::{ast, checker, infer, resolver, span, token::Token};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -95,13 +95,15 @@ pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
                     span: span::Span::new(offset, end),
                     severity: 1,
                 }],
+                imports: crate::ImportClosure::default(),
             };
         }
     };
 
     // ── AXON_PATH module loading ──────────────────────────────────────────
     let search_dirs = crate::axon_search_dirs(None);
-    let mut diagnostics: Vec<LspDiagnostic> = crate::load_use_decls(&mut program, &search_dirs)
+    let (load_errors, imports) = crate::load_use_decls_recorded(&mut program, &search_dirs);
+    let mut diagnostics: Vec<LspDiagnostic> = load_errors
         .into_iter()
         .map(|e| LspDiagnostic {
             code: e.code.to_string(),
@@ -112,7 +114,7 @@ pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
         .collect();
 
     // ── Resolve ───────────────────────────────────────────────────────────
-    let resolve_result = resolver::resolve_program(&mut program, uri);
+    let resolve_result = resolver::resolve_program(&program, uri);
     resolver::fill_captures(&mut program);
 
     for d in &resolve_result.errors {
@@ -142,7 +144,7 @@ pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
 
     // ── Type inference ────────────────────────────────────────────────────
     let mut infer_ctx = infer::InferCtx::new(uri);
-    infer_ctx.infer_program(&mut program);
+    infer_ctx.infer_program(&program);
 
     for e in &infer_ctx.errors {
         let mut msg = e.message.clone();
@@ -254,6 +256,7 @@ pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
         program: Some(program),
         infer_ctx: Some(infer_ctx),
         diagnostics,
+        imports,
     }
 }
 
@@ -271,13 +274,7 @@ pub fn run_lsp() {
     let mut documents: HashMap<String, String> = HashMap::new();
     let mut last_result: HashMap<String, crate::AnalysisResult> = HashMap::new();
 
-    loop {
-        // ── Read Content-Length header ────────────────────────────────────
-        let content_length = match read_content_length(&mut reader) {
-            Some(n) => n,
-            None => break, // stdin closed
-        };
-
+    while let Some(content_length) = read_content_length(&mut reader) {
         // ── Read JSON body ────────────────────────────────────────────────
         let mut body = vec![0u8; content_length];
         use std::io::Read as _;
@@ -336,7 +333,7 @@ pub fn run_lsp() {
                     let uri = text_doc["uri"].as_str().unwrap_or("").to_string();
                     let text = text_doc["text"].as_str().unwrap_or("").to_string();
                     let result = crate::analyse(&text, &uri);
-                    push_diagnostics(&mut out, &uri, &result.diagnostics, &text);
+                    push_diagnostics(&mut out, &uri, Some(&result), &text);
                     last_result.insert(uri.clone(), result);
                     documents.insert(uri, text);
                 }
@@ -352,7 +349,7 @@ pub fn run_lsp() {
                     if let Some(last) = changes.last() {
                         let text = last["text"].as_str().unwrap_or("").to_string();
                         let result = crate::analyse(&text, &uri);
-                        push_diagnostics(&mut out, &uri, &result.diagnostics, &text);
+                        push_diagnostics(&mut out, &uri, Some(&result), &text);
                         last_result.insert(uri.clone(), result);
                         documents.insert(uri, text);
                     }
@@ -367,7 +364,7 @@ pub fn run_lsp() {
                 documents.remove(&uri);
                 last_result.remove(&uri);
                 // Clear diagnostics for closed document.
-                push_diagnostics(&mut out, &uri, &[], "");
+                push_diagnostics(&mut out, &uri, None, "");
             }
 
             // ── Hover ─────────────────────────────────────────────────────
@@ -540,7 +537,7 @@ fn compute_hover_lsp(
 
 fn format_fn_hover(name: &str, sig: &infer::FnSig) -> String {
     // Params without names — show only types (fallback used by hover on builtins).
-    let params: Vec<String> = sig.params.iter().map(|t| format_type(t)).collect();
+    let params: Vec<String> = sig.params.iter().map(format_type).collect();
     let ret = format_type(&sig.ret);
     format!(
         "```axon\nfn {}({}) -> {}\n```",
@@ -715,42 +712,32 @@ fn compute_definition_lsp(
     character: u32,
 ) -> Option<Value> {
     let byte_offset = lsp_pos_to_byte_offset(source, line, character)?;
-    let word = word_at_offset(source, byte_offset)?;
+    let decl_span = compute_definition(result.program.as_ref()?, source, byte_offset)?;
 
-    let program = result.program.as_ref()?;
-
-    for item in &program.items {
-        let decl_span = match item {
-            ast::Item::FnDef(f) if f.name == word => f.span,
-            ast::Item::TypeDef(t) if t.name == word => t.span,
-            ast::Item::EnumDef(e) if e.name == word => e.span,
-            ast::Item::TraitDef(t) if t.name == word => t.span,
-            _ => continue,
-        };
-
-        if decl_span.start == 0 && decl_span.end == 0 {
-            continue; // dummy span — no location info
-        }
-
-        // An imported item's span indexes ITS file, not the open document.
-        return Some(match foreign_file(decl_span) {
-            Some((path, map)) => json!({
-                "uri": path_to_file_uri(&path),
-                "range": span_to_lsp_range(&map.source, decl_span)
-            }),
-            None => json!({
-                "uri": uri,
-                "range": span_to_lsp_range(source, decl_span)
-            }),
-        });
-    }
-
-    None
+    // An imported item's span indexes ITS file, not the open document.
+    Some(match foreign_file(decl_span) {
+        Some((path, map)) => json!({
+            "uri": path_to_file_uri(&path),
+            "range": span_to_lsp_range(&map.source, decl_span)
+        }),
+        None => json!({
+            "uri": uri,
+            "range": span_to_lsp_range(source, decl_span)
+        }),
+    })
 }
 
 // ── Diagnostics push ──────────────────────────────────────────────────────────
 
-fn push_diagnostics(out: &mut impl Write, uri: &str, diagnostics: &[LspDiagnostic], source: &str) {
+/// Publish `result`'s diagnostics for `uri`; `None` clears them.
+fn push_diagnostics(
+    out: &mut impl Write,
+    uri: &str,
+    result: Option<&crate::AnalysisResult>,
+    source: &str,
+) {
+    let diagnostics = result.map_or(&[][..], |r| r.diagnostics.as_slice());
+    let uses = std::cell::OnceCell::new();
     let diags: Vec<Value> = diagnostics
         .iter()
         .map(|d| {
@@ -768,7 +755,10 @@ fn push_diagnostics(out: &mut impl Write, uri: &str, diagnostics: &[LspDiagnosti
                 // foreign URI would never be cleared on didChange/didClose), so
                 // anchor it at the `use` that brought the module in and point
                 // at the real location through relatedInformation.
-                diag["range"] = use_line_range(source, &path);
+                let via = result
+                    .and_then(|r| r.imports.via_of(d.span.source))
+                    .unwrap_or_default();
+                diag["range"] = use_decl_range(source, uses.get_or_init(|| use_decls(source)), via);
                 diag["relatedInformation"] = json!([{
                     "location": {
                         "uri": path_to_file_uri(&path),
@@ -802,34 +792,64 @@ fn foreign_file(sp: span::Span) -> Option<(String, std::sync::Arc<span::SourceMa
     Some((path, map))
 }
 
-/// Range of the `use` line in `source` that imports the module at `path`
-/// (`use a.b.{x}` / `use a::b` → `…/a/b.ax`). A module reached only
-/// transitively has no `use` of its own here: the first `use` brought it in.
-fn use_line_range(source: &str, path: &str) -> Value {
-    let mut first: Option<(usize, &str)> = None;
-    for (i, line) in source.lines().enumerate() {
-        let Some(rest) = line.trim_start().strip_prefix("use ") else {
+/// Every `use` declaration in `source`: its path segments and the byte range
+/// from `use` to its last token (the closing brace, else the last segment),
+/// read from the token stream as `parse_use` reads it, so a `use` inside a
+/// comment or a string is not one.
+fn use_decls(source: &str) -> Vec<(Vec<&str>, std::ops::Range<usize>)> {
+    let Ok(toks) = crate::lexer::Lexer::tokenize(source) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < toks.len() {
+        if toks[i].0 != Token::Use {
+            i += 1;
             continue;
-        };
-        first.get_or_insert((i, line));
-        let module: String = rest
-            .trim_start()
-            .chars()
-            .take_while(|c| !matches!(c, '{' | ';') && !c.is_whitespace())
-            .collect();
-        let segs: Vec<&str> = module.split(['.', ':']).filter(|s| !s.is_empty()).collect();
-        let rel = format!("{}.ax", segs.join("/"));
-        if path == rel || path.ends_with(&format!("/{rel}")) {
-            first = Some((i, line));
-            break;
         }
+        let start = toks[i].1.start;
+        let mut end = toks[i].1.end;
+        let mut segs = Vec::new();
+        i += 1;
+        while let Some((Token::Ident(_), r)) = toks.get(i) {
+            segs.push(&source[r.clone()]);
+            end = r.end;
+            i += 1;
+            // A separator continues the path, or precedes `{` (`use a.{x}`).
+            if !matches!(toks.get(i), Some((Token::Dot | Token::ColonColon, _))) {
+                break;
+            }
+            i += 1;
+        }
+        if let Some((Token::LBrace, _)) = toks.get(i) {
+            if let Some(k) = toks[i..].iter().position(|(t, _)| *t == Token::RBrace) {
+                end = toks[i + k].1.end;
+                i += k + 1;
+            }
+        }
+        out.push((segs, start..end));
     }
-    let (line_no, text) = first.unwrap_or((0, ""));
-    let indent = text.len() - text.trim_start().len();
-    json!({
-        "start": {"line": line_no, "character": text[..indent].encode_utf16().count()},
-        "end": {"line": line_no, "character": text.encode_utf16().count()}
-    })
+    out
+}
+
+/// Range of the first `use` declaration in `uses` whose path is `via`, segment
+/// for segment: the entry `use` that brought an imported module in
+/// ([`crate::ImportClosure::via_of`]). 0:0 when none matches.
+fn use_decl_range(
+    source: &str,
+    uses: &[(Vec<&str>, std::ops::Range<usize>)],
+    via: &[String],
+) -> Value {
+    match uses
+        .iter()
+        .find(|(segs, _)| segs.iter().copied().eq(via.iter().map(String::as_str)))
+    {
+        Some((_, r)) => json!({
+            "start": byte_offset_to_lsp_pos(source, r.start),
+            "end": byte_offset_to_lsp_pos(source, r.end)
+        }),
+        None => json!({"start":{"line":0,"character":0},"end":{"line":0,"character":0}}),
+    }
 }
 
 /// `file://` URI for a path, percent-encoding every byte outside the RFC 3986
@@ -1036,7 +1056,10 @@ pub fn compute_hover(
 /// Compute a go-to-definition location for the identifier at `byte_offset`.
 ///
 /// Returns `None` if no definition is found or if span information is not
-/// available.
+/// available. The span may index an imported module's file rather than
+/// `source` (after `load_use_decls`): `span::source_path_of(span.source)` and
+/// `span::source_map_of(span.source)` name that file and its text, and only a
+/// span neither resolves belongs to `source`.
 pub fn compute_definition(
     program: &ast::Program,
     source: &str,
@@ -1151,13 +1174,18 @@ mod tests {
     fn lsp_definition_no_crash() {
         let src = "fn helper() -> i64 {\n    42\n}\nfn main() -> i64 {\n    helper()\n}\n";
         let result = analyse_source(src, "test.ax");
-        if let Some(prog) = &result.program {
-            if let Some(pos) = src.rfind("helper") {
-                let def = compute_definition(prog, src, pos);
-                // May be None if spans not tracked; just ensure no panic
-                let _ = def;
-            }
-        }
+        let prog = result.program.as_ref().expect("clean source parses");
+        let pos = src.rfind("helper").unwrap();
+        let def = compute_definition(prog, src, pos).expect("a local fn has a definition");
+        assert!(
+            def.start < def.end && def.end <= src.len(),
+            "the definition span lies inside src: {def:?}"
+        );
+        assert!(
+            src[def.start..def.end].contains("fn helper"),
+            "the definition span covers the fn: {:?}",
+            &src[def.start..def.end]
+        );
     }
 
     #[test]
