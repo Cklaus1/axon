@@ -334,3 +334,30 @@ fn an_unsealed_run_only_reaches_the_operator_kernel() {
         ix.kernels[0].sandboxes.borrow().len()
     );
 }
+
+/// gaps2 H7: the operator stream is process-global, and `cargo test` runs lib
+/// tests on parallel threads, so `operator_code_a_sealed_frame_runs_never_
+/// draws_the_operator_rng` once read 652 where its `srand(7)` promised 327: one
+/// foreign draw in between. A thread with `TEST_RNG_OVERRIDE` on draws its own
+/// stream: another thread's draw between its `srand(7)` and its next draw does
+/// not move it. Calls `set_rand_seed`/`next_rand_u64` directly: every public run
+/// entry spawns a fresh thread (`on_deep_stack`), where this thread's switch is
+/// not set.
+#[test]
+fn a_thread_own_operator_stream_is_not_advanced_by_another_threads_draw() {
+    TEST_RNG_OVERRIDE.with(|c| c.set(Some(0)));
+    set_rand_seed(7);
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let _ = next_rand_u64();
+        });
+    });
+    let first = next_rand_u64();
+    TEST_RNG_OVERRIDE.with(|c| c.set(None));
+    // The first xorshift64 draw of seed 7; `random_i64(0, 1000)` reduces it to 327.
+    assert_eq!(
+        (first, first % 1000),
+        (7_575_888_327, 327),
+        "ATTACK: another thread's draw advanced this thread's operator stream between srand(7) and its next draw"
+    );
+}

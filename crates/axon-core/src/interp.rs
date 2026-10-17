@@ -7405,7 +7405,11 @@ pub use provenance::{
 };
 
 /// A pseudo-random `u64` from a process-global xorshift state (seeded from the
-/// clock on first use). Single-threaded interpreter, so no CAS needed.
+/// clock on first use). Single-threaded in production: every OS thread that
+/// runs an interpreter is joined before another starts, so no CAS is needed.
+/// Parallel only under `cargo test`, where lib tests share this process; a
+/// test that seeds and asserts the operator stream switches on
+/// `TEST_RNG_OVERRIDE` (cfg(test) only) on its run's thread.
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 /// Global xorshift64 RNG state: the OPERATOR kernel's stream (the sealed
@@ -7415,6 +7419,19 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 /// `Kernel::rng_next` / `Kernel::rng_set`, so every draw goes through
 /// [`Interp::rng_next`].
 static RNG_STATE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+thread_local! {
+    /// TEST-ONLY: when `Some`, THIS thread's operator stream, which
+    /// [`next_rand_u64`] and [`set_rand_seed`] use instead of [`RNG_STATE`].
+    /// `cargo test` runs lib tests on parallel threads of one process, so a
+    /// test that seeds the global stream and asserts its next value could
+    /// read another test's draw in between (`srand(7)` then 652, not 327).
+    /// Switched on with `Some(0)` (seeded on first draw, as the global is);
+    /// the production stream stays process-wide (`Interp`'s per-run stream
+    /// was vetoed: successive `@[test]` fns continue one stream).
+    pub(crate) static TEST_RNG_OVERRIDE: Cell<Option<u64>> = const { Cell::new(None) };
+}
 
 /// Parse the ambient run-level token cap from `AXON_BUDGET_TOKENS`.
 ///
@@ -7521,11 +7538,27 @@ fn rng_seed() -> u64 {
 /// "uninitialized".
 fn set_rand_seed(n: i64) {
     let s = (n as u64) | 1;
+    #[cfg(test)]
+    if TEST_RNG_OVERRIDE.with(Cell::get).is_some() {
+        TEST_RNG_OVERRIDE.with(|c| c.set(Some(s)));
+        return;
+    }
     RNG_STATE.store(s, AtomicOrdering::Relaxed);
 }
 
 /// The operator kernel's next draw (see [`RNG_STATE`]).
 fn next_rand_u64() -> u64 {
+    #[cfg(test)]
+    if let Some(mut x) = TEST_RNG_OVERRIDE.with(Cell::get) {
+        if x == 0 {
+            x = rng_seed();
+        }
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        TEST_RNG_OVERRIDE.with(|c| c.set(Some(x)));
+        return x;
+    }
     let mut x = RNG_STATE.load(AtomicOrdering::Relaxed);
     if x == 0 {
         x = rng_seed();
@@ -9215,7 +9248,10 @@ fn main() { }
 
     /// `rule`: whether the dispatch rule (amendment 83) is on (v0.22
     /// interp.rs:5765). The switches are per thread and set on the run's own
-    /// thread ([`on_deep_stack`] spawns it), which starts with both off.
+    /// thread ([`on_deep_stack`] spawns it), which starts with both off. The
+    /// run also draws a thread-own operator stream ([`TEST_RNG_OVERRIDE`]):
+    /// suites that `srand` and assert the next draw must not see a parallel
+    /// test's draw in between.
     fn sealed_outcome_rule(
         tag: &str,
         suite: &str,
@@ -9231,6 +9267,7 @@ fn main() { }
         on_deep_stack(|| {
             DISPATCH_RULE_OFF.with(|c| c.set(!rule || taint_only));
             TAINT_FORCE_ON.with(|c| c.set(taint_only));
+            TEST_RNG_OVERRIDE.with(|c| c.set(Some(0)));
             run_test_fn_inner(&prog, test, &[sdir]).map_err(|f| f.message)
         })
     }

@@ -3045,4 +3045,5 @@ ATTACK_MARKERS.update({
 # gaps2 run, harness lane (tasks/harness-hygiene-spec.md), ids M3680-M3699.
 ATTACK_MARKERS.update({
     'M3680': r'ATTACK: a skip line outside the three-line window decided the verdict',
+    'M3681': r"ATTACK: another thread's draw advanced this thread's operator stream between srand\(7\) and its next draw",
 })

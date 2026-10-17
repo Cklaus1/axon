@@ -11345,6 +11345,11 @@ MUTATIONS += [
     ('M3680', 'HARNESS (gaps2 H5): the skip detector looks back three non-empty lines, no more', 'crates/axon-core/tests/cli_run.rs',
      '    body.iter().rev().take(3).any(|l| says_skip(l))', '    body.iter().rev().take(10).any(|l| says_skip(l))',
      'axon-core', '--no-default-features --test cli_run', 'skip_rule_table::detectors_agree_on_every_shape'),
+    # H7: the cfg(test) thread-own operator stream; with next_rand_u64's override branch dead, a
+    # thread that switched it on draws the process-global stream another thread just advanced.
+    ('M3681', 'HARNESS (gaps2 H7): a thread with the test RNG override draws its own operator stream', 'crates/axon-core/src/interp.rs',
+     '    if let Some(mut x) = TEST_RNG_OVERRIDE.with(Cell::get) {', '    if let Some(mut x) = TEST_RNG_OVERRIDE.with(Cell::get).filter(|_| false) {',
+     'axon-core', '--no-default-features --lib', 'interp::kernel_tests::a_thread_own_operator_stream_is_not_advanced_by_another_threads_draw'),
 ]
 
 
