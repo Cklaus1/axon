@@ -2182,6 +2182,13 @@ fn kg2_the_generator_deadline_kills_its_whole_job() {
 /// KG2 (b): a generator that answers and exits, leaving a background process
 /// that still holds its stdout and stderr, does not stall the loop. Leftovers
 /// after a normal exit are left alone (NH1): only the reads are bounded.
+///
+/// The claim is ORDER, not speed: cortex finishes while the leftover still
+/// runs. Before KG2 the drains waited for the leftover's EOF, so cortex could
+/// not exit before it did. A wall-clock bound on the whole episode measured
+/// host load instead (a reviewer saw 47 s under `taskset -c 0` and three busy
+/// loops), so the leftover sleeps 600 s and the 300 s bound is only a hang
+/// guard; cortex's own output goes to files, not to pipes this test reads.
 #[test]
 fn kg2_a_leftover_holding_the_generators_pipes_does_not_stall_the_loop() {
     let ws = workspace("kg2_leftover");
@@ -2189,23 +2196,52 @@ fn kg2_a_leftover_holding_the_generators_pipes_does_not_stall_the_loop() {
     common::write_executable(
         &gen,
         format!(
-            "#!/bin/sh\ncat >/dev/null\nsleep 60 &\necho $! > '{}'\nprintf '    n * 2\\n'\nexit 0\n",
+            "#!/bin/sh\ncat >/dev/null\nsleep 600 &\necho $! > '{}'\nprintf '    n * 2\\n'\nexit 0\n",
             ws.join("left.pid").display()
         ),
         0o755,
     );
+    let out_file = ws.join("cortex.out");
+    let mut cortex = repair_with_generator(&ws, &gen, "120000")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::fs::File::create(&out_file).unwrap())
+        .stderr(std::fs::File::create(ws.join("cortex.err")).unwrap())
+        .spawn()
+        .unwrap();
+    let said = || {
+        format!(
+            "{}{}",
+            std::fs::read_to_string(&out_file).unwrap_or_default(),
+            std::fs::read_to_string(ws.join("cortex.err")).unwrap_or_default()
+        )
+    };
     let began = std::time::Instant::now();
-    let out = repair_with_generator(&ws, &gen, "120000").output().unwrap();
-    let took = began.elapsed();
-    let leftover = Proc::named(&ws.join("left.pid"), &["sleep", "60"]);
+    let status = loop {
+        if let Some(st) = cortex.try_wait().unwrap() {
+            break st;
+        }
+        if began.elapsed() >= std::time::Duration::from_secs(300) {
+            let _ = cortex.kill();
+            let _ = cortex.wait();
+            let _leftover = Proc::named(&ws.join("left.pid"), &["sleep", "600"]);
+            panic!(
+                "ATTACK: a leftover holding the generator's pipes stalled `cortex repair` \
+                 (still running after 300 s): {}",
+                said()
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let leftover = Proc::named(&ws.join("left.pid"), &["sleep", "600"]);
     assert!(
-        took < std::time::Duration::from_secs(20),
-        "ATTACK: a leftover holding the generator's pipes stalled `cortex repair` for {took:?} \
-         (exit {:?}: {}{})",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        leftover.alive(),
+        "ATTACK: a leftover holding the generator's pipes stalled `cortex repair` until it \
+         exited (after {:?}; exit {:?}): {}",
+        began.elapsed(),
+        status.code(),
+        said()
     );
+    assert_eq!(status.code(), Some(0), "{}", said());
     drop(leftover);
     let _ = std::fs::remove_dir_all(&ws);
 }

@@ -2528,3 +2528,9 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
   `join_within(DRAIN_GRACE)`) would fix both. Not in KG1's behaviour-preserving move. [INFERENCE: by reading; not run.]
 - **[P3] `OnSignal::Die` processes ignore SIGQUIT.** `axon_jobctl::TERMINATION_SIGNALS` is SIGINT/SIGTERM/SIGHUP (as G2d
   was); SIGQUIT (terminal Ctrl-\) to `cortex`/`axon-intent` kills them and leaves their jobs running.
+- **[P3] [INFERENCE] `OnSignal::Die` can orphan a job spawned as the signal lands.** `Job::spawn` blocks the termination
+  signals only in the spawning thread between the fork and the registry write. A signal taken by another thread in that
+  window (a pipe-drain thread, a detached stdin writer) runs the handler without the new group, and in Die mode the
+  process then dies by the signal, so the just-spawned job runs on in its own group. Continue mode is covered by the
+  caller's poll loop. A fix would block the termination signals in every thread a caller starts (or register the pgid
+  from the child's `pre_exec` side via a pipe) — not done; documented on `Job::spawn`. Not reproduced.
