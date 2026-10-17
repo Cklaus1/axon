@@ -13,7 +13,7 @@
 # list is not duplicated any more.
 #
 # In rough order: VISION.md focus · cargo fmt · the full test suite
-# (--no-default-features) · the native codegen build · serde-json feature builds
+# (--no-default-features) · the native codegen build · serde-json clippy + LSP tests
 # · clippy (lib, then every runtime crate, then the coverage check that every
 # workspace crate is gated or excused) · and under --strict, --all-targets clippy
 # and the whole parity suite (I-2).
@@ -340,7 +340,8 @@ if [ "$FAST" = 1 ]; then
   # the merge base with --base (default main) and the working tree, untracked
   # files included. Crate directory = package name (the coverage check below
   # relies on the same identity). axon-core is linted as the strict gate lints
-  # its interpreter build (--no-default-features --all-targets).
+  # its interpreter build (--no-default-features --all-targets), and again
+  # under serde-json, the only configuration that compiles lsp.rs.
   fast_base="${FAST_BASE:-main}"
   fast_mb="$(git merge-base "$fast_base" HEAD)" || fail "--base=$fast_base has no merge base with HEAD"
   echo "── fast: clippy -D warnings on the crates changed since $fast_base ($(git rev-parse --short "$fast_mb")) ──"
@@ -360,6 +361,11 @@ if [ "$FAST" = 1 ]; then
       if [ "$c" = axon-core ]; then
         cargo clippy --locked --no-default-features -p axon-core --all-targets -- -D warnings \
           || fail "clippy axon-core (--no-default-features --all-targets)"
+        # lsp.rs compiles only under serde-json, which the line above never
+        # enables; without this an lsp.rs lint first surfaces at the full gate.
+        echo "  axon-core: serde-json clippy (axon lsp / axon parse --json)"
+        cargo clippy --locked --no-default-features --features serde-json -p axon-core --all-targets -- -D warnings \
+          || fail "serde-json clippy (axon lsp / axon parse --json)"
       else
         fast_pk+=(-p "$c")
       fi
@@ -784,17 +790,20 @@ cargo build --locked -p axon-core || fail "native build"
 # could not be compiled at all. An advertised command with no build gate is a
 # command that will eventually stop existing without anyone noticing.
 echo "── gate: serde-json feature builds (axon lsp / axon parse --json) ─"
-cargo check --locked --no-default-features --features serde-json -p axon-core \
-  || fail "serde-json feature check (axon lsp / axon parse --json)"
-# AX-10. `cargo check` never runs the monomorphization collector, which is where
-# the internally-tagged AST derive stalled forever - so the check above passed
+# clippy type-checks what `cargo check` did (lib + bin) plus every test target,
+# and -D warnings also fails on what check only warns about. No other axon-core
+# clippy run enables serde-json, so lsp.rs lints went unseen (four by 2026-10).
+cargo clippy --locked --no-default-features --features serde-json -p axon-core --all-targets -- -D warnings \
+  || fail "serde-json clippy (axon lsp / axon parse --json)"
+# AX-10. `cargo check` (and clippy) never runs the monomorphization collector, which
+# is where the internally-tagged AST derive stalled forever - so a check passed
 # while no build of `axon parse` could finish. Building and running the AST
 # JSON test (beside codegen, the combination once thought to collide) does.
 cargo test --locked -p axon-core --features serde-json --lib program_json_tests \
   || fail "serde-json + codegen build and AST JSON round-trip"
 # The LSP's own tests (lsp.rs unit tests + tests/lsp_multi_file.rs) compile only
-# under serde-json, so the default test stage never ran them: the check above
-# proves lsp.rs BUILDS, not that an imported module's diagnostic lands in the
+# under serde-json, so the default test stage never ran them: the clippy above
+# proves lsp.rs BUILDS (and lints clean), not that an imported module's diagnostic lands in the
 # right file. G3 (gaps-spec) wired them here.
 cargo test --locked -p axon-core --no-default-features --features serde-json \
   --lib lsp::tests || fail "lsp unit tests (serde-json)"

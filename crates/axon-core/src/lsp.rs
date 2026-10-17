@@ -112,7 +112,7 @@ pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
         .collect();
 
     // ── Resolve ───────────────────────────────────────────────────────────
-    let resolve_result = resolver::resolve_program(&mut program, uri);
+    let resolve_result = resolver::resolve_program(&program, uri);
     resolver::fill_captures(&mut program);
 
     for d in &resolve_result.errors {
@@ -142,7 +142,7 @@ pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
 
     // ── Type inference ────────────────────────────────────────────────────
     let mut infer_ctx = infer::InferCtx::new(uri);
-    infer_ctx.infer_program(&mut program);
+    infer_ctx.infer_program(&program);
 
     for e in &infer_ctx.errors {
         let mut msg = e.message.clone();
@@ -271,13 +271,7 @@ pub fn run_lsp() {
     let mut documents: HashMap<String, String> = HashMap::new();
     let mut last_result: HashMap<String, crate::AnalysisResult> = HashMap::new();
 
-    loop {
-        // ── Read Content-Length header ────────────────────────────────────
-        let content_length = match read_content_length(&mut reader) {
-            Some(n) => n,
-            None => break, // stdin closed
-        };
-
+    while let Some(content_length) = read_content_length(&mut reader) {
         // ── Read JSON body ────────────────────────────────────────────────
         let mut body = vec![0u8; content_length];
         use std::io::Read as _;
@@ -540,7 +534,7 @@ fn compute_hover_lsp(
 
 fn format_fn_hover(name: &str, sig: &infer::FnSig) -> String {
     // Params without names — show only types (fallback used by hover on builtins).
-    let params: Vec<String> = sig.params.iter().map(|t| format_type(t)).collect();
+    let params: Vec<String> = sig.params.iter().map(format_type).collect();
     let ret = format_type(&sig.ret);
     format!(
         "```axon\nfn {}({}) -> {}\n```",
