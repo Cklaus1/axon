@@ -3745,6 +3745,10 @@ fn ar5_session(
     let tmp = dir.join("tmp");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
+    // A fresh ledger per session (its keyed tip, if any, beside it).
+    for f in ["ledger.ndjson", "ledger.ndjson.tip"] {
+        let _ = std::fs::remove_file(dir.join(f));
+    }
     let mut child = g1_axon(dir)
         .env("AXON_REQUIRE_IMPORTS_DIGEST", digest)
         .env("TMPDIR", &tmp)
@@ -3847,10 +3851,56 @@ fn session_refuses_a_mismatching_cell_with_a_frame_and_no_leftovers() {
         left.is_empty(),
         "ATTACK: the refused cell left temp files: {ctx}"
     );
-    if ledger.exists() {
-        let l = axon_audit::Ledger::open(&ledger).unwrap();
-        l.verify().unwrap();
-    }
+
+    // The refused cell ends the session through its normal end path, so the
+    // ledger of what earlier cells did is flushed and checked. An approved
+    // cell writes a file (a ledgered effect); then a cell whose closure adds
+    // a module is refused.
+    std::fs::write(
+        dir.join("mods").join("other.ax"),
+        "fn extra() -> i64 { 1 }\n",
+    )
+    .unwrap();
+    let wrote = dir.join("wrote.txt");
+    let effect = format!(
+        "mod lib\nuse lib.{{helper}}\nlet w = write_file(\"{}\", \"x\")",
+        wrote.display()
+    );
+    let refused = "mod other\nuse other.{extra}\nlet e = extra()";
+    let (code, frames, err, _) = ar5_session(&dir, &digest, &[effect.as_str(), refused]);
+    let ctx = format!("frames={frames:?} stderr={err}");
+    assert_eq!(code, Some(8), "{ctx}");
+    assert_eq!(frames.len(), 2, "{ctx}");
+    assert_eq!(frames[0]["ok"], serde_json::json!(true), "{ctx}");
+    assert!(
+        frames[1]["diagnostics"].to_string().contains("E2404"),
+        "{ctx}"
+    );
+    assert!(wrote.exists(), "{ctx}");
+    let l = axon_audit::Ledger::open(&ledger).unwrap();
+    assert!(
+        !l.is_empty(),
+        "the earlier cell's effect is in the ledger: {ctx}"
+    );
+    l.verify().unwrap();
+    assert!(
+        !err.contains("audit ledger integrity check failed"),
+        "{ctx}"
+    );
+
+    // ...and the end check runs: a cell that truncates the ledger behind the
+    // session's back is reported at the end, before exit 8.
+    let truncate = format!("let t = write_file(\"{}\", \"\")", ledger.display());
+    let (code, _, err, _) = ar5_session(
+        &dir,
+        &digest,
+        &[effect.as_str(), truncate.as_str(), refused],
+    );
+    assert_eq!(code, Some(8), "{err}");
+    assert!(
+        err.contains("audit ledger integrity check failed"),
+        "ATTACK: a digest-refused session skipped the ledger's end check: {err}"
+    );
 
     // Control: the approved closure in the first cell runs as before.
     let (code, frames, err, _) = ar5_session(
