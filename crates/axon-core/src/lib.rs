@@ -427,6 +427,9 @@ pub struct AnalysisResult {
     pub program: Option<ast::Program>,
     pub infer_ctx: Option<infer::InferCtx>,
     pub diagnostics: Vec<lsp::LspDiagnostic>,
+    /// The modules the analysis loaded, so an imported module's diagnostic
+    /// can be anchored on the entry `use` that brought it in.
+    pub imports: ImportClosure,
 }
 
 /// Run the full analysis pipeline (parse → resolve → infer → check → borrow)
@@ -587,6 +590,11 @@ pub struct LoadedModule {
     /// The source id its items' spans carry, so an item can be traced back
     /// to the module it came from.
     pub source: span::SourceId,
+    /// The entry file's `use` path that brought this module in: its own path
+    /// when the entry imports it directly, else the first entry `use` whose
+    /// load merged it (entry order). Filled by [`load_use_decls_recorded`];
+    /// not part of the digest or of any CLI output.
+    pub via: Vec<String>,
 }
 
 /// The import closure one load produced (G1a).
@@ -630,6 +638,18 @@ impl ImportClosure {
             .find(|m| m.source == source)
             .map(|m| m.name.as_str())
     }
+
+    /// The entry `use` path that brought in the module whose items carry
+    /// `source` ([`LoadedModule::via`]), if any.
+    pub fn via_of(&self, source: span::SourceId) -> Option<&[String]> {
+        if source.is_unknown() {
+            return None;
+        }
+        self.modules
+            .iter()
+            .find(|m| m.source == source)
+            .map(|m| m.via.as_slice())
+    }
 }
 
 /// [`load_use_decls`], also returning the modules it merged.
@@ -671,9 +691,10 @@ pub fn load_use_decls_recorded(
     let mut already_loaded: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut loading_stack: Vec<String> = Vec::new();
 
-    for use_path in use_paths {
+    for use_path in &use_paths {
+        let before = closure.modules.len();
         load_module_recursive(
-            &use_path,
+            use_path,
             search_dirs,
             false,
             &mut already_loaded,
@@ -682,6 +703,20 @@ pub fn load_use_decls_recorded(
             &mut closure.modules,
             &mut errors,
         );
+        for m in &mut closure.modules[before..] {
+            m.via = use_path.clone();
+        }
+    }
+    // Direct import wins: a module the entry `use`s by name is anchored on
+    // that `use`, even when an earlier entry `use` merged it transitively
+    // (its own load then returned at `already_loaded`).
+    for m in &mut closure.modules {
+        let direct = use_paths
+            .iter()
+            .find(|p| m.name.split("::").eq(p.iter().map(String::as_str)));
+        if let Some(direct) = direct {
+            m.via = direct.clone();
+        }
     }
 
     // Prepend loaded module items so they are visible to the main program.
@@ -1033,6 +1068,7 @@ fn load_module_recursive(
                             path: candidate,
                             bytes: src.into_bytes(),
                             source,
+                            via: Vec::new(),
                         });
                         found = true;
                         break;
