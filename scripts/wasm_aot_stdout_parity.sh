@@ -73,7 +73,14 @@ fi
 # Builtins whose host the pure AOT-wasm path doesn't provide → skip those files.
 EXCLUDE_RE='ai_complete|ai_extract|spawn|thread|chan_|goal_run|goal_eval|agent_|read_file|write_file|env_var|exec\(|random_|srand'
 
-pass=0; fail=0; skip=0
+# Each example's build is classified by `wasm_case` (lib/harness_skip.sh): an
+# E0910 refusal is counted REFUSED, an unavailable build or link is a case
+# SKIP, an object-only example must be listed in scripts/wasm_object_only.txt,
+# and anything else (a build error, `wasm runtime not found`, an unlisted
+# object-only example, a listed one that now links) FAILs. These used to be
+# "SKIP (wasm build unavailable)" / "SKIP (not linkable)", held by the floor.
+wasm_object_only_check wasm_aot_stdout_parity || exit 1
+pass=0; fail=0; skip=0; refused=0; objonly=0; bad=0; skip_why=""
 for f in examples/*.ax; do
   [ -f "$f" ] || continue
   grep -q "fn main" "$f" || { skip=$((skip+1)); continue; }
@@ -84,11 +91,16 @@ for f in examples/*.ax; do
   # Skip programs the interpreter itself rejects (e.g. @[test]-only files).
   if [ $irc -ne 0 ]; then skip=$((skip+1)); continue; fi
 
-  if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$f" >/dev/null 2>&1; then
-    echo "  SKIP $n (wasm build unavailable)"; skip=$((skip+1)); continue
-  fi
+  werr="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$f" 2>&1)"; wrc=$?
   L="${f%.ax}.linked.wasm"
-  if [ ! -f "$L" ]; then echo "  SKIP $n (not linkable)"; skip=$((skip+1)); rm -f "${f%.ax}.wasm"; continue; fi
+  wasm_case wasm32-wasip1 "$n" "$wrc" "$werr" "$L"
+  case "$WASM_CASE" in
+    linked) ;;
+    refused) refused=$((refused+1)); rm -f "${f%.ax}.wasm"; continue ;;
+    skip) skip=$((skip+1)); skip_why="$WASM_CASE_WHY"; rm -f "${f%.ax}.wasm"; continue ;;
+    objonly) objonly=$((objonly+1)); rm -f "${f%.ax}.wasm"; continue ;;
+    *) bad=$((bad+1)); rm -f "$L" "${f%.ax}.wasm"; continue ;;
+  esac
 
   # wasmtime --invoke prints program stdout then the i64 return on a final line.
   wg="$("$WASMRT" --invoke main "$L" 2>/dev/null | grep -vi experimental | head -n -1)"
@@ -104,20 +116,30 @@ for f in examples/*.ax; do
   fi
 done
 
-echo "wasm_aot_stdout_parity: $pass match, $fail differ, $skip skipped"
+echo "wasm_aot_stdout_parity: $pass match, $fail differ, $refused refused (E0910), $objonly object-only (listed), $bad failed, $skip skipped"
+if [ "$bad" -ne 0 ]; then
+  echo "wasm_aot_stdout_parity: FAIL — $bad example(s) failed to build or link, or contradict scripts/wasm_object_only.txt (FAIL lines above)"
+  exit 1
+fi
 # A vacuous green, found by the coverage-metric audit: this used to read
 #   if [ "$pass" -eq 0 ]; then ... exit 0; fi
 # so `AXON=/bin/false bash scripts/wasm_aot_stdout_parity.sh` printed
 # "0 match, 0 differ, 42 skipped" and exited 0. Nothing ran and the harness
 # said so, but it said so with a SUCCESS code.
 #
-# "Nothing ran" cannot mean "toolchain absent" HERE: every toolchain
-# precondition above already exits 0 with a stated reason before the loop
-# starts. Reaching this line with pass=0 means the compiler under test is
-# broken or the corpus vanished — both failures. The two sibling wasm
-# harnesses already guard this with a FLOOR; this one was the omission.
-FLOOR=${FLOOR:-25}   # actual is 29/42 today; headroom for corpus churn, still
-                     # far above the mass-skip regression this exists to catch
+# "Nothing ran" means "toolchain absent" HERE only when the compiler said so:
+# every toolchain precondition above exits 0 with a stated reason before the
+# loop starts, and the one left is the link itself, which no case linked while
+# the compiler printed `wasm link unavailable:` for some (and nothing failed).
+# Otherwise pass=0 means the compiler under test is broken or the corpus
+# vanished — both failures. The two sibling wasm harnesses already guard this
+# with a FLOOR; this one was the omission.
+if [ "$pass" -eq 0 ] && [ "$fail" -eq 0 ] && [ -n "$skip_why" ]; then
+  harness_skip wasm_aot_stdout_parity "$skip_why"
+fi
+FLOOR=${FLOOR:-25}   # census 2026-10-17 (gaps2 H6): 29 of 42 link+match, 0 refused,
+                     # 13 excluded before the build; a second guard behind the
+                     # per-example classes
 if [ "$pass" -lt "$FLOOR" ]; then
   printf "wasm_aot_stdout_parity: FAIL — only %d examples ran (floor %d). Every toolchain precondition passed, so this is a broken compiler or a vanished corpus, not an absent toolchain.\n" "$pass" "$FLOOR"
   exit 1

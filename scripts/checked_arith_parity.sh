@@ -28,7 +28,7 @@ if [ -n "${AXON:-}" ]; then
 else
   echo "checked_arith_parity: building codegen axon binary…"
   cargo_build_or_skip checked_arith_parity llvm cargo build -q -p axon-core --bin axon
-  cargo build -q -p axon-rt 2>/dev/null || true
+  cargo_build_or_skip checked_arith_parity interp cargo build -q -p axon-rt
   use_built AXON axon
 fi
 require_codegen_axon checked_arith_parity

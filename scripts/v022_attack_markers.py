@@ -3054,3 +3054,9 @@ ATTACK_MARKERS.update({
     'M3663': r"MISANCHOR \(path suffix\): util/lib\.ax's diagnostic is not on main\.ax's line 3",
     'M3664': r"MISANCHOR \(direct import\): c\.ax's diagnostic is not on main\.ax's line 3",
 })
+
+# gaps2 run, harness lane (tasks/harness-hygiene-spec.md), ids M3680-M3699.
+ATTACK_MARKERS.update({
+    'M3680': r'ATTACK: a skip line outside the three-line window decided the verdict',
+    'M3681': r"ATTACK: another thread's draw advanced this thread's operator stream between srand\(7\) and its next draw",
+})

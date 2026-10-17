@@ -24,7 +24,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 # the ~370 other tests, which keep running in parallel). No-op without flock.
 if command -v flock >/dev/null 2>&1; then exec 9>"${TMPDIR:-/tmp}/axon_wasm_parity.lock" && flock 9; fi
 
-FLOOR=28   # actual is 29/29; headroom for minor churn, catches mass regression
+FLOOR=28   # a second guard behind the per-example classes; census 2026-10-17
+           # (gaps2 H6): 30 of 34 match, 4 refused by E0910 (the HTTP/SSE examples)
 
 command -v node >/dev/null 2>&1 || { echo "wasm_browser_examples_parity: no node — skipping"; exit 0; }
 HOSTJS="scripts/wasm_browser_host.js"
@@ -70,24 +71,30 @@ if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
     exit 1
   fi
   # The target and axon-rt for it were proven above. A build that FAILED is a
-  # result; only a build that succeeded without producing a linked module (the
-  # environment's wasm link is unavailable) is a skip.
+  # result. A build that succeeded without a linked module is a skip only when
+  # the compiler says the link is unavailable (wasm_unlinked_probe).
   if [ "$_probe_rc" -ne 0 ]; then
     native_build_failed wasm_browser_examples_parity "wasm probe build" "$_probe_err" || exit 1
   fi
-  echo "wasm_browser_examples_parity: browser link unavailable — skipping"; exit 0
+  wasm_unlinked_probe wasm_browser_examples_parity "$_probe_err"
 fi
 
-pass=0; diff=0; objonly=0; total=0
-fails=""; objs=""
+# Each example's outcome is classified by `wasm_case` (lib/harness_skip.sh):
+# an E0910 refusal is counted REFUSED, an unavailable build or link is a case
+# SKIP, an object-only example must be listed (wasm32-unknown-unknown rows) in
+# scripts/wasm_object_only.txt, and anything else (a build error, `wasm runtime
+# not found`, an unlisted object-only example, a listed one that now links) is
+# a FAILED example. The floor is a second guard, no longer the only one.
+wasm_object_only_check wasm_browser_examples_parity || exit 1
+pass=0; diff=0; objonly=0; refused=0; skipped=0; bad=0; total=0
+fails=""; objs=""; refs=""; bads=""
 for f in examples/*.ax; do
   grep -q "fn main" "$f" || continue
   # Skip host / non-deterministic / time-dependent examples: AI, randomness, the
   # clock (now_ms directly AND temporal_*, which stamps created_at via __axon_now_ms
   # internally — no wasi clock on the browser; a Date.now() host import is the
-  # follow-on), I/O, exec, goal search, spawn. (Everything else now links wasi-free
-  # and matches — 29/29; an object-only example would be a NEW frontier, reported
-  # below, not failed.)
+  # follow-on), I/O, exec, goal search, spawn. (An object-only example must be
+  # listed in scripts/wasm_object_only.txt, or it fails below.)
   if grep -qE 'ai_complete|ai_extract|random_|now_ms|now_ns|temporal_|sleep_ms|read_line|read_file|write_file|exec\(|goal_run|goal_step|for!|spawn|llm_|agent_' "$f"; then
     continue
   fi
@@ -95,9 +102,15 @@ for f in examples/*.ax; do
   base="$(basename "$f" .ax)"
   linked="examples/$base.linked.wasm"
   rm -f "$linked" "examples/$base.wasm"
-  if ! "$AXON" target build "$f" --target wasm32-unknown-unknown >/dev/null 2>&1 || [ ! -f "$linked" ]; then
-    objonly=$((objonly + 1)); objs="$objs $base"; rm -f "examples/$base.wasm"; continue
-  fi
+  werr="$("$AXON" target build "$f" --target wasm32-unknown-unknown 2>&1)"; wrc=$?
+  wasm_case wasm32-unknown-unknown "$base" "$wrc" "$werr" "$linked"
+  case "$WASM_CASE" in
+    linked) ;;
+    refused) refused=$((refused + 1)); refs="$refs $base"; rm -f "examples/$base.wasm"; continue ;;
+    skip) skipped=$((skipped + 1)); rm -f "examples/$base.wasm"; continue ;;
+    objonly) objonly=$((objonly + 1)); objs="$objs $base"; rm -f "examples/$base.wasm"; continue ;;
+    *) bad=$((bad + 1)); bads="$bads $base"; rm -f "$linked" "examples/$base.wasm"; continue ;;
+  esac
   if strings "$linked" | grep -qi wasi_snapshot; then
     diff=$((diff + 1)); fails="$fails\n  WASI-IMPORT: $base"; rm -f "$linked" "examples/$base.wasm"; continue
   fi
@@ -111,8 +124,13 @@ for f in examples/*.ax; do
   fi
 done
 
-echo "wasm_browser_examples_parity: $pass/$total linked+matched, $diff differ, $objonly object-only"
-[ -n "$objs" ] && echo "wasm_browser_examples_parity: object-only (frontier, not failed):$objs"
+echo "wasm_browser_examples_parity: $pass/$total linked+matched, $diff differ, $refused refused (E0910), $objonly object-only (listed), $skipped skipped, $bad failed"
+[ -n "$refs" ] && echo "wasm_browser_examples_parity: refused by codegen (E0910, interpreter-only):$refs"
+[ -n "$objs" ] && echo "wasm_browser_examples_parity: object-only (listed in scripts/wasm_object_only.txt):$objs"
+if [ "$bad" -ne 0 ]; then
+  echo "wasm_browser_examples_parity: FAIL — examples that failed to build or link, or contradict scripts/wasm_object_only.txt (FAIL lines above):$bads"
+  exit 1
+fi
 if [ "$diff" -ne 0 ]; then
   printf "wasm_browser_examples_parity: FAIL — browser output diverged from the interpreter:$fails\n"
   exit 1

@@ -53,15 +53,16 @@ echo "wasm_host_await_parity: building axon (native) + axon-run (wasm32-wasip1)â
 # under test) when given. Otherwise build one in its own target dir: a
 # --no-default-features `axon` written to the SHARED target/debug/axon is
 # codegen-less but still executable, and replaced the codegen binary other
-# harnesses run. Stable path so cargo can reuse.
+# harnesses run. `interp_target_dir` puts it under the caller's target dir.
 . scripts/lib/axon_bin.sh
 if [ -n "${AXON:-}" ]; then
   named_bin AXON wasm_host_await_parity
   NATIVE="$AXON"
 else
-  cargo_build_or_skip wasm_host_await_parity interp env CARGO_TARGET_DIR="target/interp-only" \
+  ITD="$(interp_target_dir)" || exit 2
+  cargo_build_or_skip wasm_host_await_parity interp env CARGO_TARGET_DIR="$ITD" \
     cargo build -q -p axon-core --no-default-features --bin axon
-  NATIVE="target/interp-only/debug/axon"
+  NATIVE="$ITD/debug/axon"
 fi
 cargo_build_or_skip wasm_host_await_parity target:wasm32-wasip1 \
   cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32-wasip1

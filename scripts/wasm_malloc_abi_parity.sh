@@ -88,7 +88,7 @@ PROGS[combo]='fn main() -> i64 {
     str_len(s) + str_len(f) + a[2] + str_len(msg)
 }'
 
-fail=0; ran=0
+fail=0; ran=0; skip_why=""
 for name in arr tostr interp eprint combo; do
   # Compare PRINTED values, not exit codes. `main`'s i64 return is not the exit
   # code: 2..=15 and 101 are remapped to 1, as is anything outside 0..=255
@@ -116,17 +116,17 @@ for name in arr tostr interp eprint combo; do
   fi
   # AOT-wasm
   # The wasm32-wasip1 target and axon-rt for it were proven above: a failed
-  # build is a result unless stderr proves an unavailability.
-  if ! werr="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$SRC" 2>&1)"; then
-    if native_build_unavailable "$werr"; then
-      echo "  SKIP $name (wasm build unavailable)"; continue
-    fi
-    echo "  FAIL $name: AOT-wasm build FAILED (a build error is not a skip):"
-    printf '%s\n' "$werr" | head -5 | sed 's/^/        /'
-    fail=1; continue
-  fi
+  # build or a missing link is a result unless the compiler proves an
+  # unavailability (wasm_case).
+  werr="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$SRC" 2>&1)"; wrc=$?
   L="${SRC%.ax}.linked.wasm"
-  if [ ! -f "$L" ]; then echo "  FAIL $name: did NOT link (size_t ABI regressed)"; fail=1; continue; fi
+  wasm_case wasm32-wasip1 "wasm_malloc_abi:$name" "$wrc" "$werr" "$L"
+  case "$WASM_CASE" in
+    linked) ;;
+    skip) skip_why="$WASM_CASE_WHY"; continue ;;
+    objonly) continue ;;
+    *) fail=1; continue ;;  # a missing link here is the size_t ABI regressing
+  esac
   ran=$((ran+1))
   # `--invoke` prints the callee's return AFTER the experimental warning; the
   # probe's main prints the answer and returns nothing, so cut at the warning and
@@ -148,6 +148,9 @@ done
 
 # A failure decides first: with every case FAILED, ran is 0 too.
 [ "$fail" -eq 0 ] || { echo "wasm_malloc_abi_parity: FAIL"; exit 1; }
-if [ "$ran" -eq 0 ]; then echo "wasm_malloc_abi_parity: nothing linked — skipping"; exit 0; fi
+if [ "$ran" -eq 0 ]; then
+  [ -n "$skip_why" ] && harness_skip wasm_malloc_abi_parity "$skip_why"
+  echo "wasm_malloc_abi_parity: FAIL — nothing linked and no case proved the link unavailable"; exit 1
+fi
 echo "wasm_malloc_abi_parity: PASS — array + to_str + string-interpolation + eprintln (malloc/snprintf/memcpy/write size_t) run identically on interp, native, AOT-wasm ✓"
 exit 0

@@ -2497,15 +2497,16 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
 - **[P3] `axon-os verify` default job path is built from the record's `run_id` without cleaning path separators.** A forged
   unkeyed record can name a job elsewhere; under `AXON_APPROVAL_KEY` the seal stops this, without a key forgery is possible
   anyway. Constrain `run_id` to the record's directory.
-- **[P3] Load-dependent test seen once:** `operator_code_a_sealed_frame_runs_never_draws_the_operator_rng` failed in the
-  gaps-cancel lane's `gate.sh --fast` while five lanes built concurrently; passed 3/3 alone. Not yet tallied across gate logs.
-- **[P3] Parity harness leftovers (from G4):** `wasm_host_await` and `browser_compute` use a relative
+- **[CLOSED gaps2 H7]** ~~**[P3] Load-dependent test seen once:** `operator_code_a_sealed_frame_runs_never_draws_the_operator_rng` failed in the
+  gaps-cancel lane's `gate.sh --fast` while five lanes built concurrently; passed 3/3 alone. Not yet tallied across gate logs.~~
+  Cause: it read the process-global operator RNG another thread could draw from; the test now owns a thread-local stream.
+- **[CLOSED gaps2 H1–H6]** ~~**[P3] Parity harness leftovers (from G4):** `wasm_host_await` and `browser_compute` use a relative
   `CARGO_TARGET_DIR=target/interp-only` (leaves a dir in the worktree); `parity_all` prints the skip reason from the
   last line, which can be elaboration text; the "nothing linked" skips in wasm_aot_run/wasm_examples/browser harnesses
   don't prove the linker is missing; `wasm_fs`, `wasm_parity`, `vm_parity`, `decimal_parity`, `suspend_resume`,
   `browser_compute` FAIL on build errors but drop the compiler's stderr; `a_skip_that_elaborates_is_still_a_skip` and
   `a_failing_harness_is_never_a_skip_gate_04` re-implement the skip rule locally; `wasm_aot_stdout` treats a
-  per-example wasm build failure as a sweep skip, held only by its floor.
+  per-example wasm build failure as a sweep skip, held only by its floor.~~ See tasks/harness-hygiene-spec.md.
 - **[P3] `axon session` under `AXON_REQUIRE_IMPORTS_DIGEST`** exits 8 for the whole session at the first cell whose
   accumulated closure differs from the required digest (fail-closed, but it leaves the probe temp file and gives no
   per-cell refusal). From the wave-1 implementation review, [INFERENCE] not reproduced. Turn the mismatch into a cell error.
@@ -2534,3 +2535,22 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
   argument), so it belongs in a spec with the seal-check work.
 - **[P3] The serde-json clippy stage can exceed its 30 s cold budget under lane load.** First run in this lane's
   target dir, 5 lanes building: 35 s to the four errors, then 8 s for the clean `--all-targets` run. Warm: 2-8 s.
+
+## gaps2 run — harness
+
+- **[P3] The compiler's wasm runtime search walks the cwd's ancestors' `target/`** (`find_wasm_axon_rt`): a stale
+  `libaxon_rt.a` in some ancestor's `target/wasm32-*/` links silently ahead of nothing. H3 made the miss loud, not the
+  hit exact; consider searching only beside the binary plus `AXON_WASM_RT`.
+- **[P3] No `wasm32-unknown-unknown` runtime override:** `AXON_WASM_RT` covers wasip1 only, so a browser link can only
+  find its runtime by directory layout.
+- **[P3] `decimal_parity` and `suspend_resume_parity` cold-build private target dirs** (minutes each, every run) where
+  `interp_target_dir` (H1) would share one.
+- **[P3] `cargo build … 2>/dev/null` outside `scripts/*_parity.sh`** (H4's scope): acceptance_gate.sh,
+  axon_kernel_gate.sh, axon_session_demo.sh, fhir_roundtrip.sh, fix_codec.sh, modbus_roundtrip.sh,
+  native_ffi_forge.sh, r22_acceptance_gate.sh, r23_acceptance_gate.sh, wasm_aot_link_probe.sh,
+  wasm_browser_host_await.sh still drop the compiler's stderr on a failed build.
+- **[P3] The killgroup spec cites a stale `main.rs` line number** for the process-group spawn; cite by symbol.
+- **[P3] The wasm harness lock is keyed by `$TMPDIR`, not by the tree it protects** (`${TMPDIR}/axon_wasm_parity.lock`
+  guards `examples/*.wasm` in ONE checkout). Lanes sharing `TMPDIR=/var/tmp/r51-tmp` serialize every wasm harness of
+  every lane behind one lock (seen: a gaps2-harness run queued 35 min behind other lanes' `cli_run`). Key it by the repo
+  root (e.g. a lock file under the tree's own target dir or a hash of `$ROOT`).

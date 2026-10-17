@@ -31,8 +31,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 # the ~370 other tests, which keep running in parallel). No-op without flock.
 if command -v flock >/dev/null 2>&1; then exec 9>"${TMPDIR:-/tmp}/axon_wasm_parity.lock" && flock 9; fi
 
-FLOOR=25   # at least this many examples must link+run+match (vacuous-skip guard;
-           # actual is 30/30 — headroom for minor churn, catches mass regression)
+FLOOR=25   # at least this many examples must link+run+match (a second guard behind
+           # the per-example classes; census 2026-10-17, gaps2 H6: 31 of 35 match,
+           # 4 refused by E0910 — anthropic_stream http_get http_sse trainloop_stream)
 
 WASMRT=""
 for rt in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do
@@ -84,16 +85,23 @@ if [ ! -f "${PROBE%.ax}.linked.wasm" ]; then
     exit 1
   fi
   # The target and axon-rt for it were proven above. A build that FAILED is a
-  # result; only a build that succeeded without producing a linked module (the
-  # environment's wasm link is unavailable) is a skip.
+  # result. A build that succeeded without a linked module is a skip only when
+  # the compiler says the link is unavailable (wasm_unlinked_probe).
   if [ "$_probe_rc" -ne 0 ]; then
     native_build_failed wasm_examples_parity "wasm probe build" "$_probe_err" || exit 1
   fi
-  echo "wasm_examples_parity: AOT-wasm link unavailable here — skipping"; exit 0
+  wasm_unlinked_probe wasm_examples_parity "$_probe_err"
 fi
 
-pass=0; diff=0; objonly=0; total=0
-fails=""; objs=""
+# Each example's outcome is classified by `wasm_case` (lib/harness_skip.sh):
+# an E0910 refusal is counted REFUSED, an unavailable build or link is a case
+# SKIP, an object-only example must be listed in scripts/wasm_object_only.txt,
+# and anything else (a build error, `wasm runtime not found`, an unlisted
+# object-only example, a listed one that now links) is a FAILED example. The
+# floor below is a second guard, no longer the only one.
+wasm_object_only_check wasm_examples_parity || exit 1
+pass=0; diff=0; objonly=0; refused=0; skipped=0; bad=0; total=0
+fails=""; objs=""; refs=""; bads=""
 for f in examples/*.ax; do
   grep -q "fn main" "$f" || continue
   # Skip host / non-deterministic examples (not on the wasm target, or differ by design).
@@ -104,9 +112,15 @@ for f in examples/*.ax; do
   base="$(basename "$f" .ax)"
   linked="examples/$base.linked.wasm"
   rm -f "$linked"
-  if ! "$AXON" target build "$f" --target wasm32-wasip1 >/dev/null 2>&1 || [ ! -f "$linked" ]; then
-    objonly=$((objonly + 1)); objs="$objs $base"; rm -f "examples/$base.wasm"; continue
-  fi
+  werr="$("$AXON" target build "$f" --target wasm32-wasip1 2>&1)"; wrc=$?
+  wasm_case wasm32-wasip1 "$base" "$wrc" "$werr" "$linked"
+  case "$WASM_CASE" in
+    linked) ;;
+    refused) refused=$((refused + 1)); refs="$refs $base"; rm -f "examples/$base.wasm"; continue ;;
+    skip) skipped=$((skipped + 1)); rm -f "examples/$base.wasm"; continue ;;
+    objonly) objonly=$((objonly + 1)); objs="$objs $base"; rm -f "examples/$base.wasm"; continue ;;
+    *) bad=$((bad + 1)); bads="$bads $base"; rm -f "$linked" "examples/$base.wasm"; continue ;;
+  esac
   I_OUT="$(AXON_SEED=42 "$AXON" run "$f" 2>/dev/null)"
   W_OUT="$("$WASMRT" --invoke main "$linked" 2>/dev/null | grep -vi experimental | head -n -1)"
   rm -f "$linked" "examples/$base.wasm"
@@ -117,8 +131,13 @@ for f in examples/*.ax; do
   fi
 done
 
-echo "wasm_examples_parity: $pass/$total linked+matched, $diff differ, $objonly object-only"
-[ -n "$objs" ] && echo "wasm_examples_parity: object-only (frontier, not failed):$objs"
+echo "wasm_examples_parity: $pass/$total linked+matched, $diff differ, $refused refused (E0910), $objonly object-only (listed), $skipped skipped, $bad failed"
+[ -n "$refs" ] && echo "wasm_examples_parity: refused by codegen (E0910, interpreter-only):$refs"
+[ -n "$objs" ] && echo "wasm_examples_parity: object-only (listed in scripts/wasm_object_only.txt):$objs"
+if [ "$bad" -ne 0 ]; then
+  echo "wasm_examples_parity: FAIL — examples that failed to build or link, or contradict scripts/wasm_object_only.txt (FAIL lines above):$bads"
+  exit 1
+fi
 if [ "$diff" -ne 0 ]; then
   printf "wasm_examples_parity: FAIL — AOT-wasm output diverged from the interpreter:$fails\n"
   exit 1

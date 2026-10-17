@@ -23,6 +23,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
+. scripts/lib/harness_skip.sh
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -37,18 +38,23 @@ for rt in wasmtime "$HOME/.wasmtime/bin/wasmtime"; do
 done
 if [ -z "$WASMRT" ]; then echo "wasi_env_control_gate: no wasm runtime — skipping"; exit 0; fi
 
-if ! rustup target list --installed 2>/dev/null | grep -q '^wasm32-wasip1$'; then
-  rc=$?
-  if [ $rc -gt 1 ]; then
-    echo "wasi_env_control_gate: cannot determine whether wasm32-wasip1 is installed — refusing to call that a skip" >&2
-    exit 1
-  fi
+# rust_target_installed: 2 = rustup could not answer (a FAIL, not a skip).
+rust_target_installed wasm32-wasip1; _rt=$?
+if [ "$_rt" -eq 2 ]; then
+  echo "wasi_env_control_gate: cannot determine whether wasm32-wasip1 is installed — refusing to call that a skip" >&2
+  exit 1
+elif [ "$_rt" -ne 0 ]; then
   echo "wasi_env_control_gate: wasm32-wasip1 not installed — skipping"; exit 0
 fi
 
 # Runs only the binary its caller names (scripts/lib/axon_bin.sh).
 . scripts/lib/axon_bin.sh
 named_bin AXON wasi_env_control_gate
+# The wasip1 runtime the probes link against (the refusal and seed prologues
+# call into it), built into the caller's target dir — where $AXON looks when it
+# was built there too. It used to link only because gate.sh ran parity_all first.
+cargo_build_or_skip wasi_env_control_gate target:wasm32-wasip1 \
+  cargo build -q -p axon-rt --target wasm32-wasip1
 
 echo "── WASI env-control gate ──────────────────────────────────────────"
 
@@ -56,9 +62,14 @@ echo "── WASI env-control gate ───────────────
 cat > "$WORK/io.ax" <<'AX'
 fn main() { println("IO HAPPENED") }
 AX
-if ! "$AXON" target build --engine codegen --target wasm32-wasip1 "$WORK/io.ax" >/dev/null 2>&1 \
-   || [ ! -f "$WORK/io.linked.wasm" ]; then
-  echo "wasi_env_control_gate: wasip1 link unavailable for the IO probe — skipping"; exit 0
+io_err="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$WORK/io.ax" 2>&1)"; io_rc=$?
+if [ ! -f "$WORK/io.linked.wasm" ]; then
+  # A failed build is a result; a build that linked nothing is a skip only when
+  # the compiler says the link is unavailable.
+  if [ "$io_rc" -ne 0 ]; then
+    native_build_failed wasi_env_control_gate "wasip1 IO probe build" "$io_err" || exit 1
+  fi
+  wasm_unlinked_probe wasi_env_control_gate "$io_err"
 fi
 
 # CONTROL FIRST: an unconstrained run must still work. Without this, a refusal
@@ -108,8 +119,8 @@ fn main() {
     println(to_str(random_i64(1, 1000000)))
 }
 AX
-if "$AXON" target build --engine codegen --target wasm32-wasip1 "$WORK/rand.ax" >/dev/null 2>&1 \
-   && [ -f "$WORK/rand.linked.wasm" ]; then
+r_err="$("$AXON" target build --engine codegen --target wasm32-wasip1 "$WORK/rand.ax" 2>&1)"
+if [ -f "$WORK/rand.linked.wasm" ]; then
   r_a="$("$WASMRT" --env AXON_SEED=1  --invoke main "$WORK/rand.linked.wasm" 2>/dev/null | head -2 | tr '\n' ' ')"
   r_b="$("$WASMRT" --env AXON_SEED=42 --invoke main "$WORK/rand.linked.wasm" 2>/dev/null | head -2 | tr '\n' ' ')"
   r_b2="$("$WASMRT" --env AXON_SEED=42 --invoke main "$WORK/rand.linked.wasm" 2>/dev/null | head -2 | tr '\n' ' ')"
@@ -123,13 +134,23 @@ if "$AXON" target build --engine codegen --target wasm32-wasip1 "$WORK/rand.ax" 
     ok "AXON_SEED: wasip1 honours the seed (differs across seeds, reproduces within one)"
   fi
 else
-  echo "  skip  AXON_SEED leg: the random probe did not link"
+  # Leg 1 linked on this host, so the toolchain is here: a probe that does not
+  # link is a result (it used to print "skip" and the gate still PASSed).
+  bad "AXON_SEED: the wasip1 random probe did not link"
+  printf '%s\n' "$r_err" | grep -v '^[[:space:]]*$' | head -20 | sed 's/^/        | /'
 fi
 
 # ── LEG 2: wasm32-unknown-unknown is NOT-APPLICABLE, structurally ───────────
 # Asserted on the SAME program built for BOTH targets, so the comparison is
 # about the target and not about the program.
-if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
+rust_target_installed wasm32-unknown-unknown; _rt=$?
+if [ "$_rt" -eq 2 ]; then
+  bad "browser leg: cannot determine whether wasm32-unknown-unknown is installed"
+elif [ "$_rt" -eq 0 ]; then
+  # Its own runtime, as for wasip1 above (the browser link needs the
+  # unknown-unknown build of axon-rt).
+  cargo_build_or_skip wasi_env_control_gate target:wasm32-unknown-unknown \
+    cargo build -q -p axon-rt --target wasm32-unknown-unknown
   cat > "$WORK/pure.ax" <<'AX'
 fn main() -> i64 { 41 + 1 }
 AX

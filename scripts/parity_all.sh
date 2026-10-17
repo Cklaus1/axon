@@ -74,11 +74,14 @@ note_skip() {
 # ── THE skip rule ────────────────────────────────────────────────────────────
 # `harness_says_skip` lives in scripts/lib/harness_skip.sh (sourced above), the
 # one shell copy of the rule; scripts/test_harness_skip.sh pins it against the
-# same rows as `skip_rule_table` in crates/axon-core/tests/cli_run.rs. A broken
-# detector would misfile every harness, so it is checked before any runs.
-if ! bash "$ROOT/scripts/test_harness_skip.sh" >/dev/null; then
-  echo "parity_all: FAILED — the skip detector disagrees with its rule table:" >&2
-  bash "$ROOT/scripts/test_harness_skip.sh" >&2
+# same rows as `skip_rule_table` in crates/axon-core/tests/cli_run.rs, and
+# greps the scripts for refused shapes. A broken detector would misfile every
+# harness, so it is checked before any runs; the message names the section.
+if ! ths_out="$(bash "$ROOT/scripts/test_harness_skip.sh" 2>&1)"; then
+  ths_failed="$(printf '%s\n' "$ths_out" | grep -oE '^test_harness_skip: FAIL \[[a-z]+\]' \
+                | grep -oE '\[[a-z]+\]' | paste -sd ' ')"
+  echo "parity_all: FAILED — scripts/test_harness_skip.sh failed in section(s) ${ths_failed:-unknown}:" >&2
+  printf '%s\n' "$ths_out" >&2
   exit 2
 fi
 
@@ -116,7 +119,8 @@ for h in scripts/*_parity.sh; do
   # states a skip or a verdict, else a column-0 skip in the last three lines.
   # Detecting "skip" anywhere in the output is wrong: a passing harness may
   # print a per-case "  SKIP <case>" line (e.g. wasm_aot_run skips a single loop
-  # program) while its overall result is PASS. `last_line` is only for display.
+  # program) while its overall result is PASS. `last_line` is only for display
+  # of a PASS; a SKIP's reason is the line the rule matched (`harness_skip_reason`).
   last_line="$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -1)"
   if [ "$rc" -ne 0 ]; then
     printf "  FAIL  %-30s (exit %d)\n" "$name" "$rc"
@@ -136,7 +140,9 @@ for h in scripts/*_parity.sh; do
     # believed the label would leave real verification switched off.
     #
     # Trimmed to the part after the harness name, so the column stays readable.
-    reason="$(echo "$last_line" | sed "s/^$name: *//" | cut -c1-58)"
+    # The line is the one the skip rule matched, not the last line: a skip
+    # followed by build-error text printed that error as the skip's reason.
+    reason="$(harness_skip_reason "$out" | sed "s/^$name: *//" | cut -c1-58)"
     printf "  SKIP  %-30s (%s)\n" "$name" "${reason:-reason not stated}"
     skip=$((skip+1))
     note_skip "$name"

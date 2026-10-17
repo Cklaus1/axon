@@ -127,14 +127,14 @@ collect_lowered() { # <slice> — add the slice's row and its ancestors' rows
 }
 collect_lowered "$SLICE"
 
+. "$ROOT/scripts/lib/harness_skip.sh"
 . "$ROOT/scripts/lib/axon_bin.sh"
 if [ -n "${AXON_BIN:-}" ]; then
   named_bin AXON_BIN vm_parity
   AXON="$AXON_BIN"
 else
   echo "vm_parity: building axon (release, --no-default-features)…"
-  cargo build -q --release -p axon-core --no-default-features --bin axon \
-    || { echo "vm_parity: build failed" >&2; exit 2; }
+  cargo_build_or_skip vm_parity interp cargo build -q --release -p axon-core --no-default-features --bin axon
   AXON=""; use_built AXON axon "" release
 fi
 AXON_REF=""

@@ -15,6 +15,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/scripts/lib/harness_skip.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -28,11 +29,8 @@ echo "decimal_parity: building interpreter axon binary…"
 # A codegen-less `axon` left at target/debug/axon is executable, so later
 # harnesses' `[ -x "$AXON" ]` guards pass, nobody rebuilds, and their native or
 # wasm builds answer E0907 while reporting "toolchain absent".
-if ! CARGO_TARGET_DIR="$WORK/interp-target" \
-     cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null; then
-  echo "decimal_parity: interpreter build FAILED"
-  exit 1
-fi
+cargo_build_or_skip decimal_parity interp env CARGO_TARGET_DIR="$WORK/interp-target" \
+  cargo build -q -p axon-core --no-default-features --bin axon
 IAXON="$WORK/interp-target/debug/axon"
 
 # ── 1. interpreter correctness ───────────────────────────────────────────────
@@ -74,7 +72,6 @@ if ! cargo build -q -p axon-core --bin axon 2>"$WORK/codegen_build.err"; then
   # broken" (a real failure that must not silently pass as interp-only green).
   # The probe is llvm17_present (scripts/lib/harness_skip.sh), the one
   # definition of "LLVM 17 is installed" every harness uses.
-  . scripts/lib/harness_skip.sh
   if llvm17_present; then
     echo "decimal_parity: codegen build FAILED with LLVM present — NOT a skip:"
     sed 's/^/    /' "$WORK/codegen_build.err" | tail -30

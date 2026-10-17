@@ -1,0 +1,18 @@
+# Cases that BUILD for a wasm triple but do not LINK into a runnable module
+# ("object-only"), pinned so that a new one is a failure, not a frontier the
+# floor absorbs (gaps2 H6, NH1 decided A). Read by `wasm_case` in
+# scripts/lib/harness_skip.sh, for the three example sweeps (wasm_examples and
+# wasm_aot_stdout read the wasm32-wasip1 rows, wasm_browser_examples the
+# wasm32-unknown-unknown rows) and the per-case wasm harnesses (wasm_aot_run,
+# wasm_malloc_abi, wasm_browser, wasm_browser_io).
+#
+# One row per line: `<triple> <case> <reason>`. <case> is the example's base
+# name (examples/<case>.ax) in a sweep, `<harness>:<case>` for a per-case
+# harness (e.g. `wasm_browser_io:demo`). The reason is required: a row without
+# one fails every reader. A listed case that now links fails as a stale entry:
+# delete the row. An unlisted object-only case fails: fix the link, or add a
+# row saying why it cannot link.
+#
+# Census at gaps2 H6 (codegen axon with both wasm runtimes in its own target
+# dir): every example in the three sweeps and every per-case program either
+# links or is refused with E0910 — no case is object-only, so the list is empty.
