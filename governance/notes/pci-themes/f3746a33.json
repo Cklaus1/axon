@@ -1,0 +1,4 @@
+{
+  "theme": "R0b claims-gate read shape",
+  "text": "INTERPRETER: no behaviour change. ambient_scope_var now takes the already-read OsString; the three call sites read AXON_ALLOWED_FS_READ / AXON_ALLOWED_FS_WRITE / AXON_ALLOWED_NET with std::env::var_os(\"<literal>\") so scripts/claims_gate.sh (CLAUDE.md env-var claims) recognises them as read."
+}
