@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 3e55fd79ab9e4de6ff1facbc4216206581aefac0
+generated-at: 361bdfe965a43fc93d5e40220b7399e3daac2e10
 
-`git diff --numstat 31413ca7..3e55fd79 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..361bdfe9 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -28,7 +28,7 @@ generated-at: 3e55fd79ab9e4de6ff1facbc4216206581aefac0
 | `crates/axon-core/src/borrow.rs` | 18 | 3 |
 | `crates/axon-core/src/builtins.rs` | 45 | 11 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
-| `crates/axon-core/src/capabilities.rs` | 307 | 127 |
+| `crates/axon-core/src/capabilities.rs` | 522 | 129 |
 | `crates/axon-core/src/checker.rs` | 1235 | 510 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
@@ -98,9 +98,9 @@ generated-at: 3e55fd79ab9e4de6ff1facbc4216206581aefac0
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 56348 | 7880 |
+| total | 56563 | 7882 |
 
-`git log --reverse 31413ca7..3e55fd79 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..361bdfe9 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -394,7 +394,8 @@ generated-at: 3e55fd79ab9e4de6ff1facbc4216206581aefac0
 | d5181dda | R0a axon caps | NOT INTERPRETER: a new read-only CLI verb `axon caps` and a Reach sink on the @[contained] walker (capabilities.rs). check_fn passes reach: None and the walk is drain_walk unchanged, so @[contained] verdicts are identical; in reach mode only, visited entries are kept (a union walk) and callees / builtin values are recorded. No runtime, sealed or interpreter path reads it. |
 | 01a62742 | R0b ambient scope env | INTERPRETER: the ambient sandbox can now carry a path/host scope from AXON_ALLOWED_FS_READ / AXON_ALLOWED_FS_WRITE / AXON_ALLOWED_NET (narrowing only). With all three unset and AXON_ALLOWED_EFFECTS unset the registry is empty exactly as before (no behaviour change); with AXON_ALLOWED_EFFECTS alone the entry is the same ceiling with all_effects false. New refusals only: scope_violation against the ambient entry under an inner sandbox, sandbox_run into an all-effects entry from a narrower one, provenance suppressed when a fs_write scope does not admit its path. SandboxEntry::allows replaces allowed.contains at the four ceiling sites (identical unless all_effects). sandbox_create_scoped's list parser moved to parse_scope_list unchanged. axon-rt and axon build refuse the three vars (exit 2 / E0910). A sealed run's kernel holds the same ambient entry at index 0, so the ceiling binds sealed frames too. |
 | f3746a33 | R0b claims-gate read shape | INTERPRETER: no behaviour change. ambient_scope_var now takes the already-read OsString; the three call sites read AXON_ALLOWED_FS_READ / AXON_ALLOWED_FS_WRITE / AXON_ALLOWED_NET with std::env::var_os("<literal>") so scripts/claims_gate.sh (CLAUDE.md env-var claims) recognises them as read. |
-| 290 commits | | |
+| 361bdfe9 | caps implicit user-code routes | CHECKER/STATIC ANALYSIS, no interpreter change: the shared @[contained]/axon caps walker now also follows the user code the interpreter runs without a call in the body - refinement predicates at param/return/let/field coercions, struct whole-type refinements at construction, @[verify] predicates, and the metric fn of an @[goal]. axon caps reports more (never less); @[contained] can newly report E1001 for a forbidden call reached only through such a predicate. No example changes verdict or caps output. |
+| 291 commits | | |
 <!-- END MECHANICAL -->
 
 

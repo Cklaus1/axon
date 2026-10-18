@@ -155,7 +155,10 @@ axon caps f.ax [--fn NAME] --json         # what a program / one fn can exercise
                                           #   (the @[contained] labels: fs:read fs:write net exec env dstore native:M)
                                           #   and `effects` (builtin rows, Exec split from IO), via the SAME walker
                                           #   @[contained] uses (helpers, methods, fn/builtin values, imports,
-                                          #   module-level lets); `unknown:true` = deny by default. `-` = stdin,
+                                          #   module-level lets, AND the code the interpreter runs implicitly:
+                                          #   refinement predicates at param/return/let/field, struct `where`,
+                                          #   @[verify], an @[goal]'s metric — enumerated on
+                                          #   `capabilities::reachable_capabilities`); `unknown:true` = deny by default. `-` = stdin,
                                           #   imports then resolve from --base-dir DIR. Exit 2 on a parse/type error
                                           #   or unknown --fn. The repair fence is built from the PRISTINE file's set.
 axon reference                            # the complete surface of THIS build (--json → axon-reference/1)

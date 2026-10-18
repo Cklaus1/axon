@@ -9,7 +9,9 @@
 //! E1003 — capability path is not parseable
 //! E1004 — call hits a `never:` clause (hard violation, even if allowlist would permit it)
 
-use crate::ast::{ContainedSpec, Expr, FnDef, Item, NeverClause, Program, Stmt};
+use crate::ast::{
+    AxonType, ContainedSpec, Expr, FnDef, Item, NeverClause, Program, RefineDef, Stmt, TypeDef,
+};
 use crate::span::Span;
 
 // ── Error codes ───────────────────────────────────────────────────────────────
@@ -376,9 +378,10 @@ pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
             _ => {}
         }
     }
+    let hooks = TypeHooks::of(program);
     for item in &program.items {
         match item {
-            Item::FnDef(fndef) => check_fn(fndef, &fn_map, &method_map, &mut errors),
+            Item::FnDef(fndef) => check_fn(fndef, &fn_map, &method_map, &hooks, &mut errors),
             // An impl method with its OWN @[contained] must be enforced too —
             // otherwise `impl T for X { @[contained(net:[])] fn m(self){ http_get(..) } }`
             // would silently escape its declared sandbox (the method's body was
@@ -386,7 +389,7 @@ pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
             // no-ops in check_fn, matching free-fn behavior.
             Item::ImplBlock(b) => {
                 for m in &b.methods {
-                    check_fn(m, &fn_map, &method_map, &mut errors);
+                    check_fn(m, &fn_map, &method_map, &hooks, &mut errors);
                 }
             }
             _ => {}
@@ -399,6 +402,7 @@ fn check_fn<'a>(
     fndef: &'a FnDef,
     fn_map: &'a std::collections::HashMap<&'a str, &'a FnDef>,
     method_map: &'a std::collections::HashMap<&'a str, Vec<&'a FnDef>>,
+    hooks: &'a TypeHooks<'a>,
     errors: &mut Vec<CapabilityError>,
 ) {
     // R45: the default applies to `main` ONLY, and the existing transitive walk
@@ -435,12 +439,19 @@ fn check_fn<'a>(
         method_map,
         visited,
         visited_methods: std::collections::HashSet::new(),
+        hooks,
+        visited_types: std::collections::HashSet::new(),
         site: fndef.span,
         errors,
         reach: None,
     };
     let before = ctx.errors.len();
-    check_expr(&fndef.body, &mut ctx);
+    // The contained fn's own signature and attributes run code too (see
+    // `reachable_capabilities`): its parameter/return refinements, its
+    // `@[verify]` predicate and its `@[goal]` metric.
+    let mut work = vec![Walk::Expr(&fndef.body)];
+    push_fn_hooks(fndef, &ctx, &mut work);
+    drain_walk(work, &mut ctx);
 
     // R45 §3 — relabel violations of a SYNTHESIZED spec.
     //
@@ -528,6 +539,12 @@ struct CapCtx<'a, 'e> {
     /// Method names already descended into on this path (cycle guard, separate
     /// namespace from free-fn `visited` since a method and a fn can share a name).
     visited_methods: std::collections::HashSet<&'a str>,
+    /// The program's refinement and struct types, for the predicates their
+    /// use runs (`TypeHooks`).
+    hooks: &'a TypeHooks<'a>,
+    /// Type names whose predicates are already being walked on this path
+    /// (cycle guard: a predicate can mention its own type).
+    visited_types: std::collections::HashSet<&'a str>,
     /// The span of the fn whose body is currently being walked -- the
     /// contained fn itself, or a helper it reached. `Expr::Call` carries no
     /// span, so this is the finest location available without an AST change,
@@ -604,15 +621,66 @@ impl Reach {
 }
 
 /// R0a — what `fn_name` (or, for `None`, the whole program) can exercise,
-/// transitively: helpers, impl methods (by name, over-approximated as the
-/// checker does), user fns and builtins referenced as values, fns dispatched
-/// by a literal name, and every module-level `let` initializer (they run in
-/// any execution of the program, and a closure stored in one can be called
-/// from anywhere). Imported modules count once the shared loader has merged
-/// them into `program`.
+/// transitively. Imported modules count once the shared loader has merged them
+/// into `program`. Walked by `@[contained]`'s own traversal with a sink
+/// attached, never a second walker, so everything below binds `@[contained]`
+/// too. `None` when `fn_name` names no fn or method.
 ///
-/// Walked by `@[contained]`'s own traversal with a sink attached, never a
-/// second walker. `None` when `fn_name` names no fn or method.
+/// WHERE THE INTERPRETER RUNS USER CODE, and how the walk follows each. A
+/// route missing from this list is a fence a candidate walks around (the S1
+/// review: a `let y: Lk = n` whose `type Lk = i64 where leak(_)` reached
+/// `write_file` was reported as `capabilities: []` while the run wrote the
+/// file). Enumerated from every `call_fn` / `call_fn_entry` / closure-call /
+/// predicate-eval site in `interp.rs` and `interp/`:
+///
+/// Explicit, in the body:
+/// - a call to a user fn, or a fn or builtin used as a VALUE (`let g = w`):
+///   followed (`Walk::Helper`, `Reach::note`);
+/// - `x.m()`: every impl method named `m` (no receiver type statically, so
+///   over-approximated by name);
+/// - closures: the `|..| body` is walked where it is written, so a closure
+///   passed to `arr_map`/`dict_filter`/a callback builtin, returned from a
+///   fn, or stored in a struct is covered by the walk of the code that built
+///   it; `spawn { }`, `comptime { }`, `select` arms, f-string parts and
+///   inline effect-handler arms (named handlers are inlined by the parser)
+///   likewise;
+/// - builtins that run a fn NAMED BY A STRING (`indirect_dispatch_args`:
+///   `sandbox_run`, `scheduler_spawn`, the `goal_*` family,
+///   `kernel_goal_create`): a literal name is followed, a computed one sets
+///   `unknown` (and is E1001 to `@[contained]`).
+///
+/// Implicit, with no call in the body (`push_fn_hooks`, `push_type`,
+/// `Walk::Type`):
+/// - a REFINEMENT PREDICATE (`type T = B where P`, and the synthetic
+///   refinement an inline `p: B where P` desugars to) runs when a value is
+///   bound to a parameter, returned, `let`/`own`/`ref`-bound, or stored in a
+///   struct field of that type (`call_fn_in`, `bind_let`, struct
+///   construction). Followed from every fn's parameter and return types,
+///   every annotated binding, and every constructed struct's field types.
+///   The interpreter checks only a top-level `Named` type; the walk follows
+///   every refinement named ANYWHERE in the type (`Option<T>`, `[T]`, fn
+///   types), the base of a refinement, and lambda parameter annotations — a
+///   sound over-approximation;
+/// - a struct's WHOLE-TYPE refinement (`type S = { .. } where P`) runs at
+///   every `S { .. }` literal: followed from the literal;
+/// - an `@[verify(P)]` predicate runs when the fn returns: followed with the fn;
+/// - an `@[goal(metric: m, ..)]` fn's call runs the goal search, which calls
+///   `m` (`call_fn_goal`): followed with the fn;
+/// - every module-level `let` initializer runs in any execution of the
+///   program, and a closure stored in one can be called from anywhere: always
+///   a root.
+///
+/// Not in the language (checked, so a future addition must land here):
+/// operator overloading, `Display`/`to_str` hooks, drop hooks, iterator
+/// protocols (`for` is an integer range), trait default methods (a trait
+/// method has no body), `requires`/`ensures`/invariant clauses (`@[verify]` is
+/// the only contract), and refinements on enum variant fields (not checked
+/// at construction). The runtime's OWN writes (`@[adaptive]`/`@[experiment]`
+/// provenance, the `@[agent]` action log) run no user code and are
+/// path-fixed (`EXEMPT_IO`).
+///
+/// `unknown` is set where nothing can say what runs: a computed dispatch
+/// name, inline assembly.
 pub fn reachable_capabilities(program: &Program, fn_name: Option<&str>) -> Option<Reach> {
     let mut fn_map: std::collections::HashMap<&str, &FnDef> = std::collections::HashMap::new();
     let mut method_map: std::collections::HashMap<&str, Vec<&FnDef>> =
@@ -632,6 +700,7 @@ pub fn reachable_capabilities(program: &Program, fn_name: Option<&str>) -> Optio
             _ => {}
         }
     }
+    let hooks = TypeHooks::of(program);
     let mut work: Vec<Walk<'_>> = Vec::new();
     match fn_name {
         Some(name) => {
@@ -663,12 +732,103 @@ pub fn reachable_capabilities(program: &Program, fn_name: Option<&str>) -> Optio
         method_map: &method_map,
         visited: std::collections::HashSet::new(),
         visited_methods: std::collections::HashSet::new(),
+        hooks: &hooks,
+        visited_types: std::collections::HashSet::new(),
         site: Span::dummy(),
         errors: &mut scratch,
         reach: Some(&mut reach),
     };
     drain_walk(work, &mut ctx);
     Some(reach)
+}
+
+/// The program's types whose USE runs user code: refinements (named, and the
+/// synthetic ones inline `p: B where P` annotations desugar to) and structs
+/// (a whole-type refinement and refined field types, checked at
+/// construction). See `reachable_capabilities` for where each fires.
+struct TypeHooks<'a> {
+    refines: std::collections::HashMap<&'a str, &'a RefineDef>,
+    structs: std::collections::HashMap<&'a str, &'a TypeDef>,
+}
+
+impl<'a> TypeHooks<'a> {
+    fn of(program: &'a Program) -> Self {
+        let mut refines = std::collections::HashMap::new();
+        let mut structs = std::collections::HashMap::new();
+        for item in &program.items {
+            match item {
+                Item::RefineDef(r) => {
+                    refines.insert(r.name.as_str(), r);
+                }
+                Item::TypeDef(t) => {
+                    structs.insert(t.name.as_str(), t);
+                }
+                _ => {}
+            }
+        }
+        TypeHooks { refines, structs }
+    }
+}
+
+/// What calling `f` runs besides its body: the refinement predicates of its
+/// parameter and return types, its `@[verify]` predicate, and the metric fn
+/// its `@[goal]` optimises (`Interp::goal_spec_of` reads the same `metric:`
+/// argument).
+fn push_fn_hooks<'a>(f: &'a FnDef, ctx: &CapCtx<'a, '_>, work: &mut Vec<Walk<'a>>) {
+    if let Some(v) = &f.verify {
+        work.push(Walk::Expr(&v.predicate));
+    }
+    let metrics = f
+        .attrs
+        .iter()
+        .filter(|a| a.name == "goal")
+        .flat_map(|a| a.args.iter())
+        .filter_map(|arg| arg.split_once(':'))
+        .filter(|(k, _)| k.trim().eq_ignore_ascii_case("metric"))
+        .map(|(_, v)| v.trim());
+    for metric in metrics {
+        if let Some((canon, helper)) = ctx.fn_map.get_key_value(metric) {
+            work.push(Walk::Helper(canon, helper));
+        }
+    }
+    for p in &f.params {
+        push_type(&p.ty, ctx.hooks, work);
+    }
+    if let Some(rt) = &f.return_type {
+        push_type(rt, ctx.hooks, work);
+    }
+}
+
+/// Queue the predicate of every refinement named anywhere in `ty`.
+fn push_type<'a>(ty: &'a AxonType, hooks: &TypeHooks<'a>, work: &mut Vec<Walk<'a>>) {
+    let mut stack = vec![ty];
+    while let Some(t) = stack.pop() {
+        match t {
+            AxonType::Named(n) | AxonType::TypeParam(n) | AxonType::DynTrait(n) => {
+                if hooks.refines.contains_key(n.as_str()) {
+                    work.push(Walk::Type(n));
+                }
+            }
+            AxonType::Generic { base, args } => {
+                if hooks.refines.contains_key(base.as_str()) {
+                    work.push(Walk::Type(base));
+                }
+                stack.extend(args);
+            }
+            AxonType::Result { ok, err } => stack.extend([&**ok, &**err]),
+            AxonType::Option(inner)
+            | AxonType::Chan(inner)
+            | AxonType::Slice(inner)
+            | AxonType::Ref(inner)
+            | AxonType::RefMut(inner)
+            | AxonType::RawPtr(inner) => stack.push(inner),
+            AxonType::Fn { params, ret } => {
+                stack.extend(params);
+                stack.push(ret);
+            }
+            AxonType::Tuple(ts) | AxonType::Union(ts) => stack.extend(ts),
+        }
+    }
 }
 
 /// The set of capability *kinds* a program exercises — `"fs:read"`,
@@ -1217,6 +1377,13 @@ enum Walk<'a> {
     Methods(&'a str, &'a [&'a FnDef]),
     /// Leave the method name: take it off the path.
     LeaveMethods(&'a str),
+    /// Follow the predicates using a value of type `name` runs: a
+    /// refinement's predicate (and its base type's), or a struct's whole-type
+    /// refinement and its refined field types (`TypeHooks`), unless that type
+    /// is already on the current path.
+    Type(&'a str),
+    /// Leave the type: take it off the path.
+    LeaveType(&'a str),
     /// A diagnostic raised between two walks of the dispatch loop.
     Report(CapabilityError),
 }
@@ -1226,10 +1393,6 @@ fn push_exprs<'a>(work: &mut Vec<Walk<'a>>, exprs: impl DoubleEndedIterator<Item
     for e in exprs.rev() {
         work.push(Walk::Expr(e));
     }
-}
-
-fn check_expr<'a>(root: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
-    drain_walk(vec![Walk::Expr(root)], ctx);
 }
 
 /// Run the walk until `work` is empty.
@@ -1246,6 +1409,7 @@ fn drain_walk<'a>(mut work: Vec<Walk<'a>>, ctx: &mut CapCtx<'a, '_>) {
                     ctx.site = helper.span;
                     work.push(Walk::LeaveHelper(name, outer));
                     work.push(Walk::Expr(&helper.body));
+                    push_fn_hooks(helper, ctx, &mut work);
                 }
             }
             Walk::LeaveHelper(name, outer) => {
@@ -1262,11 +1426,37 @@ fn drain_walk<'a>(mut work: Vec<Walk<'a>>, ctx: &mut CapCtx<'a, '_>) {
                 if ctx.visited_methods.insert(method) {
                     work.push(Walk::LeaveMethods(method));
                     push_exprs(&mut work, impls.iter().map(|m| &m.body));
+                    for m in impls.iter() {
+                        push_fn_hooks(m, ctx, &mut work);
+                    }
                 }
             }
             Walk::LeaveMethods(method) => {
                 if ctx.reach.is_none() {
                     ctx.visited_methods.remove(method);
+                }
+            }
+            Walk::Type(name) => {
+                if ctx.visited_types.insert(name) {
+                    work.push(Walk::LeaveType(name));
+                    let hooks = ctx.hooks;
+                    if let Some(r) = hooks.refines.get(name).copied() {
+                        work.push(Walk::Expr(&r.predicate));
+                        push_type(&r.base, hooks, &mut work);
+                    }
+                    if let Some(t) = hooks.structs.get(name).copied() {
+                        if let Some(p) = &t.refinement {
+                            work.push(Walk::Expr(p));
+                        }
+                        for f in &t.fields {
+                            push_type(&f.ty, hooks, &mut work);
+                        }
+                    }
+                }
+            }
+            Walk::LeaveType(name) => {
+                if ctx.reach.is_none() {
+                    ctx.visited_types.remove(name);
                 }
             }
             Walk::Report(err) => ctx.errors.push(err),
@@ -1391,7 +1581,14 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
                 arms.map(|arm| &arm.body).chain(std::iter::once(&**body)),
             );
         }
-        Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
+        // The value is bound after it is computed, then checked against an
+        // annotated refinement (`bind_let`): queued under the value.
+        Expr::Let { value, ty, .. }
+        | Expr::Own { value, ty, .. }
+        | Expr::RefBind { value, ty, .. } => {
+            if let Some(ty) = ty {
+                push_type(ty, ctx.hooks, work);
+            }
             work.push(Walk::Expr(value))
         }
         Expr::BinOp { left, right, .. } => push_exprs(work, [&**left, &**right].into_iter()),
@@ -1451,7 +1648,14 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
         Expr::Index { receiver, index } => push_exprs(work, [&**receiver, &**index].into_iter()),
         Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => work.push(Walk::Expr(inner)),
         Expr::Array(elems) | Expr::Tuple(elems) => push_exprs(work, elems.iter()),
-        Expr::StructLit { fields, .. } => push_exprs(work, fields.iter().map(|(_, v)| v)),
+        // Constructing a struct runs its whole-type refinement and the
+        // predicates of its refined fields, after the fields are computed.
+        Expr::StructLit { name, fields } => {
+            if ctx.hooks.structs.contains_key(name.as_str()) {
+                work.push(Walk::Type(name));
+            }
+            push_exprs(work, fields.iter().map(|(_, v)| v))
+        }
         Expr::FmtStr { parts } => push_exprs(
             work,
             parts.iter().filter_map(|part| match part {
@@ -1459,7 +1663,16 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
                 _ => None,
             }),
         ),
-        Expr::Lambda { body, .. } => work.push(Walk::Expr(body)),
+        // A lambda parameter's refinement is not checked by the interpreter
+        // today; followed anyway, so adding that check cannot open a route.
+        Expr::Lambda { params, body, .. } => {
+            for p in params {
+                if let Some(ty) = &p.ty {
+                    push_type(ty, ctx.hooks, work);
+                }
+            }
+            work.push(Walk::Expr(body))
+        }
         Expr::Spawn(body) => work.push(Walk::Expr(body)),
         Expr::Select(arms) => push_exprs(
             work,
