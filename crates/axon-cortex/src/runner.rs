@@ -2319,7 +2319,7 @@ impl Runner {
             return (None, None);
         };
         match self.visible_run(rel_path, &now, hidden, what) {
-            Ok((fb, failing)) => (Some(fb), failing),
+            Ok(r) => (Some(r.feedback), r.failing),
             Err(_) => (None, None),
         }
     }
@@ -2364,7 +2364,7 @@ impl Runner {
         text: &str,
         hidden: &str,
         what: VisibleRun,
-    ) -> Result<(crate::feedback::Feedback, Option<Vec<String>>), String> {
+    ) -> Result<VisibleReport, String> {
         use crate::feedback::Feedback;
         let cut = crate::rank::without_check(text, hidden);
         if crate::rank::mentions(&cut, hidden) {
@@ -2393,42 +2393,49 @@ impl Runner {
             let s = s.replace(&abs_str, rel_path).replace(&copy_name, &name);
             (!crate::rank::mentions(&s, hidden)).then_some(s)
         };
-        // The names of the visible checks that failed, for a test run only.
+        // The names of the visible checks that failed, for a test run only,
+        // and (asked as `AsFound`) the first prompt's plain-text report.
         let mut failing: Option<Vec<String>> = None;
+        let mut plain: Option<String> = None;
         let ran = match what {
-            VisibleRun::Tests => match self.check_executor.run_checks(&CheckRequest {
-                workspace: &self.workspace,
-                rel_path: &rel_copy_str,
-                filter: None,
-            }) {
-                Ok(r) => {
-                    failing = Some(r.failed.clone());
-                    let failed: Vec<(String, Option<String>)> = r
-                        .failed
-                        .iter()
-                        .map(|n| {
-                            let m = r
-                                .messages
-                                .iter()
-                                .find(|(m, _)| m == n)
-                                .map(|(_, m)| m.clone());
-                            (n.clone(), m)
-                        })
-                        .collect();
-                    Ok(Feedback::from_tests(
-                        &failed,
-                        r.passed.len(),
-                        &r.output,
-                        &clean,
-                    ))
+            VisibleRun::Tests | VisibleRun::AsFound => {
+                match self.check_executor.run_checks(&CheckRequest {
+                    workspace: &self.workspace,
+                    rel_path: &rel_copy_str,
+                    filter: None,
+                }) {
+                    Ok(r) => {
+                        failing = Some(r.failed.clone());
+                        if matches!(what, VisibleRun::AsFound) {
+                            plain = Some(render_visible_tests(&r, &clean));
+                        }
+                        let failed: Vec<(String, Option<String>)> = r
+                            .failed
+                            .iter()
+                            .map(|n| {
+                                let m = r
+                                    .messages
+                                    .iter()
+                                    .find(|(m, _)| m == n)
+                                    .map(|(_, m)| m.clone());
+                                (n.clone(), m)
+                            })
+                            .collect();
+                        Ok(Feedback::from_tests(
+                            &failed,
+                            r.passed.len(),
+                            &r.output,
+                            &clean,
+                        ))
+                    }
+                    // R2: the VISIBLE run stopping at a bound is the attempt's
+                    // own visible fact, and the generator is told it.
+                    Err(e) if bound_exceeded(&e).is_some() => Ok(Feedback::timed_out(&format!(
+                        "the visible tests did not finish: {e}"
+                    ))),
+                    Err(e) => Err(format!("the visible tests could not be run: {e}")),
                 }
-                // R2: the VISIBLE run stopping at a bound is the attempt's
-                // own visible fact, and the generator is told it.
-                Err(e) if bound_exceeded(&e).is_some() => Ok(Feedback::timed_out(&format!(
-                    "the visible tests did not finish: {e}"
-                ))),
-                Err(e) => Err(format!("the visible tests could not be run: {e}")),
-            },
+            }
             VisibleRun::Compile | VisibleRun::Diagnostics => self
                 .run_axon_check(&abs, Some(&self.workspace))
                 .map(|(text, _)| {
@@ -2441,7 +2448,11 @@ impl Runner {
                 .map_err(|e| format!("the checker could not be run: {e}")),
         };
         let _ = std::fs::remove_file(&abs);
-        Ok((ran?, failing))
+        Ok(VisibleReport {
+            feedback: ran?,
+            failing,
+            plain,
+        })
     }
 
     /// What the generator for `symbol` may see: the ranker's view of the file
@@ -2481,9 +2492,9 @@ impl Runner {
             Ok(view) => GenContext::View {
                 view,
                 visible_now: self
-                    .visible_run(rel_path, src, hidden, VisibleRun::Tests)
+                    .visible_run(rel_path, src, hidden, VisibleRun::AsFound)
                     .ok()
-                    .map(|(text, _)| text),
+                    .and_then(|r| r.plain),
             },
             Err(reason) => GenContext::BodyOnly { reason },
         }
@@ -2788,11 +2799,76 @@ fn push_rejected(
 enum VisibleRun {
     /// `axon test` on the file: verdicts, failure messages, printed output.
     Tests,
+    /// `Tests` on the file as the candidate found it, also rendered as the
+    /// first prompt's plain-text report ([`VisibleReport::plain`]).
+    AsFound,
     /// `axon check` on the file: the first error diagnostics.
     Compile,
     /// `axon check` on the file: the first diagnostics of ANY severity, for an
     /// attempt rejected because the checker did not exit 0.
     Diagnostics,
+}
+
+/// What a visible run came back with.
+struct VisibleReport {
+    /// The typed feedback a REJECTED attempt carries into the next prompt.
+    feedback: crate::feedback::Feedback,
+    /// For a test run, the names of the visible checks that failed.
+    failing: Option<Vec<String>>,
+    /// For [`VisibleRun::AsFound`] (and only when the tests ran), the plain
+    /// report the first prompt shows.
+    plain: Option<String>,
+}
+
+/// The first prompt's report of the visible tests, as it has read since
+/// before R4: `N failed, M passed`, one `FAILED name[: message]` line per
+/// failure, then up to [`crate::feedback::MAX_PRINTED_LINES`] non-blank
+/// printed lines. Every line passes `clean` (the copy's names become the real
+/// ones; a line naming the hidden check is dropped), and the whole is bounded
+/// to [`crate::generate::MAX_VISIBLE_NOW_BYTES`]. Plain text, not the typed
+/// JSON a rejection carries: every task pays for this prompt.
+fn render_visible_tests(report: &CheckReport, clean: &dyn Fn(&str) -> Option<String>) -> String {
+    let mut s = format!(
+        "{} failed, {} passed\n",
+        report.failed.len(),
+        report.passed.len()
+    );
+    for name in &report.failed {
+        match report.messages.iter().find(|(n, _)| n == name) {
+            Some((_, m)) => s.push_str(&format!("FAILED {name}: {m}\n")),
+            None => s.push_str(&format!("FAILED {name}\n")),
+        }
+    }
+    let printed: Vec<&str> = report
+        .output
+        .iter()
+        .map(String::as_str)
+        .filter(|l| !l.trim().is_empty())
+        .take(crate::feedback::MAX_PRINTED_LINES)
+        .collect();
+    if !printed.is_empty() {
+        s.push_str("printed:\n");
+        for l in printed {
+            s.push_str(l);
+            s.push('\n');
+        }
+    }
+    let s: String = s
+        .lines()
+        .filter_map(clean)
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let s = s.trim_end();
+    const MARK: &str = "\n… (truncated)";
+    let max = crate::generate::MAX_VISIBLE_NOW_BYTES;
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max.saturating_sub(MARK.len());
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{MARK}", &s[..end])
 }
 
 /// The verdict for exactly the check that was named.
@@ -4410,5 +4486,72 @@ mod drain_tests {
         ])
         .unwrap();
         assert_eq!((o, e, t), (b"o".to_vec(), b"e".to_vec(), true));
+    }
+}
+
+#[cfg(test)]
+mod visible_report_tests {
+    use super::{render_visible_tests, CheckReport};
+
+    /// The first prompt's report is the pre-R4 plain text, byte for byte —
+    /// and still passes every line through the cleaner: the visible copy's
+    /// name becomes the real one, and a line naming the hidden check is
+    /// dropped whole.
+    #[test]
+    fn the_first_prompt_report_is_plain_text_and_cleaned() {
+        let report = CheckReport {
+            completion: Vec::new(),
+            failed: vec!["visible_a".into(), "visible_b".into()],
+            passed: vec!["other".into()],
+            total: 3,
+            exit_code: Some(1),
+            messages: vec![("visible_a".into(), "assertion failed: 0 != 5".into())],
+            output: vec![
+                "".into(),
+                "at .cortex-visible-42-f.ax:3".into(),
+                "hidden_q says hi".into(),
+                "PRINTED".into(),
+            ],
+        };
+        let clean = |s: &str| -> Option<String> {
+            let s = s.replace(".cortex-visible-42-f.ax", "f.ax");
+            (!s.contains("hidden_q")).then_some(s)
+        };
+        let got = render_visible_tests(&report, &clean);
+        assert!(
+            !got.contains("cortex-visible") && !got.contains("hidden_q"),
+            "ATTACK: the first prompt's report carries what the cleaner must remove: {got}"
+        );
+        assert_eq!(
+            got,
+            "2 failed, 1 passed\n\
+             FAILED visible_a: assertion failed: 0 != 5\n\
+             FAILED visible_b\n\
+             printed:\n\
+             at f.ax:3\n\
+             PRINTED"
+        );
+    }
+
+    /// Bounded like the report it replaces: at most MAX_VISIBLE_NOW_BYTES,
+    /// the cut marked.
+    #[test]
+    fn the_first_prompt_report_is_bounded() {
+        let report = CheckReport {
+            completion: Vec::new(),
+            failed: vec!["t".into()],
+            passed: Vec::new(),
+            total: 1,
+            exit_code: Some(1),
+            messages: vec![("t".into(), "é".repeat(4000))],
+            output: Vec::new(),
+        };
+        let got = render_visible_tests(&report, &|s: &str| Some(s.to_string()));
+        assert!(
+            got.len() <= crate::generate::MAX_VISIBLE_NOW_BYTES,
+            "{}",
+            got.len()
+        );
+        assert!(got.ends_with("\n… (truncated)"), "{got}");
     }
 }

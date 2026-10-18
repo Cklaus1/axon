@@ -26,8 +26,9 @@ pub const MAX_DIAGNOSTICS: usize = 8;
 pub const MAX_FAILED_TESTS: usize = 8;
 /// The bound on the note (the visible tests' tally and what they printed).
 pub const MAX_NOTE_BYTES: usize = 1024;
-/// Lines of printed test output the note keeps.
-const MAX_PRINTED_LINES: usize = 40;
+/// Lines of printed test output the note keeps (and the first prompt's
+/// plain-text report shows).
+pub const MAX_PRINTED_LINES: usize = 40;
 
 /// What the visible side said about one attempt. Empty fields are omitted
 /// from the JSON, so an attempt the compiler accepted and no visible test
