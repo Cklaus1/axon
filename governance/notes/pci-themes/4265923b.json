@@ -1,0 +1,1 @@
+{"theme": "repair artifact binding", "text": "cortex R5 review fixes: stopped_by is reported only on a final exit 27, never on a run R5 failed closed; a failure to restore the found file between walk attempts ends the walk blocked so the run still settles, reports JSON and writes its label row; the R5 settle step restores the found bytes on refusal through a unit-tested helper."}

@@ -1037,9 +1037,15 @@ fn main() {
                 break 'walk;
             }
             if let Some(p) = prev {
+                // A restore that fails ends the walk like any other block,
+                // so the run still settles (and reports) what it reached.
                 if let Err(e) = std::fs::write(workspace.join(&file), &original) {
                     eprintln!("cannot restore {file} between attempts: {e}");
-                    std::process::exit(22);
+                    outcome = EpisodeOutcome::Blocked {
+                        steps: progress[p].steps(),
+                        reason: format!("cannot restore {file} between attempts: {e}"),
+                    };
+                    break 'walk;
                 }
                 if pass == 1 {
                     eprintln!("`{}` did not repair it; trying `{target}`", targets[p]);
@@ -1229,24 +1235,27 @@ fn main() {
     // that keeps no patch), and the reason on stderr. Only exits 0 and 27
     // keep a patch; every other run names none. An exit 27 whose adjudicated
     // state could not be put back fails closed the same way.
-    let (accepted, code, kind, detail, repaired) = match kept_adjudicated.and_then(|()| {
-        accepted_artifact(
-            &file,
-            code,
-            &runner.episode,
-            std::fs::read(workspace.join(&file)),
-        )
-    }) {
+    let settled = settle_artifact(
+        &workspace.join(&file),
+        &file,
+        code,
+        &runner.episode,
+        kept_adjudicated,
+        original.as_bytes(),
+    );
+    let (accepted, code, kind, detail, repaired) = match settled {
         Ok(accepted) => (accepted, code, kind, detail, repaired),
         Err(why) => {
             eprintln!("cortex repair: {why}; the repair is NOT accepted");
-            let _ = std::fs::write(workspace.join(&file), &original);
             (None, 22, "blocked", why, None)
         }
     };
     // An audit reviews an accepted fix; one that R5 refused is not reported
-    // as audited (its stderr line, already printed, says what it saw).
+    // as audited (its stderr line, already printed, says what it saw). Nor
+    // does a run R5 failed closed report what ended a walk whose
+    // adjudication it kept: it kept none.
     let audit = audit.filter(|_| code == 0);
+    let stopped_by = stopped_by.filter(|_| code == 27);
 
     // THE LABEL ROW, after the final verdict: the exit code R5 settled, the
     // file and the audit. It records the exit the run exits with, and
@@ -1312,7 +1321,8 @@ fn main() {
                 // What ended a walk whose reported outcome is an earlier
                 // adjudication (kept, exit 27): `{outcome, exit_code,
                 // detail}` as that ending alone would have been reported.
-                // `null` when the outcome above is what ended the run.
+                // `null` when the outcome above is what ended the run, and on
+                // every exit but 27 (a run R5 failed closed kept nothing).
                 "stopped_by": stopped_by.as_ref().map(|o| {
                     let (code, kind, detail, _) = verdict(o, &check);
                     serde_json::json!({ "outcome": kind, "exit_code": code, "detail": detail })
@@ -1563,6 +1573,26 @@ fn accepted_artifact(
     Ok(Some(serde_json::json!({ "path": file, "sha256": graded })))
 }
 
+/// R5's final settle of a run that exited `code`: `kept` (whether an exit
+/// 27's adjudicated state was put back) and then `accepted_artifact` over
+/// the file at `path` as it is now. When either refuses, the run keeps no
+/// patch, so the file is restored to `original`, the bytes the run found —
+/// like every run that keeps none — and the reason is returned.
+fn settle_artifact(
+    path: &std::path::Path,
+    file: &str,
+    code: i32,
+    episode: &axon_cortex::episode::Episode,
+    kept: Result<(), String>,
+    original: &[u8],
+) -> Result<Option<serde_json::Value>, String> {
+    let settled = kept.and_then(|()| accepted_artifact(file, code, episode, std::fs::read(path)));
+    if settled.is_err() {
+        let _ = std::fs::write(path, original);
+    }
+    settled
+}
+
 /// `cortex locate --file F --check C [--json]`
 fn locate_only(mut args: impl Iterator<Item = String>) {
     let mut workspace = std::path::PathBuf::from(".");
@@ -1760,5 +1790,44 @@ mod tests {
             Ok(Some(serde_json::json!({ "path": "f.ax", "sha256": sha })))
         );
         assert_eq!(accepted_artifact("f.ax", 21, &ep, Ok(Vec::new())), Ok(None));
+    }
+
+    /// R5 settle: a run R5 refuses keeps no patch, so the file is put back
+    /// to the bytes the run found — whether the file changed after
+    /// acceptance or an exit 27's adjudicated state was not kept. An
+    /// accepted file is left as it is.
+    #[test]
+    fn a_refused_settle_restores_the_file_as_found() {
+        let dir = std::env::temp_dir().join(format!("cortex-settle-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("f.ax");
+        let (found, accepted) = (
+            b"fn double(n: i64) -> i64 {\n    n\n}\n",
+            b"fn double(n: i64) -> i64 {\n    n * 2\n}\n",
+        );
+        let ep = graded(accepted);
+        for (on_disk, kept) in [
+            (&b"fn double() {}\n"[..], Ok(())),
+            (
+                &accepted[..],
+                Err("the adjudicated state of f.ax was not kept".to_string()),
+            ),
+        ] {
+            std::fs::write(&path, on_disk).unwrap();
+            let settled = settle_artifact(&path, "f.ax", 0, &ep, kept, found);
+            assert!(settled.is_err(), "{settled:?}");
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                found,
+                "ATTACK: a run R5 refused left the unaccepted file in place"
+            );
+        }
+        std::fs::write(&path, accepted).unwrap();
+        assert!(matches!(
+            settle_artifact(&path, "f.ax", 0, &ep, Ok(()), found),
+            Ok(Some(_))
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), accepted);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

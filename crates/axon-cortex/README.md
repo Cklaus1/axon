@@ -100,7 +100,10 @@ budget, no progress, the early stop, …), it reports that adjudication (exit
 `stopped_by` (`{outcome, exit_code, detail}`; `budget.exhausted_by` still names
 a walk limit). The file is read once more before the run reports, and if it
 is no longer those bytes (changed after acceptance, or not put back) the run
-fails closed: exit 22 `blocked`, `accepted: null`, the file restored as found.
+fails closed: exit 22 `blocked`, `accepted: null`, `stopped_by: null`, the
+file restored as found. A walk that cannot restore the found bytes between
+attempts ends `blocked` there, and the run still settles and reports it
+this way.
 The `--label-log` row is written after that final check, so it records the
 exit the run exits with.
 

@@ -11517,6 +11517,18 @@ MUTATIONS += [
      '            exit_code: code,',
      '            exit_code: verdict(&outcome, &check).0,',
      'axon-cortex', '--test cli', 'r5_a_lost_adjudication_fails_closed_and_its_label_row_says_so'),
+    ('M3714', "S1 R5 settle: a run R5 refuses leaves the unaccepted file in place (no restore)", _S1B,
+     '        let _ = std::fs::write(path, original);',
+     '        let _ = (path, original);',
+     'axon-cortex', '--bin cortex', 'tests::a_refused_settle_restores_the_file_as_found'),
+    ('M3715', "S1 R5 x walk: a run R5 failed closed still reports what ended a walk whose adjudication it kept", _S1B,
+     '    let stopped_by = stopped_by.filter(|_| code == 27);',
+     '    let stopped_by = stopped_by.filter(|_| code != 0);',
+     'axon-cortex', '--test cli', 'r5_a_lost_adjudication_fails_closed_and_its_label_row_says_so'),
+    ('M3716', "S1 walk: a failed restore between attempts exits on the spot, with no verdict, R5 or label row", _S1B,
+     '                    };\n                    break \'walk;\n                }\n                if pass == 1 {',
+     '                    };\n                    std::process::exit(22);\n                }\n                if pass == 1 {',
+     'axon-cortex', '--test cli', 'a_restore_failing_between_attempts_still_ends_with_a_verdict'),
 ]
 
 # C9 round 15 (amendment 121): M3260 is retired under the four-cell rule against M3456. The
