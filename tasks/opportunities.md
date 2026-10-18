@@ -2650,3 +2650,12 @@ Found in the follow-up spec review (FU-2, A#6). `program_builtin_calls` (`capabi
 
 ### O-S1-21 — [low] `B/hardset/build.py` always exits 0 and `--check` with no file validates nothing
 Found in the follow-up dev-loop review (D#17). `if __name__ == "__main__": main()` discards `main()`'s return (`B/hardset/build.py:362-363`), so a failing spec still exits 0; `--check` with no FILE runs `load_specs([])`. Fix: `sys.exit(main())`, and `--check` with no file means all of `defects/*.json` (fail-first: a broken spec exits 1). Not cheap enough for every gate (runs axon + `cortex locate` per spec).
+
+### O-S1-22 — [high] A struct-field refinement type-checks, then panics at run time
+Found while authoring the FU-1 stratum-C programs (AuthorC), reproduced at f26e9506 (`rep-int` axon): `type Amt = { value: i64 where value > 0 }` with `Amt { value: v }` → `axon check` rc 0, `axon run` → `axon: panic: undefined identifier `value`` rc 101. The checker accepts what the interpreter cannot evaluate; expected: the refinement is checked against the field value (or the checker rejects the form). Fail-first: the 10-line repro above as a cli_run test.
+
+### O-S1-23 — [high] An `@[verify]` predicate naming a parameter type-checks, then panics
+Same origin, reproduced: `@[verify(value >= lo && value <= hi)] fn clampv(x: i64, lo: i64, hi: i64) -> i64` → `axon check` rc 0, `axon run` → `axon: panic: undefined identifier `lo`` rc 101. Either the checker rejects parameter names in verify predicates (with a diagnostic) or the interpreter binds them; a panic is neither. Relates to O-S1-19 (verify purity).
+
+### O-S1-24 — [medium] Type-checker false positives reported while authoring (NOT reproduced)
+Reported by AuthorC, not yet reproduced: a user type named `Unit` is silently `()` (E0306 "expected (), found Unit"); `len(ts)` on an array bound from a match pattern/expression → E0102 "expected str"; `None => return Err(..)` inside a `let` match → E0102 "expected i64, found ()"; a parameter used in two match arms → E0601 "use of moved value" (if/else accepted); `let out = cfg` of a `&[T]` param then `f(&cfg)` → moved. Reproduce each before acting.
