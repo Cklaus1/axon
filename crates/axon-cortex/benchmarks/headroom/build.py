@@ -13,7 +13,11 @@ sha256 is recorded in `meta.headroom` and `--check` refuses other binaries.
 SOURCES (FU-1b). Stratum D: `STRATUM_D`, the 17 hardset snapshots no hard
 set uses plus the tempt snapshot `traits_demo.ax`. Stratum C: every `*.ax`
 under `--programs-dir` (default `programs/` beside this file). A program is
-used only if it type-checks, has >= 2 tests and every test passes.
+used only if it type-checks, has >= 2 tests, every test passes, and
+../ab/corpus.py's `test_blocks` (whose brace counting is not string-aware, and
+which run_ab grading uses) delimits every test block as a string-aware scan
+does. The same check guards every test cut and the visible and hidden blocks
+of each task; a failure rejects the candidate with a reason in the report.
 
 CLASSES (FU-1a). Every task is one function body (`symbol`) whose pristine
 body repairs it:
@@ -141,6 +145,13 @@ def split_programs(programs, seed, prior=None):
 def split_ok(split):
     n_dev = sum(v == "dev" for v in split.values())
     return n_dev >= MIN_DEV and len(split) - n_dev >= MIN_TEST
+
+
+def recorded_split(prior, split):
+    """The split a pool records: every program of the prior split (kept in
+    this pool or not) plus this pool's, so a chained extension never deals a
+    prior dev program to test (FU-1c step 4)."""
+    return dict(sorted({**(prior or {}), **split}.items()))
 
 
 def cap_per_program(tasks, cap, seed):
@@ -319,6 +330,10 @@ class Program:
             self.reject = "fewer than 2 tests"
         elif res is None or any(s != "ok" for s, _ in res.values()) or set(res) != set(self.tests):
             self.reject = "pristine tests do not all pass"
+        else:
+            why = blocks_reason(h.corpus, self.src)
+            if why:
+                self.reject = f"ungradeable: {why}"
         defs = h.common.defined_fns(self.src)
         self.fns = [f for f in dict.fromkeys(defs) if defs.count(f) == 1 and f not in self.tests
                     and f != "main" and _span(self.src, f) and self.src[slice(*_span(self.src, f))].strip()]
@@ -383,7 +398,7 @@ def candidates(prog, singles, seed, multi_tries):
     subtle_ops = {n for n, _ in M.SUBTLE_OPS}
     for fn, ss in singles.items():
         for s in ss:
-            base = {"fn": fn, "how": s["how"], "broken": s["broken"], "ops": [s["op"]]}
+            base = {"fn": fn, "how": s["how"], "broken": s["broken"], "ops": [s["op"]], "edits": [list(s["edit"])]}
             if s["op"] in subtle_ops and len(s["failing"]) >= 2:
                 out.setdefault(("subtle", s["op"]), []).append(dict(base))
             if prog.refine and len(s["failing"]) >= 2:
@@ -415,7 +430,8 @@ def candidates(prog, singles, seed, multi_tries):
                 out.setdefault(("multi", str(n)), []).append(
                     {"fn": fn, "how": "multi:" + " ; ".join(ss[i]["how"] for i in sorted(pick)),
                      "broken": prog.src[:a] + body + prog.src[b:],
-                     "ops": [ss[i]["op"] for i in sorted(pick)]})
+                     "ops": [ss[i]["op"] for i in sorted(pick)],
+                     "edits": [list(ss[i]["edit"]) for i in sorted(pick)]})
                 made += 1
                 if made >= multi_tries:
                     break
@@ -424,10 +440,58 @@ def candidates(prog, singles, seed, multi_tries):
     return out
 
 
-def cut_tests(h, text, names):
+def code_end(src, o):
+    """Index just past the brace that closes `src[o] == "{"`, skipping string
+    literals (with backslash escapes) and `//` comments; None if unclosed."""
+    d, i, n = 0, o, len(src)
+    while i < n:
+        c = src[i]
+        if c == '"':
+            i += 1
+            while i < n and src[i] != '"':
+                i += 2 if src[i] == "\\" else 1
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "{":
+            d += 1
+        elif c == "}":
+            d -= 1
+            if d == 0:
+                return i + 1
+        i += 1
+    return None
+
+
+def cut_tests(corpus, text, names):
+    """(text without the named tests, None) or (None, reason). The cut is
+    ../ab/corpus.py's `cut_test` (what grading and corpus.load see), whose
+    brace counting is not string-aware: a block it cannot find, or delimits
+    differently from a string-aware scan, rejects the candidate."""
     for n in names:
-        text, _ = h.corpus.cut_test(text, n)
-    return text
+        blocks = {b[0]: b for b in corpus.test_blocks(text)}
+        if n not in blocks:
+            return None, f"corpus.test_blocks cannot delimit test `{n}` (brace in a string?)"
+        _, a, b = blocks[n]
+        m = re.compile(r"[ \t]*@\[test[^\n]*\n(?:[ \t]*@\[[^\n]*\n)*\s*fn %s\(" % re.escape(n)).match(text, a)
+        end = code_end(text, text.find("{", m.end())) if m else None
+        if end is None or not (b == end or (b == end + 1 and text[end] == "\n")):
+            return None, f"corpus.test_blocks mis-delimits test `{n}` (brace in a string?)"
+        text = text[:a] + text[b:]
+    return text, None
+
+
+def blocks_reason(corpus, src):
+    """None when ../ab/corpus.py's test_blocks delimits every test of `src`
+    as a string-aware scan does, else the reason. run_ab grading strips and
+    re-appends test blocks with test_blocks, so a program failing this is
+    ungradeable."""
+    for n in corpus.tests_in(src):
+        why = cut_tests(corpus, src, [n])[1]
+        if why:
+            return why
+    return None
 
 
 def graded_view(h, final, pristine):
@@ -439,19 +503,82 @@ def graded_view(h, final, pristine):
     return final.rstrip("\n") + "\n\n" + blocks
 
 
+def rebuild(src, fn, cls, ops, edits, how):
+    """(broken file before any test cut, None) or (None, reason), from the
+    pristine `src` and a task's recorded construction alone: one edit per
+    operator, 2-3 for `multi` and 1 otherwise, `subtle` only with a
+    SUBTLE_OPS operator; each edit must be what its operator makes at one of
+    its first MAX_SITES sites of `fn`'s pristine body (as
+    M.edit_of gives it), the edits disjoint, and `how` their labels."""
+    n = len(edits)
+    if n == 0 or len(ops) != n:
+        return None, f"{cls}: {len(ops)} operators for {n} edits"
+    if (cls == "multi") != (n > 1) or n > 3:
+        return None, f"{cls}: {n} edits do not fit the class"
+    if cls == "subtle" and ops[0] not in dict(M.SUBTLE_OPS):
+        return None, f"subtle: operator {ops[0]} is not a subtle operator"
+    span = _span(src, fn)
+    if not span:
+        return None, f"{cls}: no body for `{fn}`"
+    a, b = span
+    body, ctx, all_ops = src[a:b], M.context(src, fn), dict(M.ALL_OPS)
+    labels = [how] if n == 1 else (how[len("multi:"):].split(" ; ") if how.startswith("multi:") else [])
+    if len(labels) != n:
+        return None, f"{cls}: `how` {how!r} does not list {n} mutations"
+    edits = [tuple(e) for e in edits]
+    for op, e, label in zip(ops, edits, labels):
+        if op not in all_ops or len(e) != 3 or not 0 <= e[0] <= e[1] <= len(body):
+            return None, f"{cls}: unknown operator {op} or malformed edit {list(e)}"
+        mutant = body[:e[0]] + e[2] + body[e[1]:]
+        if M.edit_of(body, mutant) != e:
+            return None, f"{cls}: edit {list(e)} is not in canonical form"
+        made = {hw for _, m, hw in M.sites(body, [(op, all_ops[op])], ctx, MAX_SITES) if m == mutant}
+        if label not in made:
+            return None, f"{cls}: edit {list(e)} labelled {label!r} is not a site of operator {op}"
+    if not M.disjoint(edits):
+        return None, f"{cls}: edits overlap"
+    return src[:a] + M.compose(body, edits) + src[b:], None
+
+
+def names_symbol(res, hidden, fn):
+    """The first failing test other than `hidden` (so one the model sees)
+    whose message names `fn`, or None."""
+    pat = re.compile(r"\b%s\b" % re.escape(fn))
+    return next((n for n, (s, m) in sorted(res.items()) if s == "failed" and n != hidden and pat.search(m)), None)
+
+
+def singles_fail(h, prog, fn, edits):
+    """`--check`'s re-run of FU-1a's per-mutation check: each edit alone on
+    the pristine file type-checks and fails >= 1 pristine test."""
+    a, b = _span(prog.src, fn)
+    body = prog.src[a:b]
+    for e in edits:
+        e = tuple(e)
+        if len(e) != 3 or not 0 <= e[0] <= e[1] <= len(body):
+            return f"malformed edit {list(e)}"
+        single = prog.src[:a] + body[:e[0]] + e[2] + body[e[1]:] + prog.src[b:]
+        if not h.check(prog.name, single)[0]:
+            return f"edit {list(e)} alone does not type-check"
+        res = h.tests(prog.name, single)
+        if res is None or not any(s == "failed" for s, _ in res.values()):
+            return f"edit {list(e)} alone fails no pristine test"
+    return None
+
+
 def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
-    """(task, None) or (None, reason): every build check of FU-1a. The knob
-    is derived here (from the ops, the call depth or the failure text), so
-    `--check` recomputes it rather than trusting the stored one."""
-    ops = list(cand.get("ops") or [])
-    if not ops:
-        return None, f"{cls}: no mutation operators recorded"
+    """(task, None) or (None, reason): every build check of FU-1a. The broken
+    file is rebuilt from the pristine source and the recorded edits
+    (`rebuild`), and the knob derived (from the operators, the call depth or
+    the failure text), so `--check` re-validates both."""
+    fn, ops = cand["fn"], list(cand.get("ops") or [])
+    broken, why = rebuild(prog.src, fn, cls, ops, list(cand.get("edits") or []), cand["how"])
+    if why:
+        return None, why
     knob = {"multi": str(len(ops)), "subtle": ops[0], "caps": "-"}.get(cls)
-    if (cls == "multi") != (len(ops) > 1) or (cls == "subtle" and ops[0] not in {n for n, _ in M.SUBTLE_OPS}):
-        return None, f"{cls}: mutation operators {ops} do not fit the class"
-    fn, broken = cand["fn"], cand["broken"]
     if cls == "caller":
-        broken = cut_tests(h, broken, cand["cut"])
+        broken, why = cut_tests(h.corpus, broken, cand["cut"])
+        if why:
+            return None, why
     clean, _ = h.check(prog.name, broken)
     if not clean:
         return None, "broken does not type-check (or names E1201)"
@@ -482,9 +609,16 @@ def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
         why = prog.caps_eligible(h, fn)
         if why:
             return None, why
-    t = h.corpus.task_from_broken(prog.path, prog.src, fn, cls, cand["how"], broken, visible, hidden)
+    try:
+        t = h.corpus.task_from_broken(prog.path, prog.src, fn, cls, cand["how"], broken, visible, hidden)
+    except (KeyError, IndexError) as e:
+        return None, f"corpus.task_from_broken cannot delimit a test block ({type(e).__name__})"
     if t is None:
         return None, "corpus.task_from_broken validity"
+    for n in (t["visible"], t["hidden"]):  # the blocks corpus.load and grading cut or read
+        why = cut_tests(h.corpus, broken, [n])[1]
+        if why:
+            return None, why
     a, b = _span(broken, fn)
     restored = broken[:a] + t["oracle_body"] + broken[b:]
     view = graded_view(h, restored, prog.src)
@@ -501,7 +635,12 @@ def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
         return None, f"locate ranks the symbol {rank}, outside the top {h.candidates}"
     if fn not in (loc.get("reached_by_all") or []):
         return None, "the symbol is not in reached_by_all of the failing visible checks"
-    t.update(id=task_id(cls, prog.source_file, t["broken"]), knob=knob, ops=ops, stratum=prog.stratum,
+    if cls == "caller":
+        g = names_symbol(res, t["hidden"], fn)
+        if g:
+            return None, f"caller: failing test `{g}`, which the model sees, names g"
+    t.update(id=task_id(cls, prog.source_file, t["broken"]), knob=knob, ops=ops,
+             edits=[list(e) for e in cand["edits"]], stratum=prog.stratum,
              program=prog.source_file, caps_strict=True, seed=seed, spectrum_rank=rank)
     if cls == "caller":
         t["cut_tests"] = list(cand["cut"])
@@ -621,20 +760,30 @@ def build(a):
         "rejections": dict(sorted(rejects.items())),
         "split": split, "split_ok": split_ok(split),
     })
-    headroom = {**h.shas, "seed": a.seed, "split_seed": a.split_seed, "split": split,
+    recorded = recorded_split(prior, split)
+    headroom = {**h.shas, "seed": a.seed, "split_seed": a.split_seed, "split": recorded,
                 "split_ok": split_ok(split), "stratum": a.stratum,
                 "per_cell_program": a.per_cell_program, "multi_tries": a.multi_tries,
                 "max_singles": a.max_singles, "inputs_digest": inputs_digest(),
                 "programs": {p: report["programs"][p]["stratum"] for p in sorted(kept)},
                 "dropped": sorted(dropped),
                 "rejected": {p.source_file: p.reject for p in progs if p.reject}}
-    if tasks:
+    refuse = None
+    if not split_ok(split) and not a.allow_short_split:
+        refuse = (f"split has {sum(v == 'dev' for v in split.values())} dev / "
+                  f"{sum(v == 'test' for v in split.values())} test programs, below {MIN_DEV} / {MIN_TEST} "
+                  "(FU-1c step 1); no pool written (--allow-short-split for a scratch build)")
+        report["refused"] = refuse
+    elif tasks:
         write_corpus(h, a.out, tasks, sorted(kept), headroom)
         report["out_sha256"] = sha256_file(a.out)
     if a.report:
         with open(a.report, "w") as f:
             json.dump(report, f, indent=1)
     print(json.dumps({k: report[k] for k in ("wall_s", "yield", "split_ok")}, indent=1), file=sys.stderr)
+    if refuse:
+        print("hx build: REFUSED: " + refuse, file=sys.stderr)
+        return 1
     return 0
 
 
@@ -682,13 +831,14 @@ def check(a):
             p = progs[t["source_file"]] = Program(h, path, t["stratum"])
             if p.reject:
                 return t["id"], f"program: {p.reject}"
-        cand = {"fn": t["symbol"], "how": t["how"], "broken": t["broken"], "ops": t.get("ops"),
-                "cut": []}  # a caller task stores the broken file after the cut
+        cand = {"fn": t["symbol"], "how": t["how"], "ops": t.get("ops") or [], "edits": t.get("edits") or [],
+                "cut": list(p.direct_tests.get(t["symbol"], [])) if t["class"] == "caller" else []}
+        why = singles_fail(h, p, t["symbol"], cand["edits"])
+        if why:
+            return t["id"], why
         t2, why = finish(h, p, t["class"], cand, t["seed"], t["visible"], t["hidden"])
         if t2 is None:
             return t["id"], why
-        if t["class"] == "caller":  # the cut is g's direct tests, recomputed
-            t2["cut_tests"] = list(p.direct_tests.get(t["symbol"], []))
         t2["split"] = t.get("split")
         diff = sorted(k for k in set(t) | set(t2) if k not in CHECK_IGNORED and t.get(k) != t2.get(k))
         return t["id"], (f"rebuilt task differs in {diff}" if diff else None)
@@ -720,6 +870,9 @@ def main(argv=None):
     ap.add_argument("--test-timeout", type=int, default=30)
     ap.add_argument("--jobs", type=int, default=8)
     ap.add_argument("--report")
+    ap.add_argument("--allow-short-split", action="store_true",
+                    help="write the pool even when the split misses >= 10 dev / >= 20 test programs "
+                         "(scratch builds and extensions only)")
     a = ap.parse_args(argv)
     if a.inputs_digest:
         print(inputs_digest())
