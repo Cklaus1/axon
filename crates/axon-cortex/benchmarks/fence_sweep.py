@@ -18,9 +18,10 @@ refusal. The sweep passes only with zero flips. It spends no model call.
 Usage:
     AXON_BIN=... CORTEX_BIN=... python3 fence_sweep.py [--corpus FILE ...] [--json]
 
-Exit 0: zero flips. Exit 1: at least one flip (each printed). Exit 2: a task
-could not be swept (no grant, a run that never completed in either arm) —
-never a pass.
+Exit 0: zero flips over at least one swept task. Exit 1: at least one flip
+(each printed). Exit 2: nothing was proven — a corpus that does not load or
+holds no task, a task that could not be swept (no grant, a run that never
+completed in either arm, a crash), so zero swept tasks — never a pass.
 """
 import argparse
 import concurrent.futures
@@ -73,7 +74,18 @@ def axon_test(ws, rel, env):
 
 
 def sweep(set_name, t):
-    """One task: its grant, and the flips the fence causes on each source."""
+    """One task: its grant, and the flips the fence causes on each source. A
+    crash is the task's error, never an uncaught exception (whose exit 1 the
+    gate would read as a flip, and which would hide every other row)."""
+    try:
+        return sweep_one(set_name, t)
+    except Exception as e:  # noqa: BLE001 — reported as this task's error
+        return {"set": set_name, "id": t.get("id"), "file": t.get("file"),
+                "symbol": t.get("symbol"), "flips": [],
+                "error": f"sweep crashed: {type(e).__name__}: {e}"}
+
+
+def sweep_one(set_name, t):
     row = {"set": set_name, "id": t["id"], "file": t["file"], "symbol": t["symbol"],
            "flips": [], "error": None}
     with tempfile.TemporaryDirectory(prefix="fence-sweep-") as ws:
@@ -120,7 +132,18 @@ def main():
     jobs = []
     for path in args.corpus or DEFAULT_CORPORA:
         name = os.path.relpath(path, HERE)
-        for t in corpus.load(path)["tasks"]:
+        # corpus.load raises SystemExit (exit 1, read as a flip) on a task
+        # whose rebuilt text does not match; any failure to load is exit 2.
+        try:
+            tasks = corpus.load(path)["tasks"]
+        except (Exception, SystemExit) as e:  # noqa: BLE001
+            print(f"ERROR {name}: the corpus does not load: {e}", file=sys.stderr)
+            sys.exit(2)
+        if not tasks:
+            print(f"ERROR {name}: the corpus holds no task; nothing would be swept",
+                  file=sys.stderr)
+            sys.exit(2)
+        for t in tasks:
             jobs.append((name, t))
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
         rows = list(pool.map(lambda j: sweep(*j), jobs))
@@ -143,14 +166,15 @@ def main():
         "fence_envs": sorted({json.dumps(r["fence_env"], sort_keys=True) for r in swept}),
         "flips": sum(len(r["flips"]) for r in rows),
         "errors": len(errors),
-        "pass": not errors and not flipped,
+        "pass": bool(swept) and not errors and not flipped,
     }
     if args.json:
         print(json.dumps(summary))
     else:
         for k, v in summary.items():
             print(f"{k}: {v}")
-    sys.exit(2 if errors else 1 if flipped else 0)
+    # Zero swept tasks proves nothing, whatever else happened.
+    sys.exit(2 if errors or not swept else 1 if flipped else 0)
 
 
 if __name__ == "__main__":
