@@ -1,0 +1,1161 @@
+{
+ "programs": {
+  "crates/axon-cortex/benchmarks/headroom/programs/validate.ax": {
+   "stratum": "C",
+   "rejected": "ungradeable: corpus.test_blocks mis-delimits test `test_opener_helpers` (brace in a string?)"
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/asi/kernel_orchestrator.ax": {
+   "stratum": "D",
+   "functions": 2,
+   "singles": 2,
+   "tasks": 1,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 1
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 2
+   },
+   "dropped": "fewer than 3 valid tasks"
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/browser/demo.ax": {
+   "stratum": "D",
+   "functions": 1,
+   "singles": 9,
+   "tasks": 4,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 9
+   }
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/enums.ax": {
+   "stratum": "D",
+   "functions": 1,
+   "singles": 2,
+   "tasks": 1,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 1
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 2
+   },
+   "dropped": "fewer than 3 valid tasks"
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/feature_tour.ax": {
+   "stratum": "D",
+   "functions": 3,
+   "singles": 15,
+   "tasks": 6,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 15
+   }
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/fintech/overdraft.ax": {
+   "stratum": "D",
+   "functions": 1,
+   "singles": 7,
+   "tasks": 6,
+   "by_class": {
+    "refine": 2,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 5
+   }
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/flagship/cve/CVE-2024-34359/model_loader.ax": {
+   "stratum": "D",
+   "functions": 2,
+   "singles": 0,
+   "tasks": 0,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 0
+   },
+   "rejections": {},
+   "dropped": "fewer than 3 valid tasks"
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/flagship/cve/CVE-2024-5314/list_records.ax": {
+   "stratum": "D",
+   "functions": 1,
+   "singles": 3,
+   "tasks": 3,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 3
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 3
+   }
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/goals/redteam-goal.ax": {
+   "stratum": "D",
+   "functions": 3,
+   "singles": 9,
+   "tasks": 4,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 9,
+    "multi: corpus.task_from_broken validity": 2
+   }
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/hello.ax": {
+   "stratum": "D",
+   "functions": 1,
+   "singles": 0,
+   "tasks": 0,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 0
+   },
+   "rejections": {},
+   "dropped": "fewer than 3 valid tasks"
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/kernel/hello_kernel_slice3.ax": {
+   "stratum": "D",
+   "functions": 5,
+   "singles": 0,
+   "tasks": 0,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 0
+   },
+   "rejections": {},
+   "dropped": "fewer than 3 valid tasks"
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/mobile/compute.ax": {
+   "stratum": "D",
+   "functions": 1,
+   "singles": 9,
+   "tasks": 4,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 9
+   }
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/options.ax": {
+   "stratum": "D",
+   "functions": 1,
+   "singles": 8,
+   "tasks": 4,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 8,
+    "multi: corpus.task_from_broken validity": 1
+   }
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/r27/killable_agent.ax": {
+   "stratum": "D",
+   "functions": 1,
+   "singles": 9,
+   "tasks": 4,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 9
+   }
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/sealed/candidates/honest/sol.ax": {
+   "stratum": "D",
+   "functions": 1,
+   "singles": 1,
+   "tasks": 0,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 0
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 1
+   },
+   "dropped": "fewer than 3 valid tasks"
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/should_fail_test.ax": {
+   "stratum": "D",
+   "functions": 2,
+   "singles": 5,
+   "tasks": 1,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 1
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 5,
+    "multi: corpus.task_from_broken validity": 4
+   },
+   "dropped": "fewer than 3 valid tasks"
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/structs.ax": {
+   "stratum": "D",
+   "functions": 1,
+   "singles": 9,
+   "tasks": 6,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 9
+   }
+  },
+  "crates/axon-cortex/benchmarks/hardset/src/sum_types.ax": {
+   "stratum": "D",
+   "functions": 1,
+   "singles": 5,
+   "tasks": 4,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 5
+   }
+  },
+  "crates/axon-cortex/benchmarks/tempt/src/examples/traits_demo.ax": {
+   "stratum": "D",
+   "functions": 6,
+   "singles": 25,
+   "tasks": 4,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 0,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 25,
+    "multi: corpus.task_from_broken validity": 13
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/bowling.ax": {
+   "stratum": "C",
+   "functions": 11,
+   "singles": 94,
+   "tasks": 10,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 4,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 1
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/bsearch.ax": {
+   "stratum": "C",
+   "functions": 9,
+   "singles": 53,
+   "tasks": 8,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 35
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/calc_lex.ax": {
+   "stratum": "C",
+   "functions": 10,
+   "singles": 123,
+   "tasks": 14,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 4,
+    "multi": 4
+   },
+   "rejections": {
+    "caps: locate ranks the symbol 8, outside the top 6": 1,
+    "caller: fewer than 2 failing tests once g's tests are cut": 3,
+    "caller: locate ranks the symbol 0, outside the top 6": 1,
+    "subtle: locate ranks the symbol 0, outside the top 6": 2
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/cart.ax": {
+   "stratum": "C",
+   "functions": 10,
+   "singles": 63,
+   "tasks": 11,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 5,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 47,
+    "multi: corpus.task_from_broken validity": 2
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/csvrow.ax": {
+   "stratum": "C",
+   "functions": 11,
+   "singles": 122,
+   "tasks": 12,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 2,
+    "subtle": 4,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 53,
+    "multi: corpus.task_from_broken validity": 4
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/dates.ax": {
+   "stratum": "C",
+   "functions": 7,
+   "singles": 99,
+   "tasks": 12,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 6,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 79,
+    "multi: corpus.task_from_broken validity": 1,
+    "multi: broken test run did not complete": 1
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/elevator.ax": {
+   "stratum": "C",
+   "functions": 10,
+   "singles": 95,
+   "tasks": 14,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 4,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 33,
+    "caller: the symbol is not in reached_by_all of the failing visible checks": 10,
+    "multi: corpus.task_from_broken validity": 2
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/gradebook.ax": {
+   "stratum": "C",
+   "functions": 10,
+   "singles": 51,
+   "tasks": 8,
+   "by_class": {
+    "refine": 2,
+    "caps": 0,
+    "caller": 0,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 43,
+    "multi: corpus.task_from_broken validity": 2
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/graph.ax": {
+   "stratum": "C",
+   "functions": 10,
+   "singles": 80,
+   "tasks": 12,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 4,
+    "subtle": 4,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 8,
+    "multi: corpus.task_from_broken validity": 2
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/gridpath.ax": {
+   "stratum": "C",
+   "functions": 9,
+   "singles": 101,
+   "tasks": 15,
+   "by_class": {
+    "refine": 1,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 4,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 24
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/heap.ax": {
+   "stratum": "C",
+   "functions": 10,
+   "singles": 76,
+   "tasks": 11,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 5,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 54,
+    "multi: corpus.task_from_broken validity": 1
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/histogram.ax": {
+   "stratum": "C",
+   "functions": 9,
+   "singles": 88,
+   "tasks": 12,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 4,
+    "subtle": 4,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 52
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/interest.ax": {
+   "stratum": "C",
+   "functions": 6,
+   "singles": 64,
+   "tasks": 13,
+   "by_class": {
+    "refine": 1,
+    "caps": 0,
+    "caller": 4,
+    "subtle": 4,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 42,
+    "multi: corpus.task_from_broken validity": 6
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/intervals.ax": {
+   "stratum": "C",
+   "functions": 8,
+   "singles": 69,
+   "tasks": 12,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 6,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 37,
+    "multi: corpus.task_from_broken validity": 1
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/inventory.ax": {
+   "stratum": "C",
+   "functions": 7,
+   "singles": 51,
+   "tasks": 10,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 4,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 46
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/invoice.ax": {
+   "stratum": "C",
+   "functions": 11,
+   "singles": 81,
+   "tasks": 17,
+   "by_class": {
+    "refine": 1,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 6,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 29
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/kvconfig.ax": {
+   "stratum": "C",
+   "functions": 8,
+   "singles": 55,
+   "tasks": 15,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 4,
+    "subtle": 7,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 23,
+    "multi: corpus.task_from_broken validity": 1
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/lcs.ax": {
+   "stratum": "C",
+   "functions": 9,
+   "singles": 120,
+   "tasks": 13,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 2,
+    "subtle": 5,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 61
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/ledger.ax": {
+   "stratum": "C",
+   "functions": 11,
+   "singles": 118,
+   "tasks": 14,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 2,
+    "subtle": 6,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 75
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/library.ax": {
+   "stratum": "C",
+   "functions": 13,
+   "singles": 109,
+   "tasks": 15,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 5,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 8
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/matrix.ax": {
+   "stratum": "C",
+   "functions": 8,
+   "singles": 66,
+   "tasks": 8,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 50,
+    "multi: corpus.task_from_broken validity": 2
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/paging.ax": {
+   "stratum": "C",
+   "functions": 8,
+   "singles": 70,
+   "tasks": 12,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 4,
+    "subtle": 4,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 7,
+    "multi: corpus.task_from_broken validity": 1
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/parking.ax": {
+   "stratum": "C",
+   "functions": 10,
+   "singles": 88,
+   "tasks": 17,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 7,
+    "multi": 4
+   },
+   "rejections": {
+    "caps: the symbol is not in reached_by_all of the failing visible checks": 1,
+    "caller: fewer than 2 failing tests once g's tests are cut": 11,
+    "multi: the symbol is not in reached_by_all of the failing visible checks": 2
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/playlist.ax": {
+   "stratum": "C",
+   "functions": 11,
+   "singles": 79,
+   "tasks": 12,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 2,
+    "subtle": 4,
+    "multi": 4
+   },
+   "rejections": {
+    "refine: corpus.task_from_broken validity": 4,
+    "caller: fewer than 2 failing tests once g's tests are cut": 54
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/poly.ax": {
+   "stratum": "C",
+   "functions": 8,
+   "singles": 76,
+   "tasks": 8,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 60
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/portfolio.ax": {
+   "stratum": "C",
+   "functions": 11,
+   "singles": 83,
+   "tasks": 17,
+   "by_class": {
+    "refine": 1,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 6,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 7,
+    "multi: corpus.task_from_broken validity": 1
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/radix.ax": {
+   "stratum": "C",
+   "functions": 12,
+   "singles": 112,
+   "tasks": 14,
+   "by_class": {
+    "refine": 2,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "refine: corpus.task_from_broken validity": 1,
+    "caller: fewer than 2 failing tests once g's tests are cut": 39
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/ranked_vote.ax": {
+   "stratum": "C",
+   "functions": 8,
+   "singles": 104,
+   "tasks": 10,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 2,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 38
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/rational.ax": {
+   "stratum": "C",
+   "functions": 12,
+   "singles": 118,
+   "tasks": 12,
+   "by_class": {
+    "refine": 2,
+    "caps": 2,
+    "caller": 2,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 101,
+    "multi: corpus.task_from_broken validity": 2
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/recurrence.ax": {
+   "stratum": "C",
+   "functions": 10,
+   "singles": 90,
+   "tasks": 13,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 2,
+    "subtle": 5,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 51
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/rle.ax": {
+   "stratum": "C",
+   "functions": 7,
+   "singles": 44,
+   "tasks": 9,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 3,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 38,
+    "multi: corpus.task_from_broken validity": 1
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/roman.ax": {
+   "stratum": "C",
+   "functions": 7,
+   "singles": 60,
+   "tasks": 11,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 4,
+    "subtle": 3,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 2
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/roundrobin.ax": {
+   "stratum": "C",
+   "functions": 10,
+   "singles": 86,
+   "tasks": 12,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 2,
+    "subtle": 4,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 47
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/rpn.ax": {
+   "stratum": "C",
+   "functions": 13,
+   "singles": 109,
+   "tasks": 13,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 4,
+    "subtle": 5,
+    "multi": 4
+   },
+   "rejections": {}
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/semver.ax": {
+   "stratum": "C",
+   "functions": 12,
+   "singles": 162,
+   "tasks": 16,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 6,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 16
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/shipping.ax": {
+   "stratum": "C",
+   "functions": 11,
+   "singles": 100,
+   "tasks": 15,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 5,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 6
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/sparse.ax": {
+   "stratum": "C",
+   "functions": 11,
+   "singles": 121,
+   "tasks": 16,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 6,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 39,
+    "multi: corpus.task_from_broken validity": 3
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/temps.ax": {
+   "stratum": "C",
+   "functions": 7,
+   "singles": 70,
+   "tasks": 9,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 3,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 62,
+    "multi: corpus.task_from_broken validity": 3
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/textstats.ax": {
+   "stratum": "C",
+   "functions": 7,
+   "singles": 60,
+   "tasks": 9,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 3,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 45
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/ticketq.ax": {
+   "stratum": "C",
+   "functions": 11,
+   "singles": 108,
+   "tasks": 15,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 3,
+    "subtle": 6,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 70
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/tictactoe.ax": {
+   "stratum": "C",
+   "functions": 12,
+   "singles": 113,
+   "tasks": 12,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 25,
+    "multi: corpus.task_from_broken validity": 1
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/tokenbucket.ax": {
+   "stratum": "C",
+   "functions": 11,
+   "singles": 83,
+   "tasks": 17,
+   "by_class": {
+    "refine": 2,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 5,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 54,
+    "multi: corpus.task_from_broken validity": 3
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/tournament.ax": {
+   "stratum": "C",
+   "functions": 14,
+   "singles": 154,
+   "tasks": 17,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 4,
+    "subtle": 7,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 54,
+    "caller: the symbol is not in reached_by_all of the failing visible checks": 9,
+    "caller: locate ranks the symbol 11, outside the top 6": 2
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/units.ax": {
+   "stratum": "C",
+   "functions": 9,
+   "singles": 30,
+   "tasks": 8,
+   "by_class": {
+    "refine": 0,
+    "caps": 0,
+    "caller": 2,
+    "subtle": 2,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 19
+   }
+  },
+  "crates/axon-cortex/benchmarks/headroom/programs/wordwrap.ax": {
+   "stratum": "C",
+   "functions": 9,
+   "singles": 98,
+   "tasks": 14,
+   "by_class": {
+    "refine": 0,
+    "caps": 2,
+    "caller": 2,
+    "subtle": 6,
+    "multi": 4
+   },
+   "rejections": {
+    "caller: fewer than 2 failing tests once g's tests are cut": 26,
+    "multi: corpus.task_from_broken validity": 1
+   }
+  }
+ },
+ "binaries": {
+  "axon_sha256": "819e04609b49c2b329edb2f79bd5a7653d5ee59ed8ddf5809a29c3247924ddda",
+  "cortex_sha256": "e052ea815762ad13a6417e94efa5d3f5c08854c483c320da1fddeab6087a433a"
+ },
+ "wall_s": {
+  "total": 444.5,
+  "singles": 371.8,
+  "tasks": 72.7
+ },
+ "yield": {
+  "tasks": 613,
+  "programs": 56,
+  "dropped_programs": 7,
+  "by_class": {
+   "refine": 14,
+   "caps": 48,
+   "caller": 133,
+   "subtle": 195,
+   "multi": 223
+  },
+  "by_cell": {
+   "caller:1": 88,
+   "caller:2": 45,
+   "caps:-": 48,
+   "multi:2": 112,
+   "multi:3": 111,
+   "refine:refine": 12,
+   "refine:verify": 2,
+   "subtle:argswap-typed": 42,
+   "subtle:bound": 90,
+   "subtle:drop-else": 18,
+   "subtle:wrong-field": 45
+  },
+  "by_stratum": {
+   "D": 49,
+   "C": 564
+  }
+ },
+ "rejections": {
+  "caller: fewer than 2 failing tests once g's tests are cut": 1790,
+  "caller: locate ranks the symbol 0, outside the top 6": 1,
+  "caller: locate ranks the symbol 11, outside the top 6": 2,
+  "caller: the symbol is not in reached_by_all of the failing visible checks": 19,
+  "caps: locate ranks the symbol 8, outside the top 6": 1,
+  "caps: the symbol is not in reached_by_all of the failing visible checks": 1,
+  "multi: broken test run did not complete": 1,
+  "multi: corpus.task_from_broken validity": 60,
+  "multi: the symbol is not in reached_by_all of the failing visible checks": 2,
+  "refine: corpus.task_from_broken validity": 5,
+  "subtle: locate ranks the symbol 0, outside the top 6": 2
+ },
+ "split": {
+  "crates/axon-cortex/benchmarks/hardset/src/browser/demo.ax": "test",
+  "crates/axon-cortex/benchmarks/hardset/src/feature_tour.ax": "test",
+  "crates/axon-cortex/benchmarks/hardset/src/fintech/overdraft.ax": "dev",
+  "crates/axon-cortex/benchmarks/hardset/src/flagship/cve/CVE-2024-5314/list_records.ax": "dev",
+  "crates/axon-cortex/benchmarks/hardset/src/goals/redteam-goal.ax": "test",
+  "crates/axon-cortex/benchmarks/hardset/src/mobile/compute.ax": "dev",
+  "crates/axon-cortex/benchmarks/hardset/src/options.ax": "test",
+  "crates/axon-cortex/benchmarks/hardset/src/r27/killable_agent.ax": "test",
+  "crates/axon-cortex/benchmarks/hardset/src/structs.ax": "test",
+  "crates/axon-cortex/benchmarks/hardset/src/sum_types.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/bowling.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/bsearch.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/calc_lex.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/cart.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/csvrow.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/dates.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/elevator.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/gradebook.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/graph.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/gridpath.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/heap.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/histogram.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/interest.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/intervals.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/inventory.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/invoice.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/kvconfig.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/lcs.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/ledger.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/library.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/matrix.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/paging.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/parking.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/playlist.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/poly.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/portfolio.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/radix.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/ranked_vote.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/rational.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/recurrence.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/rle.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/roman.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/roundrobin.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/rpn.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/semver.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/shipping.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/sparse.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/temps.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/textstats.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/ticketq.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/tictactoe.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/tokenbucket.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/tournament.ax": "test",
+  "crates/axon-cortex/benchmarks/headroom/programs/units.ax": "dev",
+  "crates/axon-cortex/benchmarks/headroom/programs/wordwrap.ax": "dev",
+  "crates/axon-cortex/benchmarks/tempt/src/examples/traits_demo.ax": "dev"
+ },
+ "split_ok": true,
+ "out_sha256": "c5e9f812e1144bb7f30d1d9f5edeca2268238724cf25d3123cef45fa2995a426"
+}

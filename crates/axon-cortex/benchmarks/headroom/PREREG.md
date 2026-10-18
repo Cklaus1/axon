@@ -41,16 +41,16 @@ Source of the design: `tasks/followup-spec.md` FU-1c, FU-1f, FU-1h and FU-10
 
 | field | value |
 |---|---|
-| pilot (20 hx-dev tasks, h55 k=1, h45 k=1): cost per task-trial by outcome | `TBD` |
-| pilot wall time, rate-limit rows | `TBD` |
+| pilot (20 hx-dev tasks, h55 k=1, h45 k=1): cost per task-trial by outcome | h55: 20/20 `verified_done`, $0.0006 mean ($0.012 total); h45: 19 `verified_done` $0.0044 mean, 1 `budget_exhausted` $0.0224 ($0.106 total). Ranker spend $0 (no row called it). Ids: seeded `random.Random(1).sample` of the 182 dev ids. |
+| pilot wall time, rate-limit rows | h55 27 s, h45 64 s (`--parallel 3`); 0 rate-limited rows |
 | incumbent | f26e9506 cortex, arm B |
 | primary model, k on dev | `claude-haiku-5-5`, k = 3 |
-| cells: final (class, knob) list | `TBD` |
-| eligible cells (>= 12 dev tasks from >= 3 dev programs) | `TBD` |
-| prior (beta-binomial fit across cells): mean, precision | `TBD` |
-| kept cells (shrunk rate in [0.3, 0.7]) with shrunk and raw rates | `TBD` |
-| cross-fitted predicted test rate (required in [0.2, 0.8]) | `TBD` |
-| h45 kept-cell dev rate (k = 1); informative iff in [0.1, 0.9] | `TBD` |
+| cells: final (class, knob) list | caller:1, caller:2, caps:-, multi:2, multi:3, refine:refine, subtle:argswap-typed, subtle:bound, subtle:drop-else, subtle:wrong-field |
+| eligible cells (>= 12 dev tasks from >= 3 dev programs) | caller:1, caller:2, caps:-, multi:2, multi:3, subtle:bound, subtle:wrong-field |
+| prior (beta-binomial fit across cells): mean, precision | mean 0.94, precision 2.33 (a 2.187, b 0.140); caller:2 shrunk 0.571, caller:1 shrunk 0.877. Full report `calibration-2026-10-18/calibration.json`, with the dev rows (`DEV-H55.jsonl`, `DEV-H45.jsonl`), the pilot rows and the build report |
+| kept cells (shrunk rate in [0.3, 0.7]) with shrunk and raw rates | caller:2 only (raw 18/36 = 0.50). Raw dev rates (h55 k = 3, 546 task-trials, $0.436): caller:1 68/78, caps 36/36, multi:2 108/108, multi:3 104/105, refine 21/21, argswap-typed 33/33, bound 72/72, drop-else 15/15, wrong-field 42/42 |
+| cross-fitted predicted test rate (required in [0.2, 0.8]) | 0.50 |
+| h45 kept-cell dev rate (k = 1); informative iff in [0.1, 0.9] | 12/12 = 1.0: uninformative ($0.124) |
 
 - Cells are (class, knob): multi 2|3 mutations; caller depth 1|2; subtle
   operator id; refine refine|verify; caps `-`.
@@ -114,7 +114,8 @@ reported next to the result. The criterion stays on the pooled set; the C-only
 **Known confound (A#17).** The incumbent's early stop counts a proposal as
 inert when it leaves the visible failing set unchanged. A partial fix of a
 `multi` task can look inert, so `multi` headroom partly measures the
-early-stop heuristic. The `multi` cell rates are reported separately: `TBD`.
+early-stop heuristic. The `multi` cell rates are reported separately: dev h55
+multi:2 108/108, multi:3 104/105 (not kept).
 
 ## 5. FU-10: typed-feedback (R4) keep/remove
 
@@ -142,4 +143,26 @@ Computed by `stats.py compare` / `stats.py route2` and `stats.fu10_verdict`.
 
 ## 6. Results (append only, after the freeze)
 
-None yet.
+**2026-10-18 — calibration acceptance failed; hx-test NOT frozen; FU-11 not run.**
+
+- `calibrate.py` (seed 1, cap-seed 1) keeps one cell, caller:2. Its test
+  selection is 33 tasks from 17 programs; the acceptance needs >= 150 tasks
+  from >= 20 programs. `--write-sets` refuses (IA-13), and nothing was written.
+- The remedy in section 1 item 3 (more pool, same recipe) needs about 170
+  more test programs at caller:2's yield (33 tasks from 38 test programs,
+  `--per-cell-program 2`). Not pursued: the set would be one cell, and that
+  cell's failures are not generation failures (below), so neither the batch
+  (FU-2..FU-9 are correctness fixes) nor FU-10 (feedback reaches the model
+  only after a REJECTED attempt) could move it.
+- **Every not-clean caller trial is a false success** (28 of 114 caller
+  task-trials, 10 tasks; 0 in every other class): the incumbent patched the
+  CALLER (`true_symbol_changed` false), the hidden check passed, and the
+  defective helper's own tests (cut from the task, restored at grading) still
+  fail (`regressed`). h45 patched the helper on 12/12 caller:2 tasks. This is
+  a property of the caller recipe (the hidden check exercises the helper only
+  through the caller), logged as O-FU-08.
+- Sections 3 and 5 stay `TBD`: no design was chosen and no T2 run was made.
+  O-S1-18 (FU-10 keep/remove) stays open; R4 stays on main unchanged. T2 is
+  kept on `fu/r4-ablation` (5d257b75, patch sha256
+  `f0209bfc8e23b80dafea44bfa3ab6dd41d8b6fb37e43ed9e1c3baa6c0b2cecc6`).
+- hard-once is not spent.

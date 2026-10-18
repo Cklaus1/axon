@@ -1,0 +1,233 @@
+{
+ "seed": 1,
+ "cap": 8,
+ "cap_seed": 1,
+ "band": [
+  0.3,
+  0.7
+ ],
+ "min_tasks": 12,
+ "min_programs": 3,
+ "prior": {
+  "a": 2.1866239561501235,
+  "b": 0.1395717418819229,
+  "mean": 0.9399999999999998,
+  "precision": 2.3261956980320466
+ },
+ "cells": {
+  "caller:1": {
+   "tasks": 26,
+   "programs": 13,
+   "raw_rate": 0.8717948717948717,
+   "shrunk_rate": 0.8773959937212276,
+   "eligible": true,
+   "kept": false,
+   "test_pool": 62
+  },
+  "caller:2": {
+   "tasks": 12,
+   "programs": 6,
+   "raw_rate": 0.5,
+   "shrunk_rate": 0.5714443756533844,
+   "eligible": true,
+   "kept": true,
+   "test_pool": 33
+  },
+  "caps:-": {
+   "tasks": 12,
+   "programs": 6,
+   "raw_rate": 1.0,
+   "shrunk_rate": 0.9902575851381749,
+   "eligible": true,
+   "kept": false,
+   "test_pool": 36
+  },
+  "multi:2": {
+   "tasks": 36,
+   "programs": 18,
+   "raw_rate": 1.0,
+   "shrunk_rate": 0.9963583199600191,
+   "eligible": true,
+   "kept": false,
+   "test_pool": 76
+  },
+  "multi:3": {
+   "tasks": 35,
+   "programs": 18,
+   "raw_rate": 0.9904761904761906,
+   "shrunk_rate": 0.9873304775273365,
+   "eligible": true,
+   "kept": false,
+   "test_pool": 76
+  },
+  "refine:refine": {
+   "tasks": 7,
+   "programs": 5,
+   "raw_rate": 1.0,
+   "shrunk_rate": 0.9850344399365998,
+   "eligible": false,
+   "kept": false,
+   "test_pool": 5
+  },
+  "subtle:argswap-typed": {
+   "tasks": 11,
+   "programs": 6,
+   "raw_rate": 1.0,
+   "shrunk_rate": 0.9895265126638855,
+   "eligible": false,
+   "kept": false,
+   "test_pool": 31
+  },
+  "subtle:bound": {
+   "tasks": 24,
+   "programs": 12,
+   "raw_rate": 1.0,
+   "shrunk_rate": 0.9946983702665267,
+   "eligible": true,
+   "kept": false,
+   "test_pool": 66
+  },
+  "subtle:drop-else": {
+   "tasks": 5,
+   "programs": 3,
+   "raw_rate": 1.0,
+   "shrunk_rate": 0.980948947088676,
+   "eligible": false,
+   "kept": false,
+   "test_pool": 13
+  },
+  "subtle:wrong-field": {
+   "tasks": 14,
+   "programs": 7,
+   "raw_rate": 1.0,
+   "shrunk_rate": 0.9914510554409961,
+   "eligible": true,
+   "kept": false,
+   "test_pool": 31
+  }
+ },
+ "eligible": [
+  "caller:1",
+  "caller:2",
+  "caps:-",
+  "multi:2",
+  "multi:3",
+  "subtle:bound",
+  "subtle:wrong-field"
+ ],
+ "kept": [
+  "caller:2"
+ ],
+ "crossfit": {
+  "seed": 1,
+  "folds": [
+   {
+    "programs": [
+     "crates/axon-cortex/benchmarks/hardset/src/flagship/cve/CVE-2024-5314/list_records.ax",
+     "crates/axon-cortex/benchmarks/hardset/src/mobile/compute.ax",
+     "crates/axon-cortex/benchmarks/hardset/src/sum_types.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/interest.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/intervals.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/invoice.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/rational.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/units.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/wordwrap.ax"
+    ],
+    "prior": [
+     9.034328640906239,
+     0.3764303600377603
+    ],
+    "kept": [],
+    "cells": {}
+   },
+   {
+    "programs": [
+     "crates/axon-cortex/benchmarks/hardset/src/fintech/overdraft.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/bowling.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/bsearch.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/dates.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/graph.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/gridpath.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/recurrence.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/shipping.ax",
+     "crates/axon-cortex/benchmarks/tempt/src/examples/traits_demo.ax"
+    ],
+    "prior": [
+     1.6358124757427628,
+     0.1231256702171971
+    ],
+    "kept": [
+     "caller:2"
+    ],
+    "cells": {
+     "caller:2": {
+      "oof_rate": 0.5,
+      "oof_tasks": 4,
+      "test_weight": 33
+     }
+    }
+   }
+  ],
+  "predicted_test_rate": 0.5
+ },
+ "hx_dev": [
+  "hx-caller-744b244e8b",
+  "hx-multi-6d7581e843"
+ ],
+ "kept_dev_ids": [
+  "hx-caller-1f48cb3886",
+  "hx-caller-40e94fc37f",
+  "hx-caller-64c05522e4",
+  "hx-caller-7d18624da4",
+  "hx-caller-861bfd5b66",
+  "hx-caller-89ce2e67bd",
+  "hx-caller-acd3301087",
+  "hx-caller-b0cd6b3c98",
+  "hx-caller-b857c78772",
+  "hx-caller-c7763d12fa",
+  "hx-caller-d4604e9155",
+  "hx-caller-f2a70c0954"
+ ],
+ "test_ids": [
+  "hx-caller-01148942da",
+  "hx-caller-03b4a11cbb",
+  "hx-caller-05a3dbc812",
+  "hx-caller-08e20aedc6",
+  "hx-caller-1d96ddd7e8",
+  "hx-caller-2554eb7f19",
+  "hx-caller-27189b7d0e",
+  "hx-caller-2c30ee870a",
+  "hx-caller-39768d4bbb",
+  "hx-caller-47d91e1f3a",
+  "hx-caller-4aa228b582",
+  "hx-caller-5398afeb90",
+  "hx-caller-5992f6ab8c",
+  "hx-caller-59ebd9984e",
+  "hx-caller-6558ad8a8c",
+  "hx-caller-730b2c1e28",
+  "hx-caller-738449a8ea",
+  "hx-caller-73fbb876db",
+  "hx-caller-7a57fa3bd0",
+  "hx-caller-7e28024349",
+  "hx-caller-7fb000101f",
+  "hx-caller-8778b2d53c",
+  "hx-caller-8920b6686e",
+  "hx-caller-8ec8f6df8d",
+  "hx-caller-8f74185b67",
+  "hx-caller-98c72271b9",
+  "hx-caller-9ec7b74415",
+  "hx-caller-a24b5af1b1",
+  "hx-caller-adc8afbe20",
+  "hx-caller-d3a0700d7a",
+  "hx-caller-d5565b32c9",
+  "hx-caller-eb298941bf",
+  "hx-caller-f87a0de435"
+ ],
+ "test_programs": 17,
+ "h45": {
+  "n": 12,
+  "rate": 1.0,
+  "informative": false
+ },
+ "pool_sha256": "c5e9f812e1144bb7f30d1d9f5edeca2268238724cf25d3123cef45fa2995a426"
+}
