@@ -3159,3 +3159,67 @@ fn r1_a_candidate_the_walker_cannot_classify_is_refused() {
     assert_eq!(std::fs::read_to_string(ws.join("broken.ax")).unwrap(), src);
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// R5: `accepted.sha256` is the digest the deciding Verified event graded,
+/// and the file on disk must still be those bytes when the run reports it.
+/// Here the file changes AFTER acceptance: `--label-log` is a FIFO, and the
+/// label row (written after the verdict, carrying a >64 KiB source) blocks
+/// cortex until this test, having rewritten the file, drains it. Before the
+/// fix the run exited 0 and reported the digest of the REWRITTEN bytes —
+/// an artifact no check ever graded. Now it fails closed: exit 22, a stderr
+/// line, `accepted: null`, and the file restored as found.
+#[test]
+fn r5_a_file_changed_after_acceptance_is_not_reported_as_accepted() {
+    let ws = workspace("r5_late_change");
+    let path = ws.join("broken.ax");
+    let mut src = std::fs::read_to_string(&path).unwrap();
+    src.push_str(&format!("\n// {}\n", "x".repeat(80 * 1024)));
+    std::fs::write(&path, &src).unwrap();
+    let fifo = ws.join("label.fifo");
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let tampered = src.replace("n + 2", "n * 2 + 0");
+    let drain = {
+        let (fifo, path, tampered) = (fifo.clone(), path.clone(), tampered.clone());
+        std::thread::spawn(move || {
+            use std::io::Read;
+            // Returns once cortex opened the log for its row, which it
+            // cannot finish writing (it exceeds the pipe buffer) until read.
+            let mut r = std::fs::File::open(&fifo).unwrap();
+            std::fs::write(&path, &tampered).unwrap();
+            let mut row = String::new();
+            r.read_to_string(&mut row).unwrap();
+            row
+        })
+    };
+    let (code, v, err) = r1_repair(
+        &ws,
+        "broken.ax",
+        "literal:\n    n * 2\n",
+        &["--label-log", fifo.to_str().unwrap(), "--label-source"],
+    );
+    // Should cortex never have opened the log, release the reader (a no-op
+    // when it did: with no reader left, this open fails with ENXIO).
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        const O_NONBLOCK: i32 = 0o4000; // Linux
+        let _ = std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(O_NONBLOCK)
+            .open(&fifo);
+    }
+    let row = drain.join().unwrap();
+    assert!(row.contains("\"exit_code\""), "the label row was written");
+    assert_eq!(code, 22, "{err}{v}");
+    assert!(v["accepted"].is_null(), "{v}");
+    assert_eq!(v["outcome"], "blocked", "{v}");
+    assert!(
+        err.contains("not the bytes the hidden check graded"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), src);
+    let _ = std::fs::remove_dir_all(&ws);
+}

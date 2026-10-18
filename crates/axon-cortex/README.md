@@ -90,7 +90,10 @@ under `budget` in `--json`.
 **The accepted artifact is bound to its evidence.** The bytes the hidden check
 graded are digested before it spawns and re-read after the last acceptance
 check; a file changed in between is never accepted. `--json` reports
-`accepted: {path, sha256}` on exits 0 and 27.
+`accepted: {path, sha256}` on exits 0 and 27, where `sha256` is the digest the
+deciding verdict graded; the file is read once more before the run reports,
+and if it is no longer those bytes (changed after acceptance) the run fails
+closed: exit 22 `blocked`, `accepted: null`, the file restored as found.
 
 **The adjudicator** must be able to witness the repair. A check that already
 passes would accept the file unchanged, so it is refused (exit 26) rather than

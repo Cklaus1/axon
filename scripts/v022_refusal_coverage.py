@@ -1800,6 +1800,10 @@ EXEMPT += [
     (_SR, '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "{} could not be read before grading: {e}",',
      _CTX + "; R5: a file that cannot be read before the hidden check spawns could not be "
      "graded as anything in particular; Blocked (exit 22) grants nothing"),
+    ('crates/axon-cortex/src/episode.rs', 'pub fn deciding_graded_sha256(&self, exit_code: i32) -> Option<&str> {',
+     _CHK + "; R5: which Verified event decided a kept patch; `cortex repair` reports that event's digest "
+     "as `accepted.sha256` only if the file on disk still hashes to it, else exit 22 and accepted: null "
+     "(tests/cli.rs r5_a_file_changed_after_acceptance_is_not_reported_as_accepted, episode::tests)"),
     ('crates/axon-cortex/src/fence.rs', 'pub const CAPS_SCHEMA: &str = "axon-caps/1";',
      _FEN + "; an `axon caps` answer under any other schema is refused as unreadable (no grant -> exit 22, or Blocked for a candidate)"),
     ('crates/axon-cortex/src/fence.rs', 'Some(2) => return Err(CapsError::DidNotCompile(bounded(text.trim()))),',
