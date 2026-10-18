@@ -2682,3 +2682,12 @@ The broke-build revert (~runner.rs:1793) and `restore_base` (~2768) still write 
 
 ### O-FU-05 — [low] Two capability expression walkers remain (FU-2 consolidation rule)
 FU-2 fixed the predicate gap with one shared `program_roots` list and did not merge the walkers: `collect_caps_stmts` + `collect_caps_expr` (145 lines, `capabilities.rs` ~1257–1404) and S1's `visit_expr` (246 lines, ~1514–1759). Not merged because the fix needed only the roots list (it removed the duplicate roots list rather than adding one) and the two walkers differ in reach semantics (S1 tracks the reach set and per-fn hooks). A future merge must keep the agreement fixtures in `tests/predicate_capability_routes.rs` and M3760–M3764 green.
+
+### O-FU-06 — [medium] Checker gaps hit while authoring the 24 extension programs
+From AuthorC2/AuthorC3 (`/var/tmp/r51-tmp/AuthorC{2,3}-NOTES.md`, exact snippets there).
+- **Reproduced at fu/int (hx-bin axon 819e0460):** a user `fn ln(a, b, c, d)` shadowing the builtin gets only W0003 and `axon check` rc 0, then `ln(1, 2, 3, 4)` panics at run time `ln: expected 1 args, got 4` (rc 101). A call that cannot match the builtin's arity should be a type error.
+- **Reproduced, possibly by design:** `let core = s` on a `str` parameter moves `s` (E0601 on a later `len(s)`). Strings are immutable; decide whether `str` (and reads through `&[T]` params) should be copy/borrow.
+- **Not reproduced:** `len()` on an array bound by `?` (`let toks = tokenize(s)?; len(toks)` → E0102 "expected str") — the `?` extension of O-S1-24's match-pattern case; an early `return` marks a struct param moved for the rest of the fn; a line starting with `(` continues the previous expression as a call (gotcha not in `axon-for-llms.md`); `stdlib.md` says `parse_int` errors with "invalid integer" but the message is ``could not parse `x` as a base-10 integer`` and leading whitespace is accepted.
+
+### O-FU-07 — [low] `conformance.rs` leaks `cortex_gen_unauthorized_*` temp dirs
+178 `cortex_gen_unauthorized_*` directories accumulated in `TMPDIR` (`/var/tmp/r51-tmp`) across runs; the stage name comes from `crates/axon-cortex/tests/conformance.rs:1589` (`stage("gen_unauthorized")`). The test should clean up its workspace (or use a tempdir guard).
