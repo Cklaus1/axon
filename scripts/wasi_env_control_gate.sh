@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # WASI environment-control gate.
 #
-# The interpreter-only env controls (AXON_ALLOWED_EFFECTS, AXON_RECORD,
-# AXON_REPLAY, AXON_AUDIT_LEDGER) are REFUSED by a compiled binary, because a
+# The interpreter-only env controls (AXON_ALLOWED_EFFECTS, the ambient scope
+# AXON_ALLOWED_FS_READ / _FS_WRITE / _NET, AXON_RECORD, AXON_REPLAY,
+# AXON_AUDIT_LEDGER) are REFUSED by a compiled binary, because a
 # compiled engine cannot honour them and performing the effects anyway — with
 # no warning and exit 0 — is indistinguishable from a run the control allowed.
 # Native has refused since D-002. wasm32-wasip1 did NOT, and the classification
@@ -83,9 +84,13 @@ else
   bad "control: an unconstrained wasip1 run no longer works (exit $rc) — the refusal is too broad"
 fi
 
-for var in AXON_ALLOWED_EFFECTS AXON_RECORD AXON_REPLAY AXON_AUDIT_LEDGER; do
+for var in AXON_ALLOWED_EFFECTS AXON_ALLOWED_FS_READ AXON_ALLOWED_FS_WRITE AXON_ALLOWED_NET \
+           AXON_RECORD AXON_REPLAY AXON_AUDIT_LEDGER; do
   case "$var" in
     AXON_ALLOWED_EFFECTS) val="Pure" ;;
+    # Empty = deny every path/host of that kind: the strictest scope, so a
+    # binary that ran anyway would be the plainest violation.
+    AXON_ALLOWED_FS_READ|AXON_ALLOWED_FS_WRITE|AXON_ALLOWED_NET) val="" ;;
     *)                    val="$WORK/j.journal" ;;
   esac
   err="$("$WASMRT" --env "$var=$val" --invoke main "$WORK/io.linked.wasm" 2>&1 >/dev/null | grep -vi experimental)"
