@@ -12,15 +12,15 @@ Source of the design: `tasks/followup-spec.md` FU-1c, FU-1f, FU-1h and FU-10
 
 | field | value |
 |---|---|
-| builder binaries (built from a tree containing FU-7) | axon sha256 `TBD`, cortex sha256 `TBD` |
-| builder-input digest (`build.py --inputs-digest`) | `TBD` |
-| mutation seed (`build.py --seed`) | `TBD` |
-| split seed (`build.py --split-seed`) | `TBD` |
-| extension split seeds (new programs only), if any | `TBD` |
-| cross-fit fold seed (`calibrate.py --seed`) | `TBD` |
-| per-program cap draw seed (`calibrate.py --cap-seed`) | `TBD` |
-| pool: programs / tasks per stratum | `TBD` |
-| split: dev programs / test programs | `TBD` (required: test >= 20, dev >= 10) |
+| builder binaries (built from a tree containing FU-7) | axon sha256 `819e04609b49c2b329edb2f79bd5a7653d5ee59ed8ddf5809a29c3247924ddda`, cortex sha256 `e052ea815762ad13a6417e94efa5d3f5c08854c483c320da1fddeab6087a433a` (fu/int `b789a8f6` sources; copies at `/var/tmp/r51-tmp/hx-bin/`) |
+| builder-input digest (`build.py --inputs-digest`) | `fbe27d3b45300843c8cd8deaf30ad46f3b4dec75e719fa8aca2dc5c7708f8eff` |
+| mutation seed (`build.py --seed`) | 1 |
+| split seed (`build.py --split-seed`) | 1 |
+| extension split seeds (new programs only), if any | none. The 24 programs added after the first scratch build (`f9834709`, `d853e064`) were written before any model run on any hx task; the pool was built once over all 46 stratum-C and the stratum-D programs, so there is one split. |
+| cross-fit fold seed (`calibrate.py --seed`) | 1 |
+| per-program cap draw seed (`calibrate.py --cap-seed`) | 1 |
+| pool: programs / tasks per stratum | C: 45 programs / 564 tasks (`validate.ax` rejected: ungradeable); D: 11 programs / 49 tasks (7 dropped, < 3 valid tasks); total 613 tasks, pool sha256 `c5e9f812e1144bb7f30d1d9f5edeca2268238724cf25d3123cef45fa2995a426` (`--stratum all --jobs 16`, `--per-cell-program 2`) |
+| split: dev programs / test programs | 18 (13 C, 5 D) / 38 (32 C, 6 D); `split_ok` true (required: test >= 20, dev >= 10) |
 
 1. The pool is built by `build.py`, split by source program: all tasks of one
    program go to one split. The split is a seeded shuffle; dev gets
