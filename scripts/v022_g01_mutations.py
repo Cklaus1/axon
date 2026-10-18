@@ -11501,6 +11501,14 @@ MUTATIONS += [
      '    if !fence.env.is_empty() {\n        match runner.fence_conflicts(&file) {',
      '    if false && !fence.env.is_empty() {\n        match runner.fence_conflicts(&file) {',
      'axon-cortex', '--test cli', 'r1_a_file_the_fence_would_break_stops_with_fence_conflict'),
+    ('M3710', "S1 R5 x walk: an exit 27 reports an adjudicated state a later attempt undid (not put back)", _S1B,
+     '    let kept_adjudicated = if code == 27 {',
+     '    let kept_adjudicated = if false {',
+     'axon-cortex', '--test cli', 'r5_the_walk_keeps_the_adjudicated_state_it_reports'),
+    ('M3711', "S1 R5 x walk: a later candidate's regressed hidden pass decides an exit 27's digest", 'crates/axon-cortex/src/episode.rs',
+     '                27 if !*passed && graded_sha256.is_some() => Some(graded_sha256.as_deref()),',
+     '                27 if graded_sha256.is_some() => Some(graded_sha256.as_deref()),',
+     'axon-cortex', '--lib', 'episode::tests::a_later_candidates_regressed_pass_does_not_decide_an_adjudication'),
 ]
 
 # C9 round 15 (amendment 121): M3260 is retired under the four-cell rule against M3456. The
