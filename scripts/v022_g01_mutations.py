@@ -11536,7 +11536,7 @@ MUTATIONS += [
     ('M3718', "S1 R4: the first prompt's plain report skips the cleaner (copy name, hidden-naming lines)", _S1R,
      '        .filter_map(clean)',
      '        .filter_map(|l| Some(l.to_string()))',
-     'axon-cortex', '--lib', 'the_first_prompt_report_is_plain_text_and_cleaned'),
+     'axon-cortex', '--lib', 'runner::visible_report_tests::the_first_prompt_report_is_plain_text_and_cleaned'),
     ('M3719', "S1 R4: the first prompt loses the visible report of the file as found", _S1R,
      '                        if matches!(what, VisibleRun::AsFound) {',
      '                        if false {',
