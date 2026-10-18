@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: df8ba265a2b1b723eb6c7146f13f30377b1e5239
+generated-at: 44c8311c00eee6727849b7852a13b965ae773c62
 
-`git diff --numstat 31413ca7..df8ba265 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..44c8311c -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -28,7 +28,7 @@ generated-at: df8ba265a2b1b723eb6c7146f13f30377b1e5239
 | `crates/axon-core/src/borrow.rs` | 18 | 3 |
 | `crates/axon-core/src/builtins.rs` | 45 | 11 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
-| `crates/axon-core/src/capabilities.rs` | 706 | 171 |
+| `crates/axon-core/src/capabilities.rs` | 711 | 173 |
 | `crates/axon-core/src/checker.rs` | 1235 | 510 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
@@ -55,7 +55,7 @@ generated-at: df8ba265a2b1b723eb6c7146f13f30377b1e5239
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 396 | 146 |
-| `crates/axon-core/src/interp.rs` | 7704 | 2876 |
+| `crates/axon-core/src/interp.rs` | 7709 | 2876 |
 | `crates/axon-core/src/interp/builtins.rs` | 794 | 614 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
@@ -98,9 +98,9 @@ generated-at: df8ba265a2b1b723eb6c7146f13f30377b1e5239
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 56771 | 7927 |
+| total | 56781 | 7929 |
 
-`git log --reverse 31413ca7..df8ba265 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..44c8311c -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -397,7 +397,9 @@ generated-at: df8ba265a2b1b723eb6c7146f13f30377b1e5239
 | 361bdfe9 | caps implicit user-code routes | CHECKER/STATIC ANALYSIS, no interpreter change: the shared @[contained]/axon caps walker now also follows the user code the interpreter runs without a call in the body - refinement predicates at param/return/let/field coercions, struct whole-type refinements at construction, @[verify] predicates, and the metric fn of an @[goal]. axon caps reports more (never less); @[contained] can newly report E1001 for a forbidden call reached only through such a predicate. No example changes verdict or caps output. |
 | ecf63dfc | capability walker coverage | capabilities: the program-wide capability and builtin-call walkers share one roots list (fn and impl-method bodies, @[verify] predicates, LetDef values, every refinement predicate incl. synthetic __refine_* and TypeDef where clauses), so G2, the import edge (E1203) and the effect union see a capability used only inside a predicate; E1004 is checked per fn over the fn body with its own hooks. |
 | 7c5d2136 | effect ceiling | interp/main: a non-UTF-8 AXON_ALLOWED_EFFECTS is the empty allowed set (every effect denied) with one warning, both for axon run and for axon test --completion-key-stdin, which no longer widens it; unset keeps its previous meaning. |
-| 293 commits | | |
+| c9ef67e7 | effect ceiling | interp: the non-UTF-8 AXON_ALLOWED_EFFECTS warning is printed once per process (a static Once), not once per interpreter build, so a multi-test `axon test` run warns once; the deny-all meaning is unchanged. |
+| e7e49f26 | capability walker coverage | capabilities: comment only. The E1004 comment now states that the per-fn check walks the fn's own body plus the predicates it carries or uses, not the fns it calls; no behaviour change. |
+| 295 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -556,7 +558,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 469 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3766
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 470 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767
 
 | delta | rows (named in the amendment's own text) |
 |---|---|

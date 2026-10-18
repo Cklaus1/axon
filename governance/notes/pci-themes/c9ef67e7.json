@@ -1,0 +1,1 @@
+{"theme": "effect ceiling", "text": "interp: the non-UTF-8 AXON_ALLOWED_EFFECTS warning is printed once per process (a static Once), not once per interpreter build, so a multi-test `axon test` run warns once; the deny-all meaning is unchanged."}

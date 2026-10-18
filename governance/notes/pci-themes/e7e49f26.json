@@ -1,0 +1,1 @@
+{"theme": "capability walker coverage", "text": "capabilities: comment only. The E1004 comment now states that the per-fn check walks the fn's own body plus the predicates it carries or uses, not the fns it calls; no behaviour change."}
