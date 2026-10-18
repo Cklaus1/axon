@@ -1,0 +1,1 @@
+{"theme": "containment", "text": "cortex R2: every check process of a repair is a bounded job (own process group, killpg at the --check-timeout-ms deadline, 1 MiB per stream, empty environment); a candidate whose check hits a bound is rejected and undone instead of stalling the loop, and only the pristine pre-flight still blocks."}
