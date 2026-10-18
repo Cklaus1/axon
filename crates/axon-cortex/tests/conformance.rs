@@ -161,6 +161,7 @@ fn cxg_c11_repair_episode_runs_end_to_end() {
             EpisodeEvent::Observed { .. } => "observed",
             EpisodeEvent::ActionAllowed { .. } => "allowed",
             EpisodeEvent::ActionDenied { .. } => "denied",
+            EpisodeEvent::CapabilityGrant { .. } => "grant",
             EpisodeEvent::PatchApplied { .. } => "patch",
             EpisodeEvent::PatchReverted { .. } => "reverted",
             EpisodeEvent::CheckRun { .. } => "check",

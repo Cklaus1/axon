@@ -369,6 +369,10 @@ pub struct Runner {
     /// R3: the walk's hard budget, shared by every episode this runner
     /// drives (both passes of a `cortex repair` walk).
     walk: WalkBudget,
+    /// R1: the static grant of the target being repaired. A candidate for
+    /// that symbol reaching anything outside it is refused before it runs.
+    /// `None`: no admission check (no grant was derived).
+    static_grant: Option<crate::fence::StaticGrant>,
 }
 
 /// R3: which hard limit of a walk ran out.
@@ -478,6 +482,9 @@ impl WalkBudget {
 
 /// The capture bound on one stream of an `axon check` the runner spawns.
 pub const CHECKER_MAX_OUTPUT: usize = 1 << 20;
+/// R1: the wall-clock limit on an `axon caps` run when the runner has no
+/// checker timeout of its own.
+pub const CAPS_WALL_DEFAULT: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl Runner {
     /// Convenience constructor kept for existing callers.
@@ -513,6 +520,7 @@ impl Runner {
                 ..ExecLimits::default()
             },
             walk: WalkBudget::default(),
+            static_grant: None,
         }
     }
 
@@ -524,6 +532,35 @@ impl Runner {
     /// R3: the walk budget and what has been spent of it.
     pub fn walk_budget(&self) -> &WalkBudget {
         &self.walk
+    }
+
+    /// R1: admit candidates for `grant.symbol` only within `grant` (`None`:
+    /// no admission check). Set per target, before its episode.
+    pub fn set_static_grant(&mut self, grant: Option<crate::fence::StaticGrant>) {
+        self.static_grant = grant;
+    }
+
+    /// R1d: run every test of `rel_path` through this runner's executor (the
+    /// fenced one) and return `(test, kind, message)` for each failure the
+    /// fence caused ([`crate::fence::fence_violation`]). Run on the PRISTINE
+    /// file, any entry means the fence would refuse what the original code
+    /// already does — the run must stop rather than repair under it.
+    pub fn fence_conflicts(
+        &self,
+        rel_path: &str,
+    ) -> std::io::Result<Vec<(String, String, String)>> {
+        let report = self.check_executor.run_checks(&CheckRequest {
+            workspace: &self.workspace,
+            rel_path,
+            filter: None,
+        })?;
+        Ok(report
+            .messages
+            .iter()
+            .filter_map(|(test, msg)| {
+                crate::fence::fence_violation(msg).map(|kind| (test.clone(), kind, msg.clone()))
+            })
+            .collect())
     }
 
     /// R3: [`WalkBudget::exhausted`] on this runner's walk budget.
@@ -1249,6 +1286,78 @@ impl Runner {
                     self.episode.push(EpisodeEvent::Proposed {
                         generator_id: proposal.generator_id.clone(),
                     });
+                    // R1b — ADMISSION, before the candidate executes. The
+                    // patched text is walked IN MEMORY by the same
+                    // classifier `@[contained]` uses; a body reaching a
+                    // capability the original target did not hold never
+                    // reaches a check. A rejected attempt, not a terminal:
+                    // the generator is told which kinds were refused and the
+                    // next proposal runs. A candidate that does not compile
+                    // goes on to meet that failure where every other one
+                    // does (`axon test` aborts on a type error, so nothing of
+                    // it executes).
+                    if let Some(grant) = self
+                        .static_grant
+                        .as_ref()
+                        .filter(|g| g.symbol == symbol.symbol)
+                    {
+                        let path = self.workspace.join(&symbol.path);
+                        let Some(patched) = std::fs::read_to_string(&path).ok().and_then(|src| {
+                            symbol_body(&src, &symbol.symbol).map(|(a, b)| {
+                                format!("{}{}{}", &src[..a], proposal.body, &src[b..])
+                            })
+                        }) else {
+                            return EpisodeOutcome::NoSuchSymbol {
+                                steps: step,
+                                symbol: symbol.symbol.clone(),
+                                path: symbol.path.clone(),
+                            };
+                        };
+                        let base_dir = path.parent().unwrap_or(&self.workspace).to_path_buf();
+                        let wall = self.checker_limits.wall.unwrap_or(CAPS_WALL_DEFAULT);
+                        match crate::fence::caps_of_text(
+                            &self.axon_bin,
+                            &patched,
+                            &base_dir,
+                            Some(&symbol.symbol),
+                            wall,
+                        ) {
+                            Ok(caps) => {
+                                let excess = grant.excess(&caps);
+                                if !excess.is_empty() {
+                                    self.episode.push(EpisodeEvent::ActionDenied {
+                                        action: action.name().to_string(),
+                                        reason: format!("capability:{}", excess.join(",")),
+                                    });
+                                    progress.attempts.push(AttemptSignal {
+                                        proposal: progress.proposals,
+                                        rejection:
+                                            crate::generate::RejectionReason::CapabilityDenied,
+                                        visible_failing: None,
+                                    });
+                                    push_rejected(
+                                        rejected,
+                                        proposal.body,
+                                        crate::generate::RejectionReason::CapabilityDenied,
+                                        Some(crate::feedback::Feedback::refused(excess)),
+                                    );
+                                    continue;
+                                }
+                            }
+                            Err(crate::fence::CapsError::DidNotCompile(_)) => {}
+                            // The walker could not be run: nothing is known
+                            // about what the candidate reaches, so it does not
+                            // run either. An environment fact.
+                            Err(crate::fence::CapsError::Failed(why)) => {
+                                return EpisodeOutcome::Blocked {
+                                    steps: step,
+                                    reason: format!(
+                                        "the candidate's capabilities could not be established: {why}"
+                                    ),
+                                };
+                            }
+                        }
+                    }
                     *last_applied = Some(proposal.body.clone());
                     CortexAction::PatchSymbolBody {
                         symbol: symbol.clone(),
@@ -3372,6 +3481,39 @@ where
         }
         (kept, cap.is_some_and(|c| total > c))
     })
+}
+
+/// `axon caps <file> --json [--base-dir D] [--fn NAME]` (R1) as a bounded job:
+/// its own process group, `wall`, at most [`CHECKER_MAX_OUTPUT`] bytes per
+/// stream, an EMPTY environment like the checks it fences. It executes no
+/// workspace code. Returns (stdout+stderr, exit code); read it with
+/// [`crate::fence::parse_caps`].
+pub fn run_axon_caps(
+    axon: &Path,
+    file: &Path,
+    base_dir: Option<&Path>,
+    fn_name: Option<&str>,
+    wall: std::time::Duration,
+) -> std::io::Result<(String, Option<i32>)> {
+    let mut cmd = std::process::Command::new(axon);
+    cmd.arg("caps").arg(file).arg("--json");
+    if let Some(d) = base_dir {
+        cmd.arg("--base-dir").arg(d);
+    }
+    if let Some(f) = fn_name {
+        cmd.arg("--fn").arg(f);
+    }
+    cmd.env_clear();
+    let limits = ExecLimits {
+        wall: Some(wall),
+        max_output: Some(CHECKER_MAX_OUTPUT),
+        ..ExecLimits::default()
+    };
+    let (text, code, truncated) = run_limited(&mut cmd, &limits, None)?;
+    if truncated {
+        return Err(BoundExceeded::output(CHECKER_MAX_OUTPUT));
+    }
+    Ok((text, code))
 }
 
 /// Spawn `cmd` as its own process-group JOB, drain both pipes (bounded, if

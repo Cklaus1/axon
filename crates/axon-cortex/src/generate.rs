@@ -124,6 +124,11 @@ pub enum RejectionReason {
     /// generator is shown a plain [`Self::CheckRefused`] for it, plus whatever
     /// its VISIBLE run said, so which hidden spawn hit the bound never leaks.
     TimedOut,
+    /// It reaches a capability (or a non-free effect) the original target did
+    /// not hold (R1b). Refused before anything of it ran; the feedback's
+    /// `refusal.capabilities` names the kinds. Skipped by the early-stop
+    /// signals like [`Self::DidNotCompile`]: no check of it ran.
+    CapabilityDenied,
 }
 
 impl RejectionReason {
@@ -134,6 +139,7 @@ impl RejectionReason {
             RejectionReason::CheckRefused => "check_refused",
             RejectionReason::CheckerObjected => "checker_objected",
             RejectionReason::TimedOut => "timed_out",
+            RejectionReason::CapabilityDenied => "capability_denied",
         }
     }
 }
@@ -150,6 +156,10 @@ impl std::fmt::Display for RejectionReason {
             RejectionReason::TimedOut => {
                 write!(f, "a check of it did not finish within its limits")
             }
+            RejectionReason::CapabilityDenied => write!(
+                f,
+                "it uses a capability the original function does not hold, so it was not run"
+            ),
         }
     }
 }
@@ -312,6 +322,9 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
                 // hit is shown as CheckRefused); labelled like it regardless.
                 RejectionReason::CheckRefused | RejectionReason::TimedOut => {
                     "With that attempt applied, the visible tests reported"
+                }
+                RejectionReason::CapabilityDenied => {
+                    "It was refused before running, for capabilities the original does not hold"
                 }
             };
             history.push_str(&format!("{label} (JSON):\n```json\n{}\n```\n", f.to_json()));

@@ -31,6 +31,7 @@ pub mod audit;
 pub mod earlystop;
 pub mod episode;
 pub mod feedback;
+pub mod fence;
 pub mod generate;
 pub mod label;
 pub mod locate;

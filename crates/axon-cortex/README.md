@@ -48,10 +48,43 @@ is missing is permission.
 **The generator** receives a function body and the observation, and returns a
 string. It holds no tool, chooses no action, and never learns the name of the
 check that grades it. A retry is told which bodies were already rejected and
-roughly how — it did not compile, or it compiled and did not fix the problem —
-and nothing the grader said. A generator that could read why it failed the
-hidden check would be writing against the grader, at which point passing it
-stops being evidence.
+why, as typed JSON: the VISIBLE checks' structured diagnostics (`axon-diag/1`
+fields, the file paths rewritten to the workspace file), the visible tests
+still failing, or — for a refused proposal — `refusal.capabilities`. Nothing
+the hidden check said reaches it. A generator that could read why it failed
+the hidden check would be writing against the grader, at which point passing
+it stops being evidence.
+
+**The capability fence** keeps a candidate from acquiring host authority the
+original code did not hold. Before the walk the pinned axon's `axon caps` (the
+classifier `@[contained]` uses) runs on the unpatched file. Each target's
+static grant is what that function transitively reaches; a candidate body
+reaching anything else (`fs:write`, `net`, `exec`, a non-free `effect:NAME`,
+or something the walker cannot classify) is refused BEFORE it runs — a
+rejected attempt, `capability_denied`, fed back to the generator, and counted
+against `--max-proposals`. Every check also runs under a runtime fence derived
+from the whole file: `AXON_ALLOWED_EFFECTS` = Chan, IO, Pure, Random, Time plus
+the file's own effects, and `AXON_ALLOWED_FS_READ` / `AXON_ALLOWED_FS_WRITE` /
+`AXON_ALLOWED_NET` set empty (deny all) for each kind the file does not use. A
+file whose own tests fail under that fence stops with `fence_conflict` (exit
+22) before anything else runs. `--json` reports it as `grant`, and `cortex
+grant --file F [--symbol S]` prints it without running anything. An
+unclassifiable file (basis `unknown`) gets no fence, said in one stderr line;
+the Fabric executor does not take the fence (`applied: false`).
+
+**Every execution is bounded.** Each check is its own process group, killed
+at `--check-timeout-ms` (default 60 s) with its output capped at 1 MiB; a
+candidate past a bound is rejected and undone, and only the unpatched file
+past a bound blocks (22). The walk itself has hard limits:
+`--max-proposals N` caps generator calls across every candidate and
+`--deadline-ms N` stops new generator calls at a wall-clock deadline; either
+ends `budget_exhausted` (20) with `detail` `proposals` / `deadline`, reported
+under `budget` in `--json`.
+
+**The accepted artifact is bound to its evidence.** The bytes the hidden check
+graded are digested before it spawns and re-read after the last acceptance
+check; a file changed in between is never accepted. `--json` reports
+`accepted: {path, sha256}` on exits 0 and 27.
 
 **The adjudicator** must be able to witness the repair. A check that already
 passes would accept the file unchanged, so it is refused (exit 26) rather than
@@ -128,7 +161,7 @@ about whether to widen a grant, supply a generator, or fix a PATH.
 | 2 | usage error, including a `--check` that names no `@[test]` in the file; nothing was decided |
 | 20 | budget exhausted |
 | 21 | going in circles — the generator is not helping |
-| 22 | the checker could not run (missing or changed `--axon`, registry mismatch) |
+| 22 | the environment is wrong: the checker could not run (missing or changed `--axon`, registry mismatch), the capability grant could not be derived, or `fence_conflict` — a test of the unpatched file needs a capability the derived fence denies |
 | 23 | authority: the grant does not cover this |
 | 24 | no usable proposal |
 | 25 | no repair target could be established, or the named symbol does not exist |

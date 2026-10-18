@@ -32,6 +32,20 @@ pub enum EpisodeEvent {
     /// allowed one: an episode that logs only what it did cannot show what it
     /// was stopped from doing, which is the half a reviewer needs.
     ActionDenied { action: String, reason: String },
+    /// R1: the authority this run's candidates are confined to, derived by
+    /// `axon caps` from the PRISTINE file before any candidate existed: the
+    /// file's capabilities and effects, what they rest on (`axon-caps` or
+    /// `unknown`), the exact environment every check carried (`fence_env`,
+    /// empty when no fence was applied) and its digest, and each repair
+    /// target's static grant as `symbol=cap,cap` (`symbol=?` when unknown).
+    CapabilityGrant {
+        basis: String,
+        capabilities: Vec<String>,
+        effects: Vec<String>,
+        fence_env: std::collections::BTreeMap<String, String>,
+        fence_sha256: String,
+        targets: Vec<String>,
+    },
     /// A patch applied to the COPY, never to the original.
     PatchApplied {
         path: String,

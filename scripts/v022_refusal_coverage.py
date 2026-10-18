@@ -1604,6 +1604,13 @@ _WBG = (_CTX + "; runner.rs WalkBudget, `cortex repair`'s walk budget (R3: --max
         "grants no verdict, no write and never exit 0, and the file is restored as the run found "
         "it; acceptance is still decided only by the hidden check on a patched file; exercised by "
         "tests/cli.rs r3_* and runner.rs walk_budget_tests")
+_FEN = (_CTX + "; fence.rs and its runner.rs call sites, `cortex repair`'s capability fence (R1: "
+        "axon caps grant, admission, runtime fence env, fence_conflict pre-flight): every "
+        "predicate here only REFUSES a candidate before it runs (a rejected attempt, "
+        "capability_denied), narrows the environment the checks run under, or stops the run "
+        "(exit 22); none grants a verdict, a write or exit 0, and acceptance is still decided "
+        "only by the hidden check on a patched file; exercised by tests/cli.rs r1_* and the "
+        "fence.rs unit tests")
 _EXE = ("NOT ON THE PROTECTED ROUTE (checkable): a registered EXECUTOR. A protected request's "
         "executable is the qualified guest interpreter (submit.rs: LINUX_GUEST_AXON_ID, pinned by "
         "the qualification's guest_axon_sha256); the registry's executors are read only by "
@@ -1793,6 +1800,36 @@ EXEMPT += [
     (_SR, '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "{} could not be read before grading: {e}",',
      _CTX + "; R5: a file that cannot be read before the hidden check spawns could not be "
      "graded as anything in particular; Blocked (exit 22) grants nothing"),
+    ('crates/axon-cortex/src/fence.rs', 'pub const CAPS_SCHEMA: &str = "axon-caps/1";',
+     _FEN + "; an `axon caps` answer under any other schema is refused as unreadable (no grant -> exit 22, or Blocked for a candidate)"),
+    ('crates/axon-cortex/src/fence.rs', 'Some(2) => return Err(CapsError::DidNotCompile(bounded(text.trim()))),',
+     _FEN + "; exit 2 is `axon caps`' parse/type error: the candidate goes on to meet that compile failure where every other one does (axon test aborts on a type error, nothing runs)"),
+    ('crates/axon-cortex/src/fence.rs', '            return Err(CapsError::Failed(format!(\n                "exit {other:?}: {}",',
+     _FEN + "; any other exit is the walker not running: an environment fact, never an admission"),
+    ('crates/axon-cortex/src/fence.rs', '.ok_or_else(|| CapsError::Failed("no JSON line in its output".into()))?;',
+     _FEN + "; an answer with no JSON line is unreadable, never an empty grant"),
+    ('crates/axon-cortex/src/fence.rs', '    if v["schema"] != CAPS_SCHEMA {',
+     _FEN + "; a wrong-schema answer is unreadable, never an empty grant"),
+    ('crates/axon-cortex/src/fence.rs', '        .create_new(true)\n        .open(&tmp)',
+     _FEN + "; the candidate's private staging file is never an existing one (a name collision is a staging failure, Blocked)"),
+    ('crates/axon-cortex/src/fence.rs', '        Err(e) => Err(CapsError::Failed(format!(\n            "the candidate could not be staged at {}: {e}",',
+     _FEN + "; a candidate that could not be staged for `axon caps` is not run (Blocked)"),
+    ('crates/axon-cortex/src/fence.rs', 'pub fn fence_violation(message: &str) -> Option<String> {',
+     _FEN + "; reads a PRISTINE test's failure message only to name a fence conflict (exit 22), never a verdict"),
+    ('crates/axon-cortex/src/fence.rs', '    if message.contains("not in the active sandbox\'s allowed set") {',
+     _FEN + "; the effect-ceiling form of a fence conflict (exit 22)"),
+    (_SR, 'Some(crate::feedback::Feedback::refused(excess)),',
+     _FEN + "; R1b admission: a candidate reaching past its target's static grant is a rejected attempt (capability_denied) and nothing of it runs"),
+    (_SR, 'Err(crate::fence::CapsError::Failed(why)) => {',
+     _FEN + "; R1b: a candidate whose capabilities could not be established is not run (Blocked, exit 22)"),
+    (_SR, '    cmd.env_clear();\n    let limits = ExecLimits {\n        wall: Some(wall),',
+     _FEN + "; run_axon_caps: `axon caps` (static, executes no workspace code) from an EMPTY environment, like the checks it fences"),
+    (_SR, '    if truncated {\n        return Err(BoundExceeded::output(CHECKER_MAX_OUTPUT));',
+     _FEN + "; run_axon_caps' output bound: an `axon caps` that said more than CHECKER_MAX_OUTPUT is a run stopped at a bound, never a grant"),
+    (_SR, 'pub const CHECKER_MAX_OUTPUT: usize = 1 << 20;',
+     _CHK + "; the capture bound on `axon check` (R2) and `axon caps` (R1) output: past it the run is stopped at a bound, never a verdict or a grant"),
+    (_SR, 'pub const CAPS_WALL_DEFAULT: std::time::Duration = std::time::Duration::from_secs(60);',
+     _FEN + "; the wall-clock bound on `axon caps` when the runner has no checker timeout: past it the run is stopped at a bound, never a grant"),
     (_SR, '                return Err(format!("fabric dispatch needs a non-empty {name}"));',
      _CTX + "; FabricSubmitExecutor::new, Cortex's client of `axon-fabric submit` (bin/cortex.rs); its operator fields are what Cortex sends, and Fabric judges the request itself"),
     (_SR, "        if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {\n            return Err(format!(",
@@ -4091,6 +4128,11 @@ VALUE_EXEMPT += [
     ('crates/axon-cortex/src/runner.rs', 'run_limited', 1, 'Stdio::piped()', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the LOCAL interpreter executor's stdin (the development route, process_scoped/local-interpreter), piped unconditionally since 2618c9b0 so every check child receives the per-run completion key; submit.rs builds it only when the profile is not the protected one (`let local = if is_linux { None } else { .. host_executor .. }`), and a protected host runs nothing outside the protected profile (M265); the guest runs `axon test` from axon-psv's runner (exec_axon_test), not this executor"),
     ('crates/axon-cortex/src/runner.rs', 'run_limited', 2, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) a_digest_changed_executable_is_refused_with_zero_effects, an_empty_mandatory_match_is_not_run_never_passed, cli_a_malformed_request_decides_nothing; no row of its own'),
     ('crates/axon-cortex/src/runner.rs', 'run_limited', 3, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) a_digest_changed_executable_is_refused_with_zero_effects, an_empty_mandatory_match_is_not_run_never_passed, cli_a_malformed_request_decides_nothing; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_axon_caps', 1, '"caps"', 'NOTROUTE', _FEN + "; the `axon caps` verb: a wrong verb fails every r1_* row (no grant -> exit 22)"),
+    ('crates/axon-cortex/src/runner.rs', 'run_axon_caps', 2, '"--json"', 'NOTROUTE', _FEN + "; `axon caps --json`: without it no JSON line, so no grant (exit 22)"),
+    ('crates/axon-cortex/src/runner.rs', 'run_axon_caps', 3, '"--base-dir"', 'NOTROUTE', _FEN + "; imports of a staged candidate resolve against the replaced file's directory"),
+    ('crates/axon-cortex/src/runner.rs', 'run_axon_caps', 4, '"--fn"', 'NOTROUTE', _FEN + "; the target's transitive set (the static grant), not the whole file's"),
+    ('crates/axon-cortex/src/fence.rs', 'bounded~flow', 1, '600', 'NOTROUTE', _FEN + "; the length an `axon caps` diagnostic is cut to in a stderr message"),
     ('crates/axon-fabric/src/backend.rs', 'for_manifest', 1, 'DEFAULT_EVIDENCE_MAX_AGE_S', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): a TESTS-ONLY constructor, `#[cfg(any(test, feature = "test-trust-root"))]`: absent from a production build (the feature is enabled only through [dev-dependencies]: `grep -n test-trust-root crates/*/Cargo.toml`)'),
     ('crates/axon-fabric/src/backend.rs', 'for_manifest', 2, 'false', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): a TESTS-ONLY constructor, `#[cfg(any(test, feature = "test-trust-root"))]`: absent from a production build (the feature is enabled only through [dev-dependencies]: `grep -n test-trust-root crates/*/Cargo.toml`)'),
     ('crates/axon-fabric/src/backend.rs', 'for_manifest', 3, 'None', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): a TESTS-ONLY constructor, `#[cfg(any(test, feature = "test-trust-root"))]`: absent from a production build (the feature is enabled only through [dev-dependencies]: `grep -n test-trust-root crates/*/Cargo.toml`)'),
@@ -5955,6 +5997,7 @@ EXEC_CONSTRUCTORS = {
     ("crates/axon-cortex/src/generate.rs", "propose"): "builder: own .arg/.stdin sites (not a protected route)",
     ("crates/axon-cortex/src/runner.rs", "run_axon_check"): "builder: own .arg sites (`axon check <file>`, bounded by run_limited; not a protected route)",
     ("crates/axon-cortex/src/runner.rs", "run_checks"): "builder: own .arg sites",
+    ("crates/axon-cortex/src/runner.rs", "run_axon_caps"): "builder: own .arg sites (`axon caps <file> --json [--base-dir D] [--fn F]`, static, bounded by run_limited; not a protected route)",
     ("crates/axon-core/src/host.rs", "exec"): "OUT OF SCOPE: the language host seam",
     ("crates/axon-core/src/main.rs", "try_link_wasm"): "OUT OF SCOPE: the language CLI",
     ("crates/axon-core/src/main.rs", "run_quorum_gate"): "OUT OF SCOPE: the language CLI",
