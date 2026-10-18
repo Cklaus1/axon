@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: d5181dda0e3744a2d9c90d5fa2f3eb3f465a4eb6
+generated-at: 01a627428a70bf30d6df3cccda1dcd1cb9a1fbd1
 
-`git diff --numstat 31413ca7..d5181dda -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..01a62742 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -49,14 +49,14 @@ generated-at: d5181dda0e3744a2d9c90d5fa2f3eb3f465a4eb6
 | `crates/axon-core/src/complexity.rs` | 1 | 0 |
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
 | `crates/axon-core/src/effects.rs` | 291 | 108 |
-| `crates/axon-core/src/env_registry.rs` | 11 | 2 |
+| `crates/axon-core/src/env_registry.rs` | 14 | 2 |
 | `crates/axon-core/src/error.rs` | 24 | 13 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 396 | 146 |
-| `crates/axon-core/src/interp.rs` | 7581 | 2874 |
-| `crates/axon-core/src/interp/builtins.rs` | 746 | 594 |
+| `crates/axon-core/src/interp.rs` | 7663 | 2858 |
+| `crates/axon-core/src/interp/builtins.rs` | 794 | 614 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
@@ -87,7 +87,7 @@ generated-at: d5181dda0e3744a2d9c90d5fa2f3eb3f465a4eb6
 | `crates/axon-core/src/lib.rs` | 300 | 75 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 179 | 57 |
-| `crates/axon-core/src/main.rs` | 1549 | 346 |
+| `crates/axon-core/src/main.rs` | 1580 | 365 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
 | `crates/axon-core/src/parser.rs` | 457 | 31 |
@@ -98,9 +98,9 @@ generated-at: d5181dda0e3744a2d9c90d5fa2f3eb3f465a4eb6
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 56158 | 7841 |
+| total | 56322 | 7864 |
 
-`git log --reverse 31413ca7..d5181dda -- crates/axon-core/src`:
+`git log --reverse 31413ca7..01a62742 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -392,7 +392,8 @@ generated-at: d5181dda0e3744a2d9c90d5fa2f3eb3f465a4eb6
 | 4694410b | gaps harness hygiene | TOOLING (wasm link diagnostics on stderr only; no change in what any run computes, accepts or links) |
 | 8afc76ba | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | d5181dda | R0a axon caps | NOT INTERPRETER: a new read-only CLI verb `axon caps` and a Reach sink on the @[contained] walker (capabilities.rs). check_fn passes reach: None and the walk is drain_walk unchanged, so @[contained] verdicts are identical; in reach mode only, visited entries are kept (a union walk) and callees / builtin values are recorded. No runtime, sealed or interpreter path reads it. |
-| 288 commits | | |
+| 01a62742 | R0b ambient scope env | INTERPRETER: the ambient sandbox can now carry a path/host scope from AXON_ALLOWED_FS_READ / AXON_ALLOWED_FS_WRITE / AXON_ALLOWED_NET (narrowing only). With all three unset and AXON_ALLOWED_EFFECTS unset the registry is empty exactly as before (no behaviour change); with AXON_ALLOWED_EFFECTS alone the entry is the same ceiling with all_effects false. New refusals only: scope_violation against the ambient entry under an inner sandbox, sandbox_run into an all-effects entry from a narrower one, provenance suppressed when a fs_write scope does not admit its path. SandboxEntry::allows replaces allowed.contains at the four ceiling sites (identical unless all_effects). sandbox_create_scoped's list parser moved to parse_scope_list unchanged. axon-rt and axon build refuse the three vars (exit 2 / E0910). A sealed run's kernel holds the same ambient entry at index 0, so the ceiling binds sealed frames too. |
+| 289 commits | | |
 <!-- END MECHANICAL -->
 
 
