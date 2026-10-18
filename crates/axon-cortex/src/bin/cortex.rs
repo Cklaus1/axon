@@ -1100,6 +1100,22 @@ fn main() {
         }
     }
 
+    // R5: the artifact a kept patch left, by digest of the bytes on disk now —
+    // equal to the deciding Verified event's `graded_sha256`, which the
+    // episode confirmed after its last acceptance spawn. Only exits 0 and 27
+    // keep a patch; every other run names none. An unreadable file is
+    // `sha256: null`, which matches no digest.
+    let accepted = (code == 0 || code == 27).then(|| {
+        let sha256 = match std::fs::read(workspace.join(&file)) {
+            Ok(b) => Some(axon_cortex::label::sha256_hex(&b)),
+            Err(e) => {
+                eprintln!("the accepted {file} could not be read back for its digest: {e}");
+                None
+            }
+        };
+        serde_json::json!({ "path": file, "sha256": sha256 })
+    });
+
     if json {
         println!(
             "{}",
@@ -1108,6 +1124,7 @@ fn main() {
                 "outcome": kind,
                 "detail": detail,
                 "steps": steps,
+                "accepted": accepted,
                 // R3: the walk's hard limits (`null` = unset), what was spent
                 // of them, and which one stopped the walk (`null`: none did).
                 "budget": {

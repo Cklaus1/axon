@@ -726,7 +726,17 @@ def run_arm_b(task, generator, ws, cfg):
         # stop reads (PREREG-earlystop.md); absent from older rows.
         "early_stop": verdict.get("early_stop"),
     }
-    return given, open(p).read(), row
+    final = open(p, "rb").read()
+    # R5: the file graded below must be the artifact Cortex accepted. A run
+    # whose `accepted.sha256` (cortex-repair/1, exits 0 and 27) names other
+    # bytes than the full file left on disk is an INTEGRITY FAILURE: it is not
+    # scored, and the whole run aborts, so rows from binaries that predate
+    # `accepted` cannot end up compared against a run that lost some.
+    accepted = (verdict.get("accepted") or {}).get("sha256") if verdict else None
+    if accepted is not None and hashlib.sha256(final).hexdigest() != accepted:
+        raise SystemExit(f"INTEGRITY FAILURE {task['id']}: {rel} on disk is sha256 "
+                         f"{hashlib.sha256(final).hexdigest()}, cortex accepted {accepted}")
+    return given, final.decode(), row
 
 
 # ---------------------------------------------------------------- driver
@@ -870,6 +880,9 @@ def main():
             else:
                 given, final, row = run_arm_b(t, a.generator, ws, a)
             g = grade(t, given, final)
+        except SystemExit:
+            stop.set()
+            raise
         finally:
             shutil.rmtree(ws, ignore_errors=True)
         row.update(id=t["id"], cls=t["class"], arm=a.arm, variant=variant, meta=meta, **g)

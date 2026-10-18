@@ -1782,6 +1782,17 @@ EXEMPT += [
     (_SR, 'if self.walk.deadline_passed() {', _WBG + "; a generator call cut at the deadline is the walk's limit, reported as it, not NeedsInput"),
     ('crates/axon-cortex/src/generate.rs', 'fn uncancellable_for(&self) -> Option<std::time::Duration> {',
      _WBG + "; the default (and the ai: override) of how long a call runs uncut, read only by the walk budget"),
+    (_SR, '                if now == graded {\n                    Ok(())',
+     _CHK + "; R5 Runner::still_graded: a file whose bytes changed between the hidden check's "
+     "spawn and the last acceptance spawn only WITHHOLDS VerifiedDone/AdjudicatedNotClean (a "
+     "Verified passed:false, 'workspace changed during acceptance'); exercised by "
+     "tests/conformance.rs r5_a_file_edited_during_acceptance_is_never_accepted"),
+    (_SR, '            Err(e) => Err(format!(\n                "{rel_path} could not be re-read after grading: {e}"',
+     _CHK + "; R5 Runner::still_graded: a file that cannot be re-read after grading is never "
+     "accepted (fails closed)"),
+    (_SR, '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "{} could not be read before grading: {e}",',
+     _CTX + "; R5: a file that cannot be read before the hidden check spawns could not be "
+     "graded as anything in particular; Blocked (exit 22) grants nothing"),
     (_SR, '                return Err(format!("fabric dispatch needs a non-empty {name}"));',
      _CTX + "; FabricSubmitExecutor::new, Cortex's client of `axon-fabric submit` (bin/cortex.rs); its operator fields are what Cortex sends, and Fabric judges the request itself"),
     (_SR, "        if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {\n            return Err(format!(",

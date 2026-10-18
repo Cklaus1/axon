@@ -386,6 +386,7 @@ mod tests {
         ep.push(EpisodeEvent::Verified {
             passed: true,
             detail: "checks green".into(),
+            graded_sha256: Some("ab".repeat(32)),
         });
         let a = to_canonical_json(&ep).unwrap();
         let b: Episode = parse_strict(&a).unwrap();
@@ -532,11 +533,13 @@ mod tests {
         ep.push(EpisodeEvent::Verified {
             passed: false,
             detail: "verifier disagreed".into(),
+            graded_sha256: None,
         });
         assert!(!ep.verified_ok(), "a FAILED verdict is not success either");
         ep.push(EpisodeEvent::Verified {
             passed: true,
             detail: "ok".into(),
+            graded_sha256: None,
         });
         assert!(ep.verified_ok());
     }

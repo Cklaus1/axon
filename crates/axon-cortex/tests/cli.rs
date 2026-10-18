@@ -1905,6 +1905,30 @@ fn cli_ships_evidence_a_reader_can_verify() {
         ep.events
     );
 
+    // 4. R5: THE ACCEPTED ARTIFACT IS BOUND TO THE EVIDENCE. `accepted.sha256`
+    //    is the file as the run left it, and the deciding Verified event names
+    //    the same bytes as the ones the hidden check graded.
+    let on_disk = axon_cortex::label::sha256_hex(&std::fs::read(ws.join("broken.ax")).unwrap());
+    assert_eq!(v["accepted"]["path"], "broken.ax", "{v}");
+    assert_eq!(
+        v["accepted"]["sha256"].as_str(),
+        Some(on_disk.as_str()),
+        "accepted.sha256 must be the file the run left: {v}"
+    );
+    let graded = ep.events.iter().rev().find_map(|e| match e {
+        axon_cortex::episode::EpisodeEvent::Verified {
+            passed: true,
+            graded_sha256,
+            ..
+        } => Some(graded_sha256.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        graded,
+        Some(Some(on_disk.clone())),
+        "the deciding Verified event must carry the graded bytes' digest"
+    );
+
     // And the negative: a run that does NOT verify must not carry an episode
     // claiming it did.
     let ws2 = workspace("evidence_fail");
@@ -1935,6 +1959,10 @@ fn cli_ships_evidence_a_reader_can_verify() {
     assert!(
         !ep2.verified_ok(),
         "a non-zero run must not ship an episode claiming verification"
+    );
+    assert!(
+        v2["accepted"].is_null(),
+        "a run that accepted nothing names no accepted artifact: {v2}"
     );
 }
 

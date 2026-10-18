@@ -1574,7 +1574,25 @@ impl Runner {
                 // never blocks the run. The generator is told only what the
                 // visible run said: which acceptance spawn hit the bound is
                 // the grader's business.
-                let (verified, bound) = self.verify_run(true, hidden_check, &target.path);
+                // R5: the bytes about to be graded, read BEFORE the hidden
+                // check spawns. Acceptance holds only for these bytes: after
+                // the last acceptance spawn the file is read again, and any
+                // difference fails closed. A file that cannot be read here
+                // could not be graded as anything in particular.
+                let graded = match std::fs::read(self.workspace.join(&target.path)) {
+                    Ok(bytes) => sha256_hex(&bytes),
+                    Err(e) => {
+                        return EpisodeOutcome::Blocked {
+                            steps: step,
+                            reason: format!(
+                                "{} could not be read before grading: {e}",
+                                target.path
+                            ),
+                        };
+                    }
+                };
+                let (verified, bound) =
+                    self.verify_run(true, hidden_check, &target.path, Some(graded.clone()));
                 let mut unfinished = bound.is_some();
                 if verified {
                     'accept: {
@@ -1612,6 +1630,7 @@ impl Runner {
                                      the re-check of the file did not finish, so the candidate \
                                      is rejected: {e}"
                                 ),
+                                    graded_sha256: None,
                                 });
                                 unfinished = true;
                                 break 'accept;
@@ -1624,6 +1643,7 @@ impl Runner {
                                      the file could not be re-checked afterwards, so nothing was \
                                      established about the rest of it: {e}"
                                 ),
+                                    graded_sha256: None,
                                 });
                                 return EpisodeOutcome::Blocked {
                                     steps: step,
@@ -1644,7 +1664,23 @@ impl Runner {
                             // not finished, so it is rejected like any other and
                             // the generator is shown what the checker said.
                             match self.checker_exit_clean(&target.path) {
-                                Ok(true) => return EpisodeOutcome::VerifiedDone { steps: step },
+                                Ok(true) => match self.still_graded(&target.path, &graded) {
+                                    Ok(()) => return EpisodeOutcome::VerifiedDone { steps: step },
+                                    // R5: the deciding event above named bytes
+                                    // that are no longer the file; this one,
+                                    // appended after it, is the verdict now.
+                                    Err(why) => {
+                                        self.episode.push(EpisodeEvent::Verified {
+                                            passed: false,
+                                            detail: format!(
+                                                "claim_done=true: hidden check `{hidden_check}` \
+                                                 passed, but the workspace changed during \
+                                                 acceptance: {why}"
+                                            ),
+                                            graded_sha256: None,
+                                        });
+                                    }
+                                },
                                 Ok(false) => {
                                     self.episode.push(EpisodeEvent::Verified {
                                         passed: false,
@@ -1654,6 +1690,7 @@ impl Runner {
                                          exit 0 (it reported diagnostics)",
                                         target.path
                                     ),
+                                        graded_sha256: None,
                                     });
                                     objected = true;
                                 }
@@ -1665,6 +1702,7 @@ impl Runner {
                                          and no check fails, but `axon check` on the file did \
                                          not finish, so the candidate is rejected: {e}"
                                     ),
+                                        graded_sha256: None,
                                     });
                                     unfinished = true;
                                 }
@@ -1678,6 +1716,7 @@ impl Runner {
                                          but `axon check` could not be run on the file, so its \
                                          acceptance was not established: {e}"
                                     ),
+                                        graded_sha256: None,
                                     });
                                     return EpisodeOutcome::Blocked {
                                         steps: step,
@@ -1707,6 +1746,21 @@ impl Runner {
                             // So this is a terminal outcome of its own: the patch is
                             // KEPT, and the pre-existing failures are named.
                             if regressed.is_empty() {
+                                // R5: `check_outcomes` was this path's last
+                                // acceptance spawn; the patch is kept only if
+                                // the file is still the bytes graded.
+                                if let Err(why) = self.still_graded(&target.path, &graded) {
+                                    self.episode.push(EpisodeEvent::Verified {
+                                        passed: false,
+                                        detail: format!(
+                                            "claim_done=true: hidden check `{hidden_check}` \
+                                             passed, but the workspace changed during \
+                                             acceptance: {why}"
+                                        ),
+                                        graded_sha256: None,
+                                    });
+                                    break 'accept;
+                                }
                                 self.episode.push(EpisodeEvent::Verified {
                                     passed: false,
                                     detail: format!(
@@ -1716,6 +1770,7 @@ impl Runner {
                                     still_failing.len(),
                                     still_failing.join(", ")
                                 ),
+                                    graded_sha256: Some(graded.clone()),
                                 });
                                 return EpisodeOutcome::AdjudicatedNotClean {
                                     steps: step,
@@ -1732,6 +1787,7 @@ impl Runner {
                                     still_failing.join(", "),
                                     regressed.join(", ")
                                 ),
+                                graded_sha256: None,
                             });
                         }
                     }
@@ -2213,17 +2269,21 @@ impl Runner {
     /// is IGNORED for the verdict — it is recorded so a reviewer can see that a
     /// confident wrong claim was made and overruled.
     pub fn verify(&mut self, claimed_done: bool, hidden_check: &str, rel_path: &str) -> bool {
-        self.verify_run(claimed_done, hidden_check, rel_path).0
+        self.verify_run(claimed_done, hidden_check, rel_path, None)
+            .0
     }
 
     /// [`Runner::verify`], and the process bound that stopped the hidden
     /// check's run when one did (R2: the candidate is then rejected, never
-    /// the run blocked).
+    /// the run blocked). `graded_sha256` (R5) is the digest of the file read
+    /// before this check spawns; it is recorded on the event only when that
+    /// event passes, the one a verified run is decided by.
     fn verify_run(
         &mut self,
         claimed_done: bool,
         hidden_check: &str,
         rel_path: &str,
+        graded_sha256: Option<String>,
     ) -> (bool, Option<Bound>) {
         // THE VERDICT COMES FROM THE NAMED TEST, and from nothing else.
         //
@@ -2246,6 +2306,7 @@ impl Runner {
                 self.episode.push(EpisodeEvent::Verified {
                     passed: false,
                     detail: format!("hidden check `{hidden_check}` DID NOT RUN: {e}"),
+                    graded_sha256: None,
                 });
                 return (false, bound_exceeded(&e));
             }
@@ -2280,8 +2341,31 @@ impl Runner {
                     format!("hidden check `{hidden_check}` FAILED")
                 }
             ),
+            graded_sha256: if ok { graded_sha256 } else { None },
         });
         (ok, None)
+    }
+
+    /// R5: `Ok` when `rel_path` still holds the bytes whose digest is
+    /// `graded`; otherwise why not. Called after the last acceptance spawn,
+    /// so a file changed while it was being accepted (by the checks
+    /// themselves or by anything else) is never the file that is accepted.
+    fn still_graded(&self, rel_path: &str, graded: &str) -> Result<(), String> {
+        match std::fs::read(self.workspace.join(rel_path)) {
+            Ok(bytes) => {
+                let now = sha256_hex(&bytes);
+                if now == graded {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{rel_path} was sha256 {graded} when graded, {now} after"
+                    ))
+                }
+            }
+            Err(e) => Err(format!(
+                "{rel_path} could not be re-read after grading: {e}"
+            )),
+        }
     }
 
     /// Prepare a resettable COPY of a fixture directory. The original is never

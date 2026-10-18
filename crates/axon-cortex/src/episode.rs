@@ -90,7 +90,17 @@ pub enum EpisodeEvent {
     },
     /// The independent verifier's verdict — produced out-of-band from whatever
     /// proposed the patch.
-    Verified { passed: bool, detail: String },
+    Verified {
+        passed: bool,
+        detail: String,
+        /// R5: on the DECIDING event only (the hidden check's `passed:true`
+        /// of a verified run, or the adjudicated event of an exit-27 one), the
+        /// sha256 of the file the hidden check graded — taken before that
+        /// check spawned and confirmed unchanged after the last acceptance
+        /// spawn. Absent everywhere else, so older episodes keep their digest.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        graded_sha256: Option<String>,
+    },
 }
 
 /// An append-only episode.
