@@ -25,7 +25,7 @@
 //! | 24 | needs input | no usable proposal — supply or fix `--generator` |
 //! | 25 | no target | no candidate could be established, or the named symbol does not exist |
 //! | 26 | check cannot witness | `--check` already passes; it would accept the file unchanged |
-//! | 27 | adjudicated, not clean | the check passed and nothing regressed, but the file was already failing others — THE PATCH IS KEPT |
+//! | 27 | adjudicated, not clean | the check passed and nothing regressed, but the file was already failing others — THE PATCH IS KEPT. A walk that reached such a state and then ended without a verified repair, for any reason (budget, no progress, the early stop, …), reports it: what ended the walk is `stopped_by` |
 //!
 //! Note what 0 means here: a hidden check the generator never saw accepted the
 //! result. It is not "the loop finished", and no other outcome is rounded up
@@ -76,7 +76,9 @@ cortex grant --file PATH [--symbol NAME] [--workspace DIR] [--axon PATH]
                          refused counts). Default: unlimited. When it is
                          reached no generator is asked anything again and the
                          run ends `budget_exhausted` (20) with detail
-                         `proposals`.
+                         `proposals` — or, when the walk had already reached
+                         an adjudicated state, exit 27 with that state kept
+                         and `stopped_by` naming the limit.
   --deadline-ms N        wall-clock deadline for the run, counted from cortex
                          start (the ranker counts). Default: none. At it no
                          new generator call starts: a cmd: generator is cut at
@@ -86,8 +88,9 @@ cortex grant --file PATH [--symbol NAME] [--workspace DIR] [--axon PATH]
                          not started. A check already running finishes (within
                          --check-timeout-ms) and a pass it produces is
                          accepted. Otherwise the run ends `budget_exhausted`
-                         (20) with detail `deadline`. --json reports both under
-                         `budget` with what was spent.
+                         (20) with detail `deadline` (exit 27 instead, as for
+                         --max-proposals, after an adjudicated state). --json
+                         reports both under `budget` with what was spent.
   --candidates N         how many ranked candidates to try (default: 3). On
                          the measured corpus the top candidate is the sole
                          most-suspicious one about a third of the time, while
@@ -185,14 +188,18 @@ cortex grant --file PATH [--symbol NAME] [--workspace DIR] [--axon PATH]
                          order, every attempt, the outcome and exit code, and
                          `truth` = the repaired symbol (null unless
                          verified_done). Default: env CORTEX_LABEL_LOG, else
-                         off. Written after the verdict: a write failure is
-                         one stderr line and never changes the exit code.
+                         off. Written after the final verdict (it records the
+                         exit the run exits with): a write failure is one
+                         stderr line and never changes the exit code.
   --label-source         also record the file's text as found in that line.
                          Off by default: source can be sensitive.
   --json                 machine-readable outcome on stdout (`cortex-repair/1`):
                          also `budget` (limits and what was spent), `accepted`
                          ({path, sha256} of the bytes the hidden check graded,
-                         on exits 0/27; null otherwise) and `grant` (below).
+                         on exits 0/27; null otherwise), `stopped_by` (what
+                         ended a walk that reports an earlier adjudication,
+                         as {outcome, exit_code, detail}; else null) and
+                         `grant` (below).
                          A rejected attempt reaches the generator's next prompt
                          as typed JSON (diagnostics, failing tests, refusal).
 
@@ -996,11 +1003,12 @@ fn main() {
     // it asked ended that way.
     let mut stopped = vec![false; targets.len()];
     let mut last_other: Option<EpisodeOutcome> = None;
-    // R5 × the walk: the bytes of the latest adjudicated-not-clean state. The
-    // walk goes on looking for a clean repair (restoring the found bytes for
-    // each next attempt), so if it ends reporting that adjudication (exit 27)
-    // these bytes — the ones its digest names — are what the file must hold.
-    let mut adjudicated: Option<Vec<u8>> = None;
+    // R5 × the walk: the latest adjudicated-not-clean outcome and the bytes
+    // it graded. The walk goes on looking for a clean repair (restoring the
+    // found bytes for each next attempt); however it then ends short of one,
+    // the run reports this adjudication and the file must hold these bytes.
+    // An adjudicated result is never discarded by a later, worse attempt.
+    let mut adjudicated: Option<(EpisodeOutcome, Result<Vec<u8>, String>)> = None;
     let mut progress: Vec<axon_cortex::runner::CandidateProgress> =
         targets.iter().map(|_| Default::default()).collect();
     // Every attempt, in the order it ran. A candidate resumed in pass 2
@@ -1101,11 +1109,29 @@ fn main() {
                     stopped[i] = true;
                 }
                 EpisodeOutcome::AdjudicatedNotClean { .. } => {
-                    adjudicated = std::fs::read(workspace.join(&file)).ok();
+                    let bytes = std::fs::read(workspace.join(&file)).map_err(|e| {
+                        format!("the adjudicated state of {file} could not be read: {e}")
+                    });
+                    adjudicated = Some((outcome.clone(), bytes));
                     last_other = Some(outcome.clone());
                 }
                 _ => last_other = Some(outcome.clone()),
             }
+        }
+    }
+    // Short of a verified repair, a walk that reached an adjudicated state
+    // reports it, whatever ended the walk afterwards. What did end it is
+    // reported beside it (`stopped_by`), so a walk budget, a step budget, a
+    // candidate going in circles or the early stop stays visible.
+    let mut stopped_by: Option<EpisodeOutcome> = None;
+    let mut adjudicated_bytes: Option<Result<Vec<u8>, String>> = None;
+    if !matches!(outcome, EpisodeOutcome::VerifiedDone { .. }) {
+        if let Some((adj, bytes)) = adjudicated {
+            let end = std::mem::replace(&mut outcome, adj);
+            if !matches!(end, EpisodeOutcome::AdjudicatedNotClean { .. }) {
+                stopped_by = Some(end);
+            }
+            adjudicated_bytes = Some(bytes);
         }
     }
     if matches!(outcome, EpisodeOutcome::OutOfScopeSuspected { .. }) && structural_stop.is_none() {
@@ -1119,49 +1145,7 @@ fn main() {
             }
         }
     }
-
-    let (code, kind, detail, steps) = match &outcome {
-        EpisodeOutcome::VerifiedDone { steps } => (0, "verified_done", String::new(), *steps),
-        EpisodeOutcome::BudgetExhausted { steps } => {
-            (20, "budget_exhausted", String::new(), *steps)
-        }
-        // R3: the same exit and kind as step exhaustion; `detail` names the
-        // walk limit, where step exhaustion leaves it empty.
-        EpisodeOutcome::WalkBudgetExhausted { steps, by } => {
-            (20, "budget_exhausted", by.as_str().to_string(), *steps)
-        }
-        EpisodeOutcome::NoProgress { steps, action } => (21, "no_progress", action.clone(), *steps),
-        EpisodeOutcome::Blocked { steps, reason } => (22, "blocked", reason.clone(), *steps),
-        EpisodeOutcome::Refused { steps, reason } => (23, "refused", reason.clone(), *steps),
-        EpisodeOutcome::NeedsInput { steps, what } => (24, "needs_input", what.clone(), *steps),
-        EpisodeOutcome::AdjudicatedNotClean {
-            steps,
-            still_failing,
-        } => (
-            27,
-            "adjudicated_not_clean",
-            format!(
-                "`{check}` passed and nothing regressed, but {} check(s) that were already \
-                 failing still fail: {}",
-                still_failing.len(),
-                still_failing.join(", ")
-            ),
-            *steps,
-        ),
-        EpisodeOutcome::NoSuchSymbol {
-            steps,
-            symbol,
-            path,
-        } => (
-            25,
-            "no_such_symbol",
-            format!("`{symbol}` is not defined in {path}"),
-            *steps,
-        ),
-        EpisodeOutcome::OutOfScopeSuspected { steps, reason } => {
-            (28, "out_of_scope_suspected", reason.clone(), *steps)
-        }
-    };
+    let (code, kind, detail, steps) = verdict(&outcome, &check);
     // Nothing worked: the file is left exactly as it was found. A run that
     // reports failure while having rewritten a function is reporting on a
     // workspace nobody asked for.
@@ -1174,17 +1158,13 @@ fn main() {
     // An exit 27 reports the latest adjudication, which a later attempt may
     // have undone on its way: its graded bytes are put back. Failing that,
     // the run fails closed below (R5), never reporting a state it lost.
-    let kept_adjudicated = if code == 27 {
-        match &adjudicated {
-            Some(bytes) => std::fs::write(workspace.join(&file), bytes).map_err(|e| {
-                format!("the adjudicated state of {file} could not be put back at exit: {e}")
-            }),
-            None => Err(format!(
-                "the adjudicated state of {file} could not be read when it was reached"
-            )),
-        }
-    } else {
-        Ok(())
+    let kept_adjudicated = match (code, adjudicated_bytes) {
+        (27, Some(Ok(bytes))) => std::fs::write(workspace.join(&file), bytes).map_err(|e| {
+            format!("the adjudicated state of {file} could not be put back at exit: {e}")
+        }),
+        (27, Some(Err(why))) => Err(why),
+        (27, None) => Err(format!("the adjudicated state of {file} was not kept")),
+        _ => Ok(()),
     };
     let repaired = (code == 0).then(|| attempted.last().cloned().unwrap_or_default());
 
@@ -1240,9 +1220,38 @@ fn main() {
         report
     });
 
-    // THE LABEL ROW, after the verdict, the exit code, the file and the audit
-    // are settled. It reads them and changes none of them: a failed append is
-    // one stderr line and the run exits exactly as it would have.
+    // R5: the artifact a kept patch left, named by the digest the DECIDING
+    // Verified event graded (exit 0: the last `passed: true`; exit 27: the
+    // adjudicated event) — not by a late re-read, which happens after the
+    // audit call and whatever else ran since. The file on disk is read once
+    // more and must still be those bytes; otherwise the run fails closed:
+    // exit 22, `accepted: null`, the file restored as found (like every run
+    // that keeps no patch), and the reason on stderr. Only exits 0 and 27
+    // keep a patch; every other run names none. An exit 27 whose adjudicated
+    // state could not be put back fails closed the same way.
+    let (accepted, code, kind, detail, repaired) = match kept_adjudicated.and_then(|()| {
+        accepted_artifact(
+            &file,
+            code,
+            &runner.episode,
+            std::fs::read(workspace.join(&file)),
+        )
+    }) {
+        Ok(accepted) => (accepted, code, kind, detail, repaired),
+        Err(why) => {
+            eprintln!("cortex repair: {why}; the repair is NOT accepted");
+            let _ = std::fs::write(workspace.join(&file), &original);
+            (None, 22, "blocked", why, None)
+        }
+    };
+    // An audit reviews an accepted fix; one that R5 refused is not reported
+    // as audited (its stderr line, already printed, says what it saw).
+    let audit = audit.filter(|_| code == 0);
+
+    // THE LABEL ROW, after the final verdict: the exit code R5 settled, the
+    // file and the audit. It records the exit the run exits with, and
+    // changes none of it: a failed append is one stderr line and the run
+    // exits exactly as it would have.
     if let Some(path) = &label_log {
         let costs = targets
             .iter()
@@ -1282,31 +1291,6 @@ fn main() {
         }
     }
 
-    // R5: the artifact a kept patch left, named by the digest the DECIDING
-    // Verified event graded (exit 0: the last `passed: true`; exit 27: the
-    // adjudicated event) — not by a late re-read, which happens after the
-    // audit call, the label append and whatever else ran since. The file on
-    // disk is read once more and must still be those bytes; otherwise the
-    // run fails closed: exit 22, `accepted: null`, the file restored as found
-    // (like every run that keeps no patch), and the reason on stderr. Only
-    // exits 0 and 27 keep a patch; every other run names none. An exit 27
-    // whose adjudicated state could not be put back fails closed the same way.
-    let (accepted, code, kind, detail, repaired) = match kept_adjudicated.and_then(|()| {
-        accepted_artifact(
-            &file,
-            code,
-            &runner.episode,
-            std::fs::read(workspace.join(&file)),
-        )
-    }) {
-        Ok(accepted) => (accepted, code, kind, detail, repaired),
-        Err(why) => {
-            eprintln!("cortex repair: {why}; the repair is NOT accepted");
-            let _ = std::fs::write(workspace.join(&file), &original);
-            (None, 22, "blocked", why, None)
-        }
-    };
-
     if json {
         println!(
             "{}",
@@ -1325,6 +1309,14 @@ fn main() {
                     "elapsed_ms": started.elapsed().as_millis() as u64,
                     "exhausted_by": runner.walk_budget().exhausted_by().map(|b| b.as_str()),
                 },
+                // What ended a walk whose reported outcome is an earlier
+                // adjudication (kept, exit 27): `{outcome, exit_code,
+                // detail}` as that ending alone would have been reported.
+                // `null` when the outcome above is what ended the run.
+                "stopped_by": stopped_by.as_ref().map(|o| {
+                    let (code, kind, detail, _) = verdict(o, &check);
+                    serde_json::json!({ "outcome": kind, "exit_code": code, "detail": detail })
+                }),
                 // WHICH candidate worked, and every attempt before it, in the
                 // order they ran. With a walked ranking that is no longer
                 // implied by the command line. Under the breadth-first walk a
@@ -1478,8 +1470,67 @@ fn main() {
         if !detail.is_empty() {
             println!("  {detail}");
         }
+        if let Some(o) = &stopped_by {
+            let (code, kind, detail, _) = verdict(o, &check);
+            let detail = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            };
+            println!(
+                "  the walk then ended {kind} ({code}){detail}; the adjudicated state is kept"
+            );
+        }
     }
     std::process::exit(code);
+}
+
+/// `(exit code, outcome kind, detail, steps)` of an episode outcome — the
+/// run's verdict, and (as `stopped_by`) what ended a walk whose reported
+/// verdict is an earlier adjudication.
+fn verdict(outcome: &EpisodeOutcome, check: &str) -> (i32, &'static str, String, usize) {
+    match outcome {
+        EpisodeOutcome::VerifiedDone { steps } => (0, "verified_done", String::new(), *steps),
+        EpisodeOutcome::BudgetExhausted { steps } => {
+            (20, "budget_exhausted", String::new(), *steps)
+        }
+        // R3: the same exit and kind as step exhaustion; `detail` names the
+        // walk limit, where step exhaustion leaves it empty.
+        EpisodeOutcome::WalkBudgetExhausted { steps, by } => {
+            (20, "budget_exhausted", by.as_str().to_string(), *steps)
+        }
+        EpisodeOutcome::NoProgress { steps, action } => (21, "no_progress", action.clone(), *steps),
+        EpisodeOutcome::Blocked { steps, reason } => (22, "blocked", reason.clone(), *steps),
+        EpisodeOutcome::Refused { steps, reason } => (23, "refused", reason.clone(), *steps),
+        EpisodeOutcome::NeedsInput { steps, what } => (24, "needs_input", what.clone(), *steps),
+        EpisodeOutcome::AdjudicatedNotClean {
+            steps,
+            still_failing,
+        } => (
+            27,
+            "adjudicated_not_clean",
+            format!(
+                "`{check}` passed and nothing regressed, but {} check(s) that were already \
+                 failing still fail: {}",
+                still_failing.len(),
+                still_failing.join(", ")
+            ),
+            *steps,
+        ),
+        EpisodeOutcome::NoSuchSymbol {
+            steps,
+            symbol,
+            path,
+        } => (
+            25,
+            "no_such_symbol",
+            format!("`{symbol}` is not defined in {path}"),
+            *steps,
+        ),
+        EpisodeOutcome::OutOfScopeSuspected { steps, reason } => {
+            (28, "out_of_scope_suspected", reason.clone(), *steps)
+        }
+    }
 }
 
 /// R5: the `accepted` object of a run that exited `code`, or why the kept
@@ -1665,4 +1716,49 @@ fn grant_only(mut args: impl Iterator<Item = String>) {
             "grant": fence.to_json(&grants),
         })
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axon_cortex::episode::{Episode, EpisodeEvent};
+
+    fn graded(bytes: &[u8]) -> Episode {
+        let mut ep = Episode::new("e");
+        ep.push(EpisodeEvent::Verified {
+            passed: true,
+            detail: String::new(),
+            graded_sha256: Some(axon_cortex::label::sha256_hex(bytes)),
+        });
+        ep
+    }
+
+    /// R5: the file on disk at the final check must be the bytes the
+    /// deciding verdict graded. A file changed after acceptance (here: read
+    /// back as other bytes) is refused with the reason, never reported as
+    /// accepted; the graded bytes themselves are accepted under their digest.
+    #[test]
+    fn a_file_changed_after_acceptance_is_not_reported_as_accepted() {
+        let ep = graded(b"fn double(n: i64) -> i64 {\n    n * 2\n}\n");
+        let changed = accepted_artifact("f.ax", 0, &ep, Ok(b"fn double() {}\n".to_vec()));
+        let why = match changed {
+            Err(why) => why,
+            Ok(a) => {
+                panic!("ATTACK: a file changed after acceptance was reported as accepted: {a:?}")
+            }
+        };
+        assert!(why.contains("changed after acceptance"), "{why}");
+        let same = accepted_artifact(
+            "f.ax",
+            0,
+            &ep,
+            Ok(b"fn double(n: i64) -> i64 {\n    n * 2\n}\n".to_vec()),
+        );
+        let sha = axon_cortex::label::sha256_hex(b"fn double(n: i64) -> i64 {\n    n * 2\n}\n");
+        assert_eq!(
+            same,
+            Ok(Some(serde_json::json!({ "path": "f.ax", "sha256": sha })))
+        );
+        assert_eq!(accepted_artifact("f.ax", 21, &ep, Ok(Vec::new())), Ok(None));
+    }
 }
