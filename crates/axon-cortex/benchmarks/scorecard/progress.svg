@@ -25,8 +25,12 @@
 <text x="1154" y="45">tempt</text>
 <polygon points="1225.0,34.5 1226.8,38.6 1231.2,39.0 1227.9,41.9 1228.8,46.3 1225.0,44.0 1221.2,46.3 1222.1,41.9 1218.8,39.0 1223.2,38.6" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
 <text x="1234" y="45">receipt</text>
-<circle cx="1305.0" cy="41.0" r="4.5" fill="#ffffff" stroke="#555555" stroke-width="1.5"></circle>
-<text x="1314" y="45">cost estimated</text>
+<polygon points="1310.5,41.0 1300.5,35.5 1300.5,46.5" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
+<text x="1314" y="45">hx-dev</text>
+<polygon points="1379.5,41.0 1389.5,35.5 1389.5,46.5" fill="#555555" stroke="#555555" stroke-width="1.5"></polygon>
+<text x="1394" y="45">hx-test</text>
+<circle cx="1465.0" cy="41.0" r="4.5" fill="#ffffff" stroke="#555555" stroke-width="1.5"></circle>
+<text x="1474" y="45">cost estimated</text>
 <text x="220" y="62" font-weight="bold">Verified rate (95% Wilson CI)</text>
 <rect x="220" y="70" width="860" height="150" fill="none" stroke="#999999"/>
 <line x1="220" y1="220.0" x2="1080" y2="220.0" stroke="#e3e3e3"/>

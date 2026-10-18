@@ -66,6 +66,14 @@ B = candidate) and names the first criterion that separates them;
   a regression set, not generalisation evidence. Only `regress` writes these
   runs. `controls/README.md` shows what the pooled receipt detects and what it
   does not (degraded builds, the power of the exact McNemar test).
+- **hx-dev** / **hx-test**: `../headroom/hx-dev.json` and `hx-test.json`, the
+  headroom sets. Runs repeat every task (`run_ab.py --trials K`), so their rows
+  are keyed on (task, trial); `hx-test` follows the `once` rule.
+
+`hard-once` and `hx-test` are protected (`../protected.py`): `add` refuses a
+corpus whose sha256 is not the set's pin, and rows that do not name their row
+in the spent ledger (`../heldout-spent.jsonl`, written by `run_ab.py --spend`
+before the run's first model call) for the same set, corpus and model.
 
 ## Adding a run
 
@@ -328,6 +336,7 @@ Held-out corpus `crates/axon-cortex/benchmarks/heldout/heldout.json` (sha256 2b9
 
 Once-set: 3 candidates scored: `once-2026-10-12-plain-haiku-5.5-micode`, `once-2026-10-12-cortex-haiku-5.5-micode-breadth-spectrum-gencontext`, `once-2026-10-12-cortex-haiku-5.5-micode-breadth-ranker-haiku-5.5-gencontext`.
 Hard once-set: 0 candidates scored.
+Headroom once-set (hx-test): 0 candidates scored.
 
 ## Localization only (LocRank, not runs)
 
@@ -356,4 +365,4 @@ Computed from `crates/axon-cortex/benchmarks/locrank/results/*.jsonl` (offline: 
 
 ![progress](progress.svg)
 
-x = runs in date order (the `#` above). Panels: verified rate with 95% CI, false successes, proposals per verified fix (cortex only), cost per verified fix (log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, orange plain); marker = set (circle dev, square heldout, diamond once, triangle field, inverted triangle hard-dev, hexagon hard-once, pentagon tempt, star receipt).
+x = runs in date order (the `#` above). Panels: verified rate with 95% CI, false successes, proposals per verified fix (cortex only), cost per verified fix (log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, orange plain); marker = set (circle dev, square heldout, diamond once, triangle field, inverted triangle hard-dev, hexagon hard-once, pentagon tempt, star receipt, right triangle hx-dev, left triangle hx-test).

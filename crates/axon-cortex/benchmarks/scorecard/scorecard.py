@@ -57,11 +57,14 @@ LOCRANK = os.path.join(BENCH, "locrank", "results")
 sys.path.insert(0, os.path.join(BENCH, "ab"))
 import analyse  # noqa: E402  (../ab/analyse.py: wilson, mcnemar_exact, summarize, walk_stats, usd)
 import corpus as corpus_mod  # noqa: E402
+sys.path.insert(0, BENCH)
+import protected  # noqa: E402  (../protected.py: pins, the spent ledger)
 
 SCHEMA = "cortex-scorecard/1"
-SETS = ("dev", "heldout", "once", "field", "hard-dev", "hard-once", "tempt", "receipt")
+SETS = ("dev", "heldout", "once", "field", "hard-dev", "hard-once", "tempt", "receipt",
+        "hx-dev", "hx-test")
 # Sets scored at most once per candidate (see `add`).
-ONCE_SETS = ("once", "hard-once")
+ONCE_SETS = ("once", "hard-once", "hx-test")
 AGENTS = ("cortex", "plain", "plain-verify", "plain-honest")
 WALKS = ("depth", "breadth")
 ALPHA = 0.05
@@ -683,16 +686,32 @@ def normalize(raw, truth, oos=frozenset()):
     return row
 
 
-def load_rows(path, truth, oos=frozenset()):
+def load_rows(path, truth, oos=frozenset(), set_=None):
+    """A trial set's (analyse.TRIAL_SETS) rows are keyed on (id, trial) and
+    carry `trial` normalized; every other set's on the task id alone."""
     raw = read_jsonl(path)
     if not raw:
         raise Refused(f"{path}: no rows")
     norm = [normalize(r, truth, oos) for r in raw]
-    ids = [r["id"] for r in norm]
-    dup = sorted({i for i in ids if ids.count(i) > 1})
+    if set_ in analyse.TRIAL_SETS:
+        for r, n in zip(raw, norm):
+            if not isinstance(r.get("trial"), int) or isinstance(r.get("trial"), bool):
+                raise Refused(f"{path}: row {r.get('id')} has no integer `trial`: {set_} is "
+                              "a trial set")
+            n["trial"] = r["trial"]
+    keys = [unit(r) for r in norm]
+    seen, dup = set(), set()
+    for k in keys:
+        (dup if k in seen else seen).add(k)
     if dup:
-        raise Refused(f"{path}: task ids appear more than once: {dup}")
+        raise Refused(f"{path}: task ids appear more than once: {sorted(dup, key=str)}")
     return raw, norm
+
+
+def unit(r):
+    """What a normalized row is one observation of: its task, or for a trial
+    set its (task, trial)."""
+    return (r["id"], r["trial"]) if "trial" in r else r["id"]
 
 
 def row_meta(raw_rows):
@@ -719,9 +738,12 @@ def check_rows_against_config(raw_rows, agent, cfg):
     transport = meta.get("transport") or ("claude" if meta.get("claude_version") else None)
     if transport and transport != cfg["transport"]:
         raise Refused(f"config transport {cfg['transport']!r} but the rows ran {transport!r}")
-    if cfg["cortex_commit"] and meta.get("commit") and meta["commit"] != cfg["cortex_commit"]:
+    # The cortex binary's build commit if run_ab.py was told it
+    # (`--cortex-commit`), else the harness HEAD the rows were produced at.
+    built = meta.get("cortex_commit") or meta.get("commit")
+    if cfg["cortex_commit"] and built and built != cfg["cortex_commit"]:
         raise Refused(f"config cortex_commit {cfg['cortex_commit']} but the rows were "
-                      f"produced at {meta['commit']}")
+                      f"produced at {built}")
     sha16 = meta.get("cortex_sha256_16")
     if cfg["cortex_sha256"] and sha16 and not cfg["cortex_sha256"].startswith(sha16):
         raise Refused(f"config cortex_sha256 {cfg['cortex_sha256']} but the rows' cortex "
@@ -837,8 +859,8 @@ def crosscheck_analyse(raw, norm, agent):
 def pair(this_norm, base_norm):
     """Paired on the in-scope tasks only (out-of-scope rows have no verified
     outcome to pair: see compute_metrics)."""
-    a = {r["id"]: r["verified"] for r in this_norm if r.get("scope") != "out"}
-    b = {r["id"]: r["verified"] for r in base_norm if r.get("scope") != "out"}
+    a = {unit(r): r["verified"] for r in this_norm if r.get("scope") != "out"}
+    b = {unit(r): r["verified"] for r in base_norm if r.get("scope") != "out"}
     ids = sorted(set(a) & set(b))
     if not ids:
         raise Refused("the two runs share no task ids")
@@ -864,7 +886,7 @@ def run_inputs(rec, root):
             raise Refused(f"run {rec['run_id']}: {what} file {path} changed since it was "
                           "added (sha256 differs)")
     truth = load_corpus(corpus_abs)
-    raw, norm = load_rows(rows_abs, truth, out_of_scope_ids(corpus_abs))
+    raw, norm = load_rows(rows_abs, truth, out_of_scope_ids(corpus_abs), rec["set"])
     return raw, norm
 
 
@@ -917,8 +939,32 @@ def default_run_id(set_, date, agent, cfg):
     return "-".join(parts)
 
 
+def check_spent(raw, set_, corpus_sha, ledger):
+    """A protected set scores only run_ab.py rows that name a row of the spent
+    ledger (`meta.spend.row_sha256`) for this set, corpus and model."""
+    if not all(is_run_ab_row(r) for r in raw):
+        raise Refused(f"--set {set_} is protected: it scores run_ab.py rows that name their "
+                      "spent-ledger row (meta.spend)")
+    meta = row_meta(raw)
+    sha = (meta.get("spend") or {}).get("row_sha256")
+    if not sha:
+        raise Refused(f"--set {set_} is protected: the rows name no spent-ledger row "
+                      "(run_ab.py --spend)")
+    try:
+        row = protected.find(protected.read_ledger(ledger), sha)
+    except protected.ProtectedError as e:
+        raise Refused(str(e)) from None
+    if row is None:
+        raise Refused(f"the rows name spent-ledger row {sha}, which is not in {ledger}")
+    want = {"set": set_, "corpus_sha256": corpus_sha, "model": meta.get("model")}
+    bad = {k: (row[k], v) for k, v in want.items() if row[k] != v}
+    if bad:
+        raise Refused(f"spent-ledger row {sha} does not match these rows: "
+                      + ", ".join(f"{k} ledger {a!r}, rows {b!r}" for k, (a, b) in bad.items()))
+
+
 def add(history, root, *, set_, agent, rows, corpus, config, notes, baselines=(),
-        run_id=None, date=None, digest_of=None, incumbent=None):
+        run_id=None, date=None, digest_of=None, incumbent=None, ledger=None):
     """`digest_of(commit)` gives the repair digest at a commit; default
     `repair_digest(root, commit)` (git). `incumbent`: the run this one is
     judged against for a receipt (main's run, PREREG-regress amendment 2),
@@ -938,11 +984,18 @@ def add(history, root, *, set_, agent, rows, corpus, config, notes, baselines=()
         raise Refused(f"incumbent {incumbent} is not in the history")
     rows_rel, corpus_rel = repo_rel(rows, root), repo_rel(corpus, root)
     truth = load_corpus(corpus)
-    raw, norm = load_rows(rows, truth, out_of_scope_ids(corpus))
+    if set_ in protected.PROTECTED_SETS:
+        try:
+            protected.check_pin(set_, corpus)
+        except protected.ProtectedError as e:
+            raise Refused(str(e)) from None
+    raw, norm = load_rows(rows, truth, out_of_scope_ids(corpus), set_)
     check_rows_against_config(raw, agent, cfg)
     crosscheck_analyse(raw, norm, agent)
     rows_sha = sha256_file(rows)
     corpus_sha = sha256_file(corpus)
+    if set_ in protected.PROTECTED_SETS:
+        check_spent(raw, set_, corpus_sha, ledger or protected.LEDGER)
     run_id = run_id or default_run_id(set_, date, agent, cfg)
 
     for r in recs:
@@ -971,10 +1024,12 @@ def add(history, root, *, set_, agent, rows, corpus, config, notes, baselines=()
         _, base_norm = run_inputs(by_id[b], root)
         paired.append({"baseline_run_id": b, "paired": pair(norm, base_norm)})
 
-    # The commit the rows were produced at: the config's, else the one
-    # run_ab.py stamped in every row's meta. No commit, no digest (null).
-    commit = cfg["cortex_commit"] or (row_meta(raw).get("commit")
-                                      if all(is_run_ab_row(r) for r in raw) else None)
+    # The commit the rows were produced at: the config's, else the cortex
+    # build commit run_ab.py was given, else the HEAD it stamped in every
+    # row's meta. No commit, no digest (null).
+    commit = cfg["cortex_commit"] or (
+        (row_meta(raw).get("cortex_commit") or row_meta(raw).get("commit"))
+        if all(is_run_ab_row(r) for r in raw) else None)
     digest = None
     if commit:
         digest = digest_of(commit) if digest_of else repair_digest(root, commit)
@@ -1062,8 +1117,8 @@ def sign_test(a_norm, b_norm, key, name):
     over the tasks BOTH runs verified. A pair with a missing value is left out
     and ties are dropped; `analyse.mcnemar_exact` is the same two-sided
     binomial (p = 1/2) on the untied pairs."""
-    a = {r["id"]: r for r in a_norm}
-    b = {r["id"]: r for r in b_norm}
+    a = {unit(r): r for r in a_norm}
+    b = {unit(r): r for r in b_norm}
     worse = better = ties = missing = 0
     for i in sorted(set(a) & set(b)):
         if not (a[i]["verified"] and b[i]["verified"]):
@@ -1254,6 +1309,14 @@ B = candidate) and names the first criterion that separates them;
   a regression set, not generalisation evidence. Only `regress` writes these
   runs. `controls/README.md` shows what the pooled receipt detects and what it
   does not (degraded builds, the power of the exact McNemar test).
+- **hx-dev** / **hx-test**: `../headroom/hx-dev.json` and `hx-test.json`, the
+  headroom sets. Runs repeat every task (`run_ab.py --trials K`), so their rows
+  are keyed on (task, trial); `hx-test` follows the `once` rule.
+
+`hard-once` and `hx-test` are protected (`../protected.py`): `add` refuses a
+corpus whose sha256 is not the set's pin, and rows that do not name their row
+in the spent ledger (`../heldout-spent.jsonl`, written by `run_ab.py --spend`
+before the run's first model call) for the same set, corpus and model.
 
 ## Adding a run
 
@@ -1548,7 +1611,8 @@ def render_readme(recs, root, locdir, norms, waivers=(), spec=None):
                    f"{len(rs)} time{'s' if len(rs) != 1 else ''}: "
                    + ", ".join(f"`{r['run_id']}`" for r in rs) + ".")
     out.append("")
-    for s, name in (("once", "Once-set"), ("hard-once", "Hard once-set")):
+    for s, name in (("once", "Once-set"), ("hard-once", "Hard once-set"),
+                    ("hx-test", "Headroom once-set (hx-test)")):
         once = [r for r in runs if r["set"] == s]
         out.append(f"{name}: {len(once)} candidate{'s' if len(once) != 1 else ''} scored"
                    + (": " + ", ".join(f"`{r['run_id']}`" for r in once) if once else "") + ".")
@@ -1564,7 +1628,8 @@ def render_readme(recs, root, locdir, norms, waivers=(), spec=None):
             "(log scale; hollow = estimate), truth-first rate. Colour = agent (blue cortex, "
             "orange plain); marker = set "
             "(circle dev, square heldout, diamond once, triangle field, inverted triangle "
-            "hard-dev, hexagon hard-once, pentagon tempt, star receipt).", ""]
+            "hard-dev, hexagon hard-once, pentagon tempt, star receipt, right triangle "
+            "hx-dev, left triangle hx-test).", ""]
     return "\n".join(out)
 
 
@@ -1590,6 +1655,10 @@ def marker(set_, x, y, color, hollow=False, title=None):
     elif set_ == "tempt":
         pts = " ".join(f"{x + 5.5 * math.cos(math.radians(a)):.1f},"
                        f"{y + 5.5 * math.sin(math.radians(a)):.1f}" for a in range(-90, 270, 72))
+    elif set_ == "hx-dev":
+        pts = f"{x + 5.5:.1f},{y:.1f} {x - 4.5:.1f},{y - 5.5:.1f} {x - 4.5:.1f},{y + 5.5:.1f}"
+    elif set_ == "hx-test":
+        pts = f"{x - 5.5:.1f},{y:.1f} {x + 4.5:.1f},{y - 5.5:.1f} {x + 4.5:.1f},{y + 5.5:.1f}"
     elif set_ == "receipt":
         pts = " ".join(f"{x + (6.5 if k % 2 == 0 else 3.0) * math.cos(math.radians(-90 + 36 * k)):.1f},"
                        f"{y + (6.5 if k % 2 == 0 else 3.0) * math.sin(math.radians(-90 + 36 * k)):.1f}"
@@ -1928,6 +1997,67 @@ def selftest():
             add(hist, root, set_="heldout", agent="cortex", rows=norm_rows(f"h{k}.jsonl", b_rows[1:k + 2]),
                 corpus=corpus, config=dict(cfg_b, ranker=f"r{k}"), notes=f"heldout {k}",
                 run_id=f"H{k}", date="2026-01-04")
+        # Trial sets (hx-dev, hx-test) key a run's rows on (id, trial); every
+        # other set keeps one row per task id.
+        def trial_rows(name, trials, spend=None, model="m1", extra=()):
+            rs = [dict(r, trial=k, meta=dict(r["meta"], spend=spend, model=model))
+                  for k in trials for r in b_rows]
+            return write_rows(name, rs + list(extra))
+
+        truth6 = load_corpus(corpus)
+        _, tn = load_rows(trial_rows("tr1.jsonl", (1, 2)), truth6, set_="hx-dev")
+        expect(sorted((r["id"], r["trial"]) for r in tn)
+               == sorted((i, k) for i in ids for k in (1, 2)), "hx-dev rows not keyed (id, trial)")
+        expect(refused(lambda: load_rows(trial_rows("tr2.jsonl", (1,), extra=[dict(b_rows[0], trial=1)]),
+                                         truth6, set_="hx-dev"), "more than once"),
+               "a duplicate (id, trial) row was not refused")
+        expect(refused(lambda: load_rows(write_rows("tr3.jsonl", b_rows), truth6, set_="hx-dev"),
+                       "trial"), "a trial-set row without `trial` was not refused")
+        expect(refused(lambda: load_rows(trial_rows("tr4.jsonl", (1, 2)), truth6, set_="dev"),
+                       "more than once"), "a dev run with two trials of one task was not refused")
+        # A history of their own, so the fixture history below is unchanged.
+        hist_hx = os.path.join(root, "history-hx.jsonl")
+        hx1 = add(hist_hx, root, set_="hx-dev", agent="cortex", rows=trial_rows("hx1.jsonl", (1, 2)),
+                  corpus=corpus, config=cfg_b, notes="hx 1", run_id="HX1", date="2026-01-04")
+        expect(hx1["metrics"]["n"] == 12, f"hx-dev metrics over (id, trial) {hx1['metrics']}")
+        # Same tasks and trials in another order: another rows file, the same pairs.
+        hx2 = add(hist_hx, root, set_="hx-dev", agent="cortex", rows=trial_rows("hx2.jsonl", (2, 1)),
+                  corpus=corpus, config=cfg_b, notes="hx 2",
+                  baselines=["HX1"], run_id="HX2", date="2026-01-04")
+        expect(sum(v for k, v in hx2["paired"].items() if k != "mcnemar_p") == 12,
+               f"hx-dev pairing not over (id, trial): {hx2['paired']}")
+        # Protected sets: the corpus must match its pin, and the rows must
+        # name a spent-ledger row for this set, corpus and model.
+        expect(refused(lambda: add(hist_hx, root, set_="hard-once", agent="cortex",
+                                   rows=norm_rows("ho.jsonl", b_rows), corpus=corpus,
+                                   config=dict(cfg_b, ranker="x"), notes="x"), "pin"),
+               "a hard-once run on a corpus that is not the pinned one was not refused")
+        led = os.path.join(root, "spent.jsonl")
+        open(led, "w").close()
+        lrow = {"set": "hx-test", "corpus_sha256": sha256_file(corpus), "purpose": "selftest",
+                "repair_digest": D1, "patch_sha256": None, "cortex_sha256": "ab" * 32,
+                "axon_sha256": "0" * 64, "grade_axon_sha256": "0" * 64,
+                "generator": "real/micode", "model": "m1", "k": 1, "out": "x.jsonl",
+                "git_head": "c" * 40, "arm": "B"}
+        good = protected.spend(led, lrow)
+        other_set = protected.spend(led, dict(lrow, set="hard-once", purpose="o", out="y.jsonl"))
+        hx_cfg = cfg_b
+        for what, sp, needle in (("no spend", None, "ledger"),
+                                 ("unknown row", {"row_sha256": "f" * 64}, "ledger"),
+                                 ("another set's row", {"row_sha256": other_set}, "ledger row")):
+            expect(refused(lambda: add(hist_hx, root, set_="hx-test", agent="cortex",
+                                       rows=trial_rows(f"hxt-{what}.jsonl", (1,), spend=sp),
+                                       corpus=corpus, config=hx_cfg, notes="x", ledger=led),
+                           needle), f"hx-test run with {what} was not refused")
+        expect(refused(lambda: add(hist_hx, root, set_="hx-test", agent="cortex",
+                                   rows=trial_rows("hxt-model.jsonl", (1,), model="m2",
+                                                   spend={"row_sha256": good}),
+                                   corpus=corpus, config=dict(hx_cfg, model="m2"), notes="x",
+                                   ledger=led), "ledger row"),
+               "hx-test run whose model is not the ledger row's was not refused")
+        add(hist_hx, root, set_="hx-test", agent="cortex",
+            rows=trial_rows("hxt.jsonl", (1,), spend={"row_sha256": good}), corpus=corpus,
+            config=hx_cfg, notes="hx-test", run_id="HXT", date="2026-01-04", ledger=led)
         # Out-of-scope tasks (../hardset): never in verified/n, summarized apart;
         # a false claim on one still counts as a false success.
         corpus_h = os.path.join(root, "hard.json")
@@ -2209,7 +2339,8 @@ def selftest():
           "heldout count, report determinism, SVG well-formed, compare order, stale rows, "
           "repair digest (exclusions, one-character change, git = working tree), receipts: "
           "matching run passes, changed digest fails, waiver passes and is reported, worse "
-          "run fails, a receipt against a superseded main fails, receipt-set legs and pooled verdict, dev-receipt legacy cutoff)")
+          "run fails, a receipt against a superseded main fails, receipt-set legs and pooled verdict, dev-receipt legacy cutoff, "
+          "trial sets keyed (id, trial), protected sets: pin and spent-ledger row)")
     return 0
 
 
