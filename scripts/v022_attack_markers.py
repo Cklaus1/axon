@@ -3129,4 +3129,6 @@ ATTACK_MARKERS.update({
     'M3762': r'ATTACK: struct_where: a pass adding a `fs:write` predicate passed G2',
     'M3763': r'ATTACK: verify_read: a `fs:read` predicate is missing `IO` from the effect union',
     'M3764': r'ATTACK: a native call in a refinement f uses escaped E1004',
+    'M3765': r'ATTACK: println ran under a non-UTF-8 AXON_ALLOWED_EFFECTS',
+    'M3766': r'ATTACK: a printing test passed a keyed run under a non-UTF-8 AXON_ALLOWED_EFFECTS',
 })

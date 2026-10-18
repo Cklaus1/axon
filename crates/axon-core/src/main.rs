@@ -6750,7 +6750,15 @@ fn cmd_test(
                 .map(|e| e.trim().to_string())
                 .filter(|e| !e.is_empty() && e != "Exec")
                 .collect(),
-            Err(_) => axon_core::builtins::GRANTABLE_EFFECTS
+            // SET but not UTF-8: it names no effect, so it grants none. This
+            // arm used to be `Err(_)` and handed it every grantable effect
+            // but `Exec`; the rewrite below then made that widening valid
+            // UTF-8 for the interpreter. Rewritten empty, it denies all.
+            Err(std::env::VarError::NotUnicode(_)) => {
+                eprintln!("warning: AXON_ALLOWED_EFFECTS is not UTF-8 — it denies every effect");
+                Vec::new()
+            }
+            Err(std::env::VarError::NotPresent) => axon_core::builtins::GRANTABLE_EFFECTS
                 .iter()
                 .filter(|e| **e != "Exec")
                 .map(|e| e.to_string())

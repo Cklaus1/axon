@@ -7535,7 +7535,9 @@ fn parse_token_budget() -> Option<i64> {
 /// An EMPTY value is meaningful and is NOT the same as unset:
 /// `AXON_ALLOWED_EFFECTS=` means "pure only, deny every effect", while unset
 /// means "no ceiling at all". Distinguishing them matters because
-/// deny-everything is a case a caller reaches for deliberately.
+/// deny-everything is a case a caller reaches for deliberately. A SET value
+/// that is not UTF-8 names no effect, so it denies every effect too (with one
+/// warning) — it is never read as unset.
 ///
 /// THE SCOPE VARIABLES restrict the same effects to paths and hosts, with
 /// `sandbox_create_scoped`'s spelling and matching (`parse_scope_list`, then the
@@ -7563,17 +7565,28 @@ fn ambient_sandbox() -> Vec<SandboxEntry> {
         net: ambient_scope_var("AXON_ALLOWED_NET", std::env::var_os("AXON_ALLOWED_NET")),
     };
     let scoped = scope.fs_read.is_some() || scope.fs_write.is_some() || scope.net.is_some();
-    let Ok(raw) = std::env::var("AXON_ALLOWED_EFFECTS") else {
-        if !scoped {
-            return Vec::new();
+    let raw = match std::env::var("AXON_ALLOWED_EFFECTS") {
+        Ok(raw) => raw,
+        // SET but not UTF-8: no effect name can be read out of it, so it
+        // grants none. Reading it as unset (no ceiling, or `all_effects`
+        // beside a scope variable) let a set ceiling fail open — the same
+        // rule `ambient_scope_var` applies to the scope variables.
+        Err(std::env::VarError::NotUnicode(_)) => {
+            eprintln!("warning: AXON_ALLOWED_EFFECTS is not UTF-8 — it denies every effect");
+            String::new()
         }
-        return vec![SandboxEntry {
-            principal: 0,
-            allowed: std::collections::HashSet::new(),
-            scope,
-            all_effects: true,
-            ambient: true,
-        }];
+        Err(std::env::VarError::NotPresent) => {
+            if !scoped {
+                return Vec::new();
+            }
+            return vec![SandboxEntry {
+                principal: 0,
+                allowed: std::collections::HashSet::new(),
+                scope,
+                all_effects: true,
+                ambient: true,
+            }];
+        }
     };
     let allowed: std::collections::HashSet<String> = raw
         .split(',')

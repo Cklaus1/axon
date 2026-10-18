@@ -11634,6 +11634,14 @@ MUTATIONS += [
      '    push_fn_hooks(fndef, &ctx, &mut work);\n    drain_walk(work, &mut ctx);\n    let called: Vec<&str> = reach',
      '    drain_walk(work, &mut ctx);\n    let called: Vec<&str> = reach',
      'axon-core', '--lib', 'capabilities::tests::a_native_call_in_a_used_refinement_needs_the_users_grant_e1004'),
+    ('M3765', 'FU-5 CEILING: the interpreter reads a non-UTF-8 AXON_ALLOWED_EFFECTS as a grant', 'crates/axon-core/src/interp.rs',
+     'it denies every effect");\n            String::new()',
+     'it denies every effect");\n            "IO".to_string()',
+     'axon-core', '--test cli_run', 'a_non_utf8_effect_ceiling_denies_every_effect'),
+    ('M3766', 'FU-5 CEILING: axon test --completion-key-stdin widens a non-UTF-8 AXON_ALLOWED_EFFECTS', 'crates/axon-core/src/main.rs',
+     'it denies every effect");\n                Vec::new()',
+     'it denies every effect");\n                vec!["IO".to_string()]',
+     'axon-core', '--test cli_run', 'a_keyed_test_run_under_a_non_utf8_effect_ceiling_denies_every_effect'),
 ]
 
 if __name__ == "__main__":
