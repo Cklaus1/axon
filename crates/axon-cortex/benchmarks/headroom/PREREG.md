@@ -43,7 +43,7 @@ Source of the design: `tasks/followup-spec.md` FU-1c, FU-1f, FU-1h and FU-10
 |---|---|
 | pilot (20 hx-dev tasks, h55 k=1, h45 k=1): cost per task-trial by outcome | h55: 20/20 `verified_done`, $0.0006 mean ($0.012 total); h45: 19 `verified_done` $0.0044 mean, 1 `budget_exhausted` $0.0224 ($0.106 total). Ranker spend $0 (no row called it). Ids: seeded `random.Random(1).sample` of the 182 dev ids. |
 | pilot wall time, rate-limit rows | h55 27 s, h45 64 s (`--parallel 3`); 0 rate-limited rows |
-| incumbent | f26e9506 cortex, arm B |
+| incumbent | f26e9506 cortex (sha256 `957e5343529712b7…`, the rep-int debug build at f26e9506; every committed calibration row carries it in `meta.cortex_sha256_16`), arm B |
 | primary model, k on dev | `claude-haiku-5-5`, k = 3 |
 | cells: final (class, knob) list | caller:1, caller:2, caps:-, multi:2, multi:3, refine:refine, subtle:argswap-typed, subtle:bound, subtle:drop-else, subtle:wrong-field |
 | eligible cells (>= 12 dev tasks from >= 3 dev programs) | caller:1, caller:2, caps:-, multi:2, multi:3, subtle:bound, subtle:wrong-field |
@@ -148,12 +148,14 @@ Computed by `stats.py compare` / `stats.py route2` and `stats.fu10_verdict`.
 - `calibrate.py` (seed 1, cap-seed 1) keeps one cell, caller:2. Its test
   selection is 33 tasks from 17 programs; the acceptance needs >= 150 tasks
   from >= 20 programs. `--write-sets` refuses (IA-13), and nothing was written.
-- The remedy in section 1 item 3 (more pool, same recipe) needs about 170
-  more test programs at caller:2's yield (33 tasks from 38 test programs,
-  `--per-cell-program 2`). Not pursued: the set would be one cell, and that
-  cell's failures are not generation failures (below), so neither the batch
-  (FU-2..FU-9 are correctness fixes) nor FU-10 (feedback reaches the model
-  only after a REJECTED attempt) could move it.
+- The remedy in section 1 item 3 (more pool, same recipe) needs about 135
+  more test programs (≈ 173 in total) at caller:2's yield (33 tasks from 38
+  test programs, `--per-cell-program 2`). Not pursued: the set would be one
+  cell whose failures are accepted caller workarounds (below), not refused
+  repairs. The batch's correctness fixes (FU-2..FU-9) do not change which
+  symbol is patched. FU-10's feedback follows a REJECTED attempt: 18 of the
+  28 false successes were first proposals, which no feedback precedes; the
+  other 10 followed one rejected attempt on another candidate.
 - **Every not-clean caller trial is a false success** (28 of 114 caller
   task-trials, 10 tasks; 0 in every other class): the incumbent patched the
   CALLER (`true_symbol_changed` false), the hidden check passed, and the

@@ -459,14 +459,19 @@ def _measure(run_root, out_dir, spec, *, cap_usd, parallel, not_sha256=None):
     """Build axon and cortex in `run_root` (a checkout) and run ITS `run_ab.py`
     on the receipt corpus (`spec["corpus"]`, read from THIS checkout: the commit
     measured may predate it) with the receipt config into `out_dir`/b.jsonl, so the
-    rows' meta commit is `run_root`'s HEAD. Returns (rows, cortex binary).
+    rows' meta commit is `run_root`'s HEAD. Returns (rows, cortex sha256); the
+    sha256 is taken here because main's worktree, and the `target/` in it, is
+    removed once this returns.
 
     A checkout other than this one (main's detached worktree) builds into its
     own `target/`, never into CARGO_TARGET_DIR: cargo copies a binary up to
     `debug/` only when it compiles it, so after main's build in a shared target
     dir a HEAD build whose units were already fresh left main's `cortex` in
     `debug/`, and the HEAD run measured main's bytes. `not_sha256` (the
-    incumbent's recorded cortex sha256) refuses such a binary before any spend."""
+    incumbent's recorded cortex sha256, passed when Rust inputs changed since
+    the incumbent's commit) refuses such a binary before this run's spend. It
+    is a backstop only: a debug binary embeds its checkout path, so it catches
+    an incumbent built at this same path, not a stale artifact from another."""
     cfg = spec["config"]
     if os.path.realpath(run_root) == os.path.realpath(ROOT):
         target = os.environ.get("CARGO_TARGET_DIR") or os.path.join(run_root, "target")
@@ -482,10 +487,11 @@ def _measure(run_root, out_dir, spec, *, cap_usd, parallel, not_sha256=None):
         if subprocess.run(cmd, cwd=run_root, env=env).returncode != 0:
             raise Refused(f"build failed in {run_root}: {' '.join(cmd)}")
     axon, cortex = os.path.join(target, "debug", "axon"), os.path.join(target, "debug", "cortex")
-    if not_sha256 and sha256_file(cortex) == not_sha256:
+    cortex_sha = sha256_file(cortex)
+    if not_sha256 and cortex_sha == not_sha256:
         raise Refused(f"{cortex} is byte-identical to the incumbent's cortex ({not_sha256[:16]}) "
-                      "although the repair digests differ: a stale binary, not a build of "
-                      f"{run_root}. Nothing was run")
+                      "although Rust sources changed since its commit: a stale binary, not a "
+                      f"build of {run_root}. Nothing was run")
     rows, log = os.path.join(out_dir, "b.jsonl"), os.path.join(out_dir, "b.log")
     os.makedirs(out_dir, exist_ok=True)
     cmd = [sys.executable, "-B", os.path.join(run_root, os.path.relpath(BENCH, ROOT), "ab",
@@ -511,7 +517,7 @@ def _measure(run_root, out_dir, spec, *, cap_usd, parallel, not_sha256=None):
         raise Refused(f"run_ab.py exited {rc} with {len(missing)} of {len(truth)} tasks "
                       f"missing ({', '.join(missing[:5])}{' ...' if len(missing) > 5 else ''}): "
                       f"nothing added. `regress` again resumes {repo_rel(out_dir, ROOT)}")
-    return rows, cortex
+    return rows, cortex_sha
 
 
 def _out_dir(runs, name):
@@ -591,14 +597,14 @@ def regress(history, root, *, cap_usd=RECEIPT_CAP_USD, parallel=3, again=False,
         os.rmdir(wt)
         git(root, "worktree", "add", "--detach", wt, base)
         try:
-            rows, cortex = _measure(wt, out_dir, spec, cap_usd=cap_usd, parallel=parallel)
+            rows, cortex_sha = _measure(wt, out_dir, spec, cap_usd=cap_usd, parallel=parallel)
         finally:
             git(root, "worktree", "remove", "--force", wt)
         spend = run_ab.spent(out_dir)
         spent += spend
         inc = add(history, root, set_=RECEIPT_SET, agent="cortex", rows=rows,
                   corpus=spec["corpus"],
-                  config=dict(cfg, cortex_commit=base, cortex_sha256=sha256_file(cortex)),
+                  config=dict(cfg, cortex_commit=base, cortex_sha256=cortex_sha),
                   run_id=default_run_id(RECEIPT_SET, date, "cortex", cfg)
                   + f"-main-{base[:12]}" + sfx,
                   date=date,
@@ -619,13 +625,19 @@ def regress(history, root, *, cap_usd=RECEIPT_CAP_USD, parallel=3, again=False,
 
     out_dir, sfx = _out_dir(runs, f"{date}-{head[:12]}")
     # The cap is per invocation (PREREG-regress.md): main's run, if made, spent part.
-    inc_sha = next((r["config"].get("cortex_sha256") for r in runs if r["run_id"] == inc), None)
-    rows, cortex = _measure(root, out_dir, spec, cap_usd=round(cap_usd - spent, 6),
-                            parallel=parallel, not_sha256=inc_sha)
+    inc_cfg = next((r["config"] for r in runs if r["run_id"] == inc), {})
+    # Byte-identical cortex is expected when only drivers/*.sh changed; it is
+    # stale only if Rust inputs changed since the incumbent's commit.
+    rust_changed = inc_cfg.get("cortex_commit") and git(
+        root, "diff", "--name-only", inc_cfg["cortex_commit"], head, "--", ":(glob)**/*.rs",
+        ":(glob)**/Cargo.toml", "Cargo.lock").strip()
+    rows, cortex_sha = _measure(root, out_dir, spec, cap_usd=round(cap_usd - spent, 6),
+                                parallel=parallel,
+                                not_sha256=inc_cfg.get("cortex_sha256") if rust_changed else None)
     spend = run_ab.spent(out_dir)
     spent += spend
     rec = add(history, root, set_=RECEIPT_SET, agent="cortex", rows=rows, corpus=spec["corpus"],
-              config=dict(cfg, cortex_commit=head, cortex_sha256=sha256_file(cortex)),
+              config=dict(cfg, cortex_commit=head, cortex_sha256=cortex_sha),
               incumbent=inc,
               run_id=default_run_id(RECEIPT_SET, date, "cortex", cfg)
               + f"-regress-{head[:12]}" + sfx,

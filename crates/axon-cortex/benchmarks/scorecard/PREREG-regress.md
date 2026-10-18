@@ -251,7 +251,9 @@ shared `CARGO_TARGET_DIR`; cargo judged HEAD's units fresh by file mtime (main's
 HEAD's sources) and kept main's artifacts, so the HEAD build left main's `cortex` in `debug/`. The run
 is NOT evidence about digest `5c490de3`. It stays in the history (every run does) and is superseded by
 the next `regress --again` at that digest. `scorecard.py` now builds a checkout other than its own
-into that checkout's `target/`, and refuses before any spend a HEAD cortex that is byte-identical to
-the incumbent's recorded cortex while the repair digests differ. The valid measurements at this digest
+into that checkout's `target/` (hashing its `cortex` before the worktree is removed), and, as a
+backstop, refuses before the HEAD run's spend a HEAD cortex byte-identical to the incumbent's recorded
+cortex when Rust sources changed since the incumbent's commit. The valid measurements at this digest
 are the first run (`…-regress-e2f5fb48de52`, cortex `e052ea815762ad13`, WORSE on wall seconds under
-load average ≈ 48) and the next one.
+load average ≈ 48) and the next one (`…-regress-ac149215c350`, same cortex, PASS against the main
+replicate: 108/115, 0 false successes; wall seconds 42 worse / 61 better, p = 0.0756, load ≈ 12–20).
