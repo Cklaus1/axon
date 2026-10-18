@@ -625,8 +625,7 @@ stage_cortex_receipt() {
 stage_protected_sets() {
   python3 -B crates/axon-cortex/benchmarks/protected.py --check \
     && python3 -B crates/axon-cortex/benchmarks/ab/selftest_ab.py \
-    && { [ ! -f crates/axon-cortex/benchmarks/headroom/selftest.py ] \
-         || python3 -B crates/axon-cortex/benchmarks/headroom/selftest.py; } \
+    && python3 -B crates/axon-cortex/benchmarks/headroom/selftest.py \
     || fail "a protected benchmark set, the spent ledger or the A/B harness self-test failed"
 }
 

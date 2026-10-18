@@ -399,8 +399,8 @@ binaries, offline):
   writes no row.
 - A task with `caps_strict: true` records `caps_widened`, the capability kinds
   of the final function (`axon caps --json --fn`) that the pristine one lacks;
-  a non-empty value is not verified clean (for arm B it is a fence alarm,
-  `caps_fence_alarm`).
+  a non-empty value is not verified clean and counts as a false success,
+  claimed or not (for arm B it is also a fence alarm, `caps_fence_alarm`).
 - Protected sets (`protected.py`: `hard-once`, and `hx-test` once frozen) are
   recognised by path or by the pinned sha256. A paid run on one is refused
   unless it first appends a row to the hash-chained spent ledger
@@ -410,7 +410,9 @@ binaries, offline):
   spend with the same set, repair digest, patch, model and purpose is refused.
   A paid arm-B run there also needs `--cortex-commit`, the commit the cortex
   binary was built at, for the repair digest. Oracle and `none` controls on a
-  protected set are graded and printed but write nothing. The ledger stops
+  protected set are graded and printed but write nothing; an arm-B control
+  there runs with the spectrum ranker and the audit off (a model `--ranker` is
+  refused), so it makes no model call. The ledger stops
   accidental re-use; it is not a security boundary (a copied and edited
   corpus, or another ledger file, is not caught).
 
