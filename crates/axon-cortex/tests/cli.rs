@@ -2876,6 +2876,28 @@ fn r1_a_helper_or_a_closure_does_not_widen_the_targets_grant() {
     assert_ne!(code, 0, "{err}{v}");
     assert_only_fs_write_denied(&v, &err);
 
+    // A builtin cannot be bound by name (E0306: `let f = write_file` does not
+    // compile); the closure above is the language's alias for one. A user fn
+    // CAN be bound by name — the helper reached through a value is still the
+    // helper.
+    let bound = ws.join("BOUND");
+    let gen = format!(
+        "literal:\n    let g = note\n    let _ = g(\"{}\")\n    n * 2\n",
+        bound.display()
+    );
+    let (code, v, err) = r1_repair(
+        &ws,
+        "helper.ax",
+        &gen,
+        &["--candidates", "1", "--budget", "4"],
+    );
+    assert!(
+        !bound.exists(),
+        "the helper bound by name ran for the candidate: {err}{v}"
+    );
+    assert_ne!(code, 0, "{err}{v}");
+    assert_only_fs_write_denied(&v, &err);
+
     let (code, v, err) = r1_repair(&ws, "helper.ax", "literal:\n    n * 2\n", &[]);
     assert_eq!(code, 0, "a correct body is still accepted: {err}{v}");
     assert!(denials(&v).is_empty(), "{v}");
