@@ -239,10 +239,11 @@ fn usage(msg: &str) -> ! {
 /// FU-6 (O-S1-04): `--workspace`, and an `--axon` given as a relative path,
 /// resolved ONCE, against the directory `cortex` was started in. The checks
 /// run with the workspace as their current directory AND name files under
-/// it, so a relative workspace was joined twice and every check failed; a
-/// relative `--axon` was looked up inside the workspace. A bare name (the
-/// default `axon`) is a PATH lookup and stays one. A path that does not exist
-/// is a command-line error.
+/// it, so a relative workspace was joined twice and every check failed. A
+/// relative `--axon` that exists was already resolved by the check registry
+/// (`resolve_executable`); resolving it here makes a missing one a usage
+/// error like a missing workspace, not exit 22. A bare name (the default
+/// `axon`) is a PATH lookup and stays one.
 fn resolve_paths(
     workspace: std::path::PathBuf,
     axon_bin: std::path::PathBuf,
