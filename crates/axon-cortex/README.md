@@ -91,7 +91,9 @@ under `budget` in `--json`.
 graded are digested before it spawns and re-read after the last acceptance
 check; a file changed in between is never accepted. `--json` reports
 `accepted: {path, sha256}` on exits 0 and 27, where `sha256` is the digest the
-deciding verdict graded; the file is read once more before the run reports,
+deciding verdict graded. A walk that reaches an adjudicated state and goes on
+looking for a clean repair puts that state's graded bytes back if it ends
+reporting it (exit 27). The file is read once more before the run reports,
 and if it is no longer those bytes (changed after acceptance) the run fails
 closed: exit 22 `blocked`, `accepted: null`, the file restored as found.
 

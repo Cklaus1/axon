@@ -996,6 +996,11 @@ fn main() {
     // it asked ended that way.
     let mut stopped = vec![false; targets.len()];
     let mut last_other: Option<EpisodeOutcome> = None;
+    // R5 × the walk: the bytes of the latest adjudicated-not-clean state. The
+    // walk goes on looking for a clean repair (restoring the found bytes for
+    // each next attempt), so if it ends reporting that adjudication (exit 27)
+    // these bytes — the ones its digest names — are what the file must hold.
+    let mut adjudicated: Option<Vec<u8>> = None;
     let mut progress: Vec<axon_cortex::runner::CandidateProgress> =
         targets.iter().map(|_| Default::default()).collect();
     // Every attempt, in the order it ran. A candidate resumed in pass 2
@@ -1095,6 +1100,10 @@ fn main() {
                     eprintln!("`{target}` is not asked again: {reason}");
                     stopped[i] = true;
                 }
+                EpisodeOutcome::AdjudicatedNotClean { .. } => {
+                    adjudicated = std::fs::read(workspace.join(&file)).ok();
+                    last_other = Some(outcome.clone());
+                }
                 _ => last_other = Some(outcome.clone()),
             }
         }
@@ -1162,6 +1171,21 @@ fn main() {
     if code != 0 && code != 27 {
         let _ = std::fs::write(workspace.join(&file), &original);
     }
+    // An exit 27 reports the latest adjudication, which a later attempt may
+    // have undone on its way: its graded bytes are put back. Failing that,
+    // the run fails closed below (R5), never reporting a state it lost.
+    let kept_adjudicated = if code == 27 {
+        match &adjudicated {
+            Some(bytes) => std::fs::write(workspace.join(&file), bytes).map_err(|e| {
+                format!("the adjudicated state of {file} could not be put back at exit: {e}")
+            }),
+            None => Err(format!(
+                "the adjudicated state of {file} could not be read when it was reached"
+            )),
+        }
+    } else {
+        Ok(())
+    };
     let repaired = (code == 0).then(|| attempted.last().cloned().unwrap_or_default());
 
     // THE AUDIT, after the verdict, the exit code and the file are all
@@ -1265,13 +1289,16 @@ fn main() {
     // disk is read once more and must still be those bytes; otherwise the
     // run fails closed: exit 22, `accepted: null`, the file restored as found
     // (like every run that keeps no patch), and the reason on stderr. Only
-    // exits 0 and 27 keep a patch; every other run names none.
-    let (accepted, code, kind, detail, repaired) = match accepted_artifact(
-        &file,
-        code,
-        &runner.episode,
-        std::fs::read(workspace.join(&file)),
-    ) {
+    // exits 0 and 27 keep a patch; every other run names none. An exit 27
+    // whose adjudicated state could not be put back fails closed the same way.
+    let (accepted, code, kind, detail, repaired) = match kept_adjudicated.and_then(|()| {
+        accepted_artifact(
+            &file,
+            code,
+            &runner.episode,
+            std::fs::read(workspace.join(&file)),
+        )
+    }) {
         Ok(accepted) => (accepted, code, kind, detail, repaired),
         Err(why) => {
             eprintln!("cortex repair: {why}; the repair is NOT accepted");
