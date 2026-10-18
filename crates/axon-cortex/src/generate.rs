@@ -48,6 +48,11 @@ pub struct PatchConstraints {
     /// What else the generator may read: the file it is repairing, minus the
     /// hidden check — or, when that cannot be shown, why not.
     pub context: GenContext,
+    /// R3: the walk's wall-clock deadline. A generator that can be cut short
+    /// stops at it (a `cmd:` job gets min(its timeout, the time left)); one
+    /// that cannot is not started without enough time left
+    /// ([`PatchGenerator::uncancellable_for`]). `None`: no deadline.
+    pub deadline: Option<std::time::Instant>,
 }
 
 /// The material a generator gets beyond the body.
@@ -221,6 +226,13 @@ pub trait PatchGenerator {
         target: &SymbolRef,
         constraints: &PatchConstraints,
     ) -> Result<ProposedPatch, GenerationFailure>;
+
+    /// R3: how long a call runs once started when it cannot be cut short at
+    /// the walk deadline (`None`: it can be, or it returns at once). The walk
+    /// does not start a call with less time than this left.
+    fn uncancellable_for(&self) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// Check a proposal against its constraints.
@@ -590,7 +602,12 @@ impl PatchGenerator for CommandGenerator {
         // A DEADLINE. `--budget` bounds STEPS, not wall time, and no budget
         // applies to a child process — so without this, one program that never
         // exits stops the loop forever.
-        let limit = Self::timeout();
+        // R3: and never past the walk's deadline — the job is cut at
+        // whichever comes first.
+        let limit = match constraints.deadline {
+            Some(d) => Self::timeout().min(d.saturating_duration_since(std::time::Instant::now())),
+            None => Self::timeout(),
+        };
         let deadline = std::time::Instant::now() + limit;
         let watched = loop {
             match job.has_exited() {

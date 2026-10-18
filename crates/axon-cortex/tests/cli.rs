@@ -2568,3 +2568,120 @@ fn r4_a_type_error_reaches_the_next_prompt_as_structured_json() {
     }
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// R3 (a): `--max-proposals` caps generator calls across the WHOLE walk —
+/// pass 1 and pass 2 share one counter. Three candidates, a generator that is
+/// always wrong, a cap of 2: exactly two calls are made, and the run ends
+/// `budget_exhausted` with `detail` `proposals`. Before R3 there was no such
+/// flag, and the walk spent every candidate's step budget.
+#[test]
+fn r3_max_proposals_caps_generator_calls_across_the_walk() {
+    let (ws, gen) = walk_fixture("r3_props", "never:0");
+    let (code, v, err, calls) = walk_run(
+        &ws,
+        &gen,
+        &[
+            "--write-prefix",
+            "three.ax",
+            "--candidates",
+            "3",
+            "--max-proposals",
+            "2",
+        ],
+    );
+    assert_eq!(
+        calls.len(),
+        2,
+        "exactly two generator calls: {calls:?}\n{err}"
+    );
+    assert_eq!(code, 20, "{err}{v}");
+    assert_eq!(v["outcome"], "budget_exhausted", "{v}");
+    assert_eq!(v["detail"], "proposals", "{v}");
+    assert_eq!(v["budget"]["max_proposals"], 2, "{v}");
+    assert_eq!(v["budget"]["proposals_used"], 2, "{v}");
+    assert_eq!(v["budget"]["exhausted_by"], "proposals", "{v}");
+    assert!(v["budget"]["deadline_ms"].is_null(), "{v}");
+    assert!(v["budget"]["elapsed_ms"].is_u64(), "{v}");
+    // A failed run leaves the file as it found it.
+    assert!(std::fs::read_to_string(ws.join("three.ax"))
+        .unwrap()
+        .contains("fn gamma(n: i64) -> i64 { n }"));
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R3 (a'): with neither flag the walk is unbounded as before, and `budget`
+/// reports so (`null` limits, nothing exhausted).
+#[test]
+fn r3_without_limits_the_budget_reports_none() {
+    let (ws, gen) = walk_fixture("r3_none", "gamma:0");
+    let (code, v, err, calls) = walk_run(&ws, &gen, &["--write-prefix", "three.ax"]);
+    assert_eq!(code, 0, "{err}{v}");
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert!(v["budget"]["max_proposals"].is_null(), "{v}");
+    assert!(v["budget"]["deadline_ms"].is_null(), "{v}");
+    assert_eq!(v["budget"]["proposals_used"], 3, "{v}");
+    assert!(v["budget"]["exhausted_by"].is_null(), "{v}");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R3 (b): `--deadline-ms` is wall clock from cortex start. A generator that
+/// would answer after it is cut at the deadline (its whole process group, the
+/// `sleep` it backgrounded included), no further call starts, and the run
+/// ends `budget_exhausted` with `detail` `deadline` — not `needs_input`, which
+/// would blame the generator for the walk's own limit.
+#[test]
+fn r3_the_deadline_cuts_the_generator_and_no_call_starts_after_it() {
+    let ws = workspace("r3_deadline");
+    let gen = ws.join("slow-gen.sh");
+    let log = ws.join("calls.log");
+    let pids = ws.join("gen.pids");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\necho call >> '{log}'\n\
+             sleep 4724 &\necho $! >> '{pids}'\nwait\nprintf '    n * 2\\n'\n",
+            log = log.display(),
+            pids = pids.display()
+        ),
+        0o755,
+    );
+    let mut cmd = repair_with_generator(&ws, &gen, "120000");
+    cmd.args([
+        "--symbol",
+        "double",
+        "--budget",
+        "12",
+        "--deadline-ms",
+        "3000",
+        "--json",
+    ]);
+    let (code, stdout, said, took) = run_guarded(
+        &ws,
+        &mut cmd,
+        std::time::Duration::from_secs(90),
+        "the deadline did not stop the walk",
+    );
+    assert_eq!(code, Some(20), "{said}");
+    let v: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(v["outcome"], "budget_exhausted", "{said}");
+    assert_eq!(v["detail"], "deadline", "{said}");
+    assert_eq!(v["budget"]["deadline_ms"], 3000, "{v}");
+    assert_eq!(v["budget"]["exhausted_by"], "deadline", "{v}");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap().lines().count(),
+        1,
+        "no generator call may start after the deadline: {said}"
+    );
+    assert!(
+        took < std::time::Duration::from_secs(20),
+        "the walk must end at its deadline, took {took:?}: {said}"
+    );
+    for pid in std::fs::read_to_string(&pids).unwrap_or_default().lines() {
+        let alive = std::path::Path::new(&format!("/proc/{}", pid.trim())).exists()
+            && std::fs::read_to_string(format!("/proc/{}/cmdline", pid.trim()))
+                .unwrap_or_default()
+                .contains("4724");
+        assert!(!alive, "the cut generator's `sleep` {pid} is still running");
+    }
+    let _ = std::fs::remove_dir_all(&ws);
+}

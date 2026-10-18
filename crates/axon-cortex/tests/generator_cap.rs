@@ -43,6 +43,7 @@ fn propose_with(script_body: &str) -> (u64, Result<usize, String>) {
         context: axon_cortex::generate::GenContext::BodyOnly {
             reason: "not under test here".into(),
         },
+        deadline: None,
     };
     let before = peak_rss_kb();
     let got = CommandGenerator::new(exe.display().to_string())

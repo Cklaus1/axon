@@ -1598,6 +1598,12 @@ _ESP = (_CTX + "; earlystop.rs, `cortex repair`'s early stop (--early-stop/--ine
         "decided only by the hidden check on a patched file, which is exercised by tests/"
         "early_stop.rs (the same runs with the rule off keep asking); no protected crate names "
         "axon_cortex::earlystop (grep `axon_cortex::earlystop` crates/*/src)")
+_WBG = (_CTX + "; runner.rs WalkBudget, `cortex repair`'s walk budget (R3: --max-proposals/"
+        "--deadline-ms): every predicate here only decides that NO FURTHER GENERATOR CALL is "
+        "made; the outcome it produces (`budget_exhausted`, exit 20, detail proposals|deadline) "
+        "grants no verdict, no write and never exit 0, and the file is restored as the run found "
+        "it; acceptance is still decided only by the hidden check on a patched file; exercised by "
+        "tests/cli.rs r3_* and runner.rs walk_budget_tests")
 _EXE = ("NOT ON THE PROTECTED ROUTE (checkable): a registered EXECUTOR. A protected request's "
         "executable is the qualified guest interpreter (submit.rs: LINUX_GUEST_AXON_ID, pinned by "
         "the qualification's guest_axon_sha256); the registry's executors are read only by "
@@ -1766,6 +1772,16 @@ EXEMPT += [
      _LOC + "; run_limited's PR_SET_PDEATHSIG in the local child (also an OS ERROR: the child is not exec'd)"),
     (_SR, '        return Err(std::io::Error::new(',
      _LOC + "; run_limited's wall-clock kill (a RESOURCE BOUND: no status, no report)"),
+    (_SR, 'pub fn exhausted_by(&self) -> Option<WalkLimit> {', _WBG),
+    (_SR, 'pub fn remaining(&self) -> Option<std::time::Duration> {', _WBG),
+    (_SR, 'pub fn deadline_passed(&self) -> bool {', _WBG),
+    (_SR, '            Some(by) => Err(by),', _WBG),
+    (_SR, 'pub fn exhausted(&mut self, min_time: Option<std::time::Duration>) -> Option<WalkLimit> {', _WBG),
+    (_SR, 'pub fn walk_exhausted(&mut self, min_time: Option<std::time::Duration>) -> Option<WalkLimit> {', _WBG),
+    (_SR, 'if let Err(by) = self.walk.admit(gen.uncancellable_for()) {', _WBG),
+    (_SR, 'if self.walk.deadline_passed() {', _WBG + "; a generator call cut at the deadline is the walk's limit, reported as it, not NeedsInput"),
+    ('crates/axon-cortex/src/generate.rs', 'fn uncancellable_for(&self) -> Option<std::time::Duration> {',
+     _WBG + "; the default (and the ai: override) of how long a call runs uncut, read only by the walk budget"),
     (_SR, '                return Err(format!("fabric dispatch needs a non-empty {name}"));',
      _CTX + "; FabricSubmitExecutor::new, Cortex's client of `axon-fabric submit` (bin/cortex.rs); its operator fields are what Cortex sends, and Fabric judges the request itself"),
     (_SR, "        if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {\n            return Err(format!(",

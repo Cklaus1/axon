@@ -1636,6 +1636,7 @@ fn cxg_c12_validate_enforces_each_constraint_it_states() {
         context: axon_cortex::generate::GenContext::BodyOnly {
             reason: "not under test here".into(),
         },
+        deadline: None,
     };
     let patch = |body: &str, id: &str| ProposedPatch {
         body: body.into(),

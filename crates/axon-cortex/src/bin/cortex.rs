@@ -18,7 +18,7 @@
 //! |---|---|---|
 //! | 0 | verified done | nothing — a hidden check confirmed the repair |
 //! | 2 | usage error | fix the command line; NOTHING was decided or run |
-//! | 20 | budget exhausted | raise `--budget`, or the task is too hard for this loop |
+//! | 20 | budget exhausted | raise `--budget` (empty `detail`), or `--max-proposals` / `--deadline-ms` (`detail` `proposals` / `deadline`), or the task is too hard for this loop |
 //! | 21 | no progress | the loop is going in circles; the generator is not helping |
 //! | 22 | blocked | the environment is wrong — the checker could not run |
 //! | 23 | refused | authority is wrong — widen `--write-prefix`, deliberately |
@@ -66,6 +66,23 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH]
                          and the next proposal runs; only a check of the
                          UNPATCHED file hitting a bound blocks the run (22).
                          Checks run with an empty environment.
+  --max-proposals N      at most N generator calls across the WHOLE walk (every
+                         candidate, both passes; a call whose proposal is then
+                         refused counts). Default: unlimited. When it is
+                         reached no generator is asked anything again and the
+                         run ends `budget_exhausted` (20) with detail
+                         `proposals`.
+  --deadline-ms N        wall-clock deadline for the run, counted from cortex
+                         start (the ranker counts). Default: none. At it no
+                         new generator call starts: a cmd: generator is cut at
+                         min(its timeout, the time left), an ai: call is not
+                         started with less than its 30 s HTTP timeout left (an
+                         in-flight one cannot be cancelled), and the audit is
+                         not started. A check already running finishes (within
+                         --check-timeout-ms) and a pass it produces is
+                         accepted. Otherwise the run ends `budget_exhausted`
+                         (20) with detail `deadline`. --json reports both under
+                         `budget` with what was spent.
   --candidates N         how many ranked candidates to try (default: 3). On
                          the measured corpus the top candidate is the sole
                          most-suspicious one about a third of the time, while
@@ -359,6 +376,8 @@ fn main() {
     // caller still sees e.g. "killed by SIGTERM"). Before this, a generator ran
     // on after cortex died. Installed before anything can spawn a job.
     axon_jobctl::forward_termination_signals(axon_jobctl::OnSignal::Die);
+    // R3: `--deadline-ms` counts from here, so the ranker counts too.
+    let started = std::time::Instant::now();
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("repair") => {}
@@ -394,6 +413,8 @@ fn main() {
     let mut label_log_flag: Option<String> = None;
     let mut label_source = false;
     let mut check_timeout_ms: u64 = DEFAULT_CHECK_TIMEOUT_MS;
+    let mut max_proposals: Option<usize> = None;
+    let mut deadline_ms: Option<u64> = None;
 
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
@@ -461,6 +482,26 @@ fn main() {
                 if check_timeout_ms == 0 {
                     usage("--check-timeout-ms must be at least 1");
                 }
+            }
+            "--max-proposals" => {
+                let raw = val("--max-proposals");
+                let n: usize = raw.parse().unwrap_or_else(|_| {
+                    usage(&format!("--max-proposals must be a number, got `{raw}`"))
+                });
+                if n == 0 {
+                    usage("--max-proposals must be at least 1");
+                }
+                max_proposals = Some(n);
+            }
+            "--deadline-ms" => {
+                let raw = val("--deadline-ms");
+                let ms: u64 = raw.parse().unwrap_or_else(|_| {
+                    usage(&format!("--deadline-ms must be a number, got `{raw}`"))
+                });
+                if ms == 0 {
+                    usage("--deadline-ms must be at least 1");
+                }
+                deadline_ms = Some(ms);
             }
             other => usage(&format!("unknown argument `{other}`")),
         }
@@ -553,6 +594,10 @@ fn main() {
         fabric.as_ref(),
         check_timeout,
     );
+    runner.set_walk_budget(axon_cortex::runner::WalkBudget::new(
+        max_proposals,
+        deadline_ms.map(|ms| started + std::time::Duration::from_millis(ms)),
+    ));
     // (A grep for `fn NAME(` used to stand here as a cheaper first pass. It
     // was redundant with the check below and strictly worse: it accepted any
     // FUNCTION, so a `--check` naming an ordinary function passed it and was
@@ -808,6 +853,18 @@ fn main() {
             }
             progress[i].proposal_limit = (pass == 1 && targets.len() > 1).then_some(1);
             progress[i].inert_limit = Some(early_stop.inert_limit);
+            // R3: an exhausted walk budget starts no further episode — not
+            // even its baseline checks, which could only lead to a generator
+            // call that may not be made.
+            if let Some(by) =
+                runner.walk_exhausted(generator.as_deref().and_then(|g| g.uncancellable_for()))
+            {
+                outcome = EpisodeOutcome::WalkBudgetExhausted {
+                    steps: prev.map_or(0, |p| progress[p].steps()),
+                    by,
+                };
+                break 'walk;
+            }
             if let Some(p) = prev {
                 if let Err(e) = std::fs::write(workspace.join(&file), &original) {
                     eprintln!("cannot restore {file} between attempts: {e}");
@@ -874,6 +931,8 @@ fn main() {
                 // candidate. Another one would fail identically and burn the
                 // budget proving it.
                 EpisodeOutcome::Refused { .. } | EpisodeOutcome::Blocked { .. } => break 'walk,
+                // R3: no generator may be asked anything again.
+                EpisodeOutcome::WalkBudgetExhausted { .. } => break 'walk,
                 EpisodeOutcome::OutOfScopeSuspected { reason, .. } => {
                     eprintln!("`{target}` is not asked again: {reason}");
                     stopped[i] = true;
@@ -898,6 +957,11 @@ fn main() {
         EpisodeOutcome::VerifiedDone { steps } => (0, "verified_done", String::new(), *steps),
         EpisodeOutcome::BudgetExhausted { steps } => {
             (20, "budget_exhausted", String::new(), *steps)
+        }
+        // R3: the same exit and kind as step exhaustion; `detail` names the
+        // walk limit, where step exhaustion leaves it empty.
+        EpisodeOutcome::WalkBudgetExhausted { steps, by } => {
+            (20, "budget_exhausted", by.as_str().to_string(), *steps)
         }
         EpisodeOutcome::NoProgress { steps, action } => (21, "no_progress", action.clone(), *steps),
         EpisodeOutcome::Blocked { steps, reason } => (22, "blocked", reason.clone(), *steps),
@@ -950,6 +1014,24 @@ fn main() {
             .and_then(|i| progress[i].baseline_failing())
             .unwrap_or(&[]);
         let report = match std::fs::read_to_string(workspace.join(&file)) {
+            // R3: a model audit is not started after the walk's deadline.
+            // `--audit off` starts nothing and reports itself as before.
+            Ok(_)
+                if runner.walk_budget().deadline_passed()
+                    && !matches!(audit_spec, axon_cortex::audit::AuditSpec::Off) =>
+            {
+                axon_cortex::audit::AuditReport {
+                    requested: audit_spec.label(),
+                    used: None,
+                    verdict: axon_cortex::audit::Verdict::Unavailable,
+                    p: None,
+                    latency_ms: None,
+                    cost_usd: None,
+                    reason: Some(
+                        "not started: the walk deadline (--deadline-ms) had passed".into(),
+                    ),
+                }
+            }
             Ok(patched) => axon_cortex::audit::Auditor::from_env(audit_spec.clone()).audit(
                 &axon_cortex::audit::AuditInput {
                     file: &file,
@@ -1026,6 +1108,15 @@ fn main() {
                 "outcome": kind,
                 "detail": detail,
                 "steps": steps,
+                // R3: the walk's hard limits (`null` = unset), what was spent
+                // of them, and which one stopped the walk (`null`: none did).
+                "budget": {
+                    "max_proposals": max_proposals,
+                    "deadline_ms": deadline_ms,
+                    "proposals_used": runner.walk_budget().proposals_used(),
+                    "elapsed_ms": started.elapsed().as_millis() as u64,
+                    "exhausted_by": runner.walk_budget().exhausted_by().map(|b| b.as_str()),
+                },
                 // WHICH candidate worked, and every attempt before it, in the
                 // order they ran. With a walked ranking that is no longer
                 // implied by the command line. Under the breadth-first walk a

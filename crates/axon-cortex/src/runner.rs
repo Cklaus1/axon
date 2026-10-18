@@ -256,6 +256,10 @@ pub enum EpisodeOutcome {
     /// not `BudgetExhausted`, and the generator was not at fault, which is why
     /// it is not `NoProgress`.
     OutOfScopeSuspected { steps: usize, reason: String },
+    /// R3: the walk's hard budget (`--max-proposals` or `--deadline-ms`) ran
+    /// out, so no generator is asked anything again. Distinct from
+    /// `BudgetExhausted` (one episode's steps), which may also be a pause.
+    WalkBudgetExhausted { steps: usize, by: WalkLimit },
 }
 
 /// What the visible checks said about ONE rejected proposal, kept for the early
@@ -362,6 +366,114 @@ pub struct Runner {
     check_executor: Box<dyn CheckExecutor>,
     /// Limits on the `axon check` processes this runner spawns itself.
     checker_limits: ExecLimits,
+    /// R3: the walk's hard budget, shared by every episode this runner
+    /// drives (both passes of a `cortex repair` walk).
+    walk: WalkBudget,
+}
+
+/// R3: which hard limit of a walk ran out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkLimit {
+    /// `--max-proposals`: generator calls across the whole walk.
+    Proposals,
+    /// `--deadline-ms`: wall clock from cortex start.
+    Deadline,
+}
+
+impl WalkLimit {
+    /// The slug `cortex repair` reports as `detail` and `exhausted_by`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WalkLimit::Proposals => "proposals",
+            WalkLimit::Deadline => "deadline",
+        }
+    }
+}
+
+/// R3: the hard budget of a walk — total generator calls and a wall-clock
+/// deadline — checked before every generator call of every episode one
+/// [`Runner`] drives.
+///
+/// Separate from [`CandidateProgress::proposal_limit`], which PAUSES one
+/// candidate after pass 1's single proposal so the next can be tried: that
+/// limit is a walk ORDER, and exhausting it means "resume later". This one is
+/// a ceiling, and exhausting it means no generator is asked anything again.
+/// Unset limits are unlimited, so a walk without them runs as before.
+#[derive(Debug, Clone, Default)]
+pub struct WalkBudget {
+    pub max_proposals: Option<usize>,
+    pub deadline: Option<std::time::Instant>,
+    used: usize,
+    exhausted_by: Option<WalkLimit>,
+}
+
+impl WalkBudget {
+    pub fn new(max_proposals: Option<usize>, deadline: Option<std::time::Instant>) -> Self {
+        WalkBudget {
+            max_proposals,
+            deadline,
+            ..WalkBudget::default()
+        }
+    }
+
+    /// Generator calls started so far, refused or not.
+    pub fn proposals_used(&self) -> usize {
+        self.used
+    }
+
+    /// The limit that stopped the walk; `None` while none has.
+    pub fn exhausted_by(&self) -> Option<WalkLimit> {
+        self.exhausted_by
+    }
+
+    /// Time left before the deadline; `None` without one.
+    pub fn remaining(&self) -> Option<std::time::Duration> {
+        self.deadline
+            .map(|d| d.saturating_duration_since(std::time::Instant::now()))
+    }
+
+    /// Whether the deadline has passed (`false` without one).
+    pub fn deadline_passed(&self) -> bool {
+        self.remaining().is_some_and(|r| r.is_zero())
+    }
+
+    /// Admit one more generator call, or say which limit forbids it (and
+    /// remember it). `min_time` is how long the generator needs once started
+    /// because it cannot be cut short ([`crate::generate::PatchGenerator::
+    /// uncancellable_for`]): a call with less time left than that is not
+    /// started.
+    pub fn admit(&mut self, min_time: Option<std::time::Duration>) -> Result<(), WalkLimit> {
+        match self.exhausted(min_time) {
+            Some(by) => Err(by),
+            None => {
+                self.used += 1;
+                Ok(())
+            }
+        }
+    }
+
+    /// The limit that forbids another generator call needing `min_time`, if
+    /// one does — remembered, so the walk reports what stopped it. The walk
+    /// driver asks it before starting an episode, so no baseline checks run
+    /// for an episode that could not ask its generator anything.
+    pub fn exhausted(&mut self, min_time: Option<std::time::Duration>) -> Option<WalkLimit> {
+        if self.exhausted_by.is_none() {
+            self.exhausted_by = if self.max_proposals.is_some_and(|m| self.used >= m) {
+                Some(WalkLimit::Proposals)
+            } else {
+                self.remaining()
+                    .filter(|r| r.is_zero() || min_time.is_some_and(|t| *r < t))
+                    .map(|_| WalkLimit::Deadline)
+            };
+        }
+        self.exhausted_by
+    }
+
+    /// Record that the deadline stopped the walk outside [`WalkBudget::admit`]
+    /// (a generator call cut at it).
+    fn expire(&mut self) {
+        self.exhausted_by.get_or_insert(WalkLimit::Deadline);
+    }
 }
 
 /// The capture bound on one stream of an `axon check` the runner spawns.
@@ -400,7 +512,23 @@ impl Runner {
                 max_output: Some(CHECKER_MAX_OUTPUT),
                 ..ExecLimits::default()
             },
+            walk: WalkBudget::default(),
         }
+    }
+
+    /// R3: bound every episode this runner drives from now on by `budget`.
+    pub fn set_walk_budget(&mut self, budget: WalkBudget) {
+        self.walk = budget;
+    }
+
+    /// R3: the walk budget and what has been spent of it.
+    pub fn walk_budget(&self) -> &WalkBudget {
+        &self.walk
+    }
+
+    /// R3: [`WalkBudget::exhausted`] on this runner's walk budget.
+    pub fn walk_exhausted(&mut self, min_time: Option<std::time::Duration>) -> Option<WalkLimit> {
+        self.walk.exhausted(min_time)
     }
 
     /// Kill every `axon check` this runner spawns (observation, the
@@ -1029,6 +1157,17 @@ impl Runner {
                             ),
                         };
                     };
+                    // THE WALK BUDGET (R3), before anything is spent on the
+                    // call: once it is out no generator is asked anything,
+                    // in this episode or any later one. The step is handed
+                    // back, as at the pause: it has not been taken.
+                    if let Err(by) = self.walk.admit(gen.uncancellable_for()) {
+                        progress.steps = step - 1;
+                        return EpisodeOutcome::WalkBudgetExhausted {
+                            steps: step - 1,
+                            by,
+                        };
+                    }
                     // What the generator is allowed to see, assembled by
                     // Cortex through its own typed read rather than by the
                     // generator opening the file. If the symbol cannot be
@@ -1071,11 +1210,21 @@ impl Runner {
                         current_body,
                         rejected: rejected.clone(),
                         context: progress.gen_context.clone().expect("built just above"),
+                        deadline: self.walk.deadline,
                     };
                     progress.proposals += 1;
                     let proposal = match gen.propose(&obs, target, &constraints) {
                         Ok(p) => p,
                         Err(why) => {
+                            // Cut at the walk's deadline: the walk's own
+                            // limit, not a generator that failed to answer.
+                            if self.walk.deadline_passed() {
+                                self.walk.expire();
+                                return EpisodeOutcome::WalkBudgetExhausted {
+                                    steps: step,
+                                    by: WalkLimit::Deadline,
+                                };
+                            }
                             // A generator that cannot or will not propose is
                             // NeedsInput, not Blocked: authority and environment
                             // are fine, the missing piece is content.
@@ -3667,5 +3816,46 @@ impl CheckExecutor for FabricSubmitExecutor {
             messages: Vec::new(),
             output: Vec::new(),
         })
+    }
+}
+
+#[cfg(test)]
+mod walk_budget_tests {
+    use super::{WalkBudget, WalkLimit};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn the_proposal_cap_admits_exactly_n_calls_and_remembers_why() {
+        let mut b = WalkBudget::new(Some(2), None);
+        assert_eq!(b.admit(None), Ok(()));
+        assert_eq!(b.admit(None), Ok(()));
+        assert_eq!(b.admit(None), Err(WalkLimit::Proposals));
+        assert_eq!(b.proposals_used(), 2);
+        assert_eq!(b.exhausted_by(), Some(WalkLimit::Proposals));
+    }
+
+    /// An `ai:` call cannot be cut at the deadline, so it is not started
+    /// with less than its own timeout left; a cuttable one still is.
+    #[test]
+    fn an_uncancellable_call_is_not_started_without_its_time_left() {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut cuttable = WalkBudget::new(None, Some(deadline));
+        assert_eq!(cuttable.admit(None), Ok(()));
+        let mut ai = WalkBudget::new(None, Some(deadline));
+        assert_eq!(
+            ai.admit(Some(Duration::from_secs(30))),
+            Err(WalkLimit::Deadline)
+        );
+        assert_eq!(ai.proposals_used(), 0);
+    }
+
+    #[test]
+    fn unset_limits_admit_everything() {
+        let mut b = WalkBudget::default();
+        for _ in 0..100 {
+            assert_eq!(b.admit(Some(Duration::from_secs(30))), Ok(()));
+        }
+        assert_eq!(b.exhausted_by(), None);
+        assert!(!b.deadline_passed());
     }
 }
