@@ -3133,4 +3133,7 @@ ATTACK_MARKERS.update({
     'M3746': r'ATTACK: a relative --workspace or --axon got no real verdict',
     'M3747': r'ATTACK: a missing --workspace or --axon path was not a usage error',
     'M3748': r'ATTACK: a missing --workspace or --axon path was not a usage error',
+    'M3749': r'ATTACK: a body was read from a source that does not lex',
+    'M3750': r'ATTACK: a brace in a string ended the body and hid the call after it',
+    'M3751': r'ATTACK: a `fn NAME\(` in a comment was read as the function',
 })

@@ -174,7 +174,7 @@ pub enum ExecOutcome {
 /// the function. Counting raw braces put the end of a body holding `"}"`
 /// inside the string, and that disagreement with the compiler is exactly what
 /// [`splice_body`] must not have.
-fn symbol_body(src: &str, symbol: &str) -> Option<(usize, usize)> {
+pub(crate) fn symbol_body(src: &str, symbol: &str) -> Option<(usize, usize)> {
     // The open paren is load-bearing. Without it `fn fib` matches `fn fib_rec`
     // defined earlier in the file, and every caller of this function then
     // operates on the WRONG body: Inspect reads it, the generator is shown it,
@@ -242,7 +242,10 @@ fn symbol_count(src: &str, symbol: &str) -> Option<usize> {
 /// digit (`1r"…"`: the compiler's number token may stop before the `r`, making
 /// it a raw string, which this scan does not decide). A caller that needs the
 /// structure must treat `Err` as "not found", never as "no structure".
-fn scan_code<T>(src: &str, mut code: impl FnMut(usize, u8) -> Option<T>) -> Result<Option<T>, ()> {
+pub(crate) fn scan_code<T>(
+    src: &str,
+    mut code: impl FnMut(usize, u8) -> Option<T>,
+) -> Result<Option<T>, ()> {
     let b = src.as_bytes();
     let is_word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
     // Every delimiter below is ASCII and every byte of a multi-byte character

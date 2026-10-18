@@ -2546,7 +2546,7 @@ EXEMPT += [
      "fn fn_body<'a>(src: &'a str, name: &str) -> Option<&'a str> {",
      _CTX + "; fn_body"),
     ('crates/axon-cortex/src/runner.rs',
-     'fn symbol_body(src: &str, symbol: &str) -> Option<(usize, usize)> {',
+     'pub(crate) fn symbol_body(src: &str, symbol: &str) -> Option<(usize, usize)> {',
      _CTX + "; symbol_body"),
     ('crates/axon-cortex/src/runner.rs',
      '            None => s.push_str(&format!("FAILED {name}\\n")),',

@@ -11657,6 +11657,26 @@ MUTATIONS += [
      '        std::fs::canonicalize(p).unwrap_or_else(|e| usage(&format!("{flag} {}: {e}", p.display())))',
      '        std::fs::canonicalize(p).unwrap_or_else(|_| {\n            let _ = flag;\n            p.to_path_buf()\n        })',
      'axon-cortex', '--test cli', 'fu6_a_missing_workspace_or_axon_path_is_a_usage_error'),
+    # FU-7 (O-S1-11): locate::fn_body reads a body the way runner::symbol_body does (the lexer's
+    # view), and a source that does not lex has no body.
+    ('M3749', "FU-7: locate reads a body from a source that does not lex", 'crates/axon-cortex/src/locate.rs',
+     '    crate::runner::scan_code(src, |_, _| None::<()>).ok()?;',
+     '    let _ = crate::runner::scan_code(src, |_, _| None::<()>);',
+     'axon-cortex', '--lib', 'locate::fn_body_tests::a_source_that_does_not_lex_has_no_reach'),
+    ('M3750', "FU-7: locate counts raw braces again (a `\"}\"` in a string ends the body)", 'crates/axon-cortex/src/locate.rs',
+     '    crate::runner::symbol_body(src, name).map(|(a, b)| &src[a..b])',
+     '    let at = src.find(&format!("fn {name}("))?;\n    let open = at + src[at..].find(\'{\')?;\n'
+     '    let mut depth = 0usize;\n    for (i, c) in src[open..].char_indices() {\n'
+     '        match c {\n            \'{\' => depth += 1,\n            \'}\' => {\n'
+     '                depth -= 1;\n                if depth == 0 {\n'
+     '                    return Some(&src[open + 1..open + i]);\n                }\n            }\n'
+     '            _ => {}\n        }\n    }\n    None',
+     'axon-cortex', '--lib', 'locate::fn_body_tests::a_brace_in_a_string_does_not_end_the_body'),
+    ('M3751', "FU-7: locate finds `fn NAME(` by raw search (a comment is taken for the definition)", 'crates/axon-cortex/src/locate.rs',
+     '    crate::runner::symbol_body(src, name).map(|(a, b)| &src[a..b])',
+     '    let at = src.find(&format!("fn {name}("))?;\n'
+     '    crate::runner::symbol_body(&src[at..], name).map(|(a, b)| &src[at + a..at + b])',
+     'axon-cortex', '--lib', 'locate::fn_body_tests::a_definition_in_a_comment_is_not_the_function'),
 ]
 
 if __name__ == "__main__":

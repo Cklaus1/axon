@@ -107,25 +107,15 @@ fn defined_fns(src: &str) -> Vec<String> {
         .collect()
 }
 
-/// The body of `fn NAME(...)`, by brace matching from its opening brace.
+/// The body of `fn NAME(...)`: the same reading `runner` repairs and splices
+/// by ([`crate::runner::symbol_body`], the Axon lexer's view), so a `"}"` in
+/// a string or a `fn NAME(` in a comment is not structure. A source that
+/// does not lex — anywhere, not only before the body closes — has no body
+/// here, hence no reach (FU-7, O-S1-11): counting raw braces in it would be
+/// a guess at what the compiler sees.
 fn fn_body<'a>(src: &'a str, name: &str) -> Option<&'a str> {
-    let needle = format!("fn {name}(");
-    let at = src.find(&needle)?;
-    let open = at + src[at..].find('{')?;
-    let mut depth = 0usize;
-    for (i, c) in src[open..].char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&src[open + 1..open + i]);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    crate::runner::scan_code(src, |_, _| None::<()>).ok()?;
+    crate::runner::symbol_body(src, name).map(|(a, b)| &src[a..b])
 }
 
 /// Which of `defined` are called inside `body`.
@@ -318,4 +308,49 @@ pub fn reached_by_all(src: &str, failing: &[String], passing: &[String]) -> Vec<
     }
     let common = common.unwrap_or_default();
     defined.into_iter().filter(|n| common.contains(n)).collect()
+}
+
+#[cfg(test)]
+mod fn_body_tests {
+    use super::*;
+
+    fn reach(src: &str, from: &str) -> Vec<String> {
+        reachable(src, from, &defined_fns(src))
+    }
+
+    /// FU-7 (O-S1-11): a `"}"` in a body is not structure. Counted as a
+    /// brace, it ended `caller`'s body inside the string, and the call after
+    /// it was never seen.
+    #[test]
+    fn a_brace_in_a_string_does_not_end_the_body() {
+        let src = "fn helper(n: i64) -> i64 {\n    n\n}\n\
+                   fn caller() -> i64 {\n    let s = \"}\";\n    helper(1)\n}\n";
+        assert!(
+            reach(src, "caller").contains(&"helper".to_string()),
+            "ATTACK: a brace in a string ended the body and hid the call after it"
+        );
+    }
+
+    /// FU-7: a `fn caller(` in a comment is not the function. Taken as one,
+    /// the body read was the next function's (`helper`'s, empty here), and
+    /// `caller`'s real call went unseen.
+    #[test]
+    fn a_definition_in_a_comment_is_not_the_function() {
+        let src = "// fn caller( was renamed\nfn helper() {}\nfn caller() {\n    helper()\n}\n";
+        assert!(
+            reach(src, "caller").contains(&"helper".to_string()),
+            "ATTACK: a `fn NAME(` in a comment was read as the function"
+        );
+    }
+
+    /// FU-7 behaviour change: a source that does not lex has no body to read
+    /// and so no reach — never a reach guessed from raw braces.
+    #[test]
+    fn a_source_that_does_not_lex_has_no_reach() {
+        let src = "fn helper() {}\nfn caller() {\n    helper()\n}\nfn open() { \"never closed }\n";
+        assert!(
+            reach(src, "caller").is_empty(),
+            "ATTACK: a body was read from a source that does not lex"
+        );
+    }
 }
