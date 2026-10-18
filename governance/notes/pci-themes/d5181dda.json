@@ -1,0 +1,4 @@
+{
+  "theme": "R0a axon caps",
+  "text": "NOT INTERPRETER: a new read-only CLI verb `axon caps` and a Reach sink on the @[contained] walker (capabilities.rs). check_fn passes reach: None and the walk is drain_walk unchanged, so @[contained] verdicts are identical; in reach mode only, visited entries are kept (a union walk) and callees / builtin values are recorded. No runtime, sealed or interpreter path reads it."
+}

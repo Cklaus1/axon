@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 425382ce0a5bc3301986b964fb34b5a0bae5d407
+generated-at: d5181dda0e3744a2d9c90d5fa2f3eb3f465a4eb6
 
-`git diff --numstat 31413ca7..425382ce -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..d5181dda -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -28,7 +28,7 @@ generated-at: 425382ce0a5bc3301986b964fb34b5a0bae5d407
 | `crates/axon-core/src/borrow.rs` | 18 | 3 |
 | `crates/axon-core/src/builtins.rs` | 45 | 11 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
-| `crates/axon-core/src/capabilities.rs` | 156 | 128 |
+| `crates/axon-core/src/capabilities.rs` | 307 | 127 |
 | `crates/axon-core/src/checker.rs` | 1235 | 510 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
@@ -87,7 +87,7 @@ generated-at: 425382ce0a5bc3301986b964fb34b5a0bae5d407
 | `crates/axon-core/src/lib.rs` | 300 | 75 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 179 | 57 |
-| `crates/axon-core/src/main.rs` | 1405 | 346 |
+| `crates/axon-core/src/main.rs` | 1549 | 346 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
 | `crates/axon-core/src/parser.rs` | 457 | 31 |
@@ -98,9 +98,9 @@ generated-at: 425382ce0a5bc3301986b964fb34b5a0bae5d407
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 55863 | 7842 |
+| total | 56158 | 7841 |
 
-`git log --reverse 31413ca7..425382ce -- crates/axon-core/src`:
+`git log --reverse 31413ca7..d5181dda -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -391,7 +391,8 @@ generated-at: 425382ce0a5bc3301986b964fb34b5a0bae5d407
 | c691a51b | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 4694410b | gaps harness hygiene | TOOLING (wasm link diagnostics on stderr only; no change in what any run computes, accepts or links) |
 | 8afc76ba | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 287 commits | | |
+| d5181dda | R0a axon caps | NOT INTERPRETER: a new read-only CLI verb `axon caps` and a Reach sink on the @[contained] walker (capabilities.rs). check_fn passes reach: None and the walk is drain_walk unchanged, so @[contained] verdicts are identical; in reach mode only, visited entries are kept (a union walk) and callees / builtin values are recorded. No runtime, sealed or interpreter path reads it. |
+| 288 commits | | |
 <!-- END MECHANICAL -->
 
 
