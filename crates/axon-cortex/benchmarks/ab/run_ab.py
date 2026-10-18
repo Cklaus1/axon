@@ -733,6 +733,13 @@ def run_arm_b(task, generator, ws, cfg):
     # scored, and the whole run aborts, so rows from binaries that predate
     # `accepted` cannot end up compared against a run that lost some.
     accepted = (verdict.get("accepted") or {}).get("sha256") if verdict else None
+    # A binary that reports `accepted` (the key is present) must name the bytes
+    # on every exit that keeps a patch: exit 0 or 27 with `accepted: null` is a
+    # reported repair with no artifact behind it (S1: the walk once reported 27
+    # after reverting the adjudicated patch).
+    if rc in (0, 27) and "accepted" in verdict and accepted is None:
+        raise SystemExit(f"INTEGRITY FAILURE {task['id']}: exit {rc} but cortex accepted "
+                         "no artifact (`accepted: null`)")
     if accepted is not None and hashlib.sha256(final).hexdigest() != accepted:
         raise SystemExit(f"INTEGRITY FAILURE {task['id']}: {rel} on disk is sha256 "
                          f"{hashlib.sha256(final).hexdigest()}, cortex accepted {accepted}")
