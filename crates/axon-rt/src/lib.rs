@@ -2096,6 +2096,24 @@ pub extern "C" fn __axon_rt_refuse_interp_only_env() {
              exit 0 — a ceiling the interpreter enforces and this engine \
              cannot",
         ),
+        // The ambient path/host scope is read by the interpreter only, exactly
+        // as the effect ceiling above is: a native or wasi binary would run
+        // every write, read and connect the scope forbids.
+        (
+            "AXON_ALLOWED_FS_READ",
+            "read every path the scope forbids, with no warning and exit 0 — \
+             a read scope the interpreter enforces and this engine cannot",
+        ),
+        (
+            "AXON_ALLOWED_FS_WRITE",
+            "write every path the scope forbids, with no warning and exit 0 — \
+             a write scope the interpreter enforces and this engine cannot",
+        ),
+        (
+            "AXON_ALLOWED_NET",
+            "reach every host the scope forbids, with no warning and exit 0 — \
+             a host scope the interpreter enforces and this engine cannot",
+        ),
         (
             "AXON_BUDGET_TOKENS",
             "spend AI tokens past a cap the operator set and the program \

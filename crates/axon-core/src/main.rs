@@ -3603,8 +3603,20 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
 /// it fails EARLIER and more cheaply — at build time, with the source in
 /// hand — instead of at the end of a deployment.
 fn refuse_if_ambient_ceiling(context: &str) {
-    for var in ["AXON_ALLOWED_EFFECTS", "AXON_BUDGET_TOKENS"] {
-        if let Ok(val) = std::env::var(var) {
+    // The path/host scope is the same kind of control as the effect ceiling
+    // and is read by the interpreter only too (`ambient_sandbox`), so a binary
+    // built under it would drop it the same way.
+    for var in [
+        "AXON_ALLOWED_EFFECTS",
+        "AXON_ALLOWED_FS_READ",
+        "AXON_ALLOWED_FS_WRITE",
+        "AXON_ALLOWED_NET",
+        "AXON_BUDGET_TOKENS",
+    ] {
+        // `var_os`: a set variable whose value is not UTF-8 is still set, and
+        // `env::var` would have read it as absent.
+        if let Some(val) = std::env::var_os(var) {
+            let val = val.to_string_lossy();
             eprintln!(
                 "error[E0910]: `{var}` is set ({}), but a natively built binary \
                  cannot enforce it — the ceiling is honoured by the interpreter \
@@ -3617,7 +3629,7 @@ fn refuse_if_ambient_ceiling(context: &str) {
                 if val.is_empty() {
                     "empty — deny all"
                 } else {
-                    val.as_str()
+                    &val
                 }
             );
             process::exit(2);

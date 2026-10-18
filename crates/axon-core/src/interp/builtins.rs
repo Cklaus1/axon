@@ -170,7 +170,7 @@ pub(super) fn first_effect_outside_ceiling<'a>(
     sb: &SandboxEntry,
     effects: &[&'a str],
 ) -> Option<&'a str> {
-    effects.iter().copied().find(|e| !sb.allowed.contains(*e))
+    effects.iter().copied().find(|e| !sb.allows(e))
 }
 
 fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<String> {
@@ -693,6 +693,23 @@ impl<'p> Interp<'p> {
                             if let Some(v) = scope_violation(op_name, args, sb) {
                                 audit(self, true);
                                 return Err(crate::interp::Flow::SandboxViolation(v.into()));
+                            }
+                            // The AMBIENT scope (AXON_ALLOWED_FS_READ /
+                            // _FS_WRITE / _NET) is a ceiling, not a default a
+                            // program can replace: under a sandbox the program
+                            // created, the call must ALSO be inside it. The
+                            // effect half needs no second check — creating or
+                            // entering a sandbox already refuses an effect set
+                            // wider than the active one.
+                            if sb_handle != 0 {
+                                if let Some(amb) = sbs.first().filter(|a| a.ambient) {
+                                    if let Some(v) = scope_violation(op_name, args, amb) {
+                                        audit(self, true);
+                                        return Err(crate::interp::Flow::SandboxViolation(
+                                            v.into(),
+                                        ));
+                                    }
+                                }
                             }
                         }
                     }
@@ -4311,7 +4328,7 @@ impl<'p> Interp<'p> {
                         if let Some(outer) = sbs.get(active as usize) {
                             let mut escalated: Vec<&str> = allowed
                                 .iter()
-                                .filter(|e| !outer.allowed.contains(*e))
+                                .filter(|e| !outer.allows(e))
                                 .map(|e| e.as_str())
                                 .collect();
                             if !escalated.is_empty() {
@@ -4330,6 +4347,8 @@ impl<'p> Interp<'p> {
                     principal,
                     allowed,
                     scope: Default::default(),
+                    all_effects: false,
+                    ambient: false,
                 });
                 ok!(Value::Int(handle));
             }
@@ -4375,18 +4394,10 @@ impl<'p> Interp<'p> {
                     .collect();
                 // `None` = unrestricted, `Some(list)` = must match an entry,
                 // `Some([])` = nothing matches, i.e. deny-all. Only the explicit
-                // `"*"` wildcard produces `None`.
+                // `"*"` wildcard produces `None` (`parse_scope_list`, shared
+                // with the AXON_ALLOWED_FS_* / AXON_ALLOWED_NET variables).
                 let list = |v: &Value| -> Result<Option<Vec<String>>, Flow> {
-                    let s = as_str(v)?;
-                    let items: Vec<String> = s
-                        .split(',')
-                        .map(|x| x.trim().to_string())
-                        .filter(|x| !x.is_empty())
-                        .collect();
-                    if items.iter().any(|x| x == "*") {
-                        return Ok(None);
-                    }
-                    Ok(Some(items))
+                    Ok(crate::interp::parse_scope_list(as_str(v)?))
                 };
                 let scope = crate::interp::SandboxScope {
                     fs_read: list(&args[2])?,
@@ -4400,7 +4411,7 @@ impl<'p> Interp<'p> {
                         if let Some(outer) = sbs.get(active as usize) {
                             let mut escalated: Vec<&str> = allowed
                                 .iter()
-                                .filter(|e| !outer.allowed.contains(*e))
+                                .filter(|e| !outer.allows(e))
                                 .map(|e| e.as_str())
                                 .collect();
                             if !escalated.is_empty() {
@@ -4420,6 +4431,8 @@ impl<'p> Interp<'p> {
                     principal,
                     allowed,
                     scope,
+                    all_effects: false,
+                    ambient: false,
                 });
                 ok!(Value::Int(handle));
             }
@@ -4462,12 +4475,27 @@ impl<'p> Interp<'p> {
                         if let (Some(outer), Some(inner)) =
                             (sbs.get(active as usize), sbs.get(sb_handle as usize))
                         {
-                            let mut escalated: Vec<&str> = inner
-                                .allowed
-                                .iter()
-                                .filter(|e| !outer.allowed.contains(*e))
-                                .map(|e| e.as_str())
-                                .collect();
+                            // The ambient entry built from scope variables
+                            // alone allows EVERY effect (`all_effects`) and
+                            // lists none, so iterating its `allowed` set would
+                            // find nothing to refuse and `sandbox_run(0, …)`
+                            // would climb back out to every effect. Measured
+                            // before this: an `IO`-only sandbox ran `exec`
+                            // through it, exit 0.
+                            let mut escalated: Vec<&str> = if inner.all_effects {
+                                crate::builtins::GRANTABLE_EFFECTS
+                                    .iter()
+                                    .copied()
+                                    .filter(|e| !outer.allows(e))
+                                    .collect()
+                            } else {
+                                inner
+                                    .allowed
+                                    .iter()
+                                    .filter(|e| !outer.allows(e))
+                                    .map(|e| e.as_str())
+                                    .collect()
+                            };
                             if !escalated.is_empty() {
                                 escalated.sort_unstable();
                                 return Err(crate::interp::Flow::SandboxViolation(format!("sandbox_run: sandbox {sb_handle} grants effect(s) \
