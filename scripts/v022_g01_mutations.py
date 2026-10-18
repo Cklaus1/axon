@@ -11529,6 +11529,18 @@ MUTATIONS += [
      '                    };\n                    break \'walk;\n                }\n                if pass == 1 {',
      '                    };\n                    std::process::exit(22);\n                }\n                if pass == 1 {',
      'axon-cortex', '--test cli', 'a_restore_failing_between_attempts_still_ends_with_a_verdict'),
+    ('M3717', "S1 R4 (token regress): the first prompt's visible report is rendered as a JSON block again", 'crates/axon-cortex/src/generate.rs',
+     '"What the visible tests report on the file as it stands:\\n```\\n{}\\n```\\n\\n",',
+     '"What the visible tests report on the file as it stands (JSON):\\n```json\\n{}\\n```\\n\\n",',
+     'axon-cortex', '--test gen_context', 'the_generator_sees_the_file_and_visible_feedback_but_never_the_hidden_check'),
+    ('M3718', "S1 R4: the first prompt's plain report skips the cleaner (copy name, hidden-naming lines)", _S1R,
+     '        .filter_map(clean)',
+     '        .filter_map(|l| Some(l.to_string()))',
+     'axon-cortex', '--lib', 'the_first_prompt_report_is_plain_text_and_cleaned'),
+    ('M3719', "S1 R4: the first prompt loses the visible report of the file as found", _S1R,
+     '                        if matches!(what, VisibleRun::AsFound) {',
+     '                        if false {',
+     'axon-cortex', '--test gen_context', 'the_generator_sees_the_file_and_visible_feedback_but_never_the_hidden_check'),
 ]
 
 # C9 round 15 (amendment 121): M3260 is retired under the four-cell rule against M3456. The

@@ -3117,4 +3117,7 @@ ATTACK_MARKERS.update({
     'M3714': r'ATTACK: a run R5 refused left the unaccepted file in place',
     'M3715': r'ATTACK: a run that kept nothing reports the adjudicated state as kept',
     'M3716': r'no verdict \(EOF while parsing a value',
+    'M3717': r'ATTACK: the first prompt carries a JSON block',
+    'M3718': r"ATTACK: the first prompt's report carries what the cleaner must remove",
+    'M3719': r'first prompt lacks `What the visible tests report on the file as it stands',
 })
