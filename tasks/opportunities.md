@@ -2671,3 +2671,6 @@ The broke-build revert (~runner.rs:1793) and `restore_base` (~2768) still write 
 
 ### O-FU-04 — [low] Exit-27 adjudicated put-back writes without checking disk
 `bin/cortex.rs` `(27, Some(Ok(bytes))) => std::fs::write(...)` is not a restore of the original, so it is outside FU-4's table; it overwrites whatever is on disk. NH-R1 E5 lists it among the nine CAS sites.
+
+### O-FU-05 — [low] Two capability expression walkers remain (FU-2 consolidation rule)
+FU-2 fixed the predicate gap with one shared `program_roots` list and did not merge the walkers: `collect_caps_stmts` + `collect_caps_expr` (145 lines, `capabilities.rs` ~1257–1404) and S1's `visit_expr` (246 lines, ~1514–1759). Not merged because the fix needed only the roots list (it removed the duplicate roots list rather than adding one) and the two walkers differ in reach semantics (S1 tracks the reach set and per-fn hooks). A future merge must keep the agreement fixtures in `tests/predicate_capability_routes.rs` and M3760–M3764 green.
