@@ -2641,3 +2641,12 @@ Noted in `crates/axon-core/src/capabilities.rs` (the `reachable_capabilities` do
 
 ### O-S1-18 — [high] R4 typed feedback needs a prospective keep/remove criterion
 `[DECIDED by human 2026-10-18]`: R4 shipped without a demonstrated benefit. Its keep/remove criterion (measured capability gain on the new held-out evaluation, against its implementation cost and complexity) is fixed in tasks/followup-spec.md BEFORE the measurement runs; typed feedback is not kept indefinitely without demonstrated benefit.
+
+### O-S1-19 — [medium] `@[verify]` predicates have no purity check
+Found in the follow-up spec review (FU-2). E1209 rejects impure builtins in refinement predicates (`checker.rs:788-804` → `reject_impure_refinement`), but a `@[verify(...)]` predicate is checked only for sealing (`checker.rs:1393-1400`) and confidence bounds (`verify.rs`, E1101), and the interpreter evaluates it (`interp.rs:~6613`). So `@[verify(len(read_file("x")) > 0)]` runs a file read as part of a "verification". FU-2 makes every capability walker SEE it; whether verify predicates should be pure like refinements is a language-behaviour change (product decision).
+
+### O-S1-20 — [medium] `effect_union` omits native-module effects everywhere
+Found in the follow-up spec review (FU-2, A#6). `program_builtin_calls` (`capabilities.rs:876-899`) records only `Expr::Ident` callees that are known builtins, so a native `M::f` call (resolved by `native::resolve_call`) contributes no effect row to `program_effect_rows` → `build_axmeta_manifest`'s `effect_union`/`syscall_hint` (`main.rs:8986-9068`) — from fn bodies too, not only predicates. `reachable_capabilities` records `native:M` plus module effects (`Reach::note`, `capabilities.rs:604-607`). Fix direction: map native calls through the module's declared effects in `program_builtin_calls`; test via a body-level native call in the agreement fixture.
+
+### O-S1-21 — [low] `B/hardset/build.py` always exits 0 and `--check` with no file validates nothing
+Found in the follow-up dev-loop review (D#17). `if __name__ == "__main__": main()` discards `main()`'s return (`B/hardset/build.py:362-363`), so a failing spec still exits 0; `--check` with no FILE runs `load_specs([])`. Fix: `sys.exit(main())`, and `--check` with no file means all of `defects/*.json` (fail-first: a broken spec exits 1). Not cheap enough for every gate (runs axon + `cortex locate` per spec).
