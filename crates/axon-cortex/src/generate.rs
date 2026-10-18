@@ -113,6 +113,12 @@ pub enum RejectionReason {
     /// feedback carries those diagnostics, from checking the file with the
     /// hidden check cut out.
     CheckerObjected,
+    /// A check of the patched file stopped at a process bound — its wall-clock
+    /// limit or its output bound — so no verdict came back (R2). Recorded in
+    /// the early-stop signals, which skip it like [`Self::DidNotCompile`]; the
+    /// generator is shown a plain [`Self::CheckRefused`] for it, plus whatever
+    /// its VISIBLE run said, so which hidden spawn hit the bound never leaks.
+    TimedOut,
 }
 
 impl RejectionReason {
@@ -122,6 +128,7 @@ impl RejectionReason {
             RejectionReason::DidNotCompile => "did_not_compile",
             RejectionReason::CheckRefused => "check_refused",
             RejectionReason::CheckerObjected => "checker_objected",
+            RejectionReason::TimedOut => "timed_out",
         }
     }
 }
@@ -135,6 +142,9 @@ impl std::fmt::Display for RejectionReason {
                 f,
                 "it passed the checks, but `axon check` reported diagnostics on the file"
             ),
+            RejectionReason::TimedOut => {
+                write!(f, "a check of it did not finish within its limits")
+            }
         }
     }
 }
@@ -288,10 +298,12 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
         if let Some(f) = &r.feedback {
             let label = match r.reason {
                 RejectionReason::DidNotCompile => "The compiler reported",
-                RejectionReason::CheckRefused => {
+                RejectionReason::CheckerObjected => "`axon check` reported",
+                // Never constructed for a generator-facing attempt (a bound
+                // hit is shown as CheckRefused); labelled like it regardless.
+                RejectionReason::CheckRefused | RejectionReason::TimedOut => {
                     "With that attempt applied, the visible tests reported"
                 }
-                RejectionReason::CheckerObjected => "`axon check` reported",
             };
             history.push_str(&format!("{label}:\n```\n{}\n```\n", f.trim_end()));
         }

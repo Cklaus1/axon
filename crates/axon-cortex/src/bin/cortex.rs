@@ -39,7 +39,8 @@ use axon_cortex::runner::{
 
 const USAGE: &str = "\
 cortex repair --file PATH --check NAME [--symbol NAME] [options]
-cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
+cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH]
+              [--check-timeout-ms N] [--json]
 
   --workspace DIR        directory to operate in (default: .)
   --file PATH            workspace-relative file holding the symbol
@@ -57,6 +58,14 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          matching Cortex's convention where \"\" denies.
   --principal NAME       who is acting (default: agent)
   --budget N             maximum steps per candidate (default: 8)
+  --check-timeout-ms N   wall-clock limit on every check process (default:
+                         60000). A check is spawned as its own process group
+                         and the whole group is killed at the limit; its
+                         output is capped at 1 MiB per stream. A candidate
+                         whose check hits either bound is rejected and undone
+                         and the next proposal runs; only a check of the
+                         UNPATCHED file hitting a bound blocks the run (22).
+                         Checks run with an empty environment.
   --candidates N         how many ranked candidates to try (default: 3). On
                          the measured corpus the top candidate is the sole
                          most-suspicious one about a third of the time, while
@@ -284,11 +293,17 @@ impl axon_cortex::runner::CheckExecutor for SharedFabric {
     }
 }
 
+/// Default `--check-timeout-ms`: the wall-clock limit on every check process.
+const DEFAULT_CHECK_TIMEOUT_MS: u64 = 60_000;
+/// The capture bound on each output stream of a local check process.
+const CHECK_MAX_OUTPUT: usize = 1 << 20;
+
 fn registered_runner(
     axon_bin: &std::path::Path,
     check_registry: Option<&std::path::Path>,
     workspace: &std::path::Path,
     fabric: Option<&std::sync::Arc<FabricSubmitExecutor>>,
+    check_timeout: std::time::Duration,
 ) -> Runner {
     let reg = match check_registry {
         Some(file) => CheckRegistry::load(file),
@@ -309,18 +324,33 @@ fn registered_runner(
             .map(|x| (exe, x))
             .map_err(|e| e.to_string())
     });
-    match exec {
+    // R2: every process that runs workspace code is bounded. A candidate body
+    // that never returns used to hold the loop forever: the local executor
+    // ran with no wall clock and no capture bound. The check process also
+    // starts from an EMPTY environment, so nothing of the operator's shell
+    // (AXON_STRICT, a stray AXON_PATH) steers a verdict.
+    let mut runner = match exec {
         Ok((exe, _)) if fabric.is_some() => Runner::with_check_executor(
             exe,
             workspace,
             Box::new(SharedFabric(std::sync::Arc::clone(fabric.expect("some")))),
         ),
-        Ok((exe, x)) => Runner::with_check_executor(exe, workspace, Box::new(x)),
+        Ok((exe, x)) => Runner::with_check_executor(
+            exe,
+            workspace,
+            Box::new(
+                x.with_timeout(check_timeout)
+                    .with_max_output(CHECK_MAX_OUTPUT)
+                    .with_clean_env(),
+            ),
+        ),
         Err(e) => {
             eprintln!("the checks could not be run: {e}");
             std::process::exit(22);
         }
-    }
+    };
+    runner.set_checker_timeout(check_timeout);
+    runner
 }
 
 fn main() {
@@ -363,6 +393,7 @@ fn main() {
     let mut audit_flag: Option<String> = None;
     let mut label_log_flag: Option<String> = None;
     let mut label_source = false;
+    let mut check_timeout_ms: u64 = DEFAULT_CHECK_TIMEOUT_MS;
 
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
@@ -422,6 +453,15 @@ fn main() {
                 }
             }
             "--json" => json = true,
+            "--check-timeout-ms" => {
+                let raw = val("--check-timeout-ms");
+                check_timeout_ms = raw.parse().unwrap_or_else(|_| {
+                    usage(&format!("--check-timeout-ms must be a number, got `{raw}`"))
+                });
+                if check_timeout_ms == 0 {
+                    usage("--check-timeout-ms must be at least 1");
+                }
+            }
             other => usage(&format!("unknown argument `{other}`")),
         }
     }
@@ -505,11 +545,13 @@ fn main() {
     let mut localization: Option<axon_cortex::label::Localization> = None;
 
     let fabric = fabric_executor(&fabric_args, check_registry.as_deref());
+    let check_timeout = std::time::Duration::from_millis(check_timeout_ms);
     let mut runner = registered_runner(
         &axon_bin,
         check_registry.as_deref(),
         &workspace,
         fabric.as_ref(),
+        check_timeout,
     );
     // (A grep for `fn NAME(` used to stand here as a cheaper first pass. It
     // was redundant with the check below and strictly worse: it accepted any
@@ -1145,6 +1187,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
     let mut check_registry: Option<std::path::PathBuf> = None;
     let mut fabric_args = FabricArgs::default();
     let mut json = false;
+    let mut check_timeout_ms: u64 = DEFAULT_CHECK_TIMEOUT_MS;
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
             args.next()
@@ -1164,6 +1207,15 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
                 }
             }
             "--json" => json = true,
+            "--check-timeout-ms" => {
+                let raw = val("--check-timeout-ms");
+                check_timeout_ms = raw.parse().unwrap_or_else(|_| {
+                    usage(&format!("--check-timeout-ms must be a number, got `{raw}`"))
+                });
+                if check_timeout_ms == 0 {
+                    usage("--check-timeout-ms must be at least 1");
+                }
+            }
             other => usage(&format!("unknown argument `{other}`")),
         }
     }
@@ -1187,6 +1239,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
         check_registry.as_deref(),
         &workspace,
         fabric.as_ref(),
+        std::time::Duration::from_millis(check_timeout_ms),
     );
     let src = std::fs::read_to_string(workspace.join(&file))
         .unwrap_or_else(|e| usage(&format!("cannot read {file}: {e}")));

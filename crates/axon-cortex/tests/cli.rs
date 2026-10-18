@@ -2297,3 +2297,208 @@ fn kg3_sigterm_to_cortex_kills_the_generators_job_and_cortex_dies_by_it() {
     }
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// Run `cmd` to completion with its output in files under `ws`, killing it
+/// (and failing) after `guard`: the rows below are about runs that USED to
+/// hang. Returns (exit code, stdout, stdout+stderr, elapsed).
+fn run_guarded(
+    ws: &Path,
+    cmd: &mut Command,
+    guard: std::time::Duration,
+    attack: &str,
+) -> (Option<i32>, String, String, std::time::Duration) {
+    let out_file = ws.join("cortex.out");
+    let err_file = ws.join("cortex.err");
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::fs::File::create(&out_file).unwrap())
+        .stderr(std::fs::File::create(&err_file).unwrap())
+        .spawn()
+        .unwrap();
+    let said = || {
+        (
+            std::fs::read_to_string(&out_file).unwrap_or_default(),
+            std::fs::read_to_string(&err_file).unwrap_or_default(),
+        )
+    };
+    let began = std::time::Instant::now();
+    let status = loop {
+        if let Some(st) = child.try_wait().unwrap() {
+            break st;
+        }
+        if began.elapsed() >= guard {
+            let _ = child.kill();
+            let _ = child.wait();
+            let (o, e) = said();
+            panic!("ATTACK: {attack} (still running after {guard:?}): {o}{e}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let (o, e) = said();
+    (status.code(), o.clone(), format!("{o}{e}"), began.elapsed())
+}
+
+/// R2 (a): a candidate body that never returns is killed at
+/// `--check-timeout-ms`, rejected like any refused attempt, and the NEXT
+/// proposal runs. Before R2 the local check had no wall clock: the hidden
+/// check of the looping body held `cortex repair` forever.
+#[test]
+fn r2_a_candidate_that_never_returns_is_rejected_and_the_next_proposal_runs() {
+    let ws = workspace("r2_hang");
+    let gen = ws.join("hang-gen.sh");
+    let log = ws.join("calls.log");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\necho call >> '{log}'\n\
+             if [ \"$(wc -l < '{log}')\" -eq 1 ]; then\n\
+             printf '    while true {{\\n    }}\\n    n * 2\\n'\nelse\nprintf '    n * 2\\n'\nfi\n",
+            log = log.display()
+        ),
+        0o755,
+    );
+    let mut cmd = repair_with_generator(&ws, &gen, "120000");
+    cmd.args([
+        "--symbol",
+        "double",
+        "--check-timeout-ms",
+        "1500",
+        "--budget",
+        "12",
+        "--json",
+    ]);
+    let (code, stdout, said, elapsed) = run_guarded(
+        &ws,
+        &mut cmd,
+        std::time::Duration::from_secs(180),
+        "a candidate that never returns stalled `cortex repair`",
+    );
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        calls.lines().count(),
+        2,
+        "the next proposal must run: {said}"
+    );
+    assert_eq!(code, Some(0), "{said}");
+    let v: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(v["outcome"], "verified_done", "{said}");
+    let src = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    assert!(
+        src.contains("n * 2") && !src.contains("while true"),
+        "{src}"
+    );
+    // Each spawn of the looping body is bounded by the timeout plus the drain
+    // grace; a handful of them, not an unbounded wait, is what elapsed.
+    assert!(
+        elapsed < std::time::Duration::from_secs(90),
+        "took {elapsed:?}: {said}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R2 (b): the check is killed as a GROUP. `axon test --completion-key-stdin`
+/// drops `Exec` from every check, so candidate code cannot spawn a process;
+/// the process tree under the check is the REGISTERED executor's. The fixture
+/// registers a check executor that, for the candidate's state, backgrounds a
+/// grandchild holding the check's stdout/stderr and waits on it forever.
+/// After the timeout no grandchild survives, the loop is not stalled, and the
+/// next proposal runs. Before R2 nothing bounded the check at all.
+#[test]
+fn r2_a_timed_out_check_is_killed_as_a_group_and_the_loop_goes_on() {
+    let ws = workspace("r2_group");
+    let pids = ws.join("gc.pids");
+    let real = axon_bin().canonicalize().unwrap();
+    let wrapper = ws.join("check-exec.sh");
+    common::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nf=\nfor a in \"$@\"; do case \"$a\" in *.ax) f=\"$a\";; esac; done\n\
+             if [ \"$1\" = test ] && grep -q GRANDCHILD_HOLDS_PIPES \"$f\"; then\n\
+             sleep 4723 &\necho $! >> '{pids}'\nwait\nfi\nexec '{real}' \"$@\"\n",
+            pids = pids.display(),
+            real = real.display()
+        ),
+        0o755,
+    );
+    let sha = String::from_utf8(
+        Command::new("sha256sum")
+            .arg(&wrapper)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let registry = ws.join("registry.json");
+    std::fs::write(
+        &registry,
+        serde_json::json!({
+            "schema": "cortex-check-registry/1",
+            "executors": [{
+                "id": axon_cortex::runner::LOCAL_AXON_TEST_ID,
+                "path": wrapper,
+                "sha256": sha.split_whitespace().next().unwrap(),
+            }],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let gen = ws.join("gc-gen.sh");
+    let log = ws.join("calls.log");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\necho call >> '{log}'\n\
+             if [ \"$(wc -l < '{log}')\" -eq 1 ]; then\n\
+             printf '    // GRANDCHILD_HOLDS_PIPES\\n    n * 2\\n'\nelse\nprintf '    n * 2\\n'\nfi\n",
+            log = log.display()
+        ),
+        0o755,
+    );
+    let mut cmd = repair_with_generator(&ws, &gen, "120000");
+    cmd.arg("--check-registry").arg(&registry).args([
+        "--symbol",
+        "double",
+        "--check-timeout-ms",
+        "1500",
+        "--budget",
+        "12",
+        "--json",
+    ]);
+    let (code, stdout, said, _) = run_guarded(
+        &ws,
+        &mut cmd,
+        std::time::Duration::from_secs(180),
+        "a grandchild holding the check's pipes stalled `cortex repair`",
+    );
+    let spawned: Vec<i32> = std::fs::read_to_string(&pids)
+        .unwrap_or_else(|e| panic!("the candidate's check never ran: {e}: {said}"))
+        .lines()
+        .map(|l| l.trim().parse().unwrap())
+        .collect();
+    assert!(!spawned.is_empty(), "{said}");
+    for pid in spawned {
+        let gc = Proc {
+            pid,
+            cmdline: b"sleep\x004723\x00".to_vec(),
+        };
+        assert!(
+            gc.gone_within(std::time::Duration::from_secs(5)),
+            "ATTACK: the timed-out check's grandchild (pid {pid}) outlived its deadline: {said}"
+        );
+    }
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        calls.lines().count(),
+        2,
+        "the next proposal must run: {said}"
+    );
+    assert_eq!(code, Some(0), "{said}");
+    let v: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(v["outcome"], "verified_done", "{said}");
+    let after = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    assert!(
+        !after.contains("GRANDCHILD"),
+        "the candidate was not undone: {after}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}

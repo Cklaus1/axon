@@ -1741,8 +1741,27 @@ EXEMPT += [
      _LOC + "; LocalInterpreterExecutor::verified_path"),
     (_SR, '                    return Err(CheckRefusal::DigestChanged {',
      _LOC + "; LocalInterpreterExecutor::verified_path"),
-    (_SR, '        if truncated {',
+    (_SR, '        if truncated {\n            return Err(BoundExceeded::output(self.limits.max_output.unwrap_or(0)));',
      _LOC + "; LocalInterpreterExecutor::run_checks' output bound"),
+    (_SR, '        if truncated {\n            return Err(BoundExceeded::output(CHECKER_MAX_OUTPUT));',
+     _CHK + "; Runner::run_axon_check's output bound (R2): an `axon check` that said more than "
+     "CHECKER_MAX_OUTPUT is a run stopped at a bound, never a verdict"),
+    (_SR, '            Err(e) => break Err(e),',
+     _LOC + "; run_limited: a failed has_exited poll is an OS ERROR (no status, no report); the "
+     "job is killed and reaped before the error returns"),
+    (_SR, 'pub fn bound_exceeded(e: &std::io::Error) -> Option<Bound> {',
+     _LOC + "; the classifier of a run_limited error (R2): Some only for a spawn stopped at its "
+     "time or output bound, which the loop turns into a rejected candidate on a patched file "
+     "and Blocked on the pristine one"),
+    (_SR, '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "a candidate whose check did not finish could not be undone in {}",',
+     _CTX + "; R2: undoing a candidate whose check stopped at a bound; a file that cannot be "
+     "restored is an environment fact"),
+    (_SR, 'ExecOutcome::CheckUnfinished { why, .. } => {',
+     _CTX + "; R2: a check of the PRISTINE file stopped at a bound blocks the run (exit 22), as "
+     "the spec requires; on a candidate the arm above rejects instead"),
+    (_SR, '        if let Some(d) = cwd {',
+     _CHK + "; Runner::run_axon_check's working directory: the visible-copy compile runs in the "
+     "workspace, the other checks get an absolute path; it selects no file and no verdict"),
     (_SR, '                    return Err(std::io::Error::last_os_error());',
      _LOC + "; run_limited's PR_SET_PDEATHSIG in the local child (also an OS ERROR: the child is not exec'd)"),
     (_SR, '        return Err(std::io::Error::new(',
@@ -2667,19 +2686,10 @@ EXEMPT += [
      '.ok_or_else(|| format!("{rel_path} names no file"))?;',
      _GCX),
     ('crates/axon-cortex/src/runner.rs',
-     'VisibleRun::Compile | VisibleRun::Diagnostics => {',
+     'Err(e) => Err(format!("the visible tests could not be run: {e}")),',
      _GCX),
     ('crates/axon-cortex/src/runner.rs',
-     'fn checker_exit_clean(&self, rel_path: &str) -> Result<bool, String> {',
-     _CHK),
-    ('crates/axon-cortex/src/runner.rs',
-     '.stdout(std::process::Stdio::null())',
-     _CHK),
-    ('crates/axon-cortex/src/runner.rs',
-     '.stderr(std::process::Stdio::null())',
-     _CHK),
-    ('crates/axon-cortex/src/runner.rs',
-     'None => Err("the checker was killed by a signal".into()),',
+     'None => Err(std::io::Error::other("the checker was killed by a signal")),',
      _CHK),
     ('crates/axon-cortex/src/runner.rs',
      'acceptance was not established: {e}"',
@@ -3124,7 +3134,7 @@ EXEMPT += [
      '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "a patch broke the build and {} could not be restored: {e}",',
      _CTX),
     ('crates/axon-cortex/src/runner.rs',
-     '                            return EpisodeOutcome::Blocked {\n                                steps: step,\n                                reason: format!("the file could not be re-checked: {e}"),',
+     '                                return EpisodeOutcome::Blocked {\n                                    steps: step,\n                                    reason: format!("the file could not be re-checked: {e}"),',
      _CTX),
     ('crates/axon-cortex/src/runner.rs',
      '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "a rejected patch could not be undone in {}",',
@@ -4030,7 +4040,7 @@ VALUE_EXEMPT += [
     ('crates/axon-cortex/src/generate.rs', 'propose', 1, 'std::process::Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (std::process::Stdio::piped() -> std::process::Stdio::null()) fails the test(s) cli_drives_an_external_generator_and_shows_it_no_grader, cli_shows_the_generator_the_same_body_on_the_warned_path; no row of its own'),
     ('crates/axon-cortex/src/generate.rs', 'propose', 2, 'std::process::Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (std::process::Stdio::piped() -> std::process::Stdio::null()) fails the test(s) a_generators_stdout_is_never_buffered_past_its_cap, cli_drives_an_external_generator_and_shows_it_no_grader, cli_shows_the_generator_the_same_body_on_the_warned_path; no row of its own'),
     ('crates/axon-cortex/src/generate.rs', 'propose', 3, 'Stdio::piped()', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the Cortex repair loop's own code. The protected crates use from axon-cortex only parse_strict and ContractError (axon-loop-contracts) and, from runner, CheckRegistry, LocalInterpreterExecutor (the local route), the CheckExecutor types, parse_axon_test_json, completion_token, the suite-reference functions and the workspace/executable digest functions (axon-fabric submit.rs, psv.rs, workspace.rs, backend.rs, bin/axon-fabric.rs); nothing below is among them"),
-    ('crates/axon-cortex/src/runner.rs', 'observe', 1, '"check"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("check" -> "checkx") fails the test(s) cxg_c02_selection_follows_the_observation_and_refuses_to_guess, cxg_c13_a_patch_that_breaks_the_build_is_undone, cxg_g02_an_observation_distinguishes_clean_from_warned; no row of its own'),
+    ('crates/axon-cortex/src/runner.rs', 'run_axon_check', 1, '"check"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("check" -> "checkx") fails the test(s) cxg_c02_selection_follows_the_observation_and_refuses_to_guess, cxg_c13_a_patch_that_breaks_the_build_is_undone, cxg_g02_an_observation_distinguishes_clean_from_warned; no row of its own'),
     ('crates/axon-cortex/src/runner.rs', 'run_checks', 2, '"--json"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--json" -> "--jsonx") fails the test(s) a_digest_changed_executable_is_refused_with_zero_effects, an_empty_mandatory_match_is_not_run_never_passed, cli_a_malformed_request_decides_nothing; no row of its own'),
     ('crates/axon-cortex/src/runner.rs', 'run_checks', 3, '"--filter"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("--filter" -> "--filterx") fails the test(s) a_digest_changed_executable_is_refused_with_zero_effects, an_empty_mandatory_match_is_not_run_never_passed, cli_a_malformed_request_decides_nothing; no row of its own'),
     ('crates/axon-cortex/src/runner.rs', 'run_checks', 4, '"--completion-key-stdin"', 'NOTROUTE', "NOT ON THE PROTECTED ROUTE (checkable): the LOCAL interpreter executor (the development route, process_scoped/local-interpreter); submit.rs builds it only when the profile is not the protected one (`let local = if is_linux { None } else { .. host_executor .. }`), and a protected host runs nothing outside the protected profile (M265); the guest runs `axon test` from axon-psv's runner (exec_axon_test), not this executor"),
@@ -4347,10 +4357,6 @@ VALUE_EXEMPT += [
 # Hand-judged NOTROUTE value sites (not from a survey).
 VALUE_EXEMPT += [
     ('crates/axon-cortex/src/label.rs', 'append', 1, '0o600', 'NOTROUTE', _LBL),
-    ('crates/axon-cortex/src/runner.rs', 'visible_run', 1, '"check"', 'NOTROUTE', _GCX),
-    ('crates/axon-cortex/src/runner.rs', 'checker_exit_clean', 1, '"check"', 'NOTROUTE', _CHK),
-    ('crates/axon-cortex/src/runner.rs', 'checker_exit_clean', 2, 'std::process::Stdio::null()', 'NOTROUTE', _CHK),
-    ('crates/axon-cortex/src/runner.rs', 'checker_exit_clean', 3, 'std::process::Stdio::null()', 'NOTROUTE', _CHK),
 ]
 
 
@@ -5917,10 +5923,8 @@ EXEC_CONSTRUCTORS = {
     ("crates/axon-fabric/src/git_data.rs", "refuse_config"): "builder: own .arg sites",
     ("crates/axon-psv/src/runner.rs", "exec_axon_test"): "builder: own .env/.arg sites",
     ("crates/axon-cortex/src/generate.rs", "propose"): "builder: own .arg/.stdin sites (not a protected route)",
-    ("crates/axon-cortex/src/runner.rs", "observe"): "builder: own .arg sites",
+    ("crates/axon-cortex/src/runner.rs", "run_axon_check"): "builder: own .arg sites (`axon check <file>`, bounded by run_limited; not a protected route)",
     ("crates/axon-cortex/src/runner.rs", "run_checks"): "builder: own .arg sites",
-    ("crates/axon-cortex/src/runner.rs", "visible_run"): "builder: own .arg sites (`axon check <copy>`; not a protected route)",
-    ("crates/axon-cortex/src/runner.rs", "checker_exit_clean"): "builder: own .arg sites (`axon check <file>`, exit status only; not a protected route)",
     ("crates/axon-core/src/host.rs", "exec"): "OUT OF SCOPE: the language host seam",
     ("crates/axon-core/src/main.rs", "try_link_wasm"): "OUT OF SCOPE: the language CLI",
     ("crates/axon-core/src/main.rs", "run_quorum_gate"): "OUT OF SCOPE: the language CLI",

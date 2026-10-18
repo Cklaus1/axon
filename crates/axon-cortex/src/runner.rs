@@ -156,6 +156,10 @@ pub enum ExecOutcome {
     Claimed { rationale: String },
     /// The action could not be attempted at all, with the reason.
     Failed(String),
+    /// A named check was stopped at a process bound (time or output) and so
+    /// produced no verdict. On a candidate's patched file that rejects the
+    /// candidate (R2); anywhere else it blocks like [`ExecOutcome::Failed`].
+    CheckUnfinished { name: String, why: String },
 }
 
 /// Find a function body in Axon source: the text between the brace that opens
@@ -356,7 +360,12 @@ pub struct Runner {
     last_snapshot_id: Option<String>,
     /// B264: the seam every check dispatch goes through.
     check_executor: Box<dyn CheckExecutor>,
+    /// Limits on the `axon check` processes this runner spawns itself.
+    checker_limits: ExecLimits,
 }
+
+/// The capture bound on one stream of an `axon check` the runner spawns.
+pub const CHECKER_MAX_OUTPUT: usize = 1 << 20;
 
 impl Runner {
     /// Convenience constructor kept for existing callers.
@@ -387,7 +396,39 @@ impl Runner {
             episode: Episode::new("cortex-repair-1"),
             last_snapshot_id: None,
             check_executor,
+            checker_limits: ExecLimits {
+                max_output: Some(CHECKER_MAX_OUTPUT),
+                ..ExecLimits::default()
+            },
         }
+    }
+
+    /// Kill every `axon check` this runner spawns (observation, the
+    /// visible-copy compile, the acceptance check) at `wall` (R2). The
+    /// registered checks are bounded by their executor's own limits.
+    pub fn set_checker_timeout(&mut self, wall: std::time::Duration) {
+        self.checker_limits.wall = Some(wall);
+    }
+
+    /// `axon check <file>` as a bounded job (R2): its own process group, the
+    /// runner's wall-clock limit, at most [`CHECKER_MAX_OUTPUT`] bytes per
+    /// stream. Returns (stdout+stderr, exit code). A run stopped at a bound
+    /// is an `Err` carrying a [`BoundExceeded`].
+    fn run_axon_check(
+        &self,
+        file: &Path,
+        cwd: Option<&Path>,
+    ) -> std::io::Result<(String, Option<i32>)> {
+        let mut cmd = std::process::Command::new(&self.axon_bin);
+        if let Some(d) = cwd {
+            cmd.current_dir(d);
+        }
+        cmd.arg("check").arg(file);
+        let (text, code, truncated) = run_limited(&mut cmd, &self.checker_limits, None)?;
+        if truncated {
+            return Err(BoundExceeded::output(CHECKER_MAX_OUTPUT));
+        }
+        Ok((text, code))
     }
 
     /// Which executor adjudicates this runner's checks (for evidence/logs).
@@ -455,17 +496,9 @@ impl Runner {
     /// omission is reported. An observation that silently dropped what it
     /// could not see would be indistinguishable from a complete one.
     pub fn observe(&mut self, snap: &WorkspaceSnapshot, target: &str) -> Observation {
-        let out = std::process::Command::new(&self.axon_bin)
-            .arg("check")
-            .arg(self.workspace.join(target))
-            .output();
+        let out = self.run_axon_check(&self.workspace.join(target), None);
         let (diagnostics, warnings, facts, omissions) = match out {
-            Ok(o) => {
-                let text = format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&o.stdout),
-                    String::from_utf8_lossy(&o.stderr)
-                );
+            Ok((text, _)) => {
                 let diags: Vec<String> = text
                     .lines()
                     .filter(|l| l.contains("\"severity\":\"error\""))
@@ -657,6 +690,10 @@ impl Runner {
                         name: check.name.clone(),
                         passed,
                         matched,
+                    },
+                    Err(e) if bound_exceeded(&e).is_some() => ExecOutcome::CheckUnfinished {
+                        name: check.name.clone(),
+                        why: e.to_string(),
                     },
                     Err(e) => ExecOutcome::Failed(format!("check could not run: {e}")),
                 }
@@ -1206,7 +1243,54 @@ impl Runner {
                 }
             }
 
+            // R2: the symbol's check ran past a process bound ON A CANDIDATE.
+            // The candidate's code is what ran too long or said too much, so
+            // the candidate is rejected and undone exactly as a failing check
+            // rejects it; the run goes on to the next proposal. On the
+            // pristine file it is still an environment fact (Blocked below).
+            if let ExecOutcome::CheckUnfinished { name, why } = &outcome {
+                if let Some(body) = last_applied.take() {
+                    self.episode.push(EpisodeEvent::CheckRun {
+                        name: format!("{name} (unfinished: {why})"),
+                        exit_code: -1,
+                        passed: false,
+                    });
+                    let feedback =
+                        self.visible_feedback(&target.path, hidden_check, VisibleRun::Tests);
+                    progress.attempts.push(AttemptSignal {
+                        proposal: progress.proposals,
+                        rejection: crate::generate::RejectionReason::TimedOut,
+                        visible_failing: None,
+                    });
+                    push_rejected(
+                        rejected,
+                        body,
+                        crate::generate::RejectionReason::CheckRefused,
+                        feedback,
+                    );
+                    if restore_base(&self.workspace.join(&target.path), &candidate_base).is_err() {
+                        return EpisodeOutcome::Blocked {
+                            steps: step,
+                            reason: format!(
+                                "a candidate whose check did not finish could not be undone in {}",
+                                target.path
+                            ),
+                        };
+                    }
+                    if let (Some(g), Some(pin)) = (effective.as_mut(), base_pin.as_ref()) {
+                        g.snapshot_id = pin.clone();
+                    }
+                    ctx.last_check = crate::select::VisibleCheck::NotRun;
+                    continue;
+                }
+            }
             match &outcome {
+                ExecOutcome::CheckUnfinished { why, .. } => {
+                    return EpisodeOutcome::Blocked {
+                        steps: step,
+                        reason: format!("the check did not finish: {why}"),
+                    }
+                }
                 ExecOutcome::Failed(why) => {
                     return EpisodeOutcome::Blocked {
                         steps: step,
@@ -1334,138 +1418,173 @@ impl Runner {
                 // undo below then records the attempt as `CheckerObjected`
                 // with the checker's diagnostics as its feedback.
                 let mut objected = false;
-                if self.verify(true, hidden_check, &target.path) {
-                    // The adjudicator accepted. That is a witness, not the
-                    // whole truth: it is ONE test, and a patch can satisfy it
-                    // while the file still fails others.
-                    //
-                    // Measured with a deliberately wrong generator, 4 of 68
-                    // runs exited 0 with a file that still failed — every one
-                    // a patch to the WRONG function that the single hidden
-                    // check happened to accept. A regression guard alone did
-                    // not close it: in the surviving case nothing REGRESSED,
-                    // the episode simply left failures it was there to fix.
-                    //
-                    // So the rule is the one an operator can act on: verified
-                    // means NO check in the file is failing. A file that still
-                    // fails checks has not been repaired, whatever the
-                    // adjudicator says about its own test.
-                    // FAIL CLOSED. `unwrap_or_default()` sat here and turned
-                    // "the checks could not be run" into "nothing is failing"
-                    // — on the ONLY path that can return VerifiedDone. That is
-                    // the exact collapse `check_outcomes`' own doc forbids ten
-                    // lines from where it is written, and it made the
-                    // strictness fail OPEN: any second spawn that died (the
-                    // binary replaced mid-run, an OOM kill) produced exit 0 on
-                    // a file whose other checks all still failed.
-                    let still_failing: Vec<String> = match self.check_outcomes(&target.path, "") {
-                        Ok((failing, _)) => failing,
-                        Err(e) => {
-                            self.episode.push(EpisodeEvent::Verified {
-                                passed: false,
-                                detail: format!(
+                // R2: set when a spawn of the acceptance stopped at a process
+                // bound (time or output) on the candidate's file. That is a
+                // fact about the CANDIDATE's code — it ran too long or said too
+                // much — so it rejects the candidate like a refused claim and
+                // never blocks the run. The generator is told only what the
+                // visible run said: which acceptance spawn hit the bound is
+                // the grader's business.
+                let (verified, bound) = self.verify_run(true, hidden_check, &target.path);
+                let mut unfinished = bound.is_some();
+                if verified {
+                    'accept: {
+                        // The adjudicator accepted. That is a witness, not the
+                        // whole truth: it is ONE test, and a patch can satisfy it
+                        // while the file still fails others.
+                        //
+                        // Measured with a deliberately wrong generator, 4 of 68
+                        // runs exited 0 with a file that still failed — every one
+                        // a patch to the WRONG function that the single hidden
+                        // check happened to accept. A regression guard alone did
+                        // not close it: in the surviving case nothing REGRESSED,
+                        // the episode simply left failures it was there to fix.
+                        //
+                        // So the rule is the one an operator can act on: verified
+                        // means NO check in the file is failing. A file that still
+                        // fails checks has not been repaired, whatever the
+                        // adjudicator says about its own test.
+                        // FAIL CLOSED. `unwrap_or_default()` sat here and turned
+                        // "the checks could not be run" into "nothing is failing"
+                        // — on the ONLY path that can return VerifiedDone. That is
+                        // the exact collapse `check_outcomes`' own doc forbids ten
+                        // lines from where it is written, and it made the
+                        // strictness fail OPEN: any second spawn that died (the
+                        // binary replaced mid-run, an OOM kill) produced exit 0 on
+                        // a file whose other checks all still failed.
+                        let still_failing: Vec<String> = match self.check_outcomes(&target.path, "")
+                        {
+                            Ok((failing, _)) => failing,
+                            Err(e) if bound_exceeded(&e).is_some() => {
+                                self.episode.push(EpisodeEvent::Verified {
+                                    passed: false,
+                                    detail: format!(
+                                    "claim_done=true: hidden check `{hidden_check}` passed, but \
+                                     the re-check of the file did not finish, so the candidate \
+                                     is rejected: {e}"
+                                ),
+                                });
+                                unfinished = true;
+                                break 'accept;
+                            }
+                            Err(e) => {
+                                self.episode.push(EpisodeEvent::Verified {
+                                    passed: false,
+                                    detail: format!(
                                     "claim_done=true: hidden check `{hidden_check}` passed, but \
                                      the file could not be re-checked afterwards, so nothing was \
                                      established about the rest of it: {e}"
                                 ),
-                            });
-                            return EpisodeOutcome::Blocked {
-                                steps: step,
-                                reason: format!("the file could not be re-checked: {e}"),
-                            };
-                        }
-                    };
-                    if still_failing.is_empty() {
-                        // THE CHECKER HAS THE LAST WORD. `axon test` runs a
-                        // file `axon check` refuses: `check` exits 2 on ANY
-                        // diagnostic, a note included, and a test run does
-                        // not. Measured on the dev corpus (drop-stmt-02, 4 of
-                        // 4 reruns): a generator shown the file wrote
-                        // `let mut s = start`, every test passed, this
-                        // returned VerifiedDone, and the file it left failed
-                        // `axon check` with the I0002 note "`mut` is not an
-                        // Axon keyword". A repair the checker objects to is
-                        // not finished, so it is rejected like any other and
-                        // the generator is shown what the checker said.
-                        match self.checker_exit_clean(&target.path) {
-                            Ok(true) => return EpisodeOutcome::VerifiedDone { steps: step },
-                            Ok(false) => {
-                                self.episode.push(EpisodeEvent::Verified {
-                                    passed: false,
-                                    detail: format!(
+                                });
+                                return EpisodeOutcome::Blocked {
+                                    steps: step,
+                                    reason: format!("the file could not be re-checked: {e}"),
+                                };
+                            }
+                        };
+                        if still_failing.is_empty() {
+                            // THE CHECKER HAS THE LAST WORD. `axon test` runs a
+                            // file `axon check` refuses: `check` exits 2 on ANY
+                            // diagnostic, a note included, and a test run does
+                            // not. Measured on the dev corpus (drop-stmt-02, 4 of
+                            // 4 reruns): a generator shown the file wrote
+                            // `let mut s = start`, every test passed, this
+                            // returned VerifiedDone, and the file it left failed
+                            // `axon check` with the I0002 note "`mut` is not an
+                            // Axon keyword". A repair the checker objects to is
+                            // not finished, so it is rejected like any other and
+                            // the generator is shown what the checker said.
+                            match self.checker_exit_clean(&target.path) {
+                                Ok(true) => return EpisodeOutcome::VerifiedDone { steps: step },
+                                Ok(false) => {
+                                    self.episode.push(EpisodeEvent::Verified {
+                                        passed: false,
+                                        detail: format!(
                                         "claim_done=true: hidden check `{hidden_check}` passed \
                                          and no check fails, but `axon check` on {} did not \
                                          exit 0 (it reported diagnostics)",
                                         target.path
                                     ),
-                                });
-                                objected = true;
-                            }
-                            // FAIL CLOSED, as for the re-check above: a
-                            // checker that could not run established nothing.
-                            Err(e) => {
-                                self.episode.push(EpisodeEvent::Verified {
-                                    passed: false,
-                                    detail: format!(
+                                    });
+                                    objected = true;
+                                }
+                                Err(e) if bound_exceeded(&e).is_some() => {
+                                    self.episode.push(EpisodeEvent::Verified {
+                                        passed: false,
+                                        detail: format!(
+                                        "claim_done=true: hidden check `{hidden_check}` passed \
+                                         and no check fails, but `axon check` on the file did \
+                                         not finish, so the candidate is rejected: {e}"
+                                    ),
+                                    });
+                                    unfinished = true;
+                                }
+                                // FAIL CLOSED, as for the re-check above: a
+                                // checker that could not run established nothing.
+                                Err(e) => {
+                                    self.episode.push(EpisodeEvent::Verified {
+                                        passed: false,
+                                        detail: format!(
                                         "claim_done=true: hidden check `{hidden_check}` passed, \
                                          but `axon check` could not be run on the file, so its \
                                          acceptance was not established: {e}"
                                     ),
-                                });
-                                return EpisodeOutcome::Blocked {
-                                    steps: step,
-                                    reason: format!("`axon check` could not be run: {e}"),
-                                };
+                                    });
+                                    return EpisodeOutcome::Blocked {
+                                        steps: step,
+                                        reason: format!("`axon check` could not be run: {e}"),
+                                    };
+                                }
                             }
-                        }
-                    } else {
-                        let regressed: Vec<String> = still_failing
-                            .iter()
-                            .filter(|n| baseline_passing.contains(n))
-                            .cloned()
-                            .collect();
-                        // NOTHING REGRESSED. The patch satisfied the adjudicator
-                        // and broke nothing; the remaining failures were already
-                        // there when the episode started, and this loop was never
-                        // asked about them.
-                        //
-                        // Undoing it here discarded a repair that had WORKED, then
-                        // recorded the correct body as `CheckRefused` — which the
-                        // prompt renders as "it compiled but did not fix the
-                        // problem" and adds to a do-not-propose list. The loop
-                        // steered a competent generator away from the right answer
-                        // and then reported exit 21, "the generator is not
-                        // helping", about a generator that had already succeeded.
-                        //
-                        // So this is a terminal outcome of its own: the patch is
-                        // KEPT, and the pre-existing failures are named.
-                        if regressed.is_empty() {
-                            self.episode.push(EpisodeEvent::Verified {
-                                passed: false,
-                                detail: format!(
+                        } else {
+                            let regressed: Vec<String> = still_failing
+                                .iter()
+                                .filter(|n| baseline_passing.contains(n))
+                                .cloned()
+                                .collect();
+                            // NOTHING REGRESSED. The patch satisfied the adjudicator
+                            // and broke nothing; the remaining failures were already
+                            // there when the episode started, and this loop was never
+                            // asked about them.
+                            //
+                            // Undoing it here discarded a repair that had WORKED, then
+                            // recorded the correct body as `CheckRefused` — which the
+                            // prompt renders as "it compiled but did not fix the
+                            // problem" and adds to a do-not-propose list. The loop
+                            // steered a competent generator away from the right answer
+                            // and then reported exit 21, "the generator is not
+                            // helping", about a generator that had already succeeded.
+                            //
+                            // So this is a terminal outcome of its own: the patch is
+                            // KEPT, and the pre-existing failures are named.
+                            if regressed.is_empty() {
+                                self.episode.push(EpisodeEvent::Verified {
+                                    passed: false,
+                                    detail: format!(
                                     "claim_done=true: hidden check `{hidden_check}` passed and \
                                      nothing regressed, but {} check(s) that were ALREADY \
                                      failing still fail: {}",
                                     still_failing.len(),
                                     still_failing.join(", ")
                                 ),
-                            });
-                            return EpisodeOutcome::AdjudicatedNotClean {
-                                steps: step,
-                                still_failing,
-                            };
-                        }
-                        self.episode.push(EpisodeEvent::Verified {
-                            passed: false,
-                            detail: format!(
-                                "hidden check `{hidden_check}` passed, but {} check(s) \
+                                });
+                                return EpisodeOutcome::AdjudicatedNotClean {
+                                    steps: step,
+                                    still_failing,
+                                };
+                            }
+                            self.episode.push(EpisodeEvent::Verified {
+                                passed: false,
+                                detail: format!(
+                                    "hidden check `{hidden_check}` passed, but {} check(s) \
                                  still fail ({}) — and this episode BROKE {} that passed \
                                  before it",
-                                still_failing.len(),
-                                still_failing.join(", "),
-                                regressed.join(", ")
-                            ),
-                        });
+                                    still_failing.len(),
+                                    still_failing.join(", "),
+                                    regressed.join(", ")
+                                ),
+                            });
+                        }
                     }
                 }
                 // The claim was refused. That is the signal the code compiles
@@ -1529,7 +1648,11 @@ impl Runner {
                 if let Some(body) = last_applied.take() {
                     progress.attempts.push(AttemptSignal {
                         proposal: progress.proposals,
-                        rejection: reason.clone(),
+                        rejection: if unfinished {
+                            crate::generate::RejectionReason::TimedOut
+                        } else {
+                            reason.clone()
+                        },
                         visible_failing,
                     });
                     push_rejected(rejected, body, reason, feedback);
@@ -1701,17 +1824,11 @@ impl Runner {
     /// applies, and it is stricter than "no error diagnostics": `check` exits
     /// 2 on any diagnostic, a note included. `Err` when the checker could not
     /// be run or was killed, so a missing answer is never read as a clean one.
-    fn checker_exit_clean(&self, rel_path: &str) -> Result<bool, String> {
-        let st = std::process::Command::new(&self.axon_bin)
-            .arg("check")
-            .arg(self.workspace.join(rel_path))
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|e| format!("the checker could not be run: {e}"))?;
-        match st.code() {
+    fn checker_exit_clean(&self, rel_path: &str) -> std::io::Result<bool> {
+        let (_, code) = self.run_axon_check(&self.workspace.join(rel_path), None)?;
+        match code {
             Some(c) => Ok(c == 0),
-            None => Err("the checker was killed by a signal".into()),
+            None => Err(std::io::Error::other("the checker was killed by a signal")),
         }
     }
 
@@ -1763,36 +1880,26 @@ impl Runner {
         // The names of the visible checks that failed, for a test run only.
         let mut failing: Option<Vec<String>> = None;
         let ran = match what {
-            VisibleRun::Tests => self
-                .check_executor
-                .run_checks(&CheckRequest {
-                    workspace: &self.workspace,
-                    rel_path: &rel_copy_str,
-                    filter: None,
-                })
-                .map(|r| {
+            VisibleRun::Tests => match self.check_executor.run_checks(&CheckRequest {
+                workspace: &self.workspace,
+                rel_path: &rel_copy_str,
+                filter: None,
+            }) {
+                Ok(r) => {
                     failing = Some(r.failed.clone());
-                    render_visible_tests(&r)
-                })
-                .map_err(|e| format!("the visible tests could not be run: {e}")),
-            VisibleRun::Compile | VisibleRun::Diagnostics => {
-                std::process::Command::new(&self.axon_bin)
-                    .current_dir(&self.workspace)
-                    .arg("check")
-                    .arg(&abs)
-                    .output()
-                    .map(|o| {
-                        render_diagnostics(
-                            &format!(
-                                "{}{}",
-                                String::from_utf8_lossy(&o.stdout),
-                                String::from_utf8_lossy(&o.stderr)
-                            ),
-                            matches!(what, VisibleRun::Diagnostics),
-                        )
-                    })
-                    .map_err(|e| format!("the checker could not be run: {e}"))
-            }
+                    Ok(render_visible_tests(&r))
+                }
+                // R2: the VISIBLE run stopping at a bound is the attempt's
+                // own visible fact, and the generator is told it.
+                Err(e) if bound_exceeded(&e).is_some() => {
+                    Ok(format!("the visible tests did not finish: {e}"))
+                }
+                Err(e) => Err(format!("the visible tests could not be run: {e}")),
+            },
+            VisibleRun::Compile | VisibleRun::Diagnostics => self
+                .run_axon_check(&abs, Some(&self.workspace))
+                .map(|(text, _)| render_diagnostics(&text, matches!(what, VisibleRun::Diagnostics)))
+                .map_err(|e| format!("the checker could not be run: {e}")),
         };
         let _ = std::fs::remove_file(&abs);
         let out = ran?
@@ -1932,6 +2039,18 @@ impl Runner {
     /// is IGNORED for the verdict — it is recorded so a reviewer can see that a
     /// confident wrong claim was made and overruled.
     pub fn verify(&mut self, claimed_done: bool, hidden_check: &str, rel_path: &str) -> bool {
+        self.verify_run(claimed_done, hidden_check, rel_path).0
+    }
+
+    /// [`Runner::verify`], and the process bound that stopped the hidden
+    /// check's run when one did (R2: the candidate is then rejected, never
+    /// the run blocked).
+    fn verify_run(
+        &mut self,
+        claimed_done: bool,
+        hidden_check: &str,
+        rel_path: &str,
+    ) -> (bool, Option<Bound>) {
         // THE VERDICT COMES FROM THE NAMED TEST, and from nothing else.
         //
         // This used to read the exit status of `axon test --filter NAME` over
@@ -1954,7 +2073,7 @@ impl Runner {
                     passed: false,
                     detail: format!("hidden check `{hidden_check}` DID NOT RUN: {e}"),
                 });
-                return false;
+                return (false, bound_exceeded(&e));
             }
         };
         let ran = failed.len() + passed.len();
@@ -1988,7 +2107,7 @@ impl Runner {
                 }
             ),
         });
-        ok
+        (ok, None)
     }
 
     /// Prepare a resettable COPY of a fixture directory. The original is never
@@ -2970,13 +3089,9 @@ impl CheckExecutor for LocalInterpreterExecutor {
         for (k, v) in &self.limits.env {
             cmd.env(k, v);
         }
-        let (text, code, truncated) = run_limited(&mut cmd, &self.limits, &key)?;
+        let (text, code, truncated) = run_limited(&mut cmd, &self.limits, Some(&key))?;
         if truncated {
-            return Err(std::io::Error::other(format!(
-                "check output exceeded the {}-byte capture bound; a truncated run \
-                 yields no verdict",
-                self.limits.max_output.unwrap_or(0)
-            )));
+            return Err(BoundExceeded::output(self.limits.max_output.unwrap_or(0)));
         }
         let mut report = parse_axon_test_json(&text, req.rel_path)?;
         report.exit_code = code;
@@ -3014,15 +3129,108 @@ fn require_completion(report: &mut CheckReport, key: &[u8]) {
     report.failed.extend(unproven);
 }
 
-/// Spawn `cmd`, drain both pipes (bounded, if asked), enforce the wall-clock
-/// deadline (if asked). Returns (stdout+stderr, exit code, truncated?).
+/// Which process bound stopped a spawn that therefore produced no verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bound {
+    /// Killed (with its whole process group) at its wall-clock limit.
+    Time,
+    /// Wrote more than its capture bound, so what it said cannot be read.
+    Output,
+}
+
+/// The error payload of a spawn stopped at a [`Bound`]. Carried inside the
+/// `std::io::Error` the dispatch returns, so a caller can tell "the candidate
+/// ran past a limit" (a rejected attempt) from "the checker could not run"
+/// (an environment fault) with [`bound_exceeded`].
+#[derive(Debug)]
+pub struct BoundExceeded {
+    pub bound: Bound,
+    detail: String,
+}
+
+impl std::fmt::Display for BoundExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for BoundExceeded {}
+
+impl BoundExceeded {
+    fn output(max: usize) -> std::io::Error {
+        std::io::Error::other(BoundExceeded {
+            bound: Bound::Output,
+            detail: format!(
+                "check output exceeded the {max}-byte capture bound; a truncated run \
+                 yields no verdict"
+            ),
+        })
+    }
+}
+
+/// The bound that stopped the spawn `e` reports, if a bound did.
+pub fn bound_exceeded(e: &std::io::Error) -> Option<Bound> {
+    e.get_ref()
+        .and_then(|inner| inner.downcast_ref::<BoundExceeded>())
+        .map(|b| b.bound)
+}
+
+/// Drain one pipe of a check on its own thread: keep at most `cap` bytes,
+/// count the rest, and give up once `stop` is set, so a descendant holding
+/// the pipe open cannot hold the caller (R2). Returns (kept, truncated?).
+fn drain_bounded<R>(
+    pipe: Option<R>,
+    cap: Option<usize>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> std::thread::JoinHandle<(Vec<u8>, bool)>
+where
+    R: std::io::Read + std::os::fd::AsRawFd + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut total = 0usize;
+        let mut buf = [0u8; 8192];
+        if let Some(mut r) = pipe {
+            let fd = r.as_raw_fd();
+            while axon_jobctl::wait_readable(fd, &stop) {
+                match r.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        total += n;
+                        let room = cap.map(|c| c.saturating_sub(kept.len())).unwrap_or(n);
+                        kept.extend_from_slice(&buf[..n.min(room)]);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+        }
+        (kept, cap.is_some_and(|c| total > c))
+    })
+}
+
+/// Spawn `cmd` as its own process-group JOB, drain both pipes (bounded, if
+/// asked), enforce the wall-clock deadline (if asked). Returns
+/// (stdout+stderr, exit code, truncated?). `completion_key`, when given, is
+/// written to the child's stdin; otherwise stdin is `/dev/null`.
+///
+/// R2: a check runs candidate code, and candidate code can spawn. Killing
+/// only the direct child at the deadline left a grandchild running, and the
+/// unbounded pipe joins then waited for THAT to exit — one backgrounded
+/// `sleep` holding the pipes stalled the whole loop. The job is a group
+/// leader; at the deadline, and also after a normal exit (a check's
+/// leftovers have no business running on), the whole group is killed with
+/// `killpg` while the leader is still an unreaped zombie, so its group id
+/// cannot have been reused. The drains poll a stop flag and are joined
+/// within [`axon_jobctl::DRAIN_GRACE`].
 fn run_limited(
     cmd: &mut std::process::Command,
     limits: &ExecLimits,
-    completion_key: &[u8],
+    completion_key: Option<&[u8]>,
 ) -> std::io::Result<(String, Option<i32>, bool)> {
-    use std::io::Read;
     use std::process::Stdio;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
     // NO UNOWNED WORKER (v0.22 G13-r22-restart-matrix). A supervisor that dies
     // — SIGKILL, OOM, a host reboot of the process — used to leave its check
     // running with nobody to collect its verdict or bill it: measured, the
@@ -3054,61 +3262,57 @@ fn run_limited(
             });
         }
     }
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    if let Some(mut stdin) = child.stdin.take() {
+    cmd.stdin(if completion_key.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    let mut job = axon_jobctl::Job::spawn(cmd)?;
+    if let (Some(key), Some(mut stdin)) = (completion_key, job.child_mut().stdin.take()) {
         use std::io::Write;
-        let hex: String = completion_key.iter().map(|b| format!("{b:02x}")).collect();
-        // Written then closed: the program finds stdin at EOF.
+        let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+        // Written then closed: the program finds stdin at EOF. 65 bytes, far
+        // below a pipe buffer, so this cannot block on a child that never reads.
         let _ = writeln!(stdin, "{hex}");
     }
     let cap = limits.max_output;
-    let drain = |mut r: Box<dyn Read + Send>| {
-        std::thread::spawn(move || {
-            let mut kept = Vec::new();
-            let mut total = 0usize;
-            let mut buf = [0u8; 8192];
-            loop {
-                match r.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        total += n;
-                        let room = cap.map(|c| c.saturating_sub(kept.len())).unwrap_or(n);
-                        kept.extend_from_slice(&buf[..n.min(room)]);
-                    }
-                }
-            }
-            (kept, cap.is_some_and(|c| total > c))
-        })
-    };
-    let out_h = drain(Box::new(child.stdout.take().expect("piped")));
-    let err_h = drain(Box::new(child.stderr.take().expect("piped")));
+    let stop = Arc::new(AtomicBool::new(false));
+    let out_h = drain_bounded(job.child_mut().stdout.take(), cap, Arc::clone(&stop));
+    let err_h = drain_bounded(job.child_mut().stderr.take(), cap, Arc::clone(&stop));
     let start = std::time::Instant::now();
-    let status = loop {
-        if let Some(st) = child.try_wait()? {
-            break Some(st);
+    let watched = loop {
+        match job.has_exited() {
+            Ok(true) => break Ok(false),
+            Ok(false) if limits.wall.is_some_and(|w| start.elapsed() >= w) => break Ok(true),
+            Ok(false) => std::thread::sleep(std::time::Duration::from_millis(20)),
+            Err(e) => break Err(e),
         }
-        if limits.wall.is_some_and(|w| start.elapsed() >= w) {
-            let _ = child.kill();
-            let _ = child.wait();
-            break None;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
     };
-    let (o, ot) = out_h.join().unwrap_or_default();
-    let (e, et) = err_h.join().unwrap_or_default();
-    let Some(status) = status else {
+    // The whole group, on every path, before the reap (see above).
+    job.kill();
+    let reaped = job.reap();
+    let mut joined =
+        axon_jobctl::join_within(axon_jobctl::DRAIN_GRACE, vec![out_h, err_h], &stop).into_iter();
+    // A drain that could not be joined lost what it read: the output is
+    // incomplete, which is the truncated case (no verdict).
+    let (o, ot) = joined.next().flatten().unwrap_or((Vec::new(), true));
+    let (e, et) = joined.next().flatten().unwrap_or((Vec::new(), true));
+    let timed_out = watched?;
+    let status = reaped?;
+    if timed_out {
         return Err(std::io::Error::new(
             std::io::ErrorKind::TimedOut,
-            format!(
-                "check killed at its {} ms wall-clock limit",
-                limits.wall.map(|w| w.as_millis()).unwrap_or(0)
-            ),
+            BoundExceeded {
+                bound: Bound::Time,
+                detail: format!(
+                    "check killed at its {} ms wall-clock limit",
+                    limits.wall.map(|w| w.as_millis()).unwrap_or(0)
+                ),
+            },
         ));
-    };
+    }
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&o),

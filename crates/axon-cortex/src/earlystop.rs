@@ -103,13 +103,16 @@ pub fn is_inert(baseline: &[String], attempt: &AttemptSignal) -> bool {
 }
 
 /// The run of inert proposals ending the candidate's history. A proposal that
-/// did not compile neither extends nor breaks it: no verdict came back, so
-/// nothing was learned about whether the verdict moves. Any other proposal
-/// ends it.
+/// did not compile, or whose check stopped at a process bound (R2), neither
+/// extends nor breaks it: no verdict came back, so nothing was learned about
+/// whether the verdict moves. Any other proposal ends it.
 pub fn inert_streak(baseline: &[String], attempts: &[AttemptSignal]) -> usize {
     let mut streak = 0;
     for a in attempts.iter().rev() {
-        if a.rejection == RejectionReason::DidNotCompile {
+        if matches!(
+            a.rejection,
+            RejectionReason::DidNotCompile | RejectionReason::TimedOut
+        ) {
             continue;
         }
         if is_inert(baseline, a) {
@@ -205,5 +208,17 @@ mod tests {
         assert!(should_stop(2, &base, &[inert(1), inert(2)]));
         assert!(!should_stop(2, &base, &[inert(1)]));
         assert!(!should_stop(0, &base, &[inert(1), inert(2), inert(3)]));
+    }
+
+    /// R2: a proposal whose check stopped at a process bound brought back no
+    /// verdict, so like a compile failure it neither extends nor breaks the
+    /// streak.
+    #[test]
+    fn streak_skips_timed_out_attempts() {
+        let base = names(&["t"]);
+        let inert = |n| att(n, RejectionReason::CheckRefused, Some(&["t"]));
+        let timed_out = |n| att(n, RejectionReason::TimedOut, None);
+        assert_eq!(inert_streak(&base, &[inert(1), timed_out(2), inert(3)]), 2);
+        assert_eq!(inert_streak(&base, &[inert(1), timed_out(2)]), 1);
     }
 }
