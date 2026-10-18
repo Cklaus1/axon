@@ -1,0 +1,4 @@
+{
+  "theme": "caps implicit user-code routes",
+  "text": "CHECKER/STATIC ANALYSIS, no interpreter change: the shared @[contained]/axon caps walker now also follows the user code the interpreter runs without a call in the body - refinement predicates at param/return/let/field coercions, struct whole-type refinements at construction, @[verify] predicates, and the metric fn of an @[goal]. axon caps reports more (never less); @[contained] can newly report E1001 for a forbidden call reached only through such a predicate. No example changes verdict or caps output."
+}
