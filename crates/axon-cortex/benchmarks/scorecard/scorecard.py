@@ -939,9 +939,10 @@ def default_run_id(set_, date, agent, cfg):
     return "-".join(parts)
 
 
-def check_spent(raw, set_, corpus_sha, ledger):
+def check_spent(raw, set_, corpus_sha, ledger, rows_rel):
     """A protected set scores only run_ab.py rows that name a row of the spent
-    ledger (`meta.spend.row_sha256`) for this set, corpus and model."""
+    ledger (`meta.spend.row_sha256`) recording this set, corpus, model, arm,
+    trial count, cortex binary and rows file (`rows_rel`, repo-relative)."""
     if not all(is_run_ab_row(r) for r in raw):
         raise Refused(f"--set {set_} is protected: it scores run_ab.py rows that name their "
                       "spent-ledger row (meta.spend)")
@@ -956,8 +957,14 @@ def check_spent(raw, set_, corpus_sha, ledger):
         raise Refused(str(e)) from None
     if row is None:
         raise Refused(f"the rows name spent-ledger row {sha}, which is not in {ledger}")
-    want = {"set": set_, "corpus_sha256": corpus_sha, "model": meta.get("model")}
-    bad = {k: (row[k], v) for k, v in want.items() if row[k] != v}
+    want = {"set": set_, "corpus_sha256": corpus_sha, "model": meta.get("model"),
+            "arm": meta.get("arm"), "k": meta.get("trials"), "out": rows_rel}
+    have = {k: row.get(k) for k in want}
+    if row.get("cortex_sha256") is not None:
+        # run_ab stamps the first 16 hex digits of the binary's sha256.
+        want["cortex_sha256_16"] = meta.get("cortex_sha256_16")
+        have["cortex_sha256_16"] = row["cortex_sha256"][:16]
+    bad = {k: (have[k], v) for k, v in want.items() if have[k] != v}
     if bad:
         raise Refused(f"spent-ledger row {sha} does not match these rows: "
                       + ", ".join(f"{k} ledger {a!r}, rows {b!r}" for k, (a, b) in bad.items()))
@@ -995,7 +1002,7 @@ def add(history, root, *, set_, agent, rows, corpus, config, notes, baselines=()
     rows_sha = sha256_file(rows)
     corpus_sha = sha256_file(corpus)
     if set_ in protected.PROTECTED_SETS:
-        check_spent(raw, set_, corpus_sha, ledger or protected.LEDGER)
+        check_spent(raw, set_, corpus_sha, ledger or protected.LEDGER, rows_rel)
     run_id = run_id or default_run_id(set_, date, agent, cfg)
 
     for r in recs:
@@ -1316,7 +1323,8 @@ B = candidate) and names the first criterion that separates them;
 `hard-once` and `hx-test` are protected (`../protected.py`): `add` refuses a
 corpus whose sha256 is not the set's pin, and rows that do not name their row
 in the spent ledger (`../heldout-spent.jsonl`, written by `run_ab.py --spend`
-before the run's first model call) for the same set, corpus and model.
+before the run's first model call) for the same set, corpus, model, arm, trial
+count, cortex binary and rows file.
 
 ## Adding a run
 
@@ -2000,7 +2008,7 @@ def selftest():
         # Trial sets (hx-dev, hx-test) key a run's rows on (id, trial); every
         # other set keeps one row per task id.
         def trial_rows(name, trials, spend=None, model="m1", extra=()):
-            rs = [dict(r, trial=k, meta=dict(r["meta"], spend=spend, model=model))
+            rs = [dict(r, trial=k, meta=dict(r["meta"], spend=spend, model=model, trials=len(trials)))
                   for k in trials for r in b_rows]
             return write_rows(name, rs + list(extra))
 
@@ -2037,7 +2045,7 @@ def selftest():
         lrow = {"set": "hx-test", "corpus_sha256": sha256_file(corpus), "purpose": "selftest",
                 "repair_digest": D1, "patch_sha256": None, "cortex_sha256": "ab" * 32,
                 "axon_sha256": "0" * 64, "grade_axon_sha256": "0" * 64,
-                "generator": "real/micode", "model": "m1", "k": 1, "out": "x.jsonl",
+                "generator": "real/micode", "model": "m1", "k": 1, "out": "hxt.jsonl",
                 "git_head": "c" * 40, "arm": "B"}
         good = protected.spend(led, lrow)
         other_set = protected.spend(led, dict(lrow, set="hard-once", purpose="o", out="y.jsonl"))
@@ -2049,6 +2057,19 @@ def selftest():
                                        rows=trial_rows(f"hxt-{what}.jsonl", (1,), spend=sp),
                                        corpus=corpus, config=hx_cfg, notes="x", ledger=led),
                            needle), f"hx-test run with {what} was not refused")
+        # A ledger row that differs from the rows in one recorded identity
+        # field: the cortex binary, the arm, the trial count, the out file.
+        for field, val in (("cortex_sha256", "cd" * 32), ("arm", "A"), ("k", 2),
+                           ("out", "elsewhere.jsonl")):
+            name = f"hxt-{field}.jsonl"
+            bad_row = dict(lrow, purpose=f"mismatch-{field}", out=name)
+            bad_row[field] = val
+            sha = protected.spend(led, bad_row)
+            expect(refused(lambda: add(hist_hx, root, set_="hx-test", agent="cortex",
+                                       rows=trial_rows(name, (1,), spend={"row_sha256": sha}),
+                                       corpus=corpus, config=hx_cfg, notes="x", ledger=led),
+                           "ledger row"),
+                   f"hx-test rows naming a ledger row whose {field} differs were not refused")
         expect(refused(lambda: add(hist_hx, root, set_="hx-test", agent="cortex",
                                    rows=trial_rows("hxt-model.jsonl", (1,), model="m2",
                                                    spend={"row_sha256": good}),

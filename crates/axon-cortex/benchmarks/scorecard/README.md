@@ -73,7 +73,8 @@ B = candidate) and names the first criterion that separates them;
 `hard-once` and `hx-test` are protected (`../protected.py`): `add` refuses a
 corpus whose sha256 is not the set's pin, and rows that do not name their row
 in the spent ledger (`../heldout-spent.jsonl`, written by `run_ab.py --spend`
-before the run's first model call) for the same set, corpus and model.
+before the run's first model call) for the same set, corpus, model, arm, trial
+count, cortex binary and rows file.
 
 ## Adding a run
 
