@@ -3140,3 +3140,14 @@ ATTACK_MARKERS.update({
     'M3753': r'ATTACK: a file that could not be read was restored over',
     'M3754': r'ATTACK: a failed restore was not reported',
 })
+
+# FU core lane (FU-2 predicate routes, FU-5 non-UTF-8 ceiling; ids M3760-M3779)
+ATTACK_MARKERS.update({
+    'M3760': r'ATTACK: verify_read: a pass adding a `fs:read` predicate passed G2',
+    'M3761': r'ATTACK: named_refine: a pass adding a `fs:read` predicate passed G2',
+    'M3762': r'ATTACK: struct_where: a pass adding a `fs:write` predicate passed G2',
+    'M3763': r'ATTACK: verify_read: a `fs:read` predicate is missing `IO` from the effect union',
+    'M3764': r'ATTACK: a native call in a refinement f uses escaped E1004',
+    'M3765': r'ATTACK: println ran under a non-UTF-8 AXON_ALLOWED_EFFECTS',
+    'M3766': r'ATTACK: a printing test passed a keyed run under a non-UTF-8 AXON_ALLOWED_EFFECTS',
+})

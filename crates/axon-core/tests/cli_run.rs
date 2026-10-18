@@ -30918,6 +30918,106 @@ fn a_misspelled_effect_ceiling_is_named_not_silently_ignored() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// FU-5 (O-S1-09): a SET `AXON_ALLOWED_EFFECTS` that is not UTF-8 names no
+/// effect, so it grants none. The interpreter read `VarError::NotUnicode` as
+/// unset: no ceiling at all, or `all_effects` when a scope variable was set.
+/// A set ceiling failed open.
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_effect_ceiling_denies_every_effect() {
+    use std::os::unix::ffi::OsStrExt;
+    let bad = std::ffi::OsStr::from_bytes(b"IO\xff");
+    let dir = std::env::temp_dir().join(format!("axon_effceil_nu_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("p.ax");
+    std::fs::write(&f, "fn main() { println(\"did IO\") }\n").unwrap();
+    // Alone, and beside a scope variable (the path that built `all_effects`).
+    for scope in [None, Some("*")] {
+        let mut c = axon();
+        c.args(["run", f.to_str().unwrap()])
+            .env("AXON_ALLOWED_EFFECTS", bad)
+            .env_remove("AXON_ALLOWED_FS_WRITE")
+            .env_remove("AXON_ALLOWED_NET");
+        match scope {
+            Some(v) => c.env("AXON_ALLOWED_FS_READ", v),
+            None => c.env_remove("AXON_ALLOWED_FS_READ"),
+        };
+        let o = c.output().unwrap();
+        let out = String::from_utf8_lossy(&o.stdout);
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(
+            o.status.code(),
+            Some(8),
+            "ATTACK: println ran under a non-UTF-8 AXON_ALLOWED_EFFECTS (scope {scope:?}): \
+             stdout {out:?} stderr {err}"
+        );
+        assert!(!out.contains("did IO"), "the refused print ran: {out}");
+        assert_eq!(
+            err.matches("AXON_ALLOWED_EFFECTS is not UTF-8").count(),
+            1,
+            "one warning names the unreadable ceiling: {err}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// FU-5: `axon test --completion-key-stdin` (every cortex check) rewrites the
+/// ceiling before the interpreter reads it, and mapped ANY read error to every
+/// grantable effect but `Exec` — so a non-UTF-8 ceiling became `IO,Net,…`
+/// and a printing test passed with a completion token. It must deny every
+/// effect instead.
+#[cfg(unix)]
+#[test]
+fn a_keyed_test_run_under_a_non_utf8_effect_ceiling_denies_every_effect() {
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+    use std::process::Stdio;
+    let bad = std::ffi::OsStr::from_bytes(b"IO\xff");
+    let dir = std::env::temp_dir().join(format!("axon_effceil_key_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    std::fs::write(&f, "@[test]\nfn t_prints() { println(\"did IO\") }\n").unwrap();
+    let mut child = axon()
+        .args(["test", "--json", "--jobs", "1", "--completion-key-stdin"])
+        .arg(&f)
+        .env("AXON_ALLOWED_EFFECTS", bad)
+        .env_remove("AXON_ALLOWED_FS_READ")
+        .env_remove("AXON_ALLOWED_FS_WRITE")
+        .env_remove("AXON_ALLOWED_NET")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(child.stdin.take().unwrap(), "{}", "0b".repeat(32)).unwrap();
+    let o = child.wait_with_output().unwrap();
+    let out = String::from_utf8_lossy(&o.stdout);
+    let err = String::from_utf8_lossy(&o.stderr);
+    let line = out
+        .lines()
+        .find(|l| l.contains("\"name\":\"t_prints\""))
+        .unwrap_or_else(|| panic!("no result line for t_prints: {out}\n{err}"));
+    // A keyed FAILED verdict carries its own failure token in `completion`,
+    // so the refusal is read off the status and the violation it names.
+    assert!(
+        line.contains("\"status\":\"failed\"")
+            && line.contains(
+                "requires effect `IO` which is not in the active sandbox's allowed set {}"
+            ),
+        "ATTACK: a printing test passed a keyed run under a non-UTF-8 AXON_ALLOWED_EFFECTS: \
+         {line}\n{err}"
+    );
+    assert_eq!(o.status.code(), Some(3), "a test failed: {out}\n{err}");
+    assert_eq!(
+        err.matches("AXON_ALLOWED_EFFECTS is not UTF-8").count(),
+        1,
+        "one warning names the unreadable ceiling: {err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_traversal_denial_does_not_advise_a_grant_that_cannot_work() {
     // A `..` path is refused, correctly. But the help offered the generic
