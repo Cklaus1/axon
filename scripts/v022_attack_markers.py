@@ -3112,4 +3112,6 @@ ATTACK_MARKERS.update({
     'M3709': r'ATTACK: a file the fence itself breaks went on to be repaired under it',
     'M3710': r'ATTACK: the adjudicated state the run reports was not the one it kept',
     'M3711': r'left: Some\("hidden-pass-b"\)',
+    'M3712': r'ATTACK: a later, worse attempt discarded the adjudicated result',
+    'M3713': r'ATTACK: the label row records a verdict the run did not exit with',
 })
