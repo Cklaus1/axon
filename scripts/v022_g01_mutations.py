@@ -11401,10 +11401,9 @@ MUTATIONS += [
      'axon-cortex', '--test cli', 'kg2_the_generator_deadline_kills_its_whole_job'),
     ('M3602', "KG2: a generator's pipe drains are joined within DRAIN_GRACE, not until a leftover's EOF",
      'crates/axon-cortex/src/generate.rs',
-     '            axon_jobctl::join_within(axon_jobctl::DRAIN_GRACE, vec![out_t, err_t, writer], &stop)\n'
-     '                .into_iter()\n                .map(Option::unwrap_or_default);',
+     '            axon_jobctl::join_within(axon_jobctl::DRAIN_GRACE, vec![out_t, err_t, writer], &stop);',
      '            [out_t, err_t, writer]\n'
-     '                .into_iter()\n                .map(|h| h.join().unwrap_or_default());',
+     '                .into_iter()\n                .map(|h| h.join().ok())\n                .collect::<Vec<_>>();',
      'axon-cortex', '--test cli', 'kg2_a_leftover_holding_the_generators_pipes_does_not_stall_the_loop'),
     ('M3603', "KG3: cortex forwards termination signals to its generator jobs", 'crates/axon-cortex/src/bin/cortex.rs',
      '    axon_jobctl::forward_termination_signals(axon_jobctl::OnSignal::Die);\n    // R3: `--deadline-ms`',
@@ -11611,6 +11610,39 @@ MUTATIONS += [
      '                if ctx.visited.insert(name) {',
      '                if ctx.visited.insert(name) && (ctx.reach.is_none() || ctx.visited.len() == 1) {',
      'axon-core', '--test caps_verb', 'a_helper_reaching_append_file_is_fs_write'),
+]
+
+# ── FU-3/FU-6/FU-7/FU-4 cortex follow-ups (tasks/followup-spec.md; ids M3740-M3759) ─────────────
+# FU-3 (O-S1-12): a stopped drain is never complete output. The check side marks a drain the stop
+# flag ended before EOF and refuses it (no verdict); the generator side refuses a DETACHED drain and
+# one stopped while data was still pending (Unavailable), and keeps the bytes of one stopped while
+# idle (the NH1 leftover, M3602's KG2 test).
+_FUG = 'crates/axon-cortex/src/generate.rs'
+MUTATIONS += [
+    ('M3740', "FU-3: a check drain ended by the stop flag is not marked stopped (read as EOF)", _S1R,
+     '                    stopped = true;\n                    break;',
+     '                    stopped = false;\n                    break;',
+     'axon-cortex', '--lib', 'runner::drain_tests::a_drain_stopped_before_eof_is_never_complete_output'),
+    ('M3741', "FU-3: a stopped stdout drain is taken as complete check output", _S1R,
+     '        (Some(o), Some(e)) if !o.stopped && !e.stopped => {',
+     '        (Some(o), Some(e)) if !e.stopped => {',
+     'axon-cortex', '--lib', 'runner::drain_tests::a_drain_stopped_before_eof_is_never_complete_output'),
+    ('M3742', "FU-3: a stopped stderr drain is taken as complete check output", _S1R,
+     '        (Some(o), Some(e)) if !o.stopped && !e.stopped => {',
+     '        (Some(o), Some(e)) if !o.stopped => {',
+     'axon-cortex', '--lib', 'runner::drain_tests::a_drain_stopped_before_eof_is_never_complete_output'),
+    ('M3743', "FU-3: a generator drain stopped with data pending is not marked pending", _FUG,
+     '    unsafe { libc::poll(&mut p, 1, 0) > 0 }',
+     '    unsafe { libc::poll(&mut p, 1, 0) > 0 && false }',
+     'axon-cortex', '--lib', 'generate::drain_tests::a_drain_stopped_with_data_pending_is_not_a_whole_answer'),
+    ('M3744', "FU-3: a pending generator drain is read as the whole answer", _FUG,
+     '        (Some(_), Some(_)) => Err(": it was still being written when the drain grace ran out"),',
+     '        (Some(o), Some(e)) => Ok((o.bytes, e.bytes)),',
+     'axon-cortex', '--lib', 'generate::drain_tests::a_detached_or_pending_drain_is_a_lost_read'),
+    ('M3745', "FU-3: a DETACHED generator drain is read as empty bytes, not Unavailable", _FUG,
+     '        _ => Err(""),',
+     '        _ => Ok((Vec::new(), Vec::new())),',
+     'axon-cortex', '--lib', 'generate::drain_tests::a_detached_or_pending_drain_is_a_lost_read'),
 ]
 
 if __name__ == "__main__":

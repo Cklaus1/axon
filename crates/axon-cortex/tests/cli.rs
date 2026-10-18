@@ -2535,6 +2535,105 @@ fn r2_a_timed_out_check_is_killed_as_a_group_and_the_loop_goes_on() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+/// FU-3 (O-S1-12): a check whose output is still being written when the drain
+/// grace runs out gets NO verdict. The registered executor hands the
+/// candidate's `axon test` to a `setsid` grandchild (out of the job's group,
+/// so the group kill misses it) that prints the real run's output and then
+/// keeps writing to the check's pipes. The drains are stopped after
+/// DRAIN_GRACE; before FU-3 what they had read was taken as the complete
+/// output, so the candidate passed on output nobody saw end. Now that
+/// candidate is rejected and the next proposal runs.
+#[test]
+fn fu3_a_check_still_writing_past_the_drain_grace_gets_no_verdict() {
+    let ws = workspace("fu3_still_writing");
+    let pids = ws.join("gc.pids");
+    let real = axon_bin().canonicalize().unwrap();
+    let wrapper = ws.join("check-exec.sh");
+    common::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nf=\nfor a in \"$@\"; do case \"$a\" in *.ax) f=\"$a\";; esac; done\n\
+             if [ \"$1\" = test ] && grep -q STILL_WRITING \"$f\"; then\n\
+             key=$(cat)\n\
+             KEY=\"$key\" setsid sh -c 'printf \"%s\\n\" \"$KEY\" | \"$0\" \"$@\"; i=0; \
+             while [ $i -lt 200 ]; do echo; sleep 0.05; i=$((i+1)); done' '{real}' \"$@\" &\n\
+             echo $! >> '{pids}'\nexit 0\nfi\nexec '{real}' \"$@\"\n",
+            pids = pids.display(),
+            real = real.display()
+        ),
+        0o755,
+    );
+    let sha = String::from_utf8(
+        Command::new("sha256sum")
+            .arg(&wrapper)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let registry = ws.join("registry.json");
+    std::fs::write(
+        &registry,
+        serde_json::json!({
+            "schema": "cortex-check-registry/1",
+            "executors": [{
+                "id": axon_cortex::runner::LOCAL_AXON_TEST_ID,
+                "path": wrapper,
+                "sha256": sha.split_whitespace().next().unwrap(),
+            }],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let gen = ws.join("sw-gen.sh");
+    let log = ws.join("calls.log");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\necho call >> '{log}'\n\
+             if [ \"$(wc -l < '{log}')\" -eq 1 ]; then\n\
+             printf '    // STILL_WRITING\\n    n * 2\\n'\nelse\nprintf '    n * 2\\n'\nfi\n",
+            log = log.display()
+        ),
+        0o755,
+    );
+    let mut cmd = repair_with_generator(&ws, &gen, "120000");
+    cmd.arg("--check-registry")
+        .arg(&registry)
+        .args(["--symbol", "double", "--budget", "12", "--json"]);
+    let (code, stdout, said, _) = run_guarded(
+        &ws,
+        &mut cmd,
+        std::time::Duration::from_secs(180),
+        "a grandchild still writing to the check's pipes stalled `cortex repair`",
+    );
+    let spawned: Vec<i32> = std::fs::read_to_string(&pids)
+        .unwrap_or_else(|e| panic!("the candidate's check never ran: {e}: {said}"))
+        .lines()
+        .map(|l| l.trim().parse().unwrap())
+        .collect();
+    for pid in &spawned {
+        // SAFETY: plain syscall; the group is this fixture's own `setsid` writer.
+        unsafe { libc::kill(-*pid, libc::SIGKILL) };
+    }
+    let after = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    assert!(
+        !after.contains("STILL_WRITING"),
+        "ATTACK: a check whose output was still being written past the drain grace \
+         decided the run: {after}\n{said}"
+    );
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        calls.lines().count(),
+        2,
+        "the next proposal must run: {said}"
+    );
+    assert_eq!(code, Some(0), "{said}");
+    let v: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(v["outcome"], "verified_done", "{said}");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
 /// R4: a rejected attempt's diagnostics reach the generator as DATA. The
 /// generator copies each prompt to `prompt-N.txt`; its first body type-errors,
 /// and the second prompt must carry that diagnostic as one compact JSON block

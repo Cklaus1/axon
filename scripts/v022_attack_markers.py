@@ -3121,3 +3121,13 @@ ATTACK_MARKERS.update({
     'M3718': r"ATTACK: the first prompt's report carries what the cleaner must remove",
     'M3719': r'first prompt lacks `What the visible tests report on the file as it stands',
 })
+
+# FU-3/FU-6/FU-7/FU-4 cortex follow-ups (tasks/followup-spec.md; ids M3740-M3759)
+ATTACK_MARKERS.update({
+    'M3740': r'ATTACK: a drain stopped before EOF was taken as complete output',
+    'M3741': r'ATTACK: a drain stopped before EOF was taken as complete output',
+    'M3742': r'ATTACK: a drain stopped before EOF was taken as complete output',
+    'M3743': r'ATTACK: a generator drain stopped with data pending was taken as the whole answer',
+    'M3744': r'ATTACK: a generator drain stopped with data pending was taken as the whole answer',
+    'M3745': r'ATTACK: a detached generator drain was read as an answer',
+})

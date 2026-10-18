@@ -3718,15 +3718,27 @@ impl BoundExceeded {
 }
 
 /// Both drains of a spawn, as joined: (stdout, stderr, truncated?), or the
-/// [`BoundExceeded::unread`] error when either could not be joined.
-fn joined_output(
-    joined: Vec<Option<(Vec<u8>, bool)>>,
-) -> std::io::Result<(Vec<u8>, Vec<u8>, bool)> {
+/// [`BoundExceeded::unread`] error when either could not be joined or was
+/// STOPPED before EOF (FU-3): a stopped drain read only what arrived before
+/// the drain grace ran out, so what it holds is never complete output.
+fn joined_output(joined: Vec<Option<Drained>>) -> std::io::Result<(Vec<u8>, Vec<u8>, bool)> {
     let mut it = joined.into_iter();
     match (it.next().flatten(), it.next().flatten()) {
-        (Some((o, ot)), Some((e, et))) => Ok((o, e, ot || et)),
+        (Some(o), Some(e)) if !o.stopped && !e.stopped => {
+            Ok((o.kept, e.kept, o.truncated || e.truncated))
+        }
         _ => Err(BoundExceeded::unread()),
     }
+}
+
+/// What one check drain read: the bytes it kept, whether the capture bound
+/// cut them, and whether it was STOPPED (the stop flag set before EOF) rather
+/// than reading to EOF.
+#[derive(Debug)]
+struct Drained {
+    kept: Vec<u8>,
+    truncated: bool,
+    stopped: bool,
 }
 
 /// The bound that stopped the spawn `e` reports, if a bound did.
@@ -3738,22 +3750,28 @@ pub fn bound_exceeded(e: &std::io::Error) -> Option<Bound> {
 
 /// Drain one pipe of a check on its own thread: keep at most `cap` bytes,
 /// count the rest, and give up once `stop` is set, so a descendant holding
-/// the pipe open cannot hold the caller (R2). Returns (kept, truncated?).
+/// the pipe open cannot hold the caller (R2). A drain that gave up is marked
+/// `stopped`: it never saw EOF (FU-3).
 fn drain_bounded<R>(
     pipe: Option<R>,
     cap: Option<usize>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> std::thread::JoinHandle<(Vec<u8>, bool)>
+) -> std::thread::JoinHandle<Drained>
 where
     R: std::io::Read + std::os::fd::AsRawFd + Send + 'static,
 {
     std::thread::spawn(move || {
         let mut kept = Vec::new();
         let mut total = 0usize;
+        let mut stopped = false;
         let mut buf = [0u8; 8192];
         if let Some(mut r) = pipe {
             let fd = r.as_raw_fd();
-            while axon_jobctl::wait_readable(fd, &stop) {
+            loop {
+                if !axon_jobctl::wait_readable(fd, &stop) {
+                    stopped = true;
+                    break;
+                }
                 match r.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
@@ -3766,7 +3784,11 @@ where
                 }
             }
         }
-        (kept, cap.is_some_and(|c| total > c))
+        Drained {
+            kept,
+            truncated: cap.is_some_and(|c| total > c),
+            stopped,
+        }
     })
 }
 
@@ -4461,15 +4483,26 @@ mod splice_tests {
 
 #[cfg(test)]
 mod drain_tests {
-    use super::{bound_exceeded, joined_output, Bound};
+    use super::{bound_exceeded, drain_bounded, joined_output, Bound, Drained};
+    use std::io::Write;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    fn drained(kept: &[u8], truncated: bool, stopped: bool) -> Option<Drained> {
+        Some(Drained {
+            kept: kept.to_vec(),
+            truncated,
+            stopped,
+        })
+    }
 
     /// R2: a drain that could not be joined is "could not be read to EOF",
     /// not "exceeded the capture bound" — still no verdict (a bound).
     #[test]
     fn an_unjoined_drain_is_not_reported_as_the_capture_bound() {
         for joined in [
-            vec![None, Some((b"e".to_vec(), false))],
-            vec![Some((b"o".to_vec(), false)), None],
+            vec![None, drained(b"e", false, false)],
+            vec![drained(b"o", false, false), None],
         ] {
             let e = joined_output(joined).unwrap_err();
             assert_eq!(bound_exceeded(&e), Some(Bound::Output));
@@ -4481,11 +4514,57 @@ mod drain_tests {
             assert!(!s.contains("capture bound"), "{s}");
         }
         let (o, e, t) = joined_output(vec![
-            Some((b"o".to_vec(), false)),
-            Some((b"e".to_vec(), true)),
+            drained(b"o", false, false),
+            drained(b"e", true, false),
         ])
         .unwrap();
         assert_eq!((o, e, t), (b"o".to_vec(), b"e".to_vec(), true));
+    }
+
+    /// FU-3: the write end is still held open (a descendant out of the job's
+    /// group) when the drain grace runs out and stop is set. The drain is
+    /// marked stopped, and a stopped drain is never complete output: no
+    /// verdict, whatever it read. A drain that reached EOF is not stopped.
+    #[test]
+    fn a_drain_stopped_before_eof_is_never_complete_output() {
+        let (r, mut w) = std::os::unix::net::UnixStream::pair().unwrap();
+        w.write_all(b"{\"type\":\"summary\",\"total\":1}\n")
+            .unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let held = drain_bounded(Some(r), None, Arc::clone(&stop));
+        let (r2, w2) = std::os::unix::net::UnixStream::pair().unwrap();
+        drop(w2);
+        let at_eof = drain_bounded(Some(r2), None, Arc::clone(&stop));
+        let joined = axon_jobctl::join_within(
+            std::time::Duration::from_millis(300),
+            vec![held, at_eof],
+            &stop,
+        );
+        let (Some(h), Some(e)) = (&joined[0], &joined[1]) else {
+            panic!("a polling drain must be joined: {joined:?}");
+        };
+        assert!(
+            h.stopped,
+            "ATTACK: a drain stopped before EOF was taken as complete output: {h:?}"
+        );
+        assert_eq!(h.kept, b"{\"type\":\"summary\",\"total\":1}\n");
+        assert!(!e.stopped, "{e:?}");
+        let r = joined_output(joined);
+        assert!(
+            r.as_ref()
+                .is_err_and(|e| bound_exceeded(e) == Some(Bound::Output)),
+            "ATTACK: a drain stopped before EOF was taken as complete output: {r:?}"
+        );
+        // Either stream: a stopped stderr drain is as incomplete as stdout's.
+        let r = joined_output(vec![
+            drained(b"o", false, false),
+            drained(b"e", false, true),
+        ]);
+        assert!(
+            r.is_err(),
+            "ATTACK: a drain stopped before EOF was taken as complete output: {r:?}"
+        );
+        drop(w);
     }
 }
 
