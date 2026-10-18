@@ -1,0 +1,200 @@
+// Parking garage fees (in cents) and per-level occupancy.
+// Rules: stays of up to 10 minutes are free; within a day the first started
+// hour costs 300 and every further started hour 200, capped at 2000 per day;
+// each full 24h day costs the cap. A lost ticket pays at least 2500.
+
+type Stay = { entry: i64, exit: i64, lost: bool }
+
+type Move = { level: i64, arriving: bool }
+
+@[contained]
+fn hours_started(minutes: i64) -> i64 {
+    if minutes <= 0 { 0 } else { (minutes + 59) / 60 }
+}
+
+// Fee for a partial day of `minutes` (0 <= minutes < 1440).
+@[contained]
+fn day_fee(minutes: i64) -> i64 {
+    let h = hours_started(minutes)
+    if h == 0 { return 0 }
+    min_i64(300 + (h - 1) * 200, 2000)
+}
+
+fn stay_fee(minutes: i64) -> i64 {
+    if minutes <= 10 { return 0 }
+    let days = minutes / 1440
+    let rest = minutes % 1440
+    days * 2000 + day_fee(rest)
+}
+
+fn ticket_fee(entry: i64, exit: i64, lost: bool) -> Result<i64, str> {
+    if entry < 0 {
+        return Err("bad entry")
+    }
+    if exit < entry {
+        return Err("exit before entry")
+    }
+    let fee = stay_fee(exit - entry)
+    if lost { Ok(max_i64(fee, 2500)) } else { Ok(fee) }
+}
+
+// Sum of fees over all well-formed stays, and how many were skipped.
+fn total_revenue(stays: &[Stay]) -> [i64] {
+    let total = 0
+    let skipped = 0
+    for i in 0..len(stays) {
+        match ticket_fee(stays[i].entry, stays[i].exit, stays[i].lost) {
+            Ok(f) => { total = total + f }
+            Err(_) => { skipped = skipped + 1 }
+        }
+    }
+    [total, skipped]
+}
+
+// Cars on each level after replaying `moves` on an empty garage.
+fn occupancy(moves: &[Move], levels: i64 where levels >= 1) -> Result<[i64], str> {
+    let occ: [i64] = []
+    for i in 0..levels { occ = arr_push(occ, 0) }
+    for i in 0..len(moves) {
+        let lv = moves[i].level
+        if lv < 0 || lv >= levels {
+            return Err("bad level at " + to_str(i))
+        }
+        if moves[i].arriving {
+            occ[lv] = occ[lv] + 1
+        } else {
+            if occ[lv] == 0 { return Err("empty level at " + to_str(i)) }
+            occ[lv] = occ[lv] - 1
+        }
+    }
+    Ok(occ)
+}
+
+// Lowest level with a free space, or -1 when the garage is full.
+fn level_with_space(occ: &[i64], capacity: i64) -> i64 {
+    for i in 0..len(occ) {
+        if occ[i] < capacity { return i }
+    }
+    -1
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn fee_or(entry: i64, exit: i64, lost: bool) -> i64 {
+    match ticket_fee(entry, exit, lost) { Ok(f) => f  Err(_) => -1 }
+}
+
+fn mv(level: i64, arriving: bool) -> Move {
+    Move { level: level, arriving: arriving }
+}
+
+@[test]
+fn test_hours_started() {
+    assert_eq(hours_started(0), 0)
+    assert_eq(hours_started(1), 1)
+    assert_eq(hours_started(60), 1)
+    assert_eq(hours_started(61), 2)
+}
+
+@[test]
+fn test_day_fee_steps_and_cap() {
+    assert_eq(day_fee(0), 0)
+    assert_eq(day_fee(60), 300)
+    assert_eq(day_fee(61), 500)
+    assert_eq(day_fee(540), 1900)
+    assert_eq(day_fee(541), 2000)
+    assert_eq(day_fee(1439), 2000)
+}
+
+@[test]
+fn test_stay_fee_grace_and_days() {
+    assert_eq(stay_fee(10), 0)
+    assert_eq(stay_fee(11), 300)
+    assert_eq(stay_fee(1440), 2000)
+    assert_eq(stay_fee(1441), 2300)
+    assert_eq(stay_fee(2 * 1440 + 61), 4500)
+}
+
+@[test]
+fn test_ticket_fee_normal() {
+    assert_eq(fee_or(100, 225, false), 700)
+    assert_eq(fee_or(50, 50, false), 0)
+    assert_eq(fee_or(0, 120, false), 500)
+    assert_eq(fee_or(0, 121, false), 700)
+}
+
+@[test]
+fn test_ticket_fee_lost() {
+    assert_eq(fee_or(0, 30, true), 2500)
+    assert_eq(fee_or(0, 1500, true), 2500)
+    assert_eq(fee_or(0, 3000, true), 4500)
+    assert_eq(fee_or(0, 5, true), 2500)
+}
+
+@[test]
+fn test_ticket_fee_errors() {
+    match ticket_fee(90, 80, false) { Ok(_) => assert(false)  Err(e) => assert(e == "exit before entry") }
+    match ticket_fee(-1, 80, false) { Ok(_) => assert(false)  Err(e) => assert(e == "bad entry") }
+}
+
+@[test]
+fn test_total_revenue() {
+    let stays = [Stay { entry: 0, exit: 60, lost: false }, Stay { entry: 10, exit: 1451, lost: false }, Stay { entry: 5, exit: 9, lost: true }]
+    let r = total_revenue(&stays)
+    assert_eq(r[0], 300 + 2300 + 2500)
+    assert_eq(r[1], 0)
+}
+
+@[test]
+fn test_total_revenue_skips_bad() {
+    let stays = [Stay { entry: 70, exit: 69, lost: false }, Stay { entry: 0, exit: 600, lost: false }, Stay { entry: 0, exit: 11, lost: false }]
+    let r = total_revenue(&stays)
+    assert_eq(r[0], 2300)
+    assert_eq(r[1], 1)
+    let none: [Stay] = []
+    assert_eq(total_revenue(&none)[0], 0)
+}
+
+@[test]
+fn test_total_revenue_grace_boundary() {
+    let stays = [Stay { entry: 0, exit: 10, lost: false }, Stay { entry: 0, exit: 70, lost: false }]
+    let r = total_revenue(&stays)
+    assert_eq(r[0], 500)
+}
+
+@[test]
+fn test_occupancy_counts() {
+    match occupancy(&[mv(0, true), mv(1, true), mv(1, true), mv(0, false), mv(2, true)], 3) {
+        Ok(o) => { assert_eq(o[0], 0) assert_eq(o[1], 2) assert_eq(o[2], 1) }
+        Err(_) => assert(false)
+    }
+    let none: [Move] = []
+    match occupancy(&none, 1) { Ok(o) => assert_eq(o[0], 0)  Err(_) => assert(false) }
+}
+
+@[test]
+fn test_occupancy_errors() {
+    match occupancy(&[mv(0, true), mv(2, true)], 2) { Ok(_) => assert(false)  Err(e) => assert(e == "bad level at 1") }
+    match occupancy(&[mv(1, true), mv(0, false)], 2) { Ok(_) => assert(false)  Err(e) => assert(e == "empty level at 1") }
+    match occupancy(&[mv(-1, true)], 2) { Ok(_) => assert(false)  Err(e) => assert(e == "bad level at 0") }
+}
+
+@[test]
+fn test_level_with_space() {
+    assert_eq(level_with_space(&[2, 1, 0], 2), 1)
+    assert_eq(level_with_space(&[2, 2], 2), -1)
+    assert_eq(level_with_space(&[0], 1), 0)
+}
+
+@[test]
+fn test_level_with_space_after_moves() {
+    match occupancy(&[mv(0, true), mv(0, true), mv(1, true), mv(1, true), mv(1, false)], 2) {
+        Ok(o) => {
+            assert_eq(level_with_space(&o, 2), 1)
+            assert_eq(level_with_space(&o, 1), -1)
+        }
+        Err(_) => assert(false)
+    }
+}

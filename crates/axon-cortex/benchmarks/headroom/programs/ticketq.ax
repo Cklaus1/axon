@@ -1,0 +1,269 @@
+// Support ticket queue: tickets carry a priority (1 = low .. 5 = urgent) and
+// a creation time. The next ticket is the open one with the highest priority,
+// then the oldest creation time, then the lowest id.
+
+type Ticket = { id: i64, priority: i64, created: i64, assignee: str, open: bool }
+
+type Pick = { id: i64, queue: [Ticket] }
+
+// Index of the ticket with `id`, or -1.
+fn find_index(q: &[Ticket], id: i64) -> i64 {
+    for i in 0..len(q) {
+        if q[i].id == id { return i }
+    }
+    -1
+}
+
+// True if `a` should be served before `b`.
+@[contained]
+fn outranks(a: Ticket, b: Ticket) -> bool {
+    if a.priority != b.priority {
+        a.priority > b.priority
+    } else if a.created != b.created {
+        a.created < b.created
+    } else {
+        a.id < b.id
+    }
+}
+
+fn enqueue(q: &[Ticket], id: i64, priority: i64 where priority >= 1 && priority <= 5, created: i64, assignee: str) -> Result<[Ticket], str> {
+    if find_index(q, id) >= 0 {
+        return Err("duplicate id")
+    }
+    if created < 0 {
+        return Err("bad time")
+    }
+    let out = q
+    out = arr_push(out, Ticket { id: id, priority: priority, created: created, assignee: assignee, open: true })
+    Ok(out)
+}
+
+// Index of the open ticket to serve next, or -1 when none is open.
+fn best_open_index(q: &[Ticket]) -> i64 {
+    let best = -1
+    for i in 0..len(q) {
+        if q[i].open {
+            if best < 0 {
+                best = i
+            } else if outranks(q[i], q[best]) {
+                best = i
+            }
+        }
+    }
+    best
+}
+
+// Close the next ticket; returns its id (or -1) and the updated queue.
+fn pop_next(q: &[Ticket]) -> Pick {
+    let out = q
+    let k = best_open_index(&out)
+    if k < 0 {
+        return Pick { id: -1, queue: out }
+    }
+    out[k].open = false
+    Pick { id: out[k].id, queue: out }
+}
+
+fn reassign(q: &[Ticket], id: i64, assignee: str) -> Result<[Ticket], str> {
+    let out = q
+    let k = find_index(&out, id)
+    if k < 0 {
+        return Err("no such ticket")
+    }
+    if !out[k].open {
+        return Err("ticket closed")
+    }
+    if out[k].assignee == assignee {
+        return Err("already assigned")
+    }
+    out[k].assignee = assignee
+    Ok(out)
+}
+
+// counts[p - 1] = number of open tickets with priority p.
+fn count_open_by_priority(q: &[Ticket]) -> [i64] {
+    let counts = [0, 0, 0, 0, 0]
+    for i in 0..len(q) {
+        let p = q[i].priority
+        if q[i].open && p >= 1 && p <= 5 {
+            counts[p - 1] = counts[p - 1] + 1
+        }
+    }
+    counts
+}
+
+// Number of open tickets held by `assignee`.
+fn open_for(q: &[Ticket], assignee: str) -> i64 {
+    let n = 0
+    for i in 0..len(q) {
+        if q[i].open && q[i].assignee == assignee { n = n + 1 }
+    }
+    n
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn tk(id: i64, priority: i64, created: i64) -> Ticket {
+    Ticket { id: id, priority: priority, created: created, assignee: "ann", open: true }
+}
+
+fn sample() -> [Ticket] {
+    [tk(1, 2, 10), tk(2, 4, 30), tk(3, 4, 20), tk(4, 1, 5), tk(5, 4, 20)]
+}
+
+@[test]
+fn test_find_index() {
+    let q = sample()
+    assert_eq(find_index(&q, 1), 0)
+    assert_eq(find_index(&q, 5), 4)
+    assert_eq(find_index(&q, 6), -1)
+    let empty: [Ticket] = []
+    assert_eq(find_index(&empty, 1), -1)
+}
+
+@[test]
+fn test_outranks_order() {
+    assert(outranks(tk(1, 3, 50), tk(2, 2, 1)))
+    assert(!outranks(tk(1, 2, 1), tk(2, 3, 50)))
+    assert(outranks(tk(9, 3, 10), tk(2, 3, 11)))
+    assert(outranks(tk(2, 3, 10), tk(9, 3, 10)))
+    assert(!outranks(tk(9, 3, 10), tk(2, 3, 10)))
+}
+
+@[test]
+fn test_enqueue_appends_and_rejects() {
+    let empty: [Ticket] = []
+    match enqueue(&empty, 7, 5, 0, "bob") {
+        Ok(q) => {
+            let got: [Ticket] = q
+            assert_eq(len(got), 1)
+            assert_eq(got[0].priority, 5)
+            assert(got[0].open)
+        }
+        Err(_) => assert(false)
+    }
+    let q = sample()
+    match enqueue(&q, 3, 1, 99, "bob") { Ok(_) => assert(false) Err(e) => assert(e == "duplicate id") }
+    match enqueue(&q, 8, 1, -1, "bob") { Ok(_) => assert(false) Err(e) => assert(e == "bad time") }
+}
+
+@[test]
+fn test_best_open_index() {
+    let q = sample()
+    assert_eq(best_open_index(&q), 2)
+    q[2].open = false
+    assert_eq(best_open_index(&q), 4)
+    let empty: [Ticket] = []
+    assert_eq(best_open_index(&empty), -1)
+}
+
+@[test]
+fn test_pop_next_sequence() {
+    let p1 = pop_next(&sample())
+    assert_eq(p1.id, 3)
+    let p2 = pop_next(&p1.queue)
+    assert_eq(p2.id, 5)
+    let p3 = pop_next(&p2.queue)
+    assert_eq(p3.id, 2)
+    let p4 = pop_next(&p3.queue)
+    assert_eq(p4.id, 1)
+    let p5 = pop_next(&p4.queue)
+    assert_eq(p5.id, 4)
+    let p6 = pop_next(&p5.queue)
+    assert_eq(p6.id, -1)
+}
+
+@[test]
+fn test_pop_next_after_enqueue() {
+    let q = sample()
+    match enqueue(&q, 6, 5, 100, "cy") {
+        Ok(q2) => {
+            let p = pop_next(&q2)
+            assert_eq(p.id, 6)
+            assert_eq(pop_next(&p.queue).id, 3)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_pop_next_tie_on_time_uses_id() {
+    let q = [tk(12, 3, 7), tk(11, 3, 7), tk(10, 2, 1)]
+    let p = pop_next(&q)
+    assert_eq(p.id, 11)
+    assert(!p.queue[1].open)
+    assert(p.queue[0].open)
+}
+
+@[test]
+fn test_reassign() {
+    let q = sample()
+    match reassign(&q, 4, "dee") {
+        Ok(q2) => { assert(q2[3].assignee == "dee") assert(q[3].assignee == "ann") }
+        Err(_) => assert(false)
+    }
+    match reassign(&q, 40, "dee") { Ok(_) => assert(false) Err(e) => assert(e == "no such ticket") }
+    match reassign(&q, 4, "ann") { Ok(_) => assert(false) Err(e) => assert(e == "already assigned") }
+}
+
+@[test]
+fn test_reassign_closed_after_pop() {
+    let p = pop_next(&sample())
+    match reassign(&p.queue, 3, "eve") { Ok(_) => assert(false) Err(e) => assert(e == "ticket closed") }
+    match reassign(&p.queue, 5, "eve") {
+        Ok(q2) => {
+            assert_eq(open_for(&q2, "eve"), 1)
+            assert_eq(open_for(&q2, "ann"), 3)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_count_open_by_priority() {
+    let c = count_open_by_priority(&sample())
+    assert_eq(c[0], 1)
+    assert_eq(c[1], 1)
+    assert_eq(c[2], 0)
+    assert_eq(c[3], 3)
+    assert_eq(c[4], 0)
+}
+
+@[test]
+fn test_count_open_after_pops() {
+    let p = pop_next(&pop_next(&sample()).queue)
+    let c = count_open_by_priority(&p.queue)
+    assert_eq(c[3], 1)
+    assert_eq(c[0], 1)
+    let empty: [Ticket] = []
+    assert_eq(count_open_by_priority(&empty)[4], 0)
+}
+
+@[test]
+fn test_open_for() {
+    let q = sample()
+    assert_eq(open_for(&q, "ann"), 5)
+    assert_eq(open_for(&q, "bob"), 0)
+    q[0].open = false
+    assert_eq(open_for(&q, "ann"), 4)
+}
+
+@[test]
+fn test_enqueue_then_reassign_new_ticket() {
+    match enqueue(&sample(), 6, 1, 0, "fay") {
+        Ok(q2) => {
+            assert_eq(find_index(&q2, 6), 5)
+            match reassign(&q2, 6, "gus") {
+                Ok(q3) => {
+                    assert_eq(open_for(&q3, "gus"), 1)
+                    assert_eq(open_for(&q3, "fay"), 0)
+                    assert_eq(count_open_by_priority(&q3)[0], 2)
+                }
+                Err(_) => assert(false)
+            }
+        }
+        Err(_) => assert(false)
+    }
+}

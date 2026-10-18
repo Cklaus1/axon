@@ -1,0 +1,218 @@
+// Round-robin CPU scheduler. All jobs arrive at time 0 in list order; each
+// turn a job runs for min(quantum, remaining) time units. Reports completion
+// times, waiting times, the average wait, switches and the finish order.
+
+type Job = { id: i64, burst: i64 }
+
+// Time units a job runs in one turn.
+@[contained]
+fn slice_for(remaining: i64, quantum: i64) -> i64 {
+    if remaining <= 0 { 0 } else if remaining < quantum { remaining } else { quantum }
+}
+
+fn all_done(rem: &[i64]) -> bool {
+    for i in 0..len(rem) {
+        if rem[i] > 0 { return false }
+    }
+    true
+}
+
+fn bursts_of(jobs: &[Job]) -> [i64] {
+    let out: [i64] = []
+    for i in 0..len(jobs) {
+        out = arr_push(out, max_i64(jobs[i].burst, 0))
+    }
+    out
+}
+
+// completion[i] = time at which jobs[i] finishes (0 for empty bursts).
+fn simulate(jobs: &[Job], quantum: i64 where quantum >= 1) -> [i64] {
+    let rem = bursts_of(jobs)
+    let n = len(rem)
+    let completion: [i64] = []
+    for i in 0..n { completion = arr_push(completion, 0) }
+    let time = 0
+    while !all_done(&rem) {
+        for i in 0..n {
+            if rem[i] > 0 {
+                let s = slice_for(rem[i], quantum)
+                time = time + s
+                rem[i] = rem[i] - s
+                if rem[i] == 0 { completion[i] = time }
+            }
+        }
+    }
+    completion
+}
+
+// Waiting time = completion - burst (everyone arrives at 0).
+fn waiting_times(jobs: &[Job], quantum: i64 where quantum >= 1) -> [i64] {
+    let done = simulate(jobs, quantum)
+    let out: [i64] = []
+    for i in 0..len(jobs) {
+        out = arr_push(out, done[i] - max_i64(jobs[i].burst, 0))
+    }
+    out
+}
+
+// Average waiting time, scaled by 100 and truncated (0 for no jobs).
+fn average_wait_x100(jobs: &[Job], quantum: i64 where quantum >= 1) -> i64 {
+    let n = len(jobs)
+    if n == 0 { return 0 }
+    let w = waiting_times(jobs, quantum)
+    let total = 0
+    for i in 0..n { total = total + w[i] }
+    total * 100 / n
+}
+
+// Number of times the CPU moves from one job to a different job.
+fn context_switches(jobs: &[Job], quantum: i64 where quantum >= 1) -> i64 {
+    let rem = bursts_of(jobs)
+    let last = -1
+    let switches = 0
+    while !all_done(&rem) {
+        for i in 0..len(rem) {
+            if rem[i] > 0 {
+                if last >= 0 && last != i { switches = switches + 1 }
+                last = i
+                rem[i] = rem[i] - slice_for(rem[i], quantum)
+            }
+        }
+    }
+    switches
+}
+
+// Job ids ordered by completion time (ties keep list order).
+fn finish_order(jobs: &[Job], quantum: i64 where quantum >= 1) -> [i64] {
+    let done = simulate(jobs, quantum)
+    let n = len(jobs)
+    let used: [bool] = []
+    for i in 0..n { used = arr_push(used, false) }
+    let out: [i64] = []
+    for k in 0..n {
+        let best = -1
+        for i in 0..n {
+            if !used[i] {
+                if best < 0 || done[i] < done[best] { best = i }
+            }
+        }
+        used[best] = true
+        out = arr_push(out, jobs[best].id)
+    }
+    out
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn three() -> [Job] {
+    [Job { id: 10, burst: 5 }, Job { id: 20, burst: 3 }, Job { id: 30, burst: 8 }]
+}
+
+@[test]
+fn test_slice_for() {
+    assert_eq(slice_for(5, 2), 2)
+    assert_eq(slice_for(2, 2), 2)
+    assert_eq(slice_for(1, 2), 1)
+    assert_eq(slice_for(0, 2), 0)
+}
+
+@[test]
+fn test_all_done() {
+    assert(all_done(&[0, 0, 0]))
+    assert(!all_done(&[0, 1]))
+    let empty: [i64] = []
+    assert(all_done(&empty))
+}
+
+@[test]
+fn test_simulate_quantum_two() {
+    let c = simulate(&three(), 2)
+    assert_eq(c[0], 12)
+    assert_eq(c[1], 9)
+    assert_eq(c[2], 16)
+}
+
+@[test]
+fn test_simulate_large_quantum_is_fcfs() {
+    let c = simulate(&three(), 10)
+    assert_eq(c[0], 5)
+    assert_eq(c[1], 8)
+    assert_eq(c[2], 16)
+}
+
+@[test]
+fn test_simulate_quantum_one_and_exact_fit() {
+    let c = simulate(&[Job { id: 1, burst: 2 }, Job { id: 2, burst: 1 }], 1)
+    assert_eq(c[0], 3)
+    assert_eq(c[1], 2)
+    let e = simulate(&[Job { id: 1, burst: 3 }, Job { id: 2, burst: 3 }], 3)
+    assert_eq(e[0], 3)
+    assert_eq(e[1], 6)
+}
+
+@[test]
+fn test_waiting_times() {
+    let w = waiting_times(&three(), 2)
+    assert_eq(w[0], 7)
+    assert_eq(w[1], 6)
+    assert_eq(w[2], 8)
+    let f = waiting_times(&three(), 8)
+    assert_eq(f[0], 0)
+    assert_eq(f[1], 5)
+    assert_eq(f[2], 8)
+}
+
+@[test]
+fn test_waiting_zero_burst() {
+    let w = waiting_times(&[Job { id: 1, burst: 0 }, Job { id: 2, burst: 4 }], 2)
+    assert_eq(w[0], 0)
+    assert_eq(w[1], 0)
+}
+
+@[test]
+fn test_average_wait() {
+    assert_eq(average_wait_x100(&three(), 2), 700)
+    assert_eq(average_wait_x100(&three(), 10), 433)
+    let none: [Job] = []
+    assert_eq(average_wait_x100(&none, 3), 0)
+}
+
+@[test]
+fn test_average_wait_single_and_pair() {
+    assert_eq(average_wait_x100(&[Job { id: 1, burst: 9 }], 4), 0)
+    assert_eq(average_wait_x100(&[Job { id: 1, burst: 2 }, Job { id: 2, burst: 1 }], 1), 100)
+}
+
+@[test]
+fn test_context_switches() {
+    assert_eq(context_switches(&three(), 2), 7)
+    assert_eq(context_switches(&three(), 10), 2)
+    assert_eq(context_switches(&[Job { id: 1, burst: 0 }, Job { id: 2, burst: 4 }], 2), 0)
+}
+
+@[test]
+fn test_context_switches_quantum_one() {
+    assert_eq(context_switches(&[Job { id: 1, burst: 2 }, Job { id: 2, burst: 1 }], 1), 2)
+    assert_eq(context_switches(&[Job { id: 1, burst: 3 }, Job { id: 2, burst: 3 }], 3), 1)
+}
+
+@[test]
+fn test_finish_order() {
+    let o = finish_order(&three(), 2)
+    assert_eq(o[0], 20)
+    assert_eq(o[1], 10)
+    assert_eq(o[2], 30)
+    let f = finish_order(&three(), 10)
+    assert_eq(f[0], 10)
+    assert_eq(f[1], 20)
+}
+
+@[test]
+fn test_finish_order_ties_and_zero() {
+    let o = finish_order(&[Job { id: 7, burst: 2 }, Job { id: 8, burst: 0 }, Job { id: 9, burst: 2 }], 2)
+    assert_eq(o[0], 8)
+    assert_eq(o[1], 7)
+    assert_eq(o[2], 9)
+}
