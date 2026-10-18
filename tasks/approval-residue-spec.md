@@ -283,9 +283,11 @@ notes; no code change.
 - **H3 (was AR6) — remove `axon-intent approve --program`.** `[DECIDED by human: EXCLUDED from this build; keep the
   flag]`. Recommendation if revisited: removal (see AR6). No non-removal fix leaves external behaviour unchanged.
 - **H4 (was AR5's first draft) — let `axon session` continue past a digest-refused cell, exiting 8 at its end.**
-  Added by the Step 1 review; not built. It changes the session's external contract, so a human has to choose.
-  Recommendation: adopt only if a session user needs cells before the `use` cell. Today's rule (put the approved `use`
-  in the first cell) is documented by AR5's message.
+  `[DECIDED by human 2026-10-18: A — keep today's behaviour; no deferred exit 8. Reconsider only if a real session
+  workflow needs cells before the use cell]`. Added by the Step 1 review; not built. It changes the session's external
+  contract. Today's rule (put the approved `use` in the first cell) is documented by AR5's message.
+- **2026-10-18 human re-confirmation:** H1/NH1 stays excluded (no entry-directory module search), H3 keeps `axon-intent
+  approve --program`, KG4 keeps today's Ctrl-C behaviour. None is reopened in the S1 follow-up batch.
 
 ## Dropped on re-measurement
 

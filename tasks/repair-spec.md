@@ -208,14 +208,21 @@ USAGE text in `bin/cortex.rs` and `crates/axon-cortex/README.md`: grant, fence, 
 
 ## needs-human (excluded from the autonomous run)
 
-- **NH-R1 episode approval token.** For unattended episodes an operator would approve an envelope (task, write prefixes,
-  grant, check digest, budget) with a keyed token a supervisor verifies. Per-candidate `axon-approval/3` tokens are the
-  wrong shape: they bind entry bytes, so each patch needs a fresh approval, and an automatic one is the machine
-  approving itself. Recommendation: build after S1 as an `axon-approval` sibling schema reusing the G5 key derivation.
-  Until then the operator's command line is the authority, and deploying the accepted artifact uses the existing human
-  `axon ast approve` / `axon-intent approve`.
-- **NH-R2 spend `hard-once` (n=19) on S1.** Scored once per candidate; the final judge. Recommendation: keep it for a
-  candidate that has first shown a gain on a held-out set with headroom.
+- **NH-R1 episode approval token.** `[DECIDED by human 2026-10-18: A — build a new axon-approval schema, specified
+  separately before unattended repair is enabled]`. For unattended episodes an operator would approve an envelope (task,
+  write prefixes, grant, check digest, budget) with a keyed token a supervisor verifies. Per-candidate `axon-approval/3`
+  tokens are the wrong shape: they bind entry bytes, so each patch needs a fresh approval, and an automatic one is the
+  machine approving itself. Requirements set by the human: G5 key derivation with domain separation; the signed
+  authorization binds task identity and permitted write paths, granted capabilities, check digest and execution budget,
+  run identity and expiration, and explicit limits the repair process cannot widen; the runner rejects expired, altered,
+  replayed or out-of-scope authorizations and never issues or extends its own authority; the per-candidate approval
+  flow stays unchanged; the token grants authority to operate within limits, not acceptance of arbitrary results; R6
+  gets its own specification. The scheme must pass its own security and correctness tests before unattended repair is
+  enabled. Until then the operator's command line is the authority, and deploying the accepted artifact uses the
+  existing human `axon ast approve` / `axon-intent approve`.
+- **NH-R2 spend `hard-once` (n=19) on S1.** `[DECIDED by human 2026-10-18: A — preserve the set]`. Scored once per
+  candidate; the final judge. It is spent only on a candidate that first shows a meaningful task-solving improvement on a
+  held-out evaluation with headroom. A speed improvement alone does not qualify; S1's 107 vs 108 solved does not.
 
 ## Out of scope / open
 

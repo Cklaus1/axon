@@ -2582,22 +2582,22 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
 ## S1 governed repair episode (tasks/repair-spec.md)
 
 ### O-S1-01 — [medium] R6 record-only trial ledger in axon-loop (deferred by Step 1 review #20)
-The ledger would be self-signed by the harness, nothing reads it yet, and reusing `promote.py`'s `Evidence.trial` would change `ws_out` (`promote.py:399`). Revisit together with NH-R1 (an envelope token gives an independent signer) and when a learner exists.
+The ledger would be self-signed by the harness, nothing reads it yet, and reusing `promote.py`'s `Evidence.trial` would change `ws_out` (`promote.py:399`). Revisit together with NH-R1 (an envelope token gives an independent signer) and when a learner exists. `[DECIDED by human 2026-10-18: deferred until the NH-R1 authorization is specified; R6 gets its own specification designed against it]`
 
 ### O-S1-02 — [high] A held-out set with headroom (R7b deferred, review #24/#25)
 Every existing set is saturated at f83c6f86 (gencontext heldout 47/47, once 30/30); only 16 unused example files remain. Until a harder set exists, no arm can show whether R4's structured feedback helps.
 
 ### O-S1-03 — [medium] `--effect-ceiling` and path-level narrowing
-S1 only stops NEW capability kinds. Narrowing a kind the file already holds (write only under the workspace, net only to one host) needs its own design: narrowing below the pristine set denies every candidate (review #3).
+S1 only stops NEW capability kinds. Narrowing a kind the file already holds (write only under the workspace, net only to one host) needs its own design: narrowing below the pristine set denies every candidate (review #3). `[DECIDED by human 2026-10-18: an independent design problem, not part of a correctness batch]`
 
 ### O-S1-04 — [low] Relative `cortex repair --workspace` fails every check (pre-existing, review #27)
 `run_checks` sets `current_dir(ws)` and also passes `ws.join(rel)`. Canonicalize in the CLI; keep `current_dir` (M71).
 
 ### O-S1-05 — [low] Fabric executor: no fence, empty `messages`
-The fence is reported `applied:false` there and fence conflicts cannot be detected; the typed feedback (R4) has no data on that path.
+The fence is reported `applied:false` there and fence conflicts cannot be detected; the typed feedback (R4) has no data on that path. `[DECIDED by human 2026-10-18: an independent design problem, not part of a correctness batch]`
 
 ### O-S1-06 — [low] dstore files hit `fence_conflict`
-A file using the durable store gets exit 22, because the fence's empty FS_READ denies its store reads. The dstore → fs-scope mapping needs a design.
+A file using the durable store gets exit 22, because the fence's empty FS_READ denies its store reads. The dstore → fs-scope mapping needs a design. `[DECIDED by human 2026-10-18: an independent design problem, not part of a correctness batch]`
 
 ### O-S1-07 — [low] An `ai:` generator call in flight cannot be cancelled at the deadline
 It is an in-process blocking HTTP call; S1 only refuses to start one with less than its 30 s timeout left.
