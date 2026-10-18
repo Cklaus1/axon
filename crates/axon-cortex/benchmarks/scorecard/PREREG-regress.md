@@ -240,3 +240,18 @@ and "First run under this file" above:
    committed main rows, by `controls/controls.py`, and reported there; they
    are design evidence. Neither the controls nor the power analysis is an
    acceptance test of a future change.
+
+## Record (2026-10-18): one run measured the wrong binary
+
+Not a rule change. The run `receipt-2026-10-18-cortex-haiku-5.5-micode-breadth-or-haiku-5.5-regress-4ef551886b3d`
+(recorded as a PASS for repair digest `5c490de362739328`) ran main's cortex, not HEAD's: its rows and config
+carry cortex sha256 `0a4cb97b704871b2`, the same bytes as the main replicate recorded just before it
+(`…-main-f26e95064260`). `regress --main-only --again` had built main in a detached worktree into the
+shared `CARGO_TARGET_DIR`; cargo judged HEAD's units fresh by file mtime (main's build was newer than
+HEAD's sources) and kept main's artifacts, so the HEAD build left main's `cortex` in `debug/`. The run
+is NOT evidence about digest `5c490de3`. It stays in the history (every run does) and is superseded by
+the next `regress --again` at that digest. `scorecard.py` now builds a checkout other than its own
+into that checkout's `target/`, and refuses before any spend a HEAD cortex that is byte-identical to
+the incumbent's recorded cortex while the repair digests differ. The valid measurements at this digest
+are the first run (`…-regress-e2f5fb48de52`, cortex `e052ea815762ad13`, WORSE on wall seconds under
+load average ≈ 48) and the next one.

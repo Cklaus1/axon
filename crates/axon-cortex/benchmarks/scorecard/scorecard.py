@@ -455,21 +455,37 @@ def waive(history, root, *, reason, digest=None, date=None):
     return rec
 
 
-def _measure(run_root, out_dir, spec, *, cap_usd, parallel):
+def _measure(run_root, out_dir, spec, *, cap_usd, parallel, not_sha256=None):
     """Build axon and cortex in `run_root` (a checkout) and run ITS `run_ab.py`
     on the receipt corpus (`spec["corpus"]`, read from THIS checkout: the commit
     measured may predate it) with the receipt config into `out_dir`/b.jsonl, so the
-    rows' meta commit is `run_root`'s HEAD. Returns (rows, cortex binary)."""
+    rows' meta commit is `run_root`'s HEAD. Returns (rows, cortex binary).
+
+    A checkout other than this one (main's detached worktree) builds into its
+    own `target/`, never into CARGO_TARGET_DIR: cargo copies a binary up to
+    `debug/` only when it compiles it, so after main's build in a shared target
+    dir a HEAD build whose units were already fresh left main's `cortex` in
+    `debug/`, and the HEAD run measured main's bytes. `not_sha256` (the
+    incumbent's recorded cortex sha256) refuses such a binary before any spend."""
     cfg = spec["config"]
-    target = os.environ.get("CARGO_TARGET_DIR") or os.path.join(run_root, "target")
+    if os.path.realpath(run_root) == os.path.realpath(ROOT):
+        target = os.environ.get("CARGO_TARGET_DIR") or os.path.join(run_root, "target")
+    else:
+        target = os.path.join(run_root, "target")
+    env = dict(os.environ, CARGO_TARGET_DIR=target)
     for cmd in (["cargo", "build", "-q", "-p", "axon-core", "--no-default-features",
                  "--bin", "axon"],
                 ["cargo", "build", "-q", "-p", "axon-cortex", "--features", "ai",
                  "--bin", "cortex"]):
-        print(f"$ (in {run_root}) " + " ".join(cmd), file=sys.stderr, flush=True)
-        if subprocess.run(cmd, cwd=run_root).returncode != 0:
+        print(f"$ (in {run_root}, CARGO_TARGET_DIR={target}) " + " ".join(cmd),
+              file=sys.stderr, flush=True)
+        if subprocess.run(cmd, cwd=run_root, env=env).returncode != 0:
             raise Refused(f"build failed in {run_root}: {' '.join(cmd)}")
     axon, cortex = os.path.join(target, "debug", "axon"), os.path.join(target, "debug", "cortex")
+    if not_sha256 and sha256_file(cortex) == not_sha256:
+        raise Refused(f"{cortex} is byte-identical to the incumbent's cortex ({not_sha256[:16]}) "
+                      "although the repair digests differ: a stale binary, not a build of "
+                      f"{run_root}. Nothing was run")
     rows, log = os.path.join(out_dir, "b.jsonl"), os.path.join(out_dir, "b.log")
     os.makedirs(out_dir, exist_ok=True)
     cmd = [sys.executable, "-B", os.path.join(run_root, os.path.relpath(BENCH, ROOT), "ab",
@@ -603,8 +619,9 @@ def regress(history, root, *, cap_usd=RECEIPT_CAP_USD, parallel=3, again=False,
 
     out_dir, sfx = _out_dir(runs, f"{date}-{head[:12]}")
     # The cap is per invocation (PREREG-regress.md): main's run, if made, spent part.
+    inc_sha = next((r["config"].get("cortex_sha256") for r in runs if r["run_id"] == inc), None)
     rows, cortex = _measure(root, out_dir, spec, cap_usd=round(cap_usd - spent, 6),
-                            parallel=parallel)
+                            parallel=parallel, not_sha256=inc_sha)
     spend = run_ab.spent(out_dir)
     spent += spend
     rec = add(history, root, set_=RECEIPT_SET, agent="cortex", rows=rows, corpus=spec["corpus"],
