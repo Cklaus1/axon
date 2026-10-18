@@ -11643,6 +11643,20 @@ MUTATIONS += [
      '        _ => Err(""),',
      '        _ => Ok((Vec::new(), Vec::new())),',
      'axon-cortex', '--lib', 'generate::drain_tests::a_detached_or_pending_drain_is_a_lost_read'),
+    # FU-6 (O-S1-04): `--workspace` and a relative `--axon` resolved once after parsing (repair,
+    # locate, grant); a missing path is a usage error.
+    ('M3746', "FU-6: a relative --workspace is passed on unresolved (joined twice by the checks)", _S1B,
+     '    let workspace = canon("--workspace", &workspace);',
+     '    let workspace = {\n        canon("--workspace", &workspace);\n        workspace\n    };',
+     'axon-cortex', '--test cli', 'fu6_a_relative_workspace_and_axon_get_a_real_verdict'),
+    ('M3747', "FU-6: a relative --axon is passed on unresolved (looked up inside the workspace)", _S1B,
+     '    let axon_bin = if axon_bin.is_relative() && axon_bin.components().count() > 1 {',
+     '    let axon_bin = if false {',
+     'axon-cortex', '--test cli', 'fu6_a_relative_workspace_and_axon_get_a_real_verdict'),
+    ('M3748', "FU-6: a --workspace or --axon path that does not exist is used as given, not a usage error", _S1B,
+     '        std::fs::canonicalize(p).unwrap_or_else(|e| usage(&format!("{flag} {}: {e}", p.display())))',
+     '        std::fs::canonicalize(p).unwrap_or_else(|_| {\n            let _ = flag;\n            p.to_path_buf()\n        })',
+     'axon-cortex', '--test cli', 'fu6_a_missing_workspace_or_axon_path_is_a_usage_error'),
 ]
 
 if __name__ == "__main__":

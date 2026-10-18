@@ -116,6 +116,110 @@ fn cli_a_wrong_repair_never_exits_zero() {
     assert_ne!(code, 0, "a wrong repair must not exit 0: {text}");
 }
 
+/// FU-6 (O-S1-04): a relative `--workspace` (and a relative `--axon`) is
+/// resolved once, against the directory `cortex` was started in. Before FU-6
+/// the checks ran with `current_dir(workspace)` AND `workspace.join(file)`,
+/// so a relative workspace was joined twice and every check failed: run from
+/// the workspace's parent, a correct repair got no verdict.
+#[test]
+fn fu6_a_relative_workspace_and_axon_get_a_real_verdict() {
+    let root = std::env::temp_dir().join(format!("cortex_cli_fu6_rel_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("ws")).unwrap();
+    std::fs::create_dir_all(root.join("bin")).unwrap();
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax");
+    std::fs::copy(src, root.join("ws/broken.ax")).unwrap();
+    std::os::unix::fs::symlink(axon_bin().canonicalize().unwrap(), root.join("bin/axon")).unwrap();
+    let out = common::cortex()
+        .current_dir(&root)
+        .args(["repair", "--workspace", "ws", "--axon", "bin/axon"])
+        .args(["--file", "broken.ax", "--symbol", "double"])
+        .args([
+            "--check",
+            "hidden_completion",
+            "--write-prefix",
+            "broken.ax",
+        ])
+        .args(["--generator", "literal:\n    n * 2\n", "--json"])
+        .output()
+        .unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "ATTACK: a relative --workspace or --axon got no real verdict: {said}"
+    );
+    let after = std::fs::read_to_string(root.join("ws/broken.ax")).unwrap();
+    assert!(
+        after.contains("n * 2") && !after.contains("n + 2"),
+        "{after}"
+    );
+    // `locate` from the same place sees the same file and the same checks.
+    let out = common::cortex()
+        .current_dir(&root)
+        .args(["locate", "--workspace", "ws", "--axon", "bin/axon"])
+        .args([
+            "--file",
+            "broken.ax",
+            "--check",
+            "hidden_completion",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "ATTACK: `locate` with a relative --workspace or --axon could not run its checks: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// FU-6: a `--workspace` (or a relative `--axon`) that does not exist is a
+/// command-line error (exit 2, no outcome) in `repair`, `locate` and `grant`.
+#[test]
+fn fu6_a_missing_workspace_or_axon_path_is_a_usage_error() {
+    let root = std::env::temp_dir().join(format!("cortex_cli_fu6_missing_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("ws")).unwrap();
+    for (verb, extra) in [
+        ("repair", &["--check", "hidden_completion"][..]),
+        ("locate", &["--check", "hidden_completion"][..]),
+        ("grant", &[][..]),
+    ] {
+        for (ws, axon) in [("no-such-ws", "axon"), ("ws", "bin/no-such-axon")] {
+            let out = common::cortex()
+                .current_dir(&root)
+                .args([
+                    verb,
+                    "--workspace",
+                    ws,
+                    "--axon",
+                    axon,
+                    "--file",
+                    "broken.ax",
+                ])
+                .args(extra)
+                .output()
+                .unwrap();
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "ATTACK: a missing --workspace or --axon path was not a usage error: \
+                 {verb} {ws} {axon}: {err}"
+            );
+            assert!(out.stdout.is_empty(), "{verb}: no outcome on a usage error");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// The file must be back to the defect and carry nothing of `marker`: a
 /// refused candidate is reverted, never left behind.
 fn assert_reverted(ws: &Path, marker: &str, text: &str) {

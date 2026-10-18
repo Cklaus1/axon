@@ -3130,4 +3130,7 @@ ATTACK_MARKERS.update({
     'M3743': r'ATTACK: a generator drain stopped with data pending was taken as the whole answer',
     'M3744': r'ATTACK: a generator drain stopped with data pending was taken as the whole answer',
     'M3745': r'ATTACK: a detached generator drain was read as an answer',
+    'M3746': r'ATTACK: a relative --workspace or --axon got no real verdict',
+    'M3747': r'ATTACK: a relative --workspace or --axon got no real verdict',
+    'M3748': r'ATTACK: a missing --workspace or --axon path was not a usage error',
 })

@@ -236,6 +236,29 @@ fn usage(msg: &str) -> ! {
     std::process::exit(2)
 }
 
+/// FU-6 (O-S1-04): `--workspace`, and an `--axon` given as a relative path,
+/// resolved ONCE, against the directory `cortex` was started in. The checks
+/// run with the workspace as their current directory AND name files under
+/// it, so a relative workspace was joined twice and every check failed; a
+/// relative `--axon` was looked up inside the workspace. A bare name (the
+/// default `axon`) is a PATH lookup and stays one. A path that does not exist
+/// is a command-line error.
+fn resolve_paths(
+    workspace: std::path::PathBuf,
+    axon_bin: std::path::PathBuf,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    let canon = |flag: &str, p: &std::path::Path| {
+        std::fs::canonicalize(p).unwrap_or_else(|e| usage(&format!("{flag} {}: {e}", p.display())))
+    };
+    let workspace = canon("--workspace", &workspace);
+    let axon_bin = if axon_bin.is_relative() && axon_bin.components().count() > 1 {
+        canon("--axon", &axon_bin)
+    } else {
+        axon_bin
+    };
+    (workspace, axon_bin)
+}
+
 /// Exit 25: no target could be established.
 ///
 /// Its own code, separate from the usage error above and from every episode
@@ -639,6 +662,7 @@ fn main() {
             usage(&format!("{name} is required"));
         }
     }
+    let (workspace, axon_bin) = resolve_paths(workspace, axon_bin);
     let early_stop = if early_stop_off {
         if inert_flag.is_some() {
             usage("--inert-limit has no effect with --early-stop off");
@@ -1647,6 +1671,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
              as evidence, and the target becomes a function of the answer",
         );
     }
+    let (workspace, axon_bin) = resolve_paths(workspace, axon_bin);
     let fabric = fabric_executor(&fabric_args, check_registry.as_deref());
     // No fence: `locate` runs the file's own tests on its own bytes and
     // writes nothing — there is no candidate whose authority could exceed
@@ -1728,6 +1753,7 @@ fn grant_only(mut args: impl Iterator<Item = String>) {
     if file.is_empty() {
         usage("--file is required");
     }
+    let (workspace, axon_bin) = resolve_paths(workspace, axon_bin);
     let wall = std::time::Duration::from_millis(DEFAULT_CHECK_TIMEOUT_MS);
     let (exe, _) = resolve_checker(&axon_bin, check_registry.as_deref());
     let fence = derive_fence(&exe, &workspace, &file, wall);
