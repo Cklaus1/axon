@@ -6,21 +6,25 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
+
 fn script() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("benchmarks/fence_sweep.py")
 }
 
 /// Run the sweep on one corpus file: (exit code, stdout, stderr).
 fn sweep(corpus: &Path) -> (i32, String, String) {
-    let out = Command::new("python3")
-        .arg("-B")
-        .arg(script())
+    // Never reached on these corpora; named so nothing resolves a default.
+    let bins = [
+        ("AXON_BIN", "/nonexistent/axon"),
+        ("CORTEX_BIN", "/nonexistent/cortex"),
+    ];
+    let out = script_spawn::script("python3", script(), script_spawn::Bins::Named(&bins))
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .arg("--corpus")
         .arg(corpus)
         .arg("--json")
-        // Never reached on these corpora; set so nothing resolves a default.
-        .env("AXON_BIN", "/nonexistent/axon")
-        .env("CORTEX_BIN", "/nonexistent/cortex")
         .output()
         .expect("run python3");
     (

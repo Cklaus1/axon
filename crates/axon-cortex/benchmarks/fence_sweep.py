@@ -36,8 +36,11 @@ sys.path.insert(0, os.path.join(HERE, "ab"))
 import corpus  # noqa: E402
 from common import ROOT  # noqa: E402
 
-AXON = os.environ.get("AXON_BIN", f"{ROOT}/target/debug/axon")
-CORTEX = os.environ.get("CORTEX_BIN", f"{ROOT}/target/debug/cortex")
+# The caller names both binaries (scripts/lib/axon_bin.sh): a guessed
+# target/debug path could be a stale build, and a sweep of the wrong binary
+# proves nothing about the one being shipped.
+AXON = os.environ.get("AXON_BIN")
+CORTEX = os.environ.get("CORTEX_BIN")
 DEFAULT_CORPORA = (os.path.join(HERE, "scorecard", "receipt-corpus.json"),
                    os.path.join(HERE, "heldout", "heldout.json"))
 # The interpreter's sandbox refusals (crates/axon-core capabilities): a fenced
@@ -129,6 +132,10 @@ def main():
                     help="a corpus file (repeatable; default: receipt corpus + heldout1)")
     ap.add_argument("--json", action="store_true", help="one JSON summary line on stdout")
     args = ap.parse_args()
+    if not AXON or not CORTEX:
+        print("ERROR: set AXON_BIN and CORTEX_BIN to the binaries to sweep",
+              file=sys.stderr)
+        sys.exit(2)
     jobs = []
     for path in args.corpus or DEFAULT_CORPORA:
         name = os.path.relpath(path, HERE)
