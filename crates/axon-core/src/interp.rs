@@ -7552,9 +7552,15 @@ fn parse_token_budget() -> Option<i64> {
 /// run.
 fn ambient_sandbox() -> Vec<SandboxEntry> {
     let scope = SandboxScope {
-        fs_read: ambient_scope_var("AXON_ALLOWED_FS_READ"),
-        fs_write: ambient_scope_var("AXON_ALLOWED_FS_WRITE"),
-        net: ambient_scope_var("AXON_ALLOWED_NET"),
+        fs_read: ambient_scope_var(
+            "AXON_ALLOWED_FS_READ",
+            std::env::var_os("AXON_ALLOWED_FS_READ"),
+        ),
+        fs_write: ambient_scope_var(
+            "AXON_ALLOWED_FS_WRITE",
+            std::env::var_os("AXON_ALLOWED_FS_WRITE"),
+        ),
+        net: ambient_scope_var("AXON_ALLOWED_NET", std::env::var_os("AXON_ALLOWED_NET")),
     };
     let scoped = scope.fs_read.is_some() || scope.fs_write.is_some() || scope.net.is_some();
     let Ok(raw) = std::env::var("AXON_ALLOWED_EFFECTS") else {
@@ -7607,8 +7613,12 @@ fn ambient_sandbox() -> Vec<SandboxEntry> {
 /// `parse_scope_list`. A value that is not UTF-8 cannot be matched against a
 /// path or host, so it DENIES every one of that kind rather than reading as
 /// unset — the variable was set, and a set scope must not fail open.
-fn ambient_scope_var(var: &str) -> Option<Vec<String>> {
-    let raw = std::env::var_os(var)?;
+///
+/// The caller reads the variable with the literal name at the call site
+/// (`std::env::var_os("AXON_ALLOWED_FS_READ")`), not through `var`: the claims
+/// gate proves a documented env var is READ by finding that literal read.
+fn ambient_scope_var(var: &str, raw: Option<std::ffi::OsString>) -> Option<Vec<String>> {
+    let raw = raw?;
     match raw.to_str() {
         Some(s) => parse_scope_list(s),
         None => {
