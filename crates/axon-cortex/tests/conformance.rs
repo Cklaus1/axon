@@ -2072,10 +2072,19 @@ fn cxg_c14b_a_body_the_checker_objects_to_never_reaches_verified_done() {
     let rej = &seen.last().expect("the generator was asked")[0];
     assert_eq!(rej.body, NOTED);
     assert_eq!(rej.reason, RejectionReason::CheckerObjected);
-    let fb = rej.feedback.as_deref().unwrap_or("");
+    let fb = rej
+        .feedback
+        .as_ref()
+        .map(|f| f.to_json())
+        .unwrap_or_default();
+    let d = rej
+        .feedback
+        .as_ref()
+        .and_then(|f| f.diagnostics.first())
+        .unwrap_or_else(|| panic!("the feedback must carry the checker's diagnostic: {fb}"));
     assert!(
-        fb.contains("I0002") && fb.contains("(note)"),
-        "the feedback must carry the checker's diagnostic: {fb:?}"
+        d.code == "I0002" && d.severity == "note",
+        "the feedback must carry the checker's diagnostic: {fb}"
     );
     for leaked in ["hidden_completion", "double(7)"] {
         assert!(!fb.contains(leaked), "the feedback leaked `{leaked}`: {fb}");

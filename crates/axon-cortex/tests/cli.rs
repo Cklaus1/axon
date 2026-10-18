@@ -2502,3 +2502,69 @@ fn r2_a_timed_out_check_is_killed_as_a_group_and_the_loop_goes_on() {
     );
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// R4: a rejected attempt's diagnostics reach the generator as DATA. The
+/// generator copies each prompt to `prompt-N.txt`; its first body type-errors,
+/// and the second prompt must carry that diagnostic as one compact JSON block
+/// with its `col`, `expected` and `found`, and the target's relative `file`
+/// (never the visible copy's pid-named path). Before R4 the prompt carried a
+/// prose rendering (`line 6: E0307 …`) with no column and no types.
+#[test]
+fn r4_a_type_error_reaches_the_next_prompt_as_structured_json() {
+    let ws = workspace("r4_diag");
+    let gen = ws.join("copy-gen.sh");
+    let log = ws.join("calls.log");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\necho call >> '{log}'\nn=$(wc -l < '{log}')\n\
+             cat > '{ws}/prompt-'$n'.txt'\n\
+             if [ \"$n\" -eq 1 ]; then\nprintf '    \"x\"\\n'\nelse\nprintf '    n * 2\\n'\nfi\n",
+            log = log.display(),
+            ws = ws.display()
+        ),
+        0o755,
+    );
+    let mut cmd = repair_with_generator(&ws, &gen, "120000");
+    cmd.args(["--symbol", "double", "--budget", "12", "--json"]);
+    let (code, stdout, said, _) = run_guarded(
+        &ws,
+        &mut cmd,
+        std::time::Duration::from_secs(180),
+        "the repair did not finish",
+    );
+    assert_eq!(code, Some(0), "{said}");
+    let v: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(v["outcome"], "verified_done", "{said}");
+    let second = std::fs::read_to_string(ws.join("prompt-2.txt")).unwrap();
+    // The block: one line of JSON inside a ```json fence after attempt 1.
+    let block = second
+        .split("Attempt 1 was REJECTED")
+        .nth(1)
+        .and_then(|attempt| attempt.split("```json\n").nth(1))
+        .and_then(|rest| rest.lines().next())
+        .unwrap_or_else(|| panic!("no JSON feedback block in the second prompt:\n{second}"));
+    let fb: serde_json::Value = serde_json::from_str(block)
+        .unwrap_or_else(|e| panic!("the feedback block is not JSON ({e}): {block}"));
+    let d = &fb["diagnostics"][0];
+    assert_eq!(d["code"], "E0307", "{block}");
+    assert_eq!(
+        d["file"], "broken.ax",
+        "the target's relative path, no pid: {block}"
+    );
+    // The span is the checker's own (it points at the declared return type
+    // here); what matters is that line AND column arrive as numbers.
+    assert!(d["line"].as_u64().is_some_and(|l| l > 0), "{block}");
+    assert!(d["col"].as_u64().is_some_and(|c| c > 0), "{block}");
+    assert_eq!(d["expected"], "i64", "{block}");
+    assert_eq!(d["found"], "str", "{block}");
+    assert!(!second.contains("cortex-visible"), "{second}");
+    // Grader secrecy: nothing of the hidden check is in any block.
+    for leaked in ["hidden_completion", "double(7)"] {
+        assert!(
+            !block.contains(leaked),
+            "the feedback leaked `{leaked}`: {block}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&ws);
+}

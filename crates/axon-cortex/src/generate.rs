@@ -67,7 +67,7 @@ pub enum GenContext {
     /// stands (`visible_now`, `None` when they could not be run).
     View {
         view: crate::rank::RankView,
-        visible_now: Option<String>,
+        visible_now: Option<crate::feedback::Feedback>,
     },
     /// The view could not be built — the hidden check's name appears outside
     /// its own definition, or no visible failing check is defined in the
@@ -155,15 +155,12 @@ pub struct RejectedAttempt {
     pub body: String,
     pub reason: RejectionReason,
     /// What the visible side of the workspace said about it — compiler
-    /// diagnostics or visible-check results — bounded to
-    /// [`MAX_FEEDBACK_BYTES`]. Gathered from a file that does not contain
-    /// the hidden check, so none of it can come from the hidden check. `None`
+    /// diagnostics or visible-check results — as data, each field bounded
+    /// ([`crate::feedback`]). Gathered from a file that does not contain the
+    /// hidden check, so none of it can come from the hidden check. `None`
     /// when nothing could be gathered (and then nothing is invented).
-    pub feedback: Option<String>,
+    pub feedback: Option<crate::feedback::Feedback>,
 }
-
-/// Upper bound on the feedback carried per rejected attempt.
-pub const MAX_FEEDBACK_BYTES: usize = 2048;
 
 /// A generated body, plus WHO generated it.
 ///
@@ -305,7 +302,7 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
                     "With that attempt applied, the visible tests reported"
                 }
             };
-            history.push_str(&format!("{label}:\n```\n{}\n```\n", f.trim_end()));
+            history.push_str(&format!("{label} (JSON):\n```json\n{}\n```\n", f.to_json()));
         }
     }
     if !history.is_empty() {
@@ -331,11 +328,12 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
             let names: Vec<&str> = view.failing.iter().map(|(n, _)| n.as_str()).collect();
             let tests: Vec<&str> = view.failing.iter().map(|(_, b)| b.trim_end()).collect();
             let now = visible_now
-                .as_deref()
-                .map(|t| {
+                .as_ref()
+                .map(|f| {
                     format!(
-                        "What the visible tests report on the file as it stands:\n```\n{}\n```\n\n",
-                        t.trim_end()
+                        "What the visible tests report on the file as it stands (JSON):\n\
+                         ```json\n{}\n```\n\n",
+                        f.to_json()
                     )
                 })
                 .unwrap_or_default();
