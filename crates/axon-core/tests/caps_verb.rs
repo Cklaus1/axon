@@ -458,3 +458,184 @@ fn main() { let _ = reader(1) }
         .collect();
     assert_eq!(outside, ["fs:write"]);
 }
+
+// ── User code the interpreter runs WITHOUT a call to it in the fn's body ────
+//
+// Each route below is a place the interpreter invokes user code implicitly:
+// a refinement predicate at a `let`/param/return/field coercion, a struct's
+// whole-type refinement at construction, an `@[verify]` predicate at return,
+// and the metric an `@[goal]` fn's call optimises. Every test first RUNS the
+// program and checks the helper's file really was written (so the route is
+// live, not hypothetical), then asks `axon caps --fn double`. Red before the
+// fix: every one reported `"capabilities":[],"effects":[]` (Main's review,
+// route c6 first), so a fence built from a pristine `double` that only
+// reached `append_file` through a predicate denied nothing it needed, and a
+// candidate that ADDED such a predicate passed the static excess check.
+
+/// The helper every route reaches, and a predicate that calls it.
+const LEAK: &str = r#"
+fn w(x: i64) -> i64 {
+    let _ = append_file("MARK", "x")
+    x
+}
+fn leak(v: i64) -> bool {
+    w(v) == v
+}
+"#;
+
+const RUN_DOUBLE: &str = "\nfn main() {\n    println(to_str(double(3)))\n}\n";
+
+/// Run `LEAK + body + main`, assert the route really writes, then return
+/// `axon caps --fn double`'s report.
+fn implicit_route(tag: &str, body: &str) -> serde_json::Value {
+    let d = tmp(tag);
+    let mark = d.join("written.W");
+    let src = format!(
+        "{}{body}{RUN_DOUBLE}",
+        LEAK.replace("MARK", &mark.display().to_string())
+    );
+    let f = write(&d, "p.ax", &src);
+    let run = Command::new(axon())
+        .arg("run")
+        .arg(&f)
+        .env("XDG_CACHE_HOME", d.join("cache"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "{tag}: the route must run: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(
+        mark.exists(),
+        "{tag}: the interpreter did not run the helper — the route is not live"
+    );
+    let (code, out, err) = caps(&f, Some("double"));
+    assert_eq!(code, 0, "{tag}: {err}");
+    report(&out)
+}
+
+fn assert_reaches_the_write(tag: &str, r: &serde_json::Value) {
+    assert_eq!(strings(r, "capabilities"), ["fs:write"], "{tag}: {r}");
+    assert_eq!(strings(r, "effects"), ["IO"], "{tag}: {r}");
+}
+
+#[test]
+fn a_refinement_predicate_at_a_let_annotation_is_reached() {
+    let r = implicit_route(
+        "refine_let",
+        "type Lk = i64 where leak(_)\nfn double(n: i64) -> i64 {\n    let y: Lk = n\n    y * 2\n}\n",
+    );
+    assert_reaches_the_write("refine_let", &r);
+}
+
+#[test]
+fn a_refinement_predicate_at_a_helpers_parameter_is_reached() {
+    let r = implicit_route(
+        "refine_param",
+        "type Lk = i64 where leak(_)\nfn twice(y: Lk) -> i64 {\n    y * 2\n}\n\
+         fn double(n: i64) -> i64 {\n    twice(n)\n}\n",
+    );
+    assert_reaches_the_write("refine_param", &r);
+}
+
+#[test]
+fn a_refinement_predicate_on_the_return_type_is_reached() {
+    let r = implicit_route(
+        "refine_ret",
+        "type Lk = i64 where leak(_)\nfn double(n: i64) -> Lk {\n    n * 2\n}\n",
+    );
+    assert_reaches_the_write("refine_ret", &r);
+}
+
+#[test]
+fn an_inline_parameter_refinement_is_reached() {
+    let r = implicit_route(
+        "refine_inline",
+        "fn double(n: i64 where leak(n)) -> i64 {\n    n * 2\n}\n",
+    );
+    assert_reaches_the_write("refine_inline", &r);
+}
+
+#[test]
+fn a_refined_struct_field_is_checked_at_construction_and_reached() {
+    let r = implicit_route(
+        "refine_field",
+        "type Lk = i64 where leak(_)\ntype Box = { v: Lk }\n\
+         fn double(n: i64) -> i64 {\n    let b = Box { v: n }\n    b.v * 2\n}\n",
+    );
+    assert_reaches_the_write("refine_field", &r);
+}
+
+#[test]
+fn a_whole_struct_refinement_is_reached() {
+    let r = implicit_route(
+        "refine_struct",
+        "type Pair = { lo: i64, hi: i64 } where leak(_.lo)\n\
+         fn double(n: i64) -> i64 {\n    let p = Pair { lo: n, hi: n }\n    p.lo * 2\n}\n",
+    );
+    assert_reaches_the_write("refine_struct", &r);
+}
+
+#[test]
+fn a_verify_predicate_is_reached() {
+    let r = implicit_route(
+        "verify",
+        "@[verify(leak(value))]\nfn double(n: i64) -> i64 {\n    n * 2\n}\n",
+    );
+    assert_reaches_the_write("verify", &r);
+}
+
+#[test]
+fn the_metric_of_a_goal_fn_is_reached() {
+    let r = implicit_route(
+        "goal",
+        "@[adaptive]\nfn score(x: i64) -> i64 {\n    let _ = w(x)\n    x\n}\n\
+         @[goal(metric: score, target: 5.0, max_evals: 2)]\nfn tune() -> i64 {\n    0\n}\n\
+         fn double(n: i64) -> i64 {\n    let _ = tune()\n    n * 2\n}\n",
+    );
+    assert_reaches_the_write("goal", &r);
+}
+
+/// The walker is `@[contained]`'s own, so the same predicate is a violation
+/// to `axon check`: before the fix it passed with exit 0 and the run wrote
+/// the file.
+#[test]
+fn contained_refuses_a_write_reached_through_a_refinement_predicate() {
+    let d = tmp("contained_refine");
+    let src = format!(
+        "{}type Lk = i64 where leak(_)\n\
+         @[contained(fs: [], net: [], exec: none)]\n\
+         fn double(n: i64) -> i64 {{\n    let y: Lk = n\n    y * 2\n}}\n{RUN_DOUBLE}",
+        LEAK.replace("MARK", &d.join("w.W").display().to_string())
+    );
+    let f = write(&d, "p.ax", &src);
+    let out = Command::new(axon()).arg("check").arg(&f).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("E1001"), "{text}");
+}
+
+/// A predicate whose helper annotates a binding with the predicate's own type
+/// is a cycle the walk must cut (each type is walked once per path), and the
+/// write behind it is still reported. Walker-level: the program never runs.
+#[test]
+fn a_predicate_that_mentions_its_own_type_terminates_and_is_reached() {
+    let src = r#"
+fn leak(v: i64) -> bool {
+    let again: Lk = v
+    let _ = append_file("/nonexistent/x", "x")
+    again == v
+}
+type Lk = i64 where leak(_)
+fn double(n: i64) -> i64 {
+    let y: Lk = n
+    y * 2
+}
+"#;
+    let program = axon_core::parse_source(src).unwrap();
+    let r = axon_core::capabilities::reachable_capabilities(&program, Some("double")).unwrap();
+    assert_eq!(r.capabilities.into_iter().collect::<Vec<_>>(), ["fs:write"]);
+    assert!(!r.unknown);
+}
