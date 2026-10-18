@@ -161,12 +161,19 @@ impl Feedback {
             }
         }
         let mut note = format!("{} failed, {passed} passed", failed.len());
-        let lines: Vec<String> = printed
+        let mut lines: Vec<String> = printed
             .iter()
             .filter(|l| !l.trim().is_empty())
             .filter_map(|l| clean(l))
-            .take(MAX_PRINTED_LINES)
             .collect();
+        // Lines past the bound are cut AND counted, like every other bound
+        // of the feedback: a generator told nothing was cut reads the tail
+        // it never saw as absent.
+        if lines.len() > MAX_PRINTED_LINES {
+            let cut = u32::try_from(lines.len() - MAX_PRINTED_LINES).unwrap_or(u32::MAX);
+            fb.truncated = fb.truncated.saturating_add(cut);
+            lines.truncate(MAX_PRINTED_LINES);
+        }
         if !lines.is_empty() {
             note.push_str("\nprinted:\n");
             note.push_str(&lines.join("\n"));
@@ -342,5 +349,20 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    /// R4: printed lines past the line bound are counted in `truncated`, not
+    /// dropped silently.
+    #[test]
+    fn printed_lines_past_the_bound_are_counted() {
+        let printed: Vec<String> = (0..100).map(|i| format!("p{i}")).collect();
+        let fb = Feedback::from_tests(&[], 1, &printed, &keep);
+        assert!(
+            fb.truncated >= (100 - MAX_PRINTED_LINES) as u32,
+            "{}",
+            fb.truncated
+        );
+        assert!(fb.note.as_deref().unwrap().contains("p39"));
+        assert!(!fb.note.as_deref().unwrap().contains("p40"));
     }
 }
