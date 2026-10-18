@@ -3081,3 +3081,19 @@ ATTACK_MARKERS.update({
     'M3625': r'ATTACK: a closure the token does not bind verified',
     'M3626': r'ATTACK: verify_triple accepted a module rewritten after approval',
 })
+
+# S1 caps lane (R0a `axon caps`, R0b ambient scope; ids M3720-M3739)
+ATTACK_MARKERS.update({
+    'M3720': r'ATTACK: write_file ran under an empty AXON_ALLOWED_FS_WRITE',
+    'M3721': r'ATTACK: an inner sandbox scoped `\*` widened the ambient AXON_ALLOWED_FS_WRITE= scope',
+    'M3722': r'ATTACK: sandbox_run\(0, …\) re-entered the all-effects ambient handle from an IO-only sandbox',
+    'M3723': r'ATTACK: file_copy ran under an empty AXON_ALLOWED_FS_WRITE',
+    'M3724': r'ATTACK: a compiled binary ran under AXON_ALLOWED_FS_READ= instead of refusing it',
+    'M3725': r'ATTACK: a compiled binary ran under AXON_ALLOWED_FS_WRITE= instead of refusing it',
+    'M3726': r'ATTACK: a compiled binary ran under AXON_ALLOWED_NET= instead of refusing it',
+    'M3727': r'ATTACK: `axon build` emitted a binary while AXON_ALLOWED_FS_READ was set',
+    'M3728': r'ATTACK: refine_let: a write the interpreter runs implicitly is missing from caps',
+    'M3729': r'ATTACK: a computed dispatch target was reported as fully known',
+    'M3730': r'ATTACK: a computed dispatch target was reported as fully known',
+    'M3731': r'ATTACK: --fn via_helper hid the write its helper does',
+})

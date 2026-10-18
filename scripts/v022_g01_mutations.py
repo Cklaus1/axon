@@ -11522,5 +11522,56 @@ EQUIV_RECORD["M3260"] = {
 EQUIVALENT_DID |= {"M3260"}
 RETIRED = LEGACY_EQUIV | EQUIVALENT_DID | set(STALE_REFACTORED)
 
+# ── S1 caps lane (R0a `axon caps`, R0b ambient scope; ids M3720-M3739) ──────────
+# The ambient AXON_ALLOWED_FS_READ / _FS_WRITE / _NET scope (interpreter enforcement, the
+# native/wasi refusal at build and run time) and the static walker behind `axon caps` and
+# @[contained]. Every row is killed by a fail-first test of its item.
+MUTATIONS += [
+    ('M3720', 'R0b SCOPE: an ambient scope variable set to the empty string reads as unset (unrestricted)', 'crates/axon-core/src/interp.rs',
+     '        Some(s) => parse_scope_list(s),',
+     '        Some(s) if s.trim().is_empty() => None,\n        Some(s) => parse_scope_list(s),',
+     'axon-core', '--test ambient_scope', 'fs_write_empty_keeps_the_console_and_refuses_every_write'),
+    ('M3721', 'R0b SCOPE: under a sandbox the program created, the ambient scope is not re-checked', 'crates/axon-core/src/interp/builtins.rs',
+     '                            if sb_handle != 0 {\n                                if let Some(amb) = sbs.first().filter(|a| a.ambient) {',
+     '                            if false && sb_handle != 0 {\n                                if let Some(amb) = sbs.first().filter(|a| a.ambient) {',
+     'axon-core', '--test ambient_scope', 'an_inner_sandbox_cannot_widen_the_ambient_scope'),
+    ('M3722', 'R0b SCOPE: sandbox_run may enter the all-effects ambient handle from a narrower sandbox', 'crates/axon-core/src/interp/builtins.rs',
+     '                            let mut escalated: Vec<&str> = if inner.all_effects {',
+     '                            let mut escalated: Vec<&str> = if false && inner.all_effects {',
+     'axon-core', '--test ambient_scope', 'entering_the_ambient_handle_from_a_narrower_sandbox_is_refused'),
+    ('M3723', "R0b SCOPE: file_copy's destination (its per-argument WRITE) is not checked against the write scope", 'crates/axon-core/src/interp/builtins.rs',
+     '    if let Some(pairs) = caps::classify_call_paths(name) {\n        for (kind, idx) in pairs {',
+     '    if let Some(pairs) = caps::classify_call_paths(name) {\n'
+     '        for (kind, idx) in pairs.into_iter().filter(|(k, _)| !(name == "file_copy" && *k == caps::IoKind::FsWrite)) {',
+     'axon-core', '--test ambient_scope', 'fs_write_empty_keeps_the_console_and_refuses_every_write'),
+    ('M3724', 'R0b NATIVE RUN: a compiled binary runs under AXON_ALLOWED_FS_READ instead of refusing it', 'crates/axon-rt/src/lib.rs',
+     '        (\n            "AXON_ALLOWED_FS_READ",', '        (\n            "AXON_ALLOWED_FS_READ_NOT_THIS",',
+     'axon-core', '--test ambient_scope', 'a_compiled_binary_refuses_the_scope_rather_than_dropping_it'),
+    ('M3725', 'R0b NATIVE RUN: a compiled binary runs under AXON_ALLOWED_FS_WRITE instead of refusing it', 'crates/axon-rt/src/lib.rs',
+     '        (\n            "AXON_ALLOWED_FS_WRITE",', '        (\n            "AXON_ALLOWED_FS_WRITE_NOT_THIS",',
+     'axon-core', '--test ambient_scope', 'a_compiled_binary_refuses_the_scope_rather_than_dropping_it'),
+    ('M3726', 'R0b NATIVE RUN: a compiled binary runs under AXON_ALLOWED_NET instead of refusing it', 'crates/axon-rt/src/lib.rs',
+     '        (\n            "AXON_ALLOWED_NET",', '        (\n            "AXON_ALLOWED_NET_NOT_THIS",',
+     'axon-core', '--test ambient_scope', 'a_compiled_binary_refuses_the_scope_rather_than_dropping_it'),
+    ('M3727', 'R0b NATIVE BUILD: a binary is emitted while an ambient scope variable is set (E0910 dropped)', 'crates/axon-core/src/main.rs',
+     '        "AXON_ALLOWED_FS_READ",\n        "AXON_ALLOWED_FS_WRITE",\n        "AXON_ALLOWED_NET",\n        "AXON_BUDGET_TOKENS",\n    ] {',
+     '        "AXON_BUDGET_TOKENS",\n    ] {',
+     'axon-core', '--test ambient_scope', 'a_compiled_binary_refuses_the_scope_rather_than_dropping_it'),
+    ('M3728', 'R0a CAPS: a refinement predicate the interpreter runs implicitly is not walked', 'crates/axon-core/src/capabilities.rs',
+     '                        work.push(Walk::Expr(&r.predicate));', '                        let _ = &r.predicate;',
+     'axon-core', '--test caps_verb', 'a_refinement_predicate_at_a_let_annotation_is_reached'),
+    ('M3729', 'R0a CAPS: a computed string-dispatch target does not set unknown', 'crates/axon-core/src/capabilities.rs',
+     '                                reach.unknown = true;\n                            }\n                            follow.push(Walk::Report(',
+     '                                reach.unknown = false;\n                            }\n                            follow.push(Walk::Report(',
+     'axon-core', '--test caps_verb', 'a_dynamic_dispatch_target_is_unknown'),
+    ('M3730', 'R0a CAPS: the axon-caps/1 report never carries unknown:true', 'crates/axon-core/src/main.rs',
+     '            reach.unknown,', '            false,',
+     'axon-core', '--test caps_verb', 'a_dynamic_dispatch_target_is_unknown'),
+    ('M3731', 'R0a CAPS: --fn reach stops at the named fn (helpers it calls are not walked)', 'crates/axon-core/src/capabilities.rs',
+     '                if ctx.visited.insert(name) {',
+     '                if ctx.visited.insert(name) && (ctx.reach.is_none() || ctx.visited.len() == 1) {',
+     'axon-core', '--test caps_verb', 'a_helper_reaching_append_file_is_fs_write'),
+]
+
 if __name__ == "__main__":
     main()
