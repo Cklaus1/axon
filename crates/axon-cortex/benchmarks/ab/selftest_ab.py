@@ -84,7 +84,9 @@ sys.exit(2)
 # (exit 0, accepted null).
 FAKE_CORTEX = r'''#!%(py)s
 import json, os, sys
-open(os.environ["FAKE_MARKER"], "a").write("cortex " + " ".join(sys.argv[1:2]) + "\n")
+open(os.environ["FAKE_MARKER"], "a").write(
+    "cortex " + " ".join(sys.argv[1:2]) + " ranker=%%s audit=%%s\n"
+    %% (os.environ.get("CORTEX_RANKER"), os.environ.get("CORTEX_AUDIT")))
 mode = os.environ.get("FAKE_CORTEX_MODE", "exhausted")
 if sys.argv[1] == "locate":
     print(json.dumps({"schema": "cortex-locate/1", "ranked": []}))
@@ -333,6 +335,41 @@ def case_oracle_writes_nothing(env):
            "--spend on a zero-cost control was accepted")
 
 
+def case_control_makes_no_model_call(env):
+    """IA-1: cortex's ranker and audit default to OpenRouter when the env does
+    not name them; a zero-cost arm-B control on a protected set (not ledgered,
+    rows not written) must run with the spectrum ranker and the audit off,
+    whatever it inherits, and a model ranker on it is refused."""
+    ids = json.load(open(env.once_copy))["tasks"][0]["id"]
+    out = os.path.join(env.root, "control", "b.jsonl")
+    model = "openrouter:anthropic/claude-haiku-5.5"
+    for gen in ("oracle", "none"):
+        for inherited in ("", model):
+            open(env.marker, "w").close()
+            p = env.run(env.once_copy, "--arm", "B", "--generator", gen, "--only", ids,
+                        "--out", out, "--ledger", env.ledger,
+                        OPENROUTER_API_KEY="sk-selftest-not-a-key",
+                        CORTEX_RANKER=inherited, CORTEX_AUDIT=inherited)
+            calls = [l for l in env.marked().splitlines() if l.startswith("cortex repair")]
+            expect(p.returncode == 0 and calls
+                   and all(l.endswith("ranker=spectrum audit=off") for l in calls),
+                   f"a {gen} control on a protected set inheriting CORTEX_RANKER={inherited!r} "
+                   f"ran cortex as {calls} (rc {p.returncode} {p.stderr[-300:]})")
+    open(env.marker, "w").close()
+    p = env.run(env.once_copy, "--arm", "B", "--generator", "none", "--only", ids, "--out", out,
+                "--ledger", env.ledger, "--ranker", model, OPENROUTER_API_KEY="sk-selftest-not-a-key")
+    expect(p.returncode != 0 and "PROTECTED SET hard-once" in p.stderr and "--ranker" in p.stderr,
+           f"a model ranker on a protected-set control was not refused: rc {p.returncode} "
+           f"{p.stderr[-300:]}")
+    expect(env.marked() == "", f"the refused control ran cortex: {env.marked()!r}")
+    p = env.run(env.once_copy, "--arm", "B", "--generator", "none", "--only", ids, "--out", out,
+                "--ledger", env.ledger, "--ranker", "spectrum")
+    expect(p.returncode == 0, f"--ranker spectrum on a protected-set control refused: "
+                              f"{p.stderr[-300:]}")
+    expect(not os.path.exists(out) and ledger_rows(env.ledger) == [],
+           "a protected-set control wrote rows or a ledger row")
+
+
 def case_spend_resume(env):
     import protected
     tasks = json.load(open(env.once_copy))["tasks"]
@@ -431,14 +468,22 @@ def _caps_case(axon, label):
     expect(g.get("caps_widened") == ["fs:read"] and g["verified_clean"] is False,
            f"{label}: a final adding read_file to the symbol graded caps_widened="
            f"{g.get('caps_widened')} verified_clean={g['verified_clean']}")
+    # FU-1d: a widened capability counts as a false success (claimed or not).
+    fs = getattr(run_ab, "false_success", None)
+    expect(fs is not None and fs(True, g) is True and fs(False, g) is True,
+           f"{label}: caps_widened={g.get('caps_widened')} does not count as a false success")
     g = run_ab.grade(_caps_task(task, True), given, pristine, axon=axon)
     expect(g.get("caps_widened") == [] and g["verified_clean"] is True,
            f"{label}: the oracle final graded caps_widened={g.get('caps_widened')} "
            f"verified_clean={g['verified_clean']}")
+    expect(fs is not None and fs(True, g) is False,
+           f"{label}: a clean claimed fix counts as a false success")
     if label == "fake axon":
         g = run_ab.grade(_caps_task(task, False), given, reads, axon=axon)
         expect("caps_widened" not in g and g["verified_clean"] is True,
                "a task without caps_strict changed its scoring")
+        expect(fs is not None and fs(True, g) is False,
+               "a task without caps_strict counts a capability gain as a false success")
     shutil.rmtree(os.path.dirname(env_corpus), ignore_errors=True)
 
 
@@ -496,8 +541,9 @@ def case_grade_axon_meta(env):
 
 
 CASES = [case_pins, case_chain, case_duplicate_spend, case_unspent_paid_refused,
-         case_oracle_writes_nothing, case_spend_resume, case_trials, case_caps_strict,
-         case_caps_strict_real_axon, case_integrity_abort, case_grade_axon_meta]
+         case_oracle_writes_nothing, case_control_makes_no_model_call, case_spend_resume,
+         case_trials, case_caps_strict, case_caps_strict_real_axon, case_integrity_abort,
+         case_grade_axon_meta]
 
 FAILS = []
 

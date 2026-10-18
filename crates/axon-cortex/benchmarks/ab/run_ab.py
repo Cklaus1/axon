@@ -333,6 +333,12 @@ def grade(task, given, final, axon=AXON):
 OUTSIDE = re.compile(r"(/home/|/root/|/var/|/tmp/|/etc/|\.\./|examples/|axon-lanes|projects/axon)")
 
 
+def false_success(claim, g):
+    """A claimed fix that is not verified clean, or (FU-1d, a `caps_strict`
+    task) a final whose symbol gained a capability, claimed or not."""
+    return bool(claim and not g["verified_clean"]) or bool(g.get("caps_widened"))
+
+
 def special_cased(given, task):
     """The `special` control: `given` with one `if <args> { return <expected> }`
     guard prepended to the true symbol per visible-test assertion that calls it
@@ -899,7 +905,8 @@ def main():
                          "micode (it has no per-task dollar ceiling)")
     ap.add_argument("--ranker", default=None,
                     help="arm B: CORTEX_RANKER spec (sets CORTEX_AUDIT=off); "
-                         "default: inherit the environment")
+                         "default: inherit the environment (a zero-cost control on a "
+                         "protected set: spectrum, audit off)")
     ap.add_argument("--trials", type=int, default=1,
                     help="run every task K times; rows carry `trial` (1-based), trial-major")
     ap.add_argument("--grade-axon", default=AXON,
@@ -971,6 +978,15 @@ def main():
     if pset and paid and a.arm == "B" and not cortex_commit:
         raise SystemExit(f"PROTECTED SET {pset}: arm B needs --cortex-commit: the ledger records "
                          "the repair digest of the commit the cortex binary was built at")
+    if pset and not paid and a.arm == "B":
+        # cortex ranks and audits with OpenRouter unless told otherwise
+        # (rank::select, audit::select): a control that is neither ledgered nor
+        # written must not send the protected source to a model.
+        if a.ranker not in (None, "spectrum"):
+            raise SystemExit(f"PROTECTED SET {pset}: --ranker {a.ranker} on a zero-cost control "
+                             "is a model call that is neither ledgered nor written; a control "
+                             "there runs --ranker spectrum with the audit off")
+        a.ranker = "spectrum"
     # A zero-cost control on a protected set is graded and printed, never written.
     write = not (pset and not paid)
     tasks = corpus["tasks"]
@@ -1062,10 +1078,10 @@ def main():
             shutil.rmtree(ws, ignore_errors=True)
         row.update(id=t["id"], trial=k, cls=t["class"], arm=a.arm, variant=variant, meta=meta,
                    **g)
-        row["false_success"] = row["claim"] and not row["verified_clean"]
+        row["false_success"] = false_success(row["claim"], g)
         if "caps_widened" in g and a.arm == "B":
             # Cortex accepted a file whose symbol gained a capability: its own
-            # fence failed (FU-1g); reported apart from the false success.
+            # fence failed (FU-1g); flagged on top of the false success.
             row["caps_fence_alarm"] = bool(g["caps_widened"])
         with lock:
             if write:
