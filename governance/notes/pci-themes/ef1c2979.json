@@ -1,0 +1,1 @@
+{"theme": "repair execution bounds", "text": "cortex R2: a check whose output drain could not be joined within the drain grace is reported as 'check output could not be read to EOF within the drain grace' instead of as exceeding the capture bound; it is still a process bound (Bound::Output) and yields no verdict."}
