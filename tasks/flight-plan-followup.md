@@ -41,7 +41,7 @@
 
 **needs-human:** none in this batch. NH-R1 and R6 are separate DRAFT specs, and unattended execution is not authorized.
 
-**[REVISED] markers:** 41. The headline ones:
+**[REVISED] markers:** 57. The headline ones:
 - FU-3's generator remedy reversed (blocker A#1);
 - the `--check` gate stages replaced (blocker D#17);
 - k-trial keying added (blocker D#9);

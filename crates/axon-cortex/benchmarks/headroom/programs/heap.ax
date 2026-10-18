@@ -1,0 +1,160 @@
+// Binary min-heap stored in an array. `size` is the logical length; slots past it are free.
+
+type Heap = { data: [i64], size: i64 }
+
+fn swap(xs: &mut [i64], i: i64, j: i64) {
+    let t = xs[i]
+    xs[i] = xs[j]
+    xs[j] = t
+}
+
+fn sift_up(xs: &mut [i64], i: i64) {
+    if i > 0 && xs[(i - 1) / 2] > xs[i] {
+        swap(&mut xs, i, (i - 1) / 2)
+        sift_up(&mut xs, (i - 1) / 2)
+    }
+}
+
+fn sift_down(xs: &mut [i64], i: i64, n: i64) {
+    let l = 2 * i + 1
+    let small = i
+    if l < n && xs[l] < xs[small] { small = l }
+    if l + 1 < n && xs[l + 1] < xs[small] { small = l + 1 }
+    if small != i {
+        swap(&mut xs, i, small)
+        sift_down(&mut xs, small, n)
+    }
+}
+
+fn empty_heap() -> Heap { Heap { data: [], size: 0 } }
+fn peek(h: Heap) -> Option<i64> { if h.size == 0 { None } else { Some(h.data[0]) } }
+
+fn push(h: Heap, v: i64) -> Heap {
+    let d = h.data
+    if h.size < len(d) { d[h.size] = v } else { d = arr_push(d, v) }
+    sift_up(&mut d, h.size)
+    Heap { data: d, size: h.size + 1 }
+}
+
+// Returns the minimum and the heap without it.
+fn pop(h: Heap) -> Option<(i64, Heap)> {
+    if h.size == 0 { return None }
+    let d = h.data
+    let top = d[0]
+    let n = h.size - 1
+    d[0] = d[n]
+    sift_down(&mut d, 0, n)
+    Some((top, Heap { data: d, size: n }))
+}
+
+fn heapify(xs: &[i64]) -> Heap {
+    let d = xs
+    let n = len(d)
+    let i = n / 2 - 1
+    while i >= 0 {
+        sift_down(&mut d, i, n)
+        i = i - 1
+    }
+    Heap { data: d, size: n }
+}
+
+fn is_min_heap(h: Heap) -> bool {
+    for i in 1..h.size {
+        if h.data[(i - 1) / 2] > h.data[i] { return false }
+    }
+    true
+}
+
+fn heap_sort(xs: &[i64]) -> [i64] {
+    let h = heapify(&xs)
+    let out = []
+    while h.size > 0 {
+        out = arr_push(out, h.data[0])
+        h = match pop(h) { Some(p) => p.1, None => empty_heap() }
+    }
+    out
+}
+
+fn main() {
+    println("smallest: {to_str(heap_sort(&[5, 3, 9, 1])[0])}")
+}
+
+@[test]
+fn test_swap() {
+    let a = [1, 2, 3]
+    swap(&mut a, 0, 2)
+    assert_eq(a[0], 3)
+    assert_eq(a[2], 1)
+}
+
+@[test]
+fn test_sift_up_and_down() {
+    let a = [1, 5, 3, 0]
+    sift_up(&mut a, 3)
+    assert_eq(a[0], 0)
+    assert_eq(a[1], 1)
+    assert_eq(a[3], 5)
+    let b = [9, 2, 4, 3]
+    sift_down(&mut b, 0, 4)
+    assert_eq(b[0], 2)
+    assert_eq(b[1], 3)
+    assert_eq(b[3], 9)
+}
+
+@[test]
+fn test_push_peek() {
+    let h = push(push(push(empty_heap(), 7), 2), 5)
+    assert_eq(h.size, 3)
+    assert_eq(match peek(h) { Some(v) => v, None => -1 }, 2)
+    assert(is_min_heap(h))
+    assert_eq(match peek(empty_heap()) { Some(v) => v, None => -1 }, -1)
+}
+
+@[test]
+fn test_pop() {
+    let h = push(push(push(empty_heap(), 7), 2), 5)
+    let first = match pop(h) { Some(p) => p, None => (-1, empty_heap()) }
+    assert_eq(first.0, 2)
+    assert_eq(first.1.size, 2)
+    assert_eq(match peek(first.1) { Some(v) => v, None => -1 }, 5)
+    assert(match pop(empty_heap()) { Some(_) => false, None => true })
+}
+
+@[test]
+fn test_push_after_pop_reuses_slot() {
+    let h = push(push(empty_heap(), 4), 8)
+    let p = match pop(h) { Some(x) => x, None => (-1, empty_heap()) }
+    let h2 = push(p.1, 1)
+    assert_eq(h2.size, 2)
+    assert_eq(len(h2.data), 2)
+    assert_eq(match peek(h2) { Some(v) => v, None => -1 }, 1)
+}
+
+@[test]
+fn test_heapify() {
+    let h = heapify(&[9, 8, 7, 6, 5, 4, 3])
+    assert_eq(h.size, 7)
+    assert(is_min_heap(h))
+    assert_eq(h.data[0], 3)
+}
+
+@[test]
+fn test_is_min_heap() {
+    assert(is_min_heap(Heap { data: [1, 2, 3], size: 3 }))
+    assert(!is_min_heap(Heap { data: [2, 1, 3], size: 3 }))
+    assert(is_min_heap(Heap { data: [2, 1], size: 1 }))
+}
+
+@[test]
+fn test_heap_sort() {
+    let s = heap_sort(&[5, -1, 3, 3, 0, 12, 7])
+    assert_eq(len(s), 7)
+    assert_eq(s[0], -1)
+    assert_eq(s[1], 0)
+    assert_eq(s[2], 3)
+    assert_eq(s[3], 3)
+    assert_eq(s[4], 5)
+    assert_eq(s[5], 7)
+    assert_eq(s[6], 12)
+    assert_eq(len(heap_sort(&[])), 0)
+}

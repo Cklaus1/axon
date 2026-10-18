@@ -64,9 +64,9 @@ PER_CLASS = int(os.environ.get("PER_CLASS", "12"))
 PER_FILE_CLASS = int(os.environ.get("PER_FILE_CLASS", "1"))
 
 
-def test_results(path):
+def test_results(path, axon=AXON):
     """{name: status} from `axon test --json`, or None if the run did not complete."""
-    _, t = run([AXON, "test", path, "--json"], timeout=120)
+    _, t = run([axon, "test", path, "--json"], timeout=120)
     res, saw = {}, False
     for line in t.splitlines():
         line = line.strip()

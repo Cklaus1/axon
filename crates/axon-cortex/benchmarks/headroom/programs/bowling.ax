@@ -1,0 +1,145 @@
+// Ten-pin bowling: validate a complete game's rolls and score it frame by frame.
+
+fn check_pins(rolls: &[i64]) -> Result<i64, str> {
+    for i in 0..len(rolls) {
+        if rolls[i] < 0 || rolls[i] > 10 { return Err("bad pin count at roll {to_str(i)}") }
+    }
+    Ok(len(rolls))
+}
+
+fn is_strike(rolls: &[i64], i: i64) -> bool { i < len(rolls) && rolls[i] == 10 }
+
+fn is_spare(rolls: &[i64], i: i64) -> bool {
+    !is_strike(&rolls, i) && i + 1 < len(rolls) && rolls[i] + rolls[i + 1] == 10
+}
+
+// Bonus rolls after a 10th-frame strike may not exceed 10 pins unless the first is a strike.
+fn check_tenth_bonus(rolls: &[i64], i: i64) -> Result<i64, str> {
+    if is_strike(&rolls, i) && rolls[i + 1] != 10 && rolls[i + 1] + rolls[i + 2] > 10 {
+        return Err("too many pins in bonus rolls")
+    }
+    Ok(0)
+}
+
+fn frame_scores(rolls: &[i64]) -> Result<[i64], str> {
+    let n = check_pins(&rolls)?
+    let out = []
+    let i = 0
+    for frame in 0..10 {
+        let needed = if is_strike(&rolls, i) || is_spare(&rolls, i) { 3 } else { 2 }
+        if i + needed > n { return Err("incomplete game") }
+        if !is_strike(&rolls, i) && rolls[i] + rolls[i + 1] > 10 {
+            return Err("too many pins in frame {to_str(frame + 1)}")
+        }
+        if frame == 9 {
+            let _bonus_ok = check_tenth_bonus(&rolls, i)?
+            if i + needed != n { return Err("too many rolls") }
+        }
+        let s = 0
+        for k in 0..needed { s = s + rolls[i + k] }
+        out = arr_push(out, s)
+        i = i + if is_strike(&rolls, i) { 1 } else { 2 }
+    }
+    Ok(out)
+}
+
+fn running_totals(frames: &[i64]) -> [i64] {
+    let out = []
+    let t = 0
+    for i in 0..len(frames) {
+        t = t + frames[i]
+        out = arr_push(out, t)
+    }
+    out
+}
+
+fn score(rolls: &[i64]) -> Result<i64, str> {
+    let f = frame_scores(&rolls)?
+    let totals = running_totals(&f)
+    Ok(totals[9])
+}
+
+fn repeat(v: i64, n: i64) -> [i64] {
+    let out = []
+    for i in 0..n { out = arr_push(out, v) }
+    out
+}
+
+fn score_or(rolls: &[i64]) -> i64 { match score(&rolls) { Ok(s) => s, Err(_) => -1 } }
+
+fn err_of(rolls: &[i64]) -> str { match score(&rolls) { Ok(_) => "", Err(e) => e } }
+
+fn example() -> [i64] { [10, 7, 3, 9, 0, 10, 0, 8, 8, 2, 0, 6, 10, 10, 10, 8, 1] }
+
+fn main() {
+    println("example game: {to_str(score_or(&example()))}")
+}
+
+@[test]
+fn test_check_pins() {
+    assert_eq(match check_pins(&[1, 10, 0]) { Ok(n) => n, Err(_) => -1 }, 3)
+    assert(match check_pins(&[3, 11]) { Ok(_) => false, Err(e) => str_eq(e, "bad pin count at roll 1") })
+}
+
+@[test]
+fn test_strike_spare() {
+    let r = [10, 4, 6, 3, 3]
+    assert(is_strike(&r, 0))
+    assert(!is_strike(&r, 1))
+    assert(is_spare(&r, 1))
+    assert(!is_spare(&r, 3))
+    assert(is_spare(&[0, 10], 0))
+}
+
+@[test]
+fn test_frame_scores_example() {
+    let f: [i64] = match frame_scores(&example()) { Ok(v) => v, Err(_) => [] }
+    assert_eq(len(f), 10)
+    assert_eq(f[0], 20)
+    assert_eq(f[1], 19)
+    assert_eq(f[2], 9)
+    assert_eq(f[3], 18)
+    assert_eq(f[7], 30)
+    assert_eq(f[8], 28)
+    assert_eq(f[9], 19)
+}
+
+@[test]
+fn test_running_totals() {
+    let t = running_totals(&[20, 19, 9])
+    assert_eq(t[0], 20)
+    assert_eq(t[1], 39)
+    assert_eq(t[2], 48)
+}
+
+@[test]
+fn test_score_classics() {
+    assert_eq(score_or(&example()), 167)
+    assert_eq(score_or(&repeat(10, 12)), 300)
+    assert_eq(score_or(&repeat(0, 20)), 0)
+    assert_eq(score_or(&repeat(5, 21)), 150)
+    assert_eq(score_or(&repeat(1, 20)), 20)
+}
+
+@[test]
+fn test_tenth_frame() {
+    let open9 = repeat(0, 18)
+    assert_eq(score_or(&arr_push(arr_push(open9, 3), 4)), 7)
+    assert_eq(score_or(&arr_push(arr_push(arr_push(repeat(0, 18), 7), 3), 10)), 20)
+    assert_eq(score_or(&arr_push(arr_push(arr_push(repeat(0, 18), 10), 10), 7)), 27)
+}
+
+@[test]
+fn test_check_tenth_bonus() {
+    assert_eq(match check_tenth_bonus(&[10, 10, 9], 0) { Ok(v) => v, Err(_) => -1 }, 0)
+    assert_eq(match check_tenth_bonus(&[10, 6, 5], 0) { Ok(v) => v, Err(_) => -1 }, -1)
+}
+
+@[test]
+fn test_invalid_games() {
+    assert(str_eq(err_of(&repeat(0, 19)), "incomplete game"))
+    assert(str_eq(err_of(&repeat(0, 21)), "too many rolls"))
+    assert(str_eq(err_of(&[6, 6]), "too many pins in frame 1"))
+    assert(str_eq(err_of(&arr_push(arr_push(arr_push(repeat(0, 18), 10), 6), 5)), "too many pins in bonus rolls"))
+    assert(str_eq(err_of(&[12]), "bad pin count at roll 0"))
+}

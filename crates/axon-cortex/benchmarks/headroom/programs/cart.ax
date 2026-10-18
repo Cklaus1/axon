@@ -1,0 +1,117 @@
+// Shopping cart totals in integer cents: tiered discount, then coupon, then tax.
+
+type Line = { sku: str, unit_cents: i64, qty: i64 }
+type Totals = { subtotal: i64, tier_off: i64, coupon_off: i64, tax: i64, total: i64 }
+
+fn line_total(l: Line) -> Result<i64, str> {
+    if l.qty <= 0 { return Err("bad quantity for {l.sku}") }
+    if l.unit_cents < 0 { return Err("negative price for {l.sku}") }
+    Ok(l.unit_cents * l.qty)
+}
+
+fn subtotal(lines: &[Line]) -> Result<i64, str> {
+    let s = 0
+    for i in 0..len(lines) { s = s + line_total(lines[i])? }
+    Ok(s)
+}
+
+// Rounds n * num / den half up (n, num, den >= 0).
+fn pct_of(n: i64, num: i64, den: i64) -> i64 { (n * num * 2 + den) / (den * 2) }
+
+// 10% off from $100.00, 5% off from $50.00, otherwise nothing.
+fn tier_percent(sub: i64) -> i64 {
+    if sub >= 10000 { 10 } else if sub >= 5000 { 5 } else { 0 }
+}
+
+fn tier_discount(sub: i64) -> i64 { pct_of(sub, tier_percent(sub), 100) }
+
+fn coupon_discount(amount: i64, pct: i64 where pct >= 0 && pct <= 100) -> i64 { pct_of(amount, pct, 100) }
+
+// Tax rate in basis points (825 = 8.25%).
+fn tax_on(amount: i64, rate_bps: i64) -> i64 { pct_of(amount, rate_bps, 10000) }
+
+fn checkout(lines: &[Line], coupon_pct: i64 where coupon_pct >= 0 && coupon_pct <= 100, rate_bps: i64) -> Result<Totals, str> {
+    let sub = subtotal(&lines)?
+    let t_off = tier_discount(sub)
+    let c_off = coupon_discount(sub - t_off, coupon_pct)
+    let taxable = sub - t_off - c_off
+    let tax = tax_on(taxable, rate_bps)
+    Ok(Totals { subtotal: sub, tier_off: t_off, coupon_off: c_off, tax: tax, total: taxable + tax })
+}
+
+fn total_or(lines: &[Line], coupon_pct: i64 where coupon_pct >= 0 && coupon_pct <= 100, rate_bps: i64) -> i64 {
+    match checkout(&lines, coupon_pct, rate_bps) {
+        Ok(t) => t.total
+        Err(_) => -1
+    }
+}
+
+fn basket() -> [Line] {
+    [Line { sku: "mug", unit_cents: 1299, qty: 2 }, Line { sku: "tea", unit_cents: 850, qty: 3 }, Line { sku: "pot", unit_cents: 4500, qty: 1 }]
+}
+
+fn main() {
+    println("total: {to_str(total_or(&basket(), 15, 825))} cents")
+}
+
+@[test]
+fn test_line_total() {
+    assert_eq(match line_total(Line { sku: "a", unit_cents: 250, qty: 4 }) { Ok(v) => v, Err(_) => -1 }, 1000)
+    assert(match line_total(Line { sku: "a", unit_cents: 250, qty: 0 }) { Ok(_) => false, Err(e) => str_eq(e, "bad quantity for a") })
+    assert(match line_total(Line { sku: "b", unit_cents: -1, qty: 1 }) { Ok(_) => false, Err(e) => str_eq(e, "negative price for b") })
+}
+
+@[test]
+fn test_subtotal() {
+    assert_eq(match subtotal(&basket()) { Ok(v) => v, Err(_) => -1 }, 2598 + 2550 + 4500)
+    let none: [Line] = []
+    assert_eq(match subtotal(&none) { Ok(v) => v, Err(_) => -1 }, 0)
+    assert_eq(match subtotal(&[Line { sku: "z", unit_cents: 1, qty: -1 }]) { Ok(v) => v, Err(_) => -1 }, -1)
+}
+
+@[test]
+fn test_pct_of() {
+    assert_eq(pct_of(1000, 5, 100), 50)
+    assert_eq(pct_of(10, 5, 100), 1)
+    assert_eq(pct_of(9, 5, 100), 0)
+}
+
+@[test]
+fn test_tiers() {
+    assert_eq(tier_percent(4999), 0)
+    assert_eq(tier_percent(5000), 5)
+    assert_eq(tier_percent(10000), 10)
+    assert_eq(tier_discount(9648), 482)
+    assert_eq(tier_discount(20000), 2000)
+}
+
+@[test]
+fn test_coupon_discount() {
+    assert_eq(coupon_discount(9166, 15), 1375)
+    assert_eq(coupon_discount(9166, 0), 0)
+    assert_eq(coupon_discount(9166, 100), 9166)
+}
+
+@[test(should_fail)]
+fn test_coupon_refinement_rejects() {
+    let bad = coupon_discount(1000, 101)
+    assert_eq(bad, 0)
+}
+
+@[test]
+fn test_tax_on() {
+    assert_eq(tax_on(7791, 825), 643)
+    assert_eq(tax_on(10000, 0), 0)
+}
+
+@[test]
+fn test_checkout() {
+    let t = match checkout(&basket(), 15, 825) { Ok(x) => x, Err(_) => Totals { subtotal: 0, tier_off: 0, coupon_off: 0, tax: 0, total: 0 } }
+    assert_eq(t.subtotal, 9648)
+    assert_eq(t.tier_off, 482)
+    assert_eq(t.coupon_off, 1375)
+    assert_eq(t.tax, 643)
+    assert_eq(t.total, 8434)
+    assert_eq(total_or(&basket(), 0, 0), 9166)
+    assert_eq(total_or(&[Line { sku: "x", unit_cents: 5, qty: 0 }], 10, 825), -1)
+}

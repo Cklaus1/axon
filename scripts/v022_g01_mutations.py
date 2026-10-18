@@ -11401,10 +11401,9 @@ MUTATIONS += [
      'axon-cortex', '--test cli', 'kg2_the_generator_deadline_kills_its_whole_job'),
     ('M3602', "KG2: a generator's pipe drains are joined within DRAIN_GRACE, not until a leftover's EOF",
      'crates/axon-cortex/src/generate.rs',
-     '            axon_jobctl::join_within(axon_jobctl::DRAIN_GRACE, vec![out_t, err_t, writer], &stop)\n'
-     '                .into_iter()\n                .map(Option::unwrap_or_default);',
+     '            axon_jobctl::join_within(axon_jobctl::DRAIN_GRACE, vec![out_t, err_t, writer], &stop);',
      '            [out_t, err_t, writer]\n'
-     '                .into_iter()\n                .map(|h| h.join().unwrap_or_default());',
+     '                .into_iter()\n                .map(|h| h.join().ok())\n                .collect::<Vec<_>>();',
      'axon-cortex', '--test cli', 'kg2_a_leftover_holding_the_generators_pipes_does_not_stall_the_loop'),
     ('M3603', "KG3: cortex forwards termination signals to its generator jobs", 'crates/axon-cortex/src/bin/cortex.rs',
      '    axon_jobctl::forward_termination_signals(axon_jobctl::OnSignal::Die);\n    // R3: `--deadline-ms`',
@@ -11517,9 +11516,9 @@ MUTATIONS += [
      '            exit_code: code,',
      '            exit_code: verdict(&outcome, &check).0,',
      'axon-cortex', '--test cli', 'r5_a_lost_adjudication_fails_closed_and_its_label_row_says_so'),
-    ('M3714', "S1 R5 settle: a run R5 refuses leaves the unaccepted file in place (no restore)", _S1B,
-     '        let _ = std::fs::write(path, original);',
-     '        let _ = (path, original);',
+    ('M3714', "S1 R5 settle x FU-4 (a): a run R5 refuses leaves the unaccepted file it wrote in place (no restore)", _S1B,
+     '    std::fs::write(path, original)\n        .map(|()| true)',
+     '    Ok::<(), std::io::Error>(())\n        .map(|()| true)',
      'axon-cortex', '--bin cortex', 'tests::a_refused_settle_restores_the_file_as_found'),
     ('M3715', "S1 R5 x walk: a run R5 failed closed still reports what ended a walk whose adjudication it kept", _S1B,
      '    let stopped_by = stopped_by.filter(|_| code == 27);',
@@ -11611,6 +11610,122 @@ MUTATIONS += [
      '                if ctx.visited.insert(name) {',
      '                if ctx.visited.insert(name) && (ctx.reach.is_none() || ctx.visited.len() == 1) {',
      'axon-core', '--test caps_verb', 'a_helper_reaching_append_file_is_fs_write'),
+]
+
+# ── FU-3/FU-6/FU-7/FU-4 cortex follow-ups (tasks/followup-spec.md; ids M3740-M3759) ─────────────
+# FU-3 (O-S1-12): a stopped drain is never complete output. The check side marks a drain the stop
+# flag ended before EOF and refuses it (no verdict); the generator side refuses a DETACHED drain and
+# one stopped while data was still pending (Unavailable), and keeps the bytes of one stopped while
+# idle (the NH1 leftover, M3602's KG2 test).
+_FUG = 'crates/axon-cortex/src/generate.rs'
+MUTATIONS += [
+    ('M3740', "FU-3: a check drain ended by the stop flag is not marked stopped (read as EOF)", _S1R,
+     '                    stopped = true;\n                    break;',
+     '                    stopped = false;\n                    break;',
+     'axon-cortex', '--lib', 'runner::drain_tests::a_drain_stopped_before_eof_is_never_complete_output'),
+    ('M3741', "FU-3: a stopped stdout drain is taken as complete check output", _S1R,
+     '        (Some(o), Some(e)) if !o.stopped && !e.stopped => {',
+     '        (Some(o), Some(e)) if !e.stopped => {',
+     'axon-cortex', '--lib', 'runner::drain_tests::a_drain_stopped_before_eof_is_never_complete_output'),
+    ('M3742', "FU-3: a stopped stderr drain is taken as complete check output", _S1R,
+     '        (Some(o), Some(e)) if !o.stopped && !e.stopped => {',
+     '        (Some(o), Some(e)) if !o.stopped => {',
+     'axon-cortex', '--lib', 'runner::drain_tests::a_drain_stopped_before_eof_is_never_complete_output'),
+    ('M3743', "FU-3: a generator drain stopped with data pending is not marked pending", _FUG,
+     '    unsafe { libc::poll(&mut p, 1, 0) > 0 }',
+     '    unsafe { libc::poll(&mut p, 1, 0) > 0 && false }',
+     'axon-cortex', '--lib', 'generate::drain_tests::a_drain_stopped_with_data_pending_is_not_a_whole_answer'),
+    ('M3744', "FU-3: a pending generator drain is read as the whole answer", _FUG,
+     '        (Some(_), Some(_)) => Err(": it was still being written when the drain grace ran out"),',
+     '        (Some(o), Some(e)) => Ok((o.bytes, e.bytes)),',
+     'axon-cortex', '--lib', 'generate::drain_tests::a_detached_or_pending_drain_is_a_lost_read'),
+    ('M3745', "FU-3: a DETACHED generator drain is read as empty bytes, not Unavailable", _FUG,
+     '        _ => Err(""),',
+     '        _ => Ok((Vec::new(), Vec::new())),',
+     'axon-cortex', '--lib', 'generate::drain_tests::a_detached_or_pending_drain_is_a_lost_read'),
+    # FU-6 (O-S1-04): `--workspace` and a relative `--axon` resolved once after parsing (repair,
+    # locate, grant); a missing path is a usage error.
+    ('M3746', "FU-6: a relative --workspace is passed on unresolved (joined twice by the checks)", _S1B,
+     '    let workspace = canon("--workspace", &workspace);',
+     '    let workspace = {\n        canon("--workspace", &workspace);\n        workspace\n    };',
+     'axon-cortex', '--test cli', 'fu6_a_relative_workspace_and_axon_get_a_real_verdict'),
+    ('M3747', "FU-6: a relative --axon that does not exist is passed on (exit 22), not a usage error", _S1B,
+     '    let axon_bin = if axon_bin.is_relative() && axon_bin.components().count() > 1 {',
+     '    let axon_bin = if false {',
+     'axon-cortex', '--test cli', 'fu6_a_missing_workspace_or_axon_path_is_a_usage_error'),
+    ('M3748', "FU-6: a --workspace or --axon path that does not exist is used as given, not a usage error", _S1B,
+     '        std::fs::canonicalize(p).unwrap_or_else(|e| usage(&format!("{flag} {}: {e}", p.display())))',
+     '        std::fs::canonicalize(p).unwrap_or_else(|_| {\n            let _ = flag;\n            p.to_path_buf()\n        })',
+     'axon-cortex', '--test cli', 'fu6_a_missing_workspace_or_axon_path_is_a_usage_error'),
+    # FU-7 (O-S1-11): locate::fn_body reads a body the way runner::symbol_body does (the lexer's
+    # view), and a source that does not lex has no body.
+    ('M3749', "FU-7: locate reads a body from a source that does not lex", 'crates/axon-cortex/src/locate.rs',
+     '    crate::runner::scan_code(src, |_, _| None::<()>).ok()?;',
+     '    let _ = crate::runner::scan_code(src, |_, _| None::<()>);',
+     'axon-cortex', '--lib', 'locate::fn_body_tests::a_source_that_does_not_lex_has_no_reach'),
+    ('M3750', "FU-7: locate counts raw braces again (a `\"}\"` in a string ends the body)", 'crates/axon-cortex/src/locate.rs',
+     '    crate::runner::symbol_body(src, name).map(|(a, b)| &src[a..b])',
+     '    let at = src.find(&format!("fn {name}("))?;\n    let open = at + src[at..].find(\'{\')?;\n'
+     '    let mut depth = 0usize;\n    for (i, c) in src[open..].char_indices() {\n'
+     '        match c {\n            \'{\' => depth += 1,\n            \'}\' => {\n'
+     '                depth -= 1;\n                if depth == 0 {\n'
+     '                    return Some(&src[open + 1..open + i]);\n                }\n            }\n'
+     '            _ => {}\n        }\n    }\n    None',
+     'axon-cortex', '--lib', 'locate::fn_body_tests::a_brace_in_a_string_does_not_end_the_body'),
+    ('M3751', "FU-7: locate finds `fn NAME(` by raw search (a comment is taken for the definition)", 'crates/axon-cortex/src/locate.rs',
+     '    crate::runner::symbol_body(src, name).map(|(a, b)| &src[a..b])',
+     '    let at = src.find(&format!("fn {name}("))?;\n'
+     '    crate::runner::symbol_body(&src[at..], name).map(|(a, b)| &src[at + a..at + b])',
+     'axon-cortex', '--lib', 'locate::fn_body_tests::a_definition_in_a_comment_is_not_the_function'),
+    # FU-4 (O-S1-13): every restore in `cortex repair` goes through restore_found/restore_read,
+    # restoring only over bytes this run wrote (PatchApplied.after_digest + adjudicated bytes).
+    ('M3752', "FU-4 (c): a restore overwrites bytes another writer left after acceptance", _S1B,
+     '    if !ours.contains(&axon_cortex::content_digest(&now)) {',
+     '    if false && !ours.contains(&axon_cortex::content_digest(&now)) {',
+     'axon-cortex', '--bin cortex', 'tests::fu4_bytes_another_writer_left_are_not_restored_over'),
+    ('M3753', "FU-4 (d): a file that could not be read is restored over anyway", _S1B,
+     '    let now = now.map_err(|e| format!("could not be read; not restored ({e})"))?;',
+     '    let Ok(now) = now else {\n'
+     '        return std::fs::write(path, original)\n'
+     '            .map(|()| true)\n'
+     '            .map_err(|e| e.to_string());\n'
+     '    };',
+     'axon-cortex', '--bin cortex', 'tests::fu4_an_unreadable_file_is_not_restored_over'),
+    ('M3754', "FU-4 (e): a restore whose write fails is reported as done", _S1B,
+     '        .map_err(|e| format!("could not be put back as found: {e}"))',
+     '        .or_else(|_| Ok(true))',
+     'axon-cortex', '--bin cortex', 'tests::fu4_a_failed_restore_write_is_reported'),
+]
+
+# FU core lane (FU-2 predicate routes, FU-5 non-UTF-8 ceiling; ids M3760-M3779)
+MUTATIONS += [
+    ('M3760', 'FU-2 CAPS: the program-wide walkers do not root @[verify] predicates', 'crates/axon-core/src/capabilities.rs',
+     '        roots.extend(f.verify.as_ref().map(|v| &*v.predicate));', '        let _ = &f.verify;',
+     'axon-core', '--test predicate_capability_routes', 'g2_rejects_a_pass_that_adds_a_predicate_route'),
+    ('M3761', 'FU-2 CAPS: the program-wide walkers do not root refinement predicates (named or inline)', 'crates/axon-core/src/capabilities.rs',
+     '        let refines = self.refines.values().map(|r| &*r.predicate);',
+     '        let refines = self.refines.values().map(|r| &*r.predicate).take(0);',
+     'axon-core', '--test predicate_capability_routes', 'g2_rejects_a_pass_that_adds_a_predicate_route'),
+    ('M3762', 'FU-2 CAPS: the program-wide walkers do not root struct whole-type refinements', 'crates/axon-core/src/capabilities.rs',
+     '            .filter_map(|t| t.refinement.as_deref());',
+     '            .filter_map(|t| t.refinement.as_deref())\n            .take(0);',
+     'axon-core', '--test predicate_capability_routes', 'g2_rejects_a_pass_that_adds_a_predicate_route'),
+    ('M3763', 'FU-2 CAPS: program_effect_rows (the manifest effect union) skips the shared roots', 'crates/axon-core/src/capabilities.rs',
+     '        crate::ast::walk_expr(root, &mut visit);',
+     '        if false {\n            crate::ast::walk_expr(root, &mut visit);\n        }',
+     'axon-core', '--test predicate_capability_routes', 'the_effect_union_carries_the_row_a_predicate_route_implies'),
+    ('M3764', 'FU-2 E1004: a native call in a predicate a fn runs escapes its grant check', 'crates/axon-core/src/capabilities.rs',
+     '    push_fn_hooks(fndef, &ctx, &mut work);\n    drain_walk(work, &mut ctx);\n    let called: Vec<&str> = reach',
+     '    drain_walk(work, &mut ctx);\n    let called: Vec<&str> = reach',
+     'axon-core', '--lib', 'capabilities::tests::a_native_call_in_a_used_refinement_needs_the_users_grant_e1004'),
+    ('M3765', 'FU-5 CEILING: the interpreter reads a non-UTF-8 AXON_ALLOWED_EFFECTS as a grant', 'crates/axon-core/src/interp.rs',
+     'it denies every effect");\n            String::new()',
+     'it denies every effect");\n            "IO".to_string()',
+     'axon-core', '--test cli_run', 'a_non_utf8_effect_ceiling_denies_every_effect'),
+    ('M3766', 'FU-5 CEILING: axon test --completion-key-stdin widens a non-UTF-8 AXON_ALLOWED_EFFECTS', 'crates/axon-core/src/main.rs',
+     'it denies every effect");\n                Vec::new()',
+     'it denies every effect");\n                vec!["IO".to_string()]',
+     'axon-core', '--test cli_run', 'a_keyed_test_run_under_a_non_utf8_effect_ceiling_denies_every_effect'),
 ]
 
 if __name__ == "__main__":

@@ -1,0 +1,146 @@
+// Integer histograms: k equal-width bins over [lo, hi), cumulative counts, percentiles.
+
+type Hist = { lo: i64, hi: i64, counts: [i64], outside: i64 }
+
+fn bin_index(v: i64, lo: i64, hi: i64, k: i64) -> Option<i64> {
+    if v < lo || v >= hi { None } else { Some((v - lo) * k / (hi - lo)) }
+}
+
+fn histogram(xs: &[i64], lo: i64, hi: i64, k: i64) -> Result<Hist, str> {
+    if k <= 0 { return Err("need at least one bin") }
+    if hi <= lo { return Err("empty range") }
+    let counts = []
+    for i in 0..k { counts = arr_push(counts, 0) }
+    let outside = 0
+    for i in 0..len(xs) {
+        match bin_index(xs[i], lo, hi, k) {
+            Some(b) => counts[b] = counts[b] + 1
+            None => outside = outside + 1
+        }
+    }
+    Ok(Hist { lo: lo, hi: hi, counts: counts, outside: outside })
+}
+
+fn cumulative(counts: &[i64]) -> [i64] {
+    let out = []
+    let run = 0
+    for i in 0..len(counts) {
+        run = run + counts[i]
+        out = arr_push(out, run)
+    }
+    out
+}
+
+// Lower edge of bin i (floored), so bin i covers [bin_start(i), bin_start(i + 1)).
+fn bin_start(h: Hist, i: i64) -> i64 { h.lo + i * (h.hi - h.lo) / len(h.counts) }
+
+// First bin whose cumulative share reaches p percent of the in-range values.
+fn percentile_bin(h: Hist, p: i64 where p >= 0 && p <= 100) -> Option<i64> {
+    let cum = cumulative(&h.counts)
+    let total = cum[len(cum) - 1]
+    if total == 0 { return None }
+    for i in 0..len(cum) {
+        if cum[i] * 100 >= p * total && cum[i] > 0 { return Some(i) }
+    }
+    None
+}
+
+// Nearest-rank percentile: index into the sorted data (0-based).
+fn percentile_index(n: i64, p: i64 where p >= 0 && p <= 100) -> Option<i64> {
+    if n == 0 { return None }
+    let rank = (p * n + 99) / 100
+    Some(max_i64(rank, 1) - 1)
+}
+
+fn percentile_value(xs: &[i64], p: i64 where p >= 0 && p <= 100) -> Option<i64> {
+    let sorted = arr_sort_by(xs, |a, b| a - b)
+    match percentile_index(len(sorted), p) {
+        Some(i) => Some(sorted[i])
+        None => None
+    }
+}
+
+fn sample() -> [i64] { [3, 7, 12, 15, 18, 22, 27, 31, 45, 49, -1, 50] }
+
+fn hist_or_empty(xs: &[i64], lo: i64, hi: i64, k: i64) -> Hist {
+    match histogram(&xs, lo, hi, k) {
+        Ok(h) => h
+        Err(_) => Hist { lo: 0, hi: 0, counts: [], outside: -1 }
+    }
+}
+
+fn main() {
+    let h = hist_or_empty(&sample(), 0, 50, 5)
+    println("first bin: {to_str(h.counts[0])}")
+}
+
+@[test]
+fn test_bin_index() {
+    assert_eq(match bin_index(0, 0, 50, 5) { Some(b) => b, None => -1 }, 0)
+    assert_eq(match bin_index(9, 0, 50, 5) { Some(b) => b, None => -1 }, 0)
+    assert_eq(match bin_index(10, 0, 50, 5) { Some(b) => b, None => -1 }, 1)
+    assert_eq(match bin_index(49, 0, 50, 5) { Some(b) => b, None => -1 }, 4)
+    assert_eq(match bin_index(50, 0, 50, 5) { Some(b) => b, None => -1 }, -1)
+    assert_eq(match bin_index(5, 0, 10, 3) { Some(b) => b, None => -1 }, 1)
+}
+
+@[test]
+fn test_histogram() {
+    let h = hist_or_empty(&sample(), 0, 50, 5)
+    assert_eq(h.counts[0], 2)
+    assert_eq(h.counts[1], 3)
+    assert_eq(h.counts[2], 2)
+    assert_eq(h.counts[3], 1)
+    assert_eq(h.counts[4], 2)
+    assert_eq(h.outside, 2)
+}
+
+@[test]
+fn test_histogram_errors() {
+    assert(match histogram(&sample(), 0, 50, 0) { Ok(_) => false, Err(e) => str_eq(e, "need at least one bin") })
+    assert(match histogram(&sample(), 5, 5, 2) { Ok(_) => false, Err(e) => str_eq(e, "empty range") })
+}
+
+@[test]
+fn test_cumulative() {
+    let c = cumulative(&[2, 3, 2, 1, 2])
+    assert_eq(c[0], 2)
+    assert_eq(c[2], 7)
+    assert_eq(c[4], 10)
+    assert_eq(len(cumulative(&[])), 0)
+}
+
+@[test]
+fn test_bin_start() {
+    let h = hist_or_empty(&sample(), 0, 50, 5)
+    assert_eq(bin_start(h, 0), 0)
+    assert_eq(bin_start(h, 3), 30)
+    assert_eq(bin_start(hist_or_empty(&sample(), 0, 10, 3), 1), 3)
+}
+
+@[test]
+fn test_percentile_bin() {
+    let h = hist_or_empty(&sample(), 0, 50, 5)
+    assert_eq(match percentile_bin(h, 50) { Some(b) => b, None => -1 }, 1)
+    assert_eq(match percentile_bin(h, 51) { Some(b) => b, None => -1 }, 2)
+    assert_eq(match percentile_bin(h, 100) { Some(b) => b, None => -1 }, 4)
+    assert_eq(match percentile_bin(h, 0) { Some(b) => b, None => -1 }, 0)
+    assert_eq(match percentile_bin(hist_or_empty(&[99], 0, 50, 5), 50) { Some(b) => b, None => -1 }, -1)
+}
+
+@[test]
+fn test_percentile_index() {
+    assert_eq(match percentile_index(10, 50) { Some(i) => i, None => -1 }, 4)
+    assert_eq(match percentile_index(10, 95) { Some(i) => i, None => -1 }, 9)
+    assert_eq(match percentile_index(10, 0) { Some(i) => i, None => -1 }, 0)
+    assert_eq(match percentile_index(3, 34) { Some(i) => i, None => -1 }, 1)
+    assert_eq(match percentile_index(0, 50) { Some(i) => i, None => -1 }, -1)
+}
+
+@[test]
+fn test_percentile_value() {
+    assert_eq(match percentile_value(&sample(), 50) { Some(v) => v, None => -999 }, 18)
+    assert_eq(match percentile_value(&sample(), 100) { Some(v) => v, None => -999 }, 50)
+    assert_eq(match percentile_value(&sample(), 1) { Some(v) => v, None => -999 }, -1)
+    assert_eq(match percentile_value(&[], 50) { Some(v) => v, None => -999 }, -999)
+}

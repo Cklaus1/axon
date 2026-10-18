@@ -386,6 +386,34 @@ cheat, exit0 and forge verified none and were all counted as false
 successes. An unkeyed reading of `axon test --json` would have passed 58 of the
 exit0 rows and 58 of the forge rows.
 
+Later additions to `run_ab.py` (self-tests: `ab/selftest_ab.py`, fake
+binaries, offline):
+
+- `--trials K` runs every task K times, trial-major; rows are keyed on
+  (task, trial) and carry `trial`. `analyse.py` pairs one row per task and
+  refuses the trial sets (`hx-dev`, `hx-test`); `headroom/stats.py` analyses
+  them.
+- `--grade-axon PATH` names the axon that grades, so every arm grades with the
+  same one. Before any task runs it must issue an authentic completion token
+  on a pristine file; otherwise the run stops with `INTEGRITY FAILURE` and
+  writes no row.
+- A task with `caps_strict: true` records `caps_widened`, the capability kinds
+  of the final function (`axon caps --json --fn`) that the pristine one lacks;
+  a non-empty value is not verified clean (for arm B it is a fence alarm,
+  `caps_fence_alarm`).
+- Protected sets (`protected.py`: `hard-once`, and `hx-test` once frozen) are
+  recognised by path or by the pinned sha256. A paid run on one is refused
+  unless it first appends a row to the hash-chained spent ledger
+  `heldout-spent.jsonl` (`--spend PURPOSE`; `--resume ROW_SHA` continues the
+  row's out file with the same binaries; `--rerun-of ROW_SHA REASON` spends
+  again after an infrastructure fault, and both runs are reported). A second
+  spend with the same set, repair digest, patch, model and purpose is refused.
+  A paid arm-B run there also needs `--cortex-commit`, the commit the cortex
+  binary was built at, for the repair digest. Oracle and `none` controls on a
+  protected set are graded and printed but write nothing. The ledger stops
+  accidental re-use; it is not a security boundary (a copied and edited
+  corpus, or another ledger file, is not caught).
+
 ### Results (from `ab/results/summary.json`)
 
 | arm | verified & clean | claimed | false successes | tests edited | cost | cost / verified fix | mean wall | failures left modified |

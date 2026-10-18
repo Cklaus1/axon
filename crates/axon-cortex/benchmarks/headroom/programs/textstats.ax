@@ -1,0 +1,124 @@
+// Text statistics over ASCII text: words are maximal runs of non-space characters.
+
+fn is_space(c: i64) -> bool { c == 32 || c == 9 || c == 10 }
+
+fn words(s: str) -> [str] {
+    let out = []
+    let start = -1
+    for i in 0..len(s) {
+        let sp = is_space(char_at(s, i))
+        if !sp && start < 0 { start = i }
+        if sp && start >= 0 {
+            out = arr_push(out, str_slice(s, start, i))
+            start = -1
+        }
+    }
+    if start >= 0 { out = arr_push(out, str_slice(s, start, len(s))) }
+    out
+}
+
+fn word_count(s: str) -> i64 { len(words(s)) }
+
+fn longest_word(s: str) -> Option<str> {
+    let ws = words(s)
+    if len(ws) == 0 { return None }
+    let best = ws[0]
+    for i in 1..len(ws) {
+        if len(ws[i]) > len(best) { best = ws[i] }
+    }
+    Some(best)
+}
+
+fn count_char(s: str, ch: str) -> Result<i64, str> {
+    if len(ch) != 1 { return Err("expected one character") }
+    let target = char_at(ch, 0)
+    let n = 0
+    for i in 0..len(s) {
+        if char_at(s, i) == target { n = n + 1 }
+    }
+    Ok(n)
+}
+
+fn capitalize(w: str) -> str {
+    if len(w) == 0 { w } else { str_to_upper(str_slice(w, 0, 1)) + str_to_lower(str_slice(w, 1, len(w))) }
+}
+
+// Capitalizes each word, preserving the original spacing.
+fn capitalize_words(s: str) -> str {
+    let out = ""
+    let at_start = true
+    for i in 0..len(s) {
+        let c = str_slice(s, i, i + 1)
+        if is_space(char_at(s, i)) {
+            out = out + c
+            at_start = true
+        } else {
+            out = out + if at_start { str_to_upper(c) } else { str_to_lower(c) }
+            at_start = false
+        }
+    }
+    out
+}
+
+fn main() {
+    let t = "the quick brown fox"
+    println("{to_str(word_count(t))} words: {capitalize_words(t)}")
+}
+
+@[test]
+fn test_is_space() {
+    assert(is_space(32))
+    assert(!is_space(char_at("x", 0)))
+}
+
+@[test]
+fn test_words() {
+    let ws = words("  hello   big world ")
+    assert_eq(len(ws), 3)
+    assert(str_eq(ws[0], "hello"))
+    assert(str_eq(ws[1], "big"))
+    assert(str_eq(ws[2], "world"))
+}
+
+@[test]
+fn test_word_count() {
+    assert_eq(word_count("one two three"), 3)
+    assert_eq(word_count(""), 0)
+    assert_eq(word_count("   "), 0)
+    assert_eq(word_count("single"), 1)
+}
+
+@[test]
+fn test_longest_word() {
+    assert(match longest_word("a bbb cc dddd ee") { Some(w) => str_eq(w, "dddd"), None => false })
+    assert(match longest_word("tie tie2 xyzw") { Some(w) => str_eq(w, "tie2"), None => false })
+    assert(match longest_word("  ") { Some(_) => false, None => true })
+}
+
+@[test]
+fn test_count_char() {
+    assert_eq(match count_char("banana", "a") { Ok(n) => n, Err(_) => -1 }, 3)
+    assert_eq(match count_char("banana", "z") { Ok(n) => n, Err(_) => -1 }, 0)
+    assert_eq(match count_char("banana", "an") { Ok(n) => n, Err(_) => -1 }, -1)
+}
+
+@[test]
+fn test_capitalize() {
+    assert(str_eq(capitalize("hELLO"), "Hello"))
+    assert(str_eq(capitalize(""), ""))
+    assert(str_eq(capitalize("x"), "X"))
+}
+
+@[test]
+fn test_capitalize_words() {
+    assert(str_eq(capitalize_words("the quick  brown"), "The Quick  Brown"))
+    assert(str_eq(capitalize_words(" mIXED case "), " Mixed Case "))
+    assert(str_eq(capitalize_words(""), ""))
+}
+
+@[test]
+fn test_capitalize_words_matches_capitalize() {
+    let ws = words(capitalize_words("alpha beta"))
+    assert(str_eq(ws[0], capitalize("alpha")))
+    assert(str_eq(ws[1], capitalize("BETA")))
+}

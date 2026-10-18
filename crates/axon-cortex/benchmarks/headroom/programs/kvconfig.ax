@@ -1,0 +1,143 @@
+// In-memory "k=v;k2=v2" configs: parse, lookup with default, merge (right wins), serialize.
+// Parsing and lookup are sandboxed with @[contained] and grant no capabilities at all.
+
+type Entry = { key: str, value: str }
+
+fn find_key(cfg: &[Entry], key: str) -> Option<i64> {
+    for i in 0..len(cfg) {
+        if str_eq(cfg[i].key, key) { return Some(i) }
+    }
+    None
+}
+
+// Inserts or replaces, keeping first-insertion order.
+fn set(cfg: &[Entry], key: str, value: str) -> [Entry] {
+    let idx = match find_key(&cfg, key) { Some(i) => i, None => -1 }
+    let out = cfg
+    if idx >= 0 { out[idx].value = value } else { out = arr_push(out, Entry { key: key, value: value }) }
+    out
+}
+
+@[contained(fs: [], net: [], exec: none)]
+fn parse_pair(part: str) -> Result<Entry, str> {
+    let eq = str_index_of(part, "=")
+    if eq < 0 { return Err("missing '=' in '{part}'") }
+    let key = str_trim(str_slice(part, 0, eq))
+    if len(key) == 0 { return Err("empty key in '{part}'") }
+    Ok(Entry { key: key, value: str_trim(str_slice(part, eq + 1, len(part))) })
+}
+
+@[contained(fs: [], net: [], exec: none)]
+fn parse(text: str) -> Result<[Entry], str> {
+    let cfg = []
+    let parts = str_split(text, ";")
+    for i in 0..len(parts) {
+        if len(str_trim(parts[i])) > 0 {
+            let e = parse_pair(parts[i])?
+            cfg = set(&cfg, e.key, e.value)
+        }
+    }
+    Ok(cfg)
+}
+
+@[contained(fs: [], net: [], exec: none)]
+fn lookup(cfg: &[Entry], key: str, dflt: str) -> str {
+    match find_key(&cfg, key) {
+        Some(i) => cfg[i].value
+        None => dflt
+    }
+}
+
+fn merge(left: &[Entry], right: &[Entry]) -> [Entry] {
+    let out = left
+    for i in 0..len(right) { out = set(&out, right[i].key, right[i].value) }
+    out
+}
+
+fn serialize(cfg: &[Entry]) -> str {
+    let s = ""
+    for i in 0..len(cfg) {
+        if i > 0 { s = s + ";" }
+        s = s + cfg[i].key + "=" + cfg[i].value
+    }
+    s
+}
+
+fn parsed(text: str) -> [Entry] {
+    match parse(text) {
+        Ok(c) => c
+        Err(_) => []
+    }
+}
+
+fn main() {
+    let cfg = merge(&parsed("host=localhost;port=80"), &parsed("port=8080"))
+    println(serialize(&cfg))
+}
+
+@[test]
+fn test_find_key() {
+    let c = parsed("a=1;b=2")
+    assert_eq(match find_key(&c, "b") { Some(i) => i, None => -1 }, 1)
+    assert_eq(match find_key(&c, "z") { Some(i) => i, None => -1 }, -1)
+}
+
+@[test]
+fn test_set() {
+    let c = set(&parsed("a=1;b=2"), "a", "9")
+    assert_eq(len(c), 2)
+    assert(str_eq(lookup(&c, "a", "?"), "9"))
+    let d = set(&c, "c", "3")
+    assert_eq(len(d), 3)
+    assert(str_eq(d[2].key, "c"))
+}
+
+@[test]
+fn test_parse_pair() {
+    assert(match parse_pair(" name = Ada ") { Ok(e) => str_eq(e.key, "name") && str_eq(e.value, "Ada"), Err(_) => false })
+    assert(match parse_pair("k=") { Ok(e) => len(e.value) == 0, Err(_) => false })
+    assert(match parse_pair("novalue") { Ok(_) => false, Err(e) => str_eq(e, "missing '=' in 'novalue'") })
+    assert(match parse_pair("=x") { Ok(_) => false, Err(e) => str_eq(e, "empty key in '=x'") })
+}
+
+@[test]
+fn test_parse() {
+    let c = parsed("host=example.org; port = 443 ;;mode=a=b;")
+    assert_eq(len(c), 3)
+    assert(str_eq(lookup(&c, "port", "?"), "443"))
+    assert(str_eq(lookup(&c, "mode", "?"), "a=b"))
+    assert_eq(len(parsed("")), 0)
+}
+
+@[test]
+fn test_parse_duplicates_and_errors() {
+    let c = parsed("x=1;y=2;x=3")
+    assert_eq(len(c), 2)
+    assert(str_eq(lookup(&c, "x", "?"), "3"))
+    assert(match parse("a=1;oops") { Ok(_) => false, Err(e) => str_eq(e, "missing '=' in 'oops'") })
+}
+
+@[test]
+fn test_lookup_default() {
+    let c = parsed("a=1")
+    assert(str_eq(lookup(&c, "a", "d"), "1"))
+    assert(str_eq(lookup(&c, "b", "d"), "d"))
+}
+
+@[test]
+fn test_merge_right_wins() {
+    let m = merge(&parsed("host=localhost;port=80;debug=no"), &parsed("port=8080;user=root"))
+    assert_eq(len(m), 4)
+    assert(str_eq(lookup(&m, "port", "?"), "8080"))
+    assert(str_eq(lookup(&m, "host", "?"), "localhost"))
+    assert(str_eq(lookup(&m, "user", "?"), "root"))
+}
+
+@[test]
+fn test_serialize_round_trip() {
+    let m = merge(&parsed("host=localhost;port=80"), &parsed("port=8080"))
+    assert(str_eq(serialize(&m), "host=localhost;port=8080"))
+    assert(str_eq(serialize(&parsed(" b = 2 ; a=1")), "b=2;a=1"))
+    assert(str_eq(serialize(&parsed(serialize(&m))), serialize(&m)))
+    assert(str_eq(serialize(&parsed("")), ""))
+}

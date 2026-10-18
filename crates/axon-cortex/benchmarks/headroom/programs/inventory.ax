@@ -1,0 +1,133 @@
+// Inventory: stock levels with non-negative quantities, value and low-stock queries.
+// Prices are integer cents.
+
+type Item = { name: str, qty: i64, price: i64 }
+
+fn find_index(items: &[Item], name: str) -> Option<i64> {
+    for i in 0..len(items) {
+        if str_eq(items[i].name, name) { return Some(i) }
+    }
+    None
+}
+
+fn add_stock(items: &mut [Item], name: str, amount: i64) -> Result<i64, str> {
+    if amount <= 0 { return Err("amount must be positive") }
+    match find_index(&items, name) {
+        Some(i) => {
+            items[i].qty = items[i].qty + amount
+            Ok(items[i].qty)
+        }
+        None => Err("unknown item")
+    }
+}
+
+fn remove_stock(items: &mut [Item], name: str, amount: i64) -> Result<i64, str> {
+    if amount <= 0 { return Err("amount must be positive") }
+    match find_index(&items, name) {
+        Some(i) => {
+            if items[i].qty < amount { return Err("insufficient stock") }
+            items[i].qty = items[i].qty - amount
+            Ok(items[i].qty)
+        }
+        None => Err("unknown item")
+    }
+}
+
+fn item_value(it: Item) -> i64 { it.qty * it.price }
+
+fn total_value(items: &[Item]) -> i64 {
+    let total = 0
+    for i in 0..len(items) { total = total + item_value(items[i]) }
+    total
+}
+
+fn low_stock(items: &[Item], threshold: i64) -> [str] {
+    let out = []
+    for i in 0..len(items) {
+        if items[i].qty < threshold { out = arr_push(out, items[i].name) }
+    }
+    out
+}
+
+fn sample() -> [Item] {
+    [
+        Item { name: "bolt", qty: 100, price: 5 },
+        Item { name: "nut", qty: 3, price: 2 },
+        Item { name: "gear", qty: 7, price: 250 },
+        Item { name: "belt", qty: 0, price: 900 }
+    ]
+}
+
+fn main() {
+    let inv = sample()
+    println("total value: {to_str(total_value(&inv))}")
+}
+
+@[test]
+fn test_find_index() {
+    let inv = sample()
+    assert_eq(match find_index(&inv, "gear") { Some(i) => i, None => -1 }, 2)
+    assert_eq(match find_index(&inv, "spring") { Some(i) => i, None => -1 }, -1)
+}
+
+@[test]
+fn test_add_stock() {
+    let inv = sample()
+    assert_eq(match add_stock(&mut inv, "nut", 10) { Ok(q) => q, Err(_) => -1 }, 13)
+    assert_eq(inv[1].qty, 13)
+}
+
+@[test]
+fn test_add_stock_rejects() {
+    let inv = sample()
+    assert(match add_stock(&mut inv, "nut", 0) { Ok(_) => false, Err(e) => str_eq(e, "amount must be positive") })
+    assert(match add_stock(&mut inv, "cog", 4) { Ok(_) => false, Err(e) => str_eq(e, "unknown item") })
+    assert_eq(inv[1].qty, 3)
+}
+
+@[test]
+fn test_remove_stock() {
+    let inv = sample()
+    assert_eq(match remove_stock(&mut inv, "bolt", 40) { Ok(q) => q, Err(_) => -1 }, 60)
+    assert_eq(match remove_stock(&mut inv, "gear", 7) { Ok(q) => q, Err(_) => -1 }, 0)
+}
+
+@[test]
+fn test_remove_never_negative() {
+    let inv = sample()
+    assert(match remove_stock(&mut inv, "nut", 4) { Ok(_) => false, Err(e) => str_eq(e, "insufficient stock") })
+    assert_eq(inv[1].qty, 3)
+    assert(match remove_stock(&mut inv, "nut", -2) { Ok(_) => false, Err(_) => true })
+}
+
+@[test]
+fn test_item_value() {
+    assert_eq(item_value(Item { name: "x", qty: 4, price: 25 }), 100)
+}
+
+@[test]
+fn test_total_value() {
+    let inv = sample()
+    assert_eq(total_value(&inv), 500 + 6 + 1750)
+    let e: [Item] = []
+    assert_eq(total_value(&e), 0)
+}
+
+@[test]
+fn test_low_stock() {
+    let inv = sample()
+    let low = low_stock(&inv, 5)
+    assert_eq(len(low), 2)
+    assert(str_eq(low[0], "nut"))
+    assert(str_eq(low[1], "belt"))
+    assert_eq(len(low_stock(&inv, 0)), 0)
+}
+
+@[test]
+fn test_value_after_changes() {
+    let inv = sample()
+    assert_eq(match add_stock(&mut inv, "belt", 2) { Ok(q) => q, Err(_) => -1 }, 2)
+    assert_eq(match remove_stock(&mut inv, "bolt", 100) { Ok(q) => q, Err(_) => -1 }, 0)
+    assert_eq(total_value(&inv), 6 + 1750 + 1800)
+    assert_eq(len(low_stock(&inv, 1)), 1)
+}

@@ -1,0 +1,132 @@
+// Integer polynomials as coefficient vectors, lowest degree first: [c0, c1, c2] = c0 + c1 x + c2 x^2.
+
+fn trim(p: &[i64]) -> [i64] {
+    let n = len(p)
+    while n > 0 && p[n - 1] == 0 { n = n - 1 }
+    let out = []
+    for i in 0..n { out = arr_push(out, p[i]) }
+    out
+}
+
+fn degree(p: &[i64]) -> Option<i64> {
+    let t = trim(&p)
+    if len(t) == 0 { None } else { Some(len(t) - 1) }
+}
+
+fn eval(p: &[i64], x: i64) -> i64 {
+    let acc = 0
+    let i = len(p) - 1
+    while i >= 0 {
+        acc = acc * x + p[i]
+        i = i - 1
+    }
+    acc
+}
+
+fn derivative(p: &[i64]) -> [i64] {
+    let out = []
+    for i in 1..len(p) { out = arr_push(out, p[i] * i) }
+    trim(&out)
+}
+
+fn coeff(p: &[i64], i: i64) -> i64 { if i < len(p) { p[i] } else { 0 } }
+
+fn add(a: &[i64], b: &[i64]) -> [i64] {
+    let n = max_i64(len(a), len(b))
+    let out = []
+    for i in 0..n { out = arr_push(out, coeff(&a, i) + coeff(&b, i)) }
+    trim(&out)
+}
+
+fn multiply(a: &[i64], b: &[i64]) -> [i64] {
+    if len(a) == 0 || len(b) == 0 { return [] }
+    let out = []
+    for k in 0..(len(a) + len(b) - 1) { out = arr_push(out, 0) }
+    for i in 0..len(a) {
+        for j in 0..len(b) { out[i + j] = out[i + j] + a[i] * b[j] }
+    }
+    trim(&out)
+}
+
+fn same(a: &[i64], b: &[i64]) -> bool {
+    let x = trim(&a)
+    let y = trim(&b)
+    if len(x) != len(y) { return false }
+    for i in 0..len(x) {
+        if x[i] != y[i] { return false }
+    }
+    true
+}
+
+fn main() {
+    let p = [1, 2, 3]
+    println("p(2) = {to_str(eval(&p, 2))}")
+}
+
+@[test]
+fn test_trim() {
+    assert_eq(len(trim(&[1, 2, 0, 0])), 2)
+    assert_eq(len(trim(&[0, 0])), 0)
+    assert_eq(len(trim(&[0, 5])), 2)
+}
+
+@[test]
+fn test_degree() {
+    assert_eq(match degree(&[1, 2, 3]) { Some(d) => d, None => -1 }, 2)
+    assert_eq(match degree(&[7, 0, 0]) { Some(d) => d, None => -1 }, 0)
+    assert_eq(match degree(&[0]) { Some(d) => d, None => -1 }, -1)
+}
+
+@[test]
+fn test_eval() {
+    assert_eq(eval(&[1, 2, 3], 2), 17)
+    assert_eq(eval(&[-4, 0, 1], 3), 5)
+    assert_eq(eval(&[5], 100), 5)
+    assert_eq(eval(&[], 9), 0)
+    assert_eq(eval(&[0, 0, 0, 1], -2), -8)
+}
+
+@[test]
+fn test_derivative() {
+    assert(same(&derivative(&[1, 2, 3]), &[2, 6]))
+    assert(same(&derivative(&[4, 0, 0, 5]), &[0, 0, 15]))
+    assert_eq(len(derivative(&[9])), 0)
+}
+
+@[test]
+fn test_coeff() {
+    assert_eq(coeff(&[1, 2], 1), 2)
+    assert_eq(coeff(&[1, 2], 5), 0)
+}
+
+@[test]
+fn test_add() {
+    assert(same(&add(&[1, 2], &[3, 4, 5]), &[4, 6, 5]))
+    assert(same(&add(&[1, 2, 3], &[0, 0, -3]), &[1, 2]))
+    assert_eq(len(add(&[1], &[-1])), 0)
+}
+
+@[test]
+fn test_multiply() {
+    assert(same(&multiply(&[1, 1], &[1, 1]), &[1, 2, 1]))
+    assert(same(&multiply(&[-1, 1], &[1, 1]), &[-1, 0, 1]))
+    assert(same(&multiply(&[2], &[3, 4]), &[6, 8]))
+    assert_eq(len(multiply(&[], &[3, 4])), 0)
+}
+
+@[test]
+fn test_same() {
+    assert(same(&[1, 2, 0], &[1, 2]))
+    assert(!same(&[1, 2], &[1, 3]))
+    assert(!same(&[1], &[1, 1]))
+}
+
+@[test]
+fn test_product_rule() {
+    let f = [1, 2]
+    let g = [0, 3, 1]
+    let lhs = derivative(&multiply(&f, &g))
+    let rhs = add(&multiply(&derivative(&f), &g), &multiply(&f, &derivative(&g)))
+    assert(same(&lhs, &rhs))
+    assert_eq(eval(&multiply(&f, &g), 2), eval(&f, 2) * eval(&g, 2))
+}

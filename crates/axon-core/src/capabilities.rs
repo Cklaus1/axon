@@ -363,22 +363,22 @@ pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
         }
     }
     // R13 native FFI: the import/call capability gate (fail-closed, I-11). Any
-    // fn whose body calls a native module `M::*` must declare a matching
+    // fn whose own code calls a native module `M::*` must declare a matching
     // `@[contained(M: …)]` grant; an ungranted call is E1004. This is checked
     // per-fn on the DIRECT call sites: a helper that hides a `gfx::*` call is
     // itself ungranted → E1004 on the helper (no laundering past the boundary).
+    let hooks = TypeHooks::of(program);
     for item in &program.items {
         match item {
-            Item::FnDef(f) => check_native_grants(f, &mut errors),
+            Item::FnDef(f) => check_native_grants(f, &hooks, &mut errors),
             Item::ImplBlock(b) => {
                 for m in &b.methods {
-                    check_native_grants(m, &mut errors);
+                    check_native_grants(m, &hooks, &mut errors);
                 }
             }
             _ => {}
         }
     }
-    let hooks = TypeHooks::of(program);
     for item in &program.items {
         match item {
             Item::FnDef(fndef) => check_fn(fndef, &fn_map, &method_map, &hooks, &mut errors),
@@ -492,15 +492,41 @@ fn check_fn<'a>(
     }
 }
 
-/// R13 native FFI: enforce that every native `M::*` call in `fndef`'s body is
+/// R13 native FFI: enforce that every native `M::*` call `fndef` runs is
 /// covered by a `@[contained(M: …)]` grant on this fn (E1004, fail-closed).
-/// Reuses the single exhaustive, laundering-closed `collect_caps_expr` walker
-/// (which records native calls as `native:M`), so there is no second walk to
-/// drift out of sync.
-fn check_native_grants(fndef: &FnDef, errors: &mut Vec<CapabilityError>) {
-    let mut caps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    collect_caps_expr(&fndef.body, &mut caps);
-    let called: Vec<&str> = caps
+/// What the fn runs is its body plus what calling it runs besides
+/// (`push_fn_hooks`: its `@[verify]` predicate, the refinements its signature
+/// names) and the predicates its bindings and struct literals run, walked by
+/// the `@[contained]` walker itself (which records native calls as
+/// `native:M`) — but with no fn or method map, so a call into a helper is not
+/// followed: that helper's own native calls are its own E1004.
+fn check_native_grants<'a>(
+    fndef: &'a FnDef,
+    hooks: &'a TypeHooks<'a>,
+    errors: &mut Vec<CapabilityError>,
+) {
+    let no_fns = std::collections::HashMap::new();
+    let no_methods = std::collections::HashMap::new();
+    let spec = deny_all_spec(fndef.span);
+    let mut scratch = Vec::new();
+    let mut reach = Reach::default();
+    let mut ctx = CapCtx {
+        spec: &spec,
+        fn_map: &no_fns,
+        method_map: &no_methods,
+        visited: std::collections::HashSet::new(),
+        visited_methods: std::collections::HashSet::new(),
+        hooks,
+        visited_types: std::collections::HashSet::new(),
+        site: fndef.span,
+        errors: &mut scratch,
+        reach: Some(&mut reach),
+    };
+    let mut work = vec![Walk::Expr(&fndef.body)];
+    push_fn_hooks(fndef, &ctx, &mut work);
+    drain_walk(work, &mut ctx);
+    let called: Vec<&str> = reach
+        .capabilities
         .iter()
         .filter_map(|c| c.strip_prefix("native:"))
         .collect();
@@ -768,6 +794,50 @@ impl<'a> TypeHooks<'a> {
         }
         TypeHooks { refines, structs }
     }
+
+    /// Every predicate a use of one of these types runs, used or not: each
+    /// refinement's (named, and the synthetic `__refine_*` an inline
+    /// `p: B where P` desugars to) and each struct's whole-type refinement.
+    fn predicates(&self) -> impl Iterator<Item = &'a Expr> + '_ {
+        let refines = self.refines.values().map(|r| &*r.predicate);
+        let structs = self
+            .structs
+            .values()
+            .filter_map(|t| t.refinement.as_deref());
+        refines.chain(structs)
+    }
+}
+
+/// Every expression of `program` that can run, called or not: each fn and
+/// impl-method body with its `@[verify]` predicate, each module `let`
+/// initializer, and every predicate `TypeHooks` knows. The roots of the
+/// program-wide walkers (`program_capabilities`, `program_builtin_calls`).
+/// Rooting every predicate, used or not, over-approximates
+/// `reachable_capabilities(program, None)`, which is sound for their
+/// consumers: each needs a superset (G2, the import edge, `axon lock`, the
+/// G1 purity filter, deploy risk, the manifest's effect union).
+fn program_roots(program: &Program) -> Vec<&Expr> {
+    let mut roots: Vec<&Expr> = Vec::new();
+    let mut fns: Vec<&FnDef> = Vec::new();
+    for item in &program.items {
+        match item {
+            Item::FnDef(f) => fns.push(f),
+            // Impl-method bodies are full FnDefs and CAN exercise capabilities —
+            // an exfil call inside `impl Trait for T { fn m(self) { http_get(..) } }`
+            // was previously invisible to G2's capability-diff (I-12) and the
+            // import-edge demand set (I-11, E1203), a real laundering vector.
+            Item::ImplBlock(b) => fns.extend(b.methods.iter()),
+            // Module-level `let NAME = comptime { … }` initializers run code too.
+            Item::LetDef { value, .. } => roots.push(value),
+            _ => {}
+        }
+    }
+    for f in fns {
+        roots.push(&f.body);
+        roots.extend(f.verify.as_ref().map(|v| &*v.predicate));
+    }
+    roots.extend(TypeHooks::of(program).predicates());
+    roots
 }
 
 /// What calling `f` runs besides its body: the refinement predicates of its
@@ -868,7 +938,7 @@ pub fn program_effect_rows(program: &Program) -> std::collections::BTreeSet<Stri
     caps
 }
 
-/// Every builtin NAME the program calls, anywhere.
+/// Every builtin NAME the program calls, anywhere `program_roots` reaches.
 ///
 /// Uses the shared `ast::walk_expr` (T46/T48) rather than a bespoke recursion —
 /// this file has already been bitten twice by a walker that missed an arm
@@ -885,39 +955,16 @@ fn program_builtin_calls(program: &Program) -> std::collections::BTreeSet<String
             }
         }
     };
-    for item in &program.items {
-        match item {
-            Item::FnDef(f) => crate::ast::walk_expr(&f.body, &mut visit),
-            Item::ImplBlock(b) => {
-                for m in &b.methods {
-                    crate::ast::walk_expr(&m.body, &mut visit);
-                }
-            }
-            Item::LetDef { value, .. } => crate::ast::walk_expr(value, &mut visit),
-            _ => {}
-        }
+    for root in program_roots(program) {
+        crate::ast::walk_expr(root, &mut visit);
     }
     names
 }
 
 pub fn program_capabilities(program: &Program) -> std::collections::BTreeSet<String> {
     let mut caps = std::collections::BTreeSet::new();
-    for item in &program.items {
-        match item {
-            Item::FnDef(f) => collect_caps_expr(&f.body, &mut caps),
-            // Impl-method bodies are full FnDefs and CAN exercise capabilities —
-            // an exfil call inside `impl Trait for T { fn m(self) { http_get(..) } }`
-            // was previously invisible to G2's capability-diff (I-12) and the
-            // import-edge demand set (I-11, E1203), a real laundering vector.
-            Item::ImplBlock(b) => {
-                for m in &b.methods {
-                    collect_caps_expr(&m.body, &mut caps);
-                }
-            }
-            // Module-level `let NAME = comptime { … }` initializers run code too.
-            Item::LetDef { value, .. } => collect_caps_expr(value, &mut caps),
-            _ => {}
-        }
+    for root in program_roots(program) {
+        collect_caps_expr(root, &mut caps);
     }
     caps
 }
@@ -1241,9 +1288,8 @@ fn collect_caps_expr(expr: &Expr, caps: &mut std::collections::BTreeSet<String>)
                     }
                 }
                 // R13: a native `M::*` call is a capability — record it as
-                // `native:M` so the import-edge (E1203) and grant (E1004) checks
-                // both see it through this single exhaustive, laundering-closed
-                // walker.
+                // `native:M` so the import-edge (E1203) check sees it (the grant
+                // check, E1004, reads the same label from `Reach::note`).
                 if let Some((m, _f)) = crate::native::resolve_call(n) {
                     caps.insert(format!("native:{}", m.name));
                 }
@@ -2639,6 +2685,102 @@ mod tests {
         assert!(
             caps.contains("net"),
             "net call inside an impl method must be visible to G2/import-edge, got: {caps:?}"
+        );
+    }
+
+    // FU-2 (O-S1-14): one per predicate root kind. Un-type-checked parses, as
+    // G2 and the import edge see them (E1209 would reject the impure
+    // refinements of a checked program first).
+
+    #[test]
+    fn program_capabilities_sees_a_verify_predicate() {
+        let p = parse("@[verify(is_ok(read_file(\"/x\")))]\nfn f(n: i64) -> i64 { n }");
+        let caps = program_capabilities(&p);
+        assert!(
+            caps.contains("fs:read"),
+            "ATTACK: a read in an @[verify] predicate is invisible to G2/import-edge: {caps:?}"
+        );
+    }
+
+    #[test]
+    fn program_capabilities_sees_an_impl_methods_verify_predicate() {
+        let p = parse(
+            "type T = { x: i64 }\n\
+             trait N { fn go(self) -> i64 }\n\
+             impl N for T {\n\
+               @[verify(is_ok(http_get(\"api.evil.com\")))]\n\
+               fn go(self: T) -> i64 { 0 }\n\
+             }",
+        );
+        let caps = program_capabilities(&p);
+        assert!(
+            caps.contains("net"),
+            "ATTACK: a net call in an impl method's @[verify] predicate is invisible: {caps:?}"
+        );
+    }
+
+    #[test]
+    fn program_capabilities_sees_a_named_refinement_predicate() {
+        let p =
+            parse("type Lk = i64 where is_ok(write_file(\"/x\", \"y\"))\nfn f(y: Lk) -> i64 { y }");
+        let caps = program_capabilities(&p);
+        assert!(
+            caps.contains("fs:write"),
+            "ATTACK: a write in a named refinement predicate is invisible: {caps:?}"
+        );
+    }
+
+    #[test]
+    fn program_capabilities_sees_an_inline_refinement_predicate() {
+        // `n: i64 where P` desugars to a synthetic `__refine_*` RefineDef.
+        let p = parse("fn f(n: i64 where is_ok(exec(\"true\"))) -> i64 { n }");
+        assert!(
+            p.items
+                .iter()
+                .any(|i| matches!(i, Item::RefineDef(r) if r.name.starts_with("__refine_"))),
+            "premise: the inline refinement is a synthetic RefineDef"
+        );
+        let caps = program_capabilities(&p);
+        assert!(
+            caps.contains("exec"),
+            "ATTACK: an exec in an inline parameter refinement is invisible: {caps:?}"
+        );
+    }
+
+    #[test]
+    fn program_capabilities_sees_a_struct_refinement() {
+        let p = parse(
+            "type Pair = { lo: i64, hi: i64 } where is_ok(read_file(\"/x\"))\n\
+             fn f(n: i64) -> i64 { let p = Pair { lo: n, hi: n }\n p.lo }",
+        );
+        let caps = program_capabilities(&p);
+        assert!(
+            caps.contains("fs:read"),
+            "ATTACK: a read in a struct's whole-type refinement is invisible: {caps:?}"
+        );
+    }
+
+    /// E1004 is per fn: a native call in a refinement `f`'s signature uses is
+    /// checked against `f`'s grants (FU-2, A#7), and a grant permits it.
+    #[test]
+    fn a_native_call_in_a_used_refinement_needs_the_users_grant_e1004() {
+        let pred = "type Win = i64 where gfx::window_open(1, 1, \"x\") > 0\n";
+        let ungranted = parse(&format!(
+            "use native::gfx\n{pred}fn f(w: Win) -> i64 {{ w }}"
+        ));
+        let errs = check_capabilities(&ungranted);
+        assert!(
+            errs.iter()
+                .any(|e| e.code == E1004 && e.message.contains("`f`")),
+            "ATTACK: a native call in a refinement f uses escaped E1004: {errs:?}"
+        );
+        let granted = parse(&format!(
+            "use native::gfx\n{pred}@[contained(gfx: any)]\nfn f(w: Win) -> i64 {{ w }}"
+        ));
+        let errs = check_capabilities(&granted);
+        assert!(
+            !errs.iter().any(|e| e.code == E1004),
+            "the user's grant permits the call: {errs:?}"
         );
     }
 
