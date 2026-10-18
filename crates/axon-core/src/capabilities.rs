@@ -365,8 +365,11 @@ pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
     // R13 native FFI: the import/call capability gate (fail-closed, I-11). Any
     // fn whose own code calls a native module `M::*` must declare a matching
     // `@[contained(M: …)]` grant; an ungranted call is E1004. This is checked
-    // per-fn on the DIRECT call sites: a helper that hides a `gfx::*` call is
-    // itself ungranted → E1004 on the helper (no laundering past the boundary).
+    // per fn over the code that fn runs itself — its body plus the predicates
+    // it carries or uses (@[verify], parameter/return/let refinements, struct
+    // `where`; `check_native_grants`) — but NOT through the fns it calls: a
+    // helper that hides a `gfx::*` call is itself ungranted → E1004 on the
+    // helper (no laundering past the boundary).
     let hooks = TypeHooks::of(program);
     for item in &program.items {
         match item {
