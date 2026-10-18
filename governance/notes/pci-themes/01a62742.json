@@ -1,0 +1,4 @@
+{
+  "theme": "R0b ambient scope env",
+  "text": "INTERPRETER: the ambient sandbox can now carry a path/host scope from AXON_ALLOWED_FS_READ / AXON_ALLOWED_FS_WRITE / AXON_ALLOWED_NET (narrowing only). With all three unset and AXON_ALLOWED_EFFECTS unset the registry is empty exactly as before (no behaviour change); with AXON_ALLOWED_EFFECTS alone the entry is the same ceiling with all_effects false. New refusals only: scope_violation against the ambient entry under an inner sandbox, sandbox_run into an all-effects entry from a narrower one, provenance suppressed when a fs_write scope does not admit its path. SandboxEntry::allows replaces allowed.contains at the four ceiling sites (identical unless all_effects). sandbox_create_scoped's list parser moved to parse_scope_list unchanged. axon-rt and axon build refuse the three vars (exit 2 / E0910). A sealed run's kernel holds the same ambient entry at index 0, so the ceiling binds sealed frames too."
+}

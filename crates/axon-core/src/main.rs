@@ -578,6 +578,37 @@ enum Command {
         json: bool,
     },
 
+    /// Report the capabilities and effects a program, or one fn, can exercise.
+    ///
+    /// Computed by the walker `@[contained]` uses: helpers, impl methods,
+    /// builtins and fns used as values, fns dispatched by a literal name,
+    /// module-level `let` initializers and imported modules are all followed,
+    /// so a fence built from this cannot disagree with the language's own
+    /// containment. `capabilities` are the `@[contained]` labels (`fs:read`,
+    /// `fs:write`, `net`, `exec`, `env`, `dstore`, `native:M`); `effects` are
+    /// the builtin effect rows, with `Exec` split from `IO`; `unknown` is
+    /// true when the walk met something it cannot classify (deny by default).
+    /// `-` reads the program from stdin. Exit 0 on success, 2 on a parse or
+    /// type error or an unknown `--fn`.
+    Caps {
+        #[arg(help = "Path to .ax source file, or `-` for stdin")]
+        file: PathBuf,
+
+        /// Report only what this fn (free fn, or every impl method so named)
+        /// reaches transitively.
+        #[arg(long = "fn", value_name = "NAME", help = "Report one fn, transitively")]
+        fn_name: Option<String>,
+
+        /// Directory `use` search paths are resolved against (relative
+        /// `AXON_PATH` entries); default the current directory.
+        #[arg(long, value_name = "DIR", help = "Resolve imports relative to DIR")]
+        base_dir: Option<PathBuf>,
+
+        /// Emit the report as one `axon-caps/1` JSON line.
+        #[arg(long, help = "Machine-readable JSON output")]
+        json: bool,
+    },
+
     // ── Phase 10 CLI verbs ────────────────────────────────────────────────────
     /// Compile a structured-prose intent file (*.md) to a typed .ax skeleton.
     ///
@@ -1142,6 +1173,12 @@ fn dispatch(command: Command) {
         }
         Command::Complexity { file, json } => cmd_complexity(file, json),
         Command::Imports { file, json } => cmd_imports(file, json),
+        Command::Caps {
+            file,
+            fn_name,
+            base_dir,
+            json,
+        } => cmd_caps(file, fn_name, base_dir, json),
         Command::Intent { action } => cmd_intent(action),
         Command::Ast { action } => cmd_ast(action),
         Command::Deploy {
@@ -1328,6 +1365,113 @@ fn cmd_imports(file: PathBuf, json: bool) {
             if m.sealed { "  [sealed]" } else { "" }
         );
     }
+}
+
+// ── caps ──────────────────────────────────────────────────────────────────────
+
+/// `axon caps <file|-> [--fn NAME] [--base-dir DIR] [--json]` (R0a): what the
+/// program, or one fn transitively, can exercise — schema `axon-caps/1`.
+///
+/// The program goes through the same load + check pipeline as `axon check`, so
+/// imports are merged by the shared loader before the walk. A parse or type
+/// error is exit 2 with the diagnostics; a `@[contained]` violation is NOT —
+/// reporting the capability a fn reaches outside its grant is this verb's job,
+/// and refusing to report it would hide exactly that.
+fn cmd_caps(file: PathBuf, fn_name: Option<String>, base_dir: Option<PathBuf>, json: bool) {
+    let stdin_mode = file.as_os_str() == "-";
+    let src = if stdin_mode {
+        let mut s = String::new();
+        if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut s) {
+            eprintln!("error: cannot read the program from stdin: {e}");
+            process::exit(2);
+        }
+        s
+    } else {
+        validate_ax_extension(&file);
+        read_source(&file)
+    };
+    // Read before moving: the file path is the caller's, relative to the
+    // directory it was invoked from; `use` resolution is relative to DIR.
+    if let Some(dir) = &base_dir {
+        if let Err(e) = std::env::set_current_dir(dir) {
+            eprintln!("error: --base-dir {}: {e}", dir.display());
+            process::exit(2);
+        }
+    }
+    let use_json = json || !std::io::stderr().is_terminal();
+    let mut program = match parse_source_located_cli(&src, &file) {
+        Ok(p) => p,
+        Err(diag) => {
+            if use_json {
+                eprintln!("{}", diag.json());
+            } else {
+                eprintln!("error: {}", diag.display());
+            }
+            process::exit(2);
+        }
+    };
+    let (located, _ictx, _closure) = run_check_pipeline_located(&mut program, &src, &file);
+    let fatal: Vec<&axon_core::PipelineDiagnostic> = located
+        .iter()
+        .filter(|d| d.severity == "error" && !is_capability_code(&d.code))
+        .collect();
+    if !fatal.is_empty() {
+        for d in fatal {
+            if use_json {
+                eprintln!("{}", d.json());
+            } else {
+                eprintln!("error: {}", d.display());
+            }
+        }
+        process::exit(2);
+    }
+    let Some(reach) = axon_core::capabilities::reachable_capabilities(&program, fn_name.as_deref())
+    else {
+        eprintln!(
+            "error: no fn named {}",
+            fn_name.as_deref().unwrap_or_default()
+        );
+        process::exit(2);
+    };
+    let list = |set: &std::collections::BTreeSet<String>| -> String {
+        set.iter()
+            .map(|s| json_str(s))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    if json {
+        println!(
+            "{{\"schema\":\"axon-caps/1\",\"file\":{},\"fn\":{},\"capabilities\":[{}],\"effects\":[{}],\"unknown\":{}}}",
+            json_str(&file.display().to_string()),
+            fn_name.as_deref().map_or_else(|| "null".to_string(), json_str),
+            list(&reach.capabilities),
+            list(&reach.effects),
+            reach.unknown,
+        );
+        return;
+    }
+    let join = |set: &std::collections::BTreeSet<String>| -> String {
+        if set.is_empty() {
+            "(none)".to_string()
+        } else {
+            set.iter().cloned().collect::<Vec<_>>().join(", ")
+        }
+    };
+    match &fn_name {
+        Some(n) => println!("{} fn {n}", file.display()),
+        None => println!("{}", file.display()),
+    }
+    println!("  capabilities: {}", join(&reach.capabilities));
+    println!("  effects: {}", join(&reach.effects));
+    if reach.unknown {
+        println!("  unknown: the walk reached something it cannot classify (deny by default)");
+    }
+}
+
+/// The `@[contained]` diagnostics (E1001-E1005): a property of the program's
+/// own grants, not a reason its capabilities cannot be computed.
+fn is_capability_code(code: &str) -> bool {
+    matches!(code, "E1001" | "E1002" | "E1003" | "E1004" | "E1005")
 }
 
 // ── check ─────────────────────────────────────────────────────────────────────
@@ -3459,8 +3603,20 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
 /// it fails EARLIER and more cheaply — at build time, with the source in
 /// hand — instead of at the end of a deployment.
 fn refuse_if_ambient_ceiling(context: &str) {
-    for var in ["AXON_ALLOWED_EFFECTS", "AXON_BUDGET_TOKENS"] {
-        if let Ok(val) = std::env::var(var) {
+    // The path/host scope is the same kind of control as the effect ceiling
+    // and is read by the interpreter only too (`ambient_sandbox`), so a binary
+    // built under it would drop it the same way.
+    for var in [
+        "AXON_ALLOWED_EFFECTS",
+        "AXON_ALLOWED_FS_READ",
+        "AXON_ALLOWED_FS_WRITE",
+        "AXON_ALLOWED_NET",
+        "AXON_BUDGET_TOKENS",
+    ] {
+        // `var_os`: a set variable whose value is not UTF-8 is still set, and
+        // `env::var` would have read it as absent.
+        if let Some(val) = std::env::var_os(var) {
+            let val = val.to_string_lossy();
             eprintln!(
                 "error[E0910]: `{var}` is set ({}), but a natively built binary \
                  cannot enforce it — the ceiling is honoured by the interpreter \
@@ -3473,7 +3629,7 @@ fn refuse_if_ambient_ceiling(context: &str) {
                 if val.is_empty() {
                     "empty — deny all"
                 } else {
-                    val.as_str()
+                    &val
                 }
             );
             process::exit(2);

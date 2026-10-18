@@ -437,6 +437,7 @@ fn check_fn<'a>(
         visited_methods: std::collections::HashSet::new(),
         site: fndef.span,
         errors,
+        reach: None,
     };
     let before = ctx.errors.len();
     check_expr(&fndef.body, &mut ctx);
@@ -549,6 +550,125 @@ struct CapCtx<'a, 'e> {
     /// sites already take it.
     site: Span,
     errors: &'e mut Vec<CapabilityError>,
+    /// R0a: `Some` when the walk COLLECTS what it reaches (`axon caps`)
+    /// instead of checking it. The same traversal either way, so the
+    /// capability set a fence is built from and the one `@[contained]` checks
+    /// cannot disagree about what a body reaches.
+    reach: Option<&'e mut Reach>,
+}
+
+/// R0a — everything a walk reached that can touch the host: the capability
+/// labels (`cap_label`, plus `native:M`), the effect rows
+/// (`builtins::builtin_effect_row`, with `Exec` split out of `IO` exactly as
+/// the runtime gate splits it), and whether it met something it cannot
+/// classify. A consumer building a fence from this denies by default on
+/// `unknown`.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Reach {
+    pub capabilities: std::collections::BTreeSet<String>,
+    pub effects: std::collections::BTreeSet<String>,
+    pub unknown: bool,
+}
+
+impl Reach {
+    /// Record a builtin the walk reached, called or used as a value. A name
+    /// that is not a builtin records nothing.
+    fn note(&mut self, name: &str) {
+        if let Some(pairs) = classify_call_paths(name) {
+            for (kind, _) in pairs {
+                if kind == IoKind::Exec {
+                    // The runtime gate requires an explicit `Exec` grant for
+                    // a spawn even though the effect row says `IO`.
+                    self.effects.insert("Exec".to_string());
+                }
+                self.capabilities.insert(cap_label(&kind).to_string());
+            }
+        }
+        if let Some((m, _f)) = crate::native::resolve_call(name) {
+            self.capabilities.insert(format!("native:{}", m.name));
+            self.effects.extend(m.effects.iter().map(|e| e.to_string()));
+        }
+        // `ai_extract::<T>` is a synthetic name no table lists by its
+        // spelling; it is the same model call as `ai_extract_i64`.
+        let row_name = if name.starts_with("ai_extract::<") {
+            "ai_extract_i64"
+        } else {
+            name
+        };
+        self.effects.extend(
+            crate::builtins::builtin_effect_row(row_name)
+                .iter()
+                .map(|e| e.to_string()),
+        );
+    }
+}
+
+/// R0a — what `fn_name` (or, for `None`, the whole program) can exercise,
+/// transitively: helpers, impl methods (by name, over-approximated as the
+/// checker does), user fns and builtins referenced as values, fns dispatched
+/// by a literal name, and every module-level `let` initializer (they run in
+/// any execution of the program, and a closure stored in one can be called
+/// from anywhere). Imported modules count once the shared loader has merged
+/// them into `program`.
+///
+/// Walked by `@[contained]`'s own traversal with a sink attached, never a
+/// second walker. `None` when `fn_name` names no fn or method.
+pub fn reachable_capabilities(program: &Program, fn_name: Option<&str>) -> Option<Reach> {
+    let mut fn_map: std::collections::HashMap<&str, &FnDef> = std::collections::HashMap::new();
+    let mut method_map: std::collections::HashMap<&str, Vec<&FnDef>> =
+        std::collections::HashMap::new();
+    let mut inits: Vec<&Expr> = Vec::new();
+    for item in &program.items {
+        match item {
+            Item::FnDef(f) => {
+                fn_map.insert(f.name.as_str(), f);
+            }
+            Item::ImplBlock(b) => {
+                for m in &b.methods {
+                    method_map.entry(m.name.as_str()).or_default().push(m);
+                }
+            }
+            Item::LetDef { value, .. } => inits.push(value),
+            _ => {}
+        }
+    }
+    let mut work: Vec<Walk<'_>> = Vec::new();
+    match fn_name {
+        Some(name) => {
+            let mut found = false;
+            if let Some((canon, f)) = fn_map.get_key_value(name) {
+                work.push(Walk::Helper(canon, f));
+                found = true;
+            }
+            if let Some((canon, impls)) = method_map.get_key_value(name) {
+                work.push(Walk::Methods(canon, impls));
+                found = true;
+            }
+            if !found {
+                return None;
+            }
+        }
+        None => {
+            work.extend(fn_map.iter().map(|(n, f)| Walk::Helper(n, f)));
+            work.extend(method_map.iter().map(|(n, ms)| Walk::Methods(n, ms)));
+        }
+    }
+    push_exprs(&mut work, inits.into_iter());
+    let spec = deny_all_spec(Span::dummy());
+    let mut scratch = Vec::new();
+    let mut reach = Reach::default();
+    let mut ctx = CapCtx {
+        spec: &spec,
+        fn_map: &fn_map,
+        method_map: &method_map,
+        visited: std::collections::HashSet::new(),
+        visited_methods: std::collections::HashSet::new(),
+        site: Span::dummy(),
+        errors: &mut scratch,
+        reach: Some(&mut reach),
+    };
+    drain_walk(work, &mut ctx);
+    Some(reach)
 }
 
 /// The set of capability *kinds* a program exercises — `"fs:read"`,
@@ -1109,7 +1229,11 @@ fn push_exprs<'a>(work: &mut Vec<Walk<'a>>, exprs: impl DoubleEndedIterator<Item
 }
 
 fn check_expr<'a>(root: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
-    let mut work = vec![Walk::Expr(root)];
+    drain_walk(vec![Walk::Expr(root)], ctx);
+}
+
+/// Run the walk until `work` is empty.
+fn drain_walk<'a>(mut work: Vec<Walk<'a>>, ctx: &mut CapCtx<'a, '_>) {
     while let Some(step) = work.pop() {
         match step {
             Walk::Expr(e) => visit_expr(e, ctx, &mut work),
@@ -1126,7 +1250,13 @@ fn check_expr<'a>(root: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
             }
             Walk::LeaveHelper(name, outer) => {
                 ctx.site = outer;
-                ctx.visited.remove(name);
+                // A collecting walk keeps every fn it entered: it wants the
+                // UNION of what is reached, so a second visit adds nothing,
+                // and re-walking a helper on every path would be exponential
+                // in a call graph full of diamonds.
+                if ctx.reach.is_none() {
+                    ctx.visited.remove(name);
+                }
             }
             Walk::Methods(method, impls) => {
                 if ctx.visited_methods.insert(method) {
@@ -1135,7 +1265,9 @@ fn check_expr<'a>(root: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
                 }
             }
             Walk::LeaveMethods(method) => {
-                ctx.visited_methods.remove(method);
+                if ctx.reach.is_none() {
+                    ctx.visited_methods.remove(method);
+                }
             }
             Walk::Report(err) => ctx.errors.push(err),
         }
@@ -1162,6 +1294,9 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
             if let Some(name) = callee_name {
                 // A builtin I/O call is checked against the spec directly.
                 check_call(name, args, ctx.spec, ctx.site, ctx.errors);
+                if let Some(reach) = ctx.reach.as_deref_mut() {
+                    reach.note(name);
+                }
                 // AUDIT T2 (finding F153 / P7-SEC-02). Several builtins dispatch
                 // to a user fn NAMED BY A STRING — `sandbox_run(sb, "job", 0)`,
                 // `scheduler_spawn("worker", 0)`, the whole `goal_run` family.
@@ -1191,6 +1326,11 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
                         Some(Expr::Literal(crate::ast::Literal::Str(t))) => t,
                         None => continue,
                         Some(_) => {
+                            // Nothing can say which fn runs, so nothing can
+                            // say what it reaches.
+                            if let Some(reach) = ctx.reach.as_deref_mut() {
+                                reach.unknown = true;
+                            }
                             follow.push(Walk::Report(CapabilityError::new(
                                 E1001,
                                 format!(
@@ -1332,6 +1472,11 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
         // (THREAT_MODEL.md §8); permitted only if the spec grants the category.
         Expr::Ident(name) => {
             check_builtin_value_ref(name, ctx.spec, ctx.errors);
+            if let Some(reach) = ctx.reach.as_deref_mut() {
+                if crate::builtins::is_known_builtin(name) {
+                    reach.note(name);
+                }
+            }
             // AX-25: a USER fn referenced as a value (`let g = helper; g(p)`)
             // can be called through that value, so it inherits the caller's
             // containment exactly as a direct call does (the helper-follow in the
@@ -1343,7 +1488,14 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
             }
         }
         // Leaf nodes — no recursion needed.
-        Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue | Expr::InlineAsm { .. } => {}
+        Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue => {}
+        // Inline assembly can do anything the machine can, and no table
+        // classifies it.
+        Expr::InlineAsm { .. } => {
+            if let Some(reach) = ctx.reach.as_deref_mut() {
+                reach.unknown = true;
+            }
+        }
     }
 }
 
