@@ -1549,6 +1549,22 @@ struct SandboxEntry {
     /// allowlists parsed, type-checked and were rendered to the approving human,
     /// then discarded before anything could enforce them.
     scope: SandboxScope,
+    /// Every effect is allowed and only `scope` restricts. True only for the
+    /// ambient entry built from the scope variables while
+    /// `AXON_ALLOWED_EFFECTS` is unset: the two controls are independent, so
+    /// a path/host scope must not silently become an effect ceiling too.
+    all_effects: bool,
+    /// This is the ambient entry (index 0, from the environment). Its scope is
+    /// a CEILING: `pre_effect_gate` checks it as well while a program-created
+    /// sandbox is active, so an inner sandbox can narrow it and never widen it.
+    ambient: bool,
+}
+
+impl SandboxEntry {
+    /// Does this sandbox's effect ceiling allow `effect`?
+    fn allows(&self, effect: &str) -> bool {
+        self.all_effects || self.allowed.contains(effect)
+    }
 }
 
 /// Path/host restrictions attached to a sandbox. `None` = unscoped (grant the
@@ -1559,6 +1575,24 @@ struct SandboxScope {
     fs_read: Option<Vec<String>>,
     fs_write: Option<Vec<String>>,
     net: Option<Vec<String>>,
+}
+
+/// One scope dimension in the `sandbox_create_scoped` /
+/// `AXON_ALLOWED_FS_*` / `AXON_ALLOWED_NET` spelling: comma-separated path
+/// prefixes or host globs. `None` = unrestricted, which only an explicit `*`
+/// entry produces; `Some([])` (an empty or all-blank value) denies everything
+/// of that kind. One parser, so the primitive and the environment cannot
+/// disagree about what a spelling means.
+fn parse_scope_list(raw: &str) -> Option<Vec<String>> {
+    let items: Vec<String> = raw
+        .split(',')
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect();
+    if items.iter().any(|x| x == "*") {
+        return None;
+    }
+    Some(items)
 }
 
 // ── Interpreter ──────────────────────────────────────────────────────────────
@@ -5680,15 +5714,36 @@ impl<'p> Interp<'p> {
     /// same predicate, so the ceiling cannot mean one thing for `write_file`
     /// and another for the telemetry writer. `IO` is the row the effect
     /// catalog gives filesystem and console builtins.
+    ///
+    /// The row is a FILE WRITE, so a `fs_write` scope (an
+    /// `AXON_ALLOWED_FS_WRITE` or `sandbox_create_scoped` grant) must admit the
+    /// log's path as it would `write_file`'s — the active sandbox's, and the
+    /// ambient one's, which stays a ceiling under an inner sandbox. An effect
+    /// ceiling that grants `IO` does not lift a scope that denies the path.
     fn provenance_write_permitted(&self) -> bool {
         let handle = self.k().active_sandbox.get();
         if handle < 0 {
             return true; // no ceiling in force
         }
         let sbs = self.k().sandboxes.borrow();
+        let log = crate::interp::provenance::provenance_log_path()
+            .map(|p| p.to_string_lossy().into_owned());
+        let scope_admits = |sb: &SandboxEntry| match (sb.scope.fs_write.as_deref(), &log) {
+            (None, _) => true,
+            (Some(allow), Some(path)) => allow
+                .iter()
+                .any(|p| crate::capabilities::path_is_under(path, p)),
+            // No resolvable log path under a write scope: nothing to admit.
+            (Some(_), None) => false,
+        };
+        let ambient_admits = sbs
+            .first()
+            .is_none_or(|a| !a.ambient || handle == 0 || scope_admits(a));
         match sbs.get(handle as usize) {
             Some(sb) => {
                 crate::interp::builtins::first_effect_outside_ceiling(sb, &["IO"]).is_none()
+                    && scope_admits(sb)
+                    && ambient_admits
             }
             // UNREACHABLE BY CONSTRUCTION, and deliberately fail-closed
             // anyway. `active_sandbox` only ever holds -1 or an index that
@@ -7459,8 +7514,9 @@ fn parse_token_budget() -> Option<i64> {
     }
 }
 
-/// Build the ambient sandbox from `AXON_ALLOWED_EFFECTS`, or an empty registry
-/// when the var is unset.
+/// Build the ambient sandbox from `AXON_ALLOWED_EFFECTS` and the scope
+/// variables `AXON_ALLOWED_FS_READ` / `AXON_ALLOWED_FS_WRITE` /
+/// `AXON_ALLOWED_NET`, or an empty registry when all four are unset.
 ///
 /// The var is the ambient counterpart to `sandbox_create`: a comma-separated
 /// effect ceiling for the whole run, for a caller who cannot edit the program to
@@ -7481,12 +7537,37 @@ fn parse_token_budget() -> Option<i64> {
 /// means "no ceiling at all". Distinguishing them matters because
 /// deny-everything is a case a caller reaches for deliberately.
 ///
-/// The scope is unscoped (`Default`) — this grants effects without a path/host
-/// restriction, matching plain `sandbox_create`. Bound to principal handle 0 so
-/// audit attribution matches the rest of the run.
+/// THE SCOPE VARIABLES restrict the same effects to paths and hosts, with
+/// `sandbox_create_scoped`'s spelling and matching (`parse_scope_list`, then the
+/// per-argument `classify_call_paths` check in `scope_violation`): unset is
+/// unrestricted, set-but-empty denies every path/host of that kind, `*` is
+/// unrestricted. `IO` is `println` as much as `write_file`, so an effect
+/// ceiling alone could not say "may print, may not write" — the shape a
+/// repair candidate's checks need. They are INDEPENDENT of
+/// `AXON_ALLOWED_EFFECTS`: with it unset the entry allows every effect
+/// (`all_effects`) and only the scope restricts. The entry is marked `ambient`,
+/// which keeps its scope a ceiling under any sandbox the program creates.
+///
+/// Bound to principal handle 0 so audit attribution matches the rest of the
+/// run.
 fn ambient_sandbox() -> Vec<SandboxEntry> {
+    let scope = SandboxScope {
+        fs_read: ambient_scope_var("AXON_ALLOWED_FS_READ"),
+        fs_write: ambient_scope_var("AXON_ALLOWED_FS_WRITE"),
+        net: ambient_scope_var("AXON_ALLOWED_NET"),
+    };
+    let scoped = scope.fs_read.is_some() || scope.fs_write.is_some() || scope.net.is_some();
     let Ok(raw) = std::env::var("AXON_ALLOWED_EFFECTS") else {
-        return Vec::new();
+        if !scoped {
+            return Vec::new();
+        }
+        return vec![SandboxEntry {
+            principal: 0,
+            allowed: std::collections::HashSet::new(),
+            scope,
+            all_effects: true,
+            ambient: true,
+        }];
     };
     let allowed: std::collections::HashSet<String> = raw
         .split(',')
@@ -7516,8 +7597,25 @@ fn ambient_sandbox() -> Vec<SandboxEntry> {
     vec![SandboxEntry {
         principal: 0,
         allowed,
-        scope: SandboxScope::default(),
+        scope,
+        all_effects: false,
+        ambient: true,
     }]
+}
+
+/// One ambient scope variable: unset = unrestricted (`None`), otherwise
+/// `parse_scope_list`. A value that is not UTF-8 cannot be matched against a
+/// path or host, so it DENIES every one of that kind rather than reading as
+/// unset — the variable was set, and a set scope must not fail open.
+fn ambient_scope_var(var: &str) -> Option<Vec<String>> {
+    let raw = std::env::var_os(var)?;
+    match raw.to_str() {
+        Some(s) => parse_scope_list(s),
+        None => {
+            eprintln!("warning: {var} is not UTF-8 — it denies every path/host of its kind");
+            Some(Vec::new())
+        }
+    }
 }
 
 /// Initial seed for the RNG. Reproducibility (BUG_HUNT #11 / I-10):

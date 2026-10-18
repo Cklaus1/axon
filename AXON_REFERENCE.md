@@ -5,11 +5,11 @@
 
 # Axon Reference
 
-The complete surface of this build — 26 CLI verbs, 344 builtins, 24 attributes, 147 diagnostic codes (134 live, 13 reserved), 64 environment variables.
+The complete surface of this build — 27 CLI verbs, 344 builtins, 24 attributes, 147 diagnostic codes (134 live, 13 reserved), 67 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
-## CLI verbs (26)
+## CLI verbs (27)
 
 | Verb | Purpose |
 |---|---|
@@ -17,6 +17,7 @@ Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap
 | `axon ast` | Review or approve a compiled .ax AST |
 | `axon build` | Compile one or more .ax files to a native binary |
 | `axon cache` | Manage the incremental compilation cache |
+| `axon caps` | Report the capabilities and effects a program, or one fn, can exercise |
 | `axon check` | Type-check a .ax file and report errors |
 | `axon complexity` | Report the description-length (MDL) complexity of a .ax file |
 | `axon deploy` | Run a .ax program through the full safety-gate pipeline, then deploy |
@@ -69,7 +70,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (64)
+## Environment variables (67)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -104,6 +105,9 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_DOTENV_WALK` | walk parent directories looking for a `.env` file |
 | `AXON_INTENT_GEN` | let `axon intent compile` fill TODO stubs via a live model (needs `--features asi-runtime`) |
 | `AXON_ALLOWED_EFFECTS` | ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset. Interpreter-only |
+| `AXON_ALLOWED_FS_READ` | ambient read-path scope for the whole run: comma-separated path prefixes, matched like `sandbox_create_scoped` (per argument, `..` refused). Unset = unrestricted, EMPTY = deny every filesystem read, `*` = unrestricted. Independent of AXON_ALLOWED_EFFECTS (with it unset every effect stays allowed and only paths are restricted); a ceiling an inner sandbox may narrow but never widen. Interpreter-only |
+| `AXON_ALLOWED_FS_WRITE` | ambient write-path scope for the whole run, as AXON_ALLOWED_FS_READ for writes (`write_file`, `append_file`, `file_copy`'s destination, both `file_rename` paths, `dir_create`, the durable store, the `@[adaptive]` provenance row). EMPTY = deny every write while `println` keeps working. Interpreter-only |
+| `AXON_ALLOWED_NET` | ambient host scope for the whole run: comma-separated host globs, matched like `sandbox_create_scoped`; checked before any connect. Unset = unrestricted, EMPTY = deny every host (the AI builtins' fixed endpoint included), `*` = unrestricted. Independent of AXON_ALLOWED_EFFECTS. Interpreter-only |
 | `AXON_PRINCIPAL` | the principal a run executes as — audit ATTRIBUTION only; it grants and withholds nothing |
 | `AXON_GUEST_ALLOW_NO_POLICY` | axon-guest-init: start the guest even though no capability policy could be loaded from the kernel cmdline (`axon.policy=`) or MMDS (no effect ceiling, no token cap, no seccomp). READ ONLY in builds with the non-default cargo feature `dev-allow-no-policy`; a default build ignores it and REFUSES, because Linux copies `NAME=value` cmdline words into init's environment, so a runtime flag would be reachable by whoever can append one |
 | `AXON_REQUIRE_IMPORTS_DIGEST` | the `axsha256:` imports_digest (`axon imports --json`) a run must load: `axon run`/`test`/`goal`/`session`/`deploy` compare the import closure they loaded and exit 8 before executing anything when it differs. In `axon session` the first cell whose closure differs is refused with E2404 (its frame or human render is emitted; it does not execute or accumulate), no further input is read, and the session ends through its normal end path with exit 8 — so `use` the approved modules in the first cell. Read once and removed from the environment, so it binds that process only, not programs it spawns. Any other verb refuses it (exit 2); a built binary refuses it at start (exit 2). Interpreter-only |
