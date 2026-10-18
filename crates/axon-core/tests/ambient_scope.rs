@@ -109,7 +109,11 @@ fn fs_write_empty_keeps_the_console_and_refuses_every_write() {
             &[("AXON_ALLOWED_FS_WRITE", "")],
         );
         let t = text(&o);
-        assert_eq!(o.status.code(), Some(8), "{name} was not refused:\n{t}");
+        assert_eq!(
+            o.status.code(),
+            Some(8),
+            "ATTACK: {name} ran under an empty AXON_ALLOWED_FS_WRITE:\n{t}"
+        );
         assert!(t.contains("before"), "{name}: console output lost:\n{t}");
         assert!(t.contains("write path"), "{name}: wrong refusal:\n{t}");
         assert!(!target.exists(), "{name} created {}", target.display());
@@ -222,7 +226,11 @@ fn an_inner_sandbox_cannot_widen_the_ambient_scope() {
     );
     let o = run(&d, &src, &[("AXON_ALLOWED_FS_WRITE", "")]);
     let t = text(&o);
-    assert_eq!(o.status.code(), Some(8), "{t}");
+    assert_eq!(
+        o.status.code(),
+        Some(8),
+        "ATTACK: an inner sandbox scoped `*` widened the ambient AXON_ALLOWED_FS_WRITE= scope:\n{t}"
+    );
     assert!(
         !target.exists(),
         "the inner sandbox widened the ambient scope"
@@ -248,7 +256,11 @@ fn entering_the_ambient_handle_from_a_narrower_sandbox_is_refused() {
     );
     let o = run(&d, &src, &[("AXON_ALLOWED_FS_WRITE", "")]);
     let t = text(&o);
-    assert_eq!(o.status.code(), Some(8), "{t}");
+    assert_eq!(
+        o.status.code(),
+        Some(8),
+        "ATTACK: sandbox_run(0, …) re-entered the all-effects ambient handle from an IO-only sandbox:\n{t}"
+    );
     assert!(t.contains("never widen"), "{t}");
     assert!(
         !marker.exists(),
@@ -389,7 +401,11 @@ fn a_compiled_binary_refuses_the_scope_rather_than_dropping_it() {
         }
         let ran = run.env(var, "").output().unwrap();
         let err = String::from_utf8_lossy(&ran.stderr);
-        assert_eq!(ran.status.code(), Some(2), "{var}: {err}");
+        assert_eq!(
+            ran.status.code(),
+            Some(2),
+            "ATTACK: a compiled binary ran under {var}= instead of refusing it: {err}"
+        );
         assert!(err.contains(var), "{var}: {err}");
         assert!(!target.exists(), "{var}: the binary wrote the file");
 
@@ -404,7 +420,11 @@ fn a_compiled_binary_refuses_the_scope_rather_than_dropping_it() {
         }
         let o = b.env(var, "").output().unwrap();
         let err = String::from_utf8_lossy(&o.stderr);
-        assert_eq!(o.status.code(), Some(2), "{var}: {err}");
+        assert_eq!(
+            o.status.code(),
+            Some(2),
+            "ATTACK: `axon build` emitted a binary while {var} was set: {err}"
+        );
         assert!(err.contains("E0910") && err.contains(var), "{var}: {err}");
         assert!(!out.exists(), "{var}: a binary was emitted");
     }

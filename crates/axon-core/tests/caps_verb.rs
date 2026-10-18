@@ -112,7 +112,11 @@ fn a_helper_reaching_append_file_is_fs_write() {
     let r = report(&out);
     assert_eq!(r["schema"], "axon-caps/1");
     assert_eq!(r["fn"], "via_helper");
-    assert_eq!(strings(&r, "capabilities"), ["fs:write"]);
+    assert_eq!(
+        strings(&r, "capabilities"),
+        ["fs:write"],
+        "ATTACK: --fn via_helper hid the write its helper does: {r}"
+    );
     assert_eq!(strings(&r, "effects"), ["IO"]);
     assert_eq!(r["unknown"], false);
 }
@@ -322,7 +326,11 @@ fn target(n: i64) -> i64 {
     let f = write(&d, "p.ax", src);
     let (code, out, err) = caps(&f, Some("target"));
     assert_eq!(code, 0, "{err}");
-    assert_eq!(report(&out)["unknown"], true, "{out}");
+    assert_eq!(
+        report(&out)["unknown"],
+        true,
+        "ATTACK: a computed dispatch target was reported as fully known: {out}"
+    );
 }
 
 // ── agreement with `@[contained]` ───────────────────────────────────────────
@@ -517,7 +525,11 @@ fn implicit_route(tag: &str, body: &str) -> serde_json::Value {
 }
 
 fn assert_reaches_the_write(tag: &str, r: &serde_json::Value) {
-    assert_eq!(strings(r, "capabilities"), ["fs:write"], "{tag}: {r}");
+    assert_eq!(
+        strings(r, "capabilities"),
+        ["fs:write"],
+        "ATTACK: {tag}: a write the interpreter runs implicitly is missing from caps: {r}"
+    );
     assert_eq!(strings(r, "effects"), ["IO"], "{tag}: {r}");
 }
 
