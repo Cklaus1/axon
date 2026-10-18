@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: fd032a6d72f4359c21a0c06f8fa4e4f94563a946
+generated-at: df8ba265a2b1b723eb6c7146f13f30377b1e5239
 
-`git diff --numstat 31413ca7..fd032a6d -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..df8ba265 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -28,7 +28,7 @@ generated-at: fd032a6d72f4359c21a0c06f8fa4e4f94563a946
 | `crates/axon-core/src/borrow.rs` | 18 | 3 |
 | `crates/axon-core/src/builtins.rs` | 45 | 11 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
-| `crates/axon-core/src/capabilities.rs` | 522 | 129 |
+| `crates/axon-core/src/capabilities.rs` | 706 | 171 |
 | `crates/axon-core/src/checker.rs` | 1235 | 510 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
@@ -49,13 +49,13 @@ generated-at: fd032a6d72f4359c21a0c06f8fa4e4f94563a946
 | `crates/axon-core/src/complexity.rs` | 1 | 0 |
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
 | `crates/axon-core/src/effects.rs` | 291 | 108 |
-| `crates/axon-core/src/env_registry.rs` | 14 | 2 |
+| `crates/axon-core/src/env_registry.rs` | 15 | 3 |
 | `crates/axon-core/src/error.rs` | 24 | 13 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 396 | 146 |
-| `crates/axon-core/src/interp.rs` | 7689 | 2874 |
+| `crates/axon-core/src/interp.rs` | 7704 | 2876 |
 | `crates/axon-core/src/interp/builtins.rs` | 794 | 614 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
@@ -87,7 +87,7 @@ generated-at: fd032a6d72f4359c21a0c06f8fa4e4f94563a946
 | `crates/axon-core/src/lib.rs` | 300 | 75 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 179 | 57 |
-| `crates/axon-core/src/main.rs` | 1580 | 365 |
+| `crates/axon-core/src/main.rs` | 1588 | 365 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
 | `crates/axon-core/src/parser.rs` | 457 | 31 |
@@ -98,9 +98,9 @@ generated-at: fd032a6d72f4359c21a0c06f8fa4e4f94563a946
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 56563 | 7882 |
+| total | 56771 | 7927 |
 
-`git log --reverse 31413ca7..fd032a6d -- crates/axon-core/src`:
+`git log --reverse 31413ca7..df8ba265 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -395,7 +395,9 @@ generated-at: fd032a6d72f4359c21a0c06f8fa4e4f94563a946
 | 01a62742 | R0b ambient scope env | INTERPRETER: the ambient sandbox can now carry a path/host scope from AXON_ALLOWED_FS_READ / AXON_ALLOWED_FS_WRITE / AXON_ALLOWED_NET (narrowing only). With all three unset and AXON_ALLOWED_EFFECTS unset the registry is empty exactly as before (no behaviour change); with AXON_ALLOWED_EFFECTS alone the entry is the same ceiling with all_effects false. New refusals only: scope_violation against the ambient entry under an inner sandbox, sandbox_run into an all-effects entry from a narrower one, provenance suppressed when a fs_write scope does not admit its path. SandboxEntry::allows replaces allowed.contains at the four ceiling sites (identical unless all_effects). sandbox_create_scoped's list parser moved to parse_scope_list unchanged. axon-rt and axon build refuse the three vars (exit 2 / E0910). A sealed run's kernel holds the same ambient entry at index 0, so the ceiling binds sealed frames too. |
 | f3746a33 | R0b claims-gate read shape | INTERPRETER: no behaviour change. ambient_scope_var now takes the already-read OsString; the three call sites read AXON_ALLOWED_FS_READ / AXON_ALLOWED_FS_WRITE / AXON_ALLOWED_NET with std::env::var_os("<literal>") so scripts/claims_gate.sh (CLAUDE.md env-var claims) recognises them as read. |
 | 361bdfe9 | caps implicit user-code routes | CHECKER/STATIC ANALYSIS, no interpreter change: the shared @[contained]/axon caps walker now also follows the user code the interpreter runs without a call in the body - refinement predicates at param/return/let/field coercions, struct whole-type refinements at construction, @[verify] predicates, and the metric fn of an @[goal]. axon caps reports more (never less); @[contained] can newly report E1001 for a forbidden call reached only through such a predicate. No example changes verdict or caps output. |
-| 291 commits | | |
+| ecf63dfc | capability walker coverage | capabilities: the program-wide capability and builtin-call walkers share one roots list (fn and impl-method bodies, @[verify] predicates, LetDef values, every refinement predicate incl. synthetic __refine_* and TypeDef where clauses), so G2, the import edge (E1203) and the effect union see a capability used only inside a predicate; E1004 is checked per fn over the fn body with its own hooks. |
+| 7c5d2136 | effect ceiling | interp/main: a non-UTF-8 AXON_ALLOWED_EFFECTS is the empty allowed set (every effect denied) with one warning, both for axon run and for axon test --completion-key-stdin, which no longer widens it; unset keeps its previous meaning. |
+| 293 commits | | |
 <!-- END MECHANICAL -->
 
 
