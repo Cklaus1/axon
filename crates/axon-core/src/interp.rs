@@ -7572,7 +7572,12 @@ fn ambient_sandbox() -> Vec<SandboxEntry> {
         // beside a scope variable) let a set ceiling fail open — the same
         // rule `ambient_scope_var` applies to the scope variables.
         Err(std::env::VarError::NotUnicode(_)) => {
-            eprintln!("warning: AXON_ALLOWED_EFFECTS is not UTF-8 — it denies every effect");
+            // Once per PROCESS: `axon test` builds an interpreter per test,
+            // and each build reads the ceiling.
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| {
+                eprintln!("warning: AXON_ALLOWED_EFFECTS is not UTF-8 — it denies every effect");
+            });
             String::new()
         }
         Err(std::env::VarError::NotPresent) => {

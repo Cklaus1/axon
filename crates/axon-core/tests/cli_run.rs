@@ -31018,6 +31018,46 @@ fn a_keyed_test_run_under_a_non_utf8_effect_ceiling_denies_every_effect() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// FU-5 / IA-10: the warning is ONE line per process. `axon test` builds an
+/// interpreter per test, and each build read the ceiling, so a three-test
+/// file printed the same warning three times.
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_effect_ceiling_warns_once_per_process_not_once_per_test() {
+    use std::os::unix::ffi::OsStrExt;
+    let bad = std::ffi::OsStr::from_bytes(b"IO\xff");
+    let dir = std::env::temp_dir().join(format!("axon_effceil_once_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t.ax");
+    std::fs::write(
+        &f,
+        "@[test]\nfn a() { assert(1 == 1) }\n@[test]\nfn b() { assert(2 == 2) }\n\
+         @[test]\nfn c() { println(\"did IO\") }\n",
+    )
+    .unwrap();
+    for jobs in ["1", "3"] {
+        let o = axon()
+            .args(["test", "--jobs", jobs])
+            .arg(&f)
+            .env("AXON_ALLOWED_EFFECTS", bad)
+            .env_remove("AXON_ALLOWED_FS_READ")
+            .env_remove("AXON_ALLOWED_FS_WRITE")
+            .env_remove("AXON_ALLOWED_NET")
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&o.stderr);
+        let out = String::from_utf8_lossy(&o.stdout);
+        assert_eq!(o.status.code(), Some(3), "c must be refused: {out}\n{err}");
+        let n = err.matches("AXON_ALLOWED_EFFECTS is not UTF-8").count();
+        assert_eq!(
+            n, 1,
+            "ATTACK: the non-UTF-8 ceiling warning printed {n} times under --jobs {jobs}: {err}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_traversal_denial_does_not_advise_a_grant_that_cannot_work() {
     // A `..` path is refused, correctly. But the help offered the generic
