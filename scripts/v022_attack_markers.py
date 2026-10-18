@@ -3121,3 +3121,12 @@ ATTACK_MARKERS.update({
     'M3718': r"ATTACK: the first prompt's report carries what the cleaner must remove",
     'M3719': r'first prompt lacks `What the visible tests report on the file as it stands',
 })
+
+# FU core lane (FU-2 predicate routes, FU-5 non-UTF-8 ceiling; ids M3760-M3779)
+ATTACK_MARKERS.update({
+    'M3760': r'ATTACK: verify_read: a pass adding a `fs:read` predicate passed G2',
+    'M3761': r'ATTACK: named_refine: a pass adding a `fs:read` predicate passed G2',
+    'M3762': r'ATTACK: struct_where: a pass adding a `fs:write` predicate passed G2',
+    'M3763': r'ATTACK: verify_read: a `fs:read` predicate is missing `IO` from the effect union',
+    'M3764': r'ATTACK: a native call in a refinement f uses escaped E1004',
+})

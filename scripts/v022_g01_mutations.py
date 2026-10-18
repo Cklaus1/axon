@@ -11613,5 +11613,28 @@ MUTATIONS += [
      'axon-core', '--test caps_verb', 'a_helper_reaching_append_file_is_fs_write'),
 ]
 
+# FU core lane (FU-2 predicate routes, FU-5 non-UTF-8 ceiling; ids M3760-M3779)
+MUTATIONS += [
+    ('M3760', 'FU-2 CAPS: the program-wide walkers do not root @[verify] predicates', 'crates/axon-core/src/capabilities.rs',
+     '        roots.extend(f.verify.as_ref().map(|v| &*v.predicate));', '        let _ = &f.verify;',
+     'axon-core', '--test predicate_capability_routes', 'g2_rejects_a_pass_that_adds_a_predicate_route'),
+    ('M3761', 'FU-2 CAPS: the program-wide walkers do not root refinement predicates (named or inline)', 'crates/axon-core/src/capabilities.rs',
+     '        let refines = self.refines.values().map(|r| &*r.predicate);',
+     '        let refines = self.refines.values().map(|r| &*r.predicate).take(0);',
+     'axon-core', '--test predicate_capability_routes', 'g2_rejects_a_pass_that_adds_a_predicate_route'),
+    ('M3762', 'FU-2 CAPS: the program-wide walkers do not root struct whole-type refinements', 'crates/axon-core/src/capabilities.rs',
+     '            .filter_map(|t| t.refinement.as_deref());',
+     '            .filter_map(|t| t.refinement.as_deref())\n            .take(0);',
+     'axon-core', '--test predicate_capability_routes', 'g2_rejects_a_pass_that_adds_a_predicate_route'),
+    ('M3763', 'FU-2 CAPS: program_effect_rows (the manifest effect union) skips the shared roots', 'crates/axon-core/src/capabilities.rs',
+     '        crate::ast::walk_expr(root, &mut visit);',
+     '        if false {\n            crate::ast::walk_expr(root, &mut visit);\n        }',
+     'axon-core', '--test predicate_capability_routes', 'the_effect_union_carries_the_row_a_predicate_route_implies'),
+    ('M3764', 'FU-2 E1004: a native call in a predicate a fn runs escapes its grant check', 'crates/axon-core/src/capabilities.rs',
+     '    push_fn_hooks(fndef, &ctx, &mut work);\n    drain_walk(work, &mut ctx);\n    let called: Vec<&str> = reach',
+     '    drain_walk(work, &mut ctx);\n    let called: Vec<&str> = reach',
+     'axon-core', '--lib', 'capabilities::tests::a_native_call_in_a_used_refinement_needs_the_users_grant_e1004'),
+]
+
 if __name__ == "__main__":
     main()
