@@ -2754,7 +2754,7 @@ EXEMPT += [
      'if lines.len() > MAX_PRINTED_LINES {',
      _GCX + "; R4: the printed-output line bound of the typed feedback, cut AND counted in `truncated` (feedback::tests::printed_lines_past_the_bound_are_counted)"),
     (_SR, '_ => Err(BoundExceeded::unread()),',
-     _CHK + "; R2: a drain that could not be joined within the drain grace lost what it read, so the run yields no verdict (a bound, reported as unread, not as the capture bound; runner::drain_tests)"),
+     _CHK + "; R2: a drain that could not be joined within the drain grace lost what it read, or was stopped before EOF (FU-3), so the run yields no verdict (a bound, reported as unread, not as the capture bound; runner::drain_tests)"),
     ('crates/axon-cortex/src/feedback.rs',
      'fn is_zero(n: &u32) -> bool {',
      _GCX + "; R4: a serde skip predicate for the `truncated` count, decides no admission"),

@@ -11728,5 +11728,19 @@ MUTATIONS += [
      'axon-core', '--test cli_run', 'a_keyed_test_run_under_a_non_utf8_effect_ceiling_denies_every_effect'),
 ]
 
+# Cortex lane, IA-5 (implementation audit): propose's lost-read mapping (read_answer) — a
+# detached/pending generator drain is Unavailable, never Declined, never an empty answer.
+# (ids from the cortex range M3740-M3759)
+MUTATIONS += [
+    ('M3755', "FU-3 x propose: a lost generator read is reported Declined, not Unavailable", _FUG,
+     '        GenerationFailure::Unavailable(format!("`{program}` output could not be read to EOF{why}"))',
+     '        GenerationFailure::Declined(format!("`{program}` output could not be read to EOF{why}"))',
+     'axon-cortex', '--lib', 'generate::drain_tests::a_lost_read_is_unavailable_never_declined_or_empty'),
+    ('M3756', "FU-3 x propose: a lost generator read falls back to empty bytes (an empty answer)", _FUG,
+     '    generator_output(joined).map_err(|why| {',
+     '    Ok::<_, &str>(generator_output(joined).unwrap_or_default()).map_err(|why| {',
+     'axon-cortex', '--lib', 'generate::drain_tests::a_lost_read_is_unavailable_never_declined_or_empty'),
+]
+
 if __name__ == "__main__":
     main()

@@ -3151,3 +3151,9 @@ ATTACK_MARKERS.update({
     'M3765': r'ATTACK: println ran under a non-UTF-8 AXON_ALLOWED_EFFECTS',
     'M3766': r'ATTACK: a printing test passed a keyed run under a non-UTF-8 AXON_ALLOWED_EFFECTS',
 })
+
+# Cortex lane, IA-5 (ids M3740-M3759)
+ATTACK_MARKERS.update({
+    'M3755': r'ATTACK: a lost generator read was not reported Unavailable',
+    'M3756': r'ATTACK: a lost generator read was not reported Unavailable',
+})

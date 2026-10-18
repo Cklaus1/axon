@@ -103,10 +103,14 @@ budget, no progress, the early stop, …), it reports that adjudication (exit
 `stopped_by` (`{outcome, exit_code, detail}`; `budget.exhausted_by` still names
 a walk limit). The file is read once more before the run reports, and if it
 is no longer those bytes (changed after acceptance, or not put back) the run
-fails closed: exit 22 `blocked`, `accepted: null`, `stopped_by: null`, the
-file restored as found. A walk that cannot restore the found bytes between
-attempts ends `blocked` there, and the run still settles and reports it
-this way.
+fails closed: exit 22 `blocked`, `accepted: null`, `stopped_by: null`. Every
+restore (between attempts, at exit, and this one) puts the found bytes back
+only over bytes this run wrote (a `patch_applied` digest or the adjudicated
+bytes): a file another writer changed, or one that cannot be read, is left in
+place and the reason says "changed by another writer; not restored" or "could
+not be read; not restored"; a restore whose write fails reports the io error.
+A walk that cannot restore the found bytes between attempts ends `blocked`
+there, and the run still settles and reports it this way.
 The `--label-log` row is written after that final check, so it records the
 exit the run exits with.
 
