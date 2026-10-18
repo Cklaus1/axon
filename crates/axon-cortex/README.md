@@ -85,17 +85,24 @@ past a bound blocks (22). The walk itself has hard limits:
 `--max-proposals N` caps generator calls across every candidate and
 `--deadline-ms N` stops new generator calls at a wall-clock deadline; either
 ends `budget_exhausted` (20) with `detail` `proposals` / `deadline`, reported
-under `budget` in `--json`.
+under `budget` in `--json` — unless the walk had already reached an
+adjudicated state (below), which it then reports as exit 27.
 
 **The accepted artifact is bound to its evidence.** The bytes the hidden check
 graded are digested before it spawns and re-read after the last acceptance
 check; a file changed in between is never accepted. `--json` reports
 `accepted: {path, sha256}` on exits 0 and 27, where `sha256` is the digest the
-deciding verdict graded. A walk that reaches an adjudicated state and goes on
-looking for a clean repair puts that state's graded bytes back if it ends
-reporting it (exit 27). The file is read once more before the run reports,
-and if it is no longer those bytes (changed after acceptance) the run fails
-closed: exit 22 `blocked`, `accepted: null`, the file restored as found.
+deciding verdict graded. An adjudicated result is never discarded by later,
+worse attempts: a walk that reaches an adjudicated state goes on looking for
+a clean repair, and if it then ends without one, for any reason (walk or step
+budget, no progress, the early stop, …), it reports that adjudication (exit
+27) with its graded bytes put back, and names what ended the walk in
+`stopped_by` (`{outcome, exit_code, detail}`; `budget.exhausted_by` still names
+a walk limit). The file is read once more before the run reports, and if it
+is no longer those bytes (changed after acceptance, or not put back) the run
+fails closed: exit 22 `blocked`, `accepted: null`, the file restored as found.
+The `--label-log` row is written after that final check, so it records the
+exit the run exits with.
 
 **The adjudicator** must be able to witness the repair. A check that already
 passes would accept the file unchanged, so it is refused (exit 26) rather than
@@ -177,7 +184,7 @@ about whether to widen a grant, supply a generator, or fix a PATH.
 | 24 | no usable proposal |
 | 25 | no repair target could be established, or the named symbol does not exist |
 | 26 | `--check` already passes — it cannot witness a repair |
-| 27 | adjudicated, not clean: the check passed and nothing regressed, but checks that were already failing still fail. The patch is KEPT |
+| 27 | adjudicated, not clean: the check passed and nothing regressed, but checks that were already failing still fail. The patch is KEPT — also when the walk went on and ended short of a clean repair for another reason, which `stopped_by` names |
 
 A check passes only with a completion token: every check child runs with
 `--completion-key-stdin` and a fresh per-run key, so a body that calls

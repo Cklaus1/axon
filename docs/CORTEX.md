@@ -635,7 +635,7 @@ Every one of these was produced on `pricing.ax` (or, for 27, on
 | 24 | `needs_input` | restored | a patch was needed and no usable body came back; supply or fix `--generator` |
 | 25 | `no_such_symbol` / no target | untouched | `--symbol` does not exist, or no candidate could be ranked |
 | 26 | check cannot witness | untouched | `--check` already passes; name a check that currently fails |
-| 27 | `adjudicated_not_clean` | patched (KEPT) | the check passed and nothing regressed, but tests that were already failing still fail; look at those separately |
+| 27 | `adjudicated_not_clean` | patched (KEPT) | the check passed and nothing regressed, but tests that were already failing still fail; look at those separately. A walk that reached this state and then ended short of a clean repair for any other reason (20, 21, 28, …) still reports it, with its graded bytes; `stopped_by` in `--json` names what ended the walk |
 | 28 | `out_of_scope_suspected` | restored (untouched when no model was asked) | the early stop ended the run: either no function is reached by every failing visible check, or every candidate asked stopped changing the visible verdict. A one-body fix is unlikely; look for a defect spanning functions, a signature or a type. A suspicion, not a proof: rerun with `--early-stop off` to spend the whole budget |
 
 `verified_done` also needs `axon check` on the patched file to exit 0.

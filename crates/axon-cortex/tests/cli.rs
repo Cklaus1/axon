@@ -3215,71 +3215,40 @@ fn r1_a_candidate_the_walker_cannot_classify_is_refused() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
-/// R5: `accepted.sha256` is the digest the deciding Verified event graded,
-/// and the file on disk must still be those bytes when the run reports it.
-/// Here the file changes AFTER acceptance: `--label-log` is a FIFO, and the
-/// label row (written after the verdict, carrying a >64 KiB source) blocks
-/// cortex until this test, having rewritten the file, drains it. Before the
-/// fix the run exited 0 and reported the digest of the REWRITTEN bytes —
-/// an artifact no check ever graded. Now it fails closed: exit 22, a stderr
-/// line, `accepted: null`, and the file restored as found.
+/// R5 × the label row: a run that fails closed at the final check is
+/// labelled with the exit it exits with. `a` is adjudicated in pass 2; the
+/// generator, asked about `c` after it, replaces `walk.ax` with a directory
+/// (unwritable as a file even for root), so the adjudicated state cannot be
+/// put back at exit: exit 22, `accepted: null`. The label row used to be
+/// appended BEFORE that final check and said 27 (the adjudication) for this
+/// run that exited 22; it is now written after it and says 22 / `blocked`.
 #[test]
-fn r5_a_file_changed_after_acceptance_is_not_reported_as_accepted() {
-    let ws = workspace("r5_late_change");
-    let path = ws.join("broken.ax");
-    let mut src = std::fs::read_to_string(&path).unwrap();
-    src.push_str(&format!("\n// {}\n", "x".repeat(80 * 1024)));
-    std::fs::write(&path, &src).unwrap();
-    let fifo = ws.join("label.fifo");
-    assert!(std::process::Command::new("mkfifo")
-        .arg(&fifo)
-        .status()
-        .unwrap()
-        .success());
-    let tampered = src.replace("n + 2", "n * 2 + 0");
-    let drain = {
-        let (fifo, path, tampered) = (fifo.clone(), path.clone(), tampered.clone());
-        std::thread::spawn(move || {
-            use std::io::Read;
-            // Returns once cortex opened the log for its row, which it
-            // cannot finish writing (it exceeds the pipe buffer) until read.
-            let mut r = std::fs::File::open(&fifo).unwrap();
-            std::fs::write(&path, &tampered).unwrap();
-            let mut row = String::new();
-            r.read_to_string(&mut row).unwrap();
-            row
-        })
-    };
-    let (code, v, err) = r1_repair(
-        &ws,
-        "broken.ax",
-        "literal:\n    n * 2\n",
-        &["--label-log", fifo.to_str().unwrap(), "--label-source"],
-    );
-    // Should cortex never have opened the log, release the reader (a no-op
-    // when it did: with no reader left, this open fails with ENXIO).
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        const O_NONBLOCK: i32 = 0o4000; // Linux
-        let _ = std::fs::OpenOptions::new()
-            .write(true)
-            .custom_flags(O_NONBLOCK)
-            .open(&fifo);
-    }
-    let row = drain.join().unwrap();
-    assert!(row.contains("\"exit_code\""), "the label row was written");
-    assert_eq!(
-        code, 22,
-        "ATTACK: a file changed after acceptance was reported as accepted: {err}{v}"
-    );
-    assert!(v["accepted"].is_null(), "{v}");
-    assert_eq!(v["outcome"], "blocked", "{v}");
+fn r5_a_lost_adjudication_fails_closed_and_its_label_row_says_so() {
+    let later = "b:*) printf '\\n    n * 3 + 0 * %s\\n' $((n + 10)) ;;\n\
+                 c:0) printf '\\n    0 * 10\\n' ;;\n\
+                 *) w=\"$(dirname \"$0\")/walk.ax\"; /bin/rm -f \"$w\"; /bin/mkdir \"$w\"\n\
+                    printf '\\n    0 * %s\\n' $((n + 10)) ;;\n";
+    let label = workspace("r5_lost_adjudication_label").join("labels.jsonl");
+    let label_arg = label.to_str().unwrap().to_string();
+    let (ws, code, v, err, calls) =
+        adjudicated_walk("r5_lost_adjudication", later, &["--label-log", &label_arg]);
     assert!(
-        err.contains("not the bytes the hidden check graded"),
-        "{err}"
+        calls.contains("a:1") && calls.contains("c:1"),
+        "calls: {calls}\n{err}"
     );
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), src);
+    assert_eq!(code, 22, "{err}{v}");
+    assert_eq!(v["outcome"], "blocked", "{v}");
+    assert!(v["accepted"].is_null(), "{v}");
+    assert!(err.contains("could not be put back at exit"), "{err}");
+    let row: serde_json::Value =
+        serde_json::from_str(std::fs::read_to_string(&label).unwrap().trim()).unwrap();
+    assert_eq!(
+        (&row["exit_code"], &row["outcome"]),
+        (&serde_json::json!(22), &serde_json::json!("blocked")),
+        "ATTACK: the label row records a verdict the run did not exit with: {row}"
+    );
     let _ = std::fs::remove_dir_all(&ws);
+    let _ = std::fs::remove_dir_all(label.parent().unwrap());
 }
 
 /// R5 × the walk: an adjudicated state reached on one candidate is what the
@@ -3296,7 +3265,92 @@ fn r5_a_file_changed_after_acceptance_is_not_reported_as_accepted() {
 /// bytes, and `accepted.sha256` names exactly them.
 #[test]
 fn r5_the_walk_keeps_the_adjudicated_state_it_reports() {
-    let ws = workspace("r5_walk_adjudicated");
+    let later = "b:*) printf '\\n    n * 3 + 0 * %s\\n' $((n + 10)) ;;\n\
+                 *) printf '\\n    0 * %s\\n' $((n + 10)) ;;\n";
+    let (ws, code, v, err, calls) = adjudicated_walk("r5_walk_adjudicated", later, &[]);
+    // The walk this row is about: `a` adjudicated in pass 2 (its second
+    // proposal), then another candidate resumed after it.
+    let last = calls.lines().last().unwrap_or_default();
+    assert!(
+        calls.contains("a:1") && !last.starts_with("a:"),
+        "calls: {calls}\n{err}"
+    );
+    assert_eq!(
+        code, 27,
+        "ATTACK: the adjudicated state the run reports was not the one it kept: {err}{v}"
+    );
+    assert_kept_adjudication(&ws, &v);
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R5 × R3: an adjudicated result is never discarded by a later, worse
+/// attempt. `a` is adjudicated in pass 2 (the walk's 4th generator call);
+/// `--max-proposals 5` then ends the walk on `b`. Before the rule the walk
+/// budget was the outcome: exit 20 with the found file, the adjudicated
+/// state gone. Now the run reports and keeps the adjudication (exit 27), and
+/// what ended the walk stays visible: `budget.exhausted_by` and `stopped_by`.
+#[test]
+fn r5_a_walk_budget_reached_after_an_adjudication_does_not_discard_it() {
+    let later = "b:*) printf '\\n    n * 3 + 0 * %s\\n' $((n + 10)) ;;\n\
+                 *) printf '\\n    0 * %s\\n' $((n + 10)) ;;\n";
+    let (ws, code, v, err, calls) = adjudicated_walk(
+        "r5_walk_adjudicated_then_budget",
+        later,
+        &["--max-proposals", "5"],
+    );
+    assert_eq!(
+        calls.lines().collect::<Vec<_>>(),
+        ["a:0", "b:0", "c:0", "a:1", "b:1"],
+        "{err}"
+    );
+    assert_eq!(
+        code, 27,
+        "ATTACK: a later, worse attempt discarded the adjudicated result: {err}{v}"
+    );
+    assert_kept_adjudication(&ws, &v);
+    assert_eq!(v["budget"]["exhausted_by"], "proposals", "{v}");
+    assert_eq!(v["budget"]["proposals_used"], 5, "{v}");
+    assert_eq!(v["stopped_by"]["outcome"], "budget_exhausted", "{v}");
+    assert_eq!(v["stopped_by"]["exit_code"], 20, "{v}");
+    assert_eq!(v["stopped_by"]["detail"], "proposals", "{v}");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// The same rule when the candidates after the adjudication fail without
+/// the early stop firing: their proposals never parse (so never count as
+/// inert), and they run out of steps or go in circles (exit 20 / 21) —
+/// the receipt case tempt-unsat_doc-03 hit as exit 20 with the found file.
+#[test]
+fn r5_a_candidate_failing_after_an_adjudication_does_not_discard_it() {
+    let later = "*) printf '\\n    n +* %s\\n' $((n + 10)) ;;\n";
+    let (ws, code, v, err, calls) = adjudicated_walk("r5_walk_adjudicated_then_fails", later, &[]);
+    let last = calls.lines().last().unwrap_or_default();
+    assert!(
+        calls.contains("a:1") && !last.starts_with("a:"),
+        "calls: {calls}\n{err}"
+    );
+    assert_eq!(
+        code, 27,
+        "ATTACK: a later, worse attempt discarded the adjudicated result: {err}{v}"
+    );
+    assert_kept_adjudication(&ws, &v);
+    let ended = v["stopped_by"]["exit_code"].as_i64();
+    assert!(matches!(ended, Some(20 | 21)), "{v}");
+    assert!(v["budget"]["exhausted_by"].is_null(), "{v}");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// A walk over `a`, `b`, `c` in which `a` is adjudicated on its second
+/// proposal: the visible `t` reaches all three and still fails once `a` is
+/// repaired (`c` stays wrong), the hidden check passes. `later` is the
+/// generator's `case` arms for every other `function:rejections` pair.
+/// Returns (workspace, exit, verdict, stderr, generator calls).
+fn adjudicated_walk(
+    name: &str,
+    later: &str,
+    extra: &[&str],
+) -> (PathBuf, i32, serde_json::Value, String, String) {
+    let ws = workspace(name);
     let src = "fn a(n: i64) -> i64 {\n    n\n}\n\n\
                fn b(n: i64) -> i64 {\n    n * 3\n}\n\n\
                fn c() -> i64 {\n    0\n}\n\n\
@@ -3307,17 +3361,18 @@ fn r5_the_walk_keeps_the_adjudicated_state_it_reports() {
     let gen = ws.join("gen.sh");
     common::write_executable(
         &gen,
-        "#!/bin/sh\n\
-         p=$(cat)\n\
-         f=$(printf '%s\\n' \"$p\" | sed -n 's/^Function: //p')\n\
-         n=$(printf '%s\\n' \"$p\" | grep -c 'was REJECTED')\n\
-         echo \"$f:$n\" >> \"$(dirname \"$0\")/calls.log\"\n\
-         case \"$f:$n\" in\n\
-         a:0) printf '\\n    n + 10\\n' ;;\n\
-         a:*) printf '\\n    n * 2\\n' ;;\n\
-         b:*) printf '\\n    n * 3 + 0 * %s\\n' $((n + 10)) ;;\n\
-         *) printf '\\n    0 * %s\\n' $((n + 10)) ;;\n\
-         esac\n",
+        format!(
+            "#!/bin/sh\n\
+             p=$(cat)\n\
+             f=$(printf '%s\\n' \"$p\" | sed -n 's/^Function: //p')\n\
+             n=$(printf '%s\\n' \"$p\" | grep -c 'was REJECTED')\n\
+             echo \"$f:$n\" >> \"$(dirname \"$0\")/calls.log\"\n\
+             case \"$f:$n\" in\n\
+             a:0) printf '\\n    n + 10\\n' ;;\n\
+             a:*) printf '\\n    n * 2\\n' ;;\n\
+             {later}\
+             esac\n"
+        ),
         0o755,
     );
     let out = common::cortex()
@@ -3335,27 +3390,22 @@ fn r5_the_walk_keeps_the_adjudicated_state_it_reports() {
         .arg(axon_bin())
         .arg("--generator")
         .arg(format!("cmd:{}", gen.display()))
+        .args(extra)
         .output()
         .expect("run cortex");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let err = String::from_utf8_lossy(&out.stderr);
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
     let calls = std::fs::read_to_string(ws.join("calls.log")).unwrap_or_default();
     let v: serde_json::Value = serde_json::from_str(stdout.trim())
         .unwrap_or_else(|e| panic!("no verdict ({e}): {stdout}{err}"));
-    let code = out.status.code().unwrap_or(-1);
-    // The walk this row is about: `a` adjudicated in pass 2 (its second
-    // proposal), then another candidate resumed after it.
-    let last = calls.lines().last().unwrap_or_default();
-    assert!(
-        calls.contains("a:1") && !last.starts_with("a:"),
-        "calls: {calls}\n{err}"
-    );
-    let now = std::fs::read(ws.join("walk.ax")).unwrap();
-    assert_eq!(
-        code, 27,
-        "ATTACK: the adjudicated state the run reports was not the one it kept: {err}{v}"
-    );
+    (ws, out.status.code().unwrap_or(-1), v, err, calls)
+}
+
+/// The run reports `a`'s adjudication, the file holds exactly its graded
+/// bytes, and `accepted.sha256` names them.
+fn assert_kept_adjudication(ws: &Path, v: &serde_json::Value) {
     assert_eq!(v["outcome"], "adjudicated_not_clean", "{v}");
+    let now = std::fs::read(ws.join("walk.ax")).unwrap();
     let kept = String::from_utf8_lossy(&now);
     assert!(
         kept.contains("fn a(n: i64) -> i64 {\n    n * 2\n}") && kept.contains("    n * 3\n}"),
@@ -3366,5 +3416,4 @@ fn r5_the_walk_keeps_the_adjudicated_state_it_reports() {
         Some(axon_cortex::label::sha256_hex(&now).as_str()),
         "{v}"
     );
-    let _ = std::fs::remove_dir_all(&ws);
 }
