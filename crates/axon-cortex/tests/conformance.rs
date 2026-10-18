@@ -1701,7 +1701,10 @@ fn cxg_c13_a_patch_that_breaks_the_build_is_undone() {
     let before = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
     let mut r = Runner::new(axon_bin(), &ws);
     let g = broken_grant(&mut r);
-    let junk = LiteralGenerator::new("\n    this is not axon at all ]]}\n");
+    // No `}`: a body that closes the function is refused before it is applied
+    // (it does not stay inside `double`), and this case is about a patch that
+    // IS applied and then breaks the build.
+    let junk = LiteralGenerator::new("\n    this is not axon at all ]]\n");
     let out = r.run_episode(
         &target(),
         Some(&g),

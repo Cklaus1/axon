@@ -168,6 +168,12 @@ pub enum ExecOutcome {
 /// Returns None when the symbol is absent — the caller reports that as
 /// `SymbolNotFound` rather than as an empty body, because an empty body is a
 /// real thing a function can have.
+///
+/// The source is read as the Axon lexer reads it ([`scan_code`]): a brace in
+/// a string or a comment is not structure, and a `fn <symbol>(` in one is not
+/// the function. Counting raw braces put the end of a body holding `"}"`
+/// inside the string, and that disagreement with the compiler is exactly what
+/// [`splice_body`] must not have.
 fn symbol_body(src: &str, symbol: &str) -> Option<(usize, usize)> {
     // The open paren is load-bearing. Without it `fn fib` matches `fn fib_rec`
     // defined earlier in the file, and every caller of this function then
@@ -183,22 +189,163 @@ fn symbol_body(src: &str, symbol: &str) -> Option<(usize, usize)> {
     // `locate.rs` already spelled its needle with the paren; the two modules
     // disagreed about what "the body of X" means.
     let needle = format!("fn {symbol}(");
-    let at = src.find(&needle)?;
-    let open = src[at..].find('{')? + at;
-    let mut depth = 0usize;
-    for (i, c) in src[open..].char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
+    let (mut found, mut open, mut depth) = (false, None, 0usize);
+    scan_code(src, |i, c| {
+        if !found {
+            found = src.as_bytes()[i..].starts_with(needle.as_bytes());
+            return None;
+        }
+        match (open, c) {
+            (None, b'{') => {
+                open = Some(i);
+                depth = 1;
+            }
+            (Some(_), b'{') => depth += 1,
+            (Some(o), b'}') => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some((open + 1, open + i));
+                    return Some((o + 1, i));
                 }
             }
             _ => {}
         }
+        None
+    })
+    .ok()
+    .flatten()
+}
+
+/// How many times `fn <symbol>(` starts in CODE (not in a string or comment);
+/// None when the source does not lex.
+fn symbol_count(src: &str, symbol: &str) -> Option<usize> {
+    let needle = format!("fn {symbol}(");
+    let mut n = 0usize;
+    scan_code(src, |i, _| {
+        if src.as_bytes()[i..].starts_with(needle.as_bytes()) {
+            n += 1;
+        }
+        None::<()>
+    })
+    .ok()?;
+    Some(n)
+}
+
+/// Walk `src` the way the Axon lexer tokenizes it (crates/axon-core/src/
+/// token.rs), calling `code(i, byte)` for every byte that is neither inside a
+/// string literal (`"…"` with `\` escapes, raw `r"…"`) nor a comment
+/// (`// …` to the newline, `/* … */` where a `*` takes the next character
+/// along, so `**/` does not close). Stops at the first `Some` from `code`.
+///
+/// `Err` when the text does not lex the same way under every reading this
+/// scan can make: a string, raw string or block comment that never closes, a
+/// `\` before a newline or the end, or `r"` after a word that starts with a
+/// digit (`1r"…"`: the compiler's number token may stop before the `r`, making
+/// it a raw string, which this scan does not decide). A caller that needs the
+/// structure must treat `Err` as "not found", never as "no structure".
+fn scan_code<T>(src: &str, mut code: impl FnMut(usize, u8) -> Option<T>) -> Result<Option<T>, ()> {
+    let b = src.as_bytes();
+    let is_word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    // Every delimiter below is ASCII and every byte of a multi-byte character
+    // is >= 0x80, so stepping bytewise stays on character boundaries wherever
+    // a delimiter is matched; the one place a whole character is skipped
+    // (after `\` and after `*`) steps by its UTF-8 length.
+    let char_len = |at: usize| src[at..].chars().next().map(char::len_utf8);
+    let mut word_start: Option<usize> = None;
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'"' {
+            let raw = match word_start {
+                Some(w) if w + 1 == i && b[w] == b'r' => true,
+                Some(w) if b[w].is_ascii_digit() && b[i - 1] == b'r' => return Err(()),
+                _ => false,
+            };
+            word_start = None;
+            let mut j = i + 1;
+            i = loop {
+                match b.get(j) {
+                    None => return Err(()),
+                    Some(b'"') => break j + 1,
+                    Some(b'\\') if !raw => match char_len(j + 1) {
+                        Some(_) if b[j + 1] == b'\n' => return Err(()),
+                        Some(n) => j += 1 + n,
+                        None => return Err(()),
+                    },
+                    Some(_) => j += 1,
+                }
+            };
+            continue;
+        }
+        if c == b'/' && b.get(i + 1) == Some(&b'/') {
+            word_start = None;
+            i = b[i..]
+                .iter()
+                .position(|&x| x == b'\n')
+                .map_or(b.len(), |p| i + p);
+            continue;
+        }
+        if c == b'/' && b.get(i + 1) == Some(&b'*') {
+            word_start = None;
+            let mut j = i + 2;
+            i = loop {
+                match b.get(j) {
+                    None => return Err(()),
+                    Some(b'*') => match b.get(j + 1) {
+                        None => return Err(()),
+                        Some(b'/') => break j + 2,
+                        Some(_) => j += 1 + char_len(j + 1).unwrap_or(1),
+                    },
+                    Some(_) => j += 1,
+                }
+            };
+            continue;
+        }
+        if is_word(c) {
+            word_start.get_or_insert(i);
+        } else {
+            word_start = None;
+        }
+        if let Some(t) = code(i, c) {
+            return Ok(Some(t));
+        }
+        i += 1;
     }
-    None
+    Ok(None)
+}
+
+/// Why [`splice_body`] did not produce a patched file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SpliceError {
+    /// The target is not in the file as found.
+    NoSymbol,
+    /// Spliced in, the body does not stay inside the target: re-located with
+    /// the same locator, the target's body is not exactly the proposed text,
+    /// or another `fn <symbol>(` appeared.
+    Escapes,
+}
+
+/// `src` with `body` in place of `symbol`'s body — only if the body stays
+/// INSIDE the function.
+///
+/// The text outside the replaced span is the original by construction; what
+/// a body can still do is change where the function ENDS. A body reading
+/// `n * 2\n}\n\n@[test]\nfn injected() {…` closes `symbol` early and turns
+/// the original closing brace into the end of a new top-level item: the
+/// static grant walks only `symbol`, and the new item runs as a test. So the
+/// patched text is re-located with the same locator, and the splice stands
+/// only if the target is found at the same place, its body is exactly the
+/// proposed text (so every brace, string and comment the body opens closes
+/// inside it, and everything after it lexes as it did), and no new
+/// `fn <symbol>(` appeared.
+fn splice_body(src: &str, symbol: &str, body: &str) -> Result<String, SpliceError> {
+    let (a, b) = symbol_body(src, symbol).ok_or(SpliceError::NoSymbol)?;
+    let patched = format!("{}{}{}", &src[..a], body, &src[b..]);
+    if symbol_body(&patched, symbol) != Some((a, a + body.len()))
+        || symbol_count(&patched, symbol) != symbol_count(src, symbol)
+    {
+        return Err(SpliceError::Escapes);
+    }
+    Ok(patched)
 }
 
 /// How a bounded repair episode ended.
@@ -874,16 +1021,27 @@ impl Runner {
                         return ExecOutcome::Failed(format!("cannot read {}: {e}", symbol.path))
                     }
                 };
-                let Some((a, b)) = symbol_body(&src, &symbol.symbol) else {
+                let after = match splice_body(&src, &symbol.symbol, proposed_body) {
+                    Ok(after) => after,
                     // NOT a silent no-op. The old apply_patch returned
                     // Ok(false) when its needle was absent, which a caller
                     // could read as "applied, nothing changed".
-                    return ExecOutcome::SymbolNotFound {
-                        symbol: symbol.symbol.clone(),
-                        path: symbol.path.clone(),
-                    };
+                    Err(SpliceError::NoSymbol) => {
+                        return ExecOutcome::SymbolNotFound {
+                            symbol: symbol.symbol.clone(),
+                            path: symbol.path.clone(),
+                        }
+                    }
+                    // The episode loop refuses such a proposal before it
+                    // gets here; any other caller of `execute` meets the
+                    // same rule at the write itself, and nothing is written.
+                    Err(SpliceError::Escapes) => {
+                        return ExecOutcome::Failed(format!(
+                            "the body does not stay inside `{}` in {}; nothing was written",
+                            symbol.symbol, symbol.path
+                        ))
+                    }
                 };
-                let after = format!("{}{}{}", &src[..a], proposed_body, &src[b..]);
                 if let Err(e) = std::fs::write(&p, &after) {
                     return ExecOutcome::Failed(format!("cannot write {}: {e}", symbol.path));
                 }
@@ -1286,6 +1444,46 @@ impl Runner {
                     self.episode.push(EpisodeEvent::Proposed {
                         generator_id: proposal.generator_id.clone(),
                     });
+                    // CONTAINMENT, before anything else looks at it. The
+                    // body is spliced in memory and the target re-located in
+                    // the result with the same locator: a body that closes
+                    // the function and appends items of its own (a new
+                    // `@[test]` runs; the static grant below walks only the
+                    // target) or that opens what it does not close is
+                    // refused here — non-terminally, nothing written, the
+                    // generator told why.
+                    let path = self.workspace.join(&symbol.path);
+                    let spliced = std::fs::read_to_string(&path)
+                        .map_err(|_| SpliceError::NoSymbol)
+                        .and_then(|src| splice_body(&src, &symbol.symbol, &proposal.body));
+                    let patched = match spliced {
+                        Ok(patched) => patched,
+                        Err(SpliceError::NoSymbol) => {
+                            return EpisodeOutcome::NoSuchSymbol {
+                                steps: step,
+                                symbol: symbol.symbol.clone(),
+                                path: symbol.path.clone(),
+                            };
+                        }
+                        Err(SpliceError::Escapes) => {
+                            self.episode.push(EpisodeEvent::ActionDenied {
+                                action: action.name().to_string(),
+                                reason: "body_outside_symbol".to_string(),
+                            });
+                            progress.attempts.push(AttemptSignal {
+                                proposal: progress.proposals,
+                                rejection: crate::generate::RejectionReason::OutsideSymbol,
+                                visible_failing: None,
+                            });
+                            push_rejected(
+                                rejected,
+                                proposal.body,
+                                crate::generate::RejectionReason::OutsideSymbol,
+                                Some(crate::feedback::Feedback::outside_symbol(&symbol.symbol)),
+                            );
+                            continue;
+                        }
+                    };
                     // R1b — ADMISSION, before the candidate executes. The
                     // patched text is walked IN MEMORY by the same
                     // classifier `@[contained]` uses; a body reaching a
@@ -1301,18 +1499,6 @@ impl Runner {
                         .as_ref()
                         .filter(|g| g.symbol == symbol.symbol)
                     {
-                        let path = self.workspace.join(&symbol.path);
-                        let Some(patched) = std::fs::read_to_string(&path).ok().and_then(|src| {
-                            symbol_body(&src, &symbol.symbol).map(|(a, b)| {
-                                format!("{}{}{}", &src[..a], proposal.body, &src[b..])
-                            })
-                        }) else {
-                            return EpisodeOutcome::NoSuchSymbol {
-                                steps: step,
-                                symbol: symbol.symbol.clone(),
-                                path: symbol.path.clone(),
-                            };
-                        };
                         let base_dir = path.parent().unwrap_or(&self.workspace).to_path_buf();
                         let wall = self.checker_limits.wall.unwrap_or(CAPS_WALL_DEFAULT);
                         match crate::fence::caps_of_text(
@@ -4083,5 +4269,92 @@ mod walk_budget_tests {
         }
         assert_eq!(b.exhausted_by(), None);
         assert!(!b.deadline_passed());
+    }
+}
+
+#[cfg(test)]
+mod splice_tests {
+    use super::{splice_body, symbol_body, SpliceError};
+
+    const SRC: &str = "fn save(p: str) -> i64 {\n    0\n}\n\n\
+                       fn double(n: i64) -> i64 {\n    n + 2\n}\n\n\
+                       @[test]\nfn t() {\n    assert_eq(double(7), 14)\n}\n";
+
+    fn body(src: &str) -> &str {
+        let (a, b) = symbol_body(src, "double").unwrap();
+        &src[a..b]
+    }
+
+    #[test]
+    fn a_plain_body_is_spliced_and_everything_else_kept() {
+        let out = splice_body(SRC, "double", "\n    n * 2\n").unwrap();
+        assert_eq!(out, SRC.replace("n + 2", "n * 2"));
+    }
+
+    /// The reviewer's injection: close the target, append an item.
+    #[test]
+    fn a_body_that_closes_the_function_escapes() {
+        let inj = "\n    n * 2\n}\n\n@[test]\nfn zz() {\n    assert_eq(1, 1)\n";
+        assert_eq!(splice_body(SRC, "double", inj), Err(SpliceError::Escapes));
+        // Opening more than it closes reaches the text after it too.
+        assert_eq!(
+            splice_body(SRC, "double", "\n    if n > 0 {\n"),
+            Err(SpliceError::Escapes)
+        );
+    }
+
+    /// A body may not swallow the rest of the file into a string or comment.
+    #[test]
+    fn an_unclosed_string_or_comment_escapes() {
+        for b in [
+            "\n    \"",
+            "\n    r\"",
+            "\n    /* ",
+            "\n    n * 2 // }",
+            "\n    \"\\",
+        ] {
+            assert_eq!(
+                splice_body(SRC, "double", b),
+                Err(SpliceError::Escapes),
+                "{b:?}"
+            );
+        }
+    }
+
+    /// A second `fn double(` in code would make "the target" ambiguous.
+    #[test]
+    fn a_body_defining_its_namesake_escapes() {
+        let b = "\n    n * 2\n}\nfn double(m: i64) -> i64 {\n    m\n";
+        assert_eq!(splice_body(SRC, "double", b), Err(SpliceError::Escapes));
+    }
+
+    /// Braces and the needle inside strings and comments are not structure.
+    #[test]
+    fn braces_in_strings_and_comments_stay_inside() {
+        let b = "\n    /* } fn double( **/ */\n    // }\n    let a = r\"}\"\n    \
+                 let s = \"{{ \\\"}\\\" }} {n} fn double(\"\n    n * 2\n";
+        let out = splice_body(SRC, "double", b).unwrap();
+        assert_eq!(body(&out), b);
+    }
+
+    /// `1r"…"` is not decided either way: neither found nor spliced.
+    #[test]
+    fn an_ambiguous_raw_string_is_not_located() {
+        assert_eq!(
+            splice_body(SRC, "double", "\n    1r\"}\"\n"),
+            Err(SpliceError::Escapes)
+        );
+        assert_eq!(symbol_body("fn double() {\n 1r\"}\" }", "double"), None);
+    }
+
+    #[test]
+    fn a_missing_target_is_no_symbol() {
+        assert_eq!(
+            splice_body(SRC, "triple", "\n    0\n"),
+            Err(SpliceError::NoSymbol)
+        );
+        // In a comment or a string it is not the function.
+        let hidden = "// fn triple(n: i64) -> i64 { n }\nfn t() {\n    \"fn triple(\"\n}\n";
+        assert_eq!(symbol_body(hidden, "triple"), None);
     }
 }

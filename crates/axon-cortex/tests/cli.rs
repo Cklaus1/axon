@@ -3043,3 +3043,119 @@ fn r1_cortex_grant_prints_the_grant_and_runs_nothing() {
     assert!(!ws.join("RAN").exists(), "`cortex grant` ran a test");
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// The reviewer's injection (BLOCKER): a body that CLOSES the target and
+/// appends top-level items. The static grant walks only `double`, and the
+/// file's own `save` keeps `fs:write` out of the runtime fence, so before the
+/// containment check the injected test ran (PWNED written), the hidden check
+/// passed and the injected test was KEPT in the file, exit 0. A body must stay
+/// inside the function it replaces: it is refused before anything of it runs,
+/// non-terminally, and the generator is told why.
+#[test]
+fn r1_a_body_that_closes_its_function_never_runs() {
+    let ws = workspace("r1_inject");
+    let pristine = "fn save(p: str, s: str) -> i64 {\n    let _ = write_file(p, s)\n    0\n}\n\n\
+                    fn double(n: i64) -> i64 {\n    n + 2\n}\n\n\
+                    @[test]\nfn visible_repro() {\n    assert_eq(double(5), 10)\n}\n\n\
+                    @[test]\nfn hidden_completion() {\n    assert_eq(double(7), 14)\n}\n\n\
+                    fn main() {\n    let _ = save(\"out.txt\", \"x\")\n    println(to_str(double(21)))\n}\n";
+    std::fs::write(ws.join("wfile.ax"), pristine).unwrap();
+    let pwned = ws.join("PWNED");
+    std::fs::write(
+        ws.join("body.txt"),
+        format!(
+            "\n    n * 2\n}}\n\n@[test]\nfn zz_inject() {{\n    let _ = write_file(\"{}\", \"x\")\n    \
+             assert_eq(1, 1)\n",
+            pwned.display()
+        ),
+    )
+    .unwrap();
+    let gen = ws.join("gen.sh");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\necho x >> \"{ws}/calls.log\"\n\
+             n=$(wc -l < \"{ws}/calls.log\")\n\
+             cat > \"{ws}/prompt.$n\"\n\
+             cat \"{ws}/body.txt\"\necho \"    // attempt $n\"\n",
+            ws = ws.display()
+        ),
+        0o755,
+    );
+    let (code, v, err) = r1_repair(
+        &ws,
+        "wfile.ax",
+        &format!("cmd:{}", gen.display()),
+        &["--candidates", "1", "--budget", "8", "--max-proposals", "2"],
+    );
+    assert!(!pwned.exists(), "the injected test ran: {err}{v}");
+    assert_eq!(
+        std::fs::read_to_string(ws.join("wfile.ax")).unwrap(),
+        pristine,
+        "the file must be left as found: {err}{v}"
+    );
+    // Non-terminal: the walk went on asking until its proposal limit.
+    assert_eq!(code, 20, "{err}{v}");
+    assert_eq!(v["budget"]["proposals_used"], 2, "{v}");
+    let d = denials(&v);
+    assert!(
+        d.len() == 2 && d.iter().all(|r| r == "body_outside_symbol"),
+        "{d:?}\n{err}{v}"
+    );
+    let second = std::fs::read_to_string(ws.join("prompt.2")).unwrap();
+    assert!(
+        second.contains("the body must stay inside `double`"),
+        "{second}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// P1 for the containment check: braces inside strings (interpolation and
+/// its `{{`/`}}` escapes, a raw string, an escaped quote) and inside line and
+/// block comments are not structure; such a body is applied and accepted.
+#[test]
+fn r1_a_body_with_braces_in_strings_and_comments_is_accepted() {
+    let ws = workspace("r1_braces");
+    let body = "literal:\n    /* a } in a block comment, and a {{ */\n    \
+                // a { in a line comment }\n    let raw = r\"}}{\"\n    \
+                let lit = \"{{ \\\"}\\\" }}\"\n    let shown = \"{n}}}\"\n    \
+                if str_len(raw) == 3 && str_len(lit) == 7 && str_len(shown) > 1 { n * 2 } else { 0 }\n";
+    let (code, v, err) = r1_repair(&ws, "broken.ax", body, &[]);
+    assert_eq!(code, 0, "{err}{v}");
+    assert!(denials(&v).is_empty(), "{v}");
+    let after = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    assert!(after.contains("let raw = r\"}}{\""), "{after}");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R1b: a candidate the static walker cannot classify (`unknown: true` — here
+/// a scheduler callee whose name is built at runtime) is refused, not run:
+/// nothing can say what it reaches.
+#[test]
+fn r1_a_candidate_the_walker_cannot_classify_is_refused() {
+    let ws = workspace("r1_unknown");
+    let ran = ws.join("SPAWNED");
+    let mut src = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    src.push_str(&format!(
+        "\nfn hop() -> i64 {{\n    let _ = append_file(\"{}\", \"x\")\n    0\n}}\n",
+        ran.display()
+    ));
+    std::fs::write(ws.join("broken.ax"), &src).unwrap();
+    let gen = "literal:\n    let name = \"h{str_trim(\\\"op \\\")}\"\n    \
+               let _ = scheduler_spawn(name, 0)\n    let _ = scheduler_run()\n    n * 2\n";
+    let (code, v, err) = r1_repair(
+        &ws,
+        "broken.ax",
+        gen,
+        &["--candidates", "1", "--budget", "4"],
+    );
+    assert!(!ran.exists(), "the unclassifiable candidate ran: {err}{v}");
+    assert_ne!(code, 0, "{err}{v}");
+    let d = denials(&v);
+    assert!(
+        !d.is_empty() && d.iter().all(|r| r == "capability:unknown"),
+        "{d:?}\n{err}{v}"
+    );
+    assert_eq!(std::fs::read_to_string(ws.join("broken.ax")).unwrap(), src);
+    let _ = std::fs::remove_dir_all(&ws);
+}

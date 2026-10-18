@@ -199,12 +199,17 @@ cortex grant --file PATH [--symbol NAME] [--workspace DIR] [--axon PATH]
 CAPABILITY FENCE. A repair may not acquire a capability the original code did
 not hold. Before the walk, `axon caps` (the classifier `@[contained]` uses) is
 run by the pinned axon on the UNPATCHED file:
+  - a candidate body must stay inside the function it replaces: one that,
+    spliced in, closes it early (appending items of its own) or opens a
+    brace, string or comment it does not close is refused before anything of
+    it is written or run (`outside_symbol`, an `action_denied` event with
+    reason `body_outside_symbol`, the generator told why).
   - each target's static grant = what that function transitively reaches. A
     candidate body reaching anything else (`fs:write`, `net`, `exec`, ...,
     `effect:NAME` for a non-free effect, `unknown`) is refused BEFORE it runs:
     a rejected attempt (`capability_denied`, an `action_denied` event with
-    reason `capability:KINDS`, the kinds fed back to the generator); it counts
-    against --max-proposals.
+    reason `capability:KINDS`, the kinds fed back to the generator). Both
+    count against --max-proposals.
   - the runtime fence, from the whole file: every check runs with
     AXON_ALLOWED_EFFECTS = Chan,IO,Pure,Random,Time plus the file's own
     effects, and AXON_ALLOWED_FS_READ / AXON_ALLOWED_FS_WRITE /

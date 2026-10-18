@@ -192,6 +192,18 @@ impl Feedback {
             ..Feedback::default()
         }
     }
+
+    /// An attempt refused because, spliced in, it did not stay inside the
+    /// function it replaces.
+    pub fn outside_symbol(symbol: &str) -> Self {
+        Feedback {
+            note: Some(format!(
+                "the body must stay inside `{symbol}`: replace only the text between its \
+                 braces, and close every brace, string and comment it opens"
+            )),
+            ..Feedback::default()
+        }
+    }
 }
 
 fn parse_diag(
