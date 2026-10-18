@@ -151,6 +151,13 @@ axon session                              # R44: an accumulating typed session �
                                           #   their types. `--protocol jsonl` for a host driver
                                           #   (one JSON frame in, one `axon-session/1` frame out);
                                           #   `--transcript PATH` + AXON_RECORD gives a replayable pair.
+axon caps f.ax [--fn NAME] --json         # what a program / one fn can exercise (axon-caps/1): `capabilities`
+                                          #   (the @[contained] labels: fs:read fs:write net exec env dstore native:M)
+                                          #   and `effects` (builtin rows, Exec split from IO), via the SAME walker
+                                          #   @[contained] uses (helpers, methods, fn/builtin values, imports,
+                                          #   module-level lets); `unknown:true` = deny by default. `-` = stdin,
+                                          #   imports then resolve from --base-dir DIR. Exit 2 on a parse/type error
+                                          #   or unknown --fn. The repair fence is built from the PRISTINE file's set.
 axon reference                            # the complete surface of THIS build (--json → axon-reference/1)
 axon --version                            # e.g. "axon 0.1.0 (02cd617)" — semver + git SHA (build.rs); "-dirty" if uncommitted
                                           #   build-time AXON_GIT_SHA=<id> overrides it; a source copy not at its own git root reports "unknown"
