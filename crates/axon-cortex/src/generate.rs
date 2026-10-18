@@ -595,6 +595,18 @@ fn generator_output(joined: Vec<Option<GenDrain>>) -> Result<(Vec<u8>, Vec<u8>),
     }
 }
 
+/// [`generator_output`] as `propose` reports it: a lost read is
+/// `Unavailable` (the drain, not the task, failed), never `Declined` and
+/// never an empty answer.
+fn read_answer(
+    program: &str,
+    joined: Vec<Option<GenDrain>>,
+) -> Result<(Vec<u8>, Vec<u8>), GenerationFailure> {
+    generator_output(joined).map_err(|why| {
+        GenerationFailure::Unavailable(format!("`{program}` output could not be read to EOF{why}"))
+    })
+}
+
 impl PatchGenerator for CommandGenerator {
     fn id(&self) -> String {
         // The program as written, so the episode records WHICH generator ran.
@@ -723,12 +735,7 @@ impl PatchGenerator for CommandGenerator {
 
         // FU-3: a lost read is not an answer — never parsed as an empty or
         // cut proposal.
-        let (stdout, stderr) = generator_output(joined).map_err(|why| {
-            GenerationFailure::Unavailable(format!(
-                "`{}` output could not be read to EOF{why}",
-                self.program
-            ))
-        })?;
+        let (stdout, stderr) = read_answer(&self.program, joined)?;
 
         if !status.success() {
             // It RAN and refused. Declined, not Unavailable: the remedy is the
@@ -755,7 +762,7 @@ impl PatchGenerator for CommandGenerator {
 
 #[cfg(test)]
 mod drain_tests {
-    use super::{drain_capped, generator_output, GenDrain};
+    use super::{drain_capped, generator_output, read_answer, GenDrain, GenerationFailure};
     use std::io::Write;
     use std::os::unix::net::UnixStream;
     use std::sync::atomic::AtomicBool;
@@ -824,6 +831,37 @@ mod drain_tests {
         assert_eq!(
             generator_output(vec![idle(b"    n * 2\n"), idle(b"e"), None]),
             Ok((b"    n * 2\n".to_vec(), b"e".to_vec()))
+        );
+    }
+
+    /// FU-3 × propose (IA-5): a detached or pending drain is reported as
+    /// `Unavailable` — the drain failed, not the generator — never as
+    /// `Declined`, and never as an empty or cut answer.
+    #[test]
+    fn a_lost_read_is_unavailable_never_declined_or_empty() {
+        let pending = || {
+            Some(GenDrain {
+                bytes: b"    n".to_vec(),
+                pending: true,
+            })
+        };
+        for joined in [
+            vec![None, idle(b""), None],
+            vec![pending(), idle(b""), None],
+        ] {
+            match read_answer("gen.sh", joined) {
+                Err(GenerationFailure::Unavailable(why)) => assert!(
+                    why.starts_with("`gen.sh` output could not be read to EOF"),
+                    "{why}"
+                ),
+                other => {
+                    panic!("ATTACK: a lost generator read was not reported Unavailable: {other:?}")
+                }
+            }
+        }
+        assert_eq!(
+            read_answer("gen.sh", vec![idle(b"    n * 2\n"), idle(b""), None]),
+            Ok((b"    n * 2\n".to_vec(), Vec::new()))
         );
     }
 }
