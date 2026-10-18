@@ -268,6 +268,64 @@ def test_build():
     d1 = build.inputs_digest()
     check(d1 == build.inputs_digest() and len(d1) == 64, "build: inputs digest deterministic")
     check(build.STRATUM_D and len(build.STRATUM_D) == 18, "build: stratum D lists 18 programs")
+    test_cut_tests(build)
+
+
+CUT_SRC = '''fn g(x: i64) -> i64 {
+    x + 1
+}
+
+fn f(x: i64) -> i64 {
+    g(x) * 2
+}
+
+@[test]
+fn test_g() {
+    assert_eq(g(1), 2)
+}
+
+@[test]
+fn test_f() {
+    assert_eq(f(1), 4)
+}
+'''
+
+
+def test_cut_tests(build):
+    """A test cut that ../ab/corpus.py's brace counting (not string-aware)
+    cannot locate, or locates wrongly, is a rejection with a reason, never
+    an exception and never an accepted cut."""
+    sys.path.insert(0, os.path.dirname(HERE))
+    sys.path.insert(0, os.path.join(os.path.dirname(HERE), "ab"))
+    import corpus
+    out, why = build.cut_tests(corpus, CUT_SRC, ["test_g"])
+    check(why is None and "test_g" not in out and "fn test_f" in out and "fn g(" in out,
+          f"build: a clean cut must succeed ({why})")
+    cases = {
+        # "{" in a string: the block never closes -> corpus.cut_test raises KeyError
+        "open brace in the last test": (CUT_SRC.replace("assert_eq(f(1), 4)", 'assert_eq(len("{{"), 1)'),
+                                        ["test_f"]),
+        # "}" in a string: the block ends inside the string, leaving junk behind
+        "close brace in a string": (CUT_SRC.replace("assert_eq(g(1), 2)", 'assert_eq(len("}}"), 1)'),
+                                    ["test_g"]),
+        # "{" in test_g's string and "}" in test_f's: one cut swallows test_f too
+        "cut swallows the next test": (CUT_SRC.replace("assert_eq(g(1), 2)", 'assert_eq(len("{{"), 1)')
+                                       .replace("assert_eq(f(1), 4)", 'assert_eq(len("}}"), 1)'),
+                                       ["test_g"]),
+    }
+    for label, (src, names) in cases.items():
+        try:
+            out, why = build.cut_tests(corpus, src, names)
+        except Exception as e:  # noqa: BLE001
+            check(False, f"build: cut_tests must not raise ({label}): {type(e).__name__}: {e}")
+            continue
+        check(out is None and why, f"build: a mis-delimited cut must be rejected ({label})")
+
+    # run_ab grading strips and re-appends test blocks with corpus.test_blocks:
+    # a program with any block it mis-delimits is ungradeable and is rejected.
+    check(build.blocks_reason(corpus, CUT_SRC) is None, "build: a cleanly delimited program is accepted")
+    for label, (src, _) in cases.items():
+        check(build.blocks_reason(corpus, src), f"build: a program with a mis-delimited block is rejected ({label})")
 
 
 # ------------------------------------------------------------------ mutators

@@ -13,7 +13,11 @@ sha256 is recorded in `meta.headroom` and `--check` refuses other binaries.
 SOURCES (FU-1b). Stratum D: `STRATUM_D`, the 17 hardset snapshots no hard
 set uses plus the tempt snapshot `traits_demo.ax`. Stratum C: every `*.ax`
 under `--programs-dir` (default `programs/` beside this file). A program is
-used only if it type-checks, has >= 2 tests and every test passes.
+used only if it type-checks, has >= 2 tests, every test passes, and
+../ab/corpus.py's `test_blocks` (whose brace counting is not string-aware, and
+which run_ab grading uses) delimits every test block as a string-aware scan
+does. The same check guards every test cut and the visible and hidden blocks
+of each task; a failure rejects the candidate with a reason in the report.
 
 CLASSES (FU-1a). Every task is one function body (`symbol`) whose pristine
 body repairs it:
@@ -319,6 +323,10 @@ class Program:
             self.reject = "fewer than 2 tests"
         elif res is None or any(s != "ok" for s, _ in res.values()) or set(res) != set(self.tests):
             self.reject = "pristine tests do not all pass"
+        else:
+            why = blocks_reason(h.corpus, self.src)
+            if why:
+                self.reject = f"ungradeable: {why}"
         defs = h.common.defined_fns(self.src)
         self.fns = [f for f in dict.fromkeys(defs) if defs.count(f) == 1 and f not in self.tests
                     and f != "main" and _span(self.src, f) and self.src[slice(*_span(self.src, f))].strip()]
@@ -424,10 +432,58 @@ def candidates(prog, singles, seed, multi_tries):
     return out
 
 
-def cut_tests(h, text, names):
+def code_end(src, o):
+    """Index just past the brace that closes `src[o] == "{"`, skipping string
+    literals (with backslash escapes) and `//` comments; None if unclosed."""
+    d, i, n = 0, o, len(src)
+    while i < n:
+        c = src[i]
+        if c == '"':
+            i += 1
+            while i < n and src[i] != '"':
+                i += 2 if src[i] == "\\" else 1
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "{":
+            d += 1
+        elif c == "}":
+            d -= 1
+            if d == 0:
+                return i + 1
+        i += 1
+    return None
+
+
+def cut_tests(corpus, text, names):
+    """(text without the named tests, None) or (None, reason). The cut is
+    ../ab/corpus.py's `cut_test` (what grading and corpus.load see), whose
+    brace counting is not string-aware: a block it cannot find, or delimits
+    differently from a string-aware scan, rejects the candidate."""
     for n in names:
-        text, _ = h.corpus.cut_test(text, n)
-    return text
+        blocks = {b[0]: b for b in corpus.test_blocks(text)}
+        if n not in blocks:
+            return None, f"corpus.test_blocks cannot delimit test `{n}` (brace in a string?)"
+        _, a, b = blocks[n]
+        m = re.compile(r"[ \t]*@\[test[^\n]*\n(?:[ \t]*@\[[^\n]*\n)*\s*fn %s\(" % re.escape(n)).match(text, a)
+        end = code_end(text, text.find("{", m.end())) if m else None
+        if end is None or not (b == end or (b == end + 1 and text[end] == "\n")):
+            return None, f"corpus.test_blocks mis-delimits test `{n}` (brace in a string?)"
+        text = text[:a] + text[b:]
+    return text, None
+
+
+def blocks_reason(corpus, src):
+    """None when ../ab/corpus.py's test_blocks delimits every test of `src`
+    as a string-aware scan does, else the reason. run_ab grading strips and
+    re-appends test blocks with test_blocks, so a program failing this is
+    ungradeable."""
+    for n in corpus.tests_in(src):
+        why = cut_tests(corpus, src, [n])[1]
+        if why:
+            return why
+    return None
 
 
 def graded_view(h, final, pristine):
@@ -451,7 +507,9 @@ def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
         return None, f"{cls}: mutation operators {ops} do not fit the class"
     fn, broken = cand["fn"], cand["broken"]
     if cls == "caller":
-        broken = cut_tests(h, broken, cand["cut"])
+        broken, why = cut_tests(h.corpus, broken, cand["cut"])
+        if why:
+            return None, why
     clean, _ = h.check(prog.name, broken)
     if not clean:
         return None, "broken does not type-check (or names E1201)"
@@ -482,9 +540,16 @@ def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
         why = prog.caps_eligible(h, fn)
         if why:
             return None, why
-    t = h.corpus.task_from_broken(prog.path, prog.src, fn, cls, cand["how"], broken, visible, hidden)
+    try:
+        t = h.corpus.task_from_broken(prog.path, prog.src, fn, cls, cand["how"], broken, visible, hidden)
+    except (KeyError, IndexError) as e:
+        return None, f"corpus.task_from_broken cannot delimit a test block ({type(e).__name__})"
     if t is None:
         return None, "corpus.task_from_broken validity"
+    for n in (t["visible"], t["hidden"]):  # the blocks corpus.load and grading cut or read
+        why = cut_tests(h.corpus, broken, [n])[1]
+        if why:
+            return None, why
     a, b = _span(broken, fn)
     restored = broken[:a] + t["oracle_body"] + broken[b:]
     view = graded_view(h, restored, prog.src)
