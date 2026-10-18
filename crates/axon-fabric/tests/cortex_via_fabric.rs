@@ -161,13 +161,15 @@ fn cortex_repair_adjudicates_through_the_fabric() {
     let launches = recs.iter().filter(|r| r["kind"] == "launched").count();
     assert_eq!(launches, receipts.len());
     // Every `axon test` (a CHECK) went through a Fabric launch. `axon check`
-    // is the Runner's observation step (diagnostics, not a verdict) and is
-    // not a registered check, so it is counted separately.
+    // is the Runner's observation step (diagnostics, not a verdict) and
+    // `axon caps` is the S1 static capability fence (an analysis of the
+    // pristine file and each candidate, run before any check); neither is a
+    // registered check, so they are counted separately.
     let log = std::fs::read_to_string(&s.env.spawns).unwrap();
     let tests = log.lines().filter(|l| *l == "test").count();
     let others: Vec<&str> = log
         .lines()
-        .filter(|l| *l != "test" && *l != "check")
+        .filter(|l| *l != "test" && *l != "check" && *l != "caps")
         .collect();
     assert_eq!(tests, launches, "every check spawn is a journalled launch");
     assert!(others.is_empty(), "unexpected invocations: {others:?}");
