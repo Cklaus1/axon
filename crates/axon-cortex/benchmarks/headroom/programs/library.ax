@@ -1,0 +1,255 @@
+// Library loan desk: checkouts and returns with due dates measured in
+// day numbers, late fees with a grace period and a cap, per-member loan
+// limits and an overdue listing. Fees are integer cents.
+
+type Loan = { book_id: i64, member_id: i64, due_day: i64, returned_day: i64 }
+
+// A loan with returned_day < 0 is still open.
+fn is_open(l: Loan) -> bool {
+    l.returned_day < 0
+}
+
+fn due_day(checkout_day: i64, loan_days: i64 where loan_days >= 1) -> i64 {
+    checkout_day + loan_days
+}
+
+// Whole days past the due date; returning on or before the due day is 0.
+@[contained]
+fn days_late(due: i64, on_day: i64) -> i64 {
+    if on_day <= due { 0 } else { on_day - due }
+}
+
+// 25 cents per late day after a 1-day grace period, capped at 500 cents.
+@[contained]
+fn late_fee(late_days: i64) -> i64 {
+    let grace = 1
+    let rate = 25
+    let cap = 500
+    if late_days <= grace {
+        return 0
+    }
+    let fee = (late_days - grace) * rate
+    if fee > cap { cap } else { fee }
+}
+
+fn fee_for(l: Loan, on_day: i64) -> i64 {
+    late_fee(days_late(l.due_day, on_day))
+}
+
+fn active_count(loans: &[Loan], member_id: i64) -> i64 {
+    let n = 0
+    for i in 0..len(loans) {
+        if loans[i].member_id == member_id && is_open(loans[i]) {
+            n = n + 1
+        }
+    }
+    n
+}
+
+fn open_loan_index(loans: &[Loan], book_id: i64) -> i64 {
+    for i in 0..len(loans) {
+        if loans[i].book_id == book_id && is_open(loans[i]) {
+            return i
+        }
+    }
+    -1
+}
+
+// Records a new loan of 14 days, or explains why it is refused.
+fn checkout(loans: &[Loan], book_id: i64, member_id: i64, day: i64, limit: i64) -> Result<[Loan], str> {
+    if open_loan_index(loans, book_id) >= 0 {
+        return Err("book already on loan")
+    }
+    if active_count(loans, member_id) >= limit {
+        return Err("loan limit reached")
+    }
+    let l = Loan { book_id: book_id, member_id: member_id, due_day: due_day(day, 14), returned_day: -1 }
+    Ok(arr_push(loans, l))
+}
+
+// Closes the open loan for a book and returns the fee owed.
+fn return_book(loans: &mut [Loan], book_id: i64, day: i64) -> Result<i64, str> {
+    let idx = open_loan_index(&loans, book_id)
+    if idx < 0 {
+        return Err("book is not on loan")
+    }
+    loans[idx].returned_day = day
+    Ok(fee_for(loans[idx], day))
+}
+
+// Book ids of open loans whose due day is before today, in loan order.
+fn overdue_books(loans: &[Loan], today: i64) -> [i64] {
+    let out: [i64] = []
+    for i in 0..len(loans) {
+        if is_open(loans[i]) && loans[i].due_day < today {
+            out = arr_push(out, loans[i].book_id)
+        }
+    }
+    out
+}
+
+// Fees a member would owe if every open loan were returned today.
+fn member_outstanding(loans: &[Loan], member_id: i64, today: i64) -> i64 {
+    let total = 0
+    for i in 0..len(loans) {
+        if loans[i].member_id == member_id && is_open(loans[i]) {
+            total = total + fee_for(loans[i], today)
+        }
+    }
+    total
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn loan(b: i64, m: i64, due: i64, ret: i64) -> Loan {
+    Loan { book_id: b, member_id: m, due_day: due, returned_day: ret }
+}
+
+fn main() {
+    let loans = [loan(1, 7, 20, -1), loan(2, 7, 30, -1)]
+    println("overdue: " + to_str(len(overdue_books(&loans, 25))))
+}
+
+@[test]
+fn test_due_day() {
+    assert_eq(due_day(0, 14), 14)
+    assert_eq(due_day(100, 1), 101)
+    assert_eq(due_day(37, 21), 58)
+}
+
+@[test]
+fn test_days_late() {
+    assert_eq(days_late(10, 5), 0)
+    assert_eq(days_late(10, 10), 0)
+    assert_eq(days_late(10, 11), 1)
+    assert_eq(days_late(10, 40), 30)
+}
+
+@[test]
+fn test_late_fee_grace_and_cap() {
+    assert_eq(late_fee(0), 0)
+    assert_eq(late_fee(1), 0)
+    assert_eq(late_fee(2), 25)
+    assert_eq(late_fee(10), 225)
+    assert_eq(late_fee(21), 500)
+    assert_eq(late_fee(22), 500)
+    assert_eq(late_fee(20), 475)
+}
+
+@[test]
+fn test_active_count() {
+    let loans = [loan(1, 7, 20, -1), loan(2, 7, 20, 18), loan(3, 8, 20, -1), loan(4, 7, 25, -1)]
+    assert_eq(active_count(&loans, 7), 2)
+    assert_eq(active_count(&loans, 8), 1)
+    assert_eq(active_count(&loans, 9), 0)
+}
+
+@[test]
+fn test_checkout_ok() {
+    let empty: [Loan] = []
+    match checkout(&empty, 5, 1, 10, 2) {
+        Ok(found) => {
+            let ls: [Loan] = found
+            assert_eq(len(ls), 1)
+            assert_eq(ls[0].due_day, 24)
+            assert_eq(ls[0].returned_day, -1)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_checkout_book_taken() {
+    let loans = [loan(5, 2, 30, -1)]
+    match checkout(&loans, 5, 1, 10, 3) {
+        Ok(_) => assert(false)
+        Err(e) => assert(e == "book already on loan")
+    }
+    // a returned copy can be borrowed again
+    let back = [loan(5, 2, 30, 28)]
+    match checkout(&back, 5, 1, 10, 3) {
+        Ok(found) => {
+            let ls: [Loan] = found
+            assert_eq(len(ls), 2)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_checkout_limit() {
+    let loans = [loan(1, 4, 30, -1), loan(2, 4, 30, -1), loan(3, 4, 30, 12)]
+    match checkout(&loans, 9, 4, 10, 2) {
+        Ok(_) => assert(false)
+        Err(e) => assert(e == "loan limit reached")
+    }
+    match checkout(&loans, 9, 4, 10, 3) {
+        Ok(ls) => assert_eq(ls[3].due_day, 24)
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_return_on_time_and_late() {
+    let loans = [loan(1, 7, 20, -1), loan(2, 7, 20, -1)]
+    match return_book(&mut loans, 1, 20) {
+        Ok(fee) => assert_eq(fee, 0)
+        Err(_) => assert(false)
+    }
+    assert_eq(loans[0].returned_day, 20)
+    match return_book(&mut loans, 2, 26) {
+        Ok(fee) => assert_eq(fee, 125)
+        Err(_) => assert(false)
+    }
+    assert_eq(active_count(&loans, 7), 0)
+}
+
+@[test]
+fn test_return_unknown_and_twice() {
+    let loans = [loan(1, 7, 20, -1)]
+    match return_book(&mut loans, 3, 21) {
+        Ok(_) => assert(false)
+        Err(e) => assert(e == "book is not on loan")
+    }
+    match return_book(&mut loans, 1, 50) {
+        Ok(fee) => assert_eq(fee, 500)
+        Err(_) => assert(false)
+    }
+    match return_book(&mut loans, 1, 51) {
+        Ok(_) => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+@[test]
+fn test_overdue_books() {
+    let loans = [loan(1, 7, 20, -1), loan(2, 7, 25, -1), loan(3, 8, 10, 15), loan(4, 9, 24, -1)]
+    let od = overdue_books(&loans, 25)
+    assert_eq(len(od), 2)
+    assert_eq(od[0], 1)
+    assert_eq(od[1], 4)
+    assert_eq(len(overdue_books(&loans, 20)), 0)
+    assert_eq(len(overdue_books(&loans, 26)), 3)
+}
+
+@[test]
+fn test_member_outstanding() {
+    let loans = [loan(1, 7, 20, -1), loan(2, 7, 25, -1), loan(3, 7, 10, 15), loan(4, 9, 24, -1)]
+    // book 1: 10 late -> 225, book 2: 5 late -> 100, book 3 returned
+    assert_eq(member_outstanding(&loans, 7, 30), 325)
+    assert_eq(member_outstanding(&loans, 9, 30), 125)
+    assert_eq(member_outstanding(&loans, 7, 21), 0)
+    assert_eq(member_outstanding(&loans, 5, 30), 0)
+}
+
+@[test]
+fn test_open_loan_index_and_fee_for() {
+    let loans = [loan(1, 7, 20, 19), loan(2, 7, 25, -1), loan(1, 8, 30, -1)]
+    assert_eq(open_loan_index(&loans, 1), 2)
+    assert_eq(open_loan_index(&loans, 2), 1)
+    assert_eq(open_loan_index(&loans, 3), -1)
+    assert_eq(fee_for(loans[1], 25), 0)
+    assert_eq(fee_for(loans[1], 27), 25)
+}

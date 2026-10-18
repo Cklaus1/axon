@@ -1,0 +1,257 @@
+// Ranked-choice (instant-runoff) tally. Each ballot lists candidate ids
+// in preference order. Each round counts every ballot for its highest
+// ranked candidate still standing; a candidate with a strict majority of
+// the live ballots wins, otherwise the weakest candidate is eliminated
+// (ties for weakest eliminate the higher id). If every remaining
+// candidate has the same count the election ends in a tie.
+
+type Tally = { winner: i64, rounds: i64, tied: i64 }
+
+// Highest-ranked candidate on the ballot that is not eliminated, or -1
+// when the ballot is exhausted.
+@[contained]
+fn top_choice(ballot: &[i64], eliminated: &[bool]) -> i64 {
+    for i in 0..len(ballot) {
+        let c = ballot[i]
+        if c >= 0 && c < len(eliminated) && !eliminated[c] {
+            return c
+        }
+    }
+    -1
+}
+
+fn count_first(ballots: &[[i64]], eliminated: &[bool]) -> [i64] {
+    let counts: [i64] = []
+    for c in 0..len(eliminated) {
+        counts = arr_push(counts, 0)
+    }
+    for i in 0..len(ballots) {
+        let b: [i64] = ballots[i]
+        let c = top_choice(&b, eliminated)
+        if c >= 0 {
+            counts[c] = counts[c] + 1
+        }
+    }
+    counts
+}
+
+fn exhausted_ballots(ballots: &[[i64]], eliminated: &[bool]) -> i64 {
+    let n = 0
+    for i in 0..len(ballots) {
+        let b: [i64] = ballots[i]
+        if top_choice(&b, eliminated) < 0 {
+            n = n + 1
+        }
+    }
+    n
+}
+
+// Candidate holding more than half of the counted votes, or -1.
+fn majority_winner(counts: &[i64], eliminated: &[bool]) -> i64 {
+    let total = 0
+    for i in 0..len(counts) {
+        total = total + counts[i]
+    }
+    for i in 0..len(counts) {
+        if !eliminated[i] && counts[i] * 2 > total {
+            return i
+        }
+    }
+    -1
+}
+
+// Weakest standing candidate; on equal counts the higher id is chosen.
+fn lowest_candidate(counts: &[i64], eliminated: &[bool]) -> i64 {
+    let best = -1
+    let best_count = 0
+    for i in 0..len(counts) {
+        if !eliminated[i] && (best < 0 || counts[i] <= best_count) {
+            best = i
+            best_count = counts[i]
+        }
+    }
+    best
+}
+
+// Number of standing candidates if they all share one count, else 0.
+fn tied_count(counts: &[i64], eliminated: &[bool]) -> i64 {
+    let n = 0
+    let first = -1
+    for i in 0..len(counts) {
+        if !eliminated[i] {
+            if first < 0 {
+                first = counts[i]
+            } else if counts[i] != first {
+                return 0
+            }
+            n = n + 1
+        }
+    }
+    if n >= 2 { n } else { 0 }
+}
+
+fn run_irv(ballots: &[[i64]], candidates: i64 where candidates >= 1) -> Tally {
+    let eliminated: [bool] = []
+    for c in 0..candidates {
+        eliminated = arr_push(eliminated, false)
+    }
+    let rounds = 0
+    while true {
+        rounds = rounds + 1
+        let counts = count_first(ballots, &eliminated)
+        let total = 0
+        for i in 0..len(counts) {
+            total = total + counts[i]
+        }
+        if total == 0 {
+            return Tally { winner: -1, rounds: rounds, tied: 0 }
+        }
+        let w = majority_winner(&counts, &eliminated)
+        if w >= 0 {
+            return Tally { winner: w, rounds: rounds, tied: 0 }
+        }
+        let t = tied_count(&counts, &eliminated)
+        if t > 0 {
+            return Tally { winner: -1, rounds: rounds, tied: t }
+        }
+        let lo = lowest_candidate(&counts, &eliminated)
+        eliminated[lo] = true
+    }
+    Tally { winner: -1, rounds: rounds, tied: 0 }
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn main() {
+    let ballots = [[0, 1], [0, 2], [1, 0], [2, 1], [2, 1]]
+    let t = run_irv(&ballots, 3)
+    println("winner " + to_str(t.winner) + " after " + to_str(t.rounds) + " rounds")
+}
+
+@[test]
+fn test_top_choice() {
+    let none = [false, false, false]
+    let some = [true, false, true]
+    assert_eq(top_choice(&[2, 0, 1], &none), 2)
+    assert_eq(top_choice(&[2, 0, 1], &some), 1)
+    assert_eq(top_choice(&[0, 2], &some), -1)
+    let empty: [i64] = []
+    assert_eq(top_choice(&empty, &none), -1)
+}
+
+@[test]
+fn test_count_first() {
+    let ballots = [[0, 1], [0, 2], [1, 0], [2, 1], [2, 1]]
+    let c = count_first(&ballots, &[false, false, false])
+    assert_eq(c[0], 2)
+    assert_eq(c[1], 1)
+    assert_eq(c[2], 2)
+    let c2 = count_first(&ballots, &[false, true, false])
+    assert_eq(c2[0], 3)
+    assert_eq(c2[1], 0)
+    assert_eq(c2[2], 2)
+}
+
+@[test]
+fn test_exhausted_ballots() {
+    let ballots = [[0], [1, 0], [2], [2, 1]]
+    assert_eq(exhausted_ballots(&ballots, &[false, false, false]), 0)
+    assert_eq(exhausted_ballots(&ballots, &[false, false, true]), 1)
+    assert_eq(exhausted_ballots(&ballots, &[true, true, false]), 2)
+}
+
+@[test]
+fn test_majority_winner() {
+    assert_eq(majority_winner(&[3, 2, 0], &[false, false, false]), 0)
+    assert_eq(majority_winner(&[2, 2, 0], &[false, false, false]), -1)
+    assert_eq(majority_winner(&[1, 0, 4], &[false, true, false]), 2)
+    assert_eq(majority_winner(&[0, 0, 0], &[false, false, false]), -1)
+}
+
+@[test]
+fn test_lowest_candidate() {
+    assert_eq(lowest_candidate(&[3, 1, 2], &[false, false, false]), 1)
+    assert_eq(lowest_candidate(&[3, 1, 1], &[false, false, false]), 2)
+    assert_eq(lowest_candidate(&[3, 0, 2], &[false, true, false]), 2)
+    assert_eq(lowest_candidate(&[0, 5, 0], &[false, false, false]), 2)
+}
+
+@[test]
+fn test_tied_count() {
+    assert_eq(tied_count(&[2, 2, 2], &[false, false, false]), 3)
+    assert_eq(tied_count(&[2, 0, 2], &[false, true, false]), 2)
+    assert_eq(tied_count(&[2, 1, 2], &[false, false, false]), 0)
+    assert_eq(tied_count(&[4, 0, 0], &[false, true, true]), 0)
+}
+
+@[test]
+fn test_irv_first_round_majority() {
+    let ballots = [[1, 0], [1, 2], [0, 1]]
+    let t = run_irv(&ballots, 3)
+    assert_eq(t.winner, 1)
+    assert_eq(t.rounds, 1)
+    assert_eq(t.tied, 0)
+}
+
+@[test]
+fn test_irv_redistribution() {
+    let ballots = [[0, 1], [0, 2], [1, 0], [2, 1], [2, 1]]
+    let t = run_irv(&ballots, 3)
+    assert_eq(t.winner, 0)
+    assert_eq(t.rounds, 2)
+}
+
+@[test]
+fn test_irv_tiebreak_elimination_order() {
+    // counts 2,1,1: candidate 2 goes first, its ballot moves to 1,
+    // then 1 has 2 against 0's 2 -> exact tie
+    let ballots = [[0], [0], [1], [2, 1]]
+    let t = run_irv(&ballots, 3)
+    assert_eq(t.winner, -1)
+    assert_eq(t.rounds, 2)
+    assert_eq(t.tied, 2)
+    // with a second preference for 0 instead, 0 wins in round 2
+    let b2 = [[0], [0], [1], [2, 0]]
+    let t2 = run_irv(&b2, 3)
+    assert_eq(t2.winner, 0)
+    assert_eq(t2.rounds, 2)
+}
+
+@[test]
+fn test_irv_exhausted_ballots_and_tie() {
+    let ballots = [[0], [0], [1], [1], [2]]
+    let t = run_irv(&ballots, 3)
+    assert_eq(t.winner, -1)
+    assert_eq(t.rounds, 2)
+    assert_eq(t.tied, 2)
+}
+
+@[test]
+fn test_irv_three_rounds() {
+    // round 1: 0:3 1:2 2:2 3:1 ; 3 out -> 2 ; round 2: 0:3 1:2 2:3 ;
+    // 1 out -> its ballots go to 2 and 0 ; round 3: 0:4 2:4 -> tie
+    let ballots = [[0], [0], [0], [1, 2], [1, 0], [2], [2], [3, 2]]
+    let t = run_irv(&ballots, 4)
+    assert_eq(t.winner, -1)
+    assert_eq(t.rounds, 3)
+    assert_eq(t.tied, 2)
+    let b2 = [[0], [0], [0], [1, 2], [1, 2], [2], [2], [3, 2]]
+    let t2 = run_irv(&b2, 4)
+    assert_eq(t2.winner, 2)
+    assert_eq(t2.rounds, 3)
+}
+
+@[test]
+fn test_irv_no_votes_and_single() {
+    let empty: [[i64]] = []
+    let t = run_irv(&empty, 2)
+    assert_eq(t.winner, -1)
+    assert_eq(t.rounds, 1)
+    assert_eq(t.tied, 0)
+    let one = [[0]]
+    let t1 = run_irv(&one, 1)
+    assert_eq(t1.winner, 0)
+    assert_eq(t1.rounds, 1)
+}

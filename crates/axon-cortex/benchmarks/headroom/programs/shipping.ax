@@ -1,0 +1,241 @@
+// Shipping cost calculator: weight bands, distance zones, oversize
+// surcharges, a free-shipping threshold and multi-parcel totals.
+// All money values are integer cents.
+
+type Parcel = { weight_g: i64, length_cm: i64, width_cm: i64, height_cm: i64 }
+
+// Base price for a parcel by weight band. Above 5 kg every started
+// kilogram costs an extra 300 cents.
+@[contained]
+fn weight_band_cents(weight_g: i64) -> i64 {
+    if weight_g <= 500 {
+        450
+    } else if weight_g <= 2000 {
+        800
+    } else if weight_g <= 5000 {
+        1400
+    } else {
+        let extra_g = weight_g - 5000
+        let started_kg = (extra_g + 999) / 1000
+        1400 + started_kg * 300
+    }
+}
+
+// Percentage multiplier for the distance zone.
+@[contained]
+fn zone_percent(distance_km: i64 where distance_km >= 0) -> i64 {
+    if distance_km <= 50 {
+        100
+    } else if distance_km <= 300 {
+        130
+    } else if distance_km <= 1000 {
+        160
+    } else {
+        200
+    }
+}
+
+fn longest_side(p: Parcel) -> i64 {
+    let m = p.length_cm
+    if p.width_cm > m { m = p.width_cm }
+    if p.height_cm > m { m = p.height_cm }
+    m
+}
+
+// Oversize when any side exceeds 100 cm or the three sides sum past 150 cm.
+fn is_oversize(p: Parcel) -> bool {
+    let sum = p.length_cm + p.width_cm + p.height_cm
+    longest_side(p) > 100 || sum > 150
+}
+
+// Flat 1500 cents for oversize parcels, plus 50 cents per cm the
+// longest side exceeds 100 cm.
+fn oversize_surcharge(p: Parcel) -> i64 {
+    if !is_oversize(p) {
+        return 0
+    }
+    let side = longest_side(p)
+    let over = if side > 100 { side - 100 } else { 0 }
+    1500 + over * 50
+}
+
+// Base cost scaled by zone, rounded half up to whole cents.
+fn base_cost(p: Parcel, distance_km: i64) -> i64 {
+    let band = weight_band_cents(p.weight_g)
+    let pct = zone_percent(distance_km)
+    (band * pct + 50) / 100
+}
+
+fn parcel_cost(p: Parcel, distance_km: i64) -> i64 {
+    base_cost(p, distance_km) + oversize_surcharge(p)
+}
+
+// Total for a shipment. When the order value reaches the free-shipping
+// threshold the base costs are waived, but oversize surcharges still apply.
+fn shipment_total(ps: &[Parcel], distance_km: i64, order_cents: i64, free_threshold: i64) -> i64 {
+    let free = order_cents >= free_threshold
+    let total = 0
+    for i in 0..len(ps) {
+        if free {
+            total = total + oversize_surcharge(ps[i])
+        } else {
+            total = total + parcel_cost(ps[i], distance_km)
+        }
+    }
+    total
+}
+
+// Index of the parcel with the highest cost; ties keep the first one.
+fn priciest_parcel(ps: &[Parcel], distance_km: i64) -> Option<i64> {
+    if len(ps) == 0 {
+        return None
+    }
+    let best = 0
+    let best_cost = parcel_cost(ps[0], distance_km)
+    for i in 1..len(ps) {
+        let c = parcel_cost(ps[i], distance_km)
+        if c > best_cost {
+            best = i
+            best_cost = c
+        }
+    }
+    Some(best)
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn box(w: i64, l: i64, wd: i64, h: i64) -> Parcel {
+    Parcel { weight_g: w, length_cm: l, width_cm: wd, height_cm: h }
+}
+
+fn main() {
+    let ps = [box(400, 20, 20, 10), box(6200, 120, 30, 20)]
+    println("total: " + to_str(shipment_total(&ps, 200, 3000, 5000)))
+}
+
+@[test]
+fn test_weight_band_edges() {
+    assert_eq(weight_band_cents(0), 450)
+    assert_eq(weight_band_cents(500), 450)
+    assert_eq(weight_band_cents(501), 800)
+    assert_eq(weight_band_cents(2000), 800)
+    assert_eq(weight_band_cents(5000), 1400)
+}
+
+@[test]
+fn test_weight_band_heavy() {
+    assert_eq(weight_band_cents(5001), 1700)
+    assert_eq(weight_band_cents(6000), 1700)
+    assert_eq(weight_band_cents(6001), 2000)
+    assert_eq(weight_band_cents(10000), 2900)
+}
+
+@[test]
+fn test_zone_percent() {
+    assert_eq(zone_percent(0), 100)
+    assert_eq(zone_percent(50), 100)
+    assert_eq(zone_percent(51), 130)
+    assert_eq(zone_percent(300), 130)
+    assert_eq(zone_percent(1000), 160)
+    assert_eq(zone_percent(1001), 200)
+}
+
+@[test]
+fn test_longest_side() {
+    assert_eq(longest_side(box(1, 10, 20, 5)), 20)
+    assert_eq(longest_side(box(1, 3, 3, 9)), 9)
+    assert_eq(longest_side(box(1, 7, 7, 7)), 7)
+}
+
+@[test]
+fn test_is_oversize() {
+    assert(!is_oversize(box(1, 100, 25, 25)))
+    assert(is_oversize(box(1, 101, 10, 10)))
+    assert(is_oversize(box(1, 60, 50, 41)))
+    assert(!is_oversize(box(1, 60, 50, 40)))
+}
+
+@[test]
+fn test_oversize_surcharge() {
+    assert_eq(oversize_surcharge(box(1, 30, 30, 30)), 0)
+    assert_eq(oversize_surcharge(box(1, 100, 30, 30)), 1500)
+    assert_eq(oversize_surcharge(box(1, 120, 10, 10)), 2500)
+    assert_eq(oversize_surcharge(box(1, 10, 101, 10)), 1550)
+}
+
+@[test]
+fn test_parcel_cost_small_local() {
+    assert_eq(parcel_cost(box(300, 20, 20, 20), 10), 450)
+    assert_eq(parcel_cost(box(1500, 20, 20, 20), 50), 800)
+}
+
+@[test]
+fn test_parcel_cost_zones_and_rounding() {
+    // 450 * 1.3 = 585, 800 * 1.6 = 1280, 1700 * 2 = 3400
+    assert_eq(parcel_cost(box(500, 20, 20, 20), 100), 585)
+    assert_eq(parcel_cost(box(1999, 20, 20, 20), 999), 1280)
+    assert_eq(parcel_cost(box(5500, 20, 20, 20), 5000), 3400)
+}
+
+@[test]
+fn test_parcel_cost_oversize() {
+    // 1400 * 1.3 = 1820 plus 1500 + 10 * 50
+    assert_eq(parcel_cost(box(3000, 110, 20, 20), 200), 3820)
+    // 800 base plus flat surcharge for sum 160
+    assert_eq(parcel_cost(box(1000, 60, 60, 40), 0), 2300)
+}
+
+@[test]
+fn test_shipment_total_paid() {
+    let ps = [box(400, 20, 20, 10), box(6200, 120, 30, 20)]
+    // 585 + (2000 * 1.3 = 2600) + 1500 + 1000
+    assert_eq(shipment_total(&ps, 200, 3000, 5000), 5685)
+}
+
+@[test]
+fn test_shipment_total_free_threshold() {
+    let ps = [box(400, 20, 20, 10), box(6200, 120, 30, 20)]
+    assert_eq(shipment_total(&ps, 200, 5000, 5000), 2500)
+    assert_eq(shipment_total(&ps, 200, 4999, 5000), 5685)
+    let plain = [box(400, 20, 20, 10), box(900, 30, 30, 30)]
+    assert_eq(shipment_total(&plain, 20, 9000, 5000), 0)
+}
+
+@[test]
+fn test_shipment_total_empty() {
+    let none: [Parcel] = []
+    assert_eq(shipment_total(&none, 500, 0, 5000), 0)
+}
+
+@[test]
+fn test_priciest_parcel() {
+    let ps = [box(400, 20, 20, 10), box(2500, 30, 30, 30), box(2600, 30, 30, 30)]
+    match priciest_parcel(&ps, 10) {
+        Some(i) => assert_eq(i, 1)
+        None => assert(false)
+    }
+    let big = [box(400, 20, 20, 10), box(400, 101, 10, 10)]
+    match priciest_parcel(&big, 10) {
+        Some(i) => assert_eq(i, 1)
+        None => assert(false)
+    }
+}
+
+@[test]
+fn test_priciest_parcel_empty() {
+    let none: [Parcel] = []
+    match priciest_parcel(&none, 10) {
+        Some(_) => assert(false)
+        None => assert(true)
+    }
+}
+
+@[test]
+fn test_base_cost_ignores_size() {
+    // 1400 * 1.6 = 2240 regardless of oversize ; 450 * 2 = 900
+    assert_eq(base_cost(box(3000, 150, 20, 20), 400), 2240)
+    assert_eq(base_cost(box(100, 10, 10, 10), 2000), 900)
+    assert_eq(base_cost(box(2001, 10, 10, 10), 51), 1820)
+}

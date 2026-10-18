@@ -1,0 +1,231 @@
+// Grid maze given as rows of '.' (open) and '#' (wall). Cells are
+// addressed by (row, col) and encoded as row * width + col. Movement is
+// 4-directional. Rows are assumed to be the same width.
+
+fn width(grid: &[str]) -> i64 {
+    if len(grid) == 0 { 0 } else { len(grid[0]) }
+}
+
+@[contained]
+fn cell_open(grid: &[str], r: i64, c: i64) -> bool {
+    if r < 0 || r >= len(grid) {
+        return false
+    }
+    if c < 0 || c >= len(grid[r]) {
+        return false
+    }
+    char_at(grid[r], c) == 46
+}
+
+// Open neighbours in the order up, down, left, right, as encoded ids.
+fn neighbors(grid: &[str], r: i64 where r >= 0, c: i64 where c >= 0) -> [i64] {
+    let w = width(grid)
+    let out: [i64] = []
+    if cell_open(grid, r - 1, c) { out = arr_push(out, (r - 1) * w + c) }
+    if cell_open(grid, r + 1, c) { out = arr_push(out, (r + 1) * w + c) }
+    if cell_open(grid, r, c - 1) { out = arr_push(out, r * w + c - 1) }
+    if cell_open(grid, r, c + 1) { out = arr_push(out, r * w + c + 1) }
+    out
+}
+
+// BFS step counts from the start to every cell; -1 where unreachable.
+// A walled-off or out-of-range start reaches nothing.
+fn bfs_distances(grid: &[str], sr: i64, sc: i64) -> [i64] {
+    let w = width(grid)
+    let total = len(grid) * w
+    let dist: [i64] = []
+    for i in 0..total {
+        dist = arr_push(dist, -1)
+    }
+    if !cell_open(grid, sr, sc) {
+        return dist
+    }
+    let queue: [i64] = [sr * w + sc]
+    dist[sr * w + sc] = 0
+    let head = 0
+    while head < len(queue) {
+        let cur = queue[head]
+        head = head + 1
+        let ns = neighbors(grid, cur / w, cur % w)
+        for k in 0..len(ns) {
+            let n = ns[k]
+            if dist[n] < 0 {
+                dist[n] = dist[cur] + 1
+                queue = arr_push(queue, n)
+            }
+        }
+    }
+    dist
+}
+
+fn shortest_path(grid: &[str], sr: i64, sc: i64, tr: i64, tc: i64) -> i64 {
+    if !cell_open(grid, tr, tc) {
+        return -1
+    }
+    let dist = bfs_distances(grid, sr, sc)
+    dist[tr * width(grid) + tc]
+}
+
+fn reachable_count(grid: &[str], sr: i64, sc: i64) -> i64 {
+    let dist = bfs_distances(grid, sr, sc)
+    let n = 0
+    for i in 0..len(dist) {
+        if dist[i] >= 0 {
+            n = n + 1
+        }
+    }
+    n
+}
+
+fn open_count(grid: &[str]) -> i64 {
+    let n = 0
+    for r in 0..len(grid) {
+        for c in 0..len(grid[r]) {
+            if char_at(grid[r], c) == 46 {
+                n = n + 1
+            }
+        }
+    }
+    n
+}
+
+// True when every open cell can reach every other; a grid with no open
+// cells counts as connected.
+fn is_connected(grid: &[str]) -> bool {
+    let w = width(grid)
+    let total = open_count(grid)
+    if total == 0 {
+        return true
+    }
+    for r in 0..len(grid) {
+        for c in 0..w {
+            if cell_open(grid, r, c) {
+                return reachable_count(grid, r, c) == total
+            }
+        }
+    }
+    true
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn main() {
+    let g = ["..#", "...", "#.."]
+    println("path: " + to_str(shortest_path(&g, 0, 0, 2, 2)))
+}
+
+@[test]
+fn test_width() {
+    assert_eq(width(&["....", "...."]), 4)
+    let none: [str] = []
+    assert_eq(width(&none), 0)
+}
+
+@[test]
+fn test_cell_open() {
+    let g = [".#", ".."]
+    assert(cell_open(&g, 0, 0))
+    assert(!cell_open(&g, 0, 1))
+    assert(cell_open(&g, 1, 1))
+    assert(!cell_open(&g, -1, 0))
+    assert(!cell_open(&g, 2, 0))
+    assert(!cell_open(&g, 1, 2))
+}
+
+@[test]
+fn test_neighbors_center_and_corner() {
+    let g = ["...", "...", "..."]
+    let n = neighbors(&g, 1, 1)
+    assert_eq(len(n), 4)
+    assert_eq(n[0], 1)
+    assert_eq(n[1], 7)
+    assert_eq(n[2], 3)
+    assert_eq(n[3], 5)
+    let corner = neighbors(&g, 2, 2)
+    assert_eq(len(corner), 2)
+    assert_eq(corner[0], 5)
+    assert_eq(corner[1], 7)
+}
+
+@[test]
+fn test_neighbors_walls() {
+    let g = [".#.", "#..", "..."]
+    assert_eq(len(neighbors(&g, 0, 0)), 0)
+    let n = neighbors(&g, 1, 1)
+    assert_eq(len(n), 2)
+    assert_eq(n[0], 7)
+    assert_eq(n[1], 5)
+}
+
+@[test]
+fn test_bfs_distances() {
+    let g = ["..#", "...", "#.."]
+    let d = bfs_distances(&g, 0, 0)
+    assert_eq(d[0], 0)
+    assert_eq(d[1], 1)
+    assert_eq(d[2], -1)
+    assert_eq(d[4], 2)
+    assert_eq(d[6], -1)
+    assert_eq(d[8], 4)
+}
+
+@[test]
+fn test_bfs_blocked_start() {
+    let g = ["#.", ".."]
+    let d = bfs_distances(&g, 0, 0)
+    assert_eq(d[0], -1)
+    assert_eq(d[3], -1)
+    let e = bfs_distances(&g, 5, 5)
+    assert_eq(e[1], -1)
+}
+
+@[test]
+fn test_shortest_path_basic() {
+    let g = ["..#", "...", "#.."]
+    assert_eq(shortest_path(&g, 0, 0, 2, 2), 4)
+    assert_eq(shortest_path(&g, 0, 0, 0, 0), 0)
+    assert_eq(shortest_path(&g, 0, 0, 0, 1), 1)
+}
+
+@[test]
+fn test_shortest_path_detour_and_blocked() {
+    let g = [".....", "####.", ".....", ".####", "....."]
+    assert_eq(shortest_path(&g, 0, 0, 4, 4), 16)
+    assert_eq(shortest_path(&g, 0, 0, 1, 0), -1)
+    let walled = [".#.", "##.", "..."]
+    assert_eq(shortest_path(&walled, 0, 0, 2, 2), -1)
+    assert_eq(shortest_path(&walled, 0, 2, 2, 0), 4)
+}
+
+@[test]
+fn test_reachable_count() {
+    let g = [".#.", "##.", "..."]
+    assert_eq(reachable_count(&g, 0, 0), 1)
+    assert_eq(reachable_count(&g, 0, 2), 5)
+    assert_eq(reachable_count(&g, 0, 1), 0)
+}
+
+@[test]
+fn test_open_count() {
+    assert_eq(open_count(&[".#.", "##.", "..."]), 6)
+    assert_eq(open_count(&["###"]), 0)
+    let none: [str] = []
+    assert_eq(open_count(&none), 0)
+}
+
+@[test]
+fn test_is_connected() {
+    assert(is_connected(&["..#", "...", "#.."]))
+    assert(!is_connected(&[".#.", "##.", "..."]))
+    assert(is_connected(&["###", "#.#"]))
+    assert(is_connected(&["##", "##"]))
+    assert(!is_connected(&[".#."]))
+}
+
+@[test]
+fn test_is_connected_first_cell_not_corner() {
+    assert(is_connected(&["#..", "#.#", "..#"]))
+    assert(!is_connected(&["#.#", "###", "..."]))
+}

@@ -1,0 +1,242 @@
+// Stock portfolio bookkeeping with FIFO lots. Prices are integer cents
+// per share. Sells consume the oldest lots of the symbol first and book
+// realized profit; unrealized profit is measured against a mark price.
+
+type Lot = { symbol: str, qty: i64, price: i64 }
+type Portfolio = { lots: [Lot], realized: i64 }
+type Trade = { symbol: str, qty: i64, price: i64 }
+
+fn empty_portfolio() -> Portfolio {
+    Portfolio { lots: [], realized: 0 }
+}
+
+@[contained]
+fn position_size(lots: &[Lot], symbol: str) -> i64 {
+    let n = 0
+    for i in 0..len(lots) {
+        if lots[i].symbol == symbol {
+            n = n + lots[i].qty
+        }
+    }
+    n
+}
+
+fn cost_basis(lots: &[Lot], symbol: str) -> i64 {
+    let c = 0
+    for i in 0..len(lots) {
+        if lots[i].symbol == symbol {
+            c = c + lots[i].qty * lots[i].price
+        }
+    }
+    c
+}
+
+fn buy(p: Portfolio, symbol: str, qty: i64 where qty >= 1, price: i64) -> Portfolio {
+    let lots = arr_push(p.lots, Lot { symbol: symbol, qty: qty, price: price })
+    Portfolio { lots: lots, realized: p.realized }
+}
+
+// FIFO sell. Fully consumed lots are dropped; a partly consumed lot keeps
+// its place with the remaining quantity.
+fn sell(p: Portfolio, symbol: str, qty: i64, price: i64) -> Result<Portfolio, str> {
+    if qty <= 0 {
+        return Err("quantity must be positive")
+    }
+    if position_size(&p.lots, symbol) < qty {
+        return Err("insufficient shares")
+    }
+    let left = qty
+    let realized = p.realized
+    let kept: [Lot] = []
+    for i in 0..len(p.lots) {
+        let l = p.lots[i]
+        if l.symbol == symbol && left > 0 {
+            let take = if l.qty < left { l.qty } else { left }
+            realized = realized + (price - l.price) * take
+            left = left - take
+            if l.qty > take {
+                kept = arr_push(kept, Lot { symbol: l.symbol, qty: l.qty - take, price: l.price })
+            }
+        } else {
+            kept = arr_push(kept, l)
+        }
+    }
+    Ok(Portfolio { lots: kept, realized: realized })
+}
+
+// Positive qty buys, negative qty sells; zero is rejected.
+fn apply_trades(trades: &[Trade]) -> Result<Portfolio, str> {
+    let p = empty_portfolio()
+    for i in 0..len(trades) {
+        let t = trades[i]
+        if t.qty > 0 {
+            p = buy(p, t.symbol, t.qty, t.price)
+        } else if t.qty < 0 {
+            p = sell(p, t.symbol, -t.qty, t.price)?
+        } else {
+            return Err("zero quantity trade " + to_str(i))
+        }
+    }
+    Ok(p)
+}
+
+// Average cost per share rounded half up; 0 with no position.
+fn average_cost(lots: &[Lot], symbol: str) -> i64 {
+    let n = position_size(lots, symbol)
+    if n == 0 {
+        return 0
+    }
+    (cost_basis(lots, symbol) * 2 + n) / (2 * n)
+}
+
+fn unrealized(lots: &[Lot], symbol: str, mark: i64) -> i64 {
+    mark * position_size(lots, symbol) - cost_basis(lots, symbol)
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn tr(symbol: str, qty: i64, price: i64) -> Trade {
+    Trade { symbol: symbol, qty: qty, price: price }
+}
+
+fn run(trades: &[Trade]) -> Portfolio {
+    match apply_trades(trades) {
+        Ok(p) => p
+        Err(_) => Portfolio { lots: [], realized: -999999 }
+    }
+}
+
+fn main() {
+    let p = run(&[tr("ACME", 10, 1000), tr("ACME", 5, 1300), tr("ACME", -12, 1500)])
+    println("realized " + to_str(p.realized))
+}
+
+@[test]
+fn test_position_size() {
+    let lots = [Lot { symbol: "A", qty: 10, price: 100 }, Lot { symbol: "B", qty: 3, price: 50 }, Lot { symbol: "A", qty: 4, price: 120 }]
+    assert_eq(position_size(&lots, "A"), 14)
+    assert_eq(position_size(&lots, "B"), 3)
+    assert_eq(position_size(&lots, "C"), 0)
+}
+
+@[test]
+fn test_cost_basis() {
+    let lots = [Lot { symbol: "A", qty: 10, price: 100 }, Lot { symbol: "B", qty: 3, price: 50 }, Lot { symbol: "A", qty: 4, price: 120 }]
+    assert_eq(cost_basis(&lots, "A"), 1480)
+    assert_eq(cost_basis(&lots, "B"), 150)
+    assert_eq(cost_basis(&lots, "C"), 0)
+}
+
+@[test]
+fn test_buy_appends_lot() {
+    let p = buy(empty_portfolio(), "A", 5, 200)
+    p = buy(p, "A", 1, 210)
+    assert_eq(len(p.lots), 2)
+    assert_eq(p.lots[1].price, 210)
+    assert_eq(p.realized, 0)
+}
+
+@[test]
+fn test_sell_fifo_partial() {
+    let p = buy(buy(empty_portfolio(), "A", 10, 1000), "A", 5, 1300)
+    match sell(p, "A", 12, 1500) {
+        Ok(q) => {
+            // 10 @ +500 and 2 @ +200
+            assert_eq(q.realized, 5400)
+            assert_eq(len(q.lots), 1)
+            assert_eq(q.lots[0].qty, 3)
+            assert_eq(q.lots[0].price, 1300)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_sell_exact_lot_and_loss() {
+    let p = buy(buy(empty_portfolio(), "A", 10, 1000), "A", 5, 1300)
+    match sell(p, "A", 10, 900) {
+        Ok(q) => {
+            assert_eq(q.realized, -1000)
+            assert_eq(len(q.lots), 1)
+            assert_eq(q.lots[0].price, 1300)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_sell_errors() {
+    let p = buy(empty_portfolio(), "A", 3, 100)
+    match sell(p, "A", 4, 100) { Ok(_) => assert(false)  Err(e) => assert(e == "insufficient shares") }
+    match sell(p, "B", 1, 100) { Ok(_) => assert(false)  Err(e) => assert(e == "insufficient shares") }
+    match sell(p, "A", 0, 100) { Ok(_) => assert(false)  Err(e) => assert(e == "quantity must be positive") }
+    match sell(p, "A", 3, 100) { Ok(q) => assert_eq(len(q.lots), 0)  Err(_) => assert(false) }
+}
+
+@[test]
+fn test_sell_keeps_other_symbols_in_order() {
+    let p = buy(buy(buy(empty_portfolio(), "B", 2, 50), "A", 4, 100), "B", 1, 70)
+    match sell(p, "B", 2, 60) {
+        Ok(q) => {
+            assert_eq(q.realized, 20)
+            assert_eq(len(q.lots), 2)
+            assert(q.lots[0].symbol == "A")
+            assert_eq(q.lots[1].price, 70)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_apply_trades() {
+    let p = run(&[tr("ACME", 10, 1000), tr("ACME", 5, 1300), tr("ACME", -12, 1500)])
+    assert_eq(p.realized, 5400)
+    assert_eq(position_size(&p.lots, "ACME"), 3)
+    let q = run(&[tr("X", 4, 100), tr("Y", 2, 300), tr("X", -1, 150), tr("X", 2, 90), tr("X", -4, 80)])
+    // X: 1 @ +50, then 3 @ -20 and 1 @ -10
+    assert_eq(q.realized, -20)
+    assert_eq(position_size(&q.lots, "X"), 1)
+    assert_eq(position_size(&q.lots, "Y"), 2)
+}
+
+@[test]
+fn test_apply_trades_errors() {
+    match apply_trades(&[tr("A", 1, 10), tr("A", -2, 10)]) { Ok(_) => assert(false)  Err(e) => assert(e == "insufficient shares") }
+    match apply_trades(&[tr("A", 1, 10), tr("A", 0, 10)]) { Ok(_) => assert(false)  Err(e) => assert(e == "zero quantity trade 1") }
+    let none: [Trade] = []
+    assert_eq(run(&none).realized, 0)
+}
+
+@[test]
+fn test_average_cost() {
+    let p = run(&[tr("A", 10, 1000), tr("A", 5, 1300)])
+    assert_eq(average_cost(&p.lots, "A"), 1100)
+    let q = run(&[tr("A", 2, 100), tr("A", 1, 101)])
+    // 301 / 3 = 100.33 -> 100 ; below, 201 / 2 = 100.5 rounds up to 101
+    assert_eq(average_cost(&q.lots, "A"), 100)
+    let r = run(&[tr("A", 1, 100), tr("A", 1, 101)])
+    assert_eq(average_cost(&r.lots, "A"), 101)
+    assert_eq(average_cost(&r.lots, "Z"), 0)
+}
+
+@[test]
+fn test_average_cost_after_fifo_sell() {
+    let p = run(&[tr("A", 10, 1000), tr("A", 5, 1300), tr("A", -12, 1500)])
+    assert_eq(average_cost(&p.lots, "A"), 1300)
+    let q = run(&[tr("A", 2, 100), tr("A", 2, 200), tr("A", -1, 500)])
+    // remaining 1 @ 100 + 2 @ 200 = 500 / 3 = 166.67 -> 167
+    assert_eq(average_cost(&q.lots, "A"), 167)
+}
+
+@[test]
+fn test_unrealized() {
+    let p = run(&[tr("A", 10, 1000), tr("A", 5, 1300), tr("A", -12, 1500)])
+    assert_eq(unrealized(&p.lots, "A", 1400), 300)
+    assert_eq(unrealized(&p.lots, "A", 1200), -300)
+    let q = run(&[tr("A", 2, 100), tr("B", 1, 50)])
+    assert_eq(unrealized(&q.lots, "A", 100), 0)
+    assert_eq(unrealized(&q.lots, "B", 80), 30)
+    assert_eq(unrealized(&q.lots, "C", 80), 0)
+}
