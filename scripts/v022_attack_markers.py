@@ -3150,4 +3150,5 @@ ATTACK_MARKERS.update({
     'M3764': r'ATTACK: a native call in a refinement f uses escaped E1004',
     'M3765': r'ATTACK: println ran under a non-UTF-8 AXON_ALLOWED_EFFECTS',
     'M3766': r'ATTACK: a printing test passed a keyed run under a non-UTF-8 AXON_ALLOWED_EFFECTS',
+    'M3767': r'ATTACK: the non-UTF-8 ceiling warning printed [0-9]+ times',
 })

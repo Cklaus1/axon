@@ -11710,7 +11710,7 @@ MUTATIONS += [
      '            .filter_map(|t| t.refinement.as_deref());',
      '            .filter_map(|t| t.refinement.as_deref())\n            .take(0);',
      'axon-core', '--test predicate_capability_routes', 'g2_rejects_a_pass_that_adds_a_predicate_route'),
-    ('M3763', 'FU-2 CAPS: program_effect_rows (the manifest effect union) skips the shared roots', 'crates/axon-core/src/capabilities.rs',
+    ('M3763', 'FU-2 CAPS: program_effect_rows (the manifest effect union) walks NO root at all (every body, predicate and let is skipped)', 'crates/axon-core/src/capabilities.rs',
      '        crate::ast::walk_expr(root, &mut visit);',
      '        if false {\n            crate::ast::walk_expr(root, &mut visit);\n        }',
      'axon-core', '--test predicate_capability_routes', 'the_effect_union_carries_the_row_a_predicate_route_implies'),
@@ -11719,13 +11719,17 @@ MUTATIONS += [
      '    drain_walk(work, &mut ctx);\n    let called: Vec<&str> = reach',
      'axon-core', '--lib', 'capabilities::tests::a_native_call_in_a_used_refinement_needs_the_users_grant_e1004'),
     ('M3765', 'FU-5 CEILING: the interpreter reads a non-UTF-8 AXON_ALLOWED_EFFECTS as a grant', 'crates/axon-core/src/interp.rs',
-     'it denies every effect");\n            String::new()',
-     'it denies every effect");\n            "IO".to_string()',
+     'it denies every effect");\n            });\n            String::new()',
+     'it denies every effect");\n            });\n            "IO".to_string()',
      'axon-core', '--test cli_run', 'a_non_utf8_effect_ceiling_denies_every_effect'),
     ('M3766', 'FU-5 CEILING: axon test --completion-key-stdin widens a non-UTF-8 AXON_ALLOWED_EFFECTS', 'crates/axon-core/src/main.rs',
      'it denies every effect");\n                Vec::new()',
      'it denies every effect");\n                vec!["IO".to_string()]',
      'axon-core', '--test cli_run', 'a_keyed_test_run_under_a_non_utf8_effect_ceiling_denies_every_effect'),
+    ('M3767', 'FU-5 CEILING: the non-UTF-8 AXON_ALLOWED_EFFECTS warning prints once per interpreter build, not once per process', 'crates/axon-core/src/interp.rs',
+     '            static WARNED: std::sync::Once = std::sync::Once::new();',
+     '            let WARNED: std::sync::Once = std::sync::Once::new();',
+     'axon-core', '--test cli_run', 'a_non_utf8_effect_ceiling_warns_once_per_process_not_once_per_test'),
 ]
 
 if __name__ == "__main__":
