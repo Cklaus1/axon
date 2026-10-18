@@ -2592,6 +2592,7 @@ S1 only stops NEW capability kinds. Narrowing a kind the file already holds (wri
 
 ### O-S1-04 — [low] Relative `cortex repair --workspace` fails every check (pre-existing, review #27)
 `run_checks` sets `current_dir(ws)` and also passes `ws.join(rel)`. Canonicalize in the CLI; keep `current_dir` (M71).
+**[RESOLVED fu/int FU-6, 392acddc/69b643ee]** `resolve_paths` resolves `--workspace`/`--axon` once in repair, locate and grant; a missing path is exit 2. A relative `--axon` that exists was already resolved by `resolve_executable` (the spec premise was half wrong).
 
 ### O-S1-05 — [low] Fabric executor: no fence, empty `messages`
 The fence is reported `applied:false` there and fence conflicts cannot be detected; the typed feedback (R4) has no data on that path. `[DECIDED by human 2026-10-18: an independent design problem, not part of a correctness batch]`
@@ -2608,25 +2609,31 @@ It is an in-process blocking HTTP call; S1 only refuses to start one with less t
 ### O-S1-09 — [low] axon caps / ambient scope leftovers (LaneCaps)
 Narrowing between two program-created sandboxes compares effects, not scopes (pre-existing); `@[contained]` does not follow closures stored in module-level `let`s while `caps` does; a non-UTF-8 `AXON_ALLOWED_EFFECTS` reads as unset in the interpreter; the guest/VM path cannot carry the scope variables; runtime cache writes other than provenance and the durable store (AI replay cache, goal state) are not checked against the write scope; native-module calls skip the scope check (pre-existing).
 `[DECIDED by human 2026-10-18: split. The invalid-UTF-8 AXON_ALLOWED_EFFECTS case joins the follow-up batch (tasks/followup-spec.md): it must deny every capability, never drop the restriction. The native-module scope, cache writes, guest/VM carriage and sandbox narrowing are enforcement prerequisites of NH-R1 unattended runs (tasks/unattended-auth-spec.md), not this batch]`
+**[RESOLVED fu/int FU-5 (the invalid-UTF-8 part only), 7c5d2136/c9ef67e7]** A non-UTF-8 value denies every effect in `axon run` and in keyed `axon test`, with one warning per process (M3765–M3767). The other leftovers remain NH-R1 prerequisites.
 
 ### O-S1-10 — [low] `run_ab.py` R5 integrity abort has no automated test
 Exercised only by reading and by the real-binary smoke; a fake verdict fixture test would pin it.
 `[DECIDED by human 2026-10-18: in the follow-up batch]`
+**[RESOLVED fu/int FU-8, 30fb8841]** `selftest_ab.py` cases untokened, badtoken, R5 mismatch and R5 null each abort with no rows.
 
 ### O-S1-11 — [low] `locate.rs` `fn_body` matches braces naively
 `crates/axon-cortex/src/locate.rs` `fn_body` finds `fn NAME(` by substring and counts every `{`/`}` from the first brace, so a brace inside a string or a comment ends the body early or late, and a `fn NAME(` inside a comment or string is taken as the definition. The repair path's own re-location (the body-containment guard) reads strings and comments as the lexer does; `cortex locate`'s call graph does not. Use the same locator, or the parser.
+**[RESOLVED fu/int FU-7, 2338ceca/685c2ee0]** `fn_body` uses `symbol_body` plus a full `scan_code` pass; a source that does not lex yields no body (M3749–M3751). Siblings: O-FU-02.
 
 ### O-S1-12 — [medium, was low: raised by human 2026-10-18] A drain stopped by the stop flag counts as complete output
 `crates/axon-cortex/src/runner.rs` `drain_bounded`: when `wait_readable` returns false because `stop` was set (the drain grace ran out with a descendant still holding the pipe), the loop ends and the thread returns `(kept, truncated)` as if it had read to EOF. `join_within` then sees a joined drain, and `run_limited` parses a cut-off stream as the check's full output. R2 reports only an UN-joinable drain as incomplete. Return a third state (stopped) and treat it like the un-joinable case. [INFERENCE: by reading; not reproduced.]
 `[DECIDED by human 2026-10-18: in the follow-up batch: reproduce first, then an explicit stopped/incomplete result; an incomplete check never counts as passing]`
+**[RESOLVED fu/int FU-3, ac5876df/993802bb]** Reproduced (a check still writing past the drain grace decided the run); a stopped drain is now no verdict on the check side and `Unavailable` on the generator side (M3740–M3745, M3755–M3756). Residual: O-FU-01.
 
 ### O-S1-13 — [medium, was low: raised by human 2026-10-18] The R5 fail-closed restore overwrites an external change
 `crates/axon-cortex/src/bin/cortex.rs` (the `accepted_artifact` error arm in `main`): when the file on disk no longer hashes to the graded digest, the run writes the original bytes back (`let _ = std::fs::write(.., &original)`). The mismatch means someone else changed the file after acceptance, so the restore destroys that change, and the write's own error is dropped. Leave the file as found (or restore only when it still holds a patch this run wrote) and report a failed write.
 `[DECIDED by human 2026-10-18: in the follow-up batch: restore only when the file still holds bytes this run wrote; preserve a concurrent edit; report a failed restore]`
+**[RESOLVED fu/int FU-4, 098786e7]** `restore_found` writes the original only over bytes this run wrote (a `patch_applied` digest or the adjudicated bytes), leaves a concurrent edit or an unreadable file with a reason, and reports a failed write (M3752–M3754). Residual sites: O-FU-03/04.
 
 ### O-S1-14 — [medium] The whole-program capability walkers do not walk `@[verify]` or refinement predicates
 S1 taught `reachable_capabilities` (the `@[contained]` / `axon caps` walker) to follow the user code the interpreter runs implicitly. `collect_caps_expr`, `program_capabilities` and `program_effect_rows` (`crates/axon-core/src/capabilities.rs`) still walk only fn bodies, impl-method bodies and module `let` values. A capability reached only from a refinement `where`, a struct `where` or a `@[verify]` predicate is invisible to G2's capability diff, the import-edge E1203 demand set and `--emit-manifest`'s `effect_union`. Route them through the same implicit-invocation list.
 `[DECIDED by human 2026-10-18: in the follow-up batch, priority P1: reuse S1's implicit-execution traversal; G2 diff, import check, manifest emitter and the S1 walker must agree on shared predicate-only fixtures; consolidate only if the narrow change shows substantial duplication]`
+**[RESOLVED fu/int FU-2, ecf63dfc]** `program_roots` feeds `program_capabilities` and `program_builtin_calls`; E1004 is per fn with its hooks; agreement fixtures in `tests/predicate_capability_routes.rs` (M3760–M3764). Walkers not merged: O-FU-05.
 
 ### O-S1-15 — [low] The interpreter does not check refinements on enum variant fields or on lambda parameters
 Noted in `crates/axon-core/src/capabilities.rs` (the `reachable_capabilities` doc and the `Expr::Lambda` arm): an enum variant field's refinement is not checked at construction, and a lambda parameter's refinement is not checked at a call. The caps walker follows lambda parameter refinements anyway, so adding the check opens no route; the variant-field case is not followed and would need a walker change with the check.
@@ -2635,6 +2642,7 @@ Noted in `crates/axon-core/src/capabilities.rs` (the `reachable_capabilities` do
 ### O-S1-16 — [medium] The build-loop skill should carry the S1 lessons
 `skill://build-loop` does not yet say: lanes run every gate stage before reporting (not filtered tests); reviewer briefs use neutral "conformance audit" wording; probe real receipt-corpus tasks on the frozen binary before the paid regress; every partial outcome (exit 27) gets an invariant that the file on disk holds the reported bytes. See `tasks/lessons.md` § S1 — governed repair episode.
 `[DECIDED by human 2026-10-18: in the follow-up batch: all ten S1 lessons; the dependency-aware gate profile is O-S1-17]`
+**[RESOLVED FU-9]** SKILL.md carries the ten S1 lessons (out of repo).
 
 ### O-S1-17 — [medium] A dependency-aware `gate.sh --lane` profile (lesson fired twice in S1)
 "Lanes skip suites" fired twice in S1 (claims_gate after the merge; axon-fabric's `cortex_via_fabric` and axon-core's `harness_binaries` in the final full gate, ~1 h of reruns). Per the build-loop recurrence → mechanism rule: a `gate.sh --lane` profile that derives the suites to run from the changed paths (a changed `cortex`/`axon` binary → the crates whose tests drive it; any changed `tests/*.rs` → the workspace-wide lint tests).
