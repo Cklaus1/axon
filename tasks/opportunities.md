@@ -2578,3 +2578,53 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
 - **[P3] The AR3 fail-first test mutates process env** (`crates/axon-intent/tests/acceptance.rs:1160-1161`,
   `set_var("AXON_BIN")`, `remove_var("AXON_APPROVAL_KEY")`) while sibling tests in the binary run in parallel.
   Flake risk only today [INFERENCE]; pass the binary and key explicitly.
+
+## S1 governed repair episode (tasks/repair-spec.md)
+
+### O-S1-01 — [medium] R6 record-only trial ledger in axon-loop (deferred by Step 1 review #20)
+The ledger would be self-signed by the harness, nothing reads it yet, and reusing `promote.py`'s `Evidence.trial` would change `ws_out` (`promote.py:399`). Revisit together with NH-R1 (an envelope token gives an independent signer) and when a learner exists.
+
+### O-S1-02 — [high] A held-out set with headroom (R7b deferred, review #24/#25)
+Every existing set is saturated at f83c6f86 (gencontext heldout 47/47, once 30/30); only 16 unused example files remain. Until a harder set exists, no arm can show whether R4's structured feedback helps.
+
+### O-S1-03 — [medium] `--effect-ceiling` and path-level narrowing
+S1 only stops NEW capability kinds. Narrowing a kind the file already holds (write only under the workspace, net only to one host) needs its own design: narrowing below the pristine set denies every candidate (review #3).
+
+### O-S1-04 — [low] Relative `cortex repair --workspace` fails every check (pre-existing, review #27)
+`run_checks` sets `current_dir(ws)` and also passes `ws.join(rel)`. Canonicalize in the CLI; keep `current_dir` (M71).
+
+### O-S1-05 — [low] Fabric executor: no fence, empty `messages`
+The fence is reported `applied:false` there and fence conflicts cannot be detected; the typed feedback (R4) has no data on that path.
+
+### O-S1-06 — [low] dstore files hit `fence_conflict`
+A file using the durable store gets exit 22, because the fence's empty FS_READ denies its store reads. The dstore → fs-scope mapping needs a design.
+
+### O-S1-07 — [low] An `ai:` generator call in flight cannot be cancelled at the deadline
+It is an in-process blocking HTTP call; S1 only refuses to start one with less than its 30 s timeout left.
+
+### O-S1-08 — [low] Spliced bodies lose their line structure
+`cortex repair` writes `fn double(n: i64) -> i64 {    n * 2}` when the generator returns a body without a leading newline (pre-existing at f83c6f86, seen with micode/haiku). Correct, but the accepted artifact is not formatted; run the formatter on the spliced region or normalise newlines.
+
+### O-S1-09 — [low] axon caps / ambient scope leftovers (LaneCaps)
+Narrowing between two program-created sandboxes compares effects, not scopes (pre-existing); `@[contained]` does not follow closures stored in module-level `let`s while `caps` does; a non-UTF-8 `AXON_ALLOWED_EFFECTS` reads as unset in the interpreter; the guest/VM path cannot carry the scope variables; runtime cache writes other than provenance and the durable store (AI replay cache, goal state) are not checked against the write scope; native-module calls skip the scope check (pre-existing).
+
+### O-S1-10 — [low] `run_ab.py` R5 integrity abort has no automated test
+Exercised only by reading and by the real-binary smoke; a fake verdict fixture test would pin it.
+
+### O-S1-11 — [low] `locate.rs` `fn_body` matches braces naively
+`crates/axon-cortex/src/locate.rs` `fn_body` finds `fn NAME(` by substring and counts every `{`/`}` from the first brace, so a brace inside a string or a comment ends the body early or late, and a `fn NAME(` inside a comment or string is taken as the definition. The repair path's own re-location (the body-containment guard) reads strings and comments as the lexer does; `cortex locate`'s call graph does not. Use the same locator, or the parser.
+
+### O-S1-12 — [low] A drain stopped by the stop flag counts as complete output
+`crates/axon-cortex/src/runner.rs` `drain_bounded`: when `wait_readable` returns false because `stop` was set (the drain grace ran out with a descendant still holding the pipe), the loop ends and the thread returns `(kept, truncated)` as if it had read to EOF. `join_within` then sees a joined drain, and `run_limited` parses a cut-off stream as the check's full output. R2 reports only an UN-joinable drain as incomplete. Return a third state (stopped) and treat it like the un-joinable case. [INFERENCE: by reading; not reproduced.]
+
+### O-S1-13 — [low] The R5 fail-closed restore overwrites an external change
+`crates/axon-cortex/src/bin/cortex.rs` (the `accepted_artifact` error arm in `main`): when the file on disk no longer hashes to the graded digest, the run writes the original bytes back (`let _ = std::fs::write(.., &original)`). The mismatch means someone else changed the file after acceptance, so the restore destroys that change, and the write's own error is dropped. Leave the file as found (or restore only when it still holds a patch this run wrote) and report a failed write.
+
+### O-S1-14 — [medium] The whole-program capability walkers do not walk `@[verify]` or refinement predicates
+S1 taught `reachable_capabilities` (the `@[contained]` / `axon caps` walker) to follow the user code the interpreter runs implicitly. `collect_caps_expr`, `program_capabilities` and `program_effect_rows` (`crates/axon-core/src/capabilities.rs`) still walk only fn bodies, impl-method bodies and module `let` values. A capability reached only from a refinement `where`, a struct `where` or a `@[verify]` predicate is invisible to G2's capability diff, the import-edge E1203 demand set and `--emit-manifest`'s `effect_union`. Route them through the same implicit-invocation list.
+
+### O-S1-15 — [low] The interpreter does not check refinements on enum variant fields or on lambda parameters
+Noted in `crates/axon-core/src/capabilities.rs` (the `reachable_capabilities` doc and the `Expr::Lambda` arm): an enum variant field's refinement is not checked at construction, and a lambda parameter's refinement is not checked at a call. The caps walker follows lambda parameter refinements anyway, so adding the check opens no route; the variant-field case is not followed and would need a walker change with the check.
+
+### O-S1-16 — [medium] The build-loop skill should carry the S1 lessons
+`skill://build-loop` does not yet say: lanes run every gate stage before reporting (not filtered tests); reviewer briefs use neutral "conformance audit" wording; probe real receipt-corpus tasks on the frozen binary before the paid regress; every partial outcome (exit 27) gets an invariant that the file on disk holds the reported bytes. See `tasks/lessons.md` § S1 — governed repair episode.
