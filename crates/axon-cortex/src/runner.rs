@@ -3594,7 +3594,8 @@ fn require_completion(report: &mut CheckReport, key: &[u8]) {
 pub enum Bound {
     /// Killed (with its whole process group) at its wall-clock limit.
     Time,
-    /// Wrote more than its capture bound, so what it said cannot be read.
+    /// Wrote more than its capture bound, or its output could not be read to
+    /// EOF within the drain grace, so what it said cannot be read.
     Output,
 }
 
@@ -3625,6 +3626,30 @@ impl BoundExceeded {
                  yields no verdict"
             ),
         })
+    }
+
+    /// A drain thread that could not be joined within the drain grace: what
+    /// it read is lost, so the output is incomplete — no verdict, like the
+    /// capture bound, but not reported as one (nothing exceeded it).
+    fn unread() -> std::io::Error {
+        std::io::Error::other(BoundExceeded {
+            bound: Bound::Output,
+            detail: "check output could not be read to EOF within the drain grace; an \
+                     incomplete run yields no verdict"
+                .to_string(),
+        })
+    }
+}
+
+/// Both drains of a spawn, as joined: (stdout, stderr, truncated?), or the
+/// [`BoundExceeded::unread`] error when either could not be joined.
+fn joined_output(
+    joined: Vec<Option<(Vec<u8>, bool)>>,
+) -> std::io::Result<(Vec<u8>, Vec<u8>, bool)> {
+    let mut it = joined.into_iter();
+    match (it.next().flatten(), it.next().flatten()) {
+        (Some((o, ot)), Some((e, et))) => Ok((o, e, ot || et)),
+        _ => Err(BoundExceeded::unread()),
     }
 }
 
@@ -3786,12 +3811,7 @@ fn run_limited(
     // The whole group, on every path, before the reap (see above).
     job.kill();
     let reaped = job.reap();
-    let mut joined =
-        axon_jobctl::join_within(axon_jobctl::DRAIN_GRACE, vec![out_h, err_h], &stop).into_iter();
-    // A drain that could not be joined lost what it read: the output is
-    // incomplete, which is the truncated case (no verdict).
-    let (o, ot) = joined.next().flatten().unwrap_or((Vec::new(), true));
-    let (e, et) = joined.next().flatten().unwrap_or((Vec::new(), true));
+    let joined = axon_jobctl::join_within(axon_jobctl::DRAIN_GRACE, vec![out_h, err_h], &stop);
     let timed_out = watched?;
     let status = reaped?;
     if timed_out {
@@ -3806,12 +3826,16 @@ fn run_limited(
             },
         ));
     }
+    // A drain that could not be joined lost what it read: the output is
+    // incomplete, so no verdict — reported as exactly that, not as the
+    // capture bound.
+    let (o, e, truncated) = joined_output(joined)?;
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&o),
         String::from_utf8_lossy(&e)
     );
-    Ok((text, status.code(), ot || et))
+    Ok((text, status.code(), truncated))
 }
 
 /// Parse `axon test --json` output. See `Runner::run_tests_json` for why the
@@ -4356,5 +4380,35 @@ mod splice_tests {
         // In a comment or a string it is not the function.
         let hidden = "// fn triple(n: i64) -> i64 { n }\nfn t() {\n    \"fn triple(\"\n}\n";
         assert_eq!(symbol_body(hidden, "triple"), None);
+    }
+}
+
+#[cfg(test)]
+mod drain_tests {
+    use super::{bound_exceeded, joined_output, Bound};
+
+    /// R2: a drain that could not be joined is "could not be read to EOF",
+    /// not "exceeded the capture bound" — still no verdict (a bound).
+    #[test]
+    fn an_unjoined_drain_is_not_reported_as_the_capture_bound() {
+        for joined in [
+            vec![None, Some((b"e".to_vec(), false))],
+            vec![Some((b"o".to_vec(), false)), None],
+        ] {
+            let e = joined_output(joined).unwrap_err();
+            assert_eq!(bound_exceeded(&e), Some(Bound::Output));
+            let s = e.to_string();
+            assert!(
+                s.contains("could not be read to EOF within the drain grace"),
+                "{s}"
+            );
+            assert!(!s.contains("capture bound"), "{s}");
+        }
+        let (o, e, t) = joined_output(vec![
+            Some((b"o".to_vec(), false)),
+            Some((b"e".to_vec(), true)),
+        ])
+        .unwrap();
+        assert_eq!((o, e, t), (b"o".to_vec(), b"e".to_vec(), true));
     }
 }
