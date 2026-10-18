@@ -11452,6 +11452,65 @@ MUTATIONS += [
 ]
 
 
+# ── S1 repair lane (tasks/r51 repair spec R1/R3/R5; ids M3700-M3719) ─────────────────────────
+# `cortex repair`'s governance of a model-proposed candidate: the static grant (R1b), the runtime
+# fence and its pre-flight (R1a/R1d), the containment of the proposed body, the walk budget (R3)
+# and the accepted artifact's digest (R5). Every row is killed end to end through the real
+# `cortex` and `axon` binaries (tests/cli.rs).
+_S1F = 'crates/axon-cortex/src/fence.rs'
+_S1R = 'crates/axon-cortex/src/runner.rs'
+_S1B = 'crates/axon-cortex/src/bin/cortex.rs'
+MUTATIONS += [
+    ('M3700', "S1 R1b: StaticGrant::excess admits every candidate (returns empty)", _S1F,
+     '        if self.basis == Basis::Unknown {\n            return Vec::new();',
+     '        if true {\n            return Vec::new();',
+     'axon-cortex', '--test cli', 'r1_a_helper_or_a_closure_does_not_widen_the_targets_grant'),
+    ('M3701', "S1 R1b: StaticGrant::excess ignores a candidate the walker could not classify", _S1F,
+     '        if candidate.unknown {\n            return vec!["unknown".to_string()];',
+     '        if false && candidate.unknown {\n            return vec!["unknown".to_string()];',
+     'axon-cortex', '--test cli', 'r1_a_candidate_the_walker_cannot_classify_is_refused'),
+    ('M3702', "S1 R1a: the fence leaves a scope the pristine file never uses unset instead of set-but-empty", _S1F,
+     '                if !caps.capabilities.iter().any(|c| c == label) {',
+     '                if false && !caps.capabilities.iter().any(|c| c == label) {',
+     'axon-cortex', '--test cli', 'r1_the_runtime_fence_reaches_every_check_set_but_empty'),
+    ('M3703', "S1 containment: a body that closes its function and appends items is spliced in (guard skipped)", _S1R,
+     '    if symbol_body(&patched, symbol) != Some((a, a + body.len()))\n        || symbol_count(&patched, symbol) != symbol_count(src, symbol)\n    {',
+     '    if false\n        && (symbol_body(&patched, symbol) != Some((a, a + body.len()))\n            || symbol_count(&patched, symbol) != symbol_count(src, symbol))\n    {',
+     'axon-cortex', '--test cli', 'r1_a_body_that_closes_its_function_never_runs'),
+    ('M3704', "S1 R1b: admission skipped — the candidate executes without its capabilities being walked", _S1R,
+     '                        .filter(|g| g.symbol == symbol.symbol)',
+     '                        .filter(|_| false)',
+     'axon-cortex', '--test cli', 'r1_a_helper_or_a_closure_does_not_widen_the_targets_grant'),
+    ('M3705', "S1 R1xR3: a proposal refused by admission is not counted against --max-proposals", _S1R,
+     '                                if !excess.is_empty() {\n                                    self.episode.push(EpisodeEvent::ActionDenied {',
+     '                                if !excess.is_empty() {\n                                    self.walk.used -= 1;\n                                    self.episode.push(EpisodeEvent::ActionDenied {',
+     'axon-cortex', '--test cli', 'r1_a_refused_proposal_counts_against_max_proposals'),
+    ('M3706', "S1 containment x R3: a proposal refused as outside its symbol is not counted against --max-proposals", _S1R,
+     '                        Err(SpliceError::Escapes) => {\n                            self.episode.push(EpisodeEvent::ActionDenied {',
+     '                        Err(SpliceError::Escapes) => {\n                            self.walk.used -= 1;\n                            self.episode.push(EpisodeEvent::ActionDenied {',
+     'axon-cortex', '--test cli', 'r1_a_body_that_closes_its_function_never_runs'),
+    ('M3707', "S1 R3: a passed deadline does not stop the next generator call from starting", _S1R,
+     '                    .filter(|r| r.is_zero() || min_time.is_some_and(|t| *r < t))',
+     '                    .filter(|r| min_time.is_some_and(|t| *r < t))',
+     'axon-cortex', '--test cli', 'r3_no_generator_call_starts_once_the_deadline_has_passed'),
+    ('M3708', "S1 R5: the accepted file is reported without comparing it with the digest the deciding verdict graded", _S1B,
+     '    if now != graded {',
+     '    if false && now != graded {',
+     'axon-cortex', '--test cli', 'r5_a_file_changed_after_acceptance_is_not_reported_as_accepted'),
+    ('M3709', "S1 R1d: the fence_conflict pre-flight on the pristine file is skipped", _S1B,
+     '    if !fence.env.is_empty() {\n        match runner.fence_conflicts(&file) {',
+     '    if false && !fence.env.is_empty() {\n        match runner.fence_conflicts(&file) {',
+     'axon-cortex', '--test cli', 'r1_a_file_the_fence_would_break_stops_with_fence_conflict'),
+    ('M3710', "S1 R5 x walk: an exit 27 reports an adjudicated state a later attempt undid (not put back)", _S1B,
+     '    let kept_adjudicated = if code == 27 {',
+     '    let kept_adjudicated = if false {',
+     'axon-cortex', '--test cli', 'r5_the_walk_keeps_the_adjudicated_state_it_reports'),
+    ('M3711', "S1 R5 x walk: a later candidate's regressed hidden pass decides an exit 27's digest", 'crates/axon-cortex/src/episode.rs',
+     '                27 if !*passed && graded_sha256.is_some() => Some(graded_sha256.as_deref()),',
+     '                27 if graded_sha256.is_some() => Some(graded_sha256.as_deref()),',
+     'axon-cortex', '--lib', 'episode::tests::a_later_candidates_regressed_pass_does_not_decide_an_adjudication'),
+]
+
 # C9 round 15 (amendment 121): M3260 is retired under the four-cell rule against M3456. The
 # candidate's `use` declarations are set aside for the merged check (M3260's guard) AND a merged
 # diagnostic that names no line is handed to the backstop (M3456's guard, `seal_split`): the text a

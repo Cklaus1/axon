@@ -203,8 +203,10 @@ impl Episode {
 
     /// R5: the `graded_sha256` of the event that DECIDED a kept patch — for a
     /// verified run (exit 0) the last `passed: true` Verified event, for an
-    /// adjudicated-not-clean one (exit 27) the last Verified event carrying a
-    /// digest. None for any other exit, or when that event carries none.
+    /// adjudicated-not-clean one (exit 27) the last `passed: false` Verified
+    /// event carrying a digest (only the adjudication carries one; a later
+    /// candidate's hidden pass that then regressed does not decide it). None
+    /// for any other exit, or when that event carries none.
     pub fn deciding_graded_sha256(&self, exit_code: i32) -> Option<&str> {
         self.events.iter().rev().find_map(|e| match e {
             EpisodeEvent::Verified {
@@ -213,7 +215,7 @@ impl Episode {
                 ..
             } => match exit_code {
                 0 if *passed => Some(graded_sha256.as_deref()),
-                27 if graded_sha256.is_some() => Some(graded_sha256.as_deref()),
+                27 if !*passed && graded_sha256.is_some() => Some(graded_sha256.as_deref()),
                 _ => None,
             },
             _ => None,
@@ -245,7 +247,7 @@ mod tests {
     }
 
     /// R5: exit 0 is decided by the last passing verdict, exit 27 by the
-    /// last one carrying a digest; no other exit names one.
+    /// last failing one carrying a digest; no other exit names one.
     #[test]
     fn the_deciding_event_names_the_graded_digest() {
         let mut ep = Episode::new("e");
@@ -265,5 +267,19 @@ mod tests {
         ep.push(verified(false, None));
         assert_eq!(ep.deciding_graded_sha256(27), Some("adj"));
         assert_eq!(ep.deciding_graded_sha256(0), None);
+    }
+
+    /// R5 × the walk: the episode is shared by every candidate, so a later
+    /// candidate's hidden pass that then regressed (a `passed: true` digest
+    /// followed by an undigested `passed: false`) is not the adjudication
+    /// an exit 27 reports — the adjudicated `passed: false` event is.
+    #[test]
+    fn a_later_candidates_regressed_pass_does_not_decide_an_adjudication() {
+        let mut ep = Episode::new("e");
+        ep.push(verified(true, Some("hidden-pass-a")));
+        ep.push(verified(false, Some("adjudicated-a")));
+        ep.push(verified(true, Some("hidden-pass-b")));
+        ep.push(verified(false, None));
+        assert_eq!(ep.deciding_graded_sha256(27), Some("adjudicated-a"));
     }
 }

@@ -2718,6 +2718,32 @@ fn r3_the_deadline_cuts_the_generator_and_no_call_starts_after_it() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+/// R3 (b'): the deadline is checked BEFORE every generator call, not only by
+/// cutting one in flight: once it has passed, no call starts. `--deadline-ms
+/// 1` has passed before the first proposal (startup alone takes longer), so a
+/// generator that would answer at once with the correct body is never asked.
+#[test]
+fn r3_no_generator_call_starts_once_the_deadline_has_passed() {
+    let ws = workspace("r3_deadline_passed");
+    let (code, v, err) = r1_repair(
+        &ws,
+        "broken.ax",
+        "literal:\n    n * 2\n",
+        &["--deadline-ms", "1"],
+    );
+    assert_eq!(
+        v["budget"]["proposals_used"], 0,
+        "ATTACK: a generator call started after the deadline had passed: {err}{v}"
+    );
+    assert_eq!(code, 20, "{err}{v}");
+    assert_eq!(v["outcome"], "budget_exhausted", "{v}");
+    assert_eq!(v["detail"], "deadline", "{v}");
+    assert!(std::fs::read_to_string(ws.join("broken.ax"))
+        .unwrap()
+        .contains("n + 2"));
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
 /// R1: `cortex repair --json` on `file`/`double` with `generator`:
 /// (exit, verdict, stderr).
 fn r1_repair(
@@ -2842,7 +2868,7 @@ fn r1_a_helper_or_a_closure_does_not_widen_the_targets_grant() {
     );
     assert!(
         !helped.exists(),
-        "the helper ran for the candidate: {err}{v}"
+        "ATTACK: the helper ran for the candidate: {err}{v}"
     );
     assert_ne!(code, 0, "{err}{v}");
     assert_only_fs_write_denied(&v, &err);
@@ -2871,7 +2897,7 @@ fn r1_a_helper_or_a_closure_does_not_widen_the_targets_grant() {
     );
     assert!(
         !aliased.exists(),
-        "the closure ran for the candidate: {err}{v}"
+        "ATTACK: the closure ran for the candidate: {err}{v}"
     );
     assert_ne!(code, 0, "{err}{v}");
     assert_only_fs_write_denied(&v, &err);
@@ -2893,7 +2919,7 @@ fn r1_a_helper_or_a_closure_does_not_widen_the_targets_grant() {
     );
     assert!(
         !bound.exists(),
-        "the helper bound by name ran for the candidate: {err}{v}"
+        "ATTACK: the helper bound by name ran for the candidate: {err}{v}"
     );
     assert_ne!(code, 0, "{err}{v}");
     assert_only_fs_write_denied(&v, &err);
@@ -2922,7 +2948,11 @@ fn r1_the_runtime_fence_reaches_every_check_set_but_empty() {
     )
     .unwrap();
     let (code, v, err) = r1_repair(&ws, "envfx.ax", "literal:\n    n * 2\n", &[]);
-    assert_eq!(code, 0, "{err}{v}");
+    assert_eq!(
+        code, 0,
+        "ATTACK: the check ran without AXON_ALLOWED_FS_WRITE set-but-empty \
+         (an unused scope left unset is unrestricted): {err}{v}"
+    );
     assert_eq!(v["grant"]["fence_env"]["AXON_ALLOWED_FS_WRITE"], "", "{v}");
     assert_eq!(v["grant"]["fence_env"]["AXON_ALLOWED_NET"], "", "{v}");
     let _ = std::fs::remove_dir_all(&ws);
@@ -2945,7 +2975,11 @@ fn r1_a_file_the_fence_would_break_stops_with_fence_conflict() {
     )
     .unwrap();
     let (code, v, err) = r1_repair(&ws, "store.ax", "literal:\n    n * 2\n", &[]);
-    assert_eq!(code, 22, "{err}{v}");
+    assert_eq!(
+        code, 22,
+        "ATTACK: a file the fence itself breaks went on to be repaired under it \
+         (no fence_conflict pre-flight): {err}{v}"
+    );
     assert!(
         err.contains("fence_conflict") && err.contains("t_bump"),
         "{err}"
@@ -2980,6 +3014,15 @@ fn r1_a_refused_proposal_counts_against_max_proposals() {
         "broken.ax",
         &format!("cmd:{}", gen.display()),
         &["--candidates", "1", "--budget", "8", "--max-proposals", "2"],
+    );
+    let calls = std::fs::read_to_string(ws.join("calls.log"))
+        .unwrap()
+        .lines()
+        .count();
+    assert_eq!(
+        calls, 2,
+        "ATTACK: proposals refused by admission were not counted: {calls} generator calls \
+         under --max-proposals 2: {err}{v}"
     );
     assert_eq!(code, 20, "{err}{v}");
     assert_eq!(v["detail"], "proposals", "{v}");
@@ -3088,11 +3131,20 @@ fn r1_a_body_that_closes_its_function_never_runs() {
         &format!("cmd:{}", gen.display()),
         &["--candidates", "1", "--budget", "8", "--max-proposals", "2"],
     );
-    assert!(!pwned.exists(), "the injected test ran: {err}{v}");
+    assert!(!pwned.exists(), "ATTACK: the injected test ran: {err}{v}");
     assert_eq!(
         std::fs::read_to_string(ws.join("wfile.ax")).unwrap(),
         pristine,
         "the file must be left as found: {err}{v}"
+    );
+    let calls = std::fs::read_to_string(ws.join("calls.log"))
+        .unwrap()
+        .lines()
+        .count();
+    assert_eq!(
+        calls, 2,
+        "ATTACK: proposals refused as outside their symbol were not counted: {calls} \
+         generator calls under --max-proposals 2: {err}{v}"
     );
     // Non-terminal: the walk went on asking until its proposal limit.
     assert_eq!(code, 20, "{err}{v}");
@@ -3149,7 +3201,10 @@ fn r1_a_candidate_the_walker_cannot_classify_is_refused() {
         gen,
         &["--candidates", "1", "--budget", "4"],
     );
-    assert!(!ran.exists(), "the unclassifiable candidate ran: {err}{v}");
+    assert!(
+        !ran.exists(),
+        "ATTACK: the unclassifiable candidate ran: {err}{v}"
+    );
     assert_ne!(code, 0, "{err}{v}");
     let d = denials(&v);
     assert!(
@@ -3213,7 +3268,10 @@ fn r5_a_file_changed_after_acceptance_is_not_reported_as_accepted() {
     }
     let row = drain.join().unwrap();
     assert!(row.contains("\"exit_code\""), "the label row was written");
-    assert_eq!(code, 22, "{err}{v}");
+    assert_eq!(
+        code, 22,
+        "ATTACK: a file changed after acceptance was reported as accepted: {err}{v}"
+    );
     assert!(v["accepted"].is_null(), "{v}");
     assert_eq!(v["outcome"], "blocked", "{v}");
     assert!(
@@ -3221,5 +3279,92 @@ fn r5_a_file_changed_after_acceptance_is_not_reported_as_accepted() {
         "{err}"
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), src);
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R5 × the walk: an adjudicated state reached on one candidate is what the
+/// run reports and KEEPS, even though the walk moves on. The visible `t`
+/// reaches `a`, `b` and `c`; `a` is repaired on its second proposal (pass 2),
+/// which passes the hidden check, but `t` — failing before the repair — still
+/// fails: adjudicated, not clean. The walk then resumes the candidates after
+/// it, whose proposals never move the visible verdict, until the early stop
+/// ends them; the run reports that adjudicated outcome (exit 27). Before the
+/// fix the walk restored the found bytes before resuming the next candidate,
+/// so the adjudicated patch was lost: exit 27 with the broken file (base),
+/// then — once R5 compared — exit 22 "changed after acceptance" for a change
+/// cortex made itself. Now the file at exit is the adjudicated state's graded
+/// bytes, and `accepted.sha256` names exactly them.
+#[test]
+fn r5_the_walk_keeps_the_adjudicated_state_it_reports() {
+    let ws = workspace("r5_walk_adjudicated");
+    let src = "fn a(n: i64) -> i64 {\n    n\n}\n\n\
+               fn b(n: i64) -> i64 {\n    n * 3\n}\n\n\
+               fn c() -> i64 {\n    0\n}\n\n\
+               @[test]\nfn t() {\n    assert_eq(a(1) + b(1) + c(), 6)\n}\n\n\
+               @[test]\nfn hidden() {\n    assert_eq(a(1), 2)\n    assert_eq(b(1), 3)\n}\n\n\
+               fn main() {\n    println(to_str(a(1) + b(1) + c()))\n}\n";
+    std::fs::write(ws.join("walk.ax"), src).unwrap();
+    let gen = ws.join("gen.sh");
+    common::write_executable(
+        &gen,
+        "#!/bin/sh\n\
+         p=$(cat)\n\
+         f=$(printf '%s\\n' \"$p\" | sed -n 's/^Function: //p')\n\
+         n=$(printf '%s\\n' \"$p\" | grep -c 'was REJECTED')\n\
+         echo \"$f:$n\" >> \"$(dirname \"$0\")/calls.log\"\n\
+         case \"$f:$n\" in\n\
+         a:0) printf '\\n    n + 10\\n' ;;\n\
+         a:*) printf '\\n    n * 2\\n' ;;\n\
+         b:*) printf '\\n    n * 3 + 0 * %s\\n' $((n + 10)) ;;\n\
+         *) printf '\\n    0 * %s\\n' $((n + 10)) ;;\n\
+         esac\n",
+        0o755,
+    );
+    let out = common::cortex()
+        .args(["repair", "--workspace"])
+        .arg(&ws)
+        .args([
+            "--file",
+            "walk.ax",
+            "--check",
+            "hidden",
+            "--write-prefix",
+            "walk.ax",
+        ])
+        .args(["--json", "--axon"])
+        .arg(axon_bin())
+        .arg("--generator")
+        .arg(format!("cmd:{}", gen.display()))
+        .output()
+        .expect("run cortex");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let err = String::from_utf8_lossy(&out.stderr);
+    let calls = std::fs::read_to_string(ws.join("calls.log")).unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("no verdict ({e}): {stdout}{err}"));
+    let code = out.status.code().unwrap_or(-1);
+    // The walk this row is about: `a` adjudicated in pass 2 (its second
+    // proposal), then another candidate resumed after it.
+    let last = calls.lines().last().unwrap_or_default();
+    assert!(
+        calls.contains("a:1") && !last.starts_with("a:"),
+        "calls: {calls}\n{err}"
+    );
+    let now = std::fs::read(ws.join("walk.ax")).unwrap();
+    assert_eq!(
+        code, 27,
+        "ATTACK: the adjudicated state the run reports was not the one it kept: {err}{v}"
+    );
+    assert_eq!(v["outcome"], "adjudicated_not_clean", "{v}");
+    let kept = String::from_utf8_lossy(&now);
+    assert!(
+        kept.contains("fn a(n: i64) -> i64 {\n    n * 2\n}") && kept.contains("    n * 3\n}"),
+        "the file must be the adjudicated state: {kept}"
+    );
+    assert_eq!(
+        v["accepted"]["sha256"].as_str(),
+        Some(axon_cortex::label::sha256_hex(&now).as_str()),
+        "{v}"
+    );
     let _ = std::fs::remove_dir_all(&ws);
 }

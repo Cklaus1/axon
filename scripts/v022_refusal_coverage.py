@@ -1783,7 +1783,6 @@ EXEMPT += [
     (_SR, 'pub fn remaining(&self) -> Option<std::time::Duration> {', _WBG),
     (_SR, 'pub fn deadline_passed(&self) -> bool {', _WBG),
     (_SR, '            Some(by) => Err(by),', _WBG),
-    (_SR, 'pub fn exhausted(&mut self, min_time: Option<std::time::Duration>) -> Option<WalkLimit> {', _WBG),
     (_SR, 'pub fn walk_exhausted(&mut self, min_time: Option<std::time::Duration>) -> Option<WalkLimit> {', _WBG),
     (_SR, 'if let Err(by) = self.walk.admit(gen.uncancellable_for()) {', _WBG),
     (_SR, 'if self.walk.deadline_passed() {', _WBG + "; a generator call cut at the deadline is the walk's limit, reported as it, not NeedsInput"),
@@ -1800,10 +1799,6 @@ EXEMPT += [
     (_SR, '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "{} could not be read before grading: {e}",',
      _CTX + "; R5: a file that cannot be read before the hidden check spawns could not be "
      "graded as anything in particular; Blocked (exit 22) grants nothing"),
-    ('crates/axon-cortex/src/episode.rs', 'pub fn deciding_graded_sha256(&self, exit_code: i32) -> Option<&str> {',
-     _CHK + "; R5: which Verified event decided a kept patch; `cortex repair` reports that event's digest "
-     "as `accepted.sha256` only if the file on disk still hashes to it, else exit 22 and accepted: null "
-     "(tests/cli.rs r5_a_file_changed_after_acceptance_is_not_reported_as_accepted, episode::tests)"),
     ('crates/axon-cortex/src/fence.rs', 'pub const CAPS_SCHEMA: &str = "axon-caps/1";',
      _FEN + "; an `axon caps` answer under any other schema is refused as unreadable (no grant -> exit 22, or Blocked for a candidate)"),
     ('crates/axon-cortex/src/fence.rs', 'Some(2) => return Err(CapsError::DidNotCompile(bounded(text.trim()))),',
@@ -1850,8 +1845,6 @@ EXEMPT += [
      _FEN + "; splice_body: a body adding a `fn <symbol>(` in code changes this count and is refused (body_outside_symbol); r1_a_body_that_closes_its_function_never_runs, splice_tests"),
     (_SR, 'let (a, b) = symbol_body(src, symbol).ok_or(SpliceError::NoSymbol)?;',
      _FEN + "; splice_body: a target absent from the file as found is NoSuchSymbol (exit 25), as before the containment check"),
-    (_SR, 'if symbol_body(&patched, symbol) != Some((a, a + body.len()))',
-     _FEN + "; body containment: a body that, spliced in, does not stay inside its symbol is a rejected attempt (outside_symbol) and nothing of it is written or run; r1_a_body_that_closes_its_function_never_runs"),
     (_SR, 'Err(SpliceError::Escapes) => {\n                        return ExecOutcome::Failed(',
      _FEN + "; body containment at the write itself, for a caller of `execute` outside the episode loop (which refuses such a body first): nothing is written"),
     ('crates/axon-cortex/src/feedback.rs', 'note: Some(format!(\n                "the body must stay inside',
@@ -3248,9 +3241,6 @@ EXEMPT += [
      _CTX),
     ('crates/axon-cortex/src/runner.rs',
      '    pub fn run_episode(',
-     _CTX),
-    ('crates/axon-cortex/src/runner.rs',
-     '    pub fn run_episode_resumable(',
      _CTX),
     ('crates/axon-cortex/src/runner.rs',
      '            CheckVerdict::Failed',

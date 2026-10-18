@@ -3097,3 +3097,19 @@ ATTACK_MARKERS.update({
     'M3730': r'ATTACK: a computed dispatch target was reported as fully known',
     'M3731': r'ATTACK: --fn via_helper hid the write its helper does',
 })
+
+# S1 repair lane (cortex R1/R3/R5; ids M3700-M3719)
+ATTACK_MARKERS.update({
+    'M3700': r'ATTACK: the helper ran for the candidate',
+    'M3701': r'ATTACK: the unclassifiable candidate ran',
+    'M3702': r'ATTACK: the check ran without AXON_ALLOWED_FS_WRITE set-but-empty',
+    'M3703': r'ATTACK: the injected test ran',
+    'M3704': r'ATTACK: the helper ran for the candidate',
+    'M3705': r'ATTACK: proposals refused by admission were not counted',
+    'M3706': r'ATTACK: proposals refused as outside their symbol were not counted',
+    'M3707': r'ATTACK: a generator call started after the deadline had passed',
+    'M3708': r'ATTACK: a file changed after acceptance was reported as accepted',
+    'M3709': r'ATTACK: a file the fence itself breaks went on to be repaired under it',
+    'M3710': r'ATTACK: the adjudicated state the run reports was not the one it kept',
+    'M3711': r'left: Some\("hidden-pass-b"\)',
+})
