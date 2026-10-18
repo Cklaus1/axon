@@ -3114,4 +3114,7 @@ ATTACK_MARKERS.update({
     'M3711': r'left: Some\("hidden-pass-b"\)',
     'M3712': r'ATTACK: a later, worse attempt discarded the adjudicated result',
     'M3713': r'ATTACK: the label row records a verdict the run did not exit with',
+    'M3714': r'ATTACK: a run R5 refused left the unaccepted file in place',
+    'M3715': r'ATTACK: a run that kept nothing reports the adjudicated state as kept',
+    'M3716': r'no verdict \(EOF while parsing a value',
 })
