@@ -1064,7 +1064,13 @@ fn main() {
             if let Some(p) = prev {
                 // A restore that fails ends the walk like any other block,
                 // so the run still settles (and reports) what it reached.
-                if let Err(e) = std::fs::write(workspace.join(&file), &original) {
+                // FU-4: only bytes this run wrote are restored over.
+                let ours = written_by_run(
+                    &runner.episode,
+                    &file,
+                    adjudicated.as_ref().and_then(|(_, b)| b.as_deref().ok()),
+                );
+                if let Err(e) = restore_found(&workspace.join(&file), original.as_bytes(), &ours) {
                     eprintln!("cannot restore {file} between attempts: {e}");
                     outcome = EpisodeOutcome::Blocked {
                         steps: progress[p].steps(),
@@ -1183,8 +1189,16 @@ fn main() {
     // Exit 27 KEEPS its patch: the adjudicator accepted it and it broke
     // nothing, so discarding it would throw away work that succeeded on the
     // only question this run was asked.
+    // FU-4: the bytes this run wrote, the only ones a restore may overwrite.
+    let ours = written_by_run(
+        &runner.episode,
+        &file,
+        adjudicated_bytes.as_ref().and_then(|b| b.as_deref().ok()),
+    );
     if code != 0 && code != 27 {
-        let _ = std::fs::write(workspace.join(&file), &original);
+        if let Err(e) = restore_found(&workspace.join(&file), original.as_bytes(), &ours) {
+            eprintln!("cortex repair: {file} {e}");
+        }
     }
     // An exit 27 reports the latest adjudication, which a later attempt may
     // have undone on its way: its graded bytes are put back. Failing that,
@@ -1256,8 +1270,9 @@ fn main() {
     // adjudicated event) — not by a late re-read, which happens after the
     // audit call and whatever else ran since. The file on disk is read once
     // more and must still be those bytes; otherwise the run fails closed:
-    // exit 22, `accepted: null`, the file restored as found (like every run
-    // that keeps no patch), and the reason on stderr. Only exits 0 and 27
+    // exit 22, `accepted: null`, the file restored as found if this run wrote
+    // what is there (FU-4; like every run that keeps no patch), and the
+    // reason on stderr. Only exits 0 and 27
     // keep a patch; every other run names none. An exit 27 whose adjudicated
     // state could not be put back fails closed the same way.
     let settled = settle_artifact(
@@ -1267,6 +1282,7 @@ fn main() {
         &runner.episode,
         kept_adjudicated,
         original.as_bytes(),
+        &ours,
     );
     let (accepted, code, kind, detail, repaired) = match settled {
         Ok(accepted) => (accepted, code, kind, detail, repaired),
@@ -1602,7 +1618,9 @@ fn accepted_artifact(
 /// 27's adjudicated state was put back) and then `accepted_artifact` over
 /// the file at `path` as it is now. When either refuses, the run keeps no
 /// patch, so the file is restored to `original`, the bytes the run found —
-/// like every run that keeps none — and the reason is returned.
+/// like every run that keeps none — through [`restore_found`]: only over
+/// bytes this run wrote (`ours`). The reason is returned, with what the
+/// restore did.
 fn settle_artifact(
     path: &std::path::Path,
     file: &str,
@@ -1610,12 +1628,74 @@ fn settle_artifact(
     episode: &axon_cortex::episode::Episode,
     kept: Result<(), String>,
     original: &[u8],
+    ours: &[String],
 ) -> Result<Option<serde_json::Value>, String> {
     let settled = kept.and_then(|()| accepted_artifact(file, code, episode, std::fs::read(path)));
-    if settled.is_err() {
-        let _ = std::fs::write(path, original);
+    settled.map_err(|why| match restore_found(path, original, ours) {
+        Ok(true) => format!("{why}; {file} restored as found"),
+        Ok(false) => why,
+        Err(e) => format!("{why}; {file} {e}"),
+    })
+}
+
+/// FU-4 (O-S1-13): the digests ([`axon_cortex::content_digest`], `axc1:`)
+/// of the bytes this run wrote to `file`: every `PatchApplied.after_digest`
+/// on it, plus the adjudicated bytes it puts back. No new tracking.
+fn written_by_run(
+    episode: &axon_cortex::episode::Episode,
+    file: &str,
+    adjudicated: Option<&[u8]>,
+) -> Vec<String> {
+    use axon_cortex::episode::EpisodeEvent;
+    let mut ours: Vec<String> = episode
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            EpisodeEvent::PatchApplied {
+                path, after_digest, ..
+            } if path == file => Some(after_digest.clone()),
+            _ => None,
+        })
+        .collect();
+    ours.extend(adjudicated.map(axon_cortex::content_digest));
+    ours
+}
+
+/// FU-4 (O-S1-13): put the found bytes (`original`) back at `path` — over
+/// bytes THIS run wrote (`ours`), and only those. Every restore in
+/// `cortex repair` goes through here:
+///
+/// | file at restore | action |
+/// |---|---|
+/// | (a) read, digest in `ours` | restored: `Ok(true)` |
+/// | (b) read, already `original` | nothing to do: `Ok(false)` |
+/// | (c) read, digest not in `ours` | left in place: "changed by another writer; not restored" |
+/// | (d) unreadable | not written (its bytes cannot be shown ours): "could not be read; not restored" |
+/// | (e) the write fails | the io error |
+///
+/// Writing `original` back unconditionally overwrote another actor's edit
+/// made after acceptance, and a failed write was dropped.
+fn restore_found(path: &std::path::Path, original: &[u8], ours: &[String]) -> Result<bool, String> {
+    restore_read(path, std::fs::read(path), original, ours)
+}
+
+/// [`restore_found`] over the file's bytes as read (`now`).
+fn restore_read(
+    path: &std::path::Path,
+    now: std::io::Result<Vec<u8>>,
+    original: &[u8],
+    ours: &[String],
+) -> Result<bool, String> {
+    let now = now.map_err(|e| format!("could not be read; not restored ({e})"))?;
+    if now == original {
+        return Ok(false);
     }
-    settled
+    if !ours.contains(&axon_cortex::content_digest(&now)) {
+        return Err("changed by another writer; not restored".into());
+    }
+    std::fs::write(path, original)
+        .map(|()| true)
+        .map_err(|e| format!("could not be put back as found: {e}"))
 }
 
 /// `cortex locate --file F --check C [--json]`
@@ -1819,42 +1899,125 @@ mod tests {
         assert_eq!(accepted_artifact("f.ax", 21, &ep, Ok(Vec::new())), Ok(None));
     }
 
-    /// R5 settle: a run R5 refuses keeps no patch, so the file is put back
-    /// to the bytes the run found — whether the file changed after
-    /// acceptance or an exit 27's adjudicated state was not kept. An
-    /// accepted file is left as it is.
+    const FOUND: &[u8] = b"fn double(n: i64) -> i64 {\n    n\n}\n";
+    const ACCEPTED: &[u8] = b"fn double(n: i64) -> i64 {\n    n * 2\n}\n";
+    const EXTERNAL: &[u8] = b"fn double() {}\n";
+
+    /// The episode of a run that wrote `ACCEPTED` to f.ax and had it graded.
+    fn wrote_accepted() -> (Episode, Vec<String>) {
+        let mut ep = graded(ACCEPTED);
+        ep.push(EpisodeEvent::PatchApplied {
+            path: "f.ax".into(),
+            before_digest: axon_cortex::content_digest(FOUND),
+            after_digest: axon_cortex::content_digest(ACCEPTED),
+        });
+        let ours = written_by_run(&ep, "f.ax", None);
+        (ep, ours)
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("cortex-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("f.ax")
+    }
+
+    /// R5 settle × FU-4: a run R5 refuses keeps no patch, so bytes THIS run
+    /// wrote are put back to the bytes it found (case 2: its accepted bytes,
+    /// with an exit 27's adjudicated state not kept). Bytes another writer
+    /// left after acceptance (case 1) are not this run's: they SURVIVE, and
+    /// the reason says so. An accepted file is left as it is.
     #[test]
     fn a_refused_settle_restores_the_file_as_found() {
-        let dir = std::env::temp_dir().join(format!("cortex-settle-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("f.ax");
-        let (found, accepted) = (
-            b"fn double(n: i64) -> i64 {\n    n\n}\n",
-            b"fn double(n: i64) -> i64 {\n    n * 2\n}\n",
+        let path = scratch("settle");
+        let (ep, ours) = wrote_accepted();
+        std::fs::write(&path, EXTERNAL).unwrap();
+        let settled = settle_artifact(&path, "f.ax", 0, &ep, Ok(()), FOUND, &ours);
+        assert!(settled.is_err(), "{settled:?}");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            EXTERNAL,
+            "ATTACK: a restore overwrote bytes another writer left"
         );
-        let ep = graded(accepted);
-        for (on_disk, kept) in [
-            (&b"fn double() {}\n"[..], Ok(())),
-            (
-                &accepted[..],
-                Err("the adjudicated state of f.ax was not kept".to_string()),
-            ),
-        ] {
-            std::fs::write(&path, on_disk).unwrap();
-            let settled = settle_artifact(&path, "f.ax", 0, &ep, kept, found);
-            assert!(settled.is_err(), "{settled:?}");
-            assert_eq!(
-                std::fs::read(&path).unwrap(),
-                found,
-                "ATTACK: a run R5 refused left the unaccepted file in place"
-            );
-        }
-        std::fs::write(&path, accepted).unwrap();
+        std::fs::write(&path, ACCEPTED).unwrap();
+        let kept = Err("the adjudicated state of f.ax was not kept".to_string());
+        let settled = settle_artifact(&path, "f.ax", 0, &ep, kept, FOUND, &ours);
+        assert!(settled.is_err(), "{settled:?}");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            FOUND,
+            "ATTACK: a run R5 refused left the unaccepted file in place"
+        );
+        std::fs::write(&path, ACCEPTED).unwrap();
         assert!(matches!(
-            settle_artifact(&path, "f.ax", 0, &ep, Ok(()), found),
+            settle_artifact(&path, "f.ax", 0, &ep, Ok(()), FOUND, &ours),
             Ok(Some(_))
         ));
-        assert_eq!(std::fs::read(&path).unwrap(), accepted);
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(std::fs::read(&path).unwrap(), ACCEPTED);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// FU-4 (c): bytes changed after acceptance by another writer are left in
+    /// place, and the reason says the file was not restored.
+    #[test]
+    fn fu4_bytes_another_writer_left_are_not_restored_over() {
+        let path = scratch("fu4-c");
+        let (ep, ours) = wrote_accepted();
+        std::fs::write(&path, EXTERNAL).unwrap();
+        let why = settle_artifact(&path, "f.ax", 0, &ep, Ok(()), FOUND, &ours).unwrap_err();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            EXTERNAL,
+            "ATTACK: a restore overwrote bytes another writer left: {why}"
+        );
+        assert!(
+            why.contains("changed by another writer; not restored"),
+            "{why}"
+        );
+        // (b): bytes that already are the found ones are left alone, with
+        // nothing added to the reason.
+        assert_eq!(restore_found(&path, EXTERNAL, &ours), Ok(false));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// FU-4 (d): a file whose read fails is not written: its bytes cannot be
+    /// shown to be this run's. The read error is handed in (permissions do
+    /// not stop a root test run from reading), over a file that IS writable,
+    /// so an unconditional restore would be seen.
+    #[test]
+    fn fu4_an_unreadable_file_is_not_restored_over() {
+        let path = scratch("fu4-d");
+        let (_, ours) = wrote_accepted();
+        std::fs::write(&path, ACCEPTED).unwrap();
+        let unreadable = Err(std::io::Error::other("injected read failure"));
+        let got = restore_read(&path, unreadable, FOUND, &ours);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            ACCEPTED,
+            "ATTACK: a file that could not be read was restored over: {got:?}"
+        );
+        assert!(
+            matches!(&got, Err(why) if why.contains("could not be read; not restored")
+                && why.contains("injected")),
+            "{got:?}"
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// FU-4 (e): a restore whose write fails says so, with the io error,
+    /// instead of dropping it. The target is a directory (unwritable even as
+    /// root); the bytes read are this run's, so the restore is attempted.
+    #[test]
+    fn fu4_a_failed_restore_write_is_reported() {
+        let path = scratch("fu4-e");
+        std::fs::create_dir(&path).unwrap();
+        let (_, ours) = wrote_accepted();
+        let io = std::fs::write(&path, FOUND).unwrap_err().to_string();
+        let got = restore_read(&path, Ok(ACCEPTED.to_vec()), FOUND, &ours);
+        assert!(
+            matches!(&got, Err(why) if why.contains(&io)),
+            "ATTACK: a failed restore was not reported: {got:?}"
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

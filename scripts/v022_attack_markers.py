@@ -3136,4 +3136,7 @@ ATTACK_MARKERS.update({
     'M3749': r'ATTACK: a body was read from a source that does not lex',
     'M3750': r'ATTACK: a brace in a string ended the body and hid the call after it',
     'M3751': r'ATTACK: a `fn NAME\(` in a comment was read as the function',
+    'M3752': r'ATTACK: a restore overwrote bytes another writer left',
+    'M3753': r'ATTACK: a file that could not be read was restored over',
+    'M3754': r'ATTACK: a failed restore was not reported',
 })

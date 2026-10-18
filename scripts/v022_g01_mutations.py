@@ -11516,9 +11516,9 @@ MUTATIONS += [
      '            exit_code: code,',
      '            exit_code: verdict(&outcome, &check).0,',
      'axon-cortex', '--test cli', 'r5_a_lost_adjudication_fails_closed_and_its_label_row_says_so'),
-    ('M3714', "S1 R5 settle: a run R5 refuses leaves the unaccepted file in place (no restore)", _S1B,
-     '        let _ = std::fs::write(path, original);',
-     '        let _ = (path, original);',
+    ('M3714', "S1 R5 settle x FU-4 (a): a run R5 refuses leaves the unaccepted file it wrote in place (no restore)", _S1B,
+     '    std::fs::write(path, original)\n        .map(|()| true)',
+     '    Ok::<(), std::io::Error>(())\n        .map(|()| true)',
      'axon-cortex', '--bin cortex', 'tests::a_refused_settle_restores_the_file_as_found'),
     ('M3715', "S1 R5 x walk: a run R5 failed closed still reports what ended a walk whose adjudication it kept", _S1B,
      '    let stopped_by = stopped_by.filter(|_| code == 27);',
@@ -11677,6 +11677,24 @@ MUTATIONS += [
      '    let at = src.find(&format!("fn {name}("))?;\n'
      '    crate::runner::symbol_body(&src[at..], name).map(|(a, b)| &src[at + a..at + b])',
      'axon-cortex', '--lib', 'locate::fn_body_tests::a_definition_in_a_comment_is_not_the_function'),
+    # FU-4 (O-S1-13): every restore in `cortex repair` goes through restore_found/restore_read,
+    # restoring only over bytes this run wrote (PatchApplied.after_digest + adjudicated bytes).
+    ('M3752', "FU-4 (c): a restore overwrites bytes another writer left after acceptance", _S1B,
+     '    if !ours.contains(&axon_cortex::content_digest(&now)) {',
+     '    if false && !ours.contains(&axon_cortex::content_digest(&now)) {',
+     'axon-cortex', '--bin cortex', 'tests::fu4_bytes_another_writer_left_are_not_restored_over'),
+    ('M3753', "FU-4 (d): a file that could not be read is restored over anyway", _S1B,
+     '    let now = now.map_err(|e| format!("could not be read; not restored ({e})"))?;',
+     '    let Ok(now) = now else {\n'
+     '        return std::fs::write(path, original)\n'
+     '            .map(|()| true)\n'
+     '            .map_err(|e| e.to_string());\n'
+     '    };',
+     'axon-cortex', '--bin cortex', 'tests::fu4_an_unreadable_file_is_not_restored_over'),
+    ('M3754', "FU-4 (e): a restore whose write fails is reported as done", _S1B,
+     '        .map_err(|e| format!("could not be put back as found: {e}"))',
+     '        .or_else(|_| Ok(true))',
+     'axon-cortex', '--bin cortex', 'tests::fu4_a_failed_restore_write_is_reported'),
 ]
 
 if __name__ == "__main__":
