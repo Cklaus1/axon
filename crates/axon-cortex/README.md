@@ -50,7 +50,10 @@ string. It holds no tool, chooses no action, and never learns the name of the
 check that grades it. A retry is told which bodies were already rejected and
 why, as typed JSON: the VISIBLE checks' structured diagnostics (`axon-diag/1`
 fields, the file paths rewritten to the workspace file), the visible tests
-still failing, or — for a refused proposal — `refusal.capabilities`. Nothing
+still failing, or — for a refused proposal — `refusal.capabilities`. The first
+prompt's report of the visible tests on the file as found stays plain text,
+byte for byte as before typed feedback: every task pays for that prompt, and
+the same report as JSON cost ~31 input tokens on each. Nothing
 the hidden check said reaches it. A generator that could read why it failed
 the hidden check would be writing against the grader, at which point passing
 it stops being evidence.

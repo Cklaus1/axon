@@ -69,10 +69,14 @@ pub enum GenContext {
     /// The file with the hidden check cut out (or, over the size cap, the
     /// target alone), the source of the VISIBLE failing checks, and the target's
     /// signature; plus what those visible checks report on the file as it
-    /// stands (`visible_now`, `None` when they could not be run).
+    /// stands (`visible_now`, `None` when they could not be run), as the
+    /// plain-text report the first prompt has always carried, bounded to
+    /// [`MAX_VISIBLE_NOW_BYTES`]. Typed feedback ([`crate::feedback`]) is
+    /// for REJECTED attempts only: the first prompt is the one every task
+    /// pays for, and the same report as JSON cost ~31 input tokens on each.
     View {
         view: crate::rank::RankView,
-        visible_now: Option<crate::feedback::Feedback>,
+        visible_now: Option<String>,
     },
     /// The view could not be built — the hidden check's name appears outside
     /// its own definition, or no visible failing check is defined in the
@@ -150,6 +154,10 @@ impl RejectionReason {
         }
     }
 }
+
+/// The bound on the first prompt's plain-text report of the visible tests
+/// (`GenContext::View::visible_now`).
+pub const MAX_VISIBLE_NOW_BYTES: usize = 2048;
 
 impl std::fmt::Display for RejectionReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -365,12 +373,11 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
             let names: Vec<&str> = view.failing.iter().map(|(n, _)| n.as_str()).collect();
             let tests: Vec<&str> = view.failing.iter().map(|(_, b)| b.trim_end()).collect();
             let now = visible_now
-                .as_ref()
-                .map(|f| {
+                .as_deref()
+                .map(|t| {
                     format!(
-                        "What the visible tests report on the file as it stands (JSON):\n\
-                         ```json\n{}\n```\n\n",
-                        f.to_json()
+                        "What the visible tests report on the file as it stands:\n```\n{}\n```\n\n",
+                        t.trim_end()
                     )
                 })
                 .unwrap_or_default();

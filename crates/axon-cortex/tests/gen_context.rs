@@ -171,6 +171,14 @@ fn the_generator_sees_the_file_and_visible_feedback_but_never_the_hidden_check()
     // (b) The first prompt: signature, the type the target builds, a sibling,
     // the visible failing test's source and what it printed and asserted.
     let first = &ps[0];
+    // The report of the file as found is the pre-R4 plain text, byte for
+    // byte: the first prompt is the one every task pays for, and typed JSON
+    // there cost ~31 input tokens a task (receipt regress at 648530ac). The
+    // typed data is for REJECTED attempts, of which the first prompt has none.
+    assert!(
+        !first.contains("```json") && !first.contains("(JSON)"),
+        "ATTACK: the first prompt carries a JSON block:\n{first}"
+    );
     for want in [
         "Function: sched_new\n",
         "Signature: fn sched_new(strategy: i64, every: i64) -> Sched",
@@ -180,7 +188,9 @@ fn the_generator_sees_the_file_and_visible_feedback_but_never_the_hidden_check()
         "Failing visible test(s): visible_every",
         "assert_eq(s.every, 5)",
         "VISIBLE-PRINT",
-        r#"{"failed_tests":[{"name":"visible_every","message":"assertion failed: 0 != 5"}]"#,
+        "What the visible tests report on the file as it stands:\n```\n\
+         1 failed, 0 passed\n\
+         FAILED visible_every: assertion failed: 0 != 5\n",
     ] {
         assert!(
             first.contains(want),
@@ -197,9 +207,10 @@ fn the_generator_sees_the_file_and_visible_feedback_but_never_the_hidden_check()
     );
     assert!(
         second.contains(
-            r#"{"failed_tests":[{"name":"visible_every","message":"assertion failed: 1 != 5"}]"#
+            "With that attempt applied, the visible tests reported (JSON):\n```json\n\
+             {\"failed_tests\":[{\"name\":\"visible_every\",\"message\":\"assertion failed: 1 != 5\"}]"
         ),
-        "the retry must say what the visible test reported on attempt 1:\n{second}"
+        "the retry must say what the visible test reported on attempt 1, as typed JSON:\n{second}"
     );
 
     // A DidNotCompile retry carries the compiler's diagnostics.
