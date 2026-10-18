@@ -3121,3 +3121,22 @@ ATTACK_MARKERS.update({
     'M3718': r"ATTACK: the first prompt's report carries what the cleaner must remove",
     'M3719': r'first prompt lacks `What the visible tests report on the file as it stands',
 })
+
+# FU-3/FU-6/FU-7/FU-4 cortex follow-ups (tasks/followup-spec.md; ids M3740-M3759)
+ATTACK_MARKERS.update({
+    'M3740': r'ATTACK: a drain stopped before EOF was taken as complete output',
+    'M3741': r'ATTACK: a drain stopped before EOF was taken as complete output',
+    'M3742': r'ATTACK: a drain stopped before EOF was taken as complete output',
+    'M3743': r'ATTACK: a generator drain stopped with data pending was taken as the whole answer',
+    'M3744': r'ATTACK: a generator drain stopped with data pending was taken as the whole answer',
+    'M3745': r'ATTACK: a detached generator drain was read as an answer',
+    'M3746': r'ATTACK: a relative --workspace or --axon got no real verdict',
+    'M3747': r'ATTACK: a missing --workspace or --axon path was not a usage error',
+    'M3748': r'ATTACK: a missing --workspace or --axon path was not a usage error',
+    'M3749': r'ATTACK: a body was read from a source that does not lex',
+    'M3750': r'ATTACK: a brace in a string ended the body and hid the call after it',
+    'M3751': r'ATTACK: a `fn NAME\(` in a comment was read as the function',
+    'M3752': r'ATTACK: a restore overwrote bytes another writer left',
+    'M3753': r'ATTACK: a file that could not be read was restored over',
+    'M3754': r'ATTACK: a failed restore was not reported',
+})
