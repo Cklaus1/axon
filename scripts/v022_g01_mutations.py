@@ -11492,7 +11492,7 @@ MUTATIONS += [
     ('M3707', "S1 R3: a passed deadline does not stop the next generator call from starting", _S1R,
      '                    .filter(|r| r.is_zero() || min_time.is_some_and(|t| *r < t))',
      '                    .filter(|r| min_time.is_some_and(|t| *r < t))',
-     'axon-cortex', '--test cli', 'r3_the_deadline_cuts_the_generator_and_no_call_starts_after_it'),
+     'axon-cortex', '--test cli', 'r3_no_generator_call_starts_once_the_deadline_has_passed'),
     ('M3708', "S1 R5: the accepted file is reported without comparing it with the digest the deciding verdict graded", _S1B,
      '    if now != graded {',
      '    if false && now != graded {',
