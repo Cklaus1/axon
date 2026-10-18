@@ -161,6 +161,7 @@ fn cxg_c11_repair_episode_runs_end_to_end() {
             EpisodeEvent::Observed { .. } => "observed",
             EpisodeEvent::ActionAllowed { .. } => "allowed",
             EpisodeEvent::ActionDenied { .. } => "denied",
+            EpisodeEvent::CapabilityGrant { .. } => "grant",
             EpisodeEvent::PatchApplied { .. } => "patch",
             EpisodeEvent::PatchReverted { .. } => "reverted",
             EpisodeEvent::CheckRun { .. } => "check",
@@ -357,7 +358,7 @@ fn cxg_g03_done_claim_cannot_override_failing_hidden_checks() {
     assert!(!r.episode.verified_ok());
     let last = r.episode.events.last().unwrap();
     match last {
-        EpisodeEvent::Verified { passed, detail } => {
+        EpisodeEvent::Verified { passed, detail, .. } => {
             assert!(!passed);
             assert!(
                 detail.contains("claim_done=true"),
@@ -1636,6 +1637,7 @@ fn cxg_c12_validate_enforces_each_constraint_it_states() {
         context: axon_cortex::generate::GenContext::BodyOnly {
             reason: "not under test here".into(),
         },
+        deadline: None,
     };
     let patch = |body: &str, id: &str| ProposedPatch {
         body: body.into(),
@@ -2072,10 +2074,19 @@ fn cxg_c14b_a_body_the_checker_objects_to_never_reaches_verified_done() {
     let rej = &seen.last().expect("the generator was asked")[0];
     assert_eq!(rej.body, NOTED);
     assert_eq!(rej.reason, RejectionReason::CheckerObjected);
-    let fb = rej.feedback.as_deref().unwrap_or("");
+    let fb = rej
+        .feedback
+        .as_ref()
+        .map(|f| f.to_json())
+        .unwrap_or_default();
+    let d = rej
+        .feedback
+        .as_ref()
+        .and_then(|f| f.diagnostics.first())
+        .unwrap_or_else(|| panic!("the feedback must carry the checker's diagnostic: {fb}"));
     assert!(
-        fb.contains("I0002") && fb.contains("(note)"),
-        "the feedback must carry the checker's diagnostic: {fb:?}"
+        d.code == "I0002" && d.severity == "note",
+        "the feedback must carry the checker's diagnostic: {fb}"
     );
     for leaked in ["hidden_completion", "double(7)"] {
         assert!(!fb.contains(leaked), "the feedback leaked `{leaked}`: {fb}");
@@ -2632,4 +2643,80 @@ fn a_pre_v022_episode_reads_and_keeps_its_digest() {
         "axc1:d061c2c2beba3e9f1f05737b45d72119a079cb961d80acd1c30ec5b5b944964b"
     );
     assert!(ep.verified_ok());
+}
+
+/// R5 — the bytes the hidden check graded are the bytes that are accepted.
+///
+/// A check executor double that delegates to the real interpreter but, while
+/// the HIDDEN check runs, appends to the file under acceptance: everything the
+/// grader sees still passes, and `axon check` is still clean, yet the file
+/// being accepted is no longer the one that was graded. That must fail
+/// closed — `passed:false`, "workspace changed during acceptance" — never
+/// VerifiedDone.
+#[test]
+fn r5_a_file_edited_during_acceptance_is_never_accepted() {
+    use axon_cortex::action::SymbolRef;
+    use axon_cortex::generate::LiteralGenerator;
+    use axon_cortex::runner::{
+        CheckExecutor, CheckReport, CheckRequest, EpisodeOutcome, LocalInterpreterExecutor,
+    };
+
+    struct TamperDuringHidden {
+        inner: LocalInterpreterExecutor,
+        hidden: &'static str,
+    }
+    impl CheckExecutor for TamperDuringHidden {
+        fn id(&self) -> String {
+            format!("tamper+{}", self.inner.id())
+        }
+        fn run_checks(&self, req: &CheckRequest<'_>) -> std::io::Result<CheckReport> {
+            let report = self.inner.run_checks(req)?;
+            if req.filter == Some(self.hidden) {
+                let path = req.workspace.join(req.rel_path);
+                let mut text = std::fs::read_to_string(&path)?;
+                text.push('\n');
+                std::fs::write(&path, text)?;
+            }
+            Ok(report)
+        }
+    }
+
+    let (_src, ws) = stage("r5_tamper");
+    let exec = TamperDuringHidden {
+        inner: LocalInterpreterExecutor::pin_on_first_use(axon_bin()),
+        hidden: "hidden_completion",
+    };
+    let mut r = Runner::with_check_executor(axon_bin(), &ws, Box::new(exec));
+    let snap = r.snapshot(&["broken.ax"]).unwrap();
+    let grant = EditGrant {
+        grant_id: "g".into(),
+        principal: "agent".into(),
+        snapshot_id: snap.snapshot_id,
+        write_prefixes: vec!["broken.ax".into()],
+    };
+    let out = r.run_episode(
+        &SymbolRef {
+            path: "broken.ax".into(),
+            symbol: "double".into(),
+        },
+        Some(&grant),
+        "agent",
+        "hidden_completion",
+        4,
+        Some(&LiteralGenerator::new("\n    n * 2\n")),
+    );
+    assert!(
+        !matches!(out, EpisodeOutcome::VerifiedDone { .. }),
+        "a file changed under acceptance must not be accepted, got {out:?}"
+    );
+    assert!(!r.episode.verified_ok(), "{:?}", r.episode.events);
+    assert!(
+        r.episode.events.iter().any(|e| matches!(
+            e,
+            EpisodeEvent::Verified { passed: false, detail, .. }
+                if detail.contains("workspace changed during acceptance")
+        )),
+        "the refusal must be recorded as a Verified failure: {:?}",
+        r.episode.events
+    );
 }

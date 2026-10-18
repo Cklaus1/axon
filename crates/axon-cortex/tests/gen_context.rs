@@ -180,7 +180,7 @@ fn the_generator_sees_the_file_and_visible_feedback_but_never_the_hidden_check()
         "Failing visible test(s): visible_every",
         "assert_eq(s.every, 5)",
         "VISIBLE-PRINT",
-        "FAILED visible_every: assertion failed: 0 != 5",
+        r#"{"failed_tests":[{"name":"visible_every","message":"assertion failed: 0 != 5"}]"#,
     ] {
         assert!(
             first.contains(want),
@@ -188,15 +188,17 @@ fn the_generator_sees_the_file_and_visible_feedback_but_never_the_hidden_check()
         );
     }
 
-    // (d) A CheckRefused retry carries the visible test's failure output on
-    // the attempt that was refused.
+    // (d) A CheckRefused retry carries the visible test's failure, as data,
+    // on the attempt that was refused.
     let second = &ps[1];
     assert!(
         second.contains("Attempt 1 was REJECTED because it compiled but did not fix the problem"),
         "{second}"
     );
     assert!(
-        second.contains("FAILED visible_every: assertion failed: 1 != 5"),
+        second.contains(
+            r#"{"failed_tests":[{"name":"visible_every","message":"assertion failed: 1 != 5"}]"#
+        ),
         "the retry must say what the visible test reported on attempt 1:\n{second}"
     );
 
@@ -207,7 +209,7 @@ fn the_generator_sees_the_file_and_visible_feedback_but_never_the_hidden_check()
         "{third}"
     );
     assert!(
-        third.contains("The compiler reported") && third.contains("E0102"),
+        third.contains("The compiler reported (JSON)") && third.contains(r#""code":"E0102""#),
         "the retry must carry the compiler's first diagnostics:\n{third}"
     );
 

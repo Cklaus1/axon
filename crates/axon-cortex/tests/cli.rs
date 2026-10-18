@@ -1662,9 +1662,11 @@ fn cli_fails_closed_when_the_recheck_cannot_run() {
     // 1. THE RE-CHECK FAILS, AND ONLY IT.
     //
     // After the adjudicator passes, the loop re-runs the WHOLE file to confirm
-    // nothing else fails — the only `axon test` call made without `--filter`.
-    // That asymmetry is what makes this testable: a wrapper that dies when no
-    // filter is given leaves every other call working.
+    // nothing else fails. Besides it, only the fence pre-flight (R1d, before
+    // anything else runs) calls `axon test` without `--filter`. That
+    // asymmetry is what makes this testable: a wrapper that lets the FIRST
+    // unfiltered call through and dies on every later one leaves every other
+    // call working.
     //
     // This guard replaced an `unwrap_or_default()`, which turned "the checks
     // could not be run" into "nothing is failing" on the ONE path that can
@@ -1673,8 +1675,10 @@ fn cli_fails_closed_when_the_recheck_cannot_run() {
         "axon-wrapper.sh",
         format!(
             "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = \"--filter\" ] && exec {real} \"$@\"; done\n\
-             case \"$1\" in test) exit 2 ;; esac\nexec {real} \"$@\"\n",
-            real = axon_bin().display()
+             case \"$1\" in test) [ -e {seen} ] && exit 2; : > {seen} ;; esac\n\
+             exec {real} \"$@\"\n",
+            real = axon_bin().display(),
+            seen = ws.join("preflight.seen").display()
         ),
     );
     let out = common::cortex()
@@ -1905,6 +1909,30 @@ fn cli_ships_evidence_a_reader_can_verify() {
         ep.events
     );
 
+    // 4. R5: THE ACCEPTED ARTIFACT IS BOUND TO THE EVIDENCE. `accepted.sha256`
+    //    is the file as the run left it, and the deciding Verified event names
+    //    the same bytes as the ones the hidden check graded.
+    let on_disk = axon_cortex::label::sha256_hex(&std::fs::read(ws.join("broken.ax")).unwrap());
+    assert_eq!(v["accepted"]["path"], "broken.ax", "{v}");
+    assert_eq!(
+        v["accepted"]["sha256"].as_str(),
+        Some(on_disk.as_str()),
+        "accepted.sha256 must be the file the run left: {v}"
+    );
+    let graded = ep.events.iter().rev().find_map(|e| match e {
+        axon_cortex::episode::EpisodeEvent::Verified {
+            passed: true,
+            graded_sha256,
+            ..
+        } => Some(graded_sha256.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        graded,
+        Some(Some(on_disk.clone())),
+        "the deciding Verified event must carry the graded bytes' digest"
+    );
+
     // And the negative: a run that does NOT verify must not carry an episode
     // claiming it did.
     let ws2 = workspace("evidence_fail");
@@ -1935,6 +1963,10 @@ fn cli_ships_evidence_a_reader_can_verify() {
     assert!(
         !ep2.verified_ok(),
         "a non-zero run must not ship an episode claiming verification"
+    );
+    assert!(
+        v2["accepted"].is_null(),
+        "a run that accepted nothing names no accepted artifact: {v2}"
     );
 }
 
@@ -2295,5 +2327,719 @@ fn kg3_sigterm_to_cortex_kills_the_generators_job_and_cortex_dies_by_it() {
             p.pid
         );
     }
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// Run `cmd` to completion with its output in files under `ws`, killing it
+/// (and failing) after `guard`: the rows below are about runs that USED to
+/// hang. Returns (exit code, stdout, stdout+stderr, elapsed).
+fn run_guarded(
+    ws: &Path,
+    cmd: &mut Command,
+    guard: std::time::Duration,
+    attack: &str,
+) -> (Option<i32>, String, String, std::time::Duration) {
+    let out_file = ws.join("cortex.out");
+    let err_file = ws.join("cortex.err");
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::fs::File::create(&out_file).unwrap())
+        .stderr(std::fs::File::create(&err_file).unwrap())
+        .spawn()
+        .unwrap();
+    let said = || {
+        (
+            std::fs::read_to_string(&out_file).unwrap_or_default(),
+            std::fs::read_to_string(&err_file).unwrap_or_default(),
+        )
+    };
+    let began = std::time::Instant::now();
+    let status = loop {
+        if let Some(st) = child.try_wait().unwrap() {
+            break st;
+        }
+        if began.elapsed() >= guard {
+            let _ = child.kill();
+            let _ = child.wait();
+            let (o, e) = said();
+            panic!("ATTACK: {attack} (still running after {guard:?}): {o}{e}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let (o, e) = said();
+    (status.code(), o.clone(), format!("{o}{e}"), began.elapsed())
+}
+
+/// R2 (a): a candidate body that never returns is killed at
+/// `--check-timeout-ms`, rejected like any refused attempt, and the NEXT
+/// proposal runs. Before R2 the local check had no wall clock: the hidden
+/// check of the looping body held `cortex repair` forever.
+#[test]
+fn r2_a_candidate_that_never_returns_is_rejected_and_the_next_proposal_runs() {
+    let ws = workspace("r2_hang");
+    let gen = ws.join("hang-gen.sh");
+    let log = ws.join("calls.log");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\necho call >> '{log}'\n\
+             if [ \"$(wc -l < '{log}')\" -eq 1 ]; then\n\
+             printf '    while true {{\\n    }}\\n    n * 2\\n'\nelse\nprintf '    n * 2\\n'\nfi\n",
+            log = log.display()
+        ),
+        0o755,
+    );
+    let mut cmd = repair_with_generator(&ws, &gen, "120000");
+    cmd.args([
+        "--symbol",
+        "double",
+        "--check-timeout-ms",
+        "1500",
+        "--budget",
+        "12",
+        "--json",
+    ]);
+    let (code, stdout, said, elapsed) = run_guarded(
+        &ws,
+        &mut cmd,
+        std::time::Duration::from_secs(180),
+        "a candidate that never returns stalled `cortex repair`",
+    );
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        calls.lines().count(),
+        2,
+        "the next proposal must run: {said}"
+    );
+    assert_eq!(code, Some(0), "{said}");
+    let v: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(v["outcome"], "verified_done", "{said}");
+    let src = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    assert!(
+        src.contains("n * 2") && !src.contains("while true"),
+        "{src}"
+    );
+    // Each spawn of the looping body is bounded by the timeout plus the drain
+    // grace; a handful of them, not an unbounded wait, is what elapsed.
+    assert!(
+        elapsed < std::time::Duration::from_secs(90),
+        "took {elapsed:?}: {said}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R2 (b): the check is killed as a GROUP. `axon test --completion-key-stdin`
+/// drops `Exec` from every check, so candidate code cannot spawn a process;
+/// the process tree under the check is the REGISTERED executor's. The fixture
+/// registers a check executor that, for the candidate's state, backgrounds a
+/// grandchild holding the check's stdout/stderr and waits on it forever.
+/// After the timeout no grandchild survives, the loop is not stalled, and the
+/// next proposal runs. Before R2 nothing bounded the check at all.
+#[test]
+fn r2_a_timed_out_check_is_killed_as_a_group_and_the_loop_goes_on() {
+    let ws = workspace("r2_group");
+    let pids = ws.join("gc.pids");
+    let real = axon_bin().canonicalize().unwrap();
+    let wrapper = ws.join("check-exec.sh");
+    common::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nf=\nfor a in \"$@\"; do case \"$a\" in *.ax) f=\"$a\";; esac; done\n\
+             if [ \"$1\" = test ] && grep -q GRANDCHILD_HOLDS_PIPES \"$f\"; then\n\
+             sleep 4723 &\necho $! >> '{pids}'\nwait\nfi\nexec '{real}' \"$@\"\n",
+            pids = pids.display(),
+            real = real.display()
+        ),
+        0o755,
+    );
+    let sha = String::from_utf8(
+        Command::new("sha256sum")
+            .arg(&wrapper)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let registry = ws.join("registry.json");
+    std::fs::write(
+        &registry,
+        serde_json::json!({
+            "schema": "cortex-check-registry/1",
+            "executors": [{
+                "id": axon_cortex::runner::LOCAL_AXON_TEST_ID,
+                "path": wrapper,
+                "sha256": sha.split_whitespace().next().unwrap(),
+            }],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let gen = ws.join("gc-gen.sh");
+    let log = ws.join("calls.log");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\necho call >> '{log}'\n\
+             if [ \"$(wc -l < '{log}')\" -eq 1 ]; then\n\
+             printf '    // GRANDCHILD_HOLDS_PIPES\\n    n * 2\\n'\nelse\nprintf '    n * 2\\n'\nfi\n",
+            log = log.display()
+        ),
+        0o755,
+    );
+    let mut cmd = repair_with_generator(&ws, &gen, "120000");
+    cmd.arg("--check-registry").arg(&registry).args([
+        "--symbol",
+        "double",
+        "--check-timeout-ms",
+        "1500",
+        "--budget",
+        "12",
+        "--json",
+    ]);
+    let (code, stdout, said, _) = run_guarded(
+        &ws,
+        &mut cmd,
+        std::time::Duration::from_secs(180),
+        "a grandchild holding the check's pipes stalled `cortex repair`",
+    );
+    let spawned: Vec<i32> = std::fs::read_to_string(&pids)
+        .unwrap_or_else(|e| panic!("the candidate's check never ran: {e}: {said}"))
+        .lines()
+        .map(|l| l.trim().parse().unwrap())
+        .collect();
+    assert!(!spawned.is_empty(), "{said}");
+    for pid in spawned {
+        let gc = Proc {
+            pid,
+            cmdline: b"sleep\x004723\x00".to_vec(),
+        };
+        assert!(
+            gc.gone_within(std::time::Duration::from_secs(5)),
+            "ATTACK: the timed-out check's grandchild (pid {pid}) outlived its deadline: {said}"
+        );
+    }
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        calls.lines().count(),
+        2,
+        "the next proposal must run: {said}"
+    );
+    assert_eq!(code, Some(0), "{said}");
+    let v: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(v["outcome"], "verified_done", "{said}");
+    let after = std::fs::read_to_string(ws.join("broken.ax")).unwrap();
+    assert!(
+        !after.contains("GRANDCHILD"),
+        "the candidate was not undone: {after}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R4: a rejected attempt's diagnostics reach the generator as DATA. The
+/// generator copies each prompt to `prompt-N.txt`; its first body type-errors,
+/// and the second prompt must carry that diagnostic as one compact JSON block
+/// with its `col`, `expected` and `found`, and the target's relative `file`
+/// (never the visible copy's pid-named path). Before R4 the prompt carried a
+/// prose rendering (`line 6: E0307 …`) with no column and no types.
+#[test]
+fn r4_a_type_error_reaches_the_next_prompt_as_structured_json() {
+    let ws = workspace("r4_diag");
+    let gen = ws.join("copy-gen.sh");
+    let log = ws.join("calls.log");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\necho call >> '{log}'\nn=$(wc -l < '{log}')\n\
+             cat > '{ws}/prompt-'$n'.txt'\n\
+             if [ \"$n\" -eq 1 ]; then\nprintf '    \"x\"\\n'\nelse\nprintf '    n * 2\\n'\nfi\n",
+            log = log.display(),
+            ws = ws.display()
+        ),
+        0o755,
+    );
+    let mut cmd = repair_with_generator(&ws, &gen, "120000");
+    cmd.args(["--symbol", "double", "--budget", "12", "--json"]);
+    let (code, stdout, said, _) = run_guarded(
+        &ws,
+        &mut cmd,
+        std::time::Duration::from_secs(180),
+        "the repair did not finish",
+    );
+    assert_eq!(code, Some(0), "{said}");
+    let v: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(v["outcome"], "verified_done", "{said}");
+    let second = std::fs::read_to_string(ws.join("prompt-2.txt")).unwrap();
+    // The block: one line of JSON inside a ```json fence after attempt 1.
+    let block = second
+        .split("Attempt 1 was REJECTED")
+        .nth(1)
+        .and_then(|attempt| attempt.split("```json\n").nth(1))
+        .and_then(|rest| rest.lines().next())
+        .unwrap_or_else(|| panic!("no JSON feedback block in the second prompt:\n{second}"));
+    let fb: serde_json::Value = serde_json::from_str(block)
+        .unwrap_or_else(|e| panic!("the feedback block is not JSON ({e}): {block}"));
+    let d = &fb["diagnostics"][0];
+    assert_eq!(d["code"], "E0307", "{block}");
+    assert_eq!(
+        d["file"], "broken.ax",
+        "the target's relative path, no pid: {block}"
+    );
+    // The span is the checker's own (it points at the declared return type
+    // here); what matters is that line AND column arrive as numbers.
+    assert!(d["line"].as_u64().is_some_and(|l| l > 0), "{block}");
+    assert!(d["col"].as_u64().is_some_and(|c| c > 0), "{block}");
+    assert_eq!(d["expected"], "i64", "{block}");
+    assert_eq!(d["found"], "str", "{block}");
+    assert!(!second.contains("cortex-visible"), "{second}");
+    // Grader secrecy: nothing of the hidden check is in any block.
+    for leaked in ["hidden_completion", "double(7)"] {
+        assert!(
+            !block.contains(leaked),
+            "the feedback leaked `{leaked}`: {block}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R3 (a): `--max-proposals` caps generator calls across the WHOLE walk —
+/// pass 1 and pass 2 share one counter. Three candidates, a generator that is
+/// always wrong, a cap of 2: exactly two calls are made, and the run ends
+/// `budget_exhausted` with `detail` `proposals`. Before R3 there was no such
+/// flag, and the walk spent every candidate's step budget.
+#[test]
+fn r3_max_proposals_caps_generator_calls_across_the_walk() {
+    let (ws, gen) = walk_fixture("r3_props", "never:0");
+    let (code, v, err, calls) = walk_run(
+        &ws,
+        &gen,
+        &[
+            "--write-prefix",
+            "three.ax",
+            "--candidates",
+            "3",
+            "--max-proposals",
+            "2",
+        ],
+    );
+    assert_eq!(
+        calls.len(),
+        2,
+        "exactly two generator calls: {calls:?}\n{err}"
+    );
+    assert_eq!(code, 20, "{err}{v}");
+    assert_eq!(v["outcome"], "budget_exhausted", "{v}");
+    assert_eq!(v["detail"], "proposals", "{v}");
+    assert_eq!(v["budget"]["max_proposals"], 2, "{v}");
+    assert_eq!(v["budget"]["proposals_used"], 2, "{v}");
+    assert_eq!(v["budget"]["exhausted_by"], "proposals", "{v}");
+    assert!(v["budget"]["deadline_ms"].is_null(), "{v}");
+    assert!(v["budget"]["elapsed_ms"].is_u64(), "{v}");
+    // A failed run leaves the file as it found it.
+    assert!(std::fs::read_to_string(ws.join("three.ax"))
+        .unwrap()
+        .contains("fn gamma(n: i64) -> i64 { n }"));
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R3 (a'): with neither flag the walk is unbounded as before, and `budget`
+/// reports so (`null` limits, nothing exhausted).
+#[test]
+fn r3_without_limits_the_budget_reports_none() {
+    let (ws, gen) = walk_fixture("r3_none", "gamma:0");
+    let (code, v, err, calls) = walk_run(&ws, &gen, &["--write-prefix", "three.ax"]);
+    assert_eq!(code, 0, "{err}{v}");
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert!(v["budget"]["max_proposals"].is_null(), "{v}");
+    assert!(v["budget"]["deadline_ms"].is_null(), "{v}");
+    assert_eq!(v["budget"]["proposals_used"], 3, "{v}");
+    assert!(v["budget"]["exhausted_by"].is_null(), "{v}");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R3 (b): `--deadline-ms` is wall clock from cortex start. A generator that
+/// would answer after it is cut at the deadline (its whole process group, the
+/// `sleep` it backgrounded included), no further call starts, and the run
+/// ends `budget_exhausted` with `detail` `deadline` — not `needs_input`, which
+/// would blame the generator for the walk's own limit.
+#[test]
+fn r3_the_deadline_cuts_the_generator_and_no_call_starts_after_it() {
+    let ws = workspace("r3_deadline");
+    let gen = ws.join("slow-gen.sh");
+    let log = ws.join("calls.log");
+    let pids = ws.join("gen.pids");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\necho call >> '{log}'\n\
+             sleep 4724 &\necho $! >> '{pids}'\nwait\nprintf '    n * 2\\n'\n",
+            log = log.display(),
+            pids = pids.display()
+        ),
+        0o755,
+    );
+    let mut cmd = repair_with_generator(&ws, &gen, "120000");
+    cmd.args([
+        "--symbol",
+        "double",
+        "--budget",
+        "12",
+        "--deadline-ms",
+        "3000",
+        "--json",
+    ]);
+    let (code, stdout, said, took) = run_guarded(
+        &ws,
+        &mut cmd,
+        std::time::Duration::from_secs(90),
+        "the deadline did not stop the walk",
+    );
+    assert_eq!(code, Some(20), "{said}");
+    let v: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(v["outcome"], "budget_exhausted", "{said}");
+    assert_eq!(v["detail"], "deadline", "{said}");
+    assert_eq!(v["budget"]["deadline_ms"], 3000, "{v}");
+    assert_eq!(v["budget"]["exhausted_by"], "deadline", "{v}");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap().lines().count(),
+        1,
+        "no generator call may start after the deadline: {said}"
+    );
+    assert!(
+        took < std::time::Duration::from_secs(20),
+        "the walk must end at its deadline, took {took:?}: {said}"
+    );
+    for pid in std::fs::read_to_string(&pids).unwrap_or_default().lines() {
+        let alive = std::path::Path::new(&format!("/proc/{}", pid.trim())).exists()
+            && std::fs::read_to_string(format!("/proc/{}/cmdline", pid.trim()))
+                .unwrap_or_default()
+                .contains("4724");
+        assert!(!alive, "the cut generator's `sleep` {pid} is still running");
+    }
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R1: `cortex repair --json` on `file`/`double` with `generator`:
+/// (exit, verdict, stderr).
+fn r1_repair(
+    ws: &Path,
+    file: &str,
+    generator: &str,
+    extra: &[&str],
+) -> (i32, serde_json::Value, String) {
+    let out = common::cortex()
+        .args(["repair", "--workspace"])
+        .arg(ws)
+        .args([
+            "--file",
+            file,
+            "--symbol",
+            "double",
+            "--check",
+            "hidden_completion",
+        ])
+        .args(["--write-prefix", file, "--json", "--axon"])
+        .arg(axon_bin())
+        .arg("--generator")
+        .arg(generator)
+        .args(extra)
+        .output()
+        .expect("run cortex");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let v = serde_json::from_str(stdout.trim()).unwrap_or(serde_json::Value::Null);
+    (out.status.code().unwrap_or(-1), v, stderr)
+}
+
+/// The `reason`s of the episode's `action_denied` events.
+fn denials(v: &serde_json::Value) -> Vec<String> {
+    v["episode"]["events"]
+        .as_array()
+        .map(|evs| {
+            evs.iter()
+                .filter(|e| e["kind"] == "action_denied")
+                .map(|e| e["reason"].as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Every proposal was refused for `fs:write`, and at least one was made. (A
+/// generator repeating a refused body is refused again, then the walk stops
+/// as no progress.)
+fn assert_only_fs_write_denied(v: &serde_json::Value, err: &str) {
+    let d = denials(v);
+    assert!(
+        !d.is_empty() && d.iter().all(|r| r == "capability:fs:write"),
+        "{d:?}\n{err}{v}"
+    );
+}
+
+/// A file whose `double` prints, and whose OTHER fn `note` appends to a file:
+/// the whole file holds `fs:write`, the repair target does not.
+fn r1_helper_workspace(name: &str) -> PathBuf {
+    let ws = workspace(name);
+    std::fs::write(
+        ws.join("helper.ax"),
+        format!(
+            "fn note(p: str) -> i64 {{\n    let _ = append_file(p, \"x\")\n    0\n}}\n\n\
+             fn double(n: i64) -> i64 {{\n    println(\"doubling\")\n    n + 2\n}}\n\n\
+             @[test]\nfn t_note() {{\n    assert_eq(note(\"{}\"), 0)\n}}\n\n\
+             @[test]\nfn hidden_completion() {{\n    assert_eq(double(7), 14)\n}}\n\n\
+             fn main() {{\n    println(to_str(double(1)))\n}}\n",
+            ws.join("RAN").display()
+        ),
+    )
+    .unwrap();
+    ws
+}
+
+/// R1 (I-12), the defect's own repro: a candidate body calling `write_file`
+/// in a file that never writes. Before R1 it ran — the file was written and
+/// the repair kept, exit 0. Now it is refused before anything of it runs.
+#[test]
+fn r1_a_candidate_cannot_write_a_file_the_original_never_could() {
+    let ws = workspace("r1_pwned");
+    let pwned = ws.join("PWNED");
+    let gen = format!(
+        "literal:\n    let _ = write_file(\"{}\", \"x\")\n    n * 2\n",
+        pwned.display()
+    );
+    let (code, v, err) = r1_repair(
+        &ws,
+        "broken.ax",
+        &gen,
+        &["--candidates", "1", "--budget", "4"],
+    );
+    assert!(!pwned.exists(), "the candidate executed a write: {err}{v}");
+    assert_ne!(code, 0, "{err}{v}");
+    assert_only_fs_write_denied(&v, &err);
+    assert_eq!(v["grant"]["basis"], "axon-caps", "{v}");
+    assert_eq!(v["grant"]["fence_env"]["AXON_ALLOWED_FS_WRITE"], "", "{v}");
+    assert_eq!(v["grant"]["targets"][0]["symbol"], "double", "{v}");
+    assert!(std::fs::read_to_string(ws.join("broken.ax"))
+        .unwrap()
+        .contains("n + 2"));
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R1: the grant is the TARGET's, not the file's. A helper in the same file
+/// may append to a file; `double` may not reach it — neither by calling the
+/// helper nor through a closure over `write_file`. A correct body is still
+/// accepted (P1).
+#[test]
+fn r1_a_helper_or_a_closure_does_not_widen_the_targets_grant() {
+    let ws = r1_helper_workspace("r1_helper");
+    let helped = ws.join("HELPED");
+    let gen = format!(
+        "literal:\n    let _ = note(\"{}\")\n    n * 2\n",
+        helped.display()
+    );
+    let (code, v, err) = r1_repair(
+        &ws,
+        "helper.ax",
+        &gen,
+        &["--candidates", "1", "--budget", "4"],
+    );
+    assert!(
+        !helped.exists(),
+        "the helper ran for the candidate: {err}{v}"
+    );
+    assert_ne!(code, 0, "{err}{v}");
+    assert_only_fs_write_denied(&v, &err);
+    // The whole file writes, so the runtime fence leaves fs:write unscoped:
+    // only admission stands between the candidate and the disk here.
+    assert!(
+        v["grant"]["fence_env"]["AXON_ALLOWED_FS_WRITE"].is_null(),
+        "{v}"
+    );
+    assert_eq!(
+        v["grant"]["targets"][0]["capabilities"],
+        serde_json::json!([]),
+        "{v}"
+    );
+
+    let aliased = ws.join("ALIASED");
+    let gen = format!(
+        "literal:\n    let f = |p: str| write_file(p, \"x\")\n    let _ = f(\"{}\")\n    n * 2\n",
+        aliased.display()
+    );
+    let (code, v, err) = r1_repair(
+        &ws,
+        "helper.ax",
+        &gen,
+        &["--candidates", "1", "--budget", "4"],
+    );
+    assert!(
+        !aliased.exists(),
+        "the closure ran for the candidate: {err}{v}"
+    );
+    assert_ne!(code, 0, "{err}{v}");
+    assert_only_fs_write_denied(&v, &err);
+
+    // A builtin cannot be bound by name (E0306: `let f = write_file` does not
+    // compile); the closure above is the language's alias for one. A user fn
+    // CAN be bound by name — the helper reached through a value is still the
+    // helper.
+    let bound = ws.join("BOUND");
+    let gen = format!(
+        "literal:\n    let g = note\n    let _ = g(\"{}\")\n    n * 2\n",
+        bound.display()
+    );
+    let (code, v, err) = r1_repair(
+        &ws,
+        "helper.ax",
+        &gen,
+        &["--candidates", "1", "--budget", "4"],
+    );
+    assert!(
+        !bound.exists(),
+        "the helper bound by name ran for the candidate: {err}{v}"
+    );
+    assert_ne!(code, 0, "{err}{v}");
+    assert_only_fs_write_denied(&v, &err);
+
+    let (code, v, err) = r1_repair(&ws, "helper.ax", "literal:\n    n * 2\n", &[]);
+    assert_eq!(code, 0, "a correct body is still accepted: {err}{v}");
+    assert!(denials(&v).is_empty(), "{v}");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R1c: every check of the workspace runs under the fence — here the hidden
+/// check itself reads the fence variable, so the repair is accepted only if
+/// `AXON_ALLOWED_FS_WRITE` reached it set-but-EMPTY (deny all), not unset.
+#[test]
+fn r1_the_runtime_fence_reaches_every_check_set_but_empty() {
+    let ws = workspace("r1_envfence");
+    std::fs::write(
+        ws.join("envfx.ax"),
+        "fn fence_write() -> i64 {\n    match env_var(\"AXON_ALLOWED_FS_WRITE\") {\n        \
+         Ok(v) => if str_len(v) == 0 { 0 } else { 1 },\n        \
+         Err(_) => 2,\n    }\n}\n\n\
+         fn double(n: i64) -> i64 {\n    n + 2\n}\n\n\
+         @[test]\nfn hidden_completion() {\n    assert_eq(fence_write(), 0)\n    \
+         assert_eq(double(7), 14)\n}\n\n\
+         fn main() {\n    println(to_str(fence_write()))\n}\n",
+    )
+    .unwrap();
+    let (code, v, err) = r1_repair(&ws, "envfx.ax", "literal:\n    n * 2\n", &[]);
+    assert_eq!(code, 0, "{err}{v}");
+    assert_eq!(v["grant"]["fence_env"]["AXON_ALLOWED_FS_WRITE"], "", "{v}");
+    assert_eq!(v["grant"]["fence_env"]["AXON_ALLOWED_NET"], "", "{v}");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R1d: a pristine file the fence itself would break is not repaired under
+/// it. `dstore` reads a store directory, which the fence scopes away; the
+/// run stops before any generator call, exit 22 `fence_conflict`, naming the
+/// test.
+#[test]
+fn r1_a_file_the_fence_would_break_stops_with_fence_conflict() {
+    let ws = workspace("r1_conflict");
+    std::fs::write(
+        ws.join("store.ax"),
+        "fn bump(n: i64) -> i64 {\n    let h = dstore_open(\"k1\", 0)\n    dstore_apply(h, n, 7)\n}\n\n\
+         fn double(n: i64) -> i64 {\n    n + 2\n}\n\n\
+         @[test]\nfn t_bump() {\n    assert(bump(1) > 0)\n}\n\n\
+         @[test]\nfn hidden_completion() {\n    assert_eq(double(7), 14)\n}\n\n\
+         fn main() {\n    println(to_str(double(1)))\n}\n",
+    )
+    .unwrap();
+    let (code, v, err) = r1_repair(&ws, "store.ax", "literal:\n    n * 2\n", &[]);
+    assert_eq!(code, 22, "{err}{v}");
+    assert!(
+        err.contains("fence_conflict") && err.contains("t_bump"),
+        "{err}"
+    );
+    assert!(err.contains("needs `fs:read`"), "the kind is named: {err}");
+    assert!(v.is_null(), "a pre-flight stop issues no verdict: {v}");
+    assert!(std::fs::read_to_string(ws.join("store.ax"))
+        .unwrap()
+        .contains("n + 2"));
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R1 × R3: a refused proposal was still a generator call, so it counts
+/// against `--max-proposals`.
+#[test]
+fn r1_a_refused_proposal_counts_against_max_proposals() {
+    let ws = workspace("r1_props");
+    let gen = ws.join("gen.sh");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\necho x >> \"{ws}/calls.log\"\n\
+             n=$(wc -l < \"{ws}/calls.log\")\n\
+             cat > \"{ws}/prompt.$n\"\n\
+             printf '\\n    let _ = write_file(\"{ws}/P%s\", \"x\")\\n    n * 2\\n' \"$n\"\n",
+            ws = ws.display()
+        ),
+        0o755,
+    );
+    let (code, v, err) = r1_repair(
+        &ws,
+        "broken.ax",
+        &format!("cmd:{}", gen.display()),
+        &["--candidates", "1", "--budget", "8", "--max-proposals", "2"],
+    );
+    assert_eq!(code, 20, "{err}{v}");
+    assert_eq!(v["detail"], "proposals", "{v}");
+    assert_eq!(v["budget"]["proposals_used"], 2, "{v}");
+    assert_eq!(denials(&v).len(), 2, "{v}");
+    assert!(!ws.join("P1").exists() && !ws.join("P2").exists());
+    // R1b: the refusal reaches the generator as data, naming the kind.
+    let second = std::fs::read_to_string(ws.join("prompt.2")).unwrap();
+    assert!(
+        second.contains("\"refusal\":{\"capabilities\":[\"fs:write\"]}"),
+        "{second}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// R1e: `cortex grant` prints the grant a repair would run under — the file's
+/// fence and each target's static grant — and runs nothing (the file's test
+/// that would leave `RAN` behind never runs).
+#[test]
+fn r1_cortex_grant_prints_the_grant_and_runs_nothing() {
+    let ws = r1_helper_workspace("r1_grant");
+    let out = common::cortex()
+        .args(["grant", "--workspace"])
+        .arg(&ws)
+        .args([
+            "--file",
+            "helper.ax",
+            "--symbol",
+            "double",
+            "--json",
+            "--axon",
+        ])
+        .arg(axon_bin())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stdout}{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).expect("one JSON object");
+    assert_eq!(v["schema"], "cortex-grant/1", "{v}");
+    assert_eq!(v["file"], "helper.ax", "{v}");
+    let g = &v["grant"];
+    assert_eq!(g["basis"], "axon-caps", "{v}");
+    assert_eq!(g["capabilities"], serde_json::json!(["fs:write"]), "{v}");
+    assert_eq!(
+        g["fence_env"],
+        serde_json::json!({
+            "AXON_ALLOWED_EFFECTS": "Chan,IO,Pure,Random,Time",
+            "AXON_ALLOWED_FS_READ": "",
+            "AXON_ALLOWED_NET": "",
+        }),
+        "{v}"
+    );
+    assert_eq!(g["fence_sha256"].as_str().map(str::len), Some(64), "{v}");
+    assert_eq!(g["targets"][0]["symbol"], "double", "{v}");
+    assert_eq!(
+        g["targets"][0]["capabilities"],
+        serde_json::json!([]),
+        "{v}"
+    );
+    assert!(!ws.join("RAN").exists(), "`cortex grant` ran a test");
     let _ = std::fs::remove_dir_all(&ws);
 }

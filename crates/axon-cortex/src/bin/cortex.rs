@@ -18,9 +18,9 @@
 //! |---|---|---|
 //! | 0 | verified done | nothing — a hidden check confirmed the repair |
 //! | 2 | usage error | fix the command line; NOTHING was decided or run |
-//! | 20 | budget exhausted | raise `--budget`, or the task is too hard for this loop |
+//! | 20 | budget exhausted | raise `--budget` (empty `detail`), or `--max-proposals` / `--deadline-ms` (`detail` `proposals` / `deadline`), or the task is too hard for this loop |
 //! | 21 | no progress | the loop is going in circles; the generator is not helping |
-//! | 22 | blocked | the environment is wrong — the checker could not run |
+//! | 22 | blocked | the environment is wrong — the checker could not run, a capability grant could not be derived, or `fence_conflict`: a test of the unpatched file needs a capability the derived fence denies |
 //! | 23 | refused | authority is wrong — widen `--write-prefix`, deliberately |
 //! | 24 | needs input | no usable proposal — supply or fix `--generator` |
 //! | 25 | no target | no candidate could be established, or the named symbol does not exist |
@@ -39,7 +39,13 @@ use axon_cortex::runner::{
 
 const USAGE: &str = "\
 cortex repair --file PATH --check NAME [--symbol NAME] [options]
-cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
+cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH]
+              [--check-timeout-ms N] [--json]
+cortex grant --file PATH [--symbol NAME] [--workspace DIR] [--axon PATH]
+             [--check-registry FILE] [--json]
+                         print, as one `cortex-grant/1` JSON line, the grant a
+                         repair of PATH would run under (see CAPABILITY FENCE
+                         below), running nothing of the workspace.
 
   --workspace DIR        directory to operate in (default: .)
   --file PATH            workspace-relative file holding the symbol
@@ -57,6 +63,31 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          matching Cortex's convention where \"\" denies.
   --principal NAME       who is acting (default: agent)
   --budget N             maximum steps per candidate (default: 8)
+  --check-timeout-ms N   wall-clock limit on every check process (default:
+                         60000). A check is spawned as its own process group
+                         and the whole group is killed at the limit; its
+                         output is capped at 1 MiB per stream. A candidate
+                         whose check hits either bound is rejected and undone
+                         and the next proposal runs; only a check of the
+                         UNPATCHED file hitting a bound blocks the run (22).
+                         Checks run with an empty environment.
+  --max-proposals N      at most N generator calls across the WHOLE walk (every
+                         candidate, both passes; a call whose proposal is then
+                         refused counts). Default: unlimited. When it is
+                         reached no generator is asked anything again and the
+                         run ends `budget_exhausted` (20) with detail
+                         `proposals`.
+  --deadline-ms N        wall-clock deadline for the run, counted from cortex
+                         start (the ranker counts). Default: none. At it no
+                         new generator call starts: a cmd: generator is cut at
+                         min(its timeout, the time left), an ai: call is not
+                         started with less than its 30 s HTTP timeout left (an
+                         in-flight one cannot be cancelled), and the audit is
+                         not started. A check already running finishes (within
+                         --check-timeout-ms) and a pass it produces is
+                         accepted. Otherwise the run ends `budget_exhausted`
+                         (20) with detail `deadline`. --json reports both under
+                         `budget` with what was spent.
   --candidates N         how many ranked candidates to try (default: 3). On
                          the measured corpus the top candidate is the sole
                          most-suspicious one about a third of the time, while
@@ -158,7 +189,32 @@ cortex locate --file PATH --check NAME [--workspace DIR] [--axon PATH] [--json]
                          one stderr line and never changes the exit code.
   --label-source         also record the file's text as found in that line.
                          Off by default: source can be sensitive.
-  --json                 machine-readable outcome on stdout
+  --json                 machine-readable outcome on stdout (`cortex-repair/1`):
+                         also `budget` (limits and what was spent), `accepted`
+                         ({path, sha256} of the bytes the hidden check graded,
+                         on exits 0/27; null otherwise) and `grant` (below).
+                         A rejected attempt reaches the generator's next prompt
+                         as typed JSON (diagnostics, failing tests, refusal).
+
+CAPABILITY FENCE. A repair may not acquire a capability the original code did
+not hold. Before the walk, `axon caps` (the classifier `@[contained]` uses) is
+run by the pinned axon on the UNPATCHED file:
+  - each target's static grant = what that function transitively reaches. A
+    candidate body reaching anything else (`fs:write`, `net`, `exec`, ...,
+    `effect:NAME` for a non-free effect, `unknown`) is refused BEFORE it runs:
+    a rejected attempt (`capability_denied`, an `action_denied` event with
+    reason `capability:KINDS`, the kinds fed back to the generator); it counts
+    against --max-proposals.
+  - the runtime fence, from the whole file: every check runs with
+    AXON_ALLOWED_EFFECTS = Chan,IO,Pure,Random,Time plus the file's own
+    effects, and AXON_ALLOWED_FS_READ / AXON_ALLOWED_FS_WRITE /
+    AXON_ALLOWED_NET set EMPTY (deny all) for each kind the file does not use.
+    If a test of the unpatched file fails under it, the run stops with
+    `fence_conflict: test `T` needs `KIND`...` (exit 22).
+  If `axon caps` cannot classify everything (basis `unknown`) no fence is
+  applied for it, said in one stderr line. --json reports `grant`
+  {capabilities, effects, basis, applied, fence_env, fence_sha256, targets};
+  the Fabric executor does not take the fence (`applied: false`).
 ";
 
 fn usage(msg: &str) -> ! {
@@ -284,12 +340,17 @@ impl axon_cortex::runner::CheckExecutor for SharedFabric {
     }
 }
 
-fn registered_runner(
+/// Default `--check-timeout-ms`: the wall-clock limit on every check process.
+const DEFAULT_CHECK_TIMEOUT_MS: u64 = 60_000;
+/// The capture bound on each output stream of a local check process.
+const CHECK_MAX_OUTPUT: usize = 1 << 20;
+
+/// The pinned `axon` executable and its local executor, as the registry (or
+/// `--axon`, pinned now) names them. Exit 22 if neither can be resolved.
+fn resolve_checker(
     axon_bin: &std::path::Path,
     check_registry: Option<&std::path::Path>,
-    workspace: &std::path::Path,
-    fabric: Option<&std::sync::Arc<FabricSubmitExecutor>>,
-) -> Runner {
+) -> (std::path::PathBuf, LocalInterpreterExecutor) {
     let reg = match check_registry {
         Some(file) => CheckRegistry::load(file),
         None => {
@@ -310,17 +371,114 @@ fn registered_runner(
             .map_err(|e| e.to_string())
     });
     match exec {
-        Ok((exe, _)) if fabric.is_some() => Runner::with_check_executor(
-            exe,
-            workspace,
-            Box::new(SharedFabric(std::sync::Arc::clone(fabric.expect("some")))),
-        ),
-        Ok((exe, x)) => Runner::with_check_executor(exe, workspace, Box::new(x)),
+        Ok(v) => v,
         Err(e) => {
             eprintln!("the checks could not be run: {e}");
             std::process::exit(22);
         }
     }
+}
+
+fn registered_runner(
+    (exe, local): (std::path::PathBuf, LocalInterpreterExecutor),
+    workspace: &std::path::Path,
+    fabric: Option<&std::sync::Arc<FabricSubmitExecutor>>,
+    check_timeout: std::time::Duration,
+    fence_env: &std::collections::BTreeMap<String, String>,
+) -> Runner {
+    // R2: every process that runs workspace code is bounded. A candidate body
+    // that never returns used to hold the loop forever: the local executor
+    // ran with no wall clock and no capture bound. The check process also
+    // starts from an EMPTY environment, so nothing of the operator's shell
+    // (AXON_STRICT, a stray AXON_PATH) steers a verdict.
+    // R1c: and carries the runtime fence — every value as derived, an EMPTY
+    // one included (empty = deny all of that kind; unset = unrestricted).
+    let mut runner = match fabric {
+        Some(f) => Runner::with_check_executor(
+            exe,
+            workspace,
+            Box::new(SharedFabric(std::sync::Arc::clone(f))),
+        ),
+        None => {
+            let x = fence_env.iter().fold(
+                local
+                    .with_timeout(check_timeout)
+                    .with_max_output(CHECK_MAX_OUTPUT)
+                    .with_clean_env(),
+                |x, (k, v)| x.with_env(k, v),
+            );
+            Runner::with_check_executor(exe, workspace, Box::new(x))
+        }
+    };
+    runner.set_checker_timeout(check_timeout);
+    runner
+}
+
+/// A grant `axon caps` cannot answer for stops the run (exit 22): no
+/// candidate runs without a grant derived for it.
+fn grant_underivable(what: &str, e: axon_cortex::fence::CapsError) -> ! {
+    eprintln!("the capability grant for {what} could not be derived: {e}");
+    std::process::exit(22);
+}
+
+/// R1a: the runtime fence of `file`, from `axon caps` on the whole PRISTINE
+/// file, run by the pinned `axon`.
+fn derive_fence(
+    axon: &std::path::Path,
+    workspace: &std::path::Path,
+    file: &str,
+    wall: std::time::Duration,
+) -> axon_cortex::fence::Fence {
+    use axon_cortex::fence::{caps_of_file, Basis, Fence};
+    let caps = caps_of_file(axon, &workspace.join(file), None, wall)
+        .unwrap_or_else(|e| grant_underivable(file, e));
+    let fence = Fence::from_pristine(&caps);
+    if fence.basis == Basis::Unknown {
+        eprintln!(
+            "grant: `axon caps` cannot classify everything {file} reaches (basis unknown); \
+             no runtime fence is applied"
+        );
+    }
+    fence
+}
+
+/// R1a: the static grant of each repair target — what it transitively
+/// reaches in the PRISTINE file.
+fn derive_static_grants(
+    axon: &std::path::Path,
+    workspace: &std::path::Path,
+    file: &str,
+    targets: &[String],
+    wall: std::time::Duration,
+) -> Vec<axon_cortex::fence::StaticGrant> {
+    use axon_cortex::fence::{caps_of_file, Basis, Caps, CapsError, StaticGrant};
+    let path = workspace.join(file);
+    targets
+        .iter()
+        .map(|t| {
+            // The whole file was classified, so a target `axon caps` refuses
+            // is one the file does not define: it reaches nothing, and its
+            // episode stops at `no_such_symbol` before any proposal.
+            let caps = match caps_of_file(axon, &path, Some(t), wall) {
+                Err(CapsError::DidNotCompile(_)) => Caps {
+                    capabilities: Vec::new(),
+                    effects: Vec::new(),
+                    unknown: false,
+                },
+                other => {
+                    other.unwrap_or_else(|e| grant_underivable(&format!("`{t}` in {file}"), e))
+                }
+            };
+            let g = StaticGrant::from_caps(t, &caps);
+            if g.basis == Basis::Unknown {
+                eprintln!(
+                    "grant: `axon caps` cannot classify everything `{t}` reaches (basis \
+                     unknown); its candidates are not admission-checked"
+                );
+            }
+            g
+        })
+        .collect()
 }
 
 fn main() {
@@ -329,6 +487,8 @@ fn main() {
     // caller still sees e.g. "killed by SIGTERM"). Before this, a generator ran
     // on after cortex died. Installed before anything can spawn a job.
     axon_jobctl::forward_termination_signals(axon_jobctl::OnSignal::Die);
+    // R3: `--deadline-ms` counts from here, so the ranker counts too.
+    let started = std::time::Instant::now();
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("repair") => {}
@@ -337,6 +497,9 @@ fn main() {
         // measurable: a verdict that collapses the list to one name cannot be
         // scored for whether the right answer was second.
         Some("locate") => return locate_only(args),
+        // `grant` shows the authority a repair would confine candidates to
+        // (R1e), running nothing of the workspace.
+        Some("grant") => return grant_only(args),
         Some("--help" | "-h") | None => {
             println!("{USAGE}");
             return;
@@ -363,6 +526,9 @@ fn main() {
     let mut audit_flag: Option<String> = None;
     let mut label_log_flag: Option<String> = None;
     let mut label_source = false;
+    let mut check_timeout_ms: u64 = DEFAULT_CHECK_TIMEOUT_MS;
+    let mut max_proposals: Option<usize> = None;
+    let mut deadline_ms: Option<u64> = None;
 
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
@@ -422,6 +588,35 @@ fn main() {
                 }
             }
             "--json" => json = true,
+            "--check-timeout-ms" => {
+                let raw = val("--check-timeout-ms");
+                check_timeout_ms = raw.parse().unwrap_or_else(|_| {
+                    usage(&format!("--check-timeout-ms must be a number, got `{raw}`"))
+                });
+                if check_timeout_ms == 0 {
+                    usage("--check-timeout-ms must be at least 1");
+                }
+            }
+            "--max-proposals" => {
+                let raw = val("--max-proposals");
+                let n: usize = raw.parse().unwrap_or_else(|_| {
+                    usage(&format!("--max-proposals must be a number, got `{raw}`"))
+                });
+                if n == 0 {
+                    usage("--max-proposals must be at least 1");
+                }
+                max_proposals = Some(n);
+            }
+            "--deadline-ms" => {
+                let raw = val("--deadline-ms");
+                let ms: u64 = raw.parse().unwrap_or_else(|_| {
+                    usage(&format!("--deadline-ms must be a number, got `{raw}`"))
+                });
+                if ms == 0 {
+                    usage("--deadline-ms must be at least 1");
+                }
+                deadline_ms = Some(ms);
+            }
             other => usage(&format!("unknown argument `{other}`")),
         }
     }
@@ -505,12 +700,51 @@ fn main() {
     let mut localization: Option<axon_cortex::label::Localization> = None;
 
     let fabric = fabric_executor(&fabric_args, check_registry.as_deref());
+    let check_timeout = std::time::Duration::from_millis(check_timeout_ms);
+    let checker = resolve_checker(&axon_bin, check_registry.as_deref());
+    let checker_exe = checker.0.clone();
+    // R1a: the runtime fence, from the PRISTINE file, before anything of the
+    // workspace runs. The Fabric executor does not take it: recorded as not
+    // applied rather than claimed.
+    let fence = derive_fence(&checker.0, &workspace, &file, check_timeout);
+    let fence = if fabric.is_some() {
+        fence.not_applied()
+    } else {
+        fence
+    };
     let mut runner = registered_runner(
-        &axon_bin,
-        check_registry.as_deref(),
+        checker,
         &workspace,
         fabric.as_ref(),
+        check_timeout,
+        &fence.env,
     );
+    // R1d: the pristine file under the fence. A test the fence itself makes
+    // fail means the fence would refuse what the original code already does:
+    // the run stops, never repairing under a fence weaker or stronger than
+    // the one it reports.
+    if !fence.env.is_empty() {
+        match runner.fence_conflicts(&file) {
+            Err(e) => {
+                eprintln!("the checks could not be run: {e}");
+                std::process::exit(22);
+            }
+            Ok(conflicts) if !conflicts.is_empty() => {
+                for (test, kind, msg) in &conflicts {
+                    eprintln!(
+                        "fence_conflict: test `{test}` needs `{kind}`, which the fence \
+                         derived from {file} denies: {msg}"
+                    );
+                }
+                std::process::exit(22);
+            }
+            Ok(_) => {}
+        }
+    }
+    runner.set_walk_budget(axon_cortex::runner::WalkBudget::new(
+        max_proposals,
+        deadline_ms.map(|ms| started + std::time::Duration::from_millis(ms)),
+    ));
     // (A grep for `fn NAME(` used to stand here as a cheaper first pass. It
     // was redundant with the check below and strictly worse: it accepted any
     // FUNCTION, so a `--check` naming an ordinary function passed it and was
@@ -717,6 +951,11 @@ fn main() {
     // success there would not mean what it says.
     let original = std::fs::read_to_string(workspace.join(&file))
         .unwrap_or_else(|e| usage(&format!("cannot read {}/{file}: {e}", workspace.display())));
+    // R1a: each target's static grant, from the same pristine bytes, before
+    // any candidate exists — recorded in the episode with the fence.
+    let static_grants =
+        derive_static_grants(&checker_exe, &workspace, &file, &targets, check_timeout);
+    runner.episode.push(fence.event(&static_grants));
 
     // BREADTH-FIRST: every candidate gets ONE proposal before any gets a
     // second.
@@ -766,6 +1005,19 @@ fn main() {
             }
             progress[i].proposal_limit = (pass == 1 && targets.len() > 1).then_some(1);
             progress[i].inert_limit = Some(early_stop.inert_limit);
+            runner.set_static_grant(Some(static_grants[i].clone()));
+            // R3: an exhausted walk budget starts no further episode — not
+            // even its baseline checks, which could only lead to a generator
+            // call that may not be made.
+            if let Some(by) =
+                runner.walk_exhausted(generator.as_deref().and_then(|g| g.uncancellable_for()))
+            {
+                outcome = EpisodeOutcome::WalkBudgetExhausted {
+                    steps: prev.map_or(0, |p| progress[p].steps()),
+                    by,
+                };
+                break 'walk;
+            }
             if let Some(p) = prev {
                 if let Err(e) = std::fs::write(workspace.join(&file), &original) {
                     eprintln!("cannot restore {file} between attempts: {e}");
@@ -832,6 +1084,8 @@ fn main() {
                 // candidate. Another one would fail identically and burn the
                 // budget proving it.
                 EpisodeOutcome::Refused { .. } | EpisodeOutcome::Blocked { .. } => break 'walk,
+                // R3: no generator may be asked anything again.
+                EpisodeOutcome::WalkBudgetExhausted { .. } => break 'walk,
                 EpisodeOutcome::OutOfScopeSuspected { reason, .. } => {
                     eprintln!("`{target}` is not asked again: {reason}");
                     stopped[i] = true;
@@ -856,6 +1110,11 @@ fn main() {
         EpisodeOutcome::VerifiedDone { steps } => (0, "verified_done", String::new(), *steps),
         EpisodeOutcome::BudgetExhausted { steps } => {
             (20, "budget_exhausted", String::new(), *steps)
+        }
+        // R3: the same exit and kind as step exhaustion; `detail` names the
+        // walk limit, where step exhaustion leaves it empty.
+        EpisodeOutcome::WalkBudgetExhausted { steps, by } => {
+            (20, "budget_exhausted", by.as_str().to_string(), *steps)
         }
         EpisodeOutcome::NoProgress { steps, action } => (21, "no_progress", action.clone(), *steps),
         EpisodeOutcome::Blocked { steps, reason } => (22, "blocked", reason.clone(), *steps),
@@ -908,6 +1167,24 @@ fn main() {
             .and_then(|i| progress[i].baseline_failing())
             .unwrap_or(&[]);
         let report = match std::fs::read_to_string(workspace.join(&file)) {
+            // R3: a model audit is not started after the walk's deadline.
+            // `--audit off` starts nothing and reports itself as before.
+            Ok(_)
+                if runner.walk_budget().deadline_passed()
+                    && !matches!(audit_spec, axon_cortex::audit::AuditSpec::Off) =>
+            {
+                axon_cortex::audit::AuditReport {
+                    requested: audit_spec.label(),
+                    used: None,
+                    verdict: axon_cortex::audit::Verdict::Unavailable,
+                    p: None,
+                    latency_ms: None,
+                    cost_usd: None,
+                    reason: Some(
+                        "not started: the walk deadline (--deadline-ms) had passed".into(),
+                    ),
+                }
+            }
             Ok(patched) => axon_cortex::audit::Auditor::from_env(audit_spec.clone()).audit(
                 &axon_cortex::audit::AuditInput {
                     file: &file,
@@ -976,6 +1253,22 @@ fn main() {
         }
     }
 
+    // R5: the artifact a kept patch left, by digest of the bytes on disk now —
+    // equal to the deciding Verified event's `graded_sha256`, which the
+    // episode confirmed after its last acceptance spawn. Only exits 0 and 27
+    // keep a patch; every other run names none. An unreadable file is
+    // `sha256: null`, which matches no digest.
+    let accepted = (code == 0 || code == 27).then(|| {
+        let sha256 = match std::fs::read(workspace.join(&file)) {
+            Ok(b) => Some(axon_cortex::label::sha256_hex(&b)),
+            Err(e) => {
+                eprintln!("the accepted {file} could not be read back for its digest: {e}");
+                None
+            }
+        };
+        serde_json::json!({ "path": file, "sha256": sha256 })
+    });
+
     if json {
         println!(
             "{}",
@@ -984,6 +1277,16 @@ fn main() {
                 "outcome": kind,
                 "detail": detail,
                 "steps": steps,
+                "accepted": accepted,
+                // R3: the walk's hard limits (`null` = unset), what was spent
+                // of them, and which one stopped the walk (`null`: none did).
+                "budget": {
+                    "max_proposals": max_proposals,
+                    "deadline_ms": deadline_ms,
+                    "proposals_used": runner.walk_budget().proposals_used(),
+                    "elapsed_ms": started.elapsed().as_millis() as u64,
+                    "exhausted_by": runner.walk_budget().exhausted_by().map(|b| b.as_str()),
+                },
                 // WHICH candidate worked, and every attempt before it, in the
                 // order they ran. With a walked ranking that is no longer
                 // implied by the command line. Under the breadth-first walk a
@@ -992,6 +1295,10 @@ fn main() {
                 "symbol": repaired,
                 "attempted": attempted,
                 "exit_code": code,
+                // R1: what candidates were confined to — the pristine file's
+                // capabilities and effects, the runtime fence every check
+                // carried, and each target's static grant.
+                "grant": fence.to_json(&static_grants),
                 // The episode, verbatim. Every check that ran, every patch
                 // applied with its before/after digests, and which generator
                 // proposed it. The verdict above is a summary OF this, not a
@@ -1145,6 +1452,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
     let mut check_registry: Option<std::path::PathBuf> = None;
     let mut fabric_args = FabricArgs::default();
     let mut json = false;
+    let mut check_timeout_ms: u64 = DEFAULT_CHECK_TIMEOUT_MS;
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
             args.next()
@@ -1164,6 +1472,15 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
                 }
             }
             "--json" => json = true,
+            "--check-timeout-ms" => {
+                let raw = val("--check-timeout-ms");
+                check_timeout_ms = raw.parse().unwrap_or_else(|_| {
+                    usage(&format!("--check-timeout-ms must be a number, got `{raw}`"))
+                });
+                if check_timeout_ms == 0 {
+                    usage("--check-timeout-ms must be at least 1");
+                }
+            }
             other => usage(&format!("unknown argument `{other}`")),
         }
     }
@@ -1182,11 +1499,15 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
         );
     }
     let fabric = fabric_executor(&fabric_args, check_registry.as_deref());
+    // No fence: `locate` runs the file's own tests on its own bytes and
+    // writes nothing — there is no candidate whose authority could exceed
+    // the original's.
     let runner = registered_runner(
-        &axon_bin,
-        check_registry.as_deref(),
+        resolve_checker(&axon_bin, check_registry.as_deref()),
         &workspace,
         fabric.as_ref(),
+        std::time::Duration::from_millis(check_timeout_ms),
+        &std::collections::BTreeMap::new(),
     );
     let src = std::fs::read_to_string(workspace.join(&file))
         .unwrap_or_else(|e| usage(&format!("cannot read {file}: {e}")));
@@ -1225,4 +1546,55 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
             println!("{sc:.4}  {n}");
         }
     }
+}
+
+/// `cortex grant --workspace W --file F [--symbol S] [--axon PATH]
+/// [--check-registry FILE] --json` (R1e): the grant a repair of F would run
+/// under — the file's runtime fence and the named target's static grant —
+/// derived exactly as `cortex repair` derives it, with nothing of the
+/// workspace run.
+fn grant_only(mut args: impl Iterator<Item = String>) {
+    let mut workspace = std::path::PathBuf::from(".");
+    let (mut file, mut symbol) = (String::new(), String::new());
+    let mut axon_bin = std::path::PathBuf::from("axon");
+    let mut check_registry: Option<std::path::PathBuf> = None;
+    while let Some(a) = args.next() {
+        let mut val = |flag: &str| -> String {
+            args.next()
+                .unwrap_or_else(|| usage(&format!("{flag} needs a value")))
+        };
+        match a.as_str() {
+            "--workspace" => workspace = std::path::PathBuf::from(val("--workspace")),
+            "--file" => file = val("--file"),
+            "--symbol" => symbol = val("--symbol"),
+            "--axon" => axon_bin = std::path::PathBuf::from(val("--axon")),
+            "--check-registry" => {
+                check_registry = Some(std::path::PathBuf::from(val("--check-registry")))
+            }
+            // The only output form; accepted so the spelling matches repair's.
+            "--json" => {}
+            other => usage(&format!("unknown argument `{other}`")),
+        }
+    }
+    if file.is_empty() {
+        usage("--file is required");
+    }
+    let wall = std::time::Duration::from_millis(DEFAULT_CHECK_TIMEOUT_MS);
+    let (exe, _) = resolve_checker(&axon_bin, check_registry.as_deref());
+    let fence = derive_fence(&exe, &workspace, &file, wall);
+    let targets: Vec<String> = if symbol.is_empty() {
+        Vec::new()
+    } else {
+        vec![symbol.clone()]
+    };
+    let grants = derive_static_grants(&exe, &workspace, &file, &targets, wall);
+    println!(
+        "{}",
+        serde_json::json!({
+            "schema": "cortex-grant/1",
+            "file": file,
+            "symbol": (!symbol.is_empty()).then_some(symbol),
+            "grant": fence.to_json(&grants),
+        })
+    );
 }

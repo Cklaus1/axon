@@ -59,9 +59,20 @@ fn unfence(s: &str) -> String {
     }
 }
 
+/// How long one `ai:` call can run: `axon_ai::complete_with_model` sends it
+/// with a default `reqwest::blocking::Client`, whose whole-request timeout is
+/// 30 s. The call is blocking and cannot be cancelled once started.
+pub const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl PatchGenerator for AiPatchGenerator {
     fn id(&self) -> String {
         format!("ai:{}", self.model)
+    }
+
+    /// R3: an in-flight model call cannot be cut at the walk deadline, so it
+    /// is not started with less than [`HTTP_TIMEOUT`] left.
+    fn uncancellable_for(&self) -> Option<std::time::Duration> {
+        Some(HTTP_TIMEOUT)
     }
 
     fn propose(

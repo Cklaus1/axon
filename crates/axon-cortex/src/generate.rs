@@ -48,6 +48,11 @@ pub struct PatchConstraints {
     /// What else the generator may read: the file it is repairing, minus the
     /// hidden check — or, when that cannot be shown, why not.
     pub context: GenContext,
+    /// R3: the walk's wall-clock deadline. A generator that can be cut short
+    /// stops at it (a `cmd:` job gets min(its timeout, the time left)); one
+    /// that cannot is not started without enough time left
+    /// ([`PatchGenerator::uncancellable_for`]). `None`: no deadline.
+    pub deadline: Option<std::time::Instant>,
 }
 
 /// The material a generator gets beyond the body.
@@ -67,7 +72,7 @@ pub enum GenContext {
     /// stands (`visible_now`, `None` when they could not be run).
     View {
         view: crate::rank::RankView,
-        visible_now: Option<String>,
+        visible_now: Option<crate::feedback::Feedback>,
     },
     /// The view could not be built — the hidden check's name appears outside
     /// its own definition, or no visible failing check is defined in the
@@ -113,6 +118,17 @@ pub enum RejectionReason {
     /// feedback carries those diagnostics, from checking the file with the
     /// hidden check cut out.
     CheckerObjected,
+    /// A check of the patched file stopped at a process bound — its wall-clock
+    /// limit or its output bound — so no verdict came back (R2). Recorded in
+    /// the early-stop signals, which skip it like [`Self::DidNotCompile`]; the
+    /// generator is shown a plain [`Self::CheckRefused`] for it, plus whatever
+    /// its VISIBLE run said, so which hidden spawn hit the bound never leaks.
+    TimedOut,
+    /// It reaches a capability (or a non-free effect) the original target did
+    /// not hold (R1b). Refused before anything of it ran; the feedback's
+    /// `refusal.capabilities` names the kinds. Skipped by the early-stop
+    /// signals like [`Self::DidNotCompile`]: no check of it ran.
+    CapabilityDenied,
 }
 
 impl RejectionReason {
@@ -122,6 +138,8 @@ impl RejectionReason {
             RejectionReason::DidNotCompile => "did_not_compile",
             RejectionReason::CheckRefused => "check_refused",
             RejectionReason::CheckerObjected => "checker_objected",
+            RejectionReason::TimedOut => "timed_out",
+            RejectionReason::CapabilityDenied => "capability_denied",
         }
     }
 }
@@ -135,6 +153,13 @@ impl std::fmt::Display for RejectionReason {
                 f,
                 "it passed the checks, but `axon check` reported diagnostics on the file"
             ),
+            RejectionReason::TimedOut => {
+                write!(f, "a check of it did not finish within its limits")
+            }
+            RejectionReason::CapabilityDenied => write!(
+                f,
+                "it uses a capability the original function does not hold, so it was not run"
+            ),
         }
     }
 }
@@ -145,15 +170,12 @@ pub struct RejectedAttempt {
     pub body: String,
     pub reason: RejectionReason,
     /// What the visible side of the workspace said about it — compiler
-    /// diagnostics or visible-check results — bounded to
-    /// [`MAX_FEEDBACK_BYTES`]. Gathered from a file that does not contain
-    /// the hidden check, so none of it can come from the hidden check. `None`
+    /// diagnostics or visible-check results — as data, each field bounded
+    /// ([`crate::feedback`]). Gathered from a file that does not contain the
+    /// hidden check, so none of it can come from the hidden check. `None`
     /// when nothing could be gathered (and then nothing is invented).
-    pub feedback: Option<String>,
+    pub feedback: Option<crate::feedback::Feedback>,
 }
-
-/// Upper bound on the feedback carried per rejected attempt.
-pub const MAX_FEEDBACK_BYTES: usize = 2048;
 
 /// A generated body, plus WHO generated it.
 ///
@@ -214,6 +236,13 @@ pub trait PatchGenerator {
         target: &SymbolRef,
         constraints: &PatchConstraints,
     ) -> Result<ProposedPatch, GenerationFailure>;
+
+    /// R3: how long a call runs once started when it cannot be cut short at
+    /// the walk deadline (`None`: it can be, or it returns at once). The walk
+    /// does not start a call with less time than this left.
+    fn uncancellable_for(&self) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// Check a proposal against its constraints.
@@ -288,12 +317,17 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
         if let Some(f) = &r.feedback {
             let label = match r.reason {
                 RejectionReason::DidNotCompile => "The compiler reported",
-                RejectionReason::CheckRefused => {
+                RejectionReason::CheckerObjected => "`axon check` reported",
+                // Never constructed for a generator-facing attempt (a bound
+                // hit is shown as CheckRefused); labelled like it regardless.
+                RejectionReason::CheckRefused | RejectionReason::TimedOut => {
                     "With that attempt applied, the visible tests reported"
                 }
-                RejectionReason::CheckerObjected => "`axon check` reported",
+                RejectionReason::CapabilityDenied => {
+                    "It was refused before running, for capabilities the original does not hold"
+                }
             };
-            history.push_str(&format!("{label}:\n```\n{}\n```\n", f.trim_end()));
+            history.push_str(&format!("{label} (JSON):\n```json\n{}\n```\n", f.to_json()));
         }
     }
     if !history.is_empty() {
@@ -319,11 +353,12 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
             let names: Vec<&str> = view.failing.iter().map(|(n, _)| n.as_str()).collect();
             let tests: Vec<&str> = view.failing.iter().map(|(_, b)| b.trim_end()).collect();
             let now = visible_now
-                .as_deref()
-                .map(|t| {
+                .as_ref()
+                .map(|f| {
                     format!(
-                        "What the visible tests report on the file as it stands:\n```\n{}\n```\n\n",
-                        t.trim_end()
+                        "What the visible tests report on the file as it stands (JSON):\n\
+                         ```json\n{}\n```\n\n",
+                        f.to_json()
                     )
                 })
                 .unwrap_or_default();
@@ -580,7 +615,12 @@ impl PatchGenerator for CommandGenerator {
         // A DEADLINE. `--budget` bounds STEPS, not wall time, and no budget
         // applies to a child process — so without this, one program that never
         // exits stops the loop forever.
-        let limit = Self::timeout();
+        // R3: and never past the walk's deadline — the job is cut at
+        // whichever comes first.
+        let limit = match constraints.deadline {
+            Some(d) => Self::timeout().min(d.saturating_duration_since(std::time::Instant::now())),
+            None => Self::timeout(),
+        };
         let deadline = std::time::Instant::now() + limit;
         let watched = loop {
             match job.has_exited() {

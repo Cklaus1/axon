@@ -702,6 +702,18 @@ cargo build --locked -q -p axon-cortex --bins \
 cargo test --locked -p axon-loop-contracts -p axon-loop -p axon-fabric \
   || fail "v0.22 closed-loop crate tests (axon-loop-contracts / axon-loop / axon-fabric)"
 
+# R1f: the offline fence sweep. `cortex repair` runs every check under a
+# runtime fence derived from the file (AXON_ALLOWED_EFFECTS and the empty
+# AXON_ALLOWED_FS_READ/_WRITE/_NET); a fence that changed a test verdict on the
+# corpora a paid run is scored on would read as a repair-rate change. Every
+# receipt-corpus and heldout1 task, `cortex grant` then `axon test --json` with
+# and without the fence: zero status flips required. Offline, no key, seconds;
+# a hard gate before any paid run. Both binaries are the ones built just above.
+echo "── gate: cortex fence sweep (R1f) ─────────────────────────────────"
+AXON_BIN="$(built_bin axon)" CORTEX_BIN="$(built_bin cortex)" \
+  python3 -B crates/axon-cortex/benchmarks/fence_sweep.py \
+  || fail "cortex fence sweep: the runtime fence flips a corpus test (crates/axon-cortex/benchmarks/fence_sweep.py)"
+
 # v0.22 Stage-5 gates that are EXECUTED here, by name. A registry row in
 # governance/cortex_gate_execution_registry.json may only vouch for a package gate
 # whose checks a script invoked from THIS file runs; `cargo test -p …` below runs

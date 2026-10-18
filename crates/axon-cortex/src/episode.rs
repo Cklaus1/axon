@@ -32,6 +32,20 @@ pub enum EpisodeEvent {
     /// allowed one: an episode that logs only what it did cannot show what it
     /// was stopped from doing, which is the half a reviewer needs.
     ActionDenied { action: String, reason: String },
+    /// R1: the authority this run's candidates are confined to, derived by
+    /// `axon caps` from the PRISTINE file before any candidate existed: the
+    /// file's capabilities and effects, what they rest on (`axon-caps` or
+    /// `unknown`), the exact environment every check carried (`fence_env`,
+    /// empty when no fence was applied) and its digest, and each repair
+    /// target's static grant as `symbol=cap,cap` (`symbol=?` when unknown).
+    CapabilityGrant {
+        basis: String,
+        capabilities: Vec<String>,
+        effects: Vec<String>,
+        fence_env: std::collections::BTreeMap<String, String>,
+        fence_sha256: String,
+        targets: Vec<String>,
+    },
     /// A patch applied to the COPY, never to the original.
     PatchApplied {
         path: String,
@@ -90,7 +104,17 @@ pub enum EpisodeEvent {
     },
     /// The independent verifier's verdict — produced out-of-band from whatever
     /// proposed the patch.
-    Verified { passed: bool, detail: String },
+    Verified {
+        passed: bool,
+        detail: String,
+        /// R5: on the DECIDING event only (the hidden check's `passed:true`
+        /// of a verified run, or the adjudicated event of an exit-27 one), the
+        /// sha256 of the file the hidden check graded — taken before that
+        /// check spawned and confirmed unchanged after the last acceptance
+        /// spawn. Absent everywhere else, so older episodes keep their digest.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        graded_sha256: Option<String>,
+    },
 }
 
 /// An append-only episode.
