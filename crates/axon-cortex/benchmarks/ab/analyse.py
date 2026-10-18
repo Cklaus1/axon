@@ -38,12 +38,35 @@ def mcnemar_exact(b, c):
     return min(1.0, 2 * p)
 
 
-def load(path):
-    rows = {}
-    for line in open(path):
-        if line.strip():
-            r = json.loads(line)
-            rows[r["id"]] = r
+# Sets whose runs repeat every task (`run_ab.py --trials K`): their rows are
+# keyed on (id, trial), never on id alone.
+TRIAL_SETS = ("hx-dev", "hx-test")
+
+
+def load(path, trials=False):
+    """{id: row}, the last row of an id winning; with `trials`, {(id, trial):
+    row}, refusing a repeated (id, trial) or a row without `trial`. Without
+    `trials`, rows holding several trials of one id are refused, never
+    collapsed to one of them."""
+    rows, seen = {}, {}
+    for n, line in enumerate(open(path), 1):
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        if trials:
+            if not isinstance(r.get("trial"), int):
+                raise SystemExit(f"{path} line {n}: {r['id']} has no `trial` (a trial set)")
+            k = (r["id"], r["trial"])
+            if k in rows:
+                raise SystemExit(f"{path} line {n}: ({r['id']}, trial {r['trial']}) appears "
+                                 "more than once")
+            rows[k] = r
+            continue
+        seen.setdefault(r["id"], set()).add(r.get("trial", 1))
+        if len(seen[r["id"]]) > 1:
+            raise SystemExit(f"{path} line {n}: {r['id']} has trials {sorted(seen[r['id']])}: "
+                             "load(trials=True) keys a trial run on (id, trial)")
+        rows[r["id"]] = r
     return rows
 
 
@@ -152,6 +175,14 @@ def main():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import corpus as corpus_mod
     corpus = corpus_mod.load(sys.argv[1])
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import protected
+    set_ = protected.set_of(sys.argv[1])
+    if set_ in TRIAL_SETS:
+        # This analysis pairs ONE row per task across the arms (McNemar);
+        # a trial set's k rows per task are analysed by ../headroom/stats.py.
+        raise SystemExit(f"{sys.argv[1]} is the {set_} set, a trial set: analyse.py pairs one "
+                         "row per task id; use ../headroom/stats.py")
     A, B = load(sys.argv[2]), load(sys.argv[3])
     cheat_ids = set(corpus["meta"].get("cheat_subset", []))
     classes = {t["id"]: t["class"] for t in corpus["tasks"]}

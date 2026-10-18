@@ -616,6 +616,20 @@ stage_cortex_receipt() {
     || fail "cortex repair-path change has no receipt (scorecard.py regress, or waive)"
 }
 
+# Protected benchmark sets (crates/axon-cortex/benchmarks/protected.py): each
+# pinned corpus still matches its sha256, the spent ledger's hash chain holds
+# and begins with the ledger committed at HEAD, every registered corpus loads,
+# and the harness self-tests (spend refusal, resume, (id, trial) keying,
+# caps_strict grading, the grading-axon integrity abort) pass. Fake binaries
+# only: no axon or cortex build is run or needed.
+stage_protected_sets() {
+  python3 -B crates/axon-cortex/benchmarks/protected.py --check \
+    && python3 -B crates/axon-cortex/benchmarks/ab/selftest_ab.py \
+    && { [ ! -f crates/axon-cortex/benchmarks/headroom/selftest.py ] \
+         || python3 -B crates/axon-cortex/benchmarks/headroom/selftest.py; } \
+    || fail "a protected benchmark set, the spent ledger or the A/B harness self-test failed"
+}
+
 # The completeness manifest regenerates AXON-COMPLETENESS.md and refuses a row
 # claiming a production proof or a mutation it cannot cite. Wired here because
 # a manifest nobody runs is a table of assertions, which is the state it was
@@ -645,6 +659,7 @@ par "benchmark docs" stage_benchmark_docs
 par "analyser selftest" stage_analyser_selftest
 par "cortex scorecard" stage_scorecard
 par "cortex repair-path receipt" stage_cortex_receipt
+par "protected benchmark sets" stage_protected_sets
 par "completeness manifest" stage_completeness
 par_join
 
