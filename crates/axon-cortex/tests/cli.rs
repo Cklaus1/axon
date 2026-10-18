@@ -3240,6 +3240,12 @@ fn r5_a_lost_adjudication_fails_closed_and_its_label_row_says_so() {
     assert_eq!(v["outcome"], "blocked", "{v}");
     assert!(v["accepted"].is_null(), "{v}");
     assert!(err.contains("could not be put back at exit"), "{err}");
+    // Nothing was kept, so nothing is reported as having ended a walk that
+    // keeps an adjudication.
+    assert!(
+        v["stopped_by"].is_null(),
+        "ATTACK: a run that kept nothing reports the adjudicated state as kept: {v}"
+    );
     let row: serde_json::Value =
         serde_json::from_str(std::fs::read_to_string(&label).unwrap().trim()).unwrap();
     assert_eq!(
@@ -3249,6 +3255,116 @@ fn r5_a_lost_adjudication_fails_closed_and_its_label_row_says_so() {
     );
     let _ = std::fs::remove_dir_all(&ws);
     let _ = std::fs::remove_dir_all(label.parent().unwrap());
+}
+
+/// The walk × a lost restore: `a` is adjudicated in pass 2, then `b`'s
+/// generator replaces `walk.ax` with a directory, so the found bytes cannot
+/// be restored before the next attempt. That used to `exit(22)` on the spot:
+/// no verdict on stdout, no label row, the adjudication neither reported
+/// nor checked. It is now a `blocked` end of the walk like any other, so the
+/// run's normal tail settles it: the adjudication cannot be put back either,
+/// R5 fails closed, and the run exits 22 WITH its verdict and label row.
+#[test]
+fn a_restore_failing_between_attempts_still_ends_with_a_verdict() {
+    let later = "b:0) printf '\\n    n * 3 + 0 * 1\\n' ;;\n\
+                 b:*) w=\"$(dirname \"$0\")/walk.ax\"; /bin/rm -f \"$w\"; /bin/mkdir \"$w\"\n\
+                      printf '\\n    n * 3\\n' ;;\n\
+                 *) printf '\\n    0 * %s\\n' $((n + 10)) ;;\n";
+    let label = workspace("lost_restore_label").join("labels.jsonl");
+    let label_arg = label.to_str().unwrap().to_string();
+    let (ws, code, v, err, calls) =
+        adjudicated_walk("lost_restore", later, &["--label-log", &label_arg]);
+    assert_eq!(
+        calls.lines().collect::<Vec<_>>(),
+        ["a:0", "b:0", "c:0", "a:1", "b:1"],
+        "{err}"
+    );
+    assert!(
+        err.contains("cannot restore walk.ax between attempts"),
+        "{err}"
+    );
+    assert_eq!(code, 22, "{err}{v}");
+    assert_eq!(v["outcome"], "blocked", "{v}");
+    assert!(v["accepted"].is_null(), "{v}");
+    assert!(v["stopped_by"].is_null(), "{v}");
+    let row: serde_json::Value = serde_json::from_str(
+        std::fs::read_to_string(&label)
+            .unwrap_or_else(|e| {
+                panic!("ATTACK: a failed restore between attempts wrote no label row: {e}")
+            })
+            .trim(),
+    )
+    .unwrap();
+    assert_eq!(
+        (&row["exit_code"], &row["outcome"]),
+        (&serde_json::json!(22), &serde_json::json!("blocked")),
+        "{row}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+    let _ = std::fs::remove_dir_all(label.parent().unwrap());
+}
+
+/// R5 × the walk, end to end: a later candidate whose proposal PASSES the
+/// hidden check and then regresses a passing check does not decide the
+/// digest of the exit 27 the walk reports. `a` (`n * 2`) is adjudicated:
+/// `hidden` passes, nothing regresses, the already-failing `t` still fails.
+/// `c` then proposes `if n == 0 { 1 } else { n * 2 }`: `hidden` passes again
+/// but `p` regresses, so it is rejected; `--max-proposals 2` ends the walk.
+/// The run reports `a`'s adjudication: `accepted.sha256` is the digest the
+/// adjudicated (`passed: false`) event graded, the file on disk is those
+/// bytes, and neither is `c`'s hidden-pass digest.
+#[test]
+fn r5_a_later_regressing_hidden_pass_does_not_decide_the_adjudication() {
+    let src = "fn a(n: i64) -> i64 {\n    c(n)\n}\n\n\
+               fn c(n: i64) -> i64 {\n    n\n}\n\n\
+               @[test]\nfn t() {\n    assert_eq(c(1), 2)\n    assert_eq(a(0), 0)\n}\n\n\
+               @[test]\nfn p() {\n    assert_eq(c(0), 0)\n}\n\n\
+               @[test]\nfn hidden() {\n    assert_eq(a(1), 2)\n}\n\n\
+               fn main() {\n    println(to_str(a(1)))\n}\n";
+    let arms = "a:*) printf '\\n    n * 2\\n' ;;\n\
+                c:*) printf '\\n    if n == 0 { 1 } else { n * 2 }\\n' ;;\n";
+    let (ws, code, v, err, calls) = scripted_walk(
+        "r5_later_regressing_pass",
+        src,
+        arms,
+        &["--max-proposals", "2"],
+    );
+    assert_eq!(calls.lines().collect::<Vec<_>>(), ["a:0", "c:0"], "{err}");
+    assert_eq!(code, 27, "{err}{v}");
+    assert_eq!(v["stopped_by"]["detail"], "proposals", "{v}");
+    let verified: Vec<&serde_json::Value> = v["episode"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "verified")
+        .collect();
+    let digest = |passed: bool| -> Vec<&str> {
+        verified
+            .iter()
+            .filter(|e| e["passed"] == passed && e["graded_sha256"].is_string())
+            .map(|e| e["graded_sha256"].as_str().unwrap())
+            .collect()
+    };
+    let (adjudicated, passes) = (digest(false), digest(true));
+    let c_pass = *passes
+        .last()
+        .unwrap_or_else(|| panic!("c's hidden pass: {v}"));
+    let adjudicated = *adjudicated
+        .last()
+        .unwrap_or_else(|| panic!("no adjudication: {v}"));
+    let disk = axon_cortex::label::sha256_hex(&std::fs::read(ws.join("walk.ax")).unwrap());
+    assert_eq!(v["accepted"]["sha256"].as_str(), Some(adjudicated), "{v}");
+    assert_eq!(disk, adjudicated, "{v}");
+    assert_ne!(
+        adjudicated, c_pass,
+        "ATTACK: a later candidate's regressed hidden pass decided the adjudication: {v}"
+    );
+    let kept = std::fs::read_to_string(ws.join("walk.ax")).unwrap();
+    assert!(
+        kept.contains("fn a(n: i64) -> i64 {\n    n * 2\n}") && kept.contains("    n\n}"),
+        "{kept}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
 }
 
 /// R5 × the walk: an adjudicated state reached on one candidate is what the
@@ -3350,13 +3466,28 @@ fn adjudicated_walk(
     later: &str,
     extra: &[&str],
 ) -> (PathBuf, i32, serde_json::Value, String, String) {
-    let ws = workspace(name);
     let src = "fn a(n: i64) -> i64 {\n    n\n}\n\n\
                fn b(n: i64) -> i64 {\n    n * 3\n}\n\n\
                fn c() -> i64 {\n    0\n}\n\n\
                @[test]\nfn t() {\n    assert_eq(a(1) + b(1) + c(), 6)\n}\n\n\
                @[test]\nfn hidden() {\n    assert_eq(a(1), 2)\n    assert_eq(b(1), 3)\n}\n\n\
                fn main() {\n    println(to_str(a(1) + b(1) + c()))\n}\n";
+    let arms =
+        format!("a:0) printf '\\n    n + 10\\n' ;;\na:*) printf '\\n    n * 2\\n' ;;\n{later}");
+    scripted_walk(name, src, &arms, extra)
+}
+
+/// `cortex repair` of `walk.ax` = `src` against the hidden check `hidden`,
+/// with a `cmd:` generator whose `case "$function:$rejections"` arms are
+/// `arms` and which logs every call to `calls.log`.
+/// Returns (workspace, exit, verdict, stderr, generator calls).
+fn scripted_walk(
+    name: &str,
+    src: &str,
+    arms: &str,
+    extra: &[&str],
+) -> (PathBuf, i32, serde_json::Value, String, String) {
+    let ws = workspace(name);
     std::fs::write(ws.join("walk.ax"), src).unwrap();
     let gen = ws.join("gen.sh");
     common::write_executable(
@@ -3368,9 +3499,7 @@ fn adjudicated_walk(
              n=$(printf '%s\\n' \"$p\" | grep -c 'was REJECTED')\n\
              echo \"$f:$n\" >> \"$(dirname \"$0\")/calls.log\"\n\
              case \"$f:$n\" in\n\
-             a:0) printf '\\n    n + 10\\n' ;;\n\
-             a:*) printf '\\n    n * 2\\n' ;;\n\
-             {later}\
+             {arms}\
              esac\n"
         ),
         0o755,
