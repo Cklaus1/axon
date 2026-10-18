@@ -23,12 +23,17 @@ run before the freeze.
   the prior is refitted and the eligible cells whose fold-A shrunk rate is in
   the band are selected; their raw task-mean rate on fold B is the
   out-of-fold rate; then the reverse. The predicted test rate is the mean of
-  the out-of-fold rates weighted by each cell's TEST pool count.
+  the out-of-fold rates weighted by each cell's count in the selected
+  (capped) test set.
 * **hx-dev** = dev tasks with mixed outcomes (0 < successes < trials).
 * **Test selection** = test pool tasks in a kept cell, then at most `--cap`
   per program by build.py's seeded draw. Outcomes play no part.
 * **h45 check** (FU-1h iii): the k = 1 rate of the second model on the kept
   dev cells' tasks; informative iff it is in [0.1, 0.9].
+* **Acceptance** (`acceptance`): `--write-sets` writes nothing, exit 1, unless
+  the test set has >= 20 programs (FU-1c step 1) and >= 150 tasks and the
+  predicted test rate is in [0.2, 0.8] (FU-1 acceptance). The report is
+  always written.
 """
 import argparse
 import json
@@ -45,6 +50,8 @@ from stats import read_rows, task_rates  # noqa: E402
 BAND = (0.3, 0.7)
 MIN_TASKS, MIN_PROGRAMS = 12, 3
 H45_BAND = (0.1, 0.9)
+MIN_TEST_PROGRAMS, MIN_TEST_TASKS = 20, 150  # FU-1c step 1; FU-1 acceptance
+PREDICTED_BAND = (0.2, 0.8)  # FU-1 acceptance, cross-fitted predicted test rate
 MEANS = [i / 100 for i in range(1, 100)]
 PRECISIONS = [0.5 * 1.15 ** i for i in range(60)]  # 0.5 .. ~1900
 
@@ -157,6 +164,9 @@ def calibrate(meta, rows, seed, cap=8, cap_seed=0, band=BAND, min_tasks=MIN_TASK
     for t in test_pool:
         test_weight[cell_of(t)] = test_weight.get(cell_of(t), 0) + 1
     chosen = build.cap_per_program([t for t in test_pool if cell_of(t) in kept], cap, cap_seed)
+    chosen_weight = {}  # the cross-fit weights: the capped test set that will be run (FU-1c step 3)
+    for t in chosen:
+        chosen_weight[cell_of(t)] = chosen_weight.get(cell_of(t), 0) + 1
     return {
         "seed": seed, "cap": cap, "cap_seed": cap_seed, "band": list(band),
         "min_tasks": min_tasks, "min_programs": min_programs,
@@ -165,12 +175,27 @@ def calibrate(meta, rows, seed, cap=8, cap_seed=0, band=BAND, min_tasks=MIN_TASK
                       "shrunk_rate": shr[c], "eligible": c in eligible, "kept": c in kept,
                       "test_pool": test_weight.get(c, 0)} for c, e in sorted(ev.items())},
         "eligible": eligible, "kept": kept,
-        "crossfit": crossfit(meta, counts, ids, eligible, test_weight, seed, band),
+        "crossfit": crossfit(meta, counts, ids, eligible, chosen_weight, seed, band),
         "hx_dev": sorted(i for i in ids if 0 < counts[i][0] < counts[i][1]),
         "kept_dev_ids": sorted(i for i in ids if cell_of(meta[i]) in kept),
         "test_ids": sorted(t["id"] for t in chosen),
         "test_programs": len({t["program"] for t in chosen}),
     }
+
+
+def acceptance(rep):
+    """Reasons the FU-1 thresholds fail for this calibration ([] = accept):
+    test >= 20 programs (FU-1c step 1) and >= 150 tasks, cross-fitted
+    predicted test rate in [0.2, 0.8] (FU-1 acceptance)."""
+    out = []
+    if rep["test_programs"] < MIN_TEST_PROGRAMS:
+        out.append(f"test set has {rep['test_programs']} programs, below {MIN_TEST_PROGRAMS}")
+    if len(rep["test_ids"]) < MIN_TEST_TASKS:
+        out.append(f"test set has {len(rep['test_ids'])} tasks, below {MIN_TEST_TASKS}")
+    r = rep["crossfit"]["predicted_test_rate"]
+    if r is None or not in_band(r, PREDICTED_BAND):
+        out.append(f"cross-fitted predicted test rate {r} is outside {list(PREDICTED_BAND)}")
+    return out
 
 
 def write_subset(pool, ids, name, path, extra):
@@ -206,7 +231,11 @@ def main(argv=None):
     rep["pool_sha256"] = build.sha256_file(a.pool)
     with open(a.report, "w") as f:
         json.dump(rep, f, indent=1)
-    if a.write_sets:
+    refused = acceptance(rep)
+    if a.write_sets and refused:
+        for r in refused:
+            print("calibrate: REFUSED to write hx-dev/hx-test: " + r, file=sys.stderr)
+    elif a.write_sets:
         extra = {"report_sha256": build.sha256_file(a.report), "kept": rep["kept"]}
         write_subset(pool, rep["hx_dev"], "hx-dev", os.path.join(a.write_sets, "hx-dev.json"), extra)
         write_subset(pool, rep["test_ids"], "hx-test", os.path.join(a.write_sets, "hx-test.json"), extra)
@@ -217,8 +246,9 @@ def main(argv=None):
     print(json.dumps({k: rep[k] for k in ("eligible", "kept")} |
                      {"predicted_test_rate": rep["crossfit"]["predicted_test_rate"],
                       "hx_dev": len(rep["hx_dev"]), "test": len(rep["test_ids"]),
-                      "test_programs": rep["test_programs"], "h45": rep.get("h45")}, indent=1))
-    return 0
+                      "test_programs": rep["test_programs"], "h45": rep.get("h45"),
+                      "acceptance": refused or "ok"}, indent=1))
+    return 1 if a.write_sets and refused else 0
 
 
 if __name__ == "__main__":

@@ -195,6 +195,52 @@ def test_calibrate():
     for i in test:
         per[meta[i]["program"]] = per.get(meta[i]["program"], 0) + 1
     check(max(per.values()) <= 4 and len(test) == 20, f"calibrate: per-program cap 4, got {per}")
+    # IA-15: the prediction is weighted by the capped test set, not the pool
+    w = rep["crossfit"]["folds"][0]["cells"]["multi:2"]["test_weight"]
+    check(w == len(test), f"calibrate: cross-fit weight must count the capped test set ({w} != {len(test)})")
+    # IA-13: the FU-1 acceptance thresholds refuse the sets
+    why = calibrate.acceptance(rep)
+    check(any("programs" in r for r in why) and any("tasks" in r for r in why),
+          f"calibrate: 5 test programs / 20 tasks must be refused, got {why}")
+    ok = {"test_programs": 20, "test_ids": [f"t{i}" for i in range(150)],
+          "crossfit": {"predicted_test_rate": 0.5}}
+    check(calibrate.acceptance(ok) == [], f"calibrate: thresholds met must pass, got {calibrate.acceptance(ok)}")
+    for r in (0.19, 0.81, None):
+        check(calibrate.acceptance(dict(ok, crossfit={"predicted_test_rate": r})),
+              f"calibrate: predicted rate {r} must be refused")
+    import contextlib
+    import io
+    import json
+    import tempfile
+    d = tempfile.mkdtemp(prefix="hx_selftest_")
+    quiet = contextlib.ExitStack()  # the CLIs' stdout/stderr chatter
+    quiet.enter_context(contextlib.redirect_stdout(io.StringIO()))
+    quiet.enter_context(contextlib.redirect_stderr(io.StringIO()))
+    try:
+        pool, rp = os.path.join(d, "pool.json"), os.path.join(d, "rows.jsonl")
+        with open(pool, "w") as f:
+            json.dump({"meta": {"sources": {}}, "tasks": list(meta.values())}, f)
+        with open(rp, "w") as f:
+            f.write("".join(json.dumps(r) + "\n" for r in rows))
+        rc = calibrate.main(["--pool", pool, "--rows", rp, "--seed", "5", "--cap-seed", "9", "--cap", "4",
+                             "--report", os.path.join(d, "rep.json"), "--write-sets", d])
+        check(rc != 0 and not os.path.exists(os.path.join(d, "hx-test.json"))
+              and os.path.exists(os.path.join(d, "rep.json")),
+              f"calibrate: --write-sets must refuse (rc {rc}) and write no set, but keep the report")
+        # IA-16: power reads only the kept dev cells' rows
+        import power
+        out = os.path.join(d, "power.json")
+        power.main(["--dev-rows", rp, "--calibration", os.path.join(d, "rep.json"), "--cost-success", "0.001",
+                    "--cost-failure", "0.004", "--cap-usd", "100", "--seed", "1", "--sims", "4",
+                    "--n-grid", "24", "--ks", "3", "--min-programs", "4", "--per-program", "6",
+                    "--out", out])
+        got = json.load(open(out))["inputs"]["tasks"]
+        check(got == len(rep["kept_dev_ids"]) == 16, f"power: --calibration must keep {len(rep['kept_dev_ids'])} "
+              f"kept-cell dev tasks, used {got}")
+    finally:
+        quiet.close()
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
     # h45: k=1 rows on kept dev cells
     h45 = [{"id": f"m{n}", "trial": 1, "verified_clean": n < 2} for n in range(16)]
     hc = calibrate.h45_check(h45, rep["kept_dev_ids"])
@@ -269,6 +315,80 @@ def test_build():
     check(d1 == build.inputs_digest() and len(d1) == 64, "build: inputs digest deterministic")
     check(build.STRATUM_D and len(build.STRATUM_D) == 18, "build: stratum D lists 18 programs")
     test_cut_tests(build)
+    # IA-14: the recorded split keeps every prior program, so a prior dev
+    # program absent from one extension cannot be dealt to test by the next
+    rec_a = build.split_programs(progs, seed=3)
+    x = next(p for p in progs if rec_a[p] == "dev")
+    rest = [p for p in progs if p != x]
+    split_b = build.split_programs(rest + ["b1", "b2"], seed=5, prior=rec_a)
+    rec_b = build.recorded_split(rec_a, split_b)
+    check(rec_b.get(x) == "dev", "build: the recorded split must keep prior programs absent from this pool")
+    split_c = build.split_programs([x, "c1", "c2", "c3"], seed=6, prior=rec_b)
+    check(split_c[x] == "dev", "build: a prior dev program must never re-enter test in a chained extension")
+    test_rebuild(build)
+    test_names_symbol(build)
+
+
+REBUILD_SRC = '''fn f(xs: [i64], n: i64) -> i64 {
+    let mut s = 0
+    for i in 0..len(xs) {
+        if xs[i] < n {
+            s = s + xs[i] * 2
+        }
+    }
+    s
+}
+'''
+
+
+def test_rebuild(build):
+    """IA-11: a task's stored edits and operator labels are re-derived from
+    the pristine source, not trusted."""
+    import mutators as M
+    src = REBUILD_SRC
+    a, b = build._span(src, "f")
+    body = src[a:b]
+    sites = {(op, how): (list(M.edit_of(body, m)), how) for op, m, how in
+             M.sites(body, M.ALL_OPS, M.context(src, "f"), build.MAX_SITES)}
+    e_plus, h_plus = sites[("operator", "op:+->-")]
+    e_cmp, h_cmp = sites[("flip-comparison", "flip:<->>")]
+    e_bound, h_bound = sites[("bound", "bound:range-lo:0->1")]
+    good = build.rebuild(src, "f", "multi", ["operator", "flip-comparison"], [e_plus, e_cmp],
+                         f"multi:{h_plus} ; {h_cmp}")
+    want = src[:a] + M.compose(body, [e_plus, e_cmp]) + src[b:]
+    check(good == (want, None), f"build: rebuild must re-derive a genuine multi task ({good[1]})")
+    check(build.rebuild(src, "f", "subtle", ["bound"], [e_bound], h_bound)[1] is None,
+          "build: rebuild must accept a genuine subtle task")
+    bad = {
+        "a swapped operator label": ("multi", ["flip-comparison", "operator"], [e_plus, e_cmp],
+                                     f"multi:{h_plus} ; {h_cmp}"),
+        "an edit its operator does not make": ("multi", ["operator", "flip-comparison"],
+                                               [[e_plus[0], e_plus[1], "/"], e_cmp], f"multi:{h_plus} ; {h_cmp}"),
+        "overlapping edits": ("multi", ["operator", "operator"], [e_plus, e_plus], f"multi:{h_plus} ; {h_plus}"),
+        "a subtle task with a non-subtle operator": ("subtle", ["operator"], [e_plus], h_plus),
+        "a multi task with one edit": ("multi", ["operator"], [e_plus], h_plus),
+        "a single task with two edits": ("caller", ["operator", "flip-comparison"], [e_plus, e_cmp],
+                                         f"multi:{h_plus} ; {h_cmp}"),
+        "a `how` that does not match the edits": ("subtle", ["bound"], [e_bound], "bound:range-lo:0->2"),
+        "no edits": ("caps", [], [], h_plus),
+    }
+    for label, (cls, ops, edits, how) in bad.items():
+        out, why = build.rebuild(src, "f", cls, ops, edits, how)
+        check(out is None and why, f"build: rebuild must reject {label}")
+
+
+def test_names_symbol(build):
+    """IA-12: a caller task is rejected when ANY failing test the model sees
+    (every failing test but the hidden one) names g."""
+    res = {"t_vis": ("failed", "assert_eq failed: left 3, right 4"),
+           "t_other": ("failed", "panic in g: index out of range"),
+           "t_hidden": ("failed", "g returned 2"),
+           "t_ok": ("ok", "")}
+    check(build.names_symbol(res, "t_hidden", "g") == "t_other",
+          "build: a non-visible failing test naming g must be found")
+    res["t_other"] = ("failed", "big value wrong")
+    check(build.names_symbol(res, "t_hidden", "g") is None,
+          "build: the hidden test's text and \\bg\\b non-matches must not count")
 
 
 CUT_SRC = '''fn g(x: i64) -> i64 {
@@ -383,7 +503,7 @@ def main():
     for t in (test_stats, test_calibrate, test_power, test_build, test_mutators):
         try:
             t()
-        except Exception as e:  # a missing module or API is a failure, not a crash
+        except (Exception, SystemExit) as e:  # a missing module, API or CLI option is a failure, not a crash
             import traceback
             FAILS.append(f"{t.__name__}: {type(e).__name__}: {e}\n{traceback.format_exc(limit=3)}")
     if FAILS:

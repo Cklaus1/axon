@@ -4,12 +4,14 @@
     python3 power.py (--dev-rows DEV.jsonl [...] | --synthetic A,B,N,K) \\
         --cost-success USD --cost-failure USD [--cost2-success USD --cost2-failure USD --k2 1] \\
         --arms 3 --cap-usd 25 --seed N [--sims 1000] [--n-grid 80:241:16] [--ks 3,5] \\
-        [--c-fraction 0.5] [--out power.json]
+        [--c-fraction 0.5] [--calibration calibration.json] [--out power.json]
 
 * **Baseline rates.** Per task, the beta-binomial posterior mean of its dev
   k-trial counts (prior fitted across tasks, calibrate.eb_fit), so no task
   sits at exactly 0 or 1. `--synthetic A,B,N,K` draws N tasks with
-  p ~ Beta(A, B) and K trials each instead (seeded).
+  p ~ Beta(A, B) and K trials each instead (seeded). `--calibration REPORT`
+  (a calibrate.py report) keeps only its `kept_dev_ids` rows, the dev tasks
+  of the kept cells that hx-test is drawn from (both models' rows).
 * **Design.** n test tasks over G = max(20, ceil(n / 8)) programs (<= 8 tasks
   each, dealt round robin). Each simulated replicate draws n baseline rates
   from the pool with replacement.
@@ -215,6 +217,13 @@ def parse_grid(s):
     return [int(x) for x in s.split(",")]
 
 
+def kept_rates(rows, keep=None):
+    """{id: (successes, trials)} of the dev rows, restricted to `keep` (the
+    calibration's kept_dev_ids) when given."""
+    rates = stats.task_rates(rows)
+    return rates if keep is None else {i: r for i, r in rates.items() if i in keep}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     src = ap.add_mutually_exclusive_group(required=True)
@@ -240,14 +249,21 @@ def main(argv=None):
     ap.add_argument("--target", type=float, default=0.80)
     ap.add_argument("--exact", action="store_true")
     ap.add_argument("--out")
+    ap.add_argument("--calibration", metavar="REPORT",
+                    help="calibrate.py report: only its kept_dev_ids (dev tasks in kept cells) are used")
     a = ap.parse_args(argv)
+    keep = None
+    if a.calibration:
+        if not a.dev_rows:
+            ap.error("--calibration restricts --dev-rows")
+        keep = set(json.load(open(a.calibration))["kept_dev_ids"])
     if a.dev_rows:
-        counts = list(stats.task_rates(stats.read_rows(a.dev_rows)).values())
+        counts = list(kept_rates(stats.read_rows(a.dev_rows), keep).values())
     else:
         A, B, N, K = a.synthetic.split(",")
         counts = synthetic_counts(float(A), float(B), int(N), int(K), a.seed)
     rates = posterior_rates(counts)
-    rates2 = posterior_rates(list(stats.task_rates(stats.read_rows(a.dev_rows2)).values())) \
+    rates2 = posterior_rates(list(kept_rates(stats.read_rows(a.dev_rows2), keep).values())) \
         if a.dev_rows2 else None
     costs2 = {"success": a.cost2_success, "failure": a.cost2_failure} \
         if a.cost2_success is not None and a.cost2_failure is not None else None

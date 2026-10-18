@@ -58,7 +58,8 @@ Source of the design: `tasks/followup-spec.md` FU-1c, FU-1f, FU-1h and FU-10
   per task). A cell is kept iff its shrunk rate is in [0.3, 0.7].
 - Cross-fit: dev programs are split 2-fold (seeded); cells are selected on one
   fold and measured (raw) on the other, both ways. The out-of-fold kept-cell
-  rate, weighted by the test pool's cell counts, is the predicted test rate.
+  rate, weighted by the cell counts of the capped test set (the tasks that
+  will be run), is the predicted test rate.
 - Test tasks are selected by cell membership only. hx-dev (dev tasks with
   mixed outcomes) is for development, never a calibration source.
 
