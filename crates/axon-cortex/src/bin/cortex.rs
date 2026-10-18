@@ -199,12 +199,17 @@ cortex grant --file PATH [--symbol NAME] [--workspace DIR] [--axon PATH]
 CAPABILITY FENCE. A repair may not acquire a capability the original code did
 not hold. Before the walk, `axon caps` (the classifier `@[contained]` uses) is
 run by the pinned axon on the UNPATCHED file:
+  - a candidate body must stay inside the function it replaces: one that,
+    spliced in, closes it early (appending items of its own) or opens a
+    brace, string or comment it does not close is refused before anything of
+    it is written or run (`outside_symbol`, an `action_denied` event with
+    reason `body_outside_symbol`, the generator told why).
   - each target's static grant = what that function transitively reaches. A
     candidate body reaching anything else (`fs:write`, `net`, `exec`, ...,
     `effect:NAME` for a non-free effect, `unknown`) is refused BEFORE it runs:
     a rejected attempt (`capability_denied`, an `action_denied` event with
-    reason `capability:KINDS`, the kinds fed back to the generator); it counts
-    against --max-proposals.
+    reason `capability:KINDS`, the kinds fed back to the generator). Both
+    count against --max-proposals.
   - the runtime fence, from the whole file: every check runs with
     AXON_ALLOWED_EFFECTS = Chan,IO,Pure,Random,Time plus the file's own
     effects, and AXON_ALLOWED_FS_READ / AXON_ALLOWED_FS_WRITE /
@@ -1253,21 +1258,27 @@ fn main() {
         }
     }
 
-    // R5: the artifact a kept patch left, by digest of the bytes on disk now —
-    // equal to the deciding Verified event's `graded_sha256`, which the
-    // episode confirmed after its last acceptance spawn. Only exits 0 and 27
-    // keep a patch; every other run names none. An unreadable file is
-    // `sha256: null`, which matches no digest.
-    let accepted = (code == 0 || code == 27).then(|| {
-        let sha256 = match std::fs::read(workspace.join(&file)) {
-            Ok(b) => Some(axon_cortex::label::sha256_hex(&b)),
-            Err(e) => {
-                eprintln!("the accepted {file} could not be read back for its digest: {e}");
-                None
-            }
-        };
-        serde_json::json!({ "path": file, "sha256": sha256 })
-    });
+    // R5: the artifact a kept patch left, named by the digest the DECIDING
+    // Verified event graded (exit 0: the last `passed: true`; exit 27: the
+    // adjudicated event) — not by a late re-read, which happens after the
+    // audit call, the label append and whatever else ran since. The file on
+    // disk is read once more and must still be those bytes; otherwise the
+    // run fails closed: exit 22, `accepted: null`, the file restored as found
+    // (like every run that keeps no patch), and the reason on stderr. Only
+    // exits 0 and 27 keep a patch; every other run names none.
+    let (accepted, code, kind, detail, repaired) = match accepted_artifact(
+        &file,
+        code,
+        &runner.episode,
+        std::fs::read(workspace.join(&file)),
+    ) {
+        Ok(accepted) => (accepted, code, kind, detail, repaired),
+        Err(why) => {
+            eprintln!("cortex repair: {why}; the repair is NOT accepted");
+            let _ = std::fs::write(workspace.join(&file), &original);
+            (None, 22, "blocked", why, None)
+        }
+    };
 
     if json {
         println!(
@@ -1442,6 +1453,36 @@ fn main() {
         }
     }
     std::process::exit(code);
+}
+
+/// R5: the `accepted` object of a run that exited `code`, or why the kept
+/// patch cannot be reported as accepted. `Ok(None)`: the run keeps no patch
+/// (any exit but 0 and 27). Otherwise the digest is the deciding Verified
+/// event's `graded_sha256`, and `on_disk` — the file read now — must hash to
+/// it.
+fn accepted_artifact(
+    file: &str,
+    code: i32,
+    episode: &axon_cortex::episode::Episode,
+    on_disk: std::io::Result<Vec<u8>>,
+) -> Result<Option<serde_json::Value>, String> {
+    if code != 0 && code != 27 {
+        return Ok(None);
+    }
+    let Some(graded) = episode.deciding_graded_sha256(code) else {
+        return Err(format!(
+            "the deciding verdict on {file} carries no graded digest"
+        ));
+    };
+    let bytes = on_disk.map_err(|e| format!("the accepted {file} could not be read back: {e}"))?;
+    let now = axon_cortex::label::sha256_hex(&bytes);
+    if now != graded {
+        return Err(format!(
+            "{file} on disk (sha256 {now}) is not the bytes the hidden check graded \
+             (sha256 {graded}): it changed after acceptance"
+        ));
+    }
+    Ok(Some(serde_json::json!({ "path": file, "sha256": graded })))
 }
 
 /// `cortex locate --file F --check C [--json]`

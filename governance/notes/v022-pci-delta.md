@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 361bdfe965a43fc93d5e40220b7399e3daac2e10
+generated-at: 662b309ef59e323fd6c95154e6e13b8ece10ddd4
 
-`git diff --numstat 31413ca7..361bdfe9 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..662b309e -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -100,7 +100,7 @@ generated-at: 361bdfe965a43fc93d5e40220b7399e3daac2e10
 | `crates/axon-core/src/types.rs` | 89 | 0 |
 | total | 56563 | 7882 |
 
-`git log --reverse 31413ca7..361bdfe9 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..662b309e -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|

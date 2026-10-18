@@ -201,6 +201,25 @@ impl Episode {
             .unwrap_or(false)
     }
 
+    /// R5: the `graded_sha256` of the event that DECIDED a kept patch — for a
+    /// verified run (exit 0) the last `passed: true` Verified event, for an
+    /// adjudicated-not-clean one (exit 27) the last Verified event carrying a
+    /// digest. None for any other exit, or when that event carries none.
+    pub fn deciding_graded_sha256(&self, exit_code: i32) -> Option<&str> {
+        self.events.iter().rev().find_map(|e| match e {
+            EpisodeEvent::Verified {
+                passed,
+                graded_sha256,
+                ..
+            } => match exit_code {
+                0 if *passed => Some(graded_sha256.as_deref()),
+                27 if graded_sha256.is_some() => Some(graded_sha256.as_deref()),
+                _ => None,
+            },
+            _ => None,
+        })?
+    }
+
     /// Every action the catalog refused. Reviewers read this first.
     pub fn denials(&self) -> Vec<&str> {
         self.events
@@ -210,5 +229,41 @@ impl Episode {
                 _ => None,
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn verified(passed: bool, graded: Option<&str>) -> EpisodeEvent {
+        EpisodeEvent::Verified {
+            passed,
+            detail: String::new(),
+            graded_sha256: graded.map(str::to_string),
+        }
+    }
+
+    /// R5: exit 0 is decided by the last passing verdict, exit 27 by the
+    /// last one carrying a digest; no other exit names one.
+    #[test]
+    fn the_deciding_event_names_the_graded_digest() {
+        let mut ep = Episode::new("e");
+        ep.push(verified(true, Some("old")));
+        ep.push(verified(false, None));
+        ep.push(verified(true, Some("new")));
+        assert_eq!(ep.deciding_graded_sha256(0), Some("new"));
+        assert_eq!(ep.deciding_graded_sha256(21), None);
+        ep.push(verified(true, None));
+        assert_eq!(
+            ep.deciding_graded_sha256(0),
+            None,
+            "the deciding event has none"
+        );
+        let mut ep = Episode::new("e");
+        ep.push(verified(false, Some("adj")));
+        ep.push(verified(false, None));
+        assert_eq!(ep.deciding_graded_sha256(27), Some("adj"));
+        assert_eq!(ep.deciding_graded_sha256(0), None);
     }
 }

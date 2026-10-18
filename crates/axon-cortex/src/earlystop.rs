@@ -104,9 +104,10 @@ pub fn is_inert(baseline: &[String], attempt: &AttemptSignal) -> bool {
 
 /// The run of inert proposals ending the candidate's history. A proposal that
 /// did not compile, whose check stopped at a process bound (R2), or that was
-/// refused for a capability before it ran (R1b) neither extends nor breaks
-/// it: no verdict came back, so nothing was learned about whether the
-/// verdict moves. Any other proposal ends it.
+/// refused before it ran — for a capability (R1b) or for reaching outside the
+/// function it replaces — neither extends nor breaks it: no verdict came
+/// back, so nothing was learned about whether the verdict moves. Any other
+/// proposal ends it.
 pub fn inert_streak(baseline: &[String], attempts: &[AttemptSignal]) -> usize {
     let mut streak = 0;
     for a in attempts.iter().rev() {
@@ -115,6 +116,7 @@ pub fn inert_streak(baseline: &[String], attempts: &[AttemptSignal]) -> usize {
             RejectionReason::DidNotCompile
                 | RejectionReason::TimedOut
                 | RejectionReason::CapabilityDenied
+                | RejectionReason::OutsideSymbol
         ) {
             continue;
         }
@@ -234,5 +236,16 @@ mod tests {
         let denied = |n| att(n, RejectionReason::CapabilityDenied, None);
         assert_eq!(inert_streak(&base, &[inert(1), denied(2), inert(3)]), 2);
         assert_eq!(inert_streak(&base, &[inert(1), denied(2)]), 1);
+    }
+
+    /// A proposal refused for reaching outside its function never ran a
+    /// check either.
+    #[test]
+    fn streak_skips_outside_symbol_attempts() {
+        let base = names(&["t"]);
+        let inert = |n| att(n, RejectionReason::CheckRefused, Some(&["t"]));
+        let outside = |n| att(n, RejectionReason::OutsideSymbol, None);
+        assert_eq!(inert_streak(&base, &[inert(1), outside(2), inert(3)]), 2);
+        assert_eq!(inert_streak(&base, &[inert(1), outside(2)]), 1);
     }
 }

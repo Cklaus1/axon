@@ -58,10 +58,16 @@ it stops being evidence.
 **The capability fence** keeps a candidate from acquiring host authority the
 original code did not hold. Before the walk the pinned axon's `axon caps` (the
 classifier `@[contained]` uses) runs on the unpatched file. Each target's
-static grant is what that function transitively reaches; a candidate body
+static grant is what that function transitively reaches. First, a candidate
+body must stay inside the function it replaces: spliced in, the target is
+re-located (strings and comments read as the Axon lexer reads them) and must
+end exactly where the body does, so a body that closes the function and
+appends items of its own, or opens a brace, string or comment it does not
+close, is refused — `outside_symbol`, an `action_denied` event with reason
+`body_outside_symbol`, nothing written or run. Then a candidate body
 reaching anything else (`fs:write`, `net`, `exec`, a non-free `effect:NAME`,
 or something the walker cannot classify) is refused BEFORE it runs — a
-rejected attempt, `capability_denied`, fed back to the generator, and counted
+rejected attempt, `capability_denied`, fed back to the generator. Both count
 against `--max-proposals`. Every check also runs under a runtime fence derived
 from the whole file: `AXON_ALLOWED_EFFECTS` = Chan, IO, Pure, Random, Time plus
 the file's own effects, and `AXON_ALLOWED_FS_READ` / `AXON_ALLOWED_FS_WRITE` /
@@ -84,7 +90,10 @@ under `budget` in `--json`.
 **The accepted artifact is bound to its evidence.** The bytes the hidden check
 graded are digested before it spawns and re-read after the last acceptance
 check; a file changed in between is never accepted. `--json` reports
-`accepted: {path, sha256}` on exits 0 and 27.
+`accepted: {path, sha256}` on exits 0 and 27, where `sha256` is the digest the
+deciding verdict graded; the file is read once more before the run reports,
+and if it is no longer those bytes (changed after acceptance) the run fails
+closed: exit 22 `blocked`, `accepted: null`, the file restored as found.
 
 **The adjudicator** must be able to witness the repair. A check that already
 passes would accept the file unchanged, so it is refused (exit 26) rather than

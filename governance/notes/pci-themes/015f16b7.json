@@ -1,0 +1,1 @@
+{"theme": "repair feedback bounds", "text": "cortex R4: the visible-test feedback's printed-output line bound now counts the lines it cuts in `truncated`, like every other bound of the typed feedback; a generator is never told nothing was cut when the tail of what the tests printed was dropped."}

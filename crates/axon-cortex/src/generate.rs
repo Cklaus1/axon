@@ -129,6 +129,12 @@ pub enum RejectionReason {
     /// `refusal.capabilities` names the kinds. Skipped by the early-stop
     /// signals like [`Self::DidNotCompile`]: no check of it ran.
     CapabilityDenied,
+    /// Spliced in, it does not stay inside the function it replaces: it
+    /// closes the body and reaches the text around it (a new top-level item,
+    /// an edit to another one), or opens a brace, string or comment it does
+    /// not close. Refused before anything of it ran or was written; skipped by
+    /// the early-stop signals like [`Self::DidNotCompile`].
+    OutsideSymbol,
 }
 
 impl RejectionReason {
@@ -140,6 +146,7 @@ impl RejectionReason {
             RejectionReason::CheckerObjected => "checker_objected",
             RejectionReason::TimedOut => "timed_out",
             RejectionReason::CapabilityDenied => "capability_denied",
+            RejectionReason::OutsideSymbol => "outside_symbol",
         }
     }
 }
@@ -159,6 +166,10 @@ impl std::fmt::Display for RejectionReason {
             RejectionReason::CapabilityDenied => write!(
                 f,
                 "it uses a capability the original function does not hold, so it was not run"
+            ),
+            RejectionReason::OutsideSymbol => write!(
+                f,
+                "it reaches outside the function it replaces, so it was not run"
             ),
         }
     }
@@ -326,6 +337,7 @@ pub fn build_prompt(obs: &Observation, target: &SymbolRef, c: &PatchConstraints)
                 RejectionReason::CapabilityDenied => {
                     "It was refused before running, for capabilities the original does not hold"
                 }
+                RejectionReason::OutsideSymbol => "It was refused before running",
             };
             history.push_str(&format!("{label} (JSON):\n```json\n{}\n```\n", f.to_json()));
         }
