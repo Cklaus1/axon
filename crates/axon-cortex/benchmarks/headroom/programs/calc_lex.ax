@@ -1,0 +1,275 @@
+// Integer calculator: a tokenizer and a recursive-descent evaluator for
+// expressions with + - * / (truncating), unary minus and parentheses.
+// Bad input yields Err with a short message instead of a value.
+
+type Tok = Num { v: i64 } | Plus | Minus | Star | Slash | LParen | RParen
+
+// A parsed value plus the index of the first unconsumed token.
+type Pv = { value: i64, pos: i64 }
+
+@[contained]
+fn is_digit(c: i64) -> bool {
+    c >= 48 && c <= 57
+}
+
+fn tokenize(s: str) -> Result<[Tok], str> {
+    let out: [Tok] = []
+    let i = 0
+    let n = len(s)
+    while i < n {
+        let c = char_at(s, i)
+        if is_digit(c) {
+            let v = 0
+            while i < n && is_digit(char_at(s, i)) {
+                v = v * 10 + (char_at(s, i) - 48)
+                i = i + 1
+            }
+            out = arr_push(out, Tok::Num { v: v })
+        } else {
+            if c == 43 { out = arr_push(out, Tok::Plus) }
+            else if c == 45 { out = arr_push(out, Tok::Minus) }
+            else if c == 42 { out = arr_push(out, Tok::Star) }
+            else if c == 47 { out = arr_push(out, Tok::Slash) }
+            else if c == 40 { out = arr_push(out, Tok::LParen) }
+            else if c == 41 { out = arr_push(out, Tok::RParen) }
+            else if c != 32 { return Err("unexpected char at " + to_str(i)) }
+            i = i + 1
+        }
+    }
+    Ok(out)
+}
+
+// factor := NUM | '-' factor | '(' expr ')'
+fn parse_factor(toks: &[Tok], pos: i64) -> Result<Pv, str> {
+    if pos >= len(toks) {
+        return Err("unexpected end")
+    }
+    match toks[pos] {
+        Tok::Num { v } => Ok(Pv { value: v, pos: pos + 1 })
+        Tok::Minus => {
+            let inner = parse_factor(toks, pos + 1)?
+            Ok(Pv { value: 0 - inner.value, pos: inner.pos })
+        }
+        Tok::LParen => {
+            let inner = parse_expr(toks, pos + 1)?
+            if inner.pos >= len(toks) {
+                return Err("missing )")
+            }
+            match toks[inner.pos] {
+                Tok::RParen => Ok(Pv { value: inner.value, pos: inner.pos + 1 })
+                _ => Err("missing )")
+            }
+        }
+        _ => Err("unexpected token at " + to_str(pos))
+    }
+}
+
+// term := factor (('*' | '/') factor)*
+fn parse_term(toks: &[Tok], pos: i64) -> Result<Pv, str> {
+    let acc = parse_factor(toks, pos)?
+    let done = false
+    while !done && acc.pos < len(toks) {
+        let op = match toks[acc.pos] { Tok::Star => 1  Tok::Slash => 2  _ => 0 }
+        if op == 0 {
+            done = true
+        } else {
+            let rhs = parse_factor(toks, acc.pos + 1)?
+            if op == 1 {
+                acc = Pv { value: acc.value * rhs.value, pos: rhs.pos }
+            } else {
+                if rhs.value == 0 { return Err("division by zero") }
+                acc = Pv { value: acc.value / rhs.value, pos: rhs.pos }
+            }
+        }
+    }
+    Ok(acc)
+}
+
+// expr := term (('+' | '-') term)*
+fn parse_expr(toks: &[Tok], pos: i64) -> Result<Pv, str> {
+    let acc = parse_term(toks, pos)?
+    let done = false
+    while !done && acc.pos < len(toks) {
+        let sign = match toks[acc.pos] { Tok::Plus => 1  Tok::Minus => -1  _ => 0 }
+        if sign == 0 {
+            done = true
+        } else {
+            let rhs = parse_term(toks, acc.pos + 1)?
+            acc = Pv { value: acc.value + sign * rhs.value, pos: rhs.pos }
+        }
+    }
+    Ok(acc)
+}
+
+// Deepest parenthesis nesting, or -1 if the parentheses are unbalanced.
+fn paren_depth(toks: &[Tok]) -> i64 {
+    let depth = 0
+    let best = 0
+    for i in 0..len(toks) {
+        match toks[i] {
+            Tok::LParen => {
+                depth = depth + 1
+                best = max_i64(best, depth)
+            }
+            Tok::RParen => {
+                depth = depth - 1
+                if depth < 0 { return -1 }
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 { -1 } else { best }
+}
+
+// Evaluate `s`, refusing input nested deeper than `max_depth`.
+fn evaluate(s: str, max_depth: i64 where max_depth >= 0) -> Result<i64, str> {
+    let toks: [Tok] = tokenize(s)?
+    if len(toks) == 0 {
+        return Err("empty")
+    }
+    let d = paren_depth(&toks)
+    if d < 0 {
+        return Err("unbalanced")
+    }
+    if d > max_depth {
+        return Err("too deep")
+    }
+    let r = parse_expr(&toks, 0)?
+    if r.pos != len(toks) {
+        return Err("trailing input at " + to_str(r.pos))
+    }
+    Ok(r.value)
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn ev(s: str) -> i64 {
+    match evaluate(s, 10) { Ok(v) => v  Err(_) => -999999 }
+}
+
+fn ev_err(s: str) -> str {
+    match evaluate(s, 10) { Ok(_) => "ok"  Err(e) => e }
+}
+
+@[test]
+fn test_is_digit() {
+    assert(is_digit(48))
+    assert(is_digit(57))
+    assert(!is_digit(47))
+    assert(!is_digit(58))
+}
+
+@[test]
+fn test_tokenize_counts_and_values() {
+    match tokenize("12+(3 * 45)") {
+        Ok(t) => {
+            let ts: [Tok] = t
+            assert_eq(len(ts), 7)
+            match ts[0] { Tok::Num { v } => assert_eq(v, 12)  _ => assert(false) }
+            match ts[5] { Tok::Num { v } => assert_eq(v, 45)  _ => assert(false) }
+            match ts[6] { Tok::RParen => assert(true)  _ => assert(false) }
+        }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_tokenize_errors_and_empty() {
+    match tokenize("1 + x") { Ok(_) => assert(false)  Err(e) => assert(e == "unexpected char at 4") }
+    match tokenize("   ") {
+        Ok(t) => { let ts: [Tok] = t  assert_eq(len(ts), 0) }
+        Err(_) => assert(false)
+    }
+    match tokenize("0") {
+        Ok(t) => match t[0] { Tok::Num { v } => assert_eq(v, 0)  _ => assert(false) }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_parse_factor_direct() {
+    let toks = [Tok::Minus, Tok::Minus, Tok::Num { v: 7 }]
+    match parse_factor(&toks, 0) {
+        Ok(p) => { assert_eq(p.value, 7) assert_eq(p.pos, 3) }
+        Err(_) => assert(false)
+    }
+    match parse_factor(&toks, 3) { Ok(_) => assert(false)  Err(e) => assert(e == "unexpected end") }
+    match parse_factor(&[Tok::Star], 0) { Ok(_) => assert(false)  Err(e) => assert(e == "unexpected token at 0") }
+}
+
+@[test]
+fn test_parse_term_direct() {
+    let toks = [Tok::Num { v: 20 }, Tok::Slash, Tok::Num { v: 3 }, Tok::Star, Tok::Num { v: 2 }, Tok::Plus]
+    match parse_term(&toks, 0) {
+        Ok(p) => { assert_eq(p.value, 12) assert_eq(p.pos, 5) }
+        Err(_) => assert(false)
+    }
+    match parse_term(&[Tok::Num { v: 1 }, Tok::Slash, Tok::Num { v: 0 }], 0) {
+        Ok(_) => assert(false)
+        Err(e) => assert(e == "division by zero")
+    }
+}
+
+@[test]
+fn test_parse_expr_direct() {
+    let toks = [Tok::Num { v: 10 }, Tok::Minus, Tok::Num { v: 4 }, Tok::Minus, Tok::Num { v: 3 }, Tok::RParen]
+    match parse_expr(&toks, 0) {
+        Ok(p) => { assert_eq(p.value, 3) assert_eq(p.pos, 5) }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_paren_depth() {
+    match tokenize("((1)+(2*(3)))") {
+        Ok(t) => assert_eq(paren_depth(&t), 3)
+        Err(_) => assert(false)
+    }
+    assert_eq(paren_depth(&[Tok::Num { v: 1 }]), 0)
+    assert_eq(paren_depth(&[Tok::RParen, Tok::LParen]), -1)
+    assert_eq(paren_depth(&[Tok::LParen, Tok::LParen, Tok::RParen]), -1)
+}
+
+@[test]
+fn test_evaluate_precedence() {
+    assert_eq(ev("2+3*4"), 14)
+    assert_eq(ev("(2+3)*4"), 20)
+    assert_eq(ev("100 / 7 / 2"), 7)
+    assert_eq(ev("8-3-2"), 3)
+    assert_eq(ev("2*3-4*5"), -14)
+}
+
+@[test]
+fn test_evaluate_unary_and_truncation() {
+    assert_eq(ev("-5+2"), -3)
+    assert_eq(ev("-(3*3)"), -9)
+    assert_eq(ev("-7/2"), -3)
+    assert_eq(ev("4*-2"), -8)
+    assert_eq(ev("0"), 0)
+}
+
+@[test]
+fn test_evaluate_errors() {
+    assert(ev_err("") == "empty")
+    assert(ev_err("1+") == "unexpected end")
+    assert(ev_err("(1+2") == "unbalanced")
+    assert(ev_err("1 2") == "trailing input at 1")
+    assert(ev_err("6/(3-3)") == "division by zero")
+    assert(ev_err("2 $ 3") == "unexpected char at 2")
+}
+
+@[test]
+fn test_evaluate_depth_limit() {
+    match evaluate("((4))", 2) { Ok(v) => assert_eq(v, 4)  Err(_) => assert(false) }
+    match evaluate("((4))", 1) { Ok(_) => assert(false)  Err(e) => assert(e == "too deep") }
+    match evaluate("9-1", 0) { Ok(v) => assert_eq(v, 8)  Err(_) => assert(false) }
+}
+
+@[test]
+fn test_evaluate_nested_mix() {
+    assert_eq(ev("((1+2)*(3+4))/(2)"), 10)
+    assert_eq(ev("10-(2-(3-1))"), 10)
+    assert_eq(ev(" 12 * ( 3 + -1 ) "), 24)
+}

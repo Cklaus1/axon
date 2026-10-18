@@ -1,0 +1,224 @@
+// Playlist arithmetic on song durations in seconds: totals, clock-style
+// formatting, greedily fitting songs into a time limit, and the longest
+// run of consecutive songs by the same artist.
+
+type Song = { title: str, artist: str, secs: i64 }
+
+fn total_secs(songs: &[Song]) -> i64 {
+    let t = 0
+    for i in 0..len(songs) {
+        t = t + songs[i].secs
+    }
+    t
+}
+
+@[contained]
+fn pad2(n: i64) -> str {
+    if n < 10 { "0" + to_str(n) } else { to_str(n) }
+}
+
+// Under an hour "mm:ss"; otherwise "h:mm:ss".
+fn format_duration(secs: i64 where secs >= 0) -> str {
+    let h = secs / 3600
+    let m = (secs % 3600) / 60
+    let s = secs % 60
+    if h == 0 {
+        pad2(m) + ":" + pad2(s)
+    } else {
+        to_str(h) + ":" + pad2(m) + ":" + pad2(s)
+    }
+}
+
+fn playlist_length(songs: &[Song]) -> str {
+    format_duration(total_secs(songs))
+}
+
+// Walks the list in order and keeps every song that still fits in the
+// remaining time; songs that do not fit are skipped, not fatal.
+fn fit_greedy(songs: &[Song], limit: i64) -> [i64] {
+    let picked: [i64] = []
+    let used = 0
+    for i in 0..len(songs) {
+        if used + songs[i].secs <= limit {
+            picked = arr_push(picked, i)
+            used = used + songs[i].secs
+        }
+    }
+    picked
+}
+
+fn fitted_secs(songs: &[Song], limit: i64) -> i64 {
+    let picked = fit_greedy(songs, limit)
+    let t = 0
+    for k in 0..len(picked) {
+        t = t + songs[picked[k]].secs
+    }
+    t
+}
+
+// Unused time left after the greedy fit, formatted.
+fn time_left(songs: &[Song], limit: i64) -> str {
+    format_duration(limit - fitted_secs(songs, limit))
+}
+
+// Start index of the longest run of consecutive songs by one artist;
+// the earliest run wins ties. -1 for an empty playlist.
+@[contained]
+fn longest_run_start(songs: &[Song]) -> i64 {
+    if len(songs) == 0 {
+        return -1
+    }
+    let best_start = 0
+    let best_len = 1
+    let run_start = 0
+    for i in 1..len(songs) {
+        if songs[i].artist != songs[i - 1].artist {
+            run_start = i
+        }
+        let run_len = i - run_start + 1
+        if run_len > best_len {
+            best_len = run_len
+            best_start = run_start
+        }
+    }
+    best_start
+}
+
+fn longest_run_length(songs: &[Song]) -> i64 {
+    let start = longest_run_start(songs)
+    if start < 0 {
+        return 0
+    }
+    let n = 0
+    let i = start
+    while i < len(songs) && songs[i].artist == songs[start].artist {
+        n = n + 1
+        i = i + 1
+    }
+    n
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn song(artist: str, secs: i64) -> Song {
+    Song { title: "t", artist: artist, secs: secs }
+}
+
+fn main() {
+    let ps = [song("a", 200), song("a", 185), song("b", 240)]
+    println(playlist_length(&ps))
+}
+
+@[test]
+fn test_total_secs() {
+    assert_eq(total_secs(&[song("a", 200), song("b", 185)]), 385)
+    let none: [Song] = []
+    assert_eq(total_secs(&none), 0)
+}
+
+@[test]
+fn test_pad2() {
+    assert(pad2(0) == "00")
+    assert(pad2(9) == "09")
+    assert(pad2(10) == "10")
+    assert(pad2(59) == "59")
+}
+
+@[test]
+fn test_format_duration_short() {
+    assert(format_duration(0) == "00:00")
+    assert(format_duration(59) == "00:59")
+    assert(format_duration(60) == "01:00")
+    assert(format_duration(605) == "10:05")
+    assert(format_duration(3599) == "59:59")
+}
+
+@[test]
+fn test_format_duration_hours() {
+    assert(format_duration(3600) == "1:00:00")
+    assert(format_duration(3725) == "1:02:05")
+    assert(format_duration(36000) == "10:00:00")
+}
+
+@[test]
+fn test_playlist_length() {
+    let ps = [song("a", 200), song("a", 185), song("b", 240)]
+    assert(playlist_length(&ps) == "10:25")
+    let long = [song("a", 1800), song("b", 1800), song("c", 9)]
+    assert(playlist_length(&long) == "1:00:09")
+    let none: [Song] = []
+    assert(playlist_length(&none) == "00:00")
+}
+
+@[test]
+fn test_fit_greedy() {
+    let ps = [song("a", 300), song("b", 400), song("c", 200), song("d", 100)]
+    let p = fit_greedy(&ps, 600)
+    assert_eq(len(p), 3)
+    assert_eq(p[0], 0)
+    assert_eq(p[1], 2)
+    assert_eq(p[2], 3)
+    let exact = fit_greedy(&ps, 700)
+    assert_eq(len(exact), 2)
+    assert_eq(exact[1], 1)
+}
+
+@[test]
+fn test_fit_greedy_edges() {
+    let ps = [song("a", 300), song("b", 400)]
+    assert_eq(len(fit_greedy(&ps, 0)), 0)
+    assert_eq(len(fit_greedy(&ps, 299)), 0)
+    assert_eq(len(fit_greedy(&ps, 300)), 1)
+    assert_eq(len(fit_greedy(&ps, 10000)), 2)
+}
+
+@[test]
+fn test_fitted_secs() {
+    let ps = [song("a", 300), song("b", 400), song("c", 200), song("d", 100)]
+    assert_eq(fitted_secs(&ps, 600), 600)
+    assert_eq(fitted_secs(&ps, 550), 500)
+    assert_eq(fitted_secs(&ps, 99), 0)
+    assert_eq(fitted_secs(&ps, 2000), 1000)
+}
+
+@[test]
+fn test_time_left() {
+    let ps = [song("a", 300), song("b", 400), song("c", 200), song("d", 100)]
+    assert(time_left(&ps, 550) == "00:50")
+    assert(time_left(&ps, 600) == "00:00")
+    assert(time_left(&ps, 4600) == "1:00:00")
+}
+
+@[test]
+fn test_longest_run_start() {
+    let ps = [song("x", 1), song("y", 1), song("y", 1), song("z", 1), song("z", 1), song("z", 1)]
+    assert_eq(longest_run_start(&ps), 3)
+    let tie = [song("x", 1), song("x", 1), song("y", 1), song("y", 1)]
+    assert_eq(longest_run_start(&tie), 0)
+    let none: [Song] = []
+    assert_eq(longest_run_start(&none), -1)
+    let solo = [song("x", 1), song("y", 1)]
+    assert_eq(longest_run_start(&solo), 0)
+}
+
+@[test]
+fn test_longest_run_length() {
+    let ps = [song("x", 1), song("y", 1), song("y", 1), song("z", 1), song("z", 1), song("z", 1)]
+    assert_eq(longest_run_length(&ps), 3)
+    let mid = [song("x", 1), song("y", 1), song("y", 1), song("x", 1)]
+    assert_eq(longest_run_length(&mid), 2)
+    let same = [song("q", 1), song("q", 1), song("q", 1), song("q", 1)]
+    assert_eq(longest_run_length(&same), 4)
+    let none: [Song] = []
+    assert_eq(longest_run_length(&none), 0)
+}
+
+@[test]
+fn test_longest_run_split_artist() {
+    // the same artist in two separate runs must not be merged
+    let ps = [song("x", 1), song("x", 1), song("y", 1), song("x", 1), song("x", 1), song("x", 1)]
+    assert_eq(longest_run_start(&ps), 3)
+    assert_eq(longest_run_length(&ps), 3)
+}

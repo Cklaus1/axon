@@ -1,0 +1,206 @@
+// Invoice totals. Each line has a quantity, a unit price in cents, a
+// percentage discount and a tax category. Discounts and taxes are
+// computed per line and rounded half away from zero to whole cents.
+
+type Line = { sku: str, category: i64, qty: i64, unit_cents: i64, discount_pct: i64 }
+type Totals = { net: i64, tax: i64, total: i64 }
+
+// num / den rounded half away from zero (den > 0).
+@[contained]
+fn round_div(num: i64, den: i64) -> i64 {
+    if num >= 0 {
+        (num + den / 2) / den
+    } else {
+        -((-num + den / 2) / den)
+    }
+}
+
+// Tax rate in basis points: 0 food 7%, 1 general 19%, 2 books 5%,
+// 3 exempt 0%.
+@[contained]
+fn tax_rate_bp(category: i64) -> Result<i64, str> {
+    if category == 0 {
+        Ok(700)
+    } else if category == 1 {
+        Ok(1900)
+    } else if category == 2 {
+        Ok(500)
+    } else if category == 3 {
+        Ok(0)
+    } else {
+        Err("unknown tax category " + to_str(category))
+    }
+}
+
+fn discount_cents(gross: i64, pct: i64 where pct >= 0 && pct <= 100) -> i64 {
+    round_div(gross * pct, 100)
+}
+
+fn line_net(l: Line) -> i64 {
+    let gross = l.qty * l.unit_cents
+    gross - discount_cents(gross, l.discount_pct)
+}
+
+fn line_tax(l: Line) -> Result<i64, str> {
+    let bp = tax_rate_bp(l.category)?
+    Ok(round_div(line_net(l) * bp, 10000))
+}
+
+fn invoice_totals(lines: &[Line]) -> Result<Totals, str> {
+    let net = 0
+    let tax = 0
+    for i in 0..len(lines) {
+        net = net + line_net(lines[i])
+        tax = tax + line_tax(lines[i])?
+    }
+    Ok(Totals { net: net, tax: tax, total: net + tax })
+}
+
+// Tax collected for one category across the invoice.
+fn tax_for_category(lines: &[Line], category: i64) -> Result<i64, str> {
+    let sum = 0
+    for i in 0..len(lines) {
+        if lines[i].category == category {
+            sum = sum + line_tax(lines[i])?
+        }
+    }
+    Ok(sum)
+}
+
+// "12.34", "0.05", "-3.40".
+fn format_cents(cents: i64) -> str {
+    let a = abs_i64(cents)
+    let frac = a % 100
+    let pad = if frac < 10 { "0" } else { "" }
+    let sign = if cents < 0 { "-" } else { "" }
+    sign + to_str(a / 100) + "." + pad + to_str(frac)
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn item(cat: i64, qty: i64, unit: i64, disc: i64) -> Line {
+    Line { sku: "x", category: cat, qty: qty, unit_cents: unit, discount_pct: disc }
+}
+
+fn totals_or_zero(lines: &[Line]) -> Totals {
+    match invoice_totals(lines) {
+        Ok(t) => t
+        Err(_) => Totals { net: -1, tax: -1, total: -1 }
+    }
+}
+
+fn main() {
+    let lines = [item(0, 3, 199, 0), item(1, 1, 2999, 10)]
+    let t = totals_or_zero(&lines)
+    println("total " + format_cents(t.total))
+}
+
+@[test]
+fn test_round_div() {
+    assert_eq(round_div(250, 100), 3)
+    assert_eq(round_div(249, 100), 2)
+    assert_eq(round_div(-250, 100), -3)
+    assert_eq(round_div(-249, 100), -2)
+    assert_eq(round_div(0, 7), 0)
+    assert_eq(round_div(10, 4), 3)
+}
+
+@[test]
+fn test_tax_rate_bp() {
+    match tax_rate_bp(0) { Ok(v) => assert_eq(v, 700)  Err(_) => assert(false) }
+    match tax_rate_bp(1) { Ok(v) => assert_eq(v, 1900)  Err(_) => assert(false) }
+    match tax_rate_bp(3) { Ok(v) => assert_eq(v, 0)  Err(_) => assert(false) }
+    match tax_rate_bp(4) { Ok(_) => assert(false)  Err(e) => assert(e == "unknown tax category 4") }
+    match tax_rate_bp(-1) { Ok(_) => assert(false)  Err(_) => assert(true) }
+}
+
+@[test]
+fn test_discount_cents() {
+    assert_eq(discount_cents(1000, 0), 0)
+    assert_eq(discount_cents(1000, 100), 1000)
+    assert_eq(discount_cents(2999, 10), 300)
+    assert_eq(discount_cents(1250, 15), 188)
+}
+
+@[test]
+fn test_line_net() {
+    assert_eq(line_net(item(0, 3, 199, 0)), 597)
+    assert_eq(line_net(item(1, 1, 2999, 10)), 2699)
+    assert_eq(line_net(item(1, 0, 500, 20)), 0)
+    assert_eq(line_net(item(2, 2, 625, 15)), 1062)
+}
+
+@[test]
+fn test_line_tax() {
+    // 597 * 7% = 41.79 -> 42 ; 2699 * 19% = 512.81 -> 513
+    match line_tax(item(0, 3, 199, 0)) { Ok(v) => assert_eq(v, 42)  Err(_) => assert(false) }
+    match line_tax(item(1, 1, 2999, 10)) { Ok(v) => assert_eq(v, 513)  Err(_) => assert(false) }
+    // 1062 * 5% = 53.1 -> 53 ; exempt -> 0
+    match line_tax(item(2, 2, 625, 15)) { Ok(v) => assert_eq(v, 53)  Err(_) => assert(false) }
+    match line_tax(item(3, 4, 999, 0)) { Ok(v) => assert_eq(v, 0)  Err(_) => assert(false) }
+}
+
+@[test]
+fn test_line_tax_half_cent() {
+    // 50 * 7% = 3.5 -> 4 ; 10 * 5% = 0.5 -> 1 ; 9 * 5% = 0.45 -> 0
+    match line_tax(item(0, 1, 50, 0)) { Ok(v) => assert_eq(v, 4)  Err(_) => assert(false) }
+    match line_tax(item(2, 1, 10, 0)) { Ok(v) => assert_eq(v, 1)  Err(_) => assert(false) }
+    match line_tax(item(2, 1, 9, 0)) { Ok(v) => assert_eq(v, 0)  Err(_) => assert(false) }
+}
+
+@[test]
+fn test_invoice_totals() {
+    let lines = [item(0, 3, 199, 0), item(1, 1, 2999, 10)]
+    let t = totals_or_zero(&lines)
+    assert_eq(t.net, 3296)
+    assert_eq(t.tax, 555)
+    assert_eq(t.total, 3851)
+}
+
+@[test]
+fn test_invoice_totals_mixed_categories() {
+    let lines = [item(2, 2, 625, 15), item(3, 4, 999, 0), item(0, 1, 50, 0)]
+    let t = totals_or_zero(&lines)
+    assert_eq(t.net, 5108)
+    assert_eq(t.tax, 57)
+    assert_eq(t.total, 5165)
+}
+
+@[test]
+fn test_invoice_totals_empty_and_error() {
+    let none: [Line] = []
+    let t = totals_or_zero(&none)
+    assert_eq(t.net, 0)
+    assert_eq(t.total, 0)
+    let bad = [item(0, 1, 100, 0), item(9, 1, 100, 0)]
+    match invoice_totals(&bad) {
+        Ok(_) => assert(false)
+        Err(e) => assert(e == "unknown tax category 9")
+    }
+}
+
+@[test]
+fn test_tax_for_category() {
+    let lines = [item(0, 3, 199, 0), item(1, 1, 2999, 10), item(0, 1, 50, 0), item(2, 1, 9, 0)]
+    match tax_for_category(&lines, 0) { Ok(v) => assert_eq(v, 46)  Err(_) => assert(false) }
+    match tax_for_category(&lines, 1) { Ok(v) => assert_eq(v, 513)  Err(_) => assert(false) }
+    match tax_for_category(&lines, 2) { Ok(v) => assert_eq(v, 0)  Err(_) => assert(false) }
+    match tax_for_category(&lines, 3) { Ok(v) => assert_eq(v, 0)  Err(_) => assert(false) }
+}
+
+@[test]
+fn test_format_cents() {
+    assert(format_cents(1234) == "12.34")
+    assert(format_cents(5) == "0.05")
+    assert(format_cents(-340) == "-3.40")
+    assert(format_cents(0) == "0.00")
+    assert(format_cents(100000) == "1000.00")
+}
+
+@[test]
+fn test_format_invoice_total() {
+    let lines = [item(0, 3, 199, 0), item(1, 1, 2999, 10)]
+    assert(format_cents(totals_or_zero(&lines).total) == "38.51")
+}

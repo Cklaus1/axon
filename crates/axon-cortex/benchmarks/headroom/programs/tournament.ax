@@ -1,0 +1,241 @@
+// Round-robin tournament table. Teams are numbered 0..n-1. A win is worth
+// 3 points, a draw 1, a loss 0. Ranking: points, then goal difference, then
+// goals scored, then the lower team number.
+
+type Row = { team: i64, played: i64, won: i64, drawn: i64, lost: i64, gf: i64, ga: i64, points: i64 }
+
+type Game = { home: i64, away: i64, hg: i64, ag: i64 }
+
+@[contained]
+fn result_points(scored: i64, conceded: i64) -> i64 {
+    if scored > conceded { 3 } else if scored == conceded { 1 } else { 0 }
+}
+
+fn new_table(n: i64 where n >= 2) -> [Row] {
+    let t: [Row] = []
+    for i in 0..n {
+        t = arr_push(t, Row { team: i, played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, points: 0 })
+    }
+    t
+}
+
+// Row updated with one game where this team scored `scored`.
+fn apply_side(r: Row, scored: i64, conceded: i64) -> Row {
+    let out = r
+    let p = result_points(scored, conceded)
+    out.played = out.played + 1
+    out.gf = out.gf + scored
+    out.ga = out.ga + conceded
+    out.points = out.points + p
+    if p == 3 { out.won = out.won + 1 }
+    else if p == 1 { out.drawn = out.drawn + 1 }
+    else { out.lost = out.lost + 1 }
+    out
+}
+
+fn record(table: &[Row], g: Game) -> Result<[Row], str> {
+    let t: [Row] = table
+    let n = len(t)
+    if g.home < 0 || g.home >= n || g.away < 0 || g.away >= n {
+        return Err("unknown team")
+    }
+    if g.home == g.away {
+        return Err("same team")
+    }
+    if g.hg < 0 || g.ag < 0 {
+        return Err("bad score")
+    }
+    t[g.home] = apply_side(t[g.home], g.hg, g.ag)
+    t[g.away] = apply_side(t[g.away], g.ag, g.hg)
+    Ok(t)
+}
+
+fn build_table(n: i64 where n >= 2, games: &[Game]) -> Result<[Row], str> {
+    let t = new_table(n)
+    for i in 0..len(games) {
+        t = record(&t, games[i])?
+    }
+    Ok(t)
+}
+
+fn goal_diff(r: Row) -> i64 {
+    r.gf - r.ga
+}
+
+// True if `a` is ranked above `b`.
+fn ranks_above(a: Row, b: Row) -> bool {
+    if a.points != b.points { return a.points > b.points }
+    if goal_diff(a) != goal_diff(b) { return goal_diff(a) > goal_diff(b) }
+    if a.gf != b.gf { return a.gf > b.gf }
+    a.team < b.team
+}
+
+// Team numbers from first to last place.
+fn ranking(table: &[Row]) -> [i64] {
+    let rows: [Row] = table
+    let n = len(rows)
+    let out: [i64] = []
+    for k in 0..n {
+        let best = k
+        for i in k + 1..n {
+            if ranks_above(rows[i], rows[best]) { best = i }
+        }
+        let tmp = rows[k]
+        rows[k] = rows[best]
+        rows[best] = tmp
+        out = arr_push(out, rows[k].team)
+    }
+    out
+}
+
+// Points between first and second place (0 for fewer than two teams).
+fn leader_margin(table: &[Row]) -> i64 {
+    let order = ranking(table)
+    if len(order) < 2 { return 0 }
+    table[order[0]].points - table[order[1]].points
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn gm(home: i64, away: i64, hg: i64, ag: i64) -> Game {
+    Game { home: home, away: away, hg: hg, ag: ag }
+}
+
+fn season() -> [Game] {
+    [gm(0, 1, 2, 1), gm(2, 3, 0, 0), gm(0, 2, 1, 1), gm(1, 3, 3, 0), gm(0, 3, 0, 2), gm(1, 2, 2, 2)]
+}
+
+fn table_of(n: i64, games: &[Game]) -> [Row] {
+    match build_table(n, games) { Ok(t) => t  Err(_) => new_table(2) }
+}
+
+fn row(team: i64, points: i64, gf: i64, ga: i64) -> Row {
+    Row { team: team, played: 1, won: 0, drawn: 0, lost: 0, gf: gf, ga: ga, points: points }
+}
+
+@[test]
+fn test_result_points() {
+    assert_eq(result_points(2, 1), 3)
+    assert_eq(result_points(0, 0), 1)
+    assert_eq(result_points(1, 2), 0)
+    assert_eq(result_points(5, 5), 1)
+}
+
+@[test]
+fn test_new_table() {
+    let t = new_table(3)
+    assert_eq(len(t), 3)
+    assert_eq(t[2].team, 2)
+    assert_eq(t[1].points, 0)
+}
+
+@[test]
+fn test_apply_side() {
+    let r = apply_side(row(0, 0, 0, 0), 3, 1)
+    assert_eq(r.points, 3)
+    assert_eq(r.won, 1)
+    assert_eq(r.played, 2)
+    assert_eq(r.gf, 3)
+    let d = apply_side(r, 2, 2)
+    assert_eq(d.points, 4)
+    assert_eq(d.drawn, 1)
+    let l = apply_side(d, 0, 1)
+    assert_eq(l.lost, 1)
+    assert_eq(l.ga, 4)
+}
+
+@[test]
+fn test_record_updates_both() {
+    match record(&new_table(2), gm(1, 0, 0, 4)) {
+        Ok(t) => {
+            assert_eq(t[0].points, 3)
+            assert_eq(t[0].gf, 4)
+            assert_eq(t[1].points, 0)
+            assert_eq(t[1].lost, 1)
+            assert_eq(t[1].ga, 4)
+        }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_record_rejects() {
+    let t = new_table(3)
+    match record(&t, gm(1, 1, 0, 0)) { Ok(_) => assert(false)  Err(e) => assert(e == "same team") }
+    match record(&t, gm(0, 3, 0, 0)) { Ok(_) => assert(false)  Err(e) => assert(e == "unknown team") }
+    match record(&t, gm(-1, 0, 0, 0)) { Ok(_) => assert(false)  Err(e) => assert(e == "unknown team") }
+    match record(&t, gm(0, 2, -1, 0)) { Ok(_) => assert(false)  Err(e) => assert(e == "bad score") }
+}
+
+@[test]
+fn test_build_table_season() {
+    let t = table_of(4, &season())
+    assert_eq(t[0].points, 4)
+    assert_eq(t[1].points, 4)
+    assert_eq(t[2].points, 3)
+    assert_eq(t[3].points, 4)
+    assert_eq(t[2].drawn, 3)
+    assert_eq(t[1].gf, 6)
+    assert_eq(t[3].played, 3)
+}
+
+@[test]
+fn test_build_table_error_propagates() {
+    match build_table(3, &[gm(0, 1, 1, 0), gm(2, 2, 1, 1)]) { Ok(_) => assert(false)  Err(e) => assert(e == "same team") }
+    let none: [Game] = []
+    match build_table(2, &none) { Ok(t) => assert_eq(t[1].played, 0)  Err(_) => assert(false) }
+}
+
+@[test]
+fn test_goal_diff() {
+    assert_eq(goal_diff(row(0, 0, 3, 5)), -2)
+    assert_eq(goal_diff(row(0, 0, 4, 4)), 0)
+    assert_eq(goal_diff(row(0, 0, 7, 1)), 6)
+}
+
+@[test]
+fn test_ranks_above_tiebreaks() {
+    assert(ranks_above(row(5, 4, 0, 9), row(1, 3, 9, 0)))
+    assert(ranks_above(row(5, 3, 3, 1), row(1, 3, 4, 3)))
+    assert(ranks_above(row(5, 3, 4, 2), row(1, 3, 3, 1)))
+    assert(ranks_above(row(1, 3, 3, 1), row(5, 3, 3, 1)))
+    assert(!ranks_above(row(5, 3, 3, 1), row(1, 3, 3, 1)))
+}
+
+@[test]
+fn test_ranking_season() {
+    let r = ranking(&table_of(4, &season()))
+    assert_eq(r[0], 1)
+    assert_eq(r[1], 0)
+    assert_eq(r[2], 3)
+    assert_eq(r[3], 2)
+}
+
+@[test]
+fn test_ranking_goal_difference_and_ids() {
+    let r = ranking(&table_of(3, &[gm(0, 1, 5, 0), gm(2, 1, 1, 0)]))
+    assert_eq(r[0], 0)
+    assert_eq(r[1], 2)
+    assert_eq(r[2], 1)
+    let e = ranking(&new_table(3))
+    assert_eq(e[0], 0)
+    assert_eq(e[2], 2)
+}
+
+@[test]
+fn test_ranking_goals_scored_breaks_tie() {
+    let r = ranking(&table_of(3, &[gm(0, 2, 3, 3), gm(1, 0, 1, 1)]))
+    assert_eq(r[0], 0)
+    assert_eq(r[1], 2)
+    assert_eq(r[2], 1)
+}
+
+@[test]
+fn test_leader_margin() {
+    assert_eq(leader_margin(&table_of(4, &season())), 0)
+    assert_eq(leader_margin(&table_of(2, &[gm(0, 1, 1, 0)])), 3)
+    assert_eq(leader_margin(&table_of(3, &[gm(0, 1, 2, 0), gm(0, 2, 1, 0), gm(1, 2, 1, 1)])), 5)
+    assert_eq(leader_margin(&new_table(2)), 0)
+}

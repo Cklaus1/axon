@@ -1,0 +1,217 @@
+// Integer <-> base-b strings for bases 2..36 (digits 0-9 then a-z; parsing
+// also accepts A-Z), digit sums in a base, and palindromes in a base.
+
+// Value of an ASCII digit character, or -1.
+@[contained]
+fn digit_value(c: i64) -> i64 {
+    if c >= 48 && c <= 57 { c - 48 }
+    else if c >= 97 && c <= 122 { c - 97 + 10 }
+    else if c >= 65 && c <= 90 { c - 65 + 10 }
+    else { -1 }
+}
+
+@[contained]
+fn digit_char(d: i64) -> str {
+    str_slice("0123456789abcdefghijklmnopqrstuvwxyz", d, d + 1)
+}
+
+// Digits of |n| in `base`, least significant first; 0 has the single digit 0.
+fn digits_in_base(n: i64, base: i64 where base >= 2 && base <= 36) -> [i64] {
+    let m = abs_i64(n)
+    let out: [i64] = []
+    if m == 0 { return [0] }
+    while m > 0 {
+        out = arr_push(out, m % base)
+        m = m / base
+    }
+    out
+}
+
+fn to_base(n: i64, base: i64 where base >= 2 && base <= 36) -> str {
+    let ds = digits_in_base(n, base)
+    let out = if n < 0 { "-" } else { "" }
+    let k = len(ds) - 1
+    while k >= 0 {
+        out = out + digit_char(ds[k])
+        k = k - 1
+    }
+    out
+}
+
+fn from_base(s: str, base: i64 where base >= 2 && base <= 36) -> Result<i64, str> {
+    let start = 0
+    let neg = false
+    if len(s) > 0 && char_at(s, 0) == 45 {
+        neg = true
+        start = 1
+    }
+    if start >= len(s) {
+        return Err("empty")
+    }
+    let v = 0
+    for i in start..len(s) {
+        let d = digit_value(char_at(s, i))
+        if d < 0 || d >= base {
+            return Err("bad digit at " + to_str(i))
+        }
+        v = v * base + d
+    }
+    if neg { Ok(0 - v) } else { Ok(v) }
+}
+
+fn convert(s: str, from: i64 where from >= 2 && from <= 36, to: i64 where to >= 2 && to <= 36) -> Result<str, str> {
+    let v = from_base(s, from)?
+    Ok(to_base(v, to))
+}
+
+fn digit_sum(n: i64, base: i64 where base >= 2 && base <= 36) -> i64 {
+    let ds = digits_in_base(n, base)
+    let s = 0
+    for i in 0..len(ds) { s = s + ds[i] }
+    s
+}
+
+fn is_palindrome_in_base(n: i64, base: i64 where base >= 2 && base <= 36) -> bool {
+    if n < 0 { return false }
+    let ds = digits_in_base(n, base)
+    let i = 0
+    let j = len(ds) - 1
+    while i < j {
+        if ds[i] != ds[j] { return false }
+        i = i + 1
+        j = j - 1
+    }
+    true
+}
+
+// Bases 2..=max_base in which n reads the same both ways.
+fn palindromic_bases(n: i64, max_base: i64 where max_base >= 2 && max_base <= 36) -> [i64] {
+    let out: [i64] = []
+    for b in 2..max_base + 1 {
+        if is_palindrome_in_base(n, b) { out = arr_push(out, b) }
+    }
+    out
+}
+
+fn load_text(path: str) -> Result<str, str> {
+    read_file(path)
+}
+
+fn parsed(s: str, base: i64) -> i64 {
+    match from_base(s, base) { Ok(v) => v  Err(_) => -999 }
+}
+
+fn parse_err(s: str, base: i64) -> str {
+    match from_base(s, base) { Ok(_) => "ok"  Err(e) => e }
+}
+
+@[test]
+fn test_digit_value() {
+    assert_eq(digit_value(48), 0)
+    assert_eq(digit_value(57), 9)
+    assert_eq(digit_value(97), 10)
+    assert_eq(digit_value(122), 35)
+    assert_eq(digit_value(70), 15)
+    assert_eq(digit_value(45), -1)
+}
+
+@[test]
+fn test_digit_char() {
+    assert(digit_char(0) == "0")
+    assert(digit_char(9) == "9")
+    assert(digit_char(10) == "a")
+    assert(digit_char(35) == "z")
+}
+
+@[test]
+fn test_digits_in_base() {
+    let d = digits_in_base(6, 2)
+    assert_eq(len(d), 3)
+    assert_eq(d[0], 0)
+    assert_eq(d[2], 1)
+    assert_eq(len(digits_in_base(0, 10)), 1)
+    assert_eq(digits_in_base(-35, 36)[0], 35)
+}
+
+@[test]
+fn test_to_base() {
+    assert(to_base(255, 16) == "ff")
+    assert(to_base(255, 2) == "11111111")
+    assert(to_base(0, 7) == "0")
+    assert(to_base(-10, 2) == "-1010")
+    assert(to_base(35, 36) == "z")
+    assert(to_base(36, 36) == "10")
+}
+
+@[test]
+fn test_from_base() {
+    assert_eq(parsed("ff", 16), 255)
+    assert_eq(parsed("FF", 16), 255)
+    assert_eq(parsed("-1010", 2), -10)
+    assert_eq(parsed("0", 3), 0)
+    assert_eq(parsed("10", 36), 36)
+}
+
+@[test]
+fn test_from_base_errors() {
+    assert(parse_err("12", 2) == "bad digit at 1")
+    assert(parse_err("", 10) == "empty")
+    assert(parse_err("-", 10) == "empty")
+    assert(parse_err("1 2", 10) == "bad digit at 1")
+    assert(parse_err("z", 35) == "bad digit at 0")
+}
+
+@[test]
+fn test_round_trip() {
+    for b in 2..37 {
+        assert_eq(parsed(to_base(123456, b), b), 123456)
+        assert_eq(parsed(to_base(-77, b), b), -77)
+    }
+}
+
+@[test]
+fn test_convert() {
+    match convert("ff", 16, 2) { Ok(s) => assert(s == "11111111")  Err(_) => assert(false) }
+    match convert("z", 36, 10) { Ok(s) => assert(s == "35")  Err(_) => assert(false) }
+    match convert("-777", 8, 16) { Ok(s) => assert(s == "-1ff")  Err(_) => assert(false) }
+    match convert("9", 8, 10) { Ok(_) => assert(false)  Err(e) => assert(e == "bad digit at 0") }
+}
+
+@[test]
+fn test_digit_sum() {
+    assert_eq(digit_sum(255, 10), 12)
+    assert_eq(digit_sum(255, 2), 8)
+    assert_eq(digit_sum(255, 16), 30)
+    assert_eq(digit_sum(0, 5), 0)
+    assert_eq(digit_sum(-99, 10), 18)
+}
+
+@[test]
+fn test_is_palindrome_in_base() {
+    assert(is_palindrome_in_base(585, 10))
+    assert(is_palindrome_in_base(585, 2))
+    assert(!is_palindrome_in_base(10, 10))
+    assert(is_palindrome_in_base(0, 2))
+    assert(is_palindrome_in_base(5, 2))
+    assert(!is_palindrome_in_base(6, 2))
+    assert(!is_palindrome_in_base(-5, 10))
+}
+
+@[test]
+fn test_palindromic_bases() {
+    let p = palindromic_bases(10, 10)
+    assert_eq(len(p), 3)
+    assert_eq(p[0], 3)
+    assert_eq(p[1], 4)
+    assert_eq(p[2], 9)
+    let q = palindromic_bases(5, 6)
+    assert_eq(len(q), 3)
+    assert_eq(q[2], 6)
+}
+
+@[test]
+fn test_palindromic_bases_edges() {
+    assert_eq(len(palindromic_bases(1, 36)), 35)
+    assert_eq(len(palindromic_bases(-3, 36)), 0)
+    assert_eq(len(palindromic_bases(2, 2)), 0)
+}
