@@ -1,0 +1,114 @@
+// Monthly compound interest schedule in integer cents.
+// The annual rate is given in basis points (1 bp = 0.01%), refined to 0..=10000.
+
+type Row = { month: i64, interest: i64, balance: i64 }
+
+// Interest for one month, rounded half-up to the cent:
+// balance * bps / (10000 * 12).
+@[verify(value >= 0)]
+fn monthly_interest(balance: i64, rate_bps: i64 where rate_bps >= 0 && rate_bps <= 10000) -> i64 {
+    let denom = 120000
+    (balance * rate_bps * 2 + denom) / (denom * 2)
+}
+
+fn step(row: Row, rate_bps: i64 where rate_bps >= 0 && rate_bps <= 10000, deposit: i64) -> Row {
+    let i = monthly_interest(row.balance, rate_bps)
+    Row { month: row.month + 1, interest: i, balance: row.balance + i + deposit }
+}
+
+fn schedule(principal: i64, rate_bps: i64 where rate_bps >= 0 && rate_bps <= 10000, months: i64, deposit: i64) -> [Row] {
+    let out = []
+    let cur = Row { month: 0, interest: 0, balance: principal }
+    for m in 0..months {
+        cur = step(cur, rate_bps, deposit)
+        out = arr_push(out, cur)
+    }
+    out
+}
+
+fn final_balance(rows: &[Row], principal: i64) -> i64 {
+    if len(rows) == 0 { principal } else { rows[len(rows) - 1].balance }
+}
+
+fn total_interest(rows: &[Row]) -> i64 {
+    let t = 0
+    for i in 0..len(rows) { t = t + rows[i].interest }
+    t
+}
+
+fn months_to_reach(principal: i64, rate_bps: i64 where rate_bps >= 0 && rate_bps <= 10000, target: i64, limit: i64) -> Option<i64> {
+    let cur = Row { month: 0, interest: 0, balance: principal }
+    while cur.month < limit {
+        if cur.balance >= target { return Some(cur.month) }
+        cur = step(cur, rate_bps, 0)
+    }
+    if cur.balance >= target { Some(cur.month) } else { None }
+}
+
+fn main() {
+    let rows = schedule(100000, 600, 12, 0)
+    println("after a year: {to_str(final_balance(&rows, 100000))} cents")
+}
+
+@[test]
+fn test_monthly_interest() {
+    assert_eq(monthly_interest(100000, 600), 500)
+    assert_eq(monthly_interest(100000, 0), 0)
+    assert_eq(monthly_interest(1000, 10000), 83)
+    assert_eq(monthly_interest(100, 600), 1)
+}
+
+@[test]
+fn test_monthly_interest_rounding() {
+    // 30 * 600 / 120000 = 0.15 -> 0 ; 90 * 600 / 120000 = 0.45 -> 0 ; 100 -> 0.5 -> 1
+    assert_eq(monthly_interest(30, 600), 0)
+    assert_eq(monthly_interest(90, 600), 0)
+    assert_eq(monthly_interest(100, 600), 1)
+}
+
+@[test(should_fail)]
+fn test_rate_refinement_rejects() {
+    let bad = monthly_interest(100, 10001)
+    assert_eq(bad, 0)
+}
+
+@[test]
+fn test_step() {
+    let r = step(Row { month: 0, interest: 0, balance: 100000 }, 600, 1000)
+    assert_eq(r.month, 1)
+    assert_eq(r.interest, 500)
+    assert_eq(r.balance, 101500)
+}
+
+@[test]
+fn test_schedule() {
+    let rows = schedule(100000, 600, 3, 0)
+    assert_eq(len(rows), 3)
+    assert_eq(rows[0].balance, 100500)
+    assert_eq(rows[1].interest, 503)
+    assert_eq(rows[1].balance, 101003)
+    assert_eq(rows[2].interest, 505)
+    assert_eq(rows[2].balance, 101508)
+}
+
+@[test]
+fn test_final_balance() {
+    let rows = schedule(100000, 600, 3, 0)
+    assert_eq(final_balance(&rows, 100000), 101508)
+    let none = schedule(5000, 600, 0, 0)
+    assert_eq(final_balance(&none, 5000), 5000)
+}
+
+@[test]
+fn test_total_interest() {
+    let rows = schedule(100000, 600, 3, 0)
+    assert_eq(total_interest(&rows), 1508)
+    assert_eq(total_interest(&schedule(100000, 0, 12, 100)), 0)
+}
+
+@[test]
+fn test_months_to_reach() {
+    assert_eq(match months_to_reach(100000, 600, 101000, 100) { Some(m) => m, None => -1 }, 2)
+    assert_eq(match months_to_reach(100000, 600, 100000, 100) { Some(m) => m, None => -1 }, 0)
+    assert_eq(match months_to_reach(100000, 0, 100001, 50) { Some(m) => m, None => -1 }, -1)
+}

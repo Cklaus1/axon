@@ -1,0 +1,141 @@
+// Pagination over a list: chunks, page counts, clamped page numbers, offset/limit windows.
+// Pages are 1-based.
+
+type Page = { number: i64, items: [i64], has_prev: bool, has_next: bool }
+
+fn slice(xs: &[i64], start: i64, end: i64) -> [i64] {
+    let lo = clamp_i64(start, 0, len(xs))
+    let hi = clamp_i64(end, lo, len(xs))
+    let out = []
+    for i in lo..hi { out = arr_push(out, xs[i]) }
+    out
+}
+
+fn chunk(xs: &[i64], size: i64) -> Result<[[i64]], str> {
+    if size <= 0 { return Err("size must be positive") }
+    let out = []
+    let i = 0
+    while i < len(xs) {
+        out = arr_push(out, slice(&xs, i, i + size))
+        i = i + size
+    }
+    Ok(out)
+}
+
+fn page_count(total: i64, per_page: i64) -> i64 {
+    if per_page <= 0 || total <= 0 { 0 } else { (total + per_page - 1) / per_page }
+}
+
+// An empty list still has one (empty) page.
+fn clamp_page(page: i64, total: i64, per_page: i64) -> i64 {
+    clamp_i64(page, 1, max_i64(1, page_count(total, per_page)))
+}
+
+fn offset_limit(xs: &[i64], offset: i64, limit: i64) -> [i64] {
+    if limit <= 0 { return [] }
+    slice(&xs, offset, offset + limit)
+}
+
+fn page(xs: &[i64], number: i64, per_page: i64) -> Option<Page> {
+    if per_page <= 0 { return None }
+    let n = clamp_page(number, len(xs), per_page)
+    let items = offset_limit(&xs, (n - 1) * per_page, per_page)
+    Some(Page { number: n, items: items, has_prev: n > 1, has_next: n < page_count(len(xs), per_page) })
+}
+
+fn data(n: i64) -> [i64] {
+    let out = []
+    for i in 1..(n + 1) { out = arr_push(out, i * 10) }
+    out
+}
+
+fn page_or_empty(xs: &[i64], number: i64, per_page: i64) -> Page {
+    match page(&xs, number, per_page) {
+        Some(p) => p
+        None => Page { number: 0, items: [], has_prev: false, has_next: false }
+    }
+}
+
+fn main() {
+    let p = page_or_empty(&data(23), 3, 10)
+    println("page {to_str(p.number)} has {to_str(len(p.items))} items")
+}
+
+@[test]
+fn test_slice() {
+    let s = slice(&data(5), 1, 3)
+    assert_eq(len(s), 2)
+    assert_eq(s[0], 20)
+    assert_eq(s[1], 30)
+    assert_eq(len(slice(&data(5), 4, 99)), 1)
+    assert_eq(len(slice(&data(5), -3, 2)), 2)
+    assert_eq(len(slice(&data(5), 3, 1)), 0)
+}
+
+@[test]
+fn test_chunk() {
+    let c: [[i64]] = match chunk(&data(7), 3) { Ok(v) => v, Err(_) => [] }
+    assert_eq(len(c), 3)
+    assert_eq(len(c[0]), 3)
+    assert_eq(len(c[2]), 1)
+    assert_eq(c[2][0], 70)
+    assert(match chunk(&data(3), 0) { Ok(_) => false, Err(e) => str_eq(e, "size must be positive") })
+}
+
+@[test]
+fn test_page_count() {
+    assert_eq(page_count(23, 10), 3)
+    assert_eq(page_count(20, 10), 2)
+    assert_eq(page_count(0, 10), 0)
+    assert_eq(page_count(5, 0), 0)
+    assert_eq(page_count(1, 1), 1)
+}
+
+@[test]
+fn test_clamp_page() {
+    assert_eq(clamp_page(0, 23, 10), 1)
+    assert_eq(clamp_page(2, 23, 10), 2)
+    assert_eq(clamp_page(9, 23, 10), 3)
+    assert_eq(clamp_page(4, 0, 10), 1)
+}
+
+@[test]
+fn test_offset_limit() {
+    let w = offset_limit(&data(10), 8, 5)
+    assert_eq(len(w), 2)
+    assert_eq(w[0], 90)
+    assert_eq(len(offset_limit(&data(10), 2, 0)), 0)
+    assert_eq(len(offset_limit(&data(10), 20, 5)), 0)
+}
+
+@[test]
+fn test_page_middle_and_last() {
+    let p = page_or_empty(&data(23), 2, 10)
+    assert_eq(p.number, 2)
+    assert_eq(len(p.items), 10)
+    assert_eq(p.items[0], 110)
+    assert(p.has_prev && p.has_next)
+    let last = page_or_empty(&data(23), 3, 10)
+    assert_eq(len(last.items), 3)
+    assert(last.has_prev && !last.has_next)
+}
+
+@[test]
+fn test_page_clamped() {
+    let p = page_or_empty(&data(23), 99, 10)
+    assert_eq(p.number, 3)
+    assert_eq(p.items[2], 230)
+    let first = page_or_empty(&data(23), -5, 10)
+    assert_eq(first.number, 1)
+    assert(!first.has_prev)
+}
+
+@[test]
+fn test_page_edge_cases() {
+    let e = page_or_empty(&data(0), 1, 10)
+    assert_eq(e.number, 1)
+    assert_eq(len(e.items), 0)
+    assert(!e.has_next)
+    assert(match page(&data(5), 1, 0) { Some(_) => false, None => true })
+    assert_eq(len(data(4)), 4)
+}

@@ -1,0 +1,150 @@
+// String validators: balanced brackets, letter-only palindromes, isograms (ASCII).
+
+fn opener_for(c: i64) -> i64 {
+    if c == 41 { 40 } else if c == 93 { 91 } else if c == 125 { 123 } else { -1 }
+}
+
+fn is_opener(c: i64) -> bool { c == 40 || c == 91 || c == 123 }
+
+// Index of the first offending byte, or None when every bracket is matched.
+fn first_bracket_error(s: str) -> Option<i64> {
+    let stack = []
+    let positions = []
+    let depth = 0
+    for i in 0..len(s) {
+        let c = char_at(s, i)
+        if is_opener(c) {
+            if depth < len(stack) {
+                stack[depth] = c
+                positions[depth] = i
+            } else {
+                stack = arr_push(stack, c)
+                positions = arr_push(positions, i)
+            }
+            depth = depth + 1
+        } else if opener_for(c) >= 0 {
+            if depth == 0 || stack[depth - 1] != opener_for(c) { return Some(i) }
+            depth = depth - 1
+        }
+    }
+    if depth > 0 { Some(positions[depth - 1]) } else { None }
+}
+
+fn is_balanced(s: str) -> bool {
+    match first_bracket_error(s) {
+        Some(_) => false
+        None => true
+    }
+}
+
+fn is_letter(c: i64) -> bool { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) }
+
+fn lower(c: i64) -> i64 { if c >= 65 && c <= 90 { c + 32 } else { c } }
+
+fn letters_lower(s: str) -> [i64] {
+    let out = []
+    for i in 0..len(s) {
+        let c = char_at(s, i)
+        if is_letter(c) { out = arr_push(out, lower(c)) }
+    }
+    out
+}
+
+fn is_palindrome(s: str) -> bool {
+    let xs = letters_lower(s)
+    let i = 0
+    let j = len(xs) - 1
+    while i < j {
+        if xs[i] != xs[j] { return false }
+        i = i + 1
+        j = j - 1
+    }
+    true
+}
+
+// No letter repeats (case-insensitive); spaces and hyphens are ignored.
+fn is_isogram(s: str) -> bool {
+    let seen = []
+    for k in 0..26 { seen = arr_push(seen, false) }
+    let xs = letters_lower(s)
+    for i in 0..len(xs) {
+        let idx = xs[i] - 97
+        if seen[idx] { return false }
+        seen[idx] = true
+    }
+    true
+}
+
+fn err_at(s: str) -> i64 { match first_bracket_error(s) { Some(i) => i, None => -1 } }
+
+fn main() {
+    println(to_str_bool(is_palindrome("A man, a plan, a canal: Panama")))
+}
+
+@[test]
+fn test_opener_helpers() {
+    assert_eq(opener_for(char_at(")", 0)), char_at("(", 0))
+    assert_eq(opener_for(char_at("}}", 0)), char_at("{{", 0))
+    assert_eq(len("{{x}}"), 3)
+    assert_eq(opener_for(char_at("a", 0)), -1)
+    assert(is_opener(char_at("[", 0)))
+    assert(!is_opener(char_at("]", 0)))
+}
+
+@[test]
+fn test_first_bracket_error() {
+    assert_eq(err_at("([]{{x}})"), -1)
+    assert_eq(err_at("(]"), 1)
+    assert_eq(err_at("a)b"), 1)
+    assert_eq(err_at("{{[()]"), 0)
+    assert_eq(err_at("()(("), 3)
+}
+
+@[test]
+fn test_is_balanced() {
+    assert(is_balanced(""))
+    assert(is_balanced("f(a[1], {{b: (2)}})"))
+    assert(!is_balanced("([)]"))
+    assert(!is_balanced("((("))
+}
+
+@[test]
+fn test_letter_helpers() {
+    assert(is_letter(char_at("Q", 0)))
+    assert(!is_letter(char_at("1", 0)))
+    assert_eq(lower(char_at("A", 0)), char_at("a", 0))
+    assert_eq(lower(char_at("z", 0)), char_at("z", 0))
+}
+
+@[test]
+fn test_letters_lower() {
+    let xs = letters_lower("A-b 3C")
+    assert_eq(len(xs), 3)
+    assert_eq(xs[0], 97)
+    assert_eq(xs[2], 99)
+}
+
+@[test]
+fn test_is_palindrome() {
+    assert(is_palindrome("A man, a plan, a canal: Panama"))
+    assert(is_palindrome("No 'x' in Nixon"))
+    assert(is_palindrome(""))
+    assert(!is_palindrome("hello"))
+    assert(!is_palindrome("ab1c2a"))
+    assert(is_palindrome("ab1a2"))
+}
+
+@[test]
+fn test_is_isogram() {
+    assert(is_isogram("lumberjacks"))
+    assert(is_isogram("six-year-old"))
+    assert(!is_isogram("Alphabet"))
+    assert(!is_isogram("isograms"))
+    assert(is_isogram(""))
+}
+
+@[test]
+fn test_validators_combined() {
+    assert(is_balanced("(racecar)") && is_palindrome("(racecar)") && !is_isogram("(racecar)"))
+    assert(!is_balanced("[dog}}") && is_isogram("[dog}}"))
+}

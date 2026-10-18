@@ -1,0 +1,135 @@
+// Length and mass conversion on integer quantities. Base units: millimetre and milligram.
+// A quantity's amount must be positive; the refinement sits on the constructor `qty`
+// (a `where` on the struct field itself type-checks but fails at runtime).
+// The unit type is called `Scale` because a user type named `Unit` resolves to `()`.
+
+type Scale = Mm | Cm | M | Km | Mg | G | Kg
+type Qty = { amount: i64, scale: Scale }
+
+fn is_length(s: Scale) -> bool {
+    match s {
+        Scale::Mm => true
+        Scale::Cm => true
+        Scale::M => true
+        Scale::Km => true
+        _ => false
+    }
+}
+
+fn factor(s: Scale) -> i64 {
+    match s {
+        Scale::Mm => 1
+        Scale::Cm => 10
+        Scale::M => 1000
+        Scale::Km => 1000000
+        Scale::Mg => 1
+        Scale::G => 1000
+        Scale::Kg => 1000000
+    }
+}
+
+fn parse_scale(s: str) -> Option<Scale> {
+    let names = ["mm", "cm", "m", "km", "mg", "g", "kg"]
+    let scales = [Scale::Mm, Scale::Cm, Scale::M, Scale::Km, Scale::Mg, Scale::G, Scale::Kg]
+    for i in 0..len(names) {
+        if str_eq(names[i], s) { return Some(scales[i]) }
+    }
+    None
+}
+
+fn qty(amount: i64 where amount > 0, scale: Scale) -> Qty { Qty { amount: amount, scale: scale } }
+
+fn to_base(q: Qty) -> i64 { q.amount * factor(q.scale) }
+
+// Converts, truncating toward zero; refuses to mix length and mass.
+fn convert(q: Qty, to: Scale) -> Result<i64, str> {
+    if is_length(q.scale) != is_length(to) { return Err("incompatible units") }
+    Ok(to_base(q) / factor(to))
+}
+
+fn sum_in(qs: &[Qty], to: Scale) -> Result<i64, str> {
+    let base = 0
+    for i in 0..len(qs) {
+        if is_length(qs[i].scale) != is_length(to) { return Err("incompatible units at {to_str(i)}") }
+        base = base + to_base(qs[i])
+    }
+    Ok(base / factor(to))
+}
+
+fn parse_qty(amount: i64, name: str) -> Result<Qty, str> {
+    if amount <= 0 { return Err("amount must be positive") }
+    match parse_scale(name) {
+        Some(s) => Ok(qty(amount, s))
+        None => Err("unknown unit '{name}'")
+    }
+}
+
+fn conv_or(q: Qty, to: Scale) -> i64 { match convert(q, to) { Ok(v) => v, Err(_) => -1 } }
+
+fn main() {
+    let total = sum_in(&[qty(1, Scale::Km), qty(250, Scale::M), qty(30, Scale::Cm)], Scale::Cm)
+    match total {
+        Ok(cm) => println("{to_str(cm)} cm")
+        Err(e) => println(e)
+    }
+}
+
+@[test]
+fn test_is_length() {
+    assert(is_length(Scale::Km))
+    assert(is_length(Scale::Mm))
+    assert(!is_length(Scale::G))
+}
+
+@[test]
+fn test_factor() {
+    assert_eq(factor(Scale::Cm), 10)
+    assert_eq(factor(Scale::Km), 1000000)
+    assert_eq(factor(Scale::Kg), 1000000)
+}
+
+@[test]
+fn test_parse_scale() {
+    assert_eq(match parse_scale("kg") { Some(s) => factor(s), None => -1 }, 1000000)
+    assert(match parse_scale("m") { Some(s) => is_length(s), None => false })
+    assert(match parse_scale("lb") { Some(_) => false, None => true })
+}
+
+@[test]
+fn test_qty_and_to_base() {
+    assert_eq(to_base(qty(3, Scale::M)), 3000)
+    assert_eq(to_base(qty(2, Scale::G)), 2000)
+}
+
+@[test(should_fail)]
+fn test_qty_rejects_non_positive() {
+    let q = qty(0, Scale::M)
+    assert_eq(q.amount, 0)
+}
+
+@[test]
+fn test_convert() {
+    assert_eq(conv_or(qty(5, Scale::Km), Scale::M), 5000)
+    assert_eq(conv_or(qty(1234, Scale::Mm), Scale::M), 1)
+    assert_eq(conv_or(qty(3, Scale::Kg), Scale::G), 3000)
+    assert_eq(conv_or(qty(7, Scale::Cm), Scale::Mm), 70)
+    assert(match convert(qty(1, Scale::Kg), Scale::M) { Ok(_) => false, Err(e) => str_eq(e, "incompatible units") })
+}
+
+@[test]
+fn test_sum_in() {
+    let mixed = [qty(1, Scale::Km), qty(250, Scale::M), qty(30, Scale::Cm)]
+    assert_eq(match sum_in(&mixed, Scale::Cm) { Ok(v) => v, Err(_) => -1 }, 125030)
+    assert_eq(match sum_in(&mixed, Scale::M) { Ok(v) => v, Err(_) => -1 }, 1250)
+    assert_eq(match sum_in(&[qty(1, Scale::Kg), qty(500, Scale::G)], Scale::G) { Ok(v) => v, Err(_) => -1 }, 1500)
+    let none: [Qty] = []
+    assert_eq(match sum_in(&none, Scale::Kg) { Ok(v) => v, Err(_) => -1 }, 0)
+    assert(match sum_in(&[qty(1, Scale::M), qty(1, Scale::G)], Scale::M) { Ok(_) => false, Err(e) => str_eq(e, "incompatible units at 1") })
+}
+
+@[test]
+fn test_parse_qty() {
+    assert_eq(match parse_qty(4, "km") { Ok(q) => to_base(q), Err(_) => -1 }, 4000000)
+    assert(match parse_qty(4, "yd") { Ok(_) => false, Err(e) => str_eq(e, "unknown unit 'yd'") })
+    assert(match parse_qty(-4, "m") { Ok(_) => false, Err(e) => str_eq(e, "amount must be positive") })
+}

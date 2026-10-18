@@ -1,0 +1,124 @@
+// Run-length encoding: "aaabcc" <-> "3a1b2c". Counts may have several digits.
+// Input to encode must not contain ASCII digits (they would be ambiguous).
+
+fn is_digit(c: i64) -> bool { c >= 48 && c <= 57 }
+
+fn has_digit(s: str) -> bool {
+    for i in 0..len(s) {
+        if is_digit(char_at(s, i)) { return true }
+    }
+    false
+}
+
+fn run_length(s: str, start: i64) -> i64 {
+    let c = char_at(s, start)
+    let j = start
+    while j < len(s) && char_at(s, j) == c { j = j + 1 }
+    j - start
+}
+
+fn encode(s: str) -> Result<str, str> {
+    if has_digit(s) { return Err("input contains digits") }
+    let out = ""
+    let i = 0
+    while i < len(s) {
+        let n = run_length(s, i)
+        out = out + to_str(n) + str_slice(s, i, i + 1)
+        i = i + n
+    }
+    Ok(out)
+}
+
+fn decode(s: str) -> Result<str, str> {
+    let out = ""
+    let count = 0
+    let seen_digit = false
+    for i in 0..len(s) {
+        let c = char_at(s, i)
+        if is_digit(c) {
+            count = count * 10 + (c - 48)
+            seen_digit = true
+        } else {
+            if !seen_digit { return Err("missing count at {to_str(i)}") }
+            out = out + str_repeat(str_slice(s, i, i + 1), count)
+            count = 0
+            seen_digit = false
+        }
+    }
+    if seen_digit { return Err("dangling count") }
+    Ok(out)
+}
+
+fn round_trips(s: str) -> bool {
+    match encode(s) {
+        Ok(e) => match decode(e) {
+            Ok(d) => str_eq(d, s)
+            Err(_) => false
+        }
+        Err(_) => false
+    }
+}
+
+fn unwrap_or(r: Result<str, str>, dflt: str) -> str {
+    match r {
+        Ok(v) => v
+        Err(_) => dflt
+    }
+}
+
+fn main() {
+    println(unwrap_or(encode("wwwwbbbw"), "?"))
+}
+
+@[test]
+fn test_is_digit() {
+    assert(is_digit(char_at("7", 0)))
+    assert(!is_digit(char_at("a", 0)))
+}
+
+@[test]
+fn test_has_digit() {
+    assert(has_digit("ab3"))
+    assert(!has_digit("abc"))
+    assert(!has_digit(""))
+}
+
+@[test]
+fn test_run_length() {
+    assert_eq(run_length("aaab", 0), 3)
+    assert_eq(run_length("aaab", 3), 1)
+    assert_eq(run_length("abbbb", 1), 4)
+}
+
+@[test]
+fn test_encode() {
+    assert(str_eq(unwrap_or(encode("aaabcc"), "?"), "3a1b2c"))
+    assert(str_eq(unwrap_or(encode(""), "?"), ""))
+    assert(str_eq(unwrap_or(encode("xxxxxxxxxxxx"), "?"), "12x"))
+}
+
+@[test]
+fn test_encode_rejects_digits() {
+    assert(str_eq(unwrap_or(encode("a1"), "rejected"), "rejected"))
+}
+
+@[test]
+fn test_decode() {
+    assert(str_eq(unwrap_or(decode("3a1b2c"), "?"), "aaabcc"))
+    assert(str_eq(unwrap_or(decode("10z"), "?"), "zzzzzzzzzz"))
+    assert(str_eq(unwrap_or(decode(""), "?"), ""))
+}
+
+@[test]
+fn test_decode_errors() {
+    assert(match decode("a3") { Ok(_) => false, Err(e) => str_eq(e, "missing count at 0") })
+    assert(match decode("3a4") { Ok(_) => false, Err(e) => str_eq(e, "dangling count") })
+}
+
+@[test]
+fn test_round_trip() {
+    assert(round_trips("wwwwbbbw"))
+    assert(round_trips("a b  c"))
+    assert(round_trips(""))
+    assert(!round_trips("r2d2"))
+}

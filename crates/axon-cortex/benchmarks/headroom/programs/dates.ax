@@ -1,0 +1,129 @@
+// Proleptic Gregorian calendar helpers on (year, month, day) triples.
+
+type Date = { y: i64, m: i64, d: i64 }
+
+fn is_leap(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+fn days_in_month(y: i64, m: i64) -> Option<i64> {
+    if m < 1 || m > 12 { return None }
+    let table = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if m == 2 && is_leap(y) { Some(29) } else { Some(table[m - 1]) }
+}
+
+fn days_in_year(y: i64) -> i64 { if is_leap(y) { 366 } else { 365 } }
+
+fn make_date(y: i64, m: i64, d: i64) -> Result<Date, str> {
+    match days_in_month(y, m) {
+        None => Err("bad month")
+        Some(n) => if d < 1 || d > n { Err("bad day") } else { Ok(Date { y: y, m: m, d: d }) }
+    }
+}
+
+fn day_of_year(dt: Date) -> i64 {
+    let total = dt.d
+    for mm in 1..dt.m {
+        total = total + match days_in_month(dt.y, mm) { Some(n) => n, None => 0 }
+    }
+    total
+}
+
+fn add_days(dt: Date, n: i64) -> Date {
+    let y = dt.y
+    let m = dt.m
+    let d = dt.d
+    let left = n
+    while left > 0 {
+        let dim = match days_in_month(y, m) { Some(k) => k, None => 31 }
+        if d + left <= dim {
+            d = d + left
+            left = 0
+        } else {
+            left = left - (dim - d + 1)
+            d = 1
+            m = m + 1
+            if m > 12 {
+                m = 1
+                y = y + 1
+            }
+        }
+    }
+    Date { y: y, m: m, d: d }
+}
+
+fn same_date(a: Date, b: Date) -> bool { a.y == b.y && a.m == b.m && a.d == b.d }
+
+fn main() {
+    let dt = add_days(Date { y: 2024, m: 2, d: 28 }, 2)
+    println("{to_str(dt.y)}-{to_str(dt.m)}-{to_str(dt.d)}")
+}
+
+@[test]
+fn test_is_leap() {
+    assert(is_leap(2024))
+    assert(!is_leap(2023))
+    assert(!is_leap(1900))
+    assert(is_leap(2000))
+}
+
+@[test]
+fn test_days_in_month() {
+    assert_eq(match days_in_month(2023, 2) { Some(n) => n, None => -1 }, 28)
+    assert_eq(match days_in_month(2024, 2) { Some(n) => n, None => -1 }, 29)
+    assert_eq(match days_in_month(2024, 4) { Some(n) => n, None => -1 }, 30)
+    assert_eq(match days_in_month(2024, 12) { Some(n) => n, None => -1 }, 31)
+    assert_eq(match days_in_month(2024, 13) { Some(n) => n, None => -1 }, -1)
+}
+
+@[test]
+fn test_days_in_year() {
+    assert_eq(days_in_year(2000), 366)
+    assert_eq(days_in_year(2100), 365)
+}
+
+@[test]
+fn test_make_date() {
+    assert(match make_date(2024, 2, 29) { Ok(d) => d.d == 29, Err(_) => false })
+    assert(match make_date(2023, 2, 29) { Ok(_) => false, Err(e) => str_eq(e, "bad day") })
+    assert(match make_date(2023, 0, 1) { Ok(_) => false, Err(e) => str_eq(e, "bad month") })
+}
+
+@[test]
+fn test_day_of_year() {
+    assert_eq(day_of_year(Date { y: 2023, m: 1, d: 1 }), 1)
+    assert_eq(day_of_year(Date { y: 2023, m: 3, d: 1 }), 60)
+    assert_eq(day_of_year(Date { y: 2024, m: 3, d: 1 }), 61)
+    assert_eq(day_of_year(Date { y: 2024, m: 12, d: 31 }), 366)
+}
+
+@[test]
+fn test_add_days_simple() {
+    assert(same_date(add_days(Date { y: 2023, m: 5, d: 10 }, 0), Date { y: 2023, m: 5, d: 10 }))
+    assert(same_date(add_days(Date { y: 2023, m: 5, d: 10 }, 5), Date { y: 2023, m: 5, d: 15 }))
+    assert(same_date(add_days(Date { y: 2023, m: 1, d: 31 }, 1), Date { y: 2023, m: 2, d: 1 }))
+}
+
+@[test]
+fn test_add_days_leap_and_year() {
+    assert(same_date(add_days(Date { y: 2024, m: 2, d: 28 }, 2), Date { y: 2024, m: 3, d: 1 }))
+    assert(same_date(add_days(Date { y: 2023, m: 2, d: 28 }, 1), Date { y: 2023, m: 3, d: 1 }))
+    assert(same_date(add_days(Date { y: 2023, m: 12, d: 31 }, 1), Date { y: 2024, m: 1, d: 1 }))
+    assert(same_date(add_days(Date { y: 2023, m: 1, d: 1 }, 365), Date { y: 2024, m: 1, d: 1 }))
+    assert(same_date(add_days(Date { y: 2024, m: 1, d: 1 }, 365), Date { y: 2024, m: 12, d: 31 }))
+}
+
+@[test]
+fn test_add_days_consistent_with_day_of_year() {
+    let start = Date { y: 2025, m: 1, d: 1 }
+    let later = add_days(start, 100)
+    assert_eq(day_of_year(later), 101)
+    assert_eq(later.m, 4)
+    assert_eq(later.d, 11)
+}
+
+@[test]
+fn test_same_date() {
+    assert(same_date(Date { y: 1, m: 2, d: 3 }, Date { y: 1, m: 2, d: 3 }))
+    assert(!same_date(Date { y: 1, m: 2, d: 3 }, Date { y: 1, m: 2, d: 4 }))
+}

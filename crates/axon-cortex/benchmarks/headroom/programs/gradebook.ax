@@ -1,0 +1,151 @@
+// Gradebook: integer scores 0..=100, floor averages, letter grades and ranking.
+
+type Student = { name: str, scores: [i64] }
+
+fn min_score(xs: &[i64]) -> i64 {
+    let m = xs[0]
+    for i in 1..len(xs) { m = min_i64(m, xs[i]) }
+    m
+}
+
+fn max_score(xs: &[i64]) -> i64 {
+    let m = xs[0]
+    for i in 1..len(xs) { m = max_i64(m, xs[i]) }
+    m
+}
+
+fn average(s: Student) -> Option<i64> {
+    if len(s.scores) == 0 { return None }
+    let total = 0
+    for i in 0..len(s.scores) { total = total + s.scores[i] }
+    Some(total / len(s.scores))
+}
+
+// Where the average sits inside [min, max], in permille. The postcondition
+// 0..=1000 is exactly "the average lies within min..max of the scores".
+@[verify(value >= 0 && value <= 1000)]
+fn average_position(s: Student) -> i64 {
+    match average(s) {
+        None => 0
+        Some(avg) => {
+            let lo = min_score(&s.scores)
+            let hi = max_score(&s.scores)
+            if hi == lo { 0 } else { (avg - lo) * 1000 / (hi - lo) }
+        }
+    }
+}
+
+fn letter(avg: i64) -> str {
+    if avg >= 90 { "A" } else if avg >= 80 { "B" } else if avg >= 70 { "C" } else if avg >= 60 { "D" } else { "F" }
+}
+
+fn grade(s: Student) -> str {
+    match average(s) {
+        Some(a) => letter(a)
+        None => "-"
+    }
+}
+
+fn avg_or(s: Student, dflt: i64) -> i64 {
+    match average(s) {
+        Some(a) => a
+        None => dflt
+    }
+}
+
+// Names ordered by descending average; ties keep input order. No scores ranks last.
+fn rank(students: &[Student]) -> [str] {
+    let order = arr_sort_by(students, |a, b| avg_or(b, -1) - avg_or(a, -1))
+    let out = []
+    for i in 0..len(order) { out = arr_push(out, order[i].name) }
+    out
+}
+
+fn best_student(students: &[Student]) -> Option<str> {
+    let r = rank(&students)
+    if len(r) == 0 { None } else { Some(r[0]) }
+}
+
+fn class() -> [Student] {
+    [
+        Student { name: "ada", scores: [90, 95, 100] },
+        Student { name: "bob", scores: [70, 65, 80] },
+        Student { name: "cy", scores: [] },
+        Student { name: "dee", scores: [88, 92] }
+    ]
+}
+
+fn main() {
+    let best = match best_student(&class()) { Some(n) => n, None => "nobody" }
+    println("best: {best}")
+}
+
+@[test]
+fn test_min_max() {
+    assert_eq(min_score(&[70, 65, 80]), 65)
+    assert_eq(max_score(&[70, 65, 80]), 80)
+    assert_eq(min_score(&[42]), 42)
+}
+
+@[test]
+fn test_average() {
+    let c = class()
+    assert_eq(avg_or(c[0], -1), 95)
+    assert_eq(avg_or(c[1], -1), 71)
+    assert_eq(avg_or(c[2], -1), -1)
+    assert_eq(avg_or(c[3], -1), 90)
+}
+
+@[test]
+fn test_average_position() {
+    let c = class()
+    assert_eq(average_position(c[0]), 500)
+    assert_eq(average_position(c[1]), 400)
+    assert_eq(average_position(c[2]), 0)
+    assert_eq(average_position(Student { name: "z", scores: [50, 50] }), 0)
+    assert_eq(average_position(Student { name: "z", scores: [0, 0, 100] }), 330)
+}
+
+@[test]
+fn test_letter() {
+    assert(str_eq(letter(90), "A"))
+    assert(str_eq(letter(89), "B"))
+    assert(str_eq(letter(70), "C"))
+    assert(str_eq(letter(60), "D"))
+    assert(str_eq(letter(59), "F"))
+}
+
+@[test]
+fn test_grade() {
+    let c = class()
+    assert(str_eq(grade(c[0]), "A"))
+    assert(str_eq(grade(c[1]), "C"))
+    assert(str_eq(grade(c[2]), "-"))
+    assert(str_eq(grade(c[3]), "A"))
+}
+
+@[test]
+fn test_rank() {
+    let r = rank(&class())
+    assert_eq(len(r), 4)
+    assert(str_eq(r[0], "ada"))
+    assert(str_eq(r[1], "dee"))
+    assert(str_eq(r[2], "bob"))
+    assert(str_eq(r[3], "cy"))
+}
+
+@[test]
+fn test_best_student() {
+    assert(match best_student(&class()) { Some(n) => str_eq(n, "ada"), None => false })
+    let none: [Student] = []
+    assert(match best_student(&none) { Some(_) => false, None => true })
+}
+
+@[test]
+fn test_rank_ties_stable() {
+    let s = [Student { name: "p", scores: [80] }, Student { name: "q", scores: [80] }, Student { name: "r", scores: [81] }]
+    let r = rank(&s)
+    assert(str_eq(r[0], "r"))
+    assert(str_eq(r[1], "p"))
+    assert(str_eq(r[2], "q"))
+}

@@ -1,0 +1,131 @@
+// Half-open integer intervals [lo, hi): sorting, merging, coverage and point queries.
+
+type Span = { lo: i64, hi: i64 }
+
+fn span(lo: i64, hi: i64) -> Result<Span, str> {
+    if hi < lo { Err("hi before lo") } else { Ok(Span { lo: lo, hi: hi }) }
+}
+
+fn sort_spans(xs: &[Span]) -> [Span] {
+    arr_sort_by(xs, |a, b| if a.lo != b.lo { a.lo - b.lo } else { a.hi - b.hi })
+}
+
+// Touching spans ([1,3) and [3,5)) merge too, since together they cover [1,5) without a gap.
+fn merge(xs: &[Span]) -> [Span] {
+    let sorted = sort_spans(&xs)
+    let out = []
+    for i in 0..len(sorted) {
+        let s = sorted[i]
+        if s.lo == s.hi { continue }
+        let n = len(out)
+        if n > 0 && s.lo <= out[n - 1].hi {
+            out[n - 1].hi = max_i64(out[n - 1].hi, s.hi)
+        } else {
+            out = arr_push(out, s)
+        }
+    }
+    out
+}
+
+fn covered_length(xs: &[Span]) -> i64 {
+    let m = merge(&xs)
+    let total = 0
+    for i in 0..len(m) { total = total + (m[i].hi - m[i].lo) }
+    total
+}
+
+fn contains(s: Span, p: i64) -> bool { p >= s.lo && p < s.hi }
+
+fn find_containing(xs: &[Span], p: i64) -> Option<Span> {
+    let m = merge(&xs)
+    for i in 0..len(m) {
+        if contains(m[i], p) { return Some(m[i]) }
+    }
+    None
+}
+
+fn point_in_any(xs: &[Span], p: i64) -> bool {
+    match find_containing(&xs, p) {
+        Some(_) => true
+        None => false
+    }
+}
+
+fn sample() -> [Span] {
+    [Span { lo: 8, hi: 10 }, Span { lo: 1, hi: 3 }, Span { lo: 2, hi: 6 }, Span { lo: 15, hi: 18 }, Span { lo: 6, hi: 7 }]
+}
+
+fn main() {
+    println("covered: {to_str(covered_length(&sample()))}")
+}
+
+@[test]
+fn test_span() {
+    assert(match span(1, 4) { Ok(s) => s.hi - s.lo == 3, Err(_) => false })
+    assert(match span(5, 4) { Ok(_) => false, Err(e) => str_eq(e, "hi before lo") })
+}
+
+@[test]
+fn test_sort_spans() {
+    let s = sort_spans(&sample())
+    assert_eq(s[0].lo, 1)
+    assert_eq(s[1].lo, 2)
+    assert_eq(s[2].lo, 6)
+    assert_eq(s[4].lo, 15)
+    let t = sort_spans(&[Span { lo: 1, hi: 9 }, Span { lo: 1, hi: 2 }])
+    assert_eq(t[0].hi, 2)
+}
+
+@[test]
+fn test_merge() {
+    let m = merge(&sample())
+    assert_eq(len(m), 3)
+    assert_eq(m[0].lo, 1)
+    assert_eq(m[0].hi, 7)
+    assert_eq(m[1].lo, 8)
+    assert_eq(m[1].hi, 10)
+    assert_eq(m[2].lo, 15)
+    assert_eq(m[2].hi, 18)
+}
+
+@[test]
+fn test_merge_nested_and_empty() {
+    let m = merge(&[Span { lo: 0, hi: 10 }, Span { lo: 2, hi: 3 }, Span { lo: 4, hi: 4 }])
+    assert_eq(len(m), 1)
+    assert_eq(m[0].hi, 10)
+    let none: [Span] = []
+    assert_eq(len(merge(&none)), 0)
+    assert_eq(len(merge(&[Span { lo: 3, hi: 3 }])), 0)
+}
+
+@[test]
+fn test_covered_length() {
+    assert_eq(covered_length(&sample()), 6 + 2 + 3)
+    assert_eq(covered_length(&[Span { lo: 0, hi: 5 }, Span { lo: 0, hi: 5 }]), 5)
+}
+
+@[test]
+fn test_contains() {
+    let s = Span { lo: 2, hi: 5 }
+    assert(contains(s, 2))
+    assert(contains(s, 4))
+    assert(!contains(s, 5))
+    assert(!contains(s, 1))
+}
+
+@[test]
+fn test_find_containing() {
+    assert_eq(match find_containing(&sample(), 5) { Some(s) => s.lo, None => -1 }, 1)
+    assert_eq(match find_containing(&sample(), 16) { Some(s) => s.hi, None => -1 }, 18)
+    assert_eq(match find_containing(&sample(), 7) { Some(s) => s.lo, None => -1 }, -1)
+}
+
+@[test]
+fn test_point_in_any() {
+    let xs = sample()
+    assert(point_in_any(&xs, 1))
+    assert(point_in_any(&xs, 9))
+    assert(!point_in_any(&xs, 10))
+    assert(!point_in_any(&xs, 0))
+    assert(!point_in_any(&xs, 18))
+}
