@@ -128,3 +128,6 @@ L2 touches `axon-cortex/src/*`, so it shares NH-R1's receipt regress when landed
 | Q | Question | Default |
 |---|---|---|
 | Q1 | Confirm C1 (the accountability audit feeding the NH-R1 enabling decision) as R6's consumer | yes. If declined, R6 stays deferred and NH-R1 §9 drops its R6 clause. |
+
+`[DECIDED by human 2026-10-19: Q1 yes — C1 is R6's consumer. NH-R1 §9 keeps its R6 clause, and NH-R1 Q1 was decided
+Ed25519-from-G5, so objection (a) in §2 stays answered.]` R6 is still not authorized for build.

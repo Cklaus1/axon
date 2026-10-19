@@ -155,7 +155,10 @@ Computed by `stats.py compare` / `stats.py route2` and `stats.fu10_verdict`.
   repairs. The batch's correctness fixes (FU-2..FU-9) do not change which
   symbol is patched. FU-10's feedback follows a REJECTED attempt: 18 of the
   28 false successes were first proposals, which no feedback precedes; the
-  other 10 followed one rejected attempt on another candidate.
+  other 10 followed one rejected attempt: 9 on another candidate, and 1
+  (`hx-caller-744b244e8b` trial 3) on the helper itself (`contains`), after
+  which the caller was patched. [Corrected 2026-10-19 from "on another
+  candidate" for all 10; found in the hx2 spec draft.]
 - **Every not-clean caller trial is a false success** (28 of 114 caller
   task-trials, 10 tasks; 0 in every other class): the incumbent patched the
   CALLER (`true_symbol_changed` false), the hidden check passed, and the

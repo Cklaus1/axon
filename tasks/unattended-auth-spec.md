@@ -262,7 +262,7 @@ Rules for the gate as a whole:
 | E1s | symlink escape (F2) | scope and authority checks are lexical (`capabilities.rs:233-243`, `runner.rs:2549-2567`); writes follow links | refuse if `task.file`, any of its ancestors in the workspace, or anything at or under a write prefix or scope pin is a symlink (lstat walk, phase A/B); key and store paths compared after `canonicalize`. Resolve-beneath in the interpreter is a later item; until then this refusal stands. |
 | E2 | Fabric fencing (O-S1-05) | Fabric sets `fence.not_applied()` (`bin/cortex.rs:716-726`) | `--fabric-*` is not in the allowlist → refuse |
 | E3 | hard deadline (O-S1-07) | in-flight `ai:` up to 30 s past the deadline (`ai.rs:62-76`); checks not cut (USAGE :88-90); the audit is gated only at start (:1180-1200) | watchdog (below) |
-| E4 | native-module scopes (O-S1-09) | native calls pass `scope_args = None` except `*_connect` (`eval.rs:1218-1235`); `fix` has an empty effect row | refuse if pristine caps contain any `native:` label (`capabilities.rs:577-606`). No interpreter strict mode in v1 `[REVISED: D9, F9 — strict env fails open on an older pinned axon]`. |
+| E4 | native-module scopes (O-S1-09) | native calls pass `scope_args = None` except `*_connect` (`eval.rs:1218-1235`); `fix` has an empty effect row | refuse if pristine caps contain any `native:` label (recorded by `Reach::note`, `capabilities.rs:633-636` at 7f110693 `[REVISED 2026-10-19: re-anchored from :577-606, found by the capability-surface draft]`). No interpreter strict mode in v1 `[REVISED: D9, F9 — strict env fails open on an older pinned axon]`. |
 | E5 | foreign edits (O-S1-13) | 9 write/delete sites, FU-4 covers 3 | *build:* NH-R1 lands after FU-4, and every site goes through one CAS write helper (below) `[REVISED: F10, D10]` |
 | E6 | cache writers bypassing scopes | ungated: AI replay cache, `run_start`, `AXON_DUMP_BINDINGS`, audit ledger, `AXON_RECORD` | the check child env is **exactly** the fence env plus the completion-key mechanism (`env_clear`, `runner.rs:3619-3635`), asserted in `registered_runner`. No `HOME`/`XDG_*`, so the provenance and dstore writers find no cache root (`provenance.rs:13-19`, `builtins.rs:403-411`); dstore files stay fail-closed (exit 22, O-S1-06). `[REVISED: F14, D11 — dropped the XDG_CACHE_HOME clause]` |
 | E7 | guest/VM, AOT | MMDS has no scope fields (`firecracker.rs:80-91`) | only `LocalInterpreterExecutor` (`runner.rs:3404`); `--check-registry` is not in the allowlist → refuse |
@@ -282,7 +282,9 @@ Rules for the gate as a whole:
   5. calls `_exit(20)`.
 - An in-flight `ai:` HTTP call dies with the process, so no `axon-ai` API change is needed.
 - After the bound, the only write is the CAS restore of the found bytes. No generator or check result is applied.
-- `HARD_GRACE` (DRAFT 2 s) bounds lock wait + restore + report, and S10 measures it.
+- `HARD_GRACE` bounds lock wait + restore + report. `[DECIDED by human 2026-10-19 (§10 Q4): not fixed in advance —
+  set from S10's measured tail (p99 of lock wait + restore + report over the stall cases, run under the host's real
+  load, not on an idle machine) plus a stated margin; the measured value and its load are recorded with S10.]`
 - Every child (checks, per-proposal `axon caps`) is also bounded by `min(configured, remaining)`.
 
 ### E5 write helper `[REVISED: F10, D10]`
@@ -305,15 +307,19 @@ The helper:
 1. writes a temp file in the same directory;
 2. re-hashes the target against the last digest cortex wrote or read;
 3. renames;
-4. checks `(dev, ino)` afterwards.
+4. checks `(dev, ino)` afterwards;
+5. re-hashes the renamed file and compares it with the bytes it wrote. `[DECIDED by human 2026-10-19 (§10 Q4)]` A
+   mismatch means a writer got in during the residual window: the run reports it (exit 22, both digests named) instead
+   of claiming the write. A lost foreign edit is then visible, never silent.
 
-A mismatch writes nothing, stops the walk, and exits 22 with the reason.
+A step-2 mismatch writes nothing; any mismatch stops the walk and exits 22 with the reason.
 
 Supporting rules:
 - An exclusive `flock` on a store-side lock keyed by the canonical file path means a second unattended run on the same
   file → exit 29.
 - The visible copy goes to a private temp directory.
-- **Residual window:** a non-cooperating writer between re-hash and rename. It is stated for human sign-off (§10 Q4).
+- **Residual window:** a non-cooperating writer between re-hash and rename. `[DECIDED by human 2026-10-19 (§10 Q4):
+  accepted, on condition of step 5's post-rename check; POSIX has no atomic compare-and-rename.]`
 
 ## 7. Security and correctness tests (all must pass before §9)
 
@@ -388,3 +394,17 @@ All of the following must hold, and then a human records the enabling decision (
 | Q2 | v1 admission set: refuse files using `exec`, native modules, dstore; `ai:` generators only; fs-read/net admitted only with signed pins | as stated |
 | Q3 | Who records the enabling decision after §9; is a per-host opt-in file also required? | human decision; refused by default |
 | Q4 | Accept the residual CAS window (E5) and `HARD_GRACE` = 2 s as meeting "never overwrite another actor's edits" and "hard deadlines"? | yes, with both measured in S10 |
+
+**Decisions recorded 2026-10-19** (`[DECIDED by human 2026-10-19: the recommendations below]`). They settle the
+design questions only. Building NH-R1 still needs a separate human go-ahead, and enabling it still needs §9.
+- **Q1 → Ed25519 seeded from G5.** An HMAC verifier can mint, so the runner could approve itself. R6 depends on this
+  choice.
+- **Q2 → the v1 admission set as stated.** Each refused item is a confinement escape this spec has no defence for
+  (E4, E9, E11). Widening later is cheap; narrowing after an incident is not.
+- **Q3 → a human records the enabling decision, AND each host needs its own opt-in file.** The decision says the
+  build is fit; the host file says this machine agrees. The host is shared (other users' jobs held load ≈ 48 during
+  the follow-up run), so one repo decision must not enable every checkout on every host. The opt-in file's path,
+  owner/mode check and refusal string are A-phase build items (§8) and get an S-test.
+- **Q4 → accept the residual window with E5 step 5's post-rename check; `HARD_GRACE` from S10's measured tail under
+  real load, not a fixed 2 s.** The follow-up run's receipt flipped FAIL → PASS on wall time between two load levels,
+  so a bound measured on an idle machine is not evidence.
