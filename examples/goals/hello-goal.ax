@@ -74,7 +74,8 @@ fn try_variant(variant_id: i64) -> i64 {
 
 // ── Verify gate (derived from prose) ──────────────────────
 // prose predicate: coverage >= 7.0 AND faithfulness >= 8.0 AND length_chars <= 280
-@[verify(score >= 280)]
+// the prose predicate has no `score` bound, so the gate uses the default target 70
+@[verify(score >= 70)]
 fn assert_deployable(score: i64) -> i64 {
     score
 }
@@ -82,9 +83,9 @@ fn assert_deployable(score: i64) -> i64 {
 // ── Main loop ────────────────────────────────────────────
 fn main() -> i64 {
     println("goal: Goal: Summarize a long text into a tweet — searching variants...")
-    let result = goal_run("try_variant", 280.0, 20)
+    let result = goal_run("try_variant", 70.0, 20)
     let best = f64_to_i64(result)
-    println("best score: {to_str(best)} (target 280)")
+    println("best score: {to_str(best)} (target 70)")
     let _ = assert_deployable(best)
     println("deploy gate: passed")
     0
