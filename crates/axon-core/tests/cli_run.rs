@@ -40334,3 +40334,40 @@ fn move_before_break_still_e0601_after_loop() {
     assert_eq!(cc, Some(2), "a move before `break` was dropped: {ce}");
     assert!(ce.contains("E0601") && ce.contains("\"line\":12"), "{ce}");
 }
+
+#[test]
+fn let_copies_array_param() {
+    let src = "fn f(xs: [i64]) -> i64 {\n    let ys = xs\n    len(ys) + len(xs)\n}\n\nfn main() {\n    println(to_str(f([1, 2])))\n}\n";
+    let (cc, ce, rc, so) = csp_check_run("m_arr", src);
+    assert_eq!(
+        cc,
+        Some(0),
+        "ATTACK: `let ys = xs` moved an array param: {ce}"
+    );
+    assert_eq!((rc, so.as_str()), (Some(0), "4\n"));
+}
+
+#[test]
+fn let_copies_slice_param() {
+    let src = "fn f(xs: &[i64]) -> i64 {\n    let out = xs\n    len(out) + len(xs)\n}\n\nfn main() {\n    let a = [1, 2, 3]\n    println(to_str(f(&a)))\n}\n";
+    let (cc, ce, rc, so) = csp_check_run("m_slice", src);
+    assert_eq!(cc, Some(0), "`let out = xs` moved a `&[T]` param: {ce}");
+    assert_eq!((rc, so.as_str()), (Some(0), "6\n"));
+}
+
+#[test]
+fn let_copies_local_array() {
+    let src =
+        "fn main() {\n    let a = [1, 2]\n    let b = a\n    println(to_str(len(a) + len(b)))\n}\n";
+    let (cc, ce, rc, so) = csp_check_run("arrloc", src);
+    assert_eq!(cc, Some(0), "{ce}");
+    assert_eq!((rc, so.as_str()), (Some(0), "4\n"));
+}
+
+#[test]
+fn let_still_moves_str_param() {
+    let src = "fn f(s: str) -> i64 {\n    let core = s\n    len(core) + len(s)\n}\n\nfn main() {\n    println(to_str(f(\"abc\")))\n}\n";
+    let (cc, ce, _, _) = csp_check_run("m_str", src);
+    assert_eq!(cc, Some(2), "`str` must stay a move type (B07): {ce}");
+    assert!(ce.contains("E0601"), "{ce}");
+}

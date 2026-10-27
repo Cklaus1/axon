@@ -11756,6 +11756,10 @@ MUTATIONS += [
      'let then_live = !branch_diverges(then);',
      'let then_live = true;',
      'axon-core', '--no-default-features --test cli_run', 'early_return_move_does_not_poison_fallthrough'),
+    ('M3839', 'CS-7 / NH-3 (d): `let b = a` moves an array or `&[T]` param', 'crates/axon-core/src/borrow.rs',
+     'if matches!(ty, Some(Type::Slice(_))) {',
+     'if false {',
+     'axon-core', '--no-default-features --test cli_run', 'let_copies_array_param'),
 ]
 
 if __name__ == "__main__":

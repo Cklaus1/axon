@@ -3163,4 +3163,5 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M3833': r'ATTACK: a `.field` then a newline `\(` parsed as a method call',
     'M3835': r'ATTACK: a move before an early `return` poisoned the fallthrough path',
+    'M3839': r'ATTACK: `let ys = xs` moved an array param',
 })

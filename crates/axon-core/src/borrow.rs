@@ -252,7 +252,13 @@ impl OwnershipGraph {
 
             Expr::Let { name, value, .. } => {
                 let ty = infer_expr_type(value, &self.types);
-                self.check_move_expr(value);
+                // Arrays are values: `let b = a` copies an array or `&[T]`
+                // binding (NH-3 (d), CS-7); `str` and structs still move.
+                if matches!(ty, Some(Type::Slice(_))) {
+                    self.check_read(value);
+                } else {
+                    self.check_move_expr(value);
+                }
                 self.introduce(name, BindingState::Owned, ty);
             }
 
