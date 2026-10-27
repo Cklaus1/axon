@@ -11746,5 +11746,13 @@ MUTATIONS += [
      'axon-cortex', '--lib', 'generate::drain_tests::a_lost_read_is_unavailable_never_declined_or_empty'),
 ]
 
+# Checker-soundness LaneType B1 (CS-11, CS-5, CS-12, CS-4; ids M3820-M3832, M3836)
+MUTATIONS += [
+    ('M3836', 'CS-11: `return` is typed `()` again, so a `return` match arm refuses its sibling arm', 'crates/axon-core/src/infer.rs',
+     '(`None => return Err(..)` next to `Some(x) => x`).\n                Type::Never',
+     '(`None => return Err(..)` next to `Some(x) => x`).\n                Type::Unit',
+     'axon-core', '--no-default-features --test cli_run', 'return_in_match_arm_unifies_with_the_arm_type'),
+]
+
 if __name__ == "__main__":
     main()

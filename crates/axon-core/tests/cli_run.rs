@@ -40269,3 +40269,66 @@ fn r51_t1c_a_sealed_axon_test_never_runs_on_the_vm() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Checker-soundness (LaneType B1): write `src` to a temp file named after
+/// `tag`, `axon check` it, and when check passes `axon run` it. Returns
+/// (check rc, check stdout+stderr, run rc, run stdout).
+fn cs_b1_check_run(tag: &str, src: &str) -> (Option<i32>, String, Option<i32>, String) {
+    let f = std::env::temp_dir().join(format!("axon_cs_b1_{tag}_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let c = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let cmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&c.stdout),
+        String::from_utf8_lossy(&c.stderr)
+    );
+    let (rrc, rout) = if c.status.code() == Some(0) {
+        let r = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        (
+            r.status.code(),
+            String::from_utf8_lossy(&r.stdout).into_owned(),
+        )
+    } else {
+        (None, String::new())
+    };
+    let _ = std::fs::remove_file(&f);
+    (c.status.code(), cmsg, rrc, rout)
+}
+
+/// CS-11: `return` inside a match arm diverges (`Never`), so it unifies with
+/// the sibling arm's type instead of forcing it to `()`.
+#[test]
+fn return_in_match_arm_unifies_with_the_arm_type() {
+    let src = "fn f(o: Option<i64>) -> Result<i64, str> {\n    let v = match o {\n        Some(x) => x,\n        None => return Err(\"none\"),\n    }\n    Ok(v + 1)\n}\nfn main() { match f(Some(2)) { Ok(n) => println(to_str(n)), Err(e) => println(e) } }\n";
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run("o24_ret", src);
+    assert_eq!(
+        crc,
+        Some(0),
+        "ATTACK: a `return` match arm is typed () and refuses the sibling arm: {cmsg}"
+    );
+    assert_eq!((rrc, rout.as_str()), (Some(0), "3\n"), "{cmsg}");
+}
+
+/// CS-11: `break` in an if-branch unifies with the other branch's type.
+#[test]
+fn break_in_if_branch_unifies() {
+    let src = "fn h(n: i64) -> bool { while true { if n > 2 { break } else { 0 } }\n true }\nfn main() { println(to_str(h(3))) }\n";
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run("brk", src);
+    assert_eq!(crc, Some(0), "`break` branch must unify: {cmsg}");
+    assert_eq!((rrc, rout.as_str()), (Some(0), "true\n"), "{cmsg}");
+}
+
+/// CS-11 non-regression: a `return` value is still checked against the
+/// declared return type (E0307 at the lane base, not E0102 as the spec says).
+#[test]
+fn return_value_still_checked_against_declared_type() {
+    let (crc, cmsg, _, _) = cs_b1_check_run(
+        "ret_str",
+        "fn f() -> i64 { return \"s\" }\nfn main() { println(to_str(f())) }\n",
+    );
+    assert_eq!(crc, Some(2), "{cmsg}");
+    assert!(cmsg.contains("E0307"), "{cmsg}");
+}

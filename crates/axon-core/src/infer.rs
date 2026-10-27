@@ -1317,7 +1317,9 @@ impl InferCtx {
                 // infer constraint, so a literal-coercion here alone is insufficient
                 // (and unsound to half-do). Tracked as Slice A-cont in R19.
                 self.constrain(val_ty, ret_ty.clone(), "return value");
-                Type::Unit // Return is diverging; block type isn't used after it.
+                // Diverging: `Never` unifies with any sibling arm/branch type
+                // (`None => return Err(..)` next to `Some(x) => x`).
+                Type::Never
             }
 
             // ── Ok / Err / Some / None ────────────────────────────────────────
@@ -1711,7 +1713,7 @@ impl InferCtx {
             }
 
             // ── Break / Continue ─────────────────────────────────────────────
-            Expr::Break | Expr::Continue => Type::Unit,
+            Expr::Break | Expr::Continue => Type::Never,
 
             // ── Assign (rebind without let) ───────────────────────────────────
             Expr::Assign { name, value } => {
@@ -1988,9 +1990,9 @@ impl InferCtx {
         // Constrain body type to declared return type (explicit return statements
         // also constrain individually; this handles implicit returns).
         //
-        // UNLESS the body diverges. `Expr::Return` yields `Type::Unit` with the
-        // note "Return is diverging; block type isn't used after it" — but it IS
-        // used, right here, so a body whose tail is a `return` typed as `()` and
+        // UNLESS the body diverges. `Expr::Return` used to yield `Type::Unit`
+        // (it yields `Never` since CS-11; this guard predates that), so a body
+        // whose tail is a `return` was typed as `()` and
         // collided with the declared type:
         //
         //     fn g() -> i64 { return 7 }

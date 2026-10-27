@@ -3158,3 +3158,8 @@ ATTACK_MARKERS.update({
     'M3755': r'ATTACK: a lost generator read was not reported Unavailable',
     'M3756': r'ATTACK: a lost generator read was not reported Unavailable',
 })
+
+# Checker-soundness LaneType B1 (CS-11, CS-5, CS-12, CS-4; ids M3820-M3832, M3836)
+ATTACK_MARKERS.update({
+    'M3836': r'ATTACK: a `return` match arm is typed \(\) and refuses the sibling arm',
+})
