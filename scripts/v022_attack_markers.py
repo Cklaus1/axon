@@ -3203,3 +3203,12 @@ ATTACK_MARKERS.update({
     'M3817': r"ATTACK: a parameter refinement's predicate did not see its parameter's name",
     'M3818': r'ATTACK: a whole-struct refinement predicate naming an unbound name passed check',
 })
+
+# Capability-surface lane, CAP-1 (ids M3800-M3802, M3808-M3809)
+ATTACK_MARKERS.update({
+    'M3800': r'ATTACK: verify_match: a verify predicate that writes a file passed',
+    'M3801': r'ATTACK: verify_sleep: a verify predicate that sleeps passed',
+    'M3802': r'ATTACK: vrl: a verify predicate reached a write through a refinement-typed helper',
+    'M3808': r"ATTACK: time_row: a closed-row fn's verify predicate read the clock without E1310",
+    'M3809': r"ATTACK: time_caller: a closed-row caller inherited nothing from a callee's verify predicate",
+})

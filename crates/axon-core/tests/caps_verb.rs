@@ -590,13 +590,46 @@ fn a_whole_struct_refinement_is_reached() {
     assert_reaches_the_write("refine_struct", &r);
 }
 
+/// CAP-1 (Q1 a2): a postcondition may only read the clock, so the verify
+/// route no longer runs: `axon check` refuses it with E1104, `axon run`
+/// writes nothing, and `axon caps` (which reports only a program that
+/// checks) refuses it with the same E1104. Before the fix this route checked
+/// clean, the run wrote the file, and caps reported `fs:write`.
 #[test]
-fn a_verify_predicate_is_reached() {
-    let r = implicit_route(
-        "verify",
-        "@[verify(leak(value))]\nfn double(n: i64) -> i64 {\n    n * 2\n}\n",
+fn a_verify_predicate_route_is_refused_at_check() {
+    let d = tmp("verify");
+    let mark = d.join("written.W");
+    let src = format!(
+        "{}@[verify(leak(value))]\nfn double(n: i64) -> i64 {{\n    n * 2\n}}\n{RUN_DOUBLE}",
+        LEAK.replace("MARK", &mark.display().to_string())
     );
-    assert_reaches_the_write("verify", &r);
+    let f = write(&d, "p.ax", &src);
+    let check = Command::new(axon()).arg("check").arg(&f).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(
+        check.status.code() == Some(2) && text.contains("E1104"),
+        "ATTACK: verify: a verify predicate reaching a write passed check: {text}"
+    );
+    let run = Command::new(axon())
+        .arg("run")
+        .arg(&f)
+        .env("XDG_CACHE_HOME", d.join("cache"))
+        .output()
+        .unwrap();
+    assert!(
+        !mark.exists(),
+        "ATTACK: verify: `axon run` ran a writing verify predicate (rc {:?})",
+        run.status.code()
+    );
+    let (code, _, err) = caps(&f, Some("double"));
+    assert!(
+        code == 2 && err.contains("E1104"),
+        "verify: caps reported a program check refuses (rc {code}): {err}"
+    );
 }
 
 #[test]

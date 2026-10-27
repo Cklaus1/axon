@@ -614,12 +614,18 @@ pub struct Reach {
     pub capabilities: std::collections::BTreeSet<String>,
     pub effects: std::collections::BTreeSet<String>,
     pub unknown: bool,
+    /// CAP-1: every name `note` recorded something for (a capability label,
+    /// a native module, or an effect row), as written at the call — so a
+    /// consumer can say WHICH call carried an effect (`effects::check_effects`
+    /// names it in E1104).
+    pub builtins: std::collections::BTreeSet<String>,
 }
 
 impl Reach {
     /// Record a builtin the walk reached, called or used as a value. A name
     /// that is not a builtin records nothing.
     fn note(&mut self, name: &str) {
+        let mut hit = false;
         if let Some(pairs) = classify_call_paths(name) {
             for (kind, _) in pairs {
                 if kind == IoKind::Exec {
@@ -628,19 +634,21 @@ impl Reach {
                     self.effects.insert("Exec".to_string());
                 }
                 self.capabilities.insert(cap_label(&kind).to_string());
+                hit = true;
             }
         }
         if let Some((m, _f)) = crate::native::resolve_call(name) {
             self.capabilities.insert(format!("native:{}", m.name));
             self.effects.extend(m.effects.iter().map(|e| e.to_string()));
+            hit = true;
         }
         // `ai_extract::<T>` is looked up under the name its row is listed by
         // — the same mapping the effect checker uses.
-        self.effects.extend(
-            crate::builtins::builtin_effect_row(crate::effects::effect_row_name(name))
-                .iter()
-                .map(|e| e.to_string()),
-        );
+        let row = crate::builtins::builtin_effect_row(crate::effects::effect_row_name(name));
+        self.effects.extend(row.iter().map(|e| e.to_string()));
+        if hit || !row.is_empty() {
+            self.builtins.insert(name.to_string());
+        }
     }
 }
 
@@ -706,34 +714,16 @@ impl Reach {
 /// `unknown` is set where nothing can say what runs: a computed dispatch
 /// name, inline assembly.
 pub fn reachable_capabilities(program: &Program, fn_name: Option<&str>) -> Option<Reach> {
-    let mut fn_map: std::collections::HashMap<&str, &FnDef> = std::collections::HashMap::new();
-    let mut method_map: std::collections::HashMap<&str, Vec<&FnDef>> =
-        std::collections::HashMap::new();
-    let mut inits: Vec<&Expr> = Vec::new();
-    for item in &program.items {
-        match item {
-            Item::FnDef(f) => {
-                fn_map.insert(f.name.as_str(), f);
-            }
-            Item::ImplBlock(b) => {
-                for m in &b.methods {
-                    method_map.entry(m.name.as_str()).or_default().push(m);
-                }
-            }
-            Item::LetDef { value, .. } => inits.push(value),
-            _ => {}
-        }
-    }
-    let hooks = TypeHooks::of(program);
+    let maps = WalkMaps::of(program);
     let mut work: Vec<Walk<'_>> = Vec::new();
     match fn_name {
         Some(name) => {
             let mut found = false;
-            if let Some((canon, f)) = fn_map.get_key_value(name) {
+            if let Some((canon, f)) = maps.fn_map.get_key_value(name) {
                 work.push(Walk::Helper(canon, f));
                 found = true;
             }
-            if let Some((canon, impls)) = method_map.get_key_value(name) {
+            if let Some((canon, impls)) = maps.method_map.get_key_value(name) {
                 work.push(Walk::Methods(canon, impls));
                 found = true;
             }
@@ -742,28 +732,96 @@ pub fn reachable_capabilities(program: &Program, fn_name: Option<&str>) -> Optio
             }
         }
         None => {
-            work.extend(fn_map.iter().map(|(n, f)| Walk::Helper(n, f)));
-            work.extend(method_map.iter().map(|(n, ms)| Walk::Methods(n, ms)));
+            work.extend(maps.fn_map.iter().map(|(n, f)| Walk::Helper(n, f)));
+            work.extend(maps.method_map.iter().map(|(n, ms)| Walk::Methods(n, ms)));
         }
     }
-    push_exprs(&mut work, inits.into_iter());
-    let spec = deny_all_spec(Span::dummy());
-    let mut scratch = Vec::new();
-    let mut reach = Reach::default();
-    let mut ctx = CapCtx {
-        spec: &spec,
-        fn_map: &fn_map,
-        method_map: &method_map,
-        visited: std::collections::HashSet::new(),
-        visited_methods: std::collections::HashSet::new(),
-        hooks: &hooks,
-        visited_types: std::collections::HashSet::new(),
-        site: Span::dummy(),
-        errors: &mut scratch,
-        reach: Some(&mut reach),
-    };
-    drain_walk(work, &mut ctx);
-    Some(reach)
+    push_exprs(&mut work, maps.inits.iter().copied());
+    Some(maps.reach(work))
+}
+
+/// CAP-1 — what each `@[verify]` predicate of `program` can exercise when
+/// its fn returns: every fn and impl method carrying one, paired with the
+/// reach of the predicate ALONE (its helpers, the refinement hooks they
+/// bind, methods, native and turbofish calls, `unknown`). No module `let`
+/// initializer is a root here: the predicate does not run them. The maps are
+/// built once for all predicates; each walk starts with fresh cycle guards.
+pub fn verify_predicate_reaches(program: &Program) -> Vec<(&FnDef, Reach)> {
+    let maps = WalkMaps::of(program);
+    let fns = program.items.iter().flat_map(|item| match item {
+        Item::FnDef(f) => std::slice::from_ref(f),
+        Item::ImplBlock(b) => b.methods.as_slice(),
+        _ => &[],
+    });
+    fns.filter_map(|f| {
+        let v = f.verify.as_ref()?;
+        let mut work: Vec<Walk<'_>> = Vec::new();
+        push_exprs(&mut work, std::iter::once(&*v.predicate));
+        Some((f, maps.reach(work)))
+    })
+    .collect()
+}
+
+/// The lookup tables one reach walk follows: fns by name, impl methods by
+/// name, module `let` initializers, and the type hooks. Shared by
+/// `reachable_capabilities` and `verify_predicate_reaches`, so a predicate is
+/// followed exactly as far as a fn body is.
+struct WalkMaps<'a> {
+    fn_map: std::collections::HashMap<&'a str, &'a FnDef>,
+    method_map: std::collections::HashMap<&'a str, Vec<&'a FnDef>>,
+    inits: Vec<&'a Expr>,
+    hooks: TypeHooks<'a>,
+}
+
+impl<'a> WalkMaps<'a> {
+    fn of(program: &'a Program) -> Self {
+        let mut fn_map: std::collections::HashMap<&str, &FnDef> = std::collections::HashMap::new();
+        let mut method_map: std::collections::HashMap<&str, Vec<&FnDef>> =
+            std::collections::HashMap::new();
+        let mut inits: Vec<&Expr> = Vec::new();
+        for item in &program.items {
+            match item {
+                Item::FnDef(f) => {
+                    fn_map.insert(f.name.as_str(), f);
+                }
+                Item::ImplBlock(b) => {
+                    for m in &b.methods {
+                        method_map.entry(m.name.as_str()).or_default().push(m);
+                    }
+                }
+                Item::LetDef { value, .. } => inits.push(value),
+                _ => {}
+            }
+        }
+        WalkMaps {
+            fn_map,
+            method_map,
+            inits,
+            hooks: TypeHooks::of(program),
+        }
+    }
+
+    /// Drain `work` with `@[contained]`'s own traversal under a deny-all
+    /// spec, collecting what it reaches (its errors are discarded).
+    fn reach<'s>(&'s self, work: Vec<Walk<'s>>) -> Reach {
+        let spec = deny_all_spec(Span::dummy());
+        let mut scratch = Vec::new();
+        let mut reach = Reach::default();
+        let mut ctx = CapCtx {
+            spec: &spec,
+            fn_map: &self.fn_map,
+            method_map: &self.method_map,
+            visited: std::collections::HashSet::new(),
+            visited_methods: std::collections::HashSet::new(),
+            hooks: &self.hooks,
+            visited_types: std::collections::HashSet::new(),
+            site: Span::dummy(),
+            errors: &mut scratch,
+            reach: Some(&mut reach),
+        };
+        drain_walk(work, &mut ctx);
+        reach
+    }
 }
 
 /// The program's types whose USE runs user code: refinements (named, and the
