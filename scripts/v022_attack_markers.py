@@ -3174,3 +3174,25 @@ ATTACK_MARKERS.update({
     'M3806': r'ATTACK: a closed-row fn called ai_extract::<T> without E1310',
     'M3807': r"ATTACK: a closed-row caller inherited nothing from a helper's ai_extract::<T>",
 })
+
+# Checker-soundness LaneType B1 (CS-11, CS-5, CS-12, CS-4; ids M3820-M3832, M3836)
+ATTACK_MARKERS.update({
+    'M3836': r'ATTACK: a `return` match arm is typed \(\) and refuses the sibling arm',
+})
+ATTACK_MARKERS.update({
+    'M3834': r'ATTACK: `len` of a type-variable arg was pinned to str',
+})
+ATTACK_MARKERS.update({
+    'M3832': r'ATTACK: [a-z0-9_]+: a type named like a builtin was accepted',
+})
+ATTACK_MARKERS.update({
+    'M3831': r'ATTACK: a call to a shadowed builtin was typed against the user signature',
+})
+ATTACK_MARKERS.update({
+    'M3820': r'ATTACK: a refinement predicate naming an unbound name passed check',
+    'M3821': r'ATTACK: a refinement named by two params bound the union of their names',
+    'M3822': r'ATTACK: a non-bool refinement predicate passed check',
+    'M3823': r'ATTACK: an int literal against an f64 refinement operand passed check',
+    'M3827': r'ATTACK: a predicate that leaves its frame passed check',
+    'M3838': r'ATTACK: a struct-field refinement did not bind its own field name',
+})

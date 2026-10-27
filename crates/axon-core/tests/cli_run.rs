@@ -17900,6 +17900,14 @@ fn user_fn_shadowing_a_builtin_warns_w0003() {
         msg.contains("exp"),
         "the warning must name the shadowed builtin `exp`: {msg}"
     );
+    // CS-4: the call `exp(1)` is typed against the builtin `exp(f64)`, the fn
+    // it actually reaches, so the i64 argument fails check (it used to pass
+    // check and panic at run: "expected f64, got i64").
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a call to a shadowed builtin must be typed against the builtin: {msg}"
+    );
 }
 
 #[test]
@@ -39980,13 +39988,21 @@ macro_rules! s0b_src {
 /// `continue` never ends or skips the caller's loop; the call is an error at
 /// the frame edge it reaches. One program per edge: a named fn through
 /// `CallFastLocalInt` (`stop(i + 1)`) and an inline-argument `CallFast`
-/// (`skip(i)`), a closure, a refinement predicate, and an effect-handler arm
-/// whose `with` sits inside the loop (§3 handler-arm row, veto 2175cc1b; its
-/// text does not say "outside a loop", S7-UnsealedParity-1). Identical on the
-/// tree, the eager VM and the default VM (`vm_same_both_engines`).
+/// (`skip(i)`), a closure, and an effect-handler arm whose `with` sits inside
+/// the loop (§3 handler-arm row, veto 2175cc1b; its text does not say "outside
+/// a loop", S7-UnsealedParity-1). Identical on the tree, the eager VM and the
+/// default VM (`vm_same_both_engines`). A refinement predicate that leaves its
+/// frame is refused at check since CS-1 (E1211); its runtime containment stays
+/// covered by `interp::tests::loop_control_does_not_escape_through_a_predicate`.
 #[test]
 fn r51_s0b_loop_control_never_leaves_its_frame_on_either_engine() {
-    let cases: [(&str, &str, &str, &str); 5] = [
+    let (crc, cmsg, _, _) = cs_b1_check_run("s0b_predicate", s0b_src!("escape_predicate"));
+    assert_eq!(crc, Some(2), "[s0b_predicate] {cmsg}");
+    assert!(
+        cmsg.contains("E1211") && cmsg.contains("cannot leave its frame"),
+        "[s0b_predicate] {cmsg}"
+    );
+    let cases: [(&str, &str, &str, &str); 4] = [
         (
             "s0b_fast_local_int",
             s0b_src!("escape_fast_local_int"),
@@ -40004,12 +40020,6 @@ fn r51_s0b_loop_control_never_leaves_its_frame_on_either_engine() {
             s0b_src!("escape_closure"),
             "0\n1\n",
             "outside a loop in a closure",
-        ),
-        (
-            "s0b_predicate",
-            s0b_src!("escape_predicate"),
-            "40\n41\n42\n",
-            "outside a loop in a predicate",
         ),
         (
             "s0b_handler_arm",
@@ -40370,4 +40380,334 @@ fn let_still_moves_str_param() {
     let (cc, ce, _, _) = csp_check_run("m_str", src);
     assert_eq!(cc, Some(2), "`str` must stay a move type (B07): {ce}");
     assert!(ce.contains("E0601"), "{ce}");
+}
+
+/// Checker-soundness (LaneType B1): write `src` to a temp file named after
+/// `tag`, `axon check` it, and when check passes `axon run` it. Returns
+/// (check rc, check stdout+stderr, run rc, run stdout).
+fn cs_b1_check_run(tag: &str, src: &str) -> (Option<i32>, String, Option<i32>, String) {
+    let f = std::env::temp_dir().join(format!("axon_cs_b1_{tag}_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let c = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let cmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&c.stdout),
+        String::from_utf8_lossy(&c.stderr)
+    );
+    let (rrc, rout) = if c.status.code() == Some(0) {
+        let r = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        (
+            r.status.code(),
+            String::from_utf8_lossy(&r.stdout).into_owned(),
+        )
+    } else {
+        (None, String::new())
+    };
+    let _ = std::fs::remove_file(&f);
+    (c.status.code(), cmsg, rrc, rout)
+}
+
+/// CS-11: `return` inside a match arm diverges (`Never`), so it unifies with
+/// the sibling arm's type instead of forcing it to `()`.
+#[test]
+fn return_in_match_arm_unifies_with_the_arm_type() {
+    let src = "fn f(o: Option<i64>) -> Result<i64, str> {\n    let v = match o {\n        Some(x) => x,\n        None => return Err(\"none\"),\n    }\n    Ok(v + 1)\n}\nfn main() { match f(Some(2)) { Ok(n) => println(to_str(n)), Err(e) => println(e) } }\n";
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run("o24_ret", src);
+    assert_eq!(
+        crc,
+        Some(0),
+        "ATTACK: a `return` match arm is typed () and refuses the sibling arm: {cmsg}"
+    );
+    assert_eq!((rrc, rout.as_str()), (Some(0), "3\n"), "{cmsg}");
+}
+
+/// CS-11: `break` in an if-branch unifies with the other branch's type.
+#[test]
+fn break_in_if_branch_unifies() {
+    let src = "fn h(n: i64) -> bool { while true { if n > 2 { break } else { 0 } }\n true }\nfn main() { println(to_str(h(3))) }\n";
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run("brk", src);
+    assert_eq!(crc, Some(0), "`break` branch must unify: {cmsg}");
+    assert_eq!((rrc, rout.as_str()), (Some(0), "true\n"), "{cmsg}");
+}
+
+/// CS-11 non-regression: a `return` value is still checked against the
+/// declared return type (E0307 at the lane base, not E0102 as the spec says).
+#[test]
+fn return_value_still_checked_against_declared_type() {
+    let (crc, cmsg, _, _) = cs_b1_check_run(
+        "ret_str",
+        "fn f() -> i64 { return \"s\" }\nfn main() { println(to_str(f())) }\n",
+    );
+    assert_eq!(crc, Some(2), "{cmsg}");
+    assert!(cmsg.contains("E0307"), "{cmsg}");
+}
+
+/// CS-5: `len` of a `?`-bound array checks; the arg is still a type variable
+/// at the call, and must not be pinned to `str` before solving.
+#[test]
+fn len_of_question_bound_array_checks() {
+    let src = "fn parse_line(line: str) -> Result<[str], str> {\n    if len(line) == 0 { return Err(\"empty\") }\n    Ok(str_split(line, \",\"))\n}\n\nfn column_count(line: str) -> Result<i64, str> {\n    let fields = parse_line(line)?\n    Ok(len(fields))\n}\n\nfn main() {\n    match column_count(\"a,b,c\") {\n        Ok(n) => println(to_str(n)),\n        Err(e) => println(e),\n    }\n}\n";
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run("n_q", src);
+    assert_eq!(
+        crc,
+        Some(0),
+        "ATTACK: `len` of a type-variable arg was pinned to str: {cmsg}"
+    );
+    assert_eq!((rrc, rout.as_str()), (Some(0), "3\n"), "{cmsg}");
+}
+
+/// CS-5: `len` of a match-bound array checks.
+#[test]
+fn len_of_match_bound_array_checks() {
+    let src = "fn mk(n: i64) -> Result<[i64], str> {\n    if n < 0 { return Err(\"neg\") }\n    Ok([n, n])\n}\n\nfn main() {\n    match mk(3) {\n        Ok(q) => println(to_str(len(q))),\n        Err(e) => println(e),\n    }\n}\n";
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run("n_match", src);
+    assert_eq!(crc, Some(0), "{cmsg}");
+    assert_eq!((rrc, rout.as_str()), (Some(0), "2\n"), "{cmsg}");
+}
+
+/// CS-5 non-regression: `len` of an int is still refused, whether the int is
+/// a literal or arrives through a type variable. (The literal case is E0306
+/// at the lane base, not E0102 as the spec says; either is a type refusal.)
+#[test]
+fn len_of_int_still_refused() {
+    for (tag, src) in [
+        ("len_lit", "fn main() { println(to_str(len(42))) }\n"),
+        (
+            "len_var",
+            "fn mk() -> Result<i64, str> { Ok(4) }\nfn f() -> Result<i64, str> {\n    let n = mk()?\n    Ok(len(n))\n}\nfn main() { match f() { Ok(n) => println(to_str(n)), Err(e) => println(e) } }\n",
+        ),
+    ] {
+        let (crc, cmsg, _, _) = cs_b1_check_run(tag, src);
+        assert_eq!(crc, Some(2), "{tag}: {cmsg}");
+        assert!(
+            (cmsg.contains("E0102") || cmsg.contains("E0306")) && cmsg.contains("of `len`"),
+            "{tag}: {cmsg}"
+        );
+    }
+}
+
+/// CS-12: a user type named like a builtin type is refused E0005 instead of
+/// silently meaning the builtin (`type Unit` was `()` at every use).
+#[test]
+fn type_named_like_a_builtin_is_refused_e0005() {
+    for (tag, src) in [
+        (
+            "o24_unit",
+            "type Unit = { n: i64 }\nfn mk() -> Unit { Unit { n: 1 } }\nfn main() { println(to_str(mk().n)) }\n",
+        ),
+        ("u_str", "type str = { n: i64 }\nfn main() { println(\"x\") }\n"),
+        ("u_opt", "type Option = { n: i64 }\nfn main() { println(\"x\") }\n"),
+        ("u_enum", "type Result = A | B\nfn main() { println(\"x\") }\n"),
+    ] {
+        let (crc, cmsg, _, _) = cs_b1_check_run(tag, src);
+        assert_eq!(
+            crc,
+            Some(2),
+            "ATTACK: {tag}: a type named like a builtin was accepted: {cmsg}"
+        );
+        assert!(
+            cmsg.contains("E0005") && cmsg.contains("is a builtin type name"),
+            "ATTACK: {tag}: a type named like a builtin was accepted: {cmsg}"
+        );
+    }
+}
+
+/// CS-4: a call to a user fn named like a builtin reaches the builtin (W0003),
+/// so check types it against the builtin's signature. Both programs passed
+/// check and then panicked at run (rc 101).
+#[test]
+fn call_to_shadowed_builtin_is_typed_against_the_builtin() {
+    let (crc, cmsg, _, _) = cs_b1_check_run(
+        "fu06ln",
+        "fn ln(a: i64, b: i64, c: i64, d: i64) -> i64 {\n    a + b + c + d\n}\n\nfn main() {\n    println(to_str(ln(1, 2, 3, 4)))\n}\n",
+    );
+    let typed_by_user = "ATTACK: a call to a shadowed builtin was typed against the user signature";
+    assert_eq!(crc, Some(2), "{typed_by_user}: {cmsg}");
+    assert!(
+        cmsg.contains("E0305")
+            && cmsg.contains("function `ln` takes 1 argument but 4 were supplied"),
+        "{typed_by_user}: {cmsg}"
+    );
+    let (crc, cmsg, _, _) = cs_b1_check_run(
+        "shadow_exp",
+        "fn exp(x: i64) -> i64 { x + 2 }\nfn main() -> i64 { exp(1) }\n",
+    );
+    assert_eq!(crc, Some(2), "{typed_by_user}: {cmsg}");
+    assert!(
+        cmsg.contains("of `exp`") && cmsg.contains("f64"),
+        "{typed_by_user}: arg 0 must be refused against `exp(f64)`: {cmsg}"
+    );
+}
+
+/// CS-4 non-regression: a call with a `&mut` argument reaches the USER fn
+/// (interp `call_mut_entry`), so it is typed against the user signature and
+/// runs the user fn. W0003 still warns, naming the `&mut` exception.
+#[test]
+fn mut_arg_call_to_shadowing_fn_still_runs_the_user_fn() {
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "mutshadow",
+        "fn abs_i64(xs: &mut [i64]) -> i64 {\n    xs[0] = 7\n    1\n}\nfn main() {\n    let a = [1, 2]\n    let r = abs_i64(&mut a)\n    println(to_str(a[0] + r))\n}\n",
+    );
+    assert_eq!(crc, Some(0), "{cmsg}");
+    assert!(
+        cmsg.contains("W0003") && cmsg.contains("except with a `&mut` argument"),
+        "{cmsg}"
+    );
+    assert_eq!((rrc, rout.as_str()), (Some(0), "8\n"), "{cmsg}");
+}
+
+/// CS-4: `P`/`E`/`Var` fall through to a user fn of that name, so a user fn
+/// named `E` is not shadowed and draws no W0003.
+#[test]
+fn user_fn_named_like_a_prob_pred_does_not_warn_w0003() {
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "user_e",
+        "fn E(x: i64) -> i64 { x * 2 }\nfn main() { println(to_str(E(3))) }\n",
+    );
+    assert_eq!(crc, Some(0), "{cmsg}");
+    assert!(!cmsg.contains("W0003"), "{cmsg}");
+    assert_eq!((rrc, rout.as_str()), (Some(0), "6\n"), "{cmsg}");
+}
+
+/// CS-1: assert `src` checks rc 2 with E1211 (never E0001) and that the
+/// check output carries every string in `needles`.
+fn cs1_refused_e1211(tag: &str, src: &str, needles: &[&str], attack: &str) {
+    let (crc, cmsg, rrc, _) = cs_b1_check_run(tag, src);
+    assert_eq!(
+        crc,
+        Some(2),
+        "{attack} [{tag}]: check rc, run rc {rrc:?}: {cmsg}"
+    );
+    assert!(
+        cmsg.contains("E1211") && !cmsg.contains("E0001"),
+        "{attack} [{tag}]: want E1211, not E0001: {cmsg}"
+    );
+    for n in needles {
+        assert!(cmsg.contains(n), "{attack} [{tag}]: missing {n:?}: {cmsg}");
+    }
+}
+
+/// CS-1 / NH-2 (a): a struct-field refinement binds its own field name, like
+/// a param or `let` refinement. `{ value: i64 where value > 0 }` passed check
+/// and then panicked at run ("undefined identifier `value`", rc 101).
+#[test]
+fn struct_field_refinement_naming_its_field_binds_it() {
+    let attack = "ATTACK: a struct-field refinement did not bind its own field name";
+    for (tag, src) in [
+        ("s22", "type Amt = { value: i64 where value > 0 }\n\nfn mk(v: i64) -> Amt {\n    Amt { value: v }\n}\n\nfn main() {\n    let a = mk(5)\n    println(to_str(a.value))\n}\n"),
+        ("r_const", "type Amt = { value: i64 where value > 0 }\n\nfn main() {\n    let a = Amt { value: 5 }\n    println(to_str(a.value))\n}\n"),
+    ] {
+        let (crc, cmsg, rrc, rout) = cs_b1_check_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!((rrc, rout.as_str()), (Some(0), "5\n"), "{attack} [{tag}]: {cmsg}");
+    }
+    // And it is enforced: an invalid value fails the refinement (rc 6).
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "s22_bad",
+        "type Amt = { value: i64 where value > 0 }\n\nfn mk(v: i64) -> Amt {\n    Amt { value: v }\n}\n\nfn main() {\n    let k = 0\n    let a = mk(k)\n    println(to_str(a.value))\n}\n",
+    );
+    assert_eq!(crc, Some(0), "{attack}: {cmsg}");
+    assert_eq!((rrc, rout.as_str()), (Some(6), ""), "{attack}: {cmsg}");
+}
+
+/// CS-1: a whole-struct refinement binds `_` (the instance) only, so a bare
+/// field name is refused with the `_.field` hint.
+#[test]
+fn whole_struct_refinement_with_bare_field_names_is_refused() {
+    cs1_refused_e1211(
+        "r_whole",
+        "type R = { lo: i64, hi: i64 } where lo <= hi\n\nfn mk(a: i64, b: i64) -> R { R { lo: a, hi: b } }\n\nfn main() {\n    let r = mk(1, 2)\n    println(to_str(r.lo))\n}\n",
+        &["`lo`", "_.field"],
+        "ATTACK: a whole-struct refinement naming a bare field passed check",
+    );
+}
+
+/// CS-1: a name nothing binds in a refinement predicate is E1211, in every
+/// position (inline param, named refinement, a sibling param).
+#[test]
+fn refinement_predicate_unknown_name_is_refused() {
+    let attack = "ATTACK: a refinement predicate naming an unbound name passed check";
+    for (tag, src, name) in [
+        ("r_param", "fn f(n: i64 where nosuch > 0) -> i64 { n }\n\nfn main() {\n    let k = 3\n    println(to_str(f(k)))\n}\n", "`nosuch`"),
+        ("r_named", "type Pos = i64 where nosuch > 0\n\nfn f(n: Pos) -> i64 { n }\n\nfn main() {\n    let k = 3\n    println(to_str(f(k)))\n}\n", "`nosuch`"),
+        ("r_rel", "fn f(lo: i64, hi: i64 where hi >= lo) -> i64 { hi - lo }\n\nfn main() {\n    let a = 1\n    println(to_str(f(a, 5)))\n}\n", "`lo`"),
+    ] {
+        cs1_refused_e1211(tag, src, &[name], attack);
+    }
+}
+
+/// CS-1: the binders of a named refinement are the intersection over its
+/// use sites, so a predicate naming one param of two is refused.
+#[test]
+fn refinement_named_by_two_different_params_is_refused() {
+    cs1_refused_e1211(
+        "multi",
+        "type Pos = i64 where n > 0\nfn f(n: Pos) -> i64 { n }\nfn g(m: Pos) -> i64 { m }\nfn main() { println(to_str(f(3)))\n println(to_str(g(4))) }\n",
+        &["`n`"],
+        "ATTACK: a refinement named by two params bound the union of their names",
+    );
+}
+
+/// CS-1: a refinement predicate must be a `bool`. An ill-typed operand and a
+/// non-bool result (which the runtime treats as a pass) are both refused.
+#[test]
+fn refinement_predicate_non_bool_is_refused() {
+    cs1_refused_e1211(
+        "r_type",
+        "type Pos = i64 where _ && true\n\nfn f(n: Pos) -> i64 { n }\n\nfn main() {\n    let k = 3\n    println(to_str(f(k)))\n}\n",
+        &[],
+        "ATTACK: an ill-typed refinement predicate passed check",
+    );
+    cs1_refused_e1211(
+        "r_int",
+        "type Pos = i64 where _ + 1\n\nfn f(n: Pos) -> i64 { n }\n\nfn main() {\n    let k = 3\n    println(to_str(f(k)))\n}\n",
+        &["not bool"],
+        "ATTACK: a non-bool refinement predicate passed check",
+    );
+}
+
+/// CS-1 (E-6): an integer literal against an f64 operand panics at run
+/// (`cannot apply GtEq to f64 / i64`), so it is refused with a `.0` fix.
+#[test]
+fn refinement_predicate_int_literal_against_f64_is_refused() {
+    cs1_refused_e1211(
+        "rf",
+        "type Pos = f64 where _ >= 0\nfn f(x: Pos) -> f64 { x }\nfn main() { println(to_str_f64(f(1.5))) }\n",
+        &["write `0.0`"],
+        "ATTACK: an int literal against an f64 refinement operand passed check",
+    );
+}
+
+/// CS-1 (E-7): `return`/`break`/`continue` in a predicate cannot leave its
+/// frame; refused at check instead of a run-time panic.
+#[test]
+fn predicate_with_return_or_break_is_refused() {
+    let attack = "ATTACK: a predicate that leaves its frame passed check";
+    for (tag, src) in [
+        ("esc_param", "fn solve(n: i64 where if n > 2 { break } else { true }) -> i64 {\n    n + 40\n}\n\nfn main() {\n    let i = 0\n    while i < 5 {\n        println(to_str(solve(i)))\n        i = i + 1\n    }\n}\n"),
+        ("esc_return", "fn f(n: i64) -> (i64 where if _ > 2 { return true } else { true }) { n }\nfn main() { println(to_str(f(3))) }\n"),
+        ("esc_continue", "type Pos = i64 where if _ > 2 { continue } else { true }\nfn f(n: Pos) -> i64 { n }\nfn main() {\n    let i = 0\n    while i < 5 {\n        println(to_str(f(i)))\n        i = i + 1\n    }\n}\n"),
+    ] {
+        cs1_refused_e1211(tag, src, &["cannot leave its frame"], attack);
+    }
+}
+
+/// CS-1 non-regression: param and `let` refinements still bind their own
+/// name (and still enforce it).
+#[test]
+fn param_and_let_refinements_naming_their_binding_still_check() {
+    let (crc, cmsg, rrc, _) = cs_b1_check_run(
+        "r_paramname",
+        "fn f(n: i64 where n > 0) -> i64 { n }\n\nfn main() {\n    let k = 0\n    println(to_str(f(k)))\n}\n",
+    );
+    assert_eq!((crc, rrc), (Some(0), Some(6)), "{cmsg}");
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "r_let",
+        "fn main() {\n    let k = 3\n    let p: i64 where p > 0 = k\n    println(to_str(p))\n}\n",
+    );
+    assert_eq!(crc, Some(0), "{cmsg}");
+    assert_eq!((rrc, rout.as_str()), (Some(0), "3\n"), "{cmsg}");
 }

@@ -337,13 +337,24 @@ fn top_level_comma(s: &str) -> Option<usize> {
 pub struct InferCtx {
     next_var: u32,
     constraints: Vec<Constraint>,
-    /// Signatures of all known functions (user-defined + builtins).
+    /// Call-site signatures: builtins, plus every user fn that a plain call
+    /// reaches. A user fn named like a builtin is NOT here — a plain call
+    /// reaches the builtin (`builtins::call_prefers_builtin`, CS-4).
     pub fn_sigs: HashMap<String, FnSig>,
+    /// Every top-level user fn's own signature, shadowing ones included: the
+    /// call-site sig when `call_prefers_builtin` is false (a `&mut` call), and
+    /// the fn's own param types for borrow checking and the LSP.
+    pub user_fn_sigs: HashMap<String, FnSig>,
     /// Type parameter names for generic functions (fn_name → [param_names]).
     pub generic_fn_params: HashMap<String, Vec<String>>,
     /// Recorded call-site instantiations (fn_name → Vec<concrete Type args>).
     /// Populated during infer; consumed by the mono pass.
     pub call_instantiations: Vec<(String, Vec<Type>)>,
+    /// CS-5: `len` args that were still a type variable at the call. Each
+    /// must resolve to `str` or `[T]`; checked by `solve()` once the
+    /// substitution is final (pinning the var to `str` at the call refused a
+    /// `?`- or match-bound array).
+    len_obligations: Vec<(Type, crate::span::Span)>,
     /// Field lists for user-defined struct types.
     pub struct_fields: HashMap<String, Vec<(String, Type)>>,
     /// Generic type parameter names for struct types (struct_name → [param_names]).
@@ -371,6 +382,21 @@ pub struct InferCtx {
     current_stmt_span: crate::span::Span,
     /// Deepest type a binding may have (`None`: unbounded). See [`MAX_TYPE_DEPTH`].
     max_type_depth: Option<usize>,
+    /// Set only inside [`InferCtx::infer_predicate`]: each integer literal
+    /// that is an operand of an arithmetic or comparison `BinOp`, with the
+    /// other operand's (unsolved) type and the span (CS-1/CS-2, E-6).
+    predicate_int_operands: Option<Vec<(i64, Type, crate::span::Span)>>,
+}
+
+/// What [`InferCtx::infer_predicate`] found in one predicate.
+pub struct PredicateTyping {
+    /// The predicate's solved type (the caller decides whether it is `bool`).
+    pub ty: Type,
+    /// Integer literals compared with (or combined with) an `f64`/`f32`
+    /// operand: the runtime does not widen these, so they panic there.
+    pub int_against_float: Vec<(i64, Type, crate::span::Span)>,
+    /// Every other type error inside the predicate.
+    pub errors: Vec<InferError>,
 }
 
 /// Extract a simple string name from an `AxonType` for impl-method name mangling.
@@ -415,8 +441,10 @@ impl InferCtx {
             next_var: 0,
             constraints: Vec::new(),
             fn_sigs: HashMap::new(),
+            user_fn_sigs: HashMap::new(),
             generic_fn_params: HashMap::new(),
             call_instantiations: Vec::new(),
+            len_obligations: Vec::new(),
             struct_fields: HashMap::new(),
             struct_generic_params: HashMap::new(),
             enum_variants: HashMap::new(),
@@ -428,6 +456,7 @@ impl InferCtx {
             file: file.into(),
             current_stmt_span: crate::span::Span::dummy(),
             max_type_depth: MAX_TYPE_DEPTH,
+            predicate_int_operands: None,
         };
         for (name, sig) in builtin_sigs() {
             ctx.fn_sigs.insert(
@@ -446,6 +475,16 @@ impl InferCtx {
         let n = self.next_var;
         self.next_var += 1;
         Type::Var(n)
+    }
+
+    /// Register a top-level user fn's signature: always in `user_fn_sigs`,
+    /// and in the call-site table `fn_sigs` unless a plain call by that name
+    /// reaches the builtin instead (CS-4).
+    fn insert_user_fn_sig(&mut self, name: &str, sig: FnSig) {
+        if !crate::builtins::call_prefers_builtin(name, false) {
+            self.fn_sigs.insert(name.to_string(), sig.clone());
+        }
+        self.user_fn_sigs.insert(name.to_string(), sig);
     }
 
     /// Record that `lhs` and `rhs` must unify.
@@ -584,8 +623,8 @@ impl InferCtx {
             match item {
                 Item::FnDef(f) => {
                     // Register with placeholder types; pass 2 will resolve properly.
-                    self.fn_sigs.insert(
-                        f.name.clone(),
+                    self.insert_user_fn_sig(
+                        &f.name,
                         FnSig {
                             params: vec![],
                             ret: Type::Unit,
@@ -653,7 +692,7 @@ impl InferCtx {
                         .as_ref()
                         .map(resolve_with_generics)
                         .unwrap_or(Type::Unit);
-                    self.fn_sigs.insert(f.name.clone(), FnSig { params, ret });
+                    self.insert_user_fn_sig(&f.name, FnSig { params, ret });
                     if !f.generic_params.is_empty() {
                         self.generic_fn_params
                             .insert(f.name.clone(), f.generic_params.clone());
@@ -758,6 +797,28 @@ impl InferCtx {
         lt: Type,
         rt: Type,
     ) -> Type {
+        // CS-1/CS-2 (E-6): in a predicate, note each integer-literal operand
+        // of an arithmetic or comparison op with the other operand's type, so
+        // `infer_predicate` can refuse it against an f64 once solved.
+        if !matches!(
+            op,
+            BinOp::And
+                | BinOp::Or
+                | BinOp::BitAnd
+                | BinOp::BitOr
+                | BinOp::BitXor
+                | BinOp::Shl
+                | BinOp::Shr
+        ) {
+            let span = self.current_stmt_span;
+            if let Some(seen) = self.predicate_int_operands.as_mut() {
+                for (lit, other) in [(left, &rt), (right, &lt)] {
+                    if let Expr::Literal(AstLiteral::Int(n)) = lit {
+                        seen.push((*n, other.clone(), span));
+                    }
+                }
+            }
+        }
         // Layer-2 ASI propagation: if either operand is `Uncertain<T>`,
         // the result is Uncertain. The bare T is treated as having
         // confidence 1.0 conceptually; soft unification in `unify`
@@ -1088,8 +1149,15 @@ impl InferCtx {
                 if let Some(ref name) = fn_name {
                     if name == "len" && args.len() == 1 {
                         let arg_ty = self.infer_expr(&args[0], scope, ret_ty);
-                        if !matches!(arg_ty, Type::Slice(_)) {
-                            self.constrain(arg_ty, Type::Str, "arg 0 of `len`");
+                        match arg_ty {
+                            Type::Slice(_) => {}
+                            // Unresolved here (`?`/match binding): decide after
+                            // solving, when it may have become `[T]`.
+                            Type::Var(_) => {
+                                let span = self.current_stmt_span;
+                                self.len_obligations.push((arg_ty, span));
+                            }
+                            _ => self.constrain(arg_ty, Type::Str, "arg 0 of `len`"),
                         }
                         return Type::I64;
                     }
@@ -1138,13 +1206,29 @@ impl InferCtx {
                 let _callee_ty = self.infer_expr(callee, scope, ret_ty);
 
                 if let Some(name) = fn_name {
-                    if let Some(sig) = self.fn_sigs.get(&name).cloned() {
-                        // For generic functions: instantiate with fresh type vars per call site.
-                        let param_names = self
-                            .generic_fn_params
+                    // CS-4: the sig of the fn this call reaches — the builtin's
+                    // for a plain call to a builtin name, the user fn's otherwise.
+                    let prefers_builtin = crate::builtins::call_prefers_builtin(
+                        &name,
+                        crate::builtins::call_has_mut_arg(args),
+                    );
+                    let sig = if prefers_builtin {
+                        self.fn_sigs.get(&name)
+                    } else {
+                        self.user_fn_sigs
                             .get(&name)
-                            .cloned()
-                            .unwrap_or_default();
+                            .or_else(|| self.fn_sigs.get(&name))
+                    };
+                    if let Some(sig) = sig.cloned() {
+                        // For generic functions: instantiate with fresh type vars per call site.
+                        let param_names = if prefers_builtin {
+                            Vec::new()
+                        } else {
+                            self.generic_fn_params
+                                .get(&name)
+                                .cloned()
+                                .unwrap_or_default()
+                        };
                         let (inst_sig, var_map) = if !param_names.is_empty() {
                             self.instantiate_sig(&sig, &param_names)
                         } else {
@@ -1317,7 +1401,9 @@ impl InferCtx {
                 // infer constraint, so a literal-coercion here alone is insufficient
                 // (and unsound to half-do). Tracked as Slice A-cont in R19.
                 self.constrain(val_ty, ret_ty.clone(), "return value");
-                Type::Unit // Return is diverging; block type isn't used after it.
+                // Diverging: `Never` unifies with any sibling arm/branch type
+                // (`None => return Err(..)` next to `Some(x) => x`).
+                Type::Never
             }
 
             // ── Ok / Err / Some / None ────────────────────────────────────────
@@ -1711,7 +1797,7 @@ impl InferCtx {
             }
 
             // ── Break / Continue ─────────────────────────────────────────────
-            Expr::Break | Expr::Continue => Type::Unit,
+            Expr::Break | Expr::Continue => Type::Never,
 
             // ── Assign (rebind without let) ───────────────────────────────────
             Expr::Assign { name, value } => {
@@ -1883,6 +1969,59 @@ impl InferCtx {
         subst
     }
 
+    /// A context for typing predicates (CS-1/CS-2): every signature, struct
+    /// and refinement of `program` collected, and the module-level `let`s
+    /// typed, as [`InferCtx::infer_program`] would before the fn bodies.
+    pub fn for_predicates(file: impl Into<String>, program: &Program) -> Self {
+        let mut ctx = Self::new(file);
+        ctx.collect_sigs(program);
+        let mut module_scope = Scope::new();
+        for item in &program.items {
+            if let Item::LetDef { name, value, .. } = item {
+                let ty = ctx.infer_expr(value, &mut module_scope, &Type::Unit);
+                ctx.module_bindings.insert(name.clone(), ty);
+            }
+        }
+        let subst = ctx.solve();
+        for ty in ctx.module_bindings.values_mut() {
+            *ty = subst.apply(ty);
+        }
+        // Errors in the program itself are `infer_program`'s to report.
+        ctx.errors.clear();
+        ctx
+    }
+
+    /// Type the predicate `pred` in a scope of module items, builtins and
+    /// `bindings` (each name with its declared type), tagging what it finds
+    /// with `span`. Nothing here is reported: the caller words the refusal.
+    pub fn infer_predicate(
+        &mut self,
+        pred: &Expr,
+        bindings: &[(String, AxonType)],
+        span: crate::span::Span,
+    ) -> PredicateTyping {
+        let mut scope = Scope::new();
+        for (name, ty) in bindings {
+            let ty = self.resolve_ast_type(ty);
+            scope.bind(name.clone(), ty);
+        }
+        self.current_stmt_span = span;
+        self.predicate_int_operands = Some(Vec::new());
+        let ty = self.infer_expr(pred, &mut scope, &Type::Unit);
+        let seen = self.predicate_int_operands.take().unwrap_or_default();
+        let subst = self.solve();
+        let int_against_float = seen
+            .into_iter()
+            .map(|(n, other, span)| (n, subst.apply(&other), span))
+            .filter(|(_, other, _)| matches!(other, Type::F64 | Type::F32))
+            .collect();
+        PredicateTyping {
+            ty: subst.apply(&ty),
+            int_against_float,
+            errors: std::mem::take(&mut self.errors),
+        }
+    }
+
     /// Convert an inferred `Type` back to an `AxonType` for the mono pass.
     /// Only handles ground types — TypeParam / Var fall back to `Named("unknown")`.
     pub fn type_to_axon(ty: &Type) -> crate::ast::AxonType {
@@ -1988,9 +2127,9 @@ impl InferCtx {
         // Constrain body type to declared return type (explicit return statements
         // also constrain individually; this handles implicit returns).
         //
-        // UNLESS the body diverges. `Expr::Return` yields `Type::Unit` with the
-        // note "Return is diverging; block type isn't used after it" — but it IS
-        // used, right here, so a body whose tail is a `return` typed as `()` and
+        // UNLESS the body diverges. `Expr::Return` used to yield `Type::Unit`
+        // (it yields `Never` since CS-11; this guard predates that), so a body
+        // whose tail is a `return` was typed as `()` and
         // collided with the declared type:
         //
         //     fn g() -> i64 { return 7 }
@@ -2019,6 +2158,14 @@ impl InferCtx {
         for c in &constraints {
             self.current_stmt_span = c.span;
             self.unify(c.lhs.clone(), c.rhs.clone(), &c.origin, &mut subst);
+        }
+        // CS-5: a deferred `len` arg is fine as `[T]`, else it must be `str`.
+        for (ty, span) in std::mem::take(&mut self.len_obligations) {
+            let ty = subst.apply(&ty);
+            if !matches!(ty, Type::Slice(_)) {
+                self.current_stmt_span = span;
+                self.unify(ty, Type::Str, "arg 0 of `len`", &mut subst);
+            }
         }
         subst
     }

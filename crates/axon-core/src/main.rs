@@ -7529,7 +7529,8 @@ fn run_check_pipeline_inner(
         })
         .collect();
     let mut check_ctx =
-        axon_core::checker::CheckCtx::new(&file, fn_sigs, infer_ctx.struct_fields.clone());
+        axon_core::checker::CheckCtx::new(&file, fn_sigs, infer_ctx.struct_fields.clone())
+            .with_user_fn_sigs(&infer_ctx.user_fn_sigs);
     let check_errors = check_ctx.check_program(program, std::collections::HashMap::new());
     for err in &check_errors {
         let mut msg = err.message.clone();
@@ -7608,7 +7609,7 @@ fn run_check_pipeline_inner(
         match item {
             axon_core::ast::Item::FnDef(fndef) => {
                 let param_types: std::collections::HashMap<String, axon_core::types::Type> =
-                    if let Some(sig) = infer_ctx.fn_sigs.get(&fndef.name) {
+                    if let Some(sig) = infer_ctx.user_fn_sigs.get(&fndef.name) {
                         fndef
                             .params
                             .iter()

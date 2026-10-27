@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, SelectArm, Stmt, UseDecl,
+    AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, SelectArm, Stmt, UseDecl,
 };
 use crate::builtins::{BUILTINS, DEFERRED_ATTRS};
 use crate::error::levenshtein;
@@ -201,6 +201,8 @@ const E0003: &str = "E0003"; // module not found
 const W0003: &str = "W0003"; // user fn shadows a builtin (builtin takes precedence)
 const W0006: &str = "W0006"; // unused local binding (`let x = …` never read)
 const E0004: &str = "E0004";
+const E0005: &str = "E0005"; // a type definition reuses a builtin type name
+const E1211: &str = "E1211"; // a refinement predicate's name, type or frame escape (CS-1)
 const I0001: &str = "I0001"; // deferred attribute info
 
 // ── Symbol ───────────────────────────────────────────────────────────────────
@@ -842,6 +844,17 @@ struct Resolver<'a> {
     /// was handed -- not the process-global set, so a caller (or a unit test) that
     /// names its own sealed set gets the sealed predicate walks too.
     sealed_dirs: Vec<std::path::PathBuf>,
+    /// Set while a predicate is resolved ([`Resolver::resolve_predicate`]): a
+    /// name nothing binds in it is that predicate's code, never E0001.
+    predicate: Option<PredicateScope>,
+}
+
+/// A predicate being resolved (CS-1): the code and wording of an unbound name.
+struct PredicateScope {
+    code: &'static str,
+    /// What the predicate is, e.g. "refinement predicate of `Pos`".
+    subject: String,
+    hint: String,
 }
 
 impl<'a> Resolver<'a> {
@@ -856,6 +869,7 @@ impl<'a> Resolver<'a> {
             generic_fns: std::collections::HashSet::new(),
             ident_is_callee: false,
             sealed_dirs: Vec::new(),
+            predicate: None,
         }
     }
 
@@ -891,6 +905,25 @@ impl<'a> Resolver<'a> {
                     .with_fix(format!("rename or remove the duplicate {kind} `{name}`")),
                 );
             }
+        }
+    }
+
+    /// CS-12: refuse (E0005) a struct/enum definition named like a builtin
+    /// type. `Type::from_name` resolves those names before any user type, so
+    /// `type Unit = { n: i64 }` was accepted and then meant `()` at every use.
+    /// (A named refinement reusing one is already E0002, in `resolve_items`.)
+    fn refuse_builtin_type_name(&mut self, name: &str, span: crate::span::Span) {
+        let builtin = crate::types::Type::from_name(name).is_some()
+            || matches!(name, "Option" | "Result" | "Uncertain" | "Temporal");
+        if builtin {
+            self.emit_error(
+                Diagnostic::error(
+                    E0005,
+                    format!("`{name}` is a builtin type name; rename the type"),
+                )
+                .with_file(self.file)
+                .with_span(span),
+            );
         }
     }
 
@@ -1017,28 +1050,32 @@ impl<'a> Resolver<'a> {
                     }
                     if let Some(prev) = self.table.define(f.name.clone(), sym) {
                         if matches!(prev, Symbol::Builtin { .. }) {
-                            // User↔builtin collision. The interpreter dispatches
-                            // to the builtin BEFORE a user fn (eval_call order),
-                            // so this user fn silently never runs — and may even
-                            // panic on a signature mismatch (BUG_HUNT #33). Warn
-                            // so the user renames instead of the fn vanishing.
-                            self.emit_warning(
-                                Diagnostic::warning(
-                                    W0003,
-                                    format!(
-                                        "fn `{}` shadows the builtin `{}` — the builtin takes \
-                                         precedence, so this function will not be called",
-                                        f.name, f.name
-                                    ),
-                                )
-                                .with_file(self.file)
-                                .with_span(f.span)
-                                .with_fix(format!(
-                                    "rename `{}` to avoid the builtin (the call site resolves to \
-                                     the builtin, not your function)",
-                                    f.name
-                                )),
-                            );
+                            // User↔builtin collision. A plain call reaches the
+                            // builtin (`call_prefers_builtin`), so this user fn
+                            // never runs for it (BUG_HUNT #33); check types the
+                            // call against the builtin (CS-4). Warn so the user
+                            // renames. `P`/`E`/`Var` fall through to the user
+                            // fn, so they are not shadowed and draw no warning.
+                            if crate::builtins::call_prefers_builtin(&f.name, false) {
+                                self.emit_warning(
+                                    Diagnostic::warning(
+                                        W0003,
+                                        format!(
+                                            "fn `{}` shadows the builtin `{}` — the builtin takes \
+                                             precedence, so this function will not be called, \
+                                             except with a `&mut` argument",
+                                            f.name, f.name
+                                        ),
+                                    )
+                                    .with_file(self.file)
+                                    .with_span(f.span)
+                                    .with_fix(format!(
+                                        "rename `{}` to avoid the builtin (the call site resolves \
+                                         to the builtin, not your function)",
+                                        f.name
+                                    )),
+                                );
+                            }
                         } else {
                             // True user↔user duplicate.
                             self.emit_error(
@@ -1060,6 +1097,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
                 Item::TypeDef(t) => {
+                    self.refuse_builtin_type_name(&t.name, t.span);
                     // Duplicate struct fields (`type P = { x, x }`): last-wins,
                     // so the first field is silently dropped.
                     self.check_duplicate_names(
@@ -1092,6 +1130,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
                 Item::EnumDef(e) => {
+                    self.refuse_builtin_type_name(&e.name, e.span);
                     // Duplicate enum variants (`type S = A | A | B`).
                     self.check_duplicate_names(
                         e.variants.iter().map(|v| v.name.as_str()),
@@ -1443,6 +1482,7 @@ impl<'a> Resolver<'a> {
     // ── Pass 2: resolve bodies ────────────────────────────────────────────
 
     fn resolve_items(&mut self, program: &Program) {
+        let binders = refine_binders(program);
         for item in &program.items {
             // Every diagnostic raised while resolving an item is located at THAT
             // item. `current_span` otherwise carried over from whichever
@@ -1470,44 +1510,85 @@ impl<'a> Resolver<'a> {
                 }
                 // EnumDef / ModDecl / TraitDef have no expressions to walk.
                 Item::LetDef { value, .. } => self.resolve_expr(value),
-                // A sealed struct's WHOLE-struct refinement (`type S = {..} where
-                // _.a > f(0)`) is resolved as a named refinement's predicate is,
-                // so a name in it gets the one refusal (amendment 117, finding 4).
-                Item::TypeDef(t) if self.in_sealed_file(t.span) && t.refinement.is_some() => {
-                    self.table.push_scope();
-                    self.table.define(
-                        "_".to_string(),
-                        Symbol::Local {
-                            name: "_".to_string(),
-                        },
-                    );
+                // CS-1: every refinement predicate, sealed files included, is
+                // resolved in the scope its runtime evaluation has: module
+                // items, builtins and its binders. A name nothing binds there
+                // is E1211; so is a `return`/`break`/`continue` in it.
+                // (Sealed: amendment 117, finding 4 — one refusal for both.)
+                Item::TypeDef(t) => {
                     if let Some(p) = t.refinement.as_deref() {
-                        self.resolve_expr(p);
+                        self.resolve_predicate(
+                            p,
+                            &["_"],
+                            E1211,
+                            format!("refinement predicate of `{}`", t.name),
+                        );
                     }
-                    self.table.pop_scope();
                 }
-                // A sealed refinement's predicate is resolved (see `resolve_fn`).
-                Item::RefineDef(r) if self.in_sealed_file(r.span) => {
-                    self.table.push_scope();
-                    self.table.define(
-                        "_".to_string(),
-                        Symbol::Local {
-                            name: "_".to_string(),
-                        },
-                    );
-                    // An inline parameter refinement (`n: i64 where n >= 0`) binds
-                    // the parameter's own name too, as it does when it runs; the
-                    // walk used to bind `_` alone and refused an honest candidate
-                    // for naming its own parameter.
-                    for n in refined_param_names(program, &r.name) {
-                        self.table.define(n.clone(), Symbol::Local { name: n });
-                    }
-                    self.resolve_expr(&r.predicate);
-                    self.table.pop_scope();
+                Item::RefineDef(r) => {
+                    let names: Vec<&str> = binders
+                        .get(&r.name)
+                        .map_or(vec!["_"], |b| b.iter().map(|(n, _)| n.as_str()).collect());
+                    let subject = if r.name.starts_with("__refine_") {
+                        "inline refinement predicate".to_string()
+                    } else {
+                        format!("refinement predicate of `{}`", r.name)
+                    };
+                    self.resolve_predicate(&r.predicate, &names, E1211, subject);
                 }
                 _ => {}
             }
         }
+    }
+
+    /// Resolve the predicate `pred` (CS-1) in a scope of module items,
+    /// builtins and `binders`: a name nothing binds there is `code` (not
+    /// E0001), and so is a `return`/`break`/`continue` that would leave the
+    /// predicate's frame (E-7; the runtime containment stays as defence in
+    /// depth). `subject` names the predicate in the messages.
+    fn resolve_predicate(
+        &mut self,
+        pred: &Expr,
+        binders: &[&str],
+        code: &'static str,
+        subject: String,
+    ) {
+        if let Some(kw) = predicate_frame_escape(pred) {
+            self.emit_error(
+                Diagnostic::error(
+                    code,
+                    format!("{subject} cannot leave its frame: it contains `{kw}`"),
+                )
+                .with_file(self.file)
+                .with_span(self.current_span)
+                .with_fix("a predicate is an expression that yields `bool`: use `if`/`else` branches that each yield one"),
+            );
+        }
+        let bound: Vec<String> = binders.iter().map(|n| format!("`{n}`")).collect();
+        let mut hint = format!(
+            "{subject} sees {}, module items and builtins",
+            bound.join(", ")
+        );
+        if code == E1211 {
+            hint.push_str(": the value is `_` (inside a whole-struct refinement: `_.field`)");
+        }
+        self.table.push_scope();
+        for n in binders {
+            self.table.define(
+                n.to_string(),
+                Symbol::Local {
+                    name: n.to_string(),
+                },
+            );
+        }
+        let prev = self.predicate.replace(PredicateScope {
+            code,
+            subject,
+            hint,
+        });
+        self.resolve_expr(pred);
+        self.predicate = prev;
+        self.table.pop_scope();
     }
 
     /// Whether `span` lies in a sealed file of a `--seal` run.
@@ -1846,6 +1927,17 @@ impl<'a> Resolver<'a> {
                     self.check_fn_value_ref(name);
                 }
                 if self.table.lookup(name).is_none() {
+                    if let Some(p) = &self.predicate {
+                        let d = Diagnostic::error(
+                            p.code,
+                            format!("{} names `{name}`, which is not in scope here", p.subject),
+                        )
+                        .with_file(self.file)
+                        .with_span(self.current_span)
+                        .with_fix(p.hint.clone());
+                        self.emit_error(d);
+                        return;
+                    }
                     let suggestion = self.table.suggest(name);
                     let mut d = Diagnostic::error(
                         E0001,
@@ -2414,26 +2506,99 @@ pub fn sealed_module_dirs() -> Vec<std::path::PathBuf> {
         .clone()
 }
 
-/// The names of the fn parameters whose declared type is the (inline) refinement
-/// `refinement`: the names its predicate may also use.
-fn refined_param_names(program: &Program, refinement: &str) -> Vec<String> {
-    let mut out = Vec::new();
+/// CS-1: the names (with declared types) each named refinement's predicate
+/// binds, keyed by refinement name — the scope its runtime evaluation has.
+///
+/// `_` (the base type) always; plus, per direct use site: a param `n: R`
+/// binds `n`, a `let p: R` binds `p`, a struct field `f: R` binds `f`
+/// (NH-2), a return `-> R` binds every param of its fn. A refinement used at
+/// several sites binds only the names (and types) EVERY site binds, since a
+/// name one site lacks is undefined when the predicate runs there. A
+/// refinement used only nested (`Option<R>`, `(R, i64)`) or not at all is
+/// never checked at run time and binds `_` alone.
+pub fn refine_binders(program: &Program) -> HashMap<String, Vec<(String, AxonType)>> {
+    type Site<'a> = Vec<(&'a str, &'a AxonType)>;
+    let mut sites: HashMap<&str, Vec<Site<'_>>> = HashMap::new();
     let mut fns: Vec<&FnDef> = Vec::new();
     for item in &program.items {
         match item {
             Item::FnDef(f) => fns.push(f),
             Item::ImplBlock(b) => fns.extend(b.methods.iter()),
+            Item::TypeDef(t) => {
+                for fld in &t.fields {
+                    if let AxonType::Named(n) = &fld.ty {
+                        sites.entry(n).or_default().push(vec![(&fld.name, &fld.ty)]);
+                    }
+                }
+            }
             _ => {}
         }
     }
     for f in fns {
         for p in &f.params {
-            if matches!(&p.ty, crate::ast::AxonType::Named(n) if n == refinement) {
-                out.push(p.name.clone());
+            if let AxonType::Named(n) = &p.ty {
+                sites.entry(n).or_default().push(vec![(&p.name, &p.ty)]);
             }
         }
+        if let Some(AxonType::Named(n)) = &f.return_type {
+            let params = f.params.iter().map(|p| (p.name.as_str(), &p.ty)).collect();
+            sites.entry(n).or_default().push(params);
+        }
+        crate::ast::walk_expr(&f.body, &mut |e| match e {
+            Expr::Let {
+                name,
+                ty: Some(ty @ AxonType::Named(n)),
+                ..
+            }
+            | Expr::Own {
+                name,
+                ty: Some(ty @ AxonType::Named(n)),
+                ..
+            }
+            | Expr::RefBind {
+                name,
+                ty: Some(ty @ AxonType::Named(n)),
+                ..
+            } => {
+                sites.entry(n).or_default().push(vec![(name, ty)]);
+            }
+            _ => {}
+        });
+    }
+    let same = |a: &AxonType, b: &AxonType| format!("{a:?}") == format!("{b:?}");
+    let mut out = HashMap::new();
+    for item in &program.items {
+        let Item::RefineDef(r) = item else { continue };
+        let mut binders = vec![("_".to_string(), r.base.clone())];
+        if let Some((first, rest)) = sites.get(r.name.as_str()).and_then(|s| s.split_first()) {
+            for &(name, ty) in first {
+                let everywhere = rest
+                    .iter()
+                    .all(|s| s.iter().any(|&(n, t)| n == name && same(t, ty)));
+                if name != "_" && everywhere && !binders.iter().any(|(b, _)| b == name) {
+                    binders.push((name.to_string(), ty.clone()));
+                }
+            }
+        }
+        out.insert(r.name.clone(), binders);
     }
     out
+}
+
+/// The first `return`/`break`/`continue` in the predicate `pred`, if any: a
+/// predicate cannot leave its frame (CS-1, E-7).
+fn predicate_frame_escape(pred: &Expr) -> Option<&'static str> {
+    let mut found = None;
+    crate::ast::walk_expr(pred, &mut |e| {
+        let kw = match e {
+            Expr::Return(_) => "return",
+            Expr::Break => "break",
+            Expr::Continue => "continue",
+            _ => return,
+        };
+        found = found.or(Some(kw));
+    });
+    found
 }
 
 /// Whether `span` lies in a file under one of `sealed` — the ONE provenance

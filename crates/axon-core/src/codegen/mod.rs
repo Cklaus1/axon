@@ -765,11 +765,10 @@ impl<'ctx> Codegen<'ctx> {
         for item in &program.items {
             match item {
                 ast::Item::FnDef(f) => {
-                    self.declare_one_fn(f);
-                    self.fn_axon_params.insert(
-                        f.name.clone(),
-                        f.params.iter().map(|p| p.ty.clone()).collect(),
-                    );
+                    let llvm_name = Self::user_fn_llvm_name(&f.name);
+                    self.declare_one_fn_named(f, &llvm_name);
+                    self.fn_axon_params
+                        .insert(llvm_name, f.params.iter().map(|p| p.ty.clone()).collect());
                 }
                 ast::Item::ImplBlock(blk) => {
                     let type_name = ast_type_simple_name(&blk.for_type);
@@ -957,8 +956,17 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    fn declare_one_fn(&mut self, f: &ast::FnDef) -> FunctionValue<'ctx> {
-        self.declare_one_fn_named(f, &f.name.clone())
+    /// CS-4: the table name of a top-level user fn. A user fn named like a
+    /// builtin is declared under a private name, so the builtin keeps its own
+    /// entry (and its inline lowering): a plain call reaches the builtin, and
+    /// `emit_call` redirects a call `builtins::call_prefers_builtin` sends to
+    /// the user fn here.
+    pub(super) fn user_fn_llvm_name(name: &str) -> String {
+        if crate::builtins::is_builtin(name) {
+            format!("__axon_user_{name}")
+        } else {
+            name.to_string()
+        }
     }
 
     fn declare_one_fn_named(&mut self, f: &ast::FnDef, name: &str) -> FunctionValue<'ctx> {
@@ -1088,7 +1096,7 @@ impl<'ctx> Codegen<'ctx> {
         let mut fn_work: Vec<(String, ast::FnDef)> = Vec::new();
         for item in &program.items {
             match item {
-                ast::Item::FnDef(f) => fn_work.push((f.name.clone(), f.clone())),
+                ast::Item::FnDef(f) => fn_work.push((Self::user_fn_llvm_name(&f.name), f.clone())),
                 ast::Item::ImplBlock(blk) => {
                     let type_name = ast_type_simple_name(&blk.for_type);
                     for m in &blk.methods {

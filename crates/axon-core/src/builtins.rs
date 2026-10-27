@@ -2443,6 +2443,29 @@ pub fn is_prob_pred_ident(name: &str) -> bool {
     matches!(name, "E" | "Var" | "P")
 }
 
+/// CS-4: whether a call by `name` reaches the builtin `name` rather than a user
+/// fn of the same name. The interpreter tries a builtin before a user fn,
+/// except for `P`/`E`/`Var` (they fall through to a user fn) and a call with a
+/// `&mut` argument (it goes to the user fn, `call_mut_entry`). The resolver's
+/// W0003, inference, the checker, eval dispatch and codegen all ask this, so
+/// the call is typed against the fn it actually runs.
+pub fn call_prefers_builtin(name: &str, call_has_mut_arg: bool) -> bool {
+    is_builtin(name) && !is_prob_pred_ident(name) && !call_has_mut_arg
+}
+
+/// Whether any argument of a call is a `&mut` operand (see [`call_prefers_builtin`]).
+pub fn call_has_mut_arg(args: &[crate::ast::Expr]) -> bool {
+    args.iter().any(|a| {
+        matches!(
+            a,
+            crate::ast::Expr::UnaryOp {
+                op: crate::ast::UnaryOp::RefMut,
+                ..
+            }
+        )
+    })
+}
+
 /// The declared return type of a builtin (`ret` field), or `None` if unknown.
 /// Used by the Phase-6 handler-lowering check: codegen substitutes a handled
 /// builtin's call with an i64 resume value, so it may only lower builtins whose

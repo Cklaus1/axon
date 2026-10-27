@@ -11786,5 +11786,57 @@ MUTATIONS += [
      'axon-core', '--lib', 'effects::tests::a_turbofish_ai_extract_reaches_callers_through_inference'),
 ]
 
+# Checker-soundness LaneType B1 (CS-11, CS-5, CS-12, CS-4; ids M3820-M3832, M3836)
+MUTATIONS += [
+    ('M3836', 'CS-11: `return` is typed `()` again, so a `return` match arm refuses its sibling arm', 'crates/axon-core/src/infer.rs',
+     '(`None => return Err(..)` next to `Some(x) => x`).\n                Type::Never',
+     '(`None => return Err(..)` next to `Some(x) => x`).\n                Type::Unit',
+     'axon-core', '--no-default-features --test cli_run', 'return_in_match_arm_unifies_with_the_arm_type'),
+    ('M3834', 'CS-5: a type-variable `len` arg is pinned to `str` at the call again', 'crates/axon-core/src/infer.rs',
+     '                                self.len_obligations.push((arg_ty, span));',
+     '                                let _ = span;\n                                self.constrain(arg_ty, Type::Str, "arg 0 of `len`");',
+     'axon-core', '--no-default-features --test cli_run', 'len_of_question_bound_array_checks'),
+    ('M3832', 'CS-12: a struct/enum named like a builtin type is accepted again', 'crates/axon-core/src/resolver.rs',
+     '            || matches!(name, "Option" | "Result" | "Uncertain" | "Temporal");\n        if builtin {',
+     '            || matches!(name, "Option" | "Result" | "Uncertain" | "Temporal");\n        if builtin && false {',
+     'axon-core', '--no-default-features --test cli_run', 'type_named_like_a_builtin_is_refused_e0005'),
+    ('M3831', 'CS-4: a call to a builtin-shadowing fn is typed against the user signature again', 'crates/axon-core/src/infer.rs',
+     '        if !crate::builtins::call_prefers_builtin(name, false) {',
+     '        if true {',
+     'axon-core', '--no-default-features --test cli_run', 'call_to_shadowed_builtin_is_typed_against_the_builtin'),
+]
+
+# Checker-soundness LaneType B2 (CS-1, CS-2; ids M3820-M3827, M3837, M3838)
+MUTATIONS += [
+    ('M3820', 'CS-1: refinement predicates are resolved for sealed files only again, so an unbound name passes check', 'crates/axon-core/src/resolver.rs',
+     '                Item::RefineDef(r) => {\n                    let names: Vec<&str> = binders',
+     '                Item::RefineDef(r) if self.in_sealed_file(r.span) => {\n                    let names: Vec<&str> = binders',
+     'axon-core', '--no-default-features --test cli_run', 'refinement_predicate_unknown_name_is_refused'),
+    ('M3821', 'CS-1: a refinement binds the union of its use sites\' names again, not the intersection', 'crates/axon-core/src/resolver.rs',
+     '                let everywhere = rest\n',
+     '                let everywhere = true || rest\n',
+     'axon-core', '--no-default-features --test cli_run', 'refinement_named_by_two_different_params_is_refused'),
+    ('M3822', 'CS-1: a concrete non-bool refinement predicate is accepted again', 'crates/axon-core/src/checker.rs',
+     '    (!is_bool_or_open(&typing.ty))',
+     '    (false && !is_bool_or_open(&typing.ty))',
+     'axon-core', '--no-default-features --test cli_run', 'refinement_predicate_non_bool_is_refused'),
+    ('M3823', 'CS-1: an int literal against an f64 predicate operand is no longer singled out (no `.0` fix)', 'crates/axon-core/src/infer.rs',
+     '            .filter(|(_, other, _)| matches!(other, Type::F64 | Type::F32))',
+     '            .filter(|_| false)',
+     'axon-core', '--no-default-features --test cli_run', 'refinement_predicate_int_literal_against_f64_is_refused'),
+    ('M3827', 'CS-1: `return`/`break`/`continue` in a predicate passes check again', 'crates/axon-core/src/resolver.rs',
+     '        if let Some(kw) = predicate_frame_escape(pred) {',
+     '        if let Some(kw) = predicate_frame_escape(pred).filter(|_| false) {',
+     'axon-core', '--no-default-features --test cli_run', 'predicate_with_return_or_break_is_refused'),
+    ('M3838', 'CS-1 / NH-2: the interpreter no longer binds a struct-field refinement\'s own field name', 'crates/axon-core/src/interp/eval.rs',
+     '                                pe.define(intern(&tf.name), fv.clone(), self.t_acc());',
+     '                                let _ = &tf.name;',
+     'axon-core', '--no-default-features --test cli_run', 'struct_field_refinement_naming_its_field_binds_it'),
+]
+# CS-1 replaced the resolver's sealed-only refinement branches (and
+# `refined_param_names`) with one all-files predicate-scope pass, so the code
+# these rows mutate is gone; M3820 guards the pass that replaced it.
+RETIRED |= {"M3251", "M3340", "M3455"}
+
 if __name__ == "__main__":
     main()

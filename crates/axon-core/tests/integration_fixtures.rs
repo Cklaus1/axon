@@ -50,7 +50,8 @@ fn check_fixture(name: &str) -> Vec<String> {
             )
         })
         .collect();
-    let mut check_ctx = axon_core::checker::CheckCtx::new(&file, fn_sigs, infer_ctx.struct_fields);
+    let mut check_ctx = axon_core::checker::CheckCtx::new(&file, fn_sigs, infer_ctx.struct_fields)
+        .with_user_fn_sigs(&infer_ctx.user_fn_sigs);
     let check_errors = check_ctx.check_program(&program, std::collections::HashMap::new());
     for e in &check_errors {
         errors.push(format!("[{}] {}", e.code, e.message));
@@ -59,7 +60,7 @@ fn check_fixture(name: &str) -> Vec<String> {
     for item in &program.items {
         if let axon_core::ast::Item::FnDef(fndef) = item {
             let param_types: std::collections::HashMap<String, axon_core::types::Type> =
-                if let Some(sig) = infer_ctx.fn_sigs.get(&fndef.name) {
+                if let Some(sig) = infer_ctx.user_fn_sigs.get(&fndef.name) {
                     fndef
                         .params
                         .iter()
@@ -2296,7 +2297,7 @@ fn inline_codes(name: &str, src: &str) -> Vec<String> {
 const AX41_TYPES: &str = "type A = Lit { v: i64 } | Two { x: i64 }\n\
                           type P = { x: i64 }\n\
                           type G<T> = GS { v: T } | GN { x: i64 }\n\
-                          type Pos = i64 where self > 0\n";
+                          type Pos = i64 where _ > 0\n";
 
 /// AX-41: a declared return type with an enum inside a tuple stayed
 /// `Struct("A")` while the body inferred `Enum("A")`, so every return failed
@@ -2403,4 +2404,54 @@ fn ax41_genuinely_different_tuple_returns_are_still_e0307() {
         assert_eq!(e0307.found.as_deref(), Some(found), "[{name}]");
         assert_eq!(e0307.message, "return type mismatch", "[{name}]");
     }
+}
+
+/// CS-4: a user `pow_i64` with the builtin's signature but a different result.
+/// A plain call reaches the builtin on both engines, so the interpreter and the
+/// native binary both print the builtin's `8`, never the user fn's `99`.
+#[cfg(feature = "codegen")]
+#[test]
+fn shadowed_builtin_call_reaches_the_builtin_on_both_engines() {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_cs4_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("shadow_pow.ax");
+    std::fs::write(
+        &src,
+        "fn pow_i64(b: i64, e: i64) -> i64 { 99 }\nfn main() { println(to_str(pow_i64(2, 3))) }\n",
+    )
+    .unwrap();
+    let run = Command::new(axon_bin)
+        .arg("run")
+        .arg(&src)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).trim(),
+        "8",
+        "interpreter: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let bin = dir.join("shadow_pow_bin");
+    let build = Command::new(axon_bin)
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "native build: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let native = Command::new(&bin).output().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        String::from_utf8_lossy(&native.stdout).trim(),
+        "8",
+        "native binary must run the builtin, not the user fn"
+    );
 }

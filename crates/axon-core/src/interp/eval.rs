@@ -1464,15 +1464,9 @@ impl<'p> Interp<'p> {
 
         // AX-08: a call passing `&mut a` moves each borrowed value out of the
         // caller's binding into the callee and back on return (O(1), no copy).
-        if args.iter().any(|a| {
-            matches!(
-                a,
-                Expr::UnaryOp {
-                    op: UnaryOp::RefMut,
-                    ..
-                }
-            )
-        }) {
+        // It reaches the user fn even when a builtin has the same name
+        // (`call_prefers_builtin` is false for it).
+        if crate::builtins::call_has_mut_arg(args) {
             return self.call_mut(callee, args, tier, env);
         }
 
@@ -1679,6 +1673,11 @@ impl<'p> Interp<'p> {
         let resolved = match known {
             Some(r) if r != CALLEE_UNKNOWN => r,
             _ => {
+                // CS-4: a builtin name the shared predicate says does not win
+                // (`P`/`E`/`Var`) goes straight to a user fn of that name.
+                let builtin_first = crate::builtins::call_prefers_builtin(name, false)
+                    || !crate::builtins::is_builtin(name)
+                    || !self.fn_of_sym.contains_key(&s);
                 // A sealed run: what the builtin reads (its arguments, deep,
                 // and the kernel or world state its class says it reads) goes
                 // into the result, and the builtin runs under the control
@@ -1695,19 +1694,21 @@ impl<'p> Interp<'p> {
                 };
                 // Whether sealed code ran inside the builtin (a callback).
                 let entries = if T { self.taint.entries.get() } else { 0 };
-                if let Some(v) = self.call_builtin(name, argv.values())? {
-                    if T {
-                        self.t_builtin_out(name, argv.values(), &v);
-                        self.t_builtin_pick(
-                            argv.values(),
-                            &ats,
-                            self.taint.entries.get() != entries,
-                            &v,
-                        );
+                if builtin_first {
+                    if let Some(v) = self.call_builtin(name, argv.values())? {
+                        if T {
+                            self.t_builtin_out(name, argv.values(), &v);
+                            self.t_builtin_pick(
+                                argv.values(),
+                                &ats,
+                                self.taint.entries.get() != entries,
+                                &v,
+                            );
+                        }
+                        drop(pc);
+                        argv.done(self);
+                        return Ok(v);
                     }
-                    drop(pc);
-                    argv.done(self);
-                    return Ok(v);
                 }
                 drop(pc);
                 let r = match self.fn_of_sym.get(&s) {
@@ -2725,6 +2726,9 @@ impl<'p> Interp<'p> {
                             if let Some(fv) = fields.named(&tf.name) {
                                 let mut pe = self.new_env();
                                 pe.define(SYM_UNDERSCORE, fv.clone(), self.t_acc());
+                                // NH-2 (a): the field's own name binds too, as
+                                // a param or `let` refinement binds its name.
+                                pe.define(intern(&tf.name), fv.clone(), self.t_acc());
                                 if let Value::Bool(false) =
                                     contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
                                 {

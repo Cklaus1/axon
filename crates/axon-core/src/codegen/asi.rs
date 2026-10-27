@@ -643,8 +643,14 @@ impl<'ctx> super::Codegen<'ctx> {
                 let sem = field_sem_types.get(idx).cloned();
 
                 let label = format!("field `{fname}` of `{name}` (refinement `{rn}`)");
-                let cond =
-                    self.emit_refine_pred_with_underscore(&pred, (slot, fty), sem, &label, llvm_fn);
+                let cond = self.emit_refine_pred_with_underscore(
+                    &pred,
+                    &["_", &fname],
+                    (slot, fty),
+                    sem,
+                    &label,
+                    llvm_fn,
+                );
                 if let Some(cond) = cond {
                     self.emit_refine_branch(cond, name, &fname, &rn, llvm_fn, "refine_fld");
                 }
@@ -664,6 +670,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // `emit_field_access` lowers `_.lo`/`_.hi` via its GEP path.
             let cond = self.emit_refine_pred_with_underscore(
                 &pred,
+                &["_"],
                 (alloca, struct_ty.into()),
                 Some(Type::Struct(name.to_string())),
                 &format!("whole-struct `{name}`"),
@@ -709,6 +716,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let fn_name = llvm_fn.get_name().to_str().unwrap_or("?").to_string();
         let cond = self.emit_refine_pred_with_underscore(
             &pred,
+            &["_"],
             (slot, val_ty),
             sem,
             &format!("let `{binding}`"),
@@ -719,12 +727,14 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
-    /// Shared: alias `_` to `(slot, ty)` with semantic type `sem`, emit `pred`,
-    /// restore `_`, and return the i1 condition (or push E0910 and return None if
-    /// it didn't lower to a boolean). `label` is only for the E0910 message.
+    /// Shared: alias each of `names` (`_`, plus a field refinement's own field
+    /// name, NH-2) to `(slot, ty)` with semantic type `sem`, emit `pred`,
+    /// restore them, and return the i1 condition (or push E0910 and return None
+    /// if it didn't lower to a boolean). `label` is only for the E0910 message.
     fn emit_refine_pred_with_underscore(
         &mut self,
         pred: &ast::Expr,
+        names: &[&str],
         binder: (
             inkwell::values::PointerValue<'ctx>,
             inkwell::types::BasicTypeEnum<'ctx>,
@@ -733,22 +743,28 @@ impl<'ctx> super::Codegen<'ctx> {
         label: &str,
         llvm_fn: FunctionValue<'ctx>,
     ) -> Option<inkwell::values::IntValue<'ctx>> {
-        let prev_local = self.locals.remove("_");
-        let prev_type = self.local_types.remove("_");
-        self.locals.insert("_".to_string(), binder);
-        if let Some(s) = sem {
-            self.local_types.insert("_".to_string(), s);
+        let prev: Vec<_> = names
+            .iter()
+            .map(|n| (self.locals.remove(*n), self.local_types.remove(*n)))
+            .collect();
+        for n in names {
+            self.locals.insert(n.to_string(), binder);
+            if let Some(s) = &sem {
+                self.local_types.insert(n.to_string(), s.clone());
+            }
         }
 
         let pred_val = self.emit_expr(pred, llvm_fn);
 
-        self.locals.remove("_");
-        self.local_types.remove("_");
-        if let Some(l) = prev_local {
-            self.locals.insert("_".to_string(), l);
-        }
-        if let Some(t) = prev_type {
-            self.local_types.insert("_".to_string(), t);
+        for (n, (prev_local, prev_type)) in names.iter().zip(prev) {
+            self.locals.remove(*n);
+            self.local_types.remove(*n);
+            if let Some(l) = prev_local {
+                self.locals.insert(n.to_string(), l);
+            }
+            if let Some(t) = prev_type {
+                self.local_types.insert(n.to_string(), t);
+            }
         }
 
         match pred_val {

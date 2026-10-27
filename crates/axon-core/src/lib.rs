@@ -1354,7 +1354,8 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
             )
         })
         .collect();
-    let mut check_ctx = checker::CheckCtx::new(file, fn_sigs, infer_ctx.struct_fields);
+    let mut check_ctx = checker::CheckCtx::new(file, fn_sigs, infer_ctx.struct_fields)
+        .with_user_fn_sigs(&infer_ctx.user_fn_sigs);
     let check_errors = check_ctx.check_program(&program, std::collections::HashMap::new());
     for e in &check_errors {
         let (line, col) = if !e.span.is_dummy() {
@@ -1398,7 +1399,7 @@ pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
     for item in &program.items {
         if let ast::Item::FnDef(fndef) = item {
             let param_types: std::collections::HashMap<String, types::Type> =
-                if let Some(sig) = infer_ctx.fn_sigs.get(&fndef.name) {
+                if let Some(sig) = infer_ctx.user_fn_sigs.get(&fndef.name) {
                     fndef
                         .params
                         .iter()

@@ -495,6 +495,19 @@ fn main() -> i64 { let p = principal_root("p", true, true, true, 100)
  let sb = sandbox_create(p, "")
  sandbox_run(sb, "inner", 0) }'
 
+# CS-4: a user fn named like a builtin, with the builtin's signature. A plain
+# call reaches the builtin on both engines (3^3 = 27, not the user fn's 99); a
+# call with a `&mut` argument reaches the user fn on both (7 + 20 = 27). (Low
+# codes are reserved by the exit-code ledger, so neither case returns one.)
+check shadowed_builtin_plain_call 27 'fn pow_i64(b: i64, e: i64) -> i64 { 99 }
+fn main() -> i64 { pow_i64(3, 3) }'
+check shadowed_builtin_mut_call 27 'fn abs_i64(xs: &mut [i64]) -> i64 {
+ xs[0] = 7
+ 20 }
+fn main() -> i64 { let mut a = [1, 2]
+ let r = abs_i64(&mut a)
+ a[0] + r }'
+
 if [ "$fail" -ne 0 ]; then
   echo "exit_code_parity: FAIL — interp↔native exit-code divergence"
   exit 1
