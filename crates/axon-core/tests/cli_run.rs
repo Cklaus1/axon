@@ -39988,13 +39988,21 @@ macro_rules! s0b_src {
 /// `continue` never ends or skips the caller's loop; the call is an error at
 /// the frame edge it reaches. One program per edge: a named fn through
 /// `CallFastLocalInt` (`stop(i + 1)`) and an inline-argument `CallFast`
-/// (`skip(i)`), a closure, a refinement predicate, and an effect-handler arm
-/// whose `with` sits inside the loop (§3 handler-arm row, veto 2175cc1b; its
-/// text does not say "outside a loop", S7-UnsealedParity-1). Identical on the
-/// tree, the eager VM and the default VM (`vm_same_both_engines`).
+/// (`skip(i)`), a closure, and an effect-handler arm whose `with` sits inside
+/// the loop (§3 handler-arm row, veto 2175cc1b; its text does not say "outside
+/// a loop", S7-UnsealedParity-1). Identical on the tree, the eager VM and the
+/// default VM (`vm_same_both_engines`). A refinement predicate that leaves its
+/// frame is refused at check since CS-1 (E1211); its runtime containment stays
+/// covered by `interp::tests::loop_control_does_not_escape_through_a_predicate`.
 #[test]
 fn r51_s0b_loop_control_never_leaves_its_frame_on_either_engine() {
-    let cases: [(&str, &str, &str, &str); 5] = [
+    let (crc, cmsg, _, _) = cs_b1_check_run("s0b_predicate", s0b_src!("escape_predicate"));
+    assert_eq!(crc, Some(2), "[s0b_predicate] {cmsg}");
+    assert!(
+        cmsg.contains("E1211") && cmsg.contains("cannot leave its frame"),
+        "[s0b_predicate] {cmsg}"
+    );
+    let cases: [(&str, &str, &str, &str); 4] = [
         (
             "s0b_fast_local_int",
             s0b_src!("escape_fast_local_int"),
@@ -40012,12 +40020,6 @@ fn r51_s0b_loop_control_never_leaves_its_frame_on_either_engine() {
             s0b_src!("escape_closure"),
             "0\n1\n",
             "outside a loop in a closure",
-        ),
-        (
-            "s0b_predicate",
-            s0b_src!("escape_predicate"),
-            "40\n41\n42\n",
-            "outside a loop in a predicate",
         ),
         (
             "s0b_handler_arm",
@@ -40466,4 +40468,144 @@ fn user_fn_named_like_a_prob_pred_does_not_warn_w0003() {
     assert_eq!(crc, Some(0), "{cmsg}");
     assert!(!cmsg.contains("W0003"), "{cmsg}");
     assert_eq!((rrc, rout.as_str()), (Some(0), "6\n"), "{cmsg}");
+}
+
+/// CS-1: assert `src` checks rc 2 with E1211 (never E0001) and that the
+/// check output carries every string in `needles`.
+fn cs1_refused_e1211(tag: &str, src: &str, needles: &[&str], attack: &str) {
+    let (crc, cmsg, rrc, _) = cs_b1_check_run(tag, src);
+    assert_eq!(
+        crc,
+        Some(2),
+        "{attack} [{tag}]: check rc, run rc {rrc:?}: {cmsg}"
+    );
+    assert!(
+        cmsg.contains("E1211") && !cmsg.contains("E0001"),
+        "{attack} [{tag}]: want E1211, not E0001: {cmsg}"
+    );
+    for n in needles {
+        assert!(cmsg.contains(n), "{attack} [{tag}]: missing {n:?}: {cmsg}");
+    }
+}
+
+/// CS-1 / NH-2 (a): a struct-field refinement binds its own field name, like
+/// a param or `let` refinement. `{ value: i64 where value > 0 }` passed check
+/// and then panicked at run ("undefined identifier `value`", rc 101).
+#[test]
+fn struct_field_refinement_naming_its_field_binds_it() {
+    let attack = "ATTACK: a struct-field refinement did not bind its own field name";
+    for (tag, src) in [
+        ("s22", "type Amt = { value: i64 where value > 0 }\n\nfn mk(v: i64) -> Amt {\n    Amt { value: v }\n}\n\nfn main() {\n    let a = mk(5)\n    println(to_str(a.value))\n}\n"),
+        ("r_const", "type Amt = { value: i64 where value > 0 }\n\nfn main() {\n    let a = Amt { value: 5 }\n    println(to_str(a.value))\n}\n"),
+    ] {
+        let (crc, cmsg, rrc, rout) = cs_b1_check_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!((rrc, rout.as_str()), (Some(0), "5\n"), "{attack} [{tag}]: {cmsg}");
+    }
+    // And it is enforced: an invalid value fails the refinement (rc 6).
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "s22_bad",
+        "type Amt = { value: i64 where value > 0 }\n\nfn mk(v: i64) -> Amt {\n    Amt { value: v }\n}\n\nfn main() {\n    let k = 0\n    let a = mk(k)\n    println(to_str(a.value))\n}\n",
+    );
+    assert_eq!(crc, Some(0), "{attack}: {cmsg}");
+    assert_eq!((rrc, rout.as_str()), (Some(6), ""), "{attack}: {cmsg}");
+}
+
+/// CS-1: a whole-struct refinement binds `_` (the instance) only, so a bare
+/// field name is refused with the `_.field` hint.
+#[test]
+fn whole_struct_refinement_with_bare_field_names_is_refused() {
+    cs1_refused_e1211(
+        "r_whole",
+        "type R = { lo: i64, hi: i64 } where lo <= hi\n\nfn mk(a: i64, b: i64) -> R { R { lo: a, hi: b } }\n\nfn main() {\n    let r = mk(1, 2)\n    println(to_str(r.lo))\n}\n",
+        &["`lo`", "_.field"],
+        "ATTACK: a whole-struct refinement naming a bare field passed check",
+    );
+}
+
+/// CS-1: a name nothing binds in a refinement predicate is E1211, in every
+/// position (inline param, named refinement, a sibling param).
+#[test]
+fn refinement_predicate_unknown_name_is_refused() {
+    let attack = "ATTACK: a refinement predicate naming an unbound name passed check";
+    for (tag, src, name) in [
+        ("r_param", "fn f(n: i64 where nosuch > 0) -> i64 { n }\n\nfn main() {\n    let k = 3\n    println(to_str(f(k)))\n}\n", "`nosuch`"),
+        ("r_named", "type Pos = i64 where nosuch > 0\n\nfn f(n: Pos) -> i64 { n }\n\nfn main() {\n    let k = 3\n    println(to_str(f(k)))\n}\n", "`nosuch`"),
+        ("r_rel", "fn f(lo: i64, hi: i64 where hi >= lo) -> i64 { hi - lo }\n\nfn main() {\n    let a = 1\n    println(to_str(f(a, 5)))\n}\n", "`lo`"),
+    ] {
+        cs1_refused_e1211(tag, src, &[name], attack);
+    }
+}
+
+/// CS-1: the binders of a named refinement are the intersection over its
+/// use sites, so a predicate naming one param of two is refused.
+#[test]
+fn refinement_named_by_two_different_params_is_refused() {
+    cs1_refused_e1211(
+        "multi",
+        "type Pos = i64 where n > 0\nfn f(n: Pos) -> i64 { n }\nfn g(m: Pos) -> i64 { m }\nfn main() { println(to_str(f(3)))\n println(to_str(g(4))) }\n",
+        &["`n`"],
+        "ATTACK: a refinement named by two params bound the union of their names",
+    );
+}
+
+/// CS-1: a refinement predicate must be a `bool`. An ill-typed operand and a
+/// non-bool result (which the runtime treats as a pass) are both refused.
+#[test]
+fn refinement_predicate_non_bool_is_refused() {
+    cs1_refused_e1211(
+        "r_type",
+        "type Pos = i64 where _ && true\n\nfn f(n: Pos) -> i64 { n }\n\nfn main() {\n    let k = 3\n    println(to_str(f(k)))\n}\n",
+        &[],
+        "ATTACK: an ill-typed refinement predicate passed check",
+    );
+    cs1_refused_e1211(
+        "r_int",
+        "type Pos = i64 where _ + 1\n\nfn f(n: Pos) -> i64 { n }\n\nfn main() {\n    let k = 3\n    println(to_str(f(k)))\n}\n",
+        &["not bool"],
+        "ATTACK: a non-bool refinement predicate passed check",
+    );
+}
+
+/// CS-1 (E-6): an integer literal against an f64 operand panics at run
+/// (`cannot apply GtEq to f64 / i64`), so it is refused with a `.0` fix.
+#[test]
+fn refinement_predicate_int_literal_against_f64_is_refused() {
+    cs1_refused_e1211(
+        "rf",
+        "type Pos = f64 where _ >= 0\nfn f(x: Pos) -> f64 { x }\nfn main() { println(to_str_f64(f(1.5))) }\n",
+        &["write `0.0`"],
+        "ATTACK: an int literal against an f64 refinement operand passed check",
+    );
+}
+
+/// CS-1 (E-7): `return`/`break`/`continue` in a predicate cannot leave its
+/// frame; refused at check instead of a run-time panic.
+#[test]
+fn predicate_with_return_or_break_is_refused() {
+    let attack = "ATTACK: a predicate that leaves its frame passed check";
+    for (tag, src) in [
+        ("esc_param", "fn solve(n: i64 where if n > 2 { break } else { true }) -> i64 {\n    n + 40\n}\n\nfn main() {\n    let i = 0\n    while i < 5 {\n        println(to_str(solve(i)))\n        i = i + 1\n    }\n}\n"),
+        ("esc_return", "fn f(n: i64) -> (i64 where if _ > 2 { return true } else { true }) { n }\nfn main() { println(to_str(f(3))) }\n"),
+        ("esc_continue", "type Pos = i64 where if _ > 2 { continue } else { true }\nfn f(n: Pos) -> i64 { n }\nfn main() {\n    let i = 0\n    while i < 5 {\n        println(to_str(f(i)))\n        i = i + 1\n    }\n}\n"),
+    ] {
+        cs1_refused_e1211(tag, src, &["cannot leave its frame"], attack);
+    }
+}
+
+/// CS-1 non-regression: param and `let` refinements still bind their own
+/// name (and still enforce it).
+#[test]
+fn param_and_let_refinements_naming_their_binding_still_check() {
+    let (crc, cmsg, rrc, _) = cs_b1_check_run(
+        "r_paramname",
+        "fn f(n: i64 where n > 0) -> i64 { n }\n\nfn main() {\n    let k = 0\n    println(to_str(f(k)))\n}\n",
+    );
+    assert_eq!((crc, rrc), (Some(0), Some(6)), "{cmsg}");
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "r_let",
+        "fn main() {\n    let k = 3\n    let p: i64 where p > 0 = k\n    println(to_str(p))\n}\n",
+    );
+    assert_eq!(crc, Some(0), "{cmsg}");
+    assert_eq!((rrc, rout.as_str()), (Some(0), "3\n"), "{cmsg}");
 }

@@ -3172,3 +3172,11 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M3831': r'ATTACK: a call to a shadowed builtin was typed against the user signature',
 })
+ATTACK_MARKERS.update({
+    'M3820': r'ATTACK: a refinement predicate naming an unbound name passed check',
+    'M3821': r'ATTACK: a refinement named by two params bound the union of their names',
+    'M3822': r'ATTACK: a non-bool refinement predicate passed check',
+    'M3823': r'ATTACK: an int literal against an f64 refinement operand passed check',
+    'M3827': r'ATTACK: a predicate that leaves its frame passed check',
+    'M3838': r'ATTACK: a struct-field refinement did not bind its own field name',
+})

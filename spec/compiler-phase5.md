@@ -85,6 +85,21 @@ The implicit binder `_` refers to the value of the refined type. Inside a struct
 `type Range = { lo: i64, hi: i64 } where _.lo <= _.hi`, `_` refers to the whole struct
 instance.
 
+A predicate sees module items, builtins, and the names its position binds. `axon check`
+resolves and types every predicate in that scope: a name nothing binds, a non-`bool`
+predicate, an ill-typed operand (an integer literal against an `f64` operand: write `0.0`)
+or a `return`/`break`/`continue` in it is E1211.
+
+| position | binds |
+|---|---|
+| param `n: T where P` | `_`, `n` |
+| `let p: T where P` | `_`, `p` |
+| return `-> (T where P)` | `_`, all params (not body locals) |
+| struct field `{ v: T where P }` | `_`, `v` |
+| whole struct `{ .. } where P` | `_` (the instance; fields as `_.field`) |
+| a named refinement used at several of these | only the names (and types) every use binds |
+| a refinement used only nested (`Option<Pos>`, `(Pos, i64)`) or unused | `_` (never checked at run time) |
+
 ### Examples
 
 ```axon

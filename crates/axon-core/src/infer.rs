@@ -382,6 +382,21 @@ pub struct InferCtx {
     current_stmt_span: crate::span::Span,
     /// Deepest type a binding may have (`None`: unbounded). See [`MAX_TYPE_DEPTH`].
     max_type_depth: Option<usize>,
+    /// Set only inside [`InferCtx::infer_predicate`]: each integer literal
+    /// that is an operand of an arithmetic or comparison `BinOp`, with the
+    /// other operand's (unsolved) type and the span (CS-1/CS-2, E-6).
+    predicate_int_operands: Option<Vec<(i64, Type, crate::span::Span)>>,
+}
+
+/// What [`InferCtx::infer_predicate`] found in one predicate.
+pub struct PredicateTyping {
+    /// The predicate's solved type (the caller decides whether it is `bool`).
+    pub ty: Type,
+    /// Integer literals compared with (or combined with) an `f64`/`f32`
+    /// operand: the runtime does not widen these, so they panic there.
+    pub int_against_float: Vec<(i64, Type, crate::span::Span)>,
+    /// Every other type error inside the predicate.
+    pub errors: Vec<InferError>,
 }
 
 /// Extract a simple string name from an `AxonType` for impl-method name mangling.
@@ -441,6 +456,7 @@ impl InferCtx {
             file: file.into(),
             current_stmt_span: crate::span::Span::dummy(),
             max_type_depth: MAX_TYPE_DEPTH,
+            predicate_int_operands: None,
         };
         for (name, sig) in builtin_sigs() {
             ctx.fn_sigs.insert(
@@ -781,6 +797,28 @@ impl InferCtx {
         lt: Type,
         rt: Type,
     ) -> Type {
+        // CS-1/CS-2 (E-6): in a predicate, note each integer-literal operand
+        // of an arithmetic or comparison op with the other operand's type, so
+        // `infer_predicate` can refuse it against an f64 once solved.
+        if !matches!(
+            op,
+            BinOp::And
+                | BinOp::Or
+                | BinOp::BitAnd
+                | BinOp::BitOr
+                | BinOp::BitXor
+                | BinOp::Shl
+                | BinOp::Shr
+        ) {
+            let span = self.current_stmt_span;
+            if let Some(seen) = self.predicate_int_operands.as_mut() {
+                for (lit, other) in [(left, &rt), (right, &lt)] {
+                    if let Expr::Literal(AstLiteral::Int(n)) = lit {
+                        seen.push((*n, other.clone(), span));
+                    }
+                }
+            }
+        }
         // Layer-2 ASI propagation: if either operand is `Uncertain<T>`,
         // the result is Uncertain. The bare T is treated as having
         // confidence 1.0 conceptually; soft unification in `unify`
@@ -1929,6 +1967,59 @@ impl InferCtx {
             }
         }
         subst
+    }
+
+    /// A context for typing predicates (CS-1/CS-2): every signature, struct
+    /// and refinement of `program` collected, and the module-level `let`s
+    /// typed, as [`InferCtx::infer_program`] would before the fn bodies.
+    pub fn for_predicates(file: impl Into<String>, program: &Program) -> Self {
+        let mut ctx = Self::new(file);
+        ctx.collect_sigs(program);
+        let mut module_scope = Scope::new();
+        for item in &program.items {
+            if let Item::LetDef { name, value, .. } = item {
+                let ty = ctx.infer_expr(value, &mut module_scope, &Type::Unit);
+                ctx.module_bindings.insert(name.clone(), ty);
+            }
+        }
+        let subst = ctx.solve();
+        for ty in ctx.module_bindings.values_mut() {
+            *ty = subst.apply(ty);
+        }
+        // Errors in the program itself are `infer_program`'s to report.
+        ctx.errors.clear();
+        ctx
+    }
+
+    /// Type the predicate `pred` in a scope of module items, builtins and
+    /// `bindings` (each name with its declared type), tagging what it finds
+    /// with `span`. Nothing here is reported: the caller words the refusal.
+    pub fn infer_predicate(
+        &mut self,
+        pred: &Expr,
+        bindings: &[(String, AxonType)],
+        span: crate::span::Span,
+    ) -> PredicateTyping {
+        let mut scope = Scope::new();
+        for (name, ty) in bindings {
+            let ty = self.resolve_ast_type(ty);
+            scope.bind(name.clone(), ty);
+        }
+        self.current_stmt_span = span;
+        self.predicate_int_operands = Some(Vec::new());
+        let ty = self.infer_expr(pred, &mut scope, &Type::Unit);
+        let seen = self.predicate_int_operands.take().unwrap_or_default();
+        let subst = self.solve();
+        let int_against_float = seen
+            .into_iter()
+            .map(|(n, other, span)| (n, subst.apply(&other), span))
+            .filter(|(_, other, _)| matches!(other, Type::F64 | Type::F32))
+            .collect();
+        PredicateTyping {
+            ty: subst.apply(&ty),
+            int_against_float,
+            errors: std::mem::take(&mut self.errors),
+        }
     }
 
     /// Convert an inferred `Type` back to an `AxonType` for the mono pass.

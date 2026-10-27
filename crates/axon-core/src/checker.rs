@@ -20,8 +20,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt};
 use crate::error::{
-    levenshtein, E1206, E1207, E1208, E1209, E1210, E1500, E1503, E1504, E1505, E1704, E1810,
-    E2300, E2302,
+    levenshtein, E1206, E1207, E1208, E1209, E1210, E1211, E1500, E1503, E1504, E1505, E1704,
+    E1810, E2300, E2302,
 };
 use crate::types::Type;
 
@@ -1064,6 +1064,7 @@ impl CheckCtx {
         for item in &program.items {
             self.check_item(item);
         }
+        self.check_refinement_predicates(program);
         // AX-08: `&mut [T]` parameter mode + no writes through a shared `&`.
         self.errors
             .extend(crate::mut_borrow::check_program(program));
@@ -1232,6 +1233,54 @@ impl CheckCtx {
     // ─────────────────────────────────────────────────────────────────────────
     // Item-level
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// CS-1: type every refinement predicate (named, inline, whole-struct) in
+    /// the scope it runs in — module items, builtins and its binders
+    /// ([`crate::resolver::refine_binders`]) — and refuse (E1211) one that is
+    /// ill-typed, is not `bool`, or compares an integer literal with an f64.
+    /// Unbound names are the resolver's (also E1211, never reported here).
+    fn check_refinement_predicates(&mut self, program: &Program) {
+        let binders = crate::resolver::refine_binders(program);
+        let mut preds: Vec<(String, &Expr, Vec<(String, AxonType)>, crate::span::Span)> =
+            Vec::new();
+        for item in &program.items {
+            match item {
+                Item::RefineDef(r) => {
+                    let b = binders.get(&r.name).cloned().unwrap_or_default();
+                    preds.push((r.name.clone(), &r.predicate, b, r.span));
+                }
+                Item::TypeDef(t) => {
+                    if let Some(p) = t.refinement.as_deref() {
+                        let b = vec![("_".to_string(), AxonType::Named(t.name.clone()))];
+                        preds.push((t.name.clone(), p, b, t.span));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if preds.is_empty() {
+            return;
+        }
+        let mut ictx = crate::infer::InferCtx::for_predicates(self.file.clone(), program);
+        for (name, pred, b, span) in preds {
+            let subject = if name.starts_with("__refine_") {
+                "inline refinement predicate".to_string()
+            } else {
+                format!("refinement predicate of `{name}`")
+            };
+            let typing = ictx.infer_predicate(pred, &b, span);
+            if let Some(msg) = predicate_type_problem(&subject, &typing) {
+                let file = self.file.clone();
+                self.errors.push(
+                    CheckError::new(E1211, msg)
+                        .node(format!("#refine_{name}.where"))
+                        .at(&file, 0, 0)
+                        .with_span(span)
+                        .fix("the value is `_` (inside a whole-struct refinement: `_.field`)"),
+                );
+            }
+        }
+    }
 
     fn check_item(&mut self, item: &Item) {
         match item {
@@ -7234,6 +7283,32 @@ fn enumify(t: Type, enums: &[String]) -> Type {
         Type::Struct(n) if enums.iter().any(|e| e == &n) => Type::Enum(n),
         other => other,
     })
+}
+
+/// CS-1/CS-2: the one refusal for a typed predicate, if it has a problem: an
+/// integer literal against an f64 operand (the runtime does not widen it,
+/// E-6), else the first type error in it, else a concrete non-`bool` result.
+/// A result still unknown after solving is accepted.
+fn predicate_type_problem(subject: &str, typing: &crate::infer::PredicateTyping) -> Option<String> {
+    if let Some((lit, other, _)) = typing.int_against_float.first() {
+        return Some(format!(
+            "{subject}: `{lit}` is i64 and the operand is {}: write `{lit}.0`",
+            other.display()
+        ));
+    }
+    if let Some(e) = typing.errors.first() {
+        return Some(format!("{subject} has an ill-typed operand: {}", e.message));
+    }
+    fn is_bool_or_open(t: &Type) -> bool {
+        match t {
+            Type::Bool | Type::Var(_) | Type::Unknown | Type::Deferred(_) | Type::Never => true,
+            Type::TypeParam(_) => true,
+            Type::Uncertain(inner) => is_bool_or_open(inner),
+            _ => false,
+        }
+    }
+    (!is_bool_or_open(&typing.ty))
+        .then(|| format!("{subject} is `{}`, not bool", typing.ty.display()))
 }
 
 pub fn axon_type_to_type(ty: &AxonType) -> Type {

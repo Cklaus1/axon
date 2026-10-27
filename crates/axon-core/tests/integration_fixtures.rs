@@ -2297,7 +2297,7 @@ fn inline_codes(name: &str, src: &str) -> Vec<String> {
 const AX41_TYPES: &str = "type A = Lit { v: i64 } | Two { x: i64 }\n\
                           type P = { x: i64 }\n\
                           type G<T> = GS { v: T } | GN { x: i64 }\n\
-                          type Pos = i64 where self > 0\n";
+                          type Pos = i64 where _ > 0\n";
 
 /// AX-41: a declared return type with an enum inside a tuple stayed
 /// `Struct("A")` while the body inferred `Enum("A")`, so every return failed

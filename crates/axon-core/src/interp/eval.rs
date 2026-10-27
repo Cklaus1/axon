@@ -2726,6 +2726,9 @@ impl<'p> Interp<'p> {
                             if let Some(fv) = fields.named(&tf.name) {
                                 let mut pe = self.new_env();
                                 pe.define(SYM_UNDERSCORE, fv.clone(), self.t_acc());
+                                // NH-2 (a): the field's own name binds too, as
+                                // a param or `let` refinement binds its name.
+                                pe.define(intern(&tf.name), fv.clone(), self.t_acc());
                                 if let Value::Bool(false) =
                                     contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
                                 {
