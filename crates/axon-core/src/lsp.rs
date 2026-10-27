@@ -176,7 +176,8 @@ pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
             )
         })
         .collect();
-    let mut check_ctx = checker::CheckCtx::new(uri, fn_sigs, infer_ctx.struct_fields.clone());
+    let mut check_ctx = checker::CheckCtx::new(uri, fn_sigs, infer_ctx.struct_fields.clone())
+        .with_user_fn_sigs(&infer_ctx.user_fn_sigs);
     let check_errors = check_ctx.check_program(&program, HashMap::new());
 
     for e in &check_errors {
@@ -200,7 +201,7 @@ pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
         match item {
             ast::Item::FnDef(fndef) => {
                 let param_types: HashMap<String, crate::types::Type> =
-                    if let Some(sig) = infer_ctx.fn_sigs.get(&fndef.name) {
+                    if let Some(sig) = infer_ctx.user_fn_sigs.get(&fndef.name) {
                         fndef
                             .params
                             .iter()

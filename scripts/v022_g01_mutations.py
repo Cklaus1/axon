@@ -11760,6 +11760,10 @@ MUTATIONS += [
      '            || matches!(name, "Option" | "Result" | "Uncertain" | "Temporal");\n        if builtin {',
      '            || matches!(name, "Option" | "Result" | "Uncertain" | "Temporal");\n        if builtin && false {',
      'axon-core', '--no-default-features --test cli_run', 'type_named_like_a_builtin_is_refused_e0005'),
+    ('M3831', 'CS-4: a call to a builtin-shadowing fn is typed against the user signature again', 'crates/axon-core/src/infer.rs',
+     '        if !crate::builtins::call_prefers_builtin(name, false) {',
+     '        if true {',
+     'axon-core', '--no-default-features --test cli_run', 'call_to_shadowed_builtin_is_typed_against_the_builtin'),
 ]
 
 if __name__ == "__main__":

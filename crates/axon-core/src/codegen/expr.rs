@@ -9700,6 +9700,24 @@ impl<'ctx> super::Codegen<'ctx> {
                 };
             }
         }
+
+        // CS-4: a call `call_prefers_builtin` sends to a user fn named like a
+        // builtin (`P`/`E`/`Var`, or a `&mut` argument) calls the user fn,
+        // declared under its private name; every other call by that name
+        // falls through to the builtin's inline lowering or extern below.
+        if let ast::Expr::Ident(name) = callee {
+            if crate::builtins::is_builtin(name)
+                && !crate::builtins::call_prefers_builtin(
+                    name,
+                    crate::builtins::call_has_mut_arg(args),
+                )
+            {
+                let user = Self::user_fn_llvm_name(name);
+                if self.functions.contains_key(user.as_str()) {
+                    return self.emit_call(&ast::Expr::Ident(user), args, fn_val);
+                }
+            }
+        }
         // If `callee` is a builtin carrying an effect handled by an active
         // compile-time handler frame, SUBSTITUTE the matching arm's body in
         // place of the call (the effect is discharged). Shallow: the arm is

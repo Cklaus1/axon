@@ -17900,6 +17900,14 @@ fn user_fn_shadowing_a_builtin_warns_w0003() {
         msg.contains("exp"),
         "the warning must name the shadowed builtin `exp`: {msg}"
     );
+    // CS-4: the call `exp(1)` is typed against the builtin `exp(f64)`, the fn
+    // it actually reaches, so the i64 argument fails check (it used to pass
+    // check and panic at run: "expected f64, got i64").
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a call to a shadowed builtin must be typed against the builtin: {msg}"
+    );
 }
 
 #[test]
@@ -40401,4 +40409,61 @@ fn type_named_like_a_builtin_is_refused_e0005() {
             "ATTACK: {tag}: a type named like a builtin was accepted: {cmsg}"
         );
     }
+}
+
+/// CS-4: a call to a user fn named like a builtin reaches the builtin (W0003),
+/// so check types it against the builtin's signature. Both programs passed
+/// check and then panicked at run (rc 101).
+#[test]
+fn call_to_shadowed_builtin_is_typed_against_the_builtin() {
+    let (crc, cmsg, _, _) = cs_b1_check_run(
+        "fu06ln",
+        "fn ln(a: i64, b: i64, c: i64, d: i64) -> i64 {\n    a + b + c + d\n}\n\nfn main() {\n    println(to_str(ln(1, 2, 3, 4)))\n}\n",
+    );
+    let typed_by_user = "ATTACK: a call to a shadowed builtin was typed against the user signature";
+    assert_eq!(crc, Some(2), "{typed_by_user}: {cmsg}");
+    assert!(
+        cmsg.contains("E0305")
+            && cmsg.contains("function `ln` takes 1 argument but 4 were supplied"),
+        "{typed_by_user}: {cmsg}"
+    );
+    let (crc, cmsg, _, _) = cs_b1_check_run(
+        "shadow_exp",
+        "fn exp(x: i64) -> i64 { x + 2 }\nfn main() -> i64 { exp(1) }\n",
+    );
+    assert_eq!(crc, Some(2), "{typed_by_user}: {cmsg}");
+    assert!(
+        cmsg.contains("of `exp`") && cmsg.contains("f64"),
+        "{typed_by_user}: arg 0 must be refused against `exp(f64)`: {cmsg}"
+    );
+}
+
+/// CS-4 non-regression: a call with a `&mut` argument reaches the USER fn
+/// (interp `call_mut_entry`), so it is typed against the user signature and
+/// runs the user fn. W0003 still warns, naming the `&mut` exception.
+#[test]
+fn mut_arg_call_to_shadowing_fn_still_runs_the_user_fn() {
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "mutshadow",
+        "fn abs_i64(xs: &mut [i64]) -> i64 {\n    xs[0] = 7\n    1\n}\nfn main() {\n    let a = [1, 2]\n    let r = abs_i64(&mut a)\n    println(to_str(a[0] + r))\n}\n",
+    );
+    assert_eq!(crc, Some(0), "{cmsg}");
+    assert!(
+        cmsg.contains("W0003") && cmsg.contains("except with a `&mut` argument"),
+        "{cmsg}"
+    );
+    assert_eq!((rrc, rout.as_str()), (Some(0), "8\n"), "{cmsg}");
+}
+
+/// CS-4: `P`/`E`/`Var` fall through to a user fn of that name, so a user fn
+/// named `E` is not shadowed and draws no W0003.
+#[test]
+fn user_fn_named_like_a_prob_pred_does_not_warn_w0003() {
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "user_e",
+        "fn E(x: i64) -> i64 { x * 2 }\nfn main() { println(to_str(E(3))) }\n",
+    );
+    assert_eq!(crc, Some(0), "{cmsg}");
+    assert!(!cmsg.contains("W0003"), "{cmsg}");
+    assert_eq!((rrc, rout.as_str()), (Some(0), "6\n"), "{cmsg}");
 }

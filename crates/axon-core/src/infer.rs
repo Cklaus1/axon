@@ -337,8 +337,14 @@ fn top_level_comma(s: &str) -> Option<usize> {
 pub struct InferCtx {
     next_var: u32,
     constraints: Vec<Constraint>,
-    /// Signatures of all known functions (user-defined + builtins).
+    /// Call-site signatures: builtins, plus every user fn that a plain call
+    /// reaches. A user fn named like a builtin is NOT here — a plain call
+    /// reaches the builtin (`builtins::call_prefers_builtin`, CS-4).
     pub fn_sigs: HashMap<String, FnSig>,
+    /// Every top-level user fn's own signature, shadowing ones included: the
+    /// call-site sig when `call_prefers_builtin` is false (a `&mut` call), and
+    /// the fn's own param types for borrow checking and the LSP.
+    pub user_fn_sigs: HashMap<String, FnSig>,
     /// Type parameter names for generic functions (fn_name → [param_names]).
     pub generic_fn_params: HashMap<String, Vec<String>>,
     /// Recorded call-site instantiations (fn_name → Vec<concrete Type args>).
@@ -420,6 +426,7 @@ impl InferCtx {
             next_var: 0,
             constraints: Vec::new(),
             fn_sigs: HashMap::new(),
+            user_fn_sigs: HashMap::new(),
             generic_fn_params: HashMap::new(),
             call_instantiations: Vec::new(),
             len_obligations: Vec::new(),
@@ -452,6 +459,16 @@ impl InferCtx {
         let n = self.next_var;
         self.next_var += 1;
         Type::Var(n)
+    }
+
+    /// Register a top-level user fn's signature: always in `user_fn_sigs`,
+    /// and in the call-site table `fn_sigs` unless a plain call by that name
+    /// reaches the builtin instead (CS-4).
+    fn insert_user_fn_sig(&mut self, name: &str, sig: FnSig) {
+        if !crate::builtins::call_prefers_builtin(name, false) {
+            self.fn_sigs.insert(name.to_string(), sig.clone());
+        }
+        self.user_fn_sigs.insert(name.to_string(), sig);
     }
 
     /// Record that `lhs` and `rhs` must unify.
@@ -590,8 +607,8 @@ impl InferCtx {
             match item {
                 Item::FnDef(f) => {
                     // Register with placeholder types; pass 2 will resolve properly.
-                    self.fn_sigs.insert(
-                        f.name.clone(),
+                    self.insert_user_fn_sig(
+                        &f.name,
                         FnSig {
                             params: vec![],
                             ret: Type::Unit,
@@ -659,7 +676,7 @@ impl InferCtx {
                         .as_ref()
                         .map(resolve_with_generics)
                         .unwrap_or(Type::Unit);
-                    self.fn_sigs.insert(f.name.clone(), FnSig { params, ret });
+                    self.insert_user_fn_sig(&f.name, FnSig { params, ret });
                     if !f.generic_params.is_empty() {
                         self.generic_fn_params
                             .insert(f.name.clone(), f.generic_params.clone());
@@ -1151,13 +1168,29 @@ impl InferCtx {
                 let _callee_ty = self.infer_expr(callee, scope, ret_ty);
 
                 if let Some(name) = fn_name {
-                    if let Some(sig) = self.fn_sigs.get(&name).cloned() {
-                        // For generic functions: instantiate with fresh type vars per call site.
-                        let param_names = self
-                            .generic_fn_params
+                    // CS-4: the sig of the fn this call reaches — the builtin's
+                    // for a plain call to a builtin name, the user fn's otherwise.
+                    let prefers_builtin = crate::builtins::call_prefers_builtin(
+                        &name,
+                        crate::builtins::call_has_mut_arg(args),
+                    );
+                    let sig = if prefers_builtin {
+                        self.fn_sigs.get(&name)
+                    } else {
+                        self.user_fn_sigs
                             .get(&name)
-                            .cloned()
-                            .unwrap_or_default();
+                            .or_else(|| self.fn_sigs.get(&name))
+                    };
+                    if let Some(sig) = sig.cloned() {
+                        // For generic functions: instantiate with fresh type vars per call site.
+                        let param_names = if prefers_builtin {
+                            Vec::new()
+                        } else {
+                            self.generic_fn_params
+                                .get(&name)
+                                .cloned()
+                                .unwrap_or_default()
+                        };
                         let (inst_sig, var_map) = if !param_names.is_empty() {
                             self.instantiate_sig(&sig, &param_names)
                         } else {

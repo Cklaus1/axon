@@ -3169,3 +3169,6 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M3832': r'ATTACK: [a-z0-9_]+: a type named like a builtin was accepted',
 })
+ATTACK_MARKERS.update({
+    'M3831': r'ATTACK: a call to a shadowed builtin was typed against the user signature',
+})

@@ -1037,28 +1037,32 @@ impl<'a> Resolver<'a> {
                     }
                     if let Some(prev) = self.table.define(f.name.clone(), sym) {
                         if matches!(prev, Symbol::Builtin { .. }) {
-                            // User↔builtin collision. The interpreter dispatches
-                            // to the builtin BEFORE a user fn (eval_call order),
-                            // so this user fn silently never runs — and may even
-                            // panic on a signature mismatch (BUG_HUNT #33). Warn
-                            // so the user renames instead of the fn vanishing.
-                            self.emit_warning(
-                                Diagnostic::warning(
-                                    W0003,
-                                    format!(
-                                        "fn `{}` shadows the builtin `{}` — the builtin takes \
-                                         precedence, so this function will not be called",
-                                        f.name, f.name
-                                    ),
-                                )
-                                .with_file(self.file)
-                                .with_span(f.span)
-                                .with_fix(format!(
-                                    "rename `{}` to avoid the builtin (the call site resolves to \
-                                     the builtin, not your function)",
-                                    f.name
-                                )),
-                            );
+                            // User↔builtin collision. A plain call reaches the
+                            // builtin (`call_prefers_builtin`), so this user fn
+                            // never runs for it (BUG_HUNT #33); check types the
+                            // call against the builtin (CS-4). Warn so the user
+                            // renames. `P`/`E`/`Var` fall through to the user
+                            // fn, so they are not shadowed and draw no warning.
+                            if crate::builtins::call_prefers_builtin(&f.name, false) {
+                                self.emit_warning(
+                                    Diagnostic::warning(
+                                        W0003,
+                                        format!(
+                                            "fn `{}` shadows the builtin `{}` — the builtin takes \
+                                             precedence, so this function will not be called, \
+                                             except with a `&mut` argument",
+                                            f.name, f.name
+                                        ),
+                                    )
+                                    .with_file(self.file)
+                                    .with_span(f.span)
+                                    .with_fix(format!(
+                                        "rename `{}` to avoid the builtin (the call site resolves \
+                                         to the builtin, not your function)",
+                                        f.name
+                                    )),
+                                );
+                            }
                         } else {
                             // True user↔user duplicate.
                             self.emit_error(

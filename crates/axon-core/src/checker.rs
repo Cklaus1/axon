@@ -448,6 +448,10 @@ pub struct FnSig {
 pub struct CheckCtx {
     pub file: String,
     pub fn_sigs: HashMap<String, FnSig>,
+    /// Every user fn's own signature (infer's `user_fn_sigs`): the call-site
+    /// sig of a call that `builtins::call_prefers_builtin` sends to the user
+    /// fn although `fn_sigs` holds the builtin's (CS-4). Set by the caller.
+    pub user_fn_sigs: HashMap<String, FnSig>,
     pub struct_fields: HashMap<String, Vec<(String, Type)>>,
     /// Resolved type for each expression node, keyed by node-path string.
     /// Populated via `check_program` just before checking starts.
@@ -599,6 +603,7 @@ impl CheckCtx {
         Self {
             file: file.into(),
             fn_sigs,
+            user_fn_sigs: HashMap::new(),
             struct_fields,
             expr_types: HashMap::new(),
             errors: Vec::new(),
@@ -637,11 +642,40 @@ impl CheckCtx {
         }
     }
 
+    /// Set [`CheckCtx::user_fn_sigs`] from inference's `user_fn_sigs` (CS-4).
+    pub fn with_user_fn_sigs(mut self, sigs: &HashMap<String, crate::infer::FnSig>) -> Self {
+        self.user_fn_sigs = sigs
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    FnSig {
+                        params: v.params.clone(),
+                        ret: v.ret.clone(),
+                    },
+                )
+            })
+            .collect();
+        self
+    }
+
     /// True if `name` is a user-defined top-level fn (it has a signature and is
     /// not a builtin). Used where a fn named as a VALUE (AX-25) must be treated
     /// as a call to it.
     fn is_user_fn_name(&self, name: &str) -> bool {
         self.fn_sigs.contains_key(name) && !crate::builtins::is_known_builtin(name)
+    }
+
+    /// CS-4: the signature of the fn a call by `name` with `args` reaches —
+    /// the builtin's when `call_prefers_builtin` holds, the user fn's otherwise.
+    fn call_sig(&self, name: &str, args: &[Expr]) -> Option<&FnSig> {
+        if crate::builtins::call_prefers_builtin(name, crate::builtins::call_has_mut_arg(args)) {
+            self.fn_sigs.get(name)
+        } else {
+            self.user_fn_sigs
+                .get(name)
+                .or_else(|| self.fn_sigs.get(name))
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -5261,7 +5295,7 @@ impl CheckCtx {
         node_path: &NodePath,
         scope: &mut HashMap<String, Type>,
     ) {
-        let sig = match self.fn_sigs.get(name).cloned() {
+        let sig = match self.call_sig(name, args).cloned() {
             Option::Some(s) => s,
             Option::None => return, // Unknown function — inference handles it.
         };
@@ -6890,7 +6924,7 @@ impl CheckCtx {
                     Type::Unit
                 }
             }
-            Expr::Call { callee, .. } => {
+            Expr::Call { callee, args, .. } => {
                 // R13: a native `M::fn(...)` call resolves to its FFI return type
                 // (the StructLit-callee `::`-name resolves in the registry).
                 if let Expr::StructLit { name, fields } = callee.as_ref() {
@@ -6901,7 +6935,7 @@ impl CheckCtx {
                     }
                 }
                 if let Expr::Ident(name) = callee.as_ref() {
-                    if let Option::Some(sig) = self.fn_sigs.get(name.as_str()) {
+                    if let Option::Some(sig) = self.call_sig(name, args) {
                         if type_contains_unresolved(&sig.ret) {
                             // Collapsing the whole return to `Unknown` loses the
                             // OUTER wrapper shape — and the arg-type loop's
