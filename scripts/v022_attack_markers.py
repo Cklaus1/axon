@@ -3158,3 +3158,9 @@ ATTACK_MARKERS.update({
     'M3755': r'ATTACK: a lost generator read was not reported Unavailable',
     'M3756': r'ATTACK: a lost generator read was not reported Unavailable',
 })
+
+# Capability-surface lane (CAP-2/3/4; ids M3800-M3819)
+ATTACK_MARKERS.update({
+    'M3803': r'ATTACK: body_native: a `native:gfx` predicate is missing `IO` from the effect union',
+    'M3804': r'ATTACK: verify_native: a `native:gfx` predicate is missing `IO` from the effect union',
+})

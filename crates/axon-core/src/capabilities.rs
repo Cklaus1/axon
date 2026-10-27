@@ -10,7 +10,7 @@
 //! E1004 — call hits a `never:` clause (hard violation, even if allowlist would permit it)
 
 use crate::ast::{
-    AxonType, ContainedSpec, Expr, FnDef, Item, NeverClause, Program, RefineDef, Stmt, TypeDef,
+    AxonType, ContainedSpec, Expr, FnDef, Item, NeverClause, Program, RefineDef, TypeDef,
 };
 use crate::span::Span;
 
@@ -814,11 +814,11 @@ impl<'a> TypeHooks<'a> {
 /// Every expression of `program` that can run, called or not: each fn and
 /// impl-method body with its `@[verify]` predicate, each module `let`
 /// initializer, and every predicate `TypeHooks` knows. The roots of the
-/// program-wide walkers (`program_capabilities`, `program_builtin_calls`).
-/// Rooting every predicate, used or not, over-approximates
-/// `reachable_capabilities(program, None)`, which is sound for their
-/// consumers: each needs a superset (G2, the import edge, `axon lock`, the
-/// G1 purity filter, deploy risk, the manifest's effect union).
+/// program-wide walk (`program_reach`). Rooting every predicate, used or
+/// not, over-approximates `reachable_capabilities(program, None)`, which is
+/// sound for its consumers: each needs a superset (G2, the import edge,
+/// `axon lock`, the G1 purity filter, deploy risk, the manifest's effect
+/// union).
 fn program_roots(program: &Program) -> Vec<&Expr> {
     let mut roots: Vec<&Expr> = Vec::new();
     let mut fns: Vec<&FnDef> = Vec::new();
@@ -904,18 +904,56 @@ fn push_type<'a>(ty: &'a AxonType, hooks: &TypeHooks<'a>, work: &mut Vec<Walk<'a
     }
 }
 
-/// The set of capability *kinds* a program exercises — `"fs:read"`,
-/// `"fs:write"`, `"net"`, `"exec"` — collected from every call site regardless
-/// of `@[contained]`. This is the canonical capability surface used by R10's
-/// G2 safety gate: a candidate compiler pass `P` is unsafe iff
-/// `program_capabilities(P(c))` is NOT a subset of `program_capabilities(c)`,
-/// i.e. the transform introduced a capability the original program lacked
-/// (I-12 — self-modification cannot widen the trusted surface). Reuses
-/// `classify_call` so the capability taxonomy stays single-sourced.
-/// The union of the EFFECT ROWS of every builtin the program actually calls
-/// (AUDIT T48). Uses `builtin_effect_row` — the same table the runtime sandbox
-/// gate and the guest kernel enforce against — so a manifest built from this is
-/// expressed in the vocabulary that will be checked.
+/// Everything `program_roots` can run, noted call by call with the reach
+/// walker's own classifier (`Reach::note`): a call whose callee is an
+/// identifier (`read_file(..)`) or an empty struct-literal name (a native
+/// `gfx::window_open(..)`, the turbofish `ai_extract::<T>(..)`). Calls only:
+/// a builtin named as a value is counted by the reach walker alone (a checked
+/// program cannot hold one, E0306, so such a name is a local shadowing it).
+/// No helper is followed — every fn is a root already. Uses the shared
+/// iterative `ast::walk_expr` (T46/T48) rather than a bespoke recursion: this
+/// file has been bitten by private walkers that missed an arm (impl-method
+/// bodies, string-named dispatch, `with`/`spawn`/`select`).
+fn program_reach(program: &Program) -> Reach {
+    let mut reach = Reach::default();
+    let mut visit = |e: &Expr| {
+        if let Expr::Call { callee, .. } = e {
+            match callee.as_ref() {
+                Expr::Ident(n) => reach.note(n),
+                Expr::StructLit { name, fields } if fields.is_empty() => reach.note(name),
+                _ => {}
+            }
+        }
+    };
+    for root in program_roots(program) {
+        crate::ast::walk_expr(root, &mut visit);
+    }
+    reach
+}
+
+/// The set of capability labels a program exercises — `"fs:read"`,
+/// `"fs:write"`, `"net"`, `"exec"`, `"native:M"`, … — collected from every
+/// call site regardless of `@[contained]` (`program_reach`). This is the
+/// canonical capability surface used by R10's G2 safety gate: a candidate
+/// compiler pass `P` is unsafe iff `program_capabilities(P(c))` is NOT a
+/// subset of `program_capabilities(c)`, i.e. the transform introduced a
+/// capability the original program lacked (I-12 — self-modification cannot
+/// widen the trusted surface). It also feeds the import edge (E1203), the
+/// module audit verdict and deploy risk. Classified by `Reach::note`, i.e.
+/// the per-argument `classify_call_paths` table, so a multi-kind builtin
+/// (`file_copy`: a read AND a write) contributes every kind it exercises.
+pub fn program_capabilities(program: &Program) -> std::collections::BTreeSet<String> {
+    program_reach(program).capabilities
+}
+
+/// The union of the EFFECT ROWS of every builtin, native module and
+/// `ai_extract::<T>` call the program makes (AUDIT T48, CAP-2), with `Exec`
+/// split out of `IO` as the runtime gate splits it. Uses `builtin_effect_row`
+/// — the same table the runtime sandbox gate and the guest kernel enforce
+/// against — so a manifest built from this is expressed in the vocabulary
+/// that will be checked. Rows are looked up by spelling, as `axon caps` does,
+/// so a user fn shadowing an effect-table name counts its row too (a sound
+/// over-approximation).
 ///
 /// Exists because `axon build --emit-manifest` derived `effect_union` from
 /// DECLARED `| {IO, Net}` rows alone. A fn that calls `println` without
@@ -926,50 +964,7 @@ fn push_type<'a>(ty: &'a AxonType, hooks: &TypeHooks<'a>, work: &mut Vec<Walk<'a
 /// rows and take the wider result; a declaration can add to the demand set (an
 /// un-called capability the author intends to use) but must never shrink it.
 pub fn program_effect_rows(program: &Program) -> std::collections::BTreeSet<String> {
-    let mut caps = std::collections::BTreeSet::new();
-    let called = program_builtin_calls(program);
-    for name in called {
-        for eff in crate::builtins::builtin_effect_row(&name) {
-            caps.insert((*eff).to_string());
-        }
-        // `capability_of_builtin` is the finer-grained classification; `exec` is
-        // its own effect for the sandbox gate (T8) and is NOT implied by IO.
-        if capability_of_builtin(&name) == Some("exec") {
-            caps.insert("Exec".to_string());
-        }
-    }
-    caps
-}
-
-/// Every builtin NAME the program calls, anywhere `program_roots` reaches.
-///
-/// Uses the shared `ast::walk_expr` (T46/T48) rather than a bespoke recursion —
-/// this file has already been bitten twice by a walker that missed an arm
-/// (impl-method bodies, string-named dispatch), and a third private traversal
-/// would just queue up the next one.
-fn program_builtin_calls(program: &Program) -> std::collections::BTreeSet<String> {
-    let mut names = std::collections::BTreeSet::new();
-    let mut visit = |e: &Expr| {
-        if let Expr::Call { callee, .. } = e {
-            if let Expr::Ident(n) = callee.as_ref() {
-                if crate::builtins::is_known_builtin(n) {
-                    names.insert(n.clone());
-                }
-            }
-        }
-    };
-    for root in program_roots(program) {
-        crate::ast::walk_expr(root, &mut visit);
-    }
-    names
-}
-
-pub fn program_capabilities(program: &Program) -> std::collections::BTreeSet<String> {
-    let mut caps = std::collections::BTreeSet::new();
-    for root in program_roots(program) {
-        collect_caps_expr(root, &mut caps);
-    }
-    caps
+    program_reach(program).effects
 }
 
 /// The capability kind a builtin call exercises (`"fs:read"`, `"fs:write"`,
@@ -1254,155 +1249,6 @@ fn cap_label(kind: &IoKind) -> &'static str {
         IoKind::Exec => "exec",
         IoKind::Env => "env",
         IoKind::DurableStore => "dstore",
-    }
-}
-
-fn collect_caps_stmts(stmts: &[Stmt], caps: &mut std::collections::BTreeSet<String>) {
-    for stmt in stmts {
-        collect_caps_expr(&stmt.expr, caps);
-    }
-}
-
-/// Walk an expression, recording the capability kind of every call site. Mirrors
-/// `check_expr`'s traversal but capability-collecting instead of spec-checking.
-fn collect_caps_expr(expr: &Expr, caps: &mut std::collections::BTreeSet<String>) {
-    match expr {
-        Expr::Call { callee, args, .. } => {
-            let name = match callee.as_ref() {
-                Expr::Ident(n) => Some(n.as_str()),
-                Expr::StructLit { name, fields } if fields.is_empty() => Some(name.as_str()),
-                _ => None,
-            };
-            if let Some(n) = name {
-                // EVERY kind the call exercises, from the per-argument
-                // table. This asked `classify_call`, which yields one kind and
-                // has no arm for `file_copy`/`file_rename`, so those two
-                // contributed NOTHING to the capability surface. Measured: an
-                // imported module calling `write_file` is E1203 against a
-                // contained importer, while the same module calling
-                // `file_copy` — strictly more authority, a read AND a write —
-                // passed with exit 0. `program_capabilities` also feeds the
-                // module audit verdict and R10's G2 monotonicity gate, so a
-                // rewrite that introduced a `file_copy` widened the surface
-                // without changing the set that G2 compares.
-                if let Some(pairs) = classify_call_paths(n) {
-                    for (kind, _) in pairs {
-                        caps.insert(cap_label(&kind).to_string());
-                    }
-                }
-                // R13: a native `M::*` call is a capability — record it as
-                // `native:M` so the import-edge (E1203) check sees it (the grant
-                // check, E1004, reads the same label from `Reach::note`).
-                if let Some((m, _f)) = crate::native::resolve_call(n) {
-                    caps.insert(format!("native:{}", m.name));
-                }
-            }
-            collect_caps_expr(callee, caps);
-            for arg in args {
-                collect_caps_expr(arg, caps);
-            }
-        }
-        Expr::Block(stmts) => collect_caps_stmts(stmts, caps),
-        Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
-            collect_caps_expr(value, caps)
-        }
-        Expr::BinOp { left, right, .. } => {
-            collect_caps_expr(left, caps);
-            collect_caps_expr(right, caps);
-        }
-        Expr::UnaryOp { operand, .. } => collect_caps_expr(operand, caps),
-        Expr::Question(inner) => collect_caps_expr(inner, caps),
-        Expr::MethodCall { receiver, args, .. } => {
-            collect_caps_expr(receiver, caps);
-            for arg in args {
-                collect_caps_expr(arg, caps);
-            }
-        }
-        Expr::If { cond, then, else_ } => {
-            collect_caps_expr(cond, caps);
-            collect_caps_expr(then, caps);
-            if let Some(e) = else_ {
-                collect_caps_expr(e, caps);
-            }
-        }
-        Expr::Match { subject, arms } => {
-            collect_caps_expr(subject, caps);
-            for arm in arms {
-                if let Some(g) = &arm.guard {
-                    collect_caps_expr(g, caps);
-                }
-                collect_caps_expr(&arm.body, caps);
-            }
-        }
-        Expr::While { cond, body } => {
-            collect_caps_expr(cond, caps);
-            collect_caps_stmts(body, caps);
-        }
-        Expr::WhileLet { expr, body, .. } => {
-            collect_caps_expr(expr, caps);
-            collect_caps_stmts(body, caps);
-        }
-        Expr::For {
-            start, end, body, ..
-        } => {
-            collect_caps_expr(start, caps);
-            collect_caps_expr(end, caps);
-            collect_caps_stmts(body, caps);
-        }
-        Expr::Assign { value, .. } => collect_caps_expr(value, caps),
-        Expr::AssignTo { place, value } => {
-            collect_caps_expr(place, caps);
-            collect_caps_expr(value, caps);
-        }
-        Expr::Return(Some(e)) => collect_caps_expr(e, caps),
-        Expr::FieldAccess { receiver, .. } => collect_caps_expr(receiver, caps),
-        Expr::Index { receiver, index } => {
-            collect_caps_expr(receiver, caps);
-            collect_caps_expr(index, caps);
-        }
-        Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => collect_caps_expr(inner, caps),
-        Expr::Array(elems) | Expr::Tuple(elems) => {
-            for e in elems {
-                collect_caps_expr(e, caps);
-            }
-        }
-        Expr::StructLit { fields, .. } => {
-            for (_, v) in fields {
-                collect_caps_expr(v, caps);
-            }
-        }
-        Expr::Lambda { body, .. } => collect_caps_expr(body, caps),
-        Expr::FmtStr { parts } => {
-            for part in parts {
-                if let crate::ast::FmtPart::Expr(e) = part {
-                    collect_caps_expr(e, caps);
-                }
-            }
-        }
-        // These forms were missing — a capability call inside any of them was
-        // INVISIBLE to the import-edge E1203 check, so an imported module could
-        // launder a capability past the importer's @[contained] ceiling through a
-        // `with` block / spawn / select / comptime. Kept in lockstep with the
-        // self-check walker `check_expr` (which already handles all of these).
-        Expr::WithHandler { handler, body } => {
-            if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
-                for arm in arms {
-                    collect_caps_expr(&arm.body, caps);
-                }
-                if let Some(ra) = return_arm {
-                    collect_caps_expr(&ra.body, caps);
-                }
-            }
-            collect_caps_expr(body, caps);
-        }
-        Expr::Spawn(inner) | Expr::Comptime(inner) => collect_caps_expr(inner, caps),
-        Expr::Select(arms) => {
-            for arm in arms {
-                collect_caps_expr(&arm.recv, caps);
-                collect_caps_expr(&arm.body, caps);
-            }
-        }
-        _ => {}
     }
 }
 

@@ -11710,7 +11710,7 @@ MUTATIONS += [
      '            .filter_map(|t| t.refinement.as_deref());',
      '            .filter_map(|t| t.refinement.as_deref())\n            .take(0);',
      'axon-core', '--test predicate_capability_routes', 'g2_rejects_a_pass_that_adds_a_predicate_route'),
-    ('M3763', 'FU-2 CAPS: program_effect_rows (the manifest effect union) walks NO root at all (every body, predicate and let is skipped)', 'crates/axon-core/src/capabilities.rs',
+    ('M3763', 'FU-2/CAP-2 CAPS: program_reach walks no root: both the capability set and the effect rows are empty', 'crates/axon-core/src/capabilities.rs',
      '        crate::ast::walk_expr(root, &mut visit);',
      '        if false {\n            crate::ast::walk_expr(root, &mut visit);\n        }',
      'axon-core', '--test predicate_capability_routes', 'the_effect_union_carries_the_row_a_predicate_route_implies'),
@@ -11744,6 +11744,18 @@ MUTATIONS += [
      '    generator_output(joined).map_err(|why| {',
      '    Ok::<_, &str>(generator_output(joined).unwrap_or_default()).map_err(|why| {',
      'axon-cortex', '--lib', 'generate::drain_tests::a_lost_read_is_unavailable_never_declined_or_empty'),
+]
+
+# Capability-surface lane (CAP-2/3/4; ids M3800-M3819)
+MUTATIONS += [
+    ('M3803', 'CAP-2 CAPS: program_reach skips empty-struct-literal callees (native M::f and ai_extract::<T> calls)', 'crates/axon-core/src/capabilities.rs',
+     '                Expr::StructLit { name, fields } if fields.is_empty() => reach.note(name),',
+     '                Expr::StructLit { .. } => {}',
+     'axon-core', '--test predicate_capability_routes', 'the_effect_union_carries_the_row_a_predicate_route_implies'),
+    ('M3804', 'CAP-2 CAPS: Reach::note records a native call\'s capability label but not its module effect row', 'crates/axon-core/src/capabilities.rs',
+     '            self.effects.extend(m.effects.iter().map(|e| e.to_string()));',
+     '            let _ = m.effects;',
+     'axon-core', '--test predicate_capability_routes', 'the_effect_union_carries_the_row_a_predicate_route_implies'),
 ]
 
 if __name__ == "__main__":
