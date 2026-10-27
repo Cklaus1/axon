@@ -344,6 +344,11 @@ pub struct InferCtx {
     /// Recorded call-site instantiations (fn_name → Vec<concrete Type args>).
     /// Populated during infer; consumed by the mono pass.
     pub call_instantiations: Vec<(String, Vec<Type>)>,
+    /// CS-5: `len` args that were still a type variable at the call. Each
+    /// must resolve to `str` or `[T]`; checked by `solve()` once the
+    /// substitution is final (pinning the var to `str` at the call refused a
+    /// `?`- or match-bound array).
+    len_obligations: Vec<(Type, crate::span::Span)>,
     /// Field lists for user-defined struct types.
     pub struct_fields: HashMap<String, Vec<(String, Type)>>,
     /// Generic type parameter names for struct types (struct_name → [param_names]).
@@ -417,6 +422,7 @@ impl InferCtx {
             fn_sigs: HashMap::new(),
             generic_fn_params: HashMap::new(),
             call_instantiations: Vec::new(),
+            len_obligations: Vec::new(),
             struct_fields: HashMap::new(),
             struct_generic_params: HashMap::new(),
             enum_variants: HashMap::new(),
@@ -1088,8 +1094,15 @@ impl InferCtx {
                 if let Some(ref name) = fn_name {
                     if name == "len" && args.len() == 1 {
                         let arg_ty = self.infer_expr(&args[0], scope, ret_ty);
-                        if !matches!(arg_ty, Type::Slice(_)) {
-                            self.constrain(arg_ty, Type::Str, "arg 0 of `len`");
+                        match arg_ty {
+                            Type::Slice(_) => {}
+                            // Unresolved here (`?`/match binding): decide after
+                            // solving, when it may have become `[T]`.
+                            Type::Var(_) => {
+                                let span = self.current_stmt_span;
+                                self.len_obligations.push((arg_ty, span));
+                            }
+                            _ => self.constrain(arg_ty, Type::Str, "arg 0 of `len`"),
                         }
                         return Type::I64;
                     }
@@ -2021,6 +2034,14 @@ impl InferCtx {
         for c in &constraints {
             self.current_stmt_span = c.span;
             self.unify(c.lhs.clone(), c.rhs.clone(), &c.origin, &mut subst);
+        }
+        // CS-5: a deferred `len` arg is fine as `[T]`, else it must be `str`.
+        for (ty, span) in std::mem::take(&mut self.len_obligations) {
+            let ty = subst.apply(&ty);
+            if !matches!(ty, Type::Slice(_)) {
+                self.current_stmt_span = span;
+                self.unify(ty, Type::Str, "arg 0 of `len`", &mut subst);
+            }
         }
         subst
     }

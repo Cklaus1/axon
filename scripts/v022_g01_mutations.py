@@ -11752,6 +11752,10 @@ MUTATIONS += [
      '(`None => return Err(..)` next to `Some(x) => x`).\n                Type::Never',
      '(`None => return Err(..)` next to `Some(x) => x`).\n                Type::Unit',
      'axon-core', '--no-default-features --test cli_run', 'return_in_match_arm_unifies_with_the_arm_type'),
+    ('M3834', 'CS-5: a type-variable `len` arg is pinned to `str` at the call again', 'crates/axon-core/src/infer.rs',
+     '                                self.len_obligations.push((arg_ty, span));',
+     '                                let _ = span;\n                                self.constrain(arg_ty, Type::Str, "arg 0 of `len`");',
+     'axon-core', '--no-default-features --test cli_run', 'len_of_question_bound_array_checks'),
 ]
 
 if __name__ == "__main__":

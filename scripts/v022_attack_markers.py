@@ -3163,3 +3163,6 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M3836': r'ATTACK: a `return` match arm is typed \(\) and refuses the sibling arm',
 })
+ATTACK_MARKERS.update({
+    'M3834': r'ATTACK: `len` of a type-variable arg was pinned to str',
+})

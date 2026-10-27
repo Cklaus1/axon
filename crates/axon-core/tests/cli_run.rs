@@ -40332,3 +40332,47 @@ fn return_value_still_checked_against_declared_type() {
     assert_eq!(crc, Some(2), "{cmsg}");
     assert!(cmsg.contains("E0307"), "{cmsg}");
 }
+
+/// CS-5: `len` of a `?`-bound array checks; the arg is still a type variable
+/// at the call, and must not be pinned to `str` before solving.
+#[test]
+fn len_of_question_bound_array_checks() {
+    let src = "fn parse_line(line: str) -> Result<[str], str> {\n    if len(line) == 0 { return Err(\"empty\") }\n    Ok(str_split(line, \",\"))\n}\n\nfn column_count(line: str) -> Result<i64, str> {\n    let fields = parse_line(line)?\n    Ok(len(fields))\n}\n\nfn main() {\n    match column_count(\"a,b,c\") {\n        Ok(n) => println(to_str(n)),\n        Err(e) => println(e),\n    }\n}\n";
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run("n_q", src);
+    assert_eq!(
+        crc,
+        Some(0),
+        "ATTACK: `len` of a type-variable arg was pinned to str: {cmsg}"
+    );
+    assert_eq!((rrc, rout.as_str()), (Some(0), "3\n"), "{cmsg}");
+}
+
+/// CS-5: `len` of a match-bound array checks.
+#[test]
+fn len_of_match_bound_array_checks() {
+    let src = "fn mk(n: i64) -> Result<[i64], str> {\n    if n < 0 { return Err(\"neg\") }\n    Ok([n, n])\n}\n\nfn main() {\n    match mk(3) {\n        Ok(q) => println(to_str(len(q))),\n        Err(e) => println(e),\n    }\n}\n";
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run("n_match", src);
+    assert_eq!(crc, Some(0), "{cmsg}");
+    assert_eq!((rrc, rout.as_str()), (Some(0), "2\n"), "{cmsg}");
+}
+
+/// CS-5 non-regression: `len` of an int is still refused, whether the int is
+/// a literal or arrives through a type variable. (The literal case is E0306
+/// at the lane base, not E0102 as the spec says; either is a type refusal.)
+#[test]
+fn len_of_int_still_refused() {
+    for (tag, src) in [
+        ("len_lit", "fn main() { println(to_str(len(42))) }\n"),
+        (
+            "len_var",
+            "fn mk() -> Result<i64, str> { Ok(4) }\nfn f() -> Result<i64, str> {\n    let n = mk()?\n    Ok(len(n))\n}\nfn main() { match f() { Ok(n) => println(to_str(n)), Err(e) => println(e) } }\n",
+        ),
+    ] {
+        let (crc, cmsg, _, _) = cs_b1_check_run(tag, src);
+        assert_eq!(crc, Some(2), "{tag}: {cmsg}");
+        assert!(
+            (cmsg.contains("E0102") || cmsg.contains("E0306")) && cmsg.contains("of `len`"),
+            "{tag}: {cmsg}"
+        );
+    }
+}
