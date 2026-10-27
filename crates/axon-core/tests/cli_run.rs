@@ -40695,6 +40695,34 @@ fn predicate_with_return_or_break_is_refused() {
     }
 }
 
+/// CS-1/CS-2 (impl review): a `return` inside a closure in a predicate leaves
+/// only the closure, not the predicate's frame; it checks and is enforced.
+#[test]
+fn predicate_return_inside_a_lambda_still_checks() {
+    let src = "fn all_ok(xs: [i64], f: fn(i64) -> bool) -> bool {\n    for x in xs { if !f(x) { return false } }\n    true\n}\n\n@[verify(all_ok([value], |x: i64| -> bool { if x < 0 { return false }\n    true }))]\nfn g(a: i64) -> i64 { a }\n\nfn main() {\n    println(to_str(g(2)))\n    println(to_str(g(-1)))\n}\n";
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run("vlamret", src);
+    assert_eq!(
+        crc,
+        Some(0),
+        "ATTACK: a predicate with `return` inside a closure was refused as leaving its frame [vlamret]: {cmsg}"
+    );
+    assert_eq!((rrc, rout.as_str()), (Some(3), "2\n"), "[vlamret] {cmsg}");
+}
+
+/// CS-1 (impl review): a `break`/`continue` inside a loop in a predicate
+/// leaves only the loop; it checks and the refinement is enforced.
+#[test]
+fn predicate_break_inside_a_loop_still_checks() {
+    let src = "type P = [i64] where {\n    let ok = true\n    for x in _ { if x < 0 { ok = false\n        break } }\n    ok\n}\n\nfn f(xs: P) -> i64 { len(xs) }\n\nfn main() {\n    println(to_str(f([1, 2])))\n    println(to_str(f([1, -2])))\n}\n";
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run("loopbrk", src);
+    assert_eq!(
+        crc,
+        Some(0),
+        "ATTACK: a predicate with `break` inside a loop was refused as leaving its frame [loopbrk]: {cmsg}"
+    );
+    assert_eq!((rrc, rout.as_str()), (Some(6), "2\n"), "[loopbrk] {cmsg}");
+}
+
 /// CS-1 non-regression: param and `let` refinements still bind their own
 /// name (and still enforce it).
 #[test]
@@ -40732,6 +40760,26 @@ fn a_user_exit_reached_through_a_mut_arg_does_not_diverge() {
         Some(0),
         "control: a move before the builtin exit still does not poison the fallthrough: {ce}"
     );
+}
+
+/// CS-6 × CS-4 (impl review): a call to a LOCAL binding named `exit` runs the
+/// closure (dispatch is local -> builtin -> user fn), which returns, so a move
+/// before it stays visible after the `if` - whether the closure is bound
+/// before the `if` or inside the branch.
+#[test]
+fn a_local_closure_named_exit_does_not_diverge() {
+    for (tag, src) in [
+        ("exitclos", "type S = { t: i64 }\n\nfn main() {\n    let exit = |c: i64| println(to_str(c))\n    let b = S { t: 2 }\n    if b.t > 0 {\n        let _c = b\n        exit(1)\n    }\n    println(to_str(b.t))\n}\n"),
+        ("exitclos_in", "type S = { t: i64 }\n\nfn main() {\n    let b = S { t: 2 }\n    if b.t > 0 {\n        let _c = b\n        let exit = |c: i64| println(to_str(c))\n        exit(1)\n    }\n    println(to_str(b.t))\n}\n"),
+    ] {
+        let (cc, ce, _, _) = csp_check_run(tag, src);
+        assert_eq!(
+            cc,
+            Some(2),
+            "ATTACK: a move before a local closure named `exit` was dropped as if the branch diverged [{tag}]: {ce}"
+        );
+        assert!(ce.contains("E0601"), "[{tag}] {ce}");
+    }
 }
 
 /// CS-1 replaced `refined_param_names` (M3455's guard): the predicate-scope

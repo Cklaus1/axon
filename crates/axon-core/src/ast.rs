@@ -718,7 +718,7 @@ pub fn expr_height(root: &Expr, cap: usize) -> usize {
 }
 
 /// `e`'s direct sub-expressions, in [`walk_expr`]'s visit order.
-fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
+pub(crate) fn children<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
     let ss = |ss: &'a [Stmt]| ss.iter().map(|s| &s.expr);
     match e {
         Expr::BinOp { left, right, .. } => out.extend([&**left, &**right]),

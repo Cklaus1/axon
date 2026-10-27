@@ -11753,7 +11753,7 @@ MUTATIONS += [
      'if self.eat(&Token::LParen) {',
      'axon-core', '--no-default-features --test cli_run', 'field_access_then_newline_paren_is_a_new_statement'),
     ('M3835', 'CS-6: a move in an early-`return` branch poisons the fallthrough', 'crates/axon-core/src/borrow.rs',
-     'let then_live = !branch_diverges(then);',
+     'let then_live = !branch_diverges(then, exit_local);',
      'let then_live = true;',
      'axon-core', '--no-default-features --test cli_run', 'early_return_move_does_not_poison_fallthrough'),
     ('M3839', 'CS-7 / NH-3 (d): `let b = a` moves an array or `&[T]` param', 'crates/axon-core/src/borrow.rs',
@@ -11926,6 +11926,22 @@ MUTATIONS += [
      '            .extend(row_effects(reach).map(str::to_string));',
      '            .extend(row_effects(reach).map(str::to_string).take(0));',
      'axon-core', '--lib', 'effects::tests::a_callers_closed_row_inherits_a_predicates_time_read_e1310'),
+]
+
+# Checker-soundness impl-review fixes, LaneTypeB3 (ids M3813-M3815)
+MUTATIONS += [
+    ('M3813', 'CS-1/CS-2: the predicate frame-escape walk descends into closures again (a `return` in a lambda is refused)', 'crates/axon-core/src/resolver.rs',
+     '            Expr::Lambda { .. } => continue,',
+     '            Expr::Lambda { .. } => None,',
+     'axon-core', '--no-default-features --test cli_run', 'predicate_return_inside_a_lambda_still_checks'),
+    ('M3815', 'CS-1: a `break`/`continue` inside a loop body in a predicate counts as leaving its frame again', 'crates/axon-core/src/resolver.rs',
+     '.map(|(i, k)| (k, in_loop || (loop_body && i >= head)))',
+     '.map(|(_, k)| (k, in_loop))',
+     'axon-core', '--no-default-features --test cli_run', 'predicate_break_inside_a_loop_still_checks'),
+    ('M3814', 'CS-6 x CS-4: a call to a local closure named `exit` counts as diverging again', 'crates/axon-core/src/borrow.rs',
+     '            !exit_local\n',
+     '            true\n',
+     'axon-core', '--no-default-features --test cli_run', 'a_local_closure_named_exit_does_not_diverge'),
 ]
 
 if __name__ == "__main__":

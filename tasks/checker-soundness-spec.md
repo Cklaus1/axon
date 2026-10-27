@@ -140,7 +140,7 @@ user fns are visible at run time (`vg.ax`: global `LIM` → verify failed, rc 3)
    - Scope: module items, builtins, and the binders from a new `refine_binders(program, refine_name) -> Vec<(String, Type)>`. This replaces `refined_param_names`.
    - Binders are the **intersection** over the refinement's direct use sites (table above). A RefineDef with no direct position use (unused, or used only nested) binds `{_}` [REVISED: CSA#6].
    - An unbound name or callee inside a refinement predicate is **E1211**, never E0001. This pass owns the predicate, so there is no double report.
-   - `return`, `break` and `continue` anywhere in a predicate are E1211 "a predicate cannot leave its frame" [REVISED: CSA#6 — explicit, not via the bool constraint].
+   - A `return`, `break` or `continue` in a predicate that would leave the predicate's frame is E1211 "a predicate cannot leave its frame" [REVISED: CSA#6 — explicit, not via the bool constraint] [REVISED: impl review M1 — was "anywhere in a predicate"; a `return` inside a closure and a `break`/`continue` inside a loop in the predicate stay in its frame and are accepted].
    - The sealed checker pass at checker.rs:1259-1270 stays as an additional pass.
 2. **Checker type pass.** Infer the predicate in that scope and constrain it to `bool`. Add a new `InferCtx` entry that takes explicit bindings.
    - An integer literal compared with an f64 operand is E1211 "`{lit}` is i64 and the operand is f64: write `{lit}.0`" [REVISED: CSA#2].
@@ -614,7 +614,7 @@ Step 2 classification. Engineering questions are decided here and are canon for 
 | E-4 | Where the CS-9 invariant lives | extend `all_examples_parity.sh`; a new run-sweep script; a cli_run fixture test | **cli_run fixture test.** No codegen and no network needed; the examples sweep is not deterministic (CSD#4) and holds zero instances. | engineering — canon |
 | E-5 | Native composite verify | lower via refinement lowering; always E0910; leave | **Lower, else E0910** (asi.rs:837-896 decides) | engineering — canon |
 | E-6 | An int literal against an f64 operand in a predicate [REVISED: CSA#2, new] | refuse with E1211/E1103 and a `.0` fix; widen in the interp (and codegen); leave | **Refuse**, keeping the decodable simple shape. It matches ordinary code (`x >= 0` with `x: f64` is E0102), and widening would be a language change. | engineering — canon |
-| E-7 | `return`/`break`/`continue` inside a predicate [REVISED: CSA#6, new] | refuse at check; leave to runtime containment | **Refuse at check** (E1211/E1103). Runtime containment (M59) stays as defence in depth. | engineering — canon |
+| E-7 | `return`/`break`/`continue` inside a predicate that would leave the predicate's frame [REVISED: CSA#6, new] [REVISED: impl review M1 — not inside a closure, nor `break`/`continue` inside a loop of the predicate] | refuse at check; leave to runtime containment | **Refuse at check** (E1211/E1103). Runtime containment (M59) stays as defence in depth. | engineering — canon |
 | E-8 | A user type named like a builtin type [REVISED: CSA#14, new] | refuse with E0005; let the user type shadow the builtin | **Refuse.** Today the program already fails or silently means `()`; shadowing would change what existing names mean. | engineering — canon |
 
 **Human decisions** `[DECIDED by human 2026-10-27: all three recommendations accepted]` — now canon for the build:

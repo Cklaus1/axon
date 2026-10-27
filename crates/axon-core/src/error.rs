@@ -103,7 +103,7 @@ pub const E1005: &str = "E1005"; // R45: un-granted capability reached from an e
 // Verify errors (ASI Layer-2: @[verify])
 pub const E1101: &str = "E1101"; // verify bound not satisfied (runtime gate)
 pub const E1102: &str = "E1102"; // verify bound statically VIOLABLE — SMT counterexample (R9)
-pub const E1103: &str = "E1103"; // a `@[verify]` predicate names an unbound name, is ill-typed or not bool, shadows a param, or leaves its frame (CS-2)
+pub const E1103: &str = "E1103"; // a `@[verify]` predicate names an unbound name, is ill-typed or not bool, shadows a param, or leaves its frame (CS-2); or sits on a return the runtime cannot check (CS-3)
 pub const E1104: &str = "E1104"; // a `@[verify]` predicate reaches an effect other than a clock read (CAP-1)
 
 // Capability/registry security errors (R6: content-addressed imports, axon.lock)
@@ -507,7 +507,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E1005", "R45: an un-granted capability is reached from an entry point under `--require-contained`; distinct from E1001, which means a grant EXISTS and was exceeded"),
     ("E1101", "verify bound not satisfied (runtime gate)"),
     ("E1102", "verify bound statically VIOLABLE — SMT counterexample (R9)"),
-    ("E1103", "a `@[verify]` predicate names a name not in scope there, is ill-typed or not `bool`, has a param named like one of its binders, or contains `return`/`break`/`continue`"),
+    ("E1103", "a `@[verify]` predicate names a name not in scope there, is ill-typed or not `bool`, has a param named like one of its binders, or contains a `return`/`break`/`continue` that would leave its frame, or sits on a return the runtime cannot check (not a scalar, `Uncertain<T>` or `Temporal<T>`)"),
     ("E1104", "a `@[verify]` predicate reaches an effect other than a clock read (`now_ms`, `now_ns`, `temporal_now`, `temporal_new`, `temporal_is_valid`): a write, a sleep, a native call, or a call nothing can classify"),
     ("E1201", "on-disk module bytes ≠ axon.lock hash (tamper)"),
     ("E1202", "use with no lockfile entry under --locked"),
@@ -519,7 +519,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E1208", "a @[total] function has no strictly-decreasing measure at a recursive call (Phase 5 §3)"),
     ("E1209", "a constant argument provably violates a refinement-type predicate (Phase 5 §1 R02)"),
     ("E1210", "a `sql_query` template is not a string literal — user data must be a bound parameter, never concatenated SQL (injection)"),
-    ("E1211", "a refinement predicate names a name not in scope there, is ill-typed or not `bool`, or contains `return`/`break`/`continue`"),
+    ("E1211", "a refinement predicate names a name not in scope there, is ill-typed or not `bool`, or contains a `return`/`break`/`continue` that would leave its frame"),
     ("E1300", "ai_* call unreachable and no @[ai(policy(fallback))] in scope"),
     ("E1301", "ai_complete exceeded the fn's @[ai(policy(budget: N))] (R3c)"),
     ("E1302", "tier: resolves to a tier with no host-configured model"),

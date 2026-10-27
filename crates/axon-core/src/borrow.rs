@@ -79,18 +79,27 @@ fn is_copy(ty: &Type) -> bool {
 
 /// Whether an `if` branch never falls through: its block's last statement is
 /// a `return`, or a call that reaches the builtin `exit` (CS-6). A call with a
-/// `&mut` argument runs a user `fn exit` instead (CS-4), which returns.
-fn branch_diverges(e: &Expr) -> bool {
+/// `&mut` argument runs a user `fn exit` instead (CS-4), which returns. So
+/// does a call to a LOCAL binding named `exit` (dispatch is local closure ->
+/// builtin -> user fn): `exit_local` says one is in scope at `e`, and a
+/// block's own `let exit = ..` before its last statement brings one in.
+fn branch_diverges(e: &Expr, exit_local: bool) -> bool {
     match e {
         Expr::Return(_) => true,
         Expr::Call { callee, args, .. } => {
-            matches!(callee.as_ref(), Expr::Ident(n) if n == "exit")
+            !exit_local
+                && matches!(callee.as_ref(), Expr::Ident(n) if n == "exit")
                 && crate::builtins::call_prefers_builtin(
                     "exit",
                     crate::builtins::call_has_mut_arg(args),
                 )
         }
-        Expr::Block(stmts) => stmts.last().is_some_and(|s| branch_diverges(&s.expr)),
+        Expr::Block(stmts) => stmts.split_last().is_some_and(|(last, init)| {
+            let binds_exit = init.iter().any(|s| {
+                matches!(&s.expr, Expr::Let { name, .. } | Expr::Own { name, .. } | Expr::RefBind { name, .. } if name == "exit")
+            });
+            branch_diverges(&last.expr, exit_local || binds_exit)
+        }),
         _ => false,
     }
 }
@@ -338,8 +347,11 @@ impl OwnershipGraph {
                 // discarded (CS-6). `break`/`continue` branches keep theirs:
                 // their state flows past the loop.
                 self.bindings = snapshot;
-                let then_live = !branch_diverges(then);
-                let else_live = !else_.as_deref().is_some_and(branch_diverges);
+                let exit_local = self.bindings.contains_key("exit");
+                let then_live = !branch_diverges(then, exit_local);
+                let else_live = !else_
+                    .as_deref()
+                    .is_some_and(|e| branch_diverges(e, exit_local));
                 let live = [
                     then_live.then_some(&after_then),
                     else_live.then_some(&after_else),
