@@ -267,10 +267,12 @@ fn main() -> i64 {
 
     println("kind changes")
     // An untyped lambda hides the element type from the checker, so a write
-    // or push of another kind type-checks on either array.
+    // or push of another kind type-checks on either array. The packed side
+    // goes through `id` too: a builtin's `T` is bound by its argument, so
+    // `arr_repeat(true, 3)` alone is a `[bool]` the checker holds to `bool`.
     let id = |x| x
     let one = 1
-    let kb = arr_repeat(true, 3)
+    let kb = id(arr_repeat(true, 3))
     let lkb = id([true, true, true])
     kb[1] = one
     lkb[1] = one
@@ -315,12 +317,12 @@ fn main() -> i64 {
     lps = arr_push(lps, v)
     both("push_sized_max", "{ps}", "{lps}")
     let three = 3
-    let kf = arr_repeat(0.5, 2)
+    let kf = id(arr_repeat(0.5, 2))
     let lkf = id([0.5, 0.5])
     kf[0] = three
     lkf[0] = three
     both("write_int_into_floats", "{kf}", "{lkf}")
-    let pp = arr_push(arr_repeat(true, 2), one)
+    let pp = arr_push(id(arr_repeat(true, 2)), one)
     let lp = arr_push(id([true, true]), one)
     both("push_int_onto_bools", "{pp} {len(pp)}", "{lp} {len(lp)}")
 
@@ -363,7 +365,7 @@ fn main() -> i64 {
     ap = arr_concat(ap, arr_repeat(6, 2))
     al = arr_concat(al, [6, 6])
     both("append_same_kind", "{ap} {len(ap)}", "{al} {len(al)}")
-    let bp = arr_repeat(true, 2)
+    let bp = id(arr_repeat(true, 2))
     let bl = id([true, true])
     bp = arr_push(bp, one)
     bl = arr_push(bl, one)
