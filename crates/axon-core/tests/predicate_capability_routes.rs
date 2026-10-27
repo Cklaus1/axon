@@ -4,12 +4,15 @@
 //! seen by every consumer of the program-wide capability surface, and they
 //! must agree with the `axon caps` reach walker (S1) on what it is.
 //!
-//! Before the fix the program-wide walkers (`program_capabilities`,
-//! `program_builtin_calls`) rooted only fn and impl-method bodies and module
-//! `let` values, so such a predicate was invisible to G2 (a pass could add
-//! it), to the import edge (E1203: a contained importer took it in) and to
-//! the manifest's `effect_union` (`program_effect_rows`), while
-//! `reachable_capabilities` already reported it.
+//! Before the fix the program-wide walkers (`program_capabilities`, and the
+//! builtin-call walk behind `program_effect_rows`) rooted only fn and
+//! impl-method bodies and module `let` values, so such a predicate was
+//! invisible to G2 (a pass could add it), to the import edge (E1203: a
+//! contained importer took it in) and to the manifest's `effect_union`
+//! (`program_effect_rows`), while `reachable_capabilities` already reported
+//! it. Both now come from `program_reach`, which notes each call with the
+//! reach walker's own classifier (CAP-2), so native and `ai_extract::<T>`
+//! calls carry their effect rows too, in bodies and predicates alike.
 //!
 //! Each fixture is an UN-type-checked parse (G2 and E1203 see such ASTs, and
 //! E1209 would otherwise reject an impure refinement before any of this
@@ -20,7 +23,7 @@
 
 use axon_core::ast::Program;
 use axon_core::capabilities::{
-    check_import_capabilities, program_effect_rows, reachable_capabilities,
+    check_import_capabilities, program_capabilities, program_effect_rows, reachable_capabilities,
 };
 use axon_core::error::{E1203, E1402};
 use axon_core::improve::verify_pass;
@@ -30,11 +33,11 @@ struct Case {
     /// The program; `PRED` is replaced by the predicate (or by `true`).
     template: &'static str,
     pred: &'static str,
-    /// The capability label the predicate exercises.
-    label: &'static str,
-    /// The effect row it implies (`None`: a native call, whose module effects
-    /// `program_effect_rows` does not record anywhere — O-S1-20).
-    row: Option<&'static str>,
+    /// The capability label the predicate exercises (`None`: it exercises
+    /// none, only an effect row).
+    label: Option<&'static str>,
+    /// The effect row it implies.
+    row: &'static str,
 }
 
 const MAIN: &str = "\nfn main() -> i64 {\n    0\n}\n";
@@ -44,51 +47,76 @@ const CASES: &[Case] = &[
         name: "verify_read",
         template: "@[verify(PRED)]\nfn f(n: i64) -> i64 {\n    n\n}\n",
         pred: "is_ok(read_file(\"/nonexistent/in\"))",
-        label: "fs:read",
-        row: Some("IO"),
+        label: Some("fs:read"),
+        row: "IO",
     },
     Case {
         name: "verify_write",
         template: "@[verify(PRED)]\nfn f(n: i64) -> i64 {\n    n\n}\n",
         pred: "is_ok(write_file(\"/nonexistent/out\", \"x\"))",
-        label: "fs:write",
-        row: Some("IO"),
+        label: Some("fs:write"),
+        row: "IO",
     },
     Case {
         name: "struct_where",
         template: "type Pair = { lo: i64, hi: i64 } where PRED\n\
                    fn f(n: i64) -> i64 {\n    let p = Pair { lo: n, hi: n }\n    p.lo\n}\n",
         pred: "is_ok(write_file(\"/nonexistent/out\", \"x\"))",
-        label: "fs:write",
-        row: Some("IO"),
+        label: Some("fs:write"),
+        row: "IO",
     },
     Case {
         name: "named_refine",
         template: "type Lk = i64 where PRED\nfn f(y: Lk) -> i64 {\n    y\n}\n",
         pred: "is_ok(read_file(\"/nonexistent/in\"))",
-        label: "fs:read",
-        row: Some("IO"),
+        label: Some("fs:read"),
+        row: "IO",
     },
     Case {
         name: "inline_param",
         template: "fn f(n: i64 where PRED) -> i64 {\n    n\n}\n",
         pred: "is_ok(write_file(\"/nonexistent/out\", \"x\"))",
-        label: "fs:write",
-        row: Some("IO"),
+        label: Some("fs:write"),
+        row: "IO",
     },
     Case {
         name: "named_refine_exec",
         template: "type Ex = i64 where PRED\nfn f(y: Ex) -> i64 {\n    y\n}\n",
         pred: "is_ok(exec(\"true\"))",
-        label: "exec",
-        row: Some("Exec"),
+        label: Some("exec"),
+        row: "Exec",
     },
     Case {
         name: "verify_native",
         template: "use native::gfx\n@[verify(PRED)]\nfn f(n: i64) -> i64 {\n    n\n}\n",
         pred: "gfx::window_open(1, 1, \"x\") > 0",
-        label: "native:gfx",
-        row: None,
+        label: Some("native:gfx"),
+        row: "IO",
+    },
+    Case {
+        name: "body_native",
+        template: "use native::gfx\nfn f(n: i64) -> bool {\n    PRED\n}\n",
+        pred: "gfx::window_open(1, 1, \"x\") > 0",
+        label: Some("native:gfx"),
+        row: "IO",
+    },
+    Case {
+        name: "body_ai_extract",
+        template: "fn f(n: i64) -> bool {\n    PRED\n}\n",
+        pred: "match ai_extract::<i64>(\"x\") { Ok(k) => k > 0  Err(_) => false }",
+        label: Some("net"),
+        row: "AI",
+    },
+    Case {
+        // A user fn shadowing an effect-table name the BUILTINS list omits:
+        // the row is counted by spelling, as `axon caps` counts it (an
+        // accepted over-approximation).
+        name: "body_userchan",
+        template: "fn chan_send(c: i64, v: i64) -> i64 {\n    v\n}\n\
+                   fn f(n: i64) -> bool {\n    PRED\n}\n",
+        pred: "chan_send(n, 1) > 0",
+        label: None,
+        row: "Chan",
     },
 ];
 
@@ -112,43 +140,56 @@ fn every(_: &Case) -> bool {
     true
 }
 
+/// How a case's label reads in a message.
+fn shown(c: &Case) -> &'static str {
+    c.label.unwrap_or("capability-free")
+}
+
 /// (4) S1's reach walker, from the fn that uses the predicate. Passes before
 /// and after FU-2: it is the reference the other three must agree with.
 fn reach(c: &Case) -> Result<(), String> {
     let p = program(c, c.pred);
     let reach = reachable_capabilities(&p, Some("f")).expect("f exists");
     let got: Vec<&str> = reach.capabilities.iter().map(String::as_str).collect();
-    if got != [c.label] {
+    if got != c.label.as_slice() {
         return Err(format!(
             "ATTACK: {}: the reach walker reports {got:?} for a `{}` predicate",
-            c.name, c.label
+            c.name,
+            shown(c)
         ));
     }
     Ok(())
 }
 
 /// (1) G2: a pass that adds the predicate is rejected (E1402), naming
-/// exactly the label the reach walker reports.
+/// exactly the label the reach walker reports; one that adds no capability
+/// passes.
 fn g2(c: &Case) -> Result<(), String> {
     let pure = program(c, "true");
     let added = program(c, c.pred);
     let rec = verify_pass(&move |_: &Program| added.clone(), &[pure]);
-    match &rec.g2_safety {
-        Err(e) if e.code == E1402 && e.message.contains(&format!("{{{}}}", c.label)) => Ok(()),
-        Err(e) => Err(format!(
+    match (&rec.g2_safety, c.label) {
+        (Err(e), Some(label)) if e.code == E1402 && e.message.contains(&format!("{{{label}}}")) => {
+            Ok(())
+        }
+        (Ok(()), None) => Ok(()),
+        (Err(e), _) => Err(format!(
             "{}: G2 must name exactly `{}`: {} {}",
-            c.name, c.label, e.code, e.message
+            c.name,
+            shown(c),
+            e.code,
+            e.message
         )),
-        Ok(()) => Err(format!(
-            "ATTACK: {}: a pass adding a `{}` predicate passed G2",
-            c.name, c.label
+        (Ok(()), Some(label)) => Err(format!(
+            "ATTACK: {}: a pass adding a `{label}` predicate passed G2",
+            c.name
         )),
     }
 }
 
 /// (2) The import edge: a contained importer granting nothing takes the
-/// module in only with one E1203 naming the same label; the pure module
-/// passes.
+/// module in only with one E1203 naming the same label (none for a
+/// capability-free case); the pure module passes.
 fn import_edge(c: &Case) -> Result<(), String> {
     let importer = axon_core::parse_source(
         "@[contained(fs: [], net: [], exec: none)]\nfn main() -> i64 {\n    0\n}\n",
@@ -159,17 +200,21 @@ fn import_edge(c: &Case) -> Result<(), String> {
         return Err(format!("{}: the pure module widened: {pure:?}", c.name));
     }
     let errs = check_import_capabilities(&importer, "m", &program(c, c.pred));
-    match errs.as_slice() {
-        [] => Err(format!(
-            "ATTACK: {}: a contained importer took in a `{}` predicate without E1203",
-            c.name, c.label
+    match (errs.as_slice(), c.label) {
+        ([], None) => Ok(()),
+        ([], Some(label)) => Err(format!(
+            "ATTACK: {}: a contained importer took in a `{label}` predicate without E1203",
+            c.name
         )),
-        [e] if e.code == E1203 && e.message.contains(&format!("capability `{}`", c.label)) => {
+        ([e], Some(label))
+            if e.code == E1203 && e.message.contains(&format!("capability `{label}`")) =>
+        {
             Ok(())
         }
         _ => Err(format!(
             "{}: want one E1203 naming `{}`: {errs:?}",
-            c.name, c.label
+            c.name,
+            shown(c)
         )),
     }
 }
@@ -177,7 +222,7 @@ fn import_edge(c: &Case) -> Result<(), String> {
 /// (3) The manifest's effect union (`build_axmeta_manifest` copies
 /// `program_effect_rows` verbatim) carries the row the predicate implies.
 fn effect_row(c: &Case) -> Result<(), String> {
-    let row = c.row.expect("a builtin case");
+    let row = c.row;
     let pure = program_effect_rows(&program(c, "true"));
     if !pure.is_empty() {
         return Err(format!("{}: the pure program has rows {pure:?}", c.name));
@@ -186,7 +231,8 @@ fn effect_row(c: &Case) -> Result<(), String> {
     if !rows.contains(row) {
         return Err(format!(
             "ATTACK: {}: a `{}` predicate is missing `{row}` from the effect union: {rows:?}",
-            c.name, c.label
+            c.name,
+            shown(c)
         ));
     }
     Ok(())
@@ -207,9 +253,54 @@ fn the_import_edge_refuses_a_module_whose_predicate_widens_a_contained_importer(
     each(every, import_edge);
 }
 
-/// Builtin cases only: the effect union records no native module effects
-/// even from bodies (O-S1-20).
+/// Every case, native and `ai_extract::<T>` included: `program_effect_rows`
+/// notes each call with `Reach::note` (CAP-2, O-S1-20).
 #[test]
 fn the_effect_union_carries_the_row_a_predicate_route_implies() {
-    each(|c| c.row.is_some(), effect_row);
+    each(every, effect_row);
+}
+
+/// CAP-3: the program-wide surface (`program_reach`, every root) and the
+/// reach walker classify every call through one `Reach::note`, so on a
+/// program whose predicates are all used they agree on both the capability
+/// set and the effect rows — with the predicate and with `true` in its place.
+#[test]
+fn the_program_wide_surface_agrees_with_the_reach_walker() {
+    each(every, |c| {
+        for pred in [c.pred, "true"] {
+            let p = program(c, pred);
+            let reach = reachable_capabilities(&p, None).expect("the whole program");
+            let caps = program_capabilities(&p);
+            let rows = program_effect_rows(&p);
+            if caps != reach.capabilities || rows != reach.effects {
+                return Err(format!(
+                    "ATTACK: {}: the program-wide surface disagrees with the reach walker \
+                     on `{pred}`: {caps:?} / {rows:?} vs {:?} / {:?}",
+                    c.name, reach.capabilities, reach.effects
+                ));
+            }
+        }
+        Ok(())
+    });
+}
+
+/// CAP-3 (Q5): a builtin named as a VALUE counts for the reach walker only.
+/// A checked program cannot hold one (E0306), so the name is a local
+/// shadowing the builtin (`let exec = 2`); counting it program-wide would
+/// mark the program `exec`-critical (deploy risk) and widen G2/E1203.
+#[test]
+fn a_builtin_value_ref_is_reach_only() {
+    let src = format!("fn f() -> i64 {{\n    let exec = 2\n    exec\n}}\n{MAIN}");
+    let p = axon_core::parse_source(&src).expect("parses");
+    let reach = reachable_capabilities(&p, None).expect("the whole program");
+    assert!(
+        reach.capabilities.contains("exec"),
+        "premise: the reach walker counts a builtin value ref: {reach:?}"
+    );
+    let caps = program_capabilities(&p);
+    let rows = program_effect_rows(&p);
+    assert!(
+        caps.is_empty() && rows.is_empty(),
+        "ATTACK: a builtin value ref widened the program-wide surface: {caps:?} / {rows:?}"
+    );
 }
