@@ -3158,3 +3158,8 @@ ATTACK_MARKERS.update({
     'M3755': r'ATTACK: a lost generator read was not reported Unavailable',
     'M3756': r'ATTACK: a lost generator read was not reported Unavailable',
 })
+
+# checker-soundness LaneParse (ids M3833, M3835, M3839)
+ATTACK_MARKERS.update({
+    'M3833': r'ATTACK: a `.field` then a newline `\(` parsed as a method call',
+})

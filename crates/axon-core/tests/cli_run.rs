@@ -40269,3 +40269,36 @@ fn r51_t1c_a_sealed_axon_test_never_runs_on_the_vm() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ── checker-soundness LaneParse (CS-10, CS-6, CS-7) ──
+
+/// Writes `src` to a fresh temp file, runs `axon check` then `axon run` on it.
+/// Returns (check rc, check stderr, run rc, run stdout).
+fn csp_check_run(tag: &str, src: &str) -> (Option<i32>, String, Option<i32>, String) {
+    let p = std::env::temp_dir().join(format!("axon_csp_{tag}_{}.ax", std::process::id()));
+    std::fs::write(&p, src).unwrap();
+    let c = axon()
+        .args(["check", p.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let r = axon().args(["run", p.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&p);
+    (
+        c.status.code(),
+        String::from_utf8_lossy(&c.stderr).into_owned(),
+        r.status.code(),
+        String::from_utf8_lossy(&r.stdout).into_owned(),
+    )
+}
+
+#[test]
+fn field_access_then_newline_paren_is_a_new_statement() {
+    let src = "type Bucket = { tokens: i64, rate: i64 }\n\nfn wait(b: Bucket, cost: i64) -> i64 {\n    let missing = cost - b.tokens\n    (missing + b.rate - 1) / b.rate\n}\n\nfn main() {\n    println(to_str(wait(Bucket { tokens: 1, rate: 2 }, 6)))\n}\n";
+    let (cc, ce, rc, so) = csp_check_run("n_paren", src);
+    assert_eq!(
+        cc,
+        Some(0),
+        "ATTACK: a `.field` then a newline `(` parsed as a method call: {ce}"
+    );
+    assert_eq!((rc, so.as_str()), (Some(0), "3\n"));
+}
