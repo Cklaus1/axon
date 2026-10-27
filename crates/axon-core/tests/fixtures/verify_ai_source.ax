@@ -1,17 +1,18 @@
 // Demonstrates the lattice relaxation: AI sources are Runtime, not Unknown.
 // The static checker should NOT emit E1101 here, even though confidence is
 // not statically known. The runtime check (__axon_verify_panic, Layer 3.5)
-// will fire if the LLM's reported confidence falls below 0.8.
+// will fire if the LLM's reported confidence falls below 0.8 - or if the
+// extraction fails, which yields a zero-confidence value.
 
 @[verify(confidence >= 0.8)]
-fn confident_count(item: str) -> Result<Uncertain<i64>, str> {
-    let r = ai_extract_uncertain_i64(item)?
-    Ok(r)
+fn confident_count(item: str) -> Uncertain<i64> {
+    match ai_extract_uncertain_i64(item) {
+        Ok(u)  => uncertain_dyn_i64(u.value, u.confidence)
+        Err(_) => uncertain_dyn_i64(0, 0.0)
+    }
 }
 
 fn main() {
-    match confident_count("How many planets in the solar system?") {
-        Ok(u)  => println(to_str(u.value))
-        Err(e) => eprintln(e)
-    }
+    let u = confident_count("How many planets in the solar system?")
+    println(to_str(u.value))
 }

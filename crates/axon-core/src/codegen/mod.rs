@@ -313,6 +313,11 @@ pub struct Codegen<'ctx> {
     /// is the source operator (`">="`, …) and `bound` is the literal K. `None`
     /// whenever the surrounding function has no decodable verify spec.
     pub(super) current_verify_fn: Option<(String, String, &'static str, f64)>,
+    /// CS-3 (E-5): a `@[verify]` that is not the simple shape above but is in
+    /// the lowerable subset ([`Codegen::refine_predicate_is_lowerable`]): every
+    /// return site lowers it with the return's binders and the params aliased
+    /// (`emit_verify_check_if_needed`). `None` otherwise.
+    current_verify_composite: Option<asi::VerifyComposite<'ctx>>,
     /// Phase 5: when emitting a fn whose declared return type is a refinement
     /// (`-> T where P`) with a lowerable predicate, this holds `(refine_name,
     /// predicate)` so every return site injects a runtime POSTCONDITION check via
@@ -511,6 +516,7 @@ impl<'ctx> Codegen<'ctx> {
             source_path: String::new(),
             current_agent_fn: None,
             current_verify_fn: None,
+            current_verify_composite: None,
             current_ret_refine: None,
             target_is_wasm: false,
             target_is_wasi: false,
@@ -1514,6 +1520,7 @@ impl<'ctx> Codegen<'ctx> {
         let saved_adaptive_input = self.current_adaptive_input.take();
         let saved_agent = self.current_agent_fn.take();
         let saved_verify = self.current_verify_fn.take();
+        let saved_verify_composite = self.current_verify_composite.take();
         let saved_ret_refine = self.current_ret_refine.take();
         // R4 §4.3: arm the mandatory agent action log for an `@[agent]` fn.
         if f.attrs.iter().any(|a| a.name == "agent") {
@@ -1538,42 +1545,61 @@ impl<'ctx> Codegen<'ctx> {
 
         // ── ASI Layer-3 @[verify]: arm runtime predicate enforcement. ─────────
         // Activates `current_verify_fn` so every return site of this function
-        // emits a guarded call to `__axon_verify_panic` when the runtime
-        // confidence violates the predicate.  We only arm the check when:
-        //   1. The function has a `VerifySpec`.
-        //   2. The predicate decodes as `confidence OP literal_f64`.
-        //   3. The declared return type is `Uncertain<T>` (defensive — the
-        //      static checker should have rejected the verify clause otherwise).
-        // If any of those fail, we silently emit nothing — same shape as the
-        // static checker, which also no-ops on undecodable predicates.
+        // emits a guarded call to `__axon_verify_panic` when the decodable
+        // simple shape `value|confidence OP K` fails. CS-3 (E-5): any other
+        // predicate (a composite, or one reading a param, NH-1 a) is lowered
+        // like a refinement predicate (`current_verify_composite`) when it is
+        // in the lowerable subset, and E0910-refused otherwise. It is never
+        // silently dropped: the interpreter enforces every one.
         if let Some(spec) = &f.verify {
-            if let Some((ident, op, bound)) =
-                crate::verify::decode_verify_predicate_with_ident(&spec.predicate)
-            {
-                let ret_sem = f
-                    .return_type
-                    .as_ref()
-                    .map(|t| self.axon_type_to_semantic(t));
-                // Uncertain AND Temporal both carry value(0)/confidence(1) fields,
-                // so a `value`/`confidence` predicate applies to either.
-                let ret_is_wrapper =
-                    matches!(ret_sem, Some(Type::Uncertain(_)) | Some(Type::Temporal(_)));
-                let ret_is_scalar = matches!(
-                    ret_sem,
-                    Some(Type::I64 | Type::I32 | Type::F64 | Type::Bool)
+            let ret_sem = f
+                .return_type
+                .as_ref()
+                .map(|t| self.axon_type_to_semantic(t));
+            // Uncertain AND Temporal both carry value(0)/confidence(1) fields,
+            // so a `value`/`confidence` predicate applies to either.
+            let ret_is_wrapper =
+                matches!(ret_sem, Some(Type::Uncertain(_)) | Some(Type::Temporal(_)));
+            let ret_is_scalar = matches!(
+                ret_sem,
+                Some(Type::I64 | Type::I32 | Type::F64 | Type::Bool)
+            );
+            // Arm when: `confidence`/`value` on an Uncertain/Temporal return,
+            // OR `value` on a SCALAR return (a `@[verify(value <= 500)]` bound
+            // must be enforced natively too, matching the interpreter).
+            let simple = crate::verify::decode_verify_predicate_with_ident(&spec.predicate).filter(
+                |(ident, _, _)| {
+                    (ret_is_wrapper && (ident == "confidence" || ident == "value"))
+                        || (ret_is_scalar && ident == "value")
+                },
+            );
+            // Phase 5 §4: don't arm the gate if the SMT prover discharged this
+            // fn's `value OP K` bounds for all inputs — the check is dead (the
+            // interpreter skips it too).
+            if self.discharged.verify_proven(&f.name) {
+            } else if let Some((ident, op, bound)) = simple {
+                let op_str = crate::verify::binop_to_verify_str(&op);
+                self.current_verify_fn = Some((f.name.clone(), ident, op_str, bound));
+            } else if let (Some(ret), true) = (
+                ret_sem,
+                Self::refine_predicate_is_lowerable(&spec.predicate, &self.fndefs),
+            ) {
+                // The params are snapshotted after they are bound, below.
+                self.current_verify_composite = Some(asi::VerifyComposite {
+                    fn_name: f.name.clone(),
+                    pred: (*spec.predicate).clone(),
+                    ret,
+                    params: Vec::new(),
+                });
+            } else {
+                let msg = format!(
+                    "codegen error [E0910]: native codegen cannot lower the `@[verify]` \
+                     predicate of `{}` — it is outside the runtime-checkable subset (literals, \
+                     names, arithmetic, comparisons, `&&`/`||`/`!`, `str_len`/`str_eq`, and calls \
+                     to @[pure] functions). Run it under the interpreter (`axon run`).",
+                    f.name
                 );
-                // Arm when: `confidence`/`value` on an Uncertain/Temporal return,
-                // OR `value` on a SCALAR return (a `@[verify(value <= 500)]` bound
-                // must be enforced natively too, matching the interpreter).
-                let armable = (ret_is_wrapper && (ident == "confidence" || ident == "value"))
-                    || (ret_is_scalar && ident == "value");
-                // Phase 5 §4: don't arm the gate if the SMT prover discharged this
-                // fn's `value OP K` bound for all inputs — the SCALAR case is
-                // exactly what `prove_verify_bounds` proves, so the check is dead.
-                if armable && !self.discharged.verify_proven(&f.name) {
-                    let op_str = crate::verify::binop_to_verify_str(&op);
-                    self.current_verify_fn = Some((f.name.clone(), ident, op_str, bound));
-                }
+                self.record_error(msg);
             }
         }
 
@@ -1679,6 +1705,21 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 self.locals.insert(param.name.clone(), (alloca, llvm_ty));
                 self.local_types.insert(param.name.clone(), sem_ty);
+            }
+        }
+        // CS-3: a composite verify reads the params as they were bound here,
+        // whatever a later `let` in the body shadows them with.
+        if self.current_verify_composite.is_some() {
+            let params: Vec<_> = f
+                .params
+                .iter()
+                .filter_map(|p| {
+                    let slot = *self.locals.get(&p.name)?;
+                    Some((p.name.clone(), slot, self.local_types.get(&p.name).cloned()))
+                })
+                .collect();
+            if let Some(vc) = self.current_verify_composite.as_mut() {
+                vc.params = params;
             }
         }
 
@@ -1826,6 +1867,7 @@ impl<'ctx> Codegen<'ctx> {
         self.current_adaptive_input = saved_adaptive_input;
         self.current_agent_fn = saved_agent;
         self.current_verify_fn = saved_verify;
+        self.current_verify_composite = saved_verify_composite;
         self.current_ret_refine = saved_ret_refine;
     }
 

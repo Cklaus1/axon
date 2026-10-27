@@ -3186,3 +3186,8 @@ ATTACK_MARKERS.update({
     'M3826': r'ATTACK: a verify predicate read `source_tag` of a Temporal',
     'M3837': r'ATTACK: a param named like a verify binder passed check',
 })
+ATTACK_MARKERS.update({
+    'M3828': r'ATTACK: a verify on an unsupported return type passed check',
+    'M3829': r'ATTACK: a verify predicate on a param was silently skipped',
+    'M3830': r'ATTACK: a composite verify was dropped by native codegen',
+})

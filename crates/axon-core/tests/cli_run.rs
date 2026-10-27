@@ -40771,3 +40771,60 @@ fn verify_predicate_with_return_or_break_is_refused_e1103() {
         "ATTACK: a verify predicate that leaves its frame passed check",
     );
 }
+
+/// CS-3 (NH-1 a): a decodable `ident CMP literal` verify whose ident is not a
+/// binder of the return's shape (here a param) was decoded as the simple shape
+/// and then skipped on every return shape: `s23simple` (scalar) and `vu`
+/// (`Uncertain`) printed `5` with rc 0. It now takes the composite path.
+#[test]
+fn verify_simple_shape_on_param_is_not_silently_skipped() {
+    let attack = "ATTACK: a verify predicate on a param was silently skipped";
+    for (tag, src) in [
+        ("s23simple", "@[verify(lo >= 100)]\nfn f(x: i64, lo: i64) -> i64 { x }\n\nfn main() {\n    println(to_str(f(5, 0)))\n}\n"),
+        ("vu", "@[verify(lo >= 100)]\nfn f(x: i64, lo: i64) -> Uncertain<i64> { uncertain_dyn_i64(x, 0.5) }\n\nfn main() {\n    let u = f(5, 0)\n    println(to_str(u.value))\n}\n"),
+        ("vt", "@[verify(lo >= 100)]\nfn f(x: i64, lo: i64) -> Temporal<i64> { temporal_new(x, 100000, 0.1) }\n\nfn main() {\n    let t = f(5, 0)\n    println(to_str(t.value))\n}\n"),
+    ] {
+        let (crc, cmsg, _, _) = cs_b1_check_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        let (code, stdout, stderr) = vm_same_both_engines(tag, src);
+        assert_eq!(code, Some(3), "{attack} [{tag}]: {stdout}{stderr}");
+        assert!(stderr.contains("verify failed"), "{attack} [{tag}]: {stderr}");
+        // The same program with the param in bounds runs.
+        let ok = src.replace("f(5, 0)", "f(5, 100)");
+        let (crc, cmsg, rrc, rout) = cs_b1_check_run(&format!("{tag}_ok"), &ok);
+        assert_eq!(
+            (crc, rrc, rout.as_str()),
+            (Some(0), Some(0), "5\n"),
+            "{attack} [{tag}_ok]: {cmsg}"
+        );
+    }
+    // Routed to the composite path, the predicate is typed like one (E-6).
+    cs2_refused_e1103(
+        "vparam_f64",
+        "@[verify(lo >= 100)]\nfn f(x: i64, lo: f64) -> i64 { x }\n\nfn main() {\n    println(to_str(f(5, 0.0)))\n}\n",
+        &["f64"],
+        attack,
+    );
+}
+
+/// CS-3 (E-1): a verify on a return the runtime cannot check (here `str`,
+/// `()` and a struct) passed check and was never enforced (`v_str` printed
+/// `yes`, rc 0). It is refused; a refinement over a scalar is still checked.
+#[test]
+fn verify_on_str_return_is_refused() {
+    let attack = "ATTACK: a verify on an unsupported return type passed check";
+    for (tag, src, ty) in [
+        ("v_str", "@[verify(value == \"no\")]\nfn f(x: str) -> str { x }\n\nfn main() {\n    println(f(\"yes\"))\n}\n", "`str`"),
+        ("v_unit", "@[verify(x >= 1)]\nfn f(x: i64) { println(to_str(x)) }\n\nfn main() {\n    f(0)\n}\n", "`()`"),
+        ("v_struct", "type P = { n: i64 }\n@[verify(x >= 1)]\nfn f(x: i64) -> P { P { n: x } }\n\nfn main() {\n    println(to_str(f(0).n))\n}\n", "`P`"),
+    ] {
+        cs2_refused_e1103(tag, src, &["is never checked", ty, "returns are not supported"], attack);
+    }
+    let refined = "type Small = i64 where _ < 1000\n@[verify(value <= 10)]\nfn f(x: i64) -> Small { x }\n\nfn main() {\n    println(to_str(f(50)))\n}\n";
+    let (crc, cmsg, rrc, _) = cs_b1_check_run("v_refined", refined);
+    assert_eq!(
+        (crc, rrc),
+        (Some(0), Some(3)),
+        "{attack} [v_refined]: {cmsg}"
+    );
+}
