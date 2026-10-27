@@ -1,0 +1,9 @@
+// check_sound: CS-1 repro `r_whole` (tasks/checker-soundness-spec.md)
+type R = { lo: i64, hi: i64 } where lo <= hi
+
+fn mk(a: i64, b: i64) -> R { R { lo: a, hi: b } }
+
+fn main() {
+    let r = mk(1, 2)
+    println(to_str(r.lo))
+}

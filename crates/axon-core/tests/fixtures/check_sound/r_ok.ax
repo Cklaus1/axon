@@ -1,0 +1,12 @@
+// check_sound: CS-1 control repro `r_ok` (tasks/checker-soundness-spec.md)
+type Amt = { value: i64 where _ > 0 }
+
+fn mk(v: i64) -> Amt {
+    Amt { value: v }
+}
+
+fn main() {
+    let k = 0
+    let a = mk(k)
+    println(to_str(a.value))
+}

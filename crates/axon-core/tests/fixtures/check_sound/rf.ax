@@ -1,0 +1,4 @@
+// check_sound: CS-1 repro `rf` (tasks/checker-soundness-spec.md)
+type Pos = f64 where _ >= 0
+fn f(x: Pos) -> f64 { x }
+fn main() { println(to_str_f64(f(1.5))) }

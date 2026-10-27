@@ -1,0 +1,7 @@
+// check_sound: CS-3 repro `v_str` (tasks/checker-soundness-spec.md)
+@[verify(value == "no")]
+fn f(x: str) -> str { x }
+
+fn main() {
+    println(f("yes"))
+}

@@ -1,0 +1,11 @@
+// check_sound: CS-1 repro `s22` (tasks/checker-soundness-spec.md)
+type Amt = { value: i64 where value > 0 }
+
+fn mk(v: i64) -> Amt {
+    Amt { value: v }
+}
+
+fn main() {
+    let a = mk(5)
+    println(to_str(a.value))
+}

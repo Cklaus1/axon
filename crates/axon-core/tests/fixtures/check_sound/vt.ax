@@ -1,0 +1,4 @@
+// check_sound: CS-2 repro `vt` (tasks/checker-soundness-spec.md)
+@[verify(source_tag >= 0 && value > 100)]
+fn f(x: i64) -> Temporal<i64> { temporal_new(x, 100000, 0.1) }
+fn main() { println(to_str(f(5).value)) }

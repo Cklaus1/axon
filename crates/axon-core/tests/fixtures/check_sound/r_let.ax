@@ -1,0 +1,6 @@
+// check_sound: CS-1 control repro `r_let` (tasks/checker-soundness-spec.md)
+fn main() {
+    let k = 3
+    let p: i64 where p > 0 = k
+    println(to_str(p))
+}

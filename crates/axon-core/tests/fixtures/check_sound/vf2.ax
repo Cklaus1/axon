@@ -1,0 +1,4 @@
+// check_sound: CS-2 control repro `vf2` (tasks/checker-soundness-spec.md)
+@[verify(value >= 1)]
+fn f(x: f64) -> f64 { x }
+fn main() { println(to_str_f64(f(0.5))) }

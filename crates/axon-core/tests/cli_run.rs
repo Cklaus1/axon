@@ -40828,3 +40828,87 @@ fn verify_on_str_return_is_refused() {
         "{attack} [v_refined]: {cmsg}"
     );
 }
+
+/// CS-9: the run-time failure shapes of an interpreter-internal panic - what a
+/// program that `axon check` should have refused hits at run (rc 101).
+fn internal_panic_shape(stderr: &str) -> Option<&'static str> {
+    fn expected_then_got(s: &str, word: fn(&str) -> bool) -> bool {
+        s.match_indices("expected ").any(|(i, m)| {
+            let rest = &s[i + m.len()..];
+            rest.split_once(", got")
+                .is_some_and(|(w, _)| !w.is_empty() && word(w))
+        })
+    }
+    let digits = |w: &str| {
+        w.strip_suffix(" args")
+            .is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let ident = |w: &str| w.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    [
+        (
+            "undefined identifier",
+            stderr.contains("undefined identifier"),
+        ),
+        ("expected N args, got", expected_then_got(stderr, digits)),
+        ("cannot apply", stderr.contains("cannot apply")),
+        (
+            "call to unknown function",
+            stderr.contains("call to unknown function"),
+        ),
+        ("expected T, got", expected_then_got(stderr, ident)),
+    ]
+    .into_iter()
+    .find_map(|(shape, hit)| hit.then_some(shape))
+}
+
+/// CS-9: every CS-1...CS-4 repro (`fixtures/check_sound/`) that `axon check`
+/// accepts runs without an interpreter-internal panic: the checker refuses
+/// what the runtime cannot evaluate.
+#[test]
+fn check_clean_fixtures_never_panic_internally() {
+    let dir = fixture("check_sound");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("{dir}: {e}"))
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "ax"))
+        .collect();
+    files.sort();
+    assert!(
+        files.len() >= 29,
+        "expected the CS-1...CS-4 repros, found {} in {dir}",
+        files.len()
+    );
+    let mut panics = Vec::new();
+    for f in &files {
+        let path = f.to_str().unwrap();
+        let c = axon()
+            .args(["check", path])
+            .env_remove("AXON_PATH")
+            .output()
+            .unwrap();
+        if c.status.code() != Some(0) {
+            continue;
+        }
+        let r = axon()
+            .args(["run", path])
+            .env_remove("AXON_PATH")
+            .env_remove("ANTHROPIC_API_KEY")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&r.stderr);
+        if r.status.code() == Some(101) {
+            if let Some(shape) = internal_panic_shape(&stderr) {
+                panics.push(format!(
+                    "{} ({shape}): {}",
+                    f.file_name().unwrap().to_string_lossy(),
+                    stderr.trim()
+                ));
+            }
+        }
+    }
+    assert!(
+        panics.is_empty(),
+        "ATTACK: a check-clean program hit an interpreter-internal panic at run:\n{}",
+        panics.join("\n")
+    );
+}

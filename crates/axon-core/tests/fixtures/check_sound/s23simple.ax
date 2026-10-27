@@ -1,0 +1,7 @@
+// check_sound: CS-3 repro `s23simple` (tasks/checker-soundness-spec.md)
+@[verify(lo >= 100)]
+fn f(x: i64, lo: i64) -> i64 { x }
+
+fn main() {
+    println(to_str(f(5, 0)))
+}

@@ -1,0 +1,8 @@
+// check_sound: CS-3 repro `vu` (tasks/checker-soundness-spec.md)
+@[verify(lo >= 100)]
+fn f(x: i64, lo: i64) -> Uncertain<i64> { uncertain_dyn_i64(x, 0.5) }
+
+fn main() {
+    let u = f(5, 0)
+    println(to_str(u.value))
+}

@@ -1,0 +1,12 @@
+// check_sound: CS-1 repro `escape_predicate` (tasks/checker-soundness-spec.md)
+fn solve(n: i64 where if n > 2 { break } else { true }) -> i64 {
+    n + 40
+}
+
+fn main() {
+    let i = 0
+    while i < 5 {
+        println(to_str(solve(i)))
+        i = i + 1
+    }
+}

@@ -1,0 +1,7 @@
+// check_sound: CS-1 repro `r_param` (tasks/checker-soundness-spec.md)
+fn f(n: i64 where nosuch > 0) -> i64 { n }
+
+fn main() {
+    let k = 3
+    println(to_str(f(k)))
+}

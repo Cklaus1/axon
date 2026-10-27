@@ -1,0 +1,10 @@
+// check_sound: CS-4 control repro `mutshadow` (tasks/checker-soundness-spec.md)
+fn abs_i64(xs: &mut [i64]) -> i64 {
+    xs[0] = 7
+    1
+}
+fn main() {
+    let a = [1, 2]
+    let r = abs_i64(&mut a)
+    println(to_str(a[0] + r))
+}
