@@ -331,7 +331,7 @@ fn propagate_effects(
             let mut edges = Vec::new();
             for &(name, ctx) in &calls {
                 let h = &handled[ctx];
-                for eff in crate::builtins::builtin_effect_row(name) {
+                for eff in crate::builtins::builtin_effect_row(effect_row_name(name)) {
                     if !h.contains(*eff) {
                         direct.insert((*eff).to_string());
                     }
@@ -719,9 +719,12 @@ fn collect_calls<'a>(
             Expr::Ident(name) => out.push((name, ctx)),
             // R13: a native `M::fn(...)` call — record the qualified name so the
             // effect-inference fixpoint attributes module `M`'s effects to the
-            // caller (resolved by `callee_effects` / `infer_effects`).
+            // caller (resolved by `callee_effects` / `infer_effects`). The
+            // turbofish `ai_extract::<T>(...)` has the same callee shape; its row
+            // is looked up through `effect_row_name` (CAP-4).
             Expr::StructLit { name, fields }
-                if fields.is_empty() && crate::native::is_native_call(name) =>
+                if fields.is_empty()
+                    && (crate::native::is_native_call(name) || effect_row_name(name) != name) =>
             {
                 out.push((name, ctx))
             }
@@ -872,10 +875,23 @@ fn callback_arg_effects(
     extra
 }
 
+/// The effect-table name a callee's row is listed under. The turbofish
+/// `ai_extract::<T>(p)` (a `StructLit` callee, `parser.rs`
+/// `parse_ai_extract_turbofish`) is a synthetic name no table lists by its
+/// spelling; it is the same model call as `ai_extract_i64`. Shared by the
+/// effect checker and the capability reach walker (`Reach::note`).
+pub(crate) fn effect_row_name(callee: &str) -> &str {
+    if callee.starts_with("ai_extract::<") {
+        "ai_extract_i64"
+    } else {
+        callee
+    }
+}
+
 /// The effects a call to `callee` performs: the builtin catalog row, or the
 /// callee's INFERRED (transitive) effect set, or nothing for an unknown name.
 fn callee_effects(callee: &str, inferred: &HashMap<String, HashSet<String>>) -> Vec<String> {
-    let builtin = crate::builtins::builtin_effect_row(callee);
+    let builtin = crate::builtins::builtin_effect_row(effect_row_name(callee));
     if !builtin.is_empty() {
         return builtin.iter().map(|s| s.to_string()).collect();
     }
@@ -992,6 +1008,22 @@ fn check_expr(
                                      performs effect `{eff}`, but `{caller}`'s declared effect \
                                      row does not include `{eff}` (add `{eff}` to the row)",
                                     m.name
+                                ),
+                                span: Span::dummy(),
+                            });
+                        }
+                    }
+                } else {
+                    // CAP-4 (F4): the turbofish `ai_extract::<T>(p)` performs
+                    // its builtin row exactly as the Ident arm's callee does.
+                    for eff in crate::builtins::builtin_effect_row(effect_row_name(name)) {
+                        if !allowed.admits(eff) && !handled.contains(*eff) {
+                            errors.push(EffectError {
+                                code: E1310,
+                                message: format!(
+                                    "`{caller}` calls `{name}`, which performs effect `{eff}`, \
+                                     but `{caller}`'s declared effect row does not include \
+                                     `{eff}` (add `{eff}` to the row, or handle the effect)"
                                 ),
                                 span: Span::dummy(),
                             });
@@ -1748,5 +1780,51 @@ mod tests {
         // A declared row performs nothing; only real builtin operations count.
         assert!(eff["stub"].is_empty(), "got {:?}", eff["stub"]);
         assert!(eff["uses_stub"].is_empty(), "got {:?}", eff["uses_stub"]);
+    }
+
+    /// The effects named in the E1310s `errs` reports for `name`.
+    fn e1310_effects(errs: &[EffectError], name: &str) -> Vec<&'static str> {
+        ["AI", "Net"]
+            .into_iter()
+            .filter(|eff| {
+                errs.iter().any(|e| {
+                    e.code == E1310
+                        && e.message.contains(&format!("calls `{name}"))
+                        && e.message.contains(&format!("effect `{eff}`"))
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_turbofish_ai_extract_in_a_closed_row_is_e1310() {
+        // CAP-4 (F4): `ai_extract::<T>(p)` is a `StructLit` callee; the
+        // StructLit arm resolved native calls only, so a `| {}` fn made a
+        // model call with no diagnostic while `axon caps` reported `net`.
+        let errs = check(
+            "fn f() -> i64 | {} {\n    match ai_extract::<i64>(\"x\") {\n        \
+             Ok(n) => n\n        Err(_) => 0\n    }\n}\n",
+        );
+        assert_eq!(
+            e1310_effects(&errs, "ai_extract::<i64>"),
+            ["AI", "Net"],
+            "ATTACK: a closed-row fn called ai_extract::<T> without E1310: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_turbofish_ai_extract_reaches_callers_through_inference() {
+        // The un-annotated helper `g` is not checked itself (open row); its
+        // `ai_extract::<T>` must still flow into the closed-row caller `f`.
+        let errs = check(
+            "fn g() -> i64 {\n    match ai_extract::<i64>(\"x\") {\n        \
+             Ok(n) => n\n        Err(_) => 0\n    }\n}\n\
+             fn f() -> i64 | {} {\n    g()\n}\n",
+        );
+        assert_eq!(
+            e1310_effects(&errs, "g"),
+            ["AI", "Net"],
+            "ATTACK: a closed-row caller inherited nothing from a helper's ai_extract::<T>: {errs:?}"
+        );
     }
 }

@@ -634,15 +634,10 @@ impl Reach {
             self.capabilities.insert(format!("native:{}", m.name));
             self.effects.extend(m.effects.iter().map(|e| e.to_string()));
         }
-        // `ai_extract::<T>` is a synthetic name no table lists by its
-        // spelling; it is the same model call as `ai_extract_i64`.
-        let row_name = if name.starts_with("ai_extract::<") {
-            "ai_extract_i64"
-        } else {
-            name
-        };
+        // `ai_extract::<T>` is looked up under the name its row is listed by
+        // — the same mapping the effect checker uses.
         self.effects.extend(
-            crate::builtins::builtin_effect_row(row_name)
+            crate::builtins::builtin_effect_row(crate::effects::effect_row_name(name))
                 .iter()
                 .map(|e| e.to_string()),
         );

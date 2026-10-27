@@ -11760,6 +11760,14 @@ MUTATIONS += [
      '    let mut visit = |e: &Expr| {\n',
      '    let mut visit = |e: &Expr| {\n        if let Expr::Ident(n) = e {\n            reach.note(n);\n        }\n',
      'axon-core', '--test predicate_capability_routes', 'a_builtin_value_ref_is_reach_only'),
+    ('M3806', 'CAP-4 E1310: check_expr skips the turbofish ai_extract::<T> callee (a closed-row fn makes a model call unreported)', 'crates/axon-core/src/effects.rs',
+     '                } else {\n                    // CAP-4 (F4): the turbofish',
+     '                } else if false {\n                    // CAP-4 (F4): the turbofish',
+     'axon-core', '--lib', 'effects::tests::a_turbofish_ai_extract_in_a_closed_row_is_e1310'),
+    ('M3807', "CAP-4 E1310: propagate_effects looks ai_extract::<T> up by its spelling (no row), so callers inherit nothing", 'crates/axon-core/src/effects.rs',
+     '                let h = &handled[ctx];\n                for eff in crate::builtins::builtin_effect_row(effect_row_name(name)) {',
+     '                let h = &handled[ctx];\n                for eff in crate::builtins::builtin_effect_row(name) {',
+     'axon-core', '--lib', 'effects::tests::a_turbofish_ai_extract_reaches_callers_through_inference'),
 ]
 
 if __name__ == "__main__":

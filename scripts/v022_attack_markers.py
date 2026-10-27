@@ -3164,4 +3164,6 @@ ATTACK_MARKERS.update({
     'M3803': r'ATTACK: body_native: a `native:gfx` predicate is missing `IO` from the effect union',
     'M3804': r'ATTACK: verify_native: a `native:gfx` predicate is missing `IO` from the effect union',
     'M3805': r'ATTACK: a builtin value ref widened the program-wide surface',
+    'M3806': r'ATTACK: a closed-row fn called ai_extract::<T> without E1310',
+    'M3807': r"ATTACK: a closed-row caller inherited nothing from a helper's ai_extract::<T>",
 })
