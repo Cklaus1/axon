@@ -3223,7 +3223,7 @@ ATTACK_MARKERS.update({
     'M3809': r"ATTACK: time_caller: a closed-row caller inherited nothing from a callee's verify predicate",
 })
 ATTACK_MARKERS.update({
-    'M3813': r'ATTACK: a predicate with `return` inside a closure was refused as leaving its frame',
+    'M3816': r'ATTACK: a predicate with `return` inside a closure was refused as leaving its frame',
     'M3815': r'ATTACK: a predicate with `break` inside a loop was refused as leaving its frame',
-    'M3814': r'ATTACK: a move before a local closure named `exit` was dropped as if the branch diverged',
+    'M3818': r'ATTACK: a move before a local closure named `exit` was dropped as if the branch diverged',
 })

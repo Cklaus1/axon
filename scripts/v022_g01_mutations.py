@@ -11928,9 +11928,9 @@ MUTATIONS += [
      'axon-core', '--lib', 'effects::tests::a_callers_closed_row_inherits_a_predicates_time_read_e1310'),
 ]
 
-# Checker-soundness impl-review fixes, LaneTypeB3 (ids M3813-M3815)
+# Checker-soundness impl-review fixes, LaneTypeB3 (ids M3815-M3816, M3818)
 MUTATIONS += [
-    ('M3813', 'CS-1/CS-2: the predicate frame-escape walk descends into closures again (a `return` in a lambda is refused)', 'crates/axon-core/src/resolver.rs',
+    ('M3816', 'CS-1/CS-2: the predicate frame-escape walk descends into closures again (a `return` in a lambda is refused)', 'crates/axon-core/src/resolver.rs',
      '            Expr::Lambda { .. } => continue,',
      '            Expr::Lambda { .. } => None,',
      'axon-core', '--no-default-features --test cli_run', 'predicate_return_inside_a_lambda_still_checks'),
@@ -11938,7 +11938,7 @@ MUTATIONS += [
      '.map(|(i, k)| (k, in_loop || (loop_body && i >= head)))',
      '.map(|(_, k)| (k, in_loop))',
      'axon-core', '--no-default-features --test cli_run', 'predicate_break_inside_a_loop_still_checks'),
-    ('M3814', 'CS-6 x CS-4: a call to a local closure named `exit` counts as diverging again', 'crates/axon-core/src/borrow.rs',
+    ('M3818', 'CS-6 x CS-4: a call to a local closure named `exit` counts as diverging again', 'crates/axon-core/src/borrow.rs',
      '            !exit_local\n',
      '            true\n',
      'axon-core', '--no-default-features --test cli_run', 'a_local_closure_named_exit_does_not_diverge'),
