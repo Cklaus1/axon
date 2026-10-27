@@ -11756,6 +11756,10 @@ MUTATIONS += [
      '            self.effects.extend(m.effects.iter().map(|e| e.to_string()));',
      '            let _ = m.effects;',
      'axon-core', '--test predicate_capability_routes', 'the_effect_union_carries_the_row_a_predicate_route_implies'),
+    ('M3805', 'CAP-3 CAPS: program_reach also counts a builtin named as a value (a local shadowing `exec` marks the program exec-critical)', 'crates/axon-core/src/capabilities.rs',
+     '    let mut visit = |e: &Expr| {\n',
+     '    let mut visit = |e: &Expr| {\n        if let Expr::Ident(n) = e {\n            reach.note(n);\n        }\n',
+     'axon-core', '--test predicate_capability_routes', 'a_builtin_value_ref_is_reach_only'),
 ]
 
 if __name__ == "__main__":

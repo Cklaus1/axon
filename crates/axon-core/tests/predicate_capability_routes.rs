@@ -23,7 +23,7 @@
 
 use axon_core::ast::Program;
 use axon_core::capabilities::{
-    check_import_capabilities, program_effect_rows, reachable_capabilities,
+    check_import_capabilities, program_capabilities, program_effect_rows, reachable_capabilities,
 };
 use axon_core::error::{E1203, E1402};
 use axon_core::improve::verify_pass;
@@ -258,4 +258,49 @@ fn the_import_edge_refuses_a_module_whose_predicate_widens_a_contained_importer(
 #[test]
 fn the_effect_union_carries_the_row_a_predicate_route_implies() {
     each(every, effect_row);
+}
+
+/// CAP-3: the program-wide surface (`program_reach`, every root) and the
+/// reach walker classify every call through one `Reach::note`, so on a
+/// program whose predicates are all used they agree on both the capability
+/// set and the effect rows — with the predicate and with `true` in its place.
+#[test]
+fn the_program_wide_surface_agrees_with_the_reach_walker() {
+    each(every, |c| {
+        for pred in [c.pred, "true"] {
+            let p = program(c, pred);
+            let reach = reachable_capabilities(&p, None).expect("the whole program");
+            let caps = program_capabilities(&p);
+            let rows = program_effect_rows(&p);
+            if caps != reach.capabilities || rows != reach.effects {
+                return Err(format!(
+                    "ATTACK: {}: the program-wide surface disagrees with the reach walker \
+                     on `{pred}`: {caps:?} / {rows:?} vs {:?} / {:?}",
+                    c.name, reach.capabilities, reach.effects
+                ));
+            }
+        }
+        Ok(())
+    });
+}
+
+/// CAP-3 (Q5): a builtin named as a VALUE counts for the reach walker only.
+/// A checked program cannot hold one (E0306), so the name is a local
+/// shadowing the builtin (`let exec = 2`); counting it program-wide would
+/// mark the program `exec`-critical (deploy risk) and widen G2/E1203.
+#[test]
+fn a_builtin_value_ref_is_reach_only() {
+    let src = format!("fn f() -> i64 {{\n    let exec = 2\n    exec\n}}\n{MAIN}");
+    let p = axon_core::parse_source(&src).expect("parses");
+    let reach = reachable_capabilities(&p, None).expect("the whole program");
+    assert!(
+        reach.capabilities.contains("exec"),
+        "premise: the reach walker counts a builtin value ref: {reach:?}"
+    );
+    let caps = program_capabilities(&p);
+    let rows = program_effect_rows(&p);
+    assert!(
+        caps.is_empty() && rows.is_empty(),
+        "ATTACK: a builtin value ref widened the program-wide surface: {caps:?} / {rows:?}"
+    );
 }
