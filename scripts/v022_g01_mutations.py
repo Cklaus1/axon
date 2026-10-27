@@ -11756,6 +11756,10 @@ MUTATIONS += [
      '                                self.len_obligations.push((arg_ty, span));',
      '                                let _ = span;\n                                self.constrain(arg_ty, Type::Str, "arg 0 of `len`");',
      'axon-core', '--no-default-features --test cli_run', 'len_of_question_bound_array_checks'),
+    ('M3832', 'CS-12: a struct/enum named like a builtin type is accepted again', 'crates/axon-core/src/resolver.rs',
+     '            || matches!(name, "Option" | "Result" | "Uncertain" | "Temporal");\n        if builtin {',
+     '            || matches!(name, "Option" | "Result" | "Uncertain" | "Temporal");\n        if builtin && false {',
+     'axon-core', '--no-default-features --test cli_run', 'type_named_like_a_builtin_is_refused_e0005'),
 ]
 
 if __name__ == "__main__":

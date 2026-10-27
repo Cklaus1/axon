@@ -3166,3 +3166,6 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M3834': r'ATTACK: `len` of a type-variable arg was pinned to str',
 })
+ATTACK_MARKERS.update({
+    'M3832': r'ATTACK: [a-z0-9_]+: a type named like a builtin was accepted',
+})

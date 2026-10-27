@@ -40376,3 +40376,29 @@ fn len_of_int_still_refused() {
         );
     }
 }
+
+/// CS-12: a user type named like a builtin type is refused E0005 instead of
+/// silently meaning the builtin (`type Unit` was `()` at every use).
+#[test]
+fn type_named_like_a_builtin_is_refused_e0005() {
+    for (tag, src) in [
+        (
+            "o24_unit",
+            "type Unit = { n: i64 }\nfn mk() -> Unit { Unit { n: 1 } }\nfn main() { println(to_str(mk().n)) }\n",
+        ),
+        ("u_str", "type str = { n: i64 }\nfn main() { println(\"x\") }\n"),
+        ("u_opt", "type Option = { n: i64 }\nfn main() { println(\"x\") }\n"),
+        ("u_enum", "type Result = A | B\nfn main() { println(\"x\") }\n"),
+    ] {
+        let (crc, cmsg, _, _) = cs_b1_check_run(tag, src);
+        assert_eq!(
+            crc,
+            Some(2),
+            "ATTACK: {tag}: a type named like a builtin was accepted: {cmsg}"
+        );
+        assert!(
+            cmsg.contains("E0005") && cmsg.contains("is a builtin type name"),
+            "ATTACK: {tag}: a type named like a builtin was accepted: {cmsg}"
+        );
+    }
+}

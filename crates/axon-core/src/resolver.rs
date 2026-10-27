@@ -201,6 +201,7 @@ const E0003: &str = "E0003"; // module not found
 const W0003: &str = "W0003"; // user fn shadows a builtin (builtin takes precedence)
 const W0006: &str = "W0006"; // unused local binding (`let x = …` never read)
 const E0004: &str = "E0004";
+const E0005: &str = "E0005"; // a type definition reuses a builtin type name
 const I0001: &str = "I0001"; // deferred attribute info
 
 // ── Symbol ───────────────────────────────────────────────────────────────────
@@ -894,6 +895,25 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// CS-12: refuse (E0005) a struct/enum definition named like a builtin
+    /// type. `Type::from_name` resolves those names before any user type, so
+    /// `type Unit = { n: i64 }` was accepted and then meant `()` at every use.
+    /// (A named refinement reusing one is already E0002, in `resolve_items`.)
+    fn refuse_builtin_type_name(&mut self, name: &str, span: crate::span::Span) {
+        let builtin = crate::types::Type::from_name(name).is_some()
+            || matches!(name, "Option" | "Result" | "Uncertain" | "Temporal");
+        if builtin {
+            self.emit_error(
+                Diagnostic::error(
+                    E0005,
+                    format!("`{name}` is a builtin type name; rename the type"),
+                )
+                .with_file(self.file)
+                .with_span(span),
+            );
+        }
+    }
+
     fn emit_info(&mut self, d: Diagnostic) {
         self.infos.push(d);
     }
@@ -1060,6 +1080,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
                 Item::TypeDef(t) => {
+                    self.refuse_builtin_type_name(&t.name, t.span);
                     // Duplicate struct fields (`type P = { x, x }`): last-wins,
                     // so the first field is silently dropped.
                     self.check_duplicate_names(
@@ -1092,6 +1113,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
                 Item::EnumDef(e) => {
+                    self.refuse_builtin_type_name(&e.name, e.span);
                     // Duplicate enum variants (`type S = A | A | B`).
                     self.check_duplicate_names(
                         e.variants.iter().map(|v| v.name.as_str()),

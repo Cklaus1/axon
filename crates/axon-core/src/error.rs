@@ -18,6 +18,7 @@ pub const E0001: &str = "E0001";
 pub const E0002: &str = "E0002";
 pub const E0003: &str = "E0003";
 pub const E0004: &str = "E0004"; // a sealed module (candidate under test) used a name the rest of the program defines
+pub const E0005: &str = "E0005"; // a user type definition reuses a builtin type name
 
 // Type-check errors
 pub const E0301: &str = "E0301";
@@ -443,6 +444,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E0002", "the name is defined more than once in this module"),
     ("E0003", "module not found on AXON_PATH"),
     ("E0004", "a sealed module (`axon test --seal`, the candidate under test) used a name the rest of the program defines"),
+    ("E0005", "a type definition reuses a builtin type name (`Unit`, `str`, `Option`, …)"),
     ("E0301", "type-check failure with no more-specific code"),
     ("E0302", "a `Result` returned by a call is unused — warns by default, error under AXON_STRICT"),
     ("E0303", "type-check rule violation (Phase-1 R03)"),
@@ -743,18 +745,18 @@ mod tests {
     #[test]
     fn error_codes_are_unique() {
         let codes = [
-            E0000, E0001, E0002, E0003, E0004, E0101, E0102, E0301, E0302, E0303, E0304, E0305,
-            E0306, E0307, E0308, E0309, E0310, E0311, E0312, E0313, E0314, E0315, E0401, E0402,
-            E0403, E0404, E0405, E0406, E0407, E0501, E0502, E0503, E0504, E0505, E0601, E0602,
-            E0603, E0604, E0605, E0606, E0701, E0702, E0703, E0800, E0801, E0802, E0803, E0901,
-            E0902, E0903, E0904, E0905, E0906, E0907, E0908, E0910, E0911, E0912, E1001, E1002,
-            E1003, E1004, E1101, E1102, E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208,
-            E1209, E1300, E1301, E1302, E1303, E1306, E1310, E1316, E1401, E1402, E1403, E1404,
-            E1405, E1406, E1407, E1408, E1409, E1411, E1412, E1413, E1500, E1503, E1504, E1505,
-            E1700, E1701, E1702, E1703, E1704, E1706, E1707, E1710, E1711, E1712, E1800, E1801,
-            E1802, E1803, E1810, E1900, E2300, E2301, E2302, E2400, E2402, E2403, E2404, E2200,
-            E2201, E2202, E2203, E2204, E2205, W0001, W0002, W0003, W0004, W0005, W0006, W0007,
-            W0008, W0701, W0913, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
+            E0000, E0001, E0002, E0003, E0004, E0005, E0101, E0102, E0301, E0302, E0303, E0304,
+            E0305, E0306, E0307, E0308, E0309, E0310, E0311, E0312, E0313, E0314, E0315, E0401,
+            E0402, E0403, E0404, E0405, E0406, E0407, E0501, E0502, E0503, E0504, E0505, E0601,
+            E0602, E0603, E0604, E0605, E0606, E0701, E0702, E0703, E0800, E0801, E0802, E0803,
+            E0901, E0902, E0903, E0904, E0905, E0906, E0907, E0908, E0910, E0911, E0912, E1001,
+            E1002, E1003, E1004, E1101, E1102, E1201, E1202, E1203, E1204, E1205, E1206, E1207,
+            E1208, E1209, E1300, E1301, E1302, E1303, E1306, E1310, E1316, E1401, E1402, E1403,
+            E1404, E1405, E1406, E1407, E1408, E1409, E1411, E1412, E1413, E1500, E1503, E1504,
+            E1505, E1700, E1701, E1702, E1703, E1704, E1706, E1707, E1710, E1711, E1712, E1800,
+            E1801, E1802, E1803, E1810, E1900, E2300, E2301, E2302, E2400, E2402, E2403, E2404,
+            E2200, E2201, E2202, E2203, E2204, E2205, W0001, W0002, W0003, W0004, W0005, W0006,
+            W0007, W0008, W0701, W0913, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
         ];
         let mut seen = std::collections::HashSet::new();
         for code in &codes {
