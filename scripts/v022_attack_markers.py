@@ -3222,3 +3222,12 @@ ATTACK_MARKERS.update({
     'M3808': r"ATTACK: time_row: a closed-row fn's verify predicate read the clock without E1310",
     'M3809': r"ATTACK: time_caller: a closed-row caller inherited nothing from a callee's verify predicate",
 })
+
+# Capability-surface lane, CAP-1/CAP-3 review fixes (ids M3810-M3814)
+ATTACK_MARKERS.update({
+    'M3810': r'ATTACK: paramfn: a verify predicate calling a fn-typed param passed',
+    'M3811': r"ATTACK: param_field: a verify predicate calling a param's fn field passed",
+    'M3812': r'ATTACK: modlet: a verify predicate calling a module-level closure that writes passed',
+    'M3813': r'ATTACK: shadow: a pure user fn named like an effect builtin was refused',
+    'M3814': r'ATTACK: body_select: the program-wide surface disagrees with the reach walker',
+})

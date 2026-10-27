@@ -264,7 +264,8 @@ fn check_verify_predicate(
             code: E1104,
             message: format!(
                 "`@[verify]` predicate of `{}` reaches a call nothing can classify (a function \
-                 named at runtime, or inline assembly) — {ONLY_CLOCK}",
+                 named at runtime, a fn value its caller passes in, or inline assembly) — \
+                 {ONLY_CLOCK}",
                 f.name
             ),
             span,
@@ -2069,6 +2070,129 @@ mod tests {
         assert!(
             errs.is_empty(),
             "a clock read in a predicate is admitted: {errs:?}"
+        );
+    }
+
+    /// `leak`, a fn that writes a file, for the review's caller-value shapes.
+    const LEAK: &str = "fn leak(n: i64) -> bool { match write_file(\"/nonexistent/v\", \"x\") { \
+                        Ok(_) => true  Err(_) => false } }\n";
+
+    /// The E1104s for `f` in `src` (with `LEAK` prepended).
+    fn f_e1104s(src: &str) -> (Vec<EffectError>, bool) {
+        let errs = check(&format!("{LEAK}{src}"));
+        let hit = e1104s(&errs).iter().any(|m| m.contains("`f`"));
+        (errs, hit)
+    }
+
+    #[test]
+    fn verify_predicate_calls_a_fn_typed_param_is_e1104() {
+        // Review M1 (`paramfn`): the predicate calls a fn its caller passes
+        // in. No walk can say what that fn reaches (`main` passes `leak`), so
+        // the predicate is refused, even for a caller passing a pure fn.
+        let (errs, hit) = f_e1104s(
+            "@[verify(g(value))]\nfn f(g: fn(i64) -> bool, n: i64) -> i64 { n }\n\
+             fn main() -> i64 { f(leak, 1) }\n",
+        );
+        assert!(
+            hit,
+            "ATTACK: paramfn: a verify predicate calling a fn-typed param passed: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn verify_predicate_passes_a_fn_typed_param_on_is_e1104() {
+        // The param handed to a higher-order helper: the helper's `g(n)` runs
+        // whatever `f`'s caller passed.
+        let (errs, hit) = f_e1104s(
+            "fn ap(g: fn(i64) -> bool, n: i64) -> bool { g(n) }\n\
+             @[verify(ap(g, value))]\nfn f(g: fn(i64) -> bool, n: i64) -> i64 { n }\n\
+             fn main() -> i64 { f(leak, 1) }\n",
+        );
+        assert!(
+            hit,
+            "ATTACK: param_passed_on: a verify predicate handing a fn-typed param to a helper passed: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn verify_predicate_calls_a_fn_field_of_a_param_is_e1104() {
+        // A fn reached through a struct the caller passes in.
+        let (errs, hit) = f_e1104s(
+            "type S = { g: fn(i64) -> bool }\n\
+             @[verify((s.g)(value))]\nfn f(s: S, n: i64) -> i64 { n }\n\
+             fn main() -> i64 { f(S { g: leak }, 1) }\n",
+        );
+        assert!(
+            hit,
+            "ATTACK: param_field: a verify predicate calling a param's fn field passed: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn verify_predicate_calls_a_module_let_closure_is_e1104() {
+        // A closure bound by a module-level `let`: the predicate walk follows
+        // the name to its initializer, which writes.
+        let (errs, hit) = f_e1104s(
+            "let H = |x: i64| leak(x)\n@[verify(H(value))]\nfn f(n: i64) -> i64 { n }\n\
+             fn main() -> i64 { f(1) }\n",
+        );
+        assert!(
+            hit && e1104s(&errs).iter().any(|m| m.contains("`write_file`")),
+            "ATTACK: modlet: a verify predicate calling a module-level closure that writes passed: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_higher_order_helper_given_a_named_pure_fn_is_admitted() {
+        // Guard: a fn the predicate names itself is walked, so a pure one is
+        // fine, and so is a param that cannot hold a fn.
+        let (errs, hit) = f_e1104s(
+            "fn pos(n: i64) -> bool { n > 0 }\nfn ap(g: fn(i64) -> bool, n: i64) -> bool { g(n) }\n\
+             @[verify(ap(pos, value) && value >= m)]\nfn f(m: i64, n: i64) -> i64 { n }\n\
+             fn main() -> i64 { f(0, 1) }\n",
+        );
+        assert!(
+            !hit,
+            "a pure named fn and an i64 param are admitted: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_user_fn_named_like_an_effect_row_entry_is_followed_not_refused() {
+        // Review m1 (`shadow`): `chan_send` is in the effect table but not a
+        // builtin the interpreter prefers (`call_prefers_builtin`), so the
+        // call runs the user fn, which is pure.
+        let (errs, hit) = f_e1104s(
+            "fn chan_send(n: i64) -> bool { n > 0 }\n@[verify(chan_send(value))]\n\
+             fn f(n: i64) -> i64 { n }\nfn main() -> i64 { f(1) }\n",
+        );
+        assert!(
+            !hit,
+            "ATTACK: shadow: a pure user fn named like an effect builtin was refused: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_shadowing_user_fn_is_walked_and_a_preferred_builtin_still_counts() {
+        // Guard for the shadow fix: the user fn the call runs is walked (its
+        // write is reported), and a builtin the interpreter prefers over a
+        // user fn of its name (`read_file`) is still the one noted.
+        let (errs, hit) = f_e1104s(
+            "fn chan_send(n: i64) -> bool { leak(n) }\n@[verify(chan_send(value))]\n\
+             fn f(n: i64) -> i64 { n }\nfn main() -> i64 { f(1) }\n",
+        );
+        assert!(
+            hit && e1104s(&errs).iter().any(|m| m.contains("`write_file`")),
+            "a shadowing user fn's write is reported: {errs:?}"
+        );
+        let (errs, hit) = f_e1104s(
+            "fn read_file(p: str) -> Result<str, str> { Ok(p) }\n\
+             @[verify(is_ok(read_file(\"x\")))]\nfn f(n: i64) -> i64 { n }\n\
+             fn main() -> i64 { f(1) }\n",
+        );
+        assert!(
+            hit && e1104s(&errs).iter().any(|m| m.contains("`read_file`")),
+            "the builtin `read_file` wins over a user fn of its name: {errs:?}"
         );
     }
 }

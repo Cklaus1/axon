@@ -11928,5 +11928,29 @@ MUTATIONS += [
      'axon-core', '--lib', 'effects::tests::a_callers_closed_row_inherits_a_predicates_time_read_e1310'),
 ]
 
+# Capability-surface lane, CAP-1/CAP-3 review fixes (ids M3810-M3814)
+MUTATIONS += [
+    ('M3810', 'CAP-1 E1104: a verify predicate calling a fn its caller passes in (a fn-typed param or `value`) is not `unknown`', 'crates/axon-core/src/capabilities.rs',
+     '        if maps.takes_a_fn_from_its_caller(f, self_ty, &v.predicate) {',
+     '        if false && maps.takes_a_fn_from_its_caller(f, self_ty, &v.predicate) {',
+     'axon-core', '--lib', 'effects::tests::verify_predicate_calls_a_fn_typed_param_is_e1104'),
+    ('M3811', 'CAP-1 E1104: a struct param whose field is a fn does not count as carrying a caller-chosen fn', 'crates/axon-core/src/capabilities.rs',
+     '                stack.extend(s.fields.iter().map(|f| &f.ty));',
+     '                let _ = s;',
+     'axon-core', '--lib', 'effects::tests::verify_predicate_calls_a_fn_field_of_a_param_is_e1104'),
+    ('M3812', 'CAP-1 E1104: the predicate walk does not follow a module `let` the predicate names (a closure there writes unseen)', 'crates/axon-core/src/capabilities.rs',
+     '        if ctx.visited_lets.insert(canon) {',
+     '        if false && ctx.visited_lets.insert(canon) {',
+     'axon-core', '--lib', 'effects::tests::verify_predicate_calls_a_module_let_closure_is_e1104'),
+    ('M3813', 'CAP-1 E1104: a predicate call that runs a user fn named like an effect-table entry is noted as that entry (a pure predicate refused)', 'crates/axon-core/src/capabilities.rs',
+     '                let runs_user_fn = ctx.module_lets.is_some()',
+     '                let runs_user_fn = false && ctx.module_lets.is_some()',
+     'axon-core', '--lib', 'effects::tests::a_user_fn_named_like_an_effect_row_entry_is_followed_not_refused'),
+    ('M3814', 'CAP-3: the reach walker skips a `select` arm body (the program-wide surface sees it)', 'crates/axon-core/src/capabilities.rs',
+     '                .flat_map(|arm| [&arm.recv, &arm.body].into_iter()),',
+     '                .flat_map(|arm| [&arm.recv].into_iter()),',
+     'axon-core', '--test predicate_capability_routes', 'the_program_wide_surface_agrees_with_the_reach_walker'),
+]
+
 if __name__ == "__main__":
     main()

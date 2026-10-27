@@ -447,6 +447,8 @@ fn check_fn<'a>(
         site: fndef.span,
         errors,
         reach: None,
+        module_lets: None,
+        visited_lets: std::collections::HashSet::new(),
     };
     let before = ctx.errors.len();
     // The contained fn's own signature and attributes run code too (see
@@ -524,6 +526,8 @@ fn check_native_grants<'a>(
         site: fndef.span,
         errors: &mut scratch,
         reach: Some(&mut reach),
+        module_lets: None,
+        visited_lets: std::collections::HashSet::new(),
     };
     let mut work = vec![Walk::Expr(&fndef.body)];
     push_fn_hooks(fndef, &ctx, &mut work);
@@ -601,6 +605,16 @@ struct CapCtx<'a, 'e> {
     /// capability set a fence is built from and the one `@[contained]` checks
     /// cannot disagree about what a body reaches.
     reach: Option<&'e mut Reach>,
+    /// CAP-1: `Some` (the module-level `let`s by name) when the walk is a
+    /// `@[verify]` predicate's (`verify_predicate_reaches`). Such a walk
+    /// roots no initializer, so a predicate calling a closure bound by a
+    /// module `let` follows the name to it; and a call is resolved the way
+    /// the interpreter dispatches it (`builtins::call_prefers_builtin`), so a
+    /// user fn named like an effect-table entry is followed, not refused.
+    module_lets: Option<&'a std::collections::HashMap<&'a str, &'a Expr>>,
+    /// Module `let`s already followed (cycle guard: a closure can name its
+    /// own `let`).
+    visited_lets: std::collections::HashSet<&'a str>,
 }
 
 /// R0a — everything a walk reached that can touch the host: the capability
@@ -737,40 +751,53 @@ pub fn reachable_capabilities(program: &Program, fn_name: Option<&str>) -> Optio
         }
     }
     push_exprs(&mut work, maps.inits.iter().copied());
-    Some(maps.reach(work))
+    Some(maps.reach(work, false))
 }
 
 /// CAP-1 — what each `@[verify]` predicate of `program` can exercise when
 /// its fn returns: every fn and impl method carrying one, paired with the
 /// reach of the predicate ALONE (its helpers, the refinement hooks they
 /// bind, methods, native and turbofish calls, `unknown`). No module `let`
-/// initializer is a root here: the predicate does not run them. The maps are
-/// built once for all predicates; each walk starts with fresh cycle guards.
+/// initializer is a root here: the predicate does not run them, but a
+/// closure one binds is followed by name when the predicate names it. A call
+/// resolves to the fn the interpreter runs (`builtins::call_prefers_builtin`).
+/// A predicate that mentions a parameter (or, for a fn-returning fn, `value`)
+/// whose type can hold a fn is `unknown`: it can call whatever its caller
+/// passed in — a pure caller-supplied fn is refused too (callers can pass
+/// anything). The maps are built once for all predicates; each walk starts
+/// with fresh cycle guards.
 pub fn verify_predicate_reaches(program: &Program) -> Vec<(&FnDef, Reach)> {
     let maps = WalkMaps::of(program);
     let fns = program.items.iter().flat_map(|item| match item {
-        Item::FnDef(f) => std::slice::from_ref(f),
-        Item::ImplBlock(b) => b.methods.as_slice(),
-        _ => &[],
+        Item::FnDef(f) => vec![(f, None)],
+        Item::ImplBlock(b) => b.methods.iter().map(|m| (m, Some(&b.for_type))).collect(),
+        _ => Vec::new(),
     });
-    fns.filter_map(|f| {
+    fns.filter_map(|(f, self_ty)| {
         let v = f.verify.as_ref()?;
         let mut work: Vec<Walk<'_>> = Vec::new();
         push_exprs(&mut work, std::iter::once(&*v.predicate));
-        Some((f, maps.reach(work)))
+        let mut reach = maps.reach(work, true);
+        if maps.takes_a_fn_from_its_caller(f, self_ty, &v.predicate) {
+            reach.unknown = true;
+        }
+        Some((f, reach))
     })
     .collect()
 }
 
 /// The lookup tables one reach walk follows: fns by name, impl methods by
-/// name, module `let` initializers, and the type hooks. Shared by
+/// name, module `let` initializers (in order, and by name), the type hooks,
+/// and the enums (for which parameter types can hold a fn). Shared by
 /// `reachable_capabilities` and `verify_predicate_reaches`, so a predicate is
 /// followed exactly as far as a fn body is.
 struct WalkMaps<'a> {
     fn_map: std::collections::HashMap<&'a str, &'a FnDef>,
     method_map: std::collections::HashMap<&'a str, Vec<&'a FnDef>>,
     inits: Vec<&'a Expr>,
+    lets: std::collections::HashMap<&'a str, &'a Expr>,
     hooks: TypeHooks<'a>,
+    enums: std::collections::HashMap<&'a str, &'a crate::ast::EnumDef>,
 }
 
 impl<'a> WalkMaps<'a> {
@@ -779,6 +806,8 @@ impl<'a> WalkMaps<'a> {
         let mut method_map: std::collections::HashMap<&str, Vec<&FnDef>> =
             std::collections::HashMap::new();
         let mut inits: Vec<&Expr> = Vec::new();
+        let mut lets = std::collections::HashMap::new();
+        let mut enums = std::collections::HashMap::new();
         for item in &program.items {
             match item {
                 Item::FnDef(f) => {
@@ -789,7 +818,13 @@ impl<'a> WalkMaps<'a> {
                         method_map.entry(m.name.as_str()).or_default().push(m);
                     }
                 }
-                Item::LetDef { value, .. } => inits.push(value),
+                Item::LetDef { name, value, .. } => {
+                    inits.push(value);
+                    lets.insert(name.as_str(), &**value);
+                }
+                Item::EnumDef(e) => {
+                    enums.insert(e.name.as_str(), e);
+                }
                 _ => {}
             }
         }
@@ -797,13 +832,16 @@ impl<'a> WalkMaps<'a> {
             fn_map,
             method_map,
             inits,
+            lets,
             hooks: TypeHooks::of(program),
+            enums,
         }
     }
 
     /// Drain `work` with `@[contained]`'s own traversal under a deny-all
     /// spec, collecting what it reaches (its errors are discarded).
-    fn reach<'s>(&'s self, work: Vec<Walk<'s>>) -> Reach {
+    /// `predicate`: a `@[verify]` predicate's walk (see `CapCtx::module_lets`).
+    fn reach<'s>(&'s self, work: Vec<Walk<'s>>, predicate: bool) -> Reach {
         let spec = deny_all_spec(Span::dummy());
         let mut scratch = Vec::new();
         let mut reach = Reach::default();
@@ -818,9 +856,106 @@ impl<'a> WalkMaps<'a> {
             site: Span::dummy(),
             errors: &mut scratch,
             reach: Some(&mut reach),
+            module_lets: predicate.then_some(&self.lets),
+            visited_lets: std::collections::HashSet::new(),
         };
         drain_walk(work, &mut ctx);
         reach
+    }
+
+    /// Whether `f`'s predicate mentions a parameter (or `value`) whose type
+    /// can hold a fn: what that fn reaches is the caller's choice, so no
+    /// walk of this program can say (review M1: `g(value)`, `h(g, value)`,
+    /// `(s.g)(value)`). A value from anywhere else is built by code the walk
+    /// visits: a fn named (followed), a lambda written (walked), a module
+    /// `let` (followed by name).
+    fn takes_a_fn_from_its_caller(
+        &self,
+        f: &FnDef,
+        self_ty: Option<&AxonType>,
+        pred: &Expr,
+    ) -> bool {
+        let mut carriers: std::collections::HashSet<&str> = f
+            .params
+            .iter()
+            .filter(|p| self.may_hold_fn(&p.ty, self_ty))
+            .map(|p| p.name.as_str())
+            .collect();
+        if f.return_type
+            .as_ref()
+            .is_some_and(|t| self.may_hold_fn(t, self_ty))
+        {
+            carriers.insert("value");
+        }
+        if carriers.is_empty() {
+            return false;
+        }
+        let mut hit = false;
+        crate::ast::walk_expr(pred, &mut |e| {
+            if let Expr::Ident(n) = e {
+                hit |= carriers.contains(n.as_str());
+            }
+        });
+        hit
+    }
+
+    /// Whether a value of type `ty` can be or contain a fn: a fn type,
+    /// anywhere in it, including through a struct's fields, an enum's
+    /// variant fields, a refinement's base and generic arguments. `Self` is
+    /// `self_ty` (the impl's type). A type parameter cannot be called or
+    /// passed where a fn is expected, and a `dyn Trait` is used through its
+    /// methods, which the walk follows by name.
+    fn may_hold_fn(&self, ty: &AxonType, self_ty: Option<&AxonType>) -> bool {
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut stack = vec![ty];
+        while let Some(t) = stack.pop() {
+            let name = match t {
+                AxonType::Fn { .. } => return true,
+                AxonType::Named(n) => n,
+                AxonType::Generic { base, args } => {
+                    stack.extend(args);
+                    base
+                }
+                AxonType::TypeParam(_) | AxonType::DynTrait(_) => continue,
+                AxonType::Result { ok, err } => {
+                    stack.extend([&**ok, &**err]);
+                    continue;
+                }
+                AxonType::Option(inner)
+                | AxonType::Chan(inner)
+                | AxonType::Slice(inner)
+                | AxonType::Ref(inner)
+                | AxonType::RefMut(inner)
+                | AxonType::RawPtr(inner) => {
+                    stack.push(inner);
+                    continue;
+                }
+                AxonType::Tuple(ts) | AxonType::Union(ts) => {
+                    stack.extend(ts);
+                    continue;
+                }
+            };
+            if !seen.insert(name.as_str()) {
+                continue;
+            }
+            if name == "Self" {
+                stack.extend(self_ty);
+            }
+            if let Some(s) = self.hooks.structs.get(name.as_str()) {
+                stack.extend(s.fields.iter().map(|f| &f.ty));
+            }
+            if let Some(e) = self.enums.get(name.as_str()) {
+                stack.extend(
+                    e.variants
+                        .iter()
+                        .flat_map(|v| v.fields.iter().map(|f| &f.ty)),
+                );
+            }
+            if let Some(r) = self.hooks.refines.get(name.as_str()) {
+                stack.push(&r.base);
+            }
+        }
+        false
     }
 }
 
@@ -1412,6 +1547,18 @@ fn drain_walk<'a>(mut work: Vec<Walk<'a>>, ctx: &mut CapCtx<'a, '_>) {
     }
 }
 
+/// In a predicate walk, queue the initializer of the module `let` named
+/// `name` once: what the predicate calls through it (or passes on) is
+/// whatever that initializer built. A local of the same name over-follows,
+/// which is sound.
+fn follow_module_let<'a>(name: &'a str, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<'a>>) {
+    if let Some((canon, init)) = ctx.module_lets.and_then(|lets| lets.get_key_value(name)) {
+        if ctx.visited_lets.insert(canon) {
+            work.push(Walk::Expr(init));
+        }
+    }
+}
+
 /// The node's own checks, and its children queued on `work`.
 fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<'a>>) {
     match expr {
@@ -1430,11 +1577,26 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
             // helper (see below), before the callee expression and the arguments.
             let mut follow: Vec<Walk<'a>> = Vec::new();
             if let Some(name) = callee_name {
+                // In a predicate walk (CAP-1), a call the interpreter sends
+                // to a user fn of the name (`call_prefers_builtin` false: the
+                // name is no builtin it prefers, or a `&mut` argument) runs
+                // that fn: it is followed below, not noted as the effect-
+                // table entry it is spelled like (review m1). Other walks keep
+                // counting the spelling (CAPA#9's accepted over-approximation).
+                let runs_user_fn = ctx.module_lets.is_some()
+                    && ctx.fn_map.contains_key(name)
+                    && !crate::builtins::call_prefers_builtin(
+                        name,
+                        crate::builtins::call_has_mut_arg(args),
+                    );
                 // A builtin I/O call is checked against the spec directly.
                 check_call(name, args, ctx.spec, ctx.site, ctx.errors);
                 if let Some(reach) = ctx.reach.as_deref_mut() {
-                    reach.note(name);
+                    if !runs_user_fn {
+                        reach.note(name);
+                    }
                 }
+                follow_module_let(name, ctx, &mut follow);
                 // AUDIT T2 (finding F153 / P7-SEC-02). Several builtins dispatch
                 // to a user fn NAMED BY A STRING — `sandbox_run(sb, "job", 0)`,
                 // `scheduler_spawn("worker", 0)`, the whole `goal_run` family.
@@ -1492,7 +1654,7 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
                 // A USER fn call escapes the sandbox unless we follow it: the
                 // helper's body must also satisfy this spec (the helper inherits
                 // the caller's containment). Guard against recursion via `visited`.
-                if classify_call(name).is_none() {
+                if runs_user_fn || classify_call(name).is_none() {
                     if let Some(helper) = ctx.fn_map.get(name) {
                         follow.push(Walk::Helper(name, helper));
                     }
@@ -1633,6 +1795,7 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
         // (THREAT_MODEL.md §8); permitted only if the spec grants the category.
         Expr::Ident(name) => {
             check_builtin_value_ref(name, ctx.spec, ctx.errors);
+            follow_module_let(name, ctx, work);
             if let Some(reach) = ctx.reach.as_deref_mut() {
                 if crate::builtins::is_known_builtin(name) {
                     reach.note(name);

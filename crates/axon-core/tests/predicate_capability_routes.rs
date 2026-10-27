@@ -118,6 +118,60 @@ const CASES: &[Case] = &[
         label: None,
         row: "Chan",
     },
+    // Review m2: the call inside each arm where `ast::children` (the
+    // program-wide walk) and the reach walker's `visit_expr` could diverge.
+    Case {
+        name: "body_lambda",
+        template: "fn f(n: i64) -> bool {\n    let g = |x: i64| PRED\n    g(n)\n}\n",
+        pred: "is_ok(write_file(\"/nonexistent/out\", \"x\"))",
+        label: Some("fs:write"),
+        row: "IO",
+    },
+    Case {
+        name: "body_match_guard",
+        template: "fn f(n: i64) -> i64 {\n    match n {\n        k if PRED => k\n        _ => 0\n    }\n}\n",
+        pred: "is_ok(write_file(\"/nonexistent/out\", \"x\"))",
+        label: Some("fs:write"),
+        row: "IO",
+    },
+    Case {
+        name: "body_impl_method",
+        template: "trait Go {\n    fn go(self) -> bool\n}\ntype S = { a: i64 }\n\
+                   impl Go for S {\n    fn go(self) -> bool {\n        PRED\n    }\n}\n\
+                   fn f(n: i64) -> bool {\n    let s = S { a: n }\n    s.go()\n}\n",
+        pred: "is_ok(write_file(\"/nonexistent/out\", \"x\"))",
+        label: Some("fs:write"),
+        row: "IO",
+    },
+    Case {
+        name: "body_spawn",
+        template: "fn f(n: i64) -> i64 {\n    spawn { PRED }\n    n\n}\n",
+        pred: "is_ok(write_file(\"/nonexistent/out\", \"x\"))",
+        label: Some("fs:write"),
+        row: "IO",
+    },
+    Case {
+        name: "body_select",
+        template: "fn f(c: Chan<i64>) -> bool {\n    select {\n        c.recv() => PRED\n    }\n}\n",
+        pred: "is_ok(write_file(\"/nonexistent/out\", \"x\"))",
+        label: Some("fs:write"),
+        row: "IO",
+    },
+    Case {
+        name: "body_with_arm",
+        template: "fn f(n: i64) -> bool {\n    with handler { on Net(e) => PRED } {\n        true\n    }\n}\n",
+        pred: "is_ok(write_file(\"/nonexistent/out\", \"x\"))",
+        label: Some("fs:write"),
+        row: "IO",
+    },
+    Case {
+        name: "body_dispatch_target",
+        template: "fn w(n: i64) -> i64 {\n    if PRED { 1 } else { 0 }\n}\n\
+                   fn f(n: i64) -> i64 {\n    scheduler_spawn(\"w\", n)\n}\n",
+        pred: "is_ok(write_file(\"/nonexistent/out\", \"x\"))",
+        label: Some("fs:write"),
+        row: "IO",
+    },
 ];
 
 fn program(case: &Case, pred: &str) -> Program {
