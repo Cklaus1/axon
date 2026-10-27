@@ -73,6 +73,8 @@ fn both_check_pipelines_report_the_same_diagnostics() {
         ("ai no policy", "fn g() -> i64 { match ai_complete(\"x\") { Ok(r) => str_len(r)  Err(_) => 0 } }\nfn main() { println(to_str(g())) }\n"),
         ("refine unbound", "type R = { lo: i64, hi: i64 } where lo <= hi\nfn main() { let r = R { lo: 1, hi: 2 }\nprintln(to_str(r.lo)) }\n"),
         ("refine non-bool", "type Pos = i64 where _ && true\nfn f(n: Pos) -> i64 { n }\nfn main() { println(to_str(f(3))) }\n"),
+        ("verify unbound", "@[verify(value >= nosuch)]\nfn f(x: i64) -> i64 { x }\nfn main() { println(to_str(f(5))) }\n"),
+        ("verify non-bool", "@[verify(value && true)]\nfn f(x: i64) -> i64 { x }\nfn main() { println(to_str(f(5))) }\n"),
     ];
     let mut diffs = Vec::new();
     let mut saw_any = false;

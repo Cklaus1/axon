@@ -6666,20 +6666,20 @@ impl<'p> Interp<'p> {
                         // `value`, `confidence`, `source_tag` in scope. Any
                         // boolean expression Axon understands is accepted —
                         // `&&`, `||`, comparisons, function calls, you name it.
-                        let mut pred_env = self.new_env();
+                        // CS-2 (NH-1 a): it runs in the call env, which still
+                        // holds the params (as a return refinement does,
+                        // above), with the binders defined over them.
                         if let Some(v) = fields.get(SYM_VALUE) {
-                            pred_env.define(SYM_VALUE, v.clone(), body_t);
+                            env.define(SYM_VALUE, v.clone(), body_t);
                         }
                         if let Some(c) = fields.get(SYM_CONFIDENCE) {
-                            pred_env.define(SYM_CONFIDENCE, c.clone(), body_t);
+                            env.define(SYM_CONFIDENCE, c.clone(), body_t);
                         }
                         if let Some(s) = fields.get(SYM_SOURCE_TAG) {
-                            pred_env.define(SYM_SOURCE_TAG, s.clone(), body_t);
+                            env.define(SYM_SOURCE_TAG, s.clone(), body_t);
                         }
-                        let outcome = contain_frame(
-                            self.eval(&spec.predicate, &mut pred_env),
-                            FrameEdge::Predicate,
-                        )?;
+                        let outcome =
+                            contain_frame(self.eval(&spec.predicate, env), FrameEdge::Predicate)?;
                         if let Value::Bool(false) = outcome {
                             return Err(Flow::VerifyFailed(
                                 format!(
@@ -6733,13 +6733,12 @@ impl<'p> Interp<'p> {
                         ));
                     }
                 } else {
-                    // Composite predicate: bind `value` to the scalar and evaluate.
-                    let mut pred_env = self.new_env();
-                    pred_env.define(SYM_VALUE, result.clone(), body_t);
-                    let outcome = contain_frame(
-                        self.eval(&spec.predicate, &mut pred_env),
-                        FrameEdge::Predicate,
-                    )?;
+                    // Composite predicate: bind `value` to the scalar and
+                    // evaluate, in the call env so the params are in scope
+                    // (CS-2, NH-1 a).
+                    env.define(SYM_VALUE, result.clone(), body_t);
+                    let outcome =
+                        contain_frame(self.eval(&spec.predicate, env), FrameEdge::Predicate)?;
                     if let Value::Bool(false) = outcome {
                         return Err(Flow::VerifyFailed(format!("verify failed in {}: composite predicate did not hold (value {}{})",
                         verify_fn_label(&f.name),

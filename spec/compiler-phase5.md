@@ -100,6 +100,13 @@ or a `return`/`break`/`continue` in it is E1211.
 | a named refinement used at several of these | only the names (and types) every use binds |
 | a refinement used only nested (`Option<Pos>`, `(Pos, i64)`) or unused | `_` (never checked at run time) |
 
+A `@[verify(P)]` predicate is checked the same way, refused with E1103. It binds the fn's
+params and, by return shape: `value` (the return, or the `T` of `Uncertain<T>` /
+`Temporal<T>`); `confidence: f64` for both wrappers; `source_tag: i64` for `Uncertain`
+only. A param named like a binder its return binds is E1103. The decodable simple shape
+`value|confidence OP literal` is compared as `f64` at run time, so `value >= 0` on an `f64`
+return stays accepted.
+
 ### Examples
 
 ```axon
