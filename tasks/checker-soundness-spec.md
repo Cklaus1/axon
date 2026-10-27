@@ -1,6 +1,6 @@
 # checker-soundness — DRAFT spec
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: Step 1 reviewed; needs-human decided (§7). Authorized for build by human 2026-10-27, as one batch with `tasks/capability-surface-spec.md` (harness: `tasks/build-loop.md`).**
 
 ### Step 1 review
 
@@ -616,3 +616,8 @@ Step 2 classification. Engineering questions are decided here and are canon for 
 | E-6 | An int literal against an f64 operand in a predicate [REVISED: CSA#2, new] | refuse with E1211/E1103 and a `.0` fix; widen in the interp (and codegen); leave | **Refuse**, keeping the decodable simple shape. It matches ordinary code (`x >= 0` with `x: f64` is E0102), and widening would be a language change. | engineering — canon |
 | E-7 | `return`/`break`/`continue` inside a predicate [REVISED: CSA#6, new] | refuse at check; leave to runtime containment | **Refuse at check** (E1211/E1103). Runtime containment (M59) stays as defence in depth. | engineering — canon |
 | E-8 | A user type named like a builtin type [REVISED: CSA#14, new] | refuse with E0005; let the user type shadow the builtin | **Refuse.** Today the program already fails or silently means `()`; shadowing would change what existing names mean. | engineering — canon |
+
+**Human decisions** `[DECIDED by human 2026-10-27: all three recommendations accepted]` — now canon for the build:
+- **NH-1 → (a)** verify predicates bind the fn's params. Consequences in scope: hello, learn and file-budget goals change rc 0 → 3 unless CS-13 lands; README.md:50-53 is rewritten; CS-13 is in scope.
+- **NH-2 → (a)** a struct-field refinement binds its own field name, like param and `let` refinements.
+- **NH-3 → (d)** array and `&[T]` params copy on `let`; `str` stays a move type.

@@ -557,6 +557,14 @@ graph TD
 
   → **a**: (b) costs ≈ 2× the FU-11 cap plus ~60 new programs; (a) keeps the pre-registered route with an honest MDE.
 
+**Human decisions** `[DECIDED by human 2026-10-27: all five recommendations accepted]`:
+- **NH-1 → (b)** HX-0 + HX-5 authorized now, $5.75 total; FU-11's $25 is approved at freeze, once `power.py` has run on real rows.
+- **NH-2 → (a)** HX-2 deferred.
+- **NH-3 → (b)** if neither erase nor sparse passes HX-0, R4 is retired unmeasured, worded "retired without measurement", never as a measured REMOVE.
+- **NH-4 → (a)** one kept class is acceptable; the claim is worded by class.
+- **NH-5 → (a)** FU-10 runs as pre-registered; any REMOVE states the MDE (≈ 11–12 points).
+Building hx2 still needs its own Step 0; this records decisions only.
+
 **Not verified here:** what cortex tells the generator after an attempt passes the visible tests but fails the hidden
 pin (affects erase/sparse; `[INFERENCE]`: feedback is visible-only, `feedback.rs:9-12`). The erase and sparse yields
 on the 38 test programs (measured by N4). Where the f26e9506 binary (`957e5343…`) lives (HX-0). The h45 guard pass

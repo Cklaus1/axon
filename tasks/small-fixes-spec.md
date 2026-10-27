@@ -487,6 +487,7 @@ SF-1, SF-2, SF-3, SF-4 (each: inner-loop rows above; g01 --only for its own rows
   - (c) Widen SF-3 now.
   - Already logged by Main as **O-SP-05** (`tasks/opportunities.md:2722`). Scheduling it is the human's call; SF-3 stays
     at O-FU-07's scope.
+  - `[DECIDED by human 2026-10-27: (b) — a later batch reuses SF-3's drop guard; SF-3 stays at O-FU-07's scope.]`
 - **OQ-4 (engineering, canon): `misc.json#6`.** [REVISED: SFA#8; was "(a) move to `rejected-ideas.json` (chosen)"]
   - (a) **Delete it from `defects/`; README :136-139 already records the drop (chosen).**
   - (b) Move it to `rejected-ideas.json`. Rejected: that file holds author ideas only (README :116-118, :206).

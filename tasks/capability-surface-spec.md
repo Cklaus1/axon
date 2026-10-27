@@ -1,6 +1,6 @@
 # Capability surface: verify-predicate effects, native effect rows, one program-wide walk — DRAFT spec
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: Step 1 reviewed; needs-human decided (§6). Authorized for build by human 2026-10-27, as one batch with `tasks/checker-soundness-spec.md` (harness: `tasks/build-loop.md`).**
 Base: `main` 7f110693 (worktree `/home/cklaus/projects/axon-lanes/specs-next`, branch `specs/next`).
 Source: `tasks/opportunities.md` O-S1-19 (:2653-2654), O-S1-20 (:2656-2657), O-FU-05 (:2683-2684).
 Precedent: FU-2 (ecf63dfc, `tasks/followup-spec.md:296-369`, `crates/axon-core/tests/predicate_capability_routes.rs`,
@@ -345,3 +345,7 @@ graph LR
 | Q6 | Fix F3 here? | here · log | **log** | engineering — canon |
 | Q7 | `[REVISED: CAPD#2]` Pin `effect_union` directly by `#[cfg(any(feature = "codegen", test))]` on `main.rs:8863,8967` + a `main.rs` test? | yes · no | **no**: `main.rs:8994` copies `program_effect_rows` verbatim, already asserted in S16; a codegen-only test runs in no gate stage | engineering — canon |
 | Q8 | Is `temporal_new` a clock read (CAPA#6)? | admit · refuse | **admit**: it reads `program_now_ms()` (`interp/builtins.rs:3932`) | engineering — canon |
+
+**Human decisions** `[DECIDED by human 2026-10-27: both recommendations accepted]` — now canon for the build:
+- **Q1 → (a2)** a `@[verify]` predicate may read the clock and nothing else; any other effect is E1104. `caps_verb.rs:594` changes, and `env_var` comes out of `compiler-phase5.md:391`.
+- **Q2 → separate spec.** Deep E1209 for refinements is out of this batch; O-SP-02 stays logged.

@@ -355,6 +355,10 @@ GL-1 to GL-4 ship in one batch. Order of the final runs: full gate (ship), then 
 | Q8 | Audit cadence | A on demand, at an integrated main head, alone on host; B nightly; C after every merge | **A**. Stale audits stay sound (C is computed versus A); they only widen C. | engineering, canon A |
 | Q9 | S05/S06/S07 compile set | A whole workspace; B parse row tables for packages | **A** until GL-1 shows their cost matters. B needs a parser per row format. | engineering, canon A |
 
+**Human decisions** `[DECIDED by human 2026-10-27: both recommendations accepted]`:
+- **Q1 → B** `--lane` replaces `--fast`, and `g01_anchors.py`, `vm_parity.sh` and `test_harness_skip.sh` move into the full gate's parallel group (also closes O-SP-07). This supersedes the `--fast` lane-acceptance decision at killgroup-spec.md:290.
+- **Q4 → B** the ~1 s lane self-check joins the full gate's parallel group.
+
 ## 9. What remains unsafe, and what covers it
 
 | Gap | Covered by |
