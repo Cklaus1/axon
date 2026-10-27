@@ -30,6 +30,7 @@ fn show(s: str) {
 fn main() -> i64 {
     show("abc")
     show("0x1F")
+    show(" 0x1F")
     show("12trailing")
     0
 }

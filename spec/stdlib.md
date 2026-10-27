@@ -201,8 +201,11 @@ println("result: " + to_str(count))
 #### `parse_int(s: str) -> Result<i64, str>`
 *Phase added: 2*
 
-Parse `s` as a base-10 integer. Returns `Ok(n)` on success or `Err("invalid integer")` if `s`
-does not represent a valid decimal integer (empty string, non-digit characters, overflow).
+Parse `s` (surrounding whitespace trimmed) as a base-10 integer: `parse_int(" 3")` is `Ok(3)`.
+Base-10 only. On failure (empty string, non-digit characters, overflow) it returns an `Err(str)`
+that names the offending input: ``Err("could not parse `x` as a base-10 integer")``. A radix
+prefix such as `0x1F` returns `Err` with a hint to strip it (use `parse_int_radix` for other
+bases).
 
 ```axon
 match parse_int("123") {

@@ -223,6 +223,11 @@ when you write the candidate:
 
 7. **Default integer is `i64`.** `i32`/unsigned exist mainly for interop; reach for `i64`.
 
+8. **`let x = y` moves a `str` or a struct; arrays copy.** After `let core = s` with `s: str`
+   (or a struct, enum, closure, `chan<T>` — B07), using `s` again is `E0601`; borrow with
+   `ref core = s` instead. Arrays are values: `let b = a` copies an array, including an array
+   (`[T]`) or `&[T]` parameter, and both names stay usable.
+
 ---
 
 ## 7. AI / capability features (Axon's reason to exist)
