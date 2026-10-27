@@ -1,6 +1,6 @@
 # checker-soundness — DRAFT spec
 
-**Status: Step 1 reviewed; needs-human decided (§7). Authorized for build by human 2026-10-27, as one batch with `tasks/capability-surface-spec.md` (harness: `tasks/build-loop.md`).**
+**Status: BUILT 2026-10-27 on `main` 49b576fa (CS-1…CS-13 plus implementation-review fixes; full `gate.sh --strict` rc 0, skips identical to the 1f6b761a baseline). Step 1 reviewed; needs-human decided (§7); built as one batch with `tasks/capability-surface-spec.md` (harness: `tasks/build-loop-checker.md`).**
 
 ### Step 1 review
 

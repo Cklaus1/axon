@@ -1,6 +1,6 @@
 # Capability surface: verify-predicate effects, native effect rows, one program-wide walk — DRAFT spec
 
-**Status: Step 1 reviewed; needs-human decided (§6). Authorized for build by human 2026-10-27, as one batch with `tasks/checker-soundness-spec.md` (harness: `tasks/build-loop.md`).**
+**Status: BUILT 2026-10-27 on `main` 49b576fa (CAP-1…CAP-4 plus implementation-review fixes; full `gate.sh --strict` rc 0, skips identical to the 1f6b761a baseline). Step 1 reviewed; needs-human decided (§6); built as one batch with `tasks/checker-soundness-spec.md` (harness: `tasks/build-loop-checker.md`).**
 Base: `main` 7f110693 (worktree `/home/cklaus/projects/axon-lanes/specs-next`, branch `specs/next`).
 Source: `tasks/opportunities.md` O-S1-19 (:2653-2654), O-S1-20 (:2656-2657), O-FU-05 (:2683-2684).
 Precedent: FU-2 (ecf63dfc, `tasks/followup-spec.md:296-369`, `crates/axon-core/tests/predicate_capability_routes.rs`,
