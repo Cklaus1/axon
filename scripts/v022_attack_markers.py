@@ -3162,4 +3162,5 @@ ATTACK_MARKERS.update({
 # checker-soundness LaneParse (ids M3833, M3835, M3839)
 ATTACK_MARKERS.update({
     'M3833': r'ATTACK: a `.field` then a newline `\(` parsed as a method call',
+    'M3835': r'ATTACK: a move before an early `return` poisoned the fallthrough path',
 })

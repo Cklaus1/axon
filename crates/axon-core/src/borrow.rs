@@ -77,6 +77,17 @@ fn is_copy(ty: &Type) -> bool {
     )
 }
 
+/// Whether an `if` branch never falls through: its block's last statement is
+/// a `return`, or a call to `exit` (CS-6).
+fn branch_diverges(e: &Expr) -> bool {
+    match e {
+        Expr::Return(_) => true,
+        Expr::Call { callee, .. } => matches!(callee.as_ref(), Expr::Ident(n) if n == "exit"),
+        Expr::Block(stmts) => stmts.last().is_some_and(|s| branch_diverges(&s.expr)),
+        _ => false,
+    }
+}
+
 /// Best-effort type inference for a binding's RHS, used to track Copy status
 /// without access to the full inference context.
 /// Returns `None` when the type cannot be determined (caller treats as Copy).
@@ -308,14 +319,19 @@ impl OwnershipGraph {
                     self.check_expr(e);
                 }
                 let after_else = self.bindings.clone();
-                // Union: any binding moved in either branch is moved afterwards.
+                // Union: any binding moved in a branch that falls through is
+                // moved afterwards. A branch ending in `return` or `exit(..)`
+                // never reaches the code after the `if`, so its moves are
+                // discarded (CS-6). `break`/`continue` branches keep theirs:
+                // their state flows past the loop.
                 self.bindings = snapshot;
-                for (name, state) in &after_then {
-                    if *state == BindingState::Moved {
-                        self.bindings.insert(name.clone(), BindingState::Moved);
-                    }
-                }
-                for (name, state) in &after_else {
+                let then_live = !branch_diverges(then);
+                let else_live = !else_.as_deref().is_some_and(branch_diverges);
+                let live = [
+                    then_live.then_some(&after_then),
+                    else_live.then_some(&after_else),
+                ];
+                for (name, state) in live.into_iter().flatten().flatten() {
                     if *state == BindingState::Moved {
                         self.bindings.insert(name.clone(), BindingState::Moved);
                     }

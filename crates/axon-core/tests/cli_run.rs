@@ -40302,3 +40302,35 @@ fn field_access_then_newline_paren_is_a_new_statement() {
     );
     assert_eq!((rc, so.as_str()), (Some(0), "3\n"));
 }
+
+#[test]
+fn early_return_move_does_not_poison_fallthrough() {
+    let src = "type Bucket = { tokens: i64, last_tick: i64, rate: i64 }\n\nfn refill(b: Bucket, now: i64) -> Bucket {\n    if now <= b.last_tick {\n        return b\n    }\n    let elapsed = now - b.last_tick\n    Bucket { tokens: b.tokens + elapsed * b.rate, last_tick: now, rate: b.rate }\n}\n\nfn main() {\n    let b = refill(Bucket { tokens: 0, last_tick: 0, rate: 2 }, 5)\n    println(to_str(b.tokens))\n}\n";
+    let (cc, ce, rc, so) = csp_check_run("n_ret", src);
+    assert_eq!(
+        cc,
+        Some(0),
+        "ATTACK: a move before an early `return` poisoned the fallthrough path: {ce}"
+    );
+    assert_eq!((rc, so.as_str()), (Some(0), "10\n"));
+}
+
+#[test]
+fn move_in_non_diverging_branch_still_e0601() {
+    let src = "type B = { t: i64 }\nfn f(b: B, k: i64) -> i64 {\n    if k > 0 {\n        let c = b\n        println(to_str(c.t))\n    }\n    b.t\n}\nfn main() { println(to_str(f(B { t: 4 }, 1))) }\n";
+    let (cc, ce, _, _) = csp_check_run("nondiv", src);
+    assert_eq!(
+        cc,
+        Some(2),
+        "a move in a non-diverging branch was dropped: {ce}"
+    );
+    assert!(ce.contains("E0601"), "{ce}");
+}
+
+#[test]
+fn move_before_break_still_e0601_after_loop() {
+    let src = "type B = { t: i64 }\nfn f(b: B, k: i64) -> i64 {\n    let i = 0\n    while i < 3 {\n        if k > 0 {\n            let c = b\n            println(to_str(c.t))\n            break\n        }\n        i = i + 1\n    }\n    b.t\n}\nfn main() { println(to_str(f(B { t: 4 }, 1))) }\n";
+    let (cc, ce, _, _) = csp_check_run("brkmove2", src);
+    assert_eq!(cc, Some(2), "a move before `break` was dropped: {ce}");
+    assert!(ce.contains("E0601") && ce.contains("\"line\":12"), "{ce}");
+}

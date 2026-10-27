@@ -11752,6 +11752,10 @@ MUTATIONS += [
      'if !self.preceded_by_newline() && self.eat(&Token::LParen) {',
      'if self.eat(&Token::LParen) {',
      'axon-core', '--no-default-features --test cli_run', 'field_access_then_newline_paren_is_a_new_statement'),
+    ('M3835', 'CS-6: a move in an early-`return` branch poisons the fallthrough', 'crates/axon-core/src/borrow.rs',
+     'let then_live = !branch_diverges(then);',
+     'let then_live = true;',
+     'axon-core', '--no-default-features --test cli_run', 'early_return_move_does_not_poison_fallthrough'),
 ]
 
 if __name__ == "__main__":

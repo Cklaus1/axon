@@ -695,7 +695,10 @@ enum BindingState {
    restore `bindings[src]` to `Owned` (borrow ends).
 
 5. After an `if/else` or `match`: compute the union of moved-out bindings across all branches. A
-   binding moved in *any* branch is considered moved after the construct.
+   binding moved in *any* branch is considered moved after the construct — except that an `if`
+   branch whose block ends in `return` or a call to `exit` contributes no moves, since it never
+   reaches the code after the `if`. A branch ending in `break`/`continue` keeps its moves: its
+   state flows past the loop.
 
 ### LLVM IR Impact
 
