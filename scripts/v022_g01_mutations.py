@@ -11770,7 +11770,7 @@ MUTATIONS += [
 MUTATIONS += [
     ('M3820', 'CS-1: refinement predicates are resolved for sealed files only again, so an unbound name passes check', 'crates/axon-core/src/resolver.rs',
      '                Item::RefineDef(r) => {\n                    let names: Vec<&str> = binders',
-     '                Item::RefineDef(r) if span_in_sealed(r.span, &self.sealed_dirs) => {\n                    let names: Vec<&str> = binders',
+     '                Item::RefineDef(r) if span_in_sealed(r.span, &sealed_module_dirs()) => {\n                    let names: Vec<&str> = binders',
      'axon-core', '--no-default-features --test cli_run', 'refinement_predicate_unknown_name_is_refused'),
     ('M3821', 'CS-1: a refinement binds the union of its use sites\' names again, not the intersection', 'crates/axon-core/src/resolver.rs',
      '                let everywhere = rest\n',
