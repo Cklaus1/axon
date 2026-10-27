@@ -3231,3 +3231,10 @@ ATTACK_MARKERS.update({
     'M3813': r'ATTACK: shadow: a pure user fn named like an effect builtin was refused',
     'M3814': r'ATTACK: body_select: the program-wide surface disagrees with the reach walker',
 })
+
+# Checker-soundness impl-review fixes, LaneTypeB3 (ids M3815-M3816, M3818)
+ATTACK_MARKERS.update({
+    'M3816': r'ATTACK: a predicate with `return` inside a closure was refused as leaving its frame',
+    'M3815': r'ATTACK: a predicate with `break` inside a loop was refused as leaving its frame',
+    'M3818': r'ATTACK: a move before a local closure named `exit` was dropped as if the branch diverged',
+})

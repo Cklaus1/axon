@@ -2613,20 +2613,37 @@ pub fn verify_shape_binders(ret: Option<&AxonType>) -> Vec<(&'static str, AxonTy
     }
 }
 
-/// The first `return`/`break`/`continue` in the predicate `pred`, if any: a
-/// predicate cannot leave its frame (CS-1, E-7).
+/// The first `return`/`break`/`continue` in the predicate `pred` that would
+/// leave the predicate's frame, if any (CS-1, E-7). A closure is its own
+/// frame, so nothing inside an `Expr::Lambda` escapes; a `break`/`continue`
+/// inside a loop body leaves only that loop (a `return` there still escapes).
+/// Iterative, like [`crate::ast::walk_expr`], in the same pre-order.
 fn predicate_frame_escape(pred: &Expr) -> Option<&'static str> {
-    let mut found = None;
-    crate::ast::walk_expr(pred, &mut |e| {
-        let kw = match e {
-            Expr::Return(_) => "return",
-            Expr::Break => "break",
-            Expr::Continue => "continue",
-            _ => return,
+    let mut stack: Vec<(&Expr, bool)> = vec![(pred, false)];
+    let mut kids: Vec<&Expr> = Vec::new();
+    while let Some((e, in_loop)) = stack.pop() {
+        let body = match e {
+            Expr::Return(_) => return Some("return"),
+            Expr::Break if !in_loop => return Some("break"),
+            Expr::Continue if !in_loop => return Some("continue"),
+            Expr::Lambda { .. } => continue,
+            Expr::While { body, .. } | Expr::WhileLet { body, .. } | Expr::For { body, .. } => {
+                Some(body)
+            }
+            _ => None,
         };
-        found = found.or(Some(kw));
-    });
-    found
+        crate::ast::children(e, &mut kids);
+        // A loop's own head (cond / iterable / range) is outside its body.
+        let head = kids.len() - body.map_or(0, |b| b.len());
+        let loop_body = body.is_some();
+        stack.extend(
+            kids.drain(..)
+                .enumerate()
+                .map(|(i, k)| (k, in_loop || (loop_body && i >= head)))
+                .rev(),
+        );
+    }
+    None
 }
 
 /// Whether `span` lies in a file under one of `sealed` — the ONE provenance

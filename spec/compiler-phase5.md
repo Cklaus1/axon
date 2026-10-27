@@ -105,7 +105,11 @@ params and, by return shape: `value` (the return, or the `T` of `Uncertain<T>` /
 `Temporal<T>`); `confidence: f64` for both wrappers; `source_tag: i64` for `Uncertain`
 only. A param named like a binder its return binds is E1103. The decodable simple shape
 `value|confidence OP literal` is compared as `f64` at run time, so `value >= 0` on an `f64`
-return stays accepted.
+return stays accepted. A `@[verify]` on a return the runtime cannot check — not a scalar,
+`Uncertain<T>` or `Temporal<T>` (a `str`, `()`, a struct) — is E1103 "this `@[verify]` is
+never checked"; a generic `-> T` return is refused the same way, since `T` may be
+instantiated with a non-scalar. A `return` inside a closure, or a `break`/`continue` inside a
+loop, stays in the predicate's frame and is accepted; any other is refused.
 
 ### Examples
 
