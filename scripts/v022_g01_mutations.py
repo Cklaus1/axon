@@ -11240,7 +11240,7 @@ MUTATIONS += [
      '            || recv_taint & (TYP | PICK) == 0\n', '            || recv_taint & TYP == 0\n',
      'axon-core', '--lib', 'interp::taint_tests::an_operator_value_the_candidate_picked_is_never_dispatched_on'),
     ('M3478', "PICK (am121): a builtin's read of an operator value on a selector sealed code chose is no pick", 'crates/axon-core/src/interp/eval.rs',
-     '                        self.t_builtin_pick(\n                            argv.values(),\n                            &ats,\n                            self.taint.entries.get() != entries,\n                            &v,\n                        );', '                        let _ = (&ats, entries);',
+     '                            self.t_builtin_pick(\n                                argv.values(),\n                                &ats,\n                                self.taint.entries.get() != entries,\n                                &v,\n                            );', '                            let _ = (&ats, entries);',
      'axon-core', '--lib', 'interp::taint_tests::an_operator_value_the_candidate_picked_is_never_dispatched_on'),
     ('M3479', 'DRIFT (am121): one arr_* arm calls its closure through call_local_closure around the control taint', 'crates/axon-core/src/interp/builtins.rs',
      '                    acc = self.call_closure_arg(f, [acc, x])?;', '                    acc = self.call_local_closure(f.clone(), vec![acc, x])?;',
