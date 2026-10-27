@@ -1,0 +1,1 @@
+{"theme": "capability surface", "text": "merge cs/cap into cs/int: error.rs registers E1103 (CS-2) and E1104 (CAP-1) side by side, in code order, in the const list, the description table and ALL_CODES; no other src change beyond the two branches."}

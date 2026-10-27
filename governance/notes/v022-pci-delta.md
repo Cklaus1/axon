@@ -16,53 +16,53 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 44c8311c00eee6727849b7852a13b965ae773c62
+generated-at: 864d500c687d678c23d557f5656c5cfd35762290
 
-`git diff --numstat 31413ca7..44c8311c -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..864d500c -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
 | `crates/axon-core/src/ai_routing.rs` | 3 | 3 |
 | `crates/axon-core/src/ast.rs` | 334 | 81 |
 | `crates/axon-core/src/bin/axon-run.rs` | 19 | 0 |
-| `crates/axon-core/src/borrow.rs` | 18 | 3 |
-| `crates/axon-core/src/builtins.rs` | 45 | 11 |
+| `crates/axon-core/src/borrow.rs` | 55 | 11 |
+| `crates/axon-core/src/builtins.rs` | 68 | 11 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
-| `crates/axon-core/src/capabilities.rs` | 711 | 173 |
-| `crates/axon-core/src/checker.rs` | 1235 | 510 |
+| `crates/axon-core/src/capabilities.rs` | 779 | 342 |
+| `crates/axon-core/src/checker.rs` | 1487 | 526 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
-| `crates/axon-core/src/codegen/asi.rs` | 14 | 18 |
+| `crates/axon-core/src/codegen/asi.rs` | 172 | 37 |
 | `crates/axon-core/src/codegen/build_wrappers.rs` | 25 | 1 |
 | `crates/axon-core/src/codegen/builtin_externs.rs` | 8 | 0 |
 | `crates/axon-core/src/codegen/builtins.rs` | 6 | 0 |
 | `crates/axon-core/src/codegen/display.rs` | 514 | 0 |
 | `crates/axon-core/src/codegen/enum_layout.rs` | 451 | 0 |
 | `crates/axon-core/src/codegen/escape.rs` | 509 | 0 |
-| `crates/axon-core/src/codegen/expr.rs` | 2305 | 680 |
+| `crates/axon-core/src/codegen/expr.rs` | 2320 | 677 |
 | `crates/axon-core/src/codegen/link.rs` | 1620 | 337 |
 | `crates/axon-core/src/codegen/match_pat.rs` | 335 | 147 |
-| `crates/axon-core/src/codegen/mod.rs` | 363 | 106 |
+| `crates/axon-core/src/codegen/mod.rs` | 454 | 147 |
 | `crates/axon-core/src/codegen/option_result.rs` | 11 | 6 |
 | `crates/axon-core/src/codegen/output.rs` | 118 | 69 |
 | `crates/axon-core/src/codegen/types.rs` | 5 | 4 |
 | `crates/axon-core/src/complexity.rs` | 1 | 0 |
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
-| `crates/axon-core/src/effects.rs` | 291 | 108 |
+| `crates/axon-core/src/effects.rs` | 631 | 126 |
 | `crates/axon-core/src/env_registry.rs` | 15 | 3 |
-| `crates/axon-core/src/error.rs` | 24 | 13 |
+| `crates/axon-core/src/error.rs` | 35 | 15 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 396 | 146 |
-| `crates/axon-core/src/interp.rs` | 7709 | 2876 |
+| `crates/axon-core/src/infer.rs` | 609 | 163 |
+| `crates/axon-core/src/interp.rs` | 7722 | 2889 |
 | `crates/axon-core/src/interp/builtins.rs` | 794 | 614 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 639 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1230 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 2194 | 606 |
+| `crates/axon-core/src/interp/eval.rs` | 2200 | 608 |
 | `crates/axon-core/src/interp/goal.rs` | 87 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 363 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
@@ -84,23 +84,23 @@ generated-at: 44c8311c00eee6727849b7852a13b965ae773c62
 | `crates/axon-core/src/interp/vm/tests.rs` | 2688 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
-| `crates/axon-core/src/lib.rs` | 300 | 75 |
+| `crates/axon-core/src/lib.rs` | 303 | 77 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
-| `crates/axon-core/src/lsp.rs` | 179 | 57 |
-| `crates/axon-core/src/main.rs` | 1588 | 365 |
+| `crates/axon-core/src/lsp.rs` | 182 | 59 |
+| `crates/axon-core/src/main.rs` | 1591 | 367 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
-| `crates/axon-core/src/parser.rs` | 457 | 31 |
+| `crates/axon-core/src/parser.rs` | 460 | 32 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
-| `crates/axon-core/src/resolver.rs` | 633 | 98 |
+| `crates/axon-core/src/resolver.rs` | 848 | 121 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/span.rs` | 98 | 3 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 56781 | 7929 |
+| total | 58235 | 8261 |
 
-`git log --reverse 31413ca7..44c8311c -- crates/axon-core/src`:
+`git log --reverse 31413ca7..864d500c -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -399,7 +399,27 @@ generated-at: 44c8311c00eee6727849b7852a13b965ae773c62
 | 7c5d2136 | effect ceiling | interp/main: a non-UTF-8 AXON_ALLOWED_EFFECTS is the empty allowed set (every effect denied) with one warning, both for axon run and for axon test --completion-key-stdin, which no longer widens it; unset keeps its previous meaning. |
 | c9ef67e7 | effect ceiling | interp: the non-UTF-8 AXON_ALLOWED_EFFECTS warning is printed once per process (a static Once), not once per interpreter build, so a multi-test `axon test` run warns once; the deny-all meaning is unchanged. |
 | e7e49f26 | capability walker coverage | capabilities: comment only. The E1004 comment now states that the per-fn check walks the fn's own body plus the predicates it carries or uses, not the fns it calls; no behaviour change. |
-| 295 commits | | |
+| ddeac48c | checker soundness | parser CS-10: a newline before `(` after `.field` starts a new statement instead of continuing a method call, so a program the interpreter ran differently from what check typed now checks and runs as written (M3833). |
+| 54b5d791 | checker soundness | infer CS-11: `return`/`break`/`continue` are typed Never and unify with sibling match/if arms; a program check refused with a false arm-type mismatch now checks; the declared return type is still enforced on the returned value (M3836). |
+| 42812895 | capability surface | capabilities CAP-2: native-module and turbofish calls reach program_effect_rows through one shared program_reach walk, so the effect union and the axmeta manifest name effects a fn reaches only through them (M3803, M3804). |
+| 19c638b0 | checker soundness | borrow CS-6: an if branch that ends in `return` or the builtin `exit` contributes no moves to the union after the if, so a false E0601 on the fallthrough is gone; moves in non-diverging branches still count (M3835). |
+| 71482981 | checker soundness | infer CS-5: the type of `len(x)` with a type-variable x is decided after solving instead of pinned to str, so a match- or ?-bound array no longer fails check with E0102 (M3834). |
+| f12714fd | checker soundness | borrow CS-7 (NH-3 d): `let` of an array or `&[T]` param copies, as the interpreter does; a str still moves and its use after a move stays E0601 (M3839). |
+| dbb90201 | checker soundness | checker CS-12: a struct/enum named like a builtin type (Unit, str, Option, ...) is refused with E0005 instead of silently meaning the builtin (M3832). |
+| d5355cf3 | capability surface | effects CAP-4: E1310 sees a turbofish `ai_extract::<T>` call through a shared effect_row_name helper, in check_expr and in caller inference, so a closed-row fn calling it, directly or through a helper, is refused (M3806, M3807). |
+| 47012208 | checker soundness | resolver/infer/interp/codegen CS-4: a call to a fn shadowing a builtin is resolved, typed and dispatched by one rule (call_prefers_builtin: the builtin unless the call has a `&mut` arg), so check types the fn the run calls; a user `ln(a,b,c,d)` no longer checks clean and panics at run (M3831). |
+| 0cf7cd67 | checker soundness | resolver/checker/interp CS-1 (NH-2 a): every refinement predicate, sealed files included, is resolved and typed in its runtime scope (module items, builtins, its binders); an unbound name, a non-bool predicate or a frame escape is E1211 at check instead of an interpreter panic; a struct-field refinement binds its own field name (M3820-M3823, M3827, M3838). |
+| 8dfec4f0 | cs/cap merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| b219df46 | cs/type merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 327d5ead | checker soundness | borrow integration CS-6 x CS-4: a branch ending in `exit(&mut ..)` reaches a user `fn exit` (CS-4), which returns, so its moves count again after the if; a move before the builtin exit still does not (M3819). Also g01 row bookkeeping (M3817, STALE records). |
+| ded8b575 | checker soundness | resolver/checker/interp CS-2 (NH-1 a): `@[verify]` predicates are resolved and typed in their runtime scope (the fn's params plus the return shape's binders); an unknown or unbound name, a non-bool or ill-typed predicate is E1103 at check instead of a run panic; the interpreter evaluates composite predicates in the call env (M3824-M3826, M3837). |
+| be173dac | capability surface | effects/capabilities CAP-1 (Q1 a2): a `@[verify]` predicate may only read the clock; any other effect it reaches (a write, a sleep, a native call, a call nothing classifies), directly or through helpers and refinement-typed params, is E1104; its Time counts in the fn's row and seeds callers' inference, so a closed row is E1310 (M3800-M3802, M3808, M3809). |
+| 026d424d | checker soundness | interp/checker/codegen CS-3: `@[verify]` is enforced or refused, never silently skipped: a predicate on a param takes the composite path (exit 3 on violation); a verify on a return the runtime cannot check is E1103; native codegen lowers composite/param predicates like refinement predicates or refuses with E0910 (M3828-M3830). |
+| 84917e53 | cs/type merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 9e998287 | cs/type merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| fbc365d3 | checker soundness | infer integration fix: refinement chains are flattened once at the end of collect_sigs pass 1, so resolve_ast_type takes one hop per refinement name; CS-1 types every refinement predicate's `_`, which made a chain of N refinements N^2 hops (debug wasm refine 50000 timed out). A chain into a cycle is left as is and still resolves to Deferred. |
+| 864d500c | capability surface | merge cs/cap into cs/int: error.rs registers E1103 (CS-2) and E1104 (CAP-1) side by side, in code order, in the const list, the description table and ALL_CODES; no other src change beyond the two branches. |
+| 315 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -558,7 +578,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 470 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3251, M3253-M3259, M3267-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 499 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3809, M3817, M3819-M3839
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
