@@ -524,6 +524,54 @@ impl InferCtx {
         false
     }
 
+    /// Point every refinement at the end of its chain, once (each link is
+    /// visited once in total), so [`Self::resolve_ast_type`] takes one hop per
+    /// name instead of re-walking the chain on every call: resolving each of
+    /// `N` chained refinements (CS-1 types every refinement predicate's `_`)
+    /// was `N²` hops, and a 50,000-link chain timed out the debug wasm check.
+    /// The end is where the walk in `resolve_ast_type` stops: a builtin name,
+    /// a name that is not a refinement, or a non-name type. A chain that runs
+    /// into a cycle keeps its entries, so it still resolves to `Deferred`
+    /// exactly as the walk decides.
+    fn flatten_refinement_chains(&mut self) {
+        // `None`: the chain runs into a cycle; leave it alone.
+        let mut end: HashMap<String, Option<AxonType>> =
+            HashMap::with_capacity(self.refinement_base.len());
+        for start in self.refinement_base.keys() {
+            if end.contains_key(start) {
+                continue;
+            }
+            let mut path: Vec<&str> = Vec::new();
+            let mut on_path: HashSet<&str> = HashSet::new();
+            let mut cur = start.as_str();
+            let terminal = loop {
+                if let Some(t) = end.get(cur) {
+                    break t.clone();
+                }
+                if !on_path.insert(cur) {
+                    break None;
+                }
+                path.push(cur);
+                match &self.refinement_base[cur] {
+                    AxonType::Named(n)
+                        if Type::from_name(n).is_none() && self.refinement_base.contains_key(n) =>
+                    {
+                        cur = n.as_str();
+                    }
+                    base => break Some(base.clone()),
+                }
+            };
+            for p in path {
+                end.insert(p.to_string(), terminal.clone());
+            }
+        }
+        for (name, t) in end {
+            if let Some(t) = t {
+                self.refinement_base.insert(name, t);
+            }
+        }
+    }
+
     /// Convert an AST `AxonType` to a semantic `Type`.
     pub fn resolve_ast_type(&self, ast_ty: &AxonType) -> Type {
         // Phase 5: a named refinement is transparent — resolve to its base type.
@@ -665,6 +713,7 @@ impl InferCtx {
                 _ => {}
             }
         }
+        self.flatten_refinement_chains();
 
         // Pass 2: resolve all field types now that all names are known.
         for item in &program.items {
