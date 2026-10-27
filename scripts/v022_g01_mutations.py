@@ -11904,5 +11904,29 @@ MUTATIONS += [
      'axon-core', '--test integration_fixtures', 'verify_composite_predicate_is_enforced_or_refused_natively'),
 ]
 
+# Capability-surface lane, CAP-1 (Q1 a2: a verify predicate may only read the clock; ids M3800-M3802, M3808-M3809)
+MUTATIONS += [
+    ('M3800', 'CAP-1 E1104: the per-call E1104 check of a verify predicate admits everything (a predicate that writes a file passes)', 'crates/axon-core/src/effects.rs',
+     '        if let Some(what) = verify_predicate_offence(name) {',
+     '        if let Some(what) = None::<String>.filter(|_| !name.is_empty()) {',
+     'axon-core', '--lib', 'effects::tests::verify_predicate_write_is_e1104'),
+    ('M3801', 'CAP-1 E1104: sleep_ms is admitted in a verify predicate like a clock read (it carries the same Time row)', 'crates/axon-core/src/effects.rs',
+     '        if name != "sleep_ms" && !labelled && row.iter().all(|e| *e == "Time") {',
+     '        if !labelled && row.iter().all(|e| *e == "Time") {',
+     'axon-core', '--lib', 'effects::tests::verify_predicate_sleep_is_e1104'),
+    ('M3802', 'CAP-1 E1104: the predicate walk follows no type hooks (a write behind a refinement-typed helper parameter is unseen)', 'crates/axon-core/src/capabilities.rs',
+     '            hooks: TypeHooks::of(program),',
+     '            hooks: TypeHooks {\n                refines: Default::default(),\n                structs: Default::default(),\n            },',
+     'axon-core', '--lib', 'effects::tests::verify_predicate_write_through_a_refinement_typed_helper_is_e1104'),
+    ('M3808', 'CAP-1 E1310: a closed-row fn is not checked against what its verify predicate does (a clock read under `| {}` passes)', 'crates/axon-core/src/effects.rs',
+     '    if let Allowed::Set(_) = allowed {',
+     '    if let (Allowed::Set(_), true) = (allowed, false) {',
+     'axon-core', '--lib', 'effects::tests::a_time_read_in_a_closed_row_predicate_is_e1310'),
+    ('M3809', 'CAP-1 E1310: infer_effects does not seed a fn with its verify predicate\'s effects (a closed-row caller inherits nothing)', 'crates/axon-core/src/effects.rs',
+     '            .extend(row_effects(reach).map(str::to_string));',
+     '            .extend(row_effects(reach).map(str::to_string).take(0));',
+     'axon-core', '--lib', 'effects::tests::a_callers_closed_row_inherits_a_predicates_time_read_e1310'),
+]
+
 if __name__ == "__main__":
     main()

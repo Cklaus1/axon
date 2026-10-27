@@ -44,7 +44,7 @@
 //! diagnostics; codegen and the interpreter ignore rows entirely.
 
 use crate::ast::{Expr, Item, Program};
-use crate::error::E1310;
+use crate::error::{E1104, E1310};
 use crate::span::Span;
 use std::collections::{HashMap, HashSet};
 
@@ -111,6 +111,11 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
         open.insert(f.name.clone(), is_open);
     }
 
+    // CAP-1: what each `@[verify]` predicate reaches when its fn returns —
+    // the reach walker's own traversal (helpers, refinement hooks, methods,
+    // native and turbofish calls), not this module's body walk.
+    let verify = crate::capabilities::verify_predicate_reaches(program);
+
     // INFERRED effects per fn: the transitive closure of effects a call to it
     // actually performs — its body's direct builtin effects ∪ the inferred
     // effects of every fn it calls. This closes the transitive-laundering hole:
@@ -119,7 +124,7 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
     // though its DECLARED row is empty/open. A fn's OWN declared row does not cap
     // its inferred set (we infer what it does, then separately check that
     // against what it declared). Computed to a fixpoint over the call graph.
-    let inferred = infer_effects(program);
+    let inferred = infer_effects(program, &verify);
 
     // E03 (higher-order): which params each fn invokes as a callback, so a call
     // site forwarding a concrete effectful fn into that slot flows its effects to
@@ -127,20 +132,12 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
     let invoked = invoked_param_indices(program);
 
     let mut errors = Vec::new();
+    for (f, reach) in &verify {
+        let allowed = allowed_of(f, &declared, &open);
+        check_verify_predicate(f, reach, &allowed, &mut errors);
+    }
     for f in all_fn_defs(program) {
-        // The caller's allowed effects. Three ways to be Open (unconstrained):
-        //   1. no row clause at all (migration window — opt-in; see module docs),
-        //   2. `main` (the top-level escape hatch — admits everything),
-        //   3. an open row variable `...e`.
-        // Otherwise the caller is held to its declared concrete set.
-        let is_open = f.effect_row.is_none()
-            || f.name == "main"
-            || open.get(&f.name).copied().unwrap_or(false);
-        let allowed = if is_open {
-            Allowed::Open
-        } else {
-            Allowed::Set(declared.get(&f.name).cloned().unwrap_or_default())
-        };
+        let allowed = allowed_of(f, &declared, &open);
 
         // Consistency: a `@[contained(...)]` spec GRANTS capabilities that imply
         // effects (net→Net, fs/exec→IO — the §4 bridge). If the fn ALSO declares
@@ -184,6 +181,113 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
     errors
 }
 
+/// The caller's allowed effects. Three ways to be Open (unconstrained):
+/// 1. no row clause at all (migration window — opt-in; see module docs),
+/// 2. `main` (the top-level escape hatch — admits everything),
+/// 3. an open row variable `...e`.
+///
+/// Otherwise the caller is held to its declared concrete set.
+fn allowed_of(
+    f: &crate::ast::FnDef,
+    declared: &HashMap<String, HashSet<String>>,
+    open: &HashMap<String, bool>,
+) -> Allowed {
+    let is_open =
+        f.effect_row.is_none() || f.name == "main" || open.get(&f.name).copied().unwrap_or(false);
+    if is_open {
+        Allowed::Open
+    } else {
+        Allowed::Set(declared.get(&f.name).cloned().unwrap_or_default())
+    }
+}
+
+/// The effect-row effects in a reach: `Exec` is the capability split of
+/// `IO` (`Reach::note`), not a row effect — `IO` is already there with it.
+fn row_effects(reach: &crate::capabilities::Reach) -> impl Iterator<Item = &str> {
+    reach
+        .effects
+        .iter()
+        .map(String::as_str)
+        .filter(|e| *e != "Exec")
+}
+
+/// CAP-1 (Q1 a2): what a call reached from a `@[verify]` predicate performs
+/// beyond reading the clock, or `None` for a clock read (`now_ms`, `now_ns`,
+/// `temporal_now`, `temporal_new`, `temporal_is_valid`). `sleep_ms` carries
+/// the same `Time` row but waits, so it is refused; so is any native call
+/// and any builtin with a host capability.
+fn verify_predicate_offence(name: &str) -> Option<String> {
+    let effects: Vec<String> = if let Some((m, _f)) = crate::native::resolve_call(name) {
+        m.effects.iter().map(|e| e.to_string()).collect()
+    } else {
+        let row = crate::builtins::builtin_effect_row(effect_row_name(name));
+        let labelled = crate::capabilities::classify_call_paths(name).is_some();
+        if name != "sleep_ms" && !labelled && row.iter().all(|e| *e == "Time") {
+            return None;
+        }
+        row.iter().map(|e| e.to_string()).collect()
+    };
+    Some(if effects.is_empty() {
+        "a host capability".to_string()
+    } else {
+        format!("effect `{}`", effects.join(", "))
+    })
+}
+
+/// CAP-1: E1104 for every call a `@[verify]` predicate reaches that does more
+/// than read the clock (and one for a call nothing can classify), whatever
+/// `f`'s row; then E1310 when `f`'s row is closed and does not admit what
+/// the predicate does (a clock read is `Time`).
+fn check_verify_predicate(
+    f: &crate::ast::FnDef,
+    reach: &crate::capabilities::Reach,
+    allowed: &Allowed,
+    errors: &mut Vec<EffectError>,
+) {
+    let span = f.verify.as_ref().map_or_else(Span::dummy, |v| v.span);
+    const ONLY_CLOCK: &str =
+        "a postcondition may only read the clock (reads advance a virtual `AXON_CLOCK`)";
+    for name in &reach.builtins {
+        if let Some(what) = verify_predicate_offence(name) {
+            errors.push(EffectError {
+                code: E1104,
+                message: format!(
+                    "`@[verify]` predicate of `{}` reaches `{name}` ({what}) — {ONLY_CLOCK}",
+                    f.name
+                ),
+                span,
+            });
+        }
+    }
+    if reach.unknown {
+        errors.push(EffectError {
+            code: E1104,
+            message: format!(
+                "`@[verify]` predicate of `{}` reaches a call nothing can classify (a function \
+                 named at runtime, or inline assembly) — {ONLY_CLOCK}",
+                f.name
+            ),
+            span,
+        });
+    }
+    if let Allowed::Set(_) = allowed {
+        for eff in row_effects(reach) {
+            if !allowed.admits(eff) {
+                errors.push(EffectError {
+                    code: E1310,
+                    message: format!(
+                        "`@[verify]` predicate of `{}` performs effect `{eff}` when `{}` returns, \
+                         but `{}`'s declared effect row does not include `{eff}` (add `{eff}` to \
+                         the row)",
+                        f.name, f.name, f.name
+                    ),
+                    span,
+                });
+            }
+        }
+    }
+}
+
 /// `--effects-strict` mode: emit E1316 deprecation notices for every function
 /// annotated with `@[contained(...)]`. Phase 4's `@[contained]` attribute is
 /// superseded by the Phase-6 effect-row syntax `fn f() -> T | {IO, Net}`;
@@ -222,12 +326,15 @@ pub fn check_contained_strict(program: &Program) -> Vec<EffectError> {
 /// (recursion converges because sets only grow and the effect universe is
 /// finite). This is what subsumption is checked against — not the declared row —
 /// so an effect cannot be laundered through an un-annotated intermediary.
-fn infer_effects(program: &Program) -> HashMap<String, HashSet<String>> {
+fn infer_effects(
+    program: &Program,
+    verify: &[(&crate::ast::FnDef, crate::capabilities::Reach)],
+) -> HashMap<String, HashSet<String>> {
     let fns: Vec<&crate::ast::FnDef> = all_fn_defs(program);
     // Seed each fn with its DECLARED concrete effects: a declared row is a
     // promise the fn may perform those effects (e.g. a `| {Net}` stub whose body
     // is still `{ 0 }`), so callers must honour them even before the body does.
-    let seed: HashMap<String, HashSet<String>> = fns
+    let mut seed: HashMap<String, HashSet<String>> = fns
         .iter()
         .map(|f| {
             let mut seed: HashSet<String> = f
@@ -247,6 +354,14 @@ fn infer_effects(program: &Program) -> HashMap<String, HashSet<String>> {
             (f.name.clone(), seed)
         })
         .collect();
+    // CAP-1: a fn's `@[verify]` predicate runs whenever the fn returns, so
+    // what it reaches (after E1104, a clock read: `Time`) is an effect of a
+    // call to the fn, and its callers inherit it.
+    for (f, reach) in verify {
+        seed.entry(f.name.clone())
+            .or_default()
+            .extend(row_effects(reach).map(str::to_string));
+    }
     // R13: native `M::fn` calls contribute module `M`'s effects.
     propagate_effects(&fns, seed, true)
 }
@@ -1825,6 +1940,135 @@ mod tests {
             e1310_effects(&errs, "g"),
             ["AI", "Net"],
             "ATTACK: a closed-row caller inherited nothing from a helper's ai_extract::<T>: {errs:?}"
+        );
+    }
+
+    /// The E1104s `errs` reports, as their messages.
+    fn e1104s(errs: &[EffectError]) -> Vec<&str> {
+        errs.iter()
+            .filter(|e| e.code == E1104)
+            .map(|e| e.message.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn verify_predicate_write_is_e1104() {
+        // CAP-1 (Q1 a2): a postcondition may read the clock and nothing
+        // else. `verify_match` shape: the write sits in the predicate itself
+        // and the fn has no row, so nothing else looks at it.
+        let errs = check(
+            "@[verify(match write_file(\"/nonexistent/v\", \"x\") { Ok(_) => value > 0  \
+             Err(_) => false })]\nfn f(n: i64) -> i64 {\n    n\n}\nfn main() -> i64 {\n    f(1)\n}\n",
+        );
+        let refused = e1104s(&errs);
+        assert!(
+            refused
+                .iter()
+                .any(|m| m.contains("`f`") && m.contains("`write_file`")),
+            "ATTACK: verify_match: a verify predicate that writes a file passed: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn verify_predicate_write_through_a_refinement_typed_helper_is_e1104() {
+        // `vrl` shape: the predicate calls a pure-looking `| {}` helper whose
+        // call binds a refinement-typed parameter; the refinement's predicate
+        // writes. Only the reach walker's type hooks see it.
+        let errs = check(
+            "fn leak(n: i64) -> bool { match write_file(\"/nonexistent/v\", \"x\") { Ok(_) => true  \
+             Err(_) => false } }\ntype W = i64 where leak(_)\nfn h(n: W) -> bool { true }\n\
+             fn g(n: i64) -> bool | {} { h(n) }\n@[verify(g(value))]\nfn f(n: i64) -> i64 | {} { n }\n\
+             fn main() -> i64 { f(1) }\n",
+        );
+        let refused = e1104s(&errs);
+        assert!(
+            refused.iter().any(|m| m.contains("`f`") && m.contains("`write_file`")),
+            "ATTACK: vrl: a verify predicate reached a write through a refinement-typed helper: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn verify_predicate_sleep_is_e1104() {
+        // `sleep_ms` carries `Time` like a clock read, but it waits: it is not
+        // a read, so a postcondition may not call it (open-row fn).
+        let errs = check(
+            "@[verify(value > 0 && sleep_ms(1) == 0)]\nfn f(n: i64) -> i64 {\n    n\n}\n\
+             fn main() -> i64 {\n    f(1)\n}\n",
+        );
+        let refused = e1104s(&errs);
+        assert!(
+            refused
+                .iter()
+                .any(|m| m.contains("`f`") && m.contains("`sleep_ms`")),
+            "ATTACK: verify_sleep: a verify predicate that sleeps passed: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn verify_predicate_dynamic_dispatch_is_e1104() {
+        // A fn named at runtime: nothing can say what it reaches, so the
+        // walk sets `unknown` and the predicate is refused.
+        let errs = check(
+            "fn w(n: i64) -> i64 {\n    n\n}\n\
+             @[verify(scheduler_spawn(str_trim(\" w \"), 0) == 0)]\nfn f(n: i64) -> i64 {\n    n\n}\n\
+             fn main() -> i64 {\n    f(1)\n}\n",
+        );
+        let refused = e1104s(&errs);
+        assert!(
+            refused
+                .iter()
+                .any(|m| m.contains("`f`") && m.contains("nothing can classify")),
+            "ATTACK: verify_dynamic: a verify predicate with a runtime-named callee passed: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_time_read_in_a_closed_row_predicate_is_e1310() {
+        // `time_row` shape: the clock read is admitted (no E1104), but it is
+        // an effect the fn performs when it returns, so a `| {}` row is wrong.
+        let errs = check(
+            "@[verify(value >= 0 && now_ms() > 0)]\nfn f(n: i64) -> i64 | {} { n }\n\
+             fn main() -> i64 { f(1) }\n",
+        );
+        assert!(
+            e1104s(&errs).is_empty(),
+            "a clock read is admitted: {errs:?}"
+        );
+        assert!(
+            errs.iter().any(|e| e.code == E1310
+                && e.message.contains("predicate of `f`")
+                && e.message.contains("effect `Time`")),
+            "ATTACK: time_row: a closed-row fn's verify predicate read the clock without E1310: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_callers_closed_row_inherits_a_predicates_time_read_e1310() {
+        // `f` has no row (open), so it is not checked itself and declares
+        // nothing; its predicate's `Time` must still reach the `| {}` caller.
+        let errs = check(
+            "@[verify(value >= 0 && now_ms() > 0)]\nfn f(n: i64) -> i64 { n }\n\
+             fn g(n: i64) -> i64 | {} { f(n) }\nfn main() -> i64 { g(1) }\n",
+        );
+        assert!(
+            errs.iter().any(|e| e.code == E1310
+                && e.message.contains("`g` calls `f`")
+                && e.message.contains("effect `Time`")),
+            "ATTACK: time_caller: a closed-row caller inherited nothing from a callee's verify predicate: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_time_read_in_an_open_row_predicate_is_admitted() {
+        // Guard (Q1 a2): reading the clock is the one thing a postcondition
+        // may do; an open-row fn and its open-row caller are clean.
+        let errs = check(
+            "@[verify(value >= 0 && now_ms() > 0 && now_ns() > 0)]\nfn f(n: i64) -> i64 { n }\n\
+             fn g(n: i64) -> i64 { f(n) }\nfn main() -> i64 { g(1) }\n",
+        );
+        assert!(
+            errs.is_empty(),
+            "a clock read in a predicate is admitted: {errs:?}"
         );
     }
 }

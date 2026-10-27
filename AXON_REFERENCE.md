@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 27 CLI verbs, 344 builtins, 24 attributes, 147 diagnostic codes (134 live, 13 reserved), 67 environment variables.
+The complete surface of this build — 27 CLI verbs, 344 builtins, 24 attributes, 151 diagnostic codes (138 live, 13 reserved), 67 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -144,7 +144,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEE_ENCLAVE` | R24 TEE: set to 1 by the gramine-direct manifest to signal the workload is executing inside an enclave; this is what makes `tee_in_enclave()` return true. Read through the host seam, so it is recorded and replayed |
 | `AXON_TEE_MEASUREMENT` | R24 TEE: the simulated enclave launch measurement returned by `tee_attest_measurement()` when set, a stub otherwise. A genuine hardware-rooted quote comes only from confidential hardware. Read through the host seam |
 
-## Diagnostic codes (147, of which 134 live)
+## Diagnostic codes (151, of which 138 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -157,6 +157,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0002` | the name is defined more than once in this module |
 | `E0003` | module not found on AXON_PATH |
 | `E0004` | a sealed module (`axon test --seal`, the candidate under test) used a name the rest of the program defines |
+| `E0005` | a type definition reuses a builtin type name (`Unit`, `str`, `Option`, …) |
 | `E0301` | type-check failure with no more-specific code |
 | `E0302` | a `Result` returned by a call is unused — warns by default, error under AXON_STRICT |
 | `E0303` | type-check rule violation (Phase-1 R03) |
@@ -216,6 +217,8 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E1005` | R45: an un-granted capability is reached from an entry point under `--require-contained`; distinct from E1001, which means a grant EXISTS and was exceeded |
 | `E1101` | verify bound not satisfied (runtime gate) |
 | `E1102` | verify bound statically VIOLABLE — SMT counterexample (R9) |
+| `E1103` | a `@[verify]` predicate names a name not in scope there, is ill-typed or not `bool`, has a param named like one of its binders, or contains `return`/`break`/`continue` |
+| `E1104` | a `@[verify]` predicate reaches an effect other than a clock read (`now_ms`, `now_ns`, `temporal_now`, `temporal_new`, `temporal_is_valid`): a write, a sleep, a native call, or a call nothing can classify |
 | `E1201` | on-disk module bytes ≠ axon.lock hash (tamper) |
 | `E1202` | use with no lockfile entry under --locked |
 | `E1203` | import declares capabilities beyond the importer's grant |
@@ -226,6 +229,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E1208` | a @[total] function has no strictly-decreasing measure at a recursive call (Phase 5 §3) |
 | `E1209` | a constant argument provably violates a refinement-type predicate (Phase 5 §1 R02) |
 | `E1210` | a `sql_query` template is not a string literal — user data must be a bound parameter, never concatenated SQL (injection) |
+| `E1211` | a refinement predicate names a name not in scope there, is ill-typed or not `bool`, or contains `return`/`break`/`continue` |
 | `E1300` | ai_* call unreachable and no @[ai(policy(fallback))] in scope |
 | `E1301` | ai_complete exceeded the fn's @[ai(policy(budget: N))] (R3c) |
 | `E1302` | tier: resolves to a tier with no host-configured model |

@@ -41065,3 +41065,41 @@ fn check_clean_fixtures_never_panic_internally() {
         panics.join("\n")
     );
 }
+
+/// CAP-1 (Q1 a2): a `@[verify]` predicate may read the clock and nothing else.
+/// `verify_launder` shape: the write hides in a helper the predicate calls,
+/// on a fn with no effect row. Before: check 0, and the run wrote the file
+/// when `f` returned.
+#[test]
+fn an_effectful_verify_predicate_is_refused_e1104() {
+    let d = std::env::temp_dir().join(format!("axon_cap1_vl_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let mark = d.join("written.txt");
+    let src = format!(
+        "fn leak(n: i64) -> bool {{\n    match write_file(\"{}\", \"x\") {{\n        Ok(_) => true\n        Err(_) => false\n    }}\n}}\n\
+         @[verify(leak(value))]\nfn f(n: i64) -> i64 {{\n    n\n}}\n\nfn main() -> i64 {{\n    f(1)\n}}\n",
+        mark.display()
+    );
+    let p = d.join("p.ax");
+    std::fs::write(&p, src).unwrap();
+    let c = axon().arg("check").arg(&p).output().unwrap();
+    let cmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&c.stdout),
+        String::from_utf8_lossy(&c.stderr)
+    );
+    let r = axon().arg("run").arg(&p).output().unwrap();
+    let written = mark.exists();
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(
+        c.status.code() == Some(2) && cmsg.contains("E1104") && cmsg.contains("`write_file`"),
+        "ATTACK: verify_launder: a verify predicate that writes through a helper passed check (rc {:?}): {cmsg}",
+        c.status.code()
+    );
+    assert!(
+        !written,
+        "ATTACK: verify_launder: `axon run` wrote the file from a verify predicate (rc {:?})",
+        r.status.code()
+    );
+}

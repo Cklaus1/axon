@@ -410,10 +410,13 @@ fn act(price: Temporal<f64>) -> Order { … }
 ```
 
 `now_ms` is impure and therefore *not* admitted in `@[pure]` predicates — but `@[verify]`
-predicates may reference a small set of *side-effect-free reads* (`now_ms`, `env_var`)
-because the runtime check is the fallback, not the source of truth. The checker translates
-these to fresh SMT constants; predicates that depend on them remain `unknown` and fall
-through to the runtime check, which is the correct behavior.
+predicates may read the clock (`now_ms`, `now_ns`, `temporal_now`, `temporal_new`,
+`temporal_is_valid`) and nothing else: any other effect a predicate reaches, directly or
+through a helper or a refinement it binds (a write, `env_var`, `sleep_ms`, a native call, a
+callee named at runtime), is E1104, and a clock read counts as `Time` in the fn's effect row
+and its callers' (E1310 on a closed row). The checker translates clock reads to fresh SMT
+constants; predicates that depend on them remain `unknown` and fall through to the runtime
+check, which is the correct behavior.
 
 ---
 

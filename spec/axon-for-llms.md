@@ -240,7 +240,8 @@ These are why an LLM would target Axon specifically. Annotations attach to funct
 @[adaptive]
 fn tune(threshold: i64) -> i64 { /* return a score */ threshold * 2 }
 
-// Runtime-checked postcondition on the scalar return value.
+// Runtime-checked postcondition on the scalar return value. A `@[verify]`
+// predicate may only read the clock: any other effect is refused (E1104).
 @[verify(value >= 0)]
 fn clamp_nonneg(x: i64) -> i64 { max_i64(x, 0) }
 ```
