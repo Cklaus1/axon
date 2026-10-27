@@ -8,7 +8,7 @@
 //!   * the @[agent] action log — an @[agent] fn that read, copied and renamed
 //!     a file produced ONE row (the read) while `moved.txt` existed on disk,
 //!     in the log R4 Section 4.3 calls un-opt-out-able;
-//!   * `collect_caps_expr`, hence `program_capabilities` — an imported module
+//!   * `collect_caps_expr` (since CAP-2, the shared `program_reach` walk), hence `program_capabilities` — an imported module
 //!     calling `write_file` is E1203 against a contained importer, while the
 //!     same module calling `file_copy` (strictly MORE authority) passed with
 //!     exit 0. That set also feeds the module audit verdict and R10's G2
