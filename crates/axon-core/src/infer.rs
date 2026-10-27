@@ -314,6 +314,66 @@ fn parse_type_str(s: &str) -> Type {
     Type::Deferred(s.to_string())
 }
 
+/// Collect the distinct type-variable names a builtin signature mentions, in
+/// first-appearance order. Empty when the signature is not generic.
+///
+/// A builtin sig's `T`/`U`/`V` is a TYPE VARIABLE, but `parse_type_str` has no
+/// arm for one, so it lands as `Deferred(name)` — and `unify` passes `Deferred`
+/// through against ANY partner without error. Left that way a generic slot is a
+/// permanent wildcard: it absorbs every constraint that touches it instead of
+/// being fixed by one and checked against the rest.
+fn builtin_type_param_names(params: &[Type], ret: &Type) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in params {
+        collect_type_var_names(p, &mut out);
+    }
+    collect_type_var_names(ret, &mut out);
+    out
+}
+
+fn collect_type_var_names(t: &Type, out: &mut Vec<String>) {
+    match t {
+        Type::Deferred(n) if crate::checker::is_builtin_type_param_name(n) => {
+            if !out.iter().any(|e| e == n) {
+                out.push(n.clone());
+            }
+        }
+        Type::Slice(i)
+        | Type::Option(i)
+        | Type::Chan(i)
+        | Type::Uncertain(i)
+        | Type::Temporal(i) => collect_type_var_names(i, out),
+        Type::Result(a, b) => {
+            collect_type_var_names(a, out);
+            collect_type_var_names(b, out);
+        }
+        Type::Tuple(ts) => {
+            for t in ts {
+                collect_type_var_names(t, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Rewrite every `Deferred(n)` where `n` is one of `names` into `TypeParam(n)`,
+/// structurally. Other `Deferred`s (opaque types like `Dict`, and `fn(...)`
+/// closure slots) are left alone.
+fn promote_type_params(t: &Type, names: &[String]) -> Type {
+    let rec = |i: &Type| Box::new(promote_type_params(i, names));
+    match t {
+        Type::Deferred(n) if names.iter().any(|e| e == n) => Type::TypeParam(n.clone()),
+        Type::Slice(i) => Type::Slice(rec(i)),
+        Type::Option(i) => Type::Option(rec(i)),
+        Type::Chan(i) => Type::Chan(rec(i)),
+        Type::Uncertain(i) => Type::Uncertain(rec(i)),
+        Type::Temporal(i) => Type::Temporal(rec(i)),
+        Type::Result(a, b) => Type::Result(rec(a), rec(b)),
+        Type::Tuple(ts) => Type::Tuple(ts.iter().map(|e| promote_type_params(e, names)).collect()),
+        other => other.clone(),
+    }
+}
+
 fn strip_wrap<'a>(s: &'a str, prefix: &str, suffix: &str) -> Option<&'a str> {
     s.strip_prefix(prefix)?.strip_suffix(suffix)
 }
@@ -345,8 +405,13 @@ pub struct InferCtx {
     /// call-site sig when `call_prefers_builtin` is false (a `&mut` call), and
     /// the fn's own param types for borrow checking and the LSP.
     pub user_fn_sigs: HashMap<String, FnSig>,
-    /// Type parameter names for generic functions (fn_name → [param_names]).
+    /// Type parameter names for generic user functions (fn_name → [param_names]).
     pub generic_fn_params: HashMap<String, Vec<String>>,
+    /// Type-variable slot names of each generic BUILTIN (`T`, `V`, ...), kept
+    /// apart from `generic_fn_params`: a user fn may share a builtin's name
+    /// (CS-4), and the names a call instantiates must come from the sig that
+    /// call actually reaches.
+    builtin_generic_params: HashMap<String, Vec<String>>,
     /// Recorded call-site instantiations (fn_name → Vec<concrete Type args>).
     /// Populated during infer; consumed by the mono pass.
     pub call_instantiations: Vec<(String, Vec<Type>)>,
@@ -443,6 +508,7 @@ impl InferCtx {
             fn_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
             generic_fn_params: HashMap::new(),
+            builtin_generic_params: HashMap::new(),
             call_instantiations: Vec::new(),
             len_obligations: Vec::new(),
             struct_fields: HashMap::new(),
@@ -459,13 +525,28 @@ impl InferCtx {
             predicate_int_operands: None,
         };
         for (name, sig) in builtin_sigs() {
-            ctx.fn_sigs.insert(
-                name,
-                FnSig {
-                    params: sig.params.iter().map(|s| parse_type_str(s)).collect(),
-                    ret: parse_type_str(&sig.ret),
-                },
-            );
+            let params: Vec<Type> = sig.params.iter().map(|s| parse_type_str(s)).collect();
+            let ret = parse_type_str(&sig.ret);
+            // Promote type-variable slots to `TypeParam` and register the builtin
+            // as generic, so each CALL SITE instantiates fresh `Var`s via
+            // `instantiate_sig` — vars that unify once and then stay bound, rather
+            // than `Deferred` wildcards that silently swallow a mismatch.
+            let tp_names = builtin_type_param_names(&params, &ret);
+            let (params, ret) = if tp_names.is_empty() {
+                (params, ret)
+            } else {
+                (
+                    params
+                        .iter()
+                        .map(|t| promote_type_params(t, &tp_names))
+                        .collect(),
+                    promote_type_params(&ret, &tp_names),
+                )
+            };
+            if !tp_names.is_empty() {
+                ctx.builtin_generic_params.insert(name.clone(), tp_names);
+            }
+            ctx.fn_sigs.insert(name, FnSig { params, ret });
         }
         ctx
     }
@@ -1261,23 +1342,35 @@ impl InferCtx {
                         &name,
                         crate::builtins::call_has_mut_arg(args),
                     );
-                    let sig = if prefers_builtin {
-                        self.fn_sigs.get(&name)
+                    let user_sig = if prefers_builtin {
+                        None
                     } else {
-                        self.user_fn_sigs
-                            .get(&name)
-                            .or_else(|| self.fn_sigs.get(&name))
+                        self.user_fn_sigs.get(&name)
                     };
-                    if let Some(sig) = sig.cloned() {
-                        // For generic functions: instantiate with fresh type vars per call site.
-                        let param_names = if prefers_builtin {
-                            Vec::new()
-                        } else {
+                    // For generic functions: instantiate with fresh type vars per
+                    // call site, using the type-param names of the sig reached.
+                    // `generic_fn_params` keys are top-level user fns, all of
+                    // which are in `user_fn_sigs`; any other `fn_sigs` entry
+                    // takes the builtin's names (none for a non-builtin).
+                    let (sig, param_names, reaches_builtin) = match user_sig {
+                        Some(s) => (
+                            Some(s.clone()),
                             self.generic_fn_params
                                 .get(&name)
                                 .cloned()
-                                .unwrap_or_default()
-                        };
+                                .unwrap_or_default(),
+                            false,
+                        ),
+                        None => (
+                            self.fn_sigs.get(&name).cloned(),
+                            self.builtin_generic_params
+                                .get(&name)
+                                .cloned()
+                                .unwrap_or_default(),
+                            self.builtin_generic_params.contains_key(&name),
+                        ),
+                    };
+                    if let Some(sig) = sig {
                         let (inst_sig, var_map) = if !param_names.is_empty() {
                             self.instantiate_sig(&sig, &param_names)
                         } else {
@@ -1310,7 +1403,15 @@ impl InferCtx {
                         }
                         let ret = inst_sig.ret.clone();
                         // Record instantiation for the mono pass (resolved later).
-                        if !var_map.is_empty() {
+                        //
+                        // BUILTINS are excluded. Their type-variable slots are
+                        // instantiated above so inference binds `T` once and
+                        // checks it against the rest -- but there is no AST body
+                        // to specialize, so queueing one makes the mono pass emit
+                        // a stub that shadows the real extern. That is how a
+                        // native `dict_set` silently stored nothing while the
+                        // interpreter stored 20.
+                        if !var_map.is_empty() && !reaches_builtin {
                             let var_ids: Vec<u32> = param_names
                                 .iter()
                                 .filter_map(|n| var_map.get(n).copied())
@@ -2135,18 +2236,32 @@ impl InferCtx {
             self.next_var += 1;
             var_map.insert(name.clone(), var_id);
         }
-        let subst_ty = |ty: &Type| -> Type {
+        // Substitution must be STRUCTURAL, not top-level-only: a param typed
+        // `[T]`, `(str, V)`, `Option<T>` or `fn(T) -> U` carries its type
+        // variable *inside* a wrapper. A top-level-only match leaves those
+        // nested `TypeParam`s uninstantiated, and they then reach `unify` as
+        // themselves — reported literally as `expected T`, or silently ignored.
+        fn subst_ty(ty: &Type, var_map: &HashMap<String, u32>) -> Type {
+            let rec = |i: &Type| Box::new(subst_ty(i, var_map));
             match ty {
-                Type::TypeParam(n) => {
-                    if let Some(&var_id) = var_map.get(n) {
-                        Type::Var(var_id)
-                    } else {
-                        ty.clone()
-                    }
+                Type::TypeParam(n) => match var_map.get(n) {
+                    Some(&var_id) => Type::Var(var_id),
+                    None => ty.clone(),
+                },
+                Type::Slice(i) => Type::Slice(rec(i)),
+                Type::Option(i) => Type::Option(rec(i)),
+                Type::Chan(i) => Type::Chan(rec(i)),
+                Type::Uncertain(i) => Type::Uncertain(rec(i)),
+                Type::Temporal(i) => Type::Temporal(rec(i)),
+                Type::Result(a, b) => Type::Result(rec(a), rec(b)),
+                Type::Tuple(ts) => Type::Tuple(ts.iter().map(|e| subst_ty(e, var_map)).collect()),
+                Type::Fn(ps, r) => {
+                    Type::Fn(ps.iter().map(|p| subst_ty(p, var_map)).collect(), rec(r))
                 }
-                _ => ty.clone(),
+                other => other.clone(),
             }
-        };
+        }
+        let subst_ty = |ty: &Type| -> Type { subst_ty(ty, &var_map) };
         let fresh_sig = FnSig {
             params: sig.params.iter().map(&subst_ty).collect(),
             ret: subst_ty(&sig.ret),
@@ -2389,6 +2504,138 @@ mod tests {
 
     fn ctx() -> (InferCtx, Scope) {
         (InferCtx::new("test"), Scope::new())
+    }
+
+    /// Type-check a whole source string, returning the inference errors.
+    fn infer_errors(src: &str) -> Vec<String> {
+        let program = crate::parse_source(src).expect("parses");
+        let mut ctx = InferCtx::new("test.ax");
+        ctx.infer_program(&program);
+        ctx.errors.iter().map(|e| e.message.clone()).collect()
+    }
+
+    /// A builtin's `T`/`U`/`V` slot must behave as a type VARIABLE — bound by
+    /// the call that supplies it, then checked everywhere else it appears.
+    ///
+    /// Regression: `parse_type_str` has no arm for a bare type variable, so
+    /// these landed as `Type::Deferred`, and `unify`'s
+    /// `(Deferred(_), _) | (_, Deferred(_)) => {}` arm passes `Deferred`
+    /// through against ANY partner. A generic slot was therefore a permanent
+    /// wildcard: it absorbed every constraint touching it. Found by an external
+    /// harness, which put a value through `dict_get_or` into a struct field of
+    /// an incompatible type and got no diagnostic at all — the program instead
+    /// died much later, inside `arr_sum_i64`, at a call site with nothing to do
+    /// A generic BUILTIN is instantiated for inference but must NOT be queued
+    /// for monomorphization -- it has no AST body to specialize.
+    ///
+    /// Queueing one made the mono pass emit a stub that shadowed the real
+    /// extern, and a native `dict_set` then silently stored nothing while the
+    /// interpreter stored the value. Nothing failed to compile; the two
+    /// backends just disagreed.
+    #[test]
+    fn a_generic_builtin_is_not_queued_for_monomorphization() {
+        let program = crate::parse_source(
+            "fn main() -> i64 { let d = dict_new()  dict_set(d, \"b\", 20)  dict_len(d) }",
+        )
+        .expect("parses");
+        let mut ctx = InferCtx::new("test.ax");
+        ctx.infer_program(&program);
+        let queued: Vec<&str> = ctx
+            .call_instantiations
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .collect();
+        assert!(
+            !queued.contains(&"dict_set"),
+            "a builtin must not reach the mono pass: {queued:?}"
+        );
+    }
+
+    /// A generic USER fn named like a generic builtin, reached because the
+    /// call passes `&mut` (CS-4), has a body to specialize and must still be
+    /// queued: the builtin exclusion keys on the sig the call reaches, not on
+    /// the name.
+    #[test]
+    fn a_generic_user_fn_shadowing_a_builtin_is_still_queued() {
+        let program = crate::parse_source(
+            "fn arr_reverse<T>(xs: &mut [T]) -> i64 { len(xs) }\n\
+             fn main() -> i64 { let mut a = [1, 2]  arr_reverse(&mut a) }",
+        )
+        .expect("parses");
+        let mut ctx = InferCtx::new("test.ax");
+        ctx.infer_program(&program);
+        let queued: Vec<&str> = ctx
+            .call_instantiations
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .collect();
+        assert!(
+            queued.contains(&"arr_reverse"),
+            "the user fn reached by the call must reach the mono pass: {queued:?}"
+        );
+    }
+
+    /// A builtin's `V` is bound by its argument: an `i64` default makes the
+    /// result `i64`, and putting it in a `[i64]` field must fail rather than
+    /// be absorbed by a wildcard slot.
+    #[test]
+    fn builtin_type_var_return_is_bound_by_its_argument() {
+        let src = r#"
+type RG = { region: str, amounts: [i64] }
+fn main() -> i64 {
+    let d = dict_from_pairs([("n", 7)])
+    let v = dict_get_or(d, "n", 0)
+    let x = RG { region: "n", amounts: v }
+    0
+}
+"#;
+        let errs = infer_errors(src);
+        assert!(
+            errs.iter().any(|e| e.contains("struct field")),
+            "an i64 flowing into a declared `[i64]` field must be caught; got {errs:?}"
+        );
+    }
+
+    /// The same slot must still ACCEPT a matching type — a fix that rejects
+    /// everything would pass the test above while breaking every real program.
+    #[test]
+    fn builtin_type_var_accepts_a_matching_argument() {
+        let src = r#"
+type RG = { region: str, amount: i64 }
+fn main() -> i64 {
+    let d = dict_from_pairs([("n", 7)])
+    let v = dict_get_or(d, "n", 0)
+    let x = RG { region: "n", amount: v }
+    0
+}
+"#;
+        assert!(
+            infer_errors(src).is_empty(),
+            "a matching i64 must type-check: {:?}",
+            infer_errors(src)
+        );
+    }
+
+    /// `instantiate_sig` substituted only at the TOP level, so a type variable
+    /// nested inside `[T]` / `(str, V)` / `Option<T>` escaped instantiation and
+    /// reached `unify` as itself — surfacing as the nonsense diagnostic
+    /// "expected T, found str" on correct code. Structural substitution fixes
+    /// it; this pins the shape that regressed.
+    #[test]
+    fn nested_type_vars_are_instantiated_not_leaked() {
+        let src = r#"
+fn main() -> i64 {
+    let d = dict_from_pairs([("a", 1), ("b", 2)])
+    let ks = dict_keys(d)
+    let ups = arr_map(&ks, |k| { str_to_upper(k) })
+    len(ups)
+}
+"#;
+        let errs = infer_errors(src);
+        assert!(
+            errs.is_empty(),
+            "nested type vars must instantiate, not leak: {errs:?}"
+        );
     }
 
     #[test]
