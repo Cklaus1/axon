@@ -403,11 +403,12 @@ EOF
   # signature — at the first `Option` past the limit, or the parenthesis
   # past it in a tuple element's `where` predicate. Native parses the first
   # and third (`ok`) and reports a syntax error at 1:16 for the second (the
-  # enum parse it rewinds to; checked below).
+  # enum parse it rewinds to; checked below). The tuple predicate is a
+  # parenthesised `true`: a refinement predicate must be bool (CS-1, E1211).
   tdef() { printf 'type P = %s\nfn main() -> i64 { println("ok") 0 }\n' "$2" >"$1.ax"; }
   tdef tdef_where "$(rep 'Option<' 300)i64$(rep '>' 300) where true"
   tdef tdef_enum "$(rep 'Option<' 300)i64$(rep '>' 300)"
-  tdef tdef_tuple_pred "(i64 where $(rep '(' 300)1$(rep ')' 300)) where true"
+  tdef tdef_tuple_pred "(i64 where $(rep '(' 300)true$(rep ')' 300)) where true"
   for e in "${RUNS[@]}"; do
     for spec in "tdef_where:$((10 + 7 * LIMIT))" "tdef_enum:$((10 + 7 * LIMIT))" \
       "tdef_tuple_pred:$((20 + LIMIT / 2))"; do
