@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: f33c8266beb82558de79242c5eb27466487691bb
+generated-at: f0012a585349d57ae897fcd5b9be0a7835a540b4
 
-`git diff --numstat 31413ca7..f33c8266 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..f0012a58 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -29,7 +29,7 @@ generated-at: f33c8266beb82558de79242c5eb27466487691bb
 | `crates/axon-core/src/builtins.rs` | 68 | 11 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 940 | 340 |
-| `crates/axon-core/src/checker.rs` | 1487 | 526 |
+| `crates/axon-core/src/checker.rs` | 1500 | 528 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
 | `crates/axon-core/src/codegen/asi.rs` | 172 | 37 |
@@ -54,7 +54,7 @@ generated-at: f33c8266beb82558de79242c5eb27466487691bb
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 609 | 163 |
+| `crates/axon-core/src/infer.rs` | 876 | 183 |
 | `crates/axon-core/src/interp.rs` | 7722 | 2889 |
 | `crates/axon-core/src/interp/builtins.rs` | 794 | 614 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
@@ -98,9 +98,9 @@ generated-at: f33c8266beb82558de79242c5eb27466487691bb
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 58549 | 8259 |
+| total | 58829 | 8281 |
 
-`git log --reverse 31413ca7..f33c8266 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..f0012a58 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -422,7 +422,8 @@ generated-at: f33c8266beb82558de79242c5eb27466487691bb
 | 2eb04370 | checker soundness | resolver/borrow CS-1/CS-2/CS-6 implementation review: a predicate's frame-escape walk stops at closures and ignores `break`/`continue` inside a loop body, so such predicates check and are enforced again (a `return` outside a closure, or `break`/`continue` outside a loop, is still E1211/E1103); a call to a local binding named `exit` does not count as diverging, so a move before it still poisons the fallthrough (E0601); E1103/E1211 descriptions updated (g01 M3815, M3816, M3818). |
 | 497c26c8 | capability surface | capabilities/effects CAP-1/CAP-3 implementation review: a `@[verify]` predicate that uses a parameter (or `value`) whose type can hold a fn is `unknown` and refused with E1104, since it runs a fn its caller chose; the predicate walk follows a module `let` the predicate names (cycle-guarded) and resolves a call the way the interpreter runs it (a user fn shadowing a builtin is walked, not counted as the builtin); the reach walker covers `select` arm bodies, agreeing with the program-wide surface (g01 M3810-M3814). |
 | f33c8266 | cs/type merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 318 commits | | |
+| 128d70be | checker soundness | infer: a builtin's T/U/V slots are TypeParams instantiated per call site (structural substitution), not Deferred wildcards, so a dict_get_or result flowing into a [i64] field is E0102 at check instead of a run-time panic; the checker's same-T binder matches TypeParam; generic builtins are not queued for monomorphization; builtin type-param names are kept apart from user generics and chosen by the sig the call reaches (CS-4 shadowing). |
+| 319 commits | | |
 <!-- END MECHANICAL -->
 
 
