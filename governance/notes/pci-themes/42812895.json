@@ -1,0 +1,1 @@
+{"theme": "capability surface", "text": "capabilities CAP-2: native-module and turbofish calls reach program_effect_rows through one shared program_reach walk, so the effect union and the axmeta manifest name effects a fn reaches only through them (M3803, M3804)."}

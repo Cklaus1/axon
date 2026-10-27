@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "parser CS-10: a newline before `(` after `.field` starts a new statement instead of continuing a method call, so a program the interpreter ran differently from what check typed now checks and runs as written (M3833)."}

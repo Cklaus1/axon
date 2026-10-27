@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "infer CS-11: `return`/`break`/`continue` are typed Never and unify with sibling match/if arms; a program check refused with a false arm-type mismatch now checks; the declared return type is still enforced on the returned value (M3836)."}

@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "infer CS-5: the type of `len(x)` with a type-variable x is decided after solving instead of pinned to str, so a match- or ?-bound array no longer fails check with E0102 (M3834)."}

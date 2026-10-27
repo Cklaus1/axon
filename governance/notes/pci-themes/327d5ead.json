@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "borrow integration CS-6 x CS-4: a branch ending in `exit(&mut ..)` reaches a user `fn exit` (CS-4), which returns, so its moves count again after the if; a move before the builtin exit still does not (M3819). Also g01 row bookkeeping (M3817, STALE records)."}

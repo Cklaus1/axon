@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "borrow CS-7 (NH-3 d): `let` of an array or `&[T]` param copies, as the interpreter does; a str still moves and its use after a move stays E0601 (M3839)."}

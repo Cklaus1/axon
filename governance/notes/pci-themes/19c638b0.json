@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "borrow CS-6: an if branch that ends in `return` or the builtin `exit` contributes no moves to the union after the if, so a false E0601 on the fallthrough is gone; moves in non-diverging branches still count (M3835)."}

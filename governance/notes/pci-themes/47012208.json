@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "resolver/infer/interp/codegen CS-4: a call to a fn shadowing a builtin is resolved, typed and dispatched by one rule (call_prefers_builtin: the builtin unless the call has a `&mut` arg), so check types the fn the run calls; a user `ln(a,b,c,d)` no longer checks clean and panics at run (M3831)."}

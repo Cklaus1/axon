@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "checker CS-12: a struct/enum named like a builtin type (Unit, str, Option, ...) is refused with E0005 instead of silently meaning the builtin (M3832)."}

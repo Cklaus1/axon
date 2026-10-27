@@ -1,0 +1,1 @@
+{"theme": "capability surface", "text": "effects CAP-4: E1310 sees a turbofish `ai_extract::<T>` call through a shared effect_row_name helper, in check_expr and in caller inference, so a closed-row fn calling it, directly or through a helper, is refused (M3806, M3807)."}

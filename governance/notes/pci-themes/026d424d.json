@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "interp/checker/codegen CS-3: `@[verify]` is enforced or refused, never silently skipped: a predicate on a param takes the composite path (exit 3 on violation); a verify on a return the runtime cannot check is E1103; native codegen lowers composite/param predicates like refinement predicates or refuses with E0910 (M3828-M3830)."}
