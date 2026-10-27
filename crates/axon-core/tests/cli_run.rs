@@ -40711,3 +40711,54 @@ fn param_and_let_refinements_naming_their_binding_still_check() {
     assert_eq!(crc, Some(0), "{cmsg}");
     assert_eq!((rrc, rout.as_str()), (Some(0), "3\n"), "{cmsg}");
 }
+
+/// CS-6 × CS-4: a branch ending in `exit(..)` drops its moves only when the call
+/// reaches the builtin. With a `&mut` argument the call runs a user `fn exit`
+/// (call_prefers_builtin), which returns, so the move must stay visible after the `if`.
+#[test]
+fn a_user_exit_reached_through_a_mut_arg_does_not_diverge() {
+    let src = "type S = { t: i64 }\n\nfn exit(xs: &mut [i64]) {\n    xs[0] = xs[0] + 1\n}\n\nfn main() {\n    let a = [1, 2]\n    let b = S { t: 2 }\n    if a[0] > 0 {\n        let _c = b\n        exit(&mut a)\n    }\n    println(to_str(b.t))\n}\n";
+    let (cc, ce, _, _) = csp_check_run("uexit_mut", src);
+    assert_eq!(
+        cc,
+        Some(2),
+        "ATTACK: a move before a user `exit(&mut ..)` was dropped as if the branch diverged: {ce}"
+    );
+    assert!(ce.contains("E0601"), "{ce}");
+    let builtin = "type S = { t: i64 }\n\nfn main() {\n    let b = S { t: 2 }\n    if b.t > 0 {\n        let _c = b\n        exit(1)\n    }\n    println(to_str(b.t))\n}\n";
+    let (cc, ce, _, _) = csp_check_run("bexit", builtin);
+    assert_eq!(
+        cc,
+        Some(0),
+        "control: a move before the builtin exit still does not poison the fallthrough: {ce}"
+    );
+}
+
+/// CS-1 replaced `refined_param_names` (M3455's guard): the predicate-scope
+/// pass defines a parameter refinement's binders, so the predicate sees its
+/// own parameter's name.
+#[test]
+fn a_param_refinement_predicate_sees_its_own_param_name() {
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "r_ownparam",
+        "fn f(n: i64 where n > 0) -> i64 { n }\n\nfn main() {\n    let k = 3\n    println(to_str(f(k)))\n}\n",
+    );
+    assert_eq!(
+        crc,
+        Some(0),
+        "ATTACK: a parameter refinement's predicate did not see its parameter's name: {cmsg}"
+    );
+    assert_eq!((rrc, rout.as_str()), (Some(0), "3\n"), "{cmsg}");
+}
+
+/// CS-1 replaced the sealed-only whole-struct branch (M3340's guard): a
+/// whole-struct refinement predicate is resolved in every file.
+#[test]
+fn a_whole_struct_refinement_predicate_naming_an_unbound_name_is_refused() {
+    cs1_refused_e1211(
+        "r_wholestruct",
+        "type P = { a: i64 } where _.a > nosuch\n\nfn main() {\n    let p = P { a: 3 }\n    println(to_str(p.a))\n}\n",
+        &["`nosuch`"],
+        "ATTACK: a whole-struct refinement predicate naming an unbound name passed check",
+    );
+}

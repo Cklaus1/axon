@@ -3196,3 +3196,10 @@ ATTACK_MARKERS.update({
     'M3827': r'ATTACK: a predicate that leaves its frame passed check',
     'M3838': r'ATTACK: a struct-field refinement did not bind its own field name',
 })
+
+# Integration fixup CS-6 × CS-4 (id M3819)
+ATTACK_MARKERS.update({
+    'M3819': r'ATTACK: a move before a user `exit\(&mut \.\.\)` was dropped as if the branch diverged',
+    'M3817': r"ATTACK: a parameter refinement's predicate did not see its parameter's name",
+    'M3818': r'ATTACK: a whole-struct refinement predicate naming an unbound name passed check',
+})

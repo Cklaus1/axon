@@ -11832,11 +11832,37 @@ MUTATIONS += [
      '                                pe.define(intern(&tf.name), fv.clone(), self.t_acc());',
      '                                let _ = &tf.name;',
      'axon-core', '--no-default-features --test cli_run', 'struct_field_refinement_naming_its_field_binds_it'),
+    ('M3817', "CS-1: the predicate-scope pass defines only `_`, so a parameter refinement's predicate no longer sees its parameter's name", 'crates/axon-core/src/resolver.rs',
+     '        for n in binders {\n            self.table.define(',
+     '        for n in binders.iter().take(1) {\n            self.table.define(',
+     'axon-core', '--no-default-features --test cli_run', 'a_param_refinement_predicate_sees_its_own_param_name'),
+    ('M3818', 'CS-1: a whole-struct refinement predicate is no longer resolved, so an unbound name passes check', 'crates/axon-core/src/resolver.rs',
+     '                    if let Some(p) = t.refinement.as_deref() {',
+     '                    if let Some(p) = t.refinement.as_deref().filter(|_| false) {',
+     'axon-core', '--no-default-features --test cli_run', 'a_whole_struct_refinement_predicate_naming_an_unbound_name_is_refused'),
 ]
 # CS-1 replaced the resolver's sealed-only refinement branches (and
-# `refined_param_names`) with one all-files predicate-scope pass, so the code
-# these rows mutate is gone; M3820 guards the pass that replaced it.
-RETIRED |= {"M3251", "M3340", "M3455"}
+# `refined_param_names`) with one all-files predicate-scope pass, so the old
+# text of these rows is gone. Each guard lives on in that pass and is mutated
+# there by an ACTIVE replacement row (STALE rule, see STALE_REFACTORED above).
+_CS1_STALE = {
+    "M3251": {"property": "a name in a sealed refinement predicate is resolved", "replacement": "M3820",
+              "how": "the sealed-only RefineDef arm became the all-files RefineDef arm of resolve_items (CS-1)"},
+    "M3340": {"property": "a sealed struct's whole-struct refinement predicate is resolved", "replacement": "M3818",
+              "how": "the sealed-only TypeDef arm became the all-files TypeDef arm of resolve_items (CS-1)"},
+    "M3455": {"property": "an inline parameter refinement's predicate sees its parameter's name", "replacement": "M3817",
+              "how": "refined_param_names became refine_binders, defined by resolve_predicate's binder loop (CS-1)"},
+}
+STALE_REFACTORED.update(_CS1_STALE)
+RETIRED |= set(_CS1_STALE)
+
+# Integration fixup CS-6 × CS-4 (id M3819, integrator spare)
+MUTATIONS += [
+    ('M3819', 'CS-6 × CS-4: a call to a user `fn exit` with a `&mut` arg is taken as diverging, so a move before it is dropped', 'crates/axon-core/src/borrow.rs',
+     '                && crate::builtins::call_prefers_builtin(\n                    "exit",\n                    crate::builtins::call_has_mut_arg(args),\n                )',
+     '                && args.len() < usize::MAX',
+     'axon-core', '--no-default-features --test cli_run', 'a_user_exit_reached_through_a_mut_arg_does_not_diverge'),
+]
 
 if __name__ == "__main__":
     main()

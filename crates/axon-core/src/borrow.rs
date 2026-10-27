@@ -78,11 +78,18 @@ fn is_copy(ty: &Type) -> bool {
 }
 
 /// Whether an `if` branch never falls through: its block's last statement is
-/// a `return`, or a call to `exit` (CS-6).
+/// a `return`, or a call that reaches the builtin `exit` (CS-6). A call with a
+/// `&mut` argument runs a user `fn exit` instead (CS-4), which returns.
 fn branch_diverges(e: &Expr) -> bool {
     match e {
         Expr::Return(_) => true,
-        Expr::Call { callee, .. } => matches!(callee.as_ref(), Expr::Ident(n) if n == "exit"),
+        Expr::Call { callee, args, .. } => {
+            matches!(callee.as_ref(), Expr::Ident(n) if n == "exit")
+                && crate::builtins::call_prefers_builtin(
+                    "exit",
+                    crate::builtins::call_has_mut_arg(args),
+                )
+        }
         Expr::Block(stmts) => stmts.last().is_some_and(|s| branch_diverges(&s.expr)),
         _ => false,
     }
