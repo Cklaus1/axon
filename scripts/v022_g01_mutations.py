@@ -11746,5 +11746,21 @@ MUTATIONS += [
      'axon-cortex', '--lib', 'generate::drain_tests::a_lost_read_is_unavailable_never_declined_or_empty'),
 ]
 
+# checker-soundness LaneParse (CS-10, CS-6, CS-7; ids M3833, M3835, M3839)
+MUTATIONS += [
+    ('M3833', 'CS-10: a `.field` followed by a newline `(` is parsed as a method call', 'crates/axon-core/src/parser.rs',
+     'if !self.preceded_by_newline() && self.eat(&Token::LParen) {',
+     'if self.eat(&Token::LParen) {',
+     'axon-core', '--no-default-features --test cli_run', 'field_access_then_newline_paren_is_a_new_statement'),
+    ('M3835', 'CS-6: a move in an early-`return` branch poisons the fallthrough', 'crates/axon-core/src/borrow.rs',
+     'let then_live = !branch_diverges(then);',
+     'let then_live = true;',
+     'axon-core', '--no-default-features --test cli_run', 'early_return_move_does_not_poison_fallthrough'),
+    ('M3839', 'CS-7 / NH-3 (d): `let b = a` moves an array or `&[T]` param', 'crates/axon-core/src/borrow.rs',
+     'if matches!(ty, Some(Type::Slice(_))) {',
+     'if false {',
+     'axon-core', '--no-default-features --test cli_run', 'let_copies_array_param'),
+]
+
 if __name__ == "__main__":
     main()

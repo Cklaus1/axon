@@ -40269,3 +40269,105 @@ fn r51_t1c_a_sealed_axon_test_never_runs_on_the_vm() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ── checker-soundness LaneParse (CS-10, CS-6, CS-7) ──
+
+/// Writes `src` to a fresh temp file, runs `axon check` then `axon run` on it.
+/// Returns (check rc, check stderr, run rc, run stdout).
+fn csp_check_run(tag: &str, src: &str) -> (Option<i32>, String, Option<i32>, String) {
+    let p = std::env::temp_dir().join(format!("axon_csp_{tag}_{}.ax", std::process::id()));
+    std::fs::write(&p, src).unwrap();
+    let c = axon()
+        .args(["check", p.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let r = axon().args(["run", p.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&p);
+    (
+        c.status.code(),
+        String::from_utf8_lossy(&c.stderr).into_owned(),
+        r.status.code(),
+        String::from_utf8_lossy(&r.stdout).into_owned(),
+    )
+}
+
+#[test]
+fn field_access_then_newline_paren_is_a_new_statement() {
+    let src = "type Bucket = { tokens: i64, rate: i64 }\n\nfn wait(b: Bucket, cost: i64) -> i64 {\n    let missing = cost - b.tokens\n    (missing + b.rate - 1) / b.rate\n}\n\nfn main() {\n    println(to_str(wait(Bucket { tokens: 1, rate: 2 }, 6)))\n}\n";
+    let (cc, ce, rc, so) = csp_check_run("n_paren", src);
+    assert_eq!(
+        cc,
+        Some(0),
+        "ATTACK: a `.field` then a newline `(` parsed as a method call: {ce}"
+    );
+    assert_eq!((rc, so.as_str()), (Some(0), "3\n"));
+}
+
+#[test]
+fn early_return_move_does_not_poison_fallthrough() {
+    let src = "type Bucket = { tokens: i64, last_tick: i64, rate: i64 }\n\nfn refill(b: Bucket, now: i64) -> Bucket {\n    if now <= b.last_tick {\n        return b\n    }\n    let elapsed = now - b.last_tick\n    Bucket { tokens: b.tokens + elapsed * b.rate, last_tick: now, rate: b.rate }\n}\n\nfn main() {\n    let b = refill(Bucket { tokens: 0, last_tick: 0, rate: 2 }, 5)\n    println(to_str(b.tokens))\n}\n";
+    let (cc, ce, rc, so) = csp_check_run("n_ret", src);
+    assert_eq!(
+        cc,
+        Some(0),
+        "ATTACK: a move before an early `return` poisoned the fallthrough path: {ce}"
+    );
+    assert_eq!((rc, so.as_str()), (Some(0), "10\n"));
+}
+
+#[test]
+fn move_in_non_diverging_branch_still_e0601() {
+    let src = "type B = { t: i64 }\nfn f(b: B, k: i64) -> i64 {\n    if k > 0 {\n        let c = b\n        println(to_str(c.t))\n    }\n    b.t\n}\nfn main() { println(to_str(f(B { t: 4 }, 1))) }\n";
+    let (cc, ce, _, _) = csp_check_run("nondiv", src);
+    assert_eq!(
+        cc,
+        Some(2),
+        "a move in a non-diverging branch was dropped: {ce}"
+    );
+    assert!(ce.contains("E0601"), "{ce}");
+}
+
+#[test]
+fn move_before_break_still_e0601_after_loop() {
+    let src = "type B = { t: i64 }\nfn f(b: B, k: i64) -> i64 {\n    let i = 0\n    while i < 3 {\n        if k > 0 {\n            let c = b\n            println(to_str(c.t))\n            break\n        }\n        i = i + 1\n    }\n    b.t\n}\nfn main() { println(to_str(f(B { t: 4 }, 1))) }\n";
+    let (cc, ce, _, _) = csp_check_run("brkmove2", src);
+    assert_eq!(cc, Some(2), "a move before `break` was dropped: {ce}");
+    assert!(ce.contains("E0601") && ce.contains("\"line\":12"), "{ce}");
+}
+
+#[test]
+fn let_copies_array_param() {
+    let src = "fn f(xs: [i64]) -> i64 {\n    let ys = xs\n    len(ys) + len(xs)\n}\n\nfn main() {\n    println(to_str(f([1, 2])))\n}\n";
+    let (cc, ce, rc, so) = csp_check_run("m_arr", src);
+    assert_eq!(
+        cc,
+        Some(0),
+        "ATTACK: `let ys = xs` moved an array param: {ce}"
+    );
+    assert_eq!((rc, so.as_str()), (Some(0), "4\n"));
+}
+
+#[test]
+fn let_copies_slice_param() {
+    let src = "fn f(xs: &[i64]) -> i64 {\n    let out = xs\n    len(out) + len(xs)\n}\n\nfn main() {\n    let a = [1, 2, 3]\n    println(to_str(f(&a)))\n}\n";
+    let (cc, ce, rc, so) = csp_check_run("m_slice", src);
+    assert_eq!(cc, Some(0), "`let out = xs` moved a `&[T]` param: {ce}");
+    assert_eq!((rc, so.as_str()), (Some(0), "6\n"));
+}
+
+#[test]
+fn let_copies_local_array() {
+    let src =
+        "fn main() {\n    let a = [1, 2]\n    let b = a\n    println(to_str(len(a) + len(b)))\n}\n";
+    let (cc, ce, rc, so) = csp_check_run("arrloc", src);
+    assert_eq!(cc, Some(0), "{ce}");
+    assert_eq!((rc, so.as_str()), (Some(0), "4\n"));
+}
+
+#[test]
+fn let_still_moves_str_param() {
+    let src = "fn f(s: str) -> i64 {\n    let core = s\n    len(core) + len(s)\n}\n\nfn main() {\n    println(to_str(f(\"abc\")))\n}\n";
+    let (cc, ce, _, _) = csp_check_run("m_str", src);
+    assert_eq!(cc, Some(2), "`str` must stay a move type (B07): {ce}");
+    assert!(ce.contains("E0601"), "{ce}");
+}

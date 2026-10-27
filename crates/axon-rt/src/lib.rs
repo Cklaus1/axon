@@ -2670,8 +2670,9 @@ pub extern "C" fn __axon_parse_int_err(input: AxonStr, out_len: *mut i64, out_pt
     __axon_parse_int_err_impl(unsafe { input.as_str() }, out_len, out_ptr)
 }
 fn __axon_parse_int_err_impl(src: &str, out_len: *mut i64, out_ptr: *mut *mut u8) {
-    // Mirror the interpreter (interp.rs): a radix-prefixed input gets a hint.
-    let lower = src.to_ascii_lowercase();
+    // Mirror the interpreter (interp/builtins.rs): a radix-prefixed input gets a
+    // hint, tested on the trimmed input; the message echoes the raw input.
+    let lower = src.trim().to_ascii_lowercase();
     let hint = if lower.starts_with("0x") || lower.starts_with("0o") || lower.starts_with("0b") {
         " (parse_int is base-10 only; strip the radix prefix)"
     } else {

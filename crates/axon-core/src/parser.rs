@@ -2986,7 +2986,9 @@ impl Parser {
                         }
                         _ => self.expect_ident()?,
                     };
-                    if self.eat(&Token::LParen) {
+                    // ASI (CS-10): a `(` on a new line after `.field` starts a
+                    // new statement, exactly as in the postfix call arm below.
+                    if !self.preceded_by_newline() && self.eat(&Token::LParen) {
                         self.paren_depth += 1;
                         let args = self.parse_args()?;
                         self.paren_depth -= 1;
