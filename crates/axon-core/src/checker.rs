@@ -1305,16 +1305,59 @@ impl CheckCtx {
     /// ([`crate::resolver::verify_shape_binders`]) and the params (NH-1 a) —
     /// and refuse (E1103) one that is ill-typed, is not `bool`, or compares an
     /// integer literal with an f64. The decodable simple shape `ident CMP
-    /// literal` is not typed: the runtime compares it as f64 (E-6). Unbound
-    /// names and binder collisions are the resolver's.
+    /// literal` over a numeric binder is not typed: the runtime compares it as
+    /// f64 (E-6). Unbound names and binder collisions are the resolver's.
+    /// CS-3 (E-1): a verify on a return the runtime cannot check is E1103.
     fn check_verify_predicate(&mut self, ictx: &mut crate::infer::InferCtx, f: &FnDef) {
         use crate::ast::BinOp;
         let Some(v) = &f.verify else { return };
-        if let Some((_, op, _)) = crate::verify::decode_verify_predicate_with_ident(&v.predicate) {
-            if matches!(
-                op,
-                BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq | BinOp::Eq | BinOp::NotEq
-            ) {
+        let ret = f.return_type.as_ref();
+        let wrapped = match ret {
+            Some(AxonType::Generic { base, args })
+                if args.len() == 1 && (base == "Uncertain" || base == "Temporal") =>
+            {
+                Some(&args[0])
+            }
+            _ => None,
+        };
+        let scalar_ret = ret.is_some_and(|t| self.verify_scalar(t));
+        if wrapped.is_none() && !scalar_ret {
+            let ty = ret.map_or_else(|| "()".to_string(), axon_type_display);
+            let file = self.file.clone();
+            self.errors.push(
+                CheckError::new(
+                    E1103,
+                    format!(
+                        "this `@[verify]` on `{}` is never checked: `{ty}` returns are not \
+                         supported",
+                        f.name
+                    ),
+                )
+                .node(format!("#fn_{}.verify", f.name))
+                .at(&file, 0, 0)
+                .with_span(v.span)
+                .fix(
+                    "return a scalar (`i64`, `f64`, `bool`, …), an `Uncertain<T>` or a \
+                     `Temporal<T>`, or remove the `@[verify]`",
+                ),
+            );
+            return;
+        }
+        if let Some((ident, op, _)) =
+            crate::verify::decode_verify_predicate_with_ident(&v.predicate)
+        {
+            // The runtime takes the simple shape only for a numeric binder;
+            // any other ident is evaluated (and so typed) as a composite.
+            let numeric_binder = match wrapped {
+                Some(t) => ident == "confidence" || (ident == "value" && self.verify_scalar(t)),
+                None => ident == "value",
+            };
+            if numeric_binder
+                && matches!(
+                    op,
+                    BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq | BinOp::Eq | BinOp::NotEq
+                )
+            {
                 return;
             }
         }
@@ -1344,6 +1387,26 @@ impl CheckCtx {
                     ),
             );
         }
+    }
+
+    /// CS-3: whether `ty` is a scalar at runtime (an integer, float or
+    /// `bool`, or a refinement of one, through its chain), which a
+    /// `@[verify]` can check.
+    fn verify_scalar(&self, ty: &AxonType) -> bool {
+        let AxonType::Named(n) = ty else { return false };
+        let mut name = n.as_str();
+        // Bounded: a refinement cycle (E0308) must not spin.
+        for _ in 0..self.refinement_base.len() {
+            match self.refinement_parent(name) {
+                Some(p) => name = p,
+                None => break,
+            }
+        }
+        self.refinement_base
+            .get(name)
+            .cloned()
+            .or_else(|| Type::from_name(name))
+            .is_some_and(|t| t.is_integer() || matches!(t, Type::F32 | Type::F64 | Type::Bool))
     }
 
     fn check_item(&mut self, item: &Item) {

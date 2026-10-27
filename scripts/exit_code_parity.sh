@@ -385,6 +385,21 @@ fn g(c: f64) -> Uncertain<i64> { uncertain_dyn_i64(7, c) }
 fn main() -> i64 { let u = g(0.4)
  0 }'
 
+# CS-3: a composite verify, and a simple shape over a param on an Uncertain
+# return (`vu`). Native codegen armed only `value|confidence OP K` and dropped
+# these silently (exit 0) while the interpreter exited 3.
+check_verify_subject verify_composite 'predicate' \
+'@[verify(value >= lo && value <= hi)]
+fn nocl(x: i64, lo: i64, hi: i64) -> i64 { x }
+fn main() -> i64 { let r = nocl(11, 0, 10)
+ 0 }'
+
+check_verify_subject verify_param_uncertain 'predicate' \
+'@[verify(lo >= 100)]
+fn f(x: i64, lo: i64) -> Uncertain<i64> { uncertain_dyn_i64(x, 0.5) }
+fn main() -> i64 { let u = f(5, 0)
+ 0 }'
+
 # A diagnosed program must not produce a binary at all. `let f = some_builtin`
 # (a builtin is not a first-class value) is rejected by both engines, but the
 # codegen E0701 site PRINTED its error without recording it in `codegen_errors`

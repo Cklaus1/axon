@@ -1,0 +1,8 @@
+// check_sound: CS-4 repro `fu06ln` (tasks/checker-soundness-spec.md)
+fn ln(a: i64, b: i64, c: i64, d: i64) -> i64 {
+    a + b + c + d
+}
+
+fn main() {
+    println(to_str(ln(1, 2, 3, 4)))
+}

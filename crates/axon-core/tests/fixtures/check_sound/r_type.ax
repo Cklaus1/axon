@@ -1,0 +1,9 @@
+// check_sound: CS-1 repro `r_type` (tasks/checker-soundness-spec.md)
+type Pos = i64 where _ && true
+
+fn f(n: Pos) -> i64 { n }
+
+fn main() {
+    let k = 3
+    println(to_str(f(k)))
+}

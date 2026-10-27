@@ -47,10 +47,11 @@ Three functions, if you define them, override the default harness:
   `goal_run` hill-climbs. Define it for full control (e.g. a pure objective, or
   your own LLM loop); otherwise the default loop calls `ai_complete` over prompt
   variants and scores with `score_output`.
-- `fn assert_deployable(score: i64) -> …` — the deploy gate. Return an
-  `Uncertain<i64>` with an `@[verify(confidence >= K)]` clause to make the gate
-  **enforced** (it panics, blocking deploy, when confidence < K). The default is
-  a documentary `@[verify(score >= N)]` pass-through.
+- `fn assert_deployable(score: i64) -> …` — the deploy gate. Its `@[verify]`
+  predicate is checked at runtime on every return, in both engines, and binds
+  the fn's params: the default `@[verify(score >= N)]` blocks deploy (exit 3)
+  when the best score is below `N`. Return an `Uncertain<i64>` with an
+  `@[verify(confidence >= K)]` clause to gate on confidence instead.
 - `fn redteam_check() -> bool` — an adversarial check. When present, the goal
   deploys only if the verify gate **and** `redteam_check()` pass.
 - `fn feasible(x: i64) -> bool` — a per-candidate feasibility predicate over

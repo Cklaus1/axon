@@ -2455,3 +2455,85 @@ fn shadowed_builtin_call_reaches_the_builtin_on_both_engines() {
         "native binary must run the builtin, not the user fn"
     );
 }
+
+/// CS-3 (E-5): a `@[verify]` the native gate cannot decode as `value|confidence
+/// OP K` — a composite, or a simple shape over a param (NH-1 a) — was dropped
+/// natively ("silently emit nothing") while the interpreter enforced it. It is
+/// lowered like a refinement predicate (exit 3 on both engines), or refused at
+/// build with E0910 when it is outside the lowerable subset.
+#[cfg(feature = "codegen")]
+#[test]
+fn verify_composite_predicate_is_enforced_or_refused_natively() {
+    use std::process::Command;
+    let attack = "ATTACK: a composite verify was dropped by native codegen";
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_cs3_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let both = |tag: &str, src: &str| {
+        let file = dir.join(format!("{tag}.ax"));
+        std::fs::write(&file, src).unwrap();
+        let run = Command::new(axon_bin)
+            .arg("run")
+            .arg(&file)
+            .output()
+            .unwrap();
+        let bin = dir.join(format!("{tag}_bin"));
+        let build = Command::new(axon_bin)
+            .arg("build")
+            .arg(&file)
+            .arg("-o")
+            .arg(&bin)
+            .arg("--no-cache")
+            .output()
+            .unwrap();
+        let native = build
+            .status
+            .success()
+            .then(|| Command::new(&bin).output().unwrap());
+        (run, build, native)
+    };
+    let cases = [
+        ("comp", "@[verify(value >= lo && value <= hi)]\nfn nocl(x: i64, lo: i64, hi: i64) -> i64 { x }\nfn main() { println(to_str(nocl(11, 0, 10))) }\n", "nocl(11, 0, 10)", "nocl(5, 0, 10)"),
+        ("s23simple", "@[verify(lo >= 100)]\nfn f(x: i64, lo: i64) -> i64 { x }\nfn main() { println(to_str(f(5, 0))) }\n", "f(5, 0)", "f(5, 100)"),
+        ("vu", "@[verify(lo >= 100)]\nfn f(x: i64, lo: i64) -> Uncertain<i64> { uncertain_dyn_i64(x, 0.5) }\nfn main() { println(to_str(f(5, 0).value)) }\n", "f(5, 0)", "f(5, 100)"),
+        ("compu", "@[verify(value > 0 && confidence >= c)]\nfn g(x: i64, c: f64) -> Uncertain<i64> { uncertain_dyn_i64(x, 0.5) }\nfn main() { println(to_str(g(5, 0.9).value)) }\n", "g(5, 0.9)", "g(5, 0.4)"),
+    ];
+    for (tag, src, bad, good) in cases {
+        let (run, build, native) = both(tag, src);
+        let native = native.unwrap_or_else(|| {
+            panic!(
+                "{attack} [{tag}]: build: {}",
+                String::from_utf8_lossy(&build.stderr)
+            )
+        });
+        assert_eq!(
+            (run.status.code(), native.status.code()),
+            (Some(3), Some(3)),
+            "{attack} [{tag}] {bad}: interp {} / native {}",
+            String::from_utf8_lossy(&run.stderr),
+            String::from_utf8_lossy(&native.stderr)
+        );
+        let ok_tag = format!("{tag}_ok");
+        let (run, _, native) = both(&ok_tag, &src.replace(bad, good));
+        let native = native.unwrap_or_else(|| panic!("{attack} [{ok_tag}]: build failed"));
+        assert_eq!(
+            (run.status.code(), native.status.code(), run.stdout.clone()),
+            (Some(0), Some(0), native.stdout.clone()),
+            "{attack} [{ok_tag}]: {}",
+            String::from_utf8_lossy(&native.stderr)
+        );
+    }
+    // Outside the lowerable subset (an impure call): refused at build, never
+    // built without the check.
+    let (_, build, native) = both(
+        "nolow",
+        "@[verify(value >= 0 && now_ms() > 0)]\nfn f(x: i64) -> i64 { x }\nfn main() { println(to_str(f(5))) }\n",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        native.is_none() && String::from_utf8_lossy(&build.stderr).contains("E0910"),
+        "{attack} [nolow]: build rc {:?}: {}",
+        build.status.code(),
+        String::from_utf8_lossy(&build.stderr)
+    );
+}

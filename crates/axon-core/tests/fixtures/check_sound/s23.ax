@@ -1,0 +1,9 @@
+// check_sound: CS-2 repro `s23` (tasks/checker-soundness-spec.md)
+@[verify(value >= lo && value <= hi)]
+fn clampv(x: i64, lo: i64, hi: i64) -> i64 {
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+fn main() {
+    println(to_str(clampv(5, 0, 10)))
+}

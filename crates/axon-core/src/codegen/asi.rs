@@ -25,6 +25,31 @@ use crate::types::Type;
 
 use super::build_wrappers;
 
+/// A slot a predicate name is aliased to while the predicate is emitted: the
+/// alloca, its LLVM type, and its semantic type when known.
+pub(super) type PredBinder<'ctx> = (
+    String,
+    (
+        inkwell::values::PointerValue<'ctx>,
+        inkwell::types::BasicTypeEnum<'ctx>,
+    ),
+    Option<Type>,
+);
+
+/// CS-3 (E-5): a `@[verify]` predicate lowered like a refinement predicate —
+/// a composite, or a simple shape over a param (NH-1 a). Armed in `emit_fn`.
+#[derive(Clone)]
+pub(super) struct VerifyComposite<'ctx> {
+    pub(super) fn_name: String,
+    pub(super) pred: ast::Expr,
+    /// The declared return type: `value` is the return, or field 0 of an
+    /// `Uncertain`/`Temporal` (which also bind `confidence`, and `source_tag`
+    /// for `Uncertain`).
+    pub(super) ret: Type,
+    /// The params' entry slots.
+    pub(super) params: Vec<PredBinder<'ctx>>,
+}
+
 impl<'ctx> super::Codegen<'ctx> {
     /// R4 §4.3: emit the mandatory `agent_action` audit log when a capability-
     /// bearing builtin `action` (exercising capability `caps`) is called inside
@@ -231,6 +256,10 @@ impl<'ctx> super::Codegen<'ctx> {
         ret_val: BasicValueEnum<'ctx>,
         llvm_fn: FunctionValue<'ctx>,
     ) {
+        if self.current_verify_composite.is_some() {
+            self.emit_verify_composite_check(ret_val, llvm_fn);
+            return;
+        }
         // Quick exit: not in a verify-armed function.
         let (fn_name, ident, op_str, bound) = match self.current_verify_fn.clone() {
             Some(t) => t,
@@ -347,6 +376,82 @@ impl<'ctx> super::Codegen<'ctx> {
         build_wrappers::w_unreachable(&self.ir.builder);
 
         // ── Continue path: original return falls through here. ────────────
+        self.ir.builder.position_at_end(cont_bb);
+    }
+
+    /// CS-3 (E-5): the return-site check of a composite `@[verify]`
+    /// ([`VerifyComposite`]). The predicate is emitted with the params aliased
+    /// to their entry slots and the return's binders to spilled copies of the
+    /// returned value; on `false` it calls `__axon_verify_panic` (exit 3), as
+    /// the interpreter's composite path fails verify.
+    fn emit_verify_composite_check(
+        &mut self,
+        ret_val: BasicValueEnum<'ctx>,
+        llvm_fn: FunctionValue<'ctx>,
+    ) {
+        let Some(vc) = self.current_verify_composite.clone() else {
+            return;
+        };
+        let Some(panic_fn) = self.ir.module.get_function("__axon_verify_panic") else {
+            return;
+        };
+        if self.block_terminated() {
+            return;
+        }
+        let mut binders = vc.params;
+        let mut bind = |cg: &mut Self, name: &str, v: BasicValueEnum<'ctx>, sem: Type| {
+            let ty = v.get_type();
+            let slot = build_wrappers::w_alloca(&cg.ir.builder, ty, "verify_bind");
+            build_wrappers::w_store(&cg.ir.builder, slot, v);
+            binders.push((name.to_string(), (slot, ty), Some(sem)));
+        };
+        match (&vc.ret, ret_val) {
+            (Type::Uncertain(t) | Type::Temporal(t), BasicValueEnum::StructValue(sv)) => {
+                let mut fields = vec![("value", (**t).clone()), ("confidence", Type::F64)];
+                if matches!(vc.ret, Type::Uncertain(_)) {
+                    fields.push(("source_tag", Type::I64));
+                }
+                for (i, (name, sem)) in fields.into_iter().enumerate() {
+                    let v = build_wrappers::w_extract_value(&self.ir.builder, sv, i as u32, name);
+                    bind(self, name, v, sem);
+                }
+            }
+            (ret, v) => bind(self, "value", v, ret.clone()),
+        }
+        let label = format!("the `@[verify]` of `{}`", vc.fn_name);
+        let Some(cond) = self.emit_pred_with_binders(&vc.pred, &binders, &label, llvm_fn) else {
+            return;
+        };
+
+        let panic_bb = self.ir.context.append_basic_block(llvm_fn, "verify_panic");
+        let cont_bb = self.ir.context.append_basic_block(llvm_fn, "verify_ok");
+        build_wrappers::w_cond_br(&self.ir.builder, cond, cont_bb, panic_bb);
+
+        // ── Panic path: `predicate == 1 failed (actual=0)`, exit 3. ────────
+        self.ir.builder.position_at_end(panic_bb);
+        let i64_ty = self.ir.context.i64_type();
+        let f64_ty = self.ir.context.f64_type();
+        let (op, ident) = ("==", "predicate");
+        let name_g =
+            build_wrappers::w_global_string_ptr(&self.ir.builder, &vc.fn_name, "verify_fn_name");
+        let op_g = build_wrappers::w_global_string_ptr(&self.ir.builder, op, "verify_op");
+        let ident_g = build_wrappers::w_global_string_ptr(&self.ir.builder, ident, "verify_ident");
+        let _ = build_wrappers::w_call(
+            &self.ir.builder,
+            panic_fn,
+            &[
+                name_g.into(),
+                i64_ty.const_int(vc.fn_name.len() as u64, false).into(),
+                op_g.into(),
+                i64_ty.const_int(op.len() as u64, false).into(),
+                ident_g.into(),
+                i64_ty.const_int(ident.len() as u64, false).into(),
+                f64_ty.const_float(1.0).into(),
+                f64_ty.const_float(0.0).into(),
+            ],
+            "",
+        );
+        build_wrappers::w_unreachable(&self.ir.builder);
         self.ir.builder.position_at_end(cont_bb);
     }
 
@@ -743,27 +848,45 @@ impl<'ctx> super::Codegen<'ctx> {
         label: &str,
         llvm_fn: FunctionValue<'ctx>,
     ) -> Option<inkwell::values::IntValue<'ctx>> {
-        let prev: Vec<_> = names
+        let binders: Vec<PredBinder<'ctx>> = names
             .iter()
-            .map(|n| (self.locals.remove(*n), self.local_types.remove(*n)))
+            .map(|n| (n.to_string(), binder, sem.clone()))
             .collect();
-        for n in names {
-            self.locals.insert(n.to_string(), binder);
-            if let Some(s) = &sem {
-                self.local_types.insert(n.to_string(), s.clone());
+        let label = format!("refinement predicate for {label}");
+        self.emit_pred_with_binders(pred, &binders, &label, llvm_fn)
+    }
+
+    /// Shared: alias each binder's name to its slot, emit `pred`, restore the
+    /// names, and return the i1 condition (or push E0910 and return None if it
+    /// didn't lower to a boolean). `label` names the predicate in the E0910.
+    fn emit_pred_with_binders(
+        &mut self,
+        pred: &ast::Expr,
+        binders: &[PredBinder<'ctx>],
+        label: &str,
+        llvm_fn: FunctionValue<'ctx>,
+    ) -> Option<inkwell::values::IntValue<'ctx>> {
+        let prev: Vec<_> = binders
+            .iter()
+            .map(|(n, _, _)| (self.locals.remove(n), self.local_types.remove(n)))
+            .collect();
+        for (n, slot, sem) in binders {
+            self.locals.insert(n.clone(), *slot);
+            if let Some(s) = sem {
+                self.local_types.insert(n.clone(), s.clone());
             }
         }
 
         let pred_val = self.emit_expr(pred, llvm_fn);
 
-        for (n, (prev_local, prev_type)) in names.iter().zip(prev) {
-            self.locals.remove(*n);
-            self.local_types.remove(*n);
+        for ((n, _, _), (prev_local, prev_type)) in binders.iter().zip(prev) {
+            self.locals.remove(n);
+            self.local_types.remove(n);
             if let Some(l) = prev_local {
-                self.locals.insert(n.to_string(), l);
+                self.locals.insert(n.clone(), l);
             }
             if let Some(t) = prev_type {
-                self.local_types.insert(n.to_string(), t);
+                self.local_types.insert(n.clone(), t);
             }
         }
 
@@ -771,8 +894,8 @@ impl<'ctx> super::Codegen<'ctx> {
             Some(BasicValueEnum::IntValue(iv)) if iv.get_type().get_bit_width() == 1 => Some(iv),
             _ => {
                 let msg = format!(
-                    "codegen error [E0910]: refinement predicate for {label} did not lower to a \
-                     boolean. Run it under the interpreter."
+                    "codegen error [E0910]: {label} did not lower to a boolean. Run it under \
+                     the interpreter."
                 );
                 self.record_error(msg);
                 None

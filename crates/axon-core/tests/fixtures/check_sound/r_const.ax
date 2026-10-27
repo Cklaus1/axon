@@ -1,0 +1,7 @@
+// check_sound: CS-1 repro `r_const` (tasks/checker-soundness-spec.md)
+type Amt = { value: i64 where value > 0 }
+
+fn main() {
+    let a = Amt { value: 5 }
+    println(to_str(a.value))
+}

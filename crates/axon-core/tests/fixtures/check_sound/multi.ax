@@ -1,0 +1,8 @@
+// check_sound: CS-1 repro `multi` (tasks/checker-soundness-spec.md)
+type Pos = i64 where n > 0
+fn f(n: Pos) -> i64 { n }
+fn g(m: Pos) -> i64 { m }
+fn main() {
+    println(to_str(f(3)))
+    println(to_str(g(4)))
+}

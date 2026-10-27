@@ -11888,5 +11888,21 @@ _CS2_STALE = {
 STALE_REFACTORED.update(_CS2_STALE)
 RETIRED |= set(_CS2_STALE)
 
+# Checker-soundness LaneType B3, CS-3 (ids M3828-M3830)
+MUTATIONS += [
+    ('M3828', 'CS-3: a `@[verify]` on a return the runtime cannot check (`str`, `()`, a struct) passes check again', 'crates/axon-core/src/checker.rs',
+     '        if wrapped.is_none() && !scalar_ret {',
+     '        if false && wrapped.is_none() && !scalar_ret {',
+     'axon-core', '--no-default-features --test cli_run', 'verify_on_str_return_is_refused'),
+    ('M3829', 'CS-3: a simple-shape verify over a param on a scalar return is compared against the return value again', 'crates/axon-core/src/interp.rs',
+     '                    .filter(|(ident, _, _)| ident == "value");',
+     '                    .filter(|(ident, _, _)| !ident.is_empty());',
+     'axon-core', '--no-default-features --test cli_run', 'verify_simple_shape_on_param_is_not_silently_skipped'),
+    ('M3830', 'CS-3: native codegen drops a composite `@[verify]` silently again (never arms its return-site check)', 'crates/axon-core/src/codegen/mod.rs',
+     '                self.current_verify_composite = Some(asi::VerifyComposite {',
+     '                let _ = Some(asi::VerifyComposite {',
+     'axon-core', '--test integration_fixtures', 'verify_composite_predicate_is_enforced_or_refused_natively'),
+]
+
 if __name__ == "__main__":
     main()

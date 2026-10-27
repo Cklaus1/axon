@@ -1,0 +1,7 @@
+// check_sound: CS-2 control repro `s23ret` (tasks/checker-soundness-spec.md)
+fn clampr(x: i64, lo: i64, hi: i64) -> (i64 where _ >= lo && _ <= hi) { x }
+
+fn main() {
+    let x = 11
+    println(to_str(clampr(x, 0, 10)))
+}

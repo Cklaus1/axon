@@ -1,0 +1,7 @@
+// check_sound: CS-2 repro `s23type` (tasks/checker-soundness-spec.md)
+@[verify(value && true)]
+fn f(x: i64) -> i64 { x }
+
+fn main() {
+    println(to_str(f(5)))
+}

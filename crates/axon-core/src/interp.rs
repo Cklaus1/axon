@@ -6619,8 +6619,18 @@ impl<'p> Interp<'p> {
                 // `@[verify(value <= 500)]` on a Temporal-returning fn was
                 // silently UNENFORCED before (only Uncertain hit this branch).
                 if sv.name == SYM_UNCERTAIN || sv.name == SYM_TEMPORAL {
-                    let decoded =
-                        crate::verify::decode_verify_predicate_with_ident(&spec.predicate);
+                    // CS-3: the simple shape applies only when its ident is a
+                    // binder of this shape whose field is numeric; any other
+                    // ident (a param, NH-1 a) takes the composite path below.
+                    let simple = crate::verify::decode_verify_predicate_with_ident(&spec.predicate)
+                        .and_then(|(ident, op, bound)| {
+                            let observed = match (ident.as_str(), fields.named(ident.as_str())) {
+                                ("confidence", Some(Value::Float(c))) => Some(*c),
+                                ("value", Some(v)) => scalar_as_f64(v),
+                                _ => None,
+                            };
+                            observed.map(|c| (ident, op, bound, c))
+                        });
                     let val_str = fields
                         .get(SYM_VALUE)
                         .map(display)
@@ -6633,33 +6643,24 @@ impl<'p> Interp<'p> {
                         .map(|n| format!(", input {n}"))
                         .unwrap_or_default();
 
-                    if let Some((ident, op, bound)) = decoded {
+                    if let Some((ident, op, bound, c)) = simple {
                         // Simple shape: do the targeted, well-typed compare.
-                        let observed: Option<f64> =
-                            match (ident.as_str(), fields.named(ident.as_str())) {
-                                ("confidence", Some(Value::Float(c))) => Some(*c),
-                                ("value", Some(Value::Int(n))) => Some(*n as f64),
-                                ("value", Some(Value::Float(v))) => Some(*v),
-                                _ => None,
-                            };
-                        if let Some(c) = observed {
-                            if !cmp_f64(&op, c, bound) {
-                                return Err(Flow::VerifyFailed(
-                                    format!(
-                                        "verify failed in {}: {} {} {} {} is false \
+                        if !cmp_f64(&op, c, bound) {
+                            return Err(Flow::VerifyFailed(
+                                format!(
+                                    "verify failed in {}: {} {} {} {} is false \
                                  (value {}, confidence {}{})",
-                                        verify_fn_label(&f.name),
-                                        ident,
-                                        c,
-                                        crate::verify::binop_to_verify_str(&op),
-                                        bound,
-                                        val_str,
-                                        conf_str,
-                                        input_str,
-                                    )
-                                    .into(),
-                                ));
-                            }
+                                    verify_fn_label(&f.name),
+                                    ident,
+                                    c,
+                                    crate::verify::binop_to_verify_str(&op),
+                                    bound,
+                                    val_str,
+                                    conf_str,
+                                    input_str,
+                                )
+                                .into(),
+                            ));
                         }
                     } else {
                         // Composite predicate: evaluate as a normal Expr with
@@ -6712,13 +6713,13 @@ impl<'p> Interp<'p> {
                 let input_str = input_arg
                     .map(|n| format!(", input {n}"))
                     .unwrap_or_default();
-                let decoded = crate::verify::decode_verify_predicate_with_ident(&spec.predicate);
-                if let Some((ident, op, bound)) = decoded {
-                    // Only the `value` ident maps to a scalar return (a scalar has
-                    // no `confidence`/`source_tag`); other idents fall through to
-                    // the composite path which leaves them unbound (predicate
-                    // can't reference a field a scalar doesn't have).
-                    if ident == "value" && !cmp_f64(&op, observed, bound) {
+                // Only the `value` ident maps to a scalar return (a scalar has
+                // no `confidence`/`source_tag`). CS-3: any other ident (a
+                // param, NH-1 a) takes the composite path below.
+                let decoded = crate::verify::decode_verify_predicate_with_ident(&spec.predicate)
+                    .filter(|(ident, _, _)| ident == "value");
+                if let Some((_, op, bound)) = decoded {
+                    if !cmp_f64(&op, observed, bound) {
                         return Err(Flow::VerifyFailed(
                             format!(
                                 "verify failed in {}: value {} {} {} is false (value {}{})",

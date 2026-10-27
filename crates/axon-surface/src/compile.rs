@@ -230,7 +230,10 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     // (`<metric> OP <number>`), so preserve it verbatim as a comment and emit
     // a valid `score`-threshold gate the skeleton can actually compile and run.
     let predicate = goal.verify_predicate()?;
-    let target = extract_target_from_predicate(&predicate).unwrap_or(70);
+    // CS-13: only a `score <op> <int>` clause sets the target; any other bound
+    // in the prose (a length cap, a float metric) is not on the score's scale.
+    let parsed_target = extract_target_from_predicate(&predicate);
+    let target = parsed_target.unwrap_or(70);
     // Evaluation budget from the prose Budget section bounds goal_run's search.
     let budget = goal.budget_evals().unwrap_or(20);
     // The author may supply their own `assert_deployable` (e.g. a confidence-
@@ -242,6 +245,12 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
             "// ── Verify gate (derived from prose) ──────────────────────"
         );
         let _ = writeln!(out, "// prose predicate: {predicate}");
+        if parsed_target.is_none() {
+            let _ = writeln!(
+                out,
+                "// the prose predicate has no `score` bound, so the gate uses the default target {target}"
+            );
+        }
         let _ = writeln!(out, "@[verify(score >= {target})]");
         let _ = writeln!(out, "fn assert_deployable(score: i64) -> i64 {{");
         let _ = writeln!(out, "    score");
@@ -322,15 +331,33 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     Ok(out)
 }
 
-/// Try to pull a numeric threshold out of a verify predicate.
-/// E.g., "score >= 70" → 70; "confidence >= 0.9" → can't (float, fallback).
+/// Pull the score target out of a verify predicate: only a `score <op> <int>`
+/// clause names one (CS-13). E.g. "score >= 70" → 70, "score > 69" → 70;
+/// "length_chars <= 280" (not the score) or "confidence >= 0.9" (a float) →
+/// `None` (the caller's fallback).
 fn extract_target_from_predicate(p: &str) -> Option<i64> {
-    for tok in p.split_whitespace() {
-        if let Ok(n) = tok.parse::<i64>() {
-            return Some(n);
+    // Tokens are runs of operator chars or of other non-space chars, so
+    // `score>=70` tokenizes like `score >= 70`.
+    let is_op = |c: char| matches!(c, '<' | '>' | '=' | '!');
+    let mut toks: Vec<String> = Vec::new();
+    let mut prev_op = None;
+    for c in p.chars() {
+        if c.is_whitespace() || c == '(' || c == ')' {
+            prev_op = None;
+            continue;
         }
+        match toks.last_mut() {
+            Some(t) if prev_op == Some(is_op(c)) => t.push(c),
+            _ => toks.push(c.to_string()),
+        }
+        prev_op = Some(is_op(c));
     }
-    None
+    toks.windows(3)
+        .find_map(|w| match [w[0].as_str(), w[1].as_str(), w[2].as_str()] {
+            ["score", ">=" | "==", n] => n.parse::<i64>().ok(),
+            ["score", ">", n] => n.parse::<i64>().ok().and_then(|n| n.checked_add(1)),
+            _ => None,
+        })
 }
 
 /// Split [`PRELUDE_SRC`] into `(fn_name, full_definition_text)` pairs — one per
@@ -430,6 +457,29 @@ Some scoring.
         assert!(ax.contains("fn build_prompt(variant_id: i64) -> str"));
         // With no author code blocks, the score scaffold is emitted.
         assert!(ax.contains("// TODO: implement the score formula"));
+    }
+
+    /// CS-13: the target comes only from a `score <op> <int>` clause. The
+    /// hello-goal predicate's only integer is its length cap (280) on a 0-100
+    /// score, which the gate could never reach; it takes the 70 fallback.
+    #[test]
+    fn score_target_comes_only_from_a_score_clause() {
+        let hello = "coverage >= 7.0 AND faithfulness >= 8.0 AND length_chars <= 280";
+        assert_eq!(extract_target_from_predicate(hello), None, "[hello]");
+        assert_eq!(extract_target_from_predicate("score >= 70"), Some(70));
+        assert_eq!(extract_target_from_predicate("score>=90"), Some(90));
+        assert_eq!(
+            extract_target_from_predicate("length_chars <= 280 AND score >= 90"),
+            Some(90)
+        );
+        assert_eq!(extract_target_from_predicate("score > 69"), Some(70));
+        assert_eq!(extract_target_from_predicate("score <= 50"), None);
+        assert_eq!(extract_target_from_predicate("confidence >= 0.9"), None);
+
+        let g = GoalFile::parse(&SAMPLE.replace("score >= 70", hello)).unwrap();
+        let ax = emit(&g).unwrap();
+        assert!(ax.contains("@[verify(score >= 70)]"), "{ax}");
+        assert!(ax.contains("no `score` bound"), "{ax}");
     }
 
     #[test]
