@@ -3,6 +3,7 @@
 ## Generic builtin slots are type variables; `str_cmp` is fuzzed
 
 - **A builtin's `T`/`U`/`V` is bound once per call (port of `builtin-typevar-instantiation`):** those slots were `Deferred` wildcards that unified with anything, so `let v = dict_get_or(d, "n", 0)` followed by `RG { amounts: v }` with `amounts: [i64]` passed `axon check` and then panicked at run time (`len: expected str/array/dict, got i64`, rc 101). Each call now instantiates fresh variables, nested slots (`[T]`, `(str, V)`, `Option<T>`) included; closure slots such as `fn(T) -> U` stay deferred. The checker's same-`T` binder reads the promoted slots. Generic builtins are not queued for monomorphization (a queued stub shadowed the native `dict_set` extern). The type-param names come from the sig the call reaches, so a generic user fn sharing a builtin's name and reached through a `&mut` argument (CS-4) is still specialized.
+- **Frozen held-out task `h-wrong-var-04` is now caught at compile time:** its planted mutant pushes a `Trace` into an `[i64]` (E0102). `heldout.json` is unchanged. `fence_sweep.py` `COMPILE_CAUGHT` records the task and confirms the refusal on each gate run; a stale entry is an error. On binaries from this change on, a heldout score is at most 46/47 (`benchmarks/heldout/README.md`, "Compile-caught tasks").
 - **`scripts/fuzz_parity.sh` covers `str_cmp`:** a two-argument compare row and a self-compare row (reflexive 0), port of `fuzz-str-cmp`.
 
 ## S1: governed repair episode — capability fence, bounded checks, walk budget, typed feedback, accepted digest

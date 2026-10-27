@@ -18,10 +18,17 @@ refusal. The sweep passes only with zero flips. It spends no model call.
 Usage:
     AXON_BIN=... CORTEX_BIN=... python3 fence_sweep.py [--corpus FILE ...] [--json]
 
+A task in COMPILE_CAUGHT is not swept: the checker refuses its broken file, so
+no repair starts from it and there is no fence to compare. The sweep confirms the
+refusal (`axon check` exit 2 with the listed code) and counts the task as
+`compile_caught`. If the refusal no longer happens, the entry is stale and that
+is an error.
+
 Exit 0: zero flips over at least one swept task. Exit 1: at least one flip
 (each printed). Exit 2: nothing was proven — a corpus that does not load or
 holds no task, a task that could not be swept (no grant, a run that never
-completed in either arm, a crash), so zero swept tasks — never a pass.
+completed in either arm, a crash, a stale COMPILE_CAUGHT entry), so zero swept
+tasks — never a pass.
 """
 import argparse
 import concurrent.futures
@@ -49,6 +56,16 @@ REFUSALS = ("the active sandbox restricts it to",
             "not in the active sandbox's allowed set",
             "sandbox violation")
 TIMEOUT_S = 120
+
+# Frozen-set tasks whose BROKEN file the checker now refuses: (set, id) -> the
+# diagnostic code it must refuse with. A frozen set is never edited (its sha
+# would change), so a checker fix that catches a planted defect at compile
+# time is recorded here instead (heldout/README.md, "Compile-caught tasks").
+COMPILE_CAUGHT = {
+    # `arr_push(&t.results, t)` pushes a Trace into an [i64]; a builtin's `T`
+    # was a wildcard until 128d70be.
+    ("heldout/heldout.json", "h-wrong-var-04"): "E0102",
+}
 
 
 def axon_test(ws, rel, env):
@@ -91,6 +108,9 @@ def sweep(set_name, t):
 def sweep_one(set_name, t):
     row = {"set": set_name, "id": t["id"], "file": t["file"], "symbol": t["symbol"],
            "flips": [], "error": None}
+    code = COMPILE_CAUGHT.get((set_name, t["id"]))
+    if code is not None:
+        return compile_caught(row, t, code)
     with tempfile.TemporaryDirectory(prefix="fence-sweep-") as ws:
         path = os.path.join(ws, t["file"])
         with open(path, "w") as f:
@@ -123,6 +143,22 @@ def sweep_one(set_name, t):
                                          "plain": plain.get(name), "fenced": fenced.get(name)})
             for line in refused:
                 row["flips"].append({"source": label, "test": None, "refusal": line[:300]})
+    return row
+
+
+def compile_caught(row, t, code):
+    """A COMPILE_CAUGHT task: confirm the checker still refuses the broken
+    file with `code`, else the entry is stale (an error, never a pass)."""
+    with tempfile.TemporaryDirectory(prefix="fence-sweep-") as ws:
+        with open(os.path.join(ws, t["file"]), "w") as f:
+            f.write(t["broken"])
+        c = subprocess.run([AXON, "check", t["file"]], cwd=ws, capture_output=True,
+                           text=True, timeout=TIMEOUT_S)
+    if c.returncode == 2 and f'"code":"{code}"' in c.stdout + c.stderr:
+        row["compile_caught"] = code
+    else:
+        row["error"] = (f"listed in COMPILE_CAUGHT ({code}) but `axon check` exited "
+                        f"{c.returncode} without it: the entry is stale")
     return row
 
 
@@ -163,7 +199,7 @@ def main():
         for f in r["flips"]:
             print(f"FLIP {r['set']} {r['id']} ({r['file']}, {f['source']}): {json.dumps(f)}",
                   file=sys.stderr)
-    swept = [r for r in rows if not r["error"]]
+    swept = [r for r in rows if not r["error"] and not r.get("compile_caught")]
     summary = {
         "schema": "cortex-fence-sweep/1",
         "tasks": len(rows),
@@ -173,6 +209,7 @@ def main():
         "fence_envs": sorted({json.dumps(r["fence_env"], sort_keys=True) for r in swept}),
         "flips": sum(len(r["flips"]) for r in rows),
         "errors": len(errors),
+        "compile_caught": sum(1 for r in rows if r.get("compile_caught")),
         "pass": bool(swept) and not errors and not flipped,
     }
     if args.json:

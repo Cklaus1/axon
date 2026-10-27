@@ -171,6 +171,21 @@ Every task also passed `make_task` at build time: pristine file green, broken
 file type-checks with >= 2 failing tests (visible = first, hidden = last), the
 arm-A workspace without the hidden check type-checks and fails the visible test.
 
+### Compile-caught tasks
+
+A checker fix can make a planted defect a compile error. The set stays frozen
+(it is not rebuilt, so its sha256 does not change), and the task is recorded in
+`../fence_sweep.py` `COMPILE_CAUGHT`. The sweep confirms the refusal on every
+gate run instead of sweeping the task.
+
+| task | from | why |
+|---|---|---|
+| `h-wrong-var-04` | `128d70be` | its mutant `arr_push(&t.results, t)` pushes a `Trace` into an `[i64]`. A builtin's `T` was a wildcard before this commit; now the checker refuses the file with E0102. |
+
+From that commit on, the broken file no longer type-checks, so `cortex grant` exits 22 and every arm, oracle
+included, scores the task as not verified. A heldout score is therefore at most 46/47, which is one task below runs
+on older binaries. Configurations run on the same binary still compare with each other.
+
 ## Files
 
 * `mine.py`: real-bug miner; `mining.json`: its report (every pair and reason).
