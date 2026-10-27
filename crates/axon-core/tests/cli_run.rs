@@ -40762,3 +40762,165 @@ fn a_whole_struct_refinement_predicate_naming_an_unbound_name_is_refused() {
         "ATTACK: a whole-struct refinement predicate naming an unbound name passed check",
     );
 }
+
+/// CS-2: assert `src` checks rc 2 with E1103 (never E0001) and that the
+/// check output carries every string in `needles`.
+fn cs2_refused_e1103(tag: &str, src: &str, needles: &[&str], attack: &str) {
+    let (crc, cmsg, rrc, _) = cs_b1_check_run(tag, src);
+    assert_eq!(
+        crc,
+        Some(2),
+        "{attack} [{tag}]: check rc, run rc {rrc:?}: {cmsg}"
+    );
+    assert!(
+        cmsg.contains("E1103") && !cmsg.contains("E0001"),
+        "{attack} [{tag}]: want E1103, not E0001: {cmsg}"
+    );
+    for n in needles {
+        assert!(cmsg.contains(n), "{attack} [{tag}]: missing {n:?}: {cmsg}");
+    }
+}
+
+/// CS-2: a `@[verify]` predicate naming an unbound name passed check and
+/// panicked at run ("undefined identifier `nosuch`", rc 101).
+#[test]
+fn verify_predicate_unknown_name_is_refused_e1103() {
+    cs2_refused_e1103(
+        "s23undef",
+        "@[verify(value >= nosuch)]\nfn f(x: i64) -> i64 { x }\n\nfn main() {\n    println(to_str(f(5)))\n}\n",
+        &["`nosuch`", "not in scope"],
+        "ATTACK: a verify predicate naming an unbound name passed check",
+    );
+}
+
+/// CS-2: an unknown callee in a verify predicate (rc 101 "call to unknown
+/// function `is_ok`" at run).
+#[test]
+fn verify_predicate_unknown_callee_is_refused_e1103() {
+    cs2_refused_e1103(
+        "vcallee",
+        "@[verify(is_ok(write_file(\"/nonexistent/out\", \"x\")))]\nfn f(x: i64) -> i64 { x }\n\nfn main() {\n    println(to_str(f(5)))\n}\n",
+        &["`is_ok`"],
+        "ATTACK: a verify predicate calling an unknown fn passed check",
+    );
+}
+
+/// CS-2: a verify predicate that is not `bool`: an ill-typed one (rc 101
+/// "cannot apply And to i64 / bool" at run) and a well-typed `i64` one (run
+/// rc 0: an `i64` outcome is never `false`, so the gate never fires).
+#[test]
+fn verify_predicate_non_bool_is_refused_e1103() {
+    let attack = "ATTACK: a non-bool verify predicate passed check";
+    cs2_refused_e1103(
+        "s23type",
+        "@[verify(value && true)]\nfn f(x: i64) -> i64 { x }\n\nfn main() {\n    println(to_str(f(5)))\n}\n",
+        &["verify predicate of `f`"],
+        attack,
+    );
+    cs2_refused_e1103(
+        "vint",
+        "@[verify(value + 1)]\nfn f(x: i64) -> i64 { x }\n\nfn main() {\n    println(to_str(f(5)))\n}\n",
+        &["verify predicate of `f` is `i64`, not bool"],
+        attack,
+    );
+}
+
+/// CS-2: a `Temporal` has no `source_tag` (only `Uncertain` does), so a
+/// verify predicate naming it on a `Temporal<T>` return is refused.
+#[test]
+fn verify_temporal_source_tag_is_refused_e1103() {
+    cs2_refused_e1103(
+        "vt",
+        "@[verify(source_tag >= 0 && value > 100)]\nfn f(x: i64) -> Temporal<i64> { temporal_new(x, 100000, 0.1) }\nfn main() { println(to_str(f(5).value)) }\n",
+        &["`source_tag`"],
+        "ATTACK: a verify predicate read `source_tag` of a Temporal",
+    );
+}
+
+/// CS-2 (E-6): an integer literal against an f64 operand in a composite
+/// verify predicate (rc 101 "cannot apply GtEq to f64 / i64" at run); the
+/// decodable simple shape `value >= 0` stays accepted (runtime widening).
+#[test]
+fn verify_predicate_int_literal_against_f64_is_refused_e1103() {
+    let attack = "ATTACK: an int literal against an f64 verify operand passed check";
+    cs2_refused_e1103(
+        "vf3",
+        "@[verify(value >= 0 && value <= 1)]\nfn f(x: f64) -> f64 { x }\nfn main() { println(to_str_f64(f(0.5))) }\n",
+        &["write `0.0`"],
+        attack,
+    );
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "vf",
+        "@[verify(value >= 0)]\nfn f(x: f64) -> f64 { x }\nfn main() { println(to_str_f64(f(1.5))) }\n",
+    );
+    assert_eq!(crc, Some(0), "{attack} [vf simple shape]: {cmsg}");
+    assert_eq!(
+        (rrc, rout.as_str()),
+        (Some(0), "1.5\n"),
+        "{attack} [vf]: {cmsg}"
+    );
+}
+
+/// CS-2 / NH-1 (a): a verify predicate sees the fn's params. `s23` passed
+/// check and panicked ("undefined identifier `lo`", rc 101); now an in-range
+/// return runs rc 0 and an out-of-range one fails the gate (rc 3), on every
+/// engine.
+#[test]
+fn verify_predicate_param_names_bind_or_refuse() {
+    let attack = "ATTACK: a verify predicate reading a param panicked instead of gating";
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "s23",
+        "@[verify(value >= lo && value <= hi)]\nfn clampv(x: i64, lo: i64, hi: i64) -> i64 {\n    if x < lo { lo } else if x > hi { hi } else { x }\n}\n\nfn main() {\n    println(to_str(clampv(5, 0, 10)))\n}\n",
+    );
+    assert_eq!(crc, Some(0), "{attack} [s23]: {cmsg}");
+    assert_eq!(
+        (rrc, rout.as_str()),
+        (Some(0), "5\n"),
+        "{attack} [s23]: {cmsg}"
+    );
+    let bad = "@[verify(value >= lo && value <= hi)]\nfn nocl(x: i64, lo: i64, hi: i64) -> i64 { x }\n\nfn main() {\n    println(to_str(nocl(11, 0, 10)))\n}\n";
+    let (crc, cmsg, _, _) = cs_b1_check_run("s23bad", bad);
+    assert_eq!(crc, Some(0), "{attack} [s23bad]: {cmsg}");
+    let (code, stdout, stderr) = vm_same_both_engines("s23bad", bad);
+    assert_eq!(code, Some(3), "{attack} [s23bad]: {stdout}{stderr}");
+    assert!(
+        stderr.contains("verify failed") && !stderr.contains("undefined identifier"),
+        "{attack} [s23bad]: {stderr}"
+    );
+}
+
+/// CS-2 (E-2, NH-1 a): a param named like a binder bound for this return
+/// shape would be shadowed by it, so it is refused; a name that shape does
+/// not bind (`confidence` on an `i64` return, as in
+/// `examples/flagship/agent_task.ax`) stays a plain param.
+#[test]
+fn verify_param_named_like_a_bound_binder_is_refused() {
+    let attack = "ATTACK: a param named like a verify binder passed check";
+    for (tag, src) in [
+        ("vcoll_value", "@[verify(value >= 0)]\nfn f(value: i64) -> i64 { value }\nfn main() { println(to_str(f(5))) }\n"),
+        ("vcoll_conf", "@[verify(confidence >= 0.5)]\nfn f(x: i64, confidence: f64) -> Uncertain<i64> { uncertain_dyn_i64(x, confidence) }\nfn main() { println(to_str(f(5, 0.9).value)) }\n"),
+    ] {
+        cs2_refused_e1103(tag, src, &["rename the parameter"], attack);
+    }
+    let (crc, cmsg, rrc, rout) = cs_b1_check_run(
+        "vcoll_free",
+        "@[verify(value >= 0)]\nfn score(x: i64, confidence: i64) -> i64 { x + confidence }\nfn main() { println(to_str(score(2, 3))) }\n",
+    );
+    assert_eq!(crc, Some(0), "{attack} [vcoll_free]: {cmsg}");
+    assert_eq!(
+        (rrc, rout.as_str()),
+        (Some(0), "5\n"),
+        "{attack} [vcoll_free]: {cmsg}"
+    );
+}
+
+/// CS-2 (E-7): `return`/`break` in a verify predicate cannot leave its frame.
+#[test]
+fn verify_predicate_with_return_or_break_is_refused_e1103() {
+    cs2_refused_e1103(
+        "vesc",
+        "@[verify(if value > 2 { break } else { true })]\nfn f(x: i64) -> i64 { x }\nfn main() {\n    let i = 0\n    while i < 5 {\n        println(to_str(f(i)))\n        i = i + 1\n    }\n}\n",
+        &["cannot leave its frame"],
+        "ATTACK: a verify predicate that leaves its frame passed check",
+    );
+}

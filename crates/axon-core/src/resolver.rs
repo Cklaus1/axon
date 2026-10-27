@@ -203,6 +203,7 @@ const W0006: &str = "W0006"; // unused local binding (`let x = …` never read)
 const E0004: &str = "E0004";
 const E0005: &str = "E0005"; // a type definition reuses a builtin type name
 const E1211: &str = "E1211"; // a refinement predicate's name, type or frame escape (CS-1)
+const E1103: &str = "E1103"; // a `@[verify]` predicate's name, type, binder or frame escape (CS-2)
 const I0001: &str = "I0001"; // deferred attribute info
 
 // ── Symbol ───────────────────────────────────────────────────────────────────
@@ -840,10 +841,6 @@ struct Resolver<'a> {
     /// callee, and consumed by the `Ident` arm: `f(x)` names `f` in CALL
     /// position, which is not a use of `f` as a first-class value.
     ident_is_callee: bool,
-    /// The sealed directories of this run (`--seal`), the ones `resolve_program_sealed`
-    /// was handed -- not the process-global set, so a caller (or a unit test) that
-    /// names its own sealed set gets the sealed predicate walks too.
-    sealed_dirs: Vec<std::path::PathBuf>,
     /// Set while a predicate is resolved ([`Resolver::resolve_predicate`]): a
     /// name nothing binds in it is that predicate's code, never E0001.
     predicate: Option<PredicateScope>,
@@ -868,7 +865,6 @@ impl<'a> Resolver<'a> {
             current_span: crate::span::Span::dummy(),
             generic_fns: std::collections::HashSet::new(),
             ident_is_callee: false,
-            sealed_dirs: Vec::new(),
             predicate: None,
         }
     }
@@ -1591,11 +1587,6 @@ impl<'a> Resolver<'a> {
         self.table.pop_scope();
     }
 
-    /// Whether `span` lies in a sealed file of a `--seal` run.
-    fn in_sealed_file(&self, span: crate::span::Span) -> bool {
-        !self.sealed_dirs.is_empty() && span_in_sealed(span, &self.sealed_dirs)
-    }
-
     fn resolve_fn(&mut self, f: &FnDef) {
         // Validate attributes before entering the function body.
         self.validate_attrs(f);
@@ -1633,31 +1624,47 @@ impl<'a> Resolver<'a> {
 
         self.resolve_expr(&f.body);
 
-        // A SEALED fn's `@[verify]` predicate is resolved too, so a name in it
-        // that nothing defines is refused as it is in a body (amendment 114: an
-        // operator fn named there was refused E0004 while a missing one was
-        // accepted). The names the runtime binds for it are `value`,
-        // `confidence`, `source_tag`.
-        if let Some(v) = &f.verify {
-            if self.in_sealed_file(f.span) {
-                self.table.push_scope();
-                for n in ["value", "confidence", "source_tag"] {
-                    self.table.define(
-                        n.to_string(),
-                        Symbol::Local {
-                            name: n.to_string(),
-                        },
-                    );
-                }
-                self.resolve_expr(&v.predicate);
-                self.table.pop_scope();
-            }
-        }
-
         // Unused-local lint (W0006): a `let`-binding whose name is never read.
         self.check_unused_locals(&f.body);
 
         self.table.pop_scope();
+
+        // CS-2: a `@[verify]` predicate is resolved in the scope it runs in —
+        // module items, builtins, the binders of the return's shape and the
+        // params (NH-1 a) — in every file, sealed included. A param named like
+        // a shape binder is refused (E-2): the predicate could not tell them
+        // apart.
+        if let Some(v) = &f.verify {
+            if !v.span.is_dummy() {
+                self.current_span = v.span;
+            }
+            let shape = verify_shape_binders(f.return_type.as_ref());
+            for p in &f.params {
+                if shape.iter().any(|(b, _)| *b == p.name) {
+                    self.emit_error(
+                        Diagnostic::error(
+                            E1103,
+                            format!(
+                                "parameter `{0}` of `{1}` is named like the `@[verify]` binder \
+                                 `{0}` of its return, so the predicate cannot tell them apart",
+                                p.name, f.name
+                            ),
+                        )
+                        .with_file(self.file)
+                        .with_span(self.current_span)
+                        .with_fix(format!("rename the parameter `{}`", p.name)),
+                    );
+                }
+            }
+            let mut names: Vec<&str> = shape.iter().map(|(b, _)| *b).collect();
+            for p in &f.params {
+                if !names.contains(&p.name.as_str()) {
+                    names.push(&p.name);
+                }
+            }
+            let subject = format!("verify predicate of `{}`", f.name);
+            self.resolve_predicate(&v.predicate, &names, E1103, subject);
+        }
     }
 
     /// Warn (W0006) on any `let`-binding in this function body whose name is
@@ -2585,6 +2592,27 @@ pub fn refine_binders(program: &Program) -> HashMap<String, Vec<(String, AxonTyp
     out
 }
 
+/// CS-2: the names a `@[verify]` predicate binds for a fn returning `ret`
+/// (besides the fn's params), with their types, as the interpreter binds them:
+/// `value` is the return, or the `T` of an `Uncertain<T>`/`Temporal<T>`
+/// return; both wrappers add `confidence: f64`; only `Uncertain` carries
+/// `source_tag: i64`.
+pub fn verify_shape_binders(ret: Option<&AxonType>) -> Vec<(&'static str, AxonType)> {
+    let named = |n: &str| AxonType::Named(n.to_string());
+    match ret {
+        Some(AxonType::Generic { base, args }) if args.len() == 1 && base == "Uncertain" => vec![
+            ("value", args[0].clone()),
+            ("confidence", named("f64")),
+            ("source_tag", named("i64")),
+        ],
+        Some(AxonType::Generic { base, args }) if args.len() == 1 && base == "Temporal" => {
+            vec![("value", args[0].clone()), ("confidence", named("f64"))]
+        }
+        Some(t) => vec![("value", t.clone())],
+        None => vec![("value", named("()"))],
+    }
+}
+
 /// The first `return`/`break`/`continue` in the predicate `pred`, if any: a
 /// predicate cannot leave its frame (CS-1, E-7).
 fn predicate_frame_escape(pred: &Expr) -> Option<&'static str> {
@@ -2636,7 +2664,6 @@ pub fn resolve_program_sealed(
     sealed: &[std::path::PathBuf],
 ) -> ResolveResult {
     let mut r = Resolver::new(file);
-    r.sealed_dirs = sealed.to_vec();
     r.collect_top_level(program);
     r.resolve_items(program);
     if !sealed.is_empty() {

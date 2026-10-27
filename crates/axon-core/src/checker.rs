@@ -20,8 +20,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt};
 use crate::error::{
-    levenshtein, E1206, E1207, E1208, E1209, E1210, E1211, E1500, E1503, E1504, E1505, E1704,
-    E1810, E2300, E2302,
+    levenshtein, E1103, E1206, E1207, E1208, E1209, E1210, E1211, E1500, E1503, E1504, E1505,
+    E1704, E1810, E2300, E2302,
 };
 use crate::types::Type;
 
@@ -1065,6 +1065,7 @@ impl CheckCtx {
             self.check_item(item);
         }
         self.check_refinement_predicates(program);
+        self.check_verify_predicates(program);
         // AX-08: `&mut [T]` parameter mode + no writes through a shared `&`.
         self.errors
             .extend(crate::mut_borrow::check_program(program));
@@ -1241,28 +1242,25 @@ impl CheckCtx {
     /// Unbound names are the resolver's (also E1211, never reported here).
     fn check_refinement_predicates(&mut self, program: &Program) {
         let binders = crate::resolver::refine_binders(program);
-        let mut preds: Vec<(String, &Expr, Vec<(String, AxonType)>, crate::span::Span)> =
-            Vec::new();
+        let mut ictx: Option<crate::infer::InferCtx> = None;
         for item in &program.items {
-            match item {
+            let (name, pred, b, span) = match item {
                 Item::RefineDef(r) => {
                     let b = binders.get(&r.name).cloned().unwrap_or_default();
-                    preds.push((r.name.clone(), &r.predicate, b, r.span));
+                    (&r.name, r.predicate.as_ref(), b, r.span)
                 }
-                Item::TypeDef(t) => {
-                    if let Some(p) = t.refinement.as_deref() {
+                Item::TypeDef(t) => match t.refinement.as_deref() {
+                    Some(p) => {
                         let b = vec![("_".to_string(), AxonType::Named(t.name.clone()))];
-                        preds.push((t.name.clone(), p, b, t.span));
+                        (&t.name, p, b, t.span)
                     }
-                }
-                _ => {}
-            }
-        }
-        if preds.is_empty() {
-            return;
-        }
-        let mut ictx = crate::infer::InferCtx::for_predicates(self.file.clone(), program);
-        for (name, pred, b, span) in preds {
+                    None => continue,
+                },
+                _ => continue,
+            };
+            let ictx = ictx.get_or_insert_with(|| {
+                crate::infer::InferCtx::for_predicates(self.file.clone(), program)
+            });
             let subject = if name.starts_with("__refine_") {
                 "inline refinement predicate".to_string()
             } else {
@@ -1279,6 +1277,72 @@ impl CheckCtx {
                         .fix("the value is `_` (inside a whole-struct refinement: `_.field`)"),
                 );
             }
+        }
+    }
+
+    /// CS-2: type every `@[verify]` predicate ([`Self::check_verify_predicate`]).
+    fn check_verify_predicates(&mut self, program: &Program) {
+        let mut fns: Vec<&FnDef> = Vec::new();
+        for item in &program.items {
+            match item {
+                Item::FnDef(f) => fns.push(f),
+                Item::ImplBlock(b) => fns.extend(b.methods.iter()),
+                _ => {}
+            }
+        }
+        fns.retain(|f| f.verify.is_some());
+        if fns.is_empty() {
+            return;
+        }
+        let mut ictx = crate::infer::InferCtx::for_predicates(self.file.clone(), program);
+        for f in fns {
+            self.check_verify_predicate(&mut ictx, f);
+        }
+    }
+
+    /// CS-2: type `f`'s `@[verify]` predicate in the scope it runs in — module
+    /// items, builtins, the binders of the return's shape
+    /// ([`crate::resolver::verify_shape_binders`]) and the params (NH-1 a) —
+    /// and refuse (E1103) one that is ill-typed, is not `bool`, or compares an
+    /// integer literal with an f64. The decodable simple shape `ident CMP
+    /// literal` is not typed: the runtime compares it as f64 (E-6). Unbound
+    /// names and binder collisions are the resolver's.
+    fn check_verify_predicate(&mut self, ictx: &mut crate::infer::InferCtx, f: &FnDef) {
+        use crate::ast::BinOp;
+        let Some(v) = &f.verify else { return };
+        if let Some((_, op, _)) = crate::verify::decode_verify_predicate_with_ident(&v.predicate) {
+            if matches!(
+                op,
+                BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq | BinOp::Eq | BinOp::NotEq
+            ) {
+                return;
+            }
+        }
+        let mut bindings: Vec<(String, AxonType)> =
+            crate::resolver::verify_shape_binders(f.return_type.as_ref())
+                .into_iter()
+                .map(|(n, t)| (n.to_string(), t))
+                .collect();
+        for p in &f.params {
+            if !bindings.iter().any(|(n, _)| *n == p.name) {
+                bindings.push((p.name.clone(), p.ty.clone()));
+            }
+        }
+        let typing = ictx.infer_predicate(&v.predicate, &bindings, v.span);
+        let subject = format!("verify predicate of `{}`", f.name);
+        if let Some(msg) = predicate_type_problem(&subject, &typing) {
+            let file = self.file.clone();
+            self.errors.push(
+                CheckError::new(E1103, msg)
+                    .node(format!("#fn_{}.verify", f.name))
+                    .at(&file, 0, 0)
+                    .with_span(v.span)
+                    .fix(
+                        "the predicate sees `value` (the return, or the `T` of an \
+                         `Uncertain<T>`/`Temporal<T>`), `confidence` for those two, \
+                         `source_tag` for `Uncertain`, and the fn's params",
+                    ),
+            );
         }
     }
 

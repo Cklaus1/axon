@@ -3196,10 +3196,15 @@ ATTACK_MARKERS.update({
     'M3827': r'ATTACK: a predicate that leaves its frame passed check',
     'M3838': r'ATTACK: a struct-field refinement did not bind its own field name',
 })
+ATTACK_MARKERS.update({
+    'M3824': r'ATTACK: an int literal against an f64 verify operand passed check',
+    'M3825': r'ATTACK: a non-bool verify predicate passed check',
+    'M3826': r'ATTACK: a verify predicate read `source_tag` of a Temporal',
+    'M3837': r'ATTACK: a param named like a verify binder passed check',
+})
 
-# Integration fixup CS-6 × CS-4 (id M3819)
+# Integration fixup CS-6 × CS-4 (id M3819); M3817 guards CS-1's binder loop
 ATTACK_MARKERS.update({
     'M3819': r'ATTACK: a move before a user `exit\(&mut \.\.\)` was dropped as if the branch diverged',
     'M3817': r"ATTACK: a parameter refinement's predicate did not see its parameter's name",
-    'M3818': r'ATTACK: a whole-struct refinement predicate naming an unbound name passed check',
 })

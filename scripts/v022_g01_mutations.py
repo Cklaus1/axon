@@ -10740,7 +10740,7 @@ MUTATIONS += [
      '        if self.sealed_at(f.span) {\n            for (_, bounds) in &f.generic_bounds {', '        if self.sealed_at(f.span) && false {\n            for (_, bounds) in &f.generic_bounds {',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
     ('M3250', 'ORACLE (am114, runner): a name in a sealed @[verify] predicate is not resolved', 'crates/axon-core/src/resolver.rs',
-     '            if self.in_sealed_file(f.span) {\n                self.table.push_scope();\n                for n in ["value"', '            if self.in_sealed_file(f.span) && false {\n                self.table.push_scope();\n                for n in ["value"',
+     '            self.resolve_predicate(&v.predicate, &names, E1103, subject);', '            let _ = (&names, subject);',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
     ('M3251', 'ORACLE (am114, runner): a name in a sealed refinement predicate is not resolved', 'crates/axon-core/src/resolver.rs',
      'Item::RefineDef(r) if self.in_sealed_file(r.span) => {', 'Item::RefineDef(r) if self.in_sealed_file(r.span) && false => {',
@@ -11114,7 +11114,7 @@ MUTATIONS += [
      '    if DEFERRED_PREFIXES.contains(&name) {\n        return true;\n    }\n    if struct_fields', '    if DEFERRED_PREFIXES.iter().any(|p| name.starts_with(p)) {\n        return true;\n    }\n    if struct_fields',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
     ('M3340', "ORACLE (am117): a sealed struct's whole-struct refinement predicate is not resolved", 'crates/axon-core/src/resolver.rs',
-     'Item::TypeDef(t) if self.in_sealed_file(t.span) && t.refinement.is_some() => {', 'Item::TypeDef(t) if false && self.in_sealed_file(t.span) && t.refinement.is_some() => {',
+     '                    if let Some(p) = t.refinement.as_deref() {\n                        self.resolve_predicate(', '                    if let Some(p) = t.refinement.as_deref().filter(|_| false) {\n                        self.resolve_predicate(',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
     ('M3341', 'ORACLE (am117): a sealed refinement/where/verify predicate is not walked as an expression', 'crates/axon-core/src/checker.rs',
      '        self.check_expr(pred, path, &mut scope);\n        self.current_span = prev;', '        let _ = (pred, path, &mut scope);\n        self.current_span = prev;',
@@ -11171,7 +11171,7 @@ MUTATIONS += [
      '        !self.sealed_dirs.is_empty() && span_in_sealed(span, &self.sealed_dirs)', '        let dirs = sealed_module_dirs();\n        !dirs.is_empty() && span_in_sealed(span, &dirs)',
      'axon-core', '--lib', 'resolver::tests::a_diagnostic_about_a_sealed_item_names_the_sealed_file_wherever_the_item_sits'),
     ('M3455', "COST (am121): an inline parameter refinement's predicate does not see its parameter's name", 'crates/axon-core/src/resolver.rs',
-     '                    for n in refined_param_names(program, &r.name) {\n                        self.table.define(n.clone(), Symbol::Local { name: n });\n                    }\n', '',
+     '                sites.entry(n).or_default().push(vec![(&p.name, &p.ty)]);', '                let _ = (n, &p.name);',
      'axon-psv', '--test sealed_frames', 'a_sealed_caller_is_refused_in_the_same_words_for_an_operator_name_and_a_missing_one'),
     ('M3456', "EXISTENCE (am121): a spanless merged diagnostic is shown as the operator's", 'crates/axon-core/src/seal_split.rs',
      '        let unattributable = merged_half && d.line == 0 && i >= n_load;', '        let unattributable = false && merged_half && d.line == 0 && i >= n_load;',
@@ -11810,7 +11810,7 @@ MUTATIONS += [
 MUTATIONS += [
     ('M3820', 'CS-1: refinement predicates are resolved for sealed files only again, so an unbound name passes check', 'crates/axon-core/src/resolver.rs',
      '                Item::RefineDef(r) => {\n                    let names: Vec<&str> = binders',
-     '                Item::RefineDef(r) if self.in_sealed_file(r.span) => {\n                    let names: Vec<&str> = binders',
+     '                Item::RefineDef(r) if span_in_sealed(r.span, &sealed_module_dirs()) => {\n                    let names: Vec<&str> = binders',
      'axon-core', '--no-default-features --test cli_run', 'refinement_predicate_unknown_name_is_refused'),
     ('M3821', 'CS-1: a refinement binds the union of its use sites\' names again, not the intersection', 'crates/axon-core/src/resolver.rs',
      '                let everywhere = rest\n',
@@ -11836,22 +11836,14 @@ MUTATIONS += [
      '        for n in binders {\n            self.table.define(',
      '        for n in binders.iter().take(1) {\n            self.table.define(',
      'axon-core', '--no-default-features --test cli_run', 'a_param_refinement_predicate_sees_its_own_param_name'),
-    ('M3818', 'CS-1: a whole-struct refinement predicate is no longer resolved, so an unbound name passes check', 'crates/axon-core/src/resolver.rs',
-     '                    if let Some(p) = t.refinement.as_deref() {',
-     '                    if let Some(p) = t.refinement.as_deref().filter(|_| false) {',
-     'axon-core', '--no-default-features --test cli_run', 'a_whole_struct_refinement_predicate_naming_an_unbound_name_is_refused'),
 ]
 # CS-1 replaced the resolver's sealed-only refinement branches (and
-# `refined_param_names`) with one all-files predicate-scope pass, so the old
-# text of these rows is gone. Each guard lives on in that pass and is mutated
-# there by an ACTIVE replacement row (STALE rule, see STALE_REFACTORED above).
+# `refined_param_names`) with one all-files predicate-scope pass. M3340 and
+# M3455 are re-anchored in place on that pass (whole-struct branch, param
+# binder site); M3251's guard is the RefineDef branch M3820 mutates.
 _CS1_STALE = {
     "M3251": {"property": "a name in a sealed refinement predicate is resolved", "replacement": "M3820",
-              "how": "the sealed-only RefineDef arm became the all-files RefineDef arm of resolve_items (CS-1)"},
-    "M3340": {"property": "a sealed struct's whole-struct refinement predicate is resolved", "replacement": "M3818",
-              "how": "the sealed-only TypeDef arm became the all-files TypeDef arm of resolve_items (CS-1)"},
-    "M3455": {"property": "an inline parameter refinement's predicate sees its parameter's name", "replacement": "M3817",
-              "how": "refined_param_names became refine_binders, defined by resolve_predicate's binder loop (CS-1)"},
+              "how": "CS-1: the sealed-only RefineDef branch became the all-files RefineDef branch of resolve_items"},
 }
 STALE_REFACTORED.update(_CS1_STALE)
 RETIRED |= set(_CS1_STALE)
@@ -11863,6 +11855,38 @@ MUTATIONS += [
      '                && args.len() < usize::MAX',
      'axon-core', '--no-default-features --test cli_run', 'a_user_exit_reached_through_a_mut_arg_does_not_diverge'),
 ]
+
+# Checker-soundness LaneType B2, CS-2 (ids M3824-M3826, M3837)
+MUTATIONS += [
+    ('M3824', 'CS-2: the checker no longer types `@[verify]` predicates (the call of `check_verify_predicate`)', 'crates/axon-core/src/checker.rs',
+     '            self.check_verify_predicate(&mut ictx, f);',
+     '            let _ = (&mut ictx, f);',
+     'axon-core', '--no-default-features --test cli_run', 'verify_predicate_int_literal_against_f64_is_refused_e1103'),
+    ('M3825', 'CS-2: a well-typed non-bool `@[verify]` predicate is accepted again', 'crates/axon-core/src/checker.rs',
+     '        let subject = format!("verify predicate of `{}`", f.name);\n        if let Some(msg) = predicate_type_problem(&subject, &typing) {',
+     '        let subject = format!("verify predicate of `{}`", f.name);\n        if let Some(msg) = predicate_type_problem(&subject, &typing).filter(|m| !m.ends_with("not bool")) {',
+     'axon-core', '--no-default-features --test cli_run', 'verify_predicate_non_bool_is_refused_e1103'),
+    ('M3826', 'CS-2: a `Temporal<T>` return binds `source_tag` again, which the runtime never binds', 'crates/axon-core/src/resolver.rs',
+     '            vec![("value", args[0].clone()), ("confidence", named("f64"))]',
+     '            vec![("value", args[0].clone()), ("confidence", named("f64")), ("source_tag", named("i64"))]',
+     'axon-core', '--no-default-features --test cli_run', 'verify_temporal_source_tag_is_refused_e1103'),
+    ('M3837', 'CS-2 / NH-1: a param named like a verify binder its return binds is accepted again', 'crates/axon-core/src/resolver.rs',
+     '                if shape.iter().any(|(b, _)| *b == p.name) {',
+     '                if false && shape.iter().any(|(b, _)| *b == p.name) {',
+     'axon-core', '--no-default-features --test cli_run', 'verify_param_named_like_a_bound_binder_is_refused'),
+]
+# CS-2 replaced the resolver's sealed-only `@[verify]` scope with the
+# all-files predicate scope (M3250 re-anchored in place on it), which left
+# `Resolver::in_sealed_file` and `Resolver::sealed_dirs` with no reader
+# (removed): no predicate walk is gated on a sealed set any more.
+_CS2_STALE = {
+    "M3268": {"property": "a sealed predicate is resolved", "replacement": "M3250",
+              "how": "CS-2: predicates resolve in every file, so no sealed position gates the walk M3250 mutates"},
+    "M3454": {"property": "the sealed predicate walks use the run's sealed set", "replacement": "M3250",
+              "how": "CS-2: the walks use no sealed set (all files), so there is no set to confuse; M3250 mutates the walk"},
+}
+STALE_REFACTORED.update(_CS2_STALE)
+RETIRED |= set(_CS2_STALE)
 
 if __name__ == "__main__":
     main()
