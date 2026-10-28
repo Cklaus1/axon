@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "main.rs cmd_check: `axon check` exits 0 unless an error-severity diagnostic was emitted (a note or lint warning alone no longer exits 2), matching the --help contract; no evaluator change (O-CS-04, SF-5)."}

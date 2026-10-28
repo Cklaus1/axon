@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: f0012a585349d57ae897fcd5b9be0a7835a540b4
+generated-at: 43208ed8a38dbfce8c685883e1b81ebeeb4f60b6
 
-`git diff --numstat 31413ca7..f0012a58 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..43208ed8 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -62,7 +62,7 @@ generated-at: f0012a585349d57ae897fcd5b9be0a7835a540b4
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 639 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1230 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 2200 | 608 |
+| `crates/axon-core/src/interp/eval.rs` | 2201 | 608 |
 | `crates/axon-core/src/interp/goal.rs` | 87 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 363 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
@@ -87,20 +87,20 @@ generated-at: f0012a585349d57ae897fcd5b9be0a7835a540b4
 | `crates/axon-core/src/lib.rs` | 303 | 77 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 182 | 59 |
-| `crates/axon-core/src/main.rs` | 1591 | 367 |
+| `crates/axon-core/src/main.rs` | 1594 | 369 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
 | `crates/axon-core/src/parser.rs` | 460 | 32 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
-| `crates/axon-core/src/resolver.rs` | 865 | 121 |
+| `crates/axon-core/src/resolver.rs` | 902 | 121 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/span.rs` | 98 | 3 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 58829 | 8281 |
+| total | 58870 | 8283 |
 
-`git log --reverse 31413ca7..f0012a58 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..43208ed8 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -423,7 +423,9 @@ generated-at: f0012a585349d57ae897fcd5b9be0a7835a540b4
 | 497c26c8 | capability surface | capabilities/effects CAP-1/CAP-3 implementation review: a `@[verify]` predicate that uses a parameter (or `value`) whose type can hold a fn is `unknown` and refused with E1104, since it runs a fn its caller chose; the predicate walk follows a module `let` the predicate names (cycle-guarded) and resolves a call the way the interpreter runs it (a user fn shadowing a builtin is walked, not counted as the builtin); the reach walker covers `select` arm bodies, agreeing with the program-wide surface (g01 M3810-M3814). |
 | f33c8266 | cs/type merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 128d70be | checker soundness | infer: a builtin's T/U/V slots are TypeParams instantiated per call site (structural substitution), not Deferred wildcards, so a dict_get_or result flowing into a [i64] field is E0102 at check instead of a run-time panic; the checker's same-T binder matches TypeParam; generic builtins are not queued for monomorphization; builtin type-param names are kept apart from user generics and chosen by the sig the call reaches (CS-4 shadowing). |
-| 319 commits | | |
+| 2ba68e53 | checker soundness | main.rs cmd_check: `axon check` exits 0 unless an error-severity diagnostic was emitted (a note or lint warning alone no longer exits 2), matching the --help contract; no evaluator change (O-CS-04, SF-5). |
+| 43208ed8 | checker soundness | resolver.rs: a user fn that shadows a builtin (W0003), named in value position, is E0306 at the reference (call_prefers_builtin(name, false)); top-level lets are exempt; error.rs E0306 text. No evaluator change: the checker now refuses the program the interpreter would have run against the builtin (O-CS-03, SF-6). |
+| 321 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -582,7 +584,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 507 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 513 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854
 
 | delta | rows (named in the amendment's own text) |
 |---|---|

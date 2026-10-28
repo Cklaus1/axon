@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "resolver.rs: a user fn that shadows a builtin (W0003), named in value position, is E0306 at the reference (call_prefers_builtin(name, false)); top-level lets are exempt; error.rs E0306 text. No evaluator change: the checker now refuses the program the interpreter would have run against the builtin (O-CS-03, SF-6)."}
