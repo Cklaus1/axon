@@ -14,7 +14,7 @@
 mod script_spawn;
 use axon_cortex::episode::EpisodeEvent;
 use axon_cortex::runner::{EditGrant, Refusal, Runner};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Locate the interpreter. If it is missing this FAILS rather than skips: the
 /// conformance run is this build's stop condition, and a skip would report a
@@ -36,12 +36,59 @@ fn axon_bin() -> PathBuf {
     )
 }
 
-fn stage(name: &str) -> (PathBuf, PathBuf) {
+/// A test workspace under `$TMPDIR` ([`stage`]'s, or one a test builds by
+/// hand), removed when dropped (SF-3) — unless the test is failing: a
+/// panicking test keeps its workspace for debugging.
+struct StagedWs(PathBuf);
+
+impl std::ops::Deref for StagedWs {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<Path> for StagedWs {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<std::ffi::OsStr> for StagedWs {
+    fn as_ref(&self) -> &std::ffi::OsStr {
+        self.0.as_os_str()
+    }
+}
+
+impl Drop for StagedWs {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+}
+
+fn stage(name: &str) -> (PathBuf, StagedWs) {
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures");
     let ws = std::env::temp_dir().join(format!("cortex_{name}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&ws);
     Runner::stage_copy(&src, &ws).expect("stage a resettable copy");
-    (src, ws)
+    (src, StagedWs(ws))
+}
+
+/// SF-3 (O-FU-07): a staged workspace is removed when the test lets go of it,
+/// so a passing run leaves nothing in `$TMPDIR`.
+#[test]
+fn stage_removes_its_workspace_when_dropped() {
+    let (_, ws) = stage("drop_probe");
+    let p = ws.to_path_buf();
+    assert!(p.is_dir(), "{} was not staged", p.display());
+    drop(ws);
+    assert!(
+        !p.exists(),
+        "ATTACK: a staged conformance workspace outlived its test: {}",
+        p.display()
+    );
 }
 
 /// A patch action aimed at `path`, for the authority rows.
@@ -2420,7 +2467,7 @@ fn cxg_c25_a_snapshot_cannot_name_two_different_states() {
 /// fails.
 #[test]
 fn cxg_c27_a_sibling_check_does_not_cast_the_verdict() {
-    let ws = std::env::temp_dir().join(format!("cortex_sibling_{}", std::process::id()));
+    let ws = StagedWs(std::env::temp_dir().join(format!("cortex_sibling_{}", std::process::id())));
     let _ = std::fs::remove_dir_all(&ws);
     std::fs::create_dir_all(&ws).unwrap();
     std::fs::copy(
@@ -2475,7 +2522,7 @@ fn cxg_c28_a_repair_that_leaves_the_file_failing_is_not_verified() {
     use axon_cortex::generate::LiteralGenerator;
     use axon_cortex::runner::EpisodeOutcome;
 
-    let ws = std::env::temp_dir().join(format!("cortex_prefail_{}", std::process::id()));
+    let ws = StagedWs(std::env::temp_dir().join(format!("cortex_prefail_{}", std::process::id())));
     let _ = std::fs::remove_dir_all(&ws);
     std::fs::create_dir_all(&ws).unwrap();
     std::fs::copy(
@@ -2556,7 +2603,9 @@ fn a_stale_visible_copy_is_swept_and_changes_nothing() {
     use axon_cortex::generate::LiteralGenerator;
 
     let run = |tag: &str, stale: bool| {
-        let ws = std::env::temp_dir().join(format!("cortex_stale_{tag}_{}", std::process::id()));
+        let ws = StagedWs(
+            std::env::temp_dir().join(format!("cortex_stale_{tag}_{}", std::process::id())),
+        );
         let _ = std::fs::remove_dir_all(&ws);
         std::fs::create_dir_all(&ws).unwrap();
         std::fs::copy(
