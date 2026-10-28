@@ -171,3 +171,10 @@ Computed by `stats.py compare` / `stats.py route2` and `stats.fu10_verdict`.
   kept on `fu/r4-ablation` (5d257b75, patch sha256
   `f0209bfc8e23b80dafea44bfa3ab6dd41d8b6fb37e43ed9e1c3baa6c0b2cecc6`).
 - hard-once is not spent.
+
+**2026-10-28 — hx2 pre-registration: `PREREG-hx2.md`.** The hx2 design
+(`tasks/hx2-spec.md`: HX-1 caller hidden pin, HX-3a erase, HX-3b sparse) is
+pre-registered in its own file; its §0 (HX-0 pilot gate: decision table,
+pilot seed 2 and ids, scratch-pool sha256, prototype commit, incumbent
+binaries, the three pilot commands) is committed before any pilot row. This
+file keeps the FU-1 record unchanged.
