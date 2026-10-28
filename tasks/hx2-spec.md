@@ -1,6 +1,9 @@
 # hx2: a held-out set with headroom — DRAFT spec
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: STOPPED at HX-0 (2026-10-28).** The pilots ran under `B/headroom/PREREG-hx2.md` §0 (hx2/rec e90c676f):
+caller 20/20 clean, erase 19/20, sparse 20/20, 0 false successes, $0.0713. Neither erase nor sparse advanced, so
+HX-2 to HX-6 do not run. R4 is "retired without measurement" (NH-3 b). HX-1 (`hx2/proto` e83e89d5) is
+not merged; it may still land as a recipe fix. Verdict and rows: PREREG-hx2 §6.
 
 Base: `main` 7f110693. Source: `tasks/opportunities.md` O-FU-08 (`:2701-2706` in the post-commit file) [REVISED:
 HXA#13 — was `:2697-2701`, which ran past O-FU-08] and O-S1-18 (`:2650-2651`, FU-10 keep/remove). Prior design:

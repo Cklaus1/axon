@@ -16,7 +16,7 @@ Integrator: Main, in `/home/cklaus/projects/axon-lanes/sf-int` (`sf/int`).
 |---|---|---|---|
 | LaneDrain | `axon-lanes/sf-drain` (`sf/drain`) | `axon-lanes/.doc-build/sf-drain` | SF-1, then SF-3 |
 | LaneLocate | `axon-lanes/sf-locate` (`sf/locate`) | `axon-lanes/.doc-build/sf-locate` | SF-4, then SF-2 |
-| LaneCore | `axon-lanes/sf-core` (`sf/core`) | `axon-lanes/.doc-build/sf-core` | SF-5, SF-6, after their Step 1 review |
+| LaneCore | `axon-lanes/sf-core` (`sf/core`, reset to `sf/int` ≥ 28be0dbd before starting so it carries SF-3's `StagedWs`, SF56D#1) | `axon-lanes/.doc-build/sf-core` | SF-5, then SF-6, after their Step 1 review |
 | LaneHx2 | `axon-lanes/hx2-proto` (`hx2/proto`, never merged); records in `axon-lanes/hx2-rec` (`hx2/rec`) | `axon-lanes/.doc-build/hx2` (only if a build is needed) | HX-0: N0, N0b, N1 |
 
 All paths are under `/home/cklaus/projects/`.
@@ -62,7 +62,7 @@ graph TD
   SF3 --> INT[integrate sf/int]
   SF2 --> INT
   SF6 --> INT
-  INT --> PCI[pci themes + :561; anchors; refusal coverage; sweep; build.py --check; fmt; clippy]
+  INT --> PCI[pci themes + :585; anchors; refusal coverage; sweep; build.py --check; fmt; clippy]
   PCI --> CORTEX[cortex lane --features ai]
   CORTEX --> RCPT[receipt regress, paid, committed]
   RCPT --> GATE[gate.sh --strict]
@@ -94,7 +94,7 @@ graph TD
 **Integrator-only files:**
 - `tasks/*.md`
 - `governance/notes/pci-themes/*`
-- `governance/notes/v022-pci-delta.md` (:561)
+- `governance/notes/v022-pci-delta.md` (:585)
 - `AXON_REFERENCE.md`
 - `Cargo.lock`
 - receipt outputs
@@ -164,10 +164,11 @@ On the integrated binaries, `timeout 60` per step, in `/var/tmp/r51-tmp/sf-smoke
 3. **SF-4:** `build.py --check` with built binaries.
    - Expected: rc 0, 57 OK.
    - Broken spec: rc 1. `--bogus`: rc 2.
-4. **SF-5:** `axon check letmut.ax`.
-   - Expected: the exit code the spec states (it was 2 with only a note).
-5. **SF-6:** `axon check fnval.ax` / `axon run fnval.ax`.
-   - Expected: the spec's outcome, never rc 0 followed by a run panic of 101.
+4. **SF-5:** the smoke list in SF-5's Acceptance (`tasks/small-fixes-spec.md`), e.g. `axon check letmut.ax`.
+   - Expected: exactly the outputs stated there (rc 0 with the I0002 note; an error-severity file still rc 2).
+5. **SF-6:** the smoke list in SF-6's Acceptance, e.g. `axon check fnval.ax` / `axon run fnval.ax`.
+   - Expected: exactly the outputs stated there (E0306 at the reference, rc 2), never rc 0 followed by a run panic
+     of 101; the `toplet`/`toplam` top-level `let` cases still check rc 0 and run.
 6. **SF-3:** the private-`TMPDIR` conformance run leaves 0 `cortex_*` dirs.
 
 ## Plan options

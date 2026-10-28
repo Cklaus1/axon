@@ -2651,6 +2651,7 @@ Noted in `crates/axon-core/src/capabilities.rs` (the `reachable_capabilities` do
 ### O-S1-18 — [high] R4 typed feedback needs a prospective keep/remove criterion
 `[DECIDED by human 2026-10-18]`: R4 shipped without a demonstrated benefit. Its keep/remove criterion (measured capability gain on the new held-out evaluation, against its implementation cost and complexity) is fixed in tasks/followup-spec.md BEFORE the measurement runs; typed feedback is not kept indefinitely without demonstrated benefit.
 `[SPECCED 2026-10-19: measurement path in tasks/hx2-spec.md HX-6 (FU-10 on hx2); NH-3/NH-5 there.]`
+`[RESOLVED 2026-10-28: hx2 HX-0 pilots found no class with headroom (PREREG-hx2 §6), so per NH-3 (b) R4 is retired without measurement. It is never reported as a measured REMOVE. Whether R4's code is removed is a separate change.]`
 
 ### O-S1-19 — [medium] `@[verify]` predicates have no purity check
 Found in the follow-up spec review (FU-2). E1209 rejects impure builtins in refinement predicates (`checker.rs:788-804` → `reject_impure_refinement`), but a `@[verify(...)]` predicate is checked only for sealing (`checker.rs:1393-1400`) and confidence bounds (`verify.rs`, E1101), and the interpreter evaluates it (`interp.rs:~6613`). So `@[verify(len(read_file("x")) > 0)]` runs a file read as part of a "verification". FU-2 makes every capability walker SEE it; whether verify predicates should be pure like refinements is a language-behaviour change (product decision).
@@ -2711,6 +2712,7 @@ FU-1 calibration (2026-10-18, `B/headroom/PREREG.md` §2 and §6, evidence in `B
 - **A held-out set that can show a gain needs harder defects than single mutations with visible failing tests** (multi:3 was 104/105). Candidates: defects whose visible tests do not fail, cross-function invariants, or larger programs; each needs its own pilot (20 tasks, < $0.05 on h55) before any authoring at scale.
 - FU-10 (O-S1-18) stays undecided until such a set exists; its T2 arm is ready on `fu/r4-ablation`.
 `[SPECCED 2026-10-19: tasks/hx2-spec.md — (a) HX-1, (b) HX-2 deferred (needs-human), harder classes HX-0 pilots then HX-3; FU-11/FU-10 as HX-6.]`
+`[2026-10-28: (a) the HX-1 hidden direct pin admitted 0 false successes on a 20-task caller pilot (was 28 of 114 caller trials in FU-1); not merged (hx2/proto e83e89d5). Harder single-function classes (erase, sparse) saturate at haiku-5.5 k = 1 (19/20, 20/20), so held-out headroom still needs multi-function or non-test-visible defects. See PREREG-hx2 §6.]`
 
 ## Spec drafting, 2026-10-19 (new findings while drafting the five DRAFT specs)
 
@@ -2761,3 +2763,18 @@ R50 cites `scripts/vm_perf_gate.sh`. None of the four is invoked by `gate.sh`, C
 (`governance/EVIDENCE_CLASSES.md` rows). The test is `#[ignore]`d with this id until each is resolved one of two ways:
 wire the gate (two need an idle machine or `wasmtime` + x86-64, so `conditional`/`external_hardware` may fit), or
 restate the REQUIREMENTS.md row so it no longer claims continuous verification. Un-ignore once it passes.
+
+## Small-fixes batch, 2026-10-28 (found while drafting SF-5/SF-6)
+
+### O-SF-01 — [medium] A call through any fn value skips arity and type checks
+`let f = some_user_fn; f(1, 2, 3)` with the wrong arity or argument type: `axon check` rc 0, `axon run` rc 101. No
+shadowing is needed (DraftCore probes `j_user_arity`, `k_lambda_arity`, `l_user_type` under
+`/var/tmp/r51-tmp/draft-core/`). SF-6 only closes the builtin-shadowing case (E0306 at the reference). Fix direction:
+type the callee local's `fn(..) -> ..` in the checker's call-through-local path (`checker.rs:4012-4031`
+[INFERENCE: anchor from the drafter, not re-read]) and refuse an arity/type mismatch. Needs its own spec: it changes
+check outcomes for any program that calls a fn value.
+
+### O-SF-02 — [low] On a tty, a note or warning prints with an `error:` prefix
+`script -qc 'axon check letmut.ax'` prints `error: letmut.ax:1:28: note[I0002]: …` (`main.rs:1613` for `check`,
+`emit_pipeline_diag` `:8330-8335` for `run`). The JSON form carries the right severity; only the human prefix is
+wrong. Out of SF-5's scope.
