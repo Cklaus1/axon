@@ -55,16 +55,6 @@ struct CodeView {
     holes: Vec<(usize, usize)>,
 }
 
-impl CodeView {
-    fn is_code(&self, at: usize) -> bool {
-        self.code[at]
-    }
-
-    fn in_hole(&self, at: usize) -> bool {
-        self.holes.iter().any(|&(a, b)| a <= at && at < b)
-    }
-}
-
 /// `None` when `src` does not lex: no structure is read from text the
 /// compiler would refuse (FU-7).
 fn code_view(src: &str) -> Option<CodeView> {
@@ -169,7 +159,7 @@ fn code_lines(src: &str) -> Vec<(&str, bool)> {
             let t = l.trim_start();
             let first = at + (l.len() - t.len());
             at += l.len();
-            (t, first < src.len() && view.is_code(first))
+            (t, first < src.len() && view.code[first])
         })
         .collect()
 }
@@ -267,7 +257,8 @@ fn called_in(body: &str, defined: &[String]) -> Vec<String> {
                     .chars()
                     .next_back()
                     .is_some_and(|c| c.is_alphanumeric() || c == '_');
-            let in_code = view.is_code(abs) || view.in_hole(abs);
+            let in_hole = view.holes.iter().any(|&(a, b)| a <= abs && abs < b);
+            let in_code = view.code[abs] || in_hole;
             if ok && in_code && !out.contains(name) {
                 out.push(name.clone());
                 break;

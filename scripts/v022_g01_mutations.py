@@ -11972,8 +11972,8 @@ MUTATIONS += [
 # test_fns / called_in read the Axon lexer's view, holes of interpolated strings as code.
 MUTATIONS += [
     ('M3844', 'SF-2: locate counts a `NAME(` in a comment or string as a call again', 'crates/axon-cortex/src/locate.rs',
-     '            let in_code = view.is_code(abs) || view.in_hole(abs);',
-     '            let in_code = view.is_code(abs) || abs < body.len();',
+     '            let in_code = view.code[abs] || in_hole;',
+     '            let in_code = view.code[abs] || in_hole || abs < body.len();',
      'axon-cortex', '--lib', 'locate::fn_body_tests::a_call_in_a_comment_is_not_a_call'),
     ('M3845', 'SF-2: locate ignores interpolation holes (a call in `"{f(x)}"` is text)', 'crates/axon-cortex/src/locate.rs',
      '        hole_spans(src, start, end, &mut holes);',
