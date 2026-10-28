@@ -41267,3 +41267,123 @@ fn a_lint_beside_an_error_still_fails_check() {
         "{attack} [locked]: {lmsg}"
     );
 }
+
+/// SF-6: `axon check` then `axon run` on `src`, both always run:
+/// (check rc, check stdout+stderr, run rc, run stdout, run stderr).
+fn sf6_check_and_run(tag: &str, src: &str) -> (Option<i32>, String, Option<i32>, String, String) {
+    let f = std::env::temp_dir().join(format!("axon_sf6_{tag}_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let c = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let r = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    (
+        c.status.code(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&c.stdout),
+            String::from_utf8_lossy(&c.stderr)
+        ),
+        r.status.code(),
+        String::from_utf8_lossy(&r.stdout).into_owned(),
+        String::from_utf8_lossy(&r.stderr).into_owned(),
+    )
+}
+
+/// SF-6 (O-CS-03): a user fn that shadows a builtin (W0003), named as a
+/// VALUE, names the builtin — the same precedence as a no-`&mut` call
+/// (`call_prefers_builtin`) — and a builtin is not a value: E0306. Each case
+/// checked rc 0 and then panicked at run (rc 101) or silently ran the builtin.
+#[test]
+fn a_shadowing_fn_used_as_a_value_is_refused() {
+    let attack = "ATTACK: a builtin-shadowing fn used as a value checked clean";
+    let two = "fn abs_i64(x: i64, y: i64) -> i64 { x + y }\n";
+    let same = "fn abs_i64(x: i64) -> i64 { x + 100 }\n";
+    for (tag, user, main) in [
+        ("fnval", two, "    let f = abs_i64\n    println(to_str(f(1, 2)))\n"),
+        ("f_val_two_one", two, "    let f = abs_i64\n    println(to_str(f(-3)))\n"),
+        (
+            "e_map_two",
+            two,
+            "    let ys = arr_map([1], abs_i64)\n    println(to_str(ys[0]))\n",
+        ),
+        ("b_val_same", same, "    let f = abs_i64\n    println(to_str(f(-3)))\n"),
+        (
+            "a_map_same",
+            same,
+            "    let ys = arr_map([1, -2], abs_i64)\n    println(to_str(ys[0]))\n    println(to_str(ys[1]))\n",
+        ),
+    ] {
+        let src = format!("{user}fn main() -> i64 {{\n{main}    0\n}}\n");
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, &src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(
+            cmsg.contains("E0306")
+                && cmsg.contains("`abs_i64` names the builtin")
+                && cmsg.contains("W0003"),
+            "{attack} [{tag}]: want E0306 naming the builtin, and W0003: {cmsg}"
+        );
+        assert!(
+            rrc == Some(2) && rout.is_empty(),
+            "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+        );
+    }
+}
+
+/// SF-6 guard: what the precedence rule allows keeps its value rule — a
+/// lambda that CALLS the shadowed name (reaches the builtin, CS-4), a user fn
+/// named `P` (`call_prefers_builtin` is false, so it is the user fn), and a
+/// top-level `let` named like a builtin (a constant, not a fn). A shadowing
+/// fn with `&mut` params keeps E0605.
+#[test]
+fn a_lambda_or_a_prob_pred_keeps_its_value_rule() {
+    let attack = "ATTACK: a value the precedence rule allows was refused";
+    for (tag, src, w0003, out) in [
+        (
+            "c_lambda",
+            "fn abs_i64(x: i64, y: i64) -> i64 { x + y }\nfn main() -> i64 {\n    let f = |x: i64| abs_i64(x)\n    println(to_str(f(-3)))\n    0\n}\n",
+            true,
+            "3\n",
+        ),
+        (
+            "o_prob_pred",
+            "fn P(x: i64) -> i64 { x + 1 }\nfn main() -> i64 {\n    let f = P\n    println(to_str(f(1)))\n    0\n}\n",
+            false,
+            "2\n",
+        ),
+        (
+            "toplet",
+            "let abs_i64 = 5\nfn main() -> i64 {\n    println(to_str(abs_i64 + 1))\n    0\n}\n",
+            false,
+            "6\n",
+        ),
+        (
+            "toplam",
+            "let abs_i64 = |x: i64| x + 100\nfn main() -> i64 {\n    let f = abs_i64\n    println(to_str(f(-3)))\n    0\n}\n",
+            false,
+            "97\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert!(
+            crc == Some(0) && !cmsg.contains("E0306"),
+            "{attack} [{tag}]: check rc {crc:?}: {cmsg}"
+        );
+        assert_eq!(cmsg.contains("W0003"), w0003, "[{tag}] W0003: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+    let (crc, cmsg, _, _, _) = sf6_check_and_run(
+        "g_mut",
+        "fn abs_i64(xs: &mut [i64]) -> i64 { xs[0] = 8\n    xs[0] }\nfn main() -> i64 {\n    let a = [1]\n    let f = abs_i64\n    println(to_str(abs_i64(&mut a)))\n    0\n}\n",
+    );
+    assert!(
+        crc == Some(2) && cmsg.contains("E0605"),
+        "[g_mut] a `&mut`-param fn as a value keeps E0605: {cmsg}"
+    );
+}

@@ -837,6 +837,10 @@ struct Resolver<'a> {
     /// single runtime instantiation, so naming one as a VALUE is refused
     /// (see [`Resolver::check_fn_value_ref`]).
     generic_fns: std::collections::HashSet<String>,
+    /// Names of top-level `let` constants. One defines a `Symbol::Fn` and may
+    /// replace a builtin's symbol, but it is a constant, not a fn shadowing
+    /// the builtin, so [`Resolver::check_fn_value_ref`] lets its value through.
+    top_level_lets: std::collections::HashSet<String>,
     /// Set by the `Call` arm immediately before resolving a plain-`Ident`
     /// callee, and consumed by the `Ident` arm: `f(x)` names `f` in CALL
     /// position, which is not a use of `f` as a first-class value.
@@ -864,6 +868,7 @@ impl<'a> Resolver<'a> {
             infos: Vec::new(),
             current_span: crate::span::Span::dummy(),
             generic_fns: std::collections::HashSet::new(),
+            top_level_lets: std::collections::HashSet::new(),
             ident_is_callee: false,
             predicate: None,
         }
@@ -934,32 +939,63 @@ impl<'a> Resolver<'a> {
     /// A name in VALUE position (anything but the plain-ident callee of a call)
     /// that resolves to a function. A non-generic user fn is a first-class value
     /// — it evaluates to a closure with no captures, exactly as an equivalent
-    /// lambda would — so it is accepted. Two kinds of function have no such
+    /// lambda would — so it is accepted. Three kinds of name have no such
     /// value and are refused here, at check time, rather than reaching run time:
     ///
     /// - a BUILTIN: builtins are dispatched by name at the call site and many are
     ///   polymorphic or argument-shape-dependent, so there is no single function
     ///   value either engine could hand out;
-    /// - a GENERIC fn: it has no single instantiation to take the address of.
+    /// - a GENERIC fn: it has no single instantiation to take the address of;
+    /// - a user fn that SHADOWS a builtin (W0003): the name means what it means
+    ///   in a call without a `&mut` argument (`call_prefers_builtin`), which is
+    ///   the builtin (O-CS-03). A top-level `let` of that name is a constant,
+    ///   not a fn, and stays its own value.
     ///
-    /// Both get the same repair: a lambda that calls the function by name.
+    /// All get the same repair: a lambda that calls the function by name.
     fn check_fn_value_ref(&mut self, name: &str) {
-        let (kind, params) = match self.table.lookup(name) {
-            Some(Symbol::Builtin { .. }) => {
-                let params: Vec<String> = BUILTINS
-                    .iter()
-                    .find(|b| b.name == name)
-                    .map(|b| b.params.iter().map(|(p, _)| p.to_string()).collect())
-                    .unwrap_or_default();
-                ("a builtin", params)
-            }
-            Some(Symbol::Fn { param_names, .. }) if self.generic_fns.contains(name) => {
-                ("a generic function", param_names.clone())
+        let builtin_params = || -> Vec<String> {
+            BUILTINS
+                .iter()
+                .find(|b| b.name == name)
+                .map(|b| b.params.iter().map(|(p, _)| p.to_string()).collect())
+                .unwrap_or_default()
+        };
+        // (the message's subject, the fix-it's lead, the lambda's params, and
+        // whether they are a builtin's: those are untyped in the fix-it)
+        let (what, fix, params, builtin) = match self.table.lookup(name) {
+            Some(Symbol::Builtin { .. }) => (
+                format!("`{name}` is a builtin, which"),
+                "wrap it in a lambda".to_string(),
+                builtin_params(),
+                true,
+            ),
+            Some(Symbol::Fn { param_names, .. }) if self.generic_fns.contains(name) => (
+                format!("`{name}` is a generic function, which"),
+                "wrap it in a lambda".to_string(),
+                param_names.clone(),
+                false,
+            ),
+            Some(Symbol::Fn { .. })
+                if crate::builtins::call_prefers_builtin(name, false)
+                    && !self.top_level_lets.contains(name) =>
+            {
+                (
+                    format!(
+                        "`{name}` names the builtin `{name}` here (your `fn {name}` shadows \
+                         it, W0003), and a builtin"
+                    ),
+                    format!(
+                        "rename your `fn {name}` to pass it by name, or wrap the builtin in a \
+                         lambda"
+                    ),
+                    builtin_params(),
+                    true,
+                )
             }
             _ => return,
         };
         let list = params.join(", ");
-        let typed = if kind == "a builtin" {
+        let typed = if builtin {
             list.clone()
         } else {
             params
@@ -971,13 +1007,13 @@ impl<'a> Resolver<'a> {
         let d = Diagnostic::error(
             crate::error::E0306,
             format!(
-                "`{name}` is {kind}, which cannot be used as a value — only a non-generic \
-                 user-defined `fn` can be passed, stored or bound by name"
+                "{what} cannot be used as a value — only a non-generic user-defined `fn` can \
+                 be passed, stored or bound by name"
             ),
         )
         .with_file(self.file)
         .with_span(self.current_span)
-        .with_fix(format!("wrap it in a lambda — `|{typed}| {name}({list})`"));
+        .with_fix(format!("{fix} — `|{typed}| {name}({list})`"));
         self.emit_error(d);
     }
 
@@ -1227,6 +1263,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
                 Item::LetDef { name, span, .. } => {
+                    self.top_level_lets.insert(name.clone());
                     let sym = Symbol::Fn {
                         name: name.clone(),
                         param_names: vec![],

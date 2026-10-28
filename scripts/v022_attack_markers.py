@@ -3262,3 +3262,10 @@ ATTACK_MARKERS.update({
     'M3850': r'ATTACK: `axon check` exited 0 on a program with an error beside a lint \[locked\]',
     'M3851': r'ATTACK: a body `axon check` refuses reached VerifiedDone',
 })
+
+# Small-fixes SF-6 (O-CS-03), LaneCore (ids M3852-M3854)
+ATTACK_MARKERS.update({
+    'M3852': r'ATTACK: a builtin-shadowing fn used as a value checked clean',
+    'M3853': r'ATTACK: a value the precedence rule allows was refused \[o_prob_pred\]',
+    'M3854': r'ATTACK: a value the precedence rule allows was refused \[toplet\]',
+})

@@ -12032,5 +12032,23 @@ MUTATIONS += [
      'axon-cortex', '--test conformance', 'cxg_c14b_a_body_the_checker_objects_to_never_reaches_verified_done'),
 ]
 
+# Small-fixes SF-6 (O-CS-03), LaneCore (ids M3852-M3854; M3855 spare): a builtin-shadowing fn's
+# name in value position names the builtin (`call_prefers_builtin(name, false)`), so E0306;
+# `P`/`E`/`Var` and top-level `let` constants keep their value.
+MUTATIONS += [
+    ('M3852', 'SF-6: a builtin-shadowing fn used as a value checks clean again (O-CS-03)', 'crates/axon-core/src/resolver.rs',
+     'if crate::builtins::call_prefers_builtin(name, false)',
+     'if false',
+     'axon-core', '--no-default-features --test cli_run', 'a_shadowing_fn_used_as_a_value_is_refused'),
+    ('M3853', 'SF-6: the value refusal ignores the `P`/`E`/`Var` exception (a user fn `P` as a value is refused)', 'crates/axon-core/src/resolver.rs',
+     'crate::builtins::call_prefers_builtin(name, false)',
+     'crate::builtins::is_builtin(name)',
+     'axon-core', '--no-default-features --test cli_run', 'a_lambda_or_a_prob_pred_keeps_its_value_rule'),
+    ('M3854', 'SF-6: a top-level `let` named like a builtin is refused as a value', 'crates/axon-core/src/resolver.rs',
+     '&& !self.top_level_lets.contains(name) =>',
+     '=>',
+     'axon-core', '--no-default-features --test cli_run', 'a_lambda_or_a_prob_pred_keeps_its_value_rule'),
+]
+
 if __name__ == "__main__":
     main()

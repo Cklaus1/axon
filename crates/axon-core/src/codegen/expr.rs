@@ -166,9 +166,9 @@ impl<'ctx> super::Codegen<'ctx> {
                     return Some(self.comptime_val_to_llvm(&cv));
                 }
                 // AX-25: a top-level, non-generic user fn named as a VALUE is a
-                // capture-free closure (see `emit_fn_value`). Builtins and generic
-                // fns are not values (resolver E0306), so no other function name
-                // is lowered here.
+                // capture-free closure (see `emit_fn_value`). Builtins, generic
+                // fns and a fn that shadows a builtin are not values (resolver
+                // E0306), so no other function name is lowered here.
                 if self
                     .fndefs
                     .get(name)

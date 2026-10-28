@@ -2456,6 +2456,40 @@ fn shadowed_builtin_call_reaches_the_builtin_on_both_engines() {
     );
 }
 
+/// SF-6 (O-CS-03): a builtin-shadowing fn's name in value position names the
+/// builtin (as a no-`&mut` call does), and a builtin is not a value, so
+/// `build` stops at the front end with E0306. It used to reach native codegen,
+/// which failed with E0701 (the shadowing fn is emitted as `__axon_user_*`).
+#[cfg(feature = "codegen")]
+#[test]
+fn a_shadowing_fn_value_is_refused_before_native_codegen() {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_sf6_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("fnval.ax");
+    std::fs::write(
+        &src,
+        "fn abs_i64(x: i64, y: i64) -> i64 { x + y }\nfn main() -> i64 {\n    let f = abs_i64\n    println(to_str(f(1, 2)))\n    0\n}\n",
+    )
+    .unwrap();
+    let build = Command::new(axon_bin)
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(dir.join("fnval_bin"))
+        .arg("--no-cache")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let err = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        !build.status.success() && err.contains("E0306") && !err.contains("E0701"),
+        "ATTACK: a builtin-shadowing fn value reached native codegen (rc {:?}): {err}",
+        build.status.code()
+    );
+}
+
 /// CS-3 (E-5): a `@[verify]` the native gate cannot decode as `value|confidence
 /// OP K` — a composite, or a simple shape over a param (NH-1 a) — was dropped
 /// natively ("silently emit nothing") while the interpreter enforced it. It is

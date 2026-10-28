@@ -2825,7 +2825,8 @@ impl<'p> Interp<'p> {
             // call through the value re-enters `eval_call` by NAME and takes
             // exactly the path a direct `f(..)` call takes — contracts,
             // `@[verify]` gates, effect/capability gates and provenance
-            // included. The resolver refuses builtins and generic fns here.
+            // included. The resolver refuses builtins, generic fns and a fn
+            // that shadows a builtin (whose name means the builtin) here.
             // In a sealed run, a fn value a SEALED frame took is marked
             // (veto eval.rs:175-179). PCI: naming a fn in value position is a
             // REFERENCE to it, so the call edge applies HERE: a sealed frame

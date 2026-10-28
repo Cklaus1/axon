@@ -75,6 +75,7 @@ fn both_check_pipelines_report_the_same_diagnostics() {
         ("refine non-bool", "type Pos = i64 where _ && true\nfn f(n: Pos) -> i64 { n }\nfn main() { println(to_str(f(3))) }\n"),
         ("verify unbound", "@[verify(value >= nosuch)]\nfn f(x: i64) -> i64 { x }\nfn main() { println(to_str(f(5))) }\n"),
         ("verify non-bool", "@[verify(value && true)]\nfn f(x: i64) -> i64 { x }\nfn main() { println(to_str(f(5))) }\n"),
+        ("shadow fn value", "fn abs_i64(x: i64, y: i64) -> i64 { x + y }\nfn main() -> i64 {\n    let f = abs_i64\n    println(to_str(f(1, 2)))\n    0\n}\n"),
     ];
     let mut diffs = Vec::new();
     let mut saw_any = false;
