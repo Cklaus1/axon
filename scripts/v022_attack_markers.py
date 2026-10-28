@@ -3238,3 +3238,11 @@ ATTACK_MARKERS.update({
     'M3815': r'ATTACK: a predicate with `break` inside a loop was refused as leaving its frame',
     'M3818': r'ATTACK: a move before a local closure named `exit` was dropped as if the branch diverged',
 })
+
+# small-fixes SF-2 (O-FU-02), LaneLocate (ids M3844-M3847)
+ATTACK_MARKERS.update({
+    'M3844': r'ATTACK: a call in a comment was counted as a call',
+    'M3845': r'ATTACK: a call in an interpolation hole was not counted as a call',
+    'M3846': r'ATTACK: a function defined only inside a block comment was a candidate',
+    'M3847': r'ATTACK: a test attribute in a block comment dropped the defect from the ranking',
+})

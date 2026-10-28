@@ -11968,5 +11968,26 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'a_local_closure_named_exit_does_not_diverge'),
 ]
 
+# small-fixes SF-2 (O-FU-02), LaneLocate (ids M3844-M3847): locate's defined_fns /
+# test_fns / called_in read the Axon lexer's view, holes of interpolated strings as code.
+MUTATIONS += [
+    ('M3844', 'SF-2: locate counts a `NAME(` in a comment or string as a call again', 'crates/axon-cortex/src/locate.rs',
+     '            let in_code = view.is_code(abs) || view.in_hole(abs);',
+     '            let in_code = view.is_code(abs) || abs < body.len();',
+     'axon-cortex', '--lib', 'locate::fn_body_tests::a_call_in_a_comment_is_not_a_call'),
+    ('M3845', 'SF-2: locate ignores interpolation holes (a call in `"{f(x)}"` is text)', 'crates/axon-cortex/src/locate.rs',
+     '        hole_spans(src, start, end, &mut holes);',
+     '        hole_spans(src, start, start, &mut holes);',
+     'axon-cortex', '--lib', 'locate::fn_body_tests::a_call_in_an_interpolation_hole_is_a_call'),
+    ('M3846', 'SF-2: locate takes a `fn NAME(` line inside a comment as a definition again', 'crates/axon-cortex/src/locate.rs',
+     '        .filter(|&(_, in_code)| in_code)',
+     '        .filter(|&(_, in_code)| in_code || true)',
+     'axon-cortex', '--lib', 'locate::fn_body_tests::a_definition_in_a_block_comment_is_not_defined'),
+    ('M3847', 'SF-2: locate takes an `@[test` line inside a comment as a test attribute again', 'crates/axon-cortex/src/locate.rs',
+     '        if !in_code || !(t.starts_with("@[test")',
+     '        if !(in_code || true) || !(t.starts_with("@[test")',
+     'axon-cortex', '--lib', 'locate::fn_body_tests::a_test_attribute_in_a_block_comment_does_not_make_a_check'),
+]
+
 if __name__ == "__main__":
     main()
