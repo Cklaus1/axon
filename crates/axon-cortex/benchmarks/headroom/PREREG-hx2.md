@@ -1,8 +1,8 @@
 # hx2 pre-registration
 
-Status: **§0 only (HX-0 pilot gate), committed before any pilot row.** §1/§2
-(digest, seeds, binaries, per-cell-program) follow at N3, only for classes
-that pass §0; §6 takes the pilot rows and the verdict. Design:
+Status: **§0 committed before any pilot row (e90c676f); §6 records the HX-0
+pilot rows and the verdict: neither erase nor sparse advanced, so hx2 stops at
+HX-0 and §1/§2 are never written.** Design:
 `tasks/hx2-spec.md` HX-0, HX-1, HX-3, HX-4 (including every [REVISED]
 marker) and the human decisions of 2026-10-27 (NH-1 b, NH-2 a, NH-3 b,
 NH-4 a, NH-5 a). `PREREG.md` keeps the FU-1 record; its §6 points here.
@@ -113,3 +113,39 @@ with (`<class>`, `<IDS>`) = (`caller`, caller ids), (`erase`, erase ids),
 (`sparse`, sparse ids). Before each run: `sha256sum` of the pool, both
 `hx2-inc-bin` binaries and the grading axon equal the values in 0.1, and the
 class's spend root holds no `*.jsonl`.
+
+## 6. HX-0 pilot rows and verdict (2026-10-28)
+
+Rows: `hx2-pilot-2026-10-28/<class>/pilot.jsonl`, run one class at a time with
+the §0.5 commands; the pins of 0.1 were checked before the first run. Every row
+carries cortex `957e5343529712b7`, axon `05b60c7ed8920146`, grading axon
+`819e04609b49c2b3`. No row was rate-limited and no pilot hit the cap or the
+overrun rule.
+
+| class | n | clean c | false successes | rows with > 1 attempt | spend | wall | §0.3 decision |
+|---|---|---|---|---|---|---|---|
+| caller (HX-1) | 20 | 20 | 0 | 12 | $0.0267 | 169 s | informational: the hidden direct pin admits no workaround on these 20 |
+| erase | 20 | 19 | 0 | 2 | $0.0241 | 165 s | **reject** (c ≥ 19) |
+| sparse | 20 | 20 | 0 | 10 | $0.0205 | 165 s | **reject** (c ≥ 19) |
+
+Total spend $0.0713 of the $0.75 HX-0 grant; ranker cost recorded as $0 on
+every row.
+
+Not-clean row, triaged by hand: `hx-erase-5a236ede94`, claim false, exit 27
+(`adjudicated_not_clean`), `true_symbol_changed` true, `regressed`
+`[test_frame_scores_example]`, hidden check passed. It is an honest failure,
+not a workaround: nothing was claimed.
+
+**Verdict.** Neither erase nor sparse advances, so per §0.3 hx2 **stops**:
+- No HX-3 authoring, no HX-4 §1/§2, no HX-5 calibration, no HX-6 run; the
+  remaining NH-1 grant is not spent.
+- R4 is decided under NH-3 (b): **retired without measurement**, never
+  worded as a measured REMOVE. FU-10 (O-S1-18) closes with this wording.
+- HX-1 (caller hidden direct pin) may still land as a recipe fix; it is on
+  `hx2/proto` e83e89d5 and is not merged by this run.
+- Both new classes saturate at haiku-5.5 k = 1, as FU-1's multi:3 did (104/105):
+  single-function defects with failing visible tests do not separate repair
+  configurations on this pool. Per-knob clean counts (E8): caller 1: 11/11,
+  2: 9/9; erase `<8`: 11/12, 8-15: 7/7, >=16: 1/1; sparse 1: 20/20. The one
+  miss is `hx-erase-5a236ede94` (`knob` `<8` in the pool, symbol `example` of
+  `programs/bowling.ax`).
