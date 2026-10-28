@@ -2778,3 +2778,6 @@ check outcomes for any program that calls a fn value.
 `script -qc 'axon check letmut.ax'` prints `error: letmut.ax:1:28: note[I0002]: …` (`main.rs:1613` for `check`,
 `emit_pipeline_diag` `:8330-8335` for `run`). The JSON form carries the right severity; only the human prefix is
 wrong. Out of SF-5's scope.
+
+### O-SF-03 — [medium] A module-qualified fn used as a value checks clean, then panics at run
+`mod n` then `let f = n.add2; f(1, 2)` gives `axon check` rc 0, then `axon run` fails with `panic: undefined identifier `n`` (rc 101). The same happens for any module fn, builtin-shadowing or not, and on the pre-batch binary (`hx-bin/axon` 819e0460), so it was not introduced by SF-6. Probes: `/var/tmp/r51-tmp/review-impl-sf/sf6/modplain.ax` and `modpath.ax`. Found by ImplAuditSF. Fix direction: either the interpreter resolves `mod.fn` in value position, or the checker refuses it (E0306-style) until it does.
