@@ -79,23 +79,6 @@
    "context": "main's pin comment (line 51: 'the' #1 with 4, 'fox' and 'dog' tied at 2) fixes the word counts; the corpus string alone has no right word."
   },
   {
-   "source": "options.ax",
-   "symbol": "safe_div",
-   "scope": "in",
-   "shape": "param-meaning",
-   "edits": [
-    {
-     "old": "    if b == 0 {",
-     "new": "    if a == 0 {"
-    },
-    {
-     "old": "        Ok(a / b)",
-     "new": "        Ok(b / a)"
-    }
-   ],
-   "context": "The body is a self-consistent division with the roles of a and b swapped; only the signature order safe_div(a, b) (and main's safe_div(10, 2)) says a is the dividend and b the divisor."
-  },
-  {
    "source": "tuples.ax",
    "symbol": "divmod",
    "scope": "in",

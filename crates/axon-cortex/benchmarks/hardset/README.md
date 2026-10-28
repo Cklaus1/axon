@@ -136,7 +136,8 @@ unrealistic. `rejected-ideas.json` records all 56 with their reasons.
 5. No duplicates. This means no repeated (file, broken file) pair, and no
    repeated (pristine body, broken body) pair across files. One spec,
    `options.ax::safe_div`, was dropped because it was identical to
-   `error_handling.ax::safe_div`.
+   `error_handling.ax::safe_div`, and removed from `defects/` so `--check` is
+   clean.
 
 `corpus.py` was extended, and the existing corpora rebuild byte-identically:
 
@@ -201,7 +202,11 @@ agent that stops after one function and says "fixed" is caught.
 * `src/`: the 42 snapshots with their tests.
 * `defects/{asi,core,misc}.json`: the planted specs.
 * `build.py`: validation, real-bug replay, split, and writing both sets.
-  `python3 build.py --check defects/X.json` validates without writing.
+  `python3 build.py --check [defects/X.json ...]` validates without writing
+  (default: every `defects/*.json`) and exits 1 if any spec FAILs; the full
+  gate runs it with the built binaries.
+* `selftest_check.py`: binary-free self-test of `build.py`'s exit status and
+  arguments (`gate.sh` `stage_protected_sets`).
 * `mining.json`: the real-bug replay report (every pair and reason).
 * `rejected-ideas.json`: defect ideas dropped by their authors, with the reason.
 * `hard-dev.json`, `hard-once.json`: the sets.

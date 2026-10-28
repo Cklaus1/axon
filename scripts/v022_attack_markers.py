@@ -3246,3 +3246,11 @@ ATTACK_MARKERS.update({
     'M3842': r'ATTACK: an answer written before the generator exited was rejected as a late write',
     'M3843': r'ATTACK: a late write followed by EOF was taken as the whole answer',
 })
+
+# small-fixes SF-2 (O-FU-02), LaneLocate (ids M3844-M3847)
+ATTACK_MARKERS.update({
+    'M3844': r'ATTACK: a call in a comment was counted as a call',
+    'M3845': r'ATTACK: a call in an interpolation hole was not counted as a call',
+    'M3846': r'ATTACK: a function defined only inside a block comment was a candidate',
+    'M3847': r'ATTACK: a test attribute in a block comment dropped the defect from the ranking',
+})
