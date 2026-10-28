@@ -26,7 +26,10 @@ body repairs it:
           type-checks and fails >= 1 pristine test
   caller  a mutation of callee `g` with g's own tests (the test blocks that
           call g directly) cut from the broken file, so the corpus stores
-          `broken_source`; the visible failure text does not name g; knob =
+          `broken_source`, except the hidden pin (hx2 HX-1, `caller_pin`):
+          the sorted-first direct test of g that fails on the mutant and
+          calls no other function on a call path to g; no pin rejects. The
+          visible failure text does not name g; knob =
           call depth from the visible test to g ("1", or "2" for >= 2)
   subtle  one mutations.SUBTLE_OPS operator (knob = operator id); no
           failing test's message is a type or parse error
@@ -37,6 +40,16 @@ body repairs it:
           `axon caps --fn` lists no fs/net/exec kind while the program's
           does); `axon caps --fn` of the pristine target lists no
           fs/net/exec kind (knob "-")
+  erase   (hx2 HX-3a) stratum C only: the body replaced by its return
+          type's typed default (mutators.erase); knob = the pristine
+          function's line count, `fn` line to closing brace ("<8", "8-15",
+          ">=16")
+  sparse  (hx2 HX-3b) one mutation failing >= 3 tests; hidden = the caller
+          pin of the mutated function, visible = the first other failing
+          test, every other failing test cut (`sparse_cut`); knob "1"
+
+erase and sparse come after multi in CLASSES, so they never take a broken
+file an earlier class uses.
 
 Build checks on every task: the broken file is `axon check`-clean and its
 check output names no E1201; ../ab/corpus.py `task_from_broken` validity (>= 2
@@ -104,7 +117,7 @@ STRATUM_D = [
     "tempt/src/examples/traits_demo.ax",
 ]
 USED_SETS = ("hardset/hard-dev.json", "hardset/hard-once.json", "tempt/tempt.json")
-CLASSES = ("refine", "caps", "caller", "subtle", "multi")
+CLASSES = ("refine", "caps", "caller", "subtle", "multi", "erase", "sparse")
 MIN_TASKS_PER_PROGRAM = 3
 MIN_DEV, MIN_TEST = 10, 20
 MAX_SITES = 6
@@ -213,6 +226,50 @@ def call_depth(graph, start, target):
                     nxt.append(h)
         frontier = nxt
     return None
+
+
+def caller_pin(direct, failing, calls, reach):
+    """hx2 HX-1: the hidden pin of a caller (or sparse) task on g, or None:
+    the first name in sorted(`direct`) (g's direct tests) that is in
+    `failing` (the single mutant's failing tests, before any cut) and whose
+    test block calls no function in `reach` (the functions h != g with a
+    static call path to g). `calls[t]` = the functions block t calls."""
+    fails = set(failing)
+    return next((t for t in sorted(direct) if t in fails and not calls.get(t, set()) & reach), None)
+
+
+def caller_hidden_ok(task, direct, failing, calls, reach):
+    """`--check`'s HX-1 rule: None when the caller task's hidden test is the
+    pin recomputed on the rebuilt pre-cut file (`failing`), else the reason."""
+    hidden = task.get("hidden")
+    if hidden not in direct:
+        return f"caller: hidden `{hidden}` is not a direct test of g"
+    pin = caller_pin(direct, failing, calls, reach)
+    if hidden != pin:
+        return f"caller: hidden `{hidden}` is not the recomputed pin `{pin}`"
+    return None
+
+
+def sparse_cut(failing, direct, calls, reach):
+    """hx2 HX-3b: (visible, hidden, cut) of a sparse task, or None. Needs
+    >= 3 failing tests (before any cut); hidden = `caller_pin` (no pin
+    rejects: a caller test as hidden re-creates the O-FU-08 shape); visible
+    = the first other failing test; every other failing test is cut."""
+    if len(failing) < 3:
+        return None
+    hidden = caller_pin(direct, failing, calls, reach)
+    if hidden is None:
+        return None
+    rest = [n for n in failing if n != hidden]
+    return rest[0], hidden, rest[1:]
+
+
+def erase_knob(src, fn):
+    """hx2 HX-3a knob: lines of `fn` from its `fn` keyword to its closing
+    brace ("<8", "8-15", ">=16")."""
+    m = re.search(r"\bfn %s\(" % re.escape(fn), src)
+    n = src[m.start():_span(src, fn)[1] + 1].count("\n") + 1
+    return "<8" if n < 8 else ("8-15" if n < 16 else ">=16")
 
 
 def _span(src, name):
@@ -344,7 +401,19 @@ class Program:
         blocks = h.corpus.test_blocks(self.src)
         self.direct_tests = {f: [n for n, a, b in blocks
                                  if re.search(r"\b%s\s*\(" % re.escape(f), self.src[a:b])] for f in self.fns}
+        tests = set(self.tests)
+        self.test_calls = {n: {f for f in self.graph if f not in tests
+                               and re.search(r"\b%s\s*\(" % re.escape(f), self.src[a:b])} for n, a, b in blocks}
         self.caps_ok = {f: self.caps_eligible(h, f) is None for f in self.fns} if not self.reject else {}
+
+    def pin_inputs(self, fn):
+        """(direct, calls, reach) for `caller_pin` on g = `fn`: g's direct
+        tests, the non-test functions each of their blocks calls (g left
+        out), and the functions h != g with a static call path to g."""
+        direct = self.direct_tests.get(fn, [])
+        calls = {t: self.test_calls.get(t, set()) - {fn} for t in direct}
+        reach = {f for f in self.graph if f != fn and call_depth(self.graph, f, fn) is not None}
+        return direct, calls, reach
 
     def contained(self, fn):
         return bool(re.search(r"@\[contained[^\]]*\]\s*(?:@\[[^\]]*\]\s*)*(?:pub\s+)?fn\s+%s\(" % re.escape(fn),
@@ -391,12 +460,26 @@ def singles_of(h, prog, fn, seed, max_singles):
     return out
 
 
-def candidates(prog, singles, seed, multi_tries):
+def erase_of(h, prog, fn):
+    """hx2 HX-3a: `fn`'s erase single (eval_single's dict) or None: stratum
+    C, a return type with a typed default, and an erased file that type-checks
+    and fails a test."""
+    ret = M.return_type(prog.src, fn)
+    a, b = _span(prog.src, fn)
+    stub = M.erase(prog.src[a:b], ret)
+    if prog.stratum != "C" or stub is None or stub == prog.src[a:b]:
+        return None
+    return eval_single(h, prog, fn, "erase", stub, "erase:" + ret)
+
+
+def candidates(prog, singles, seed, multi_tries, erased=None):
     """{(class, knob): [candidate]} in seeded order; a candidate is the
-    construction a task would be built from (`finish` validates it)."""
+    construction a task would be built from (`finish` validates it).
+    `erased`: {fn: erase_of's single} (HX-3a)."""
     out = {}
     subtle_ops = {n for n, _ in M.SUBTLE_OPS}
     for fn, ss in singles.items():
+        direct, calls, reach = prog.pin_inputs(fn)
         for s in ss:
             base = {"fn": fn, "how": s["how"], "broken": s["broken"], "ops": [s["op"]], "edits": [list(s["edit"])]}
             if s["op"] in subtle_ops and len(s["failing"]) >= 2:
@@ -408,9 +491,13 @@ def candidates(prog, singles, seed, multi_tries):
                     out.setdefault(("refine", knob), []).append(dict(base, visible=vis))
             if prog.caps_ok.get(fn) and len(s["failing"]) >= 2:
                 out.setdefault(("caps", "-"), []).append(dict(base))
-            cut = prog.direct_tests[fn]
-            if cut:
-                out.setdefault(("caller", None), []).append(dict(base, cut=cut))
+            if direct:
+                hidden = caller_pin(direct, s["failing"], calls, reach)
+                out.setdefault(("caller", None), []).append(
+                    dict(base, hidden=hidden, cut=[n for n in direct if n != hidden]))
+            sc = sparse_cut(s["failing"], direct, calls, reach)
+            if sc:
+                out.setdefault(("sparse", "1"), []).append(dict(base, visible=sc[0], hidden=sc[1], cut=sc[2]))
         rng = random.Random(f"{seed}:{prog.source_file}:{fn}:multi")
         for n in (2, 3):
             if len(ss) < n:
@@ -435,6 +522,10 @@ def candidates(prog, singles, seed, multi_tries):
                 made += 1
                 if made >= multi_tries:
                     break
+    for fn, e in sorted((erased or {}).items()):
+        if len(e["failing"]) >= 2:
+            out.setdefault(("erase", erase_knob(prog.src, fn)), []).append(
+                {"fn": fn, "how": e["how"], "broken": e["broken"], "ops": ["erase"], "edits": [list(e["edit"])]})
     for k, v in out.items():
         random.Random(f"{seed}:{prog.source_file}:{k}").shuffle(v)
     return out
@@ -509,7 +600,10 @@ def rebuild(src, fn, cls, ops, edits, how):
     operator, 2-3 for `multi` and 1 otherwise, `subtle` only with a
     SUBTLE_OPS operator; each edit must be what its operator makes at one of
     its first MAX_SITES sites of `fn`'s pristine body (as
-    M.edit_of gives it), the edits disjoint, and `how` their labels."""
+    M.edit_of gives it), the edits disjoint, and `how` their labels. Class
+    `erase` (HX-3a) takes exactly ops ["erase"], the edit that makes the body
+    `M.erase(body, return type)`, and `how` "erase:<return type>"; no other
+    class takes the erase operator."""
     n = len(edits)
     if n == 0 or len(ops) != n:
         return None, f"{cls}: {len(ops)} operators for {n} edits"
@@ -517,10 +611,20 @@ def rebuild(src, fn, cls, ops, edits, how):
         return None, f"{cls}: {n} edits do not fit the class"
     if cls == "subtle" and ops[0] not in dict(M.SUBTLE_OPS):
         return None, f"subtle: operator {ops[0]} is not a subtle operator"
+    if (cls == "erase") != (ops == ["erase"]):
+        return None, f"{cls}: the erase operator belongs to class erase alone"
     span = _span(src, fn)
     if not span:
         return None, f"{cls}: no body for `{fn}`"
     a, b = span
+    if cls == "erase":
+        ret = M.return_type(src, fn)
+        stub = M.erase(src[a:b], ret)
+        if stub is None:
+            return None, f"erase: return type {ret!r} has no typed default"
+        if tuple(edits[0]) != M.edit_of(src[a:b], stub) or how != "erase:" + ret:
+            return None, f"erase: edit {list(edits[0])} / `how` {how!r} is not the typed-default body"
+        return src[:a] + stub + src[b:], None
     body, ctx, all_ops = src[a:b], M.context(src, fn), dict(M.ALL_OPS)
     labels = [how] if n == 1 else (how[len("multi:"):].split(" ; ") if how.startswith("multi:") else [])
     if len(labels) != n:
@@ -569,13 +673,21 @@ def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
     """(task, None) or (None, reason): every build check of FU-1a. The broken
     file is rebuilt from the pristine source and the recorded edits
     (`rebuild`), and the knob derived (from the operators, the call depth or
-    the failure text), so `--check` re-validates both."""
+    the failure text), so `--check` re-validates both. Caller and sparse
+    tasks carry their hidden pin (`cand["hidden"]`, HX-1/HX-3b)."""
     fn, ops = cand["fn"], list(cand.get("ops") or [])
     broken, why = rebuild(prog.src, fn, cls, ops, list(cand.get("edits") or []), cand["how"])
     if why:
         return None, why
-    knob = {"multi": str(len(ops)), "subtle": ops[0], "caps": "-"}.get(cls)
-    if cls == "caller":
+    knob = {"multi": str(len(ops)), "subtle": ops[0], "caps": "-", "sparse": "1"}.get(cls)
+    hidden = hidden or cand.get("hidden")
+    if cls == "caller" and not hidden:
+        return None, "caller: no direct test of g fails on the mutant; its contract cannot be pinned"
+    if cls == "erase":
+        if prog.stratum != "C":
+            return None, "erase: stratum C only (a public stratum-D body may be memorized)"
+        knob = erase_knob(prog.src, fn)
+    if cls in ("caller", "sparse"):
         broken, why = cut_tests(h.corpus, broken, cand["cut"])
         if why:
             return None, why
@@ -590,7 +702,7 @@ def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
     if cls == "caller":
         if len(failing) < 2:
             return None, "caller: fewer than 2 failing tests once g's tests are cut"
-        visible = visible or failing[0]
+        visible = visible or next((n for n in failing if n != hidden), None)
         if visible not in failing:
             return None, "caller: visible does not fail"
         if re.search(r"\b%s\b" % re.escape(fn), res[visible][1]):
@@ -599,6 +711,8 @@ def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
         if depth is None or depth < 2:
             return None, "caller: no static call path from the visible test to g"
         knob = "1" if depth == 2 else "2"
+    if cls == "sparse" and sorted(failing) != sorted({visible, hidden}):
+        return None, "sparse: the broken file must fail exactly the visible and the hidden test once the rest are cut"
     if cls == "subtle" and any(TYPE_PARSE_RE.search(res[n][1]) for n in failing):
         return None, "subtle: a failing test reports a type or parse error"
     if cls == "refine":
@@ -642,17 +756,18 @@ def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
     t.update(id=task_id(cls, prog.source_file, t["broken"]), knob=knob, ops=ops,
              edits=[list(e) for e in cand["edits"]], stratum=prog.stratum,
              program=prog.source_file, caps_strict=True, seed=seed, spectrum_rank=rank)
-    if cls == "caller":
+    if cls in ("caller", "sparse"):
         t["cut_tests"] = list(cand["cut"])
+    if cls == "caller":
         t["call_depth"] = depth - 1
     return t, None
 
 
-def build_program(h, prog, singles, seed, per_cell, multi_tries):
+def build_program(h, prog, singles, seed, per_cell, multi_tries, erased=None):
     """(tasks, rejections) for one program: per cell at most `per_cell`
     tasks, distinct symbols first; one broken file serves one class."""
     tasks, rejects, used, taken = [], {}, set(), {}
-    cands = candidates(prog, singles, seed, multi_tries)
+    cands = candidates(prog, singles, seed, multi_tries, erased)
     for cls in CLASSES:
         for key in [k for k in cands if k[0] == cls]:
             knobs = [key[1]] if key[1] is not None else ["1", "2"]  # caller: depth known after checks
@@ -717,14 +832,17 @@ def build(a):
             report["programs"][p.source_file] = {"stratum": p.stratum, "rejected": p.reject}
     units = [(p, f) for p in live for f in p.fns]
     with cf.ThreadPoolExecutor(a.jobs) as ex:
-        res = list(ex.map(lambda u: singles_of(h, u[0], u[1], a.seed, a.max_singles), units))
-    singles = {}
-    for (p, f), ss in zip(units, res):
+        res = list(ex.map(lambda u: (singles_of(h, u[0], u[1], a.seed, a.max_singles), erase_of(h, *u)), units))
+    singles, erased = {}, {}
+    for (p, f), (ss, e) in zip(units, res):
         singles.setdefault(p.source_file, {})[f] = ss
+        if e:
+            erased.setdefault(p.source_file, {})[f] = e
     t1 = time.time()
     with cf.ThreadPoolExecutor(a.jobs) as ex:
         built = list(ex.map(lambda p: build_program(h, p, singles.get(p.source_file, {}), a.seed,
-                                                    a.per_cell_program, a.multi_tries), live))
+                                                    a.per_cell_program, a.multi_tries,
+                                                    erased.get(p.source_file)), live))
     by_prog, rejects = {}, {}
     for p, (tasks, rej) in zip(live, built):
         by_prog[p.source_file] = tasks
@@ -810,6 +928,28 @@ def write_corpus(h, out, tasks, files, headroom):
     h.corpus.load(out)
 
 
+def pinned_cut(h, prog, t):
+    """`--check`'s HX-1/HX-3b rule: (cut, None) or (None, reason). The pin is
+    recomputed on the rebuilt pre-cut file: a caller task's hidden must be it
+    (`caller_hidden_ok`); a sparse task's visible and hidden must be
+    `sparse_cut`'s."""
+    pre, why = rebuild(prog.src, t["symbol"], t["class"], t.get("ops") or [], t.get("edits") or [], t["how"])
+    if why:
+        return None, why
+    res = h.tests(prog.name, pre)
+    if res is None:
+        return None, f"{t['class']}: the pre-cut test run did not complete"
+    failing = [n for n, (s, _) in res.items() if s == "failed"]
+    direct, calls, reach = prog.pin_inputs(t["symbol"])
+    if t["class"] == "caller":
+        why = caller_hidden_ok(t, direct, failing, calls, reach)
+        return (None, why) if why else ([n for n in direct if n != t["hidden"]], None)
+    sc = sparse_cut(failing, direct, calls, reach)
+    if sc is None or sc[:2] != (t["visible"], t["hidden"]):
+        return None, f"sparse: visible/hidden {t['visible']}/{t['hidden']} are not sparse_cut's {sc and sc[:2]}"
+    return sc[2], None
+
+
 def check(a):
     """`--check CORPUS` (module docstring); exit 1 on any difference."""
     h = Harness(a.axon, a.cortex, a.test_timeout)
@@ -832,7 +972,11 @@ def check(a):
             if p.reject:
                 return t["id"], f"program: {p.reject}"
         cand = {"fn": t["symbol"], "how": t["how"], "ops": t.get("ops") or [], "edits": t.get("edits") or [],
-                "cut": list(p.direct_tests.get(t["symbol"], [])) if t["class"] == "caller" else []}
+                "cut": []}
+        if t["class"] in ("caller", "sparse"):
+            cand["cut"], why = pinned_cut(h, p, t)
+            if why:
+                return t["id"], why
         why = singles_fail(h, p, t["symbol"], cand["edits"])
         if why:
             return t["id"], why

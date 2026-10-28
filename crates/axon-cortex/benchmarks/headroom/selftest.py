@@ -13,7 +13,9 @@ Covers (README.md "Self-test"):
   * power.py: a tiny grid runs, is deterministic per seed, and power grows
     with the effect;
   * build.py pure helpers: split determinism and inheritance, the
-    per-program cap, dropping thin programs, the inputs digest;
+    per-program cap, dropping thin programs, the inputs digest; the hx2
+    caller pin and its `--check` rule (HX-1), the erase class (HX-3a) and the
+    sparse cut (HX-3b);
   * mutators.py: each `subtle` operator and multi-mutation composition.
 
 Exit 0 when every check holds; otherwise the failures are listed and the exit
@@ -448,6 +450,109 @@ def test_cut_tests(build):
         check(build.blocks_reason(corpus, src), f"build: a program with a mis-delimited block is rejected ({label})")
 
 
+def test_caller_pin():
+    """HX-1: the hidden pin is the sorted-first direct test of g that fails on
+    the mutant and calls no other function on a path to g."""
+    import build
+    check(build.caller_pin(["t_b", "t_a"], ["t_a", "t_x"], {}, set()) == "t_a",
+          "build: caller_pin must take the sorted-first failing direct test")
+    check(build.caller_pin(["t_b"], ["t_x"], {}, set()) is None,
+          "build: caller_pin must be None when no direct test fails")
+    check(build.caller_pin(["t_a", "t_b"], ["t_a", "t_b"], {"t_a": {"h"}}, {"h"}) == "t_b",
+          "build: caller_pin must skip a direct test that also calls a caller of g")
+
+
+def test_caller_check_rule():
+    """HX-1 / HXA#14: `--check` refuses a caller task whose hidden test is a
+    caller test or is not the pin recomputed on the rebuilt pre-cut file."""
+    import build
+    direct, failing = ["t_g1", "t_g2"], ["t_g1", "t_g2", "t_f"]
+    ok = build.caller_hidden_ok
+    check(ok({"class": "caller", "hidden": "t_f"}, direct, failing, {}, set()) is not None,
+          "build: a caller task whose hidden is a caller test must be refused")
+    check(ok({"class": "caller", "hidden": "t_g2"}, direct, failing, {}, set()) is not None,
+          "build: a caller task whose hidden is not the recomputed pin must be refused")
+    check(ok({"class": "caller", "hidden": "t_g1"}, direct, failing, {}, set()) is None,
+          "build: a pinned caller task must be accepted")
+    calls, reach = {"t_g1": {"h"}}, {"h"}
+    check(ok({"class": "caller", "hidden": "t_g1"}, direct, failing, calls, reach) is not None,
+          "build: a hidden direct test that calls a caller of g must be refused")
+    check(ok({"class": "caller", "hidden": "t_g2"}, direct, failing, calls, reach) is None,
+          "build: the call-path rule's pin must be accepted")
+
+
+def test_sparse_cut():
+    """HX-3b: hidden = the caller pin, visible = the first other failing test,
+    every other failing test cut; fewer than 3 failing tests or no pin rejects."""
+    import build
+    sc = build.sparse_cut
+    check(sc(["t1", "t_g", "t2", "t3"], ["t_g"], {}, set()) == ("t1", "t_g", ["t2", "t3"]),
+          "build: sparse_cut must pin g's test and cut all but the first other failing test")
+    check(sc(["t_g", "t1", "t2"], ["t_g", "t_h"], {}, set()) == ("t1", "t_g", ["t2"]),
+          "build: sparse_cut's visible is the first failing test other than the pin")
+    check(sc(["t_g", "t1"], ["t_g"], {}, set()) is None, "build: sparse needs >= 3 failing tests")
+    check(sc(["t1", "t2", "t3"], ["t_g"], {}, set()) is None, "build: sparse with no failing direct test rejects")
+    check(sc(["t_g", "t1", "t2"], ["t_g"], {"t_g": {"h"}}, {"h"}) is None,
+          "build: sparse rejects when the only direct test calls a caller of g (no last-failing fallback)")
+
+
+ERASE_SRC = '''fn f(x: i64) -> i64 {
+    let y = x * 2
+    y + 1
+}
+
+fn r(x: i64) -> Row {
+    Row { a: x }
+}
+
+fn p(x: i64) {
+    print(x)
+}
+
+fn one(x: i64) -> bool { x > 0 }
+'''
+
+
+def test_erase():
+    """HX-3a: the body becomes its return type's typed default; erase is its
+    own class, never a multi operator."""
+    import build
+    import mutators as M
+    body = "\n    let y = x * 2\n    y + 1\n"
+    want = {"i64": "0", "f64": "0.0", "bool": "false", "str": '""', "String": '""', "[i64]": "[]",
+            "[[str]]": "[]"}
+    for ret, d in want.items():
+        check(M.erase(body, ret) == f"\n    {d}\n", f"mutators: erase -> {ret} must give `{d}`: {M.erase(body, ret)!r}")
+    for ret in ("Row", "Result<i64, str>", "Option<i64>", None):
+        check(M.erase(body, ret) is None, f"mutators: erase must reject return type {ret!r}")
+    check(M.erase(" x > 0 ", "bool") == " false ", "mutators: erase keeps a one-line body on one line")
+    check(M.return_type(ERASE_SRC, "f") == "i64" and M.return_type(ERASE_SRC, "r") == "Row",
+          "mutators: return_type reads the declared type")
+    check(M.return_type(ERASE_SRC, "p") is None and M.return_type(ERASE_SRC, "nope") is None,
+          "mutators: return_type is None without `->` or without the fn")
+    check("erase" not in dict(M.ALL_OPS), "mutators: erase must not be in ALL_OPS (multi never composes it)")
+    check(build.CLASSES[-2:] == ("erase", "sparse") and build.CLASSES.index("multi") < build.CLASSES.index("erase"),
+          f"build: erase and sparse are appended after multi: {build.CLASSES}")
+    src = REBUILD_SRC
+    a, b = build._span(src, "f")
+    stub = M.erase(src[a:b], "i64")
+    e = list(M.edit_of(src[a:b], stub))
+    check(build.rebuild(src, "f", "erase", ["erase"], [e], "erase:i64") == (src[:a] + stub + src[b:], None),
+          "build: rebuild must accept a genuine erase task")
+    for cls in ("multi", "subtle", "caller", "caps", "refine", "sparse"):
+        out, why = build.rebuild(src, "f", cls, ["erase"], [e], "erase:i64")
+        check(out is None and why, f"build: rebuild must refuse erase under class {cls}")
+    for label, (ops, edits, how) in {
+            "a non-erase operator": (["operator"], [e], "erase:i64"),
+            "an edit that is not the typed default": (["erase"], [[e[0], e[1], "\n    1\n"]], "erase:i64"),
+            "a wrong `how`": (["erase"], [e], "erase:bool")}.items():
+        out, why = build.rebuild(src, "f", "erase", ops, edits, how)
+        check(out is None and why, f"build: rebuild must refuse an erase task with {label}")
+    check(build.erase_knob(src, "f") == "8-15" and build.erase_knob(ERASE_SRC, "f") == "<8",
+          "build: erase knob = the pristine function's line count (<8 | 8-15 | >=16)")
+
+
+
 # ------------------------------------------------------------------ mutators
 
 def test_mutators():
@@ -500,7 +605,8 @@ def test_mutators():
 
 
 def main():
-    for t in (test_stats, test_calibrate, test_power, test_build, test_mutators):
+    for t in (test_stats, test_calibrate, test_power, test_build, test_caller_pin, test_caller_check_rule,
+              test_sparse_cut, test_erase, test_mutators):
         try:
             t()
         except (Exception, SystemExit) as e:  # a missing module, API or CLI option is a failure, not a crash

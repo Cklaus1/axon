@@ -31,6 +31,10 @@ convention). String literals and `//` comments are never sites.
 Composition (`multi`): `edit_of` turns a single mutant into one edit
 `(start, end, replacement)` on the original body, `disjoint` says whether
 edits neither overlap nor touch, and `compose` applies several at once.
+
+`erase` (hx2 HX-3a, class `erase`) is not an operator: `erase(body, ret)`
+replaces the whole body by the typed default of the return type `ret`
+(`return_type` reads it). It is not in `ALL_OPS`, so `multi` never composes it.
 """
 import importlib.util
 import os
@@ -247,6 +251,65 @@ SUBTLE_OPS = [
 # caps, refine): the dev classes at any site, the held-out shapes, and the
 # subtle ones; one entry per operator name.
 ALL_OPS = list({n: f for n, f in H.DEV_CLASS_MUTATORS + H.NEW_MUTATORS + SUBTLE_OPS}.items())
+
+
+# ------------------------------------------------------------ erase (HX-3a)
+
+INT_TYPES = ("i64", "i32", "i16", "i8", "u64", "u32", "u16", "u8", "isize", "usize")
+
+
+def typed_default(ret):
+    """The typed default literal of return type `ret`, or None (no default:
+    a struct, enum, Option, Result, ...)."""
+    if ret in INT_TYPES:
+        return "0"
+    if ret == "f64":
+        return "0.0"
+    if ret == "bool":
+        return "false"
+    if ret in ("str", "String"):
+        return '""'
+    if ret and re.fullmatch(r"\[.+\]", ret):
+        return "[]"
+    return None
+
+
+def return_type(src, name):
+    """The declared return type of `fn name(` (whitespace-normalized), or None
+    without `->` or without the function."""
+    m = re.search(r"\bfn %s\(" % re.escape(name), src)
+    if not m:
+        return None
+    d = 0
+    for i in range(m.end() - 1, len(src)):
+        if src[i] == "(":
+            d += 1
+        elif src[i] == ")":
+            d -= 1
+            if d == 0:
+                break
+    else:
+        return None
+    o = src.find("{", i)
+    head = src[i + 1:o].strip() if o >= 0 else ""
+    if not head.startswith("->"):
+        return None
+    return re.sub(r"\s+", " ", head[2:].strip()) or None
+
+
+def erase(body, ret):
+    """`body` (the text between a function's braces) replaced by the typed
+    default of `ret`, indented like the body's first line; None when `ret`
+    has no typed default."""
+    d = typed_default(ret)
+    if d is None:
+        return None
+    if "\n" not in body:
+        return f" {d} "
+    first = next((ln for ln in body.split("\n") if ln.strip()), "    ")
+    indent = re.match(r"[ \t]*", first).group(0)
+    tail = body[body.rfind("\n") + 1:]
+    return f"\n{indent}{d}\n{tail if not tail.strip() else ''}"
 
 
 # ------------------------------------------------------------ context
