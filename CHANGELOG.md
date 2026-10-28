@@ -1,5 +1,9 @@
 # Axon Changelog
 
+## `axon check` exit status and builtin-shadowing fn values (small fixes SF-5, SF-6)
+
+- **`axon check` exits 0 unless it reported an error (SF-5, O-CS-04):** a file whose only diagnostics are notes or warnings now exits 0, as `axon check --help` says ("0 = no error (warnings and notes alone exit 0), 2 = at least one error"). The I0002 note (`let mut`), W0007 (`x // 2`) and W0008 (`let d = {}`) alone exited 2, while W0003 and W0006 already exited 0. A lint beside an error, or beside a file-level error such as E1202 under `--locked`, still exits 2. This supersedes the rule stated in the `cortex repair` entry below ("`check` exits 2 on any diagnostic, notes included"): `verified_done` still needs `axon check` to exit 0, the grader's acceptance, so a body whose only diagnostic is a note now verifies (conformance `cxg_c14c`). The gate stays exercised by `cxg_c14b` through a shim `axon` that exits 2 with a note line on a marked body. Tests `a_note_or_lint_warning_alone_does_not_fail_check` and `a_lint_beside_an_error_still_fails_check`; g01 rows M3848-M3851.
+
 ## Requirements-evidence integrity checker (merge of `lane/checker`)
 
 - **`crates/axon-core/tests/requirements_evidence.rs` checks every gate REQUIREMENTS.md cites against how it actually runs:** each script cited as evidence must have a row in `governance/EVIDENCE_CLASSES.md`, and the row's class must match the invocation graph from `gate.sh`, CI and Rust tests (transitive reachability, flag guards, comments, `echo` text and self-references excluded).

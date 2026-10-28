@@ -1950,17 +1950,21 @@ impl Runner {
                             }
                         };
                         if still_failing.is_empty() {
-                            // THE CHECKER HAS THE LAST WORD. `axon test` runs a
-                            // file `axon check` refuses: `check` exits 2 on ANY
-                            // diagnostic, a note included, and a test run does
-                            // not. Measured on the dev corpus (drop-stmt-02, 4 of
-                            // 4 reruns): a generator shown the file wrote
-                            // `let mut s = start`, every test passed, this
-                            // returned VerifiedDone, and the file it left failed
-                            // `axon check` with the I0002 note "`mut` is not an
-                            // Axon keyword". A repair the checker objects to is
-                            // not finished, so it is rejected like any other and
-                            // the generator is shown what the checker said.
+                            // THE CHECKER HAS THE LAST WORD. `axon check`'s exit
+                            // is the grader's acceptance (`run_ab.py`
+                            // `final_compiles`), so VerifiedDone needs it to be 0.
+                            // Measured on the dev corpus (drop-stmt-02, 4 of 4
+                            // reruns, when `check` still exited 2 on a note): a
+                            // generator shown the file wrote `let mut s = start`,
+                            // every test passed, this returned VerifiedDone, and
+                            // the grader scored a false success. Error-severity
+                            // diagnostics are already undone by the rollback
+                            // observe above, so this is a backstop: it holds
+                            // VerifiedDone to exactly the grader's rule even if
+                            // `check`'s exit and its printed severities ever
+                            // disagree. A repair the checker objects to is not
+                            // finished, so it is rejected like any other and the
+                            // generator is shown what the checker said.
                             match self.checker_exit_clean(&target.path) {
                                 Ok(true) => match self.still_graded(&target.path, &graded) {
                                     Ok(()) => return EpisodeOutcome::VerifiedDone { steps: step },
@@ -2328,10 +2332,12 @@ impl Runner {
     }
 
     /// Whether `axon check` on the file under repair, as it is on disk now,
-    /// exits 0. That is the acceptance an operator (and the benchmark grader)
-    /// applies, and it is stricter than "no error diagnostics": `check` exits
-    /// 2 on any diagnostic, a note included. `Err` when the checker could not
-    /// be run or was killed, so a missing answer is never read as a clean one.
+    /// exits 0. That is the acceptance an operator (and the benchmark grader,
+    /// `run_ab.py` `final_compiles`) applies. `check` exits 2 on an
+    /// error-severity diagnostic, which the rollback observe already undoes;
+    /// reading the exit keeps VerifiedDone at the grader's rule even if the two
+    /// ever disagree. `Err` when the checker could not be run or was killed, so
+    /// a missing answer is never read as a clean one.
     fn checker_exit_clean(&self, rel_path: &str) -> std::io::Result<bool> {
         let (_, code) = self.run_axon_check(&self.workspace.join(rel_path), None)?;
         match code {

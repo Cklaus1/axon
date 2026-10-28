@@ -638,16 +638,19 @@ Every one of these was produced on `pricing.ax` (or, for 27, on
 | 27 | `adjudicated_not_clean` | patched (KEPT) | the check passed and nothing regressed, but tests that were already failing still fail; look at those separately. A walk that reached this state and then ended short of a clean repair for any other reason (20, 21, 28, …) still reports it, with its graded bytes; `stopped_by` in `--json` names what ended the walk |
 | 28 | `out_of_scope_suspected` | restored (untouched when no model was asked) | the early stop ended the run: either no function is reached by every failing visible check, or every candidate asked stopped changing the visible verdict. A one-body fix is unlikely; look for a defect spanning functions, a signature or a type. A suspicion, not a proof: rerun with `--early-stop off` to spend the whole budget |
 
-`verified_done` also needs `axon check` on the patched file to exit 0.
-`check` exits 2 on any diagnostic, a note included, while `axon test` runs
-such a file anyway. So a body that passes every test but draws a diagnostic,
-such as the I0002 note on `let mut`, is undone and recorded as a rejected
-attempt (`CheckerObjected`). The checker's diagnostics, from the file with
-the hidden check cut out, go back to the generator as feedback. They are
-capped at the first 5 and 2 KB, like compiler feedback. If the file had a
-diagnostic before the repair started, `verified_done` needs that diagnostic
-gone too. That rule came from a measured false success: dev task
-drop-stmt-02, 4 of 4 reruns. A run where `axon check` cannot be executed is
+`verified_done` also needs `axon check` on the patched file to exit 0, which
+is the grader's acceptance (`run_ab.py` `final_compiles`). `check` exits 2
+when it reports an error; a warning or a note alone (such as the I0002 note
+on `let mut`) exits 0. A body with an error is normally undone earlier, as an
+attempt that does not compile, so this rule is a backstop: a body that passes
+every test while `axon check` exits 2 on it, on an error such as E0102, is
+undone and recorded as a rejected attempt (`CheckerObjected`). The checker's
+diagnostics, from the file with the hidden check cut out, go back to the
+generator as feedback. They are capped at the first 5 and 2 KB, like
+compiler feedback. If `check` exited 2 on the file before the repair started,
+`verified_done` needs that error gone too. That rule came from a measured
+false success: dev task drop-stmt-02, 4 of 4 reruns, when `check` still
+exited 2 on the I0002 note. A run where `axon check` cannot be executed is
 blocked (exit 22), not accepted.
 
 Exit 27, on the fixture that has two independent defects:

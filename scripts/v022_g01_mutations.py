@@ -12011,5 +12011,26 @@ MUTATIONS += [
      'axon-cortex', '--lib', 'locate::fn_body_tests::a_test_attribute_in_a_block_comment_does_not_make_a_check'),
 ]
 
+# Small-fixes SF-5 (O-CS-04), LaneCore (ids M3848-M3851): `axon check` exits 2 only on an
+# error-severity diagnostic; cortex's VerifiedDone gate still reads check's exit (C14b shim).
+MUTATIONS += [
+    ('M3848', 'SF-5: `axon check` exits 2 on any diagnostic again (a note or lint warning alone fails it)', 'crates/axon-core/src/main.rs',
+     'located.iter().any(|d| d.severity == "error")',
+     '!located.is_empty()',
+     'axon-core', '--no-default-features --test cli_run', 'a_note_or_lint_warning_alone_does_not_fail_check'),
+    ('M3849', 'SF-5: `axon check` exits 0 even when it reported an error', 'crates/axon-core/src/main.rs',
+     'exit(if failed { 2 } else { 0 })',
+     'exit(if failed { 0 } else { 0 })',
+     'axon-core', '--no-default-features --test cli_run', 'a_lint_beside_an_error_still_fails_check'),
+    ('M3850', 'SF-5: a file-level string error (E1202 under --locked) beside a note no longer fails `axon check`', 'crates/axon-core/src/main.rs',
+     '!string_errors.is_empty() || ',
+     '',
+     'axon-core', '--no-default-features --test cli_run', 'a_lint_beside_an_error_still_fails_check'),
+    ('M3851', 'SF-5: cortex VerifiedDone ignores `axon check`\'s exit (the checker gate neutralised)', 'crates/axon-cortex/src/runner.rs',
+     'Some(c) => Ok(c == 0),',
+     'Some(_) => Ok(true),',
+     'axon-cortex', '--test conformance', 'cxg_c14b_a_body_the_checker_objects_to_never_reaches_verified_done'),
+]
+
 if __name__ == "__main__":
     main()

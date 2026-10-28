@@ -41188,3 +41188,82 @@ fn a_verify_predicate_calling_a_fn_typed_param_is_refused_e1104() {
         r.status.code()
     );
 }
+
+/// SF-5 (O-CS-04): `axon check` exits 0 unless an error-severity diagnostic
+/// was emitted, as `--help` says. The I0002 note (`let mut`) and the W0007 /
+/// W0008 lint warnings alone exited 2, while W0003/W0006 already exited 0.
+#[test]
+fn a_note_or_lint_warning_alone_does_not_fail_check() {
+    let attack =
+        "ATTACK: `axon check` failed a program whose only diagnostics are notes or warnings";
+    for (tag, src, code) in [
+        (
+            "letmut",
+            "fn main() -> i64 { let mut x = 1; x = x + 1; println(to_str(x)); 0 }\n",
+            "I0002",
+        ),
+        (
+            "w7",
+            "fn main() -> i64 {\n    let x = 7 // 2\n    println(to_str(x))\n    0\n}\n",
+            "W0007",
+        ),
+        (
+            "w8",
+            "fn main() -> i64 {\n    let d = {}\n    0\n}\n",
+            "W0008",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout) = cs_b1_check_run(&format!("sf5_{tag}"), src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert!(
+            cmsg.contains(code) && !cmsg.contains("\"severity\":\"error\""),
+            "{attack} [{tag}]: want {code} and no error: {cmsg}"
+        );
+        if tag == "letmut" {
+            assert_eq!((rrc, rout.as_str()), (Some(0), "2\n"), "{attack}: {cmsg}");
+        }
+    }
+}
+
+/// SF-5 guard: a lint beside an error still fails `check` — a typed error
+/// (E0102) and a file-level string error (E1202 under `--locked`).
+#[test]
+fn a_lint_beside_an_error_still_fails_check() {
+    let attack = "ATTACK: `axon check` exited 0 on a program with an error beside a lint";
+    let (crc, cmsg, _, _) = cs_b1_check_run(
+        "sf5_mixed",
+        "fn main() -> i64 {\n    let mut x = 1\n    let y: i64 = \"s\"\n    0\n}\n",
+    );
+    assert_eq!(crc, Some(2), "{attack} [mixed]: {cmsg}");
+    assert!(
+        cmsg.contains("E0102") && cmsg.contains("I0002"),
+        "{attack} [mixed]: {cmsg}"
+    );
+
+    let d = std::env::temp_dir().join(format!("axon_sf5_locked_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("util.ax"), "fn helper(n: i64) -> i64 { n + 1 }\n").unwrap();
+    let prog = d.join("prog.ax");
+    std::fs::write(
+        &prog,
+        "mod util\nuse util.{helper}\nfn main() -> i64 {\n    let mut x = helper(5)\n    x\n}\n",
+    )
+    .unwrap();
+    let c = axon()
+        .args(["check", prog.to_str().unwrap(), "--locked"])
+        .env("AXON_PATH", d.to_str().unwrap())
+        .output()
+        .unwrap();
+    let lmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&c.stdout),
+        String::from_utf8_lossy(&c.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&d);
+    assert_eq!(c.status.code(), Some(2), "{attack} [locked]: {lmsg}");
+    assert!(
+        lmsg.contains("E1202") && lmsg.contains("I0002"),
+        "{attack} [locked]: {lmsg}"
+    );
+}

@@ -51,7 +51,7 @@ enum Command {
 
     /// Type-check a .ax file and report errors.
     ///
-    /// Exit codes: 0 = no errors, 2 = type errors.
+    /// Exit codes: 0 = no error (warnings and notes alone exit 0), 2 = at least one error.
     Check {
         #[arg(help = "Path to .ax source file")]
         file: PathBuf,
@@ -1617,8 +1617,9 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
             emit_error(err, use_json);
         }
     });
-    // Fix 8: exit 2 for compile errors.
-    exit(2);
+    let failed = !string_errors.is_empty() || located.iter().any(|d| d.severity == "error");
+    // Fix 8: exit 2 for compile errors. A note or warning alone is not one (O-CS-04).
+    exit(if failed { 2 } else { 0 });
 }
 
 // ── lock / verify-lock (R6) ─────────────────────────────────────────────────────

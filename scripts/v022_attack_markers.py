@@ -3254,3 +3254,11 @@ ATTACK_MARKERS.update({
     'M3846': r'ATTACK: a function defined only inside a block comment was a candidate',
     'M3847': r'ATTACK: a test attribute in a block comment dropped the defect from the ranking',
 })
+
+# Small-fixes SF-5 (O-CS-04), LaneCore (ids M3848-M3851)
+ATTACK_MARKERS.update({
+    'M3848': r'ATTACK: `axon check` failed a program whose only diagnostics are notes or warnings',
+    'M3849': r'ATTACK: `axon check` exited 0 on a program with an error beside a lint \[mixed\]',
+    'M3850': r'ATTACK: `axon check` exited 0 on a program with an error beside a lint \[locked\]',
+    'M3851': r'ATTACK: a body `axon check` refuses reached VerifiedDone',
+})
