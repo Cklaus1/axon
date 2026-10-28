@@ -517,25 +517,68 @@ impl CommandGenerator {
     }
 }
 
-/// How one generator drain ended (FU-3): the bytes it kept, and whether it was
-/// stopped while the pipe still held data (a final non-blocking read after
-/// stop returned bytes). A drain stopped while IDLE keeps its bytes: that is
-/// the NH1 leftover case — the generator answered and exited, and something
+/// How one generator drain ended (FU-3, SF-1): the bytes it kept, and whether
+/// they are NOT the generator's whole answer (`pending`): bytes reached the
+/// pipe after the generator was reaped and the drain had emptied it (a writer
+/// other than the generator), or bytes were waiting at stop. A drain that
+/// stays empty from that observation until EOF or stop keeps its bytes: that
+/// is the NH1 leftover case — the generator answered and exited, and something
 /// it left running holds the pipe without writing.
+///
+/// Residuals, which one shared pipe cannot tell apart: bytes a leftover
+/// writes BEFORE the generator is reaped, or between the reap and the drain's
+/// first empty observation after it, look the same as the answer. A leftover
+/// that writes at least once more after that observation is caught.
 #[derive(Debug, Default)]
 struct GenDrain {
     bytes: Vec<u8>,
     pending: bool,
 }
 
+/// What one wait on a generator pipe saw.
+enum PipeWait {
+    /// Data, EOF or an error: the read says which.
+    Readable,
+    /// `stop` was set.
+    Stopped,
+    /// One poll interval passed with the pipe empty.
+    Idle,
+}
+
+/// Wait one poll interval (50 ms, as [`axon_jobctl::wait_readable`]) for `fd`
+/// to become readable, unless `stop` is set.
+fn wait_pipe(fd: std::os::fd::RawFd, stop: &std::sync::atomic::AtomicBool) -> PipeWait {
+    loop {
+        if stop.load(std::sync::atomic::Ordering::Acquire) {
+            return PipeWait::Stopped;
+        }
+        let mut p = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd for a descriptor the calling drain owns.
+        match unsafe { libc::poll(&mut p, 1, 50) } {
+            0 => return PipeWait::Idle,
+            n if n > 0 => return PipeWait::Readable,
+            _ if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted => {}
+            // poll itself failed: let the read fail and end the drain.
+            _ => return PipeWait::Readable,
+        }
+    }
+}
+
 /// Drain one of a generator's pipes on its own thread, keeping at most `cap`
-/// bytes. Each read waits for data through [`axon_jobctl::wait_readable`], so
-/// the thread gives up once `stop` is set (KG2): a descendant the generator
-/// left running can hold the pipe open, and EOF then never comes.
+/// bytes. Each read waits for data through [`wait_pipe`], so the thread gives
+/// up once `stop` is set (KG2): a descendant the generator left running can
+/// hold the pipe open, and EOF then never comes. `exited` is set once the
+/// generator is reaped (SF-1): from then on, the first time the drain sees
+/// the pipe empty, any further byte is a leftover's, never the answer.
 fn drain_capped<R>(
     pipe: Option<R>,
     cap: u64,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    exited: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> std::thread::JoinHandle<GenDrain>
 where
     R: std::io::Read + std::os::fd::AsRawFd + Send + 'static,
@@ -548,18 +591,34 @@ where
             let fd = p.as_raw_fd();
             let mut p = p.take(cap);
             let mut chunk = [0u8; 8192];
+            // The generator has been reaped and the pipe is empty: whatever
+            // it wrote has been read. `exited` is loaded BEFORE the look.
+            let quiet = || exited.load(std::sync::atomic::Ordering::Acquire) && !readable_now(fd);
+            let mut quiet_after_exit = false;
+            let mut late = false;
             loop {
-                if !axon_jobctl::wait_readable(fd, &stop) {
-                    // Stopped: one look that cannot block. Bytes still
-                    // waiting mean a writer was mid-answer.
-                    pending = readable_now(fd) && matches!(p.read(&mut chunk), Ok(n) if n > 0);
-                    break;
-                }
-                match p.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                    Err(_) => break,
+                match wait_pipe(fd, &stop) {
+                    PipeWait::Stopped => {
+                        // One look that cannot block. Bytes still waiting
+                        // mean a writer was mid-answer.
+                        pending = late
+                            || (readable_now(fd) && matches!(p.read(&mut chunk), Ok(n) if n > 0));
+                        break;
+                    }
+                    PipeWait::Idle => quiet_after_exit = quiet_after_exit || quiet(),
+                    PipeWait::Readable => match p.read(&mut chunk) {
+                        Ok(0) => {
+                            pending = late;
+                            break;
+                        }
+                        Ok(n) => {
+                            late = late || quiet_after_exit;
+                            buf.extend_from_slice(&chunk[..n]);
+                            quiet_after_exit = quiet_after_exit || quiet();
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(_) => break,
+                    },
                 }
             }
         }
@@ -582,10 +641,10 @@ fn readable_now(fd: std::os::fd::RawFd) -> bool {
 }
 
 /// The generator's (stdout, stderr) as joined, or why they are not its whole
-/// answer (FU-3). A DETACHED drain (`None`) lost what it read; one stopped
-/// with data still pending holds a cut answer. Either is a lost read, never
-/// an empty or partial proposal. The third handle, the prompt writer, returns
-/// no bytes and is not consulted.
+/// answer (FU-3). A DETACHED drain (`None`) lost what it read; a `pending`
+/// one holds a cut answer or a leftover's late bytes (SF-1). Either is a lost
+/// read, never an empty or partial proposal. The third handle, the prompt
+/// writer, returns no bytes and is not consulted.
 fn generator_output(joined: Vec<Option<GenDrain>>) -> Result<(Vec<u8>, Vec<u8>), &'static str> {
     let mut it = joined.into_iter();
     match (it.next().flatten(), it.next().flatten()) {
@@ -674,6 +733,9 @@ impl PatchGenerator for CommandGenerator {
             GenDrain::default()
         });
         let stop = Arc::new(AtomicBool::new(false));
+        // SF-1: set once the generator is reaped. A byte that reaches a pipe
+        // after that, and after the drain saw it empty, is a leftover's.
+        let exited = Arc::new(AtomicBool::new(false));
         // CAPPED. `validate` applies `max_bytes` after the read completes, so
         // it bounds what is APPLIED and never what is buffered; a child
         // writing gigabytes would abort the process on allocation failure and
@@ -682,11 +744,13 @@ impl PatchGenerator for CommandGenerator {
             job.child_mut().stdout.take(),
             MAX_GENERATOR_READ as u64,
             Arc::clone(&stop),
+            Arc::clone(&exited),
         );
         let err_t = drain_capped(
             job.child_mut().stderr.take(),
             MAX_GENERATOR_READ as u64,
             Arc::clone(&stop),
+            Arc::clone(&exited),
         );
 
         // A DEADLINE. `--budget` bounds STEPS, not wall time, and no budget
@@ -714,6 +778,7 @@ impl PatchGenerator for CommandGenerator {
             }
         };
         let reaped = job.reap();
+        exited.store(true, std::sync::atomic::Ordering::Release);
         let joined =
             axon_jobctl::join_within(axon_jobctl::DRAIN_GRACE, vec![out_t, err_t, writer], &stop);
         let status = match watched.and_then(|timed_out| reaped.map(|st| (timed_out, st))) {
@@ -762,17 +827,122 @@ impl PatchGenerator for CommandGenerator {
 
 #[cfg(test)]
 mod drain_tests {
-    use super::{drain_capped, generator_output, read_answer, GenDrain, GenerationFailure};
+    use super::{
+        drain_capped, generator_output, read_answer, readable_now, GenDrain, GenerationFailure,
+    };
     use std::io::Write;
+    use std::os::fd::AsRawFd;
     use std::os::unix::net::UnixStream;
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::time::Duration;
 
     fn idle(bytes: &[u8]) -> Option<GenDrain> {
         Some(GenDrain {
             bytes: bytes.to_vec(),
             pending: false,
         })
+    }
+
+    /// Wait (at most 10 s) until the drain has emptied `fd`. Ordering in these
+    /// tests comes from this wait, never from a wall-clock bound on the drain.
+    fn until_drained(fd: std::os::fd::RawFd) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while readable_now(fd) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the drain never emptied the pipe"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// A drain on a fresh socket pair: the write end, the read end's fd for
+    /// [`until_drained`], the drain's flags, and its thread.
+    struct Started {
+        w: UnixStream,
+        fd: std::os::fd::RawFd,
+        stop: Arc<AtomicBool>,
+        exited: Arc<AtomicBool>,
+        h: std::thread::JoinHandle<GenDrain>,
+    }
+
+    /// Start a drain on a pipe already holding `before`, whose generator has
+    /// (`exited`) or has not yet been reaped.
+    fn started(before: &[u8], exited: bool) -> Started {
+        let (r, mut w) = UnixStream::pair().unwrap();
+        w.write_all(before).unwrap();
+        let fd = r.as_raw_fd();
+        let stop = Arc::new(AtomicBool::new(false));
+        let exited = Arc::new(AtomicBool::new(exited));
+        let h = drain_capped(Some(r), 1 << 20, Arc::clone(&stop), Arc::clone(&exited));
+        Started {
+            w,
+            fd,
+            stop,
+            exited,
+            h,
+        }
+    }
+
+    /// Three times: wait until the drain has emptied the pipe, then write.
+    /// Returns once the drain has read the last write.
+    fn write_late(s: &mut Started) {
+        for _ in 0..3 {
+            until_drained(s.fd);
+            std::thread::sleep(Duration::from_millis(100));
+            s.w.write_all(b"x").unwrap();
+        }
+        until_drained(s.fd);
+    }
+
+    /// SF-1 (O-FU-01): the generator was reaped and its answer read; bytes a
+    /// leftover writes after the drain saw the pipe empty are not part of the
+    /// answer, even though nothing is pending when the drain is stopped.
+    #[test]
+    fn a_drain_written_to_after_exit_is_not_a_whole_answer() {
+        let mut s = started(b"    n * 2\n", true);
+        write_late(&mut s);
+        s.stop.store(true, Ordering::Release);
+        let d = s.h.join().unwrap();
+        assert!(
+            d.pending,
+            "ATTACK: bytes written after the generator exited were taken as its whole answer: {d:?}"
+        );
+        drop(s.w);
+    }
+
+    /// SF-1 (O-FU-01): as above, but the late writer then closes the pipe.
+    /// EOF does not make the late bytes part of the answer.
+    #[test]
+    fn a_late_write_then_eof_is_not_a_whole_answer() {
+        let mut s = started(b"    n * 2\n", true);
+        write_late(&mut s);
+        drop(s.w);
+        let d = s.h.join().unwrap();
+        assert!(
+            d.pending,
+            "ATTACK: a late write followed by EOF was taken as the whole answer: {d:?}"
+        );
+    }
+
+    /// SF-1 (O-FU-01): an empty pipe BEFORE the generator exits is just a
+    /// generator that has not answered yet; its answer is kept.
+    #[test]
+    fn a_quiet_spell_before_exit_does_not_make_the_answer_late() {
+        let mut s = started(b"", false);
+        std::thread::sleep(Duration::from_millis(200));
+        s.w.write_all(b"    n * 2\n").unwrap();
+        until_drained(s.fd);
+        s.exited.store(true, Ordering::Release);
+        s.stop.store(true, Ordering::Release);
+        let d = s.h.join().unwrap();
+        assert!(
+            !d.pending && d.bytes == b"    n * 2\n",
+            "ATTACK: an answer written before the generator exited was rejected as a late write: \
+             {d:?}"
+        );
+        drop(s.w);
     }
 
     /// FU-3, the NH1 leftover case: the generator answered, and something it
@@ -783,7 +953,8 @@ mod drain_tests {
         let (r, mut w) = UnixStream::pair().unwrap();
         w.write_all(b"    n * 2\n").unwrap();
         let stop = Arc::new(AtomicBool::new(false));
-        let h = drain_capped(Some(r), 1 << 20, Arc::clone(&stop));
+        let exited = Arc::new(AtomicBool::new(true));
+        let h = drain_capped(Some(r), 1 << 20, Arc::clone(&stop), exited);
         let joined =
             axon_jobctl::join_within(std::time::Duration::from_millis(300), vec![h], &stop);
         let d = joined[0].as_ref().expect("a polling drain is joined");
@@ -799,7 +970,9 @@ mod drain_tests {
         let (r, mut w) = UnixStream::pair().unwrap();
         w.write_all(b"    n * 2\n").unwrap();
         let stop = Arc::new(AtomicBool::new(true));
-        let d = drain_capped(Some(r), 1 << 20, stop).join().unwrap();
+        let d = drain_capped(Some(r), 1 << 20, stop, Arc::new(AtomicBool::new(false)))
+            .join()
+            .unwrap();
         assert!(
             d.pending,
             "ATTACK: a generator drain stopped with data pending was taken as the whole answer: {d:?}"

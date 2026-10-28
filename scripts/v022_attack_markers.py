@@ -3238,3 +3238,11 @@ ATTACK_MARKERS.update({
     'M3815': r'ATTACK: a predicate with `break` inside a loop was refused as leaving its frame',
     'M3818': r'ATTACK: a move before a local closure named `exit` was dropped as if the branch diverged',
 })
+
+# Small-fixes SF-1 (O-FU-01), LaneDrain (ids M3840-M3843)
+ATTACK_MARKERS.update({
+    'M3840': r'ATTACK: bytes written after the generator exited were taken as its whole answer',
+    'M3841': r'ATTACK: a leftover still writing after the generator exited was spliced into the answer',
+    'M3842': r'ATTACK: an answer written before the generator exited was rejected as a late write',
+    'M3843': r'ATTACK: a late write followed by EOF was taken as the whole answer',
+})

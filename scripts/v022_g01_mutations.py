@@ -11968,5 +11968,27 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'a_local_closure_named_exit_does_not_diverge'),
 ]
 
+# Small-fixes SF-1 (O-FU-01), LaneDrain (ids M3840-M3843): bytes a generator pipe receives after the
+# generator was reaped and the drain saw the pipe empty are a leftover's, never the answer.
+MUTATIONS += [
+    ('M3840', "SF-1: a generator drain never marks a write after exit as late", _FUG,
+     '                            late = late || quiet_after_exit;',
+     '                            late = late && quiet_after_exit;',
+     'axon-cortex', '--lib', 'generate::drain_tests::a_drain_written_to_after_exit_is_not_a_whole_answer'),
+    ('M3841', "SF-1: propose never tells its drains the generator was reaped", _FUG,
+     '        let reaped = job.reap();\n        exited.store(true, std::sync::atomic::Ordering::Release);',
+     '        let reaped = job.reap();',
+     'axon-cortex', '--test cli', 'fu01_a_leftover_still_writing_after_the_generator_exits_is_not_its_answer'),
+    ('M3842', "SF-1: an empty pipe before the generator exited counts as quiet after exit", _FUG,
+     '            let quiet = || exited.load(std::sync::atomic::Ordering::Acquire) && !readable_now(fd);',
+     '            let quiet = || !readable_now(fd);',
+     'axon-cortex', '--lib', 'generate::drain_tests::a_quiet_spell_before_exit_does_not_make_the_answer_late'),
+    ('M3843', "SF-1: a generator drain's EOF ignores a late write", _FUG,
+     '                        Ok(0) => {\n                            pending = late;\n                            break;\n'
+     '                        }',
+     '                        Ok(0) => break,',
+     'axon-cortex', '--lib', 'generate::drain_tests::a_late_write_then_eof_is_not_a_whole_answer'),
+]
+
 if __name__ == "__main__":
     main()

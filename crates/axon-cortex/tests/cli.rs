@@ -2382,6 +2382,107 @@ fn kg2_a_leftover_holding_the_generators_pipes_does_not_stall_the_loop() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+/// SF-1 (O-FU-01): run `cortex repair` on `ws` with the generator `gen`, whose
+/// background leftover writes its pid to `left.pid`, and check that the run is
+/// refused as a lost read with `broken.ax` untouched. Cortex's output goes to
+/// files and the 300 s bound is only a hang guard, as in KG2: no verdict here
+/// depends on how fast the host is.
+fn assert_a_late_leftover_write_is_not_the_answer(ws: &Path, gen: &Path, attack: &str) {
+    let out_file = ws.join("cortex.out");
+    let err_file = ws.join("cortex.err");
+    let mut cortex = repair_with_generator(ws, gen, "120000")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::fs::File::create(&out_file).unwrap())
+        .stderr(std::fs::File::create(&err_file).unwrap())
+        .spawn()
+        .unwrap();
+    let began = std::time::Instant::now();
+    let status = loop {
+        if let Some(st) = cortex.try_wait().unwrap() {
+            break st;
+        }
+        if began.elapsed() >= std::time::Duration::from_secs(300) {
+            let _ = cortex.kill();
+            break cortex.wait().unwrap(); // the assertion below reports it
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    // Whatever it runs now, the leftover is killed when this drops.
+    let _leftover = std::fs::read_to_string(ws.join("left.pid"))
+        .ok()
+        .and_then(|s| s.trim().parse::<i32>().ok())
+        .and_then(|pid| Proc::cmdline_of(pid).map(|cmdline| Proc { pid, cmdline }));
+    let said = format!(
+        "{}{}",
+        std::fs::read_to_string(&out_file).unwrap_or_default(),
+        std::fs::read_to_string(&err_file).unwrap_or_default()
+    );
+    let fixture =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax")).unwrap();
+    let now = std::fs::read(ws.join("broken.ax")).unwrap();
+    assert!(
+        status.code() == Some(24) && now == fixture,
+        "ATTACK: {attack} (exit {:?} after {:?}): {said}\n--- broken.ax ---\n{}",
+        status.code(),
+        began.elapsed(),
+        String::from_utf8_lossy(&now)
+    );
+    assert!(said.contains("could not be read to EOF"), "{said}");
+}
+
+/// SF-1 (O-FU-01), reproduction (a): the generator answers and exits, and a
+/// leftover it started keeps writing to the inherited stdout. Its lines arrive
+/// after the generator was reaped, so they are not part of its answer, and
+/// the run is refused rather than splicing them into `double`.
+#[test]
+fn fu01_a_leftover_still_writing_after_the_generator_exits_is_not_its_answer() {
+    let ws = workspace("fu01_writing");
+    let gen = ws.join("chatty-gen.sh");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\n\
+             ( i=0; while [ $i -lt 100 ]; do printf '    // leftover %s\\n' $i; i=$((i+1)); \
+             sleep 0.05; done ) &\necho $! > '{}'\nprintf '    n * 2\\n'\nexit 0\n",
+            ws.join("left.pid").display()
+        ),
+        0o755,
+    );
+    assert_a_late_leftover_write_is_not_the_answer(
+        &ws,
+        &gen,
+        "a leftover still writing after the generator exited was spliced into the answer",
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// SF-1 (O-FU-01), reproduction (b): the leftover starts writing only once
+/// cortex has reaped the generator (`kill -0` succeeds on a zombie), then
+/// closes the pipe. EOF inside the grace does not make late bytes the answer.
+#[test]
+fn fu01_a_leftover_that_writes_after_exit_then_closes_is_not_its_answer() {
+    let ws = workspace("fu01_closes");
+    let gen = ws.join("late-gen.sh");
+    common::write_executable(
+        &gen,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\ng=$$\n\
+             ( while kill -0 $g 2>/dev/null; do sleep 0.02; done; i=0; \
+             while [ $i -lt 15 ]; do sleep 0.1; printf '    // late %s\\n' $i; i=$((i+1)); \
+             done ) &\necho $! > '{}'\nprintf '    n * 2\\n'\nexit 0\n",
+            ws.join("left.pid").display()
+        ),
+        0o755,
+    );
+    assert_a_late_leftover_write_is_not_the_answer(
+        &ws,
+        &gen,
+        "a leftover that wrote after the generator exited and then closed the pipe was \
+         spliced into the answer",
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
 /// KG3: SIGTERM to `cortex` reaches the generator's job, and cortex still dies
 /// by SIGTERM. SIGTERM, not SIGINT: a background job of a non-interactive
 /// shell (gate.sh's `par`) starts with SIGINT ignored, which would make a
