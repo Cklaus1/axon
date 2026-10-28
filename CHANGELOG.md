@@ -1,5 +1,11 @@
 # Axon Changelog
 
+## Requirements-evidence integrity checker (merge of `lane/checker`)
+
+- **`crates/axon-core/tests/requirements_evidence.rs` checks every gate REQUIREMENTS.md cites against how it actually runs:** each script cited as evidence must have a row in `governance/EVIDENCE_CLASSES.md`, and the row's class must match the invocation graph from `gate.sh`, CI and Rust tests (transitive reachability, flag guards, comments, `echo` text and self-references excluded).
+- **Two false-positive sources fixed at merge:** a glob inside a quoted argument (`shape "no X in scripts/*.sh"`) is text, not a loop; a call through a runner function that executes its arguments (`run_quiet "label" ./scripts/x.sh`, `env`/`timeout` wrappers) is an invocation. A script a reachable script calls by name is `glob_invoked`, with that caller as its witness.
+- **Rows re-measured:** 18 gates wired into `gate.sh` since the branch was cut are now `strict_gate`; `r39_slice2_validate.sh`, `vm_parity.sh`, `vm_perf_gate.sh` and `vm_wasm_depth.sh` have rows. `requirements_evidence_is_not_orphaned` is `#[ignore]`d: R1, R7, R30 and R50 cite gates nothing runs (`tasks/opportunities.md` O-CK-01).
+
 ## Generic builtin slots are type variables; `str_cmp` is fuzzed
 
 - **A builtin's `T`/`U`/`V` is bound once per call (port of `builtin-typevar-instantiation`):** those slots were `Deferred` wildcards that unified with anything, so `let v = dict_get_or(d, "n", 0)` followed by `RG { amounts: v }` with `amounts: [i64]` passed `axon check` and then panicked at run time (`len: expected str/array/dict, got i64`, rc 101). Each call now instantiates fresh variables, nested slots (`[T]`, `(str, V)`, `Option<T>`) included; closure slots such as `fn(T) -> U` stay deferred. The checker's same-`T` binder reads the promoted slots. Generic builtins are not queued for monomorphization (a queued stub shadowed the native `dict_set` extern). The type-param names come from the sig the call reaches, so a generic user fn sharing a builtin's name and reached through a `&mut` argument (CS-4) is still specialized.

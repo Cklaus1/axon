@@ -21,7 +21,7 @@ filename, and it cannot be obtained for free:
 | `strict_gate` | invoked by name from `scripts/gate.sh` | `scripts/gate.sh` | yes |
 | `ci_job` | invoked by a CI workflow step | the `.github/workflows/*.yml` path | yes |
 | `cargo_test` | spawned by a Rust integration test | the `.rs` path | yes |
-| `glob_invoked` | matched by a glob in a script that is itself reachable | `<invoker>::<glob pattern>` | yes |
+| `glob_invoked` | matched by a glob in a script that is itself reachable, or called by name (unguarded) from such a script | `<invoker>::<glob pattern>`, or the calling script's path | yes |
 | `conditional` | invoked, but the site is guarded by an env flag the invoker does not set | `FLAG=<ENV_VAR>` | acknowledged, not continuous |
 | `manual_operator` | its only caller is reachable from no root | the invoker path | **no** |
 | `recorded_benchmark` | evidence is a recorded measurement | repo-relative path of the file holding it | acknowledged, not continuous |
@@ -31,8 +31,14 @@ filename, and it cannot be obtained for free:
 "Reachable from a root" means reachable from `scripts/gate.sh`, a CI workflow, or
 a Rust test — the things that run without a human choosing them. Reachability is
 TRANSITIVE: a gate invoked only by a gate nobody invokes is still invoked by
-nobody. That is why the R26-R29 gates below are not `strict_gate` despite having
-a caller.
+nobody. That was the R26-R29 gates' state until they were wired directly into
+`gate.sh` on 2026-09-19.
+
+A call through a RUNNER counts as invocation: a shell function that runs its
+arguments (`"$@"` in command position, after shifting a label off), such as
+`gate.sh`'s `run_quiet "R22 acceptance gate" ./scripts/r22_acceptance_gate.sh`,
+and the `env`/`timeout`/`nice` wrappers. A function that only prints its
+arguments is not a runner, and a glob inside a quoted argument is text.
 
 ## Reading a failure
 
@@ -55,9 +61,12 @@ cargo test -j 6 -p axon-core --no-default-features --test requirements_evidence 
     evidence_class_observed_dump -- --nocapture
 ```
 
-> **This file records the state MEASURED at 7f8d984. It is not aspirational and
-> several rows below are failing rows.** The checker is red today, which is the
-> correct report: 8 cited gates are invoked by nothing and 6 more only by a human.
+> **This file records the state MEASURED at the lane/checker merge (2026-10-27,
+> on main 22a0cfbd).** Every row below matches the facts. What remains red is
+> `requirements_evidence_is_not_orphaned`: some REQUIREMENTS.md rows claim
+> verification and cite a gate nothing runs (`perf_bench.sh`, `r30`,
+> `vm_perf_gate.sh`, `vm_wasm_depth.sh`). That test is `#[ignore]`d until those
+> claims are wired or restated (`tasks/opportunities.md` O-CK-01).
 
 | script | class | witness | note |
 |---|---|---|---|
@@ -75,26 +84,29 @@ cargo test -j 6 -p axon-core --no-default-features --test requirements_evidence 
 | r28_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | wired directly 2026-09-19; see r26. Measured 11s standalone. |
 | r29_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | wired directly 2026-09-19; see r26. Measured 4s standalone. |
 | r30_acceptance_gate.sh | orphaned | `-` | nothing invokes it, and it is the root of the dead R26-R29 subtree. |
-| r31_acceptance_gate.sh | orphaned | `-` | nothing invokes it; its only mention repo-wide is a COMMENT in `r33_acceptance_gate.sh`. |
-| r32_acceptance_gate.sh | manual_operator | `scripts/setup-environments.sh` | run only by `setup-environments.sh`, an operator-invoked provisioning script; nothing runs it per change. |
+| r31_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | run on every gate via `run_quiet "R31 acceptance gate"` (`gate.sh:1258`). Measured orphaned at 7f8d984; wired since. |
+| r32_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | run on every gate via `run_quiet` (`gate.sh:1304`). Measured `manual_operator` (only `setup-environments.sh`) at 7f8d984; wired since. |
 | r33_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | invoked by name in `scripts/gate.sh`; runs on every gate. |
 | r34_acceptance_gate.sh | strict_gate | `scripts/gate.sh` | invoked by name in `scripts/gate.sh`; runs on every gate. |
 | r39_slice1_gate.sh | strict_gate | `scripts/gate.sh` | invoked by name in `scripts/gate.sh`; runs on every gate. |
-| r39_slice2_gate.sh | orphaned | `-` | nothing invokes it; its only mentions are its own header comment and a comment in `r39_slice2_validate.sh` (self-reference + doc-only, the two false-positive classes). |
-| r39_slice2_validate.sh | manual_operator | `scripts/r39_slice2_gate.sh` | called only by `r39_slice2_gate.sh`, which is itself an orphan. |
-| r39_slice3_gate.sh | orphaned | `-` | nothing invokes it. |
-| r39_slice4_gate.sh | orphaned | `-` | nothing invokes it. |
+| r39_slice2_gate.sh | strict_gate | `scripts/gate.sh` | run on every gate via `run_quiet` (`gate.sh:1305`), ahead of slices 3-5 because it carries `r39_slice2_validate.sh`. Measured orphaned at 7f8d984. |
+| r39_slice2_validate.sh | glob_invoked | `scripts/r39_slice2_gate.sh` | called by name (`bash "$ROOT/scripts/r39_slice2_validate.sh"`) from `r39_slice2_gate.sh`, which `gate.sh` runs. |
+| r39_slice3_gate.sh | strict_gate | `scripts/gate.sh` | run on every gate via `run_quiet` (`gate.sh:1306`). Measured orphaned at 7f8d984. |
+| r39_slice4_gate.sh | strict_gate | `scripts/gate.sh` | run on every gate via `run_quiet` (`gate.sh:1307`). Measured orphaned at 7f8d984. |
 | r39_slice5_dag_check.sh | ci_job | `.github/workflows/ci.yml` | run by a CI workflow step on every push. |
-| r39_slice5_gate.sh | orphaned | `-` | nothing invokes it (its own callee `r39_slice5_dag_check.sh` IS run by CI; the gate around it is not). |
+| r39_slice5_gate.sh | strict_gate | `scripts/gate.sh` | run on every gate via `run_quiet` (`gate.sh:1308`); its callee `r39_slice5_dag_check.sh` is also a CI step. Measured orphaned at 7f8d984. |
 | smt_mint_parity.sh | glob_invoked | `scripts/parity_all.sh::scripts/*_parity.sh` | named nowhere; the aggregator iterates the glob, which is why a filename probe calls it an orphan. |
 | tee_sim_run.sh | strict_gate | `scripts/gate.sh` | invoked by name in `scripts/gate.sh`; runs on every gate. |
 | timer_irq_qemu_test.sh | cargo_test | `crates/axon-core/tests/integration_fixtures.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | unsigned_parity.sh | glob_invoked | `scripts/parity_all.sh::scripts/*_parity.sh` | named nowhere; the aggregator iterates the glob, which is why a filename probe calls it an orphan. |
 | verify_all_specs.sh | ci_job | `.github/workflows/ci.yml` | run by a CI workflow step on every push. |
+| vm_parity.sh | strict_gate | `scripts/gate.sh` | run by name in the fast stage (`gate.sh:390`); `parity_all.sh`'s `*_parity.sh` glob also matches it. |
+| vm_perf_gate.sh | orphaned | `-` | nothing invokes it (R50 §10 interpreter performance budget; idle-machine only, refuses a busy host). Its only other mention is a comment at `crates/axon-core/tests/cli_run.rs:39353`. Cited by R50 in REQUIREMENTS.md. |
+| vm_wasm_depth.sh | orphaned | `-` | nothing invokes it (R50 §4 wasm32 recursion-depth gate; needs `wasmtime` and an x86-64 host, and fails rather than skips without them). `wasm_checker_depth_parity.sh` and `wasm_nesting_parity.sh` mention it only in comments. Cited by R7 in REQUIREMENTS.md. |
 | wasm_aot_run_parity.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | wasm_browser_examples_parity.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | wasm_examples_parity.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | wasm_fs_parity.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | wasm_object_prune.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | wasm_parity.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
-| zephyr_qemu_gate.sh | orphaned | `-` | nothing invokes it. The skip-guard half of `external_hardware` is ALREADY satisfied — five honest guards (`west`, `cmake`, `ninja`, `qemu-system-arm`, the Zephyr base and the arm-zephyr-eabi toolchain), each naming what is missing and exiting 0 — so the only unmet obligation is the invocation edge. `external_hardware` excuses a gate from being EFFECTIVE without the toolchain, never from being wired: unwired, it does not run on the host that HAS the hardware either. Wire it, then reclassify to `external_hardware` with `NEEDS=arm-zephyr-eabi`. |
+| zephyr_qemu_gate.sh | strict_gate | `scripts/gate.sh` | run on every gate via `run_quiet "R25 Zephyr/Cortex-M gate" env AXON_BIN=... ./scripts/zephyr_qemu_gate.sh` (`gate.sh:1303`). Without the toolchain it SKIPS through five honest guards (`west`, `cmake`, `ninja`, `qemu-system-arm`, the Zephyr base and the arm-zephyr-eabi toolchain), each naming what is missing and exiting 0. So on a host without them the row is wired but not effective. Measured orphaned at 7f8d984. |
