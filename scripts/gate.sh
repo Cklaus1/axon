@@ -620,12 +620,14 @@ stage_cortex_receipt() {
 # pinned corpus still matches its sha256, the spent ledger's hash chain holds
 # and begins with the ledger committed at HEAD, every registered corpus loads,
 # and the harness self-tests (spend refusal, resume, (id, trial) keying,
-# caps_strict grading, the grading-axon integrity abort) pass. Fake binaries
-# only: no axon or cortex build is run or needed.
+# caps_strict grading, the grading-axon integrity abort, hardset build.py's
+# exit status and arguments) pass. Fake binaries only: no axon or cortex build
+# is run or needed.
 stage_protected_sets() {
   python3 -B crates/axon-cortex/benchmarks/protected.py --check \
     && python3 -B crates/axon-cortex/benchmarks/ab/selftest_ab.py \
     && python3 -B crates/axon-cortex/benchmarks/headroom/selftest.py \
+    && python3 -B crates/axon-cortex/benchmarks/hardset/selftest_check.py \
     || fail "a protected benchmark set, the spent ledger or the A/B harness self-test failed"
 }
 
@@ -727,6 +729,17 @@ echo "── gate: cortex fence sweep (R1f) ────────────
 AXON_BIN="$(built_bin axon)" CORTEX_BIN="$(built_bin cortex)" \
   python3 -B crates/axon-cortex/benchmarks/fence_sweep.py \
   || fail "cortex fence sweep: the runtime fence flips a corpus test (crates/axon-cortex/benchmarks/fence_sweep.py)"
+
+# The planted hard-set defects still validate against the code that ranks
+# them: every `defects/*.json` spec applies, keeps its scope, passes corpus.py
+# validity, and (in-scope) `cortex locate` still ranks its symbol within
+# run_ab's --candidates. A locate change that pushed a planted defect out of
+# reach was a manual note before this. Offline, no key, seconds; the binaries
+# are the ones built above.
+echo "── gate: hardset defects still validate (build.py --check) ────────"
+AXON_BIN="$(built_bin axon)" CORTEX_BIN="$(built_bin cortex)" \
+  python3 -B crates/axon-cortex/benchmarks/hardset/build.py --check \
+  || fail "hardset: a planted defect no longer validates (crates/axon-cortex/benchmarks/hardset/build.py --check)"
 
 # v0.22 Stage-5 gates that are EXECUTED here, by name. A registry row in
 # governance/cortex_gate_execution_registry.json may only vouch for a package gate

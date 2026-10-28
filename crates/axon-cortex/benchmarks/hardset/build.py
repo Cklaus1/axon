@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build the hard sets: `hard-dev.json` and `hard-once.json`.
 
-    python3 build.py                     # mine, validate every defect, write both sets
-    python3 build.py --check FILE.json   # validate one defects file, write nothing
+    python3 build.py                         # mine, validate every defect, write both sets
+    python3 build.py --check [FILE.json ...] # validate (default: every defects/*.json),
+                                             # write nothing; exit 1 if any spec FAILs
 
 Inputs, all in this directory:
 
@@ -78,6 +79,11 @@ from run_ab import CANDIDATES  # noqa: E402
 SRC = os.path.join(HERE, "src")
 DEFECTS = os.path.join(HERE, "defects")
 SCOPES = ("in", "out")
+USAGE = __doc__.split("\n\n")[1]
+
+
+def defect_files():
+    return sorted(glob.glob(os.path.join(DEFECTS, "*.json")))
 
 
 def sha256(b):
@@ -329,8 +335,18 @@ def report(ok, bad):
 
 
 def main():
-    if sys.argv[1:2] == ["--check"]:
-        ok, bad = check_all(load_specs(sys.argv[2:]))
+    """0/None: done; 1: a `--check` spec FAILed; 2: bad arguments. The
+    arguments are refused before any binary runs or any file is written: an
+    unknown one used to fall through to build mode, which rewrites the sets."""
+    args = sys.argv[1:]
+    if args in (["-h"], ["--help"]):
+        print(USAGE)
+        return 0
+    if args and (args[0] != "--check" or any(a.startswith("-") for a in args[1:])):
+        print(f"usage:\n{USAGE}", file=sys.stderr)
+        return 2
+    if args:
+        ok, bad = check_all(load_specs(args[1:] or defect_files()))
         report(ok, bad)
         return 1 if bad else 0
     for snap in snapshots():
@@ -341,7 +357,7 @@ def main():
     json.dump({"pairs": recs, "qualifying": len(real)},
               open(os.path.join(HERE, "mining.json"), "w"), indent=1)
     mining = {"pairs": len(recs), "qualifying": len(real)}
-    ok, bad = check_all(load_specs(sorted(glob.glob(os.path.join(DEFECTS, "*.json")))))
+    ok, bad = check_all(load_specs(defect_files()))
     report(ok, bad)
     tasks = real + [t for _, t in ok]
     planted = {(t["source_file"], t["broken"]) for _, t in ok}
@@ -360,4 +376,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
