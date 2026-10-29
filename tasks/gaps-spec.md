@@ -1,5 +1,7 @@
 # Gap closure: five tracked defects (G1-G5)
 
+**Status: BUILT 2026-10-15 on `main` 3060b866 (G1-G5, per "Status (end of run)" below; NH1 entry-directory module search was needs-human and is not built, see O-GAP-08). Stamped 2026-10-29 by tasks/docs-truth-spec.md DT-5.**
+
 Source: the user's ranked list (2026-10-15), taken from `AXON-COMPLETENESS.json` rows. Base: `main` b11841c8,
 branch `gaps/int`. Each item was re-measured against the code by a read-only scout before this spec was written;
 where the tracker row was stale, the item is rescoped to what is actually still open and the row is corrected.

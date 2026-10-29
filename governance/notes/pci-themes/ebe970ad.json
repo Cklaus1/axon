@@ -1,0 +1,1 @@
+{"theme": "docs-truth DT-2 (doc strings only)", "text": "doc field of str_cmp and str_slice; read only by `axon reference` (main.rs:5254/:5376); no change to what any run accepts, refuses or computes"}

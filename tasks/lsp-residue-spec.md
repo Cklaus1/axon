@@ -1,5 +1,7 @@
 # DRAFT — LSP multi-file residue and serde-json lint coverage (L1-L3)
 
+**Status: BUILT 2026-10-17 on `main` c691a51b (L1-L3). Stamped 2026-10-29 by tasks/docs-truth-spec.md DT-5.**
+
 **This is a DRAFT. It MUST pass a Step 1 adversarial review before any build.**
 
 Source: `tasks/opportunities.md` "gaps run (2026-10-15)", items at :2494-2496 (LSP residue) and :2518-2520 (clippy).

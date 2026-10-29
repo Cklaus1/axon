@@ -1,6 +1,8 @@
 # Follow-up spec: S1 follow-ups (held-out headroom set, capability walkers, cortex fixes)
 
-Status: REVIEWED 2026-10-18 (Step 1: conformance audit `local://followup-audit.md` A#1–22, dev-loop/statistics review
+**Status: PARTIAL 2026-10-18 on `main` 791dee95 (FU-2...FU-9 built on `fu/int`; FU-1, FU-10, FU-11 moved to tasks/hx2-spec.md, STOPPED at HX-0, so O-S1-02 stays open). Stamped 2026-10-29 by tasks/docs-truth-spec.md DT-5.**
+
+Reviewed 2026-10-18 (Step 1: conformance audit `local://followup-audit.md` A#1–22, dev-loop/statistics review
 `local://followup-devloop.md` D#1–21; dispositions inline as `[REVISED: …]`). Branch `fu/int` (worktree
 `/home/cklaus/projects/axon-lanes/fu-int`), base `main` f26e9506. Original draft: commit 0fb92f96.
 

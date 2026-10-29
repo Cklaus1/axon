@@ -1,5 +1,7 @@
 # S1: one governed repair episode (R0-R8)
 
+**Status: BUILT 2026-10-18 on `main` 4f9d883e (R0-R5, R7, R8; R6 deferred to tasks/r6-ledger-spec.md). Stamped 2026-10-29 by tasks/docs-truth-spec.md DT-5.**
+
 Source: the user's go-ahead (2026-10-17) on "build one real, governed self-repair episode end to end, using the
 parts that already exist". Base: `main` f83c6f86, branch `repair/int`, worktree `/home/cklaus/projects/axon-lanes/rep-int`.
 Seams were mapped by two read-only scouts (`agent://SeamCortexRepair`, `agent://SeamAuthorityLoop`). Step 1 adversarial

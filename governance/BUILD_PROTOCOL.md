@@ -118,7 +118,7 @@ Per risk class, add until the feature is *trustworthy*, not just *passing*:
 
 - **Run the feature for real** — an example, a demo, the actual CLI path a user hits. Tests can pass while
   the integrated experience is broken.
-- Update: the relevant `examples/`, `spec/` or `stdlib.md`, `SESSION_STATUS.md`, and **`REQUIREMENTS.md`
+- Update: the relevant `examples/`, `spec/` (a builtin: its `doc` string and a regenerated `AXON_REFERENCE.md`), `SESSION_STATUS.md`, and **`REQUIREMENTS.md`
   `%`/`Status`** in the same commit that completed the feature.
 - **The status update is an evidence-table row, not prose.** Any status change (spec `**Status:**` +
   `status-claim`, §13 DAG row → `landed`, REQUIREMENTS.md `%`) must land together with a §14

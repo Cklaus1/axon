@@ -10,7 +10,7 @@ Every other runtime answers with *trust* — a policy doc, a code review, a Dock
 you hope holds. Axon answers with a *proof*. One annotation declares the agent's
 capabilities, and the compiler refuses any escape **before the code runs even once**:
 
-```axon
+```axon fails E1001
 @[contained(fs: [], net: [], exec: none)]   // local compute only
 fn agent(quality: i64, risk: i64) -> i64 {
     let secret = read_file("/etc/passwd")     // ✗ E1001 — no fs grant
@@ -186,7 +186,7 @@ fn swap<A, B>(p: Pair<A, B>) -> Pair<B, A> {
 
 ### Concurrency
 
-```axon
+```axon exits 45
 fn producer(ch: chan<i64>) -> () {
     let i = 0
     while i < 10 {
@@ -230,6 +230,8 @@ fn is_debug() -> bool {
 ## Testing
 
 ```axon
+fn add(a: i64, b: i64) -> i64 { a + b }
+
 @[test]
 fn test_add() {
     assert_eq(add(2, 3), 5)

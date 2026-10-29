@@ -1,5 +1,7 @@
 # DRAFT — Whole-job cancellation for the remaining supervisors (KG)
 
+**Status: BUILT 2026-10-17 on `main` 82a2d51a + 00f84160 (KG1-KG3, KG5; KG4 EXCLUDED by human). Stamped 2026-10-29 by tasks/docs-truth-spec.md DT-5.**
+
 **This draft MUST pass a Step 1 adversarial review before any build.** Nothing here is approved.
 [REVISED: Step 1 review done 2026-10-17 (ReviewKillgroup) against `main` 43fa1857; human decisions of 2026-10-17
 applied under Needs human. Scope after review and decisions: KG1, KG2, KG3, KG5 (added). KG4 excluded (NH2).]

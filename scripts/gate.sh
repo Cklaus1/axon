@@ -686,6 +686,11 @@ stage_g01_anchors() {
 stage_harness_skip() {
   bash scripts/test_harness_skip.sh || fail "harness skip rules/shapes (scripts/test_harness_skip.sh)"
 }
+# Build specs' status lines agree with the ledger (docs-truth DT-6, O-GAP-11):
+# offline text checks plus `git merge-base --is-ancestor`; well under a second.
+stage_spec_ledger() {
+  python3 -B scripts/spec_ledger.py || fail "spec ledger (scripts/spec_ledger.py)"
+}
 
 if lane_runs P; then
 par "VISION.md focus" stage_vision_focus
@@ -712,6 +717,7 @@ par "completeness manifest" stage_completeness
 par "gate lane self-test" stage_gate_lane
 par "G01 mutation anchors" stage_g01_anchors
 par "harness skip rules/shapes" stage_harness_skip
+par "spec ledger" stage_spec_ledger
 par_join
 fi
 

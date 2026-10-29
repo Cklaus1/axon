@@ -1,6 +1,6 @@
 # small-fixes — DRAFT spec
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: BUILT 2026-10-28 on `main` 43208ed8 (SF-1...SF-6; SF-1...SF-4 via `sf/int`, last item SF-6 43208ed8). Stamped by tasks/docs-truth-spec.md DT-5.**
 
 **Step 1 review** (2026-10-19): conformance audit `agent://AuditSmallFixes` (SFA#1–14) and dev-loop review
 `agent://DevloopSmallFixes` (SFD#1–14). 28 findings: 1 blocker, 10 major, 17 minor. 28 accepted (SFA#13 by

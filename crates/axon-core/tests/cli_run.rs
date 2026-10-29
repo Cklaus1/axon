@@ -5598,7 +5598,7 @@ fn ad_optimizer_flagship_demo_runs_the_full_stack() {
         "ROAS carries Uncertain confidence: {stdout}"
     );
     assert!(
-        stdout.contains("compiler-capped at 500"),
+        stdout.contains("capped at 500 by @[verify]"),
         "spend is @[verify]-bounded: {stdout}"
     );
     assert!(

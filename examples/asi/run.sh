@@ -13,6 +13,9 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
+# Four demos import examples/stdlib modules (bandit_ucb, persistent_bandit,
+# safe_bandit, safe_self_improve); a caller's own AXON_PATH still wins.
+export AXON_PATH="${AXON_PATH:-$REPO/examples/stdlib}"
 DEMO="$HERE/${DEMO:-optimize.ax}"
 
 # Provenance log path — see crates/axon-rt/src/provenance.rs

@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 205e8a002d3002d669e93c366ddc4e2d4b6f99bd
+generated-at: ebe970adf4bffd5cc2a973723d595015a13630f2
 
-`git diff --numstat 31413ca7..205e8a00 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..ebe970ad -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -26,7 +26,7 @@ generated-at: 205e8a002d3002d669e93c366ddc4e2d4b6f99bd
 | `crates/axon-core/src/ast.rs` | 334 | 81 |
 | `crates/axon-core/src/bin/axon-run.rs` | 19 | 0 |
 | `crates/axon-core/src/borrow.rs` | 67 | 11 |
-| `crates/axon-core/src/builtins.rs` | 68 | 11 |
+| `crates/axon-core/src/builtins.rs` | 70 | 13 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 940 | 340 |
 | `crates/axon-core/src/checker.rs` | 1714 | 569 |
@@ -98,9 +98,9 @@ generated-at: 205e8a002d3002d669e93c366ddc4e2d4b6f99bd
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 59137 | 8326 |
+| total | 59139 | 8328 |
 
-`git log --reverse 31413ca7..205e8a00 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..ebe970ad -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -429,7 +429,8 @@ generated-at: 205e8a002d3002d669e93c366ddc4e2d4b6f99bd
 | e6e9aae8 | checker soundness | checker.rs: a call whose callee names a local, param or top-level let holding a fn value of known type (let-bound user fn or lambda, fn(..)-typed param) is checked against that type like a direct call (E0305 arity, E0306 argument type); a local of unknown type no longer falls through to a top-level fn it shadows; lambda params shadow outer locals. No evaluator change, O-SF-01. |
 | a02d632f | fix/fnval merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 4707cf11 | checker soundness | checker.rs: names a match-arm pattern binds shadow outer fn values for the guard and body (Type::Unknown, via resolver.rs collect_pattern_binding_names, now pub(crate)); a lambda param typed by a one-variant enum naming a primitive (`type Name = str`) types as that primitive; the native-typo E0404 help lists the module's functions. Removes false refusals only; no evaluator change (SND#1/#3/#4). |
-| 325 commits | | |
+| ebe970ad | docs-truth DT-2 (doc strings only) | doc field of str_cmp and str_slice; read only by `axon reference` (main.rs:5254/:5376); no change to what any run accepts, refuses or computes |
+| 326 commits | | |
 <!-- END MECHANICAL -->
 
 

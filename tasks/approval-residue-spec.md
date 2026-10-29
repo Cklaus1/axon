@@ -1,5 +1,7 @@
 # DRAFT — Approval residue: what the import-bound approval and keyed records left open (AR1-AR7)
 
+**Status: BUILT 2026-10-17 on `main` 3a4a5508 + ef1b27ee (AR1-AR5, AR7; AR6 EXCLUDED by human as H3). Stamped 2026-10-29 by tasks/docs-truth-spec.md DT-5.**
+
 **This draft MUST pass a Step 1 adversarial review before any build.** Nothing here is approved for implementation.
 
 Source: `tasks/opportunities.md` "## gaps run (2026-10-15)" (lines 2497-2499, 2509-2517) plus NH1 of `tasks/gaps-spec.md`.
