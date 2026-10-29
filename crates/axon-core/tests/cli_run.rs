@@ -37813,21 +37813,15 @@ fn vm_match_while_let_break_continue() {
     );
 }
 
-/// R50 §4: a match no arm matches panics `no match arm matched`, exit 101,
-/// after the output of the earlier calls.
+/// R50 §4 fixture, CS2-4: a match on `i64` with no catch-all is non-exhaustive,
+/// so `axon run` now refuses it at check (E0304, rc 2) on both engines before
+/// any output. It used to run and panic `no match arm matched` (exit 101).
 #[test]
-fn vm_match_non_exhaustive_panics() {
-    let (code, stdout, stderr) = vm_scalar_case(
-        "match_nomatch",
-        vm_match_src!("nomatch"),
-        &[("pick", 0), ("main", 0)],
-    );
-    assert_eq!(
-        (code, stdout.as_str()),
-        (Some(101), "one\ntwo\n"),
-        "{stderr}"
-    );
-    assert!(stderr.contains("no match arm matched"), "{stderr}");
+fn vm_match_non_exhaustive_is_refused_at_check() {
+    let (code, stdout, stderr) = vm_same_both_engines("match_nomatch", vm_match_src!("nomatch"));
+    assert_eq!((code, stdout.as_str()), (Some(2), ""), "{stderr}");
+    assert!(stderr.contains("E0304"), "{stderr}");
+    assert!(stderr.contains("non-exhaustive match on `i64`"), "{stderr}");
 }
 
 /// R50 §4 `chan_method` (Behaviour table): on a channel receiver `send`
@@ -41736,6 +41730,271 @@ fn a_call_through_a_matching_fn_value_still_runs() {
             "snd_lambda_alias",
             "type Name = str\nfn main() -> i64 {\n    let greet = |n: Name| println(\"hi \" + n)\n    greet(\"bob\")\n    0\n}\n",
             "hi bob\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS2-4 (O-GAP-04): exhaustiveness for scalar and tuple scrutinees. A match
+/// on an int/str/float needs a catch-all, a bool needs `true` + `false`, a
+/// tuple is the product of its components' domains, and a guarded arm covers
+/// nothing. Each refused probe checked clean before and panicked
+/// `no match arm matched` (exit 101) at run time.
+#[test]
+fn non_exhaustive_scalar_and_tuple_matches_are_refused() {
+    let attack = "ATTACK: a non-exhaustive match checked clean";
+    for (tag, src) in [
+        (
+            "x_int",
+            r#"fn f(n: i64) -> str {
+  match n {
+    0 => "zero",
+    1 => "one",
+  }
+}
+fn main() -> i64 {
+  println(f(5))
+  0
+}
+"#,
+        ),
+        (
+            "x_str",
+            r#"fn f(s: str) -> i64 {
+  match s {
+    "a" => 1,
+    "b" => 2,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f("z")))
+  0
+}
+"#,
+        ),
+        (
+            "x_tuple",
+            r#"fn f(t: (bool, bool)) -> i64 {
+  match t {
+    (true, true) => 1,
+    (false, false) => 2,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f((true, false))))
+  0
+}
+"#,
+        ),
+        (
+            "x_bool_half",
+            r#"fn f(b: bool) -> i64 {
+  match b {
+    true => 1,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(false)))
+  0
+}
+"#,
+        ),
+        (
+            "x_unit_stmt",
+            r#"fn main() -> i64 {
+  let n = 5
+  match n {
+    0 => println("zero"),
+    1 => println("one"),
+  }
+  println("done")
+  0
+}
+"#,
+        ),
+        (
+            "x_opt_guard",
+            r#"fn f(o: Option<i64>) -> i64 {
+  match o {
+    Some(x) if x > 0 => x,
+    None => 0,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(Some(0 - 1))))
+  0
+}
+"#,
+        ),
+    ] {
+        let (crc, cmsg, rrc, _rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains("E0304"), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(rrc, Some(2), "{attack} [{tag}]: run: {rerr}");
+    }
+    // Controls: every shape here is exhaustive and runs today; each stays
+    // rc 0 with the same output.
+    let attack = "ATTACK: an exhaustive match was refused";
+    for (tag, src, out) in [
+        (
+            "x_bool_ok",
+            r#"fn f(b: bool) -> i64 {
+  match b {
+    true => 1,
+    false => 0,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(false)))
+  0
+}
+"#,
+            "0\n",
+        ),
+        (
+            "x_int_bind",
+            r#"fn f(n: i64) -> i64 {
+  match n {
+    0 => 1,
+    k => k * 2,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(5)))
+  0
+}
+"#,
+            "10\n",
+        ),
+        (
+            "x1_opt_tuple_full",
+            r#"fn f(t: (Option<i64>, bool)) -> i64 {
+  match t {
+    (Some(x), _) => x,
+    (None, true) => 1,
+    (None, false) => 2,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f((None, false)) + f((Some(5), true))))
+  0
+}
+"#,
+            "7\n",
+        ),
+        (
+            "x2_int_wild_comp",
+            r#"fn f(n: i64, b: bool) -> i64 {
+  match (n, b) {
+    (_, true) => n,
+    (_, false) => 0 - n,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(3, true) + f(2, false)))
+  0
+}
+"#,
+            "1\n",
+        ),
+        (
+            "x3_enum_tuple",
+            r#"type C = R | G
+fn f(c: C, d: C) -> i64 {
+  match (c, d) {
+    (C::R, C::R) => 1,
+    (C::R, C::G) => 2,
+    (C::G, _) => 3,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(C::R, C::G) + f(C::G, C::R)))
+  0
+}
+"#,
+            "5\n",
+        ),
+        (
+            "x4_bool_bind",
+            r#"fn f(b: bool) -> i64 {
+  match b {
+    true => 1,
+    other => if other { 9 } else { 0 },
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(true) + f(false)))
+  0
+}
+"#,
+            "1\n",
+        ),
+        (
+            "x5_litfn",
+            r#"fn sgn(x: i64) -> i64 { if x > 0 { 1 } else { if x < 0 { 0 - 1 } else { 0 } } }
+fn main() -> i64 {
+  let r = match sgn(5) {
+    1 => "pos",
+    0 => "zero",
+    _ => "neg",
+  }
+  println(r)
+  0
+}
+"#,
+            "pos\n",
+        ),
+        (
+            "x6_res_tuple",
+            r#"fn f(t: (Result<i64, str>, i64)) -> i64 {
+  match t {
+    (Ok(v), k) => v + k,
+    (Err(_), k) => k,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f((Ok(1), 2)) + f((Err("e"), 3))))
+  0
+}
+"#,
+            "6\n",
+        ),
+        (
+            "x7_nested_tuple",
+            r#"fn f(t: ((bool, bool), bool)) -> i64 {
+  match t {
+    ((true, _), _) => 1,
+    ((false, _), _) => 2,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(((true, false), true)) + f(((false, false), false))))
+  0
+}
+"#,
+            "3\n",
+        ),
+        (
+            "x8_char",
+            r#"fn f(s: str) -> i64 {
+  match str_len(s) {
+    0 => 0,
+    n => n,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f("") + f("ab")))
+  0
+}
+"#,
+            "2\n",
         ),
     ] {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);

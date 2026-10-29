@@ -6293,20 +6293,23 @@ impl CheckCtx {
             }
         }
 
-        // A wildcard pattern or a plain identifier covers all constructors.
-        let has_wildcard = arms
-            .iter()
-            .any(|arm| matches!(arm.pattern, Pattern::Wildcard | Pattern::Ident(_)));
+        // A wildcard pattern or a plain identifier covers all constructors —
+        // unless it carries a guard: a guard can be false, so a guarded arm
+        // covers nothing for exhaustiveness (CS2-4, E-7).
+        let has_wildcard = arms.iter().any(|arm| {
+            arm.guard.is_none() && matches!(arm.pattern, Pattern::Wildcard | Pattern::Ident(_))
+        });
 
         if has_wildcard {
             return;
         }
+        let unguarded = |a: &&MatchArm| a.guard.is_none();
 
         let file = self.file.clone();
         match subject_ty {
             Type::Option(_) => {
-                let has_some = arms.iter().any(|a| matches!(a.pattern, Pattern::Some(_)));
-                let has_none = arms.iter().any(|a| matches!(a.pattern, Pattern::None));
+                let has_some = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::Some(_)));
+                let has_none = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::None));
                 if !has_some {
                     self.errors.push(
                         CheckError::new(E0304, "non-exhaustive match — missing Some(_) arm")
@@ -6327,8 +6330,8 @@ impl CheckCtx {
                 }
             }
             Type::Result(_, _) => {
-                let has_ok = arms.iter().any(|a| matches!(a.pattern, Pattern::Ok(_)));
-                let has_err = arms.iter().any(|a| matches!(a.pattern, Pattern::Err(_)));
+                let has_ok = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::Ok(_)));
+                let has_err = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::Err(_)));
                 if !has_ok {
                     self.errors.push(
                         CheckError::new(E0304, "non-exhaustive match — missing Ok(_) arm")
@@ -6405,6 +6408,7 @@ impl CheckCtx {
                     }
                     let covered: std::collections::HashSet<String> = arms
                         .iter()
+                        .filter(unguarded)
                         .filter_map(|arm| match &arm.pattern {
                             Pattern::Struct { name, .. } => {
                                 // "EnumName::VariantName" → extract variant name
@@ -6440,7 +6444,271 @@ impl CheckCtx {
                     }
                 }
             }
+            // CS2-4: scalar and tuple scrutinees. int/str/float/decimal need a
+            // catch-all, bool needs `true` + `false`, and a tuple is the product
+            // of its flattened components' domains.
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::U8 | Type::U16 | Type::U32
+            | Type::U64 | Type::F32 | Type::F64 | Type::Decimal | Type::Str | Type::Bool
+            | Type::Tuple(_) => {
+                self.check_value_exhaustiveness(subject_ty, arms, node_path);
+            }
             _ => {}
+        }
+    }
+
+    /// CS2-4: exhaustiveness for a scalar or tuple scrutinee. The subject is
+    /// flattened into components (nested tuples included); each component has
+    /// a domain (bool -> {true, false}; enum/`Option`/`Result` -> its
+    /// constructors; anything else -> {*}). The match is exhaustive iff every
+    /// combination of the product is covered by one unguarded arm. Above 256
+    /// combinations an irrefutable arm is required. A component whose type is
+    /// not known here and cannot be read off the patterns skips the check.
+    fn check_value_exhaustiveness(
+        &mut self,
+        subject_ty: &Type,
+        arms: &[MatchArm],
+        node_path: &NodePath,
+    ) {
+        let rows: Vec<CoverCell> = arms
+            .iter()
+            .filter(|a| a.guard.is_none())
+            .map(|a| CoverCell::Pat(&a.pattern))
+            .collect();
+        let n_arms = rows.len();
+        let mut domains: Vec<CoverDomain> = Vec::new();
+        let mut cols: Vec<Vec<CoverCell>> = Vec::new();
+        if !self.flatten_cover(subject_ty, rows, &mut domains, &mut cols) {
+            return;
+        }
+        let total = domains
+            .iter()
+            .try_fold(1usize, |acc, d| acc.checked_mul(d.len()).filter(|t| *t <= 256));
+        let subject = subject_ty.display();
+        let message = match total {
+            Some(_) => {
+                let mut combo = vec![0usize; domains.len()];
+                let mut missing = None;
+                'combos: loop {
+                    if domains.iter().any(|d| d.len() == 0) {
+                        break;
+                    }
+                    let covered = (0..n_arms).any(|a| {
+                        cols.iter()
+                            .enumerate()
+                            .all(|(k, c)| self.cell_covers(c[a], &domains[k], combo[k]))
+                    });
+                    if !covered {
+                        missing = Some(combo.clone());
+                        break;
+                    }
+                    for k in (0..combo.len()).rev() {
+                        combo[k] += 1;
+                        if combo[k] < domains[k].len() {
+                            continue 'combos;
+                        }
+                        combo[k] = 0;
+                    }
+                    break;
+                }
+                let Some(missing) = missing else { return };
+                let all_any = domains.iter().all(|d| matches!(d, CoverDomain::Any));
+                if all_any {
+                    format!("non-exhaustive match on `{subject}` — add a `_ =>` arm")
+                } else {
+                    let parts: Vec<String> = missing
+                        .iter()
+                        .zip(&domains)
+                        .map(|(v, d)| d.render(*v))
+                        .collect();
+                    let shown = if matches!(subject_ty, Type::Tuple(_)) {
+                        format!("({})", parts.join(", "))
+                    } else {
+                        parts.join(", ")
+                    };
+                    format!(
+                        "non-exhaustive match on `{subject}` — no arm covers `{shown}`; add that arm or a `_ =>` arm"
+                    )
+                }
+            }
+            None => {
+                let irrefutable_arm = (0..n_arms).any(|a| {
+                    cols.iter().all(|c| match c[a] {
+                        CoverCell::Wild => true,
+                        CoverCell::Never => false,
+                        CoverCell::Pat(p) => self.pattern_irrefutable(p),
+                    })
+                });
+                if irrefutable_arm {
+                    return;
+                }
+                format!(
+                    "non-exhaustive match on `{subject}` — more than 256 combinations to cover; add a `_ =>` arm"
+                )
+            }
+        };
+        let file = self.file.clone();
+        self.errors.push(
+            CheckError::new(E0304, message)
+                .node(node_path)
+                .at(&file, 0, 0)
+                .with_span(self.current_span)
+                .fix("add the missing arm, or a catch-all `_ => { /* handle */ }` (a guarded arm covers nothing)"),
+        );
+    }
+
+    /// Flatten `ty` into exhaustiveness components (CS2-4). `rows` holds one
+    /// cell per unguarded arm. Returns false when a component's domain cannot be
+    /// decided, which skips the check (no refusal on an unknown type).
+    fn flatten_cover<'a>(
+        &self,
+        ty: &Type,
+        rows: Vec<CoverCell<'a>>,
+        domains: &mut Vec<CoverDomain>,
+        cols: &mut Vec<Vec<CoverCell<'a>>>,
+    ) -> bool {
+        let unknown = matches!(ty, Type::Unknown | Type::Var(_) | Type::Deferred(_) | Type::TypeParam(_));
+        let tuple: Option<Vec<Type>> = match ty {
+            Type::Tuple(ts) => Some(ts.clone()),
+            _ if unknown => {
+                let mut arity = None;
+                for c in &rows {
+                    if let CoverCell::Pat(Pattern::Tuple(ps)) = c {
+                        if arity.is_some_and(|n| n != ps.len()) {
+                            return false;
+                        }
+                        arity = Some(ps.len());
+                    }
+                }
+                arity.map(|n| vec![Type::Unknown; n])
+            }
+            _ => None,
+        };
+        if let Some(ts) = tuple {
+            for (i, t) in ts.iter().enumerate() {
+                let sub: Vec<CoverCell<'a>> = rows
+                    .iter()
+                    .map(|c| match *c {
+                        CoverCell::Wild => CoverCell::Wild,
+                        CoverCell::Never => CoverCell::Never,
+                        CoverCell::Pat(Pattern::Wildcard | Pattern::Ident(_)) => CoverCell::Wild,
+                        CoverCell::Pat(Pattern::Tuple(ps)) if ps.len() == ts.len() => {
+                            CoverCell::Pat(&ps[i])
+                        }
+                        CoverCell::Pat(_) => CoverCell::Never,
+                    })
+                    .collect();
+                if !self.flatten_cover(t, sub, domains, cols) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        let variants = |names: &[&str]| CoverDomain::Variants(names.iter().map(|s| s.to_string()).collect());
+        let dom = match ty {
+            Type::Bool => CoverDomain::Bool,
+            Type::Option(_) => variants(&["Some", "None"]),
+            Type::Result(_, _) => variants(&["Ok", "Err"]),
+            Type::Enum(n) => match self.enum_variants.get(n) {
+                Some(vs) => CoverDomain::Variants(vs.clone()),
+                None => return false,
+            },
+            Type::Struct(n) if self.enum_variants.contains_key(n) => {
+                CoverDomain::Variants(self.enum_variants[n].clone())
+            }
+            _ if unknown => match self.domain_from_patterns(&rows) {
+                Some(d) => d,
+                None => return false,
+            },
+            _ => CoverDomain::Any,
+        };
+        domains.push(dom);
+        cols.push(rows);
+        true
+    }
+
+    /// The domain of a component whose type the checker does not know, read
+    /// off the arms' patterns; `None` when they do not decide it.
+    fn domain_from_patterns(&self, rows: &[CoverCell]) -> Option<CoverDomain> {
+        let variants = |names: &[&str]| CoverDomain::Variants(names.iter().map(|s| s.to_string()).collect());
+        let mut dom: Option<CoverDomain> = None;
+        for c in rows {
+            let CoverCell::Pat(p) = c else { continue };
+            let this = match p {
+                Pattern::Wildcard | Pattern::Ident(_) => continue,
+                Pattern::Some(_) | Pattern::None => variants(&["Some", "None"]),
+                Pattern::Ok(_) | Pattern::Err(_) => variants(&["Ok", "Err"]),
+                Pattern::Literal(crate::ast::Literal::Bool(_)) => CoverDomain::Bool,
+                Pattern::Literal(_) => CoverDomain::Any,
+                Pattern::Struct { name, .. } => {
+                    if let Some((enum_name, _)) = name.split_once("::") {
+                        CoverDomain::Variants(self.enum_variants.get(enum_name)?.clone())
+                    } else if self.struct_fields.contains_key(name) {
+                        CoverDomain::Any
+                    } else {
+                        let mut owners = self.enum_variants.values().filter(|vs| vs.contains(name));
+                        let vs = owners.next()?;
+                        if owners.next().is_some() {
+                            return None;
+                        }
+                        CoverDomain::Variants(vs.clone())
+                    }
+                }
+                Pattern::Tuple(_) => return None,
+            };
+            match &dom {
+                None => dom = Some(this),
+                Some(d) if *d == this => {}
+                Some(_) => return None,
+            }
+        }
+        Some(dom.unwrap_or(CoverDomain::Any))
+    }
+
+    /// Does `cell` cover value `v` of `dom` (CS2-4)?
+    fn cell_covers(&self, cell: CoverCell, dom: &CoverDomain, v: usize) -> bool {
+        let p = match cell {
+            CoverCell::Wild => return true,
+            CoverCell::Never => return false,
+            CoverCell::Pat(p) => p,
+        };
+        if matches!(p, Pattern::Wildcard | Pattern::Ident(_)) {
+            return true;
+        }
+        match dom {
+            CoverDomain::Bool => {
+                matches!(p, Pattern::Literal(crate::ast::Literal::Bool(b)) if *b == (v == 0))
+            }
+            CoverDomain::Variants(names) => {
+                let want = names[v].as_str();
+                match p {
+                    Pattern::Some(inner) => want == "Some" && self.pattern_irrefutable(inner),
+                    Pattern::None => want == "None",
+                    Pattern::Ok(inner) => want == "Ok" && self.pattern_irrefutable(inner),
+                    Pattern::Err(inner) => want == "Err" && self.pattern_irrefutable(inner),
+                    Pattern::Struct { name, fields } => {
+                        name.rsplit("::").next() == Some(want)
+                            && fields.iter().all(|(_, f)| self.pattern_irrefutable(f))
+                    }
+                    _ => false,
+                }
+            }
+            CoverDomain::Any => self.pattern_irrefutable(p),
+        }
+    }
+
+    /// A pattern that matches every value of its type: a binding, `_`, a tuple
+    /// of irrefutable patterns, or a destructure of a known struct whose field
+    /// patterns are irrefutable.
+    fn pattern_irrefutable(&self, p: &Pattern) -> bool {
+        match p {
+            Pattern::Wildcard | Pattern::Ident(_) => true,
+            Pattern::Tuple(ps) => ps.iter().all(|q| self.pattern_irrefutable(q)),
+            Pattern::Struct { name, fields } => {
+                !name.contains("::")
+                    && self.struct_fields.contains_key(name)
+                    && fields.iter().all(|(_, f)| self.pattern_irrefutable(f))
+            }
+            _ => false,
         }
     }
 
@@ -7730,6 +7998,47 @@ fn conclusive_pattern_key(p: &Pattern) -> Option<String> {
         // Wildcard/Ident bind-alls, deep Some/Ok/Err, tuples: not keyed (a repeat
         // of a bind-all is handled by exhaustiveness, not duplicate detection).
         _ => None,
+    }
+}
+
+/// One arm's pattern at one flattened scrutinee component (CS2-4
+/// exhaustiveness): `Wild` covers everything (a binding or `_` above a nested
+/// tuple), `Never` nothing (a pattern of another shape).
+#[derive(Clone, Copy)]
+enum CoverCell<'a> {
+    Wild,
+    Pat(&'a Pattern),
+    Never,
+}
+
+/// The values one flattened scrutinee component can take, for exhaustiveness:
+/// bool, a constructor list (enum variants, `Some`/`None`, `Ok`/`Err`), or one
+/// opaque value `{*}` that only a binding or `_` covers.
+#[derive(PartialEq)]
+enum CoverDomain {
+    Bool,
+    Variants(Vec<String>),
+    Any,
+}
+
+impl CoverDomain {
+    fn len(&self) -> usize {
+        match self {
+            CoverDomain::Bool => 2,
+            CoverDomain::Variants(v) => v.len(),
+            CoverDomain::Any => 1,
+        }
+    }
+
+    fn render(&self, v: usize) -> String {
+        match self {
+            CoverDomain::Bool => (v == 0).to_string(),
+            CoverDomain::Variants(names) => match names[v].as_str() {
+                "Some" | "Ok" | "Err" => format!("{}(_)", names[v]),
+                other => other.to_string(),
+            },
+            CoverDomain::Any => "_".to_string(),
+        }
     }
 }
 
