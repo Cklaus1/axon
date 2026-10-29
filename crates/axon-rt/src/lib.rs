@@ -638,9 +638,21 @@ fn dict_inc_impl(d: *mut c_void, key: AxonStr) -> i64 {
         Some(DictVal::Int(n)) => *n,
         _ => 0,
     };
-    let next = cur + 1;
+    let next = match dict_inc_next(cur) {
+        Some(n) => n,
+        None => {
+            drop(guard);
+            eprintln!("axon: panic: integer overflow: {cur} + 1 exceeds i64");
+            std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+        }
+    };
     guard.insert(k, DictVal::Int(next));
     next
+}
+/// `cur + 1`, or `None` on i64 overflow: `dict_inc` panics there like `+`
+/// (checker-soundness-2 CS2-2), as the interpreter does.
+fn dict_inc_next(cur: i64) -> Option<i64> {
+    cur.checked_add(1)
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
@@ -1713,19 +1725,40 @@ pub extern "C" fn __axon_abs_f64(x: f64) -> f64 {
     x.abs()
 }
 
-/// Integer power: `base.wrapping_pow(exp as u32)`.
+/// Integer power, checked: the exact value, else exit 101 like `*` overflow.
 ///
 /// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
 /// `governance/specs/R1-codegen-build-unblock.md`, Batch 1). Matches the
-/// interpreter oracle. Negative exponent aborts (no C-ABI unwind), matching
-/// the interpreter's panic-exit for `pow_i64(base, exp < 0)`.
+/// interpreter oracle (`interp/builtins.rs` `pow_i64`). Negative exponent and
+/// overflow exit (no C-ABI unwind), matching the interpreter's panics.
 #[no_mangle]
 pub extern "C" fn __axon_pow_i64(base: i64, exp: i64) -> i64 {
     if exp < 0 {
         eprintln!("axon: panic: pow_i64: negative exponent");
         std::process::exit(RUNTIME_PANIC_EXIT_CODE);
     }
-    base.wrapping_pow(exp as u32)
+    match pow_i64_checked(base, exp) {
+        Some(v) => v,
+        None => {
+            eprintln!("axon: panic: integer overflow: pow_i64({base}, {exp}) exceeds i64");
+            std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+        }
+    }
+}
+
+/// `base ** exp` for `exp >= 0`, `None` on i64 overflow (checker-soundness-2
+/// CS2-2). An exponent above u32::MAX is never truncated: only bases 0, 1 and
+/// -1 have an in-range power there.
+fn pow_i64_checked(base: i64, exp: i64) -> Option<i64> {
+    match u32::try_from(exp) {
+        Ok(e) => base.checked_pow(e),
+        Err(_) => match base {
+            0 => Some(0),
+            1 => Some(1),
+            -1 => Some(if exp % 2 == 0 { 1 } else { -1 }),
+            _ => None,
+        },
+    }
 }
 
 /// Integer square root (returns i64).
@@ -2462,14 +2495,42 @@ unsafe fn write_str_out(s: &str, out_len: *mut i64, out_ptr: *mut *mut u8) {
 // ── R1 Batch 2b: str_repeat ───────────────────────────────────────────────────
 /// `str_repeat(s, n)` — repeats string `s` `n` times (n clamped to max(0,n)).
 /// Uses the out-param convention: the caller allocates slots; this function
-/// mallocs the result and writes {byte_length, buffer_ptr}.
+/// mallocs the result and writes {byte_length, buffer_ptr}. The result's size
+/// is checked before allocating: too large exits 101 with the interpreter's
+/// `str_repeat: result too large` (checker-soundness-2 CS2-2).
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_repeat(s: AxonStr, n: i64, out_len: *mut i64, out_ptr: *mut *mut u8) {
     let src = unsafe { s.as_str() };
-    let count = n.max(0) as usize;
-    let result = src.repeat(count);
+    let result = str_repeat_checked(src, n);
     unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
+/// The byte size of `n` copies of a `len`-byte string, `None` when it exceeds
+/// the largest allocation (`isize::MAX`).
+fn str_repeat_size(len: usize, n: i64) -> Option<usize> {
+    len.checked_mul(n.max(0) as usize).filter(|&t| t <= isize::MAX as usize)
+}
+
+fn str_repeat_checked(src: &str, n: i64) -> String {
+    let count = n.max(0) as usize;
+    let mut out = String::new();
+    match str_repeat_size(src.len(), n) {
+        Some(t) if out.try_reserve_exact(t).is_ok() => {}
+        _ => {
+            eprintln!(
+                "axon: panic: str_repeat: result too large ({count} copies of a {}-byte string)",
+                src.len()
+            );
+            std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+        }
+    }
+    if !src.is_empty() {
+        for _ in 0..count {
+            out.push_str(src);
+        }
+    }
+    out
 }
 #[no_mangle]
 #[cfg(target_arch = "wasm32")]
@@ -2487,8 +2548,7 @@ pub extern "C" fn __axon_str_repeat(
         }
         .as_str()
     };
-    let count = n.max(0) as usize;
-    let result = src.repeat(count);
+    let result = str_repeat_checked(src, n);
     unsafe { write_str_out(&result, out_len, out_ptr) }
 }
 
@@ -3914,20 +3974,39 @@ mod migrated_builtin_tests {
         assert_eq!(__axon_clamp_f64(0.0, 0.0, 0.0), 0.0);
     }
 
-    // ── pow_i64: matches interp.rs base.wrapping_pow(exp as u32), exp>=0 ─
+    // ── pow_i64: matches interp/builtins.rs `pow_i64`, exp>=0 ─────────
+    // The interpreter oracle (checker-soundness-2 CS2-2): the exact power, or
+    // an overflow panic like `*` -- never a wrapped value -- and an exponent
+    // above u32::MAX is never truncated: only bases 0, 1 and -1 have an
+    // in-range power there.
+    fn pow_oracle(base: i64, exp: i64) -> Option<i64> {
+        let mut acc: i128 = 1;
+        for _ in 0..exp.min(64) {
+            acc *= base as i128;
+            if acc > i64::MAX as i128 || acc < i64::MIN as i128 {
+                return None;
+            }
+        }
+        match base {
+            0 if exp > 0 => Some(0),
+            1 => Some(1),
+            -1 => Some(if exp % 2 == 0 { 1 } else { -1 }),
+            _ => Some(acc as i64),
+        }
+    }
+
     #[test]
     fn migrated_pow_i64_matches_interpreter() {
-        // The interpreter oracle: base.wrapping_pow(exp as u32).
-        // Negative exponent is an abort (not testable here).
-        let oracle = |base: i64, exp: i32| base.wrapping_pow(exp as u32);
-        let bases = [0i64, 1, -1, 2, -2, 3, 10, -10];
-        let exps = [0i32, 1, 2, 3, 4, 10, 31];
+        // Negative exponent and overflow exit 101 (not testable in-process);
+        // `pow_i64_checked` is the value `__axon_pow_i64` returns or panics on.
+        let bases = [0i64, 1, -1, 2, -2, 3, 10, -10, i64::MAX, i64::MIN];
+        let exps = [0i64, 1, 2, 3, 4, 10, 31, 39, 40, 62, 63, 64, 4294967295, 4294967296, 4294967297, i64::MAX];
         for &base in &bases {
             for &exp in &exps {
                 assert_eq!(
-                    __axon_pow_i64(base, exp as i64),
-                    oracle(base, exp),
-                    "pow_i64({base}, {exp}) diverges"
+                    pow_i64_checked(base, exp),
+                    pow_oracle(base, exp),
+                    "ATTACK: native pow_i64 wraps or truncates where the interpreter panics [pow_i64] pow_i64({base}, {exp})"
                 );
             }
         }
@@ -3940,11 +4019,28 @@ mod migrated_builtin_tests {
         assert_eq!(__axon_pow_i64(0, 5), 0);
         assert_eq!(__axon_pow_i64(1, 99), 1);
         assert_eq!(__axon_pow_i64(-2, 3), -8);
+        assert_eq!(__axon_pow_i64(3, 39), 4052555153018976267);
+        assert_eq!(__axon_pow_i64(2, 62), 1 << 62);
+        assert_eq!(__axon_pow_i64(-2, 63), i64::MIN);
+        assert_eq!(__axon_pow_i64(-1, 4294967297), -1);
+        assert_eq!(pow_i64_checked(3, 40), None);
+        assert_eq!(pow_i64_checked(2, 4294967296), None);
+        assert_eq!(pow_i64_checked(2, 63), None);
     }
 
-    // Note: __axon_pow_i64(base, neg_exp) aborts (matching the interpreter's
-    // panic-exit for negative exponent). Not unit-tested here because
-    // process::abort would kill the test runner.
+    // Note: __axon_pow_i64 exits 101 on a negative exponent or an overflow
+    // (matching the interpreter's panic). Not unit-tested here because
+    // process::exit would kill the test runner.
+
+    #[test]
+    fn dict_inc_and_str_repeat_size_are_checked() {
+        assert_eq!(dict_inc_next(5), Some(6));
+        assert_eq!(dict_inc_next(i64::MAX), None);
+        assert_eq!(str_repeat_size(2, i64::MAX), None);
+        assert_eq!(str_repeat_size(0, i64::MAX), Some(0));
+        assert_eq!(str_repeat_size(2, 3), Some(6));
+        assert_eq!(str_repeat_size(2, -4), Some(0));
+    }
 
     // ── Helper: build an AxonStr from a Rust &str ─────────────────────
     fn s(x: &str) -> AxonStr {

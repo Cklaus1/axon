@@ -2571,3 +2571,96 @@ fn verify_composite_predicate_is_enforced_or_refused_natively() {
         String::from_utf8_lossy(&build.stderr)
     );
 }
+
+/// checker-soundness-2 CS2-2 (O-GAP-06): natively, an overflowing arithmetic
+/// builtin panics like the operator (exit 101, "integer overflow"), as the
+/// interpreter does -- `__axon_pow_i64` used to wrap, `ArrReduce::Sum` to
+/// saturate and `__axon_dict_inc` to wrap silently in release. `arr_mean_i64`
+/// is exact through an i128 sum on both engines, and `random_i64` takes the
+/// full i64 range.
+#[cfg(feature = "codegen")]
+#[test]
+fn arithmetic_builtins_overflow_natively() {
+    use std::process::Command;
+    let attack = "ATTACK: a native arithmetic builtin wraps or saturates where the operator panics";
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_cs2_2n_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let both = |tag: &str, body: &str| {
+        let file = dir.join(format!("{tag}.ax"));
+        std::fs::write(&file, format!("fn main() -> i64 {{\n  {body}\n  0\n}}\n")).unwrap();
+        let run = Command::new(axon_bin).arg("run").arg(&file).output().unwrap();
+        let bin = dir.join(format!("{tag}_bin"));
+        let build = Command::new(axon_bin)
+            .arg("build")
+            .arg(&file)
+            .arg("-o")
+            .arg(&bin)
+            .arg("--no-cache")
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success(),
+            "{attack} [{tag}]: build: {}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        (run, Command::new(&bin).output().unwrap())
+    };
+    let panics = [
+        ("a_pow", "println(to_str(pow_i64(3, 40)))", "integer overflow"),
+        ("a_pow_exp", "println(to_str(pow_i64(2, 4294967296)))", "integer overflow"),
+        ("a_sum", "println(to_str(arr_sum_i64([9223372036854775807, 1])))", "integer overflow"),
+        ("a_dictinc", "let d = dict_new()\n  dict_set(d, \"k\", 9223372036854775807)\n  println(to_str(dict_inc(d, \"k\")))", "integer overflow"),
+        ("a1_rep", "println(to_str(str_len(str_repeat(\"ab\", 9223372036854775807))))", "str_repeat: result too large"),
+    ];
+    for (tag, body, want) in panics {
+        let (run, native) = both(tag, body);
+        let (ie, ne) = (
+            String::from_utf8_lossy(&run.stderr).to_string(),
+            String::from_utf8_lossy(&native.stderr).to_string(),
+        );
+        assert!(
+            run.status.code() == Some(101)
+                && native.status.code() == Some(101)
+                && ie.contains(want)
+                && ne.contains(want)
+                && native.stdout.is_empty(),
+            "{attack} [{tag}]: interp rc {:?} {ie} / native rc {:?} stdout {:?} {ne}",
+            run.status.code(),
+            native.status.code(),
+            String::from_utf8_lossy(&native.stdout)
+        );
+    }
+    let (run, native) = both(
+        "a_mean2",
+        "let m = 9223372036854775807\n  let n = 0 - m - 1\n  println(to_str_f64(arr_mean_i64([m, m, n, n])))\n  println(to_str_f64(arr_mean_i64([m, m, 1])))",
+    );
+    assert_eq!(
+        (run.status.code(), native.status.code(), native.stdout.clone()),
+        (Some(0), Some(0), run.stdout.clone()),
+        "{attack} [a_mean2]: interp {} / native {}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&native.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&native.stdout).starts_with("-0.5\n"),
+        "{attack} [a_mean2]: {}",
+        String::from_utf8_lossy(&native.stdout)
+    );
+    // Native used to compute the full range as a wrapped `hi - lo` (-1), so
+    // every draw was `lo`: in range, but never random.
+    let (run, native) = both(
+        "rnd",
+        "let lo = 0 - 9223372036854775807 - 1\n  let i = 0\n  let moved = 0\n  while i < 40 { let r = random_i64(lo, 9223372036854775807)\n    assert(r >= lo && r < 9223372036854775807)\n    if r != lo { moved = moved + 1 }\n    i = i + 1 }\n  println(to_str(moved > 0))",
+    );
+    assert_eq!(
+        (run.status.code(), native.status.code(), native.stdout.clone()),
+        (Some(0), Some(0), run.stdout.clone()),
+        "{attack} [rnd]: interp {} {} / native {} {}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr),
+        String::from_utf8_lossy(&native.stdout),
+        String::from_utf8_lossy(&native.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
