@@ -341,12 +341,12 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `arr_group_by(xs: [T], key_fn: fn(T) -> str) -> Dict` | Bucket `xs` by a closure that maps each element to a string key. Returns `Dict[str, [T]]`; elements appear in input order within each bucket. The natural "frequency table" / "by-category" reduction. |
 | `arr_index_of(xs: [T], v: T) -> Option<i64>` | First index where the element structurally equals `v`. `Some(i)` if found, `None` otherwise. Pairs with `arr_contains` for the `where` follow-up to the `whether` question. |
 | `arr_map(xs: [T], f: fn(T) -> U) -> [U]` | Apply a closure to each element, producing a fresh array of results. Element and result types are deferred — `arr_map([1, 2], \|x\| i64_to_str(x))` works. Closure panics propagate. |
-| `arr_max_by(xs: [T], key_fn: fn(T) -> f64) -> T` | Element of `xs` that maximizes the numeric key fn. Folds map+argmax+index into one. Panics on empty. |
+| `arr_max_by(xs: [T], key_fn: fn(T) -> Num) -> T` | Element of `xs` that maximizes the numeric key fn. Folds map+argmax+index into one. Panics on empty. |
 | `arr_max_f64(xs: [f64]) -> f64` | Maximum of an f64 array. Accepts i64 elements via coercion. Panics on empty. |
 | `arr_max_i64(xs: [i64]) -> i64` | Maximum of an i64 array. Panics on an empty array — caller should guard with `if len(xs) > 0` first. |
 | `arr_mean_f64(xs: [f64]) -> f64` | Arithmetic mean of an f64 (or i64-coerced) array. Empty → 0.0. |
 | `arr_mean_i64(xs: [i64]) -> f64` | Arithmetic mean of an i64 array as f64. Empty → 0.0 (no NaN). |
-| `arr_min_by(xs: [T], key_fn: fn(T) -> f64) -> T` | Element of `xs` that minimizes the numeric key fn. |
+| `arr_min_by(xs: [T], key_fn: fn(T) -> Num) -> T` | Element of `xs` that minimizes the numeric key fn. |
 | `arr_min_f64(xs: [f64]) -> f64` | Minimum of an f64 array. Accepts i64 elements via coercion. Panics on empty. |
 | `arr_min_i64(xs: [i64]) -> i64` | Minimum of an i64 array. Panics on an empty array. |
 | `arr_partition(xs: [T], pred: fn(T) -> bool) -> ([T], [T])` | Split into `(yes, no)` tuple — elements satisfying `pred` and the rest. One pass over the input; complement of `arr_filter`. |
@@ -357,7 +357,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `arr_sort_by(xs: [T], cmp: fn(T, T) -> i64) -> [T]` | Return a sorted copy of `xs` using the comparator (neg = a<b, 0 = eq, pos = a>b). Element type is deferred so any sortable domain works. Stable merge sort, O(n log n) comparator calls; equal elements keep input order. Input untouched. |
 | `arr_std_f64(xs: [f64]) -> f64` | Sample standard deviation: sqrt of (sum of squared deviations from mean) / (n - 1). Panics for arrays of length < 2. |
 | `arr_sum_by(xs: [T], key_fn: fn(T) -> i64) -> i64` | Sum a projected i64 field over `xs`. Equivalent to `arr_sum_i64(&arr_map(xs, key_fn))` but doesn't materialize the mapped array — the `_by` sibling of `arr_max_by`/`arr_min_by`. |
-| `arr_sum_by_f64(xs: [T], key_fn: fn(T) -> f64) -> f64` | Sum a projected f64 field over `xs`. The f64 counterpart of `arr_sum_by`. |
+| `arr_sum_by_f64(xs: [T], key_fn: fn(T) -> Num) -> f64` | Sum a projected f64 field over `xs`. The f64 counterpart of `arr_sum_by`. |
 | `arr_sum_f64(xs: [f64]) -> f64` | Sum of an f64 (or i64-coerced) array. Empty → 0.0. |
 | `arr_sum_i64(xs: [i64]) -> i64` | Sum of an i64 array. Empty → 0. Saturates on overflow. |
 | `arr_take(xs: [T], n: i64) -> [T]` | Return the first `n` elements of `xs`. Saturates at `len(xs)`; negative `n` returns empty. |

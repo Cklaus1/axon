@@ -207,8 +207,8 @@ fn type_contains_unresolved(ty: &Type) -> bool {
 }
 
 /// True when a builtin signature's `Type::Deferred(name)` is a *type parameter*
-/// slot (`T`, `U`, `V`, `K`, `E`) rather than an opaque deferred type (`Dict`,
-/// `Uncertain<…>`) or a closure slot (`fn(T) -> U`).
+/// slot (`T`, `U`, `V`, `K`, `E`, and CS2-3a's numeric `Num`) rather than an
+/// opaque deferred type (`Dict`, `Uncertain<…>`).
 ///
 /// `parse_type_str` (infer.rs) has no type-variable arm, so every one of these
 /// lands as `Deferred`; the name is the only thing that tells them apart.
@@ -219,13 +219,12 @@ fn type_contains_unresolved(ty: &Type) -> bool {
 /// drift, and inference would then solve a slot the checker still treats as a
 /// wildcard (or the reverse).
 pub(crate) fn is_builtin_type_param_name(n: &str) -> bool {
-    !n.starts_with("fn(")
-        && !DEFERRED_PREFIXES.iter().any(|p| n.starts_with(p))
-        && !n.is_empty()
-        && n.len() <= 2
-        && n.starts_with(|c: char| c.is_ascii_uppercase())
-        && n.chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    n == "Num"
+        || (!DEFERRED_PREFIXES.iter().any(|p| n.starts_with(p))
+            && !n.is_empty()
+            && n.len() <= 2
+            && n.starts_with(|c: char| c.is_ascii_uppercase())
+            && n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()))
 }
 
 /// Structurally match a builtin's declared parameter type against a concrete
@@ -328,19 +327,11 @@ fn foreign_type_help(name: &str) -> Option<String> {
 /// The arity is already written down in the BUILTINS table (`fn(T) -> U`,
 /// `fn(U, T) -> U`); this just reads it, so the two cannot drift.
 fn closure_arity(ty: &Type) -> Option<usize> {
-    let s = match ty {
-        Type::Deferred(n) => n.clone(),
-        _ => return None,
-    };
-    let rest = s.strip_prefix("fn(")?;
-    let inner = &rest[..rest.find(')')?];
-    let inner = inner.trim();
-    if inner.is_empty() {
-        return Some(0);
+    match ty {
+        Type::Fn(ps, _) => Some(ps.len()),
+        _ => None,
     }
-    Some(inner.split(',').count())
 }
-
 /// A concrete lambda to write, for the arity the callee wants.
 fn lambda_shape_hint(want: usize) -> String {
     match want {
@@ -5847,15 +5838,10 @@ impl CheckCtx {
             // an interp/native divergence (invariant I-2), which is a language
             // feature, not a fix. The diagnostic names the working form instead,
             // so the reader is one edit away rather than stuck.
-            // NOTE the type test: `parse_type_str` (infer.rs:167) has no `fn(`
-            // arm, so a builtin's `fn(T) -> U` parameter lands as
-            // `Type::Deferred("fn(T) -> U")`, not `Type::Fn`. Matching on
-            // `Type::Fn` here compiled and silently never fired — the same
-            // deferred-swallows-the-check class this function already documents
-            // for `Dict`.
-            let param_is_fn = matches!(param_ty, Type::Fn(..))
-                || matches!(param_ty, Type::Deferred(n) if n.starts_with("fn("));
-            if param_is_fn {
+            // A builtin's `fn(T) -> U` parameter parses to `Type::Fn` (CS2-3a);
+            // inference unifies the closure with it, and this keeps the arity
+            // check because its message names the shape to write.
+            if matches!(param_ty, Type::Fn(..)) {
                 // A LAMBDA with the wrong number of parameters. The expected
                 // count is already declarative — `arr_map`'s param type is
                 // `fn(T) -> U` (one), `arr_fold`'s is `fn(U, T) -> U` (two) —

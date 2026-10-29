@@ -706,7 +706,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
     },
     BuiltinFn {
         name: "arr_sum_by_f64",
-        params: &[("xs", "[T]"), ("key_fn", "fn(T) -> f64")],
+        params: &[("xs", "[T]"), ("key_fn", "fn(T) -> Num")],
         ret: "f64",
         doc: "Sum a projected f64 field over `xs`. The f64 counterpart of `arr_sum_by`.",
     },
@@ -1931,13 +1931,13 @@ pub const BUILTINS: &[BuiltinFn] = &[
     },
     BuiltinFn {
         name: "arr_max_by",
-        params: &[("xs", "[T]"), ("key_fn", "fn(T) -> f64")],
+        params: &[("xs", "[T]"), ("key_fn", "fn(T) -> Num")],
         ret: "T",
         doc: "Element of `xs` that maximizes the numeric key fn. Folds map+argmax+index into one. Panics on empty.",
     },
     BuiltinFn {
         name: "arr_min_by",
-        params: &[("xs", "[T]"), ("key_fn", "fn(T) -> f64")],
+        params: &[("xs", "[T]"), ("key_fn", "fn(T) -> Num")],
         ret: "T",
         doc: "Element of `xs` that minimizes the numeric key fn.",
     },

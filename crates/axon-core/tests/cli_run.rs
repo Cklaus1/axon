@@ -42181,3 +42181,130 @@ fn main() -> i64 {
         );
     }
 }
+
+/// CS2-3a (O-GAP-01): a closure or named fn passed to a higher-order builtin
+/// is unified with the builtin's `fn(..) -> ..` param, so its params share
+/// the sig's `T`/`U` and its return is checked (E0102); a numeric key fn
+/// (`arr_max_by`, `arr_min_by`, `arr_sum_by_f64`, declared `fn(T) -> Num`)
+/// must return a number (E0306). Each refused probe checked clean before and
+/// panicked at run time (exit 101).
+#[test]
+fn closure_passed_to_a_builtin_is_type_checked() {
+    let attack = "ATTACK: a closure of the wrong type passed to a builtin checked clean";
+    for (tag, src, code) in [
+        (
+            "h_filter",
+            "fn main() -> i64 {\n  let ys = arr_filter([1,2,3], |x| x + 1)\n  println(to_str(len(ys)))\n  0\n}\n",
+            "E0102",
+        ),
+        (
+            "h_any_bad",
+            "fn main() -> i64 {\n  let xs = [1, 2, 3]\n  println(to_str(arr_any(xs, |x| x + 2)))\n  0\n}\n",
+            "E0102",
+        ),
+        (
+            "h_fold",
+            "fn main() -> i64 {\n  let n = arr_fold([\"a\"], 0, |acc, x| acc + x)\n  println(to_str(n))\n  0\n}\n",
+            "E0102",
+        ),
+        (
+            "h_named",
+            "fn big(x: i64) -> bool { x > 1 }\nfn main() -> i64 {\n  println(to_str(len(arr_filter([\"a\"], big))))\n  0\n}\n",
+            "E0102",
+        ),
+        (
+            "l_maxby_b",
+            "fn main() -> i64 {\n  println(to_str(arr_max_by([1,2], |x| x > 1)))\n  0\n}\n",
+            "E0306",
+        ),
+        (
+            "l_sumbyf_b",
+            "fn main() -> i64 {\n  println(to_str(arr_sum_by_f64([1,2], |x| x > 1)))\n  0\n}\n",
+            "E0306",
+        ),
+    ] {
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains(code), "{attack} [{tag}]: want {code}: {cmsg}");
+    }
+}
+
+/// CS2-3a controls: closures that run today stay accepted with the same
+/// output - a generic fn forwarding its fn param, annotated lambdas, an i64
+/// key to a numeric-key builtin, a `dict_each` closure whose result is
+/// discarded, `Option`/`Result`/nested/empty closures, and `cli_run.rs`'s
+/// i64-key `advice.ax` program.
+#[test]
+fn generic_and_annotated_closures_to_builtins_stay_accepted() {
+    let attack = "ATTACK: a valid closure to a builtin was refused";
+    for (tag, src, out) in [
+        (
+            "l_generic_ok",
+            "fn keep<T>(xs: [T], f: fn(T) -> bool) -> [T] {\n  arr_filter(xs, f)\n}\nfn main() -> i64 {\n  println(to_str(len(keep([1,2,3], |x| x > 1))))\n  0\n}\n",
+            "2\n",
+        ),
+        (
+            "l_annot_lambda",
+            "fn main() -> i64 {\n  let xs = [1,2,3]\n  println(to_str(arr_fold(xs, 0, |acc: i64, x: i64| acc + x)))\n  0\n}\n",
+            "6\n",
+        ),
+        (
+            "l_sumbyf_i",
+            "fn main() -> i64 {\n  println(to_str(arr_sum_by_f64([1,2], |x| x)))\n  0\n}\n",
+            "3\n",
+        ),
+        (
+            "l_numkey",
+            "fn main() -> i64 {\n  println(to_str(arr_sum_by_f64([1, 2], |x: i64| x)))\n  println(to_str(arr_max_by([1, 2], |x: i64| x)))\n  0\n}\n",
+            "3\n2\n",
+        ),
+        (
+            "h10_each_ret",
+            "fn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", 1)\n  let out = dict_new()\n  dict_each(d, |k, v| dict_inc(out, k))\n  dict_each(d, |k, v| v + 1)\n  println(to_str(dict_len(out)))\n  0\n}\n",
+            "1\n",
+        ),
+        (
+            "h_any_ok",
+            "fn main() -> i64 {\n  let xs = [1, 2, 3]\n  println(to_str(arr_any(xs, |x| x > 2)))\n  0\n}\n",
+            "true\n",
+        ),
+        (
+            "h2_opt",
+            "fn main() -> i64 {\n  let xs = arr_map([1, 0 - 2], |x| if x > 0 { Some(x) } else { None })\n  let ys = arr_map([\"1\", \"z\"], |s| parse_int(s))\n  println(to_str(len(xs) + len(ys)))\n  0\n}\n",
+            "4\n",
+        ),
+        (
+            "h3_nested",
+            "fn main() -> i64 {\n  let xss = [[1, 0 - 1], [2]]\n  let ys = arr_map(xss, |xs| arr_filter(xs, |x| x > 0))\n  let n = arr_fold(ys, 0, |acc, xs| acc + len(xs))\n  let s = arr_map([1, 2], |x| to_str(x))\n  println(to_str(n) + str_join(s, \",\"))\n  0\n}\n",
+            "21,2\n",
+        ),
+        (
+            "h4_empty",
+            "fn main() -> i64 {\n  let e = arr_map([], |x| x + 1)\n  let t = arr_filter([], |x| x > 0)\n  println(to_str(len(e) + len(t)))\n  0\n}\n",
+            "0\n",
+        ),
+        (
+            "h5_dictarr",
+            "fn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", [1, 2])\n  let v = dict_get_or(d, \"a\", [])\n  let w = dict_get_or(d, \"zz\", [7])\n  println(to_str(len(v) + len(w)))\n  0\n}\n",
+            "3\n",
+        ),
+        (
+            "h9_sortby_maxby",
+            "fn main() -> i64 {\n  let xs = arr_sort_by([\"bb\", \"a\"], |a, b| len(a) - len(b))\n  let m = arr_max_by([\"bb\", \"a\"], |s| len(s))\n  let m2 = arr_max_by([1.5, 2.5], |x| x)\n  println(str_join(xs, \",\") + to_str(m) + to_str(m2))\n  0\n}\n",
+            "a,bbbb2.5\n",
+        ),
+        (
+            "advice_i64_key",
+            "fn main() {\n  let xs = [3,9,2]\n  println(to_str(arr_sum_by(&xs, |x| x)))\n  println(to_str(arr_max_by(&xs, |x| x)))\n  println(to_str(max_i64(3, 7)))\n}\n",
+            "14\n9\n7\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}

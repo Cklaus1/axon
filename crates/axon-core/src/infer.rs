@@ -23,6 +23,7 @@ use crate::types::{Constraint, Substitution, Type};
 const E0101: &str = "E0101";
 const E0102: &str = "E0102";
 const E0301: &str = "E0301";
+const E0306: &str = "E0306";
 
 /// AX-63: how many levels deep a type may nest on wasm32. wasm32 runs the front
 /// end on wasmtime's default 512 KiB native stack, and the checker recurses over
@@ -326,32 +327,78 @@ fn parse_type_str(s: &str) -> Type {
     if let Some(inner) = strip_wrap(s, "Temporal<", ">") {
         return Type::Temporal(Box::new(parse_type_str(inner)));
     }
+    // CS2-3a: a builtin's closure param `fn(P, ..) -> R`; `fn(P, ..)` with no
+    // `->` is a unit return. The call site frees a unit return (the builtin
+    // discards the closure's result, `dict_each`, `http_sse`), so only the
+    // params are unified with the closure's.
+    if let Some(rest) = s.strip_prefix("fn(") {
+        let mut depth = 0usize;
+        let close = rest.char_indices().find_map(|(i, c)| match c {
+            '(' => {
+                depth += 1;
+                None
+            }
+            ')' if depth == 0 => Some(i),
+            ')' => {
+                depth -= 1;
+                None
+            }
+            _ => None,
+        });
+        if let Some(close) = close {
+            let inner = rest[..close].trim();
+            let params = if inner.is_empty() {
+                Vec::new()
+            } else {
+                split_top_level(inner).into_iter().map(parse_type_str).collect()
+            };
+            let ret = match rest[close + 1..].trim() {
+                "" => Type::Unit,
+                after => match after.strip_prefix("->") {
+                    Some(r) => parse_type_str(r),
+                    None => return Type::Deferred(s.to_string()),
+                },
+            };
+            return Type::Fn(params, Box::new(ret));
+        }
+    }
     // Tuple types: `(T1, T2, …)`. Top-level commas split the elements.
     // Required for builtin sigs like `arr_partition -> ([T], [T])`;
     // without this the whole string lands as one Deferred name and the
     // destructure consumer sees an opaque non-tuple, breaking inference.
     if let Some(inner) = strip_wrap(s, "(", ")") {
         if top_level_comma(inner).is_some() {
-            let mut parts: Vec<Type> = Vec::new();
-            let mut depth = 0usize;
-            let mut start = 0;
-            for (i, c) in inner.char_indices() {
-                match c {
-                    '<' | '[' | '(' => depth += 1,
-                    '>' | ']' | ')' => depth = depth.saturating_sub(1),
-                    ',' if depth == 0 => {
-                        parts.push(parse_type_str(&inner[start..i]));
-                        start = i + 1;
-                    }
-                    _ => {}
-                }
-            }
-            parts.push(parse_type_str(&inner[start..]));
-            return Type::Tuple(parts);
+            return Type::Tuple(split_top_level(inner).into_iter().map(parse_type_str).collect());
         }
     }
     Type::Deferred(s.to_string())
 }
+
+/// Split a type list at its top-level commas (`[T], (str, V)` -> two parts).
+fn split_top_level(inner: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (i, c) in inner.char_indices() {
+        match c {
+            '<' | '[' | '(' => depth += 1,
+            '>' | ']' | ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&inner[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&inner[start..]);
+    parts
+}
+
+/// CS2-3a: the sig placeholder for a numeric key fn's return (`fn(T) -> Num`
+/// in `arr_max_by`, `arr_min_by`, `arr_sum_by_f64`). Each call instantiates it
+/// to a fresh variable that `solve()` requires to be an int or a float: the
+/// interpreter takes either (an i64 key is compared or added as f64).
+const NUM_PARAM: &str = "Num";
 
 /// Collect the distinct type-variable names a builtin signature mentions, in
 /// first-appearance order. Empty when the signature is not generic.
@@ -391,13 +438,20 @@ fn collect_type_var_names(t: &Type, out: &mut Vec<String>) {
                 collect_type_var_names(t, out);
             }
         }
+        Type::Fn(ps, r) => {
+            for p in ps {
+                collect_type_var_names(p, out);
+            }
+            collect_type_var_names(r, out);
+        }
         _ => {}
     }
 }
 
 /// Rewrite every `Deferred(n)` where `n` is one of `names` into `TypeParam(n)`,
-/// structurally. Other `Deferred`s (opaque types like `Dict`, and `fn(...)`
-/// closure slots) are left alone.
+/// structurally, through a closure param's `fn(..) -> ..` too (CS2-3a), so
+/// its `T`/`U` are the same variables as the rest of the sig. Other
+/// `Deferred`s (opaque types like `Dict`) are left alone.
 fn promote_type_params(t: &Type, names: &[String]) -> Type {
     let rec = |i: &Type| Box::new(promote_type_params(i, names));
     match t {
@@ -409,6 +463,9 @@ fn promote_type_params(t: &Type, names: &[String]) -> Type {
         Type::Temporal(i) => Type::Temporal(rec(i)),
         Type::Result(a, b) => Type::Result(rec(a), rec(b)),
         Type::Tuple(ts) => Type::Tuple(ts.iter().map(|e| promote_type_params(e, names)).collect()),
+        Type::Fn(ps, r) => {
+            Type::Fn(ps.iter().map(|p| promote_type_params(p, names)).collect(), rec(r))
+        }
         other => other.clone(),
     }
 }
@@ -471,6 +528,9 @@ pub struct InferCtx {
     /// substitution is final (pinning the var to `str` at the call refused a
     /// `?`- or match-bound array).
     len_obligations: Vec<(Type, crate::span::Span)>,
+    /// CS2-3a: the `Num` variable of each call to a numeric-key builtin, which
+    /// `solve()` requires to be an int or a float.
+    num_obligations: Vec<(Type, crate::span::Span)>,
     /// CS2-6: calls whose callee is not a fn name with a signature. Checked
     /// by `solve()` against the callee's resolved fn type.
     call_obligations: Vec<CallObligation>,
@@ -565,6 +625,7 @@ impl InferCtx {
             builtin_generic_params: HashMap::new(),
             call_instantiations: Vec::new(),
             len_obligations: Vec::new(),
+            num_obligations: Vec::new(),
             call_obligations: Vec::new(),
             struct_fields: HashMap::new(),
             struct_generic_params: HashMap::new(),
@@ -1436,6 +1497,10 @@ impl InferCtx {
                         } else {
                             (sig, HashMap::new())
                         };
+                        // CS2-3a: a numeric key fn's return must resolve to a number.
+                        if let Some(&v) = var_map.get(NUM_PARAM) {
+                            self.num_obligations.push((Type::Var(v), self.current_stmt_span));
+                        }
                         // ── Layer-1 ASI: confidence propagation note ─────────
                         // When any argument has type `Uncertain<_>`, the call's
                         // result confidence should logically be the product of the
@@ -1455,6 +1520,25 @@ impl InferCtx {
                             if self.try_int_literal_coercion(arg, &arg_ty, param_ty) {
                                 continue;
                             }
+                            // CS2-3a: a closure of the wrong arity is the checker's
+                            // E0306, which names the shape to write; unifying it here
+                            // would add a bare E0102 for the same call.
+                            if matches!((&arg_ty, param_ty),
+                                (Type::Fn(a, _), Type::Fn(p, _)) if a.len() != p.len())
+                            {
+                                continue;
+                            }
+                            // CS2-3a: a builtin discards the result of a closure
+                            // param declared with a unit return, so that return
+                            // is a fresh var the closure's body may fix to anything.
+                            let freed;
+                            let param_ty = match param_ty {
+                                Type::Fn(ps, r) if reaches_builtin && **r == Type::Unit => {
+                                    freed = Type::Fn(ps.clone(), Box::new(self.fresh()));
+                                    &freed
+                                }
+                                p => p,
+                            };
                             self.constrain(
                                 arg_ty,
                                 param_ty.clone(),
@@ -2445,6 +2529,22 @@ impl InferCtx {
             let ret = subst.apply(&ret);
             if !has_unresolved(&ret) {
                 self.unify(ob.ret, ret, "return of a call through a fn value", &mut subst);
+            }
+        }
+        // CS2-3a: a numeric key fn (`arr_max_by`, `arr_min_by`,
+        // `arr_sum_by_f64`) returns an int or a float; anything else panics
+        // `key fn must return numeric` at run time. A return still unresolved
+        // is left to the run time.
+        for (ty, span) in std::mem::take(&mut self.num_obligations) {
+            let ty = subst.apply(&ty);
+            if !has_unresolved(&ty) && !ty.is_integer() && !ty.is_float() && ty != Type::Never {
+                self.errors.push(
+                    InferError::new(
+                        E0306,
+                        format!("key fn must return a number, got `{}`", ty.display()),
+                    )
+                    .with_span(span),
+                );
             }
         }
         subst
