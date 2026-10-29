@@ -2647,6 +2647,7 @@ Noted in `crates/axon-core/src/capabilities.rs` (the `reachable_capabilities` do
 ### O-S1-17 — [medium] A dependency-aware `gate.sh --lane` profile (lesson fired twice in S1)
 "Lanes skip suites" fired twice in S1 (claims_gate after the merge; axon-fabric's `cortex_via_fabric` and axon-core's `harness_binaries` in the final full gate, ~1 h of reruns). Per the build-loop recurrence → mechanism rule: a `gate.sh --lane` profile that derives the suites to run from the changed paths (a changed `cortex`/`axon` binary → the crates whose tests drive it; any changed `tests/*.rs` → the workspace-wide lint tests).
 `[SPECCED 2026-10-19: tasks/gate-lane-spec.md (GL-1…GL-6).]`
+`[BUILT 2026-10-29: GL-1..GL-5 on main; follow-ups O-GL-01 (savings below estimate), O-GL-02 (audit store perms, audit flake).]`
 
 ### O-S1-18 — [high] R4 typed feedback needs a prospective keep/remove criterion
 `[DECIDED by human 2026-10-18]`: R4 shipped without a demonstrated benefit. Its keep/remove criterion (measured capability gain on the new held-out evaluation, against its implementation cost and complexity) is fixed in tasks/followup-spec.md BEFORE the measurement runs; typed feedback is not kept indefinitely without demonstrated benefit.
@@ -2812,3 +2813,17 @@ their hidden tests; an offline regrade with the arms' axon gives excerpt 19/20 a
 false success, so earlier verdicts with 0 false successes (FU receipt, hx2 pilot) stand. Fix direction: pin the grader
 to a binary whose `axon check` accepts the same files as the arms' axon, and add a preamble probe that one `let mut`
 file gets the same rc from both. Any excerpt seed-4 re-pilot (hx3 NH-1) must take this fix first.
+
+### O-GL-01 — [medium] The gate lane saves far less than the spec's §4 estimates
+Smokes at 76a12f60 (cold target dir, load ≤ 10): docs-only 1586 s (§4: 1-10 min), `locate.rs` 1670 s (≈ 35 min),
+`checker.rs` 1473 s; the full gate is ≈ 46 min. Plans at 0b29b054: docs-only RUN 138 / SKIP 283, `checker.rs` 194 / 227.
+About 116 units always run because they read git state (HEAD, index or refs); axon-fabric's 98 units are most of them.
+Fix direction: find which call in those tests reads git state, and decide whether a fixed git-state input can be
+declared instead (an `always`-class audit entry keyed on the refs actually read), keeping unaudited => run.
+
+### O-GL-02 — [low] The lane audit store is root-owned and audits are flaky under load
+`.git/axon-gate-lanes/` is `root:root 755`, so a `user`-class audit cannot write there (ImplAuditGL minor 4). The
+audits on `gl/lane` lost 13-14 units to gate.sh's `par_abort self-check`; that branch lacked f2f36b66 (the
+`par_abort` race fix now on `main`), which is the likely cause [INFERENCE: not re-audited after the merge].
+Unaudited units always run, so this costs speed, not correctness. Fix direction: create the store per uid or
+group-writable, and re-audit after the merge to confirm the flake is gone.
