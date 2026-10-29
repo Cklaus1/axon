@@ -425,6 +425,8 @@ The message reads "non-exhaustive match on `i64` - add a `_ =>` arm" (E0304, `er
 
 **False-refusal risk.** An array of fns with different arities cannot type-check under unification anyway (an array literal's elements unify; `CS2A/n1_mixed` is already E0102), so no new refusal class arises.
 
+[REVISED: build CS2-6] The local-callee rule also reaches a call to a local *lambda*: inference checks the call's argument kinds (number / `str` / `bool` / unit, through `[T]`/`Option`/`Result`/tuples) against the kinds the lambda's body gives its params, and never binds a param from a call (`let id = \|x\| x; id(1); id("s")` stays rc 0). This closes three check-then-panic programs in existing VM tests (`cli_run.rs` `vm_pure_bool_ops` `pure_bool_if`/`pure_bool_while`, `vm_superop_write_panics` `bool_index`: an `i64` passed where the body makes the param `bool`, or a `bool` used as an index), each of which panicked at run time; those tests now reach the lambda through an untyped wrapper `let g = \|x, y\| f(x, y)` so the VM panic path stays covered. Named residual: a lambda whose body passes its param to a builtin declared narrower than the run time accepts (`let g = \|x\| println(x); g(1)`) is now E0102; the same call written directly (`println(1)`) is already E0306, so this applies the language's existing rule. Both sweeps are unchanged by CS2-6.
+
 ### CS2-7 (P2) Enforce refinements on enum variant fields and lambda params - O-S1-15 (human-decided ENFORCE)
 
 **Problem.**

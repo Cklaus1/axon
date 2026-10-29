@@ -702,6 +702,10 @@ impl CheckCtx {
     /// to one, or a user fn named as a value. A builtin (or a fn that shadows
     /// one, `call_prefers_builtin`) is not a value (the resolver refuses it).
     /// `None` for anything else, and for a name a local binds.
+    ///
+    /// CS2-6: also an element of an array of fn values (`ops[0]`), the result
+    /// of a call whose return is a fn (`mk()`), and a fn-typed struct field
+    /// (`h.f`), so a call through any of them is checked like a call by name.
     fn fn_value_type(&self, expr: &Expr, scope: &HashMap<String, Type>) -> Option<Type> {
         match expr {
             Expr::Lambda { params, .. } => Some(Type::Fn(
@@ -720,7 +724,44 @@ impl CheckCtx {
                     .or_else(|| self.fn_sigs.get(name))
                     .map(|s| Type::Fn(s.params.clone(), Box::new(s.ret.clone())))
             }
+            Expr::Index { receiver, .. } => match self.value_type(receiver, scope) {
+                Type::Slice(elem) if matches!(*elem, Type::Fn(..)) => Some(*elem),
+                _ => None,
+            },
+            Expr::Call { callee, args, .. } => {
+                let ret = match callee.as_ref() {
+                    Expr::Ident(name) => match scope.get(name.as_str()) {
+                        Some(Type::Fn(_, ret)) => (**ret).clone(),
+                        Some(_) => return None,
+                        None => self.call_sig(name, args)?.ret.clone(),
+                    },
+                    other => match self.fn_value_type(other, scope)? {
+                        Type::Fn(_, ret) => *ret,
+                        _ => return None,
+                    },
+                };
+                matches!(ret, Type::Fn(..)).then_some(ret)
+            }
+            Expr::FieldAccess { receiver, field } => match self.value_type(receiver, scope) {
+                Type::Struct(sname) => self
+                    .struct_fields
+                    .get(&sname)?
+                    .iter()
+                    .find(|(f, _)| f == field)
+                    .map(|(_, t)| t.clone())
+                    .filter(|t| matches!(t, Type::Fn(..))),
+                _ => None,
+            },
             _ => None,
+        }
+    }
+
+    /// CS2-6: the syntactic type of `expr`, a fn value's `fn(..) -> ..` type
+    /// when the fallback has none.
+    fn value_type(&self, expr: &Expr, scope: &HashMap<String, Type>) -> Type {
+        match self.resolve_expr_type(expr, &NodePath::root("#fn_value".to_string()), scope) {
+            Type::Unknown => self.fn_value_type(expr, scope).unwrap_or(Type::Unknown),
+            ty => ty,
         }
     }
 
@@ -4131,6 +4172,13 @@ impl CheckCtx {
                             self.check_refinement_args(name, args, node_path);
                         }
                     }
+                } else if let Some(Type::Fn(params, ret)) = self.fn_value_type(callee, scope) {
+                    // CS2-6: a call through a fn value that is not a name
+                    // (`ops[0](..)`, `mk()(..)`, `(h.f)(..)`) is checked against
+                    // that value's type, as a call by name is.
+                    let sig = FnSig { params, ret: *ret };
+                    let label = callee_label(callee);
+                    self.check_args_against_sig(&label, &sig, args, node_path, scope);
                 }
             }
 
@@ -7562,6 +7610,22 @@ impl CheckCtx {
                         }
                     }
                 }
+                // CS2-6: a call by a name a local binds runs the local, and a
+                // call through a fn value (`ops[0](..)`, `mk()(..)`, `(h.f)(..)`)
+                // runs that value: each returns its fn type's return.
+                let value_ret = match callee.as_ref() {
+                    Expr::Ident(name) => scope.get(name.as_str()).map(|t| match t {
+                        Type::Fn(_, ret) => (**ret).clone(),
+                        _ => Type::Unknown,
+                    }),
+                    other => Some(match self.fn_value_type(other, scope) {
+                        Some(Type::Fn(_, ret)) => *ret,
+                        _ => Type::Unknown,
+                    }),
+                };
+                if let Some(ret) = value_ret {
+                    return if type_contains_unresolved(&ret) { Type::Unknown } else { ret };
+                }
                 if let Expr::Ident(name) = callee.as_ref() {
                     if let Option::Some(sig) = self.call_sig(name, args) {
                         if type_contains_unresolved(&sig.ret) {
@@ -7609,7 +7673,13 @@ impl CheckCtx {
                 // a runtime panic. Empty literal → Unknown element.
                 let elem_ty = elems
                     .first()
-                    .map(|e| self.resolve_expr_type(e, &node_path.child("elem_0"), scope))
+                    .map(|e| match self.resolve_expr_type(e, &node_path.child("elem_0"), scope) {
+                        // CS2-6: an array of fn values (`[add, sub]`) keeps
+                        // its element's `fn(..) -> ..` type, so `ops[0](..)`
+                        // is checked.
+                        Type::Unknown => self.fn_value_type(e, scope).unwrap_or(Type::Unknown),
+                        ty => ty,
+                    })
                     .unwrap_or(Type::Unknown);
                 Type::Slice(Box::new(elem_ty))
             }
@@ -8189,6 +8259,18 @@ fn free_fn_for_method(key: &str, method: &str) -> Option<&'static str> {
 fn is_char_at_call(e: &Expr) -> bool {
     matches!(e, Expr::Call { callee, .. }
         if matches!(callee.as_ref(), Expr::Ident(n) if n == "char_at"))
+}
+
+/// CS2-6: how a diagnostic names a callee that is not a name: `ops[..]`,
+/// `mk(..)`, `h.f`, or `fn value`.
+fn callee_label(callee: &Expr) -> String {
+    match callee {
+        Expr::Ident(n) => n.clone(),
+        Expr::Index { receiver, .. } => format!("{}[..]", callee_label(receiver)),
+        Expr::Call { callee, .. } => format!("{}(..)", callee_label(callee)),
+        Expr::FieldAccess { receiver, field } => format!("{}.{field}", callee_label(receiver)),
+        _ => "fn value".to_string(),
+    }
 }
 
 fn method_lookup_key(ty: &Type) -> Option<&'static str> {

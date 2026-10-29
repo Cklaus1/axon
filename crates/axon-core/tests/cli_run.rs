@@ -37993,6 +37993,8 @@ type PureBoolCase = (
 /// R50 S7: `Bool` operands through untyped lambda parameters. `==`/`||` on
 /// `Bool`s compute; `<` on `Bool`s, and an `if`/`while` condition that is an
 /// `Int`, decline, and the generic ops panic as the tree does (exit 101).
+/// CS2-6: `f(2, 3)` on a lambda whose body makes `a`/`b` `bool` is refused at
+/// check (E0102), so the `if`/`while` cases reach `f` through the untyped `g`.
 #[test]
 fn vm_pure_bool_ops() {
     let cases: [PureBoolCase; 3] = [
@@ -38005,14 +38007,14 @@ fn vm_pure_bool_ops() {
         ),
         (
             "pure_bool_if",
-            "    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    println(to_str(f(2, 3)))",
+            "    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))",
             "",
             "axon: panic: if condition must be bool, got i64\n",
             (1, 0),
         ),
         (
             "pure_bool_while",
-            "    let f = |a, b| {\n        let n = 0\n        while a + b * a {\n            n = n + 1\n        }\n        n\n    }\n    println(to_str(f(2, 3)))",
+            "    let f = |a, b| {\n        let n = 0\n        while a + b * a {\n            n = n + 1\n        }\n        n\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))",
             "",
             "axon: panic: while condition must be bool, got i64\n",
             (1, 1),
@@ -39383,6 +39385,8 @@ fn vm_superop_write_shared() {
 /// negative and non-`Int` indexes panic as the tree does; in `a[i] = b[j]`
 /// the value `b[j]` is read (and fails) before the target index is converted;
 /// an `i32` target index is written, an `i32` read index panics.
+/// CS2-6: `f(a, true)` on a lambda that indexes with `k` is refused at check
+/// (E0102), so `bool_index` reaches `f` through the untyped `g`.
 #[test]
 fn vm_superop_write_panics() {
     let cases: [(&str, &str, Option<i32>, &str, &str); 12] = [
@@ -39403,7 +39407,7 @@ fn vm_superop_write_panics() {
         ("swap_oob", "swap(&mut a, 0, 3)", Some(101), "", "index 3 out of bounds (len 2)"),
         (
             "bool_index",
-            "let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    println(to_str(f(a, true)[0]))",
+            "let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    let g = |w, j| f(w, j)\n    println(to_str(g(a, true)[0]))",
             Some(101),
             "",
             "expected i64, got bool",
@@ -41995,6 +41999,177 @@ fn main() -> i64 {
 }
 "#,
             "2\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS2-6 (O-SF-04): a call whose callee is not a name — an array element
+/// (`ops[0](..)`), the fn a call returns (`mk()(..)`), a fn-typed field
+/// (`(h.f)(..)`) — is checked against that fn value's type like a call by
+/// name: arity E0305, argument type E0306, and inference unifies its return
+/// (E0102). Each refused probe checked clean before and panicked at run time
+/// (exit 101). A callee name a param binds is typed by the param, never by a
+/// top-level fn of the same name (`o2_shadow_fn` was E0307 and runs `true`).
+#[test]
+fn a_call_through_a_non_name_callee_checks_its_signature() {
+    let attack = "ATTACK: a bad call through a fn value checked clean";
+    for (tag, src, code) in [
+        (
+            "n_index",
+            r#"fn add(a: i64, b: i64) -> i64 { a + b }
+fn main() -> i64 {
+  let ops = [add]
+  println(to_str(ops[0](1)))
+  0
+}
+"#,
+            "E0305",
+        ),
+        (
+            "n_call",
+            r#"fn add(a: i64, b: i64) -> i64 { a + b }
+fn mk() -> fn(i64, i64) -> i64 { add }
+fn main() -> i64 {
+  println(to_str(mk()(1, 2, 3)))
+  0
+}
+"#,
+            "E0305",
+        ),
+        (
+            "n_field",
+            r#"type H = { f: fn(i64) -> i64 }
+fn main() -> i64 {
+  let h = H { f: |x: i64| x + 1 }
+  println(to_str((h.f)(1, 2)))
+  0
+}
+"#,
+            "E0305",
+        ),
+        (
+            "n_type",
+            r#"fn add(a: i64, b: i64) -> i64 { a + b }
+fn main() -> i64 {
+  let ops = [add]
+  println(to_str(ops[0](1, "x")))
+  0
+}
+"#,
+            "E0306",
+        ),
+        (
+            "n_ret",
+            r#"fn add(a: i64, b: i64) -> i64 { a + b }
+fn main() -> i64 {
+  let ops = [add]
+  let s: str = ops[0](1, 2)
+  println(s)
+  0
+}
+"#,
+            "E0102",
+        ),
+        (
+            "n_lambda_kind",
+            r#"fn main() -> i64 {
+  let f = |a, b| { if a && b { 1 } else { 2 } }
+  println(to_str(f(2, 3)))
+  0
+}
+"#,
+            "E0102",
+        ),
+    ] {
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains(code), "{attack} [{tag}]: want {code}: {cmsg}");
+    }
+    // Controls: valid calls through fn values, and a fn param named like a
+    // top-level fn; each checks clean and runs.
+    let attack = "ATTACK: a valid call through a fn value was refused";
+    for (tag, src, out) in [
+        (
+            "n_ok",
+            r#"fn add(a: i64, b: i64) -> i64 { a + b }
+fn mk() -> fn(i64, i64) -> i64 { add }
+fn main() -> i64 {
+  let ops = [add]
+  println(to_str(ops[0](1, 2) + mk()(3, 4)))
+  0
+}
+"#,
+            "10\n",
+        ),
+        (
+            "n2_hof_index",
+            r#"fn mk(k: i64) -> fn(i64) -> i64 { |x: i64| x + k }
+fn main() -> i64 {
+  let fs = arr_map([1, 2], |k| mk(k))
+  println(to_str(fs[1](10)))
+  let g = if true { mk(1) } else { mk(2) }
+  println(to_str(g(1)))
+  0
+}
+"#,
+            "12\n2\n",
+        ),
+        (
+            "n_poly",
+            r#"fn main() -> i64 {
+  let fs = [|x| x]
+  println(to_str(fs[0](1)))
+  println(fs[0]("s"))
+  let id = |x| x
+  println(to_str(id(1)))
+  println(id("t"))
+  0
+}
+"#,
+            "1\ns\n1\nt\n",
+        ),
+        (
+            "n_lambda_array",
+            r#"fn app(fs: [fn(i64) -> i64], v: i64) -> i64 { fs[0](v) }
+fn main() -> i64 {
+  let fs = [|x| x + 1, |x| x * 2]
+  println(to_str(app(fs, 3)))
+  println(to_str(fs[1](4)))
+  0
+}
+"#,
+            "4\n8\n",
+        ),
+        (
+            "o1_fnparam_bool",
+            r#"fn apply(f: fn(i64) -> bool, v: i64) -> bool { f(v) }
+fn even(v: i64) -> bool { v % 2 == 0 }
+fn main() -> i64 {
+  println(to_str(apply(even, 4)))
+  0
+}
+"#,
+            "true\n",
+        ),
+        (
+            "o2_shadow_fn",
+            r#"fn apply(f: fn(i64) -> bool, v: i64) -> bool { f(v) }
+fn even(v: i64) -> bool { v % 2 == 0 }
+fn f(n: i64) -> i64 { n }
+fn main() -> i64 {
+  println(to_str(apply(even, 4)))
+  0
+}
+"#,
+            "true\n",
         ),
     ] {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
