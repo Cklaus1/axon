@@ -168,9 +168,11 @@ on main and authors no programs before that.
      4 min 38 s covered 18 programs and skipped those checks. The ≈ 57 bundles of ≥ 26,000 characters each run every
      test once per mutant. The real wall goes in §0.1.
 4. **Commit PREREG-hx3 §0 (node N0b)** with the template below. No pilot row may predate this commit.
-   - 4a. [REVISED: HX3D-2 — the worktree did not exist and no step created it] Create it first:
-     `git -C /home/cklaus/projects/axon worktree add -b hx3/rec /home/cklaus/projects/axon-lanes/hx3-rec 43e895d0`.
-   - §0 is committed on `hx3/rec`, never merged before §6, and its sha goes in §0.1.
+   - 4a. [REVISED: N0 — the authorization of 2026-10-29 puts §0 on `hx3/proto` in
+     `/home/cklaus/projects/axon-lanes/hx3-proto`; no `hx3/rec` worktree is created. Was (HX3D-2): create
+     `hx3-rec` with `git worktree add -b hx3/rec ... 43e895d0`.] `hx3/proto` only adds `B/headroom/` files, so `ab/`
+     is byte-identical to 43e895d0.
+   - §0 is committed on `hx3/proto`, never merged before §6, and its sha goes in §0.1.
    - The pilots run at that commit. `--out` and `--spend-root` are relative to that tree, and `run_ab` records its
      `ROOT`/HEAD.
 5. **Pilots.** Pilots use only tasks whose `program` is one of the **18 programs recorded `dev` in
@@ -180,9 +182,10 @@ on main and authors no programs before that.
      excerpt), at most 100 draws [REVISED: HX3A-5 — the loop had no bound]. If no draw qualifies, use the first draw
      with the most programs. Record the number of draws.
    - Classes: P-masked (A) and P-excerpt (B). P-erase-long (C) runs only under NH-3.
-   - Each class has its own empty spend root. Run from the `hx3/rec` worktree at the §0 commit:
+   - Each class has its own empty spend root. Run from the `hx3-proto` worktree at the §0 commit [REVISED: N0 — was
+     `hx3-rec`]:
    ```
-   cd /home/cklaus/projects/axon-lanes/hx3-rec && \
+   cd /home/cklaus/projects/axon-lanes/hx3-proto && \
    AXON_BIN=/var/tmp/r51-tmp/hx3-inc-bin/axon CORTEX_BIN=/var/tmp/r51-tmp/hx3-inc-bin/cortex \
    nice -n 10 python3 crates/axon-cortex/benchmarks/ab/run_ab.py \
      /var/tmp/r51-tmp/hx3-scratch/hx-pool.json --arm B --generator real --transport micode \
@@ -560,7 +563,7 @@ Set names stay `hx-dev`/`hx-test` (F13: nothing frozen, so no code changes).
 | split | chained from `/var/tmp/r51-tmp/hx2-scratch/hx-pool.json`; programs new to the split: <list or none> |
 | incumbent (arm B) | main 43e895d0: `cargo build --locked -p axon-cortex --features ai --bin cortex` in `/var/tmp/r51-tmp/hx3-inc-src`, `CARGO_TARGET_DIR=.doc-build/hx3-inc`, sha256 <…>, build wall <…>, at `/var/tmp/r51-tmp/hx3-inc-bin/cortex` [REVISED: HX3D-4] |
 | bundle split | every bundle task's `split` = its target program's recorded split: <checked, 0 mismatches> [REVISED: HX3A-2] |
-| rec worktree | `/home/cklaus/projects/axon-lanes/hx3-rec`, branch `hx3/rec`, §0 commit <sha> [REVISED: HX3D-2] |
+| rec worktree | `/home/cklaus/projects/axon-lanes/hx3-proto`, branch `hx3/proto`, §0 commit <sha> [REVISED: N0 — was `hx3-rec`/`hx3/rec` (HX3D-2)] |
 | arms' axon (AXON_BIN) | same build, sha256 <…> |
 | grading axon | `/var/tmp/r51-tmp/hx-bin/axon` (819e0460…) |
 | model, ranker, k | claude-haiku-5-5 over micode (driver sha256 <…>), ranker openrouter:anthropic/claude-haiku-5.5, k = 1, --parallel 1 |
