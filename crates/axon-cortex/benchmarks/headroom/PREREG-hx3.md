@@ -268,6 +268,34 @@ nice -n 10 python3 crates/axon-cortex/benchmarks/ab/run_ab.py \
   --reserve-usd 0.05 --cap-usd 0.25
 ```
 
+### 0.8 Addendum: wall limit measured under real load (committed before any class C row)
+
+[DECIDED by human 2026-10-29: "approved, do it" - the wall limit is set from
+wall times measured under real load plus a stated margin, as the NH-R1
+`HARD_GRACE` rule (`tasks/unattended-auth-spec.md:285-287`).] It replaces
+only the wall half of the §0.3 overrun rule; the spend half is unchanged.
+
+- **Formula:** wall limit = n × p90 × 1.5, where n = the pilot's rows and p90
+  = the nearest-rank 90th percentile (the ⌈0.9·N⌉-th smallest) of per-row
+  `wall_s` over every recorded HX3-0 row, clean or not: masked (§0.5),
+  excerpt seed 3 (§0.5) and excerpt seed 4 (§0.6), N = 60. Margin: 1.5.
+- **Loads of those runs** (1-min load average at start / end, from the run
+  logs): masked 13.33 / 9.77; excerpt seed 3 8.05 / 12.45; excerpt seed 4
+  4.73 / 11.21. Row walls: masked sum 520.9 s, seed 3 394.9 s, seed 4 407.0 s.
+- **Value:** p90 = 41.9 s (neighbours 35.4 s and 55.6 s); for C's 20-row
+  pilot the wall limit is 20 × 41.9 × 1.5 = **1257.0 s**. Spend limit
+  unchanged: spend > 2·(c·$0.0010 + (20 − c)·$0.0093) overruns.
+- **Seed-4 overrun (§6.3): reviewed 2026-10-29: within the load-measured
+  rule** (407.0 s ≤ 1257.0 s). Masked (520.9 s) and excerpt seed 3 (394.9 s)
+  are within it too. The rule does not change any verdict: both classes were
+  rejected on c.
+- **Start condition:** the C pilot starts once the 1-min load average is
+  ≤ 15 (above every load measured above), checked once a minute for up to
+  60 min; if it never is, it starts anyway and the load is recorded. The
+  start and end loads are recorded in §6.
+- **If C's wall exceeds 1257.0 s:** recorded as an overrun and C stops; no
+  re-pilot. The §0.3 decision on c and false successes is unchanged.
+
 ## 6. HX3-0 pilot rows and verdict (2026-10-29)
 
 Rows: `hx3-pilot-2026-10-29/<class>/pilot.jsonl`, one class at a time, with
