@@ -126,6 +126,7 @@ fail() {
     printf '%s\n' "$1" > "$PAR_FAILFILE"
     echo ""; echo "❌ stage FAILED: $1"; exit 1
   fi
+  [ -z "${STAGE_ID:-}" ] || stage_end 1
   par_abort
   echo ""; echo "❌ $TIER FAILED at: $1"; exit 1
 }
@@ -207,7 +208,7 @@ par() {
     t0=${EPOCHREALTIME/[.,]/}
     # The duration (tenths of a second, integer microseconds so no locale can
     # misread it) is written on EVERY exit path, fail() included.
-    trap 't1=${EPOCHREALTIME/[.,]/}; d=$(( (t1 - t0) / 100000 )); echo "$((d / 10)).$((d % 10))" > "$PAR_DIR/$i.secs"' EXIT
+    trap 't1=${EPOCHREALTIME/[.,]/}; d=$(( (t1 - t0) / 100000 )); echo "$((d / 10)).$((d % 10))" > "$PAR_DIR/$i.secs"; echo "$((t0 / 1000)) $((t1 / 1000))" > "$PAR_DIR/$i.span"' EXIT
     "$@"
   ) </dev/null >"$PAR_DIR/$i.log" 2>&1 &
   PAR_PIDS+=("$!")
@@ -218,6 +219,9 @@ par_join() {
     rc=0; wait "${PAR_PIDS[$i]}" || rc=$?
     cat "$PAR_DIR/$i.log"
     echo "   (parallel stage '${PAR_NAMES[$i]}': $(cat "$PAR_DIR/$i.secs" 2>/dev/null || echo '?')s, exit $rc)"
+    if [ -n "${STAGE_TSV:-}" ] && read -r _t0 _t1 < "$PAR_DIR/$i.span" 2>/dev/null; then
+      printf 'P:%s\t%s\t%s\t%s\n' "${PAR_NAMES[$i]}" "$_t0" "$_t1" "$rc" >> "$STAGE_TSV"
+    fi
     if [ "$rc" -ne 0 ]; then
       msg="$(cat "$PAR_DIR/$i.fail" 2>/dev/null)"
       failed+=("${msg:-${PAR_NAMES[$i]} (exit $rc)}")
@@ -290,6 +294,34 @@ if [ -z "$_pa_pid" ] || kill -0 "$_pa_pid" 2>/dev/null || [ $((SECONDS - _pa_t0)
   fail "par_abort self-check: a failing gate must stop the stages still running in the background"
 fi
 unset _pa _pa_pid _pa_t0
+
+# STAGE TIMING (GL-1, tasks/gate-lane-spec.md). Only `par` stages were timed;
+# about 617 s of a 39-minute gate belonged to no stage anyone could name. Every
+# serial stage now sits between `stage_begin <ID> <label>` and `stage_end`,
+# which prints `   (stage '<ID> <label>': Ns, exit N)` and appends
+# `ID<TAB>start_ms<TAB>end_ms<TAB>exit` to $STAGE_TSV (par rows are `P:<name>`).
+# The `── gate:` banners stay their own echo lines inside the pair, so the
+# banner sequence is what it was. fail() closes the open stage with exit 1, so a
+# failed stage is in the file too. The table at the end lists them, slowest
+# first. Stage IDs are the rows of governance/gate-lanes.json.
+STAGE_TSV="${CARGO_TARGET_DIR:-$ROOT/target}/gate-stages.tsv"
+mkdir -p "$(dirname "$STAGE_TSV")" && : > "$STAGE_TSV" || fail "cannot create the stage log $STAGE_TSV"
+STAGE_ID=""; STAGE_LABEL=""; STAGE_T0=0
+stage_begin() {
+  STAGE_ID="$1"; STAGE_LABEL="$2"; STAGE_T0=$(( ${EPOCHREALTIME/[.,]/} / 1000 ))
+}
+stage_end() {
+  local rc="${1:-0}" t1 d
+  t1=$(( ${EPOCHREALTIME/[.,]/} / 1000 )); d=$(( (t1 - STAGE_T0) / 100 ))
+  printf '%s\t%s\t%s\t%s\n' "$STAGE_ID" "$STAGE_T0" "$t1" "$rc" >> "$STAGE_TSV"
+  echo "   (stage '$STAGE_ID $STAGE_LABEL': $((d / 10)).$((d % 10))s, exit $rc)"
+  STAGE_ID=""
+}
+stage_table() {
+  [ -s "$STAGE_TSV" ] || return 0
+  echo "── stage times, slowest first (seconds; $STAGE_TSV) ──"
+  awk -F'\t' '{ printf "  %8.1f  exit %-3s %s\n", ($3 - $2) / 1000, $4, $1 }' "$STAGE_TSV" | sort -k1,1nr
+}
 
 # The harness-skip log (O006b) is APPEND-only across runs, so the coverage notice
 # at the end of this script would otherwise report skips from previous runs as if
@@ -673,8 +705,10 @@ par_join
 # windows, runs a job under a 2 s deadline, and fails if the host's count of
 # axon_run_* cgroups grew while it ran, so it must not share the window with
 # other stages.
+stage_begin S01 "managed-run supervision"
 echo "── gate: managed-run supervision (result ownership + cancellation scope) ──"
 bash scripts/managed_run_gate.sh || fail "managed-run supervision"
+stage_end
 
 # The Cortex policy boundary. Its proofs existed but nothing ran them: every
 # `cargo test` in this gate targeted axon-core, so `axon-cortex`'s conformance
@@ -687,6 +721,7 @@ bash scripts/managed_run_gate.sh || fail "managed-run supervision"
 # Found when an omitted --grant-snapshot was discovered to silently disable the
 # staleness refusal: the suite that should have caught it was not part of any
 # gate, and five of its six boundary cases were passing vacuously besides.
+stage_begin S02 "cortex policy boundary tests"
 echo "── gate: cortex policy boundary tests ─────────────────────────────"
 # The cortex CLI suite shells out to the interpreter at target/debug/axon and
 # refuses to run without it. Nothing before this point built it, so the stage
@@ -702,6 +737,7 @@ cargo build --locked -q -p axon-core --no-default-features --bin axon \
   || fail "interpreter build (needed by the cortex CLI suite)"
 cargo test --locked -p axon-cortex -p cortex-policy-adapter -p axon-reflex \
   || fail "cortex policy boundary tests"
+stage_end
 
 # The v0.22 closed-loop crates — the contract types, the epoch/ledger store and
 # the Fabric submit path Cortex dispatches checks through. They were CLIPPY-gated
@@ -712,11 +748,13 @@ cargo test --locked -p axon-cortex -p cortex-policy-adapter -p axon-reflex \
 # at this point, into whatever CARGO_TARGET_DIR says. If governance/
 # release-verification.json later lists these same commands, the manifest stage
 # re-runs them; that costs ~seconds and is the safe direction.
+stage_begin S03 "v0.22 closed-loop crate tests"
 echo "── gate: v0.22 closed-loop crate tests (contracts, loop, fabric) ──"
 cargo build --locked -q -p axon-cortex --bins \
   || fail "cortex binary build (needed by axon-fabric's production-caller tests)"
 cargo test --locked -p axon-loop-contracts -p axon-loop -p axon-fabric \
   || fail "v0.22 closed-loop crate tests (axon-loop-contracts / axon-loop / axon-fabric)"
+stage_end
 
 # R1f: the offline fence sweep. `cortex repair` runs every check under a
 # runtime fence derived from the file (AXON_ALLOWED_EFFECTS and the empty
@@ -725,10 +763,12 @@ cargo test --locked -p axon-loop-contracts -p axon-loop -p axon-fabric \
 # receipt-corpus and heldout1 task, `cortex grant` then `axon test --json` with
 # and without the fence: zero status flips required. Offline, no key, seconds;
 # a hard gate before any paid run. Both binaries are the ones built just above.
+stage_begin S04 "cortex fence sweep (R1f)"
 echo "── gate: cortex fence sweep (R1f) ─────────────────────────────────"
 AXON_BIN="$(built_bin axon)" CORTEX_BIN="$(built_bin cortex)" \
   python3 -B crates/axon-cortex/benchmarks/fence_sweep.py \
   || fail "cortex fence sweep: the runtime fence flips a corpus test (crates/axon-cortex/benchmarks/fence_sweep.py)"
+stage_end
 
 # The planted hard-set defects still validate against the code that ranks
 # them: every `defects/*.json` spec applies, keeps its scope, passes corpus.py
@@ -736,10 +776,12 @@ AXON_BIN="$(built_bin axon)" CORTEX_BIN="$(built_bin cortex)" \
 # run_ab's --candidates. A locate change that pushed a planted defect out of
 # reach was a manual note before this. Offline, no key, seconds; the binaries
 # are the ones built above.
+stage_begin S04H "hardset build.py --check"
 echo "── gate: hardset defects still validate (build.py --check) ────────"
 AXON_BIN="$(built_bin axon)" CORTEX_BIN="$(built_bin cortex)" \
   python3 -B crates/axon-cortex/benchmarks/hardset/build.py --check \
   || fail "hardset: a planted defect no longer validates (crates/axon-cortex/benchmarks/hardset/build.py --check)"
+stage_end
 
 # v0.22 Stage-5 gates that are EXECUTED here, by name. A registry row in
 # governance/cortex_gate_execution_registry.json may only vouch for a package gate
@@ -749,12 +791,16 @@ AXON_BIN="$(built_bin axon)" CORTEX_BIN="$(built_bin cortex)" \
 # are built just above; placed earlier (as it first was) every production-caller
 # test failed with "needs the `axon` binary" on a clean snapshot. The runner fails if a listed test is missing
 # or the filtered run executes fewer tests than listed.
+stage_begin S05 "v0.22 Stage-5 executed gates"
 echo "── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) ──"
 ./scripts/v022_stage5_gates.sh || fail "v0.22 Stage-5 gate tests"
+stage_end
 # Protected Check Isolation — the prerequisite of any protected-verifier claim
 # (G01 alone is never sufficient): one row per surface, exact test names.
+stage_begin S06 "v0.22 PCI surfaces"
 echo "── gate: v0.22 Protected Check Isolation surfaces ──"
 ./scripts/v022_pci_gates.sh || fail "v0.22 Protected Check Isolation surfaces"
+stage_end
 # The trust-root preflight MECHANISM on a dev fixture. As root it is the second
 # longest single stage of the gate (~25 min measured at 9e67b796 on a loaded
 # host: ~50 fixtures, each probed as six service UIDs) and it keeps about ONE
@@ -769,6 +815,7 @@ echo "── gate: v0.22 Protected Check Isolation surfaces ──"
 # modes), through the script's own AXON_FABRIC_BIN / AXON_PROTECTED_LAUNCHER_BIN
 # inputs. It measures no time. Not root: the script prints NOT_RUN and builds
 # nothing, so it runs inline as before.
+stage_begin S07 "v0.22 trust-root preflight (inline, or its background start)"
 echo "── gate: v0.22 trust-root preflight mechanism (dev mode) ──"
 TR_BINS=""
 stage_trust_root_preflight() {
@@ -791,8 +838,10 @@ if [ "$(id -u)" = 0 ]; then
 else
   stage_trust_root_preflight
 fi
+stage_end
 # PSV in a REAL Firecracker guest. SKIP (77: no root/KVM/built image) is a
 # NON-RESULT, reported as such, never as a pass.
+stage_begin S08 "v0.22 PSV real-guest boot"
 cargo build -q -p axon-psv --example psv_dev || fail "v0.22 PSV dev tool build"
 bash scripts/psv_guest_boot_test.sh; rc=$?
 case $rc in
@@ -800,6 +849,7 @@ case $rc in
   77) echo "v0.22 PSV real-guest boot test: SKIP (non-result: not proven on this host)" ;;
   *) fail "v0.22 PSV real-guest boot test" ;;
 esac
+stage_end "$rc"
 
 # The same crate again with `ai` on, because that feature gates the only
 # model-backed generator — the one production path where a model contributes to
@@ -807,21 +857,27 @@ esac
 # module would rot exactly the way lsp.rs did below: present, plausible, and
 # verified by nothing. Clippy as well as test, since the default clippy sweep
 # further down also passes no features.
+stage_begin S09 "cortex ai-generator lint + tests"
 cargo clippy --locked -p axon-cortex --all-targets --features ai -- -D warnings \
   || fail "cortex ai-generator lint"
 cargo test --locked -p axon-cortex --features ai \
   || fail "cortex ai-generator tests"
+stage_end
 
 
 # A gate function that produced no readable verdict must not be scored as a
 # pass. Landed RED and deliberately unwired; wired here now that it is green,
 # because a gate nobody runs is the defect one layer up.
+stage_begin S10 "gate_verdict_is_read"
 AXON="$(built_bin axon)" bash scripts/gate_verdict_is_read.sh \
   || fail "a safety gate with no readable verdict is being scored as passed"
+stage_end
 
 
+stage_begin S11 "native codegen build"
 echo "── gate: native codegen build ─────────────────────────────────────"
 cargo build --locked -p axon-core || fail "native build"
+stage_end
 
 # AUDIT T15 (finding P5-34). Nothing ever built the serde-json feature — not
 # gate.sh, not CI — so lsp.rs rotted silently as new Type variants landed and
@@ -829,6 +885,7 @@ cargo build --locked -p axon-core || fail "native build"
 # `axon parse --json`, both advertised in CLAUDE.md under "Phase 4 ✅ Complete",
 # could not be compiled at all. An advertised command with no build gate is a
 # command that will eventually stop existing without anyone noticing.
+stage_begin S12 "serde-json feature builds + tests"
 echo "── gate: serde-json feature builds (axon lsp / axon parse --json) ─"
 # clippy type-checks what `cargo check` did (lib + bin) plus every test target,
 # and -D warnings also fails on what check only warns about. No other axon-core
@@ -849,9 +906,12 @@ cargo test --locked -p axon-core --no-default-features --features serde-json \
   --lib lsp::tests || fail "lsp unit tests (serde-json)"
 cargo test --locked -p axon-core --no-default-features --features serde-json \
   --test lsp_multi_file || fail "lsp multi-file tests (serde-json)"
+stage_end
 
+stage_begin S13 "lib clippy"
 echo "── gate: clippy (lib, -D warnings) ────────────────────────────────"
 cargo clippy --locked --no-default-features -p axon-core -- -D warnings || fail "lib clippy"
+stage_end
 
 # BUG_HUNT #35: the runtime crates (axon-rt/axon-ai/axon-surface) used to be
 # invisible to the clippy gate (scoped to -p axon-core), hiding ~80 lints. They
@@ -867,6 +927,7 @@ cargo clippy --locked --no-default-features -p axon-core -- -D warnings || fail 
 # — the crate landed as a workspace member with 63 tests but was never lint-
 # gated; 2 mechanical clippy fixes (a ?-operator rewrite, a redundant &) made
 # it clean, no behavior change.
+stage_begin S14 "runtime-crate clippy"
 echo "── gate: clippy runtime crates (-D warnings) ─────────────────────"
 # O-RLM-04: this list is an ALLOWLIST, not the workspace, so a crate absent from
 # it is simply unlinted — and a green gate reads as coverage. Six crates were
@@ -889,11 +950,13 @@ cargo clippy --locked -p axon-rt -p axon-rt-ai -p axon-ai -p axon-surface -p axo
   -p axon-fabric -p axon-loop -p axon-psv -p axon-workspace-recipe -p axon-jobctl \
   --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
+stage_end
 
 # COVERAGE CHECK — the note above has been written three times and the list
 # drifted anyway, because a comment cannot fail a build. Every workspace member
 # must be either lint-gated above (or as axon-core separately) or named here with
 # a reason. Adding a crate without doing one of those now turns the gate RED.
+stage_begin S15 "clippy coverage"
 echo "── gate: clippy coverage (every crate gated or excused) ──────────"
 # CLIPPY_EXCUSED (the crates excused, each with its reason) is defined near the
 # top of this file: the fast tier reads it too.
@@ -922,6 +985,7 @@ if [ -n "$_missing" ]; then
   fail "clippy coverage"
 fi
 echo "  ✓ all $(ls crates | wc -l) workspace crates are lint-gated or excused"
+stage_end
 
 # ORDERING, twice revised, and both revisions were driven by measurement.
 #
@@ -939,20 +1003,24 @@ echo "  ✓ all $(ls crates | wc -l) workspace crates are lint-gated or excused"
 # So it sits here: after the cheap checks, before the codegen build that
 # restores the binary the parity stages consume. Nothing is weakened — every
 # stage still runs and still blocks; only the order changed.
+stage_begin S16 "axon-core tests"
 echo "── gate: tests (--no-default-features) ─────────────────────────────"
 if [ "$USE_NEXTEST" = 1 ] && command -v cargo-nextest >/dev/null 2>&1; then
   cargo nextest run -p axon-core --no-default-features || fail "tests (nextest)"
 else
   cargo test --locked -p axon-core --no-default-features || fail "tests"
 fi
+stage_end
 
 # REBUILD the codegen binary. The stage above rebuilt `target/debug/axon`
 # WITHOUT codegen, and every parity harness below consumes that path. Measured
 # when this rebuild was absent: `wasm_browser_io_parity: FAIL — $AXON has no
 # codegen backend (E0907)`. The harness refused to call it a skip, which is the
 # only reason it was visible rather than a silent 14-harness gap.
+stage_begin S17 "codegen rebuild"
 echo "── gate: restore the codegen binary after the no-default test stage ──"
 cargo build --locked -q -p axon-core --bin axon || fail "codegen rebuild after tests"
+stage_end
 
 # Join the background trust-root preflight (started after the PCI surfaces)
 # before the manifest stage, so no axon-fabric test run ever overlaps it.
@@ -979,9 +1047,12 @@ fi
 # The dependency graph is the one build input a commit hash did not pin until
 # Cargo.lock was tracked (473480f). Runs early and unconditionally: it is
 # seconds, and everything below builds against whatever the lockfile says.
+stage_begin S19 "lockfile"
 echo "── gate: lockfile tracked and current ────────────────────────────"
 ./scripts/lockfile_gate.sh || fail "lockfile gate"
+stage_end
 
+stage_begin S20 "required crate verification (manifest)"
 echo "── gate: required crate verification (manifest-driven) ───────────"
 MANIFEST="$ROOT/governance/release-verification.json"
 [ -f "$MANIFEST" ] || fail "release verification manifest missing at $MANIFEST"
@@ -1006,6 +1077,7 @@ for name, spec in sorted(m["crates"].items()):
         print(c)
 PYEOF
 )
+stage_end
 
 
 
@@ -1390,9 +1462,12 @@ fi
 
 echo ""
 if [ "$PROFILE" = v022-stage5 ]; then
+  stage_begin S21 "v0.22 Stage-5 verification profile"
   echo "── gate: v0.22 Stage-5 verification profile (exact Axon + MiCode pair) ──"
   # Results land where run_managed tells it (bound into the receipt), else target/.
   python3 -B scripts/v022_stage5_verify.py --results "${STAGE_RESULTS:-target/v022-stage5-results.json}" \
     || fail "v0.22 Stage-5 verification profile (a required Stage-5 harness did not PASS)"
+  stage_end
 fi
+stage_table
 echo "✅ gate PASSED"
