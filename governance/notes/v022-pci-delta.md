@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 43208ed8a38dbfce8c685883e1b81ebeeb4f60b6
+generated-at: 205e8a002d3002d669e93c366ddc4e2d4b6f99bd
 
-`git diff --numstat 31413ca7..43208ed8 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..205e8a00 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -29,7 +29,7 @@ generated-at: 43208ed8a38dbfce8c685883e1b81ebeeb4f60b6
 | `crates/axon-core/src/builtins.rs` | 68 | 11 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 940 | 340 |
-| `crates/axon-core/src/checker.rs` | 1500 | 528 |
+| `crates/axon-core/src/checker.rs` | 1714 | 569 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
 | `crates/axon-core/src/codegen/asi.rs` | 172 | 37 |
@@ -50,7 +50,7 @@ generated-at: 43208ed8a38dbfce8c685883e1b81ebeeb4f60b6
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
 | `crates/axon-core/src/effects.rs` | 755 | 126 |
 | `crates/axon-core/src/env_registry.rs` | 15 | 3 |
-| `crates/axon-core/src/error.rs` | 35 | 15 |
+| `crates/axon-core/src/error.rs` | 36 | 16 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
@@ -92,15 +92,15 @@ generated-at: 43208ed8a38dbfce8c685883e1b81ebeeb4f60b6
 | `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
 | `crates/axon-core/src/parser.rs` | 460 | 32 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
-| `crates/axon-core/src/resolver.rs` | 902 | 121 |
+| `crates/axon-core/src/resolver.rs` | 954 | 122 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/span.rs` | 98 | 3 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 58870 | 8283 |
+| total | 59137 | 8326 |
 
-`git log --reverse 31413ca7..43208ed8 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..205e8a00 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -425,7 +425,11 @@ generated-at: 43208ed8a38dbfce8c685883e1b81ebeeb4f60b6
 | 128d70be | checker soundness | infer: a builtin's T/U/V slots are TypeParams instantiated per call site (structural substitution), not Deferred wildcards, so a dict_get_or result flowing into a [i64] field is E0102 at check instead of a run-time panic; the checker's same-T binder matches TypeParam; generic builtins are not queued for monomorphization; builtin type-param names are kept apart from user generics and chosen by the sig the call reaches (CS-4 shadowing). |
 | 2ba68e53 | checker soundness | main.rs cmd_check: `axon check` exits 0 unless an error-severity diagnostic was emitted (a note or lint warning alone no longer exits 2), matching the --help contract; no evaluator change (O-CS-04, SF-5). |
 | 43208ed8 | checker soundness | resolver.rs: a user fn that shadows a builtin (W0003), named in value position, is E0306 at the reference (call_prefers_builtin(name, false)); top-level lets are exempt; error.rs E0306 text. No evaluator change: the checker now refuses the program the interpreter would have run against the builtin (O-CS-03, SF-6). |
-| 321 commits | | |
+| f226d95d | checker soundness | resolver.rs refuse_non_value_name: a module, type or enum name in value or callee position is E0404 at the reference; checker.rs: an M::f path through a declared module (or a native fn missing from its module's table) is no longer exempt from the unknown-qualified-path E0404; error.rs E0404 text. No evaluator change: every refused program panicked at run before (undefined identifier / not callable), O-SF-03. |
+| e6e9aae8 | checker soundness | checker.rs: a call whose callee names a local, param or top-level let holding a fn value of known type (let-bound user fn or lambda, fn(..)-typed param) is checked against that type like a direct call (E0305 arity, E0306 argument type); a local of unknown type no longer falls through to a top-level fn it shadows; lambda params shadow outer locals. No evaluator change, O-SF-01. |
+| a02d632f | fix/fnval merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 4707cf11 | checker soundness | checker.rs: names a match-arm pattern binds shadow outer fn values for the guard and body (Type::Unknown, via resolver.rs collect_pattern_binding_names, now pub(crate)); a lambda param typed by a one-variant enum naming a primitive (`type Name = str`) types as that primitive; the native-typo E0404 help lists the module's functions. Removes false refusals only; no evaluator change (SND#1/#3/#4). |
+| 325 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -584,7 +588,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 513 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 530 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
