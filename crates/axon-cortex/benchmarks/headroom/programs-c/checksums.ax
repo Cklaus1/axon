@@ -1,0 +1,235 @@
+// Check digits for card numbers, ISBNs and IBANs.
+
+fn is_digit_code(c: i64) -> bool {
+    c >= 48 && c <= 57
+}
+
+fn luhn_valid(number: str) -> bool {
+    let n = len(number)
+    let sum = 0
+    let digits = 0
+    let i = n - 1
+    while i >= 0 {
+        let c = char_at(number, i)
+        if c != 32 {
+            if !is_digit_code(c) {
+                return false
+            }
+            let d = c - 48
+            if digits % 2 == 1 {
+                d = d * 2
+                if d > 9 {
+                    d = d - 9
+                }
+            }
+            sum = sum + d
+            digits = digits + 1
+        }
+        i = i - 1
+    }
+    if digits < 2 {
+        return false
+    }
+    sum % 10 == 0
+}
+
+fn isbn10_valid(isbn: str) -> bool {
+    let s = str_replace(isbn, "-", "")
+    if len(s) != 10 {
+        return false
+    }
+    let sum = 0
+    let i = 0
+    while i < 10 {
+        let c = char_at(s, i)
+        let value = 0
+        if is_digit_code(c) {
+            value = c - 48
+        } else if (c == 88 || c == 120) && i == 9 {
+            value = 10
+        } else {
+            return false
+        }
+        sum = sum + value * (10 - i)
+        i = i + 1
+    }
+    sum % 11 == 0
+}
+
+fn isbn13_check_digit(first12: str) -> i64 {
+    let sum = 0
+    let i = 0
+    while i < 12 {
+        let d = char_at(first12, i) - 48
+        if i % 2 == 0 {
+            sum = sum + d
+        } else {
+            sum = sum + 3 * d
+        }
+        i = i + 1
+    }
+    (10 - sum % 10) % 10
+}
+
+fn isbn13_valid(isbn: str) -> bool {
+    let s = str_replace(isbn, "-", "")
+    if len(s) != 13 {
+        return false
+    }
+    let i = 0
+    while i < 13 {
+        if !is_digit_code(char_at(s, i)) {
+            return false
+        }
+        i = i + 1
+    }
+    isbn13_check_digit(s) == char_at(s, 12) - 48
+}
+
+fn isbn10_to_13(isbn: str) -> str {
+    if !isbn10_valid(isbn) {
+        return ""
+    }
+    let s = str_replace(isbn, "-", "")
+    let body = "978" + str_slice(s, 0, 9)
+    body + to_str(isbn13_check_digit(body))
+}
+
+fn mod97(digits: str) -> i64 {
+    let rem = 0
+    let start = 0
+    let n = len(digits)
+    while start < n {
+        let end = min_i64(start + 7, n)
+        rem = parse_int_or(to_str(rem) + str_slice(digits, start, end), 0) % 97
+        start = end
+    }
+    rem
+}
+
+fn iban_valid(iban: str) -> bool {
+    let s = str_to_upper(str_replace(iban, " ", ""))
+    let n = len(s)
+    if n < 15 || n > 34 {
+        return false
+    }
+    let i = 0
+    while i < 4 {
+        let c = char_at(s, i)
+        if i < 2 && (c < 65 || c > 90) {
+            return false
+        }
+        if i >= 2 && !is_digit_code(c) {
+            return false
+        }
+        i = i + 1
+    }
+    let moved = str_slice(s, 4, n) + str_slice(s, 0, 4)
+    let digits = ""
+    let j = 0
+    while j < n {
+        let c = char_at(moved, j)
+        if is_digit_code(c) {
+            digits = digits + chr(c)
+        } else if c >= 65 && c <= 90 {
+            digits = digits + to_str(c - 55)
+        } else {
+            return false
+        }
+        j = j + 1
+    }
+    mod97(digits) == 1
+}
+
+@[test]
+fn test_is_digit_code() {
+    assert(is_digit_code(48))
+    assert(is_digit_code(57))
+    assert(!is_digit_code(65))
+}
+
+@[test]
+fn test_luhn_valid_with_spaces() {
+    assert(luhn_valid("4539 1488 0343 6467"))
+    assert(luhn_valid("79927398713"))
+}
+
+@[test]
+fn test_luhn_bad_checksum() {
+    assert(!luhn_valid("79927398710"))
+    assert(!luhn_valid("4539 1488 0343 6468"))
+}
+
+@[test]
+fn test_luhn_rejects_junk_and_short() {
+    assert(!luhn_valid("4539-1488"))
+    assert(!luhn_valid("0"))
+    assert(!luhn_valid("   "))
+    assert(luhn_valid("00"))
+}
+
+@[test]
+fn test_isbn10_valid_digits() {
+    assert(isbn10_valid("0-306-40615-2"))
+    assert(!isbn10_valid("0-306-40615-3"))
+}
+
+@[test]
+fn test_isbn10_check_x() {
+    assert(isbn10_valid("0-8044-2957-X"))
+    assert(isbn10_valid("080442957x"))
+    assert(!isbn10_valid("08044295X7"))
+}
+
+@[test]
+fn test_isbn10_bad_length_or_chars() {
+    assert(!isbn10_valid("030640615"))
+    assert(!isbn10_valid("03064O6152"))
+}
+
+@[test]
+fn test_isbn13_check_digit() {
+    assert_eq(isbn13_check_digit("978030640615"), 7)
+    assert_eq(isbn13_check_digit("978000000000"), 2)
+}
+
+@[test]
+fn test_isbn13_valid() {
+    assert(isbn13_valid("978-0-306-40615-7"))
+    assert(!isbn13_valid("978-0-306-40615-8"))
+    assert(!isbn13_valid("978-0-306-4061A-7"))
+    assert(!isbn13_valid("97803064061"))
+}
+
+@[test]
+fn test_isbn10_to_13() {
+    assert_eq_str(isbn10_to_13("0-306-40615-2"), "9780306406157")
+    assert_eq_str(isbn10_to_13("0-8044-2957-X"), "9780804429573")
+    assert_eq_str(isbn10_to_13("0-306-40615-9"), "")
+}
+
+@[test]
+fn test_mod97_chunks() {
+    assert_eq(mod97("97"), 0)
+    assert_eq(mod97("1234567890123"), 1234567890123 % 97)
+    assert_eq(mod97(""), 0)
+}
+
+@[test]
+fn test_iban_valid_examples() {
+    assert(iban_valid("GB82 WEST 1234 5698 7654 32"))
+    assert(iban_valid("de89 3704 0044 0532 0130 00"))
+}
+
+@[test]
+fn test_iban_bad_checksum() {
+    assert(!iban_valid("GB83 WEST 1234 5698 7654 32"))
+}
+
+@[test]
+fn test_iban_structure_rejects() {
+    assert(!iban_valid("GB82 WEST"))
+    assert(!iban_valid("1282 WEST 1234 5698 7654 32"))
+    assert(!iban_valid("GBX2 WEST 1234 5698 7654 32"))
+    assert(!iban_valid("GB82 WEST 1234 5698 7654 3-"))
+}

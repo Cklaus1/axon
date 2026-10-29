@@ -1,0 +1,259 @@
+// Progressive income tax computed in integer cents.
+
+fn default_thresholds() -> [i64] {
+    [0, 1100000, 4500000, 9500000, 20000000]
+}
+
+fn default_rates() -> [i64] {
+    [1000, 1200, 2200, 2400, 3200]
+}
+
+fn apply_bps(amount: i64, bps: i64) -> i64 {
+    (amount * bps + 5000) / 10000
+}
+
+fn bracket_tax(taxable: i64, thresholds: [i64], rates: [i64]) -> i64 {
+    if taxable <= 0 {
+        return 0
+    }
+    let n = len(thresholds)
+    if n == 0 || n != len(rates) {
+        return -1
+    }
+    let total = 0
+    let i = 0
+    let done = false
+    while i < n && !done {
+        let lower = thresholds[i]
+        if taxable <= lower {
+            done = true
+        } else {
+            let upper = taxable
+            if i + 1 < n {
+                let next = thresholds[i + 1]
+                if next < taxable {
+                    upper = next
+                }
+            }
+            total = total + apply_bps(upper - lower, rates[i])
+            i = i + 1
+        }
+    }
+    total
+}
+
+fn marginal_rate(income: i64, thresholds: [i64], rates: [i64]) -> i64 {
+    let rate = 0
+    for i in 0..len(thresholds) {
+        if income > thresholds[i] {
+            rate = rates[i]
+        }
+    }
+    rate
+}
+
+fn standard_deduction(status: str) -> i64 {
+    if status == "joint" {
+        2900000
+    } else if status == "head" {
+        2200000
+    } else {
+        1450000
+    }
+}
+
+fn chosen_deduction(status: str, gross: i64, medical: i64, local_taxes: i64, mortgage: i64, charity: i64) -> i64 {
+    let standard = standard_deduction(status)
+    let itemized = 0
+    let medical_floor = apply_bps(gross, 750)
+    if medical > medical_floor {
+        itemized = itemized + medical - medical_floor
+    }
+    let local_cap = 1000000
+    if status == "separate" {
+        local_cap = 500000
+    }
+    if local_taxes > local_cap {
+        itemized = itemized + local_cap
+    } else if local_taxes > 0 {
+        itemized = itemized + local_taxes
+    }
+    if mortgage > 0 {
+        itemized = itemized + mortgage
+    }
+    let charity_cap = apply_bps(gross, 6000)
+    if charity > charity_cap {
+        itemized = itemized + charity_cap
+    } else if charity > 0 {
+        itemized = itemized + charity
+    }
+    if itemized > standard {
+        itemized
+    } else {
+        standard
+    }
+}
+
+fn child_credit(children: i64, income: i64, status: str) -> i64 {
+    if children <= 0 {
+        return 0
+    }
+    let per_child = 200000
+    let full = children * per_child
+    let threshold = 20000000
+    if status == "joint" {
+        threshold = 40000000
+    }
+    if income <= threshold {
+        return full
+    }
+    let excess = income - threshold
+    let step = 100000
+    let steps = excess / step
+    if excess % step != 0 {
+        steps = steps + 1
+    }
+    let reduction = steps * 5000
+    if reduction >= full {
+        0
+    } else {
+        full - reduction
+    }
+}
+
+fn round_to_dollars(cents: i64) -> i64 {
+    if cents >= 0 {
+        (cents + 50) / 100
+    } else {
+        0 - ((0 - cents + 50) / 100)
+    }
+}
+
+fn total_tax_dollars(status: str, gross: i64, medical: i64, local_taxes: i64, mortgage: i64, charity: i64, children: i64) -> i64 {
+    let deduction = chosen_deduction(status, gross, medical, local_taxes, mortgage, charity)
+    let taxable = max_i64(gross - deduction, 0)
+    let before = bracket_tax(taxable, default_thresholds(), default_rates())
+    let owed = max_i64(before - child_credit(children, gross, status), 0)
+    round_to_dollars(owed)
+}
+
+@[test]
+fn test_apply_bps_rounds_half_up() {
+    assert_eq(apply_bps(10000, 1000), 1000)
+    assert_eq(apply_bps(5, 1000), 1)
+    assert_eq(apply_bps(4, 1000), 0)
+}
+
+@[test]
+fn test_bracket_tax_zero_income() {
+    assert_eq(bracket_tax(0, default_thresholds(), default_rates()), 0)
+    assert_eq(bracket_tax(-500, default_thresholds(), default_rates()), 0)
+}
+
+@[test]
+fn test_bracket_tax_first_bracket_only() {
+    assert_eq(bracket_tax(1000000, default_thresholds(), default_rates()), 100000)
+}
+
+@[test]
+fn test_bracket_tax_spans_three_brackets() {
+    assert_eq(bracket_tax(5000000, default_thresholds(), default_rates()), 628000)
+}
+
+@[test]
+fn test_bracket_tax_top_bracket() {
+    assert_eq(bracket_tax(30000000, default_thresholds(), default_rates()), 7338000)
+}
+
+@[test]
+fn test_bracket_tax_mismatched_table() {
+    assert_eq(bracket_tax(5000000, [0, 100], [1000]), -1)
+    assert_eq(bracket_tax(5000000, [], []), -1)
+}
+
+@[test]
+fn test_bracket_tax_nonzero_first_threshold() {
+    assert_eq(bracket_tax(150000, [100000], [2000]), 10000)
+    assert_eq(bracket_tax(50000, [100000], [2000]), 0)
+}
+
+@[test]
+fn test_marginal_rate_levels() {
+    assert_eq(marginal_rate(0, default_thresholds(), default_rates()), 0)
+    assert_eq(marginal_rate(500000, default_thresholds(), default_rates()), 1000)
+    assert_eq(marginal_rate(1100000, default_thresholds(), default_rates()), 1000)
+    assert_eq(marginal_rate(1100001, default_thresholds(), default_rates()), 1200)
+    assert_eq(marginal_rate(50000000, default_thresholds(), default_rates()), 3200)
+}
+
+@[test]
+fn test_standard_deduction_by_status() {
+    assert_eq(standard_deduction("joint"), 2900000)
+    assert_eq(standard_deduction("head"), 2200000)
+    assert_eq(standard_deduction("single"), 1450000)
+}
+
+@[test]
+fn test_chosen_deduction_prefers_standard() {
+    assert_eq(chosen_deduction("single", 6000000, 100000, 300000, 0, 50000), 1450000)
+}
+
+@[test]
+fn test_chosen_deduction_itemized_with_caps() {
+    assert_eq(chosen_deduction("single", 10000000, 1000000, 1500000, 1200000, 200000), 2650000)
+}
+
+@[test]
+fn test_chosen_deduction_separate_local_cap() {
+    assert_eq(chosen_deduction("separate", 4000000, 0, 900000, 1200000, 0), 1700000)
+}
+
+@[test]
+fn test_chosen_deduction_charity_capped() {
+    assert_eq(chosen_deduction("joint", 1000000, 0, 0, 0, 5000000), 2900000)
+    assert_eq(chosen_deduction("head", 5000000, 0, 0, 0, 5000000), 3000000)
+}
+
+@[test]
+fn test_child_credit_no_children() {
+    assert_eq(child_credit(0, 5000000, "single"), 0)
+}
+
+@[test]
+fn test_child_credit_below_threshold() {
+    assert_eq(child_credit(3, 15000000, "single"), 600000)
+    assert_eq(child_credit(2, 40000000, "joint"), 400000)
+}
+
+@[test]
+fn test_child_credit_partial_phaseout() {
+    assert_eq(child_credit(2, 20250000, "single"), 385000)
+    assert_eq(child_credit(1, 40100000, "joint"), 195000)
+}
+
+@[test]
+fn test_child_credit_fully_phased_out() {
+    assert_eq(child_credit(1, 30000000, "single"), 0)
+}
+
+@[test]
+fn test_round_to_dollars() {
+    assert_eq(round_to_dollars(12349), 123)
+    assert_eq(round_to_dollars(12350), 124)
+    assert_eq(round_to_dollars(-12350), -124)
+}
+
+@[test]
+fn test_total_tax_simple_single() {
+    assert_eq(total_tax_dollars("single", 6450000, 0, 0, 0, 0, 0), 6280)
+}
+
+@[test]
+fn test_total_tax_credit_wipes_out() {
+    assert_eq(total_tax_dollars("joint", 3000000, 0, 0, 0, 0, 2), 0)
+}
+
+@[test]
+fn test_total_tax_itemized_with_children() {
+    assert_eq(total_tax_dollars("single", 10000000, 1000000, 1500000, 1200000, 200000, 1), 9450)
+}

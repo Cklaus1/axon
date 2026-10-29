@@ -1,0 +1,247 @@
+// Weekly payroll for hourly workers.
+// A timesheet is seven daily hour counts, Monday first and Sunday last.
+
+fn split_hours(hours: [i64]) -> [i64] {
+    if len(hours) != 7 {
+        return []
+    }
+    let regular = 0
+    let overtime = 0
+    let sunday = 0
+    let day = 0
+    while day < 7 {
+        let h = hours[day]
+        if h < 0 || h > 24 {
+            return []
+        }
+        if day == 6 {
+            sunday = h
+        } else {
+            let daily_extra = 0
+            if h > 8 {
+                daily_extra = h - 8
+            }
+            let base = h - daily_extra
+            if regular + base > 40 {
+                let spill = regular + base - 40
+                overtime = overtime + spill
+                base = base - spill
+            }
+            regular = regular + base
+            overtime = overtime + daily_extra
+        }
+        day = day + 1
+    }
+    [regular, overtime, sunday]
+}
+
+fn overtime_hours(hours: [i64]) -> i64 {
+    let parts = split_hours(hours)
+    if len(parts) == 0 {
+        return -1
+    }
+    parts[1]
+}
+
+fn gross_pay_cents(hours: [i64], rate: i64) -> i64 {
+    let parts = split_hours(hours)
+    if len(parts) == 0 || rate < 0 {
+        return -1
+    }
+    let regular_pay = parts[0] * rate
+    let overtime_pay = (parts[1] * rate * 3 + 1) / 2
+    let sunday_pay = parts[2] * rate * 2
+    regular_pay + overtime_pay + sunday_pay
+}
+
+fn format_cents(cents: i64) -> str {
+    let negative = cents < 0
+    let v = cents
+    if negative {
+        v = 0 - cents
+    }
+    let dollars = v / 100
+    let rest = v % 100
+    let digits = to_str(dollars)
+    let grouped = ""
+    let n = len(digits)
+    let i = 0
+    while i < n {
+        if i > 0 && (n - i) % 3 == 0 {
+            grouped = grouped + ","
+        }
+        grouped = grouped + str_slice(digits, i, i + 1)
+        i = i + 1
+    }
+    let frac = to_str(rest)
+    if rest < 10 {
+        frac = "0" + frac
+    }
+    let out = "$" + grouped + "." + frac
+    if negative {
+        out = "-" + out
+    }
+    out
+}
+
+fn payslip(name: str, hours: [i64], rate: i64) -> str {
+    let label = str_trim(name)
+    if len(label) == 0 {
+        label = "unnamed"
+    }
+    let parts = split_hours(hours)
+    if len(parts) == 0 || rate < 0 {
+        return label + ": invalid timesheet"
+    }
+    let total = parts[0] + parts[1] + parts[2]
+    if total == 0 {
+        return label + ": no hours worked"
+    }
+    let line = label + ": " + to_str(parts[0]) + "h regular"
+    if parts[1] > 0 {
+        line = line + ", " + to_str(parts[1]) + "h overtime"
+    }
+    if parts[2] > 0 {
+        line = line + ", " + to_str(parts[2]) + "h sunday"
+    }
+    line = line + ", rate " + format_cents(rate) + "/h"
+    let gross = gross_pay_cents(hours, rate)
+    line = line + ", gross " + format_cents(gross)
+    line
+}
+
+fn total_payroll(sheets: [[i64]], rates: [i64]) -> i64 {
+    if len(sheets) != len(rates) {
+        return -1
+    }
+    let total = 0
+    let i = 0
+    while i < len(sheets) {
+        let pay = gross_pay_cents(sheets[i], rates[i])
+        if pay > 0 {
+            total = total + pay
+        }
+        i = i + 1
+    }
+    total
+}
+
+@[test]
+fn test_split_standard_week() {
+    let parts = split_hours([8, 8, 8, 8, 8, 0, 0])
+    assert_eq(len(parts), 3)
+    assert_eq(parts[0], 40)
+    assert_eq(parts[1], 0)
+    assert_eq(parts[2], 0)
+}
+
+@[test]
+fn test_split_daily_overtime() {
+    let parts = split_hours([12, 12, 12, 12, 0, 0, 0])
+    assert_eq(parts[0], 32)
+    assert_eq(parts[1], 16)
+    assert_eq(parts[2], 0)
+}
+
+@[test]
+fn test_split_weekly_overtime_on_saturday() {
+    let parts = split_hours([8, 8, 8, 8, 8, 5, 0])
+    assert_eq(parts[0], 40)
+    assert_eq(parts[1], 5)
+}
+
+@[test]
+fn test_split_daily_and_weekly_never_double_count() {
+    let parts = split_hours([9, 9, 9, 9, 9, 9, 4])
+    assert_eq(parts[0], 40)
+    assert_eq(parts[1], 14)
+    assert_eq(parts[2], 4)
+}
+
+@[test]
+fn test_split_rejects_bad_sheets() {
+    assert_eq(len(split_hours([8, 8])), 0)
+    assert_eq(len(split_hours([8, -1, 8, 8, 8, 0, 0])), 0)
+    assert_eq(len(split_hours([8, 8, 8, 8, 8, 0, 25])), 0)
+}
+
+@[test]
+fn test_overtime_hours_values() {
+    assert_eq(overtime_hours([10, 8, 8, 8, 8, 0, 0]), 2)
+    assert_eq(overtime_hours([0, 0, 0, 0, 0, 0, 12]), 0)
+    assert_eq(overtime_hours([1, 2, 3]), -1)
+}
+
+@[test]
+fn test_gross_pay_mixed_week() {
+    assert_eq(gross_pay_cents([8, 8, 8, 8, 8, 0, 0], 2000), 80000)
+    assert_eq(gross_pay_cents([10, 8, 8, 8, 8, 0, 0], 2000), 86000)
+    assert_eq(gross_pay_cents([9, 9, 9, 9, 9, 9, 4], 1500), 103500)
+}
+
+@[test]
+fn test_gross_pay_rounds_half_cent_up() {
+    assert_eq(gross_pay_cents([9, 0, 0, 0, 0, 0, 0], 1001), 9510)
+}
+
+@[test]
+fn test_gross_pay_invalid() {
+    assert_eq(gross_pay_cents([8, 8, 8, 8, 8, 0, 0], -5), -1)
+    assert_eq(gross_pay_cents([], 1000), -1)
+}
+
+@[test]
+fn test_format_cents_small() {
+    assert_eq_str(format_cents(0), "$0.00")
+    assert_eq_str(format_cents(5), "$0.05")
+    assert_eq_str(format_cents(1999), "$19.99")
+}
+
+@[test]
+fn test_format_cents_grouping() {
+    assert_eq_str(format_cents(103500), "$1,035.00")
+    assert_eq_str(format_cents(100000000), "$1,000,000.00")
+    assert_eq_str(format_cents(12345678), "$123,456.78")
+}
+
+@[test]
+fn test_format_cents_negative() {
+    assert_eq_str(format_cents(-123456789), "-$1,234,567.89")
+    assert_eq_str(format_cents(-40), "-$0.40")
+}
+
+@[test]
+fn test_payslip_full_line() {
+    let s = payslip("Ann", [9, 9, 9, 9, 9, 9, 4], 1500)
+    assert_eq_str(s, "Ann: 40h regular, 14h overtime, 4h sunday, rate $15.00/h, gross $1,035.00")
+}
+
+@[test]
+fn test_payslip_blank_name_no_extras() {
+    let s = payslip("   ", [8, 8, 8, 8, 8, 0, 0], 2000)
+    assert_eq_str(s, "unnamed: 40h regular, rate $20.00/h, gross $800.00")
+}
+
+@[test]
+fn test_payslip_sunday_only() {
+    let s = payslip("Di", [0, 0, 0, 0, 0, 0, 6], 1000)
+    assert_eq_str(s, "Di: 0h regular, 6h sunday, rate $10.00/h, gross $120.00")
+}
+
+@[test]
+fn test_payslip_no_hours_and_invalid() {
+    assert_eq_str(payslip("Bo", [0, 0, 0, 0, 0, 0, 0], 2000), "Bo: no hours worked")
+    assert_eq_str(payslip("Cy", [8, 8], 2000), "Cy: invalid timesheet")
+    assert_eq_str(payslip("Ed", [8, 8, 8, 8, 8, 0, 0], -1), "Ed: invalid timesheet")
+}
+
+@[test]
+fn test_total_payroll_skips_invalid() {
+    let sheets = [[8, 8, 8, 8, 8, 0, 0], [8, 8], [0, 0, 0, 0, 0, 0, 6]]
+    assert_eq(total_payroll(sheets, [2000, 3000, 1000]), 92000)
+}
+
+@[test]
+fn test_total_payroll_length_mismatch() {
+    assert_eq(total_payroll([[8, 8, 8, 8, 8, 0, 0]], [1000, 2000]), -1)
+}

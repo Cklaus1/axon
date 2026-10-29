@@ -1,0 +1,286 @@
+// Vending machine with a limited coin bank and a stream of text events.
+
+fn denominations() -> [i64] {
+    [100, 25, 10, 5]
+}
+
+fn coin_index(value: i64) -> i64 {
+    match arr_index_of(denominations(), value) {
+        Some(i) => i
+        None => -1
+    }
+}
+
+fn coins_value(denoms: [i64], used: [i64]) -> i64 {
+    arr_sum_i64(arr_zip_with(denoms, used, |d, n| d * n))
+}
+
+fn remove_coins(bank: [i64], used: [i64]) -> [i64] {
+    arr_zip_with(bank, used, |have, take| have - take)
+}
+
+fn make_change(amount: i64, denoms: [i64], counts: [i64]) -> [i64] {
+    if amount < 0 || len(denoms) != len(counts) || len(denoms) == 0 {
+        return []
+    }
+    let n = len(denoms)
+    let start = 0
+    while start < n {
+        let used = arr_repeat(0, n)
+        let remaining = amount
+        let i = start
+        while i < n {
+            let coin = denoms[i]
+            if coin > 0 && remaining >= coin {
+                let take = min_i64(remaining / coin, counts[i])
+                used[i] = take
+                remaining = remaining - take * coin
+            }
+            i = i + 1
+        }
+        if remaining == 0 {
+            return used
+        }
+        start = start + 1
+    }
+    []
+}
+
+fn parse_event(text: str) -> [i64] {
+    let words = arr_filter(str_split(str_trim(str_to_lower(text)), " "), |w| str_len(w) > 0)
+    if len(words) == 0 {
+        return [0, 0, 0]
+    }
+    let verb = words[0]
+    let nums = []
+    let bad = false
+    let i = 1
+    while i < len(words) {
+        let v = parse_int_or(words[i], -1)
+        if v < 0 {
+            bad = true
+        }
+        nums = arr_push(nums, v)
+        i = i + 1
+    }
+    if bad {
+        return [0, 0, 0]
+    }
+    if verb == "insert" && len(nums) == 1 {
+        return [1, nums[0], 0]
+    }
+    if verb == "select" && len(nums) == 1 {
+        return [2, nums[0], 0]
+    }
+    if verb == "cancel" && len(nums) == 0 {
+        return [3, 0, 0]
+    }
+    if verb == "restock" && len(nums) == 2 {
+        return [4, nums[0], nums[1]]
+    }
+    [0, 0, 0]
+}
+
+fn sale_outcome(item: i64, credit: i64, prices: [i64], stock: [i64], denoms: [i64], bank: [i64]) -> i64 {
+    if item < 0 || item >= len(prices) || item >= len(stock) {
+        return -1
+    }
+    if stock[item] <= 0 {
+        return -2
+    }
+    if credit < prices[item] {
+        return -3
+    }
+    let change = credit - prices[item]
+    if len(make_change(change, denoms, bank)) == 0 {
+        return -4
+    }
+    change
+}
+
+fn run_events(events: [str], prices: [i64], stock: [i64], coins: [i64]) -> [i64] {
+    let denoms = denominations()
+    let bank = arr_concat(coins, [])
+    let shelf = arr_concat(stock, [])
+    let credit = 0
+    let dispensed = 0
+    let sold = 0
+    for e in events {
+        let ev = parse_event(e)
+        let kind = ev[0]
+        if kind == 1 {
+            let slot = coin_index(ev[1])
+            if slot < 0 {
+                dispensed = dispensed + ev[1]
+            } else {
+                bank[slot] = bank[slot] + 1
+                credit = credit + ev[1]
+            }
+        } else if kind == 2 {
+            let change = sale_outcome(ev[1], credit, prices, shelf, denoms, bank)
+            if change >= 0 {
+                bank = remove_coins(bank, make_change(change, denoms, bank))
+                shelf[ev[1]] = shelf[ev[1]] - 1
+                dispensed = dispensed + change
+                sold = sold + 1
+                credit = 0
+            }
+        } else if kind == 3 {
+            let used = make_change(credit, denoms, bank)
+            if len(used) > 0 {
+                bank = remove_coins(bank, used)
+                dispensed = dispensed + credit
+                credit = 0
+            }
+        } else if kind == 4 {
+            if ev[1] < len(shelf) {
+                shelf[ev[1]] = shelf[ev[1]] + ev[2]
+            }
+        }
+    }
+    [credit, dispensed, sold]
+}
+
+@[test]
+fn test_coin_index_known_and_unknown() {
+    assert_eq(coin_index(25), 1)
+    assert_eq(coin_index(5), 3)
+    assert_eq(coin_index(3), -1)
+}
+
+@[test]
+fn test_coins_value_and_remove() {
+    assert_eq(coins_value(denominations(), [1, 2, 0, 1]), 155)
+    let left = remove_coins([3, 3, 3, 3], [1, 0, 2, 3])
+    assert_eq(left[0], 2)
+    assert_eq(left[2], 1)
+    assert_eq(left[3], 0)
+}
+
+@[test]
+fn test_make_change_plain_greedy() {
+    let used = make_change(65, denominations(), [5, 5, 5, 5])
+    assert_eq(used[0], 0)
+    assert_eq(used[1], 2)
+    assert_eq(used[2], 1)
+    assert_eq(used[3], 1)
+}
+
+@[test]
+fn test_make_change_limited_coins() {
+    let used = make_change(60, denominations(), [0, 1, 1, 10])
+    assert_eq(coins_value(denominations(), used), 60)
+    assert_eq(used[3], 5)
+}
+
+@[test]
+fn test_make_change_skips_large_coin() {
+    let used = make_change(30, denominations(), [0, 1, 3, 0])
+    assert_eq(used[1], 0)
+    assert_eq(used[2], 3)
+}
+
+@[test]
+fn test_make_change_impossible() {
+    assert_eq(len(make_change(15, denominations(), [4, 4, 1, 0])), 0)
+    assert_eq(len(make_change(-5, denominations(), [1, 1, 1, 1])), 0)
+    assert_eq(len(make_change(10, denominations(), [1, 1])), 0)
+}
+
+@[test]
+fn test_make_change_zero_amount() {
+    let used = make_change(0, denominations(), [0, 0, 0, 0])
+    assert_eq(len(used), 4)
+    assert_eq(coins_value(denominations(), used), 0)
+}
+
+@[test]
+fn test_parse_event_insert_and_select() {
+    let a = parse_event("insert 25")
+    assert_eq(a[0], 1)
+    assert_eq(a[1], 25)
+    let b = parse_event("  SELECT   2 ")
+    assert_eq(b[0], 2)
+    assert_eq(b[1], 2)
+}
+
+@[test]
+fn test_parse_event_cancel_and_restock() {
+    assert_eq(parse_event("cancel")[0], 3)
+    let r = parse_event("restock 3 5")
+    assert_eq(r[0], 4)
+    assert_eq(r[1], 3)
+    assert_eq(r[2], 5)
+}
+
+@[test]
+fn test_parse_event_rejects_malformed() {
+    assert_eq(parse_event("")[0], 0)
+    assert_eq(parse_event("insert")[0], 0)
+    assert_eq(parse_event("insert ten")[0], 0)
+    assert_eq(parse_event("restock 1")[0], 0)
+    assert_eq(parse_event("cancel 4")[0], 0)
+    assert_eq(parse_event("dance 1")[0], 0)
+}
+
+@[test]
+fn test_sale_outcome_codes() {
+    let d = denominations()
+    assert_eq(sale_outcome(7, 100, [65], [1], d, [1, 1, 1, 1]), -1)
+    assert_eq(sale_outcome(0, 100, [65], [0], d, [1, 1, 1, 1]), -2)
+    assert_eq(sale_outcome(0, 50, [65], [1], d, [1, 1, 1, 1]), -3)
+    assert_eq(sale_outcome(0, 100, [65], [1], d, [1, 0, 0, 0]), -4)
+    assert_eq(sale_outcome(0, 100, [65], [1], d, [1, 1, 1, 0]), 35)
+}
+
+@[test]
+fn test_run_events_simple_purchase() {
+    let r = run_events(["insert 100", "select 0"], [65, 100, 150], [2, 0, 1], [0, 2, 2, 1])
+    assert_eq(r[0], 0)
+    assert_eq(r[1], 35)
+    assert_eq(r[2], 1)
+}
+
+@[test]
+fn test_run_events_insufficient_then_cancel() {
+    let r = run_events(["insert 25", "select 0", "cancel"], [65, 100, 150], [2, 0, 1], [0, 2, 2, 1])
+    assert_eq(r[0], 0)
+    assert_eq(r[1], 25)
+    assert_eq(r[2], 0)
+}
+
+@[test]
+fn test_run_events_restock_then_buy() {
+    let events = ["select 1", "restock 1 2", "insert 100", "select 1"]
+    let r = run_events(events, [65, 100, 150], [2, 0, 1], [0, 0, 0, 0])
+    assert_eq(r[0], 0)
+    assert_eq(r[1], 0)
+    assert_eq(r[2], 1)
+}
+
+@[test]
+fn test_run_events_rejected_coin_and_noise() {
+    let r = run_events(["insert 3", "dance", "insert 10"], [65], [1], [0, 0, 0, 0])
+    assert_eq(r[0], 10)
+    assert_eq(r[1], 3)
+    assert_eq(r[2], 0)
+}
+
+@[test]
+fn test_run_events_no_change_available() {
+    let r = run_events(["insert 100", "select 0"], [65], [1], [0, 0, 0, 0])
+    assert_eq(r[0], 100)
+    assert_eq(r[2], 0)
+    let c = run_events(["insert 100", "select 0", "cancel"], [65], [1], [0, 0, 0, 0])
+    assert_eq(c[0], 0)
+    assert_eq(c[1], 100)
+}
+
+@[test]
+fn test_run_events_stock_runs_out() {
+    let events = ["insert 100", "select 0", "insert 100", "select 0"]
+    let r = run_events(events, [65], [1], [0, 1, 1, 0])
+    assert_eq(r[0], 100)
+    assert_eq(r[1], 35)
+    assert_eq(r[2], 1)
+}

@@ -1,0 +1,212 @@
+// Meeting-room bookings as (start, end) minute pairs within one day.
+// A booking covers the half-open interval [start, end); pairs with end <= start are ignored.
+
+fn sort_by_start(bookings: [(i64, i64)]) -> [(i64, i64)] {
+    arr_sort_by(bookings, |x, y| if x.0 != y.0 { x.0 - y.0 } else { x.1 - y.1 })
+}
+
+fn min_rooms(bookings: [(i64, i64)]) -> i64 {
+    let starts: [i64] = []
+    let ends: [i64] = []
+    for bk in bookings {
+        if bk.1 > bk.0 {
+            starts = arr_push(starts, bk.0)
+            ends = arr_push(ends, bk.1)
+        }
+    }
+    let s = arr_sort_by(starts, |x, y| x - y)
+    let e = arr_sort_by(ends, |x, y| x - y)
+    let i = 0
+    let j = 0
+    let current = 0
+    let best = 0
+    while i < len(s) {
+        if s[i] < e[j] {
+            current = current + 1
+            if current > best {
+                best = current
+            }
+            i = i + 1
+        } else {
+            current = current - 1
+            j = j + 1
+        }
+    }
+    best
+}
+
+fn earliest_free_slot(bookings: [(i64, i64)], length: i64, open: i64, close: i64) -> i64 {
+    if length <= 0 || open < 0 || close > 1440 {
+        return -1
+    }
+    if close - open < length {
+        return -1
+    }
+    let ordered = sort_by_start(arr_filter(bookings, |bk| bk.1 > bk.0))
+    let cursor = open
+    for bk in ordered {
+        if bk.1 <= cursor {
+            continue
+        }
+        if bk.0 >= close {
+            break
+        }
+        if bk.0 - cursor >= length {
+            return cursor
+        }
+        cursor = bk.1
+    }
+    if close - cursor >= length {
+        return cursor
+    }
+    -1
+}
+
+fn count_conflicts(bookings: [(i64, i64)]) -> i64 {
+    let valid = arr_filter(bookings, |bk| bk.1 > bk.0)
+    let count = 0
+    let i = 0
+    while i < len(valid) {
+        let j = i + 1
+        while j < len(valid) {
+            if valid[i].0 < valid[j].1 && valid[j].0 < valid[i].1 {
+                count = count + 1
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    count
+}
+
+fn merged_minutes(bookings: [(i64, i64)]) -> i64 {
+    let clipped: [(i64, i64)] = []
+    for bk in bookings {
+        let s = max_i64(bk.0, 0)
+        let e = min_i64(bk.1, 1440)
+        if e > s {
+            clipped = arr_push(clipped, (s, e))
+        }
+    }
+    if len(clipped) == 0 {
+        return 0
+    }
+    let ordered = sort_by_start(clipped)
+    let total = 0
+    let cur_start = ordered[0].0
+    let cur_end = ordered[0].1
+    let i = 1
+    while i < len(ordered) {
+        let next = ordered[i]
+        if next.0 <= cur_end {
+            if next.1 > cur_end {
+                cur_end = next.1
+            }
+        } else {
+            total = total + cur_end - cur_start
+            cur_start = next.0
+            cur_end = next.1
+        }
+        i = i + 1
+    }
+    total + cur_end - cur_start
+}
+
+fn clock(minute: i64) -> str {
+    let h = minute / 60
+    let m = minute % 60
+    str_pad_start(to_str(h), 2, "0") + ":" + str_pad_start(to_str(m), 2, "0")
+}
+
+fn describe_free_slot(bookings: [(i64, i64)], length: i64, open: i64, close: i64) -> str {
+    let start = earliest_free_slot(bookings, length, open, close)
+    if start < 0 {
+        return "no slot"
+    }
+    clock(start) + "-" + clock(start + length)
+}
+
+@[test]
+fn test_sort_by_start_orders_pairs() {
+    let s = sort_by_start([(600, 700), (540, 600), (540, 560)])
+    assert_eq(s[0].1, 560)
+    assert_eq(s[1].1, 600)
+    assert_eq(s[2].0, 600)
+}
+
+@[test]
+fn test_min_rooms_empty_and_back_to_back() {
+    assert_eq(min_rooms([]), 0)
+    assert_eq(min_rooms([(540, 600), (600, 660)]), 1)
+}
+
+@[test]
+fn test_min_rooms_nested_overlaps() {
+    assert_eq(min_rooms([(540, 600), (550, 620), (560, 570)]), 3)
+    assert_eq(min_rooms([(0, 30), (10, 40), (35, 60)]), 2)
+}
+
+@[test]
+fn test_min_rooms_ignores_empty_bookings() {
+    assert_eq(min_rooms([(600, 600), (700, 650), (610, 620)]), 1)
+}
+
+@[test]
+fn test_free_slot_between_bookings() {
+    let day = [(630, 700), (540, 600)]
+    assert_eq(earliest_free_slot(day, 30, 540, 1020), 600)
+    assert_eq(earliest_free_slot(day, 31, 540, 1020), 700)
+}
+
+@[test]
+fn test_free_slot_clips_to_working_hours() {
+    assert_eq(earliest_free_slot([(400, 560)], 60, 540, 1020), 560)
+    assert_eq(earliest_free_slot([(1100, 1200)], 60, 540, 1020), 540)
+    assert_eq(earliest_free_slot([(540, 990)], 30, 540, 1020), 990)
+}
+
+@[test]
+fn test_free_slot_none() {
+    assert_eq(earliest_free_slot([(500, 1100)], 15, 540, 1020), -1)
+    assert_eq(earliest_free_slot([], 600, 540, 1020), -1)
+    assert_eq(earliest_free_slot([], 0, 540, 1020), -1)
+    assert_eq(earliest_free_slot([], 30, 540, 1500), -1)
+}
+
+@[test]
+fn test_count_conflicts_values() {
+    assert_eq(count_conflicts([(540, 600), (550, 620), (560, 570)]), 3)
+    assert_eq(count_conflicts([(540, 600), (600, 660)]), 0)
+    assert_eq(count_conflicts([(540, 600), (550, 550)]), 0)
+}
+
+@[test]
+fn test_merged_minutes_overlaps() {
+    assert_eq(merged_minutes([(540, 600), (550, 620), (700, 730)]), 110)
+    assert_eq(merged_minutes([(100, 200), (120, 130)]), 100)
+}
+
+@[test]
+fn test_merged_minutes_touching_and_empty() {
+    assert_eq(merged_minutes([(10, 20), (0, 10)]), 20)
+    assert_eq(merged_minutes([]), 0)
+    assert_eq(merged_minutes([(50, 40)]), 0)
+}
+
+@[test]
+fn test_merged_minutes_clips_to_day() {
+    assert_eq(merged_minutes([(-30, 30), (1400, 1500)]), 70)
+}
+
+@[test]
+fn test_clock_format() {
+    assert_eq_str(clock(545), "09:05")
+    assert_eq_str(clock(0), "00:00")
+    assert_eq_str(clock(1439), "23:59")
+}
+
+@[test]
+fn test_describe_free_slot() {
+    assert_eq_str(describe_free_slot([(540, 600)], 45, 540, 1020), "10:00-10:45")
+    assert_eq_str(describe_free_slot([(0, 1440)], 45, 540, 1020), "no slot")
+}
