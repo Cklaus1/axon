@@ -531,8 +531,8 @@ def test_erase():
     check(M.return_type(ERASE_SRC, "p") is None and M.return_type(ERASE_SRC, "nope") is None,
           "mutators: return_type is None without `->` or without the fn")
     check("erase" not in dict(M.ALL_OPS), "mutators: erase must not be in ALL_OPS (multi never composes it)")
-    check(build.CLASSES[-2:] == ("erase", "sparse") and build.CLASSES.index("multi") < build.CLASSES.index("erase"),
-          f"build: erase and sparse are appended after multi: {build.CLASSES}")
+    check(build.CLASSES[5:] == ("erase", "sparse", "masked", "excerpt") and build.CLASSES[4] == "multi",
+          f"build: erase, sparse (hx2), then masked, excerpt (hx3) are appended after multi: {build.CLASSES}")
     src = REBUILD_SRC
     a, b = build._span(src, "f")
     stub = M.erase(src[a:b], "i64")
@@ -551,6 +551,238 @@ def test_erase():
     check(build.erase_knob(src, "f") == "8-15" and build.erase_knob(ERASE_SRC, "f") == "<8",
           "build: erase knob = the pristine function's line count (<8 | 8-15 | >=16)")
 
+
+def _sites(src, fn):
+    import build
+    import mutators as M
+    a, b = build._span(src, fn)
+    body = src[a:b]
+    return {(op, how): (list(M.edit_of(body, m)), how) for op, m, how in
+            M.sites(body, M.ALL_OPS, M.context(src, fn), build.MAX_SITES)}
+
+
+def test_masked_split():
+    """hx3 HX3-A: hidden = the caller pin on F_j, which must fail on the
+    composite; cut = F_j - {hidden}; visible = the first of F_ij - F_j."""
+    import build
+    ms = build.masked_split
+    check(ms(["v", "h"], ["h", "c"], ["v", "h", "c"], ["h"], {}, set()) == ("v", "h", ["c"]),
+          "build: masked_split must pin g's test on F_j, cut the rest of F_j, show F_ij - F_j")
+    check(ms(["h"], ["h", "c"], ["h", "c"], ["h"], {}, set()) is None,
+          "build: masked_split is None when F_ij - F_j is empty")
+    check(ms(["v"], ["c"], ["v", "c"], ["h"], {}, set()) is None,
+          "build: masked_split is None when no direct test of g fails on F_j")
+    check(ms(["v"], ["h", "c"], ["v", "c"], ["h"], {}, set()) is None,
+          "build: masked_split is None when the pin does not fail on the composite")
+    check(ms(["v", "h2"], ["h", "h2"], ["v", "h", "h2"], ["h", "h2"], {"h": {"k"}}, {"k"}) == ("v", "h2", ["h"]),
+          "build: masked_split's pin skips a direct test that calls a caller of g")
+
+
+def test_masked_rebuild():
+    """hx3 HX3-A: masked takes exactly 2 edits in [i, j] order, the masked
+    operator j is not OPAQUE, and no other class takes a masked construction."""
+    import build
+    import mutators as M
+    src = REBUILD_SRC
+    a, b = build._span(src, "f")
+    s = _sites(src, "f")
+    e_plus, h_plus = s[("operator", "op:+->-")]
+    e_bound, h_bound = s[("bound", "bound:range-lo:0->1")]
+    e_cmp, h_cmp = s[("flip-comparison", "flip:<->>")]
+    opaque = next(((op, v) for (op, _), v in s.items() if op in build.OPAQUE), None)
+    check(opaque is not None, f"selftest: REBUILD_SRC has an OPAQUE site: {sorted(s)}")
+    want = src[:a] + M.compose(src[a:b], [e_bound, e_plus]) + src[b:]
+    got = build.rebuild(src, "f", "masked", ["bound", "operator"], [e_bound, e_plus], f"masked:{h_bound} ; {h_plus}")
+    check(got == (want, None), f"build: rebuild must accept a genuine masked task in [i, j] order ({got[1]})")
+    bad = {
+        "one edit": (["operator"], [e_plus], f"masked:{h_plus}"),
+        "three edits": (["operator", "bound", "flip-comparison"], [e_plus, e_bound, e_cmp],
+                        f"masked:{h_plus} ; {h_bound} ; {h_cmp}"),
+        "a multi `how`": (["operator", "bound"], [e_plus, e_bound], f"multi:{h_plus} ; {h_bound}"),
+    }
+    if opaque:
+        op, (e_o, h_o) = opaque
+        bad["an OPAQUE masked operator"] = (["bound", op], [e_bound, e_o], f"masked:{h_bound} ; {h_o}")
+    for label, (ops, edits, how) in bad.items():
+        out, why = build.rebuild(src, "f", "masked", ops, edits, how)
+        check(out is None and why, f"build: rebuild must refuse masked with {label}")
+    for cls in ("multi", "subtle", "caller", "sparse", "excerpt"):
+        out, why = build.rebuild(src, "f", cls, ["bound", "operator"], [e_bound, e_plus],
+                                 f"masked:{h_bound} ; {h_plus}")
+        check(out is None and why, f"build: rebuild must refuse a masked construction under class {cls}")
+    check(build.CLASSES[-2:] == ("masked", "excerpt") and build.CLASSES.index("sparse") < build.CLASSES.index("masked"),
+          f"build: masked and excerpt are appended after sparse: {build.CLASSES}")
+
+
+XFN_SRC = '''type R = { lo: i64, hi: i64 }
+
+fn clamp(x: i64, lo: i64, hi: i64) -> i64 {
+    if x < lo { lo } else { if x > hi { hi } else { x } }
+}
+
+fn f(r: R, x: i64) -> i64 {
+    let y = clamp(x, r.lo, r.hi)
+    y + r.lo
+}
+'''
+
+
+def test_excerpt_rules():
+    """hx3 HX3-B: excerpt lives on bundle programs (stratum X) alone, with an
+    xfn or (stratum-C target) erase single, a > 24,000-character view, the
+    bundle's split forced to its target's, and one cluster per target."""
+    import build
+    import mutators as M
+    src = XFN_SRC
+    a, b = build._span(src, "f")
+    s = _sites(src, "f")
+    xfn = next(((op, v) for (op, _), v in sorted(s.items()) if op in build.XFN_OPS), None)
+    check(xfn is not None, f"selftest: XFN_SRC has an xfn site: {sorted(s)}")
+    op, (e, how) = xfn
+    ok = build.rebuild(src, "f", "excerpt", [op], [e], how, stratum="X", target_stratum="C")
+    check(ok[1] is None, f"build: rebuild must accept an xfn excerpt task on stratum X ({ok[1]})")
+    out, why = build.rebuild(src, "f", "excerpt", [op], [e], how, stratum="C", target_stratum="C")
+    check(out is None and why, "build: rebuild must refuse excerpt on a non-X program")
+    for cls in ("subtle", "caller", "sparse"):
+        out, why = build.rebuild(src, "f", cls, [op], [e], how, stratum="X", target_stratum="C")
+        check(out is None and why, f"build: rebuild must refuse class {cls} on an X program")
+    other = next(((o, v) for (o, _), v in sorted(s.items()) if o not in build.XFN_OPS), None)
+    if other:
+        o, (e_o, h_o) = other
+        out, why = build.rebuild(src, "f", "excerpt", [o], [e_o], h_o, stratum="X", target_stratum="C")
+        check(out is None and why, f"build: rebuild must refuse an excerpt op outside XFN_OPS ({o})")
+    stub = M.erase(src[a:b], "i64")
+    ee = list(M.edit_of(src[a:b], stub))
+    check(build.rebuild(src, "f", "excerpt", ["erase"], [ee], "erase:i64", stratum="X", target_stratum="C")[1] is None,
+          "build: rebuild must accept an erase excerpt task on a stratum-C target")
+    out, why = build.rebuild(src, "f", "excerpt", ["erase"], [ee], "erase:i64", stratum="X", target_stratum="D")
+    check(out is None and why, "build: rebuild must refuse an erase excerpt task on a stratum-D target")
+    check(not build.excerpt_witness("x" * 23999) and not build.excerpt_witness("x" * 24000)
+          and build.excerpt_witness("x" * 24001), "build: the excerpt witness is len > 24,000")
+    # HX3A-2: a bundle's split is its target's recorded split, never dealt
+    prior = {f"p{i:02d}.ax": ("dev" if i % 3 == 0 else "test") for i in range(30)}
+    progs = sorted(prior) + [f"b/{p}" for p in sorted(prior)]
+    targets = {f"b/{p}": p for p in prior}
+    sp = build.assign_split(progs, 7, prior, targets)
+    check(all(sp[b_] == prior[p] for b_, p in targets.items()),
+          "build: a bundle's split must equal its target program's recorded split")
+    check(build.bundle_split_reason({"split": "dev", "target_program": "p01.ax"}, prior) is not None
+          and build.bundle_split_reason({"split": "test", "target_program": "p01.ax"}, prior) is None
+          and build.bundle_split_reason({"split": "dev"}, prior) is None,
+          "build: --check refuses a bundle task whose split is not its target's")
+    # HX3A-3 / HX3A-4: one cluster per target program
+    check(build.cluster({"program": "b/p.ax", "target_program": "p.ax"}) == "p.ax"
+          and build.cluster({"program": "p.ax"}) == "p.ax", "build: cluster(t) = target_program or program")
+    tasks = ([{"id": f"m{j}", "program": "p.ax"} for j in range(6)] +
+             [{"id": f"x{j}", "program": "b/p.ax", "target_program": "p.ax"} for j in range(6)])
+    check(len(build.cap_per_program(tasks, 8, seed=1)) == 8, "build: cap_per_program caps per cluster")
+    kept, dropped = build.drop_thin({"p.ax": [1, 2], "b/p.ax": [3]}, 3, {"b/p.ax": "p.ax"})
+    check(sorted(kept) == ["b/p.ax", "p.ax"] and not dropped, "build: drop_thin counts tasks per cluster")
+    kept, dropped = build.drop_thin({"p.ax": [1], "b/p.ax": [3]}, 3, {"b/p.ax": "p.ax"})
+    check(not kept and sorted(dropped) == ["b/p.ax", "p.ax"], "build: a thin cluster is dropped whole")
+
+
+BUNDLE_P = '''// P: the target
+fn area(w: i64, h: i64) -> i64 {
+    w * h
+}
+
+fn load_text() -> str {
+    "x"
+}
+
+fn main() {
+    print(area(2, 3))
+}
+
+@[test]
+fn test_area() {
+    assert_eq(area(2, 3), 6)
+}
+'''
+BUNDLE_F1 = '''fn twice(x: i64) -> i64 {
+    x * 2
+}
+
+// entry point
+fn main() {
+    print(twice(2))
+}
+
+fn load_text() -> str {
+    "x"
+}
+
+@[test]
+fn test_twice() {
+    assert_eq(twice(2), 4)
+}
+'''
+BUNDLE_F2 = '''type Box = { w: i64 }
+
+fn area(b: Box) -> i64 {
+    b.w * b.w
+}
+
+@[test]
+fn test_box() {
+    assert_eq(area(Box { w: 2 }), 4)
+}
+'''
+BUNDLE_F3 = '''fn neg(x: i64) -> i64 {
+    0 - x
+}
+
+@[test]
+fn test_neg() {
+    assert_eq(neg(2), 0 - 2)
+}
+'''
+
+
+def test_bundle():
+    """hx3 HX3-B bundle.py: P's source first, then same-side fillers in a
+    seeded order, each with `fn main` and already-included identical fns
+    removed; a filler with any other top-level name collision is skipped;
+    stops at min_chars; `--check` detects a changed filler."""
+    import json
+    import shutil
+    import tempfile
+    import bundle
+    srcs = {"p.ax": BUNDLE_P, "f1.ax": BUNDLE_F1, "f2.ax": BUNDLE_F2, "f3.ax": BUNDLE_F3, "t1.ax": BUNDLE_F3 + "\n"}
+    split = {"p.ax": "dev", "f1.ax": "dev", "f2.ax": "dev", "f3.ax": "dev", "t1.ax": "test"}
+    big = bundle.make_bundle("p.ax", srcs, split, seed=1, min_chars=10 ** 6)
+    check(big["text"].startswith(BUNDLE_P), "bundle: P's source is the unedited prefix")
+    check("t1.ax" not in big["fillers"] and set(big["fillers"]) == {"f1.ax", "f3.ax"},
+          f"bundle: fillers come from P's side only, a colliding one skipped: {big['fillers']}")
+    check(big["skipped"].get("f2.ax") == ["area"], f"bundle: f2 collides on `area`: {big['skipped']}")
+    check(big["text"].count("fn main(") == 1 and "// entry point" not in big["text"],
+          "bundle: a filler's `fn main` is removed with its attached comment")
+    check(big["text"].count("fn load_text(") == 1, "bundle: an identical already-included fn is removed")
+    check("fn twice(" in big["text"] and "fn test_twice(" in big["text"], "bundle: the rest of a filler stays")
+    check(bundle.make_bundle("p.ax", srcs, split, seed=1, min_chars=10 ** 6) == big, "bundle: deterministic")
+    orders = {tuple(bundle.make_bundle("p.ax", srcs, split, seed=k, min_chars=10 ** 6)["fillers"]) for k in range(8)}
+    check(len(orders) == 2, f"bundle: the filler order depends on the seed: {orders}")
+    one = bundle.make_bundle("p.ax", srcs, split, seed=1, min_chars=len(BUNDLE_P) + 1)
+    check(len(one["fillers"]) == 1 and one["reached"], f"bundle: stops once min_chars is reached: {one['fillers']}")
+    check(not bundle.make_bundle("t1.ax", srcs, split, seed=1, min_chars=10 ** 6)["reached"],
+          "bundle: an unreachable floor is reported")
+    root = tempfile.mkdtemp(prefix="hx3_bundle_selftest_")
+    try:
+        for n, t in srcs.items():
+            with open(os.path.join(root, n), "w") as f:
+                f.write(t)
+        out = os.path.join(root, "out")
+        man = bundle.write_bundles(srcs, split, seed=1, min_chars=len(BUNDLE_P) + 1, out=out)
+        m = json.load(open(man))
+        check(len(m["bundles"]) == 5 and os.path.exists(os.path.join(out, "dev", "p.ax")),
+              f"bundle: one bundle per program under <out>/<side>/: {[b['path'] for b in m['bundles']]}")
+        check(bundle.check_manifest(man, root) == [], f"bundle: --check of fresh bundles: {bundle.check_manifest(man, root)}")
+        with open(os.path.join(root, "f1.ax"), "a") as f:
+            f.write("\n// changed\n")
+        check(bundle.check_manifest(man, root) != [], "bundle: --check must detect a changed filler")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 # ------------------------------------------------------------------ mutators
@@ -606,7 +838,8 @@ def test_mutators():
 
 def main():
     for t in (test_stats, test_calibrate, test_power, test_build, test_caller_pin, test_caller_check_rule,
-              test_sparse_cut, test_erase, test_mutators):
+              test_sparse_cut, test_erase, test_mutators, test_masked_split, test_masked_rebuild, test_excerpt_rules,
+              test_bundle):
         try:
             t()
         except (Exception, SystemExit) as e:  # a missing module, API or CLI option is a failure, not a crash
