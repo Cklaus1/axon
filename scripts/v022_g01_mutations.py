@@ -12139,5 +12139,51 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
 ]
 
+# docs-truth (ids M3930-M3939): every axon block in the LLM-facing docs checks and runs to its
+# marker (DT-7; M3930 anchors on prose: a doc edit touching it updates the row in the same
+# commit); scripts/spec_ledger.py keeps the build specs' status lines honest (DT-6, rules 0-7).
+MUTATIONS += [
+    ('M3930', 'DT-7: the guide\'s goal example puts @[goal] and @[adaptive] on one fn again (E1504)', 'spec/axon-for-llms.md',
+     '@[adaptive]\nfn tune(threshold: i64)',
+     '@[goal("maximize score")]\n@[adaptive]\nfn tune(threshold: i64)',
+     'axon-core', '--no-default-features --test doc_snippets', 'every_axon_block_in_the_llm_facing_docs_checks'),
+    ('M3931', 'DT-6 rule 0: a duplicate item id across specs is no longer reported', 'scripts/spec_ledger.py',
+     'problems.append(f"{rel}: item {i} also defined in {owner[i]}")',
+     'None',
+     'axon-core', '--no-default-features --test spec_ledger', 'a_duplicate_item_id_is_refused'),
+    ('M3932', 'DT-6 rule 2: a sha anywhere on the status line counts, not only inside the bold span', 'scripts/spec_ledger.py',
+     'm.group(2).split("**")[0]',
+     'm.group(2)',
+     'axon-core', '--no-default-features --test spec_ledger', 'a_sha_outside_the_status_span_does_not_count'),
+    ('M3933', 'DT-6 rule 1: a spec without a status line is no longer reported', 'scripts/spec_ledger.py',
+     'problems.append(f"{rel}: no `**Status',
+     '(f"{rel}: no `**Status',
+     'axon-core', '--no-default-features --test spec_ledger', 'a_spec_without_a_status_line_is_refused'),
+    ('M3934', 'DT-6 rule 5: a built spec may cite an entry that carries no closure stamp', 'scripts/spec_ledger.py',
+     'elif not CLOSED_RE.search(opp[oid])',
+     'elif False and not CLOSED_RE.search(opp[oid])',
+     'axon-core', '--no-default-features --test spec_ledger', 'a_built_spec_citing_an_unstamped_entry_is_refused'),
+    ('M3935', 'DT-6 rule 6: an entry specced in a built spec may stay unstamped', 'scripts/spec_ledger.py',
+     'if st in ("BUILT", "PARTIAL") and not CLOSED_RE.search(body)',
+     'if False and st in ("BUILT", "PARTIAL") and not CLOSED_RE.search(body)',
+     'axon-core', '--no-default-features --test spec_ledger', 'an_entry_specced_in_a_built_spec_without_a_stamp_is_refused'),
+    ('M3936', 'DT-6 rule 4: a draft spec whose items CHANGELOG names is accepted', 'scripts/spec_ledger.py',
+     'if status in ("DRAFT", "REVIEWED", "AUTHORIZED") and shipped:',
+     'if False:',
+     'axon-core', '--no-default-features --test spec_ledger', 'a_draft_spec_whose_items_shipped_is_refused'),
+    ('M3937', 'DT-6 rule 2: a built status may name a commit that is not an ancestor of HEAD', 'scripts/spec_ledger.py',
+     'elif not any(is_ancestor(root, s) for s in shas):',
+     'elif False:',
+     'axon-core', '--no-default-features --test spec_ledger', 'a_built_status_naming_a_non_ancestor_commit_is_refused'),
+    ('M3938', 'DT-6: a heading inside a fenced block is read as the spec\'s own item', 'scripts/spec_ledger.py',
+     'm = FENCE_RE.match(line)',
+     'm = None',
+     'axon-core', '--no-default-features --test spec_ledger', 'a_heading_inside_a_fence_is_not_an_item'),
+    ('M3939', 'DT-6 rule 7: ROADMAP.md need not point at the ledger', 'scripts/spec_ledger.py',
+     'if "scripts/spec_ledger.py" not in roadmap:',
+     'if False:',
+     'axon-core', '--no-default-features --test spec_ledger', 'a_roadmap_without_the_ledger_pointer_is_refused'),
+]
+
 if __name__ == "__main__":
     main()

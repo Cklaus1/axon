@@ -3298,3 +3298,17 @@ ATTACK_MARKERS.update({
     'M3879': r'ATTACK: a valid call through a fn value was refused \[snd_lambda_alias\]',
     'M3880': r'ATTACK: a native fix-it names no real function \[native_typo\]',
 })
+
+# docs-truth (ids M3930-M3939)
+ATTACK_MARKERS.update({
+    'M3930': r'ATTACK: a doc snippet that does not check or run was accepted',
+    'M3931': r'ATTACK: a duplicate item id was accepted',
+    'M3932': r'ATTACK: a sha outside the status span was accepted',
+    'M3933': r'ATTACK: a spec without a status line was accepted',
+    'M3934': r'ATTACK: a built spec citing an unstamped entry was accepted',
+    'M3935': r'ATTACK: an entry specced in a built spec without a stamp was accepted',
+    'M3936': r'ATTACK: a draft spec whose items shipped was accepted',
+    'M3937': r'ATTACK: a built status naming a non-ancestor commit was accepted',
+    'M3938': r'ATTACK: a fenced heading was read as a shipped item',
+    'M3939': r'ATTACK: a roadmap without the ledger pointer was accepted',
+})
