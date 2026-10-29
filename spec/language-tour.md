@@ -367,7 +367,11 @@ fn main() {
 A named, non-generic `fn` is a first-class value of type `fn(..) -> ..`: pass it,
 bind it, store it in an array or struct field, and call it through any of those.
 Effects and purity follow the value — calling `loud` through `let g = loud` is
-still `loud`'s effect.
+still `loud`'s effect. A call through a value whose type is known (a fn or
+lambda bound by `let`, including a top-level `let`, or a param typed
+`fn(..) -> ..`) is checked like a direct call: a wrong argument count is E0305
+and a wrong argument type E0306. A local shadows a top-level fn of the same
+name, so the local's own type decides a call by that name.
 
 ```axon
 fn inc(x: i64) -> i64 { x + 1 }

@@ -12050,5 +12050,45 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'a_lambda_or_a_prob_pred_keeps_its_value_rule'),
 ]
 
+# O-SF-01, FnVal (ids M3870-M3877; M3878-M3889 spare): a call through a fn VALUE whose type is
+# known (a let-bound lambda or fn name, a `fn(..)`-typed param, a top-level `let`) is checked
+# like a direct call (E0305/E0306); a local of unknown type is not checked against the fn it
+# shadows, a lambda's params shadow outer locals, and a `fn(..)` type with an unknown part is
+# unresolved for E0306.
+MUTATIONS += [
+    ('M3870', 'O-SF-01: a call through a local holding a fn value is not checked against its type', 'crates/axon-core/src/checker.rs',
+     '                            let sig = FnSig { params, ret: *ret };\n                            self.check_args_against_sig(name, &sig, args, node_path, scope);\n                        }\n                        Some(Type::Unknown',
+     '                            let sig = FnSig { params, ret: *ret };\n                            let _ = sig;\n                        }\n                        Some(Type::Unknown',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_fn_value_checks_its_signature'),
+    ('M3871', 'O-SF-01: a `let` bound to a fn value no longer gets its `fn(..)` type', 'crates/axon-core/src/checker.rs',
+     'Type::Unknown => self.fn_value_type(value, scope).unwrap_or(Type::Unknown),',
+     'Type::Unknown => Type::Unknown,',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_fn_value_checks_its_signature'),
+    ('M3872', 'O-SF-01: a call through a top-level `let` holding a fn value is not checked', 'crates/axon-core/src/checker.rs',
+     'self.top_let_fn_types.get(name).cloned()',
+     'None::<Type>',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_fn_value_checks_its_signature'),
+    ('M3873', 'O-SF-01: a user fn named as a value has no `fn(..)` type', 'crates/axon-core/src/checker.rs',
+     '.map(|s| Type::Fn(s.params.clone(), Box::new(s.ret.clone())))',
+     '.and(None::<Type>)',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_fn_value_checks_its_signature'),
+    ('M3874', 'O-SF-01: a lambda has no `fn(..)` type', 'crates/axon-core/src/checker.rs',
+     'Expr::Lambda { params, .. } => Some(Type::Fn(',
+     'Expr::Lambda { params, .. } if false => Some(Type::Fn(',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_fn_value_checks_its_signature'),
+    ('M3875', 'O-SF-01: a call through a local of unknown type is checked against the fn it shadows', 'crates/axon-core/src/checker.rs',
+     'Some(Type::Unknown | Type::Deferred(_) | Type::Var(_)) => {}',
+     'Some(Type::Unknown | Type::Deferred(_) | Type::Var(_)) => {\n                            self.check_call_arity_and_types(name, args, node_path, scope)\n                        }',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_matching_fn_value_still_runs'),
+    ('M3876', 'O-SF-01: a lambda param no longer shadows an outer local fn value of the same name', 'crates/axon-core/src/checker.rs',
+     'inner.insert(p.name.clone(), self.lambda_param_type(p));',
+     'let _ = p;',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_matching_fn_value_still_runs'),
+    ('M3877', 'O-SF-01: a `fn(..)` type with an unknown part is compared as resolved (E0306 on a valid arg)', 'crates/axon-core/src/checker.rs',
+     'params.iter().any(type_contains_unresolved) || type_contains_unresolved(ret)',
+     'false',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_matching_fn_value_still_runs'),
+]
+
 if __name__ == "__main__":
     main()

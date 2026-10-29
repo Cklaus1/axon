@@ -41387,3 +41387,187 @@ fn a_lambda_or_a_prob_pred_keeps_its_value_rule() {
         "[g_mut] a `&mut`-param fn as a value keeps E0605: {cmsg}"
     );
 }
+
+/// O-SF-01: a call through a fn VALUE whose type is known — a user fn bound
+/// by `let`, a lambda (typed or not: its arity is always known), a param
+/// typed `fn(..) -> ..`, a top-level `let` — is checked like a direct call:
+/// E0305 for the argument count, E0306 for an argument type. Each case
+/// checked rc 0 and then panicked at run (rc 101).
+#[test]
+fn a_call_through_a_fn_value_checks_its_signature() {
+    let attack = "ATTACK: a call through a fn value with a wrong signature checked clean";
+    let add2 = "fn add2(x: i64, y: i64) -> i64 { x + y }\n";
+    let main = |body: &str| format!("fn main() -> i64 {{\n{body}    0\n}}\n");
+    for (tag, src, code, msg) in [
+        (
+            "j_user_arity",
+            format!(
+                "{add2}{}",
+                main("    let f = add2\n    println(to_str(f(1)))\n")
+            ),
+            "E0305",
+            "function `f` takes 2 arguments but 1 was supplied",
+        ),
+        (
+            "j_user_extra",
+            format!(
+                "{add2}{}",
+                main("    let f = add2\n    println(to_str(f(1, 2, 3)))\n")
+            ),
+            "E0305",
+            "function `f` takes 2 arguments but 3 were supplied",
+        ),
+        (
+            "k_lambda_arity",
+            main("    let g = |x: i64, y: i64| x + y\n    println(to_str(g(1)))\n"),
+            "E0305",
+            "function `g` takes 2 arguments but 1 was supplied",
+        ),
+        (
+            "k_untyped_arity",
+            main("    let g = |x, y| x + y\n    println(to_str(g(1)))\n"),
+            "E0305",
+            "signature: `g(_, _)`",
+        ),
+        (
+            "l_user_type",
+            format!(
+                "{add2}{}",
+                main("    let f = add2\n    println(to_str(f(1, \"s\")))\n")
+            ),
+            "E0306",
+            "argument 1 of `f` has the wrong type",
+        ),
+        (
+            "m_lambda_type",
+            main("    let g = |x: i64| x + 1\n    println(to_str(g(\"s\")))\n"),
+            "E0306",
+            "argument 0 of `g` has the wrong type",
+        ),
+        (
+            "p_param_arity",
+            format!(
+                "fn apply(h: fn(i64) -> i64) -> i64 {{\n    h(1, 2)\n}}\n{}",
+                main("    println(to_str(apply(|x: i64| x + 1)))\n")
+            ),
+            "E0305",
+            "function `h` takes 1 argument but 2 were supplied",
+        ),
+        (
+            "p_param_type",
+            format!(
+                "fn apply(h: fn(i64) -> i64) -> i64 {{\n    h(\"s\")\n}}\n{}",
+                main("    println(to_str(apply(|x: i64| x + 1)))\n")
+            ),
+            "E0306",
+            "argument 0 of `h` has the wrong type",
+        ),
+        (
+            "t_toplet_arity",
+            format!(
+                "let tl = |x: i64| x * 2\n{}",
+                main("    println(to_str(tl(1, 2)))\n")
+            ),
+            "E0305",
+            "function `tl` takes 1 argument but 2 were supplied",
+        ),
+        (
+            "t_toplet_fnref",
+            format!(
+                "{add2}let tf = add2\n{}",
+                main("    println(to_str(tf(1)))\n")
+            ),
+            "E0305",
+            "function `tf` takes 2 arguments but 1 was supplied",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, &src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(
+            cmsg.contains(code) && cmsg.contains(msg),
+            "{attack} [{tag}]: want {code} with {msg:?}: {cmsg}"
+        );
+        assert!(
+            rrc == Some(2) && rout.is_empty(),
+            "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+        );
+    }
+}
+
+/// O-SF-01 guard: a call through a fn value that matches its type, or whose
+/// type is not known (a generic param, an untyped lambda param), still checks
+/// rc 0 and runs. A local shadows a top-level fn of the same name at run time,
+/// so the LOCAL's type decides its calls (`g_local_shadows_fn` and
+/// `g_unknown_local_shadows_fn` were refused with E0305 against the shadowed
+/// fn's signature). A lambda's param shadows an outer local fn value of the
+/// same name, and a fn value with an unknown part passes where a `fn(..)`
+/// param is expected.
+#[test]
+fn a_call_through_a_matching_fn_value_still_runs() {
+    let attack = "ATTACK: a valid call through a fn value was refused";
+    for (tag, src, out) in [
+        (
+            "g_user_ok",
+            "fn add2(x: i64, y: i64) -> i64 { x + y }\nfn main() -> i64 {\n    let f = add2\n    println(to_str(f(1, 2)))\n    0\n}\n",
+            "3\n",
+        ),
+        (
+            "g_lambda_ok",
+            "fn main() -> i64 {\n    let g = |x: i64, y: i64| x + y\n    let u = |x| x * 2\n    println(to_str(g(1, 2) + u(3)))\n    0\n}\n",
+            "9\n",
+        ),
+        (
+            "g_param_ok",
+            "fn apply(h: fn(i64) -> i64, x: i64) -> i64 {\n    h(x)\n}\nfn inc(x: i64) -> i64 { x + 1 }\nfn main() -> i64 {\n    println(to_str(apply(|x: i64| x + 1, 1) + apply(inc, 1) + apply(|x| x, 1)))\n    0\n}\n",
+            "5\n",
+        ),
+        (
+            "g_generic_param",
+            "fn apply<T>(h: fn(T) -> T, x: T) -> T {\n    h(x)\n}\nfn main() -> i64 {\n    println(to_str(apply(|x: i64| x + 1, 41)))\n    0\n}\n",
+            "42\n",
+        ),
+        (
+            "g_return_lambda",
+            "fn mk() -> fn(i64) -> i64 {\n    |x: i64| x + 1\n}\nfn main() -> i64 {\n    let h = mk()\n    println(to_str(h(1)))\n    0\n}\n",
+            "2\n",
+        ),
+        (
+            "g_table",
+            "fn inc(x: i64) -> i64 { x + 1 }\nfn main() -> i64 {\n    let double = |n| n * 2\n    let ops = [inc, double]\n    let f = ops[1]\n    println(to_str(f(21) + ops[0](1)))\n    0\n}\n",
+            "44\n",
+        ),
+        (
+            "g_local_shadows_fn",
+            "fn f(x: i64) -> i64 { x + 1000 }\nfn main() -> i64 {\n    let f = |x: i64, y: i64| x + y\n    println(to_str(f(1, 2)))\n    0\n}\n",
+            "3\n",
+        ),
+        (
+            "g_toplet_ok",
+            "let tl = |x: i64| x * 2\nfn main() -> i64 {\n    let f = tl\n    println(to_str(tl(2) + f(3)))\n    0\n}\n",
+            "10\n",
+        ),
+        (
+            "g_unknown_local_shadows_fn",
+            "fn f(x: i64) -> i64 { x + 1000 }\nfn main() -> i64 {\n    let ops = [|x: i64, y: i64| x + y]\n    let f = ops[0]\n    println(to_str(f(1, 2)))\n    0\n}\n",
+            "3\n",
+        ),
+        (
+            "g_lambda_param_shadows_local",
+            "fn main() -> i64 {\n    let f = |a: i64, b: i64| a + b\n    let h = |f| f(1)\n    println(to_str(h(|x: i64| x + 1) + f(1, 2)))\n    0\n}\n",
+            "5\n",
+        ),
+        (
+            "g_pass_fn_local",
+            "fn apply(h: fn(i64) -> i64, x: i64) -> i64 {\n    h(x)\n}\nfn main() -> i64 {\n    let u = |x| x * 2\n    let t = |x: i64| x + 1\n    println(to_str(apply(u, 1) + apply(t, 1)))\n    0\n}\n",
+            "4\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}

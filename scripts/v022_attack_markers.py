@@ -3269,3 +3269,15 @@ ATTACK_MARKERS.update({
     'M3853': r'ATTACK: a value the precedence rule allows was refused \[o_prob_pred\]',
     'M3854': r'ATTACK: a value the precedence rule allows was refused \[toplet\]',
 })
+
+# O-SF-01, FnVal (ids M3870-M3877)
+ATTACK_MARKERS.update({
+    'M3870': r'ATTACK: a call through a fn value with a wrong signature checked clean \[j_user_arity\]',
+    'M3871': r'ATTACK: a call through a fn value with a wrong signature checked clean \[j_user_arity\]',
+    'M3872': r'ATTACK: a call through a fn value with a wrong signature checked clean \[t_toplet_arity\]',
+    'M3873': r'ATTACK: a call through a fn value with a wrong signature checked clean \[j_user_arity\]',
+    'M3874': r'ATTACK: a call through a fn value with a wrong signature checked clean \[k_lambda_arity\]',
+    'M3875': r'ATTACK: a valid call through a fn value was refused \[g_unknown_local_shadows_fn\]',
+    'M3876': r'ATTACK: a valid call through a fn value was refused \[g_lambda_param_shadows_local\]',
+    'M3877': r'ATTACK: a valid call through a fn value was refused \[g_pass_fn_local\]',
+})
