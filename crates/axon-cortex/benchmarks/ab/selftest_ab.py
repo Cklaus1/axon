@@ -49,7 +49,9 @@ def span(name):
         if d == 0:
             return src[o:i]
 if args[0] == "check":
-    sys.exit(0)
+    # Named axon-presf5: an axon from before SF-5, which fails `check` on the
+    # I0002 `let mut` note (O-HX3-01).
+    sys.exit(2 if os.path.basename(sys.argv[0]) == "axon-presf5" and "let mut" in src else 0)
 if args[0] == "caps":
     fn = args[args.index("--fn") + 1]
     body = span(fn)
@@ -540,10 +542,30 @@ def case_grade_axon_meta(env):
            f"meta cortex_commit/commit: {m.get('cortex_commit')} {m.get('commit')}")
 
 
+def case_grade_axon_mut_skew(env):
+    """O-HX3-01: a grading axon whose `axon check` rc on a one-`let mut` file
+    differs from the arms' axon aborts the run before any row; the same
+    binary under another name passes the probe."""
+    for name, bad in (("axon-presf5", True), ("axon-same", False)):
+        other = os.path.join(env.bin, name)
+        shutil.copyfile(env.axon, other)
+        os.chmod(other, 0o755)
+        out = os.path.join(env.root, f"mut-{name}", "a.jsonl")
+        p = env.run(env.corpus, "--arm", "A", "--agent", "oracle", "--out", out,
+                    "--grade-axon", other)
+        if bad:
+            expect(p.returncode != 0 and "INTEGRITY FAILURE" in p.stderr and "let mut" in p.stderr,
+                   f"a pre-SF-5 grading axon did not abort: rc {p.returncode} {p.stderr[-400:]}")
+            expect(rows(out) == [], "a pre-SF-5 grading axon wrote a row")
+        else:
+            expect(p.returncode == 0 and len(rows(out)) == 2,
+                   f"an equivalent grading axon was refused: {p.stderr[-400:]}")
+
+
 CASES = [case_pins, case_chain, case_duplicate_spend, case_unspent_paid_refused,
          case_oracle_writes_nothing, case_control_makes_no_model_call, case_spend_resume,
          case_trials, case_caps_strict, case_caps_strict_real_axon, case_integrity_abort,
-         case_grade_axon_meta]
+         case_grade_axon_meta, case_grade_axon_mut_skew]
 
 FAILS = []
 
