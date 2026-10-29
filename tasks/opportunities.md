@@ -2819,6 +2819,10 @@ arms' axon `f15fad70` behind a one-`let mut` rc probe (grader 0, arms 0); its 5 
 (`:912`) but has no rc-skew check, so an explicit pre-SF-5 `--grade-axon` (such as `hx-bin/axon`, still the
 PREREG.md §1 builder pin) is accepted silently; the probe lives only in the pilot script
 (`/var/tmp/r51-tmp/hx3-pilot-excerpt-s4.sh`). Fix direction unchanged: move the probe into `probe_grade_axon`.
+[REVISED: HX3-0 N0c 2026-10-29] Fixed in code on `hx3/proto` (5bb4e0f4, not merged): `probe_grade_axon` also runs
+`axon check` on a one-`let mut` file with the grading axon and the arms' axon and aborts (INTEGRITY FAILURE, no row)
+when the rc differs; fail-first `ab/selftest_ab.py` `case_grade_axon_mut_skew` (red before, 13/13 after). Checked on
+the real binaries: `hx-bin/axon` aborts, `hx3-inc-bin/axon` passes. Resolved once hx3/proto's `ab/` change lands on main.
 
 ### O-GL-01 — [medium] The gate lane saves far less than the spec's §4 estimates
 Smokes at 76a12f60 (cold target dir, load ≤ 10): docs-only 1586 s (§4: 1-10 min), `locate.rs` 1670 s (≈ 35 min),
