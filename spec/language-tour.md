@@ -376,6 +376,7 @@ name, so the local's own type decides a call by that name.
 ```axon
 fn inc(x: i64) -> i64 { x + 1 }
 fn dbl(x: i64) -> i64 { x * 2 }
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
 fn main() {
     println(to_str(apply(inc, 41)))   // 42
@@ -397,7 +398,7 @@ refusal and runs under `axon run`.
 ## 14. Built-in Functions
 
 ### I/O
-```axon
+```axon fragment
 print("no newline")
 println("with newline")
 eprint("stderr no newline")
@@ -406,23 +407,32 @@ eprintln("stderr with newline")
 
 ### Conversion
 ```axon
-to_str(42)           // "42"
-to_str_f64(3.14)     // "3.140000"
-parse_int("42")      // Ok(42)
-parse_int("bad")     // Err(...)
+fn main() {
+    println(to_str(42))            // 42
+    println(to_str_f64(3.14))      // 3.14
+    match parse_int("42") {
+        Ok(n) => println(to_str(n))   // 42
+        Err(e) => println(e)
+    }
+    match parse_int("bad") {
+        Ok(n) => println(to_str(n))
+        Err(e) => println(e)          // could not parse `bad` as a base-10 integer
+    }
+}
 ```
 
 ### Math
-```axon
-abs_i32(-5)          // 5
-abs_f64(-3.14)       // 3.14
-min_i32(3, 7)        // 3
-max_i32(3, 7)        // 7
+```axon fragment
+println(to_str(abs_i32(-5)))          // 5
+println(to_str_f64(abs_f64(-3.14)))   // 3.14
+println(to_str(min_i32(3, 7)))        // 3
+println(to_str(max_i32(3, 7)))        // 7
 ```
 
 ### String
-```axon
-len("hello")         // 5
+```axon fragment
+println(to_str(len("hello")))   // 5
+println(to_str(len("héllo")))   // 6 — bytes, not characters
 ```
 
 ---
@@ -463,25 +473,31 @@ run. See [`docs/SEALED_TESTS.md`](../docs/SEALED_TESTS.md) and the runnable
 
 ---
 
-## 16. AI Annotations (Deferred)
+## 16. AI Annotations
 
-Axon has first-class support for AI/agent annotations. These are recognized by the toolchain but not yet enforced by the Phase 2 compiler:
+Axon has first-class support for AI/agent annotations. `@[adaptive]` / `@[goal]` drive the optimizer,
+`@[verify]` is a runtime-checked postcondition (a breach exits 3), and `@[contained]` is enforced at check
+(`spec/axon-for-llms.md` §7, "Capability sandboxing"):
 
 ```axon
-@[goal("maximize throughput")]
+// The optimizer tunes an @[adaptive] fn: its params are the search space,
+// its return value is the score.
 @[adaptive]
-fn schedule_tasks(tasks: [Task]) -> [Task] {
-    // ...
-}
+fn throughput(workers: i64) -> i64 { 1000 - (workers - 12) * (workers - 12) }
 
-@[agent]
-fn autonomous_optimizer() {
-    // ...
-}
+// An @[goal] fn takes no params and names the metric; calling it runs the
+// search first. `goal_met` is 1 if the best score reached `target`.
+@[goal(metric: throughput, target: 1000, max_evals: 100)]
+fn tune_workers() -> i64 { goal_met }
 
-@[verify]
-fn critical_calculation(x: f64) -> f64 {
-    // ...
+// A runtime-checked postcondition: a breach exits 3.
+@[verify(value >= 0.0)]
+fn critical_calculation(x: f64) -> f64 { x * x }
+
+fn main() {
+    println(to_str(tune_workers()))                       // 1
+    println(to_str(goal_best_input("throughput", 1000.0))) // 12
+    println(to_str_f64(critical_calculation(3.0)))        // 9
 }
 ```
 
