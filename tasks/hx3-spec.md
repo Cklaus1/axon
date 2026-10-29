@@ -1,8 +1,11 @@
 # hx3: a held-out repair set with headroom — DRAFT spec
 
 **Status: DRAFT (after Step 1 review). AUTHORIZED 2026-10-29 for HX3-0 only (pilots ≤ $0.25/class, $0.50 total; NH-1 not granted). Everything after N1 is not authorized.**
+**[REVISED: HX3-0 result 2026-10-29] HX3-0 run 2026-10-29 (PREREG-hx3 §6, rows in `B/headroom/hx3-pilot-2026-10-29/`, $0.1036 of $0.50): masked rejected (c = 17/20, 0 false successes); excerpt held pending NH-1 (c = 12/20 with 7 false successes, all from a grading-axon skew, see NH-1). Not authorized beyond HX3-0.**
 Nothing in it has been built, and no model has run on it. The Step 1 review (audit HX3A-1…11, devloop HX3D-1…8) is applied below with `[REVISED: …]` markers; the
 dispositions are in "Step 1 review".
+[REVISED: HX3-0 result 2026-10-29: the sentence above predates HX3-0; the prototype is built on `hx3/proto` and the two
+pilots have run (40 rows).]
 
 Base: `main` 43e895d0. `B` = `crates/axon-cortex/benchmarks`. Why hx3 exists:
 - hx2 stopped at HX-0. Its pilots (PREREG-hx2 §6, `B/headroom/PREREG-hx2.md:117-151`) gave caller 20/20, erase 19/20,
@@ -767,6 +770,16 @@ graph TD
 
   → **a.** Two sets saturated after design-first builds. With F4-max failure costs, a low-c pilot stops at $0.20
   (HX3-0 cost table), so a resume grant may be needed. Calibration spend waits for a class rate in the band.
+
+  [REVISED: HX3-0 result 2026-10-29] NH-1 is now concrete for excerpt. Its 7 false successes (PREREG-hx3 §6.1) are
+  repaired finals that add `let mut`: the grading axon `819e0460` predates SF-5 (2ba68e53) and exits 2 on the I0002
+  note, so the grader saw no compiling file and never ran the hidden test; the arms' axon (43e895d0) exits 0. An
+  offline regrade with the arms' axon gives excerpt 19/20 and masked 17/20, 0 false successes (a diagnostic, not a
+  verdict). The pre-registered path is a seed-4 re-pilot (rule iii) after a fix recorded in a §0 addendum before the
+  draw; the fix is the grading pin (an axon whose `axon check` acceptance equals the arms', plus a one-`let mut` rc
+  probe in the preamble), not the excerpt recipe. Options: (a) grant ≤ $0.25 for that re-pilot (`--cap-usd 0.50`,
+  ≈ $0.04 expected at c ≈ 19); (b) decline, leaving excerpt not advanced without a verdict. → **a**: pre-registered,
+  cheap, and it closes B (predicted reject, c ≈ 19 > 16). Masked needs no grant: its verdict holds under either axon.
 - **NH-2 What hx3 measures first.**
   - (a) the next cortex repair-digest change, named when hx3 freezes (for example the view or rejection-message
     changes A and B are sensitive to);
@@ -785,6 +798,10 @@ graph TD
 
   → **b.** C has the weakest prior (0.5–0.9) and is the only class that needs authoring. If A or B passes, C adds yield
   only, and N5a can supply that.
+
+  [REVISED: HX3-0 result 2026-10-29] NH-3 is live: A is rejected and B is predicted to reject. Under (b), C is
+  authored once B's re-pilot rejects or NH-1 is declined; C's pilot ($0.25, row "HX3-0 P-erase-long" in §5) must use
+  the corrected grading pin.
 - **NH-4 What "larger programs" means in a claim.**
   - (a) bundles; claims worded "files over the 24,000-character view cap, built by concatenating tested programs";
   - (b) require authored ≥ 24k-character programs before calibration.
