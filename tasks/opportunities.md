@@ -2657,32 +2657,40 @@ Noted in `crates/axon-core/src/capabilities.rs` (the `reachable_capabilities` do
 ### O-S1-19 — [medium] `@[verify]` predicates have no purity check
 Found in the follow-up spec review (FU-2). E1209 rejects impure builtins in refinement predicates (`checker.rs:788-804` → `reject_impure_refinement`), but a `@[verify(...)]` predicate is checked only for sealing (`checker.rs:1393-1400`) and confidence bounds (`verify.rs`, E1101), and the interpreter evaluates it (`interp.rs:~6613`). So `@[verify(len(read_file("x")) > 0)]` runs a file read as part of a "verification". FU-2 makes every capability walker SEE it; whether verify predicates should be pure like refinements is a language-behaviour change (product decision).
 `[SPECCED 2026-10-19: tasks/capability-surface-spec.md CAP-1 (needs-human Q1).]`
+`[BUILT 2026-10-27 on main 49b576fa: capability-surface CAP-1. Re-verified 2026-10-29 (0bd2b518 binary): @[verify(len(read_file("x")) > 0)] is E1104 (a postcondition may only read the clock), check rc 2.]`
 
 ### O-S1-20 — [medium] `effect_union` omits native-module effects everywhere
 Found in the follow-up spec review (FU-2, A#6). `program_builtin_calls` (`capabilities.rs:876-899`) records only `Expr::Ident` callees that are known builtins, so a native `M::f` call (resolved by `native::resolve_call`) contributes no effect row to `program_effect_rows` → `build_axmeta_manifest`'s `effect_union`/`syscall_hint` (`main.rs:8986-9068`) — from fn bodies too, not only predicates. `reachable_capabilities` records `native:M` plus module effects (`Reach::note`, `capabilities.rs:604-607`). Fix direction: map native calls through the module's declared effects in `program_builtin_calls`; test via a body-level native call in the agreement fixture.
 `[SPECCED 2026-10-19: tasks/capability-surface-spec.md CAP-2.]`
+`[BUILT 2026-10-27 on main 49b576fa: capability-surface CAP-2. Native and turbofish calls are noted through Reach::note; pinned by predicate_capability_routes.rs the_effect_union_carries_the_row_a_predicate_route_implies. Not re-run while stamping.]`
 
 ### O-S1-21 — [low] `B/hardset/build.py` always exits 0 and `--check` with no file validates nothing
 Found in the follow-up dev-loop review (D#17). `if __name__ == "__main__": main()` discards `main()`'s return (`B/hardset/build.py:362-363`), so a failing spec still exits 0; `--check` with no FILE runs `load_specs([])`. Fix: `sys.exit(main())`, and `--check` with no file means all of `defects/*.json` (fail-first: a broken spec exits 1). Not cheap enough for every gate (runs axon + `cortex locate` per spec).
 `[SPECCED 2026-10-19: tasks/small-fixes-spec.md SF-4.]`
+`[BUILT 2026-10-28 on main 19d64dd6: small-fixes SF-4 (CHANGELOG). Not re-run while stamping.]`
 
 ### O-S1-22 — [high] A struct-field refinement type-checks, then panics at run time
 Found while authoring the FU-1 stratum-C programs (AuthorC), reproduced at f26e9506 (`rep-int` axon): `type Amt = { value: i64 where value > 0 }` with `Amt { value: v }` → `axon check` rc 0, `axon run` → `axon: panic: undefined identifier `value`` rc 101. The checker accepts what the interpreter cannot evaluate; expected: the refinement is checked against the field value (or the checker rejects the form). Fail-first: the 10-line repro above as a cli_run test.
 `[SPECCED 2026-10-19: tasks/checker-soundness-spec.md CS-1 (needs-human NH-2).]`
+`[BUILT 2026-10-27 on main 49b576fa: checker-soundness CS-1. Re-verified 2026-10-29: the repro checks rc 0 and runs to `refinement violated: field value of Amt (= -3)`, rc 6 (the refinement exit), no panic.]`
 
 ### O-S1-23 — [high] An `@[verify]` predicate naming a parameter type-checks, then panics
 Same origin, reproduced: `@[verify(value >= lo && value <= hi)] fn clampv(x: i64, lo: i64, hi: i64) -> i64` → `axon check` rc 0, `axon run` → `axon: panic: undefined identifier `lo`` rc 101. Either the checker rejects parameter names in verify predicates (with a diagnostic) or the interpreter binds them; a panic is neither. Relates to O-S1-19 (verify purity).
 `[SPECCED 2026-10-19: tasks/checker-soundness-spec.md CS-2/CS-3 (needs-human NH-1).]`
+`[BUILT 2026-10-27 on main 49b576fa: checker-soundness CS-2/CS-3 (NH-1 a: predicates bind the params). Re-verified 2026-10-29: the clampv repro checks rc 0 and runs, prints 3, rc 0.]`
 
 ### O-S1-24 — [medium] Type-checker false positives reported while authoring (NOT reproduced)
 Reported by AuthorC, not yet reproduced: a user type named `Unit` is silently `()` (E0306 "expected (), found Unit"); `len(ts)` on an array bound from a match pattern/expression → E0102 "expected str"; `None => return Err(..)` inside a `let` match → E0102 "expected i64, found ()"; a parameter used in two match arms → E0601 "use of moved value" (if/else accepted); `let out = cfg` of a `&[T]` param then `f(&cfg)` → moved. Reproduce each before acting.
 `[TRIAGED 2026-10-19: partly reproduced at 7f110693 while drafting — the match/`?`-bound `len` (checker-soundness CS-5), `return` inside a match arm (CS-11), `type Unit` aliasing a builtin type (CS-12) and `let out = cfg` moving a `&[T]` param (CS-7, needs-human NH-3) are specced in tasks/checker-soundness-spec.md; the param-in-two-match-arms item stays logged until reproduced.]`
+`[BUILT 2026-10-27 on main 49b576fa: checker-soundness CS-5, CS-7, CS-11, CS-12. Re-verified 2026-10-29: `type Unit` is E0005; the param-in-two-match-arms item does not reproduce (check rc 0, run prints 3), so it is WITHDRAWN.]`
 
 ### O-FU-01 — [medium] Generator drain: a slow leftover writer is "idle" at the stop instant
 Found by LaneCortex (FU-3). A leftover that writes every 50 ms is idle when the drain stops, so its bytes are taken as the whole answer (exit 0, junk body accepted, before and after FU-3). "Pending" should mean "writer still open / not at EOF", not "readable right now"; needs a per-pipe EOF/close signal rather than a poll at stop. Interacts with NH1/KG2 (idle stop after exit keeps its bytes) — the fix must keep `kg2_a_leftover_holding_the_generators_pipes_does_not_stall_the_loop` green.
+`[BUILT 2026-10-28 on main 70d38c0e: small-fixes SF-1 (CHANGELOG). Not re-run while stamping.]`
 
 ### O-FU-02 — [low] `locate.rs` siblings still scan raw text
 `defined_fns`, `test_fns` and `called_in` count a `fn x(` or a call inside a string or comment. Move them onto `runner::scan_code` like FU-7's `fn_body`.
+`[BUILT 2026-10-28 on main de6be69e + cb93bf7c: small-fixes SF-2 (CHANGELOG). Not re-run while stamping.]`
 
 ### O-FU-03 — [medium] runner.rs between-attempt restores lack the we-wrote check
 The broke-build revert (~runner.rs:1793) and `restore_base` (~2768) still write base bytes unconditionally. Adopting FU-4's `restore_found` means moving it into the lib and turning cases (c)/(d) into a blocked episode, which changes the walk. A writer that edits the file during a check run can be overwritten. Also an NH-R1 E5 prerequisite (`tasks/unattended-auth-spec.md` §6).
@@ -2695,6 +2703,7 @@ The broke-build revert (~runner.rs:1793) and `restore_base` (~2768) still write 
 ### O-FU-05 — [low] Two capability expression walkers remain (FU-2 consolidation rule)
 FU-2 fixed the predicate gap with one shared `program_roots` list and did not merge the walkers: `collect_caps_stmts` + `collect_caps_expr` (145 lines, `capabilities.rs` ~1257–1404) and S1's `visit_expr` (246 lines, ~1514–1759). Not merged because the fix needed only the roots list (it removed the duplicate roots list rather than adding one) and the two walkers differ in reach semantics (S1 tracks the reach set and per-fn hooks). A future merge must keep the agreement fixtures in `tests/predicate_capability_routes.rs` and M3760–M3764 green.
 `[SPECCED 2026-10-19: tasks/capability-surface-spec.md CAP-2 (shared program_reach) and CAP-3 (no full merge; agreement test).]`
+`[BUILT 2026-10-27 on main 49b576fa: capability-surface CAP-2 + CAP-3 (one classifier, walkers agree); pinned by predicate_capability_routes.rs the_program_wide_surface_agrees_with_the_reach_walker. Not re-run while stamping.]`
 
 ### O-FU-06 — [medium] Checker gaps hit while authoring the 24 extension programs
 From AuthorC2/AuthorC3 (`/var/tmp/r51-tmp/AuthorC{2,3}-NOTES.md`, exact snippets there).
@@ -2702,10 +2711,12 @@ From AuthorC2/AuthorC3 (`/var/tmp/r51-tmp/AuthorC{2,3}-NOTES.md`, exact snippets
 - **Reproduced, possibly by design:** `let core = s` on a `str` parameter moves `s` (E0601 on a later `len(s)`). Strings are immutable; decide whether `str` (and reads through `&[T]` params) should be copy/borrow.
 - **Not reproduced:** `len()` on an array bound by `?` (`let toks = tokenize(s)?; len(toks)` → E0102 "expected str") — the `?` extension of O-S1-24's match-pattern case; an early `return` marks a struct param moved for the rest of the fn; a line starting with `(` continues the previous expression as a call (gotcha not in `axon-for-llms.md`); `stdlib.md` says `parse_int` errors with "invalid integer" but the message is ``could not parse `x` as a base-10 integer`` and leading whitespace is accepted.
 `[SPECCED 2026-10-19: tasks/checker-soundness-spec.md CS-4 (arity), CS-7 (str/&[T] move, needs-human). Re-tried at 7f110693: the `?`-bound `len`, early-return move and `(`-line items DO reproduce (CS-5, CS-6, CS-8), so "Not reproduced" above is superseded; only `to_str` of a `?`-bound f64 stays unreproduced.]`
+`[BUILT 2026-10-27 on main 49b576fa: checker-soundness CS-4..CS-8, CS-10 (NH-3 d: str stays a move type, by design). Re-verified 2026-10-29: fn ln(a, b, c, d) then ln(1, 2, 3, 4) is E0305 + E0306, check rc 2.]`
 
 ### O-FU-07 — [low] `conformance.rs` leaks `cortex_gen_unauthorized_*` temp dirs
 178 `cortex_gen_unauthorized_*` directories accumulated in `TMPDIR` (`/var/tmp/r51-tmp`) across runs; the stage name comes from `crates/axon-cortex/tests/conformance.rs:1589` (`stage("gen_unauthorized")`). The test should clean up its workspace (or use a tempdir guard).
 `[SPECCED 2026-10-19: tasks/small-fixes-spec.md SF-3. Wider leak: ~15.9k cortex_* dirs under 132 prefixes (335 MB), 8,204 from tests/cli.rs workspace() — see O-SP-05.]`
+`[BUILT 2026-10-28 on main d38abb5b: small-fixes SF-3. The wider leak stays open as O-SP-05. Not re-run while stamping.]`
 
 ### O-FU-08 — [high] hx has no headroom for the incumbent, and its caller recipe admits caller-side workarounds
 FU-1 calibration (2026-10-18, `B/headroom/PREREG.md` §2 and §6, evidence in `B/headroom/calibration-2026-10-18/`): the f26e9506 incumbent on h55 solved 517/546 dev task-trials (k = 3, 182 tasks, 18 programs). Every cell but caller has a raw rate of 0.99–1.0; only caller:2 (shrunk 0.571, raw 0.50) is in the [0.3, 0.7] band, and its test selection is 33 tasks from 17 programs against the required 150 from 20. hx-test was not frozen and FU-11 was not run.
@@ -2719,6 +2730,7 @@ FU-1 calibration (2026-10-18, `B/headroom/PREREG.md` §2 and §6, evidence in `B
 
 ### O-SP-01 — [medium] Declared effect rows ignore `@[verify]` predicates
 A fn with a closed row (`| {}`) whose `@[verify]` predicate writes a file passes `axon check` (rc 0) and writes the file at run time; only `AXON_ALLOWED_EFFECTS=Pure` stops it (sandbox violation, rc 8). Found by CapabilitySurface (F1). Specced with O-S1-19 in `tasks/capability-surface-spec.md` CAP-1.
+`[BUILT 2026-10-27 on main 49b576fa: capability-surface CAP-1. Re-verified 2026-10-29: a | {} fn whose @[verify] writes a file is E1104 + E1310, check rc 2.]`
 
 ### O-SP-02 — [medium] E1209 (impure refinement predicate) is bypassed through a user fn
 `refine_write` calling a builtin directly → E1209; the same call wrapped in a user helper fn → check rc 0 and the file is written. E1209 is shallow. Found by CapabilitySurface (F2). Deep E1209 breaks 6–7 route tests in `caps_verb.rs` (537-593, 617); recommended as its own spec (capability-surface Q2, needs-human).
@@ -2728,6 +2740,7 @@ Not observed: no codegen-capable binary was available. Found by CapabilitySurfac
 
 ### O-SP-04 — [medium] E1310 (effect row) misses `ai_extract::<T>`
 `ai_extract::<i64>` in a `| {}` fn → rc 0; `ai_extract_i64` in the same position → two E1310. Found by CapabilitySurface (F4). Specced as CAP-4.
+`[BUILT 2026-10-27 on main 49b576fa: capability-surface CAP-4. Re-verified 2026-10-29: ai_extract::<i64> in a | {} fn is two E1310 (AI, Net), check rc 2.]`
 
 ### O-SP-05 — [low] Test temp-dir leaks beyond O-FU-07
 ≈ 15.9k `cortex_*` dirs under 132 prefixes (335 MB) in `/var/tmp/r51-tmp`; `crates/axon-cortex/tests/cli.rs` `workspace()` alone accounts for 8,204. Found by SmallFixes. Recommended: reuse SF-3's drop guard in a later batch rather than widen SF-3.
@@ -2737,6 +2750,7 @@ Not observed: no codegen-capable binary was available. Found by CapabilitySurfac
 
 ### O-SP-07 — [medium] The full gate never runs `g01_anchors.py` or `vm_parity.sh`
 `scripts/gate.sh` calls them only inside the `--fast` block (`:334`, `:390`); no default or `--strict` stage calls them, directly or through another script (grep of `scripts/` and `crates/` at 7f110693). `test_harness_skip.sh` (`:391`) also runs under `--strict` via `parity_all.sh:80`, but not in the default gate. The "full gate on the integrated head" ship rule therefore does not cover g01 anchor drift or tree↔VM parity. Found by GateLane (GL-5); Main narrowed it by grep. Specced in `tasks/gate-lane-spec.md` Q1 (needs-human: it changes what the full gate runs).
+`[BUILT 2026-10-29 on main 3658ffcb: gate-lane GL-5 (g01_anchors.py and test_harness_skip.sh are par stages of the full gate, vm_parity.sh is stage S22; CHANGELOG "--fast retired").]`
 
 ## Checker + capability batch, 2026-10-27 (found during Step 0)
 
@@ -2750,9 +2764,11 @@ Not observed: no codegen-capable binary was available. Found by CapabilitySurfac
 
 ### O-CS-03 — [medium] A builtin-shadowing user fn called through a fn value still checks clean, then panics on arity
 CS-4 fixed direct calls only (`call_prefers_builtin` in the checker). Through a value the checker types the user fn, but the interpreter resolves the name to the builtin: `fn abs_i64(x: i64, y: i64) -> i64 { x + y }` then `let f = abs_i64; f(1, 2)` gives `axon check` rc 0 and `axon run` rc 101 `panic: abs_i64: expected 1 args, got 2`. Same on the pre-batch binary (`hx-bin/axon`) and the integrated head (`f33c8266`). Probe: `/var/tmp/r51-tmp/review-impl-CSAudit/fnval.ax`; found by ImplAuditChecker. Fix direction: resolve a fn-value reference with the same precedence as a call (`call_prefers_builtin` with no args), in both the checker and the value lookup, plus a W0003 at the reference.
+`[BUILT 2026-10-28 on main 43208ed8: small-fixes SF-6. Re-verified 2026-10-29: let f = abs_i64 (user fn shadowing the builtin) is E0306, check rc 2.]`
 
 ### O-CS-04 — [low] `let mut` makes `axon check` exit 2 with only a note
 `fn main() -> i64 { let mut x = 1; x = x + 1; println(to_str(x)); 0 }`: `axon check` prints only note I0002 ("`mut` is not an Axon keyword and was ignored") and exits 2; `axon run` exits 0 and prints `2`. Same on `hx-bin/axon` and the integrated head. A note is not an error, so the check exit code contradicts the diagnostics, and any harness that gates on `check` rc refuses a program that runs. Found by LaneTypeB3 (its loopbrk test used `let ok` to avoid it). Fix direction: exit 0 when no error-severity diagnostic was emitted, or make I0002 an error with a fix-it; either way pin it with a cli test.
+`[BUILT 2026-10-28 on main 2ba68e53: small-fixes SF-5. Re-verified 2026-10-29: the let mut repro prints only note I0002, check rc 0.]`
 
 ## lane/checker landing, 2026-10-27
 
@@ -2904,6 +2920,13 @@ direction: recorded replay fixtures for `optimize`, `classify`, `summarize`, `co
 carry no BUILT line though CHANGELOG lists their items; CS/CAP source entries (O-S1-19/20/22/23/24, O-FU-05/06)
 have no closure stamp; ROADMAP.md (2026-06-28) names no `tasks/` spec. Third occurrence of stale-closed entries
 (L015, O-HI-02); mechanism candidate: a check that a shipped spec's source ids carry a closure stamp.
+
+### O-DT-01 - [low] `min_i32` / `max_i32` do not truncate, though their doc strings say they do
+Found drafting docs-truth DT-2 (Step 1, DTA-2). `builtins.rs:142` and `:148` say "(truncated to i32 range)";
+`interp/builtins.rs:2896-2900` handles `min_i32` with `min_i64` and `max_i32` with `max_i64`. Reproduced:
+`min_i32(5000000000, 6000000000)` -> `5000000000`, `max_i32(5000000000, 1)` -> `5000000000` (check 0, run 0);
+`abs_i32(5000000000)` -> `705032704` does truncate. Fix direction: decide the semantics (truncate like `abs_i32`,
+or drop the `_i32` names), then make doc, interpreter and axon-rt agree. Not fixed by docs-truth.
 
 O003 re-assessed: principals are read only by the `principal_*` builtins (`kernel.rs`, `interp/builtins.rs:4196-4286`);
 no effect path consults them, so an ungated `principal_root` makes the in-language attenuation model advisory but

@@ -1,6 +1,6 @@
 # DRAFT — Intent → checked program: the generation loop and its viability benchmark (IG)
 
-**Status: Step 1 reviewed (2026-10-18, ReviewIGAdversarial: 1 blocker, 7 major, 9 minor; ReviewIGDevloop: 7 major,
+**Status: REVIEWED 2026-10-18 (Step 1, ReviewIGAdversarial: 1 blocker, 7 major, 9 minor; ReviewIGDevloop: 7 major,
 3 minor); Step 2 resolved below; the needs-human questions Q1–Q3, Q7 and the refusal policy were answered by the
 owner on 2026-10-18 (see "Owner decisions"). IG0–IG5 and dev work are authorised; the once run is gated on the
 "Before the once run" list.**

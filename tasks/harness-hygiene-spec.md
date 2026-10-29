@@ -1,5 +1,7 @@
 # DRAFT — Parity-harness and test-reliability residue (H1-H7)
 
+**Status: BUILT 2026-10-17 on `main` 8afc76ba + d2d91d0b (H1-H7). Stamped 2026-10-29 by tasks/docs-truth-spec.md DT-5.**
+
 **This draft MUST pass a Step 1 adversarial review before any build.** Nothing here is reviewed yet.
 [REVISED: Step 1 adversarial review done 2026-10-17 (ReviewHarness) against `gaps/int` 43fa1857, which is 71d6f503
 plus the four draft specs; no code changed between them. Every line number below was re-checked on 43fa1857. The

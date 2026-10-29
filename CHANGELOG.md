@@ -24,6 +24,21 @@
 - **A write to the generator's pipe after the generator was reaped is not its answer (SF-1, O-FU-01):** `cortex repair` used to treat a background child that kept writing after the generator exited as part of the answer. Its bytes were spliced in, and the run could end `verified_done` with rc 0. Those bytes now make the generator `Unavailable` (exit 24). A silent leftover that only holds the pipe open is still accepted (KG2, NH1).
 - **`cortex locate` ignores names in comments and strings (SF-2, O-FU-02):** `defined_fns`, `test_fns` and `called_in` now scan the lexer's code view, so `fn NAME(` or `NAME(` inside a comment or a string literal no longer defines or calls anything. A call inside an interpolation hole (`"{f(x)}"`) still counts.
 - **`hardset/build.py` exit status and arguments (SF-4, O-S1-21):** `--check` exits 1 when any defect spec fails. With no file it checks every `defects/*.json`. An unknown argument exits 2 instead of starting a build. `--check` is now a full-gate step, with a self-test in the protected-sets stage. `misc.json#6`, a duplicate of `options.ax::safe_div`, is deleted.
+- **Conformance workspaces are removed when dropped (SF-3, O-FU-07):** d38abb5b.
+
+## Checker soundness and capability surface (checker-soundness CS-1 to CS-13, capability-surface CAP-1 to CAP-4; `main` 49b576fa, 2026-10-27)
+- **Refinement predicates are name- and type-checked (CS-1, O-S1-22):** an unbound name or callee in a predicate is E1211, not a run-time panic; a struct-field refinement binds its own field name.
+- **`@[verify]` predicates are name- and type-checked and bind the fn's params (CS-2, CS-3, O-S1-23):** an unknown name or an ill-typed operand is E1103; a predicate the run cannot evaluate is refused at check instead of being silently skipped.
+- **A call to a builtin-shadowing fn is typed against the builtin it runs (CS-4, O-FU-06):** wrong arity is E0305, wrong argument type E0306.
+- **Checker false positives removed (CS-5, CS-6, CS-11, O-S1-24):** `len(x)` with `x` still a type variable is no longer forced to `str`; a move inside an early-`return` branch no longer poisons the fallthrough; `return` inside a match arm or if-branch is no longer typed `()`.
+- **Array and `&[T]` params copy on `let`; `str` stays a move type (CS-7, NH-3 d).**
+- **A field access followed by a newline and `(` no longer parses as a method call (CS-10).**
+- **A user type named like a builtin type is E0005 (CS-12).**
+- **The goal generator takes only the score bound as its target (CS-13).**
+- **Docs and invariants (CS-8, CS-9):** two gotchas documented; a test pins that a check-accepted fixture never reaches an interpreter-internal panic.
+- **A `@[verify]` predicate may only read the clock (CAP-1, O-S1-19, O-SP-01):** any other effect is E1104, and its effects count against the fn's declared row (E1310).
+- **Native and turbofish calls reach `effect_union` (CAP-2, O-S1-20);** both capability walkers classify every call through one `Reach::note` and a test pins their agreement (CAP-3, O-FU-05).
+- **E1310 sees `ai_extract::<T>` (CAP-4, O-SP-04).**
 
 ## Requirements-evidence integrity checker (merge of `lane/checker`)
 
@@ -36,6 +51,17 @@
 - **A builtin's `T`/`U`/`V` is bound once per call (port of `builtin-typevar-instantiation`):** those slots were `Deferred` wildcards that unified with anything, so `let v = dict_get_or(d, "n", 0)` followed by `RG { amounts: v }` with `amounts: [i64]` passed `axon check` and then panicked at run time (`len: expected str/array/dict, got i64`, rc 101). Each call now instantiates fresh variables, nested slots (`[T]`, `(str, V)`, `Option<T>`) included; closure slots such as `fn(T) -> U` stay deferred. The checker's same-`T` binder reads the promoted slots. Generic builtins are not queued for monomorphization (a queued stub shadowed the native `dict_set` extern). The type-param names come from the sig the call reaches, so a generic user fn sharing a builtin's name and reached through a `&mut` argument (CS-4) is still specialized.
 - **Frozen held-out task `h-wrong-var-04` is now caught at compile time:** its planted mutant pushes a `Trace` into an `[i64]` (E0102). `heldout.json` is unchanged. `fence_sweep.py` `COMPILE_CAUGHT` records the task and confirms the refusal on each gate run; a stale entry is an error. On binaries from this change on, a heldout score is at most 46/47 (`benchmarks/heldout/README.md`, "Compile-caught tasks").
 - **`scripts/fuzz_parity.sh` covers `str_cmp`:** a two-argument compare row and a self-compare row (reflexive 0), port of `fuzz-str-cmp`.
+
+## S1 follow-ups (followup FU-2 to FU-9; `fu/int`, on `main` by 791dee95, 2026-10-18)
+- **Capability walkers see predicate routes (FU-2, O-S1-14):** ecf63dfc.
+- **A stopped check drain is never complete output (FU-3, O-S1-12):** ac5876df.
+- **Restore only bytes this run wrote (FU-4, O-S1-13):** 098786e7.
+- **Non-UTF-8 `AXON_ALLOWED_EFFECTS` denies every effect (FU-5, O-S1-09):** 7c5d2136.
+- **Relative `cortex --workspace` (FU-6, O-S1-04):** 392acddc.
+- **Lexer-aware `locate::fn_body` (FU-7, O-S1-11):** 2338ceca.
+- **`run_ab.py` integrity-abort fixture (FU-8, O-S1-10):** 30fb8841.
+- **Build-loop skill update (FU-9, O-S1-16).**
+- FU-1, FU-10 and FU-11 moved to `tasks/hx2-spec.md` (STOPPED at HX-0); O-S1-02 stays open.
 
 ## S1: governed repair episode — capability fence, bounded checks, walk budget, typed feedback, accepted digest
 

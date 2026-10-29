@@ -3,6 +3,7 @@
 **Last updated**: 2026-06-28
 **Companion docs**: `STATUS.md` (shipped state), `CLAUDE.md` (project conventions),
 `spec/compiler-phaseN.md` (per-phase specs).
+**Build specs**: `tasks/*-spec.md`. `python3 scripts/spec_ledger.py --list` prints each spec's status and the commit it shipped at; the full gate fails when a status line and `tasks/opportunities.md` disagree.
 
 ---
 

@@ -1,6 +1,6 @@
 # gate-lane — spec
 
-**Status: BUILT 2026-10-29 on `main` (GL-1..GL-5 plus implementation-review fixes; full `gate.sh --strict` at the integrated head). P3 (GL-6) deferred.** Implementation review (ImplAuditGL): 1 blocker (relative cargo dep-info dropped, so the lane skipped tests that link a changed lib; fixed in 0b29b054, audit regenerated, `--plan` proofs in the commit's report) and 3 minors (fixed). Lane savings are below §4's estimates: O-GL-01.
+**Status: BUILT 2026-10-29 on `main` 0bd2b518 (GL-1..GL-5 plus implementation-review fixes; full `gate.sh --strict` at the integrated head). P3 (GL-6) deferred.** Implementation review (ImplAuditGL): 1 blocker (relative cargo dep-info dropped, so the lane skipped tests that link a changed lib; fixed in 0b29b054, audit regenerated, `--plan` proofs in the commit's report) and 3 minors (fixed). Lane savings are below §4's estimates: O-GL-01.
 Base commit: `7f110693` (`main`). Source: `tasks/opportunities.md` **O-S1-17** (:2647-2648), with lessons `tasks/lessons.md:875`, `:882` (S1 missed suites) and `:853` (S6.1 lane missed a stage).
 Build base: `main` 43e895d0 (harness `tasks/build-loop-gate-lane.md`). The gate.sh line numbers below are at 7f110693; SF-4 has since added the hardset `build.py --check` step after S04 (gate.sh:739-742 at 43e895d0), so every line reference is re-anchored at use. That step is stage **S04H** (cross-spec dependency below: this spec lands second, so it wraps it).
 
