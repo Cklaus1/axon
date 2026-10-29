@@ -235,9 +235,9 @@ itself a useful failure-mode demonstration.
 | `run` | `axon run` | ✅ wraps `axon run` |
 | `trace` | `axon trace` | ✅ filters provenance log |
 | `audit` | `axon trace` | ✅ AI-call audit: model, mode, cost, goal |
-| `improve` | `axon improve` | ✅ rerun continues search |
+| `improve` | none (run.sh only; `AXON_GOAL_CONTINUE=1` / `goal_continue`) - `axon improve` is the R10 pass-graduation verb, not this | ✅ rerun continues search |
 | `redteam` | `axon redteam` | ⚠️ part of `main` for now |
-| `replay` | `axon replay` (with `AXON_RECORD`) | ✅ `AXON_AI_REPLAY` memoizes ai_complete → byte-for-byte reproducible re-run |
+| `replay` | `axon trace --replay <RUN_ID>` (with the same `AXON_AI_REPLAY` cache) - `axon replay` reads `AXON_RECORD` host journals, not this | ✅ `AXON_AI_REPLAY` memoizes ai_complete → byte-for-byte reproducible re-run |
 | `log` | none (run.sh only) | ✅ raw NDJSON dump |
 | `clear` | none (run.sh only) | ✅ wipes provenance log |
 
