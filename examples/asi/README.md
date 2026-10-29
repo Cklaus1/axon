@@ -14,7 +14,7 @@ AXON_SEED=42 axon run examples/asi/ad_optimizer.ax
 searched 80 variants → best variant #35
 predicted ROAS 320 (3.2x) @ confidence 0.92
 metacog: search uncertainty 0.12 — explored broadly
-recommended spend $420/day (compiler-capped at 500)
+recommended spend $420/day (capped at 500 by @[verify])
 creative fatigue: trust 1.0 today → 0.56 in 7 days
 action: schedule a creative refresh within the week
 ─────────────────────────────────────────────────────────────────
@@ -27,7 +27,7 @@ Each line is a different primitive doing the job it was designed for:
 | searched 80 variants | `@[goal(strategy: tournament)]` | the ROAS landscape is multi-modal (several converting audience pockets) — tournament beats hill-climb |
 | confidence 0.92 | `Uncertain<T>` | a ROAS prediction is only as good as the model's confidence in it |
 | metacog: … explored broadly | agent metacognition | the agent inspects its own search trace to know it converged vs got stuck |
-| compiler-capped at 500 | `@[verify(value <= 500)]` | the spend recommendation can NEVER exceed the daily cap — a compiler-enforced safety bound, not a hope |
+| capped at 500 by @[verify] | `@[verify(value <= 500)]` | the spend recommendation can NEVER exceed the daily cap — a runtime-enforced safety bound (a breach exits 3), not a hope |
 | creative fatigue → refresh | `Temporal<T>` | ad creative wears out; confidence in it decays per day, so the agent plans the refresh |
 
 This is the answer to "why a new language for AI apps?" — the expensive,
@@ -209,6 +209,10 @@ ANTHROPIC_API_KEY=sk-ant-... ./target/debug/axon run examples/asi/optimize.ax
 ./target/debug/axon check examples/asi/optimize.ax
 ```
 
+Four demos import `examples/stdlib` modules (`bandit_ucb`, `persistent_bandit`,
+`safe_bandit`, `safe_self_improve`): run them with `AXON_PATH=examples/stdlib` from
+the repo root (`run.sh` sets it for you), or `E0901 module ... not found`.
+
 With **`AXON_AI_MOCK=1`** the `ai_complete`/`ai_extract_*` builtins return
 deterministic stubs, so the full search → `@[verify]` gate pipeline runs
 end-to-end with no key or network. Most demos then block at their deploy gate
@@ -218,27 +222,24 @@ Without a key *and* without the mock, every `ai_complete` returns `Err`,
 variants score 0, and an enforced `@[verify(confidence >= …)]` gate panics —
 itself a useful failure-mode demonstration.
 
-> Note: `run.sh` (below) predates the interpreter and drives the native codegen
-> build, which is pathologically slow / may not finish (see `BUILD_DIAGNOSIS.md`).
-> Prefer `axon run` as shown above; the `run.sh` table documents the eventual
-> `axon goal …` CLI shape.
+> Note: `run.sh` (below) wraps the interpreter (`axon check` / `axon run`); its
+> table names the shipped verb that now does each subcommand's job.
 
-## Phase-10 CLI surface (simulated)
+## Phase-10 CLI surface
 
-`run.sh` exposes the eventual `axon goal …` / `axon trace …` shape so
-the data-model contract is exercised today:
+`run.sh` predates the shipped verbs; the second column names the verb that now does the job.
 
-| Subcommand | Future name | Status |
+| Subcommand | Shipped verb | Status |
 |---|---|---|
 | `compile` | `axon ast review` | ✅ wraps `axon check` |
-| `run` | `axon goal run` | ✅ wraps `axon run` |
-| `trace` | `axon trace show <id>` | ✅ filters provenance log |
-| `audit` | `axon trace --ai` | ✅ AI-call audit: model, mode, cost, goal |
-| `improve` | `axon goal improve <id>` | ✅ rerun continues search |
-| `redteam` | `axon redteam <plan-id>` | ⚠️ part of `main` for now |
-| `replay` | `axon trace replay <id>` | ✅ `AXON_AI_REPLAY` memoizes ai_complete → byte-for-byte reproducible re-run |
-| `log` | `axon log --principal <id>` | ✅ raw NDJSON dump |
-| `clear` | (testing helper) | ✅ wipes provenance log |
+| `run` | `axon run` | ✅ wraps `axon run` |
+| `trace` | `axon trace` | ✅ filters provenance log |
+| `audit` | `axon trace` | ✅ AI-call audit: model, mode, cost, goal |
+| `improve` | `axon improve` | ✅ rerun continues search |
+| `redteam` | `axon redteam` | ⚠️ part of `main` for now |
+| `replay` | `axon replay` (with `AXON_RECORD`) | ✅ `AXON_AI_REPLAY` memoizes ai_complete → byte-for-byte reproducible re-run |
+| `log` | none (run.sh only) | ✅ raw NDJSON dump |
+| `clear` | none (run.sh only) | ✅ wipes provenance log |
 
 ## Failure modes (each one is the *useful* demo)
 
@@ -251,8 +252,8 @@ the data-model contract is exercised today:
    every `ai_complete` and re-runs from the cache, byte-for-byte reproducible);
    the remaining gap is a *simulator distinct from* the live LLM so sim and prod
    can disagree. The deterministic-replay half (Phase 9) is done.
-4. **LLM-compiler returns low-confidence AST** — *not yet
-   exercisable*. The English-surface compiler is Phase 10.
+4. **LLM-compiler returns low-confidence AST** — not exercised by this
+   demo; `axon goal` compiles a structured-prose `.md`.
 5. **Redteam catches hallucination.** `redteam_one(0)` checks variant 0
    against `adversarial_text()`; a numeric reply means the prompt
    leaks structure even with no phone present.
@@ -266,89 +267,98 @@ phases.
 
 ### Hard gaps (block real use today)
 
-1. **`goal_run` only live-hill-climbs `fn(i64) -> i64`.** Every other
+1. **[SHIPPED] `goal_run` only live-hill-climbs `fn(i64) -> i64`.** Every other
    signature falls back to retrospective best-observed lookup.
    Implication: the search input must be encoded as a single integer.
    Variant catalog → integer index works for v1, but is awkward for
    anything with continuous parameters or string inputs.
-   → Phase 8 (Goal/Agent surface) should generalize via a strategy
-   parameter: `for!<HillClimb> maximize over Vec<Variant>`.
+   → shipped: multi-arg and f64 `@[adaptive]` (`fit(a, b)` searches both
+   params; `goal_best_inputs` returns every dimension).
 
-2. **No deterministic replay.** `ai_complete` is non-deterministic, so
+2. **[SHIPPED] No deterministic replay.** `ai_complete` is non-deterministic, so
    `axon trace replay` cannot reproduce a run. Every Hello-Goal claim
    about "auditable" is therefore weaker than it sounds.
-   → Phase 9 (replay engine) is load-bearing for the audit story.
+   → shipped: `AXON_RECORD` / `AXON_REPLAY` and `axon replay` re-run a recorded journal.
 
-3. **No typed audit log.** `~/.cache/axon/provenance.jsonl` is a flat
+3. **[PARTLY SHIPPED] No typed audit log.** `~/.cache/axon/provenance.jsonl` is a flat
    NDJSON of `(fn_name, score)`. There's no `Principal`, no effect row,
    no causal link to the goal that triggered the call.
-   → Phase 7 (`Principal`, runtime services) + Phase 9 (`AuditEvent`).
+   → partly shipped: records carry principal, event and model; the link to
+   the triggering goal is not verified.
 
-4. **No budget meter.** The demo can spend unbounded API calls — there
+4. **[SHIPPED] No budget meter.** The demo can spend unbounded API calls — there
    is no `Cost<tokens, $>` ceiling enforced at the runtime. We approximate
    by capping `max_evals` in `goal_run`, but token cost per call is
    invisible.
-   → Phase 7 (`LLM<Capabilities>` mediates calls; `Budget<R...>` ticks).
+   → shipped: token budget (`AXON_BUDGET_TOKENS`, E1303, exit 5); a dollar
+   ceiling was not checked.
 
-5. **No sandbox for AI-emitted plans.** If the LLM proposed a tool call,
+5. **[PARTLY SHIPPED] No sandbox for AI-emitted plans.** If the LLM proposed a tool call,
    nothing would prevent it from invoking arbitrary effects. The
    `@[contained]` attribute is static, not runtime.
-   → Phase 9 (`Sandbox<P>`).
+   → partly shipped: a runtime effect sandbox exists (`AXON_ALLOWED_EFFECTS`,
+   exit 8); there is no tool-call surface for an LLM plan to use.
 
 ### Soft gaps (workable today, but ergonomically wrong)
 
-6. **`@[verify]` predicate language is `confidence OP K` only.** Cannot
+6. **[SHIPPED] `@[verify]` predicate language is `confidence OP K` only.** Cannot
    express `value >= 0 AND confidence >= 0.9`, or relations between two
    Uncertain values. We split the gate into the runtime check on
    confidence and a separate `if score >= 90.0` branch in main.
-   → Phase 5 (refinement types) generalizes the predicate language.
+   → shipped: compound `value` / `confidence` predicates
+   (`@[verify(value >= 0 && confidence >= 0.9)]`).
 
-7. **No string→digit-only filter builtin.** `parse_int` rejects
+7. **[SHIPPED] No string→digit-only filter builtin.** `parse_int` rejects
    "415-555-0142" because of dashes. We work around it with
    "reply with last 4 digits as integer," but that pushes the
    parsing problem onto the LLM. A `str_digits_only(s) -> str` builtin
    would have been one line.
-   → stdlib gap; cheap to add.
+   → shipped: `str_digits_only`.
 
-8. **No `f64` cast operator.** Had to use `f64_to_i64()`/`i64_to_f64()`
+8. **[SHIPPED] No `f64` cast operator.** Had to use `f64_to_i64()`/`i64_to_f64()`
    builtins instead of `expr as i64`. This is a stylistic choice
    today; it'd be friendlier for goal-surface code to support `as`.
-   → defer; not load-bearing.
+   → shipped: `expr as i64`.
 
-9. **No multi-arg `@[adaptive]`.** The signature constraint (`fn(i64)
+9. **[SHIPPED] No multi-arg `@[adaptive]`.** The signature constraint (`fn(i64)
    -> i64`) for live hill-climb means we can't have
    `try_variant(prompt_id, model_id) -> score`. We'd want `goal_run`
    to take a domain spec and search multi-dimensionally.
-   → Phase 8 generalizes.
+   → shipped: multi-arg `@[adaptive]` (see 1).
 
 10. **No reward-shaping syntax.** Currently the score *is* the metric.
     There's no way to declaratively say "score = accuracy − 0.1·tokens
     spent." We compute it imperatively.
     → Phase 8 (`Reward<T>` as signed Metric, with composition).
 
-11. **`@[adaptive]` doesn't record inputs, only return values.** That
+11. **[SHIPPED] `@[adaptive]` doesn't record inputs, only return values.** That
     means `goal_run`'s hill-climb has to start from input `0` every
     run; it can't warm-start from the best previous input.
-    → Phase 7 ABI extension: log `(input, output)` pairs.
+    → shipped: `goal_best_input(s)` and the `goal_continue` warm start.
 
-12. **No agent abstraction.** The "redteam" is just another fn; there's
+12. **[PARTLY SHIPPED] No agent abstraction.** The "redteam" is just another fn; there's
     no `Agent` type with tools, effects, and a policy. Two agents
     cannot be composed.
-    → Phase 7+8.
+    → partly shipped: a userland Agent module (`examples/stdlib/agent.ax`);
+    composing two agents is not verified.
 
 ### Strategic gaps (the demo is silent on these)
 
-13. **No structured-prose surface.** A non-programmer cannot author
+13. **[SHIPPED] No structured-prose surface.** A non-programmer cannot author
     this demo today; they'd have to learn `.ax` syntax. The whole
     English→AST pipeline is Phase 10.
-14. **No human-in-the-loop approval.** The demo runs end-to-end
+    → shipped: `axon goal` compiles a structured-prose `.md`; not exercised by this demo.
+14. **[SHIPPED] No human-in-the-loop approval.** The demo runs end-to-end
     autonomously — there's no review screen between "best variant
     found" and "deploy_gate fires." Production needs the approval
     step (Phase 12 web UI).
-15. **No `simulate → stress → redteam → verify → deploy` pipeline.**
+    → shipped: `axon ast approve` records human approval of an AST; not exercised by this demo.
+15. **[PARTLY SHIPPED] No `simulate → stress → redteam → verify → deploy` pipeline.**
     The demo conflates "score on test set" with "simulate"; there is
     no separate sim environment, no stress test, no deploy gate beyond
     `@[verify]`. Phase 11 risk-typed pipeline is the proper home.
+    → partly shipped: `axon deploy` runs the safety-gate pipeline; there is no
+    simulator or stress stage.
 
 ## Cousins (the example set)
 

@@ -374,35 +374,25 @@ examples/
 ## Language Quick Reference
 
 ```axon
-// Variables
-let x = 42            // i64 — also 0xFF (hex), 0b1010 (binary), 0o755 (octal),
-                      //   with `_` separators. A LEADING ZERO stays decimal:
-                      //   `017` is 17, not 15 — Axon has no C-style implicit octal.
-let y = 3.14          // f64
-let s = "hello"       // str
-let b = true          // bool
-x = x + 1            // reassignment (no let)
+// Items (fn, type, @[test]) live at the top level; statements live in a fn body.
+// A top-level line such as `x = x + 1` or `println(..)` is E0000.
 
 // Functions
 fn add(a: i64, b: i64) -> i64 { a + b }
 
-// Structs
+// Structs and enums
 type Point = { x: f64, y: f64 }
-let p = Point { x: 1.0, y: 2.0 }
-println(to_str_f64(p.x))
-
-// Enums
 type Shape = Circle { r: f64 } | Square { side: f64 }
-let s = Shape::Circle { r: 5.0 }
 
-// Control flow
-if x > 0 { "pos" } else { "non-pos" }
-while i < 10 { i = i + 1 }
-match val { Ok(n) => n  Err(e) => 0 }
+// Error handling
+fn parse(s: str) -> Result<i64, str> {
+    let n = parse_int(s)?
+    Ok(n * 2)
+}
 
-// Modules — TWO declarations, and both are required
-mod scorelib                       // DECLARES the module (registers the symbol)
-use scorelib.{weighted, approve}   // IMPORTS names from it; `.` separates path segments
+// Modules — TWO declarations, and both are required:
+//   mod scorelib                       // DECLARES the module (registers the symbol)
+//   use scorelib.{weighted, approve}   // IMPORTS names from it; `.` separates path segments
 // `use X` without a preceding `mod X` is E0003 "module `X` not found". The
 // resolver looks up the use-path's first segment in the symbol table, and only
 // `mod` puts it there — so the two lines are not alternatives.
@@ -412,14 +402,64 @@ use scorelib.{weighted, approve}   // IMPORTS names from it; `.` separates path 
 // so a module sitting beside its importer does not resolve without AXON_PATH.
 // First match wins and nothing records which file was chosen.
 
-// Error handling
-fn parse(s: str) -> Result<i64, str> {
-    let n = parse_int(s)?
-    Ok(n * 2)
-}
+// Goal-directed optimization: `@[adaptive]` marks the METRIC (it takes the
+// params); `@[goal]` marks a ZERO-argument entry point that names it. Both on
+// one fn is E1504. `goal_met` is 1 if the best score reached `target`.
+@[adaptive]
+fn tune(t: i64) -> i64 { 100 - (t - 40) * (t - 40) }
+@[goal(metric: tune, target: 100, max_evals: 200)]
+fn optimize() -> i64 { goal_met }
 
-// String interpolation
-println("hello {name}, age {to_str(age)}")
+// Runtime-checked postcondition; a breach exits 3. The predicate may only read the clock (E1104).
+@[verify(value >= 0)]
+fn clamp_nonneg(x: i64) -> i64 { max_i64(x, 0) }
+
+// Capability sandboxing — @[contained] (enforced by `axon check`, E1001/E1004)
+//   fs:    [read("./data/"), write("./out/")]   allowlist of path prefixes
+//   net:   ["api.example.com", "*.trusted.io"]  allowlist of hosts (leading * glob)
+//   exec:  none | any                           process spawning
+//   never: [read("/etc/"), write("/"), net("*"), exec]   hard deny (overrides allowlist)
+//   env:   reading env_var(...) is DENIED inside @[contained] (E1001) — env is an
+//          ungrantable ambient secret channel; read it OUTSIDE the boundary, pass the value in
+@[contained(fs: [write("./out/")], net: ["api.example.com"], exec: none)]
+fn scorer() -> i64 { /* compiler refuses any I/O outside the declared caps */ 0 }
+
+// Testing
+@[test]
+fn test_add() { assert_eq(add(2, 3), 5) }
+
+@[test(should_fail)]
+fn test_panic() { assert(false) }
+
+fn main() {
+    // Variables
+    let x = 42            // i64 — also 0xFF (hex), 0b1010 (binary), 0o755 (octal),
+                          //   with `_` separators. A LEADING ZERO stays decimal:
+                          //   `017` is 17, not 15 — Axon has no C-style implicit octal.
+    let y = 3.14          // f64
+    let s = "hello"       // str
+    let b = true          // bool
+    x = x + 1             // reassignment (no let)
+
+    let p = Point { x: 1.0, y: 2.0 }
+    println(to_str_f64(p.x))
+    let sh = Shape::Circle { r: 5.0 }
+
+    // Control flow — if / while / match are expressions
+    let label = if x > 0 { "pos" } else { "non-pos" }
+    let i = 0
+    while i < 10 { i = i + 1 }
+    let val = parse("21")
+    let n = match val { Ok(n) => n  Err(e) => 0 }
+
+    // String interpolation
+    let name = "ada"
+    let age = 36
+    println("hello {name}, age {to_str(age)}")
+
+    println(to_str(optimize()))         // 1: the search reached the target
+    println(to_str(clamp_nonneg(-3)))   // 0
+}
 
 // Operators: + - * / %   == != < > <= >=   && ||
 
@@ -437,29 +477,7 @@ println("hello {name}, age {to_str(age)}")
 //               divisor of 0 still PANICS in both engines — zero has no
 //               wrapped quotient, so returning one would be inventing a result.
 //           assert assert_eq assert_err
-
-// Testing
-@[test]
-fn test_add() { assert_eq(add(2, 3), 5) }
-
-@[test(should_fail)]
-fn test_panic() { assert(false) }
-
-// AI annotations (deferred, emit info not errors)
-@[goal("maximize throughput")]
-@[adaptive]
-@[agent]
-@[verify]
-
-// Capability sandboxing — @[contained] (enforced by `axon check`, E1001/E1004)
-//   fs:    [read("./data/"), write("./out/")]   allowlist of path prefixes
-//   net:   ["api.example.com", "*.trusted.io"]  allowlist of hosts (leading * glob)
-//   exec:  none | any                           process spawning
-//   never: [read("/etc/"), write("/"), net("*"), exec]   hard deny (overrides allowlist)
-//   env:   reading env_var(...) is DENIED inside @[contained] (E1001) — env is an
-//          ungrantable ambient secret channel; read it OUTSIDE the boundary, pass the value in
-@[contained(fs: [write("./out/")], net: ["api.example.com"], exec: none)]
-fn scorer() -> i64 { /* compiler refuses any I/O outside the declared caps */ 0 }
+//           The full list: AXON_REFERENCE.md (`axon reference`).
 ```
 
 ## Key Invariants

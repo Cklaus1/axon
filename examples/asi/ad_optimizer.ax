@@ -15,7 +15,7 @@
 //    * Temporal<T>                    — ad creative FATIGUES. A winner today is
 //      worth less in a week; confidence in the creative decays per day, so the
 //      agent knows when to refresh.
-//    * @[verify(value <= cap)]        — a hard SAFETY bound the compiler proves:
+//    * @[verify(value <= cap)]        — a hard SAFETY bound, checked on every call:
 //      the recommended daily spend can never exceed the budget cap.
 //    * agent metacognition            — the agent inspects its own search trace
 //      to decide whether it has CONVERGED or is spinning its wheels.
@@ -61,7 +61,7 @@ fn roas_with_confidence(score: i64) -> Uncertain<i64> {
     uncertain_dyn_i64(score, i64_to_f64(conf_pts) / 100.0)
 }
 
-// ── 4. A spend recommendation with a compiler-ENFORCED safety bound ─────────
+// ── 4. A spend recommendation with a runtime-ENFORCED safety bound ──────────
 // @[verify] is a hard bound: this function can never return a spend above the
 // $500/day cap, no matter the predicted ROAS. The runtime gate enforces it on
 // every call (a breach is a policy rejection, exit 3 — not a silent overspend).
@@ -98,7 +98,7 @@ fn main() -> i64 {
 
     // Step 4: a PROVABLY-SAFE spend recommendation (never exceeds the cap).
     let spend = recommend_spend(best_score)
-    println("recommended spend ${to_str(spend.value)}/day (compiler-capped at 500)")
+    println("recommended spend ${to_str(spend.value)}/day (capped at 500 by @[verify])")
 
     // Step 5: ad fatigue — the winning creative decays. Plan the refresh.
     let day = 86400000
