@@ -14752,6 +14752,164 @@ fn arithmetic_builtins_overflow_like_the_operators() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// checker-soundness-2 CS2-7 (O-S1-15): a refined enum variant field is
+/// checked at the `E::V { .. }` literal and a refined lambda parameter at
+/// every call of the closure (a direct call and one through a builtin), exit
+/// 6 on both engines; a constant that violates the refinement is E1209 at
+/// check, as for a struct field or a named fn's parameter. Before the fix the
+/// variant arm returned before the field checks and closures bound their
+/// arguments unchecked, so each probe printed the violating value, rc 0.
+#[test]
+fn refinements_on_variant_fields_and_lambda_params_are_enforced() {
+    let dir = std::env::temp_dir().join(format!("axon_cs2_7_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pos = "type Pos = i64 where _ > 0\n";
+    let file = |tag: &str, src: &str| {
+        let f = dir.join(format!("{tag}.ax"));
+        std::fs::write(&f, format!("{pos}{src}")).unwrap();
+        f
+    };
+    let variant = |n: &str| {
+        format!(
+            "type E = A {{ n: Pos }} | B\nfn main() -> i64 {{\n  let k = {n}\n  let e = E::A {{ n: k }}\n  \
+             match e {{\n    E::A {{ n }} => println(to_str(n)),\n    E::B => println(\"b\"),\n  }}\n  0\n}}\n"
+        )
+    };
+    let runs = [
+        ("r_variant2", variant("0 - 5"), "field `n` of `E::A` (= -5)"),
+        (
+            "r_lambda",
+            "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  let k = 0 - 5\n  println(to_str(f(k)))\n  0\n}\n".to_string(),
+            "parameter `x` of a lambda (= -5)",
+        ),
+        (
+            "r_lambda_hof",
+            "fn main() -> i64 {\n  let ys = arr_map([1, 0 - 2], |x: Pos| x * 2)\n  println(to_str(ys[1]))\n  0\n}\n".to_string(),
+            "parameter `x` of a lambda (= -2)",
+        ),
+        (
+            // The VM folds a pure two-parameter closure in registers
+            // (`fold_leaf`), skipping the call: it must decline a refined one.
+            "r_lambda_fold",
+            format!(
+                "fn main() -> i64 {{\n  let xs = [{}]\n  println(to_str(arr_fold(xs, 10, |acc: Pos, x: i64| acc - x)))\n  0\n}}\n",
+                ["1"; 20].join(", ")
+            ),
+            "parameter `acc` of a lambda (= 0)",
+        ),
+        (
+            "r_fn_ctrl",
+            "fn g(x: Pos) -> i64 { x * 2 }\nfn main() -> i64 {\n  let k = 0 - 5\n  println(to_str(g(k)))\n  0\n}\n".to_string(),
+            "parameter `x` of `g` (= -5)",
+        ),
+    ];
+    for (tag, src, want) in &runs {
+        let f = file(tag, src);
+        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            check.status.code(),
+            Some(0),
+            "[{tag}] a non-constant value is a run-time check, not a refusal: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+        for engine in ["tree", "vm"] {
+            let out = axon()
+                .args(["run", f.to_str().unwrap()])
+                .env("AXON_ENGINE", engine)
+                .output()
+                .unwrap();
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                out.status.code() == Some(6)
+                    && out.stdout.is_empty()
+                    && err.contains("refinement violated")
+                    && err.contains(want),
+                "ATTACK: a refined variant field or lambda param took a violating value [{tag}, {engine}]: \
+                 rc {:?} stdout {:?} stderr {err}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+    }
+    let consts = [
+        ("r_variant_lit", variant("0").replace("E::A { n: k }", "E::A { n: 0 }")),
+        (
+            "r_lambda_lit",
+            "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  println(to_str(f(0)))\n  0\n}\n".to_string(),
+        ),
+    ];
+    for (tag, src) in &consts {
+        let f = file(tag, src);
+        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&check.stdout),
+            String::from_utf8_lossy(&check.stderr)
+        );
+        assert!(
+            check.status.code() == Some(2) && text.contains("E1209"),
+            "ATTACK: a constant violating a variant field's or lambda param's refinement checked clean [{tag}]: {text}"
+        );
+    }
+    // False-refusal controls: a call that does not run the refined lambda (a
+    // later `let`, a match binding, an assignment, or the fn of that name
+    // once the block has ended) passes a constant the lambda would refuse.
+    let controls = [
+        ("c_shadow_let", "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  let f = |x: i64| x + 1\n  println(to_str(f(0)))\n  0\n}\n", "1\n"),
+        (
+            "c_shadow_match",
+            "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  let o = Some(|y: i64| y + 3)\n  \
+             match o {\n    Some(f) => println(to_str(f(0))),\n    None => println(\"n\"),\n  }\n  0\n}\n",
+            "3\n",
+        ),
+        ("c_assign", "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  f = |x: i64| x + 5\n  println(to_str(f(0)))\n  0\n}\n", "5\n"),
+        (
+            "c_block_end",
+            "fn f(x: i64) -> i64 { x + 9 }\nfn main() -> i64 {\n  if true {\n    let f = |x: Pos| x * 2\n    \
+             println(to_str(f(3)))\n  }\n  println(to_str(f(0)))\n  0\n}\n",
+            "6\n9\n",
+        ),
+    ];
+    for (tag, src, want) in controls {
+        let f = file(tag, src);
+        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            check.status.code(),
+            Some(0),
+            "[{tag}] false refusal: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()),
+            (Some(0), want.to_string()),
+            "[{tag}]: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    // Control: values that satisfy the refinements run unchanged.
+    let f = file(
+        "r_ok",
+        "type E = A { n: Pos } | B\nfn main() -> i64 {\n  let e = E::A { n: 3 }\n  let f = |x: Pos| x * 2\n  \
+         match e {\n    E::A { n } => println(to_str(f(n))),\n    E::B => println(\"b\"),\n  }\n  \
+         println(to_str(arr_fold([1, 2, 3], 1, |acc: Pos, x: Pos| acc + x)))\n  0\n}\n",
+    );
+    for engine in ["tree", "vm"] {
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_ENGINE", engine)
+            .output()
+            .unwrap();
+        assert_eq!(
+            (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()),
+            (Some(0), "6\n7\n".to_string()),
+            "r_ok [{engine}]: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn predicate_reductions_are_correct_over_struct_arrays() {
     // REGRESSION. arr_count_if / arr_all / arr_any over an array of STRUCTS

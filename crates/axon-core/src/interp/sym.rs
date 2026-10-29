@@ -295,6 +295,11 @@ pub struct ClosureCode {
     /// R50 S4: `vm: tree <anon>: unresolved lambda` was printed for this
     /// code (one with `compiled: None`; spec §3, once per code instance).
     pub(super) traced: std::cell::Cell<bool>,
+    /// checker-soundness-2 CS2-7: the named refinement each parameter is
+    /// declared as (`|x: Pos| ..`), checked at every call before the body
+    /// runs; `None` when no parameter is refined, so an unrefined closure
+    /// pays nothing.
+    pub(super) param_refines: Option<Box<[Option<Box<str>>]>>,
 }
 
 impl ClosureCode {
@@ -307,8 +312,26 @@ impl ClosureCode {
             param_base: None,
             compiled: None,
             traced: std::cell::Cell::new(false),
+            param_refines: None,
         }
     }
+}
+
+/// The refinement each of a lambda's `params` is declared as, by name, for
+/// [`ClosureCode::param_refines`]: `None` unless at least one parameter's
+/// annotation names a refinement in `refines` (the program's).
+pub(super) fn lambda_param_refines<V>(
+    params: &[LambdaParam],
+    refines: &HashMap<String, V>,
+) -> Option<Box<[Option<Box<str>>]>> {
+    let refined = |p: &LambdaParam| match &p.ty {
+        Some(crate::ast::AxonType::Named(n)) if refines.contains_key(n) => Some(n.as_str().into()),
+        _ => None,
+    };
+    params
+        .iter()
+        .any(|p| refined(p).is_some())
+        .then(|| params.iter().map(refined).collect())
 }
 
 // Written out so the R50 fields leave the output as it was.
@@ -336,13 +359,18 @@ pub(super) struct LambdaInfo {
 }
 
 impl LambdaInfo {
-    /// Resolve a lambda node that is not in a [`Resolution`] table.
-    pub(super) fn of(params: &[LambdaParam], body: &Expr) -> LambdaInfo {
+    /// Resolve a lambda node that is not in a [`Resolution`] table;
+    /// `refines`: the program's refinements.
+    pub(super) fn of<V>(
+        params: &[LambdaParam],
+        body: &Expr,
+        refines: &HashMap<String, V>,
+    ) -> LambdaInfo {
+        let mut code =
+            ClosureCode::unresolved(params.iter().map(|p| intern(&p.name)).collect(), body.clone());
+        code.param_refines = lambda_param_refines(params, refines);
         LambdaInfo {
-            code: Rc::new(ClosureCode::unresolved(
-                params.iter().map(|p| intern(&p.name)).collect(),
-                body.clone(),
-            )),
+            code: Rc::new(code),
             captures: free_vars(params, body)
                 .iter()
                 .map(|&s| (s, NAMED))
@@ -695,16 +723,18 @@ pub(super) struct Resolution {
 impl Resolution {
     /// Resolve every name-bearing node of `program`, and of the lambda bodies
     /// this table clones and owns, against the program's struct and enum
-    /// definitions (the interpreter's own maps, so both agree on which
-    /// definition a name means).
+    /// definitions and refinements (the interpreter's own maps, so both agree
+    /// on which definition a name means).
     pub(super) fn build(
         program: &Program,
         structs: &HashMap<String, &TypeDef>,
         enums: &HashMap<String, &EnumDef>,
+        refines: &HashMap<String, &Expr>,
     ) -> Resolution {
         let mut b = Builder {
             structs,
             enums,
+            refines,
             entries: Vec::new(),
             loops: 0,
             hot: 0,
@@ -878,6 +908,7 @@ fn slot_of(key: usize, shift: u32) -> usize {
 struct Builder<'a, 'd> {
     structs: &'a HashMap<String, &'d TypeDef>,
     enums: &'a HashMap<String, &'d EnumDef>,
+    refines: &'a HashMap<String, &'d Expr>,
     entries: Vec<(usize, u32, u32)>,
     /// R50 S9: loops seen so far, and those that make the body holding them
     /// hot on entry (`vm::long_for`); a body is hot when the second count
@@ -1150,6 +1181,7 @@ impl Builder<'_, '_> {
             param_base,
             compiled: Some(super::vm::LambdaBody::new(name)),
             traced: std::cell::Cell::new(false),
+            param_refines: lambda_param_refines(params, self.refines),
         });
         let hot = self.hot;
         self.expr(&code.body, &mut inner);

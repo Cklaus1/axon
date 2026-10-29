@@ -2664,3 +2664,92 @@ fn arithmetic_builtins_overflow_natively() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// checker-soundness-2 CS2-7 (O-S1-15): natively, a refined enum variant
+/// field is checked at the `E::V { .. }` literal and a refined lambda
+/// parameter at the closure's entry, exit 6 like the interpreter. Native used
+/// to skip both (`emit_lambda` never called `emit_refine_preconditions`, and a
+/// variant literal never reached the field checks), so the bad value ran on.
+#[cfg(feature = "codegen")]
+#[test]
+fn refinements_on_variant_fields_and_lambda_params_are_enforced_natively() {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_cs2_7n_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let both = |tag: &str, src: &str| {
+        let file = dir.join(format!("{tag}.ax"));
+        std::fs::write(&file, src).unwrap();
+        let run = Command::new(axon_bin).arg("run").arg(&file).output().unwrap();
+        let bin = dir.join(format!("{tag}_bin"));
+        let build = Command::new(axon_bin)
+            .arg("build")
+            .arg(&file)
+            .arg("-o")
+            .arg(&bin)
+            .arg("--no-cache")
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success(),
+            "[{tag}]: build: {}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        (run, Command::new(&bin).output().unwrap())
+    };
+    let pos = "type Pos = i64 where _ > 0\n";
+    let bad = [
+        (
+            "r_variant2",
+            format!(
+                "{pos}type E = A {{ n: Pos }} | B\nfn main() -> i64 {{\n  let k = 0 - 5\n  let e = E::A {{ n: k }}\n  \
+                 match e {{\n    E::A {{ n }} => println(to_str(n)),\n    E::B => println(\"b\"),\n  }}\n  0\n}}\n"
+            ),
+        ),
+        (
+            "r_lambda",
+            format!("{pos}fn main() -> i64 {{\n  let f = |x: Pos| x * 2\n  let k = 0 - 5\n  println(to_str(f(k)))\n  0\n}}\n"),
+        ),
+        (
+            "r_lambda_hof",
+            format!("{pos}fn main() -> i64 {{\n  let ys = arr_map([1, 0 - 2], |x: Pos| x * 2)\n  println(to_str(ys[1]))\n  0\n}}\n"),
+        ),
+    ];
+    for (tag, src) in &bad {
+        let (run, native) = both(tag, src);
+        assert!(
+            run.status.code() == Some(6)
+                && native.status.code() == Some(6)
+                && native.stdout.is_empty()
+                && String::from_utf8_lossy(&native.stderr).contains("refinement violated"),
+            "ATTACK: a refined variant field or lambda param took a violating value natively [{tag}]: \
+             interp rc {:?} / native rc {:?} stdout {:?} stderr {}",
+            run.status.code(),
+            native.status.code(),
+            String::from_utf8_lossy(&native.stdout),
+            String::from_utf8_lossy(&native.stderr)
+        );
+    }
+    // Control: values that satisfy the refinement run unchanged on both.
+    let (run, native) = both(
+        "r_ok",
+        &format!(
+            "{pos}type E = A {{ n: Pos }} | B\nfn main() -> i64 {{\n  let k = 3\n  let e = E::A {{ n: k }}\n  \
+             let f = |x: Pos| x * 2\n  match e {{\n    E::A {{ n }} => println(to_str(f(n))),\n    E::B => println(\"b\"),\n  }}\n  \
+             let ys = arr_map([1, 2], |x: Pos| x + 1)\n  println(to_str(ys[1]))\n  0\n}}\n"
+        ),
+    );
+    assert_eq!(
+        (run.status.code(), String::from_utf8_lossy(&run.stdout).to_string()),
+        (Some(0), "6\n3\n".to_string()),
+        "r_ok interp: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        (native.status.code(), native.stdout.clone()),
+        (Some(0), run.stdout.clone()),
+        "r_ok native: {}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

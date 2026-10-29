@@ -11333,7 +11333,7 @@ MUTATIONS += [
      '        if self.seal.active {\n            return self.init_globals_sealed(&defs);', '        if false {\n            return self.init_globals_sealed(&defs);',
      'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
     ('M3498', "R51 routing: a sealed run's whole-struct refinement runs through struct_refine_sealed", 'crates/axon-core/src/interp/eval.rs',
-     '                    let held = if self.seal.active {\n                        self.struct_refine_sealed(', '                    let held = if false {\n                        self.struct_refine_sealed(',
+     '            let held = if self.seal.active {\n                self.struct_refine_sealed(', '            let held = if false {\n                self.struct_refine_sealed(',
      'axon-core', '--no-default-features --lib', 'interp::tests::runtime_sealing_holds_without_the_static_check'),
 ]
 
@@ -11829,8 +11829,8 @@ MUTATIONS += [
      '        if let Some(kw) = predicate_frame_escape(pred).filter(|_| false) {',
      'axon-core', '--no-default-features --test cli_run', 'predicate_with_return_or_break_is_refused'),
     ('M3838', 'CS-1 / NH-2: the interpreter no longer binds a struct-field refinement\'s own field name', 'crates/axon-core/src/interp/eval.rs',
-     '                                pe.define(intern(&tf.name), fv.clone(), self.t_acc());',
-     '                                let _ = &tf.name;',
+     '                        pe.define(intern(&tf.name), fv.clone(), self.t_acc());',
+     '                        let _ = &tf.name;',
      'axon-core', '--no-default-features --test cli_run', 'struct_field_refinement_naming_its_field_binds_it'),
     ('M3817', "CS-1: the predicate-scope pass defines only `_`, so a parameter refinement's predicate no longer sees its parameter's name", 'crates/axon-core/src/resolver.rs',
      '        for n in binders {\n            self.table.define(',

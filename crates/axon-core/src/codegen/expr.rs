@@ -3788,6 +3788,15 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.locals.insert(p.name.clone(), (alloca, pty));
             }
         }
+        // checker-soundness-2 CS2-7: a parameter declared as a refinement
+        // (`|x: Pos| ..`) is checked at entry, as a named fn's is (exit 6).
+        if !self.refine_preds.is_empty() {
+            let refined: Vec<(&str, &ast::AxonType)> = params
+                .iter()
+                .filter_map(|p| p.ty.as_ref().map(|t| (p.name.as_str(), t)))
+                .collect();
+            self.emit_refine_preconditions("lambda", &refined, lambda_fn);
+        }
 
         let body_val = self.emit_expr(body, lambda_fn);
         if self
@@ -9167,6 +9176,17 @@ impl<'ctx> super::Codegen<'ctx> {
                              from the field's declared type)"
                         ));
                         continue;
+                    }
+                    // checker-soundness-2 CS2-7: a refined variant field is
+                    // checked at construction, as a struct field is (exit 6).
+                    if self.struct_field_refines.contains_key(name) {
+                        self.emit_refine_variant_field_check(
+                            name,
+                            fname,
+                            fval,
+                            slot.ty.clone(),
+                            fn_val,
+                        );
                     }
                     if self.store_enum_field(pay_ptr, slot, fval).is_none() {
                         self.refuse_unlowered(&format!("payload field `{fname}` of `{name}`"));

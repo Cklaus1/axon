@@ -905,7 +905,7 @@ impl<'p> Interp<'p> {
                 let Expr::Lambda { params, body, .. } = expr else {
                     unreachable!("make_closure on a non-lambda node")
                 };
-                unresolved = LambdaInfo::of(params, body);
+                unresolved = LambdaInfo::of(params, body, &self.refine_preds);
                 &unresolved
             }
         };
@@ -2695,7 +2695,67 @@ impl<'p> Interp<'p> {
         if self.seal.active {
             self.cast_fields(name, &mut fields)?;
         }
-        let (sname, fields) = match lit.kind {
+        // Phase 5: refinement obligations at CONSTRUCTION (the dual of the
+        // param/return checks), for non-constant values the checker (E1209)
+        // only discharges for constants. Two checks, both reusing the
+        // refinement-predicate evaluator with `_` bound to the relevant
+        // value. A whole-struct `where` lives on the TypeDef (not a
+        // RefineDef), so gate on the TypeDef having a refinement OR the
+        // program having named refinements (for refined fields), not on
+        // `refine_preds` alone. An enum variant's fields are checked like a
+        // struct's (checker-soundness-2 CS2-7); a variant has no whole-record
+        // `where`. In a sealed run each predicate's `_` carries what the field
+        // values were computed with (their union, in `acc`; veto eval.rs:879,
+        // 902).
+        let (td, decl) = match lit.kind {
+            RecordKind::Enum(..) if self.refine_preds.is_empty() => (None, None),
+            RecordKind::Enum(enum_name, variant) => {
+                let (e, v) = (sym_name(enum_name), sym_name(variant));
+                let vd = self
+                    .enums
+                    .get(&*e)
+                    .and_then(|ed| ed.variants.iter().find(|x| *x.name == *v));
+                (None, vd.map(|vd| vd.fields.as_slice()))
+            }
+            RecordKind::Struct(_) => match self.structs.get(name).copied() {
+                Some(td) if td.refinement.is_some() || !self.refine_preds.is_empty() => {
+                    (Some(td), Some(td.fields.as_slice()))
+                }
+                _ => (None, None),
+            },
+        };
+        // (1) per-FIELD refinement: each field whose declared type is a
+        // refinement must satisfy that predicate.
+        for tf in decl.unwrap_or_default() {
+            if let crate::ast::AxonType::Named(rn) = &tf.ty {
+                if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
+                    self.seal_refine(rn)?;
+                    if let Some(fv) = fields.named(&tf.name) {
+                        let mut pe = self.new_env();
+                        pe.define(SYM_UNDERSCORE, fv.clone(), self.t_acc());
+                        // NH-2 (a): the field's own name binds too, as
+                        // a param or `let` refinement binds its name.
+                        pe.define(intern(&tf.name), fv.clone(), self.t_acc());
+                        if let Value::Bool(false) =
+                            contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
+                        {
+                            return Err(Flow::RefineViolation(
+                                format!(
+                                    "field `{}` of `{}` (= {}) violates the refinement \
+                                     `{}` — the value does not satisfy the type's predicate",
+                                    tf.name,
+                                    name,
+                                    display(fv),
+                                    rn
+                                )
+                                .into(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        let sname = match lit.kind {
             RecordKind::Enum(enum_name, variant) => {
                 return Ok(Value::Enum(Rc::new(EnumVal {
                     enum_name,
@@ -2703,74 +2763,29 @@ impl<'p> Interp<'p> {
                     fields,
                 })));
             }
-            RecordKind::Struct(sname) => (sname, fields),
+            RecordKind::Struct(sname) => sname,
         };
-        // Phase 5: refinement obligations at struct CONSTRUCTION (the
-        // dual of the param/return checks), for non-constant values the
-        // checker (E1209) only discharges for constants. Two checks,
-        // both reusing the refinement-predicate evaluator with `_`
-        // bound to the relevant value. A whole-struct `where` lives on
-        // the TypeDef (not a RefineDef), so gate on the TypeDef having
-        // a refinement OR the program having named refinements (for
-        // refined fields), not on `refine_preds` alone. In a sealed run each
-        // predicate's `_` carries what the field values were computed with
-        // (their union, in `acc`; veto eval.rs:879, 902).
-        if let Some(td) = self.structs.get(name).copied() {
-            if td.refinement.is_some() || !self.refine_preds.is_empty() {
-                // (1) per-FIELD refinement: each field whose declared
-                // type is a refinement must satisfy that predicate.
-                for tf in &td.fields {
-                    if let crate::ast::AxonType::Named(rn) = &tf.ty {
-                        if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
-                            self.seal_refine(rn)?;
-                            if let Some(fv) = fields.named(&tf.name) {
-                                let mut pe = self.new_env();
-                                pe.define(SYM_UNDERSCORE, fv.clone(), self.t_acc());
-                                // NH-2 (a): the field's own name binds too, as
-                                // a param or `let` refinement binds its name.
-                                pe.define(intern(&tf.name), fv.clone(), self.t_acc());
-                                if let Value::Bool(false) =
-                                    contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
-                                {
-                                    return Err(Flow::RefineViolation(
-                                                format!(
-                                                    "field `{}` of `{}` (= {}) violates the refinement \
-                                                     `{}` — the value does not satisfy the type's predicate",
-                                                    tf.name,
-                                                    name,
-                                                    display(fv),
-                                                    rn
-                                                )
-                                                .into(),
-                                            ));
-                                }
-                            }
-                        }
-                    }
-                }
-                // (2) WHOLE-STRUCT refinement: `_` binds to the whole
-                // instance and `_.field` projects, so build it first.
-                if let Some(pred) = &td.refinement {
-                    let sv = Value::record(sname, fields);
-                    let mut pe = self.new_env();
-                    pe.define(SYM_UNDERSCORE, sv.clone(), self.t_acc());
-                    let held = if self.seal.active {
-                        self.struct_refine_sealed(name, pred, &mut pe)?
-                    } else {
-                        contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
-                    };
-                    if let Value::Bool(false) = held {
-                        return Err(Flow::RefineViolation(
-                            format!(
-                                "the constructed `{name}` violates its struct refinement \
-                                         — the value does not satisfy the type's predicate"
-                            )
-                            .into(),
-                        ));
-                    }
-                    return Ok(sv);
-                }
+        // (2) WHOLE-STRUCT refinement: `_` binds to the whole instance and
+        // `_.field` projects, so build it first.
+        if let Some(pred) = td.and_then(|td| td.refinement.as_ref()) {
+            let sv = Value::record(sname, fields);
+            let mut pe = self.new_env();
+            pe.define(SYM_UNDERSCORE, sv.clone(), self.t_acc());
+            let held = if self.seal.active {
+                self.struct_refine_sealed(name, pred, &mut pe)?
+            } else {
+                contain_frame(self.eval(pred, &mut pe), FrameEdge::Predicate)?
+            };
+            if let Value::Bool(false) = held {
+                return Err(Flow::RefineViolation(
+                    format!(
+                        "the constructed `{name}` violates its struct refinement \
+                                 — the value does not satisfy the type's predicate"
+                    )
+                    .into(),
+                ));
             }
+            return Ok(sv);
         }
         Ok(Value::record(sname, fields))
     }
