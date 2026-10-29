@@ -837,10 +837,10 @@ fi
 # modes), through the script's own AXON_FABRIC_BIN / AXON_PROTECTED_LAUNCHER_BIN
 # inputs. It measures no time. Not root: the script prints NOT_RUN and builds
 # nothing, so it runs inline as before.
+TR_BINS=""  # set before the guard: the cleanup after the join reads it even when a lane skips S07
 if lane_runs S07; then
 stage_begin S07 "v0.22 trust-root preflight (inline, or its background start)"
 echo "── gate: v0.22 trust-root preflight mechanism (dev mode) ──"
-TR_BINS=""
 stage_trust_root_preflight() {
   if [ -n "$TR_BINS" ]; then
     AXON_FABRIC_BIN="$TR_BINS/axon-fabric" AXON_PROTECTED_LAUNCHER_BIN="$TR_BINS/axon-protected-launcher" \

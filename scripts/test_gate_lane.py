@@ -463,6 +463,28 @@ def lane_guard_form():
             assert lines[i - 1].strip() == f"if lane_runs {m.group(1)}; then", f"gate.sh:{i + 1} unguarded {m.group(1)}"
 
 
+@test
+def no_unguarded_read_of_a_guarded_assignment():
+    # A variable first set inside `if lane_runs X; then … fi` and read outside every guard is
+    # unset when a lane skips X: under `set -u` that kills the lane (TR_BINS, the first audit).
+    lines = open(GATE).read().split("\n")
+    depth, inside, outside, reads = 0, set(), set(), []
+    for i, l in enumerate(lines):
+        s = l.split("#", 1)[0] if not l.lstrip().startswith("#") else ""
+        if re.match(r"^if lane_runs \S+; then$", s):
+            depth += 1
+            continue
+        if depth and s == "fi":
+            depth -= 1
+            continue
+        for v in re.findall(r"^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)=", s):
+            (inside if depth else outside).add(v)
+        if not depth:
+            reads += [(i + 1, v) for v in re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)", s)]
+    bad = sorted({f"gate.sh:{n} reads {v}" for n, v in reads if v in inside and v not in outside})
+    assert not bad, bad
+
+
 def gate(*args):
     return subprocess.run(["bash", GATE, *args], cwd=ROOT, capture_output=True, text=True)
 
