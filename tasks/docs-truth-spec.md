@@ -1,6 +1,6 @@
-# docs-truth - DRAFT spec
+# docs-truth - spec
 
-**Status: DRAFT. Not authorized for build until Step 1 review.**
+**Status: AUTHORIZED for build 2026-10-29 (after Step 1 review).**
 
 Source: `tasks/opportunities.md` "Gap analysis, 2026-10-29": O-GAP-09 (LLM-facing docs disagree with the binary),
 O-GAP-11 (spec status lines lag the code), and the doc part of O-GAP-08 (`mod util` needs `AXON_PATH`). The stamps
@@ -231,7 +231,7 @@ rejected because it re-documents 344 signatures by hand.
 12. Inbound "every builtin" claims: `AGENTS.md:14` "every builtin with signature and semantics" -> "a curated
     builtin guide (the complete list is `AXON_REFERENCE.md`)". `CLAUDE.md:349` "Standard library reference" ->
     "Curated builtin guide (complete list: AXON_REFERENCE.md)".
-13. Only if NH-1 = (a) (recommended; not yet decided): the governance checklists stop requiring a stdlib.md entry:
+13. NH-1 = (a) [DECIDED by human 2026-10-29]: the governance checklists stop requiring a stdlib.md entry:
     `DEFINITION_OF_DONE.md:52` -> "- [ ] Public surface documented: a builtin by its `doc` string in `builtins.rs`
     (AXON_REFERENCE.md regenerated, test-checked); syntax or an error code in the relevant `spec/*.md`; add to
     `spec/stdlib.md` or `spec/axon-for-llms.md` only when a model would misuse it without guidance";
@@ -680,7 +680,7 @@ Total paid spend: $0. Wall time about 3-4 h including the full gate [INFERENCE].
 
 | lane | items | files | notes |
 |---|---|---|---|
-| A (docs) | DT-1, DT-2, DT-3, DT-4 | spec/axon-for-llms.md, spec/stdlib.md, spec/language-tour.md, README.md, CLAUDE.md, AGENTS.md, examples/asi/{README.md, ad_optimizer.ax, run.sh}, crates/axon-core/src/builtins.rs (:469-470, :494; its own commit), governance/notes/pci-themes/<hash8>.json + the regenerated pci note (integrator), AXON_REFERENCE.md, cli_run.rs:5601; governance/{DEFINITION_OF_DONE,CODE_REVIEW_RUBRIC,BUILD_PROTOCOL}.md only if NH-1 = (a) | `builtins.rs:247-251` (`assert_eq_f64` doc) belongs to CS2-2: different lines, same file; whoever lands second regenerates AXON_REFERENCE.md and re-runs the pci regen |
+| A (docs) | DT-1, DT-2, DT-3, DT-4 | spec/axon-for-llms.md, spec/stdlib.md, spec/language-tour.md, README.md, CLAUDE.md, AGENTS.md, examples/asi/{README.md, ad_optimizer.ax, run.sh}, crates/axon-core/src/builtins.rs (:469-470, :494; its own commit), governance/notes/pci-themes/<hash8>.json + the regenerated pci note (integrator), AXON_REFERENCE.md, cli_run.rs:5601; governance/{DEFINITION_OF_DONE,CODE_REVIEW_RUBRIC,BUILD_PROTOCOL}.md (NH-1 = a) | `builtins.rs:247-251` (`assert_eq_f64` doc) belongs to CS2-2: different lines, same file; whoever lands second regenerates AXON_REFERENCE.md and re-runs the pci regen |
 | B (ledger) | DT-5, DT-6 | tasks/*-spec.md (status lines only, incl. gate-lane's sha), tasks/opportunities.md (stamps + the new O-DT-01 entry), CHANGELOG.md, ROADMAP.md, scripts/spec_ledger.py, scripts/gate.sh, governance/gate-lanes.json, crates/axon-core/tests/spec_ledger.rs | `tasks/opportunities.md` and CHANGELOG are shared with every concurrent spec. Re-run `spec_ledger.py` at integration, since a sibling spec landing BUILT without stamps now fails the gate (by design) |
 | C (snippet test) | DT-7 | crates/axon-core/tests/doc_snippets.rs | after lane A (it fails until A lands); g01 rows for B and C go into scripts/v022_g01_mutations.py and v022_attack_markers.py through one owner (the integrator) |
 
@@ -714,9 +714,11 @@ wording. Two product choices remain:
   relevant `spec/*.md`; add to `spec/stdlib.md` or `spec/axon-for-llms.md` only when a model would misuse it
   without guidance"; (b) keep the rule as is. **Recommendation: (a).** It is the only option that does not
   re-grow the stale list, and the reference gate already enforces the doc string.
+  **[DECIDED by human 2026-10-29: recommendation accepted]** -> (a) is canon; DT-2 step 13 applies.
 - **NH-2 - ROADMAP.md is four months stale (2026-06-28).** DT-5 adds only an index pointer. Whether to rewrite
   ROADMAP's priorities is a product call. **Recommendation:** defer to a separate roadmap pass, and keep the
   pointer so the shipped/unshipped state has one generated index.
+  **[DECIDED by human 2026-10-29: recommendation accepted]** -> pointer only now; a roadmap rewrite is a separate pass.
 
 ## Appendix A - verified replacement blocks
 
