@@ -285,11 +285,18 @@ _pa=$(mktemp); _pa_t0=$SECONDS
   for _ in $(seq 100); do [ -s "$_pa" ] && break; sleep 0.05; done
   fail "PA_SELFTEST" ) >/dev/null 2>&1
 _pa_pid="$(cat "$_pa")"; rm -f "$_pa"
-if [ -z "$_pa_pid" ] || kill -0 "$_pa_pid" 2>/dev/null || [ $((SECONDS - _pa_t0)) -ge 10 ]; then
+# A TERM sent to a stopped process lands only after its CONT, asynchronously,
+# and whoever inherits the killed grandchild reaps it later: probing at once
+# raced that under load (measured 2026-10-29: 3 gate runs failed here 0.18 s
+# in, the trace showing the full STOP/TERM/CONT walk). So allow it 2 s to go;
+# a grandchild nobody killed still sleeps then, a killed one is gone or a zombie.
+_pa_alive() { kill -0 "$1" 2>/dev/null && [ "$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null)" != Z ]; }
+for _ in $(seq 40); do [ -n "$_pa_pid" ] && _pa_alive "$_pa_pid" || break; sleep 0.05; done
+if [ -z "$_pa_pid" ] || _pa_alive "$_pa_pid" || [ $((SECONDS - _pa_t0)) -ge 10 ]; then
   [ -z "$_pa_pid" ] || kill "$_pa_pid" 2>/dev/null
   fail "par_abort self-check: a failing gate must stop the stages still running in the background"
 fi
-unset _pa _pa_pid _pa_t0
+unset _pa _pa_pid _pa_t0; unset -f _pa_alive
 
 # The harness-skip log (O006b) is APPEND-only across runs, so the coverage notice
 # at the end of this script would otherwise report skips from previous runs as if
