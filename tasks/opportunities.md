@@ -2773,6 +2773,7 @@ shadowing is needed (DraftCore probes `j_user_arity`, `k_lambda_arity`, `l_user_
 type the callee local's `fn(..) -> ..` in the checker's call-through-local path (`checker.rs:4012-4031`
 [INFERENCE: anchor from the drafter, not re-read]) and refuse an arity/type mismatch. Needs its own spec: it changes
 check outcomes for any program that calls a fn value.
+`[FIXED 2026-10-29 on fix/fnval (e6e9aae8): a call whose callee names a local holding a fn value of known type (a `let`-bound user fn or lambda, a `fn(..)`-typed param, a top-level `let`) is checked against that type: E0305 arity, E0306 argument type. A local of unknown type is no longer checked against the top-level fn it shadows (that was a false E0305 on base). Tests `a_call_through_a_fn_value_checks_its_signature`, `a_call_through_a_matching_fn_value_still_runs`; g01 M3870-M3877. Callees that are not a name stay unchecked: O-SF-04.]`
 
 ### O-SF-02 — [low] On a tty, a note or warning prints with an `error:` prefix
 `script -qc 'axon check letmut.ax'` prints `error: letmut.ax:1:28: note[I0002]: …` (`main.rs:1613` for `check`,
@@ -2782,3 +2783,8 @@ wrong. Out of SF-5's scope.
 ### O-SF-03 — [medium] A module-qualified fn used as a value checks clean, then panics at run
 `mod n` then `let f = n.add2; f(1, 2)` gives `axon check` rc 0, then `axon run` fails with `panic: undefined identifier `n`` (rc 101). The same happens for any module fn, builtin-shadowing or not, and on the pre-batch binary (`hx-bin/axon` 819e0460), so it was not introduced by SF-6. Probes: `/var/tmp/r51-tmp/review-impl-sf/sf6/modplain.ax` and `modpath.ax`. Found by ImplAuditSF. Fix direction: either the interpreter resolves `mod.fn` in value position, or the checker refuses it (E0306-style) until it does.
 `[FIXED 2026-10-29 on fix/modval: refused at check, E0404. The resolver refuses a module, type or enum name in value or callee position (`refuse_non_value_name`; also `let k = T`, `P(1)`, `let e = S`, which panicked the same way), and the checker no longer exempts `M::f` through a declared module (also `gfx::nope` after `use native::gfx`). Interpreter namespacing of `mod.fn` was not chosen: modules are merged flat by `use`, and the language docs only show `use M.{f}`. Tests `a_module_type_or_enum_name_used_as_a_value_is_refused`; g01 M3856-M3861.]`
+
+### O-SF-04 — [low] A call whose callee is not a name skips arity and type checks
+`ops[0](1, 2)` or `mk()(1, 2)` with a wrong arity checks rc 0 (FnVal2 probe `c1_index_callee.ax`). O-SF-01's fix covers
+only a callee that names a local or top-level `let`. Fix direction: type the callee expression (`resolve_expr_type`) and
+reuse `check_args_against_sig` when it resolves to `Type::Fn`.

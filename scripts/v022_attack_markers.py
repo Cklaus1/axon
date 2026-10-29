@@ -3279,3 +3279,15 @@ ATTACK_MARKERS.update({
     'M3860': r'ATTACK: a name with no run-time value checked clean \[mod_path\]',
     'M3861': r'ATTACK: a name with no run-time value checked clean \[native_typo\]',
 })
+
+# O-SF-01, FnVal (ids M3870-M3877)
+ATTACK_MARKERS.update({
+    'M3870': r'ATTACK: a call through a fn value with a wrong signature checked clean \[j_user_arity\]',
+    'M3871': r'ATTACK: a call through a fn value with a wrong signature checked clean \[j_user_arity\]',
+    'M3872': r'ATTACK: a call through a fn value with a wrong signature checked clean \[t_toplet_arity\]',
+    'M3873': r'ATTACK: a call through a fn value with a wrong signature checked clean \[j_user_arity\]',
+    'M3874': r'ATTACK: a call through a fn value with a wrong signature checked clean \[k_lambda_arity\]',
+    'M3875': r'ATTACK: a valid call through a fn value was refused \[g_unknown_local_shadows_fn\]',
+    'M3876': r'ATTACK: a valid call through a fn value was refused \[g_lambda_param_shadows_local\]',
+    'M3877': r'ATTACK: a valid call through a fn value was refused \[g_pass_fn_local\]',
+})

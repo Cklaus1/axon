@@ -75,6 +75,7 @@ fn inc(x: i64) -> i64 { x + 1 }
 let ops = [inc, double]          // a dispatch table; call with ops[k](x)
 let f = inc                      // apply(inc, 41), arr_map(xs, inc) all work
 // A generic fn or a builtin is NOT a value (E0306): wrap it, `|n| abs_i64(n)`.
+// A call through a value is checked like a direct call: f(1, 2) here is E0305.
 
 // Operators:  + - * / %   == != < > <= >=   && ||
 //   `/` and `%` on i64 are integer division/modulo.
