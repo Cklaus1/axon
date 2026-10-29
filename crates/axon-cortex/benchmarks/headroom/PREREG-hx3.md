@@ -1,7 +1,8 @@
 # hx3 pre-registration
 
-Status: **§0 is committed before any pilot row.** §1/§2 are written at N3
-only if a class advances; §6 records the HX3-0 pilot rows and the verdict.
+Status: **§0 was committed before any pilot row (730b82c4); §6 records the
+HX3-0 pilot rows and the verdict: masked rejects, excerpt is held on NH-1.**
+§1/§2 are never written unless a class advances.
 Design: `tasks/hx3-spec.md` on `hx3/spec` (10ed553f) HX3-0, HX3-A, HX3-B,
 HX3-2, including every [REVISED] marker. Authorization (2026-10-29): HX3-0
 only, pilots ≤ $0.25 per class, $0.50 in all; NH-1 not granted, so no resume,
@@ -134,3 +135,110 @@ nice -n 10 python3 crates/axon-cortex/benchmarks/ab/run_ab.py \
   --out crates/axon-cortex/benchmarks/headroom/hx3-pilot-2026-10-29/excerpt/pilot.jsonl \
   --reserve-usd 0.05 --cap-usd 0.25
 ```
+
+## 6. HX3-0 pilot rows and verdict (2026-10-29)
+
+Rows: `hx3-pilot-2026-10-29/<class>/pilot.jsonl`, one class at a time, with
+the §0.5 commands verbatim. The pins of 0.1 and the empty spend roots were
+checked before each run (`/var/tmp/r51-tmp/hx3-pilot-<class>.sh`). Every row
+carries commit `730b82c4`, cortex `1b2f8edb101d3fba`, axon `f15fad70807e5f51`,
+grading axon `819e04609b49c2b3`, driver `0a56dfa6da6428b0`. No row was
+rate-limited, no pilot hit the cap or the reserve, and none overran.
+
+| class | n | clean c | false successes | rows with > 1 proposal | spend (`spent()`, cost + ranker) | wall (rows) | §0.3 decision |
+|---|---|---|---|---|---|---|---|
+| masked | 20 | 17 | 0 | 6 | $0.0671 ($0.0577 + $0.0094) | 520.9 s | **reject** (c = 17; no escalation) |
+| excerpt | 20 | 12 | 7 | 8 | $0.0365 ($0.0320 + $0.0045) | 394.9 s | **false success → fix, re-pilot once under seed 4 (rule iii): needs NH-1, not granted → HELD** |
+
+Total spend $0.1036 ($0.10357) of the $0.50 HX3-0 envelope, recomputed from
+the rows; each spend root holds only its `pilot.jsonl`, which is what
+`spent()` sums.
+
+**Overrun** (§0.3 formula at the observed c): masked c = 17: $0.0671 ≤
+$0.0898 and 520.9 s ≤ 680.4 s; excerpt c = 12: $0.0365 ≤ $0.1728 and 394.9 s ≤
+1374.4 s (at c = 19, the regrade below: ≤ $0.0566 and ≤ 402.8 s). No overrun.
+Runs ended at load avg ≈ 10-12.
+
+**Per-knob clean counts (reported, not decided on):** masked `o` 9/11, `s`
+8/9; excerpt `erase` 4/11, `xfn` 8/9 (under the arms' axon, below: `erase`
+10/11, `xfn` 9/9).
+
+### 6.1 Triage of the 11 not-clean rows
+
+**Excerpt false successes: a grading-axon skew, not a workaround.** All 7
+(`ded05fff3b`, `af94b4f851`, `249dfe171f`, `a8bccc2087`, `d1359f76b0`,
+`fa279973a1`, `0895e2e2a9`) are `verified_done`, claim true,
+`true_symbol_changed` true, `fns_changed` = the symbol alone (no callee of g
+edited), `tests_tampered` [], `special_case_suspect` false. Each final adds
+`let mut` (2-7 times). The grading axon `819e0460` predates SF-5 (2ba68e53):
+its `axon check` exits 2 on the I0002 note "`mut` is not an Axon keyword and
+was ignored", so `final_compiles` is false, every test of the file counts as
+failed (`regressed` lists the whole bundle) and `hidden_ok` is false. The
+arms' axon (43e895d0, post SF-5) exits 0 on the same file, which is why cortex
+verified it. Each graded final has only note/warning diagnostics (I0002,
+W0002), no error. Probe (`/var/tmp/r51-tmp/specs-Hx3/mutprobe/`): a 10-line
+file whose only difference is `let mut y = x` gets `axon check` rc 2 from the
+grading axon and rc 0 from the arms' axon; without `mut`, rc 0 from both.
+**What the hidden check caught that the visible checks missed: nothing.** Per
+row, the hidden test (`ded05fff3b` `test_running_totals`, `af94b4f851`
+`test_lower_bound`, `249dfe171f` `test_add_days_leap_and_year`, `a8bccc2087`
+`test_cycle_shortcut`, `d1359f76b0` `test_bfs`, `fa279973a1`
+`test_mixed_of_arithmetic`, `0895e2e2a9` `test_justify_pads_single_word_lines`)
+was never run by the grader (`graded_results` null, the file did not compile
+for it); under the arms' axon it passes on all 7, with no test regressed.
+SF-5 is 2ba68e53, an ancestor of 43e895d0.
+
+Offline regrade, no model call (`/var/tmp/r51-tmp/specs-Hx3/regrade.py`, not
+committed; output `regrade.out.json` sha256 `dc87bd22…81b4`): every row's final
+rebuilt from the task's `broken` + `final_diff` matches its `final_sha` (40/40);
+`run_ab.grade` with the pinned grading axon reproduces every recorded row
+(40/40); with the arms' axon `f15fad70…57f4`: **masked 17/20, 0 false
+successes; excerpt 19/20, 0 false successes.** This is a diagnostic, not a
+§0.3 verdict. A second, independent run of the same script (output
+`/var/tmp/r51-tmp/hx3verdict/regrade.out.json`) gave the same sha256.
+
+| row | class | symbol (defect) | outcome | attempted (candidates) | masked-only state reached | missing fact inferable from the view |
+|---|---|---|---|---|---|---|
+| `hx-masked-a115f9ba7e` | masked `o` | `area` (visible `3→4`; masked Rect `*→+`) | exit 20 budget_exhausted, 4 proposals | `area` | yes, 3 attempts passed every visible check, refused by the hidden one | yes: Rect area is `w * h` |
+| `hx-masked-9da51ca0e1` | masked `s` | `frame_scores` (visible `rolls[i + 1]→[i + 2]`; masked `0..needed→1..needed`) | exit 20, 20 proposals, $0.0331 | `frame_scores`, `check_tenth_bonus`, `check_pins`, `score`, `err_of`, `repeat` | yes, 3 on `frame_scores` | yes: a frame's score sums from its first roll |
+| `hx-masked-ac10cf42e5` | masked `o` | `step` (visible `row.balance→row.interest`; masked `+ deposit→- deposit`) | exit 20, 6 proposals | `step`, `monthly_interest` | yes, 3 on `step` | yes: a deposit adds to the balance |
+| `hx-excerpt-79165c0750` | excerpt `erase` | `parcel_cost` (body `base_cost(p, distance_km) + oversize_surcharge(p)` → `0`) | exit 20, 6 proposals | `parcel_cost`, `box` | — (2 attempts passed every visible check) | no [INFERENCE]: `oversize_surcharge` is outside the excerpt (the view holds the target alone) |
+| 7 excerpt false successes | excerpt `erase` 6, `xfn` 1 | above | `verified_done` | the symbol, then other candidates on 5 of 7 | — | — (repaired; hidden test passes under the arms' axon) |
+
+For the 3 masked rows `true_symbol_changed` is false and `final_diff` is
+empty (nothing applied, so no accepted patch edits a callee of g); `regressed`
+is the symbol's failing tests. The masked-only state is read from
+`early_stop.attempts`: on the symbol, each listed attempt is `check_refused`
+with `visible_failing` []. They are the class's intended state: g repaired at
+fault i, fault j left, the hidden pin refusing it. Excerpt compile failures:
+13 `did_not_compile` attempts on 8
+rows (7 of which reached `verified_done`). The rows record no compiler
+diagnostics, so whether the view caused them (unknown name, field, arity) is
+not measurable from them.
+
+### 6.2 Verdict
+
+- **masked: rejected** (c = 17 > 16, 0 false successes). Not re-piloted.
+- **excerpt: held.** The 7 rows are false successes as recorded by the §0.1
+  grading pin, and §0.3 decides on the recorded rows, so the false-success
+  rule applies (the regrade does not override it): the class is fixed and
+  re-piloted once under seed 4 (rule iii), which needs NH-1; NH-1 is not
+  granted, so nothing re-runs. The fix to record in a §0 addendum before any
+  seed-4 draw is not a recipe change, because the class admitted no
+  workaround. It is the grading pin: grade with an axon whose `axon check`
+  acceptance equals the arms' axon (43e895d0 `f15fad70…57f4` or a later
+  post-SF-5 build), and add to the §0.5 preamble a probe that a one-`let mut`
+  file gets the same `axon check` rc from the grading axon and the arms'
+  axon. The excerpt recipe, view cap, bundles and knobs stay as in §0. The
+  regrade predicts c ≈ 19 under that pin, i.e. a reject. The masked verdict
+  is the same under either axon (17/20).
+- **Needs a human (NH-1, excerpt):** (a) grant ≤ $0.25 for the excerpt
+  seed-4 re-pilot under the corrected grading pin (`pilot-s4.jsonl`, same
+  root, `--cap-usd 0.50`; ≈ $0.04 at c ≈ 19, ≤ $0.20 + $0.05 at c = 0);
+  (b) decline, and excerpt stays not advanced without a §0.3 verdict.
+  Recommendation: **(a)**; it is the pre-registered path and cheap.
+- No class advances: no HX3-1, no §1/§2, no calibration. NH-3 (class C) is
+  live: under its recommendation (b) C is authored once neither A nor B
+  advances, i.e. after the excerpt re-pilot rejects (or NH-1 is declined);
+  C's pilot needs its own $0.25 and the corrected grading pin. R4 stays
+  retired without measurement (PREREG-hx2 §6).
