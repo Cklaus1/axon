@@ -106,7 +106,11 @@ struct Want {
 }
 
 fn parse_marker(marker: &str) -> Result<Want, String> {
-    let mut w = Want { fragment: false, exits: 0, fails: None };
+    let mut w = Want {
+        fragment: false,
+        exits: 0,
+        fails: None,
+    };
     let mut words = marker.split_whitespace().peekable();
     let mut exits_seen = false;
     while let Some(word) = words.next() {
@@ -122,7 +126,9 @@ fn parse_marker(marker: &str) -> Result<Want, String> {
             "fails" if w.fails.is_none() => {
                 let mut codes = Vec::new();
                 while let Some(c) = words.peek() {
-                    if c.len() == 5 && c.starts_with('E') && c[1..].bytes().all(|b| b.is_ascii_digit())
+                    if c.len() == 5
+                        && c.starts_with('E')
+                        && c[1..].bytes().all(|b| b.is_ascii_digit())
                     {
                         codes.push(words.next().unwrap().to_string());
                     } else {
@@ -138,7 +144,9 @@ fn parse_marker(marker: &str) -> Result<Want, String> {
         }
     }
     if w.fails.is_some() && exits_seen {
-        return Err(format!("`fails` and `exits` cannot combine in `axon {marker}`"));
+        return Err(format!(
+            "`fails` and `exits` cannot combine in `axon {marker}`"
+        ));
     }
     Ok(w)
 }
@@ -182,7 +190,10 @@ fn axon(verb: &str, dir: &Path) -> Run {
     };
     let out = String::from_utf8_lossy(&std::fs::read(dir.join(format!("{verb}.out"))).unwrap())
         .into_owned();
-    Run { code: status.and_then(|s| s.code()), out }
+    Run {
+        code: status.and_then(|s| s.code()),
+        out,
+    }
 }
 
 /// The error-severity codes in `axon check`'s NDJSON diagnostics.
@@ -214,7 +225,8 @@ fn first_error(out: &str) -> String {
 }
 
 fn rc(r: &Run) -> String {
-    r.code.map_or_else(|| format!("killed after {DEADLINE:?}"), |c| c.to_string())
+    r.code
+        .map_or_else(|| format!("killed after {DEADLINE:?}"), |c| c.to_string())
 }
 
 /// Every block of `text` that breaks its marker's contract, as
@@ -231,7 +243,11 @@ fn audit(doc: &str, text: &str, tag: &str) -> Vec<String> {
                 continue;
             }
         };
-        let src = if want.fragment { format!("fn main() {{\n{}\n}}\n", b.body) } else { format!("{}\n", b.body) };
+        let src = if want.fragment {
+            format!("fn main() {{\n{}\n}}\n", b.body)
+        } else {
+            format!("{}\n", b.body)
+        };
         let dir = std::env::temp_dir().join(format!(
             "axon_doc_snippets_{}_{tag}_{n}",
             std::process::id()
@@ -251,7 +267,11 @@ fn audit(doc: &str, text: &str, tag: &str) -> Vec<String> {
                 ));
             }
         } else if check.code != Some(0) {
-            bad.push(format!("{at}: check rc {}, {}", rc(&check), first_error(&check.out)));
+            bad.push(format!(
+                "{at}: check rc {}, {}",
+                rc(&check),
+                first_error(&check.out)
+            ));
         } else {
             if src.contains("fn main(") {
                 let run = axon("run", &dir);
@@ -264,12 +284,19 @@ fn audit(doc: &str, text: &str, tag: &str) -> Vec<String> {
                     ));
                 }
             } else if want.exits != 0 {
-                bad.push(format!("{at}: `exits {}` on a block with no `fn main(`", want.exits));
+                bad.push(format!(
+                    "{at}: `exits {}` on a block with no `fn main(`",
+                    want.exits
+                ));
             }
             if src.contains("@[test") {
                 let test = axon("test", &dir);
                 if test.code != Some(0) {
-                    bad.push(format!("{at}: test rc {}, {}", rc(&test), first_error(&test.out)));
+                    bad.push(format!(
+                        "{at}: test rc {}, {}",
+                        rc(&test),
+                        first_error(&test.out)
+                    ));
                 }
             }
         }
@@ -289,7 +316,10 @@ fn every_axon_block_in_the_llm_facing_docs_checks() {
         blocks += axon_blocks(&text).len();
         bad.extend(audit(doc, &text, &format!("d{k}")));
     }
-    assert!(blocks > 40, "the extractor found only {blocks} axon blocks in {DOCS:?}");
+    assert!(
+        blocks > 40,
+        "the extractor found only {blocks} axon blocks in {DOCS:?}"
+    );
     assert!(
         bad.is_empty(),
         "ATTACK: a doc snippet that does not check or run was accepted.\n\
@@ -307,16 +337,66 @@ fn the_marker_rules_hold_on_planted_blocks() {
                      fn peek() -> i64 {\n    let _s = read_file(\"/etc/passwd\")\n    1\n}\n\n\
                      fn main() { println(to_str(peek())) }";
     let cases: &[(&str, &str, &str, bool)] = &[
-        ("unmarked top-level statement", "axon", "let x = 1\nprintln(to_str(x))", true),
-        ("`fails E1001` on a clean block", "axon fails E1001", "fn main() { println(\"hi\") }", true),
-        ("`fails E9999` on an E1001 block", "axon fails E9999", contained, true),
-        ("`fails E1001` on an E1001 block", "axon fails E1001", contained, false),
-        ("fine fragment", "axon fragment", "let x = 2\nprintln(to_str(x * 21))", false),
-        ("program that panics at run", "axon", "fn main() { assert(false) }", true),
-        ("unknown marker", "axon illustrative", "fn main() { println(\"hi\") }", true),
-        ("`exits 3` on a program that exits 0", "axon exits 3", "fn main() { println(\"ok\") }", true),
-        ("`exits 45` on main returning 45", "axon exits 45", "fn main() -> i64 { 45 }", false),
-        ("failing @[test]", "axon", "@[test]\nfn t() { assert_eq(1, 2) }", true),
+        (
+            "unmarked top-level statement",
+            "axon",
+            "let x = 1\nprintln(to_str(x))",
+            true,
+        ),
+        (
+            "`fails E1001` on a clean block",
+            "axon fails E1001",
+            "fn main() { println(\"hi\") }",
+            true,
+        ),
+        (
+            "`fails E9999` on an E1001 block",
+            "axon fails E9999",
+            contained,
+            true,
+        ),
+        (
+            "`fails E1001` on an E1001 block",
+            "axon fails E1001",
+            contained,
+            false,
+        ),
+        (
+            "fine fragment",
+            "axon fragment",
+            "let x = 2\nprintln(to_str(x * 21))",
+            false,
+        ),
+        (
+            "program that panics at run",
+            "axon",
+            "fn main() { assert(false) }",
+            true,
+        ),
+        (
+            "unknown marker",
+            "axon illustrative",
+            "fn main() { println(\"hi\") }",
+            true,
+        ),
+        (
+            "`exits 3` on a program that exits 0",
+            "axon exits 3",
+            "fn main() { println(\"ok\") }",
+            true,
+        ),
+        (
+            "`exits 45` on main returning 45",
+            "axon exits 45",
+            "fn main() -> i64 { 45 }",
+            false,
+        ),
+        (
+            "failing @[test]",
+            "axon",
+            "@[test]\nfn t() { assert_eq(1, 2) }",
+            true,
+        ),
         (
             "4-backtick quote of a broken block",
             "text",
@@ -334,11 +414,19 @@ fn the_marker_rules_hold_on_planted_blocks() {
     }
     let bad = audit("planted.md", &md, "planted");
     for ((name, _, _, reported), line) in cases.iter().zip(&lines) {
-        let hit = bad.iter().any(|b| b.starts_with(&format!("planted.md:{line} ")));
+        let hit = bad
+            .iter()
+            .any(|b| b.starts_with(&format!("planted.md:{line} ")));
         if *reported {
-            assert!(hit, "ATTACK: a planted {name} was accepted (line {line}); reports:\n{bad:#?}");
+            assert!(
+                hit,
+                "ATTACK: a planted {name} was accepted (line {line}); reports:\n{bad:#?}"
+            );
         } else {
-            assert!(!hit, "control: the planted {name} was reported (line {line}):\n{bad:#?}");
+            assert!(
+                !hit,
+                "control: the planted {name} was reported (line {line}):\n{bad:#?}"
+            );
         }
     }
     assert_eq!(

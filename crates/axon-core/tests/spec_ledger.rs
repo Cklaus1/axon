@@ -56,14 +56,18 @@ fn ledger(tag: &str, tree: &[(&'static str, String)]) -> (Option<i32>, String) {
         std::fs::write(&p, text).unwrap();
     }
     let r = repo_root();
-    let o = script("python3", r.join("scripts/spec_ledger.py"), Bins::NoWorkspaceBinary)
-        .arg(&dir)
-        .current_dir(Path::new(&r))
-        .env("SPEC_LEDGER_GIT", &r)
-        .env("PYTHONDONTWRITEBYTECODE", "1")
-        .env_remove("PYTHONPATH")
-        .output()
-        .unwrap();
+    let o = script(
+        "python3",
+        r.join("scripts/spec_ledger.py"),
+        Bins::NoWorkspaceBinary,
+    )
+    .arg(&dir)
+    .current_dir(Path::new(&r))
+    .env("SPEC_LEDGER_GIT", &r)
+    .env("PYTHONDONTWRITEBYTECODE", "1")
+    .env_remove("PYTHONPATH")
+    .output()
+    .unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     let out = format!(
         "{}{}",
@@ -86,13 +90,20 @@ fn refused(tag: &str, tree: &[(&'static str, String)], line: &str, attack: &str)
 fn a_consistent_planted_tree_passes() {
     let (code, out) = ledger("ok", &base());
     assert_eq!(code, Some(0), "the consistent tree was refused:\n{out}");
-    assert!(out.contains("spec_ledger: PASS (0 problem(s), 2 specs)"), "{out}");
+    assert!(
+        out.contains("spec_ledger: PASS (0 problem(s), 2 specs)"),
+        "{out}"
+    );
 }
 
 #[test]
 fn a_spec_without_a_status_line_is_refused() {
     let mut t = base();
-    set(&mut t, "tasks/b-spec.md", "# b - spec\n\nStatus: DRAFT\n\n## B-1 Other\n".into());
+    set(
+        &mut t,
+        "tasks/b-spec.md",
+        "# b - spec\n\nStatus: DRAFT\n\n## B-1 Other\n".into(),
+    );
     refused(
         "nostatus",
         &t,
@@ -122,7 +133,10 @@ fn an_entry_specced_in_a_built_spec_without_a_stamp_is_refused() {
     set(
         &mut t,
         "tasks/opportunities.md",
-        opp.replace("Not specced.", "SPECCED in tasks/a-spec.md (A-1 covers it)."),
+        opp.replace(
+            "Not specced.",
+            "SPECCED in tasks/a-spec.md (A-1 covers it).",
+        ),
     );
     refused(
         "specced",
@@ -135,7 +149,11 @@ fn an_entry_specced_in_a_built_spec_without_a_stamp_is_refused() {
 #[test]
 fn a_draft_spec_whose_items_shipped_is_refused() {
     let mut t = base();
-    set(&mut t, "CHANGELOG.md", "# Changelog\n\n- **A thing (A-1, O-T-01).**\n- **Other (B-1).**\n".into());
+    set(
+        &mut t,
+        "CHANGELOG.md",
+        "# Changelog\n\n- **A thing (A-1, O-T-01).**\n- **Other (B-1).**\n".into(),
+    );
     refused(
         "draftshipped",
         &t,
@@ -160,7 +178,11 @@ fn a_built_status_naming_a_non_ancestor_commit_is_refused() {
 #[test]
 fn a_roadmap_without_the_ledger_pointer_is_refused() {
     let mut t = base();
-    set(&mut t, "ROADMAP.md", "# Roadmap\n\nBuild specs: see tasks/.\n".into());
+    set(
+        &mut t,
+        "ROADMAP.md",
+        "# Roadmap\n\nBuild specs: see tasks/.\n".into(),
+    );
     refused(
         "roadmap",
         &t,
@@ -199,7 +221,10 @@ fn a_heading_inside_a_fence_is_not_an_item() {
 #[test]
 fn a_duplicate_item_id_is_refused() {
     let mut t = base();
-    t.push(("tasks/c-spec.md", "# c - spec\n\n**Status: DRAFT.**\n\n## B-1 Same id\n".into()));
+    t.push((
+        "tasks/c-spec.md",
+        "# c - spec\n\n**Status: DRAFT.**\n\n## B-1 Same id\n".into(),
+    ));
     refused(
         "dup",
         &t,
