@@ -2802,3 +2802,13 @@ Also found the same day and fixed on `snd/int` (f2f36b66): the `par_abort` self-
 grandchild with `kill -0` at once. A TERM sent to a stopped process lands only after its CONT, so under load the probe
 raced it (3 async gate runs failed there in 0.18 s; an `-x` trace on fd 9 showed the full STOP/TERM/CONT walk). It now
 waits up to 2 s and counts a zombie as gone; with `par_abort` neutered it still fails.
+
+### O-HX3-01 — [medium] The pinned grading axon predates SF-5, so a final with only notes fails its hidden check
+hx3 HX3-0 pilot (2026-10-29): `--grade-axon /var/tmp/r51-tmp/hx-bin/axon` (`819e0460`) exits 2 on a file whose only
+diagnostic is the I0002 "`mut` is not an Axon keyword" note. The arms' axon (`hx3-inc-bin/axon`, `f15fad70`) exits 0
+on the same file (probe re-run by the integrator). All 7 excerpt "false successes" had finals with `let mut` that never ran
+their hidden tests; an offline regrade with the arms' axon gives excerpt 19/20 and masked 17/20, 0 false successes
+(`crates/axon-cortex/benchmarks/headroom/PREREG-hx3.md` §6). The skew only adds not-clean rows and cannot hide a
+false success, so earlier verdicts with 0 false successes (FU receipt, hx2 pilot) stand. Fix direction: pin the grader
+to a binary whose `axon check` accepts the same files as the arms' axon, and add a preamble probe that one `let mut`
+file gets the same rc from both. Any excerpt seed-4 re-pilot (hx3 NH-1) must take this fix first.
