@@ -1017,6 +1017,54 @@ impl<'a> Resolver<'a> {
         self.emit_error(d);
     }
 
+    /// A name that resolves to a MODULE, a TYPE (a struct, alias or type
+    /// parameter) or an ENUM, written where a value or a callee goes. None of
+    /// these has a run-time value: a module's items are merged into the
+    /// program by `use` and never reached through the module's name, and a
+    /// type or enum is only ever named by a literal (`P { x: 1 }`, `S::A`) or
+    /// in a type position. Both engines had no binding for the name, so `let f
+    /// = n.add2`, `let k = T` and `P(1)` checked clean and then panicked
+    /// ("undefined identifier", "call to unknown function", O-SF-03). Returns
+    /// whether the name was refused.
+    fn refuse_non_value_name(&mut self, name: &str, is_callee: bool) -> bool {
+        let (kind, fix) = match self.table.lookup(name) {
+            Some(Symbol::Mod { .. }) => (
+                "a module",
+                format!(
+                    "a module's items are merged into this program by `use`, not reached \
+                     through its name — import the item with `use {name}.{{item}}` and refer \
+                     to it as `item`"
+                ),
+            ),
+            Some(Symbol::Type { .. }) => (
+                "a type",
+                "a type has no value at run time — build a value with a struct literal \
+                 (`Name { field: … }`) or take one as a parameter"
+                    .to_string(),
+            ),
+            Some(Symbol::Enum { .. }) => (
+                "an enum",
+                format!("an enum has no value at run time — name one of its variants, `{name}::Variant`"),
+            ),
+            _ => return false,
+        };
+        let what = if is_callee {
+            "called"
+        } else {
+            "used as a value"
+        };
+        self.emit_error(
+            Diagnostic::error(
+                crate::error::E0404,
+                format!("`{name}` is {kind}, which cannot be {what}"),
+            )
+            .with_file(self.file)
+            .with_span(self.current_span)
+            .with_fix(fix),
+        );
+        true
+    }
+
     // ── Pass 1: collect top-level names ──────────────────────────────────
 
     fn collect_top_level(&mut self, program: &Program) {
@@ -1967,6 +2015,9 @@ impl<'a> Resolver<'a> {
             // ── Identifier lookup ─────────────────────────────────────────
             Expr::Ident(name) => {
                 let is_callee = std::mem::take(&mut self.ident_is_callee);
+                if self.refuse_non_value_name(name, is_callee) {
+                    return;
+                }
                 if !is_callee {
                     self.check_fn_value_ref(name);
                 }

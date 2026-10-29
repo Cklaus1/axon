@@ -228,6 +228,11 @@ when you write the candidate:
    `ref core = s` instead. Arrays are values: `let b = a` copies an array, including an array
    (`[T]`) or `&[T]` parameter, and both names stay usable.
 
+9. **A module's items are imported, not namespaced.** `mod util` plus `use util.{parse}`,
+   then call `parse(x)`. `util.parse(x)`, `util::parse(x)` and `let f = util` are `E0404`:
+   the module name has no value at run time. Likewise a type or enum name is not a value;
+   build a struct literal `P { x: 1 }` or name a variant `S::A`.
+
 ---
 
 ## 7. AI / capability features (Axon's reason to exist)

@@ -41387,3 +41387,145 @@ fn a_lambda_or_a_prob_pred_keeps_its_value_rule() {
         "[g_mut] a `&mut`-param fn as a value keeps E0605: {cmsg}"
     );
 }
+
+/// O-SF-03: a name with no run-time value — a module, a type (struct or type
+/// parameter) or an enum — written as a value or a callee, and a `M::f` path
+/// through a module, checked clean and then panicked in `run` ("undefined
+/// identifier `n`", "value of type n is not callable", "call to unknown
+/// function `P`"). A module's items are merged flat by `use`; a type or enum is
+/// only ever named by a literal. Each is now E0404 at check, and `run` stops at
+/// the same refusal. Controls: the `use n.{add2}` idiom, a local named like a
+/// type, a variant path and a struct literal keep running.
+#[test]
+fn a_module_type_or_enum_name_used_as_a_value_is_refused() {
+    let attack = "ATTACK: a name with no run-time value checked clean";
+    let dir = std::env::temp_dir().join(format!("axon_osf03_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("n.ax"),
+        "pub fn add2(x: i64, y: i64) -> i64 {\n    x + y\n}\n",
+    )
+    .unwrap();
+    let go = |tag: &str, src: &str| {
+        let f = dir.join(format!("{tag}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let run = |sub: &str| {
+            axon()
+                .args([sub, f.to_str().unwrap()])
+                .env("AXON_PATH", &dir)
+                .output()
+                .unwrap()
+        };
+        let (c, r) = (run("check"), run("run"));
+        (
+            c.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&c.stdout),
+                String::from_utf8_lossy(&c.stderr)
+            ),
+            r.status.code(),
+            String::from_utf8_lossy(&r.stdout).into_owned(),
+            String::from_utf8_lossy(&r.stderr).into_owned(),
+        )
+    };
+    let m = "mod n\nuse n.{add2}\n";
+    let p = "type P = { x: i64 }\n";
+    let s = "type S = A | B\n";
+    for (tag, head, body, want) in [
+        (
+            "mod_value",
+            m,
+            "    let f = n.add2\n    println(to_str(f(1, 2)))\n",
+            "`n` is a module, which cannot be used as a value",
+        ),
+        (
+            "mod_method",
+            m,
+            "    println(to_str(n.add2(1, 2)))\n",
+            "`n` is a module, which cannot be used as a value",
+        ),
+        (
+            "mod_bare",
+            m,
+            "    let q = n\n    println(\"x\")\n",
+            "`n` is a module, which cannot be used as a value",
+        ),
+        (
+            "mod_path",
+            m,
+            "    println(to_str(n::add2(1, 2)))\n",
+            "`n::add2` does not reach `add2`",
+        ),
+        (
+            "mod_path_value",
+            m,
+            "    let f = n::add2\n    println(to_str(f(1, 2)))\n",
+            "`n::add2` does not reach `add2`",
+        ),
+        (
+            "type_value",
+            p,
+            "    let f = P\n    println(\"x\")\n",
+            "`P` is a type, which cannot be used as a value",
+        ),
+        (
+            "type_field",
+            p,
+            "    println(to_str(P.x))\n",
+            "`P` is a type, which cannot be used as a value",
+        ),
+        (
+            "type_call",
+            p,
+            "    let q = P(1)\n    println(\"x\")\n",
+            "`P` is a type, which cannot be called",
+        ),
+        (
+            "enum_value",
+            s,
+            "    let e = S\n    println(\"x\")\n",
+            "`S` is an enum, which cannot be used as a value",
+        ),
+        (
+            "native_typo",
+            "use native::gfx\n",
+            "    gfx::nope()\n",
+            "native module `gfx` has no function `nope`",
+        ),
+    ] {
+        let src = format!("{head}fn main() -> i64 {{\n{body}    0\n}}\n");
+        let (crc, cmsg, rrc, rout, rerr) = go(tag, &src);
+        assert!(
+            crc == Some(2) && cmsg.contains("E0404") && cmsg.contains(want),
+            "{attack} [{tag}]: want check rc 2, E0404 `{want}`; got rc {crc:?}: {cmsg}"
+        );
+        assert!(
+            rrc == Some(2) && rout.is_empty(),
+            "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+        );
+    }
+    let (crc, cmsg, _, _, _) = go(
+        "type_param",
+        "fn id<T>(x: T) -> T {\n    let k = T\n    x\n}\nfn main() -> i64 {\n    println(to_str(id(1)))\n    0\n}\n",
+    );
+    assert!(
+        crc == Some(2) && cmsg.contains("`T` is a type, which cannot be used as a value"),
+        "{attack} [type_param]: {cmsg}"
+    );
+    for (tag, src, out) in [
+        ("use_idiom", format!("{m}fn main() -> i64 {{\n    println(to_str(add2(1, 2)))\n    0\n}}\n"), "3\n"),
+        ("local_named_p", format!("{p}fn main() -> i64 {{\n    let P = 3\n    println(to_str(P))\n    0\n}}\n"), "3\n"),
+        ("variant_path", format!("{s}fn main() -> i64 {{\n    let e = S::A\n    println(\"ok\")\n    0\n}}\n"), "ok\n"),
+        ("struct_lit", format!("{p}fn main() -> i64 {{\n    let q = P {{ x: 1 }}\n    println(to_str(q.x))\n    0\n}}\n"), "1\n"),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = go(tag, &src);
+        assert!(
+            crc == Some(0) && !cmsg.contains("E0404"),
+            "[{tag}] control must check clean: rc {crc:?}: {cmsg}"
+        );
+        assert_eq!((rrc, rout.as_str()), (Some(0), out), "[{tag}] control run: {rerr}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

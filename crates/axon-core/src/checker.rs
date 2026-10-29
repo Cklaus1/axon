@@ -484,12 +484,10 @@ pub struct CheckCtx {
     known_enums: Vec<String>,
     /// Variant lists for user-defined enums — used by Fix #10 for exhaustiveness.
     pub enum_variants: HashMap<String, Vec<String>>,
-    /// Module names a `M::f(…)` path may legitimately be qualified by.
-    ///
-    /// `::` is overloaded: `Shape::Circle` is an enum variant and `gfx::clear` is
-    /// a module call, and they are the same shape. Without this set the checker
-    /// cannot tell an undeclared TYPE from a declared MODULE, which is why an
-    /// unknown qualified path went unchecked entirely.
+    /// Every module name the program declares (`mod helper`, and each segment
+    /// of a `use` path). Only picks the E0404 message for an unresolved `M::f`
+    /// path: a declared module's items are merged flat and never reached as
+    /// `M::f` (O-SF-03), so the fix differs from an undeclared qualifier's.
     pub known_modules: std::collections::HashSet<String>,
 
     /// Field NAMES of each enum variant, keyed `"Enum::Variant"`.
@@ -704,9 +702,9 @@ impl CheckCtx {
     ) -> Vec<CheckError> {
         self.expr_types = expr_types;
 
-        // Every module name a qualified path may legitimately use: `mod helper`
-        // declares one, and `use native::gfx` declares `gfx` (every segment is
-        // taken, so both `native::` and `gfx::` qualify).
+        // Every declared module name (`mod helper`; every segment of a `use`
+        // path), for the E0404 message of an unresolved `M::f` (see
+        // `known_modules`).
         for item in &program.items {
             match item {
                 Item::ModDecl(m) => {
@@ -4723,30 +4721,57 @@ impl CheckCtx {
                     // Exemptions, each for a real construct: a BUILTIN whose
                     // own name contains `::` (`Chan::new` is an entry in the
                     // BUILTINS table, not a path — checked by name so any future
-                    // one is covered without touching this), a declared module
-                    // (`gfx::clear`), a native FFI module resolved by table, and
-                    // the `ai_extract::<T>(…)` turbofish, whose synthetic callee
-                    // name also contains `::` but is not a path at all.
+                    // one is covered without touching this), a native FFI
+                    // function resolved by table (`gfx::clear` after `use
+                    // native::gfx`), and the `ai_extract::<T>(…)` turbofish,
+                    // whose synthetic callee name also contains `::` but is not
+                    // a path at all.
+                    //
+                    // A declared module is NOT an exemption (O-SF-03): a user
+                    // module's items are merged flat into the program, so
+                    // `helper::f` reached nothing in either engine and panicked
+                    // ("value of type helper is not callable"), and a native
+                    // module's misspelled `gfx::nope` panicked the same way
+                    // ("value of type gfx is not callable"). Both are refused
+                    // here with their own fix.
                     let is_turbofish = name.contains("::<");
                     if !is_turbofish
                         && !crate::builtins::is_known_builtin(name)
                         && !self.enum_variants.contains_key(enum_name)
-                        && !self.known_modules.contains(enum_name)
                         && crate::native::resolve_call(name).is_none()
                     {
                         let file = self.file.clone();
                         let span = self.current_span;
-                        self.errors.push(
-                            CheckError::new(
-                                E0404,
-                                format!("no type or module `{enum_name}` in this scope"),
+                        let (msg, fix) = if crate::native::module(enum_name).is_some() {
+                            (
+                                format!("native module `{enum_name}` has no function `{variant}`"),
+                                format!(
+                                    "`axon reference` lists `{enum_name}`'s functions; a native call is `{enum_name}::<fn>(…)` after `use native::{enum_name}`"
+                                ),
                             )
-                            .node(node_path)
-                            .at(&file, 0, 0)
-                            .with_span(span)
-                            .fix(format!(
-                                "`{enum_name}::{variant}` names nothing this program declares. Axon has no `Vec`/`HashMap` — an array literal is `[1, 2]` and a dict is `dict_new()`; for a module, add `use {enum_name}` (or `mod {enum_name}`)"
-                            )),
+                        } else if self.known_modules.contains(enum_name) {
+                            (
+                                format!(
+                                    "`{enum_name}::{variant}` does not reach `{variant}`: a module's items are not namespaced by its name"
+                                ),
+                                format!(
+                                    "a module's items are merged into this program by `use` — write `use {enum_name}.{{{variant}}}` and call `{variant}(…)` directly"
+                                ),
+                            )
+                        } else {
+                            (
+                                format!("no type or module `{enum_name}` in this scope"),
+                                format!(
+                                    "`{enum_name}::{variant}` names nothing this program declares. Axon has no `Vec`/`HashMap` — an array literal is `[1, 2]` and a dict is `dict_new()`; for a module, add `mod {enum_name}` and `use {enum_name}.{{{variant}}}`, then call `{variant}(…)`"
+                                ),
+                            )
+                        };
+                        self.errors.push(
+                            CheckError::new(E0404, msg)
+                                .node(node_path)
+                                .at(&file, 0, 0)
+                                .with_span(span)
+                                .fix(fix),
                         );
                     }
                     if let Some(variants) = self.enum_variants.get(enum_name) {

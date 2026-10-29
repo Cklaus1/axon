@@ -3269,3 +3269,13 @@ ATTACK_MARKERS.update({
     'M3853': r'ATTACK: a value the precedence rule allows was refused \[o_prob_pred\]',
     'M3854': r'ATTACK: a value the precedence rule allows was refused \[toplet\]',
 })
+
+# O-SF-03, main agent (ids M3856-M3861)
+ATTACK_MARKERS.update({
+    'M3856': r'ATTACK: a name with no run-time value checked clean \[mod_value\]',
+    'M3857': r'ATTACK: a name with no run-time value checked clean \[type_value\]',
+    'M3858': r'ATTACK: a name with no run-time value checked clean \[enum_value\]',
+    'M3859': r'ATTACK: a name with no run-time value checked clean \[type_call\]',
+    'M3860': r'ATTACK: a name with no run-time value checked clean \[mod_path\]',
+    'M3861': r'ATTACK: a name with no run-time value checked clean \[native_typo\]',
+})

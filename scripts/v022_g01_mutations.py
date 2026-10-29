@@ -12050,5 +12050,36 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'a_lambda_or_a_prob_pred_keeps_its_value_rule'),
 ]
 
+# O-SF-03 (module / type / enum name with no run-time value), main agent (ids M3856-M3861): a
+# module, type or enum name in value or callee position is E0404 in the resolver
+# (`refuse_non_value_name`), and a `M::f` path through a declared module is no longer exempt from
+# the checker's unknown-qualified-path refusal.
+MUTATIONS += [
+    ('M3856', 'O-SF-03: a module name used as a value checks clean again', 'crates/axon-core/src/resolver.rs',
+     'Some(Symbol::Mod { .. }) => (',
+     'Some(Symbol::Mod { .. }) if false => (',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+    ('M3857', 'O-SF-03: a type name used as a value checks clean again', 'crates/axon-core/src/resolver.rs',
+     'Some(Symbol::Type { .. }) => (',
+     'Some(Symbol::Type { .. }) if false => (',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+    ('M3858', 'O-SF-03: an enum name used as a value checks clean again', 'crates/axon-core/src/resolver.rs',
+     'Some(Symbol::Enum { .. }) => (',
+     'Some(Symbol::Enum { .. }) if false => (',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+    ('M3859', 'O-SF-03: a type name called like a function checks clean again', 'crates/axon-core/src/resolver.rs',
+     'if self.refuse_non_value_name(name, is_callee) {',
+     'if !is_callee && self.refuse_non_value_name(name, is_callee) {',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+    ('M3860', 'O-SF-03: a `M::f` path through a declared module is exempt again (checks clean, panics at run)', 'crates/axon-core/src/checker.rs',
+     '&& !self.enum_variants.contains_key(enum_name)',
+     '&& !self.enum_variants.contains_key(enum_name) && !self.known_modules.contains(enum_name)',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+    ('M3861', 'O-SF-03: a misspelled native fn gets the undeclared-qualifier fix instead of the native one', 'crates/axon-core/src/checker.rs',
+     'let (msg, fix) = if crate::native::module(enum_name).is_some() {',
+     'let (msg, fix) = if false {',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+]
+
 if __name__ == "__main__":
     main()
