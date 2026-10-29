@@ -161,7 +161,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0301` | type-check failure with no more-specific code |
 | `E0302` | a `Result` returned by a call is unused — warns by default, error under AXON_STRICT |
 | `E0303` | type-check rule violation (Phase-1 R03) |
-| `E0304` | non-exhaustive match — a variant has no arm |
+| `E0304` | non-exhaustive match — a value has no arm (a variant, `true`/`false`, a tuple combination, or any int/str/float without a `_ =>` arm; a guarded arm covers nothing) |
 | `E0305` | wrong number of arguments supplied to a function |
 | `E0306` | cannot call a non-function value; also a generic fn, a builtin, or a user fn that shadows a builtin (W0003) used as a value (only a non-generic user `fn` is a first-class value — wrap the others in a lambda) |
 | `E0307` | return type mismatch between the declared type and the body |

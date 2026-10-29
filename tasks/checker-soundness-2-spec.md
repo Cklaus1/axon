@@ -1,6 +1,6 @@
 # checker-soundness-2 - DRAFT spec
 
-**Status: AUTHORIZED for build 2026-10-29 (after Step 1 review; human: "approved, do it"). CS2-3b waits for §8 NH-1.**
+**Status: AUTHORIZED for build 2026-10-29 (after Step 1 review; human: "approved, do it"). §8 NH-1 decided (a), 2026-10-29.**
 
 ### Step 1 review
 
@@ -425,6 +425,8 @@ The message reads "non-exhaustive match on `i64` - add a `_ =>` arm" (E0304, `er
 
 **False-refusal risk.** An array of fns with different arities cannot type-check under unification anyway (an array literal's elements unify; `CS2A/n1_mixed` is already E0102), so no new refusal class arises.
 
+[REVISED: build CS2-6] The local-callee rule also reaches a call to a local *lambda*: inference checks the call's argument kinds (number / `str` / `bool` / unit, through `[T]`/`Option`/`Result`/tuples) against the kinds the lambda's body gives its params, and never binds a param from a call (`let id = \|x\| x; id(1); id("s")` stays rc 0). This closes three check-then-panic programs in existing VM tests (`cli_run.rs` `vm_pure_bool_ops` `pure_bool_if`/`pure_bool_while`, `vm_superop_write_panics` `bool_index`: an `i64` passed where the body makes the param `bool`, or a `bool` used as an index), each of which panicked at run time; those tests now reach the lambda through an untyped wrapper `let g = \|x, y\| f(x, y)` so the VM panic path stays covered. Named residual: a lambda whose body passes its param to a builtin declared narrower than the run time accepts (`let g = \|x\| println(x); g(1)`) is now E0102; the same call written directly (`println(1)`) is already E0306, so this applies the language's existing rule. Both sweeps are unchanged by CS2-6.
+
 ### CS2-7 (P2) Enforce refinements on enum variant fields and lambda params - O-S1-15 (human-decided ENFORCE)
 
 **Problem.**
@@ -679,6 +681,7 @@ Order rationale and dependencies:
 ## 8. Needs human (product / irreversible only)
 
 - **NH-1. Is a `Dict` homogeneous in its value type?** (CS2-3b)
+  - `[DECIDED by human 2026-10-29: (a) - a Dict holds one value type; mixed dicts are refused (E0102); the 6 tracked files change in CS2-3b's commit.]`
   - (a) Yes: one value type per dict, inferred or annotated. A mixed dict is refused (E0102). Exactly 6 tracked files change, all in CS2-3b's commit:
     1. `examples/asi/safe_bandit.ax`: the `Agent` moves out of `state` into a `let` rebound each round; `state` keeps only the i64 counters (`Dict<str, i64>`). Output unchanged; S290 row unchanged.
     2-5. `crates/axon-core/tests/fixtures/vm_depth/nest/drop_array.ax`, `drop_option.ax`, `drop_result.ax`, `drop_tuple.ax`: the value they nest through the dict becomes a one-line recursive enum, so the dict holds one type; DEPTH and chain length unchanged; `vm_wasm_depth.sh` and `wasm_nesting_parity.sh` re-run. S596 rows stay rc 0.
