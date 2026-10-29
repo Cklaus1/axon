@@ -9,7 +9,7 @@
 # A second section, `wasm`, holds shell-only rows for the wasm link classifier
 # (`wasm_link_unavailable`, `wasm_case`). A third, `shape` (below), greps
 # scripts/*.sh for shapes the harness rules refuse. Each has its own FAIL line.
-# parity_all.sh runs this before any harness, and gate.sh's fast tier runs it;
+# parity_all.sh runs this before any harness, and gate.sh runs it in its parallel group;
 # it can also be run alone. Exit 0 every row and shape held; 1 otherwise (the
 # message names the row and the section).
 set -uo pipefail

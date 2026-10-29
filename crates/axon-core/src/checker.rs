@@ -197,6 +197,11 @@ fn type_contains_unresolved(ty: &Type) -> bool {
         }
         Type::Result(ok, err) => type_contains_unresolved(ok) || type_contains_unresolved(err),
         Type::Tuple(elems) => elems.iter().any(type_contains_unresolved),
+        // A lambda's `fn(..) -> ..` type has an `Unknown` return, and an
+        // `Unknown` param when unannotated (O-SF-01).
+        Type::Fn(params, ret) => {
+            params.iter().any(type_contains_unresolved) || type_contains_unresolved(ret)
+        }
         _ => false,
     }
 }
@@ -463,6 +468,9 @@ pub struct CheckCtx {
     /// sig of a call that `builtins::call_prefers_builtin` sends to the user
     /// fn although `fn_sigs` holds the builtin's (CS-4). Set by the caller.
     pub user_fn_sigs: HashMap<String, FnSig>,
+    /// O-SF-01: the `fn(..) -> ..` type of each top-level `let` bound to a fn
+    /// value ([`CheckCtx::fn_value_type`]), so a call through it is checked.
+    top_let_fn_types: HashMap<String, Type>,
     pub struct_fields: HashMap<String, Vec<(String, Type)>>,
     /// Resolved type for each expression node, keyed by node-path string.
     /// Populated via `check_program` just before checking starts.
@@ -484,12 +492,10 @@ pub struct CheckCtx {
     known_enums: Vec<String>,
     /// Variant lists for user-defined enums — used by Fix #10 for exhaustiveness.
     pub enum_variants: HashMap<String, Vec<String>>,
-    /// Module names a `M::f(…)` path may legitimately be qualified by.
-    ///
-    /// `::` is overloaded: `Shape::Circle` is an enum variant and `gfx::clear` is
-    /// a module call, and they are the same shape. Without this set the checker
-    /// cannot tell an undeclared TYPE from a declared MODULE, which is why an
-    /// unknown qualified path went unchecked entirely.
+    /// Every module name the program declares (`mod helper`, and each segment
+    /// of a `use` path). Only picks the E0404 message for an unresolved `M::f`
+    /// path: a declared module's items are merged flat and never reached as
+    /// `M::f` (O-SF-03), so the fix differs from an undeclared qualifier's.
     pub known_modules: std::collections::HashSet<String>,
 
     /// Field NAMES of each enum variant, keyed `"Enum::Variant"`.
@@ -615,6 +621,7 @@ impl CheckCtx {
             file: file.into(),
             fn_sigs,
             user_fn_sigs: HashMap::new(),
+            top_let_fn_types: HashMap::new(),
             struct_fields,
             expr_types: HashMap::new(),
             errors: Vec::new(),
@@ -689,6 +696,65 @@ impl CheckCtx {
         }
     }
 
+    /// O-SF-01: the `fn(..) -> ..` type of a fn VALUE whose signature is
+    /// known without inference: a lambda (its arity is always known; an
+    /// unannotated param and the return are `Unknown`), a top-level `let` bound
+    /// to one, or a user fn named as a value. A builtin (or a fn that shadows
+    /// one, `call_prefers_builtin`) is not a value (the resolver refuses it).
+    /// `None` for anything else, and for a name a local binds.
+    fn fn_value_type(&self, expr: &Expr, scope: &HashMap<String, Type>) -> Option<Type> {
+        match expr {
+            Expr::Lambda { params, .. } => Some(Type::Fn(
+                params.iter().map(|p| self.lambda_param_type(p)).collect(),
+                Box::new(Type::Unknown),
+            )),
+            Expr::Ident(name) if !scope.contains_key(name) => {
+                if let Some(ty) = self.top_let_fn_types.get(name) {
+                    return Some(ty.clone());
+                }
+                if crate::builtins::call_prefers_builtin(name, false) {
+                    return None;
+                }
+                self.user_fn_sigs
+                    .get(name)
+                    .or_else(|| self.fn_sigs.get(name))
+                    .map(|s| Type::Fn(s.params.clone(), Box::new(s.ret.clone())))
+            }
+            _ => None,
+        }
+    }
+
+    /// A lambda parameter's declared type, resolved as a fn parameter's is;
+    /// `Unknown` when it has no annotation.
+    ///
+    /// `type Name = str` parses as an enum whose one variant, without fields,
+    /// is named `str`: the alias the program means, which the interpreter
+    /// erases. Such a type resolves to the primitive it names, and to `Unknown`
+    /// when the variant names anything else (a struct alias, or a real
+    /// one-variant enum), so a call through the lambda is not refused on it.
+    fn lambda_param_type(&self, p: &crate::ast::LambdaParam) -> Type {
+        p.ty.as_ref().map_or(Type::Unknown, |t| {
+            self.resolve_refinements(enumify(axon_type_to_type(t), &self.known_enums))
+                .map_leaves(&mut |leaf| match &leaf {
+                    Type::Enum(name) => match self.enum_variants.get(name).map(Vec::as_slice) {
+                        Some([variant])
+                            if self
+                                .enum_variant_fields
+                                .get(&format!("{name}::{variant}"))
+                                .is_none_or(Vec::is_empty) =>
+                        {
+                            match axon_type_to_type(&AxonType::Named(variant.clone())) {
+                                Type::Struct(_) | Type::Deferred(_) => Type::Unknown,
+                                prim => prim,
+                            }
+                        }
+                        _ => leaf,
+                    },
+                    _ => leaf,
+                })
+        })
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Public entry point
     // ─────────────────────────────────────────────────────────────────────────
@@ -704,9 +770,9 @@ impl CheckCtx {
     ) -> Vec<CheckError> {
         self.expr_types = expr_types;
 
-        // Every module name a qualified path may legitimately use: `mod helper`
-        // declares one, and `use native::gfx` declares `gfx` (every segment is
-        // taken, so both `native::` and `gfx::` qualify).
+        // Every declared module name (`mod helper`; every segment of a `use`
+        // path), for the E0404 message of an unresolved `M::f` (see
+        // `known_modules`).
         for item in &program.items {
             match item {
                 Item::ModDecl(m) => {
@@ -850,6 +916,17 @@ impl CheckCtx {
         }
         self.total_cycle_members = self.find_total_cycle_members();
         self.refinement_cycle_members = self.find_refinement_cycle_members();
+        // O-SF-01: the fn type of each top-level `let` bound to a fn value, in
+        // source order (one may name an earlier one). After the enums and
+        // refinements, which a lambda's parameter annotations resolve through.
+        let no_locals = HashMap::new();
+        for item in &program.items {
+            if let Item::LetDef { name, value, .. } = item {
+                if let Some(ty) = self.fn_value_type(value, &no_locals) {
+                    self.top_let_fn_types.insert(name.clone(), ty);
+                }
+            }
+        }
         // Phase 5: record each user fn's per-param refinement name (None if the
         // param isn't a refinement) so a call site can find proof obligations.
         // Enter this pass if there's ANY refinement — named, or a whole-struct
@@ -3835,7 +3912,13 @@ impl CheckCtx {
                 }) {
                     annot_type
                 } else {
-                    self.resolve_expr_type(value, &val_path, scope)
+                    // O-SF-01: a lambda or a fn named as a value has no type
+                    // in the syntactic fallback; bind its `fn(..) -> ..` type,
+                    // so a call through the local is checked like a direct call.
+                    match self.resolve_expr_type(value, &val_path, scope) {
+                        Type::Unknown => self.fn_value_type(value, scope).unwrap_or(Type::Unknown),
+                        ty => ty,
+                    }
                 };
                 scope.insert(name.clone(), bound_type(ty));
                 // R6 local taint: if this binds a sensitive value (a sensitive
@@ -4005,30 +4088,49 @@ impl CheckCtx {
 
                 // R05 / R06 — only for named (direct) calls.
                 if let Expr::Ident(name) = callee.as_ref() {
-                    // Fix #3: detect calling a local variable that is not a function.
-                    if let Some(ty) = scope.get(name.as_str()) {
-                        if !matches!(
-                            ty,
-                            Type::Fn(_, _) | Type::Unknown | Type::Deferred(_) | Type::Var(_)
-                        ) {
-                            let file = self.file.clone();
-                            self.errors.push(
-                                CheckError::new(
-                                    E0306,
-                                    format!("cannot call non-function value '{name}'"),
-                                )
-                                .node(node_path)
-                                .at(&file, 0, 0)
-                                .with_span(self.current_span)
-                                .fix(format!(
-                                    "'{name}' is a local variable of type {}, not a function",
-                                    ty.display()
-                                )),
-                            );
+                    match scope.get(name.as_str()).cloned() {
+                        // O-SF-01: a local holding a closure is what a call by
+                        // its name runs, before any builtin or fn of that name
+                        // (`dispatch_named`), so its own `fn(..) -> ..` type
+                        // decides the call, and a local of unknown type is not
+                        // checked against the signature of the fn it shadows.
+                        Some(Type::Fn(params, ret)) => {
+                            let sig = FnSig { params, ret: *ret };
+                            self.check_args_against_sig(name, &sig, args, node_path, scope);
+                        }
+                        Some(Type::Unknown | Type::Deferred(_) | Type::Var(_)) => {}
+                        // A top-level `let` holding a closure runs when no
+                        // builtin or fn has its name.
+                        None if self.call_sig(name, args).is_none() => {
+                            if let Some(Type::Fn(params, ret)) =
+                                self.top_let_fn_types.get(name).cloned()
+                            {
+                                let sig = FnSig { params, ret: *ret };
+                                self.check_args_against_sig(name, &sig, args, node_path, scope);
+                            }
+                        }
+                        local => {
+                            // Fix #3: detect calling a local variable that is not a function.
+                            if let Some(ty) = local {
+                                let file = self.file.clone();
+                                self.errors.push(
+                                    CheckError::new(
+                                        E0306,
+                                        format!("cannot call non-function value '{name}'"),
+                                    )
+                                    .node(node_path)
+                                    .at(&file, 0, 0)
+                                    .with_span(self.current_span)
+                                    .fix(format!(
+                                        "'{name}' is a local variable of type {}, not a function",
+                                        ty.display()
+                                    )),
+                                );
+                            }
+                            self.check_call_arity_and_types(name, args, node_path, scope);
+                            self.check_refinement_args(name, args, node_path);
                         }
                     }
-                    self.check_call_arity_and_types(name, args, node_path, scope);
-                    self.check_refinement_args(name, args, node_path);
                 }
             }
 
@@ -4302,10 +4404,26 @@ impl CheckCtx {
                 self.check_match_exhaustiveness(&subj_ty, arms, node_path);
 
                 for (i, arm) in arms.iter().enumerate() {
+                    // A name the pattern binds shadows an outer local, a
+                    // top-level `let` or fn of that name in the guard and body
+                    // (the interpreter binds every `Pattern::Ident`), so a call
+                    // by it is not checked against the outer `fn(..)` type.
+                    let mut bound = Vec::new();
+                    crate::resolver::collect_pattern_binding_names(&arm.pattern, &mut bound);
+                    let mut inner;
+                    let arm_scope = if bound.is_empty() {
+                        &mut *scope
+                    } else {
+                        inner = scope.clone();
+                        for name in bound {
+                            inner.insert(name, Type::Unknown);
+                        }
+                        &mut inner
+                    };
                     if let Option::Some(guard) = &arm.guard {
-                        self.check_expr(guard, &node_path.idx("arm", i).child("guard"), scope);
+                        self.check_expr(guard, &node_path.idx("arm", i).child("guard"), arm_scope);
                     }
-                    self.check_expr(&arm.body, &node_path.idx("arm", i).child("body"), scope);
+                    self.check_expr(&arm.body, &node_path.idx("arm", i).child("body"), arm_scope);
                 }
             }
 
@@ -4544,8 +4662,14 @@ impl CheckCtx {
                         }
                     }
                 }
+                // O-SF-01: the parameters shadow outer locals of the same name
+                // (an outer `f` holding a fn value is not the param `f`).
+                let mut inner = scope.clone();
+                for p in params {
+                    inner.insert(p.name.clone(), self.lambda_param_type(p));
+                }
                 let prev = self.current_ret_ty.take();
-                self.check_expr(body, &node_path.child("body"), scope);
+                self.check_expr(body, &node_path.child("body"), &mut inner);
                 self.current_ret_ty = prev;
             }
 
@@ -4723,30 +4847,59 @@ impl CheckCtx {
                     // Exemptions, each for a real construct: a BUILTIN whose
                     // own name contains `::` (`Chan::new` is an entry in the
                     // BUILTINS table, not a path — checked by name so any future
-                    // one is covered without touching this), a declared module
-                    // (`gfx::clear`), a native FFI module resolved by table, and
-                    // the `ai_extract::<T>(…)` turbofish, whose synthetic callee
-                    // name also contains `::` but is not a path at all.
+                    // one is covered without touching this), a native FFI
+                    // function resolved by table (`gfx::clear` after `use
+                    // native::gfx`), and the `ai_extract::<T>(…)` turbofish,
+                    // whose synthetic callee name also contains `::` but is not
+                    // a path at all.
+                    //
+                    // A declared module is NOT an exemption (O-SF-03): a user
+                    // module's items are merged flat into the program, so
+                    // `helper::f` reached nothing in either engine and panicked
+                    // ("value of type helper is not callable"), and a native
+                    // module's misspelled `gfx::nope` panicked the same way
+                    // ("value of type gfx is not callable"). Both are refused
+                    // here with their own fix.
                     let is_turbofish = name.contains("::<");
                     if !is_turbofish
                         && !crate::builtins::is_known_builtin(name)
                         && !self.enum_variants.contains_key(enum_name)
-                        && !self.known_modules.contains(enum_name)
                         && crate::native::resolve_call(name).is_none()
                     {
                         let file = self.file.clone();
                         let span = self.current_span;
-                        self.errors.push(
-                            CheckError::new(
-                                E0404,
-                                format!("no type or module `{enum_name}` in this scope"),
+                        let (msg, fix) = if let Some(native) = crate::native::module(enum_name) {
+                            let fns: Vec<&str> = native.functions.iter().map(|f| f.name).collect();
+                            (
+                                format!("native module `{enum_name}` has no function `{variant}`"),
+                                format!(
+                                    "`{enum_name}` has: {}; a native call is `{enum_name}::<fn>(…)` after `use native::{enum_name}`",
+                                    fns.join(", ")
+                                ),
                             )
-                            .node(node_path)
-                            .at(&file, 0, 0)
-                            .with_span(span)
-                            .fix(format!(
-                                "`{enum_name}::{variant}` names nothing this program declares. Axon has no `Vec`/`HashMap` — an array literal is `[1, 2]` and a dict is `dict_new()`; for a module, add `use {enum_name}` (or `mod {enum_name}`)"
-                            )),
+                        } else if self.known_modules.contains(enum_name) {
+                            (
+                                format!(
+                                    "`{enum_name}::{variant}` does not reach `{variant}`: a module's items are not namespaced by its name"
+                                ),
+                                format!(
+                                    "a module's items are merged into this program by `use` — write `use {enum_name}.{{{variant}}}` and call `{variant}(…)` directly"
+                                ),
+                            )
+                        } else {
+                            (
+                                format!("no type or module `{enum_name}` in this scope"),
+                                format!(
+                                    "`{enum_name}::{variant}` names nothing this program declares. Axon has no `Vec`/`HashMap` — an array literal is `[1, 2]` and a dict is `dict_new()`; for a module, add `mod {enum_name}` and `use {enum_name}.{{{variant}}}`, then call `{variant}(…)`"
+                                ),
+                            )
+                        };
+                        self.errors.push(
+                            CheckError::new(E0404, msg)
+                                .node(node_path)
+                                .at(&file, 0, 0)
+                                .with_span(span)
+                                .fix(fix),
                         );
                     }
                     if let Some(variants) = self.enum_variants.get(enum_name) {
@@ -5486,18 +5639,43 @@ impl CheckCtx {
             Option::Some(s) => s,
             Option::None => return, // Unknown function — inference handles it.
         };
+        self.check_args_against_sig(name, &sig, args, node_path, scope);
 
+        // E0504 — trait bound satisfaction check.
+        // For each (type_param, bounds) on this function, find which args use that
+        // type param and check that the concrete resolved type implements each bound.
+        self.check_trait_bounds(name, args, node_path, scope, &sig);
+    }
+
+    /// R05/R06 for a call by `name` whose callee has signature `sig`: a named
+    /// fn's, or (O-SF-01) the `fn(..) -> ..` type of the fn value it holds.
+    fn check_args_against_sig(
+        &mut self,
+        name: &str,
+        sig: &FnSig,
+        args: &[Expr],
+        node_path: &NodePath,
+        scope: &HashMap<String, Type>,
+    ) {
         // R05 — argument count.
         if args.len() != sig.params.len() {
             let file = self.file.clone();
             let span = self.current_span;
             let expected_n = sig.params.len();
             let got_n = args.len();
-            // Spell out the expected signature so the user sees what's missing.
+            // Spell out the expected signature so the user sees what's missing
+            // (`_` for a param of unknown type, e.g. an unannotated lambda's).
             let sig_render = if expected_n == 0 {
                 format!("`{name}()`")
             } else {
-                let params: Vec<String> = sig.params.iter().map(|p| p.display()).collect();
+                let params: Vec<String> = sig
+                    .params
+                    .iter()
+                    .map(|p| match p {
+                        Type::Unknown => "_".to_string(),
+                        p => p.display(),
+                    })
+                    .collect();
                 format!("`{name}({})`", params.join(", "))
             };
             let hint = if got_n < expected_n {
@@ -5942,11 +6120,6 @@ impl CheckCtx {
                 );
             }
         }
-
-        // E0504 — trait bound satisfaction check.
-        // For each (type_param, bounds) on this function, find which args use that
-        // type param and check that the concrete resolved type implements each bound.
-        self.check_trait_bounds(name, args, node_path, scope, &sig);
     }
 
     fn check_trait_bounds(

@@ -2647,6 +2647,7 @@ Noted in `crates/axon-core/src/capabilities.rs` (the `reachable_capabilities` do
 ### O-S1-17 — [medium] A dependency-aware `gate.sh --lane` profile (lesson fired twice in S1)
 "Lanes skip suites" fired twice in S1 (claims_gate after the merge; axon-fabric's `cortex_via_fabric` and axon-core's `harness_binaries` in the final full gate, ~1 h of reruns). Per the build-loop recurrence → mechanism rule: a `gate.sh --lane` profile that derives the suites to run from the changed paths (a changed `cortex`/`axon` binary → the crates whose tests drive it; any changed `tests/*.rs` → the workspace-wide lint tests).
 `[SPECCED 2026-10-19: tasks/gate-lane-spec.md (GL-1…GL-6).]`
+`[BUILT 2026-10-29: GL-1..GL-5 on main; follow-ups O-GL-01 (savings below estimate), O-GL-02 (audit store perms, audit flake).]`
 
 ### O-S1-18 — [high] R4 typed feedback needs a prospective keep/remove criterion
 `[DECIDED by human 2026-10-18]`: R4 shipped without a demonstrated benefit. Its keep/remove criterion (measured capability gain on the new held-out evaluation, against its implementation cost and complexity) is fixed in tasks/followup-spec.md BEFORE the measurement runs; typed feedback is not kept indefinitely without demonstrated benefit.
@@ -2773,6 +2774,7 @@ shadowing is needed (DraftCore probes `j_user_arity`, `k_lambda_arity`, `l_user_
 type the callee local's `fn(..) -> ..` in the checker's call-through-local path (`checker.rs:4012-4031`
 [INFERENCE: anchor from the drafter, not re-read]) and refuse an arity/type mismatch. Needs its own spec: it changes
 check outcomes for any program that calls a fn value.
+`[FIXED 2026-10-29 on fix/fnval (e6e9aae8): a call whose callee names a local holding a fn value of known type (a `let`-bound user fn or lambda, a `fn(..)`-typed param, a top-level `let`) is checked against that type: E0305 arity, E0306 argument type. A local of unknown type is no longer checked against the top-level fn it shadows (that was a false E0305 on base). Tests `a_call_through_a_fn_value_checks_its_signature`, `a_call_through_a_matching_fn_value_still_runs`; g01 M3870-M3877. Callees that are not a name stay unchecked: O-SF-04.]`
 
 ### O-SF-02 — [low] On a tty, a note or warning prints with an `error:` prefix
 `script -qc 'axon check letmut.ax'` prints `error: letmut.ax:1:28: note[I0002]: …` (`main.rs:1613` for `check`,
@@ -2781,3 +2783,128 @@ wrong. Out of SF-5's scope.
 
 ### O-SF-03 — [medium] A module-qualified fn used as a value checks clean, then panics at run
 `mod n` then `let f = n.add2; f(1, 2)` gives `axon check` rc 0, then `axon run` fails with `panic: undefined identifier `n`` (rc 101). The same happens for any module fn, builtin-shadowing or not, and on the pre-batch binary (`hx-bin/axon` 819e0460), so it was not introduced by SF-6. Probes: `/var/tmp/r51-tmp/review-impl-sf/sf6/modplain.ax` and `modpath.ax`. Found by ImplAuditSF. Fix direction: either the interpreter resolves `mod.fn` in value position, or the checker refuses it (E0306-style) until it does.
+`[FIXED 2026-10-29 on fix/modval: refused at check, E0404. The resolver refuses a module, type or enum name in value or callee position (`refuse_non_value_name`; also `let k = T`, `P(1)`, `let e = S`, which panicked the same way), and the checker no longer exempts `M::f` through a declared module (also `gfx::nope` after `use native::gfx`). Interpreter namespacing of `mod.fn` was not chosen: modules are merged flat by `use`, and the language docs only show `use M.{f}`. Tests `a_module_type_or_enum_name_used_as_a_value_is_refused`; g01 M3856-M3861.]`
+
+### O-SF-04 — [low] A call whose callee is not a name skips arity and type checks
+`ops[0](1, 2)` or `mk()(1, 2)` with a wrong arity checks rc 0 (FnVal2 probe `c1_index_callee.ax`). O-SF-01's fix covers
+only a callee that names a local or top-level `let`. Fix direction: type the callee expression (`resolve_expr_type`) and
+reuse `check_args_against_sig` when it resolves to `Type::Fn`.
+
+### O-SF-05 — [medium] `managed_run_gate.sh` read an empty `status` once, failing the full gate
+Gate run at a02d632f (2026-10-29, load ≈ 20): `managed_run_gate: FAIL - expected exited:3, got ''`
+(`scripts/managed_run_gate.sh:153-154`); three standalone re-runs right after passed. The wait loop exits on anything
+that is not `running`, so an empty read passes it. `scripts/run_managed.sh:411` writes the terminal status with
+`echo "exited:$code" > "$dir/status"`, which truncates before it writes, so a concurrent reader can see an empty
+file. That window does not alone explain the failure message's own re-read also being empty: cause not proven.
+Fix direction: write status via temp file + `mv` (atomic) everywhere `run_managed.sh` writes it, and make the
+self-test's loop wait for a non-empty, non-`running` value.
+
+Also found the same day and fixed on `snd/int` (f2f36b66): the `par_abort` self-check in `gate.sh` probed the killed
+grandchild with `kill -0` at once. A TERM sent to a stopped process lands only after its CONT, so under load the probe
+raced it (3 async gate runs failed there in 0.18 s; an `-x` trace on fd 9 showed the full STOP/TERM/CONT walk). It now
+waits up to 2 s and counts a zombie as gone; with `par_abort` neutered it still fails.
+
+### O-HX3-01 — [medium] The pinned grading axon predates SF-5, so a final with only notes fails its hidden check
+hx3 HX3-0 pilot (2026-10-29): `--grade-axon /var/tmp/r51-tmp/hx-bin/axon` (`819e0460`) exits 2 on a file whose only
+diagnostic is the I0002 "`mut` is not an Axon keyword" note. The arms' axon (`hx3-inc-bin/axon`, `f15fad70`) exits 0
+on the same file (probe re-run by the integrator). All 7 excerpt "false successes" had finals with `let mut` that never ran
+their hidden tests; an offline regrade with the arms' axon gives excerpt 19/20 and masked 17/20, 0 false successes
+(`crates/axon-cortex/benchmarks/headroom/PREREG-hx3.md` §6). The skew only adds not-clean rows and cannot hide a
+false success, so earlier verdicts with 0 false successes (FU receipt, hx2 pilot) stand. Fix direction: pin the grader
+to a binary whose `axon check` accepts the same files as the arms' axon, and add a preamble probe that one `let mut`
+file gets the same rc from both. Any excerpt seed-4 re-pilot (hx3 NH-1) must take this fix first.
+[REVISED: HX3-0 re-pilot 2026-10-29] Pin fixed for the re-pilot: PREREG-hx3 §0.6 (hx3/proto 568d4c22) graded with the
+arms' axon `f15fad70` behind a one-`let mut` rc probe (grader 0, arms 0); its 5 `let mut` finals all graded clean
+(excerpt 19/20, 0 false successes, §6.3). Still open in code: `run_ab.py` defaults `--grade-axon` to the arms' axon
+(`:912`) but has no rc-skew check, so an explicit pre-SF-5 `--grade-axon` (such as `hx-bin/axon`, still the
+PREREG.md §1 builder pin) is accepted silently; the probe lives only in the pilot script
+(`/var/tmp/r51-tmp/hx3-pilot-excerpt-s4.sh`). Fix direction unchanged: move the probe into `probe_grade_axon`.
+
+### O-GL-01 — [medium] The gate lane saves far less than the spec's §4 estimates
+Smokes at 76a12f60 (cold target dir, load ≤ 10): docs-only 1586 s (§4: 1-10 min), `locate.rs` 1670 s (≈ 35 min),
+`checker.rs` 1473 s; the full gate is ≈ 46 min. Plans at 0b29b054: docs-only RUN 138 / SKIP 283, `checker.rs` 194 / 227.
+About 116 units always run because they read git state (HEAD, index or refs); axon-fabric's 98 units are most of them.
+Fix direction: find which call in those tests reads git state, and decide whether a fixed git-state input can be
+declared instead (an `always`-class audit entry keyed on the refs actually read), keeping unaudited => run.
+
+### O-GL-02 — [low] The lane audit store is root-owned and audits are flaky under load
+`.git/axon-gate-lanes/` is `root:root 755`, so a `user`-class audit cannot write there (ImplAuditGL minor 4). The
+audits on `gl/lane` lost 13-14 units to gate.sh's `par_abort self-check`; that branch lacked f2f36b66 (the
+`par_abort` race fix now on `main`), which is the likely cause [INFERENCE: not re-audited after the merge].
+Unaudited units always run, so this costs speed, not correctness. Fix direction: create the store per uid or
+group-writable, and re-audit after the merge to confirm the flake is gone.
+
+## Gap analysis, 2026-10-29 (main 0bd2b518; probes run on an interpreter built at that head)
+
+Each "reproduced" item: `axon check` rc 0, then `axon run` as shown. Probe sources are inline below; GapLang's
+197-file set is under `/var/tmp/r51-tmp/gaplang/p/`.
+
+### O-GAP-01 - [high] Closures passed to higher-order builtins are only arity-checked
+The builtin's `fn(T)->U` param is `Type::Deferred` (`checker.rs:5802-5809`), so the closure's param/return types are
+never unified. Reproduced: `arr_filter([1,2,3], |x| x + 1)` -> panic "predicate must return bool, got i64";
+`arr_fold(["a"], 0, |acc, x| acc + x)` -> panic "cannot apply Add to i64 / str". GapLang also lists `arr_sort_by`,
+`arr_sum_by`, `arr_group_by`, `dict_each`, `arr_zip_with`. The largest remaining check-then-panic class.
+
+### O-GAP-02 - [high] `Dict` values are untyped
+`dict_get` returns `Option<T>` with T unconstrained; a `Dict<str, i64>` annotation is accepted, not enforced.
+Reproduced: `dict_set(d, "a", 1)` then `Some(v) => println("got " + v)` -> panic "cannot apply Add to str / i64".
+Same Deferred root as O-GAP-01; fix together.
+
+### O-GAP-03 - [high] Assigning to a captured variable in a closure is silently dropped
+Reproduced: `let count = 0; let inc = || { count = count + 1 }; inc(); inc(); println(to_str(count))` prints `0`,
+rc 0, no diagnostic. Captures are copies (`spec/compiler-phase3.md:322` says by-move). Silent wrong answer. Fix
+direction: refuse assignment to a captured name at check.
+
+### O-GAP-04 - [medium] Exhaustiveness is checked only for enum / Option / Result scrutinees
+Reproduced: `match n { 0 => "zero", 1 => "one" }` with `n = 5` -> panic "no match arm matched". Same for str and
+tuple scrutinees (GapLang f01/f02). Fix direction: require `_` (or a binding arm) on non-enum scrutinees.
+
+### O-GAP-05 - [medium] Method call on an unbounded generic is accepted
+Reproduced: `fn f<T>(x: T) -> i64 { x.area() }`, `f(3)` -> panic "no method `area` on type `i64`". GapLang f17b:
+`let b: B<i64> = B { v: "s" }` is also accepted (generic struct annotation not enforced).
+
+### O-GAP-06 - [medium] Arithmetic builtins wrap or saturate where the operators panic
+Reproduced: `pow_i64(3, 40)` = -6289078614652622815 (`wrapping_pow`, `interp/builtins.rs:2969`);
+`arr_sum_i64([i64::MAX, 1])` = i64::MAX. `+`/`*` panic on overflow. Silent wrong answer. GapLang also reports
+`assert_eq_f64` with a 1e-9 tolerance in the interpreter (`builtins.rs:3783`) but exact in native and in stdlib.md
+[native side read only].
+
+### O-GAP-07 - [low] Plain recursion stops at depth 6000
+Reproduced: a 100000-deep `s(n - 1)` sum panics "recursion limit exceeded (6000)". `arr_max_i64([])` panics rather
+than returning Option (GapLang a12, not re-run).
+
+### O-GAP-08 - [medium] Common forms refused, and diagnostics that misdirect
+GapLang (not re-run here): `Ok(())`, `if let`, `for (a, b) in pairs`, inherent `impl T {}`, trait default methods,
+`?` on Option, `o == Some(1)`, `..base`, `loop`, tuple-variant enums. Messages such as `impl T {` -> "expected
+For" and `loop` -> "introduce `loop` with `let loop = …`" send repair loops the wrong way. No raw string literal,
+so JSON literals need `{{ }}`. `mod util` does not search the importing file's directory (needs `AXON_PATH`;
+reproduced E0901 with a sibling `mathutil.ax`).
+
+### O-GAP-09 - [medium] LLM-facing docs disagree with the binary
+- `spec/axon-for-llms.md:241-245`: the `@[goal("maximize score")] @[adaptive] fn tune(threshold: i64)` snippet is
+  refused, E1504 (reproduced).
+- `spec/stdlib.md` covers 63 of 344 builtins yet is called "every builtin"; its "planned" list includes shipped
+  builtins; it says `str_slice` clamps (it panics E2200 mid-char) [GapLang, not re-run].
+- `examples/asi/README.md:30` and `ad_optimizer.ax:18` say the $500 spend cap is "compiler-enforced / the
+  compiler proves"; the same file's comment (`:63-67`) says the runtime gate enforces it (exit 3). The bound holds;
+  the wording is wrong.
+- `examples/asi/README.md` friction list (`:277`, `:300`, `:318`) lists replay, multi-arg adaptive and `value`
+  predicates as missing; all ship.
+- `bandit_ucb`, `persistent_bandit`, `safe_bandit`, `safe_self_improve` need `AXON_PATH=../stdlib` to check
+  (E0901 without it; rc 0 with it).
+
+### O-GAP-10 - [medium] No offline test shows a model-backed ASI workflow succeeding
+The mock returns one fixed answer (`axon-ai/src/lib.rs:438`, `:810-813`), so the model-calling demos mostly stop
+at their deploy gate; the all-demos test (`cli_run.rs:21118-21170`) passes unless a demo exits 101. Fix
+direction: recorded replay fixtures for `optimize`, `classify`, `summarize`, `code_review`, `search_rank`,
+`pricing` and output asserts against them.
+
+### O-GAP-11 - [low] Spec status lines lag the code
+`approval-residue`, `killgroup`, `lsp-residue`, `harness-hygiene`, `gaps`, `followup`, `repair`, `small-fixes`
+carry no BUILT line though CHANGELOG lists their items; CS/CAP source entries (O-S1-19/20/22/23/24, O-FU-05/06)
+have no closure stamp; ROADMAP.md (2026-06-28) names no `tasks/` spec. Third occurrence of stale-closed entries
+(L015, O-HI-02); mechanism candidate: a check that a shipped spec's source ids carry a closure stamp.
+
+O003 re-assessed: principals are read only by the `principal_*` builtins (`kernel.rs`, `interp/builtins.rs:4196-4286`);
+no effect path consults them, so an ungated `principal_root` makes the in-language attenuation model advisory but
+does not bypass `@[contained]`, capabilities or the cortex fence. Severity stands as a design question, not an escape.

@@ -1,7 +1,8 @@
-# gate-lane — DRAFT spec
+# gate-lane — spec
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: BUILT 2026-10-29 on `main` (GL-1..GL-5 plus implementation-review fixes; full `gate.sh --strict` at the integrated head). P3 (GL-6) deferred.** Implementation review (ImplAuditGL): 1 blocker (relative cargo dep-info dropped, so the lane skipped tests that link a changed lib; fixed in 0b29b054, audit regenerated, `--plan` proofs in the commit's report) and 3 minors (fixed). Lane savings are below §4's estimates: O-GL-01.
 Base commit: `7f110693` (`main`). Source: `tasks/opportunities.md` **O-S1-17** (:2647-2648), with lessons `tasks/lessons.md:875`, `:882` (S1 missed suites) and `:853` (S6.1 lane missed a stage).
+Build base: `main` 43e895d0 (harness `tasks/build-loop-gate-lane.md`). The gate.sh line numbers below are at 7f110693; SF-4 has since added the hardset `build.py --check` step after S04 (gate.sh:739-742 at 43e895d0), so every line reference is re-anchored at use. That step is stage **S04H** (cross-spec dependency below: this spec lands second, so it wraps it).
 
 **Step 1 review** (`agent://AuditGateLane`, findings GLA#1–#18: 1 blocker, 12 major, 5 minor). All 18 were checked against the cited lines or by rerunning the check.
 - Accepted as proposed: 14.
@@ -67,6 +68,7 @@ Base commit: `7f110693` (`main`). Source: `tasks/opportunities.md` **O-S1-17** (
 - Add `stage_begin <ID> [banner]` / `stage_end` helpers. With no banner argument, `stage_begin` prints nothing, so S08, S09 and S10 can be wrapped without new banner lines. [REVISED: GLA#12]
 - Wrap S01–S20 and S21 (table §3).
 - `stage_end` prints `   (stage 'S16 axon-core tests': 794.2s, exit 0)` and appends `ID⇥start_ms⇥end_ms⇥exit` to `$CARGO_TARGET_DIR/gate-stages.tsv`, which is truncated at gate start.
+  `[REVISED: implementation review 2026-10-29, ImplAuditGL minor 3: the log is per run, $CARGO_TARGET_DIR/gate-stages.<pid>.tsv, so two runs sharing a target dir do not truncate or interleave each other's rows.]`
 - `fail()` (gate.sh:124-132) first writes the open stage's row with `exit 1`. [REVISED: GLA#12; `fail` exits, so without this every recorded exit is 0.]
 - An end-of-run table is sorted by duration; par rows are `P:<name>`.
 - Commands, order and guards are unchanged. The `release_manifest.rs:148-212` scanner requires every `cargo test|build|clippy` line to stay guarded, so wrappers never split those lines.
@@ -345,17 +347,17 @@ GL-1 to GL-4 ship in one batch. Order of the final runs: full gate (ship), then 
 
 | # | Question | Options | Recommendation | Class |
 |---|---|---|---|---|
-| Q1 | What happens to `--fast`? | A keep both; B `--lane` replaces `--fast` (GL-5); C alias | **B**, with the three fast-only checks (GL-5 Facts) moved into the full gate's par group, so the lane derives them. `g01_anchors.py` and `test_harness_skip.sh` are cheap; `vm_parity.sh` cost is unmeasured. Without the move, B drops those three checks from the inner loop. | **needs-human**: lane acceptance on `--fast` is a recorded human decision (killgroup-spec.md:290), and the move changes the full gate |
+| Q1 | What happens to `--fast`? | A keep both; B `--lane` replaces `--fast` (GL-5); C alias | **B**, with the three fast-only checks (GL-5 Facts) moved into the full gate's par group, so the lane derives them. `g01_anchors.py` and `test_harness_skip.sh` are cheap; `vm_parity.sh` cost is unmeasured. Without the move, B drops those three checks from the inner loop. | **needs-human** → `[DECIDED by human 2026-10-29: B - --lane replaces --fast (GL-5), with the three fast-only checks moved into the full gate's par group first]` |
 | Q2 | Where does the audit live? | A git common-dir cache keyed `<commit>-<toolchain>-<uid>`; B committed json; C `$CARGO_TARGET_DIR` | **A**. B puts a commit after the gated head; C is per-worktree and is lost on clean. No audit → G0 runs everything. | engineering, canon A |
-| Q3 | Build GL-6? | A no; B audit-only per-test units; C split `cli_run.rs` | **B, deferred to P3** until GL-1 timing exists; C changes the full gate's layout | engineering, canon defer |
-| Q4 | Should `test_gate_lane.py` + `check` join the full gate's par group (~1 s)? | A no; B yes | **B**: a stale registry would otherwise fail only for lane users. It changes the full gate. | **needs-human** |
+| Q3 | Build GL-6? | A no; B audit-only per-test units; C split `cli_run.rs` | **B, deferred to P3** until GL-1 timing exists; C changes the full gate's layout | engineering, canon defer: GL-6 is not built in this run |
+| Q4 | Should `test_gate_lane.py` + `check` join the full gate's par group (~1 s)? | A no; B yes | **B**: a stale registry would otherwise fail only for lane users. It changes the full gate. | **needs-human** → `[DECIDED by human 2026-10-29: B - test_gate_lane.py + check join the full gate's par group]` |
 | Q5 | Is strace needed for stat/ENOENT probes? | A inotify only + G3/G5/G7; B add a strace audit (ptrace drops setuid in the privileged-launcher tests, so the audit diverges) | **A**; the residual is stated in G5 | engineering, canon A |
 | Q6 | Added-path rule | A G5 (enumeration + package + literal; residual stated); B every added path selects everything | **A**. B makes every branch that adds a file, including docs/specs, a full run. The lane is not evidence; a miss costs one full-gate re-run under the unchanged ship rule. | engineering, canon A |
 | Q7 | Compile-set source | A cargo dep-info + rerun-if-changed per closure package, fallback `crates/Q/**`; B all of `crates/Q/**` | **A**. B makes any `benchmarks/**/*.py` edit select every cortex consumer. A is cargo's own rebuild criterion. | engineering, canon A |
 | Q8 | Audit cadence | A on demand, at an integrated main head, alone on host; B nightly; C after every merge | **A**. Stale audits stay sound (C is computed versus A); they only widen C. | engineering, canon A |
 | Q9 | S05/S06/S07 compile set | A whole workspace; B parse row tables for packages | **A** until GL-1 shows their cost matters. B needs a parser per row format. | engineering, canon A |
 
-**Human decisions** `[DECIDED by human 2026-10-27: both recommendations accepted]`:
+**Human decisions** `[DECIDED by human 2026-10-27: both recommendations accepted]`, re-confirmed `[DECIDED by human 2026-10-29]` (Q1 = B, Q4 = B above). Q2 and Q5–Q9 are engineering canon as stated; Q3 defers GL-6 (P3).
 - **Q1 → B** `--lane` replaces `--fast`, and `g01_anchors.py`, `vm_parity.sh` and `test_harness_skip.sh` move into the full gate's parallel group (also closes O-SP-07). This supersedes the `--fast` lane-acceptance decision at killgroup-spec.md:290.
 - **Q4 → B** the ~1 s lane self-check joins the full gate's parallel group.
 

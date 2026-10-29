@@ -12050,5 +12050,94 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'a_lambda_or_a_prob_pred_keeps_its_value_rule'),
 ]
 
+# O-SF-03 (module / type / enum name with no run-time value), main agent (ids M3856-M3861): a
+# module, type or enum name in value or callee position is E0404 in the resolver
+# (`refuse_non_value_name`), and a `M::f` path through a declared module is no longer exempt from
+# the checker's unknown-qualified-path refusal.
+MUTATIONS += [
+    ('M3856', 'O-SF-03: a module name used as a value checks clean again', 'crates/axon-core/src/resolver.rs',
+     'Some(Symbol::Mod { .. }) => (',
+     'Some(Symbol::Mod { .. }) if false => (',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+    ('M3857', 'O-SF-03: a type name used as a value checks clean again', 'crates/axon-core/src/resolver.rs',
+     'Some(Symbol::Type { .. }) => (',
+     'Some(Symbol::Type { .. }) if false => (',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+    ('M3858', 'O-SF-03: an enum name used as a value checks clean again', 'crates/axon-core/src/resolver.rs',
+     'Some(Symbol::Enum { .. }) => (',
+     'Some(Symbol::Enum { .. }) if false => (',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+    ('M3859', 'O-SF-03: a type name called like a function checks clean again', 'crates/axon-core/src/resolver.rs',
+     'if self.refuse_non_value_name(name, is_callee) {',
+     'if !is_callee && self.refuse_non_value_name(name, is_callee) {',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+    ('M3860', 'O-SF-03: a `M::f` path through a declared module is exempt again (checks clean, panics at run)', 'crates/axon-core/src/checker.rs',
+     '&& !self.enum_variants.contains_key(enum_name)',
+     '&& !self.enum_variants.contains_key(enum_name) && !self.known_modules.contains(enum_name)',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+    ('M3861', 'O-SF-03: a misspelled native fn gets the undeclared-qualifier fix instead of the native one', 'crates/axon-core/src/checker.rs',
+     'let (msg, fix) = if let Some(native) = crate::native::module(enum_name) {',
+     'let (msg, fix) = if let Some(native) = None::<&crate::native::NativeModule> {',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+]
+
+# O-SF-01, FnVal (ids M3870-M3877; M3878-M3889 spare): a call through a fn VALUE whose type is
+# known (a let-bound lambda or fn name, a `fn(..)`-typed param, a top-level `let`) is checked
+# like a direct call (E0305/E0306); a local of unknown type is not checked against the fn it
+# shadows, a lambda's params shadow outer locals, and a `fn(..)` type with an unknown part is
+# unresolved for E0306.
+MUTATIONS += [
+    ('M3870', 'O-SF-01: a call through a local holding a fn value is not checked against its type', 'crates/axon-core/src/checker.rs',
+     '                            let sig = FnSig { params, ret: *ret };\n                            self.check_args_against_sig(name, &sig, args, node_path, scope);\n                        }\n                        Some(Type::Unknown',
+     '                            let sig = FnSig { params, ret: *ret };\n                            let _ = sig;\n                        }\n                        Some(Type::Unknown',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_fn_value_checks_its_signature'),
+    ('M3871', 'O-SF-01: a `let` bound to a fn value no longer gets its `fn(..)` type', 'crates/axon-core/src/checker.rs',
+     'Type::Unknown => self.fn_value_type(value, scope).unwrap_or(Type::Unknown),',
+     'Type::Unknown => Type::Unknown,',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_fn_value_checks_its_signature'),
+    ('M3872', 'O-SF-01: a call through a top-level `let` holding a fn value is not checked', 'crates/axon-core/src/checker.rs',
+     'self.top_let_fn_types.get(name).cloned()',
+     'None::<Type>',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_fn_value_checks_its_signature'),
+    ('M3873', 'O-SF-01: a user fn named as a value has no `fn(..)` type', 'crates/axon-core/src/checker.rs',
+     '.map(|s| Type::Fn(s.params.clone(), Box::new(s.ret.clone())))',
+     '.and(None::<Type>)',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_fn_value_checks_its_signature'),
+    ('M3874', 'O-SF-01: a lambda has no `fn(..)` type', 'crates/axon-core/src/checker.rs',
+     'Expr::Lambda { params, .. } => Some(Type::Fn(',
+     'Expr::Lambda { params, .. } if false => Some(Type::Fn(',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_fn_value_checks_its_signature'),
+    ('M3875', 'O-SF-01: a call through a local of unknown type is checked against the fn it shadows', 'crates/axon-core/src/checker.rs',
+     'Some(Type::Unknown | Type::Deferred(_) | Type::Var(_)) => {}',
+     'Some(Type::Unknown | Type::Deferred(_) | Type::Var(_)) => {\n                            self.check_call_arity_and_types(name, args, node_path, scope)\n                        }',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_matching_fn_value_still_runs'),
+    ('M3876', 'O-SF-01: a lambda param no longer shadows an outer local fn value of the same name', 'crates/axon-core/src/checker.rs',
+     'inner.insert(p.name.clone(), self.lambda_param_type(p));',
+     'let _ = p;',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_matching_fn_value_still_runs'),
+    ('M3877', 'O-SF-01: a `fn(..)` type with an unknown part is compared as resolved (E0306 on a valid arg)', 'crates/axon-core/src/checker.rs',
+     'params.iter().any(type_contains_unresolved) || type_contains_unresolved(ret)',
+     'false',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_matching_fn_value_still_runs'),
+]
+
+# SND fixes, FnVal2 (ids M3878-M3880): a match-arm binding shadows an outer fn value for the
+# call check (SND#1); a lambda param typed by `type N = str` takes the aliased primitive
+# (SND#4); a misspelled native fn's fix lists the module's functions (SND#3).
+MUTATIONS += [
+    ('M3878', 'SND#1: a match-arm binding no longer shadows an outer fn value of the same name', 'crates/axon-core/src/checker.rs',
+     'inner.insert(name, Type::Unknown);',
+     'let _ = name;',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_matching_fn_value_still_runs'),
+    ('M3879', 'SND#4: a lambda param typed by an alias (`type N = str`) keeps the one-variant enum type', 'crates/axon-core/src/checker.rs',
+     'Type::Enum(name) => match self.enum_variants.get(name).map(Vec::as_slice) {',
+     'Type::Enum(name) if false => match self.enum_variants.get(name).map(Vec::as_slice) {',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_matching_fn_value_still_runs'),
+    ('M3880', 'SND#3: a misspelled native fn\'s fix no longer lists the module\'s functions', 'crates/axon-core/src/checker.rs',
+     '                                    fns.join(", ")\n',
+     '                                    String::new()\n',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
+]
+
 if __name__ == "__main__":
     main()

@@ -871,7 +871,7 @@ the model and the transport. It does not govern code. The generator-context
 change to `generate.rs`, `rank.rs` and `runner.rs` became everyone's default
 with no scored dev comparison. The receipt rule closes that gap.
 `python3 crates/axon-cortex/benchmarks/scorecard/scorecard.py receipt --check`
-runs in `scripts/gate.sh` (the gate and `--fast`). It works offline and needs
+runs in `scripts/gate.sh`'s parallel group, which `--lane` also runs. It works offline and needs
 no key. It passes when the working tree's REPAIR DIGEST equals main's (the
 digest at `git merge-base HEAD origin/main`: nothing changed). Otherwise
 `scorecard/history.jsonl` must hold, for the working tree's digest, one of

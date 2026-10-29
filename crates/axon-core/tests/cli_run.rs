@@ -41387,3 +41387,363 @@ fn a_lambda_or_a_prob_pred_keeps_its_value_rule() {
         "[g_mut] a `&mut`-param fn as a value keeps E0605: {cmsg}"
     );
 }
+
+/// O-SF-03: a name with no run-time value — a module, a type (struct or type
+/// parameter) or an enum — written as a value or a callee, and a `M::f` path
+/// through a module, checked clean and then panicked in `run` ("undefined
+/// identifier `n`", "value of type n is not callable", "call to unknown
+/// function `P`"). A module's items are merged flat by `use`; a type or enum is
+/// only ever named by a literal. Each is now E0404 at check, and `run` stops at
+/// the same refusal. Controls: the `use n.{add2}` idiom, a local named like a
+/// type, a variant path and a struct literal keep running.
+#[test]
+fn a_module_type_or_enum_name_used_as_a_value_is_refused() {
+    let attack = "ATTACK: a name with no run-time value checked clean";
+    let dir = std::env::temp_dir().join(format!("axon_osf03_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("n.ax"),
+        "pub fn add2(x: i64, y: i64) -> i64 {\n    x + y\n}\n",
+    )
+    .unwrap();
+    let go = |tag: &str, src: &str| {
+        let f = dir.join(format!("{tag}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let run = |sub: &str| {
+            axon()
+                .args([sub, f.to_str().unwrap()])
+                .env("AXON_PATH", &dir)
+                .output()
+                .unwrap()
+        };
+        let (c, r) = (run("check"), run("run"));
+        (
+            c.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&c.stdout),
+                String::from_utf8_lossy(&c.stderr)
+            ),
+            r.status.code(),
+            String::from_utf8_lossy(&r.stdout).into_owned(),
+            String::from_utf8_lossy(&r.stderr).into_owned(),
+        )
+    };
+    let m = "mod n\nuse n.{add2}\n";
+    let p = "type P = { x: i64 }\n";
+    let s = "type S = A | B\n";
+    for (tag, head, body, want) in [
+        (
+            "mod_value",
+            m,
+            "    let f = n.add2\n    println(to_str(f(1, 2)))\n",
+            "`n` is a module, which cannot be used as a value",
+        ),
+        (
+            "mod_method",
+            m,
+            "    println(to_str(n.add2(1, 2)))\n",
+            "`n` is a module, which cannot be used as a value",
+        ),
+        (
+            "mod_bare",
+            m,
+            "    let q = n\n    println(\"x\")\n",
+            "`n` is a module, which cannot be used as a value",
+        ),
+        (
+            "mod_path",
+            m,
+            "    println(to_str(n::add2(1, 2)))\n",
+            "`n::add2` does not reach `add2`",
+        ),
+        (
+            "mod_path_value",
+            m,
+            "    let f = n::add2\n    println(to_str(f(1, 2)))\n",
+            "`n::add2` does not reach `add2`",
+        ),
+        (
+            "type_value",
+            p,
+            "    let f = P\n    println(\"x\")\n",
+            "`P` is a type, which cannot be used as a value",
+        ),
+        (
+            "type_field",
+            p,
+            "    println(to_str(P.x))\n",
+            "`P` is a type, which cannot be used as a value",
+        ),
+        (
+            "type_call",
+            p,
+            "    let q = P(1)\n    println(\"x\")\n",
+            "`P` is a type, which cannot be called",
+        ),
+        (
+            "enum_value",
+            s,
+            "    let e = S\n    println(\"x\")\n",
+            "`S` is an enum, which cannot be used as a value",
+        ),
+        (
+            "native_typo",
+            "use native::gfx\n",
+            "    gfx::nope()\n",
+            "native module `gfx` has no function `nope`",
+        ),
+    ] {
+        let src = format!("{head}fn main() -> i64 {{\n{body}    0\n}}\n");
+        let (crc, cmsg, rrc, rout, rerr) = go(tag, &src);
+        assert!(
+            crc == Some(2) && cmsg.contains("E0404") && cmsg.contains(want),
+            "{attack} [{tag}]: want check rc 2, E0404 `{want}`; got rc {crc:?}: {cmsg}"
+        );
+        assert!(
+            rrc == Some(2) && rout.is_empty(),
+            "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+        );
+        // SND#3: the native fix names the module's real functions (it sent
+        // the user to `axon reference`, which does not list them).
+        assert!(
+            tag != "native_typo" || (cmsg.contains("`gfx` has: ") && cmsg.contains("clear")),
+            "ATTACK: a native fix-it names no real function [native_typo]: {cmsg}"
+        );
+    }
+    let (crc, cmsg, _, _, _) = go(
+        "type_param",
+        "fn id<T>(x: T) -> T {\n    let k = T\n    x\n}\nfn main() -> i64 {\n    println(to_str(id(1)))\n    0\n}\n",
+    );
+    assert!(
+        crc == Some(2) && cmsg.contains("`T` is a type, which cannot be used as a value"),
+        "{attack} [type_param]: {cmsg}"
+    );
+    for (tag, src, out) in [
+        ("use_idiom", format!("{m}fn main() -> i64 {{\n    println(to_str(add2(1, 2)))\n    0\n}}\n"), "3\n"),
+        ("local_named_p", format!("{p}fn main() -> i64 {{\n    let P = 3\n    println(to_str(P))\n    0\n}}\n"), "3\n"),
+        ("variant_path", format!("{s}fn main() -> i64 {{\n    let e = S::A\n    println(\"ok\")\n    0\n}}\n"), "ok\n"),
+        ("struct_lit", format!("{p}fn main() -> i64 {{\n    let q = P {{ x: 1 }}\n    println(to_str(q.x))\n    0\n}}\n"), "1\n"),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = go(tag, &src);
+        assert!(
+            crc == Some(0) && !cmsg.contains("E0404"),
+            "[{tag}] control must check clean: rc {crc:?}: {cmsg}"
+        );
+        assert_eq!((rrc, rout.as_str()), (Some(0), out), "[{tag}] control run: {rerr}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// O-SF-01: a call through a fn VALUE whose type is known — a user fn bound
+/// by `let`, a lambda (typed or not: its arity is always known), a param
+/// typed `fn(..) -> ..`, a top-level `let` — is checked like a direct call:
+/// E0305 for the argument count, E0306 for an argument type. Each case
+/// checked rc 0 and then panicked at run (rc 101).
+#[test]
+fn a_call_through_a_fn_value_checks_its_signature() {
+    let attack = "ATTACK: a call through a fn value with a wrong signature checked clean";
+    let add2 = "fn add2(x: i64, y: i64) -> i64 { x + y }\n";
+    let main = |body: &str| format!("fn main() -> i64 {{\n{body}    0\n}}\n");
+    for (tag, src, code, msg) in [
+        (
+            "j_user_arity",
+            format!(
+                "{add2}{}",
+                main("    let f = add2\n    println(to_str(f(1)))\n")
+            ),
+            "E0305",
+            "function `f` takes 2 arguments but 1 was supplied",
+        ),
+        (
+            "j_user_extra",
+            format!(
+                "{add2}{}",
+                main("    let f = add2\n    println(to_str(f(1, 2, 3)))\n")
+            ),
+            "E0305",
+            "function `f` takes 2 arguments but 3 were supplied",
+        ),
+        (
+            "k_lambda_arity",
+            main("    let g = |x: i64, y: i64| x + y\n    println(to_str(g(1)))\n"),
+            "E0305",
+            "function `g` takes 2 arguments but 1 was supplied",
+        ),
+        (
+            "k_untyped_arity",
+            main("    let g = |x, y| x + y\n    println(to_str(g(1)))\n"),
+            "E0305",
+            "signature: `g(_, _)`",
+        ),
+        (
+            "l_user_type",
+            format!(
+                "{add2}{}",
+                main("    let f = add2\n    println(to_str(f(1, \"s\")))\n")
+            ),
+            "E0306",
+            "argument 1 of `f` has the wrong type",
+        ),
+        (
+            "m_lambda_type",
+            main("    let g = |x: i64| x + 1\n    println(to_str(g(\"s\")))\n"),
+            "E0306",
+            "argument 0 of `g` has the wrong type",
+        ),
+        (
+            "p_param_arity",
+            format!(
+                "fn apply(h: fn(i64) -> i64) -> i64 {{\n    h(1, 2)\n}}\n{}",
+                main("    println(to_str(apply(|x: i64| x + 1)))\n")
+            ),
+            "E0305",
+            "function `h` takes 1 argument but 2 were supplied",
+        ),
+        (
+            "p_param_type",
+            format!(
+                "fn apply(h: fn(i64) -> i64) -> i64 {{\n    h(\"s\")\n}}\n{}",
+                main("    println(to_str(apply(|x: i64| x + 1)))\n")
+            ),
+            "E0306",
+            "argument 0 of `h` has the wrong type",
+        ),
+        (
+            "t_toplet_arity",
+            format!(
+                "let tl = |x: i64| x * 2\n{}",
+                main("    println(to_str(tl(1, 2)))\n")
+            ),
+            "E0305",
+            "function `tl` takes 1 argument but 2 were supplied",
+        ),
+        (
+            "t_toplet_fnref",
+            format!(
+                "{add2}let tf = add2\n{}",
+                main("    println(to_str(tf(1)))\n")
+            ),
+            "E0305",
+            "function `tf` takes 2 arguments but 1 was supplied",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, &src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(
+            cmsg.contains(code) && cmsg.contains(msg),
+            "{attack} [{tag}]: want {code} with {msg:?}: {cmsg}"
+        );
+        assert!(
+            rrc == Some(2) && rout.is_empty(),
+            "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+        );
+    }
+}
+
+/// O-SF-01 guard: a call through a fn value that matches its type, or whose
+/// type is not known (a generic param, an untyped lambda param), still checks
+/// rc 0 and runs. A local shadows a top-level fn of the same name at run time,
+/// so the LOCAL's type decides its calls (`g_local_shadows_fn` and
+/// `g_unknown_local_shadows_fn` were refused with E0305 against the shadowed
+/// fn's signature). A lambda's param, and a match-arm binding, shadows an outer
+/// local, top-level `let` or fn of the same name (`snd_match_*` were refused
+/// with E0305 against the outer value's type; `snd_match_shadow_fn` on the
+/// base too), a fn value with an unknown part passes where a `fn(..)` param is
+/// expected, and a lambda param typed by `type Name = str` takes a `str`
+/// (`snd_lambda_alias` was refused with E0306 and E0301).
+#[test]
+fn a_call_through_a_matching_fn_value_still_runs() {
+    let attack = "ATTACK: a valid call through a fn value was refused";
+    for (tag, src, out) in [
+        (
+            "g_user_ok",
+            "fn add2(x: i64, y: i64) -> i64 { x + y }\nfn main() -> i64 {\n    let f = add2\n    println(to_str(f(1, 2)))\n    0\n}\n",
+            "3\n",
+        ),
+        (
+            "g_lambda_ok",
+            "fn main() -> i64 {\n    let g = |x: i64, y: i64| x + y\n    let u = |x| x * 2\n    println(to_str(g(1, 2) + u(3)))\n    0\n}\n",
+            "9\n",
+        ),
+        (
+            "g_param_ok",
+            "fn apply(h: fn(i64) -> i64, x: i64) -> i64 {\n    h(x)\n}\nfn inc(x: i64) -> i64 { x + 1 }\nfn main() -> i64 {\n    println(to_str(apply(|x: i64| x + 1, 1) + apply(inc, 1) + apply(|x| x, 1)))\n    0\n}\n",
+            "5\n",
+        ),
+        (
+            "g_generic_param",
+            "fn apply<T>(h: fn(T) -> T, x: T) -> T {\n    h(x)\n}\nfn main() -> i64 {\n    println(to_str(apply(|x: i64| x + 1, 41)))\n    0\n}\n",
+            "42\n",
+        ),
+        (
+            "g_return_lambda",
+            "fn mk() -> fn(i64) -> i64 {\n    |x: i64| x + 1\n}\nfn main() -> i64 {\n    let h = mk()\n    println(to_str(h(1)))\n    0\n}\n",
+            "2\n",
+        ),
+        (
+            "g_table",
+            "fn inc(x: i64) -> i64 { x + 1 }\nfn main() -> i64 {\n    let double = |n| n * 2\n    let ops = [inc, double]\n    let f = ops[1]\n    println(to_str(f(21) + ops[0](1)))\n    0\n}\n",
+            "44\n",
+        ),
+        (
+            "g_local_shadows_fn",
+            "fn f(x: i64) -> i64 { x + 1000 }\nfn main() -> i64 {\n    let f = |x: i64, y: i64| x + y\n    println(to_str(f(1, 2)))\n    0\n}\n",
+            "3\n",
+        ),
+        (
+            "g_toplet_ok",
+            "let tl = |x: i64| x * 2\nfn main() -> i64 {\n    let f = tl\n    println(to_str(tl(2) + f(3)))\n    0\n}\n",
+            "10\n",
+        ),
+        (
+            "g_unknown_local_shadows_fn",
+            "fn f(x: i64) -> i64 { x + 1000 }\nfn main() -> i64 {\n    let ops = [|x: i64, y: i64| x + y]\n    let f = ops[0]\n    println(to_str(f(1, 2)))\n    0\n}\n",
+            "3\n",
+        ),
+        (
+            "g_lambda_param_shadows_local",
+            "fn main() -> i64 {\n    let f = |a: i64, b: i64| a + b\n    let h = |f| f(1)\n    println(to_str(h(|x: i64| x + 1) + f(1, 2)))\n    0\n}\n",
+            "5\n",
+        ),
+        (
+            "g_pass_fn_local",
+            "fn apply(h: fn(i64) -> i64, x: i64) -> i64 {\n    h(x)\n}\nfn main() -> i64 {\n    let u = |x| x * 2\n    let t = |x: i64| x + 1\n    println(to_str(apply(u, 1) + apply(t, 1)))\n    0\n}\n",
+            "4\n",
+        ),
+        (
+            "snd_match_shadow_local",
+            "fn main() -> i64 {\n    let f = |x: i64| x * 2\n    match Some(|a: i64, b: i64| a * b) {\n        Some(f) => println(to_str(f(3, 4))),\n        None => println(\"n\"),\n    }\n    println(to_str(f(1)))\n    0\n}\n",
+            "12\n2\n",
+        ),
+        (
+            "snd_match_shadow_toplet",
+            "let tl = |x: i64| x * 2\nfn main() -> i64 {\n    match Some(|a: i64, b: i64| a * b) {\n        Some(tl) => println(to_str(tl(3, 4))),\n        None => println(\"n\"),\n    }\n    0\n}\n",
+            "12\n",
+        ),
+        (
+            "snd_match_enum_field",
+            "type H = W { tl: fn(i64, i64) -> i64 } | N\nlet tl = |x: i64| x * 2\nfn main() -> i64 {\n    let h = H::W { tl: |p: i64, q: i64| p + q }\n    match h {\n        H::W { tl } => println(to_str(tl(1, 2))),\n        H::N => println(\"n\"),\n    }\n    0\n}\n",
+            "3\n",
+        ),
+        (
+            "snd_match_shadow_fn",
+            "fn tl(x: i64) -> i64 { x * 2 }\nfn main() -> i64 {\n    match Some(|a: i64, b: i64| a * b) {\n        Some(tl) => println(to_str(tl(3, 4))),\n        None => println(\"n\"),\n    }\n    0\n}\n",
+            "12\n",
+        ),
+        (
+            "snd_lambda_alias",
+            "type Name = str\nfn main() -> i64 {\n    let greet = |n: Name| println(\"hi \" + n)\n    greet(\"bob\")\n    0\n}\n",
+            "hi bob\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}

@@ -75,6 +75,7 @@ fn inc(x: i64) -> i64 { x + 1 }
 let ops = [inc, double]          // a dispatch table; call with ops[k](x)
 let f = inc                      // apply(inc, 41), arr_map(xs, inc) all work
 // A generic fn or a builtin is NOT a value (E0306): wrap it, `|n| abs_i64(n)`.
+// A call through a value is checked like a direct call: f(1, 2) here is E0305.
 
 // Operators:  + - * / %   == != < > <= >=   && ||
 //   `/` and `%` on i64 are integer division/modulo.
@@ -227,6 +228,11 @@ when you write the candidate:
    (or a struct, enum, closure, `chan<T>` — B07), using `s` again is `E0601`; borrow with
    `ref core = s` instead. Arrays are values: `let b = a` copies an array, including an array
    (`[T]`) or `&[T]` parameter, and both names stay usable.
+
+9. **A module's items are imported, not namespaced.** `mod util` plus `use util.{parse}`,
+   then call `parse(x)`. `util.parse(x)`, `util::parse(x)` and `let f = util` are `E0404`:
+   the module name has no value at run time. Likewise a type or enum name is not a value;
+   build a struct literal `P { x: 1 }` or name a variant `S::A`.
 
 ---
 
