@@ -6,6 +6,7 @@ fixture audits under scripts/testdata/gate_lane/.
 
     python3 -B scripts/test_gate_lane.py [test_name ...]
 """
+import json
 import os
 import re
 import subprocess
@@ -110,6 +111,80 @@ def stage_end_records_exit_and_duration():
     assert [x[0] for x in rows] == ["S98", "S97"] and [x[3] for x in rows] == ["0", "77"], rows
     assert int(rows[0][2]) - int(rows[0][1]) >= 150, rows
     assert "(stage 'S98 ok': 0.2s, exit 0)" in r.stdout, r.stdout
+
+
+# ── GL-2 ────────────────────────────────────────────────────────────────────
+
+def gl():
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import gate_lane
+    return gate_lane
+
+
+def registry():
+    return json.load(open(os.path.join(ROOT, "governance", "gate-lanes.json")))
+
+
+@test
+def registry_covers_every_gate_stage():
+    g = gl()
+    assert g.check(ROOT) == [], g.check(ROOT)
+    text = open(GATE).read()
+    extra = text.replace('stage_begin S19 "lockfile"',
+                         'stage_begin S99 "new"\n./scripts/new.sh || fail x\nstage_end\nstage_begin S19 "lockfile"')
+    extra = extra.replace('par "completeness manifest" stage_completeness',
+                          'par "completeness manifest" stage_completeness\npar "brand new check" stage_new')
+    bad = g.check(ROOT, gate=g.Gate(extra))
+    assert any("stage S99 has no row" in b for b in bad), bad
+    assert any("'brand new check' has no row" in b for b in bad), bad
+    man = json.load(open(os.path.join(ROOT, "governance", "release-verification.json")))
+    man["crates"]["axon-new"] = {"class": "A", "required": ["cargo test --locked -p axon-new"]}
+    assert any("manifest crate axon-new" in b for b in g.check(ROOT, manifest=man)), "new manifest crate"
+    unbuilt = text.replace('./scripts/lockfile_gate.sh || fail "lockfile gate"',
+                           'cargo build --locked -p axon-x || fail x\n./scripts/lockfile_gate.sh || fail "lockfile gate"')
+    assert any("cargo build --locked -p axon-x" in b for b in g.check(ROOT, gate=g.Gate(unbuilt))), "unregistered build"
+
+
+@test
+def registry_rejects_orphan_row():
+    g = gl()
+    reg = registry()
+    reg["stages"].append({"id": "S98", "class": "selectable", "split": "none"})
+    reg["par"].append("vanished check")
+    reg["stages"][[s["id"] for s in reg["stages"]].index("S20")]["crates"].append("axon-gone")
+    bad = g.check(ROOT, reg=reg)
+    for want in ("row S98 names a stage", "'vanished check' names a par stage", "row axon-gone names a crate"):
+        assert any(want in b for b in bad), (want, bad)
+    reg = registry()
+    reg["stages"][1]["banner"] = "renamed"
+    assert any("row S02 banner 'renamed'" in b for b in g.check(ROOT, reg=reg)), "banner drift"
+
+
+@test
+def registry_build_text_matches_gate():
+    g = gl()
+    reg = registry()
+    reg["builds"][0]["cmd"] = reg["builds"][0]["cmd"].replace(" -q", "")
+    reg["stages"][[s["id"] for s in reg["stages"]].index("S16")]["split_cmd"] += " --lib"
+    bad = g.check(ROOT, reg=reg)
+    assert any("build B1" in b and "differs from gate.sh" in b for b in bad), bad
+    assert any("S16 split_cmd" in b for b in bad), bad
+
+
+@test
+def units_derived_from_metadata():
+    g = gl()
+    ids = [u["id"] for u in g.units(g.derive(ROOT))]
+    for want in ("S16:axon-core:lib", "S16:axon-core:bin:axon", "S16:axon-core:bin:axon-run",
+                 "S16:axon-core:test:cli_run", "S16:axon-core:doc", "S20:axon-fabric:test:cortex_via_fabric",
+                 "S03:axon-fabric:test:cortex_via_fabric", "S09:lint", "S09:axon-cortex:lib", "S14", "S04H",
+                 "S20:axon-rt-ai:build", "S20:axon-fabric:test:workspace"):
+        assert want in ids, (want, [i for i in ids if i.startswith(want.split(":")[0])][:40])
+    assert len(ids) == len(set(ids)), "duplicate unit ids"
+    assert not any(i.startswith(("S01", "S15", "S19", "S21")) for i in ids), "always/profile stages are not units"
+    # the full gate's order: S02 before S03 before S16 before S20
+    first = {s: next(n for n, i in enumerate(ids) if i.startswith(s + ":") or i == s) for s in ("S02", "S03", "S16", "S20")}
+    assert first["S02"] < first["S03"] < first["S16"] < first["S20"], first
 
 
 def main(argv):

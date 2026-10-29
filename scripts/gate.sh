@@ -673,6 +673,15 @@ stage_completeness() {
     || fail "a completeness claim is not backed by evidence"
 }
 
+# The lane machinery (tasks/gate-lane-spec.md, Q4 = B): its self-tests, and the
+# registry governance/gate-lanes.json checked against this file, the manifest
+# and `cargo metadata`. A stage added here without a registry row would be a
+# stage `--lane` cannot see. Seconds; no build.
+stage_gate_lane() {
+  python3 -B scripts/test_gate_lane.py && python3 -B scripts/gate_lane.py check \
+    || fail "gate lane self-test or registry check (scripts/test_gate_lane.py, scripts/gate_lane.py check)"
+}
+
 par "VISION.md focus" stage_vision_focus
 par "artifact admission" stage_artifact_admission
 par "cortex v0.15 package" stage_cortex_v015
@@ -694,6 +703,7 @@ par "cortex scorecard" stage_scorecard
 par "cortex repair-path receipt" stage_cortex_receipt
 par "protected benchmark sets" stage_protected_sets
 par "completeness manifest" stage_completeness
+par "gate lane self-test" stage_gate_lane
 par_join
 
 # Long-running jobs must own their result and their cleanup. This gate exists
