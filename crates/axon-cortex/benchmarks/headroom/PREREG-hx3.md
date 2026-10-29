@@ -198,6 +198,76 @@ nice -n 10 python3 crates/axon-cortex/benchmarks/ab/run_ab.py \
   --reserve-usd 0.05 --cap-usd 0.50
 ```
 
+### 0.7 Addendum: class C `erase-long` pilot (node N0c; committed before its first row)
+
+[DECIDED by human 2026-10-29, NH-3 (b): C is authored after the excerpt
+re-pilot and piloted at $0.25 with the corrected grading pin.] The trigger
+holds (§6.2, §6.3: A and B rejected). **Not run yet:** the excerpt re-pilot
+overran on wall (§6.3), so this pilot waits for that review (spec NH-3).
+
+- **Programs (N0c):** 12 dev programs in `programs-c/` (463b7aaf, committed
+  before any defect was derived): checksums, chessmoves, globmatch, lifegrid,
+  mdlite, payroll, poker, rooms, stackvm, sudoku, taxcalc, vending. Three
+  authoring agents each wrote 4 from short neutral problem statements, reading
+  only `AXON_REFERENCE.md`, `docs/` and `examples/`; none was given or allowed
+  to read benchmark sources, cortex prompts, pools or results (FU-1b). Each
+  file has ≥ 2 functions of 24-60 lines with ≥ 3 direct tests each, 13-21
+  tests, and zero `axon check` diagnostics; `check` and `test` exit 0 under
+  both `hx-bin/axon` and `hx3-inc-bin/axon` (re-run by the integrator).
+  sha256 over the sorted per-file sha256 lines: `a01bd485…e3e9`.
+- **Builder:** `build.py` dd7d4b4f (class `erase-long`: an erase single on a
+  span ≥ 24 lines, hidden = `caller_pin`, visible = the first other failing
+  test, nothing cut, precedence over `erase`; `--deal-dev`), fail-first
+  `test_erase_long` / `test_deal_dev` (3 red before, green after). Builder
+  pins as §0.1: axon `819e0460…`, cortex `e052ea81…`.
+- **Pool:** `/var/tmp/r51-tmp/hx3c-scratch/hx-pool.json` sha256
+  `e5b49c68871900c5dc78f36aef2631f127c1f69219799138a0337350cf0ce830`, built
+  with `--stratum C --programs-dir …/programs-c --prior-split
+  /var/tmp/r51-tmp/hx3-scratch/hx-pool.json --deal-dev --allow-short-split
+  --per-cell-program 2 --seed 1 --split-seed 1` (452.7 s at load ≈ 11-25);
+  `meta.headroom.deal` = `dev`, inputs digest `57c7c2b8…0804`, 241 tasks;
+  `build.py --check`: 0 failures. **Eligible cell (§0.2):** (erase-long,
+  `>=24`) has 23 dev tasks over 12 programs (≥ 12 from ≥ 3): eligible, and
+  ≥ 20, so the pilot has 20 rows.
+- **Ids (seed 3, the §0.4 procedure):** `/var/tmp/r51-tmp/hx3c-scratch/draw_ids_c.py`
+  (not committed; output sha256 `5cf60a95…747b`). Draws: 1. 20 ids over 12
+  programs: hx-erase-long-79d95585d4, hx-erase-long-d2710c6e28,
+  hx-erase-long-c305637ec8, hx-erase-long-4e404dfb2d, hx-erase-long-84c6ebc2cf,
+  hx-erase-long-abe013b07e, hx-erase-long-3b5432b8d5, hx-erase-long-09d091fed3,
+  hx-erase-long-9e7a22b0b4, hx-erase-long-9989154306, hx-erase-long-faa5cc3d57,
+  hx-erase-long-e66a8b55f6, hx-erase-long-7ff6b007fb, hx-erase-long-495a95b844,
+  hx-erase-long-80455d7868, hx-erase-long-88bfbdd468, hx-erase-long-f63ebca8ae,
+  hx-erase-long-6e103917dc, hx-erase-long-8186423ec7, hx-erase-long-5a490dc013.
+- **Zero-cost controls on these 20 ids** (no model call, rows outside the
+  spend root in `/var/tmp/r51-tmp/hx3c-scratch/`): arm A oracle 20/20
+  verified_clean; arm B `--generator none` 0/20, `needs_input` 20, localization
+  rank 1 on 19 and 5 on 1.
+- **Grading pin:** as §0.6, the arms' axon `f15fad70…57f4`. The `let mut`
+  probe now runs inside `run_ab.py`'s `probe_grade_axon` (5bb4e0f4, O-HX3-01
+  fix; fail-first `case_grade_axon_mut_skew`): a grading axon whose `check`
+  rc on a one-`let mut` file differs from the arms' axon aborts the run before
+  any model call (`hx-bin/axon` aborts, `hx3-inc-bin/axon` passes, checked).
+- **Spend:** own empty root `hx3-pilot-2026-10-29/erase-long/`, `--cap-usd
+  0.25`, `--reserve-usd 0.05`. Arms, model, ranker, k = 1, `--parallel 1` as
+  §0.5.
+- **Decision (§0.3, unchanged):** advance iff 0 false successes and 4 ≤ c ≤ 16
+  of 20; c ≥ 17 rejects; decided early as in §0.3. Overrun iff spend >
+  2·(c·$0.0010 + (20 − c)·$0.0093) or wall > 2·(c·6.6 s + (20 − c)·76 s) at
+  the observed c.
+- **Command:**
+
+```
+cd /home/cklaus/projects/axon-lanes/hx3-proto && \
+AXON_BIN=/var/tmp/r51-tmp/hx3-inc-bin/axon CORTEX_BIN=/var/tmp/r51-tmp/hx3-inc-bin/cortex \
+nice -n 10 python3 crates/axon-cortex/benchmarks/ab/run_ab.py \
+  /var/tmp/r51-tmp/hx3c-scratch/hx-pool.json --arm B --generator real --transport micode \
+  --model claude-haiku-5-5 --trials 1 --parallel 1 --only hx-erase-long-79d95585d4,hx-erase-long-d2710c6e28,hx-erase-long-c305637ec8,hx-erase-long-4e404dfb2d,hx-erase-long-84c6ebc2cf,hx-erase-long-abe013b07e,hx-erase-long-3b5432b8d5,hx-erase-long-09d091fed3,hx-erase-long-9e7a22b0b4,hx-erase-long-9989154306,hx-erase-long-faa5cc3d57,hx-erase-long-e66a8b55f6,hx-erase-long-7ff6b007fb,hx-erase-long-495a95b844,hx-erase-long-80455d7868,hx-erase-long-88bfbdd468,hx-erase-long-f63ebca8ae,hx-erase-long-6e103917dc,hx-erase-long-8186423ec7,hx-erase-long-5a490dc013 \
+  --grade-axon /var/tmp/r51-tmp/hx3-inc-bin/axon --ranker openrouter:anthropic/claude-haiku-5.5 \
+  --spend-root crates/axon-cortex/benchmarks/headroom/hx3-pilot-2026-10-29/erase-long/ \
+  --out crates/axon-cortex/benchmarks/headroom/hx3-pilot-2026-10-29/erase-long/pilot.jsonl \
+  --reserve-usd 0.05 --cap-usd 0.25
+```
+
 ## 6. HX3-0 pilot rows and verdict (2026-10-29)
 
 Rows: `hx3-pilot-2026-10-29/<class>/pilot.jsonl`, one class at a time, with
