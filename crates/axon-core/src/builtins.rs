@@ -467,7 +467,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         params: &[("a", "str"), ("b", "str")],
         ret: "i64",
         doc: "Lexicographic byte-order comparison: -1 if `a` < `b`, 0 if equal, 1 if `a` > `b`. \
-              Drops directly into `arr_sort_by`, whose comparator is `fn(T, T) -> i64`.",
+              To sort with it, pass a lambda: `arr_sort_by(xs, |a, b| str_cmp(a, b))` (a builtin is not a value, E0306).",
     },
     BuiltinFn {
         name: "str_contains",
@@ -491,7 +491,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "str_slice",
         params: &[("s", "str"), ("start", "i64"), ("end", "i64")],
         ret: "str",
-        doc: "Return the substring of `s` from byte index `start` (inclusive) to `end` (exclusive). Clamps indices to valid range.",
+        doc: "Return the substring of `s` from byte index `start` (inclusive) to `end` (exclusive). An out-of-range index clamps; an index inside a multi-byte character panics (E2200) - use `str_char_slice` for character indices.",
     },
     BuiltinFn {
         name: "str_index_of",

@@ -589,7 +589,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `str_char_at(s: str, i: i64) -> str` | The `i`-th CHARACTER of `s` as a one-character string, or "" if `i` is out of range. Contrast `char_at`, which returns the `i`-th BYTE as an `i64` code unit — for non-ASCII text those are different positions and different values. |
 | `str_char_slice(s: str, lo: i64, hi: i64) -> str` | Characters `lo`..`hi` of `s` (half-open), indexed by CHARACTER rather than by byte. Cannot split a character, so unlike `str_slice` it never refuses (E2200); out-of-range indices clamp. |
 | `str_chars(s: str) -> [str]` | Split `s` into one one-character string per CHARACTER (Unicode scalar value, not grapheme cluster). The load-bearing character function: it turns per-character work into ordinary `arr_*` work over `[str]`, so `arr_group_by`/`dict_inc`/`arr_count_if` all apply. Prefer this over indexing in a loop — `str_len` counts BYTES, so a `while i < str_len(s)` loop over non-ASCII text does not iterate characters. |
-| `str_cmp(a: str, b: str) -> i64` | Lexicographic byte-order comparison: -1 if `a` < `b`, 0 if equal, 1 if `a` > `b`. Drops directly into `arr_sort_by`, whose comparator is `fn(T, T) -> i64`. |
+| `str_cmp(a: str, b: str) -> i64` | Lexicographic byte-order comparison: -1 if `a` < `b`, 0 if equal, 1 if `a` > `b`. To sort with it, pass a lambda: `arr_sort_by(xs, \|a, b\| str_cmp(a, b))` (a builtin is not a value, E0306). |
 | `str_contains(s: str, needle: str) -> bool` | Return true if `s` contains `needle` as a substring. |
 | `str_count(s: str, needle: str) -> i64` | Return the number of non-overlapping occurrences of `needle` in `s`. Returns 0 if `needle` is not found. An EMPTY needle matches at every char boundary, so `str_count(s, "")` is the char count plus one — both engines delegate to Rust's `str::matches`, which is where that convention comes from. |
 | `str_digits_only(s: str) -> str` | Keep only the ASCII digits in `s`; everything else (dashes, spaces, letters, Unicode) is dropped. Composes with `parse_int`: `parse_int(str_digits_only("415-555-0142"))` → `Ok(4155550142)`. Closes ROADMAP §9.5 F7. |
@@ -604,7 +604,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `str_repeat(s: str, n: i64) -> str` | Return a string containing `s` repeated `n` times (empty string if n <= 0). |
 | `str_replace(s: str, from: str, to: str) -> str` | Return a copy of `s` with all non-overlapping occurrences of `from` replaced by `to`. |
 | `str_reverse(s: str) -> str` | Return a copy of `s` with its bytes in reverse order. |
-| `str_slice(s: str, start: i64, end: i64) -> str` | Return the substring of `s` from byte index `start` (inclusive) to `end` (exclusive). Clamps indices to valid range. |
+| `str_slice(s: str, start: i64, end: i64) -> str` | Return the substring of `s` from byte index `start` (inclusive) to `end` (exclusive). An out-of-range index clamps; an index inside a multi-byte character panics (E2200) - use `str_char_slice` for character indices. |
 | `str_split(s: str, sep: str) -> [str]` | Split `s` on every occurrence of `sep`, returning the parts as a slice. Empty separator returns `[s]` (avoids Rust's panic). Inverse of `str_join`. |
 | `str_starts_with(s: str, prefix: str) -> bool` | Return true if `s` begins with `prefix`. |
 | `str_to_lower(s: str) -> str` | Return a copy of `s` with all ASCII letters converted to lowercase. |
