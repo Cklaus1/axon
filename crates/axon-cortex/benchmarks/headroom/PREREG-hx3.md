@@ -5,6 +5,9 @@ HX3-0 pilot rows and the verdict: masked rejects, excerpt is held on NH-1.**
 [REVISED: HX3-0 re-pilot 2026-10-29: NH-1 granted; §0.6 (568d4c22) preceded
 the excerpt seed-4 re-pilot, which rejects (c = 19, §6.3). Neither A nor B
 advances.]
+[REVISED: HX3-0 class C 2026-10-29: §0.7 (0824f16a) and §0.8 (3c8ba568)
+preceded the class C pilot, which **advances** (c = 15, 0 false successes,
+no overrun, §6.4). HX3-1 needs a human go-ahead (§0.3).]
 §1/§2 are never written unless a class advances.
 Design: `tasks/hx3-spec.md` on `hx3/spec` (10ed553f) HX3-0, HX3-A, HX3-B,
 HX3-2, including every [REVISED] marker. Authorization (2026-10-29): HX3-0
@@ -451,3 +454,51 @@ generator saw [INFERENCE: the view text is not recorded].
 **Verdict:** excerpt rejected (0 false successes, c = 19). Neither A nor B
 advances: stop A and B; no HX3-1, §1/§2 or calibration. Per NH-3 (b), class
 C is next, after review of the wall overrun, with the §0.6 grading pin.
+
+### 6.4 Class C `erase-long` pilot (2026-10-29)
+
+Rows: `hx3-pilot-2026-10-29/erase-long/pilot.jsonl`, the §0.7 command
+verbatim via `/var/tmp/r51-tmp/hx3-pilot-erase-long.sh` (pins of the pool,
+arms' axon and cortex checked; spend root empty; `probe_grade_axon` with the
+`let mut` probe passed, since the run wrote rows). §0.8 start condition: load
+14.18 at 17:36:02 (it had been ≈ 55 at 17:15; the script waited); 51.88 at
+the end, 17:44:29. Every row carries commit `3c8ba568`, axon and grading
+axon `f15fad70807e5f51`, cortex `1b2f8edb101d3fba`; no row was rate-limited;
+the cap and the reserve were not reached.
+
+| class | n | clean c | false successes | rows with > 1 proposal | spend (cost + ranker) | wall (rows) | §0.3 decision |
+|---|---|---|---|---|---|---|---|
+| erase-long | 20 | 15 | 0 | 8 | $0.0735 ($0.0713 + $0.0022) | 497.5 s | **advance** (4 ≤ 15 ≤ 16) |
+
+Per knob: `>=24` 15/20 (the only knob). Localization rank 1 on 19 rows, 5 on 1.
+**Overrun:** none. Spend $0.0735 ≤ 2·(15·$0.0010 + 5·$0.0093) = $0.1230;
+wall 497.5 s ≤ 1257.0 s (§0.8; the old §0.3 wall limit, 958.0 s, also
+holds). HX3-0 total: $0.1448 + $0.0735 = $0.2183.
+
+**Triage of the 5 not-clean rows** (all `budget_exhausted`, exit 20, claim
+false, no patch accepted, `fns_changed` [], so none edits a callee of g; no
+`tests_tampered`, `caps_widened` or `special_case_suspect` on any row):
+
+| row | program / g | attempts | wall |
+|---|---|---|---|
+| hx-erase-long-3b5432b8d5 | chessmoves / `count_moves` | 3 on g, all `check_refused` | 46.9 s |
+| hx-erase-long-7ff6b007fb | mdlite / `emphasis_spans` | 3 on g, all `check_refused` | 49.1 s |
+| hx-erase-long-f63ebca8ae | payroll / `payslip` | 3 on g, all `check_refused` | 28.6 s |
+| hx-erase-long-d2710c6e28 | poker / `hand_score` | 3 on g, all `check_refused` | 40.0 s |
+| hx-erase-long-9e7a22b0b4 | poker / `classify` | 12 over 5 candidates (g 3, then `sorted_ranks`, `rank_value`, `straight_high`, `parse_cards`), all `check_refused` | 111.7 s |
+
+- On the first 4 rows every attempt was refused by the check with no visible
+  test failing (`visible_failing` []); the rows do not record why (compile
+  error or another test) [INFERENCE: not measurable from the rows]. On
+  `9e7a22b0b4` the 3 attempts on `classify` left 5 visible tests failing.
+- Graded finals equal the broken files (`final_diff` empty, `modified`
+  false): `regressed` equals the task's `failing_on_broken`, `hidden_ok` false.
+- Missing fact: a whole erased body of ≥ 24 lines; the generator saw the
+  signature, g's callers and callees, and the visible test's expected
+  values. Whether the full behaviour (e.g. payslip's exact format, poker's
+  tie-break order) was inferable from that is [INFERENCE: the view text is
+  not recorded]; poker contributes 2 of 5 not-clean rows.
+
+**Verdict:** class C **advances** (0 false successes, c = 15, eligible knob
+`>=24`, no overrun). Per §0.3, HX3-1 needs a human go-ahead; nothing beyond
+this pilot is authorized. A and B stay rejected.
