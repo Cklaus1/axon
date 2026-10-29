@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """The gate's lane machinery (tasks/gate-lane-spec.md GL-2 … GL-4). NOT the gate.
 
-    gate_lane.py check [--quiet]  registry governance/gate-lanes.json against gate.sh, the manifest and cargo;
-                                  and, given an audit of an ancestor, that every audited unit can be selected
+    gate_lane.py check [--audit] [--quiet]   registry governance/gate-lanes.json against gate.sh, the manifest
+                                  and cargo; with --audit (the lane's check) also, given the stored audit of an
+                                  ancestor, that every audited unit can be selected. The full gate runs it
+                                  without --audit: its result never depends on the untracked audit store.
     gate_lane.py units            the derived units, in full-gate order
     gate_lane.py audit            the read-set audit of HEAD (GL-3; non-ship, slow: every unit, one by one)
     gate_lane.py select / expand / footer   called by `gate.sh --lane` and `--lane-units=` (GL-4)
@@ -459,17 +461,22 @@ def bin_owners(meta):
 
 
 def parse_dep_info(path, root):
-    """In-repo paths (relative to root) a cargo dep-info file names."""
+    """In-repo paths (relative to root) a cargo dep-info file names. Entries are absolute (bin .d files) or
+    workspace-relative (deps/*.d: `crates/…`, `Cargo.toml`); both resolve against root."""
     out = set()
-    prefix = root.rstrip("/") + "/"
+    root = os.path.normpath(root)
     with open(path, errors="replace") as f:
         for line in f:
             if ":" not in line or line.startswith("#"):
                 continue
             for p in re.split(r"(?<!\\) ", line.split(": ", 1)[1] if ": " in line else ""):
                 p = p.strip().replace("\\ ", " ")
-                if p.startswith(prefix) and "/target/" not in p[len(prefix) - 1:]:
-                    out.add(p[len(prefix):])
+                if not p:
+                    continue
+                ap = os.path.normpath(os.path.join(root, p))
+                rel = os.path.relpath(ap, root)
+                if rel not in (".", "..") and not rel.startswith("../") and "/target/" not in f"/{rel}":
+                    out.add(rel)
     return out
 
 
@@ -502,8 +509,9 @@ def package_compile_sets(meta, root, target):
                       for f in os.listdir(os.path.join(build_dir, b)) if f.endswith(".d")]
             for d in ds:
                 if os.path.isfile(d):
-                    files |= parse_dep_info(d, root)
-                    found = True
+                    got = parse_dep_info(d, root)
+                    files |= got
+                    found = found or any(f.startswith(pdir + "/") for f in got)
         for b in builds:
             o = os.path.join(build_dir, b, "output")
             if b.rsplit("-", 1)[0] != q or not os.path.isfile(o):
@@ -787,10 +795,12 @@ def cmd_audit(args):
                 select.select([w.fd], [], [], 0.2)
                 w.drain(att.feed)
             rc = p.returncode
+            tsv = os.path.join(target, f"gate-stages.{p.pid}.tsv")  # gate.sh's per-run log: its $$ is p.pid
             if rc == 0 and s["step"] == "unit":
-                tsv = os.path.join(target, "gate-stages.tsv")
                 if os.path.isfile(tsv) and any(l.rstrip("\n").split("\t")[-1] == "77" for l in open(tsv)):
                     rc = 77
+            if os.path.isfile(tsv):
+                os.remove(tsv)
             rcs[s["id"]] = rc
             w.mark("end", s["id"])
             if rc not in (0, 77):
@@ -1095,7 +1105,7 @@ def main(argv):
     cmd, rest = argv[0], argv[1:]
     if cmd == "check":
         bad = check(ROOT)
-        audit = find_audit(ROOT) if not bad else None
+        audit = find_audit(ROOT) if not bad and "--audit" in rest else None
         if audit:
             bad += audit_problems(audit, units(derive(ROOT)))
         for b in bad:

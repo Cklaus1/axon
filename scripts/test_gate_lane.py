@@ -257,13 +257,15 @@ def audit_skip_marks_unit_unaudited():
 
 
 def fake_target(entries):
-    """A target dir holding dep-info files {relative path: [repo paths it lists]}."""
+    """A target dir holding dep-info files {relative path: [repo paths it lists]}, written as cargo writes
+    them: workspace-relative in deps/*.d, absolute in a bin's top-level .d."""
     t = tempfile.mkdtemp(prefix="gate-lane-target-")
     for rel, paths in entries.items():
         p = os.path.join(t, "debug", rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, "w") as f:
-            f.write(f"{p[:-2]}: " + " ".join(os.path.join(ROOT, x) for x in paths) + "\n")
+            names = paths if rel.startswith("deps/") else [os.path.join(ROOT, x) for x in paths]
+            f.write(f"{p[:-2]}: " + " ".join(names) + "\n")
     return t
 
 
@@ -298,6 +300,29 @@ def audit_lint_unit_has_closure_compile_set():
     a, _ = assembled([], unit_of("S14"), pkg_sets=sets)
     files, _ = g.unit_paths({"packages": sets}, a)
     assert "crates/axon-ledger/src/lib.rs" in files, a["closure"]
+
+
+@test
+def audit_relative_dep_info_feeds_compile_sets():
+    # cargo writes deps/*.d entries workspace-relative (`crates/…`, `Cargo.toml`); the first real audit
+    # dropped them all, left every package set at its Cargo.toml and skipped units a lib edit changes.
+    g = gl()
+    t = fake_target({"deps/axon_ledger-0123abcd.d": ["crates/axon-ledger/src/lib.rs",
+                                                      "crates/axon-ledger/src/query.rs", "Cargo.toml"]})
+    sets = g.package_compile_sets(meta(), ROOT, t)
+    led = sets["axon-ledger"]
+    assert "crates/axon-ledger/src/query.rs" in led["files"] and "Cargo.toml" in led["files"], led
+    # A package whose dep-info names none of its own files falls back to its directory as a prefix.
+    t2 = fake_target({"deps/axon_ledger-0123abcd.d": ["crates/axon-core/src/lib.rs"]})
+    led2 = g.package_compile_sets(meta(), ROOT, t2)["axon-ledger"]
+    assert "crates/axon-ledger/" in led2["prefixes"], led2
+    # Transitive closure: an axon-signal test is selected when its dependency axon-ledger changes.
+    sig = next(u for u in g.derive(ROOT, meta=meta()) if u["id"].startswith("S20:axon-signal:test:"))
+    a, _ = assembled([{"t": "begin", "step": "U1"}, {"t": "end", "step": "U1"}], sig, pkg_sets=sets)
+    assert "axon-ledger" in a["closure"], a["closure"]
+    audit = {"units": {sig["id"]: a}, "packages": sets, "universe": ["crates/axon-ledger/src/query.rs"]}
+    sel, unread = g.decide(audit, [sig], [("M", "crates/axon-ledger/src/query.rs")])
+    assert sel[sig["id"]] and not unread, (sel, unread)
 
 
 @test
@@ -458,6 +483,33 @@ def lane_every_stage_reachable():
     empty["units"]["S14"] = dict(empty["units"]["S14"], closure=[], reads=[])
     assert g.audit_problems(empty, us) == [f"unit S14 has an empty read set in audit {'f' * 12}"]
 
+
+@test
+def full_gate_check_never_reads_the_audit_store():
+    # The full gate's result must not depend on the untracked .git/axon-gate-lanes/ store; the lane's must.
+    g = gl()
+    calls, real = [], g.find_audit
+    g.find_audit = lambda root: calls.append(root)
+    try:
+        assert g.main(["check", "--quiet"]) == 0 and calls == [], calls
+        g.main(["check", "--audit", "--quiet"])
+        assert calls, "check --audit never loaded the stored audit"
+    finally:
+        g.find_audit = real
+    text = open(GATE).read()
+    assert "gate_lane.py check --audit --quiet" in text
+    full = [l for l in text.split("\n") if "gate_lane.py check" in l and "test_gate_lane.py" in l]
+    assert full and all("--audit" not in l for l in full), full
+
+
+@test
+def stage_log_is_per_run_and_fail_prints_it():
+    text = open(GATE).read()
+    assert 'STAGE_TSV="${CARGO_TARGET_DIR:-$ROOT/target}/gate-stages.$$.tsv"' in text
+    body = text[text.index("fail() {"):]
+    body = body[:body.index("\n}\n")]
+    i, j, k = body.index("stage_end 1"), body.index("stage_table"), body.index("par_abort")
+    assert i < j < k and body.index("fi\n") < j, body
 
 @test
 def lane_guard_form():

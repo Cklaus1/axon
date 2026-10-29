@@ -108,8 +108,8 @@ if [ -n "$LANE" ]; then
   LANE_SEL="$(mktemp "${TMPDIR:-/tmp}/gate-lane.XXXXXX")" || { echo "gate: cannot create the lane selection file" >&2; exit 2; }
   trap 'rm -f "$LANE_SEL" "$LANE_SEL.stages" "$LANE_SEL.builds"' EXIT
   if [ "$LANE" = lane ]; then
-    python3 -B scripts/gate_lane.py check --quiet \
-      || { echo "gate: --lane refused: scripts/gate_lane.py check failed (the registry disagrees with this gate)" >&2; exit 2; }
+    python3 -B scripts/gate_lane.py check --audit --quiet \
+      || { echo "gate: --lane refused: scripts/gate_lane.py check --audit failed (the registry disagrees with this gate, or the stored audit has a unit no change can select)" >&2; exit 2; }
     python3 -B scripts/gate_lane.py select --out "$LANE_SEL" || exit 2
   else
     python3 -B scripts/gate_lane.py select --out "$LANE_SEL" --units="$LANE_UNITS" || exit 2
@@ -149,6 +149,7 @@ fail() {
     echo ""; echo "❌ stage FAILED: $1"; exit 1
   fi
   [ -z "${STAGE_ID:-}" ] || stage_end 1
+  ! declare -F stage_table >/dev/null || stage_table
   par_abort
   echo ""; echo "❌ $TIER FAILED at: $1"; exit 1
 }
@@ -321,12 +322,15 @@ unset _pa _pa_pid _pa_t0
 # about 617 s of a 39-minute gate belonged to no stage anyone could name. Every
 # serial stage now sits between `stage_begin <ID> <label>` and `stage_end`,
 # which prints `   (stage '<ID> <label>': Ns, exit N)` and appends
-# `ID<TAB>start_ms<TAB>end_ms<TAB>exit` to $STAGE_TSV (par rows are `P:<name>`).
+# `ID<TAB>start_ms<TAB>end_ms<TAB>exit` to $STAGE_TSV (par rows are `P:<name>`),
+# one file per run (the pid in its name), so two gates sharing a target dir
+# never write or table each other's rows.
 # The `── gate:` banners stay their own echo lines inside the pair, so the
 # banner sequence is what it was. fail() closes the open stage with exit 1, so a
-# failed stage is in the file too. The table at the end lists them, slowest
-# first. Stage IDs are the rows of governance/gate-lanes.json.
-STAGE_TSV="${CARGO_TARGET_DIR:-$ROOT/target}/gate-stages.tsv"
+# failed stage is in the file too, and prints the table before it exits. The
+# table at the end lists them, slowest first. Stage IDs are the rows of
+# governance/gate-lanes.json.
+STAGE_TSV="${CARGO_TARGET_DIR:-$ROOT/target}/gate-stages.$$.tsv"
 mkdir -p "$(dirname "$STAGE_TSV")" && : > "$STAGE_TSV" || fail "cannot create the stage log $STAGE_TSV"
 STAGE_ID=""; STAGE_LABEL=""; STAGE_T0=0
 stage_begin() {
