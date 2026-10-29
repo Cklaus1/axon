@@ -15,7 +15,9 @@ Covers (README.md "Self-test"):
   * build.py pure helpers: split determinism and inheritance, the
     per-program cap, dropping thin programs, the inputs digest; the hx2
     caller pin and its `--check` rule (HX-1), the erase class (HX-3a) and the
-    sparse cut (HX-3b);
+    sparse cut (HX-3b); the hx3 masked (HX3-A), excerpt (HX3-B) and
+    erase-long (HX3-C) rules, the `--deal-dev` split and the class-C
+    program directory in the inputs digest;
   * mutators.py: each `subtle` operator and multi-mutation composition.
 
 Exit 0 when every check holds; otherwise the failures are listed and the exit
@@ -531,8 +533,8 @@ def test_erase():
     check(M.return_type(ERASE_SRC, "p") is None and M.return_type(ERASE_SRC, "nope") is None,
           "mutators: return_type is None without `->` or without the fn")
     check("erase" not in dict(M.ALL_OPS), "mutators: erase must not be in ALL_OPS (multi never composes it)")
-    check(build.CLASSES[5:] == ("erase", "sparse", "masked", "excerpt") and build.CLASSES[4] == "multi",
-          f"build: erase, sparse (hx2), then masked, excerpt (hx3) are appended after multi: {build.CLASSES}")
+    check(build.CLASSES[5:] == ("erase", "erase-long", "sparse", "masked", "excerpt") and build.CLASSES[4] == "multi",
+          f"build: erase (hx2), erase-long (hx3), sparse (hx2), masked, excerpt (hx3) follow multi: {build.CLASSES}")
     src = REBUILD_SRC
     a, b = build._span(src, "f")
     stub = M.erase(src[a:b], "i64")
@@ -785,6 +787,133 @@ def test_bundle():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _long_fn(name, lines):
+    """An i64 function of exactly `lines` lines, `fn` line to closing brace."""
+    body = "".join(f"    let v{i} = x + {i}\n" for i in range(lines - 3))
+    return f"fn {name}(x: i64) -> i64 {{\n{body}    x\n}}\n\n"
+
+
+LONG_SRC = _long_fn("long_fn", 24) + _long_fn("long_nopin", 30) + _long_fn("short_fn", 23) + '''fn wrap(x: i64) -> i64 {
+    long_fn(x) + long_nopin(x)
+}
+'''
+
+
+def test_erase_long():
+    """hx3 HX3-C: erase-long is the erase body of a stratum-C function whose
+    pristine span is >= 24 lines (knob ">=24"); hidden = the caller pin (no
+    pin, no task), visible = the first other failing test, nothing cut; such
+    a function's erase single is an erase-long candidate, never an erase one;
+    `rebuild` refuses erase-long on a < 24-line span."""
+    import build
+    import mutators as M
+    src = LONG_SRC
+    check((build.fn_lines(src, "long_fn"), build.fn_lines(src, "long_nopin"), build.fn_lines(src, "short_fn"))
+          == (24, 30, 23), "build: fn_lines counts the `fn` line to the closing brace")
+    check(build.erase_long_knob(src, "long_fn") == ">=24" and build.erase_long_knob(src, "long_nopin") == ">=24"
+          and build.erase_long_knob(src, "short_fn") is None, "build: the erase-long knob is >=24 from the span line count")
+    check(build.erase_knob(src, "short_fn") == ">=16", "build: a 23-line span keeps the erase knob >=16")
+    check(build.CLASSES.index("erase") < build.CLASSES.index("erase-long") < build.CLASSES.index("sparse"),
+          f"build: erase-long follows erase in CLASSES: {build.CLASSES}")
+    edit = {}
+    for fn in ("long_fn", "short_fn"):
+        a, b = build._span(src, fn)
+        stub = M.erase(src[a:b], "i64")
+        edit[fn] = list(M.edit_of(src[a:b], stub))
+        if fn == "long_fn":
+            got = build.rebuild(src, fn, "erase-long", ["erase"], [edit[fn]], "erase:i64", stratum="C")
+            check(got == (src[:a] + stub + src[b:], None), f"build: rebuild must accept erase-long on a 24-line span ({got[1]})")
+    out, why = build.rebuild(src, "short_fn", "erase-long", ["erase"], [edit["short_fn"]], "erase:i64", stratum="C")
+    check(out is None and why and "24" in why, f"build: rebuild must refuse erase-long on a 23-line span ({why})")
+    check(build.rebuild(src, "short_fn", "erase", ["erase"], [edit["short_fn"]], "erase:i64", stratum="C")[1] is None,
+          "build: rebuild must still accept class erase on a short span")
+    for label, (cls, ops, stratum) in {"a non-erase operator": ("erase-long", ["operator"], "C"),
+                                        "a bundle program": ("erase-long", ["erase"], "X")}.items():
+        out, why = build.rebuild(src, "long_fn", cls, ops, [edit["long_fn"]], "erase:i64", stratum=stratum,
+                                 target_stratum="C")
+        check(out is None and why, f"build: rebuild must refuse erase-long with {label}")
+    for cls in ("multi", "subtle", "caller", "sparse"):
+        out, why = build.rebuild(src, "long_fn", cls, ["erase"], [edit["long_fn"]], "erase:i64", stratum="C")
+        check(out is None and why, f"build: rebuild must refuse an erase-long construction under class {cls}")
+    pv = build.pinned_visible
+    check(pv(["v", "h"], ["h"], {}, set()) == ("v", "h"), "build: pinned_visible = (first other failing, pin)")
+    check(pv(["h"], ["h"], {}, set()) is None, "build: pinned_visible needs >= 2 failing tests")
+    check(pv(["v", "c"], ["c"], {"c": {"k"}}, {"k"}) is None, "build: pinned_visible is None without a pin")
+
+    class Prog:
+        pin_inputs = build.Program.pin_inputs
+        stratum, source_file, refine, caps_ok = "C", "programs-c/long.ax", False, {}
+        graph = {"long_fn": set(), "long_nopin": set(), "short_fn": set(), "wrap": {"long_fn", "long_nopin"}}
+        direct_tests = {"long_fn": ["test_long_a", "test_long_b"], "long_nopin": ["test_nopin"],
+                        "short_fn": ["test_short"], "wrap": ["test_wrap"]}
+        test_calls = {"test_long_a": {"long_fn", "wrap"}, "test_long_b": {"long_fn"},
+                      "test_nopin": {"long_nopin", "wrap"}, "test_short": {"short_fn"}, "test_wrap": {"wrap"},
+                      "test_other": set()}
+    prog = Prog()
+    prog.src = src
+    failing = {"long_fn": ["test_wrap", "test_long_a", "test_long_b"], "long_nopin": ["test_wrap", "test_nopin"],
+               "short_fn": ["test_short", "test_other"]}
+    erased = {fn: {"fn": fn, "op": "erase", "how": "erase:i64", "mutant": "", "broken": f"<{fn} erased>",
+                   "edit": (0, 0, ""), "failing": f, "messages": {}} for fn, f in failing.items()}
+    cands = build.candidates(prog, {}, 1, 3, erased)
+    el = cands.get(("erase-long", ">=24"), [])
+    check([(c["fn"], c["visible"], c["hidden"], c["ops"], c.get("cut")) for c in el]
+          == [("long_fn", "test_wrap", "test_long_b", ["erase"], None)],
+          f"build: erase-long candidate with the caller-pin hidden, the first other failing visible, nothing cut: {el}")
+    er = {(k, c["fn"]) for k, v in cands.items() if k[0] == "erase" for c in v}
+    check(er == {(("erase", ">=16"), "short_fn")},
+          f"build: a >= 24-line span is never an erase candidate, a pinless one is no candidate at all: {sorted(er)}")
+
+
+def test_deal_dev():
+    """hx3 HX3-C: `--deal-dev` deals every program not in the prior split to
+    dev (prior programs keep their side, a bundle its target's); the inputs
+    digest covers every program directory beside build.py and --programs-dir."""
+    import shutil
+    import tempfile
+    import build
+    prior = {f"p{i:02d}.ax": ("dev" if i % 3 == 0 else "test") for i in range(30)}
+    new = [f"c/n{i:02d}.ax" for i in range(12)]
+    progs = sorted(prior)[:20] + new
+    sp = build.split_programs(progs, 1, prior, deal="dev")
+    check(all(sp[p] == "dev" for p in new), f"build: --deal-dev deals every new program to dev: {sp}")
+    check(all(sp[p] == prior[p] for p in sorted(prior)[:20]), "build: --deal-dev keeps every prior program's side")
+    check(build.split_programs(progs, 1, prior) == build.split_programs(progs, 1, prior, deal="seeded")
+          and any(v == "test" for p, v in build.split_programs(progs, 1, prior).items() if p in new),
+          "build: the default deal is the seeded shuffle")
+    check(build.split_programs(new, 1, None, deal="dev") == {p: "dev" for p in new},
+          "build: --deal-dev without a prior split deals every program to dev")
+    sa = build.assign_split(progs + ["b/c/n00.ax"], 1, prior, {"b/c/n00.ax": "c/n00.ax"}, deal="dev")
+    check(sa["b/c/n00.ax"] == "dev" and all(sa[p] == "dev" for p in new),
+          "build: assign_split passes the deal on (a bundle takes its target's side)")
+    try:
+        build.split_programs(new, 1, None, deal="test")
+        check(False, "build: an unknown deal must be refused")
+    except ValueError:
+        pass
+    root = tempfile.mkdtemp(prefix="hx3c_digest_selftest_")
+    here = build.HERE
+    try:
+        for d, n in (("programs", "a.ax"), ("programs-c", "b.ax"), ("elsewhere", "c.ax")):
+            os.makedirs(os.path.join(root, d))
+            with open(os.path.join(root, d, n), "w") as f:
+                f.write("fn main() {\n}\n")
+        build.HERE = root
+        other = os.path.join(root, "elsewhere")
+        d0, e0 = build.inputs_digest(), build.inputs_digest(other)
+        with open(os.path.join(root, "programs-c", "b.ax"), "a") as f:
+            f.write("// changed\n")
+        d1 = build.inputs_digest()
+        check(d1 != d0, "build: the inputs digest covers programs-c/ beside build.py")
+        with open(os.path.join(other, "c.ax"), "a") as f:
+            f.write("// changed\n")
+        check(build.inputs_digest() == d1 and build.inputs_digest(other) not in (e0, d1),
+              "build: the inputs digest covers --programs-dir")
+    finally:
+        build.HERE = here
+        shutil.rmtree(root, ignore_errors=True)
+
+
 # ------------------------------------------------------------------ mutators
 
 def test_mutators():
@@ -839,7 +968,7 @@ def test_mutators():
 def main():
     for t in (test_stats, test_calibrate, test_power, test_build, test_caller_pin, test_caller_check_rule,
               test_sparse_cut, test_erase, test_mutators, test_masked_split, test_masked_rebuild, test_excerpt_rules,
-              test_bundle):
+              test_bundle, test_erase_long, test_deal_dev):
         try:
             t()
         except (Exception, SystemExit) as e:  # a missing module, API or CLI option is a failure, not a crash

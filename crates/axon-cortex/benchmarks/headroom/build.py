@@ -3,16 +3,18 @@
 
     python3 build.py --axon AXON --cortex CORTEX --out hx-pool.json \\
         --seed N --split-seed N [--stratum D|C|all] [--programs-dir DIR] \\
-        [--prior-split OLD-POOL.json] [--bundles MANIFEST.json] [--report REPORT.json] [--jobs N]
+        [--prior-split OLD-POOL.json] [--deal-dev] [--bundles MANIFEST.json] \\
+        [--report REPORT.json] [--jobs N]
     python3 build.py --check CORPUS.json --axon AXON --cortex CORTEX
-    python3 build.py --inputs-digest
+    python3 build.py --inputs-digest [--programs-dir DIR]
 
 Both binaries are REQUIRED arguments (no default path is guessed); their
 sha256 is recorded in `meta.headroom` and `--check` refuses other binaries.
 
 SOURCES (FU-1b). Stratum D: `STRATUM_D`, the 17 hardset snapshots no hard
 set uses plus the tempt snapshot `traits_demo.ax`. Stratum C: every `*.ax`
-under `--programs-dir` (default `programs/` beside this file). A program is
+under `--programs-dir` (default `programs/` beside this file; the hx3
+HX3-C authored programs live in `programs-c/`). A program is
 used only if it type-checks, has >= 2 tests, every test passes, and
 ../ab/corpus.py's `test_blocks` (whose brace counting is not string-aware, and
 which run_ab grading uses) delimits every test block as a string-aware scan
@@ -61,9 +63,17 @@ body repairs it:
           block is over cortex's 24,000-character view cap
           (`excerpt_witness`); fields `target_program`, `target_stratum`,
           `view: "excerpt"`
+  erase-long (hx3 HX3-C) stratum C only: the erase body (mutators.erase)
+          of a function whose pristine span (`fn_lines`, `fn` line to
+          closing brace) is >= ERASE_LONG_MIN = 24 lines (knob ">=24");
+          hidden = the caller pin (no pin rejects), visible = the first
+          other failing test (`pinned_visible`), nothing cut. Precedence:
+          such a function's erase single is an erase-long candidate and
+          never an erase candidate (one broken file serves one class), so
+          class erase keeps the spans of < 24 lines
 
-erase and sparse come after multi in CLASSES, and masked and excerpt after
-them, so they never take a broken file an earlier class uses.
+erase, erase-long and sparse come after multi in CLASSES, and masked and
+excerpt after them, so they never take a broken file an earlier class uses.
 
 Build checks on every task: the broken file is `axon check`-clean and its
 check output names no E1201; ../ab/corpus.py `task_from_broken` validity (>= 2
@@ -81,7 +91,9 @@ caps_strict: true, seed, split`.
 
 SPLIT (FU-1c step 1). By program: `split_programs`. Programs named in
 `--prior-split` (an earlier pool) keep their split; new programs are split by
-a fresh seeded shuffle. A bundle program's split is its target program's
+a fresh seeded shuffle, or, with `--deal-dev` (hx3 HX3-C: authored programs
+are dev by construction), all dealt dev; `meta.headroom.deal` records which
+("seeded" | "dev"). A bundle program's split is its target program's
 (`assign_split`), and `--check` refuses a bundle task whose split is not. The
 per-program cap on test (<= 8) is applied by calibrate.py after cell
 selection, with `cap_per_program`.
@@ -89,7 +101,10 @@ selection, with `cap_per_program`.
 CHECK. `--check CORPUS` re-runs every task's construction checks on its
 stored broken file with the given binaries (whose sha256 must equal the
 recorded ones) and compares the rebuilt task with the stored one, ignoring
-`spectrum_rank` (and the corpus-level `examples_commit`).
+`spectrum_rank` (and the corpus-level `examples_commit`). Pinned classes
+recompute their pin: caller and sparse on the rebuilt pre-cut file
+(`pinned_cut`), masked from the singles (`masked_cut`), excerpt and
+erase-long (nothing cut) on the rebuilt broken file (`pinned_visible`).
 """
 import argparse
 import concurrent.futures as cf
@@ -134,7 +149,10 @@ STRATUM_D = [
     "tempt/src/examples/traits_demo.ax",
 ]
 USED_SETS = ("hardset/hard-dev.json", "hardset/hard-once.json", "tempt/tempt.json")
-CLASSES = ("refine", "caps", "caller", "subtle", "multi", "erase", "sparse", "masked", "excerpt")
+CLASSES = ("refine", "caps", "caller", "subtle", "multi", "erase", "erase-long", "sparse", "masked", "excerpt")
+# hx3 HX3-C: the shortest pristine span (lines) of an erase-long target.
+ERASE_LONG_MIN = 24
+DEALS = ("seeded", "dev")
 # hx3 HX3-A E2: a changed literal no visible test exposes is not inferable.
 OPAQUE = frozenset({"constant", "float-constant", "string-typo"})
 # hx3 HX3-B: the fix needs a callee's parameter order or a struct's fields.
@@ -163,16 +181,21 @@ def sha256_file(path):
         return sha256_bytes(f.read())
 
 
-def split_programs(programs, seed, prior=None):
+def split_programs(programs, seed, prior=None, deal="seeded"):
     """{program: "dev"|"test"}. Programs in `prior` keep their split. The rest
     are sorted, shuffled with `seed`, and the first max(10, n // 3) go to dev
     (with no prior), or round(n / 3) of them (when extending a prior split),
-    the remainder to test."""
+    the remainder to test. `deal` "dev" (hx3 HX3-C `--deal-dev`) deals every
+    one of the rest to dev instead."""
+    if deal not in DEALS:
+        raise ValueError(f"deal {deal!r} is not one of {DEALS}")
     prior = prior or {}
     out = {p: prior[p] for p in programs if p in prior}
     new = sorted(p for p in set(programs) if p not in prior)
     random.Random(seed).shuffle(new)
     n_dev = min(len(new), max(MIN_DEV, len(new) // 3)) if not prior else round(len(new) / 3)
+    if deal == "dev":
+        n_dev = len(new)
     for i, p in enumerate(new):
         out[p] = "dev" if i < n_dev else "test"
     return dict(sorted(out.items()))
@@ -190,11 +213,12 @@ def recorded_split(prior, split):
     return dict(sorted({**(prior or {}), **split}.items()))
 
 
-def assign_split(programs, seed, prior, targets):
-    """`split_programs` for every program but the bundles; a bundle program
-    (`targets` = {bundle: target program}) takes its target's split, from
-    this split or the prior one (hx3 HX3A-2: never a fresh deal)."""
-    out = split_programs([p for p in programs if p not in targets], seed, prior)
+def assign_split(programs, seed, prior, targets, deal="seeded"):
+    """`split_programs` (with `deal`) for every program but the bundles; a
+    bundle program (`targets` = {bundle: target program}) takes its target's
+    split, from this split or the prior one (hx3 HX3A-2: never a fresh
+    deal)."""
+    out = split_programs([p for p in programs if p not in targets], seed, prior, deal)
     known = recorded_split(prior, out)
     for b in programs:
         if b in targets:
@@ -245,13 +269,16 @@ def drop_thin(by_program, min_tasks=MIN_TASKS_PER_PROGRAM, cluster_of=None):
             {p: v for p, v in by_program.items() if p in thin})
 
 
-def inputs_digest():
-    """sha256 over the builder inputs (FU-1e): this directory's code and
-    programs, ../ab/corpus.py, ../common.py, ../heldout/mutators.py. The
-    built sets, PREREG.md and README.md are outputs, not inputs."""
-    files = sorted(glob.glob(os.path.join(HERE, "*.py")) +
-                   [p for p in glob.glob(os.path.join(HERE, "programs", "**"), recursive=True)
-                    if os.path.isfile(p)] +
+def inputs_digest(programs_dir=None):
+    """sha256 over the builder inputs (FU-1e): this directory's code, every
+    program directory beside it (`programs*/`: programs/, programs-c/), the
+    given `programs_dir` (--programs-dir) wherever it is, ../ab/corpus.py,
+    ../common.py, ../heldout/mutators.py. The built sets, PREREG.md and
+    README.md are outputs, not inputs."""
+    dirs = sorted(glob.glob(os.path.join(HERE, "programs*", ""))) + ([programs_dir] if programs_dir else [])
+    progs = {os.path.abspath(p) for d in dirs for p in glob.glob(os.path.join(d, "**"), recursive=True)
+             if os.path.isfile(p)}
+    files = sorted(glob.glob(os.path.join(HERE, "*.py")) + list(progs) +
                    [os.path.join(BENCH, "ab", "corpus.py"), os.path.join(BENCH, "common.py"),
                     os.path.join(BENCH, "heldout", "mutators.py")])
     lines = "".join(f"{os.path.relpath(p, BENCH)}\0{sha256_file(p)}\n" for p in files)
@@ -347,12 +374,33 @@ def excerpt_witness(given):
     return len(given) > VIEW_CAP
 
 
-def erase_knob(src, fn):
-    """hx2 HX-3a knob: lines of `fn` from its `fn` keyword to its closing
-    brace ("<8", "8-15", ">=16")."""
+def fn_lines(src, fn):
+    """Lines of `fn` from its `fn` keyword to its closing brace."""
     m = re.search(r"\bfn %s\(" % re.escape(fn), src)
-    n = src[m.start():_span(src, fn)[1] + 1].count("\n") + 1
+    return src[m.start():_span(src, fn)[1] + 1].count("\n") + 1
+
+
+def erase_knob(src, fn):
+    """hx2 HX-3a knob: `fn_lines` ("<8", "8-15", ">=16")."""
+    n = fn_lines(src, fn)
     return "<8" if n < 8 else ("8-15" if n < 16 else ">=16")
+
+
+def erase_long_knob(src, fn):
+    """hx3 HX3-C knob: ">=24" when `fn_lines` >= ERASE_LONG_MIN, else None
+    (no erase-long task)."""
+    return f">={ERASE_LONG_MIN}" if fn_lines(src, fn) >= ERASE_LONG_MIN else None
+
+
+def pinned_visible(failing, direct, calls, reach):
+    """(visible, hidden) of an excerpt (HX3-B) or erase-long (HX3-C) task,
+    or None: hidden = `caller_pin` on `failing` (nothing is cut, so these
+    are the broken file's failing tests), visible = the first other failing
+    test; needs >= 2 failing tests and a pin."""
+    hidden = caller_pin(direct, failing, calls, reach)
+    if hidden is None or len(failing) < 2:
+        return None
+    return next(n for n in failing if n != hidden), hidden
 
 
 def _span(src, name):
@@ -626,9 +674,14 @@ def candidates(prog, singles, seed, multi_tries, erased=None):
                     break
         masked_candidates(out, prog, fn, ss, seed, multi_tries, (direct, calls, reach), subtle_ops)
     for fn, e in sorted((erased or {}).items()):
-        if len(e["failing"]) >= 2:
-            out.setdefault(("erase", erase_knob(prog.src, fn)), []).append(
-                {"fn": fn, "how": e["how"], "broken": e["broken"], "ops": ["erase"], "edits": [list(e["edit"])]})
+        base = {"fn": fn, "how": e["how"], "broken": e["broken"], "ops": ["erase"], "edits": [list(e["edit"])]}
+        long_knob = erase_long_knob(prog.src, fn)
+        if long_knob:
+            pv = pinned_visible(e["failing"], *prog.pin_inputs(fn))
+            if pv:
+                out.setdefault(("erase-long", long_knob), []).append(dict(base, visible=pv[0], hidden=pv[1]))
+        elif len(e["failing"]) >= 2:
+            out.setdefault(("erase", erase_knob(prog.src, fn)), []).append(base)
     for k, v in out.items():
         random.Random(f"{seed}:{prog.source_file}:{k}").shuffle(v)
     return out
@@ -666,13 +719,12 @@ def excerpt_candidates(prog, singles, seed, erased):
     out = {}
     for knob, fn, s in ([("xfn", fn, s) for fn, ss in singles.items() for s in ss if s["op"] in XFN_OPS] +
                         [("erase", fn, e) for fn, e in sorted((erased or {}).items())]):
-        direct, calls, reach = prog.pin_inputs(fn)
-        hidden = caller_pin(direct, s["failing"], calls, reach)
-        if hidden is None or len(s["failing"]) < 2:
+        pv = pinned_visible(s["failing"], *prog.pin_inputs(fn))
+        if pv is None:
             continue
         out.setdefault(("excerpt", knob), []).append(
             {"fn": fn, "how": s["how"], "broken": s["broken"], "ops": [s["op"]], "edits": [list(s["edit"])],
-             "hidden": hidden, "visible": next(n for n in s["failing"] if n != hidden)})
+             "hidden": pv[1], "visible": pv[0]})
     for k, v in out.items():
         random.Random(f"{seed}:{prog.source_file}:{k}").shuffle(v)
     return out
@@ -749,11 +801,12 @@ def rebuild(src, fn, cls, ops, edits, how, stratum=None, target_stratum=None):
     operator makes at one of its first MAX_SITES sites of `fn`'s pristine
     body (as M.edit_of gives it), the edits disjoint, and `how` their labels.
     Class `erase` (HX-3a) takes exactly ops ["erase"], the edit that makes the
-    body `M.erase(body, return type)`, and `how` "erase:<return type>"; no
-    other class but `excerpt` takes the erase operator. hx3: `masked` (HX3-A)
-    stores [i, j] with `how` "masked:<i> ; <j>" and j not OPAQUE; `excerpt`
-    (HX3-B) is the only class of a `stratum` "X" program, with one XFN_OPS
-    edit or, for a stratum-C `target_stratum`, the erase edit."""
+    body `M.erase(body, return type)`, and `how` "erase:<return type>"; so
+    does `erase-long` (HX3-C), on a pristine span of >= ERASE_LONG_MIN lines
+    only; no other class but `excerpt` takes the erase operator. hx3: `masked`
+    (HX3-A) stores [i, j] with `how` "masked:<i> ; <j>" and j not OPAQUE;
+    `excerpt` (HX3-B) is the only class of a `stratum` "X" program, with one
+    XFN_OPS edit or, for a stratum-C `target_stratum`, the erase edit."""
     n = len(edits)
     if n == 0 or len(ops) != n:
         return None, f"{cls}: {len(ops)} operators for {n} edits"
@@ -769,12 +822,15 @@ def rebuild(src, fn, cls, ops, edits, how, stratum=None, target_stratum=None):
         return None, f"excerpt: operator {ops[0]} is not an XFN_OPS operator"
     if cls == "excerpt" and ops == ["erase"] and target_stratum != "C":
         return None, f"excerpt: erase needs a stratum-C target (not {target_stratum})"
-    if (ops == ["erase"] and cls not in ("erase", "excerpt")) or (cls == "erase" and ops != ["erase"]):
-        return None, f"{cls}: the erase operator belongs to class erase (and excerpt) alone"
+    erase_classes = ("erase", "erase-long", "excerpt")
+    if (ops == ["erase"] and cls not in erase_classes) or (cls in erase_classes[:2] and ops != ["erase"]):
+        return None, f"{cls}: the erase operator belongs to classes erase, erase-long (and excerpt) alone"
     span = _span(src, fn)
     if not span:
         return None, f"{cls}: no body for `{fn}`"
     a, b = span
+    if cls == "erase-long" and fn_lines(src, fn) < ERASE_LONG_MIN:
+        return None, f"erase-long: `{fn}` spans {fn_lines(src, fn)} < {ERASE_LONG_MIN} lines"
     if ops == ["erase"]:
         ret = M.return_type(src, fn)
         stub = M.erase(src[a:b], ret)
@@ -874,7 +930,7 @@ def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
     (`rebuild`), and the knob derived (from the operators, the call depth or
     the failure text), so `--check` re-validates both. Caller and sparse
     tasks carry their hidden pin (`cand["hidden"]`, HX-1/HX-3b); masked
-    (HX3-A) and excerpt (HX3-B) recompute theirs here."""
+    (HX3-A), excerpt (HX3-B) and erase-long (HX3-C) recompute theirs here."""
     fn, ops = cand["fn"], list(cand.get("ops") or [])
     broken, why = rebuild(prog.src, fn, cls, ops, list(cand.get("edits") or []), cand["how"],
                           prog.stratum, prog.target_stratum)
@@ -885,10 +941,10 @@ def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
     visible = visible or cand.get("visible")
     if cls == "caller" and not hidden:
         return None, "caller: no direct test of g fails on the mutant; its contract cannot be pinned"
-    if cls == "erase":
+    if cls in ("erase", "erase-long"):
         if prog.stratum != "C":
-            return None, "erase: stratum C only (a public stratum-D body may be memorized)"
-        knob = erase_knob(prog.src, fn)
+            return None, f"{cls}: stratum C only (a public stratum-D body may be memorized)"
+        knob = erase_knob(prog.src, fn) if cls == "erase" else erase_long_knob(prog.src, fn)
     cut = cand.get("cut")
     if cls == "masked":
         ms, why = masked_cut(h, prog, fn, broken, cand["edits"], cand.get("f_i"), cand.get("f_j"), visible, hidden)
@@ -911,13 +967,11 @@ def finish(h, prog, cls, cand, seed, visible=None, hidden=None):
     failing = [n for n, (s, _) in res.items() if s == "failed"]
     if cls == "masked" and sorted(failing) != sorted(set(masked_v) | {hidden}):
         return None, "masked: the composite with the cut must fail exactly V and the hidden test"
-    if cls == "excerpt":
-        direct, calls, reach = prog.pin_inputs(fn)
-        pin = caller_pin(direct, failing, calls, reach)
-        first = next((n for n in failing if n != pin), None)
-        if pin is None or (hidden or pin) != pin or (visible or first) != first:
-            return None, f"excerpt: visible/hidden {visible}/{hidden} are not the pin's {first}/{pin}"
-        visible, hidden = first, pin
+    if cls in ("excerpt", "erase-long"):
+        pv = pinned_visible(failing, *prog.pin_inputs(fn))
+        if pv is None or (visible or pv[0], hidden or pv[1]) != pv:
+            return None, f"{cls}: visible/hidden {visible}/{hidden} are not the pin's {pv}"
+        visible, hidden = pv
     if cls == "caller":
         if len(failing) < 2:
             return None, "caller: fewer than 2 failing tests once g's tests are cut"
@@ -1107,7 +1161,8 @@ def build(a):
     prior = None
     if a.prior_split:
         prior = json.load(open(a.prior_split))["meta"]["headroom"]["split"]
-    split = assign_split(sorted(kept), a.split_seed, prior, targets)
+    deal = "dev" if a.deal_dev else "seeded"
+    split = assign_split(sorted(kept), a.split_seed, prior, targets, deal)
     own = {p: v for p, v in split.items() if p not in targets}  # split_ok counts real programs only
     tasks = []
     for p in sorted(kept):
@@ -1128,10 +1183,10 @@ def build(a):
         "split": split, "split_ok": split_ok(own),
     })
     recorded = recorded_split(prior, split)
-    headroom = {**h.shas, "seed": a.seed, "split_seed": a.split_seed, "split": recorded,
+    headroom = {**h.shas, "seed": a.seed, "split_seed": a.split_seed, "deal": deal, "split": recorded,
                 "split_ok": split_ok(own), "stratum": a.stratum,
                 "per_cell_program": a.per_cell_program, "multi_tries": a.multi_tries,
-                "max_singles": a.max_singles, "inputs_digest": inputs_digest(),
+                "max_singles": a.max_singles, "inputs_digest": inputs_digest(a.programs_dir),
                 "programs": {p: report["programs"][p]["stratum"] for p in sorted(kept)},
                 "dropped": sorted(dropped),
                 "rejected": {p.source_file: p.reject for p in progs if p.reject}}
@@ -1268,6 +1323,8 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, help="mutation-candidate order seed")
     ap.add_argument("--split-seed", type=int, help="program split seed")
     ap.add_argument("--prior-split", metavar="POOL", help="an earlier pool whose program split is inherited")
+    ap.add_argument("--deal-dev", action="store_true",
+                    help="deal every program not in --prior-split to dev (hx3 HX3-C authored programs)")
     ap.add_argument("--bundles", metavar="MANIFEST", help="bundle.py manifest: bundle programs for class excerpt")
     ap.add_argument("--per-cell-program", type=int, default=2)
     ap.add_argument("--multi-tries", type=int, default=3)
@@ -1280,7 +1337,7 @@ def main(argv=None):
                          "(scratch builds and extensions only)")
     a = ap.parse_args(argv)
     if a.inputs_digest:
-        print(inputs_digest())
+        print(inputs_digest(a.programs_dir))
         return 0
     if not a.axon or not a.cortex:
         ap.error("--axon and --cortex are required (no default binary is guessed)")
