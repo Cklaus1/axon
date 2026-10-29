@@ -275,3 +275,69 @@ fn a_wrapped_source_paragraph_is_read_whole() {
         "a wrapped source paragraph read as one line",
     );
 }
+
+/// The PARTIAL exemption needs the status span to say the id stays OPEN, and
+/// matches the whole id: naming it ("built too") or a longer id that starts
+/// with it is no exemption. Implementation audit Minor 4.
+#[test]
+fn a_partial_status_must_name_an_id_as_open() {
+    let partial = |tail: &str| {
+        let mut t = base();
+        let a = get(&t, "tasks/a-spec.md");
+        set(
+            &mut t,
+            "tasks/a-spec.md",
+            a.replace(
+                &format!("**Status: BUILT 2026-10-29 on `main` {ANCESTOR} (A-1).**"),
+                &format!("**Status: PARTIAL 2026-10-29 on `main` {ANCESTOR} (A-1; {tail}).**"),
+            )
+            .replace(
+                "Source: `tasks/opportunities.md` O-T-01.\n",
+                "Source: `tasks/opportunities.md` O-T-01, O-T-02.\n",
+            ),
+        );
+        t
+    };
+    let line = "tasks/a-spec.md: status PARTIAL, but O-T-02 carries no closure stamp";
+    refused(
+        "partial_named",
+        &partial("O-T-02 built too"),
+        line,
+        "a partial status naming an unstamped id that is not open",
+    );
+    refused(
+        "partial_prefix",
+        &partial("O-T-021 stays open"),
+        line,
+        "a partial status whose open id only starts with the cited id",
+    );
+    let (code, out) = ledger("partial_open", &partial("O-T-02 stays open"));
+    assert_eq!(
+        code,
+        Some(0),
+        "control: an id the status names as open was refused:\n{out}"
+    );
+}
+
+/// Rule 5 reads the first Source paragraph wherever it sits, so filler before it
+/// cannot hide an unstamped id. Implementation audit Minor 5.
+#[test]
+fn a_source_paragraph_past_line_40_is_read() {
+    let mut t = base();
+    let a = get(&t, "tasks/a-spec.md");
+    let filler = "Filler paragraph.\n\n".repeat(25);
+    set(
+        &mut t,
+        "tasks/a-spec.md",
+        a.replace(
+            "Source: `tasks/opportunities.md` O-T-01.\n",
+            &format!("{filler}Source: `tasks/opportunities.md` O-T-01, O-T-02.\n"),
+        ),
+    );
+    refused(
+        "late_source",
+        &t,
+        "tasks/a-spec.md: status BUILT, but O-T-02 carries no closure stamp",
+        "a source paragraph past line 40 left unread",
+    );
+}

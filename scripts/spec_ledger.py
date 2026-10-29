@@ -14,9 +14,11 @@ shipped (L015, O-HI-02, O-GAP-11). This check reads `tasks/*-spec.md`,
    span (later prose does not count).
 3. BUILT/PARTIAL: CHANGELOG.md names one of the spec's item ids, or the spec file.
 4. DRAFT/REVIEWED/AUTHORIZED: CHANGELOG.md names none of the spec's item ids.
-5. BUILT/PARTIAL: every O-* id cited in the Source paragraph or an item heading has
-   an opportunities entry carrying a closure stamp ([RESOLVED|FIXED|DONE|CLOSED|
-   BUILT|WITHDRAWN|SUPERSEDED ...]), unless a PARTIAL status line names it as open.
+5. BUILT/PARTIAL: every O-* id cited in the spec's first Source paragraph (wherever
+   it sits) or an item heading has an opportunities entry carrying a closure stamp
+   ([RESOLVED|FIXED|DONE|CLOSED|BUILT|WITHDRAWN|SUPERSEDED ...]), unless a PARTIAL
+   status line names it as open: the whole id, then `open` before the next `;`, `.`
+   or `)` ("O-S1-02 stays open"). Merely naming the id is not an exemption.
 6. An opportunities entry saying `SPECCED ... tasks/X-spec.md`, X BUILT/PARTIAL,
    carries a closure stamp (same PARTIAL exemption).
 7. ROADMAP.md points at this script (the index `--list` prints).
@@ -57,6 +59,12 @@ def is_ancestor(root, sha):
     r = subprocess.run(["git", "-C", git, "merge-base", "--is-ancestor", sha, "HEAD"],
                        capture_output=True)
     return r.returncode == 0
+
+def named_open(oid, status, rest):
+    # The PARTIAL exemption: the status span says this id (whole, not a prefix of a
+    # longer one) stays open. "O-GAP-10 built too" is not an exemption.
+    return status == "PARTIAL" and re.search(
+        r"(?<![\w-])" + re.escape(oid) + r"(?![\w-])[^;.)]*?\bopen\b", rest) is not None
 
 
 FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
@@ -112,11 +120,12 @@ def main(root, listing=False):
             problems.append(f"{rel}: status {status} names no commit")
         elif not any(is_ancestor(root, s) for s in shas):
             problems.append(f"{rel}: status {status} names {shas}, none an ancestor of HEAD")
-        # The Source paragraph runs from its `Source` line to the next blank line (it may wrap).
-        cited, in_source = set(), False
-        for l in lines[:40]:
-            if l.startswith("Source") or l.startswith("**Source"):
-                in_source = True
+        # The first Source paragraph, wherever it sits, runs from its `Source` line to the
+        # next blank line (it may wrap).
+        cited, in_source, seen = set(), False, False
+        for l in lines:
+            if not seen and (l.startswith("Source") or l.startswith("**Source")):
+                in_source = seen = True
             elif not l.strip():
                 in_source = False
             if in_source:
@@ -127,13 +136,13 @@ def main(root, listing=False):
         for oid in sorted(cited):
             if oid not in opp:
                 problems.append(f"{rel}: cites {oid}, which has no entry in tasks/opportunities.md")
-            elif not CLOSED_RE.search(opp[oid]) and not (status == "PARTIAL" and oid in rest):
+            elif not CLOSED_RE.search(opp[oid]) and not named_open(oid, status, rest):
                 problems.append(f"{rel}: status {status}, but {oid} carries no closure stamp")
     for oid, body in sorted(opp.items()):
         for name in set(SPECCED_RE.findall(body)):
             st, rest = status_of.get(name, (None, ""))
             if st in ("BUILT", "PARTIAL") and not CLOSED_RE.search(body) \
-                    and not (st == "PARTIAL" and oid in rest):
+                    and not named_open(oid, st, rest):
                 problems.append(f"{oid}: specced in {name} ({st}) but carries no closure stamp")
     roadmap = open(os.path.join(root, "ROADMAP.md"), encoding="utf-8").read()
     if "scripts/spec_ledger.py" not in roadmap:
