@@ -2833,3 +2833,78 @@ audits on `gl/lane` lost 13-14 units to gate.sh's `par_abort self-check`; that b
 `par_abort` race fix now on `main`), which is the likely cause [INFERENCE: not re-audited after the merge].
 Unaudited units always run, so this costs speed, not correctness. Fix direction: create the store per uid or
 group-writable, and re-audit after the merge to confirm the flake is gone.
+
+## Gap analysis, 2026-10-29 (main 0bd2b518; probes run on an interpreter built at that head)
+
+Each "reproduced" item: `axon check` rc 0, then `axon run` as shown. Probe sources are inline below; GapLang's
+197-file set is under `/var/tmp/r51-tmp/gaplang/p/`.
+
+### O-GAP-01 - [high] Closures passed to higher-order builtins are only arity-checked
+The builtin's `fn(T)->U` param is `Type::Deferred` (`checker.rs:5802-5809`), so the closure's param/return types are
+never unified. Reproduced: `arr_filter([1,2,3], |x| x + 1)` -> panic "predicate must return bool, got i64";
+`arr_fold(["a"], 0, |acc, x| acc + x)` -> panic "cannot apply Add to i64 / str". GapLang also lists `arr_sort_by`,
+`arr_sum_by`, `arr_group_by`, `dict_each`, `arr_zip_with`. The largest remaining check-then-panic class.
+
+### O-GAP-02 - [high] `Dict` values are untyped
+`dict_get` returns `Option<T>` with T unconstrained; a `Dict<str, i64>` annotation is accepted, not enforced.
+Reproduced: `dict_set(d, "a", 1)` then `Some(v) => println("got " + v)` -> panic "cannot apply Add to str / i64".
+Same Deferred root as O-GAP-01; fix together.
+
+### O-GAP-03 - [high] Assigning to a captured variable in a closure is silently dropped
+Reproduced: `let count = 0; let inc = || { count = count + 1 }; inc(); inc(); println(to_str(count))` prints `0`,
+rc 0, no diagnostic. Captures are copies (`spec/compiler-phase3.md:322` says by-move). Silent wrong answer. Fix
+direction: refuse assignment to a captured name at check.
+
+### O-GAP-04 - [medium] Exhaustiveness is checked only for enum / Option / Result scrutinees
+Reproduced: `match n { 0 => "zero", 1 => "one" }` with `n = 5` -> panic "no match arm matched". Same for str and
+tuple scrutinees (GapLang f01/f02). Fix direction: require `_` (or a binding arm) on non-enum scrutinees.
+
+### O-GAP-05 - [medium] Method call on an unbounded generic is accepted
+Reproduced: `fn f<T>(x: T) -> i64 { x.area() }`, `f(3)` -> panic "no method `area` on type `i64`". GapLang f17b:
+`let b: B<i64> = B { v: "s" }` is also accepted (generic struct annotation not enforced).
+
+### O-GAP-06 - [medium] Arithmetic builtins wrap or saturate where the operators panic
+Reproduced: `pow_i64(3, 40)` = -6289078614652622815 (`wrapping_pow`, `interp/builtins.rs:2969`);
+`arr_sum_i64([i64::MAX, 1])` = i64::MAX. `+`/`*` panic on overflow. Silent wrong answer. GapLang also reports
+`assert_eq_f64` with a 1e-9 tolerance in the interpreter (`builtins.rs:3783`) but exact in native and in stdlib.md
+[native side read only].
+
+### O-GAP-07 - [low] Plain recursion stops at depth 6000
+Reproduced: a 100000-deep `s(n - 1)` sum panics "recursion limit exceeded (6000)". `arr_max_i64([])` panics rather
+than returning Option (GapLang a12, not re-run).
+
+### O-GAP-08 - [medium] Common forms refused, and diagnostics that misdirect
+GapLang (not re-run here): `Ok(())`, `if let`, `for (a, b) in pairs`, inherent `impl T {}`, trait default methods,
+`?` on Option, `o == Some(1)`, `..base`, `loop`, tuple-variant enums. Messages such as `impl T {` -> "expected
+For" and `loop` -> "introduce `loop` with `let loop = …`" send repair loops the wrong way. No raw string literal,
+so JSON literals need `{{ }}`. `mod util` does not search the importing file's directory (needs `AXON_PATH`;
+reproduced E0901 with a sibling `mathutil.ax`).
+
+### O-GAP-09 - [medium] LLM-facing docs disagree with the binary
+- `spec/axon-for-llms.md:241-245`: the `@[goal("maximize score")] @[adaptive] fn tune(threshold: i64)` snippet is
+  refused, E1504 (reproduced).
+- `spec/stdlib.md` covers 63 of 344 builtins yet is called "every builtin"; its "planned" list includes shipped
+  builtins; it says `str_slice` clamps (it panics E2200 mid-char) [GapLang, not re-run].
+- `examples/asi/README.md:30` and `ad_optimizer.ax:18` say the $500 spend cap is "compiler-enforced / the
+  compiler proves"; the same file's comment (`:63-67`) says the runtime gate enforces it (exit 3). The bound holds;
+  the wording is wrong.
+- `examples/asi/README.md` friction list (`:277`, `:300`, `:318`) lists replay, multi-arg adaptive and `value`
+  predicates as missing; all ship.
+- `bandit_ucb`, `persistent_bandit`, `safe_bandit`, `safe_self_improve` need `AXON_PATH=../stdlib` to check
+  (E0901 without it; rc 0 with it).
+
+### O-GAP-10 - [medium] No offline test shows a model-backed ASI workflow succeeding
+The mock returns one fixed answer (`axon-ai/src/lib.rs:438`, `:810-813`), so the model-calling demos mostly stop
+at their deploy gate; the all-demos test (`cli_run.rs:21118-21170`) passes unless a demo exits 101. Fix
+direction: recorded replay fixtures for `optimize`, `classify`, `summarize`, `code_review`, `search_rank`,
+`pricing` and output asserts against them.
+
+### O-GAP-11 - [low] Spec status lines lag the code
+`approval-residue`, `killgroup`, `lsp-residue`, `harness-hygiene`, `gaps`, `followup`, `repair`, `small-fixes`
+carry no BUILT line though CHANGELOG lists their items; CS/CAP source entries (O-S1-19/20/22/23/24, O-FU-05/06)
+have no closure stamp; ROADMAP.md (2026-06-28) names no `tasks/` spec. Third occurrence of stale-closed entries
+(L015, O-HI-02); mechanism candidate: a check that a shipped spec's source ids carry a closure stamp.
+
+O003 re-assessed: principals are read only by the `principal_*` builtins (`kernel.rs`, `interp/builtins.rs:4196-4286`);
+no effect path consults them, so an ungated `principal_root` makes the in-language attenuation model advisory but
+does not bypass `@[contained]`, capabilities or the cortex fence. Severity stands as a design question, not an escape.
