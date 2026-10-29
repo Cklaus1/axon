@@ -1,7 +1,7 @@
 # hx3: a held-out repair set with headroom — DRAFT spec
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.** Nothing in it has been built, and no model has run
-on it. The Step 1 review (audit HX3A-1…11, devloop HX3D-1…8) is applied below with `[REVISED: …]` markers; the
+**Status: DRAFT (after Step 1 review). AUTHORIZED 2026-10-29 for HX3-0 only (pilots ≤ $0.25/class, $0.50 total; NH-1 not granted). Everything after N1 is not authorized.**
+Nothing in it has been built, and no model has run on it. The Step 1 review (audit HX3A-1…11, devloop HX3D-1…8) is applied below with `[REVISED: …]` markers; the
 dispositions are in "Step 1 review".
 
 Base: `main` 43e895d0. `B` = `crates/axon-cortex/benchmarks`. Why hx3 exists:
