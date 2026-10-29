@@ -581,6 +581,8 @@ def assemble(steps, obs, rcs, meta, gate, pkg_sets, workspace, root=None):
         o, rc = obs[s["id"]], rcs.get(s["id"], 0)
         uses, produces = unit_cargo_packages(s, gate)
         cl = set(workspace) if s.get("compile") == "workspace" else set(closure(uses, deps))
+        if s.get("compile") == "workspace":
+            produces = set(workspace)  # its scripts' own `cargo test -p <pkg>` build that package's bins (Q9)
         needs, execs, seen_pkgs = [], [], set()
         for where, name in sorted(o["execs"]):
             example = name.startswith("examples/")

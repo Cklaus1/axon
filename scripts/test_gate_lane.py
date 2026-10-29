@@ -320,6 +320,14 @@ def audit_undeclared_producer_fails():
 
 
 @test
+def audit_workspace_compile_unit_produces_its_own_bins():
+    # S05/S06/S07 run scripts whose `cargo test -p <pkg>` builds that package's bins (Q9 = A: the whole
+    # workspace), so a bin they execute needs no prior build step (the second real audit's 14 false errors).
+    a, err = assembled(events("exec_main.jsonl"), unit_of("S06"))
+    assert not err and a["needs"] == [], (a, err)
+
+
+@test
 def audit_never_writes_a_gate_receipt():
     g = gl()
     cmd = g.unit_command({"id": "S14"})
