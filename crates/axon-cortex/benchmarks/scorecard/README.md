@@ -300,7 +300,7 @@ Per set, the latest cortex run (B) against the earliest cortex run on the same c
 
 ## Repair-path receipts
 
-`python3 scorecard.py receipt --check` (in `scripts/gate.sh`, the gate and `--fast`) passes when the REPAIR DIGEST of the working tree equals main's (the digest at `git merge-base HEAD origin/main`), or when this history holds, for the working tree's digest, a receipt run (below) judged not worse than main's run (the incumbent it recorded), or a waiver. The latest such run at a digest decides; a run judged against an older main no longer counts; a waiver counts only for a digest no run measured. `python3 scorecard.py regress` produces the run (measuring main first when main has no run), `python3 scorecard.py waive --reason TEXT` the waiver (see docs/CORTEX.md, "Repair-path receipts").
+`python3 scorecard.py receipt --check` (in `scripts/gate.sh`'s parallel group, which `--lane` also runs) passes when the REPAIR DIGEST of the working tree equals main's (the digest at `git merge-base HEAD origin/main`), or when this history holds, for the working tree's digest, a receipt run (below) judged not worse than main's run (the incumbent it recorded), or a waiver. The latest such run at a digest decides; a run judged against an older main no longer counts; a waiver counts only for a digest no run measured. `python3 scorecard.py regress` produces the run (measuring main first when main has no run), `python3 scorecard.py waive --reason TEXT` the waiver (see docs/CORTEX.md, "Repair-path receipts").
 
 The repair digest is sha256 over (path, content), in path order, of the files matching:
 

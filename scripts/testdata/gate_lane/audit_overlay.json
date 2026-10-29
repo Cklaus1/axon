@@ -1,0 +1,20 @@
+{
+  "about": "Runtime facts of the GL-4 fixture audit, from tasks/gate-lane-spec.md §5 repros 1-5. The compile side is derived (cargo metadata closure; no target dir, so each package is its whole crates/<Q>/ prefix).",
+  "absent_from_universe": ["crates/axon-cortex/tests/fence_sweep.rs"],
+  "units": {
+    "S04": {"reads": ["crates/axon-cortex/benchmarks/fence_sweep.py"]},
+    "S04H": {"reads": ["crates/axon-cortex/benchmarks/hardset/build.py"]},
+    "S10": {"reads": ["scripts/gate_verdict_is_read.sh"]},
+    "S16:axon-core:test:cli_run": {
+      "reads": ["CLAUDE.md", "scripts/claims_gate.sh", "crates/axon-cortex/src/runner.rs",
+                "crates/axon-cortex/src/bin/cortex.rs"]
+    },
+    "S16:axon-core:test:harness_binaries": {
+      "reads": ["crates/axon-core/tests/harness_binaries.rs"],
+      "dirs": ["crates/axon-cortex/tests/", "crates/axon-fabric/tests/"]
+    },
+    "S16:axon-core:test:pci_delta_note": {
+      "git_history": true
+    }
+  }
+}

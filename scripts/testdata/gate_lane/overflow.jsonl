@@ -1,0 +1,7 @@
+{"t": "begin", "step": "U1"}
+{"t": "open", "path": "crates/a/src/lib.rs"}
+{"t": "overflow"}
+{"t": "end", "step": "U1"}
+{"t": "begin", "step": "U2"}
+{"t": "open", "path": "crates/b/src/lib.rs"}
+{"t": "end", "step": "U2"}

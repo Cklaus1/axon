@@ -1,0 +1,6 @@
+{"t": "begin", "step": "U1"}
+{"t": "git", "path": ".git/HEAD"}
+{"t": "end", "step": "U1"}
+{"t": "begin", "step": "U2"}
+{"t": "open", "path": "crates/b/src/lib.rs"}
+{"t": "end", "step": "U2"}

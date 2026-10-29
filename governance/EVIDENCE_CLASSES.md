@@ -100,7 +100,7 @@ cargo test -j 6 -p axon-core --no-default-features --test requirements_evidence 
 | timer_irq_qemu_test.sh | cargo_test | `crates/axon-core/tests/integration_fixtures.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
 | unsigned_parity.sh | glob_invoked | `scripts/parity_all.sh::scripts/*_parity.sh` | named nowhere; the aggregator iterates the glob, which is why a filename probe calls it an orphan. |
 | verify_all_specs.sh | ci_job | `.github/workflows/ci.yml` | run by a CI workflow step on every push. |
-| vm_parity.sh | strict_gate | `scripts/gate.sh` | run by name in the fast stage (`gate.sh:390`); `parity_all.sh`'s `*_parity.sh` glob also matches it. |
+| vm_parity.sh | strict_gate | `scripts/gate.sh` | run by name in stage S22 on the release interpreter (on every gate since GL-5 retired the fast tier that used to run it); `parity_all.sh`'s `*_parity.sh` glob also matches it. |
 | vm_perf_gate.sh | orphaned | `-` | nothing invokes it (R50 §10 interpreter performance budget; idle-machine only, refuses a busy host). Its only other mention is a comment at `crates/axon-core/tests/cli_run.rs:39353`. Cited by R50 in REQUIREMENTS.md. |
 | vm_wasm_depth.sh | orphaned | `-` | nothing invokes it (R50 §4 wasm32 recursion-depth gate; needs `wasmtime` and an x86-64 host, and fails rather than skips without them). `wasm_checker_depth_parity.sh` and `wasm_nesting_parity.sh` mention it only in comments. Cited by R7 in REQUIREMENTS.md. |
 | wasm_aot_run_parity.sh | cargo_test | `crates/axon-core/tests/cli_run.rs` | spawned by a Rust integration test, so `cargo test` runs it. |
