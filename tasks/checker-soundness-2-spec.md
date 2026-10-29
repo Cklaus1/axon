@@ -1,6 +1,6 @@
 # checker-soundness-2 - DRAFT spec
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: AUTHORIZED for build 2026-10-29 (after Step 1 review; human: "approved, do it"). CS2-3b waits for §8 NH-1.**
 
 ### Step 1 review
 
