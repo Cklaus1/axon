@@ -11,7 +11,7 @@ surface, the common gotchas (borrow with `&[T]`, no operator-led line breaks, ex
 `@[contained]`, refinement `where`, effect rows).
 
 Then, as needed:
-- [`spec/stdlib.md`](spec/stdlib.md) — every builtin with signature and semantics
+- [`spec/stdlib.md`](spec/stdlib.md) — a curated builtin guide (the complete list is `AXON_REFERENCE.md`)
 - [`spec/language-tour.md`](spec/language-tour.md) — full feature walkthrough
 - [`spec/grammar.ebnf`](spec/grammar.ebnf) — exact grammar
 - [`examples/asi/`](examples/asi/) — end-to-end AI workflows; the language's intended public face

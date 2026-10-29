@@ -49,7 +49,7 @@ checked and the evidence inline.
 
 ## 6. Documentation & traceability
 
-- [ ] Public surface (builtin, syntax, error code) documented in `spec/stdlib.md` / relevant `spec/*.md`.
+- [ ] Public surface documented: a builtin by its `doc` string in `builtins.rs` (AXON_REFERENCE.md regenerated, test-checked); syntax or an error code in the relevant `spec/*.md`; add to `spec/stdlib.md` or `spec/axon-for-llms.md` only when a model would misuse it without guidance.
 - [ ] A runnable `examples/` artifact demonstrates the feature (for user-facing features).
 - [ ] `SESSION_STATUS.md` reflects the new capability.
 - [ ] `governance/REQUIREMENTS.md` `%`/`Status`/`Gap` updated; if a requirement reached DONE, the

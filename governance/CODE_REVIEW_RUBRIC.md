@@ -54,7 +54,7 @@ quality. Stop and fix any correctness/safety finding before committing.
 
 ## E. Documentation & traceability
 
-- [ ] Public surface documented (`spec/stdlib.md` / relevant spec).
+- [ ] Public surface documented (builtin: `doc` string + AXON_REFERENCE.md regenerated; otherwise the relevant spec).
 - [ ] `SESSION_STATUS.md` + `REQUIREMENTS.md` updated if the capability/percentage changed.
 - [ ] Commit message: what + *why*, names the requirement (R<n>), cites the now-passing test, correct
       `Co-Authored-By` trailer, no shell-hostile chars in `-m` (use `-F`).

@@ -346,7 +346,7 @@ spec/
   compiler-phase3.md   Phase 3 spec (generics, traits, closures, channels)
   compiler-phase4.md   Phase 4 spec (LSP, formatter, multi-file, caching)
   grammar.ebnf         Formal EBNF grammar
-  stdlib.md            Standard library reference
+  stdlib.md            Curated builtin guide (complete list: AXON_REFERENCE.md)
   runtime.md           C ABI / runtime function reference
   language-tour.md     Hands-on language walkthrough
 examples/
