@@ -14,8 +14,13 @@
 //! * `axon fragment` - statements, wrapped as `fn main() {\n<body>\n}`, then the
 //!   same rules. Combines with `exits N`.
 //! * `axon fails E1001 [E....]` - meant to be refused: `axon check` exits
-//!   non-zero and every listed code is on an error-severity line.
+//!   non-zero and its error-severity codes are exactly the listed set (a block
+//!   that also fails for an unrelated reason is reported).
 //! * any other word after `axon` is an unknown marker and is reported.
+//! * a fence whose first info word looks like Axon but is not exactly `axon`
+//!   (`Axon`, `axon,ignore`, `ax`, `{.axon}`: lowercased it starts with `ax` or
+//!   contains `axon`) is an unknown fence and is reported, so a block cannot
+//!   leave this test by changing its fence.
 //!
 //! Each block runs in its own temp dir with `AXON_PATH` and every other ambient
 //! `AXON_*` variable removed, `AXON_SEED=42`, `AXON_AI_MOCK=1`, `HOME` and
@@ -41,16 +46,25 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// One fenced block whose info string starts with `axon`.
+/// One fenced block whose info word is `axon` or looks like it.
 struct Block {
     /// 1-based line of the opening fence.
     line: usize,
-    /// The info string after `axon` (the marker words).
+    /// The info string's first word (`axon` unless the fence is unknown).
+    fence: String,
+    /// The info string after the first word (the marker words).
     marker: String,
     body: String,
 }
 
-/// The fenced blocks of `text` whose info word is `axon`. CommonMark fences: a
+/// An info word a reader would take for Axon: lowercased, it starts with `ax`
+/// or contains `axon`.
+fn axon_like(word: &str) -> bool {
+    let w = word.to_ascii_lowercase();
+    w.starts_with("ax") || w.contains("axon")
+}
+
+/// The fenced blocks of `text` whose info word is `axon` or Axon-like. CommonMark fences: a
 /// fence opens on 3+ backticks or tildes (after indentation) and closes only on
 /// the same character, at least as many, with nothing else on the line. A
 /// longer outer fence hides the blocks it quotes. The opener's indent is
@@ -85,9 +99,10 @@ fn axon_blocks(text: &str) -> Vec<Block> {
             j += 1;
         }
         let mut words = info.split_whitespace();
-        if words.next() == Some("axon") {
+        if let Some(word) = words.next().filter(|w| axon_like(w)) {
             out.push(Block {
                 line: i + 1,
+                fence: word.to_string(),
                 marker: words.collect::<Vec<_>>().join(" "),
                 body: body.join("\n"),
             });
@@ -230,12 +245,19 @@ fn rc(r: &Run) -> String {
 }
 
 /// Every block of `text` that breaks its marker's contract, as
-/// `doc:line axon <marker>: <verb> rc N, <first error>`.
+/// `doc:line <fence> <marker>: <verb> rc N, <first error>`.
 fn audit(doc: &str, text: &str, tag: &str) -> Vec<String> {
     let mut bad = Vec::new();
     for (n, b) in axon_blocks(text).iter().enumerate() {
         let sep = if b.marker.is_empty() { "" } else { " " };
-        let at = format!("{doc}:{} `axon{sep}{}`", b.line, b.marker);
+        let at = format!("{doc}:{} `{}{sep}{}`", b.line, b.fence, b.marker);
+        if b.fence != "axon" {
+            bad.push(format!(
+                "{at}: unknown fence `{}` - an Axon block opens with exactly `axon`",
+                b.fence
+            ));
+            continue;
+        }
         let want = match parse_marker(&b.marker) {
             Ok(w) => w,
             Err(e) => {
@@ -259,9 +281,11 @@ fn audit(doc: &str, text: &str, tag: &str) -> Vec<String> {
         if let Some(codes) = &want.fails {
             let got = error_codes(&check.out);
             let missing: Vec<&String> = codes.iter().filter(|c| !got.contains(c)).collect();
-            if check.code == Some(0) || !missing.is_empty() {
+            let mut extra: Vec<&String> = got.iter().filter(|c| !codes.contains(c)).collect();
+            extra.dedup();
+            if check.code == Some(0) || !missing.is_empty() || !extra.is_empty() {
                 bad.push(format!(
-                    "{at}: check rc {}, expected a refusal with {codes:?}, missing {missing:?}; {}",
+                    "{at}: check rc {}, expected a refusal with exactly {codes:?}, missing {missing:?}, unlisted {extra:?}; {}",
                     rc(&check),
                     first_error(&check.out)
                 ));
@@ -401,6 +425,35 @@ fn the_marker_rules_hold_on_planted_blocks() {
             "4-backtick quote of a broken block",
             "text",
             "```axon\nlet top = 1\n```",
+            false,
+        ),
+        (
+            "`Axon` fence on a broken block",
+            "Axon",
+            "let top = 1",
+            true,
+        ),
+        (
+            "`axon,ignore` fence on a broken block",
+            "axon,ignore",
+            "let top = 1",
+            true,
+        ),
+        ("`ax` fence on a broken block", "ax", "let top = 1", true),
+        (
+            "`fails E1001` on a block that also fails E0307",
+            "axon fails E1001",
+            "@[contained(fs: [], net: [], exec: none)]\n\
+             fn f() -> str { env_var(\"HOME\") }\n\n\
+             fn main() { println(f()) }",
+            true,
+        ),
+        (
+            "`fails E0307 E1001` on that block",
+            "axon fails E0307 E1001",
+            "@[contained(fs: [], net: [], exec: none)]\n\
+             fn f() -> str { env_var(\"HOME\") }\n\n\
+             fn main() { println(f()) }",
             false,
         ),
     ];
