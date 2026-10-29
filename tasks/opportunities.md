@@ -2899,6 +2899,7 @@ GapLang (not re-run here): `Ok(())`, `if let`, `for (a, b) in pairs`, inherent `
 For" and `loop` -> "introduce `loop` with `let loop = …`" send repair loops the wrong way. No raw string literal,
 so JSON literals need `{{ }}`. `mod util` does not search the importing file's directory (needs `AXON_PATH`;
 reproduced E0901 with a sibling `mathutil.ax`).
+`[PARTLY: docs-truth DT-1 gotcha 10 documents AXON_PATH; the language forms stay open]`
 
 ### O-GAP-09 - [medium] LLM-facing docs disagree with the binary
 - `spec/axon-for-llms.md:241-245`: the `@[goal("maximize score")] @[adaptive] fn tune(threshold: i64)` snippet is
@@ -2912,6 +2913,7 @@ reproduced E0901 with a sibling `mathutil.ax`).
   predicates as missing; all ship.
 - `bandit_ucb`, `persistent_bandit`, `safe_bandit`, `safe_self_improve` need `AXON_PATH=../stdlib` to check
   (E0901 without it; rc 0 with it).
+`[BUILT 2026-10-29 on main bbf1d97b: docs-truth DT-1..DT-7]`
 
 ### O-GAP-10 - [medium] No offline test shows a model-backed ASI workflow succeeding
 The mock returns one fixed answer (`axon-ai/src/lib.rs:438`, `:810-813`), so the model-calling demos mostly stop
@@ -2924,6 +2926,7 @@ direction: recorded replay fixtures for `optimize`, `classify`, `summarize`, `co
 carry no BUILT line though CHANGELOG lists their items; CS/CAP source entries (O-S1-19/20/22/23/24, O-FU-05/06)
 have no closure stamp; ROADMAP.md (2026-06-28) names no `tasks/` spec. Third occurrence of stale-closed entries
 (L015, O-HI-02); mechanism candidate: a check that a shipped spec's source ids carry a closure stamp.
+`[BUILT 2026-10-29 on main bbf1d97b: docs-truth DT-1..DT-7]`
 
 ### O-DT-01 - [low] `min_i32` / `max_i32` do not truncate, though their doc strings say they do
 Found drafting docs-truth DT-2 (Step 1, DTA-2). `builtins.rs:142` and `:148` say "(truncated to i32 range)";

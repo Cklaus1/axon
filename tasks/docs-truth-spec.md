@@ -1,6 +1,6 @@
 # docs-truth - spec
 
-**Status: AUTHORIZED for build 2026-10-29 (after Step 1 review).**
+**Status: PARTIAL 2026-10-29 on `main` bbf1d97b (DT-1..DT-7; O-GAP-08 stays open: only its AXON_PATH gotcha is done).**
 
 Source: `tasks/opportunities.md` "Gap analysis, 2026-10-29": O-GAP-09 (LLM-facing docs disagree with the binary),
 O-GAP-11 (spec status lines lag the code), and the doc part of O-GAP-08 (`mod util` needs `AXON_PATH`). The stamps

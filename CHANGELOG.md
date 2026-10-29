@@ -1,5 +1,11 @@
 # Axon Changelog
 
+## LLM-facing docs agree with the binary; the spec ledger (docs-truth DT-1 to DT-7)
+
+- **Docs fixed (DT-1 to DT-4):** every ```` ```axon ```` block in `spec/axon-for-llms.md`, `spec/stdlib.md`, `spec/language-tour.md`, `README.md`, `CLAUDE.md` and the ASI docs now checks, and each block with `fn main` runs to its marker. 32 blocks failed before; one of them, the README concurrency example, checked clean but exited 45. The guide's `@[goal]` example no longer gets E1504. A new gotcha says that `mod util` needs `AXON_PATH`. `stdlib.md` is now a curated guide, and the complete builtin list is the generated `AXON_REFERENCE.md`. The `str_cmp` and `str_slice` doc strings now state what those builtins do. The ASI spend cap is described as enforced at run time (by `@[verify]`, exit 3), not proved by the compiler. `examples/asi/run.sh` sets `AXON_PATH`. Language-tour §16 no longer calls annotations deferred.
+- **Ledger state (DT-5):** spec status lines, closure stamps in `tasks/opportunities.md`, CHANGELOG and ROADMAP now agree with what shipped. New entry O-DT-01: `min_i32` and `max_i32` do not truncate, though their docs say they do.
+- **Mechanisms (DT-6, DT-7):** `scripts/spec_ledger.py` is a full-gate parallel stage. It fails when a spec's status line, CHANGELOG and the opportunities closure stamps disagree. `crates/axon-core/tests/doc_snippets.rs` (S16) checks every axon block in the six LLM-facing docs against its fence marker (`axon`, `axon fragment`, `axon fails E....`, `axon exits N`).
+
 ## Names with no run-time value are refused at check (O-SF-03)
 
 - **A module, type or enum name used as a value or called is E0404:** `mod n` + `use n.{add2}`, then `let f = n.add2` or `n.add2(1, 2)`; `let k = T` for a struct, alias or type parameter; `P(1)` for a struct `P`; `let e = S` for an enum. Each checked clean and then panicked at run (`undefined identifier`, `call to unknown function`, rc 101), because a module's items are merged into the program by `use` and never reached through its name, and a type or enum has no value. The fix-it names the form that works: `use n.{add2}` then `add2(…)`; a struct literal; `S::Variant`.
