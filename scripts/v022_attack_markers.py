@@ -3291,3 +3291,10 @@ ATTACK_MARKERS.update({
     'M3876': r'ATTACK: a valid call through a fn value was refused \[g_lambda_param_shadows_local\]',
     'M3877': r'ATTACK: a valid call through a fn value was refused \[g_pass_fn_local\]',
 })
+
+# SND fixes, FnVal2 (ids M3878-M3880)
+ATTACK_MARKERS.update({
+    'M3878': r'ATTACK: a valid call through a fn value was refused \[snd_match_shadow_local\]',
+    'M3879': r'ATTACK: a valid call through a fn value was refused \[snd_lambda_alias\]',
+    'M3880': r'ATTACK: a native fix-it names no real function \[native_typo\]',
+})

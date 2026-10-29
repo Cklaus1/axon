@@ -726,9 +726,32 @@ impl CheckCtx {
 
     /// A lambda parameter's declared type, resolved as a fn parameter's is;
     /// `Unknown` when it has no annotation.
+    ///
+    /// `type Name = str` parses as an enum whose one variant, without fields,
+    /// is named `str`: the alias the program means, which the interpreter
+    /// erases. Such a type resolves to the primitive it names, and to `Unknown`
+    /// when the variant names anything else (a struct alias, or a real
+    /// one-variant enum), so a call through the lambda is not refused on it.
     fn lambda_param_type(&self, p: &crate::ast::LambdaParam) -> Type {
         p.ty.as_ref().map_or(Type::Unknown, |t| {
             self.resolve_refinements(enumify(axon_type_to_type(t), &self.known_enums))
+                .map_leaves(&mut |leaf| match &leaf {
+                    Type::Enum(name) => match self.enum_variants.get(name).map(Vec::as_slice) {
+                        Some([variant])
+                            if self
+                                .enum_variant_fields
+                                .get(&format!("{name}::{variant}"))
+                                .is_none_or(Vec::is_empty) =>
+                        {
+                            match axon_type_to_type(&AxonType::Named(variant.clone())) {
+                                Type::Struct(_) | Type::Deferred(_) => Type::Unknown,
+                                prim => prim,
+                            }
+                        }
+                        _ => leaf,
+                    },
+                    _ => leaf,
+                })
         })
     }
 
@@ -4381,10 +4404,26 @@ impl CheckCtx {
                 self.check_match_exhaustiveness(&subj_ty, arms, node_path);
 
                 for (i, arm) in arms.iter().enumerate() {
+                    // A name the pattern binds shadows an outer local, a
+                    // top-level `let` or fn of that name in the guard and body
+                    // (the interpreter binds every `Pattern::Ident`), so a call
+                    // by it is not checked against the outer `fn(..)` type.
+                    let mut bound = Vec::new();
+                    crate::resolver::collect_pattern_binding_names(&arm.pattern, &mut bound);
+                    let mut inner;
+                    let arm_scope = if bound.is_empty() {
+                        &mut *scope
+                    } else {
+                        inner = scope.clone();
+                        for name in bound {
+                            inner.insert(name, Type::Unknown);
+                        }
+                        &mut inner
+                    };
                     if let Option::Some(guard) = &arm.guard {
-                        self.check_expr(guard, &node_path.idx("arm", i).child("guard"), scope);
+                        self.check_expr(guard, &node_path.idx("arm", i).child("guard"), arm_scope);
                     }
-                    self.check_expr(&arm.body, &node_path.idx("arm", i).child("body"), scope);
+                    self.check_expr(&arm.body, &node_path.idx("arm", i).child("body"), arm_scope);
                 }
             }
 
@@ -4829,11 +4868,13 @@ impl CheckCtx {
                     {
                         let file = self.file.clone();
                         let span = self.current_span;
-                        let (msg, fix) = if crate::native::module(enum_name).is_some() {
+                        let (msg, fix) = if let Some(native) = crate::native::module(enum_name) {
+                            let fns: Vec<&str> = native.functions.iter().map(|f| f.name).collect();
                             (
                                 format!("native module `{enum_name}` has no function `{variant}`"),
                                 format!(
-                                    "`axon reference` lists `{enum_name}`'s functions; a native call is `{enum_name}::<fn>(…)` after `use native::{enum_name}`"
+                                    "`{enum_name}` has: {}; a native call is `{enum_name}::<fn>(…)` after `use native::{enum_name}`",
+                                    fns.join(", ")
                                 ),
                             )
                         } else if self.known_modules.contains(enum_name) {

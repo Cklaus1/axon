@@ -3354,7 +3354,7 @@ fn collect_binds_and_uses(
     }
 }
 
-fn collect_pattern_binding_names(pat: &crate::ast::Pattern, out: &mut Vec<String>) {
+pub(crate) fn collect_pattern_binding_names(pat: &crate::ast::Pattern, out: &mut Vec<String>) {
     use crate::ast::Pattern;
     match pat {
         Pattern::Ident(n) => out.push(n.clone()),

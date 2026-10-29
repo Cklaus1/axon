@@ -41505,6 +41505,12 @@ fn a_module_type_or_enum_name_used_as_a_value_is_refused() {
             rrc == Some(2) && rout.is_empty(),
             "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
         );
+        // SND#3: the native fix names the module's real functions (it sent
+        // the user to `axon reference`, which does not list them).
+        assert!(
+            tag != "native_typo" || (cmsg.contains("`gfx` has: ") && cmsg.contains("clear")),
+            "ATTACK: a native fix-it names no real function [native_typo]: {cmsg}"
+        );
     }
     let (crc, cmsg, _, _, _) = go(
         "type_param",
@@ -41641,9 +41647,12 @@ fn a_call_through_a_fn_value_checks_its_signature() {
 /// rc 0 and runs. A local shadows a top-level fn of the same name at run time,
 /// so the LOCAL's type decides its calls (`g_local_shadows_fn` and
 /// `g_unknown_local_shadows_fn` were refused with E0305 against the shadowed
-/// fn's signature). A lambda's param shadows an outer local fn value of the
-/// same name, and a fn value with an unknown part passes where a `fn(..)`
-/// param is expected.
+/// fn's signature). A lambda's param, and a match-arm binding, shadows an outer
+/// local, top-level `let` or fn of the same name (`snd_match_*` were refused
+/// with E0305 against the outer value's type; `snd_match_shadow_fn` on the
+/// base too), a fn value with an unknown part passes where a `fn(..)` param is
+/// expected, and a lambda param typed by `type Name = str` takes a `str`
+/// (`snd_lambda_alias` was refused with E0306 and E0301).
 #[test]
 fn a_call_through_a_matching_fn_value_still_runs() {
     let attack = "ATTACK: a valid call through a fn value was refused";
@@ -41702,6 +41711,31 @@ fn a_call_through_a_matching_fn_value_still_runs() {
             "g_pass_fn_local",
             "fn apply(h: fn(i64) -> i64, x: i64) -> i64 {\n    h(x)\n}\nfn main() -> i64 {\n    let u = |x| x * 2\n    let t = |x: i64| x + 1\n    println(to_str(apply(u, 1) + apply(t, 1)))\n    0\n}\n",
             "4\n",
+        ),
+        (
+            "snd_match_shadow_local",
+            "fn main() -> i64 {\n    let f = |x: i64| x * 2\n    match Some(|a: i64, b: i64| a * b) {\n        Some(f) => println(to_str(f(3, 4))),\n        None => println(\"n\"),\n    }\n    println(to_str(f(1)))\n    0\n}\n",
+            "12\n2\n",
+        ),
+        (
+            "snd_match_shadow_toplet",
+            "let tl = |x: i64| x * 2\nfn main() -> i64 {\n    match Some(|a: i64, b: i64| a * b) {\n        Some(tl) => println(to_str(tl(3, 4))),\n        None => println(\"n\"),\n    }\n    0\n}\n",
+            "12\n",
+        ),
+        (
+            "snd_match_enum_field",
+            "type H = W { tl: fn(i64, i64) -> i64 } | N\nlet tl = |x: i64| x * 2\nfn main() -> i64 {\n    let h = H::W { tl: |p: i64, q: i64| p + q }\n    match h {\n        H::W { tl } => println(to_str(tl(1, 2))),\n        H::N => println(\"n\"),\n    }\n    0\n}\n",
+            "3\n",
+        ),
+        (
+            "snd_match_shadow_fn",
+            "fn tl(x: i64) -> i64 { x * 2 }\nfn main() -> i64 {\n    match Some(|a: i64, b: i64| a * b) {\n        Some(tl) => println(to_str(tl(3, 4))),\n        None => println(\"n\"),\n    }\n    0\n}\n",
+            "12\n",
+        ),
+        (
+            "snd_lambda_alias",
+            "type Name = str\nfn main() -> i64 {\n    let greet = |n: Name| println(\"hi \" + n)\n    greet(\"bob\")\n    0\n}\n",
+            "hi bob\n",
         ),
     ] {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);

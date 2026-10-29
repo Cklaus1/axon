@@ -12076,8 +12076,8 @@ MUTATIONS += [
      '&& !self.enum_variants.contains_key(enum_name) && !self.known_modules.contains(enum_name)',
      'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
     ('M3861', 'O-SF-03: a misspelled native fn gets the undeclared-qualifier fix instead of the native one', 'crates/axon-core/src/checker.rs',
-     'let (msg, fix) = if crate::native::module(enum_name).is_some() {',
-     'let (msg, fix) = if false {',
+     'let (msg, fix) = if let Some(native) = crate::native::module(enum_name) {',
+     'let (msg, fix) = if let Some(native) = None::<&crate::native::NativeModule> {',
      'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
 ]
 
@@ -12119,6 +12119,24 @@ MUTATIONS += [
      'params.iter().any(type_contains_unresolved) || type_contains_unresolved(ret)',
      'false',
      'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_matching_fn_value_still_runs'),
+]
+
+# SND fixes, FnVal2 (ids M3878-M3880): a match-arm binding shadows an outer fn value for the
+# call check (SND#1); a lambda param typed by `type N = str` takes the aliased primitive
+# (SND#4); a misspelled native fn's fix lists the module's functions (SND#3).
+MUTATIONS += [
+    ('M3878', 'SND#1: a match-arm binding no longer shadows an outer fn value of the same name', 'crates/axon-core/src/checker.rs',
+     'inner.insert(name, Type::Unknown);',
+     'let _ = name;',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_matching_fn_value_still_runs'),
+    ('M3879', 'SND#4: a lambda param typed by an alias (`type N = str`) keeps the one-variant enum type', 'crates/axon-core/src/checker.rs',
+     'Type::Enum(name) => match self.enum_variants.get(name).map(Vec::as_slice) {',
+     'Type::Enum(name) if false => match self.enum_variants.get(name).map(Vec::as_slice) {',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_matching_fn_value_still_runs'),
+    ('M3880', 'SND#3: a misspelled native fn\'s fix no longer lists the module\'s functions', 'crates/axon-core/src/checker.rs',
+     '                                    fns.join(", ")\n',
+     '                                    String::new()\n',
+     'axon-core', '--no-default-features --test cli_run', 'a_module_type_or_enum_name_used_as_a_value_is_refused'),
 ]
 
 if __name__ == "__main__":
