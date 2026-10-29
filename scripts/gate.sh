@@ -68,6 +68,9 @@ USE_NEXTEST=0
 PROFILE=""
 FAST=0
 FAST_BASE=""
+LANE=""        # lane | units (--lane-units=, the audit's internal flag)
+LANE_PLAN=0
+LANE_UNITS=""
 for arg in "$@"; do
   case "$arg" in
     --strict) STRICT=1 ;;
@@ -80,6 +83,10 @@ for arg in "$@"; do
     --profile=*) echo "gate: unknown profile ${arg#--profile=} (known: v022-stage5)" >&2; exit 2 ;;
     --fast) FAST=1 ;;
     --base=?*) FAST_BASE="${arg#--base=}" ;;
+    --lane) LANE=lane ;;
+    --lane=*) echo "gate: --lane takes no ref; the base is the newest audit (see --plan)" >&2; exit 2 ;;
+    --plan) LANE_PLAN=1 ;;
+    --lane-units=?*) LANE=units; LANE_UNITS="${arg#--lane-units=}" ;;
     *) echo "gate: unknown flag $arg" >&2; exit 2 ;;
   esac
 done
@@ -97,6 +104,40 @@ if [ -n "$FAST_BASE" ] && [ "$FAST" != 1 ]; then
 fi
 TIER="gate"
 [ "$FAST" = 1 ] && TIER="fast tier (NOT the gate)"
+
+# THE LANE (`--lane`, tasks/gate-lane-spec.md GL-4) is NOT the gate either: it
+# runs the always-run stages and the units whose audited read set (GL-3,
+# `scripts/gate_lane.py audit`) holds a path changed since that audit's commit,
+# says which ran and why, never prints the gate's PASS line, and run_managed.sh
+# records it gate_tier=lane gate_run=no. `--lane --plan` prints the selection
+# and runs nothing. `--lane-units=<step>` is the audit's: exactly the listed
+# units or build steps, with the gate's own command lines, no always-run stage.
+# The selection logic lives in gate_lane.py, not here: the clippy-coverage check
+# reads this file's `-p <crate>` text, so crate lists written here for the lane
+# would fake coverage.
+if [ -n "$LANE" ] && { [ "$STRICT" = 1 ] || [ -n "$PROFILE" ] || [ "$USE_NEXTEST" = 1 ] || [ "$FAST" = 1 ]; }; then
+  echo "gate: --lane is NOT the gate; it cannot be combined with --strict, --profile, --nextest or --fast" >&2; exit 2
+fi
+if [ "$LANE_PLAN" = 1 ] && [ "$LANE" != lane ]; then
+  echo "gate: --plan prints a lane's selection and requires --lane" >&2; exit 2
+fi
+LANE_SEL=""
+if [ -n "$LANE" ]; then
+  TIER="lane (NOT the gate)"
+  LANE_SEL="$(mktemp "${TMPDIR:-/tmp}/gate-lane.XXXXXX")" || { echo "gate: cannot create the lane selection file" >&2; exit 2; }
+  trap 'rm -f "$LANE_SEL" "$LANE_SEL.stages" "$LANE_SEL.builds"' EXIT
+  if [ "$LANE" = lane ]; then
+    python3 -B scripts/gate_lane.py check --quiet \
+      || { echo "gate: --lane refused: scripts/gate_lane.py check failed (the registry disagrees with this gate)" >&2; exit 2; }
+    python3 -B scripts/gate_lane.py select --out "$LANE_SEL" || exit 2
+  else
+    python3 -B scripts/gate_lane.py select --out "$LANE_SEL" --units="$LANE_UNITS" || exit 2
+  fi
+  if [ "$LANE_PLAN" = 1 ]; then
+    echo "lane --plan: nothing was run — not the gate"
+    exit 0
+  fi
+fi
 
 # Every harness below that builds nothing is handed the binary THIS gate built
 # (`built_bin` names the path cargo builds to, whatever CARGO_TARGET_DIR says):
@@ -321,6 +362,50 @@ stage_table() {
   [ -s "$STAGE_TSV" ] || return 0
   echo "── stage times, slowest first (seconds; $STAGE_TSV) ──"
   awk -F'\t' '{ printf "  %8.1f  exit %-3s %s\n", ($3 - $2) / 1000, $4, $1 }' "$STAGE_TSV" | sort -k1,1nr
+}
+
+# THE LANE'S GUARDS (GL-4). Without --lane / --lane-units both are transparent:
+# `lane_runs` succeeds and `lane_cargo <ID> cmd…` runs `cmd…` exactly, so the
+# full gate's command sequence is unchanged. Every stage sits inside
+# `if lane_runs <ID>; then … fi` (never `lane_runs … && …`: `|| fail` would then
+# fire on a skip). In a lane, `lane_runs` first runs, in gate order, the
+# selection's build steps that belong to an UNSELECTED stage (a selected
+# stage's builds run inside it, through `lane_cargo B<n>`), then says whether
+# the stage was selected. `lane_cargo` runs a build step iff selected, and
+# narrows a per-target cargo line to its selected targets (gate_lane.py expand).
+lane_runs() {
+  [ -n "$LANE_SEL" ] || return 0
+  local st b cmd
+  if ! grep -qxF "$1" "$LANE_SEL.stages"; then
+    while IFS=$'\t' read -r st b cmd; do
+      [ "$st" = "$1" ] || continue
+      echo "   lane: build $b for a selected unit: $cmd"
+      # shellcheck disable=SC2086
+      $cmd || fail "lane build $b ($cmd)"
+    done < "$LANE_SEL.builds"
+    echo "   lane: SKIP stage $1"
+    return 1
+  fi
+}
+lane_cargo() {
+  local id="$1" out line
+  shift
+  [ -n "$LANE_SEL" ] || { "$@"; return; }
+  case "$id" in
+    B[0-9]*)
+      if cut -f2 "$LANE_SEL.builds" | grep -qxF "$id"; then "$@"; return; fi
+      echo "   lane: SKIP build $id"; return 0 ;;
+  esac
+  # Fail closed: a selection that cannot be expanded runs the whole line.
+  out="$(python3 -B scripts/gate_lane.py expand "$LANE_SEL" "$id" "$@")" \
+    || { echo "   lane: cannot narrow $id; running it whole"; "$@"; return; }
+  while IFS= read -r line; do
+    case "$line" in
+      "RUN =") echo "   lane: RUN $*"; "$@" || return ;;
+      "RUN "*) echo "   lane: $line"; ${line#RUN } || return ;;
+      *) echo "   lane: $line" ;;
+    esac
+  done <<< "$out"
 }
 
 # The harness-skip log (O006b) is APPEND-only across runs, so the coverage notice
@@ -682,6 +767,7 @@ stage_gate_lane() {
     || fail "gate lane self-test or registry check (scripts/test_gate_lane.py, scripts/gate_lane.py check)"
 }
 
+if lane_runs P; then
 par "VISION.md focus" stage_vision_focus
 par "artifact admission" stage_artifact_admission
 par "cortex v0.15 package" stage_cortex_v015
@@ -705,6 +791,7 @@ par "protected benchmark sets" stage_protected_sets
 par "completeness manifest" stage_completeness
 par "gate lane self-test" stage_gate_lane
 par_join
+fi
 
 # Long-running jobs must own their result and their cleanup. This gate exists
 # because they did not: gate runs launched with `nohup ... &` reported the
@@ -715,10 +802,12 @@ par_join
 # windows, runs a job under a 2 s deadline, and fails if the host's count of
 # axon_run_* cgroups grew while it ran, so it must not share the window with
 # other stages.
+if lane_runs S01; then
 stage_begin S01 "managed-run supervision"
 echo "── gate: managed-run supervision (result ownership + cancellation scope) ──"
 bash scripts/managed_run_gate.sh || fail "managed-run supervision"
 stage_end
+fi
 
 # The Cortex policy boundary. Its proofs existed but nothing ran them: every
 # `cargo test` in this gate targeted axon-core, so `axon-cortex`'s conformance
@@ -731,6 +820,7 @@ stage_end
 # Found when an omitted --grant-snapshot was discovered to silently disable the
 # staleness refusal: the suite that should have caught it was not part of any
 # gate, and five of its six boundary cases were passing vacuously besides.
+if lane_runs S02; then
 stage_begin S02 "cortex policy boundary tests"
 echo "── gate: cortex policy boundary tests ─────────────────────────────"
 # The cortex CLI suite shells out to the interpreter at target/debug/axon and
@@ -743,11 +833,12 @@ echo "── gate: cortex policy boundary tests ──────────�
 # target/ starts empty: 18 of 18 cortex CLI tests failed with "the CLI suite
 # needs the interpreter at .../src/target/debug/axon". In a pristine clone or
 # on CI-from-scratch this stage was never really green.
-cargo build --locked -q -p axon-core --no-default-features --bin axon \
+lane_cargo B1 cargo build --locked -q -p axon-core --no-default-features --bin axon \
   || fail "interpreter build (needed by the cortex CLI suite)"
-cargo test --locked -p axon-cortex -p cortex-policy-adapter -p axon-reflex \
+lane_cargo S02 cargo test --locked -p axon-cortex -p cortex-policy-adapter -p axon-reflex \
   || fail "cortex policy boundary tests"
 stage_end
+fi
 
 # The v0.22 closed-loop crates — the contract types, the epoch/ledger store and
 # the Fabric submit path Cortex dispatches checks through. They were CLIPPY-gated
@@ -758,13 +849,15 @@ stage_end
 # at this point, into whatever CARGO_TARGET_DIR says. If governance/
 # release-verification.json later lists these same commands, the manifest stage
 # re-runs them; that costs ~seconds and is the safe direction.
+if lane_runs S03; then
 stage_begin S03 "v0.22 closed-loop crate tests"
 echo "── gate: v0.22 closed-loop crate tests (contracts, loop, fabric) ──"
-cargo build --locked -q -p axon-cortex --bins \
+lane_cargo B2 cargo build --locked -q -p axon-cortex --bins \
   || fail "cortex binary build (needed by axon-fabric's production-caller tests)"
-cargo test --locked -p axon-loop-contracts -p axon-loop -p axon-fabric \
+lane_cargo S03 cargo test --locked -p axon-loop-contracts -p axon-loop -p axon-fabric \
   || fail "v0.22 closed-loop crate tests (axon-loop-contracts / axon-loop / axon-fabric)"
 stage_end
+fi
 
 # R1f: the offline fence sweep. `cortex repair` runs every check under a
 # runtime fence derived from the file (AXON_ALLOWED_EFFECTS and the empty
@@ -773,12 +866,14 @@ stage_end
 # receipt-corpus and heldout1 task, `cortex grant` then `axon test --json` with
 # and without the fence: zero status flips required. Offline, no key, seconds;
 # a hard gate before any paid run. Both binaries are the ones built just above.
+if lane_runs S04; then
 stage_begin S04 "cortex fence sweep (R1f)"
 echo "── gate: cortex fence sweep (R1f) ─────────────────────────────────"
 AXON_BIN="$(built_bin axon)" CORTEX_BIN="$(built_bin cortex)" \
   python3 -B crates/axon-cortex/benchmarks/fence_sweep.py \
   || fail "cortex fence sweep: the runtime fence flips a corpus test (crates/axon-cortex/benchmarks/fence_sweep.py)"
 stage_end
+fi
 
 # The planted hard-set defects still validate against the code that ranks
 # them: every `defects/*.json` spec applies, keeps its scope, passes corpus.py
@@ -786,12 +881,14 @@ stage_end
 # run_ab's --candidates. A locate change that pushed a planted defect out of
 # reach was a manual note before this. Offline, no key, seconds; the binaries
 # are the ones built above.
+if lane_runs S04H; then
 stage_begin S04H "hardset build.py --check"
 echo "── gate: hardset defects still validate (build.py --check) ────────"
 AXON_BIN="$(built_bin axon)" CORTEX_BIN="$(built_bin cortex)" \
   python3 -B crates/axon-cortex/benchmarks/hardset/build.py --check \
   || fail "hardset: a planted defect no longer validates (crates/axon-cortex/benchmarks/hardset/build.py --check)"
 stage_end
+fi
 
 # v0.22 Stage-5 gates that are EXECUTED here, by name. A registry row in
 # governance/cortex_gate_execution_registry.json may only vouch for a package gate
@@ -801,16 +898,20 @@ stage_end
 # are built just above; placed earlier (as it first was) every production-caller
 # test failed with "needs the `axon` binary" on a clean snapshot. The runner fails if a listed test is missing
 # or the filtered run executes fewer tests than listed.
+if lane_runs S05; then
 stage_begin S05 "v0.22 Stage-5 executed gates"
 echo "── gate: v0.22 Stage-5 executed gates (G03 G08 G10 G11 G13 G28 G32) ──"
 ./scripts/v022_stage5_gates.sh || fail "v0.22 Stage-5 gate tests"
 stage_end
+fi
 # Protected Check Isolation — the prerequisite of any protected-verifier claim
 # (G01 alone is never sufficient): one row per surface, exact test names.
+if lane_runs S06; then
 stage_begin S06 "v0.22 PCI surfaces"
 echo "── gate: v0.22 Protected Check Isolation surfaces ──"
 ./scripts/v022_pci_gates.sh || fail "v0.22 Protected Check Isolation surfaces"
 stage_end
+fi
 # The trust-root preflight MECHANISM on a dev fixture. As root it is the second
 # longest single stage of the gate (~25 min measured at 9e67b796 on a loaded
 # host: ~50 fixtures, each probed as six service UIDs) and it keeps about ONE
@@ -825,6 +926,7 @@ stage_end
 # modes), through the script's own AXON_FABRIC_BIN / AXON_PROTECTED_LAUNCHER_BIN
 # inputs. It measures no time. Not root: the script prints NOT_RUN and builds
 # nothing, so it runs inline as before.
+if lane_runs S07; then
 stage_begin S07 "v0.22 trust-root preflight (inline, or its background start)"
 echo "── gate: v0.22 trust-root preflight mechanism (dev mode) ──"
 TR_BINS=""
@@ -837,7 +939,7 @@ stage_trust_root_preflight() {
   fi
 }
 if [ "$(id -u)" = 0 ]; then
-  cargo build -q -p axon-fabric --bins || fail "cargo build -p axon-fabric --bins (trust-root preflight)"
+  lane_cargo B3 cargo build -q -p axon-fabric --bins || fail "cargo build -p axon-fabric --bins (trust-root preflight)"
   tr_built="$(built_bin axon-fabric)" || fail "cannot tell where cargo built axon-fabric (trust-root preflight)"
   TR_BINS="$ROOT/target/gate-trust-root-bins"
   rm -rf "$TR_BINS" && mkdir -m 0755 "$TR_BINS" \
@@ -849,10 +951,12 @@ else
   stage_trust_root_preflight
 fi
 stage_end
+fi
 # PSV in a REAL Firecracker guest. SKIP (77: no root/KVM/built image) is a
 # NON-RESULT, reported as such, never as a pass.
+if lane_runs S08; then
 stage_begin S08 "v0.22 PSV real-guest boot"
-cargo build -q -p axon-psv --example psv_dev || fail "v0.22 PSV dev tool build"
+lane_cargo B4 cargo build -q -p axon-psv --example psv_dev || fail "v0.22 PSV dev tool build"
 bash scripts/psv_guest_boot_test.sh; rc=$?
 case $rc in
   0) echo "v0.22 PSV real-guest boot test: PASS" ;;
@@ -860,6 +964,7 @@ case $rc in
   *) fail "v0.22 PSV real-guest boot test" ;;
 esac
 stage_end "$rc"
+fi
 
 # The same crate again with `ai` on, because that feature gates the only
 # model-backed generator — the one production path where a model contributes to
@@ -867,27 +972,33 @@ stage_end "$rc"
 # module would rot exactly the way lsp.rs did below: present, plausible, and
 # verified by nothing. Clippy as well as test, since the default clippy sweep
 # further down also passes no features.
+if lane_runs S09; then
 stage_begin S09 "cortex ai-generator lint + tests"
-cargo clippy --locked -p axon-cortex --all-targets --features ai -- -D warnings \
+lane_cargo S09:lint cargo clippy --locked -p axon-cortex --all-targets --features ai -- -D warnings \
   || fail "cortex ai-generator lint"
-cargo test --locked -p axon-cortex --features ai \
+lane_cargo S09 cargo test --locked -p axon-cortex --features ai \
   || fail "cortex ai-generator tests"
 stage_end
+fi
 
 
 # A gate function that produced no readable verdict must not be scored as a
 # pass. Landed RED and deliberately unwired; wired here now that it is green,
 # because a gate nobody runs is the defect one layer up.
+if lane_runs S10; then
 stage_begin S10 "gate_verdict_is_read"
 AXON="$(built_bin axon)" bash scripts/gate_verdict_is_read.sh \
   || fail "a safety gate with no readable verdict is being scored as passed"
 stage_end
+fi
 
 
+if lane_runs S11; then
 stage_begin S11 "native codegen build"
 echo "── gate: native codegen build ─────────────────────────────────────"
-cargo build --locked -p axon-core || fail "native build"
+lane_cargo B5 cargo build --locked -p axon-core || fail "native build"
 stage_end
+fi
 
 # AUDIT T15 (finding P5-34). Nothing ever built the serde-json feature — not
 # gate.sh, not CI — so lsp.rs rotted silently as new Type variants landed and
@@ -895,6 +1006,7 @@ stage_end
 # `axon parse --json`, both advertised in CLAUDE.md under "Phase 4 ✅ Complete",
 # could not be compiled at all. An advertised command with no build gate is a
 # command that will eventually stop existing without anyone noticing.
+if lane_runs S12; then
 stage_begin S12 "serde-json feature builds + tests"
 echo "── gate: serde-json feature builds (axon lsp / axon parse --json) ─"
 # clippy type-checks what `cargo check` did (lib + bin) plus every test target,
@@ -917,11 +1029,14 @@ cargo test --locked -p axon-core --no-default-features --features serde-json \
 cargo test --locked -p axon-core --no-default-features --features serde-json \
   --test lsp_multi_file || fail "lsp multi-file tests (serde-json)"
 stage_end
+fi
 
+if lane_runs S13; then
 stage_begin S13 "lib clippy"
 echo "── gate: clippy (lib, -D warnings) ────────────────────────────────"
 cargo clippy --locked --no-default-features -p axon-core -- -D warnings || fail "lib clippy"
 stage_end
+fi
 
 # BUG_HUNT #35: the runtime crates (axon-rt/axon-ai/axon-surface) used to be
 # invisible to the clippy gate (scoped to -p axon-core), hiding ~80 lints. They
@@ -937,6 +1052,7 @@ stage_end
 # — the crate landed as a workspace member with 63 tests but was never lint-
 # gated; 2 mechanical clippy fixes (a ?-operator rewrite, a redundant &) made
 # it clean, no behavior change.
+if lane_runs S14; then
 stage_begin S14 "runtime-crate clippy"
 echo "── gate: clippy runtime crates (-D warnings) ─────────────────────"
 # O-RLM-04: this list is an ALLOWLIST, not the workspace, so a crate absent from
@@ -961,11 +1077,13 @@ cargo clippy --locked -p axon-rt -p axon-rt-ai -p axon-ai -p axon-surface -p axo
   --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
 stage_end
+fi
 
 # COVERAGE CHECK — the note above has been written three times and the list
 # drifted anyway, because a comment cannot fail a build. Every workspace member
 # must be either lint-gated above (or as axon-core separately) or named here with
 # a reason. Adding a crate without doing one of those now turns the gate RED.
+if lane_runs S15; then
 stage_begin S15 "clippy coverage"
 echo "── gate: clippy coverage (every crate gated or excused) ──────────"
 # CLIPPY_EXCUSED (the crates excused, each with its reason) is defined near the
@@ -996,6 +1114,7 @@ if [ -n "$_missing" ]; then
 fi
 echo "  ✓ all $(ls crates | wc -l) workspace crates are lint-gated or excused"
 stage_end
+fi
 
 # ORDERING, twice revised, and both revisions were driven by measurement.
 #
@@ -1013,24 +1132,28 @@ stage_end
 # So it sits here: after the cheap checks, before the codegen build that
 # restores the binary the parity stages consume. Nothing is weakened — every
 # stage still runs and still blocks; only the order changed.
+if lane_runs S16; then
 stage_begin S16 "axon-core tests"
 echo "── gate: tests (--no-default-features) ─────────────────────────────"
 if [ "$USE_NEXTEST" = 1 ] && command -v cargo-nextest >/dev/null 2>&1; then
   cargo nextest run -p axon-core --no-default-features || fail "tests (nextest)"
 else
-  cargo test --locked -p axon-core --no-default-features || fail "tests"
+  lane_cargo S16 cargo test --locked -p axon-core --no-default-features || fail "tests"
 fi
 stage_end
+fi
 
 # REBUILD the codegen binary. The stage above rebuilt `target/debug/axon`
 # WITHOUT codegen, and every parity harness below consumes that path. Measured
 # when this rebuild was absent: `wasm_browser_io_parity: FAIL — $AXON has no
 # codegen backend (E0907)`. The harness refused to call it a skip, which is the
 # only reason it was visible rather than a silent 14-harness gap.
+if lane_runs S17; then
 stage_begin S17 "codegen rebuild"
 echo "── gate: restore the codegen binary after the no-default test stage ──"
-cargo build --locked -q -p axon-core --bin axon || fail "codegen rebuild after tests"
+lane_cargo B6 cargo build --locked -q -p axon-core --bin axon || fail "codegen rebuild after tests"
 stage_end
+fi
 
 # Join the background trust-root preflight (started after the PCI surfaces)
 # before the manifest stage, so no axon-fabric test run ever overlaps it.
@@ -1057,11 +1180,14 @@ fi
 # The dependency graph is the one build input a commit hash did not pin until
 # Cargo.lock was tracked (473480f). Runs early and unconditionally: it is
 # seconds, and everything below builds against whatever the lockfile says.
+if lane_runs S19; then
 stage_begin S19 "lockfile"
 echo "── gate: lockfile tracked and current ────────────────────────────"
 ./scripts/lockfile_gate.sh || fail "lockfile gate"
 stage_end
+fi
 
+if lane_runs S20; then
 stage_begin S20 "required crate verification (manifest)"
 echo "── gate: required crate verification (manifest-driven) ───────────"
 MANIFEST="$ROOT/governance/release-verification.json"
@@ -1074,7 +1200,7 @@ while IFS= read -r cmd; do
   [ -n "$cmd" ] || continue
   echo "   → $cmd"
   # shellcheck disable=SC2086
-  $cmd || fail "required verification: $cmd"
+  lane_cargo S20 $cmd || fail "required verification: $cmd"
 done < <(python3 - "$MANIFEST" <<'PYEOF'
 import json, sys
 m = json.load(open(sys.argv[1]))
@@ -1088,8 +1214,21 @@ for name, spec in sorted(m["crates"].items()):
 PYEOF
 )
 stage_end
+fi
 
-
+# A lane (or the audit's --lane-units run) ends here: it refuses --strict and
+# --profile, so nothing below applies, and it never prints the PASS line.
+if [ -n "$LANE_SEL" ]; then
+  echo ""
+  skip_notice
+  stage_table
+  if [ "$LANE" = lane ]; then
+    python3 -B scripts/gate_lane.py footer "$LANE_SEL"
+  else
+    echo "lane-units: $LANE_UNITS done — not the gate"
+  fi
+  exit 0
+fi
 
 if [ "$STRICT" = 1 ]; then
   echo "── gate: clippy (--all-targets, -D warnings) ─────────────────────"

@@ -187,6 +187,333 @@ def units_derived_from_metadata():
     assert first["S02"] < first["S03"] < first["S16"] < first["S20"], first
 
 
+# ── GL-3 ────────────────────────────────────────────────────────────────────
+
+FIXTURES = os.path.join(ROOT, "scripts", "testdata", "gate_lane")
+_META = []
+
+
+def meta():
+    if not _META:
+        _META.append(gl().cargo_metadata(ROOT))
+    return _META[0]
+
+
+def events(name):
+    return [json.loads(l) for l in open(os.path.join(FIXTURES, name)) if l.strip()]
+
+
+def unit_of(uid):
+    g = gl()
+    return next(s for s in g.derive(ROOT, meta=meta()) if s["id"] == uid)
+
+
+def assembled(evs, unit, rcs=None, prior=(), root=None, pkg_sets=None):
+    """One audited unit `unit` (renamed U1 in the fixture streams) after the build steps `prior`."""
+    g = gl()
+    u = dict(unit, id="U1")
+    steps = list(prior) + [u]
+    obs = g.attribute(evs, [s["id"] for s in steps])
+    m = meta()
+    out, errors = g.assemble(steps, obs, rcs or {}, m, g.read_gate(ROOT), pkg_sets or {},
+                             [p["name"] for p in m["packages"]], root=root)
+    return out["U1"], errors
+
+
+@test
+def audit_sentinel_bounds_window():
+    obs = gl().attribute(events("window.jsonl"), ["U1", "U2"])
+    assert obs["U1"]["reads"] == {"crates/a/src/lib.rs"}, obs["U1"]
+    assert obs["U2"]["reads"] == {"crates/b/src/lib.rs"} and obs["U2"]["dirs"] == {"crates/b/tests/"}, obs["U2"]
+
+
+@test
+def audit_between_units_goes_to_both():
+    obs = gl().attribute(events("between.jsonl"), ["U1", "U2"])
+    assert "lingering/child.txt" in obs["U1"]["reads"] and "lingering/child.txt" in obs["U2"]["reads"], obs
+
+
+@test
+def audit_overflow_marks_unit_unaudited():
+    g = gl()
+    obs = g.attribute(events("overflow.jsonl"), ["U1", "U2"])
+    assert obs["U1"]["overflow"] and not obs["U2"]["overflow"], obs
+    a, _ = assembled(events("overflow.jsonl")[:4], unit_of("S14"))
+    assert a["status"] == "unaudited" and "overflow" in a["why"], a
+
+
+@test
+def audit_skip_marks_unit_unaudited():
+    a, _ = assembled(events("window.jsonl")[:3], unit_of("S08"), rcs={"U1": 77})
+    assert a["status"] == "unaudited" and "77" in a["why"], a
+    a, _ = assembled(events("window.jsonl")[:3], unit_of("S08"), rcs={"U1": 0})
+    assert a["status"] == "ok", a
+    # and the lane always runs an unaudited unit
+    g = gl()
+    us = [dict(unit_of("S08"))]
+    sel, _ = g.decide({"units": {"S08": dict(a, status="unaudited", why="SKIP (exit 77)")}, "packages": {},
+                       "universe": []}, us, [])
+    assert sel["S08"] and "unaudited" in sel["S08"], sel
+
+
+def fake_target(entries):
+    """A target dir holding dep-info files {relative path: [repo paths it lists]}."""
+    t = tempfile.mkdtemp(prefix="gate-lane-target-")
+    for rel, paths in entries.items():
+        p = os.path.join(t, "debug", rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write(f"{p[:-2]}: " + " ".join(os.path.join(ROOT, x) for x in paths) + "\n")
+    return t
+
+
+@test
+def audit_exec_adds_package_closure():
+    g = gl()
+    t = fake_target({"cortex.d": ["crates/axon-cortex/src/bin/cortex.rs"]})
+    sets = g.package_compile_sets(meta(), ROOT, t)
+    # The spec's case: fabric's cortex_via_fabric executes workspace-bins/debug/cortex.
+    a, err = assembled(events("exec_private.jsonl"), unit_of("S03:axon-fabric:test:cortex_via_fabric"), pkg_sets=sets)
+    assert not err and "axon-cortex" in a["closure"], a
+    files, _ = g.unit_paths({"packages": sets}, a)
+    assert "crates/axon-cortex/src/bin/cortex.rs" in files, sorted(files)[:20]
+    # Control: a unit whose own closure lacks axon-cortex gets it from the exec alone.
+    ledger = next(u for u in g.derive(ROOT, meta=meta()) if u["id"].startswith("S20:axon-ledger:test:"))
+    a0, _ = assembled([{"t": "begin", "step": "U1"}, {"t": "end", "step": "U1"}], ledger, pkg_sets=sets)
+    assert "axon-cortex" not in a0["closure"], a0["closure"]
+    a1, _ = assembled(events("exec_private.jsonl"), ledger, pkg_sets=sets)
+    assert "axon-cortex" in a1["closure"] and a1["execs"] == ["private:cortex"], a1
+    # The static workspace_bin scan reaches the same edge without the exec.
+    a2, _ = assembled([{"t": "begin", "step": "U1"}, {"t": "end", "step": "U1"}],
+                      unit_of("S03:axon-fabric:test:cortex_via_fabric"), root=ROOT)
+    assert "axon-cortex" in a2["static_unobserved"], a2["static_unobserved"]
+
+
+@test
+def audit_lint_unit_has_closure_compile_set():
+    g = gl()
+    t = fake_target({"deps/axon_ledger-0123abcd.d": ["crates/axon-ledger/src/lib.rs"]})
+    sets = g.package_compile_sets(meta(), ROOT, t)
+    assert "crates/axon-ledger/src/lib.rs" in sets["axon-ledger"]["files"], sets["axon-ledger"]
+    a, _ = assembled([], unit_of("S14"), pkg_sets=sets)
+    files, _ = g.unit_paths({"packages": sets}, a)
+    assert "crates/axon-ledger/src/lib.rs" in files, a["closure"]
+
+
+@test
+def audit_git_open_flags_history():
+    obs = gl().attribute(events("git.jsonl"), ["U1", "U2"])
+    assert obs["U1"]["git"] and not obs["U2"]["git"], obs
+    a, _ = assembled(events("git.jsonl")[:3], unit_of("S16:axon-core:test:pci_delta_note"))
+    assert a["git_history"], a
+
+
+@test
+def audit_undeclared_producer_fails():
+    g = gl()
+    ledger = next(u for u in g.derive(ROOT, meta=meta()) if u["id"].startswith("S20:axon-ledger:test:"))
+    _, err = assembled(events("exec_main.jsonl"), ledger)
+    assert any("executes cortex that no preceding build step" in e for e in err), err
+    b2 = next(s for s in g.derive(ROOT, meta=meta()) if s["id"] == "B2")
+    a, err = assembled(events("exec_main.jsonl"), ledger, prior=[b2])
+    assert not err and a["needs"] == ["B2"], (a, err)
+
+
+@test
+def audit_never_writes_a_gate_receipt():
+    g = gl()
+    cmd = g.unit_command({"id": "S14"})
+    assert cmd == ["./scripts/gate.sh", "--lane-units=S14"], cmd
+    code = [l for l in open(os.path.join(ROOT, "scripts", "gate_lane.py")) if not l.lstrip().startswith("#")]
+    assert not any("run_managed" in l and ("subprocess" in l or "[" in l) for l in code), "the audit runs run_managed"
+    # gate.sh: a --lane-units run exits before the PASS line, and run_managed records any lane run as no gate.
+    text = open(GATE).read()
+    assert text.index('if [ -n "$LANE_SEL" ]; then\n  echo ""') < text.index('echo "✅ gate PASSED"')
+    assert "--lane|--lane=*|--lane-units=*) lane=yes" in open(os.path.join(ROOT, "scripts", "run_managed.sh")).read()
+
+
+# ── GL-4 ────────────────────────────────────────────────────────────────────
+
+def fixture_audit():
+    """The GL-4 fixture audit: every derived unit, closure from cargo, runtime facts from audit_overlay.json."""
+    g = gl()
+    m = meta()
+    steps = g.derive(ROOT, meta=m)
+    ov = json.load(open(os.path.join(FIXTURES, "audit_overlay.json")))
+    obs = {s["id"]: {"reads": set(), "dirs": set(), "execs": set(), "git": False, "overflow": False} for s in steps}
+    for uid, o in ov["units"].items():
+        obs[uid]["reads"] |= set(o.get("reads", []))
+        obs[uid]["dirs"] |= set(o.get("dirs", []))
+        obs[uid]["git"] = o.get("git_history", False)
+    sets = g.package_compile_sets(m, ROOT, os.path.join(tempfile.gettempdir(), "gate-lane-no-target"))
+    us, err = g.assemble(steps, obs, {}, m, g.read_gate(ROOT), sets, [p["name"] for p in m["packages"]], root=ROOT)
+    assert not err, err
+    universe = [p for p in subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,
+                                          check=True).stdout.splitlines() if p not in ov["absent_from_universe"]]
+    return {"commit": "f" * 40, "units": us, "packages": sets, "universe": universe}, g.units(steps)
+
+
+_FA = []
+
+
+def lane(chg, audit=True):
+    if not _FA:
+        _FA.append(fixture_audit())
+    a, us = _FA[0]
+    sel, _ = gl().decide(a if audit else None, us, chg, read_text=lambda f: "")
+    return sel, us
+
+
+def everything_selected(sel, us):
+    return all(sel[u["id"]] for u in us)
+
+
+@test
+def lane_cortex_bin_change_selects_fabric_cortex_via_fabric():
+    sel, us = lane([("M", "crates/axon-cortex/src/bin/cortex.rs")])
+    for uid in ("S03:axon-fabric:test:cortex_via_fabric", "S20:axon-fabric:test:cortex_via_fabric"):
+        assert sel[uid], (uid, sel[uid])
+    assert not everything_selected(sel, us)
+
+
+@test
+def lane_cortex_lib_change_selects_reverse_deps():
+    sel, us = lane([("M", "crates/axon-cortex/src/runner.rs")])
+    for p in ("axon-fabric", "axon-loop", "axon-loop-contracts", "axon-reflex", "cortex-policy-adapter"):
+        mine = [u for u in us if u.get("pkg") == p]
+        assert mine and all(sel[u["id"]] for u in mine), (p, [u["id"] for u in mine if not sel[u["id"]]])
+    assert not sel["S20:axon-ledger:lib"], "a crate outside axon-cortex's reverse deps was selected"
+
+
+@test
+def lane_new_crate_test_selects_harness_binaries():
+    sel, _ = lane([("A", "crates/axon-cortex/tests/fence_sweep.rs")])
+    assert sel["S16:axon-core:test:harness_binaries"] and "enumerated" in sel["S16:axon-core:test:harness_binaries"], \
+        sel["S16:axon-core:test:harness_binaries"]
+    assert sel["S02:axon-cortex:lib"] and "added in package" in sel["S02:axon-cortex:lib"], sel["S02:axon-cortex:lib"]
+
+
+@test
+def lane_cortex_src_selects_claims_gate():
+    sel, _ = lane([("M", "crates/axon-cortex/src/runner.rs")])
+    assert sel["S16:axon-core:test:cli_run"] == "reads crates/axon-cortex/src/runner.rs", sel["S16:axon-core:test:cli_run"]
+
+
+@test
+def lane_core_src_selects_pci_delta_note():
+    sel, _ = lane([("M", "crates/axon-core/src/lib.rs")])
+    assert sel["S16:axon-core:test:pci_delta_note"], sel["S16:axon-core:test:pci_delta_note"]
+    sel, _ = lane([])
+    assert "git-history" in sel["S16:axon-core:test:pci_delta_note"], sel["S16:axon-core:test:pci_delta_note"]
+
+
+@test
+def lane_lint_only_change_selects_runtime_clippy():
+    sel, _ = lane([("M", "crates/axon-ledger/src/lib.rs")])
+    assert sel["S14"] == "compiles crates/axon-ledger/src/lib.rs", sel["S14"]
+    assert not sel["S03:axon-fabric:test:cortex_via_fabric"]
+
+
+@test
+def lane_gate_definition_selects_everything():
+    for p in ("scripts/lib/axon_bin.sh", "scripts/gate.sh", "scripts/gate_lane.py", "governance/gate-lanes.json"):
+        sel, us = lane([("M", p)])
+        assert everything_selected(sel, us), p
+
+
+@test
+def lane_deleted_or_mode_selects_everything():
+    for st in ("D", "T"):
+        sel, us = lane([(st, "crates/axon-ledger/src/lib.rs")])
+        assert everything_selected(sel, us), st
+
+
+@test
+def lane_unknown_path_selects_everything():
+    sel, us = lane([("A", "newdir/x.txt")])
+    assert everything_selected(sel, us) and sel["S14"] == "unclassified path newdir/x.txt", sel["S14"]
+
+
+@test
+def lane_without_audit_selects_everything():
+    sel, us = lane([("M", "crates/axon-ledger/src/lib.rs")], audit=False)
+    assert everything_selected(sel, us) and "no read-set audit" in sel["S14"]
+
+
+@test
+def lane_every_stage_reachable():
+    g = gl()
+    lane([])
+    a, us = _FA[0]
+    assert g.audit_problems(a, us) == [], g.audit_problems(a, us)
+    empty = json.loads(json.dumps(a))
+    empty["units"]["S14"] = dict(empty["units"]["S14"], closure=[], reads=[])
+    assert g.audit_problems(empty, us) == [f"unit S14 has an empty read set in audit {'f' * 12}"]
+
+
+@test
+def lane_guard_form():
+    text = open(GATE).read()
+    code = "\n".join(l for l in text.split("\n") if not l.lstrip().startswith("#"))
+    assert not re.search(r"lane_runs [^;\n]*&&", code), "a `lane_runs … &&` guard runs `|| fail` on a skip"
+    lines = text.split("\n")
+    for i, l in enumerate(lines):
+        m = re.match(r'^\s*stage_begin (\S+) ', l)
+        if m and m.group(1) != "S21":
+            assert lines[i - 1].strip() == f"if lane_runs {m.group(1)}; then", f"gate.sh:{i + 1} unguarded {m.group(1)}"
+
+
+def gate(*args):
+    return subprocess.run(["bash", GATE, *args], cwd=ROOT, capture_output=True, text=True)
+
+
+@test
+def lane_refuses_strict_fast_ref():
+    for args, want in ((["--lane", "--strict"], "--lane is NOT the gate"),
+                       (["--lane", "--nextest"], "--lane is NOT the gate"),
+                       (["--lane", "--profile=v022-stage5"], "requires --strict"),
+                       (["--lane=main"], "--lane takes no ref; the base is the newest audit (see --plan)"),
+                       (["--plan"], "requires --lane")):
+        r = gate(*args)
+        assert r.returncode == 2 and want in r.stderr, (args, r.returncode, r.stderr)
+
+
+_PLAN = []
+
+
+def plan():
+    if not _PLAN:
+        _PLAN.append(gate("--lane", "--plan"))
+    return _PLAN[0]
+
+
+@test
+def lane_plan_banner_never_claims_gate():
+    r = plan()
+    assert r.returncode == 0, r.stdout + r.stderr
+    out = r.stdout.split("\n")
+    assert out[0].startswith("════ LANE — NOT THE GATE, NOT EVIDENCE · audit="), out[:2]
+    assert "gate PASSED" not in r.stdout and "nothing was run" in r.stdout, r.stdout[-300:]
+    assert any(l.startswith("NOT RUN (strict-only):") for l in out)
+
+
+@test
+def run_managed_records_lane_tier():
+    d = tempfile.mkdtemp(prefix="gate-lane-receipt-")
+    with open(os.path.join(d, "cmd"), "w") as f:
+        f.write("./scripts/gate.sh --lane --plan\n")
+    with open(os.path.join(d, "log"), "w") as f:
+        f.write(plan().stdout)
+    src = open(os.path.join(ROOT, "scripts", "run_managed.sh")).read()
+    fn = re.search(r"^write_receipt\(\) \{\n.*?^\}\n", src, re.S | re.M).group(0)
+    r = subprocess.run(["bash", "-c", f'ROOT="$1"\n{fn}\nwrite_receipt "$2" 0', "_", ROOT, d],
+                       capture_output=True, text=True)
+    receipt = open(os.path.join(d, "receipt")).read()
+    assert r.returncode == 0 and "gate_tier=lane\n" in receipt and "gate_run=no\n" in receipt \
+        and "gate_strict=no\n" in receipt, r.stderr + receipt
+
+
+
 def main(argv):
     want = set(argv)
     failed = 0
