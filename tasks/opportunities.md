@@ -2813,6 +2813,12 @@ their hidden tests; an offline regrade with the arms' axon gives excerpt 19/20 a
 false success, so earlier verdicts with 0 false successes (FU receipt, hx2 pilot) stand. Fix direction: pin the grader
 to a binary whose `axon check` accepts the same files as the arms' axon, and add a preamble probe that one `let mut`
 file gets the same rc from both. Any excerpt seed-4 re-pilot (hx3 NH-1) must take this fix first.
+[REVISED: HX3-0 re-pilot 2026-10-29] Pin fixed for the re-pilot: PREREG-hx3 §0.6 (hx3/proto 568d4c22) graded with the
+arms' axon `f15fad70` behind a one-`let mut` rc probe (grader 0, arms 0); its 5 `let mut` finals all graded clean
+(excerpt 19/20, 0 false successes, §6.3). Still open in code: `run_ab.py` defaults `--grade-axon` to the arms' axon
+(`:912`) but has no rc-skew check, so an explicit pre-SF-5 `--grade-axon` (such as `hx-bin/axon`, still the
+PREREG.md §1 builder pin) is accepted silently; the probe lives only in the pilot script
+(`/var/tmp/r51-tmp/hx3-pilot-excerpt-s4.sh`). Fix direction unchanged: move the probe into `probe_grade_axon`.
 
 ### O-GL-01 — [medium] The gate lane saves far less than the spec's §4 estimates
 Smokes at 76a12f60 (cold target dir, load ≤ 10): docs-only 1586 s (§4: 1-10 min), `locate.rs` 1670 s (≈ 35 min),

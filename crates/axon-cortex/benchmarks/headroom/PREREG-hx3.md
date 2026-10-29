@@ -2,6 +2,9 @@
 
 Status: **§0 was committed before any pilot row (730b82c4); §6 records the
 HX3-0 pilot rows and the verdict: masked rejects, excerpt is held on NH-1.**
+[REVISED: HX3-0 re-pilot 2026-10-29: NH-1 granted; §0.6 (568d4c22) preceded
+the excerpt seed-4 re-pilot, which rejects (c = 19, §6.3). Neither A nor B
+advances.]
 §1/§2 are never written unless a class advances.
 Design: `tasks/hx3-spec.md` on `hx3/spec` (10ed553f) HX3-0, HX3-A, HX3-B,
 HX3-2, including every [REVISED] marker. Authorization (2026-10-29): HX3-0
@@ -136,6 +139,65 @@ nice -n 10 python3 crates/axon-cortex/benchmarks/ab/run_ab.py \
   --reserve-usd 0.05 --cap-usd 0.25
 ```
 
+### 0.6 Addendum: excerpt re-pilot under seed 4 (committed before its first row)
+
+[DECIDED by human 2026-10-29: NH-1 granted for excerpt, up to $0.25 more, for
+one seed-4 re-pilot with the corrected grading pin (§6.2). NH-3 (b): class C
+is authored after this re-pilot and piloted at $0.25 with the same pin.]
+
+- **Fix (the only change from §0):** the grading axon is the arms' axon,
+  `/var/tmp/r51-tmp/hx3-inc-bin/axon` sha256
+  `f15fad70807e5f51d94104237df208fcd6944071228478700f46189f136957f4`
+  (43e895d0, post SF-5). Justification: it is `run_ab.py`'s own default
+  (`--grade-axon` defaults to `AXON_BIN`, `run_ab.py:912`); the offline regrade
+  of §6.1 reproduced every seed-3 row with it except the 7 skewed ones; and
+  `probe_grade_axon` (`:821`, run before any task) still requires an
+  authentic completion token from it. No other post-SF-5 axon is pinned
+  anywhere. The fix was decided (§6.2, 1adbda44) before this draw; the draw
+  is a function of seed 4 and the pool's sha256 alone.
+- **Recipe unchanged:** same pool (`53fb3542…1f59`), bundles, view cap,
+  knobs, arms' axon and cortex, model, ranker, k = 1, `--parallel 1`,
+  `--reserve-usd 0.05`.
+- **Preamble probe:** `/var/tmp/r51-tmp/hx3-s4/probe_mut.ax` (sha256
+  `f5665552…0698`; a 10-line file whose only diagnostic is the I0002 `let
+  mut` note) must get the same `axon check` rc from the grading axon and the
+  arms' axon, else the run aborts before any model call.
+- **Ids (seed 4):** the §0.4 procedure with `random.Random(4)`, excerpt only,
+  over the same 44 eligible dev tasks (`/var/tmp/r51-tmp/hx3-s4/draw_ids_s4.py`,
+  not committed; output sha256 `dcaa31b0…06fd`). Draws: 1. 20 ids over 10
+  target programs (bowling, dates, graph, gridpath, interest, intervals,
+  invoice, rational, recurrence, shipping), knobs erase 13 / xfn 7. 8 ids also
+  have a seed-3 row; none is skipped (rule iii): hx-excerpt-78e084c8a2,
+  hx-excerpt-7de5642522, hx-excerpt-2186d43edd, hx-excerpt-971021a7ce,
+  hx-excerpt-a8bccc2087, hx-excerpt-2b852cf3fc, hx-excerpt-159f7014da,
+  hx-excerpt-1376dde808, hx-excerpt-09e59ab8b6, hx-excerpt-e76a65d945,
+  hx-excerpt-7a1cd94e7d, hx-excerpt-1118d4d30b, hx-excerpt-696e7875ae,
+  hx-excerpt-79165c0750, hx-excerpt-7940a4afdb, hx-excerpt-4eace48161,
+  hx-excerpt-249dfe171f, hx-excerpt-91543376b4, hx-excerpt-d1359f76b0,
+  hx-excerpt-b0501e04eb.
+- **Spend (rule iii):** `--out excerpt/pilot-s4.jsonl` in the same root,
+  `--cap-usd 0.50` (= 0.25 + the 0.25 grant). `spent()` (`:808`) sums every
+  `*.jsonl` under the root, so the seed-3 $0.0365 counts: no row starts once
+  the root holds > $0.45, i.e. after > $0.4135 of new spend; class total
+  ≤ $0.55.
+- **Decision, unchanged (§0.3):** advance iff 0 false successes and
+  4 ≤ c ≤ 16 of 20; c ∈ {17, 18} rejects; decided early as in §0.3; a second
+  false success parks excerpt in §HX3-X. Overrun as in §0.3 at the observed c.
+- **Command** (script `/var/tmp/r51-tmp/hx3-pilot-excerpt-s4.sh` checks the
+  pins, the root and the probe, then runs):
+
+```
+cd /home/cklaus/projects/axon-lanes/hx3-proto && \
+AXON_BIN=/var/tmp/r51-tmp/hx3-inc-bin/axon CORTEX_BIN=/var/tmp/r51-tmp/hx3-inc-bin/cortex \
+nice -n 10 python3 crates/axon-cortex/benchmarks/ab/run_ab.py \
+  /var/tmp/r51-tmp/hx3-scratch/hx-pool.json --arm B --generator real --transport micode \
+  --model claude-haiku-5-5 --trials 1 --parallel 1 --only hx-excerpt-78e084c8a2,hx-excerpt-7de5642522,hx-excerpt-2186d43edd,hx-excerpt-971021a7ce,hx-excerpt-a8bccc2087,hx-excerpt-2b852cf3fc,hx-excerpt-159f7014da,hx-excerpt-1376dde808,hx-excerpt-09e59ab8b6,hx-excerpt-e76a65d945,hx-excerpt-7a1cd94e7d,hx-excerpt-1118d4d30b,hx-excerpt-696e7875ae,hx-excerpt-79165c0750,hx-excerpt-7940a4afdb,hx-excerpt-4eace48161,hx-excerpt-249dfe171f,hx-excerpt-91543376b4,hx-excerpt-d1359f76b0,hx-excerpt-b0501e04eb \
+  --grade-axon /var/tmp/r51-tmp/hx3-inc-bin/axon --ranker openrouter:anthropic/claude-haiku-5.5 \
+  --spend-root crates/axon-cortex/benchmarks/headroom/hx3-pilot-2026-10-29/excerpt/ \
+  --out crates/axon-cortex/benchmarks/headroom/hx3-pilot-2026-10-29/excerpt/pilot-s4.jsonl \
+  --reserve-usd 0.05 --cap-usd 0.50
+```
+
 ## 6. HX3-0 pilot rows and verdict (2026-10-29)
 
 Rows: `hx3-pilot-2026-10-29/<class>/pilot.jsonl`, one class at a time, with
@@ -242,3 +304,52 @@ not measurable from them.
   advances, i.e. after the excerpt re-pilot rejects (or NH-1 is declined);
   C's pilot needs its own $0.25 and the corrected grading pin. R4 stays
   retired without measurement (PREREG-hx2 §6).
+
+### 6.3 Excerpt re-pilot under seed 4 (2026-10-29)
+
+[DECIDED by human 2026-10-29: NH-1 granted for excerpt (≤ $0.25 more, one
+seed-4 re-pilot, corrected grading pin); NH-3 (b).]
+
+Rows: `hx3-pilot-2026-10-29/excerpt/pilot-s4.jsonl` (sha256 `98e3cb83…273c`),
+the §0.6 command verbatim via `/var/tmp/r51-tmp/hx3-pilot-excerpt-s4.sh`,
+which checked every pin, that the root held only the committed seed-3
+`pilot.jsonl`, and the probe: **grader rc 0, arms rc 0** on the one-`let mut`
+file. `uptime` before 16:34:43, load avg 4.73 / 7.00 / 8.05; after 16:41:45,
+11.21 / 8.85 / 8.47; run rc 0. Every row carries commit `568d4c22`, axon and
+grading axon `f15fad70807e5f51`, cortex `1b2f8edb101d3fba`. No row was
+rate-limited; no BUDGET CAP or INTEGRITY line.
+
+| class | n | clean c | false successes | rows with > 1 proposal | spend (cost + ranker) | wall (rows) | §0.3 decision |
+|---|---|---|---|---|---|---|---|
+| excerpt seed 4 | 20 | 19 | 0 | 10 | $0.0412 ($0.0363 + $0.0049) | 407.0 s | **reject** (c = 19 > 16) |
+
+Spend: the excerpt root now holds $0.0777 ($0.0365 + $0.0412; cap 0.50 not
+approached). HX3-0 in all: $0.1448 ($0.1036 + $0.0412).
+
+**Overrun** (§0.3 at c = 19): spend $0.0412 ≤ $0.0566; **wall 407.0 s >
+402.8 s: an overrun on wall** (by 4.2 s, 1 %). Clean rows averaged 18.2 s
+against the 6.6 s basis (10 rows took > 1 proposal); the one not-clean row
+took 61.5 s; load rose to ≈ 11 during the run. Per the spec's §5 overrun rule
+this stops for review before the next paid run (class C's pilot).
+
+**Per-knob clean counts (reported):** erase 12/13, xfn 7/7. 5 finals add
+`let mut`; all 5 graded clean, so the pin fix took effect. The 8 ids with a
+seed-3 row are clean except `79165c0750`, including the seed-3 false
+successes `249dfe171f`, `a8bccc2087`, `d1359f76b0`.
+
+**Triage of the 1 not-clean row.** `hx-excerpt-79165c0750` (erase,
+`parcel_cost`, hidden `test_parcel_cost_oversize`), the same task and the same
+failure as seed 3: exit 20 budget_exhausted, 6 proposals, $0.0070, attempted
+`parcel_cost`, `box`; `true_symbol_changed` false, `final_diff` empty, so no
+accepted patch (none edits a callee of g); `regressed` is the 6 failing
+tests of `parcel_cost`. Excerpt compile failures: 1 `did_not_compile`
+attempt here (14 over 10 rows in the pilot; the rows hold no diagnostics, so
+the view's share is not measurable). 2 attempts on `parcel_cost` passed every
+visible check and were refused. Missing fact: the `oversize_surcharge` term;
+cortex pruned `oversize_surcharge`/`is_oversize` from the candidates, and the
+view held `parcel_cost` and `box` only, so it was not inferable from what the
+generator saw [INFERENCE: the view text is not recorded].
+
+**Verdict:** excerpt rejected (0 false successes, c = 19). Neither A nor B
+advances: stop A and B; no HX3-1, §1/§2 or calibration. Per NH-3 (b), class
+C is next, after review of the wall overrun, with the §0.6 grading pin.
