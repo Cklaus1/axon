@@ -818,23 +818,50 @@ def spent(root=RESULTS):
     return total
 
 
-def probe_grade_axon(axon, task):
+# O-HX3-01: a file whose only diagnostic is the I0002 "`mut` is not an Axon
+# keyword" note. An axon from before SF-5 (2ba68e53) exits 2 on it, a later one 0.
+MUT_PROBE = """fn f(x: i64) -> i64 {
+    let mut y = x
+    y = y + 1
+    y
+}
+
+@[test]
+fn test_f() {
+    assert_eq(f(1), 2)
+}
+"""
+
+
+def probe_grade_axon(axon, task, arms_axon=None):
     """FU-8: before anything runs, the grading axon must issue an authentic
     completion token (`keyed_results`) on a pristine file, whose tests pass.
     One that does not (no `--completion-key-stdin`, not axon, a forged
     verdict) would grade every task as failed: the run aborts as an
-    integrity failure and writes no row."""
+    integrity failure and writes no row.
+    O-HX3-01: the grading axon's `axon check` must also accept what the arms'
+    axon (`arms_axon`, default AXON) accepts: both must give the same rc on
+    MUT_PROBE, else a final the arms verified fails its hidden check unrun."""
     ws = tempfile.mkdtemp(prefix="abprobe_")
     try:
         p = os.path.join(ws, task["file"])
         open(p, "w").write(task["pristine"])
         res = keyed_results(p, should_fail_tests(task["pristine"]), axon)
+        m = os.path.join(ws, "mut_probe.ax")
+        open(m, "w").write(MUT_PROBE)
+        rc = [subprocess.run([x, "check", m], capture_output=True).returncode
+              for x in (axon, arms_axon or AXON)]
     finally:
         shutil.rmtree(ws, ignore_errors=True)
     if res is None:
         raise SystemExit(f"INTEGRITY FAILURE: the grading axon {axon} issued no authentic "
                          f"completion token on the pristine file of {task['id']}: it cannot "
                          "grade; nothing run, no row written")
+    if rc[0] != rc[1]:
+        raise SystemExit(f"INTEGRITY FAILURE: `axon check` on a one-`let mut` file exits {rc[0]} "
+                         f"with the grading axon {axon} and {rc[1]} with the arms' axon "
+                         f"{arms_axon or AXON}: the grader would fail finals the arms verified; "
+                         "nothing run, no row written")
 
 
 def ledger_row(a, pset, variant, cortex_commit, head, prior, n_tasks):

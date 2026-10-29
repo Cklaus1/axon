@@ -1,0 +1,275 @@
+// 9x9 sudoku helpers over a flat array of 81 cells, 0 meaning empty.
+
+fn parse_grid(s: str) -> [i64] {
+    let out = []
+    for i in 0..str_len(s) {
+        let code = char_at(s, i)
+        if code >= 48 && code <= 57 {
+            out = arr_push(out, code - 48)
+        } else if code == 46 {
+            out = arr_push(out, 0)
+        }
+    }
+    out
+}
+
+fn box_start(cell: i64) -> i64 {
+    (cell / 27) * 27 + ((cell % 9) / 3) * 3
+}
+
+fn count_empty(grid: [i64]) -> i64 {
+    arr_count_if(grid, |v| v == 0)
+}
+
+fn is_valid_grid(grid: [i64]) -> bool {
+    if len(grid) != 81 {
+        return false
+    }
+    for v in grid {
+        if v < 0 || v > 9 {
+            return false
+        }
+    }
+    for unit in 0..9 {
+        let row_seen = arr_repeat(false, 10)
+        let col_seen = arr_repeat(false, 10)
+        let box_seen = arr_repeat(false, 10)
+        let top = (unit / 3) * 27 + (unit % 3) * 3
+        for k in 0..9 {
+            let r = grid[unit * 9 + k]
+            let c = grid[k * 9 + unit]
+            let b = grid[top + (k / 3) * 9 + k % 3]
+            if r != 0 {
+                if row_seen[r] {
+                    return false
+                }
+                row_seen[r] = true
+            }
+            if c != 0 {
+                if col_seen[c] {
+                    return false
+                }
+                col_seen[c] = true
+            }
+            if b != 0 {
+                if box_seen[b] {
+                    return false
+                }
+                box_seen[b] = true
+            }
+        }
+    }
+    true
+}
+
+fn candidates(grid: [i64], cell: i64) -> [i64] {
+    if cell < 0 || cell >= len(grid) {
+        return []
+    }
+    if grid[cell] != 0 {
+        return []
+    }
+    let used = arr_repeat(false, 10)
+    let row = cell / 9
+    let col = cell % 9
+    let top = box_start(cell)
+    for k in 0..9 {
+        used[grid[row * 9 + k]] = true
+        used[grid[k * 9 + col]] = true
+        used[grid[top + (k / 3) * 9 + k % 3]] = true
+    }
+    let out = []
+    let d = 1
+    while d <= 9 {
+        if !used[d] {
+            out = arr_push(out, d)
+        }
+        d = d + 1
+    }
+    out
+}
+
+fn naked_single_pass(grid: [i64]) -> [i64] {
+    let next = arr_concat(grid, [])
+    for cell in 0..len(next) {
+        if next[cell] == 0 {
+            let options = candidates(next, cell)
+            if len(options) == 1 {
+                next[cell] = options[0]
+            }
+        }
+    }
+    next
+}
+
+fn passes_until_stable(grid: [i64], max_passes: i64) -> i64 {
+    if !is_valid_grid(grid) {
+        return -1
+    }
+    let current = grid
+    let passes = 0
+    let finished = false
+    while !finished {
+        if count_empty(current) == 0 || passes >= max_passes {
+            finished = true
+        } else {
+            let next = naked_single_pass(current)
+            let changed = false
+            for i in 0..81 {
+                if next[i] != current[i] {
+                    changed = true
+                }
+            }
+            if changed {
+                passes = passes + 1
+                current = next
+            } else {
+                finished = true
+            }
+        }
+    }
+    passes
+}
+
+fn puzzle_text() -> str {
+    "530070000600195000098000060800060003400803001700020006060000280000419005000080079"
+}
+
+fn solved_text() -> str {
+    "534678912672195348198342567859761423426853791713924856961537284287419635345286179"
+}
+
+@[test]
+fn test_parse_grid_reads_dots_and_digits() {
+    let g = parse_grid("5.3")
+    assert_eq(len(g), 3)
+    assert_eq(g[0], 5)
+    assert_eq(g[1], 0)
+    assert_eq(g[2], 3)
+}
+
+@[test]
+fn test_box_start_positions() {
+    assert_eq(box_start(0), 0)
+    assert_eq(box_start(40), 30)
+    assert_eq(box_start(80), 60)
+}
+
+@[test]
+fn test_count_empty_puzzle() {
+    assert_eq(count_empty(parse_grid(puzzle_text())), 51)
+}
+
+@[test]
+fn test_is_valid_grid_puzzle_and_solution() {
+    assert(is_valid_grid(parse_grid(puzzle_text())))
+    assert(is_valid_grid(parse_grid(solved_text())))
+}
+
+@[test]
+fn test_is_valid_grid_wrong_length() {
+    assert(!is_valid_grid([1, 2, 3]))
+}
+
+@[test]
+fn test_is_valid_grid_out_of_range_digit() {
+    let g = parse_grid(puzzle_text())
+    g[2] = 12
+    assert(!is_valid_grid(g))
+}
+
+@[test]
+fn test_is_valid_grid_row_duplicate() {
+    let g = parse_grid(puzzle_text())
+    g[2] = 5
+    assert(!is_valid_grid(g))
+}
+
+@[test]
+fn test_is_valid_grid_column_duplicate() {
+    let g = arr_repeat(0, 81)
+    g[4] = 7
+    g[76] = 7
+    assert(!is_valid_grid(g))
+}
+
+@[test]
+fn test_is_valid_grid_box_duplicate() {
+    let g = arr_repeat(0, 81)
+    g[0] = 4
+    g[20] = 4
+    assert(!is_valid_grid(g))
+}
+
+@[test]
+fn test_candidates_open_cell() {
+    let c = candidates(parse_grid(puzzle_text()), 2)
+    assert_eq(len(c), 3)
+    assert_eq(c[0], 1)
+    assert_eq(c[1], 2)
+    assert_eq(c[2], 4)
+}
+
+@[test]
+fn test_candidates_single_option() {
+    let c = candidates(parse_grid(puzzle_text()), 40)
+    assert_eq(len(c), 1)
+    assert_eq(c[0], 5)
+}
+
+@[test]
+fn test_candidates_filled_or_bad_cell() {
+    let g = parse_grid(puzzle_text())
+    assert_eq(len(candidates(g, 0)), 0)
+    assert_eq(len(candidates(g, 81)), 0)
+    assert_eq(len(candidates(g, -1)), 0)
+}
+
+@[test]
+fn test_candidates_empty_grid() {
+    assert_eq(len(candidates(arr_repeat(0, 81), 10)), 9)
+}
+
+@[test]
+fn test_naked_single_pass_fills_some() {
+    let g = parse_grid(puzzle_text())
+    let next = naked_single_pass(g)
+    assert_eq(count_empty(next), 45)
+    assert_eq(next[40], 5)
+    assert_eq(g[40], 0)
+}
+
+@[test]
+fn test_naked_single_pass_no_change_on_empty() {
+    assert_eq(count_empty(naked_single_pass(arr_repeat(0, 81))), 81)
+}
+
+@[test]
+fn test_passes_until_stable_solves_puzzle() {
+    assert_eq(passes_until_stable(parse_grid(puzzle_text()), 20), 5)
+}
+
+@[test]
+fn test_passes_until_stable_respects_limit() {
+    assert_eq(passes_until_stable(parse_grid(puzzle_text()), 2), 2)
+}
+
+@[test]
+fn test_passes_until_stable_full_or_stuck() {
+    assert_eq(passes_until_stable(parse_grid(solved_text()), 20), 0)
+    assert_eq(passes_until_stable(arr_repeat(0, 81), 20), 0)
+}
+
+@[test]
+fn test_passes_until_stable_invalid_grid() {
+    let g = parse_grid(puzzle_text())
+    g[1] = 5
+    assert_eq(passes_until_stable(g, 20), -1)
+}
+
+@[test]
+fn test_passes_until_stable_one_hole() {
+    let g = parse_grid(solved_text())
+    g[30] = 0
+    assert_eq(passes_until_stable(g, 20), 1)
+}
