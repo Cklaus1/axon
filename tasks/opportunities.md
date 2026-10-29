@@ -2788,3 +2788,17 @@ wrong. Out of SF-5's scope.
 `ops[0](1, 2)` or `mk()(1, 2)` with a wrong arity checks rc 0 (FnVal2 probe `c1_index_callee.ax`). O-SF-01's fix covers
 only a callee that names a local or top-level `let`. Fix direction: type the callee expression (`resolve_expr_type`) and
 reuse `check_args_against_sig` when it resolves to `Type::Fn`.
+
+### O-SF-05 — [medium] `managed_run_gate.sh` read an empty `status` once, failing the full gate
+Gate run at a02d632f (2026-10-29, load ≈ 20): `managed_run_gate: FAIL - expected exited:3, got ''`
+(`scripts/managed_run_gate.sh:153-154`); three standalone re-runs right after passed. The wait loop exits on anything
+that is not `running`, so an empty read passes it. `scripts/run_managed.sh:411` writes the terminal status with
+`echo "exited:$code" > "$dir/status"`, which truncates before it writes, so a concurrent reader can see an empty
+file. That window does not alone explain the failure message's own re-read also being empty: cause not proven.
+Fix direction: write status via temp file + `mv` (atomic) everywhere `run_managed.sh` writes it, and make the
+self-test's loop wait for a non-empty, non-`running` value.
+
+Also found the same day and fixed on `snd/int` (f2f36b66): the `par_abort` self-check in `gate.sh` probed the killed
+grandchild with `kill -0` at once. A TERM sent to a stopped process lands only after its CONT, so under load the probe
+raced it (3 async gate runs failed there in 0.18 s; an `-x` trace on fd 9 showed the full STOP/TERM/CONT walk). It now
+waits up to 2 s and counts a zombie as gone; with `par_abort` neutered it still fails.
