@@ -1,6 +1,6 @@
 # checker-soundness-2 - DRAFT spec
 
-**Status: AUTHORIZED for build 2026-10-29 (after Step 1 review; human: "approved, do it"). CS2-3b waits for §8 NH-1.**
+**Status: AUTHORIZED for build 2026-10-29 (after Step 1 review; human: "approved, do it"). §8 NH-1 decided (a), 2026-10-29.**
 
 ### Step 1 review
 
@@ -679,6 +679,7 @@ Order rationale and dependencies:
 ## 8. Needs human (product / irreversible only)
 
 - **NH-1. Is a `Dict` homogeneous in its value type?** (CS2-3b)
+  - `[DECIDED by human 2026-10-29: (a) - a Dict holds one value type; mixed dicts are refused (E0102); the 6 tracked files change in CS2-3b's commit.]`
   - (a) Yes: one value type per dict, inferred or annotated. A mixed dict is refused (E0102). Exactly 6 tracked files change, all in CS2-3b's commit:
     1. `examples/asi/safe_bandit.ax`: the `Agent` moves out of `state` into a `let` rebound each round; `state` keeps only the i64 counters (`Dict<str, i64>`). Output unchanged; S290 row unchanged.
     2-5. `crates/axon-core/tests/fixtures/vm_depth/nest/drop_array.ax`, `drop_option.ax`, `drop_result.ax`, `drop_tuple.ax`: the value they nest through the dict becomes a one-line recursive enum, so the dict holds one type; DEPTH and chain length unchanged; `vm_wasm_depth.sh` and `wasm_nesting_parity.sh` re-run. S596 rows stay rc 0.
