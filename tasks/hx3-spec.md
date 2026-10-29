@@ -3,6 +3,8 @@
 **Status: DRAFT (after Step 1 review). AUTHORIZED 2026-10-29 for HX3-0 only (pilots ≤ $0.25/class, $0.50 total; NH-1 not granted). Everything after N1 is not authorized.**
 **[REVISED: HX3-0 result 2026-10-29] HX3-0 run 2026-10-29 (PREREG-hx3 §6, rows in `B/headroom/hx3-pilot-2026-10-29/`, $0.1036 of $0.50): masked rejected (c = 17/20, 0 false successes); excerpt held pending NH-1 (c = 12/20 with 7 false successes, all from a grading-axon skew, see NH-1). Not authorized beyond HX3-0.**
 **[REVISED: HX3-0 re-pilot 2026-10-29] [DECIDED by human 2026-10-29: NH-1 granted for excerpt (≤ $0.25 more, one seed-4 re-pilot, corrected grading pin); NH-3 (b).] Excerpt seed-4 re-pilot (PREREG-hx3 §0.6 / §6.3): c = 19/20, 0 false successes, $0.0412, wall 407.0 s (an overrun on wall: > 402.8 s) → excerpt rejected. Neither A nor B advances; HX3-0 spent $0.1448. Next is class C under NH-3 (b), after review of the wall overrun (§5 overrun rule). Not authorized beyond HX3-0 and the C pilot of NH-3 (b).**
+**[REVISED: HX3-0 N0c 2026-10-29] Class C authored and pre-registered, not run: 12 programs in `B/headroom/programs-c/` (hx3/proto 463b7aaf), builder `erase-long` + `--deal-dev` (dd7d4b4f), scratch pool `e5b49c68…` with 23 eligible dev tasks over 12 programs, 20 seed-3 ids and the pilot command in PREREG-hx3 §0.7 (0824f16a); the `let mut` probe is now in `probe_grade_axon` (5bb4e0f4, O-HX3-01). C's paid pilot ($0.25) still waits for the human review of the excerpt wall overrun (NH-3).**
+**[REVISED: HX3-0 class C 2026-10-29] [DECIDED by human 2026-10-29: wall limit from wall times measured under real load plus a stated margin (NH-R1 `HARD_GRACE` rule); PREREG-hx3 §0.8: 20 × p90 41.9 s × 1.5 = 1257.0 s; the excerpt seed-4 overrun is reviewed and within it.] C pilot (PREREG-hx3 §6.4): c = 15/20, 0 false successes, $0.0735, wall 497.5 s, no overrun → **class C advances**. HX3-0 spent $0.2183. HX3-1 for C (landing `erase-long` and its helpers) needs a human go-ahead; nothing beyond the C pilot is authorized.**
 Nothing in it has been built, and no model has run on it. The Step 1 review (audit HX3A-1…11, devloop HX3D-1…8) is applied below with `[REVISED: …]` markers; the
 dispositions are in "Step 1 review".
 [REVISED: HX3-0 result 2026-10-29: the sentence above predates HX3-0; the prototype is built on `hx3/proto` and the two
@@ -816,6 +818,15 @@ graph TD
   grading pin.] [REVISED: HX3-0 re-pilot 2026-10-29] The trigger holds: A and B are both rejected. C's pilot command is
   the §0.6 one (`--grade-axon /var/tmp/r51-tmp/hx3-inc-bin/axon` plus the probe), not step 5's template. The excerpt
   re-pilot overran on wall, so C's paid pilot waits for that review.
+
+  [REVISED: HX3-0 N0c 2026-10-29] N0c is done (PREREG-hx3 §0.7): C is authored, the pool is built and checked, the
+  ids are drawn, and zero-cost controls give oracle 20/20 and no-generator 0/20. Open for the human: the wall-overrun
+  review. The overrun is 407.0 s against 402.8 s (+1.0 %); the one not-clean row took 61.5 s, and load average rose
+  from 4.7 to 11.2 during the run, so clean rows averaged 18.2 s against the formula's 6.6 s. Recommendation: accept it
+  as load, not a recipe fault (spend was $0.0412 ≤ $0.0566), and release C's pilot with the §0.7 command unchanged.
+
+  [REVISED: HX3-0 class C 2026-10-29] The wall review was decided (§0.8, load-measured rule: 1257.0 s; 407.0 s is
+  within it). C's pilot ran per §0.7 and advances (c = 15, 0 false successes, no overrun; PREREG-hx3 §6.4).
 - **NH-4 What "larger programs" means in a claim.**
   - (a) bundles; claims worded "files over the 24,000-character view cap, built by concatenating tested programs";
   - (b) require authored ≥ 24k-character programs before calibration.
