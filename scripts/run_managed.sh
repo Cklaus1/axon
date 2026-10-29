@@ -586,25 +586,23 @@ write_receipt() {
   case "$first_tok" in
     */gate.sh|gate.sh) is_gate=yes ;;
   esac
-  local profile="" fast=no lane=no tier=none
+  local profile="" lane=no tier=none
   for tok in $raw_cmd; do
     case "$tok" in
       --strict) is_strict=yes ;;
       --profile=*) profile="${tok#--profile=}" ;;
-      --fast) fast=yes ;;
       --lane|--lane=*|--lane-units=*) lane=yes ;;
     esac
   done
-  # `gate.sh --fast` is the FAST TIER and `gate.sh --lane` the LANE: subsets
-  # that are not the gate. Their receipts say so (gate_tier=fast / lane) and
-  # claim neither a gate run nor strictness, whatever else the command line
-  # carries (gate.sh refuses either with --strict before running anything), so
-  # no consumer that asks for gate_run=yes / gate_strict=yes can be handed one.
+  # `gate.sh --lane` is the LANE: a subset that is not the gate. Its receipt
+  # says so (gate_tier=lane) and claims neither a gate run nor strictness,
+  # whatever else the command line carries (gate.sh refuses --lane with
+  # --strict before running anything), so no consumer that asks for
+  # gate_run=yes / gate_strict=yes can be handed one. (The fast tier it
+  # replaced, `--fast`, is refused by gate.sh since GL-5.)
   if [ "$is_gate" = yes ]; then
     if [ "$lane" = yes ]; then
       tier=lane; is_gate=no; is_strict=no
-    elif [ "$fast" = yes ]; then
-      tier=fast; is_gate=no; is_strict=no
     else
       tier=full
     fi

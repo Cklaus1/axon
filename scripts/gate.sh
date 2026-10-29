@@ -28,8 +28,8 @@
 #   scripts/gate.sh            # standard gate (lib clippy)
 #   scripts/gate.sh --strict   # also run --all-targets clippy
 #   scripts/gate.sh --nextest  # use cargo-nextest as the test runner
-#   scripts/gate.sh --fast [--base=REF]
-#                              # the FAST TIER: NOT the gate (see below)
+#   scripts/gate.sh --lane     # the LANE: NOT the gate (see below)
+#   scripts/gate.sh --lane --plan  # print the lane's selection, run nothing
 #
 # Exit 0 iff all stages pass.
 #
@@ -49,15 +49,9 @@
 # from after the PCI surfaces to a join before the manifest stage. If the gate
 # fails while it runs, fail() stops its whole process tree (`par_abort`).
 #
-# THE FAST TIER (`--fast`) is the lane-acceptance subset, for the inner loop:
-# cargo fmt, clippy -D warnings on the crates changed since `git merge-base REF
-# HEAD` (REF defaults to main), `cargo test -p axon-core --no-default-features`,
-# the axon-cortex and axon-psv suites, vm_parity.sh, v022_refusal_coverage.py,
-# pci_delta.py --check and g01_anchors.py. It is NOT the gate and NOT evidence:
-# it prints so at its start and end, never prints the gate's PASS line, refuses
-# --strict and --profile, and run_managed.sh records a --fast run with
-# gate_run=no gate_strict=no gate_tier=fast, so release_check.sh can never take
-# it for a gate receipt. The full gate at the final head stays the evidence.
+# THE LANE (`--lane`) replaced the fast tier (`--fast`, retired by
+# tasks/gate-lane-spec.md GL-5): its checks the full gate did not run
+# (g01_anchors.py, test_harness_skip.sh, vm_parity.sh) are full-gate stages now.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -66,8 +60,6 @@ cd "$ROOT"
 STRICT=0
 USE_NEXTEST=0
 PROFILE=""
-FAST=0
-FAST_BASE=""
 LANE=""        # lane | units (--lane-units=, the audit's internal flag)
 LANE_PLAN=0
 LANE_UNITS=""
@@ -81,8 +73,7 @@ for arg in "$@"; do
     # change what AXON_HARNESS_STRICT means for repository-wide qualification.
     --profile=v022-stage5) PROFILE=v022-stage5 ;;
     --profile=*) echo "gate: unknown profile ${arg#--profile=} (known: v022-stage5)" >&2; exit 2 ;;
-    --fast) FAST=1 ;;
-    --base=?*) FAST_BASE="${arg#--base=}" ;;
+    --fast|--base=*) echo "gate: --fast (and --base=) was retired by tasks/gate-lane-spec.md GL-5; use --lane" >&2; exit 2 ;;
     --lane) LANE=lane ;;
     --lane=*) echo "gate: --lane takes no ref; the base is the newest audit (see --plan)" >&2; exit 2 ;;
     --plan) LANE_PLAN=1 ;;
@@ -93,17 +84,7 @@ done
 if [ -n "$PROFILE" ] && [ "$STRICT" != 1 ]; then
   echo "gate: --profile=$PROFILE certifies a stage and requires --strict" >&2; exit 2
 fi
-# The fast tier certifies nothing, so it takes no flag that certifies something.
-# Refused before any side effect: `--fast --strict` must never run, let alone
-# leave a log or a receipt that reads as a strict gate.
-if [ "$FAST" = 1 ] && { [ "$STRICT" = 1 ] || [ -n "$PROFILE" ] || [ "$USE_NEXTEST" = 1 ]; }; then
-  echo "gate: --fast is the fast tier, NOT the gate; it cannot be combined with --strict, --profile or --nextest" >&2; exit 2
-fi
-if [ -n "$FAST_BASE" ] && [ "$FAST" != 1 ]; then
-  echo "gate: --base=REF selects the fast tier's changed crates and requires --fast" >&2; exit 2
-fi
 TIER="gate"
-[ "$FAST" = 1 ] && TIER="fast tier (NOT the gate)"
 
 # THE LANE (`--lane`, tasks/gate-lane-spec.md GL-4) is NOT the gate either: it
 # runs the always-run stages and the units whose audited read set (GL-3,
@@ -115,8 +96,8 @@ TIER="gate"
 # The selection logic lives in gate_lane.py, not here: the clippy-coverage check
 # reads this file's `-p <crate>` text, so crate lists written here for the lane
 # would fake coverage.
-if [ -n "$LANE" ] && { [ "$STRICT" = 1 ] || [ -n "$PROFILE" ] || [ "$USE_NEXTEST" = 1 ] || [ "$FAST" = 1 ]; }; then
-  echo "gate: --lane is NOT the gate; it cannot be combined with --strict, --profile, --nextest or --fast" >&2; exit 2
+if [ -n "$LANE" ] && { [ "$STRICT" = 1 ] || [ -n "$PROFILE" ] || [ "$USE_NEXTEST" = 1 ]; }; then
+  echo "gate: --lane is NOT the gate; it cannot be combined with --strict, --profile or --nextest" >&2; exit 2
 fi
 if [ "$LANE_PLAN" = 1 ] && [ "$LANE" != lane ]; then
   echo "gate: --plan prints a lane's selection and requires --lane" >&2; exit 2
@@ -422,97 +403,13 @@ skip_notice() {
   echo "  Set AXON_HARNESS_STRICT=1 to make any skip fatal."
 }
 
-# Crates excused from clippy (read by the coverage check below and by the fast
-# tier). axon-guest-kernel: freestanding no_std. On the host target clippy fails
+# Crates excused from clippy (read by the coverage check below).
+# axon-guest-kernel: freestanding no_std. On the host target clippy fails
 # with "unwinding panics are not supported without std" and a duplicate
 # `panic_impl` lang item — artifacts of the wrong target, not lints. It is built
 # and checked by scripts/build-guest-image.sh with -Z build-std and its own
 # target spec.
 CLIPPY_EXCUSED="axon-guest-kernel"
-
-# ── THE FAST TIER (--fast) ──────────────────────────────────────────────────
-# The lane-acceptance subset, for the inner loop. NOT the gate and NOT evidence:
-# it says so first and last, never prints the gate's PASS line, and exits before
-# any full-gate stage. A green fast tier means "worth running the gate", nothing
-# more.
-if [ "$FAST" = 1 ]; then
-  fast_banner() {
-    echo "════════════════════════════════════════════════════════════════════"
-    echo "  FAST TIER — NOT THE GATE, NOT EVIDENCE. $1"
-    echo "  It certifies nothing. The evidence of record is ./scripts/gate.sh"
-    echo "  (and --strict) run at the final head."
-    echo "════════════════════════════════════════════════════════════════════"
-  }
-  fast_banner "Lane-acceptance subset only."
-  echo "── fast: source checks (parallel: fmt, refusal coverage, pci_delta, anchors) ──"
-  par "cargo fmt --all --check (run: cargo fmt --all)" cargo fmt --all -- --check
-  par "v0.22 protected refusal-site coverage" python3 -B scripts/v022_refusal_coverage.py
-  par "pci_delta.py --check" python3 -B scripts/pci_delta.py --check
-  par "G01 mutation anchors (scripts/g01_anchors.py)" python3 -B scripts/g01_anchors.py
-  par "cortex repair-path receipt (scorecard.py receipt --check)" \
-    python3 -B crates/axon-cortex/benchmarks/scorecard/scorecard.py receipt --check
-  par_join
-
-  # Clippy on the crates this lane changed: every crates/<name>/ touched between
-  # the merge base with --base (default main) and the working tree, untracked
-  # files included. Crate directory = package name (the coverage check below
-  # relies on the same identity). axon-core is linted as the strict gate lints
-  # its interpreter build (--no-default-features --all-targets), and again
-  # under serde-json, the only configuration that compiles lsp.rs.
-  fast_base="${FAST_BASE:-main}"
-  fast_mb="$(git merge-base "$fast_base" HEAD)" || fail "--base=$fast_base has no merge base with HEAD"
-  echo "── fast: clippy -D warnings on the crates changed since $fast_base ($(git rev-parse --short "$fast_mb")) ──"
-  fast_crates=()
-  while IFS= read -r c; do
-    [ -f "crates/$c/Cargo.toml" ] || continue  # a deleted crate has nothing to lint
-    case " $CLIPPY_EXCUSED " in *" $c "*) echo "  $c: excused from clippy (CLIPPY_EXCUSED)"; continue ;; esac
-    fast_crates+=("$c")
-  done < <({ git diff --name-only "$fast_mb" && git ls-files --others --exclude-standard; } \
-             | sed -n 's#^crates/\([^/]*\)/.*#\1#p' | sort -u)
-  if [ "${#fast_crates[@]}" -eq 0 ]; then
-    echo "  no crate changed since the merge base: nothing to lint"
-  else
-    echo "  crates: ${fast_crates[*]}"
-    fast_pk=()
-    for c in "${fast_crates[@]}"; do
-      if [ "$c" = axon-core ]; then
-        cargo clippy --locked --no-default-features -p axon-core --all-targets -- -D warnings \
-          || fail "clippy axon-core (--no-default-features --all-targets)"
-        # lsp.rs compiles only under serde-json, which the line above never
-        # enables; without this an lsp.rs lint first surfaces at the full gate.
-        echo "  axon-core: serde-json clippy (axon lsp / axon parse --json)"
-        cargo clippy --locked --no-default-features --features serde-json -p axon-core --all-targets -- -D warnings \
-          || fail "serde-json clippy (axon lsp / axon parse --json)"
-      else
-        fast_pk+=(-p "$c")
-      fi
-    done
-    if [ "${#fast_pk[@]}" -gt 0 ]; then
-      cargo clippy --locked "${fast_pk[@]}" --all-targets -- -D warnings \
-        || fail "clippy (--all-targets) on ${fast_pk[*]}"
-    fi
-  fi
-
-  echo "── fast: tests axon-core (--no-default-features) ──"
-  cargo test --locked -p axon-core --no-default-features || fail "tests axon-core (--no-default-features)"
-  # The cortex CLI suite and the axon-psv runner tests run the interpreter at
-  # the target dir's debug/axon; build it here, as the gate does, rather than
-  # trust whatever binary was left there.
-  echo "── fast: axon-cortex and axon-psv suites ──"
-  cargo build --locked -q -p axon-core --no-default-features --bin axon \
-    || fail "interpreter build (needed by the axon-cortex and axon-psv suites)"
-  cargo test --locked -p axon-cortex || fail "axon-cortex suite"
-  cargo test --locked -p axon-psv || fail "axon-psv suite"
-  echo "── fast: vm_parity.sh (tree vs VM) ──"
-  ./scripts/vm_parity.sh || fail "vm_parity.sh"
-  bash scripts/test_harness_skip.sh || fail "harness skip rules/shapes"
-
-  echo ""
-  skip_notice
-  fast_banner "All fast-tier stages passed."
-  echo "fast tier: all stages passed — NOT the gate, NOT evidence"
-  exit 0
-fi
 
 # ── PARALLEL GROUP: source-only checks ──────────────────────────────────────
 # Every stage in this group reads the source tree and nothing else this gate
@@ -767,6 +664,18 @@ stage_gate_lane() {
     || fail "gate lane self-test or registry check (scripts/test_gate_lane.py, scripts/gate_lane.py check)"
 }
 
+# Two checks the retired fast tier ran and this gate did not (GL-5): every
+# active G01 mutation row still anchors exactly once (else the hours-long
+# mutation run reports it stale only at its end), and the parity harnesses'
+# skip rules and shapes (test_harness_skip.sh; parity_all.sh runs it again under
+# --strict). Both read only the source tree: seconds, no cargo.
+stage_g01_anchors() {
+  python3 -B scripts/g01_anchors.py || fail "G01 mutation anchors (scripts/g01_anchors.py)"
+}
+stage_harness_skip() {
+  bash scripts/test_harness_skip.sh || fail "harness skip rules/shapes (scripts/test_harness_skip.sh)"
+}
+
 if lane_runs P; then
 par "VISION.md focus" stage_vision_focus
 par "artifact admission" stage_artifact_admission
@@ -790,6 +699,8 @@ par "cortex repair-path receipt" stage_cortex_receipt
 par "protected benchmark sets" stage_protected_sets
 par "completeness manifest" stage_completeness
 par "gate lane self-test" stage_gate_lane
+par "G01 mutation anchors" stage_g01_anchors
+par "harness skip rules/shapes" stage_harness_skip
 par_join
 fi
 
@@ -1087,7 +998,7 @@ if lane_runs S15; then
 stage_begin S15 "clippy coverage"
 echo "── gate: clippy coverage (every crate gated or excused) ──────────"
 # CLIPPY_EXCUSED (the crates excused, each with its reason) is defined near the
-# top of this file: the fast tier reads it too.
+# top of this file.
 # tr: `sort -u` is newline-separated, and the `case` glob below matches on
 # SPACES. Without it nothing ever matches — the check fails closed (every crate
 # "uncovered") rather than open, but it would still have been wrong.
@@ -1152,6 +1063,20 @@ if lane_runs S17; then
 stage_begin S17 "codegen rebuild"
 echo "── gate: restore the codegen binary after the no-default test stage ──"
 lane_cargo B6 cargo build --locked -q -p axon-core --bin axon || fail "codegen rebuild after tests"
+stage_end
+fi
+
+# R50 §8 parity corpus: `axon run` under AXON_ENGINE=vm byte-identical to the
+# tree-walker. Only the retired fast tier ran it (GL-5). It wants the RELEASE
+# interpreter (the tree-walker runs qsort in ~6 s there and ~58 s in debug,
+# against a 30 s per-run limit), built here as its own step so the build is a
+# registry build row and the binary is the one this target dir holds.
+if lane_runs S22; then
+stage_begin S22 "vm parity (tree vs VM)"
+echo "── gate: vm_parity.sh (AXON_ENGINE=vm vs tree, release interpreter) ──"
+lane_cargo B7 cargo build --locked -q --release -p axon-core --no-default-features --bin axon \
+  || fail "release interpreter build (vm_parity.sh)"
+AXON_BIN="$(built_bin axon "" release)" ./scripts/vm_parity.sh || fail "vm_parity.sh (tree vs VM)"
 stage_end
 fi
 

@@ -23,7 +23,9 @@
     "cortex repair-path receipt",
     "protected benchmark sets",
     "completeness manifest",
-    "gate lane self-test"
+    "gate lane self-test",
+    "G01 mutation anchors",
+    "harness skip rules/shapes"
   ],
   "stages": [
     {"id": "S01", "banner": "managed-run supervision", "class": "always"},
@@ -50,6 +52,7 @@
     {"id": "S16", "banner": "axon-core tests", "class": "selectable", "split": "per-target",
      "split_cmd": "cargo test --locked -p axon-core --no-default-features"},
     {"id": "S17", "banner": "codegen rebuild", "class": "selectable", "split": "none", "iff": "S16"},
+    {"id": "S22", "banner": "vm parity (tree vs VM)", "class": "selectable", "split": "none"},
     {"id": "S19", "banner": "lockfile", "class": "always"},
     {"id": "S20", "banner": "required crate verification (manifest)", "class": "selectable", "split": "per-target",
      "split_cmd": "manifest",
@@ -66,6 +69,7 @@
     {"id": "B3", "stage": "S07", "cmd": "cargo build -q -p axon-fabric --bins"},
     {"id": "B4", "stage": "S08", "cmd": "cargo build -q -p axon-psv --example psv_dev"},
     {"id": "B5", "stage": "S11", "cmd": "cargo build --locked -p axon-core"},
-    {"id": "B6", "stage": "S17", "cmd": "cargo build --locked -q -p axon-core --bin axon"}
+    {"id": "B6", "stage": "S17", "cmd": "cargo build --locked -q -p axon-core --bin axon"},
+    {"id": "B7", "stage": "S22", "cmd": "cargo build --locked -q --release -p axon-core --no-default-features --bin axon"}
   ]
 }

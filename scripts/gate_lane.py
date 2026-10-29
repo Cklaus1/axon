@@ -762,13 +762,13 @@ def cmd_audit(args):
     git(ROOT, "clone", "-q", "--shared", "--no-checkout", ROOT, clone)
     git(clone, "checkout", "-q", "--detach", A)
     os.makedirs(sent)
-    target = os.environ.get("CARGO_TARGET_DIR") or os.path.join(clone, "target")
+    meta = cargo_metadata(clone)
+    target = meta["target_directory"]  # cargo's answer, CARGO_TARGET_DIR and config included
     os.makedirs(os.path.join(target, "debug", "examples"), exist_ok=True)
     env = dict(os.environ, CARGO_TARGET_DIR=target)
     if check(clone):
         print("gate_lane audit: the registry disagrees with gate.sh at A; run `gate_lane.py check`", file=sys.stderr)
         return 1
-    meta = cargo_metadata(clone)
     steps = derive(clone, meta=meta)
     gate = read_gate(clone)
     att = Attributor([s["id"] for s in steps])

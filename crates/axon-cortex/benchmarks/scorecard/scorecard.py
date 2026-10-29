@@ -1504,8 +1504,8 @@ def trend_lines(runs, norms, idx):
 def receipt_lines(runs, norms, idx, waivers, spec, root):
     cfg = spec["config"]
     out = ["", "## Repair-path receipts", "",
-           "`python3 scorecard.py receipt --check` (in `scripts/gate.sh`, the gate and "
-           "`--fast`) passes when the REPAIR DIGEST of the working tree equals main's (the "
+           "`python3 scorecard.py receipt --check` (in `scripts/gate.sh`'s parallel group, "
+           "which `--lane` also runs) passes when the REPAIR DIGEST of the working tree equals main's (the "
            "digest at `git merge-base HEAD origin/main`), or when this history holds, for "
            "the working tree's digest, a receipt run (below) judged not worse than main's "
            "run (the incumbent it recorded), or a waiver. The latest such run at a digest "

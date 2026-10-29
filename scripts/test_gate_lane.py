@@ -514,6 +514,32 @@ def run_managed_records_lane_tier():
 
 
 
+# ── GL-5 ────────────────────────────────────────────────────────────────────
+
+@test
+def fast_is_refused_with_pointer_to_lane():
+    for args in (["--fast"], ["--fast", "--base=main"], ["--base=main"]):
+        r = gate(*args)
+        assert r.returncode == 2 and "use --lane" in r.stderr, (args, r.returncode, r.stderr)
+
+
+@test
+def fast_only_checks_run_in_full_gate():
+    text = open(GATE).read()
+    code = "\n".join(l for l in text.split("\n") if not l.lstrip().startswith("#"))
+    assert 'if [ "$FAST" = 1 ]' not in code and "fast_banner" not in code and "FAST_BASE" not in code
+    for name, fn in (("G01 mutation anchors", "stage_g01_anchors"), ("harness skip rules/shapes", "stage_harness_skip")):
+        assert f'\npar "{name}" {fn}\n' in code, name
+    assert "python3 -B scripts/g01_anchors.py" in gate_functions("stage_g01_anchors")
+    assert "bash scripts/test_harness_skip.sh" in gate_functions("stage_harness_skip")
+    s22 = code[code.index('stage_begin S22 '):]
+    s22 = s22[:s22.index("stage_end")]
+    assert 'AXON_BIN="$(built_bin axon "" release)" ./scripts/vm_parity.sh' in s22, s22
+    assert "lane_cargo B7 cargo build --locked -q --release -p axon-core --no-default-features --bin axon" in s22
+    rm = open(os.path.join(ROOT, "scripts", "run_managed.sh")).read()
+    assert "tier=fast" not in rm and "--fast) fast=yes" not in rm
+
+
 def main(argv):
     want = set(argv)
     failed = 0
