@@ -177,7 +177,8 @@ pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
         })
         .collect();
     let mut check_ctx = checker::CheckCtx::new(uri, fn_sigs, infer_ctx.struct_fields.clone())
-        .with_user_fn_sigs(&infer_ctx.user_fn_sigs);
+        .with_user_fn_sigs(&infer_ctx.user_fn_sigs)
+        .with_method_receiver_type_params(&infer_ctx.method_receiver_type_params);
     let check_errors = check_ctx.check_program(&program, HashMap::new());
 
     for e in &check_errors {

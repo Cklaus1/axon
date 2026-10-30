@@ -784,6 +784,13 @@ pub struct InferCtx {
     /// CS2-3b: the constraints of the bare-`Dict` fns' bodies, unified before
     /// the rest (`solve_pending`); `solve` starts from it.
     partial: Substitution,
+    /// CS2-5: each method call whose receiver was still a type variable when
+    /// inferred (an untyped lambda param), keyed by the receiver's address.
+    method_receiver_vars: Vec<(usize, Type)>,
+    /// CS2-5: the receivers of `method_receiver_vars` that resolved to a
+    /// declared type parameter, with its name. The checker looks the method
+    /// up in that parameter's bounds, as for a receiver declared `x: T`.
+    pub method_receiver_type_params: HashMap<usize, String>,
     /// Variant name lists for user-defined enum types.
     pub enum_variants: HashMap<String, Vec<String>>,
     /// Phase 5: named refinement types → their (erased) base AxonType. A
@@ -879,6 +886,8 @@ impl InferCtx {
             dict_owned_vars: HashMap::new(),
             implicit_fn_params: HashMap::new(),
             partial: Substitution::new(),
+            method_receiver_vars: Vec::new(),
+            method_receiver_type_params: HashMap::new(),
             enum_variants: HashMap::new(),
             refinement_base: HashMap::new(),
             enum_variant_fields: HashMap::new(),
@@ -997,7 +1006,11 @@ impl InferCtx {
 
     /// CS2-3b: after `fns`' bodies are solved, a bare-`Dict` var a body fixed
     /// keeps its type (callers must agree); one the body left free becomes an
-    /// implicit type param of the fn, instantiated fresh per call.
+    /// implicit type param of the fn, instantiated fresh per call. One the
+    /// body bound to a declared `T` (which a body sees as `Deferred("T")`)
+    /// reads `Dict(T)` in the signature, so each call instantiates it with
+    /// that call's `T`: `put<T>(d: Dict, v: T) { dict_set(d, "x", v) }` no
+    /// longer lets a caller write a `str` into an `i64` dict.
     fn generalize_dict_vars(&mut self, fns: &[&str]) {
         for &name in fns {
             let Some(owned) = self.dict_owned_vars.get(name) else {
@@ -1007,13 +1020,12 @@ impl InferCtx {
             for &v in owned {
                 collect_vars(&self.partial.apply(&Type::Var(v)), &mut free);
             }
-            if free.is_empty() {
-                continue;
-            }
+            let declared = self.generic_fn_params.get(name).cloned().unwrap_or_default();
             let partial = &self.partial;
             let generalize = |t: &Type| {
                 partial.apply(t).map_leaves(&mut |l| match l {
                     Type::Var(w) if free.contains(&w) => Type::TypeParam(format!("__dv{w}")),
+                    Type::Deferred(n) if declared.contains(&n) => Type::TypeParam(n),
                     l => l,
                 })
             };
@@ -1024,9 +1036,11 @@ impl InferCtx {
                 },
                 None => continue,
             };
-            let names: Vec<String> = free.iter().map(|w| format!("__dv{w}")).collect();
             self.insert_user_fn_sig(name, sig);
-            self.implicit_fn_params.insert(name.to_string(), names);
+            if !free.is_empty() {
+                let names: Vec<String> = free.iter().map(|w| format!("__dv{w}")).collect();
+                self.implicit_fn_params.insert(name.to_string(), names);
+            }
         }
     }
 
@@ -2055,6 +2069,10 @@ impl InferCtx {
                 args,
             } => {
                 let recv_ty = self.infer_expr(receiver, scope, ret_ty);
+                if matches!(recv_ty, Type::Var(_)) {
+                    self.method_receiver_vars
+                        .push((receiver.as_ref() as *const Expr as usize, recv_ty.clone()));
+                }
                 // Special-case Chan<T> methods: recv() → T, send(T) → Unit, clone() → Chan<T>.
                 match (method.as_str(), &recv_ty) {
                     ("recv", Type::Chan(inner)) => {
@@ -2784,6 +2802,13 @@ impl InferCtx {
             }
         }
         let subst = self.solve();
+        for (recv, ty) in std::mem::take(&mut self.method_receiver_vars) {
+            // A fn body sees its declared `T` as `Deferred("T")`; the checker
+            // keeps only names that are the enclosing fn's type params.
+            if let Type::TypeParam(n) | Type::Deferred(n) = subst.apply(&ty) {
+                self.method_receiver_type_params.insert(recv, n);
+            }
+        }
         // Resolve pending generic instantiations now that the substitution is final.
         for (_, type_args) in &mut self.call_instantiations {
             for ty in type_args.iter_mut() {

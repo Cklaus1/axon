@@ -7531,7 +7531,8 @@ fn run_check_pipeline_inner(
         .collect();
     let mut check_ctx =
         axon_core::checker::CheckCtx::new(&file, fn_sigs, infer_ctx.struct_fields.clone())
-            .with_user_fn_sigs(&infer_ctx.user_fn_sigs);
+            .with_user_fn_sigs(&infer_ctx.user_fn_sigs)
+            .with_method_receiver_type_params(&infer_ctx.method_receiver_type_params);
     let check_errors = check_ctx.check_program(program, std::collections::HashMap::new());
     for err in &check_errors {
         let mut msg = err.message.clone();

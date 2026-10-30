@@ -42792,6 +42792,12 @@ fn generic_param_method_and_generic_struct_args_are_checked() {
             "E0403",
             "add `T: Trait`",
         ),
+        (
+            "g_lambda_param_unbound",
+            "trait Shape {\n  fn area(self) -> i64\n}\ntype Sq = { s: i64 }\nimpl Shape for Sq {\n  fn area(self: Sq) -> i64 { self.s }\n}\nfn f<T: Shape>(xs: [T]) -> i64 { arr_fold(xs, 0, |a, x| a + x.perim()) }\nfn main() -> i64 {\n  println(to_str(f([Sq { s: 1 }])))\n  0\n}\n",
+            "E0403",
+            "its bound `Shape` does not declare it",
+        ),
     ] {
         let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
         assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
@@ -42882,6 +42888,12 @@ fn dict_values_are_typed() {
             "E0102",
             "Dict keys are str",
         ),
+        (
+            "d_generic_put",
+            "fn put<T>(d: Dict, v: T) { dict_set(d, \"x\", v) }\nfn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", 1)\n  put(d, \"s\")\n  println(to_str(dict_get_or(d, \"x\", 0) + 1))\n  0\n}\n",
+            "E0102",
+            "type mismatch in arg 1 of `put` (expected i64), found str",
+        ),
     ] {
         let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
         assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
@@ -42913,6 +42925,11 @@ fn dict_values_are_typed() {
             "d_generic_v",
             "fn count<V>(d: Dict<str, V>) -> i64 { dict_len(d) }\nfn main() -> i64 {\n  let a: Dict<str, i64> = dict_new()\n  dict_set(a, \"k\", 1)\n  let b = dict_new()\n  dict_set(b, \"k\", \"v\")\n  println(to_str(count(a) + count(b)))\n  0\n}\n",
             "2\n",
+        ),
+        (
+            "d_generic_put_ok",
+            "fn put<T>(d: Dict, v: T) { dict_set(d, \"x\", v) }\nfn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", 1)\n  put(d, 5)\n  println(to_str(dict_get_or(d, \"x\", 0) + 1))\n  0\n}\n",
+            "6\n",
         ),
     ] {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);

@@ -490,6 +490,11 @@ pub struct CheckCtx {
     /// sig of a call that `builtins::call_prefers_builtin` sends to the user
     /// fn although `fn_sigs` holds the builtin's (CS-4). Set by the caller.
     pub user_fn_sigs: HashMap<String, FnSig>,
+    /// CS2-5: inference's `method_receiver_type_params` - a method receiver
+    /// with no declared type (an untyped lambda param) that resolved to a
+    /// declared type parameter, keyed by the receiver's address. Set by the
+    /// caller ([`CheckCtx::with_method_receiver_type_params`]).
+    method_receiver_type_params: HashMap<usize, String>,
     /// O-SF-01: the `fn(..) -> ..` type of each top-level `let` bound to a fn
     /// value ([`CheckCtx::fn_value_type`]), so a call through it is checked.
     top_let_fn_types: HashMap<String, Type>,
@@ -656,6 +661,7 @@ impl CheckCtx {
                 .map(|(k, s)| (k, erase_app_sig(s)))
                 .collect(),
             user_fn_sigs: HashMap::new(),
+            method_receiver_type_params: HashMap::new(),
             top_let_fn_types: HashMap::new(),
             struct_fields: struct_fields
                 .into_iter()
@@ -713,6 +719,12 @@ impl CheckCtx {
                 )
             })
             .collect();
+        self
+    }
+
+    /// Set [`CheckCtx::method_receiver_type_params`] from inference's (CS2-5).
+    pub fn with_method_receiver_type_params(mut self, recvs: &HashMap<usize, String>) -> Self {
+        self.method_receiver_type_params = recvs.clone();
         self
     }
 
@@ -4446,12 +4458,23 @@ impl CheckCtx {
                 // unbounded `T`, or a bounded one whose traits all lack the
                 // method, is E0403: the call checked clean and panicked "no
                 // method" at run time for an argument without it. A bound naming
-                // a trait this program does not declare is left unchecked.
+                // a trait this program does not declare is left unchecked. A
+                // receiver the checker cannot type (an untyped lambda param,
+                // `arr_fold(xs, 0, |a, x| a + x.perim())` over `xs: [T]`) uses
+                // the type parameter inference resolved it to.
                 let generic_param = match &recv_ty {
                     Type::Struct(n) | Type::Enum(n) | Type::TypeParam(n) => self
                         .current_generic_params
                         .get(n)
                         .map(|b| (n.clone(), b.clone())),
+                    Type::Unknown => self
+                        .method_receiver_type_params
+                        .get(&(receiver.as_ref() as *const Expr as usize))
+                        .and_then(|n| {
+                            self.current_generic_params
+                                .get(n)
+                                .map(|b| (n.clone(), b.clone()))
+                        }),
                     _ => None,
                 };
                 if let Some((tp, bounds)) = &generic_param {
