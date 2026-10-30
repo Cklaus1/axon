@@ -35453,7 +35453,7 @@ fn main() -> i64 {
     }
     let x = inc(1)
     let y = inc(2)
-    println(to_str(x) + " " + to_str(y) + " " + to_str(acc[0]))
+    println(to_str(x) + " " + to_str(y) + " " + to_str(inc(0)))
 
     let d = [1, 2, 3]
     let r = bump(d)
@@ -35477,7 +35477,7 @@ fn main() -> i64 {
 "#;
     assert_eq!(
         interp_stdout("ax06_values", src),
-        "1 10\n20 2\n5 50 60 6\n5 500\n2 9 3 30\n7 70\n1 3 0\n102 1\n3 2 200\n10 20 3"
+        "1 10\n20 2\n5 50 60 6\n5 500\n2 9 3 30\n7 70\n1 3 3\n102 1\n3 2 200\n10 20 3"
     );
 }
 
@@ -35555,7 +35555,7 @@ fn main() -> i64 {
     let fs = [inc]
     let q = fs[0](4)
     let r = inc(5)
-    println(to_str(x) + " " + to_str(y) + " " + to_str(z) + " " + to_str(q) + " " + to_str(r) + " " + to_str(acc[0]))
+    println(to_str(x) + " " + to_str(y) + " " + to_str(z) + " " + to_str(q) + " " + to_str(r) + " " + to_str(inc(0)))
 
     let log = []
     let rec = |k: i64| {
@@ -35563,7 +35563,7 @@ fn main() -> i64 {
         len(log)
     }
     let twice = |k: i64| rec(k) * 10 + rec(k + 1)
-    println(to_str(rec(1)) + " " + to_str(twice(5)) + " " + to_str(rec(9)) + " " + to_str(len(log)))
+    println(to_str(rec(1)) + " " + to_str(twice(5)) + " " + to_str(rec(9)) + " " + to_str(rec(0)))
 
     let txt = ""
     let add = |p: str| {
@@ -35571,13 +35571,13 @@ fn main() -> i64 {
         len(txt)
     }
     add("ab")
-    println(to_str(add("cd")) + " [" + txt + "]")
+    println(to_str(add("cd")) + " " + to_str(add("")))
     0
 }
 "#;
     assert_eq!(
         interp_stdout("ax31_values", src),
-        "6 2 6\n2 1 1 1\nabcabc ab ab ab ab\nxz xy xzw!\n5 7 99\n1 3 6 10 15 0\n1 23 4 0\n4 []"
+        "6 2 6\n2 1 1 1\nabcabc ab ab ab ab\nxz xy xzw!\n5 7 99\n1 3 6 10 15 15\n1 23 4 5\n4 4"
     );
 }
 
@@ -35586,10 +35586,10 @@ fn interp_string_and_array_builder_loops_are_linear() {
     // AX-31: each of these loops copied its whole string or array per
     // iteration (a `str` read, `arr_push`, `arr_concat`, a closure writing its
     // captured array), so at n = 200k they took minutes under `axon run`.
-    let src = "fn main() -> i64 {\n let n = 200000\n let t = \"\"\n for i in 0..n { t = t + \"x\" }\n let m = 0\n for i in 0..len(t) { m = m + len(t) }\n let xs = []\n for i in 0..n { xs = arr_push(xs, i) }\n let ys = []\n for i in 0..n { ys = arr_concat(ys, [i]) }\n let zs = arr_repeat(0, n)\n let set = |i: i64| {\n  zs[i] = i + 1\n  zs[i] + zs[i / 2]\n }\n let k = 0\n for i in 0..n { k = k + set(i) }\n println(to_str(m) + \" \" + to_str(len(xs)) + \" \" + to_str(xs[n - 1]) + \" \" + to_str(ys[n - 1]) + \" \" + to_str(k) + \" \" + to_str(zs[n - 1]))\n 0\n}\n";
+    let src = "fn main() -> i64 {\n let n = 200000\n let t = \"\"\n for i in 0..n { t = t + \"x\" }\n let m = 0\n for i in 0..len(t) { m = m + len(t) }\n let xs = []\n for i in 0..n { xs = arr_push(xs, i) }\n let ys = []\n for i in 0..n { ys = arr_concat(ys, [i]) }\n let zs = arr_repeat(0, n)\n let set = |i: i64| {\n  zs[i] = i + 1\n  zs[i] + zs[i / 2]\n }\n let k = 0\n for i in 0..n { k = k + set(i) }\n println(to_str(m) + \" \" + to_str(len(xs)) + \" \" + to_str(xs[n - 1]) + \" \" + to_str(ys[n - 1]) + \" \" + to_str(k) + \" \" + to_str(set(n - 1)))\n 0\n}\n";
     assert_eq!(
         interp_stdout("ax31_builders", src),
-        "40000000000 200000 199999 199999 30000200000 0"
+        "40000000000 200000 199999 199999 30000200000 300000"
     );
 }
 
@@ -35685,7 +35685,7 @@ fn main() -> i64 {
         tick
     }
     let run = arr_map([1, 2, 3], bump)
-    println(to_str(total) + " " + to_str(seen) + " " + to_str(run[2]) + " " + to_str(bump(10)) + " " + to_str(tick))
+    println(to_str(total) + " " + to_str(run[2]) + " " + to_str(bump(10)) + " " + to_str(bump(0)))
     let evens = arr_filter(arr_range(0, 10), |v: i64| v % 2 == 0 && v > m)
     let sorted = arr_sort_by([3, 1, 2], |a: i64, b: i64| b - a)
     println(to_str(len(evens)) + " " + to_str(sorted[0]))
@@ -35712,7 +35712,7 @@ fn main() -> i64 {
 "#;
     assert_eq!(
         interp_stdout("ax40_closures", src),
-        "12 3\n100 102 106\n101\n8 101\n12 21 13\n11\n125 11\n40 0 6 16 0\n2 3\n0 1\n1 3 6"
+        "12 3\n100 102 106\n101\n8 101\n12 21 13\n11\n125 11\n40 6 16 16\n2 3\n0 1\n1 3 6"
     );
 }
 
@@ -35825,7 +35825,7 @@ fn main() -> i64 {
         let g = |b: i64| b + z + k
         g(1)
     }
-    println(to_str(f(1)) + " " + to_str(inc()) + " " + to_str(cnt) + " " + to_str(outer(5)))
+    println(to_str(f(1)) + " " + to_str(inc()) + " " + to_str(inc() - k) + " " + to_str(outer(5)))
 
     // Place assignment and &mut on slotted locals.
     let xs = [1, 2, 3]
@@ -35845,7 +35845,7 @@ fn main() -> i64 {
 "#;
     assert_eq!(
         interp_stdout("ax53_slots", src),
-        "51\n40 4 0\n5 502\n20100\n13 100\n14 7\n12 3\n8 9 0 19\n6 20 10\n3.25 abcd true true"
+        "51\n40 4 0\n5 502\n20100\n13 100\n14 7\n12 3\n8 9 9 19\n6 20 10\n3.25 abcd true true"
     );
 }
 
@@ -35856,8 +35856,8 @@ fn interp_builtin_closure_writing_a_captured_array_is_linear() {
     // per-call copy of the captures made each write copy the whole array
     // (quadratic: minutes at n = 200k). Many unrelated bindings are in scope
     // and must not be captured or copied either.
-    let src = "fn main() -> i64 {\n let n = 200000\n let p1 = [1, 2, 3]\n let p2 = \"pad\"\n let p3 = arr_repeat(1, 1000)\n let zs = arr_repeat(0, n)\n let k = arr_fold(arr_range(0, n), 0, |acc: i64, i: i64| {\n  zs[i] = i + 1\n  acc + zs[i] + zs[i / 2]\n })\n println(to_str(k) + \" \" + to_str(zs[n - 1]) + \" \" + to_str(len(p1) + len(p2) + len(p3)))\n 0\n}\n";
-    assert_eq!(interp_stdout("ax40_fold_lend", src), "30000200000 0 1006");
+    let src = "fn main() -> i64 {\n let n = 200000\n let p1 = [1, 2, 3]\n let p2 = \"pad\"\n let p3 = arr_repeat(1, 1000)\n let zs = arr_repeat(0, n)\n let k = arr_fold(arr_range(0, n), 0, |acc: i64, i: i64| {\n  zs[i] = i + 1\n  acc + zs[i] + zs[i / 2]\n })\n println(to_str(k) + \" \" + to_str(len(p1) + len(p2) + len(p3)))\n 0\n}\n";
+    assert_eq!(interp_stdout("ax40_fold_lend", src), "30000200000 1006");
 }
 
 #[test]
@@ -37300,11 +37300,12 @@ fn vm_closure_fold_no_tree_nodes() {
 
 /// R50 S4: a lambda captures by value at creation (later assignments to the
 /// captured local do not reach it), an assignment to a captured variable
-/// persists in the closure's capture cell across calls (T40) but not back to
-/// the defining scope, and a parameter shadows a captured name.
+/// persists in the closure's capture cell across calls (T40), and a parameter
+/// shadows a captured name. (Reading the defining binding after the closure
+/// writes it is E0607 since CS2-1, so the program reads it through `inc`.)
 #[test]
 fn vm_closure_capture_semantics() {
-    let src = "fn main() -> i64 {\n    let a = 1\n    let b = 10\n    let f = |x: i64| x + a + b\n    a = 100\n    println(to_str(f(1)))\n    let n = 0\n    let inc = || {\n        n = n + 1\n        n\n    }\n    println(to_str(inc()))\n    println(to_str(inc()))\n    println(to_str(n))\n    let g = |a: i64| a * b\n    println(to_str(g(3)))\n    let k = |x: i64| {\n        let a = x + 1\n        a\n    }\n    println(to_str(k(4)))\n    println(to_str(a))\n    0\n}\n";
+    let src = "fn main() -> i64 {\n    let a = 1\n    let b = 10\n    let f = |x: i64| x + a + b\n    a = 100\n    println(to_str(f(1)))\n    let n = 0\n    let inc = || {\n        n = n + 1\n        n\n    }\n    println(to_str(inc()))\n    println(to_str(inc()))\n    println(to_str(inc()))\n    let g = |a: i64| a * b\n    println(to_str(g(3)))\n    let k = |x: i64| {\n        let a = x + 1\n        a\n    }\n    println(to_str(k(4)))\n    println(to_str(a))\n    0\n}\n";
     let (code, stdout, _) = vm_scalar_case(
         "closure_capture",
         src,
@@ -37318,7 +37319,7 @@ fn vm_closure_capture_semantics() {
     );
     assert_eq!(
         (code, stdout.as_str()),
-        (Some(0), "12\n1\n2\n0\n30\n5\n100\n")
+        (Some(0), "12\n1\n2\n3\n30\n5\n100\n")
     );
 }
 
@@ -37351,7 +37352,7 @@ fn vm_closure_calls_and_recursion() {
 /// returning the wrong type fails the same way under both engines.
 #[test]
 fn vm_closure_copied_path_and_errors() {
-    let src = "fn main() -> i64 {\n    let xs = arr_range(0, 100)\n    let c = 0\n    let g = |acc: i64, x: i64| {\n        c = c + 1\n        acc + x * 2\n    }\n    println(to_str(arr_fold(xs, 0, g)))\n    println(to_str(arr_fold(xs, 1, g)))\n    println(to_str(len(arr_map(xs, |x: i64| x + c))))\n    println(to_str(arr_count_if(xs, |x: i64| x % 3 == 0)))\n    println(to_str(arr_fold(xs, 0, |acc: i64, x: i64| acc + 10 / (50 - x))))\n    0\n}\n";
+    let src = "fn main() -> i64 {\n    let xs = arr_range(0, 100)\n    let c = 0\n    let g = |acc: i64, x: i64| {\n        c = c + 1\n        acc + x * 2\n    }\n    println(to_str(arr_fold(xs, 0, g)))\n    println(to_str(arr_fold(xs, 1, g)))\n    println(to_str(len(arr_map(xs, |x: i64| x + 1))))\n    println(to_str(arr_count_if(xs, |x: i64| x % 3 == 0)))\n    println(to_str(arr_fold(xs, 0, |acc: i64, x: i64| acc + 10 / (50 - x))))\n    0\n}\n";
     let (code, stdout, stderr) = vm_scalar_case(
         "closure_copied",
         src,
@@ -42297,6 +42298,132 @@ fn generic_and_annotated_closures_to_builtins_stay_accepted() {
             "advice_i64_key",
             "fn main() {\n  let xs = [3,9,2]\n  println(to_str(arr_sum_by(&xs, |x| x)))\n  println(to_str(arr_max_by(&xs, |x| x)))\n  println(to_str(max_i64(3, 7)))\n}\n",
             "14\n9\n7\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS2-1 (O-GAP-03): a closure captures by copy, so a write to a captured
+/// binding is not visible outside it. When the same binding is used outside
+/// the closure after the closure literal (read, written, or captured by
+/// another closure), or the literal sits in a loop that does not declare the
+/// binding (the loop re-captures it), `axon check` refuses with E0607. Each
+/// program here checked clean before and printed the outer value unchanged.
+/// `f1_readfirst` (the outer read runs before the first call) and
+/// `f5_loopwritefirst` (each loop closure writes before it reads, and nothing
+/// reads the outer binding later) are conservative refusals pinned on purpose:
+/// their output would not differ, but the rule does not track call order.
+#[test]
+fn closure_write_to_a_capture_read_outside_is_refused_e0607() {
+    let attack = "ATTACK: a closure write to a capture read outside checked clean";
+    for (tag, src) in [
+        (
+            "c1_two",
+            "fn main() -> i64 {\n  let n = 0\n  let add = || { n = n + 1 }\n  let get = || n\n  add()\n  println(to_str(get()))\n  0\n}\n",
+        ),
+        (
+            "c1_cap",
+            "fn main() -> i64 {\n  let count = 0\n  let inc = || { count = count + 1 }\n  inc()\n  inc()\n  println(to_str(count))\n  0\n}\n",
+        ),
+        (
+            "c1_nested",
+            "fn main() -> i64 {\n  let n = 0\n  let outer = || { let g = || { n = n + 5 }\n g()\n n }\n  println(to_str(outer()))\n  println(to_str(n))\n  0\n}\n",
+        ),
+        (
+            "c1_nested_local",
+            "fn main() -> i64 {\n  let outer = || { let m = 1\n let g = || { m = m + 5 }\n g()\n m }\n  println(to_str(outer()))\n  0\n}\n",
+        ),
+        (
+            "c1_field",
+            "type P = { v: i64 }\nfn main() -> i64 {\n  let p = P { v: 1 }\n  let f = || { p.v = 9 }\n  f()\n  println(to_str(p.v))\n  0\n}\n",
+        ),
+        (
+            "c1_index",
+            "fn main() -> i64 {\n  let a = [1,2,3]\n  let f = || { a[0] = 9 }\n  f()\n  println(to_str(a[0]))\n  0\n}\n",
+        ),
+        (
+            "c1_loop",
+            "fn main() -> i64 {\n  let n = 0\n  let i = 0\n  while i < 3 {\n    println(to_str(n))\n    let f = || { n = n + 1 }\n    f()\n    i = i + 1\n  }\n  0\n}\n",
+        ),
+        (
+            "f5_after",
+            "fn main() -> i64 {\n  let last = 0\n  let i = 0\n  while i < 3 {\n    let f = |k: i64| { last = k * 10\n      last }\n    println(to_str(f(i)))\n    i = i + 1\n  }\n  println(to_str(last))\n  0\n}\n",
+        ),
+        (
+            "f1_readfirst",
+            "fn main() -> i64 {\n  let n = 0\n  let next = || { n = n + 1\n n }\n  println(to_str(n))\n  println(to_str(next()))\n  println(to_str(next()))\n  0\n}\n",
+        ),
+        (
+            "f5_loopwritefirst",
+            "fn main() -> i64 {\n  let last = 0\n  let i = 0\n  while i < 3 {\n    let f = |k: i64| { last = k * 10\n last }\n    println(to_str(f(i)))\n    i = i + 1\n  }\n  0\n}\n",
+        ),
+    ] {
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains("E0607"), "{attack} [{tag}]: want E0607: {cmsg}");
+    }
+}
+
+/// CS2-1 controls: a closure that alone keeps its state (a counter or a
+/// factory), a write to a lambda param or a closure-local `let`, a re-declared
+/// or sibling-block binding of the same name, a closure stored in a field or
+/// aliased, and a `dict_set` through a captured handle all stay rc 0 with the
+/// same output.
+#[test]
+fn closure_counter_and_local_writes_stay_legal() {
+    let attack = "ATTACK: a legal closure write was refused";
+    for (tag, src, out) in [
+        (
+            "f2_shadow",
+            "fn main() -> i64 {\n  let n = 0\n  let next = || { n = n + 1\n n }\n  println(to_str(next()))\n  let n = 100\n  println(to_str(n))\n  0\n}\n",
+            "1\n100\n",
+        ),
+        (
+            "f3_sibling",
+            "fn main() -> i64 {\n  if true {\n    let n = 0\n    let next = || { n = n + 1\n n }\n    println(to_str(next()))\n  }\n  if true {\n    let n = 5\n    println(to_str(n))\n  }\n  0\n}\n",
+            "1\n5\n",
+        ),
+        (
+            "c1_factory",
+            "fn mk() -> fn() -> i64 {\n  let n = 0\n  || { n = n + 1\n  n }\n}\nfn main() -> i64 {\n  let c = mk()\n  c()\n  println(to_str(c()))\n  0\n}\n",
+            "2\n",
+        ),
+        (
+            "c1_shadow",
+            "fn main() -> i64 {\n  let n = 0\n  let f = |n: i64| { n = n + 1\n n }\n  println(to_str(f(1)))\n  println(to_str(n))\n  0\n}\n",
+            "2\n0\n",
+        ),
+        (
+            "c1_shadow_let",
+            "fn main() -> i64 {\n  let n = 0\n  let f = || { let n = 7\n n = n + 1\n n }\n  println(to_str(f()))\n  println(to_str(n))\n  0\n}\n",
+            "8\n0\n",
+        ),
+        (
+            "f4_field",
+            "type H = { f: fn() -> i64 }\nfn main() -> i64 {\n  let n = 0\n  let h = H { f: || { n = n + 1\n n } }\n  println(to_str((h.f)()))\n  println(to_str((h.f)()))\n  0\n}\n",
+            "1\n2\n",
+        ),
+        (
+            "f6_param",
+            "fn mk(n: i64) -> fn() -> i64 {\n  || { n = n + 1\n n }\n}\nfn main() -> i64 {\n  let c = mk(10)\n  c()\n  println(to_str(c()))\n  0\n}\n",
+            "12\n",
+        ),
+        (
+            "f7_dict",
+            "fn main() -> i64 {\n  let d = dict_new()\n  let f = || { dict_set(d, \"k\", 1) }\n  f()\n  println(to_str(dict_len(d)))\n  0\n}\n",
+            "1\n",
+        ),
+        (
+            "f8_retclosure_block",
+            "fn main() -> i64 {\n  let n = 0\n  let g = || { n = n + 1\n n }\n  let h = g\n  h()\n  println(to_str(h()))\n  0\n}\n",
+            "2\n",
         ),
     ] {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);

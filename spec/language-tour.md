@@ -344,7 +344,9 @@ fn main() {
 `&mut` is only allowed as a free function's top-level `[T]` parameter type, and only
 of a whole local variable at the call site (`E0605` otherwise). One call may borrow a
 variable `&mut` only once and may not also use it in another argument (`E0606`). The
-parameter itself can be reassigned (`xs = [..]`), and that also reaches the caller.
+parameter itself can be reassigned (`xs = [..]`), and that also reaches the caller. A
+closure cannot be used to update a caller's variable either: it captures by copy, and
+a write to a capture that the enclosing scope uses later is `E0607` (§13).
 
 ---
 
@@ -391,6 +393,14 @@ and is refused with E0306; wrap it in a lambda: `|n| abs_i64(n)`. Natively, a
 function value (like a lambda) returns through an i64 slot, so one returning
 `str`, an array, a tuple, a struct, `Option` or `Result` builds with an E0910
 refusal and runs under `axon run`.
+
+Closures capture by copy: a lambda gets its own copy of each outer variable it
+names, and that copy persists across its calls, so a closure over `let n = 0`
+whose body does `n = n + 1` and returns `n` is a counter. A write to a capture that the
+enclosing scope uses later (reads it, writes it, or captures it in another
+closure), or a write from a closure created in a loop that does not declare the
+variable, is E0607: the write is not visible there. Return the new value from
+the closure, or keep the state in one closure.
 
 ---
 
