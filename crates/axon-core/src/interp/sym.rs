@@ -366,8 +366,10 @@ impl LambdaInfo {
         body: &Expr,
         refines: &HashMap<String, V>,
     ) -> LambdaInfo {
-        let mut code =
-            ClosureCode::unresolved(params.iter().map(|p| intern(&p.name)).collect(), body.clone());
+        let mut code = ClosureCode::unresolved(
+            params.iter().map(|p| intern(&p.name)).collect(),
+            body.clone(),
+        );
         code.param_refines = lambda_param_refines(params, refines);
         LambdaInfo {
             code: Rc::new(code),

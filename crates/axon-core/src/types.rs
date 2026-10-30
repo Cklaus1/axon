@@ -245,7 +245,11 @@ impl Type {
             }
             Type::Struct(n) | Type::Enum(n) | Type::Deferred(n) => n.clone(),
             Type::App(n, args) => {
-                let a = args.iter().map(|t| t.display()).collect::<Vec<_>>().join(", ");
+                let a = args
+                    .iter()
+                    .map(|t| t.display())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 format!("{n}<{a}>")
             }
             Type::Dict(v) => format!("Dict<str, {}>", v.display()),

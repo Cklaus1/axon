@@ -4721,7 +4721,11 @@ impl<'ctx> super::Codegen<'ctx> {
         // Accumulator + index slots. Mean accumulates in i128 (exact; a mean
         // cannot overflow), every other reduction in i64.
         let i128_ty = self.ir.context.i128_type();
-        let acc_ty = if matches!(op, ArrReduce::Mean) { i128_ty } else { i64_ty };
+        let acc_ty = if matches!(op, ArrReduce::Mean) {
+            i128_ty
+        } else {
+            i64_ty
+        };
         let acc_slot = build_wrappers::w_alloca(&self.ir.builder, acc_ty.into(), "arr_acc");
         // Sentinel init: 0 for Sum/Contains; i64::MIN for max / i64::MAX for min
         // so the first element always wins the running compare.
@@ -4798,7 +4802,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 let acc =
                     build_wrappers::w_load(&self.ir.builder, i128_ty.into(), acc_slot, "arr_a")
                         .into_int_value();
-                let wide = build_wrappers::w_int_s_extend(&self.ir.builder, elem, i128_ty, "arr_e128");
+                let wide =
+                    build_wrappers::w_int_s_extend(&self.ir.builder, elem, i128_ty, "arr_e128");
                 let nacc = build_wrappers::w_int_add(&self.ir.builder, acc, wide, "arr_na");
                 build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
             }

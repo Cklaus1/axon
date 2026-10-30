@@ -3075,17 +3075,17 @@ mod tests {
         }
         // str / array / dict constructors+mutators MUST count as allocating.
         for name in [
-            "to_str",      // i64 → str (fresh heap str)
-            "str_repeat",  // → str
-            "str_concat",  // (if present) → str
-            "arr_range",   // → [i64]
-            "arr_push",    // → [T]
+            "to_str",          // i64 → str (fresh heap str)
+            "str_repeat",      // → str
+            "str_concat",      // (if present) → str
+            "arr_range",       // → [i64]
+            "arr_push",        // → [T]
             "dict_new",        // → Dict
             "dict_map_values", // → Dict<U>
             "arr_group_by",    // → Dict<[T]>
             "dict_from_str",   // → Dict<str>
-            "dict_set",    // () but grows the dict (explicit mutator)
-            "dict_remove", // () mutator
+            "dict_set",        // () but grows the dict (explicit mutator)
+            "dict_remove",     // () mutator
         ] {
             // Only assert for builtins that actually exist in the table.
             if is_known_builtin(name) {

@@ -2509,7 +2509,8 @@ pub extern "C" fn __axon_str_repeat(s: AxonStr, n: i64, out_len: *mut i64, out_p
 /// The byte size of `n` copies of a `len`-byte string, `None` when it exceeds
 /// the largest allocation (`isize::MAX`).
 fn str_repeat_size(len: usize, n: i64) -> Option<usize> {
-    len.checked_mul(n.max(0) as usize).filter(|&t| t <= isize::MAX as usize)
+    len.checked_mul(n.max(0) as usize)
+        .filter(|&t| t <= isize::MAX as usize)
 }
 
 fn str_repeat_checked(src: &str, n: i64) -> String {
@@ -4000,7 +4001,24 @@ mod migrated_builtin_tests {
         // Negative exponent and overflow exit 101 (not testable in-process);
         // `pow_i64_checked` is the value `__axon_pow_i64` returns or panics on.
         let bases = [0i64, 1, -1, 2, -2, 3, 10, -10, i64::MAX, i64::MIN];
-        let exps = [0i64, 1, 2, 3, 4, 10, 31, 39, 40, 62, 63, 64, 4294967295, 4294967296, 4294967297, i64::MAX];
+        let exps = [
+            0i64,
+            1,
+            2,
+            3,
+            4,
+            10,
+            31,
+            39,
+            40,
+            62,
+            63,
+            64,
+            4294967295,
+            4294967296,
+            4294967297,
+            i64::MAX,
+        ];
         for &base in &bases {
             for &exp in &exps {
                 assert_eq!(

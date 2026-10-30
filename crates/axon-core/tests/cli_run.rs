@@ -14653,15 +14653,24 @@ fn arr_sum_by_sums_a_projection_and_panics_like_the_operator() {
     for (tag, call) in [
         ("sum_by", "arr_sum_by([9223372036854775807, 1], |x: i64| x)"),
         ("sum_plain", "arr_sum_i64([9223372036854775807, 1])"),
-        ("fold", "arr_fold([9223372036854775807, 1], 0, |a: i64, x: i64| a + x)"),
+        (
+            "fold",
+            "arr_fold([9223372036854775807, 1], 0, |a: i64, x: i64| a + x)",
+        ),
     ] {
         let f = std::env::temp_dir().join(format!("axon_sumby_{tag}_{}.ax", std::process::id()));
-        std::fs::write(&f, format!("fn main() -> i64 {{\n  println(to_str({call}))\n  0\n}}\n")).unwrap();
+        std::fs::write(
+            &f,
+            format!("fn main() -> i64 {{\n  println(to_str({call}))\n  0\n}}\n"),
+        )
+        .unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(
-            out.status.code() == Some(101) && err.contains("integer overflow") && out.stdout.is_empty(),
+            out.status.code() == Some(101)
+                && err.contains("integer overflow")
+                && out.stdout.is_empty(),
             "[{tag}] an overflowing sum must panic like `+`: rc {:?} stdout {:?} stderr {err}",
             out.status.code(),
             String::from_utf8_lossy(&out.stdout)
@@ -14683,7 +14692,10 @@ fn arithmetic_builtins_overflow_like_the_operators() {
     let run = |tag: &str, src: &str| {
         let f = dir.join(format!("{tag}.ax"));
         std::fs::write(&f, src).unwrap();
-        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let check = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         assert_eq!(
             check.status.code(),
             Some(0),
@@ -14720,7 +14732,10 @@ fn arithmetic_builtins_overflow_like_the_operators() {
         &main("let m = 9223372036854775807\n  let n = 0 - m - 1\n  println(to_str_f64(arr_mean_i64([m, m, n, n])))"),
     );
     assert_eq!(
-        (out.status.code(), String::from_utf8_lossy(&out.stdout).trim().to_string()),
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        ),
         (Some(0), "-0.5".to_string()),
         "ATTACK: arr_mean_i64 returned a saturated partial sum [a_mean2]: {}",
         String::from_utf8_lossy(&out.stderr)
@@ -14731,8 +14746,7 @@ fn arithmetic_builtins_overflow_like_the_operators() {
         &main("let lo = 0 - 9223372036854775807 - 1\n  let i = 0\n  while i < 20 { let r = random_i64(lo, 9223372036854775807)\n    assert(r >= lo && r < 9223372036854775807)\n    println(to_str(r))\n    i = i + 1 }"),
     );
     assert!(
-        out.status.code() == Some(0)
-            && String::from_utf8_lossy(&out.stdout).lines().count() == 20,
+        out.status.code() == Some(0) && String::from_utf8_lossy(&out.stdout).lines().count() == 20,
         "ATTACK: random_i64 over the full i64 range is a Rust panic [rnd]: rc {:?} {}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
@@ -14741,7 +14755,10 @@ fn arithmetic_builtins_overflow_like_the_operators() {
     // pow at the exponent range edge is exact for bases 0, 1 and -1.
     let out = run("a_pow_ok", &main("println(to_str(pow_i64(3, 39)))"));
     assert_eq!(
-        (out.status.code(), String::from_utf8_lossy(&out.stdout).trim().to_string()),
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        ),
         (Some(0), "4052555153018976267".to_string()),
         "a_pow_ok: {}",
         String::from_utf8_lossy(&out.stderr)
@@ -14757,7 +14774,10 @@ fn arithmetic_builtins_overflow_like_the_operators() {
         &main("println(to_str(pow_i64(1, 4294967296)))\n  println(to_str(pow_i64(0 - 1, 4294967297)))\n  println(to_str(pow_i64(0 - 1, 4294967296)))\n  println(to_str(pow_i64(0, 4294967296)))\n  println(to_str(str_len(str_repeat(\"\", 9223372036854775807))))"),
     );
     assert_eq!(
-        (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()),
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).to_string()
+        ),
         (Some(0), "1\n-1\n1\n0\n0\n".to_string()),
         "a_pow_unit: {}",
         String::from_utf8_lossy(&out.stderr)
@@ -14818,7 +14838,10 @@ fn refinements_on_variant_fields_and_lambda_params_are_enforced() {
     ];
     for (tag, src, want) in &runs {
         let f = file(tag, src);
-        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let check = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         assert_eq!(
             check.status.code(),
             Some(0),
@@ -14845,15 +14868,22 @@ fn refinements_on_variant_fields_and_lambda_params_are_enforced() {
         }
     }
     let consts = [
-        ("r_variant_lit", variant("0").replace("E::A { n: k }", "E::A { n: 0 }")),
+        (
+            "r_variant_lit",
+            variant("0").replace("E::A { n: k }", "E::A { n: 0 }"),
+        ),
         (
             "r_lambda_lit",
-            "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  println(to_str(f(0)))\n  0\n}\n".to_string(),
+            "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  println(to_str(f(0)))\n  0\n}\n"
+                .to_string(),
         ),
     ];
     for (tag, src) in &consts {
         let f = file(tag, src);
-        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let check = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&check.stdout),
@@ -14885,7 +14915,10 @@ fn refinements_on_variant_fields_and_lambda_params_are_enforced() {
     ];
     for (tag, src, want) in controls {
         let f = file(tag, src);
-        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let check = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         assert_eq!(
             check.status.code(),
             Some(0),
@@ -14894,7 +14927,10 @@ fn refinements_on_variant_fields_and_lambda_params_are_enforced() {
         );
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         assert_eq!(
-            (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()),
+            (
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout).to_string()
+            ),
             (Some(0), want.to_string()),
             "[{tag}]: {}",
             String::from_utf8_lossy(&out.stderr)
@@ -14914,7 +14950,10 @@ fn refinements_on_variant_fields_and_lambda_params_are_enforced() {
             .output()
             .unwrap();
         assert_eq!(
-            (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()),
+            (
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout).to_string()
+            ),
             (Some(0), "6\n7\n".to_string()),
             "r_ok [{engine}]: {}",
             String::from_utf8_lossy(&out.stderr)
@@ -42945,7 +42984,10 @@ fn an_effectful_helper_in_a_refinement_is_refused_e1209() {
         "type W = i64 where now_ms() > 0\nfn f(n: W) -> i64 { n }\nfn main() -> i64 {\n  println(to_str(f(1)))\n  0\n}\n",
     );
     assert_eq!(crc, Some(2), "e_direct: {cmsg}");
-    assert!(cmsg.contains("uses the impure builtin `now_ms`"), "e_direct: {cmsg}");
+    assert!(
+        cmsg.contains("uses the impure builtin `now_ms`"),
+        "e_direct: {cmsg}"
+    );
     // Controls: a pure helper, helpers using a lambda, a fn array and
     // `assert`, a fn-param dispatch; each checks clean and prints the same.
     let attack = "ATTACK: a pure refinement predicate was refused";
@@ -42974,7 +43016,10 @@ fn an_effectful_helper_in_a_refinement_is_refused_e1209() {
             "{attack} [{tag}]: run: {rerr}"
         );
     }
-    let out = axon().args(["check", &ex("refinements.ax")]).output().unwrap();
+    let out = axon()
+        .args(["check", &ex("refinements.ax")])
+        .output()
+        .unwrap();
     assert_eq!(
         out.status.code(),
         Some(0),

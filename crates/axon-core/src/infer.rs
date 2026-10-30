@@ -155,9 +155,11 @@ fn fill_bare_dicts(
             let o = rec(o);
             Type::Result(o, rec(e))
         }
-        Type::Tuple(ts) => {
-            Type::Tuple(ts.into_iter().map(|t| fill_bare_dicts(t, structs, next)).collect())
-        }
+        Type::Tuple(ts) => Type::Tuple(
+            ts.into_iter()
+                .map(|t| fill_bare_dicts(t, structs, next))
+                .collect(),
+        ),
         Type::App(n, ts) => Type::App(
             n,
             ts.into_iter()
@@ -168,7 +170,10 @@ fn fill_bare_dicts(
                 .collect(),
         ),
         Type::Fn(ps, r) => {
-            let ps = ps.into_iter().map(|t| fill_bare_dicts(t, structs, next)).collect();
+            let ps = ps
+                .into_iter()
+                .map(|t| fill_bare_dicts(t, structs, next))
+                .collect();
             Type::Fn(ps, Box::new(fill_bare_dicts(*r, structs, next)))
         }
         other => other,
@@ -287,11 +292,15 @@ fn generalize_app_args(ty: Type, generics: &HashSet<&str>) -> Type {
         }))),
         Type::Result(o, e) => Type::Result(rec(o), rec(e)),
         Type::Slice(i) => Type::Slice(rec(i)),
-        Type::Tuple(ts) => {
-            Type::Tuple(ts.into_iter().map(|t| generalize_app_args(t, generics)).collect())
-        }
+        Type::Tuple(ts) => Type::Tuple(
+            ts.into_iter()
+                .map(|t| generalize_app_args(t, generics))
+                .collect(),
+        ),
         Type::Fn(ps, r) => Type::Fn(
-            ps.into_iter().map(|t| generalize_app_args(t, generics)).collect(),
+            ps.into_iter()
+                .map(|t| generalize_app_args(t, generics))
+                .collect(),
             rec(r),
         ),
         other => other,
@@ -557,7 +566,10 @@ fn parse_type_str(s: &str) -> Type {
             let params = if inner.is_empty() {
                 Vec::new()
             } else {
-                split_top_level(inner).into_iter().map(parse_type_str).collect()
+                split_top_level(inner)
+                    .into_iter()
+                    .map(parse_type_str)
+                    .collect()
             };
             let ret = match rest[close + 1..].trim() {
                 "" => Type::Unit,
@@ -575,7 +587,12 @@ fn parse_type_str(s: &str) -> Type {
     // destructure consumer sees an opaque non-tuple, breaking inference.
     if let Some(inner) = strip_wrap(s, "(", ")") {
         if top_level_comma(inner).is_some() {
-            return Type::Tuple(split_top_level(inner).into_iter().map(parse_type_str).collect());
+            return Type::Tuple(
+                split_top_level(inner)
+                    .into_iter()
+                    .map(parse_type_str)
+                    .collect(),
+            );
         }
     }
     // CS2-3b: a builtin's `Dict` holds the sig's `V`; `Dict<X>` names its value.
@@ -679,9 +696,10 @@ fn promote_type_params(t: &Type, names: &[String]) -> Type {
         Type::Dict(i) => Type::Dict(rec(i)),
         Type::Result(a, b) => Type::Result(rec(a), rec(b)),
         Type::Tuple(ts) => Type::Tuple(ts.iter().map(|e| promote_type_params(e, names)).collect()),
-        Type::Fn(ps, r) => {
-            Type::Fn(ps.iter().map(|p| promote_type_params(p, names)).collect(), rec(r))
-        }
+        Type::Fn(ps, r) => Type::Fn(
+            ps.iter().map(|p| promote_type_params(p, names)).collect(),
+            rec(r),
+        ),
         other => other.clone(),
     }
 }
@@ -961,8 +979,7 @@ impl InferCtx {
         walk(ty, &mut bad);
         for _ in bad {
             self.errors.push(
-                InferError::new(E0102, "Dict keys are str: write `Dict<str, V>`")
-                    .with_span(span),
+                InferError::new(E0102, "Dict keys are str: write `Dict<str, V>`").with_span(span),
             );
         }
     }
@@ -1252,7 +1269,11 @@ impl InferCtx {
                     // CS2-3b: each bare `Dict` in a field is an implicit type
                     // param of the struct, after the declared ones, so a
                     // literal types its dict's value (`Type::App`).
-                    let bare = td.fields.iter().map(|f| count_bare_dicts(&f.ty)).sum::<usize>();
+                    let bare = td
+                        .fields
+                        .iter()
+                        .map(|f| count_bare_dicts(&f.ty))
+                        .sum::<usize>();
                     if !td.generic_params.is_empty() || bare > 0 {
                         let mut ps = td.generic_params.clone();
                         ps.extend((0..bare).map(|i| format!("__dict{i}")));
@@ -1935,7 +1956,8 @@ impl InferCtx {
                         };
                         // CS2-3a: a numeric key fn's return must resolve to a number.
                         if let Some(&v) = var_map.get(NUM_PARAM) {
-                            self.num_obligations.push((Type::Var(v), self.current_stmt_span));
+                            self.num_obligations
+                                .push((Type::Var(v), self.current_stmt_span));
                         }
                         // ── Layer-1 ASI: confidence propagation note ─────────
                         // When any argument has type `Uncertain<_>`, the call's
@@ -2012,8 +2034,10 @@ impl InferCtx {
                 // constraints are solved, a callee that resolves to a fn type
                 // checks the call's arity and argument types, and gives its
                 // return type ([`InferCtx::solve`]).
-                let call_args: Vec<Type> =
-                    args.iter().map(|arg| self.infer_expr(arg, scope, ret_ty)).collect();
+                let call_args: Vec<Type> = args
+                    .iter()
+                    .map(|arg| self.infer_expr(arg, scope, ret_ty))
+                    .collect();
                 let ret = self.fresh();
                 self.call_obligations.push(CallObligation {
                     callee: callee_ty,
@@ -2263,18 +2287,19 @@ impl InferCtx {
                 let raw_declared: Vec<(String, Type)> =
                     self.struct_fields.get(name).cloned().unwrap_or_default();
                 let mut app_vars: Option<Vec<Type>> = None;
-                let declared: Vec<(String, Type)> =
-                    if let Some(param_names) = self.struct_generic_params.get(name).cloned() {
-                        let vars: Vec<Type> = param_names.iter().map(|_| self.fresh()).collect();
-                        let declared = raw_declared
-                            .into_iter()
-                            .map(|(fname, fty)| (fname, subst_struct_params(fty, &param_names, &vars)))
-                            .collect();
-                        app_vars = Some(vars);
-                        declared
-                    } else {
-                        raw_declared
-                    };
+                let declared: Vec<(String, Type)> = if let Some(param_names) =
+                    self.struct_generic_params.get(name).cloned()
+                {
+                    let vars: Vec<Type> = param_names.iter().map(|_| self.fresh()).collect();
+                    let declared = raw_declared
+                        .into_iter()
+                        .map(|(fname, fty)| (fname, subst_struct_params(fty, &param_names, &vars)))
+                        .collect();
+                    app_vars = Some(vars);
+                    declared
+                } else {
+                    raw_declared
+                };
 
                 // Track which declared fields were provided for missing-field detection.
                 let mut provided: std::collections::HashSet<String> =
@@ -2744,7 +2769,9 @@ impl InferCtx {
         for item in &program.items {
             match item {
                 Item::FnDef(f)
-                    if !dict_fns.get(f.name.as_str()).is_some_and(|d| std::ptr::eq(*d, f)) =>
+                    if !dict_fns
+                        .get(f.name.as_str())
+                        .is_some_and(|d| std::ptr::eq(*d, f)) =>
                 {
                     self.infer_fn(f, true)
                 }
@@ -2925,7 +2952,11 @@ impl InferCtx {
     fn infer_fn(&mut self, f: &FnDef, top_level: bool) {
         // CS2-3b: the body sees the same value vars as the signature, in the
         // order `collect_sigs` gave them (params, then return).
-        let owned = if top_level { self.dict_owned_vars.get(&f.name).cloned() } else { None };
+        let owned = if top_level {
+            self.dict_owned_vars.get(&f.name).cloned()
+        } else {
+            None
+        };
         let structs = owned.as_ref().map(|_| self.implicit_only_structs());
         let mut owned = owned.unwrap_or_default().into_iter();
         let mut next = || owned.next().map(Type::Var).unwrap_or(Type::Unknown);
@@ -3037,7 +3068,12 @@ impl InferCtx {
             }
             let ret = subst.apply(&ret);
             if !has_unresolved(&ret) {
-                self.unify(ob.ret, ret, "return of a call through a fn value", &mut subst);
+                self.unify(
+                    ob.ret,
+                    ret,
+                    "return of a call through a fn value",
+                    &mut subst,
+                );
             }
         }
         // CS2-3a: a numeric key fn (`arr_max_by`, `arr_min_by`,

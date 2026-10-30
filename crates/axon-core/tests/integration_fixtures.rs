@@ -2589,7 +2589,11 @@ fn arithmetic_builtins_overflow_natively() {
     let both = |tag: &str, body: &str| {
         let file = dir.join(format!("{tag}.ax"));
         std::fs::write(&file, format!("fn main() -> i64 {{\n  {body}\n  0\n}}\n")).unwrap();
-        let run = Command::new(axon_bin).arg("run").arg(&file).output().unwrap();
+        let run = Command::new(axon_bin)
+            .arg("run")
+            .arg(&file)
+            .output()
+            .unwrap();
         let bin = dir.join(format!("{tag}_bin"));
         let build = Command::new(axon_bin)
             .arg("build")
@@ -2636,7 +2640,11 @@ fn arithmetic_builtins_overflow_natively() {
         "let m = 9223372036854775807\n  let n = 0 - m - 1\n  println(to_str_f64(arr_mean_i64([m, m, n, n])))\n  println(to_str_f64(arr_mean_i64([m, m, 1])))",
     );
     assert_eq!(
-        (run.status.code(), native.status.code(), native.stdout.clone()),
+        (
+            run.status.code(),
+            native.status.code(),
+            native.stdout.clone()
+        ),
         (Some(0), Some(0), run.stdout.clone()),
         "{attack} [a_mean2]: interp {} / native {}",
         String::from_utf8_lossy(&run.stdout),
@@ -2654,7 +2662,11 @@ fn arithmetic_builtins_overflow_natively() {
         "let lo = 0 - 9223372036854775807 - 1\n  let i = 0\n  let moved = 0\n  while i < 40 { let r = random_i64(lo, 9223372036854775807)\n    assert(r >= lo && r < 9223372036854775807)\n    if r != lo { moved = moved + 1 }\n    i = i + 1 }\n  println(to_str(moved > 0))",
     );
     assert_eq!(
-        (run.status.code(), native.status.code(), native.stdout.clone()),
+        (
+            run.status.code(),
+            native.status.code(),
+            native.stdout.clone()
+        ),
         (Some(0), Some(0), run.stdout.clone()),
         "{attack} [rnd]: interp {} {} / native {} {}",
         String::from_utf8_lossy(&run.stdout),
@@ -2680,7 +2692,11 @@ fn refinements_on_variant_fields_and_lambda_params_are_enforced_natively() {
     let both = |tag: &str, src: &str| {
         let file = dir.join(format!("{tag}.ax"));
         std::fs::write(&file, src).unwrap();
-        let run = Command::new(axon_bin).arg("run").arg(&file).output().unwrap();
+        let run = Command::new(axon_bin)
+            .arg("run")
+            .arg(&file)
+            .output()
+            .unwrap();
         let bin = dir.join(format!("{tag}_bin"));
         let build = Command::new(axon_bin)
             .arg("build")
@@ -2740,7 +2756,10 @@ fn refinements_on_variant_fields_and_lambda_params_are_enforced_natively() {
         ),
     );
     assert_eq!(
-        (run.status.code(), String::from_utf8_lossy(&run.stdout).to_string()),
+        (
+            run.status.code(),
+            String::from_utf8_lossy(&run.stdout).to_string()
+        ),
         (Some(0), "6\n3\n".to_string()),
         "r_ok interp: {}",
         String::from_utf8_lossy(&run.stderr)

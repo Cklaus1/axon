@@ -224,7 +224,8 @@ pub(crate) fn is_builtin_type_param_name(n: &str) -> bool {
             && !n.is_empty()
             && n.len() <= 2
             && n.starts_with(|c: char| c.is_ascii_uppercase())
-            && n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()))
+            && n.chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()))
 }
 
 /// Structurally match a builtin's declared parameter type against a concrete
@@ -1619,7 +1620,10 @@ impl CheckCtx {
                 // Generic params of the typedef (e.g. A, B in `type Pair<A,B>`) are valid.
                 let prev_generics = std::mem::replace(
                     &mut self.current_generic_params,
-                    td.generic_params.iter().map(|p| (p.clone(), Vec::new())).collect(),
+                    td.generic_params
+                        .iter()
+                        .map(|p| (p.clone(), Vec::new()))
+                        .collect(),
                 );
                 if self.sealed_at(td.span) {
                     if let Some(p) = td.refinement.as_deref() {
@@ -1688,7 +1692,10 @@ impl CheckCtx {
             Item::EnumDef(e) if self.sealed_at(e.span) => {
                 let prev = std::mem::replace(
                     &mut self.current_generic_params,
-                    e.generic_params.iter().map(|p| (p.clone(), Vec::new())).collect(),
+                    e.generic_params
+                        .iter()
+                        .map(|p| (p.clone(), Vec::new()))
+                        .collect(),
                 );
                 for v in &e.variants {
                     for f in &v.fields {
@@ -1775,10 +1782,16 @@ impl CheckCtx {
         }
         // Bring generic type params into scope so R08 doesn't flag them as
         // unknown, each with its declared bounds (CS2-5).
-        let mut generics: HashMap<String, Vec<String>> =
-            f.generic_params.iter().map(|p| (p.clone(), Vec::new())).collect();
+        let mut generics: HashMap<String, Vec<String>> = f
+            .generic_params
+            .iter()
+            .map(|p| (p.clone(), Vec::new()))
+            .collect();
         for (p, traits) in &f.generic_bounds {
-            generics.entry(p.clone()).or_default().extend(traits.iter().cloned());
+            generics
+                .entry(p.clone())
+                .or_default()
+                .extend(traits.iter().cloned());
         }
         let prev_generics = std::mem::replace(&mut self.current_generic_params, generics);
         // Seed `current_span` from the function header so any diagnostic raised
@@ -2087,7 +2100,10 @@ impl CheckCtx {
 
     /// checker-soundness-2 CS2-7: a lambda's per-param refinement name (as
     /// `fn_param_refinements` holds a fn's); `None` when no param is refined.
-    fn lambda_refine_slots(&self, params: &[crate::ast::LambdaParam]) -> Option<Vec<Option<String>>> {
+    fn lambda_refine_slots(
+        &self,
+        params: &[crate::ast::LambdaParam],
+    ) -> Option<Vec<Option<String>>> {
         let slots: Vec<Option<String>> = params
             .iter()
             .map(|p| match &p.ty {
@@ -4432,9 +4448,10 @@ impl CheckCtx {
                 // method" at run time for an argument without it. A bound naming
                 // a trait this program does not declare is left unchecked.
                 let generic_param = match &recv_ty {
-                    Type::Struct(n) | Type::Enum(n) | Type::TypeParam(n) => {
-                        self.current_generic_params.get(n).map(|b| (n.clone(), b.clone()))
-                    }
+                    Type::Struct(n) | Type::Enum(n) | Type::TypeParam(n) => self
+                        .current_generic_params
+                        .get(n)
+                        .map(|b| (n.clone(), b.clone())),
                     _ => None,
                 };
                 if let Some((tp, bounds)) = &generic_param {
@@ -6601,8 +6618,14 @@ impl CheckCtx {
         let file = self.file.clone();
         match subject_ty {
             Type::Option(_) => {
-                let has_some = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::Some(_)));
-                let has_none = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::None));
+                let has_some = arms
+                    .iter()
+                    .filter(unguarded)
+                    .any(|a| matches!(a.pattern, Pattern::Some(_)));
+                let has_none = arms
+                    .iter()
+                    .filter(unguarded)
+                    .any(|a| matches!(a.pattern, Pattern::None));
                 if !has_some {
                     self.errors.push(
                         CheckError::new(E0304, "non-exhaustive match — missing Some(_) arm")
@@ -6623,8 +6646,14 @@ impl CheckCtx {
                 }
             }
             Type::Result(_, _) => {
-                let has_ok = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::Ok(_)));
-                let has_err = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::Err(_)));
+                let has_ok = arms
+                    .iter()
+                    .filter(unguarded)
+                    .any(|a| matches!(a.pattern, Pattern::Ok(_)));
+                let has_err = arms
+                    .iter()
+                    .filter(unguarded)
+                    .any(|a| matches!(a.pattern, Pattern::Err(_)));
                 if !has_ok {
                     self.errors.push(
                         CheckError::new(E0304, "non-exhaustive match — missing Ok(_) arm")
@@ -6740,8 +6769,19 @@ impl CheckCtx {
             // CS2-4: scalar and tuple scrutinees. int/str/float/decimal need a
             // catch-all, bool needs `true` + `false`, and a tuple is the product
             // of its flattened components' domains.
-            Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::U8 | Type::U16 | Type::U32
-            | Type::U64 | Type::F32 | Type::F64 | Type::Decimal | Type::Str | Type::Bool
+            Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::F32
+            | Type::F64
+            | Type::Decimal
+            | Type::Str
+            | Type::Bool
             | Type::Tuple(_) => {
                 self.check_value_exhaustiveness(subject_ty, arms, node_path);
             }
@@ -6773,9 +6813,9 @@ impl CheckCtx {
         if !self.flatten_cover(subject_ty, rows, &mut domains, &mut cols) {
             return;
         }
-        let total = domains
-            .iter()
-            .try_fold(1usize, |acc, d| acc.checked_mul(d.len()).filter(|t| *t <= 256));
+        let total = domains.iter().try_fold(1usize, |acc, d| {
+            acc.checked_mul(d.len()).filter(|t| *t <= 256)
+        });
         let subject = subject_ty.display();
         let message = match total {
             Some(_) => {
@@ -6859,7 +6899,10 @@ impl CheckCtx {
         domains: &mut Vec<CoverDomain>,
         cols: &mut Vec<Vec<CoverCell<'a>>>,
     ) -> bool {
-        let unknown = matches!(ty, Type::Unknown | Type::Var(_) | Type::Deferred(_) | Type::TypeParam(_));
+        let unknown = matches!(
+            ty,
+            Type::Unknown | Type::Var(_) | Type::Deferred(_) | Type::TypeParam(_)
+        );
         let tuple: Option<Vec<Type>> = match ty {
             Type::Tuple(ts) => Some(ts.clone()),
             _ if unknown => {
@@ -6896,7 +6939,8 @@ impl CheckCtx {
             }
             return true;
         }
-        let variants = |names: &[&str]| CoverDomain::Variants(names.iter().map(|s| s.to_string()).collect());
+        let variants =
+            |names: &[&str]| CoverDomain::Variants(names.iter().map(|s| s.to_string()).collect());
         let dom = match ty {
             Type::Bool => CoverDomain::Bool,
             Type::Option(_) => variants(&["Some", "None"]),
@@ -6922,7 +6966,8 @@ impl CheckCtx {
     /// The domain of a component whose type the checker does not know, read
     /// off the arms' patterns; `None` when they do not decide it.
     fn domain_from_patterns(&self, rows: &[CoverCell]) -> Option<CoverDomain> {
-        let variants = |names: &[&str]| CoverDomain::Variants(names.iter().map(|s| s.to_string()).collect());
+        let variants =
+            |names: &[&str]| CoverDomain::Variants(names.iter().map(|s| s.to_string()).collect());
         let mut dom: Option<CoverDomain> = None;
         for c in rows {
             let CoverCell::Pat(p) = c else { continue };
@@ -7869,7 +7914,11 @@ impl CheckCtx {
                     }),
                 };
                 if let Some(ret) = value_ret {
-                    return if type_contains_unresolved(&ret) { Type::Unknown } else { ret };
+                    return if type_contains_unresolved(&ret) {
+                        Type::Unknown
+                    } else {
+                        ret
+                    };
                 }
                 if let Expr::Ident(name) = callee.as_ref() {
                     if let Option::Some(sig) = self.call_sig(name, args) {
@@ -7918,13 +7967,15 @@ impl CheckCtx {
                 // a runtime panic. Empty literal → Unknown element.
                 let elem_ty = elems
                     .first()
-                    .map(|e| match self.resolve_expr_type(e, &node_path.child("elem_0"), scope) {
-                        // CS2-6: an array of fn values (`[add, sub]`) keeps
-                        // its element's `fn(..) -> ..` type, so `ops[0](..)`
-                        // is checked.
-                        Type::Unknown => self.fn_value_type(e, scope).unwrap_or(Type::Unknown),
-                        ty => ty,
-                    })
+                    .map(
+                        |e| match self.resolve_expr_type(e, &node_path.child("elem_0"), scope) {
+                            // CS2-6: an array of fn values (`[add, sub]`) keeps
+                            // its element's `fn(..) -> ..` type, so `ops[0](..)`
+                            // is checked.
+                            Type::Unknown => self.fn_value_type(e, scope).unwrap_or(Type::Unknown),
+                            ty => ty,
+                        },
+                    )
                     .unwrap_or(Type::Unknown);
                 Type::Slice(Box::new(elem_ty))
             }
