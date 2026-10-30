@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: f516cf416f5ecde249b03bb1ffca4ca1db09ae3c
+generated-at: 632233bf62c39b2dbc3eb5bb60861adc1e3ccdb6
 
-`git diff --numstat 31413ca7..f516cf41 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..632233bf -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -54,9 +54,9 @@ generated-at: f516cf416f5ecde249b03bb1ffca4ca1db09ae3c
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 1762 | 264 |
+| `crates/axon-core/src/infer.rs` | 1763 | 264 |
 | `crates/axon-core/src/interp.rs` | 7787 | 2882 |
-| `crates/axon-core/src/interp/builtins.rs` | 865 | 633 |
+| `crates/axon-core/src/interp/builtins.rs` | 863 | 633 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
@@ -81,7 +81,7 @@ generated-at: f516cf416f5ecde249b03bb1ffca4ca1db09ae3c
 | `crates/axon-core/src/interp/vm/mod.rs` | 3587 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 1840 | 0 |
 | `crates/axon-core/src/interp/vm/purefn.rs` | 860 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 2690 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 2688 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
 | `crates/axon-core/src/lib.rs` | 304 | 77 |
@@ -89,7 +89,7 @@ generated-at: f516cf416f5ecde249b03bb1ffca4ca1db09ae3c
 | `crates/axon-core/src/lsp.rs` | 188 | 59 |
 | `crates/axon-core/src/main.rs` | 1595 | 369 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
-| `crates/axon-core/src/mut_borrow.rs` | 942 | 0 |
+| `crates/axon-core/src/mut_borrow.rs` | 944 | 0 |
 | `crates/axon-core/src/parser.rs` | 460 | 32 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
 | `crates/axon-core/src/resolver.rs` | 954 | 122 |
@@ -98,9 +98,9 @@ generated-at: f516cf416f5ecde249b03bb1ffca4ca1db09ae3c
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 61565 | 8626 |
+| total | 61564 | 8626 |
 
-`git log --reverse 31413ca7..f516cf41 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..632233bf -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -448,7 +448,8 @@ generated-at: f516cf416f5ecde249b03bb1ffca4ca1db09ae3c
 | 0e2bfc6d | checker soundness | interp.rs nest_cost (wasm32 only): check_closure_param_refines gets its own nest_guard and CHECK_CLOSURE_PARAM_REFINES(_SEALED) budget, so only a call to a closure with a refined parameter pays its frame; CALL_CLOSURE_FRAME(_SEALED) and FINISH_CALL_COLD raised to the frames wasm_stack_budget.py measures. nest_guard compiles to nothing off wasm32; no evaluator change on native or interpreter runs. |
 | 72b15868 | checker soundness | ImplAuditCS2 F1/F2: a generic fn's bare Dict bound to its declared T reads Dict(T) in the signature, so put<T>(d: Dict, v: T) can no longer write a str into an i64 dict (E0102); a method call on an untyped lambda param that resolves to the enclosing fn's type param is looked up in that param's bounds (E0403). Both programs checked clean and panicked at run time before. |
 | f516cf41 | checker soundness | g01 rows M3940-M3941 and their attack markers for the ImplAuditCS2 F1/F2 fix; cargo fmt over infer.rs (formatting only, no behaviour change). |
-| 344 commits | | |
+| 632233bf | checker soundness | clippy -D warnings fixes in the checker-soundness-2 code (a collapsed if in check_dict_keys, pow_i64's overflow arm without return, mut_place's scrutinee block lifted to a statement, a single-element test loop unrolled); no behaviour change. |
+| 345 commits | | |
 <!-- END MECHANICAL -->
 
 

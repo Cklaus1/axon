@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "clippy -D warnings fixes in the checker-soundness-2 code (a collapsed if in check_dict_keys, pow_i64's overflow arm without return, mut_place's scrutinee block lifted to a statement, a single-element test loop unrolled); no behaviour change."}
