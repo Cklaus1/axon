@@ -3312,3 +3312,75 @@ ATTACK_MARKERS.update({
     'M3938': r'ATTACK: a fenced heading was read as a shipped item',
     'M3939': r'ATTACK: a roadmap without the ledger pointer was accepted',
 })
+
+# checker-soundness-2 CS2-1 (ids M3890-M3893)
+ATTACK_MARKERS.update({
+    'M3890': r'ATTACK: a closure write to a capture read outside checked clean \[c1_two\]',
+    'M3891': r'ATTACK: a closure write to a capture read outside checked clean \[c1_two\]',
+    'M3892': r'ATTACK: a closure write to a capture read outside checked clean \[c1_loop\]',
+    'M3893': r'ATTACK: a legal closure write was refused \[f2_shadow\]',
+})
+
+# checker-soundness-2 lane B: CS2-2 (M3894-M3902), CS2-7 (M3922-M3927)
+ATTACK_MARKERS.update({
+    'M3894': r'ATTACK: an arithmetic builtin returned a wrong i64 or a Rust panic where the operator panics \[a_pow\]',
+    'M3895': r'ATTACK: an arithmetic builtin returned a wrong i64 or a Rust panic where the operator panics \[a_pow_exp\]',
+    'M3896': r'ATTACK: an arithmetic builtin returned a wrong i64 or a Rust panic where the operator panics \[a_sum\]',
+    'M3897': r'ATTACK: an arithmetic builtin returned a wrong i64 or a Rust panic where the operator panics \[a_sumby\]',
+    'M3898': r'ATTACK: arr_mean_i64 returned a saturated partial sum \[a_mean2\]',
+    'M3899': r'ATTACK: an arithmetic builtin returned a wrong i64 or a Rust panic where the operator panics \[a_dictinc\]',
+    'M3900': r'ATTACK: native pow_i64 wraps or truncates where the interpreter panics \[pow_i64\]',
+    'M3901': r'ATTACK: a native arithmetic builtin wraps or saturates where the operator panics \[a_sum\]',
+    'M3902': r'ATTACK: a native arithmetic builtin wraps or saturates where the operator panics \[a_dictinc\]',
+    'M3922': r'ATTACK: a refined variant field or lambda param took a violating value \[r_variant2, tree\]',
+    'M3923': r'ATTACK: a refined variant field or lambda param took a violating value \[r_lambda, tree\]',
+    'M3924': r'ATTACK: a refined variant field or lambda param took a violating value \[r_lambda_fold, vm\]',
+    'M3925': r"ATTACK: a constant violating a variant field's or lambda param's refinement checked clean \[r_variant_lit\]",
+    'M3926': r'ATTACK: refine_variant: a write the interpreter runs implicitly is missing from caps',
+    'M3927': r'ATTACK: a refined variant field or lambda param took a violating value natively \[r_lambda\]',
+})
+
+# checker-soundness-2 CS2-3a (ids M3903-M3905)
+ATTACK_MARKERS.update({
+    'M3903': r'ATTACK: a closure of the wrong type passed to a builtin checked clean \[h_filter\]',
+    'M3904': r'ATTACK: a closure of the wrong type passed to a builtin checked clean \[l_maxby_b\]',
+    'M3905': r'ATTACK: a valid closure to a builtin was refused \[h10_each_ret\]',
+})
+
+# checker-soundness-2 CS2-3b (ids M3906-M3910)
+ATTACK_MARKERS.update({
+    'M3906': r'ATTACK: a dict holding a value of another type checked clean \[d_get\]',
+    'M3907': r'ATTACK: a dict holding a value of another type checked clean \[d_ann\]',
+    'M3908': r'ATTACK: a dict holding a value of another type checked clean \[d_param_bare\]',
+    'M3909': r'ATTACK: a dict holding a value of another type checked clean \[d_get\]',
+    'M3910': r'(dict_map_values|arr_group_by|dict_from_str) must be classified heap-allocating',
+})
+
+# checker-soundness-2 CS2-4 (ids M3911-M3915)
+ATTACK_MARKERS.update({
+    'M3911': r'ATTACK: a non-exhaustive match checked clean \[x_int\]',
+    'M3912': r'ATTACK: a non-exhaustive match checked clean \[x_bool_half\]',
+    'M3913': r'ATTACK: a non-exhaustive match checked clean \[x_tuple\]',
+    'M3914': r'ATTACK: a non-exhaustive match checked clean \[x_opt_guard\]',
+    'M3915': r'ATTACK: an exhaustive match was refused \[x1_opt_tuple_full\]',
+})
+
+# checker-soundness-2 CS2-5 (ids M3916-M3918)
+ATTACK_MARKERS.update({
+    'M3916': r'ATTACK: a generic method call or generic struct argument checked clean \[g_method\]',
+    'M3917': r'ATTACK: a generic method call or generic struct argument checked clean \[g_bounded_bad\]',
+    'M3918': r'ATTACK: a generic method call or generic struct argument checked clean \[g_struct\]',
+})
+
+# checker-soundness-2 CS2-6 (ids M3919-M3921)
+ATTACK_MARKERS.update({
+    'M3919': r'ATTACK: a bad call through a fn value checked clean \[n_lambda_kind\]',
+    'M3920': r'ATTACK: a bad call through a fn value checked clean \[n_index\]',
+    'M3921': r'ATTACK: a bad call through a fn value checked clean \[n_call\]',
+})
+
+# checker-soundness-2 CS2-8 (ids M3928-M3929)
+ATTACK_MARKERS.update({
+    'M3928': r'ATTACK: a refinement predicate reaching an effect through a helper checked clean \[e_helper\]',
+    'M3929': r'ATTACK: a refinement predicate reaching an effect through a helper checked clean \[e_unknown\]',
+})

@@ -12185,5 +12185,204 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test spec_ledger', 'a_roadmap_without_the_ledger_pointer_is_refused'),
 ]
 
+# checker-soundness-2 CS2-1 (ids M3890-M3893): a closure write to a captured binding that is
+# used outside the closure afterwards (or re-captured by a loop) is E0607.
+MUTATIONS += [
+    ('M3890', 'CS2-1: a written capture is no longer recorded by binding id', 'crates/axon-core/src/mut_borrow.rs',
+     'self.written.entry(id).or_insert((name, frame.span));',
+     'let _ = (name, frame.span);',
+     'axon-core', '--no-default-features --test cli_run', 'closure_write_to_a_capture_read_outside_is_refused_e0607'),
+    ('M3891', 'CS2-1: a later use of a recorded binding id no longer emits E0607', 'crates/axon-core/src/mut_borrow.rs',
+     'self.e0607(id, &n, at, false);',
+     'let _ = (id, n, at);',
+     'axon-core', '--no-default-features --test cli_run', 'closure_write_to_a_capture_read_outside_is_refused_e0607'),
+    ('M3892', 'CS2-1: a closure literal in a loop that does not declare the written capture is no longer refused (rule 2(b))', 'crates/axon-core/src/mut_borrow.rs',
+     'if loop_start.is_some_and(|d| decl < d) {',
+     'if loop_start.is_some_and(|d| decl < d) && false {',
+     'axon-core', '--no-default-features --test cli_run', 'closure_write_to_a_capture_read_outside_is_refused_e0607'),
+    ('M3893', 'CS2-1: bindings no longer get distinct ids, so a redefinition or a sibling block inherits the record (false refusal)', 'crates/axon-core/src/mut_borrow.rs',
+     'self.next_id += 1;',
+     'self.next_id += 0;',
+     'axon-core', '--no-default-features --test cli_run', 'closure_counter_and_local_writes_stay_legal'),
+]
+
+# checker-soundness-2 lane B: CS2-2 (M3894-M3902), CS2-7 (M3922-M3927)
+MUTATIONS += [
+    ('M3894', 'CS2-2: interp `pow_i64` wraps on overflow again (checked_pow removed)', 'crates/axon-core/src/interp/builtins.rs',
+     '                    Ok(e) => base.checked_pow(e),',
+     '                    Ok(e) => Some(base.wrapping_pow(e)),',
+     'axon-core', '--no-default-features --test cli_run', 'arithmetic_builtins_overflow_like_the_operators'),
+    ('M3895', 'CS2-2: interp `pow_i64` truncates an exponent above u32::MAX again', 'crates/axon-core/src/interp/builtins.rs',
+     '                let r = match u32::try_from(exp) {',
+     '                let r = match Ok::<u32, ()>(exp as u32) {',
+     'axon-core', '--no-default-features --test cli_run', 'arithmetic_builtins_overflow_like_the_operators'),
+    ('M3896', 'CS2-2: interp `arr_sum_i64` saturates on overflow again', 'crates/axon-core/src/interp/builtins.rs',
+     '                    s = match s.checked_add(n) {',
+     '                    s = match Some(s.saturating_add(n)) {',
+     'axon-core', '--no-default-features --test cli_run', 'arithmetic_builtins_overflow_like_the_operators'),
+    ('M3897', 'CS2-2: interp `arr_sum_by` saturates on overflow again', 'crates/axon-core/src/interp/builtins.rs',
+     '                            acc_i = match acc_i.checked_add(i) {',
+     '                            acc_i = match Some(acc_i.saturating_add(i)) {',
+     'axon-core', '--no-default-features --test cli_run', 'arithmetic_builtins_overflow_like_the_operators'),
+    ('M3898', 'CS2-2: interp `arr_mean_i64` sums in a saturating i64 again', 'crates/axon-core/src/interp/builtins.rs',
+     '                    s += n as i128;',
+     '                    s = (s as i64).saturating_add(n) as i128;',
+     'axon-core', '--no-default-features --test cli_run', 'arithmetic_builtins_overflow_like_the_operators'),
+    ('M3899', 'CS2-2: interp `dict_inc` wraps (release) / Rust-panics (debug) on overflow again', 'crates/axon-core/src/interp/builtins.rs',
+     '                    Value::Int(n) => match n.checked_add(1) {',
+     '                    Value::Int(n) => match Some(n.wrapping_add(1)) {',
+     'axon-core', '--no-default-features --test cli_run', 'arithmetic_builtins_overflow_like_the_operators'),
+    ('M3900', 'CS2-2: native `__axon_pow_i64` wraps on overflow again', 'crates/axon-rt/src/lib.rs',
+     '        Ok(e) => base.checked_pow(e),',
+     '        Ok(e) => Some(base.wrapping_pow(e)),',
+     'axon-rt', '--lib', 'migrated_builtin_tests::migrated_pow_i64_matches_interpreter'),
+    ('M3901', 'CS2-2: native `ArrReduce::Sum` accumulates unchecked again', 'crates/axon-core/src/codegen/expr.rs',
+     '                let nacc = self\n                    .emit_checked_overflow_op("llvm.sadd.with.overflow", "+", acc, elem)',
+     "                let nacc = None::<BasicValueEnum<'ctx>>",
+     'axon-core', '--test integration_fixtures', 'arithmetic_builtins_overflow_natively'),
+    ('M3902', 'CS2-2: native `__axon_dict_inc` wraps on overflow again', 'crates/axon-rt/src/lib.rs',
+     '    cur.checked_add(1)',
+     '    Some(cur.wrapping_add(1))',
+     'axon-core', '--test integration_fixtures', 'arithmetic_builtins_overflow_natively'),
+    ('M3922', 'CS2-7: the interpreter builds an enum variant without checking its refined fields', 'crates/axon-core/src/interp/eval.rs',
+     '            RecordKind::Enum(..) if self.refine_preds.is_empty() => (None, None),',
+     '            RecordKind::Enum(..) => (None, None),',
+     'axon-core', '--no-default-features --test cli_run', 'refinements_on_variant_fields_and_lambda_params_are_enforced'),
+    ('M3923', "CS2-7: a closure call binds a refined param without checking it", 'crates/axon-core/src/interp.rs',
+     '            self.check_closure_param_refines::<T>(code, refines, &checked, entry_t)?;',
+     '            let _ = (refines, entry_t);',
+     'axon-core', '--no-default-features --test cli_run', 'refinements_on_variant_fields_and_lambda_params_are_enforced'),
+    ('M3924', "CS2-7: the VM's fold_leaf folds a refined closure without the call's check", 'crates/axon-core/src/interp/vm/pure.rs',
+     '        if code.param_refines.is_some() {',
+     '        if false {',
+     'axon-core', '--no-default-features --test cli_run', 'refinements_on_variant_fields_and_lambda_params_are_enforced'),
+    ('M3925', 'CS2-7: the checker no longer records enum variant field refinements (constant -> E1209)', 'crates/axon-core/src/checker.rs',
+     '                        if !refs.is_empty() {\n                            self.struct_field_refinements\n                                .insert(format!("{}::{}", ed.name, v.name), refs);',
+     '                        if false {\n                            self.struct_field_refinements\n                                .insert(format!("{}::{}", ed.name, v.name), refs);',
+     'axon-core', '--no-default-features --test cli_run', 'refinements_on_variant_fields_and_lambda_params_are_enforced'),
+    ('M3926', "CS2-7: caps no longer walks the enum of an `E::V {..}` literal (its refinement's route goes dark)", 'crates/axon-core/src/capabilities.rs',
+     '                if ctx.hooks.enums.contains_key(head) {',
+     '                if false {',
+     'axon-core', '--no-default-features --test caps_verb', 'a_refined_variant_field_is_checked_at_construction_and_reached'),
+    ('M3927', 'CS2-7: native `emit_lambda` emits no refinement preconditions', 'crates/axon-core/src/codegen/expr.rs',
+     '            self.emit_refine_preconditions("lambda", &refined, lambda_fn);',
+     '            let _ = (&refined, lambda_fn);',
+     'axon-core', '--test integration_fixtures', 'refinements_on_variant_fields_and_lambda_params_are_enforced_natively'),
+]
+
+# checker-soundness-2 CS2-3a (ids M3903-M3905): a builtin's `fn(..) -> ..` param is typed, so a
+# closure passed to it is unified with it; a numeric key fn must return a number.
+MUTATIONS += [
+    ('M3903', 'CS2-3a: `parse_type_str` loses its `fn(` arm (a builtin closure param is an opaque Deferred again)', 'crates/axon-core/src/infer.rs',
+     'if let Some(rest) = s.strip_prefix("fn(") {',
+     'if let Some(rest) = s.strip_prefix("fn(").filter(|_| false) {',
+     'axon-core', '--no-default-features --test cli_run', 'closure_passed_to_a_builtin_is_type_checked'),
+    ('M3904', 'CS2-3a: a `Num` key var no longer has to resolve to a number', 'crates/axon-core/src/infer.rs',
+     'if !has_unresolved(&ty) && !ty.is_integer() && !ty.is_float() && ty != Type::Never {',
+     'if false {',
+     'axon-core', '--no-default-features --test cli_run', 'closure_passed_to_a_builtin_is_type_checked'),
+    ('M3905', 'CS2-3a: a unit-return builtin fn param pins the closure return to `()` (false refusal of `dict_each(d, |k, v| v + 1)`)', 'crates/axon-core/src/infer.rs',
+     'Type::Fn(ps, r) if reaches_builtin && **r == Type::Unit => {',
+     'Type::Fn(ps, r) if false && reaches_builtin && **r == Type::Unit => {',
+     'axon-core', '--no-default-features --test cli_run', 'generic_and_annotated_closures_to_builtins_stay_accepted'),
+]
+
+# checker-soundness-2 CS2-3b (ids M3906-M3910, NH-1(a)): a dict holds one value type: `Dict` is
+# `Dict(V)`, `Dict<str, V>` is enforced, a bare-`Dict` fn is solved from its body before its callers.
+MUTATIONS += [
+    ('M3906', 'CS2-3b: a builtin sig\'s bare `Dict` parses to the opaque `Deferred("Dict")` again', 'crates/axon-core/src/infer.rs',
+     'return Type::Dict(Box::new(Type::Deferred("V".to_string())));',
+     'return Type::Deferred("Dict".to_string());',
+     'axon-core', '--no-default-features --test cli_run', 'dict_values_are_typed'),
+    ('M3907', 'CS2-3b: a `Dict<str, V>` annotation no longer resolves its value type', 'crates/axon-core/src/infer.rs',
+     '[_, v] | [v] => self.resolve_ast_type(v),',
+     '[_, v] | [v] => { let _ = v; Type::Unknown }',
+     'axon-core', '--no-default-features --test cli_run', 'dict_values_are_typed'),
+    ('M3908', 'CS2-3b: a bare-`Dict` fn\'s body is no longer solved before its callers', 'crates/axon-core/src/infer.rs',
+     'self.solve_pending();',
+     '// self.solve_pending();',
+     'axon-core', '--no-default-features --test cli_run', 'dict_values_are_typed'),
+    ('M3909', 'CS2-3b: `Dict` vs `Dict` no longer unifies the value types', 'crates/axon-core/src/infer.rs',
+     '(Type::Dict(a), Type::Dict(b)) => {',
+     '(Type::Dict(a), Type::Dict(b)) => { let a = Box::new(Type::Unknown);',
+     'axon-core', '--no-default-features --test cli_run', 'dict_values_are_typed'),
+    ('M3910', 'CS2-3b: `is_heap_allocating_builtin` no longer recognizes a `Dict<..>` return (dict_map_values reads non-allocating)', 'crates/axon-core/src/builtins.rs',
+     '                || is_dict_type_str(r)',
+     '                || r == "Dict"',
+     'axon-core', '--no-default-features --lib', 'builtins::tests::r17_heap_alloc_classifier_is_sound_for_hal_and_strings'),
+]
+
+# checker-soundness-2 CS2-4 (ids M3911-M3915): exhaustiveness for scalar and tuple scrutinees;
+# a guarded arm covers nothing.
+MUTATIONS += [
+    ('M3911', 'CS2-4: a scalar scrutinee (i64/str/f64) no longer needs a catch-all arm', 'crates/axon-core/src/checker.rs',
+     '_ => CoverDomain::Any,',
+     '_ => return false,',
+     'axon-core', '--no-default-features --test cli_run', 'non_exhaustive_scalar_and_tuple_matches_are_refused'),
+    ('M3912', 'CS2-4: a bool match no longer needs both `true` and `false`', 'crates/axon-core/src/checker.rs',
+     'matches!(p, Pattern::Literal(crate::ast::Literal::Bool(b)) if *b == (v == 0))',
+     'matches!(p, Pattern::Literal(crate::ast::Literal::Bool(_)))',
+     'axon-core', '--no-default-features --test cli_run', 'non_exhaustive_scalar_and_tuple_matches_are_refused'),
+    ('M3913', 'CS2-4: a tuple scrutinee is no longer checked over the product of its component domains', 'crates/axon-core/src/checker.rs',
+     'Type::Tuple(ts) => Some(ts.clone()),',
+     'Type::Tuple(_) => return false,',
+     'axon-core', '--no-default-features --test cli_run', 'non_exhaustive_scalar_and_tuple_matches_are_refused'),
+    ('M3914', 'CS2-4: a guarded `Option`/`Result`/enum arm counts as covering its pattern again', 'crates/axon-core/src/checker.rs',
+     'let unguarded = |a: &&MatchArm| a.guard.is_none();',
+     'let unguarded = |_a: &&MatchArm| true;',
+     'axon-core', '--no-default-features --test cli_run', 'non_exhaustive_scalar_and_tuple_matches_are_refused'),
+    ('M3915', 'CS2-4: an `Option` tuple component loses its {Some, None} domain (false refusal of an exhaustive tuple match)', 'crates/axon-core/src/checker.rs',
+     'Type::Option(_) => variants(&["Some", "None"]),',
+     'Type::Option(_) => CoverDomain::Any,',
+     'axon-core', '--no-default-features --test cli_run', 'non_exhaustive_scalar_and_tuple_matches_are_refused'),
+]
+
+# checker-soundness-2 CS2-5 (ids M3916-M3918): a method call on a generic param is looked up in
+# its bound traits, and a generic struct's type arguments are compared.
+MUTATIONS += [
+    ('M3916', 'CS2-5: an unbounded generic receiver no longer refuses an unknown method', 'crates/axon-core/src/checker.rs',
+     'if known && !declared {',
+     'if known && !declared && !bounds.is_empty() {',
+     'axon-core', '--no-default-features --test cli_run', 'generic_param_method_and_generic_struct_args_are_checked'),
+    ('M3917', 'CS2-5: a bounded receiver no longer looks the method up in its bound traits', 'crates/axon-core/src/checker.rs',
+     'let declared = bounds.iter().any(|b| {',
+     'let declared = !bounds.is_empty() || bounds.iter().any(|b| {',
+     'axon-core', '--no-default-features --test cli_run', 'generic_param_method_and_generic_struct_args_are_checked'),
+    ('M3918', 'CS2-5: `App` unify no longer compares the type arguments', 'crates/axon-core/src/infer.rs',
+     'for (a, b) in as1.into_iter().zip(as2) {',
+     'for (a, b) in as1.into_iter().zip(as2).take(0) {',
+     'axon-core', '--no-default-features --test cli_run', 'generic_param_method_and_generic_struct_args_are_checked'),
+]
+
+# checker-soundness-2 CS2-6 (ids M3919-M3921): a call whose callee is not a fn name is checked
+# against the fn value's type; a local/param callee is typed by its binding.
+MUTATIONS += [
+    ('M3919', 'CS2-6: infer no longer checks the argument kinds of a call through a fn value (a local lambda called with the wrong kinds checks clean)', 'crates/axon-core/src/infer.rs',
+     'if kinds_conflict(param, &arg) {',
+     'if false && kinds_conflict(param, &arg) {',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_non_name_callee_checks_its_signature'),
+    ('M3920', 'CS2-6: `fn_value_type` no longer types an element of an array of fns (`ops[0](..)` loses its E0305/E0306)', 'crates/axon-core/src/checker.rs',
+     'Type::Slice(elem) if matches!(*elem, Type::Fn(..)) => Some(*elem),',
+     'Type::Slice(_) => None,',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_non_name_callee_checks_its_signature'),
+    ('M3921', 'CS2-6: `fn_value_type` no longer types the fn a call returns (`mk()(..)` loses its E0305)', 'crates/axon-core/src/checker.rs',
+     'matches!(ret, Type::Fn(..)).then_some(ret)',
+     'None',
+     'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_non_name_callee_checks_its_signature'),
+]
+
+# checker-soundness-2 CS2-8 (ids M3928-M3929): a refinement predicate may not reach an effect
+# through a user fn; the predicate is walked with the capabilities reach walker.
+MUTATIONS += [
+    ('M3928', 'CS2-8: the refinement predicate is no longer walked past its own calls', 'crates/axon-core/src/checker.rs',
+     'let reach = walker.reach(pred);',
+     'let reach = crate::capabilities::Reach::default(); let _ = (walker, pred);',
+     'axon-core', '--no-default-features --test cli_run', 'an_effectful_helper_in_a_refinement_is_refused_e1209'),
+    ('M3929', 'CS2-8: a refinement predicate reaching a computed dispatch is no longer refused', 'crates/axon-core/src/checker.rs',
+     'if !effectful && !reach.unknown {',
+     'if !effectful {',
+     'axon-core', '--no-default-features --test cli_run', 'an_effectful_helper_in_a_refinement_is_refused_e1209'),
+]
+
 if __name__ == "__main__":
     main()
