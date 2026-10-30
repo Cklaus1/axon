@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "cargo fmt over the merged checker-soundness-2 lanes (builtins.rs, checker.rs, codegen/expr.rs, infer.rs, interp/sym.rs, interp/taint_tests.rs, types.rs). Formatting only; no behaviour change."}

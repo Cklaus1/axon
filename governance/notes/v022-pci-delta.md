@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 189fa942c0cf6f643b6d39b4ea8e2101c931a294
+generated-at: 4562f44ce9e4dc3d78a3986516782ed63d4515ae
 
-`git diff --numstat 31413ca7..189fa942 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..4562f44c -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -26,10 +26,10 @@ generated-at: 189fa942c0cf6f643b6d39b4ea8e2101c931a294
 | `crates/axon-core/src/ast.rs` | 334 | 81 |
 | `crates/axon-core/src/bin/axon-run.rs` | 19 | 0 |
 | `crates/axon-core/src/borrow.rs` | 67 | 11 |
-| `crates/axon-core/src/builtins.rs` | 102 | 36 |
+| `crates/axon-core/src/builtins.rs` | 108 | 42 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 985 | 340 |
-| `crates/axon-core/src/checker.rs` | 2553 | 649 |
+| `crates/axon-core/src/checker.rs` | 2609 | 654 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
 | `crates/axon-core/src/codegen/asi.rs` | 237 | 49 |
@@ -39,7 +39,7 @@ generated-at: 189fa942c0cf6f643b6d39b4ea8e2101c931a294
 | `crates/axon-core/src/codegen/display.rs` | 514 | 0 |
 | `crates/axon-core/src/codegen/enum_layout.rs` | 451 | 0 |
 | `crates/axon-core/src/codegen/escape.rs` | 509 | 0 |
-| `crates/axon-core/src/codegen/expr.rs` | 2366 | 686 |
+| `crates/axon-core/src/codegen/expr.rs` | 2371 | 686 |
 | `crates/axon-core/src/codegen/link.rs` | 1620 | 337 |
 | `crates/axon-core/src/codegen/match_pat.rs` | 335 | 147 |
 | `crates/axon-core/src/codegen/mod.rs` | 477 | 148 |
@@ -54,7 +54,7 @@ generated-at: 189fa942c0cf6f643b6d39b4ea8e2101c931a294
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 1692 | 259 |
+| `crates/axon-core/src/infer.rs` | 1733 | 264 |
 | `crates/axon-core/src/interp.rs` | 7775 | 2884 |
 | `crates/axon-core/src/interp/builtins.rs` | 865 | 633 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
@@ -69,9 +69,9 @@ generated-at: 189fa942c0cf6f643b6d39b4ea8e2101c931a294
 | `crates/axon-core/src/interp/pin.rs` | 967 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 99 | 63 |
 | `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
-| `crates/axon-core/src/interp/sym.rs` | 1232 | 0 |
+| `crates/axon-core/src/interp/sym.rs` | 1234 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1659 | 0 |
-| `crates/axon-core/src/interp/taint_tests.rs` | 4355 | 0 |
+| `crates/axon-core/src/interp/taint_tests.rs` | 4361 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
 | `crates/axon-core/src/interp/tests_v022_b.rs` | 2083 | 0 |
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
@@ -97,10 +97,10 @@ generated-at: 189fa942c0cf6f643b6d39b4ea8e2101c931a294
 | `crates/axon-core/src/span.rs` | 98 | 3 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
-| `crates/axon-core/src/types.rs` | 116 | 2 |
-| total | 61381 | 8615 |
+| `crates/axon-core/src/types.rs` | 120 | 2 |
+| total | 61501 | 8631 |
 
-`git log --reverse 31413ca7..189fa942 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..4562f44c -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -444,7 +444,8 @@ generated-at: 189fa942c0cf6f643b6d39b4ea8e2101c931a294
 | 4a503b78 | cs2/b merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 8fd92f22 | checker soundness | checker.rs reject_impure_refinement walks the predicate with the capabilities reach walker: a reached capability or effect (Time included) through a user fn, or an unclassifiable dispatch, is E1209. The effect ran at every coercion before, O-SP-02 (CS2-8). No evaluator change. |
 | f9bb6236 | cs2/a merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 340 commits | | |
+| 4562f44c | checker soundness | cargo fmt over the merged checker-soundness-2 lanes (builtins.rs, checker.rs, codegen/expr.rs, infer.rs, interp/sym.rs, interp/taint_tests.rs, types.rs). Formatting only; no behaviour change. |
+| 341 commits | | |
 <!-- END MECHANICAL -->
 
 
