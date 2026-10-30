@@ -207,7 +207,9 @@ when you write the candidate:
    temporary - `E0605`), only for a free function's `&mut [T]` parameter (not builtins
    such as `len`, methods, or closures - pass `&a` / `a` to those), and a call may not
    also mention a borrowed variable in another argument (`f(&mut a, &a)`,
-   `f(&mut a, len(a))` - `E0606`; hoist `let n = len(a)` first).
+   `f(&mut a, len(a))` - `E0606`; hoist `let n = len(a)` first). A closure captures by
+   copy: a closure that assigns a captured variable the enclosing code uses later is
+   `E0607` - return the new value from the closure instead.
 
 2. **Keep an expression on one line, or end the line with the operator.** A binary
    operator that *leads* the next line breaks parsing. Do this:

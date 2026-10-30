@@ -786,6 +786,30 @@ pub fn verify_predicate_reaches(program: &Program) -> Vec<(&FnDef, Reach)> {
     .collect()
 }
 
+/// CS2-8 — what a refinement predicate (`type T = B where P`, an inline
+/// `p: B where P`, a whole-struct `{ .. } where P`) can exercise when a value
+/// is checked against it: the same walk as a `@[verify]` predicate's (its
+/// helpers, the refinement hooks they bind, methods, native calls,
+/// `unknown`), with no module `let` initializer as a root. Built once per
+/// program; `reach` walks one predicate with fresh cycle guards.
+pub struct RefinementWalker<'a> {
+    maps: WalkMaps<'a>,
+}
+
+impl<'a> RefinementWalker<'a> {
+    pub fn new(program: &'a Program) -> Self {
+        RefinementWalker {
+            maps: WalkMaps::of(program),
+        }
+    }
+
+    pub fn reach(&self, pred: &'a Expr) -> Reach {
+        let mut work: Vec<Walk<'_>> = Vec::new();
+        push_exprs(&mut work, std::iter::once(pred));
+        self.maps.reach(work, true)
+    }
+}
+
 /// The lookup tables one reach walk follows: fns by name, impl methods by
 /// name, module `let` initializers (in order, and by name), the type hooks,
 /// and the enums (for which parameter types can hold a fn). Shared by

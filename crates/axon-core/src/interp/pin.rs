@@ -247,8 +247,12 @@ impl Tys {
 }
 
 /// A builtin's declared return type names a single-letter type variable
-/// (`T`, `U`, `V`): its element comes from the arguments, untyped.
+/// (`T`, `U`, `V`): its element comes from the arguments, untyped. A dict is
+/// the opaque handle whatever value type its sig names (`Dict<U>`, CS2-3b).
 pub(crate) fn builtin_ret_open(ret: &str) -> bool {
+    if crate::builtins::is_dict_type_str(ret.trim()) {
+        return false;
+    }
     let mut cur = String::new();
     for c in ret.chars().chain(std::iter::once(' ')) {
         if c.is_alphanumeric() || c == '_' {

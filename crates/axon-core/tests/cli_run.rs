@@ -11480,8 +11480,11 @@ fn dict_get_or_and_dict_inc_compress_idioms() {
         let apples = dict_get_or(counts, \"apple\", 0)\n  \
         let bananas = dict_get_or(counts, \"banana\", 0)\n  \
         let cherries = dict_get_or(counts, \"cherry\", 0)\n  \
-        // Default-value works for any T: str default works too.\n  \
-        let name = dict_get_or(counts, \"name\", \"anon\")\n  \
+        // Default-value works for any V: a str dict takes a str default\n  \
+        // (a dict holds one value type, CS2-3b).\n  \
+        let labels = dict_new()\n  \
+        dict_set(labels, \"owner\", \"bob\")\n  \
+        let name = dict_get_or(labels, \"name\", \"anon\")\n  \
         if apples == 3 && bananas == 1 && cherries == 0 \
            && str_eq(name, \"anon\") { 1 } else { 0 }\n\
     }\n";
@@ -11570,13 +11573,17 @@ fn concrete_wrapper_arg_to_opaque_deferred_param_is_a_clean_type_error_not_a_pan
         );
     }
 
-    // NEGATIVE: storing an `Option` as a dict VALUE (the `v: T` slot, a
+    // NEGATIVE: storing an `Option` as a dict VALUE (the `v: V` slot, a
     // type-param — NOT an opaque deferred type) must STILL type-check. The guard
     // must distinguish `Deferred("Dict")` (opaque, reject wrappers) from
-    // `Deferred("T")` (generic, accept anything).
+    // `Deferred("V")` (generic, accept anything). The Option comes from another
+    // dict: a dict holds one value type (CS2-3b), so storing a dict's own
+    // `dict_get` back into it is an infinite type.
     let ok = "fn main() {\n  \
+        let src = dict_new()\n  \
+        dict_set(src, \"x\", 1)\n  \
+        let o = dict_get(src, \"x\")\n  \
         let d = dict_new()\n  \
-        let o = dict_get(d, \"x\")\n  \
         dict_set(d, \"k\", o)\n  \
         let _ = d\n\
     }\n";
@@ -14297,14 +14304,20 @@ fn dict_to_str_round_trips() {
     // dict_to_str / dict_from_str serialize a Dict to a stable
     // line-oriented `key=value\n` payload. Inverse round-trip.
     // dict_to_str returns Result<str,str> (BUG_HUNT #20); these entries are
-    // all representable, so unwrap the Ok.
+    // all representable, so unwrap the Ok. A dict holds one value type
+    // (CS2-3b), so the i64, str and f64 values live in three dicts whose
+    // payloads are joined and read back as one.
     let src = "fn main() -> i64 {\n  \
-        let d = dict_new()\n  \
-        dict_set(d, \"alpha\", 1)\n  \
-        dict_set(d, \"beta\", \"hello\")\n  \
-        dict_set(d, \"gamma\", 3.14)\n  \
-        let s = match dict_to_str(d) { Ok(v) => v  Err(_) => \"\" }\n  \
-        let d2 = dict_from_str(s)\n  \
+        let di = dict_new()\n  \
+        dict_set(di, \"alpha\", 1)\n  \
+        let ds = dict_new()\n  \
+        dict_set(ds, \"beta\", \"hello\")\n  \
+        let df = dict_new()\n  \
+        dict_set(df, \"gamma\", 3.14)\n  \
+        let si = match dict_to_str(di) { Ok(v) => v  Err(_) => \"\" }\n  \
+        let ss = match dict_to_str(ds) { Ok(v) => v  Err(_) => \"\" }\n  \
+        let sf = match dict_to_str(df) { Ok(v) => v  Err(_) => \"\" }\n  \
+        let d2 = dict_from_str(si + ss + sf)\n  \
         let alpha_s = match dict_get(d2, \"alpha\") { Some(v) => v  None => \"\" }\n  \
         let beta_s  = match dict_get(d2, \"beta\")  { Some(v) => v  None => \"\" }\n  \
         let n = match parse_int(alpha_s) { Ok(v) => v  Err(_) => -1 }\n  \
@@ -35722,7 +35735,7 @@ fn main() -> i64 {
     }
     let x = inc(1)
     let y = inc(2)
-    println(to_str(x) + " " + to_str(y) + " " + to_str(acc[0]))
+    println(to_str(x) + " " + to_str(y) + " " + to_str(inc(0)))
 
     let d = [1, 2, 3]
     let r = bump(d)
@@ -35746,7 +35759,7 @@ fn main() -> i64 {
 "#;
     assert_eq!(
         interp_stdout("ax06_values", src),
-        "1 10\n20 2\n5 50 60 6\n5 500\n2 9 3 30\n7 70\n1 3 0\n102 1\n3 2 200\n10 20 3"
+        "1 10\n20 2\n5 50 60 6\n5 500\n2 9 3 30\n7 70\n1 3 3\n102 1\n3 2 200\n10 20 3"
     );
 }
 
@@ -35824,7 +35837,7 @@ fn main() -> i64 {
     let fs = [inc]
     let q = fs[0](4)
     let r = inc(5)
-    println(to_str(x) + " " + to_str(y) + " " + to_str(z) + " " + to_str(q) + " " + to_str(r) + " " + to_str(acc[0]))
+    println(to_str(x) + " " + to_str(y) + " " + to_str(z) + " " + to_str(q) + " " + to_str(r) + " " + to_str(inc(0)))
 
     let log = []
     let rec = |k: i64| {
@@ -35832,7 +35845,7 @@ fn main() -> i64 {
         len(log)
     }
     let twice = |k: i64| rec(k) * 10 + rec(k + 1)
-    println(to_str(rec(1)) + " " + to_str(twice(5)) + " " + to_str(rec(9)) + " " + to_str(len(log)))
+    println(to_str(rec(1)) + " " + to_str(twice(5)) + " " + to_str(rec(9)) + " " + to_str(rec(0)))
 
     let txt = ""
     let add = |p: str| {
@@ -35840,13 +35853,13 @@ fn main() -> i64 {
         len(txt)
     }
     add("ab")
-    println(to_str(add("cd")) + " [" + txt + "]")
+    println(to_str(add("cd")) + " " + to_str(add("")))
     0
 }
 "#;
     assert_eq!(
         interp_stdout("ax31_values", src),
-        "6 2 6\n2 1 1 1\nabcabc ab ab ab ab\nxz xy xzw!\n5 7 99\n1 3 6 10 15 0\n1 23 4 0\n4 []"
+        "6 2 6\n2 1 1 1\nabcabc ab ab ab ab\nxz xy xzw!\n5 7 99\n1 3 6 10 15 15\n1 23 4 5\n4 4"
     );
 }
 
@@ -35855,10 +35868,10 @@ fn interp_string_and_array_builder_loops_are_linear() {
     // AX-31: each of these loops copied its whole string or array per
     // iteration (a `str` read, `arr_push`, `arr_concat`, a closure writing its
     // captured array), so at n = 200k they took minutes under `axon run`.
-    let src = "fn main() -> i64 {\n let n = 200000\n let t = \"\"\n for i in 0..n { t = t + \"x\" }\n let m = 0\n for i in 0..len(t) { m = m + len(t) }\n let xs = []\n for i in 0..n { xs = arr_push(xs, i) }\n let ys = []\n for i in 0..n { ys = arr_concat(ys, [i]) }\n let zs = arr_repeat(0, n)\n let set = |i: i64| {\n  zs[i] = i + 1\n  zs[i] + zs[i / 2]\n }\n let k = 0\n for i in 0..n { k = k + set(i) }\n println(to_str(m) + \" \" + to_str(len(xs)) + \" \" + to_str(xs[n - 1]) + \" \" + to_str(ys[n - 1]) + \" \" + to_str(k) + \" \" + to_str(zs[n - 1]))\n 0\n}\n";
+    let src = "fn main() -> i64 {\n let n = 200000\n let t = \"\"\n for i in 0..n { t = t + \"x\" }\n let m = 0\n for i in 0..len(t) { m = m + len(t) }\n let xs = []\n for i in 0..n { xs = arr_push(xs, i) }\n let ys = []\n for i in 0..n { ys = arr_concat(ys, [i]) }\n let zs = arr_repeat(0, n)\n let set = |i: i64| {\n  zs[i] = i + 1\n  zs[i] + zs[i / 2]\n }\n let k = 0\n for i in 0..n { k = k + set(i) }\n println(to_str(m) + \" \" + to_str(len(xs)) + \" \" + to_str(xs[n - 1]) + \" \" + to_str(ys[n - 1]) + \" \" + to_str(k) + \" \" + to_str(set(n - 1)))\n 0\n}\n";
     assert_eq!(
         interp_stdout("ax31_builders", src),
-        "40000000000 200000 199999 199999 30000200000 0"
+        "40000000000 200000 199999 199999 30000200000 300000"
     );
 }
 
@@ -35954,7 +35967,7 @@ fn main() -> i64 {
         tick
     }
     let run = arr_map([1, 2, 3], bump)
-    println(to_str(total) + " " + to_str(seen) + " " + to_str(run[2]) + " " + to_str(bump(10)) + " " + to_str(tick))
+    println(to_str(total) + " " + to_str(run[2]) + " " + to_str(bump(10)) + " " + to_str(bump(0)))
     let evens = arr_filter(arr_range(0, 10), |v: i64| v % 2 == 0 && v > m)
     let sorted = arr_sort_by([3, 1, 2], |a: i64, b: i64| b - a)
     println(to_str(len(evens)) + " " + to_str(sorted[0]))
@@ -35981,7 +35994,7 @@ fn main() -> i64 {
 "#;
     assert_eq!(
         interp_stdout("ax40_closures", src),
-        "12 3\n100 102 106\n101\n8 101\n12 21 13\n11\n125 11\n40 0 6 16 0\n2 3\n0 1\n1 3 6"
+        "12 3\n100 102 106\n101\n8 101\n12 21 13\n11\n125 11\n40 6 16 16\n2 3\n0 1\n1 3 6"
     );
 }
 
@@ -36094,7 +36107,7 @@ fn main() -> i64 {
         let g = |b: i64| b + z + k
         g(1)
     }
-    println(to_str(f(1)) + " " + to_str(inc()) + " " + to_str(cnt) + " " + to_str(outer(5)))
+    println(to_str(f(1)) + " " + to_str(inc()) + " " + to_str(inc() - k) + " " + to_str(outer(5)))
 
     // Place assignment and &mut on slotted locals.
     let xs = [1, 2, 3]
@@ -36114,7 +36127,7 @@ fn main() -> i64 {
 "#;
     assert_eq!(
         interp_stdout("ax53_slots", src),
-        "51\n40 4 0\n5 502\n20100\n13 100\n14 7\n12 3\n8 9 0 19\n6 20 10\n3.25 abcd true true"
+        "51\n40 4 0\n5 502\n20100\n13 100\n14 7\n12 3\n8 9 9 19\n6 20 10\n3.25 abcd true true"
     );
 }
 
@@ -36125,8 +36138,8 @@ fn interp_builtin_closure_writing_a_captured_array_is_linear() {
     // per-call copy of the captures made each write copy the whole array
     // (quadratic: minutes at n = 200k). Many unrelated bindings are in scope
     // and must not be captured or copied either.
-    let src = "fn main() -> i64 {\n let n = 200000\n let p1 = [1, 2, 3]\n let p2 = \"pad\"\n let p3 = arr_repeat(1, 1000)\n let zs = arr_repeat(0, n)\n let k = arr_fold(arr_range(0, n), 0, |acc: i64, i: i64| {\n  zs[i] = i + 1\n  acc + zs[i] + zs[i / 2]\n })\n println(to_str(k) + \" \" + to_str(zs[n - 1]) + \" \" + to_str(len(p1) + len(p2) + len(p3)))\n 0\n}\n";
-    assert_eq!(interp_stdout("ax40_fold_lend", src), "30000200000 0 1006");
+    let src = "fn main() -> i64 {\n let n = 200000\n let p1 = [1, 2, 3]\n let p2 = \"pad\"\n let p3 = arr_repeat(1, 1000)\n let zs = arr_repeat(0, n)\n let k = arr_fold(arr_range(0, n), 0, |acc: i64, i: i64| {\n  zs[i] = i + 1\n  acc + zs[i] + zs[i / 2]\n })\n println(to_str(k) + \" \" + to_str(len(p1) + len(p2) + len(p3)))\n 0\n}\n";
+    assert_eq!(interp_stdout("ax40_fold_lend", src), "30000200000 1006");
 }
 
 #[test]
@@ -37569,11 +37582,12 @@ fn vm_closure_fold_no_tree_nodes() {
 
 /// R50 S4: a lambda captures by value at creation (later assignments to the
 /// captured local do not reach it), an assignment to a captured variable
-/// persists in the closure's capture cell across calls (T40) but not back to
-/// the defining scope, and a parameter shadows a captured name.
+/// persists in the closure's capture cell across calls (T40), and a parameter
+/// shadows a captured name. (Reading the defining binding after the closure
+/// writes it is E0607 since CS2-1, so the program reads it through `inc`.)
 #[test]
 fn vm_closure_capture_semantics() {
-    let src = "fn main() -> i64 {\n    let a = 1\n    let b = 10\n    let f = |x: i64| x + a + b\n    a = 100\n    println(to_str(f(1)))\n    let n = 0\n    let inc = || {\n        n = n + 1\n        n\n    }\n    println(to_str(inc()))\n    println(to_str(inc()))\n    println(to_str(n))\n    let g = |a: i64| a * b\n    println(to_str(g(3)))\n    let k = |x: i64| {\n        let a = x + 1\n        a\n    }\n    println(to_str(k(4)))\n    println(to_str(a))\n    0\n}\n";
+    let src = "fn main() -> i64 {\n    let a = 1\n    let b = 10\n    let f = |x: i64| x + a + b\n    a = 100\n    println(to_str(f(1)))\n    let n = 0\n    let inc = || {\n        n = n + 1\n        n\n    }\n    println(to_str(inc()))\n    println(to_str(inc()))\n    println(to_str(inc()))\n    let g = |a: i64| a * b\n    println(to_str(g(3)))\n    let k = |x: i64| {\n        let a = x + 1\n        a\n    }\n    println(to_str(k(4)))\n    println(to_str(a))\n    0\n}\n";
     let (code, stdout, _) = vm_scalar_case(
         "closure_capture",
         src,
@@ -37587,7 +37601,7 @@ fn vm_closure_capture_semantics() {
     );
     assert_eq!(
         (code, stdout.as_str()),
-        (Some(0), "12\n1\n2\n0\n30\n5\n100\n")
+        (Some(0), "12\n1\n2\n3\n30\n5\n100\n")
     );
 }
 
@@ -37620,7 +37634,7 @@ fn vm_closure_calls_and_recursion() {
 /// returning the wrong type fails the same way under both engines.
 #[test]
 fn vm_closure_copied_path_and_errors() {
-    let src = "fn main() -> i64 {\n    let xs = arr_range(0, 100)\n    let c = 0\n    let g = |acc: i64, x: i64| {\n        c = c + 1\n        acc + x * 2\n    }\n    println(to_str(arr_fold(xs, 0, g)))\n    println(to_str(arr_fold(xs, 1, g)))\n    println(to_str(len(arr_map(xs, |x: i64| x + c))))\n    println(to_str(arr_count_if(xs, |x: i64| x % 3 == 0)))\n    println(to_str(arr_fold(xs, 0, |acc: i64, x: i64| acc + 10 / (50 - x))))\n    0\n}\n";
+    let src = "fn main() -> i64 {\n    let xs = arr_range(0, 100)\n    let c = 0\n    let g = |acc: i64, x: i64| {\n        c = c + 1\n        acc + x * 2\n    }\n    println(to_str(arr_fold(xs, 0, g)))\n    println(to_str(arr_fold(xs, 1, g)))\n    println(to_str(len(arr_map(xs, |x: i64| x + 1))))\n    println(to_str(arr_count_if(xs, |x: i64| x % 3 == 0)))\n    println(to_str(arr_fold(xs, 0, |acc: i64, x: i64| acc + 10 / (50 - x))))\n    0\n}\n";
     let (code, stdout, stderr) = vm_scalar_case(
         "closure_copied",
         src,
@@ -40308,39 +40322,34 @@ fn r51_s0b_loop_control_never_leaves_its_frame_on_either_engine() {
 }
 
 /// R51 §3 row 6 (veto 91c2f676): a fn declared `-> Result` never returns a
-/// `None` across its boundary (an untyped `dict_get` makes one type-check).
-/// The caller reaches `solve` through the VM's fast call from its second
-/// iteration on; the refusal is the tree's on every engine.
+/// `None` across its boundary. An untyped `dict_get` used to make one
+/// type-check, and the run-time return check refused it; since CS2-3b a dict
+/// holds one value type, so `axon check` refuses the confusion (E0102) on
+/// both engines before any output.
 #[test]
 fn r51_s0b_a_confused_result_is_refused_at_the_return_on_either_engine() {
     let (code, stdout, stderr) = vm_same_both_engines("s0b_sum", s0b_src!("sum_confusion"));
-    assert_eq!(
-        (code, stdout.as_str()),
-        (Some(101), "1\n3\n5\n"),
-        "{stderr}"
-    );
+    assert_eq!((code, stdout.as_str()), (Some(2), ""), "{stderr}");
+    assert!(stderr.contains("E0102"), "{stderr}");
     assert!(
-        stderr.contains("`solve` is declared to return Result but produced None"),
+        stderr.contains("(expected Result<i64, str>), found Option<i64>"),
         "{stderr}"
     );
 }
 
-/// R51 §3 row 6 at the VM's leaf call: `pass`'s body is one `Load` of its
-/// parameter, so the eager VM's compiled `drive` reaches it through
-/// `leaf_call`, whose return check runs out of line
-/// (`leaf_return_checked`). The confused `None` declines to the full path,
-/// which refuses it as the tree does.
+/// R51 §3 row 6 at the VM's leaf call (`pass`'s body is one `Load` of its
+/// parameter). The fixture stores a `Result` and an `Option` in one dict;
+/// since CS2-3b a dict holds one value type, so `axon check` refuses the
+/// second write (E0102) on both engines before any output.
 #[test]
 fn r51_s0b_a_confused_result_is_refused_at_a_leaf_return_on_either_engine() {
     let (code, stdout, stderr) =
         vm_same_both_engines("s0b_leaf_sum", s0b_src!("leaf_sum_confusion"));
-    assert_eq!(
-        (code, stdout.as_str()),
-        (Some(101), "0\n2\n4\n"),
-        "{stderr}"
-    );
+    assert_eq!((code, stdout.as_str()), (Some(2), ""), "{stderr}");
     assert!(
-        stderr.contains("`pass` is declared to return Result but produced None"),
+        stderr.contains(
+            "type mismatch in arg 2 of `dict_set` (expected Result<i64, str>), found Option<i64>"
+        ),
         "{stderr}"
     );
 }
@@ -42449,4 +42458,527 @@ fn main() -> i64 {
             "{attack} [{tag}]: run: {rerr}"
         );
     }
+}
+
+/// CS2-3a (O-GAP-01): a closure or named fn passed to a higher-order builtin
+/// is unified with the builtin's `fn(..) -> ..` param, so its params share
+/// the sig's `T`/`U` and its return is checked (E0102); a numeric key fn
+/// (`arr_max_by`, `arr_min_by`, `arr_sum_by_f64`, declared `fn(T) -> Num`)
+/// must return a number (E0306). Each refused probe checked clean before and
+/// panicked at run time (exit 101).
+#[test]
+fn closure_passed_to_a_builtin_is_type_checked() {
+    let attack = "ATTACK: a closure of the wrong type passed to a builtin checked clean";
+    for (tag, src, code) in [
+        (
+            "h_filter",
+            "fn main() -> i64 {\n  let ys = arr_filter([1,2,3], |x| x + 1)\n  println(to_str(len(ys)))\n  0\n}\n",
+            "E0102",
+        ),
+        (
+            "h_any_bad",
+            "fn main() -> i64 {\n  let xs = [1, 2, 3]\n  println(to_str(arr_any(xs, |x| x + 2)))\n  0\n}\n",
+            "E0102",
+        ),
+        (
+            "h_fold",
+            "fn main() -> i64 {\n  let n = arr_fold([\"a\"], 0, |acc, x| acc + x)\n  println(to_str(n))\n  0\n}\n",
+            "E0102",
+        ),
+        (
+            "h_named",
+            "fn big(x: i64) -> bool { x > 1 }\nfn main() -> i64 {\n  println(to_str(len(arr_filter([\"a\"], big))))\n  0\n}\n",
+            "E0102",
+        ),
+        (
+            "l_maxby_b",
+            "fn main() -> i64 {\n  println(to_str(arr_max_by([1,2], |x| x > 1)))\n  0\n}\n",
+            "E0306",
+        ),
+        (
+            "l_sumbyf_b",
+            "fn main() -> i64 {\n  println(to_str(arr_sum_by_f64([1,2], |x| x > 1)))\n  0\n}\n",
+            "E0306",
+        ),
+    ] {
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains(code), "{attack} [{tag}]: want {code}: {cmsg}");
+    }
+}
+
+/// CS2-3a controls: closures that run today stay accepted with the same
+/// output - a generic fn forwarding its fn param, annotated lambdas, an i64
+/// key to a numeric-key builtin, a `dict_each` closure whose result is
+/// discarded, `Option`/`Result`/nested/empty closures, and `cli_run.rs`'s
+/// i64-key `advice.ax` program.
+#[test]
+fn generic_and_annotated_closures_to_builtins_stay_accepted() {
+    let attack = "ATTACK: a valid closure to a builtin was refused";
+    for (tag, src, out) in [
+        (
+            "l_generic_ok",
+            "fn keep<T>(xs: [T], f: fn(T) -> bool) -> [T] {\n  arr_filter(xs, f)\n}\nfn main() -> i64 {\n  println(to_str(len(keep([1,2,3], |x| x > 1))))\n  0\n}\n",
+            "2\n",
+        ),
+        (
+            "l_annot_lambda",
+            "fn main() -> i64 {\n  let xs = [1,2,3]\n  println(to_str(arr_fold(xs, 0, |acc: i64, x: i64| acc + x)))\n  0\n}\n",
+            "6\n",
+        ),
+        (
+            "l_sumbyf_i",
+            "fn main() -> i64 {\n  println(to_str(arr_sum_by_f64([1,2], |x| x)))\n  0\n}\n",
+            "3\n",
+        ),
+        (
+            "l_numkey",
+            "fn main() -> i64 {\n  println(to_str(arr_sum_by_f64([1, 2], |x: i64| x)))\n  println(to_str(arr_max_by([1, 2], |x: i64| x)))\n  0\n}\n",
+            "3\n2\n",
+        ),
+        (
+            "h10_each_ret",
+            "fn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", 1)\n  let out = dict_new()\n  dict_each(d, |k, v| dict_inc(out, k))\n  dict_each(d, |k, v| v + 1)\n  println(to_str(dict_len(out)))\n  0\n}\n",
+            "1\n",
+        ),
+        (
+            "h_any_ok",
+            "fn main() -> i64 {\n  let xs = [1, 2, 3]\n  println(to_str(arr_any(xs, |x| x > 2)))\n  0\n}\n",
+            "true\n",
+        ),
+        (
+            "h2_opt",
+            "fn main() -> i64 {\n  let xs = arr_map([1, 0 - 2], |x| if x > 0 { Some(x) } else { None })\n  let ys = arr_map([\"1\", \"z\"], |s| parse_int(s))\n  println(to_str(len(xs) + len(ys)))\n  0\n}\n",
+            "4\n",
+        ),
+        (
+            "h3_nested",
+            "fn main() -> i64 {\n  let xss = [[1, 0 - 1], [2]]\n  let ys = arr_map(xss, |xs| arr_filter(xs, |x| x > 0))\n  let n = arr_fold(ys, 0, |acc, xs| acc + len(xs))\n  let s = arr_map([1, 2], |x| to_str(x))\n  println(to_str(n) + str_join(s, \",\"))\n  0\n}\n",
+            "21,2\n",
+        ),
+        (
+            "h4_empty",
+            "fn main() -> i64 {\n  let e = arr_map([], |x| x + 1)\n  let t = arr_filter([], |x| x > 0)\n  println(to_str(len(e) + len(t)))\n  0\n}\n",
+            "0\n",
+        ),
+        (
+            "h5_dictarr",
+            "fn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", [1, 2])\n  let v = dict_get_or(d, \"a\", [])\n  let w = dict_get_or(d, \"zz\", [7])\n  println(to_str(len(v) + len(w)))\n  0\n}\n",
+            "3\n",
+        ),
+        (
+            "h9_sortby_maxby",
+            "fn main() -> i64 {\n  let xs = arr_sort_by([\"bb\", \"a\"], |a, b| len(a) - len(b))\n  let m = arr_max_by([\"bb\", \"a\"], |s| len(s))\n  let m2 = arr_max_by([1.5, 2.5], |x| x)\n  println(str_join(xs, \",\") + to_str(m) + to_str(m2))\n  0\n}\n",
+            "a,bbbb2.5\n",
+        ),
+        (
+            "advice_i64_key",
+            "fn main() {\n  let xs = [3,9,2]\n  println(to_str(arr_sum_by(&xs, |x| x)))\n  println(to_str(arr_max_by(&xs, |x| x)))\n  println(to_str(max_i64(3, 7)))\n}\n",
+            "14\n9\n7\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS2-1 (O-GAP-03): a closure captures by copy, so a write to a captured
+/// binding is not visible outside it. When the same binding is used outside
+/// the closure after the closure literal (read, written, or captured by
+/// another closure), or the literal sits in a loop that does not declare the
+/// binding (the loop re-captures it), `axon check` refuses with E0607. Each
+/// program here checked clean before and printed the outer value unchanged.
+/// `f1_readfirst` (the outer read runs before the first call) and
+/// `f5_loopwritefirst` (each loop closure writes before it reads, and nothing
+/// reads the outer binding later) are conservative refusals pinned on purpose:
+/// their output would not differ, but the rule does not track call order.
+#[test]
+fn closure_write_to_a_capture_read_outside_is_refused_e0607() {
+    let attack = "ATTACK: a closure write to a capture read outside checked clean";
+    for (tag, src) in [
+        (
+            "c1_two",
+            "fn main() -> i64 {\n  let n = 0\n  let add = || { n = n + 1 }\n  let get = || n\n  add()\n  println(to_str(get()))\n  0\n}\n",
+        ),
+        (
+            "c1_cap",
+            "fn main() -> i64 {\n  let count = 0\n  let inc = || { count = count + 1 }\n  inc()\n  inc()\n  println(to_str(count))\n  0\n}\n",
+        ),
+        (
+            "c1_nested",
+            "fn main() -> i64 {\n  let n = 0\n  let outer = || { let g = || { n = n + 5 }\n g()\n n }\n  println(to_str(outer()))\n  println(to_str(n))\n  0\n}\n",
+        ),
+        (
+            "c1_nested_local",
+            "fn main() -> i64 {\n  let outer = || { let m = 1\n let g = || { m = m + 5 }\n g()\n m }\n  println(to_str(outer()))\n  0\n}\n",
+        ),
+        (
+            "c1_field",
+            "type P = { v: i64 }\nfn main() -> i64 {\n  let p = P { v: 1 }\n  let f = || { p.v = 9 }\n  f()\n  println(to_str(p.v))\n  0\n}\n",
+        ),
+        (
+            "c1_index",
+            "fn main() -> i64 {\n  let a = [1,2,3]\n  let f = || { a[0] = 9 }\n  f()\n  println(to_str(a[0]))\n  0\n}\n",
+        ),
+        (
+            "c1_loop",
+            "fn main() -> i64 {\n  let n = 0\n  let i = 0\n  while i < 3 {\n    println(to_str(n))\n    let f = || { n = n + 1 }\n    f()\n    i = i + 1\n  }\n  0\n}\n",
+        ),
+        (
+            "f5_after",
+            "fn main() -> i64 {\n  let last = 0\n  let i = 0\n  while i < 3 {\n    let f = |k: i64| { last = k * 10\n      last }\n    println(to_str(f(i)))\n    i = i + 1\n  }\n  println(to_str(last))\n  0\n}\n",
+        ),
+        (
+            "f1_readfirst",
+            "fn main() -> i64 {\n  let n = 0\n  let next = || { n = n + 1\n n }\n  println(to_str(n))\n  println(to_str(next()))\n  println(to_str(next()))\n  0\n}\n",
+        ),
+        (
+            "f5_loopwritefirst",
+            "fn main() -> i64 {\n  let last = 0\n  let i = 0\n  while i < 3 {\n    let f = |k: i64| { last = k * 10\n last }\n    println(to_str(f(i)))\n    i = i + 1\n  }\n  0\n}\n",
+        ),
+    ] {
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains("E0607"), "{attack} [{tag}]: want E0607: {cmsg}");
+    }
+}
+
+/// CS2-1 controls: a closure that alone keeps its state (a counter or a
+/// factory), a write to a lambda param or a closure-local `let`, a re-declared
+/// or sibling-block binding of the same name, a closure stored in a field or
+/// aliased, and a `dict_set` through a captured handle all stay rc 0 with the
+/// same output.
+#[test]
+fn closure_counter_and_local_writes_stay_legal() {
+    let attack = "ATTACK: a legal closure write was refused";
+    for (tag, src, out) in [
+        (
+            "f2_shadow",
+            "fn main() -> i64 {\n  let n = 0\n  let next = || { n = n + 1\n n }\n  println(to_str(next()))\n  let n = 100\n  println(to_str(n))\n  0\n}\n",
+            "1\n100\n",
+        ),
+        (
+            "f3_sibling",
+            "fn main() -> i64 {\n  if true {\n    let n = 0\n    let next = || { n = n + 1\n n }\n    println(to_str(next()))\n  }\n  if true {\n    let n = 5\n    println(to_str(n))\n  }\n  0\n}\n",
+            "1\n5\n",
+        ),
+        (
+            "c1_factory",
+            "fn mk() -> fn() -> i64 {\n  let n = 0\n  || { n = n + 1\n  n }\n}\nfn main() -> i64 {\n  let c = mk()\n  c()\n  println(to_str(c()))\n  0\n}\n",
+            "2\n",
+        ),
+        (
+            "c1_shadow",
+            "fn main() -> i64 {\n  let n = 0\n  let f = |n: i64| { n = n + 1\n n }\n  println(to_str(f(1)))\n  println(to_str(n))\n  0\n}\n",
+            "2\n0\n",
+        ),
+        (
+            "c1_shadow_let",
+            "fn main() -> i64 {\n  let n = 0\n  let f = || { let n = 7\n n = n + 1\n n }\n  println(to_str(f()))\n  println(to_str(n))\n  0\n}\n",
+            "8\n0\n",
+        ),
+        (
+            "f4_field",
+            "type H = { f: fn() -> i64 }\nfn main() -> i64 {\n  let n = 0\n  let h = H { f: || { n = n + 1\n n } }\n  println(to_str((h.f)()))\n  println(to_str((h.f)()))\n  0\n}\n",
+            "1\n2\n",
+        ),
+        (
+            "f6_param",
+            "fn mk(n: i64) -> fn() -> i64 {\n  || { n = n + 1\n n }\n}\nfn main() -> i64 {\n  let c = mk(10)\n  c()\n  println(to_str(c()))\n  0\n}\n",
+            "12\n",
+        ),
+        (
+            "f7_dict",
+            "fn main() -> i64 {\n  let d = dict_new()\n  let f = || { dict_set(d, \"k\", 1) }\n  f()\n  println(to_str(dict_len(d)))\n  0\n}\n",
+            "1\n",
+        ),
+        (
+            "f8_retclosure_block",
+            "fn main() -> i64 {\n  let n = 0\n  let g = || { n = n + 1\n n }\n  let h = g\n  h()\n  println(to_str(h()))\n  0\n}\n",
+            "2\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS2-5 (O-GAP-05): a method call on a generic param is looked up in its
+/// bound traits (an unbounded `T`, or a bound that does not declare the
+/// method, is E0403), and a generic struct's type arguments are compared
+/// (`B<i64>` holding a `str` is E0102). Each probe checked clean and then
+/// panicked at run time (exit 101). `g_unbounded_impl` is the pinned refusal:
+/// every caller passes a type that has the method, but `T` has no bound.
+#[test]
+fn generic_param_method_and_generic_struct_args_are_checked() {
+    let attack = "ATTACK: a generic method call or generic struct argument checked clean";
+    for (tag, src, code, msg) in [
+        (
+            "g_method",
+            "fn f<T>(x: T) -> i64 {\n  x.area()\n}\nfn main() -> i64 {\n  println(to_str(f(3)))\n  0\n}\n",
+            "E0403",
+            "it has no bound; add `T: Trait`",
+        ),
+        (
+            "g_bounded_bad",
+            "trait Shape {\n  fn area(self) -> i64\n}\ntype Sq = { s: i64 }\nimpl Shape for Sq {\n  fn area(self: Sq) -> i64 { self.s * self.s }\n}\nfn f<T: Shape>(x: T) -> i64 {\n  x.perim()\n}\nfn main() -> i64 {\n  println(to_str(f(Sq { s: 3 })))\n  0\n}\n",
+            "E0403",
+            "its bound `Shape` does not declare it",
+        ),
+        (
+            "g_struct",
+            "type B<T> = { v: T }\nfn main() -> i64 {\n  let b: B<i64> = B { v: \"s\" }\n  println(to_str(b.v + 1))\n  0\n}\n",
+            "E0102",
+            "expected i64",
+        ),
+        (
+            "g_struct_param",
+            "type B<T> = { v: T }\nfn get(b: B<i64>) -> i64 {\n  b.v + 1\n}\nfn main() -> i64 {\n  println(to_str(get(B { v: \"s\" })))\n  0\n}\n",
+            "E0102",
+            "expected i64",
+        ),
+        (
+            "g_unbounded_impl",
+            "trait Shape {\n  fn area(self) -> i64\n}\ntype Sq = { s: i64 }\nimpl Shape for Sq {\n  fn area(self: Sq) -> i64 { self.s * self.s }\n}\nfn f<T>(x: T) -> i64 { x.area() }\nfn main() -> i64 {\n  println(to_str(f(Sq { s: 3 })))\n  0\n}\n",
+            "E0403",
+            "add `T: Trait`",
+        ),
+    ] {
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains(code), "{attack} [{tag}]: want {code}: {cmsg}");
+        assert!(cmsg.contains(msg), "{attack} [{tag}]: want {msg:?}: {cmsg}");
+    }
+}
+
+/// CS2-5 controls: a bounded generic calling a method its bound declares, a
+/// generic struct built and read through annotations, a concrete field, a
+/// nested `App` and a bounded closure all check clean and print the same.
+#[test]
+fn bounded_generic_methods_and_generic_structs_stay_accepted() {
+    let attack = "ATTACK: a valid generic program was refused";
+    for (tag, src, out) in [
+        (
+            "g_bounded_ok",
+            "trait Shape {\n  fn area(self) -> i64\n}\ntype Sq = { s: i64 }\nimpl Shape for Sq {\n  fn area(self: Sq) -> i64 { self.s * self.s }\n}\nfn f<T: Shape>(x: T) -> i64 {\n  x.area()\n}\nfn main() -> i64 {\n  println(to_str(f(Sq { s: 3 })))\n  0\n}\n",
+            "9\n",
+        ),
+        (
+            "g1_mk",
+            "type B<T> = { v: T }\nfn mk<T>(v: T) -> B<T> { B { v: v } }\nfn get<T>(b: B<T>) -> T { b.v }\nfn main() -> i64 {\n  let b: B<i64> = mk(1)\n  let s: B<str> = mk(\"x\")\n  let n: i64 = get(b) + 1\n  println(to_str(n) + get(s))\n  0\n}\n",
+            "2x\n",
+        ),
+        (
+            "g2_conc_field",
+            "trait Shape {\n  fn area(self) -> i64\n}\ntype Sq = { s: i64 }\nimpl Shape for Sq {\n  fn area(self: Sq) -> i64 { self.s * self.s }\n}\ntype W<T> = { tag: T, sq: Sq }\nfn f<T>(w: W<T>) -> i64 { w.sq.area() }\nfn g<T>(x: T, s: Sq) -> i64 { s.area() }\nfn main() -> i64 {\n  println(to_str(f(W { tag: \"a\", sq: Sq { s: 2 } }) + g(1, Sq { s: 3 })))\n  0\n}\n",
+            "13\n",
+        ),
+        (
+            "g4_nested_app",
+            "type B<T> = { v: T }\nfn main() -> i64 {\n  let inner = B { v: 2 }\n  let outer: B<B<i64>> = B { v: inner }\n  let xs: [B<i64>] = [B { v: 1 }, inner]\n  println(to_str(outer.v.v + xs[0].v))\n  0\n}\n",
+            "3\n",
+        ),
+        (
+            "g5_bounded_closure",
+            "trait Shape {\n  fn area(self) -> i64\n}\ntype Sq = { s: i64 }\nimpl Shape for Sq {\n  fn area(self: Sq) -> i64 { self.s * self.s }\n}\nfn total<T: Shape>(xs: [T]) -> i64 { arr_fold(xs, 0, |acc, x| acc + x.area()) }\nfn main() -> i64 {\n  println(to_str(total([Sq { s: 2 }, Sq { s: 1 }])))\n  0\n}\n",
+            "5\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS2-3b (O-GAP-02, NH-1(a)): a dict holds one value type. A read used as
+/// another type, a write of another type into an annotated or a bare-`Dict`
+/// param's dict, a mixed dict and a non-`str` key are refused at check (E0102).
+/// Each refused probe checked clean before; the first three panicked
+/// `cannot apply Add to str / i64` (exit 101) at run time.
+#[test]
+fn dict_values_are_typed() {
+    let attack = "ATTACK: a dict holding a value of another type checked clean";
+    for (tag, src, code, msg) in [
+        (
+            "d_get",
+            "fn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", 1)\n  match dict_get(d, \"a\") {\n    Some(v) => println(\"got \" + v),\n    None => println(\"none\"),\n  }\n  0\n}\n",
+            "E0102",
+            "expected i64), found str",
+        ),
+        (
+            "d_ann",
+            "fn main() -> i64 {\n  let d: Dict<str, i64> = dict_new()\n  dict_set(d, \"a\", \"x\")\n  match dict_get(d, \"a\") {\n    Some(v) => println(to_str(v + 1)),\n    None => println(\"none\"),\n  }\n  0\n}\n",
+            "E0102",
+            "type mismatch in arg 2 of `dict_set` (expected i64), found str",
+        ),
+        (
+            "d_param_bare",
+            "fn total(d: Dict) -> i64 {\n  match dict_get(d, \"a\") {\n    Some(v) => v + 1,\n    None => 0,\n  }\n}\nfn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", \"s\")\n  println(to_str(total(d)))\n  0\n}\n",
+            "E0102",
+            "type mismatch in arg 0 of `total`",
+        ),
+        (
+            "d_mixed",
+            "fn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", 1)\n  dict_set(d, \"b\", \"x\")\n  println(to_str(dict_len(d)))\n  0\n}\n",
+            "E0102",
+            "type mismatch in arg 2 of `dict_set` (expected i64), found str",
+        ),
+        (
+            "d_key_i64",
+            "fn main() -> i64 {\n  let d: Dict<i64, i64> = dict_new()\n  println(to_str(dict_len(d)))\n  0\n}\n",
+            "E0102",
+            "Dict keys are str",
+        ),
+    ] {
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains(code), "{attack} [{tag}]: want {code}: {cmsg}");
+        assert!(cmsg.contains(msg), "{attack} [{tag}]: want {msg:?}: {cmsg}");
+    }
+    // Controls: a bare-`Dict` param whose body leaves the value free is
+    // generic per call (h6), a bare-`Dict` struct field is an implicit type
+    // param (h7), a body that fixes the value types the caller's dict (h6b),
+    // and a declared `<V>` stays generic; each checks clean and prints the same.
+    let attack = "ATTACK: a valid dict program was refused";
+    for (tag, src, out) in [
+        (
+            "h6_bare_param",
+            "fn size(d: Dict) -> i64 { dict_len(d) }\nfn main() -> i64 {\n  let a = dict_new()\n  dict_set(a, \"k\", 1)\n  let b = dict_new()\n  dict_set(b, \"k\", \"v\")\n  println(to_str(size(a) + size(b)))\n  0\n}\n",
+            "2\n",
+        ),
+        (
+            "h7_field",
+            "type Reg = { tags: Dict }\nfn main() -> i64 {\n  let a = dict_new()\n  dict_set(a, \"k\", 1)\n  let b = dict_new()\n  dict_set(b, \"k\", \"v\")\n  let r1 = Reg { tags: a }\n  let r2 = Reg { tags: b }\n  println(to_str(dict_len(r1.tags) + dict_len(r2.tags)))\n  0\n}\n",
+            "2\n",
+        ),
+        (
+            "h6b_put",
+            "fn put(d: Dict) -> () {\n  dict_set(d, \"k\", 1)\n}\nfn main() -> i64 {\n  let a = dict_new()\n  put(a)\n  match dict_get(a, \"k\") {\n    Some(v) => println(to_str(v + 1)),\n    None => println(\"none\"),\n  }\n  0\n}\n",
+            "2\n",
+        ),
+        (
+            "d_generic_v",
+            "fn count<V>(d: Dict<str, V>) -> i64 { dict_len(d) }\nfn main() -> i64 {\n  let a: Dict<str, i64> = dict_new()\n  dict_set(a, \"k\", 1)\n  let b = dict_new()\n  dict_set(b, \"k\", \"v\")\n  println(to_str(count(a) + count(b)))\n  0\n}\n",
+            "2\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+    for rel in [
+        "stdlib/set.ax",
+        "stdlib/bandit.ax",
+        "asi/corrigible.ax",
+        "asi/llm_cache.ax",
+    ] {
+        let out = axon().args(["check", &ex(rel)]).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{attack} [{rel}]: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+/// checker-soundness-2 CS2-8 (O-SP-02): a refinement predicate may not reach
+/// an effect through a user fn. `reject_impure_refinement` walked only the
+/// predicate's own calls, so a helper that wrote a file, read the clock or
+/// drew a random number checked clean and ran its effect at every coercion.
+/// It now walks the predicate with the capabilities reach walker: a reached
+/// capability or effect (`Time` included) is E1209, and so is a call nothing
+/// can classify (a fn named at runtime). Pure helpers stay accepted.
+#[test]
+fn an_effectful_helper_in_a_refinement_is_refused_e1209() {
+    let attack = "ATTACK: a refinement predicate reaching an effect through a helper checked clean";
+    let tail = "type W = i64 where p(_)\nfn f(n: W) -> i64 { n }\nfn main() -> i64 {\n  println(to_str(f(1)))\n  0\n}\n";
+    for (tag, helper, msg) in [
+        (
+            "e_helper",
+            "fn p(v: i64) -> bool {\n  let _ = append_file(\"/nonexistent-axon-cs2-8/x\", \"x\")\n  true\n}\n",
+            "reaches `append_file` (fs:write, IO) through `p`",
+        ),
+        (
+            "e_now",
+            "fn p(v: i64) -> bool { now_ms() > 0 }\n",
+            "reaches `now_ms` (Time) through `p`",
+        ),
+        (
+            "e_rand",
+            "fn p(v: i64) -> bool {\n  let r = random_f64()\n  r >= 0.0 && v > 0\n}\n",
+            "reaches `random_f64` (Random) through `p`",
+        ),
+        (
+            "e_unknown",
+            "fn tgt(x: i64) -> i64 { x }\nfn p(v: i64) -> bool {\n  let n = \"t\" + \"gt\"\n  let _ = scheduler_spawn(n, v)\n  true\n}\n",
+            "reaches a call nothing can classify",
+        ),
+    ] {
+        let src = format!("{helper}{tail}");
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, &src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains("E1209"), "{attack} [{tag}]: want E1209: {cmsg}");
+        assert!(cmsg.contains(msg), "{attack} [{tag}]: want {msg:?}: {cmsg}");
+    }
+    // A predicate calling the impure builtin itself keeps its own message.
+    let (crc, cmsg, _, _, _) = sf6_check_and_run(
+        "e_direct",
+        "type W = i64 where now_ms() > 0\nfn f(n: W) -> i64 { n }\nfn main() -> i64 {\n  println(to_str(f(1)))\n  0\n}\n",
+    );
+    assert_eq!(crc, Some(2), "e_direct: {cmsg}");
+    assert!(cmsg.contains("uses the impure builtin `now_ms`"), "e_direct: {cmsg}");
+    // Controls: a pure helper, helpers using a lambda, a fn array and
+    // `assert`, a fn-param dispatch; each checks clean and prints the same.
+    let attack = "ATTACK: a pure refinement predicate was refused";
+    for (tag, src, out) in [
+        (
+            "e_pure_helper",
+            "fn pos(v: i64) -> bool { v > 0 }\ntype W = i64 where pos(_)\nfn f(n: W) -> i64 { n }\nfn main() -> i64 {\n  println(to_str(f(1)))\n  0\n}\n",
+            "1\n",
+        ),
+        (
+            "e1_hof",
+            "fn all_pos(xs: [i64]) -> bool { arr_all(xs, |x| x > 0) }\nfn even(v: i64) -> bool { v % 2 == 0 }\nfn chk(v: i64) -> bool {\n  let ops = [even]\n  ops[0](v)\n}\nfn dbg(v: i64) -> bool {\n  assert(v > -100)\n  v > 0\n}\ntype P = [i64] where all_pos(_)\ntype E2 = i64 where chk(_)\ntype D = i64 where dbg(_)\nfn f(p: P, e2: E2, d: D) -> i64 { len(p) + e2 + d }\nfn main() -> i64 {\n  println(to_str(f([1, 2], 6, 1)))\n  0\n}\n",
+            "9\n",
+        ),
+        (
+            "e3_fnparam",
+            "fn via(g: fn(i64) -> i64, v: i64) -> i64 { g(v) }\nfn dbl(x: i64) -> i64 { x * 2 }\nfn p(v: i64) -> bool { via(dbl, v) > 0 }\ntype W = i64 where p(_)\nfn f(n: W) -> i64 { n }\nfn main() -> i64 {\n  println(to_str(f(1)))\n  0\n}\n",
+            "1\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+    let out = axon().args(["check", &ex("refinements.ax")]).output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{attack} [refinements.ax]: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

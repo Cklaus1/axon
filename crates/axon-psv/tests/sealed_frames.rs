@@ -409,6 +409,13 @@ fn refused_unkeyed(s: &Seen) -> bool {
     s.status != GuestStatus::Passed && s.host != Some(true)
 }
 
+/// A keyed failure, or (CS2-3b) a check-time E0102 with no verdict: a dict
+/// holds one value type, so a candidate that confuses a type by reading a
+/// dict back as another type no longer type-checks.
+fn keyed_failure_or_typed_dict_refusal(s: &Seen) -> bool {
+    s.host == Some(false) || (s.host.is_none() && s.stderr.contains("E0102"))
+}
+
 #[test]
 fn the_candidate_never_chooses_the_operators_judging_method() {
     // Controls: the suites discriminate.
@@ -468,7 +475,13 @@ fn the_candidate_never_chooses_the_operators_judging_method() {
             s.host,
             s.stdout
         );
-        assert_eq!(s.host, Some(false), "a keyed FAILURE ({why}): {}", s.stdout);
+        assert!(
+            keyed_failure_or_typed_dict_refusal(&s),
+            "a keyed FAILURE ({why}): {:?} {}{}",
+            s.host,
+            s.stdout,
+            s.stderr
+        );
     }
 }
 
@@ -605,7 +618,13 @@ fn the_candidate_never_selects_the_operators_code_by_width_or_by_name() {
             s.host,
             s.stdout
         );
-        assert_eq!(s.host, Some(false), "a keyed FAILURE ({why}): {}", s.stdout);
+        assert!(
+            keyed_failure_or_typed_dict_refusal(&s),
+            "a keyed FAILURE ({why}): {:?} {}{}",
+            s.host,
+            s.stdout,
+            s.stderr
+        );
     }
 }
 
@@ -2109,7 +2128,8 @@ fn every_position_the_sealed_walk_visits_has_a_twin_row() {
 /// the candidate PICKED the value. The registry pattern the reviewers executed
 /// (`dict_get_or(d, key(), ..)` over a dict of operator structs with a strict and
 /// a lenient impl) follows the candidate's key no longer: the verdict is refused
-/// for both keys. The honest shapes that build an operator struct from the
+/// for both keys; since CS2-3b (a dict holds one value type) that dict of an `A`
+/// and a `B` is refused at check (E0102). The honest shapes that build an operator struct from the
 /// candidate's data (`Sq { s: val() }.area()`, a factory fn, a registry the operator
 /// filled and reads by its own key) pass keyed.
 #[test]
@@ -2122,35 +2142,37 @@ fn an_operator_value_the_candidate_picked_is_refused_through_the_runner() {
     };
     let reg = "  let d = dict_new()\n  dict_set(d, \"a\", A { v: 1 })\n  dict_set(d, \"b\", B { v: 1 })\n";
     let mut fails = Vec::new();
-    // Attacks: both keys are refused (the verdict does not follow the key).
-    for (what, body) in [
-        (
-            "a dict of operator structs read by the candidate's key",
-            format!("{reg}  let r = dict_get_or(d, key(), A {{ v: 1 }})\n  assert(r.rub())"),
-        ),
-        (
-            "a sealed generic handing one of two operator ctors' values back",
-            "  let r = pickb(mka, mkb)\n  assert(r.rub())".to_string(),
-        ),
-    ] {
-        for k in ["a", "b"] {
-            fails.extend(taint_attack(
-                &format!("{what}, key {k}"),
-                &su(&body),
-                &cand(k),
+    // CS2-3b: a dict holds one value type, so a dict of an `A` and a `B` (the
+    // candidate's key choosing the impl) no longer type-checks: E0102 at check,
+    // no verdict, for both keys.
+    for k in ["a", "b"] {
+        let body = format!("{reg}  let r = dict_get_or(d, key(), A {{ v: 1 }})\n  assert(r.rub())");
+        let s = check(&su(&body), &[], &cand(k), "accept");
+        if !(refused_unkeyed(&s) && s.host.is_none() && s.stderr.contains("E0102")) {
+            fails.push(format!(
+                "ATTACK: a dict of operator structs read by the candidate's key, key {k}, was not refused at check: {:?} {:?} {}{}",
+                s.status, s.host, s.stdout, s.stderr
             ));
         }
     }
+    // Attacks: both keys are refused (the verdict does not follow the key).
+    for k in ["a", "b"] {
+        fails.extend(taint_attack(
+            &format!("a sealed generic handing one of two operator ctors' values back, key {k}"),
+            &su("  let r = pickb(mka, mkb)\n  assert(r.rub())"),
+            &cand(k),
+        ));
+    }
     // Honest controls: the operator's own key; an operator struct built from the candidate's number.
     for (what, body) in [
-        ("the operator's own key into a table of operator values", format!("{reg}  assert(dict_get_or(d, \"b\", A {{ v: 1 }}).rub())")),
+        ("the operator's own key into a table of operator values", "  let d = dict_new()\n  dict_set(d, \"a\", A { v: 1 })\n  dict_set(d, \"b\", A { v: 9 })\n  assert(dict_get_or(d, \"b\", A { v: 1 }).rub())".to_string()),
         ("an operator struct holding the candidate's number", "  assert(Sq { s: val() }.area() == 9)".to_string()),
         ("a factory fn given the candidate's number", "  assert(mk_sq(val()).area() == 9)".to_string()),
-        ("a registry the operator filled from the candidate's data, read by its own key", "  let reg = dict_new()\n  dict_set(reg, \"sq\", Sq { s: val() })\n  dict_set(reg, \"ci\", Ci { r: val() })\n  assert(dict_get_or(reg, \"sq\", Sq { s: 1 }).area() == 9)".to_string()),
+        ("a registry the operator filled from the candidate's data, read by its own key", "  let reg = dict_new()\n  dict_set(reg, \"sq\", Sq { s: val() })\n  dict_set(reg, \"one\", Sq { s: 1 })\n  assert(dict_get_or(reg, \"sq\", Sq { s: 1 }).area() == 9)".to_string()),
     ] {
         let s = check(&su(&body), &[], &cand("b"), "accept");
         if (s.status, s.host) != (GuestStatus::Passed, Some(true)) {
-            fails.push(format!("CONTROL REFUSED ({what}): {}", s.stdout));
+            fails.push(format!("CONTROL REFUSED ({what}): {}{}", s.stdout, s.stderr));
         }
     }
     all_refused(fails);

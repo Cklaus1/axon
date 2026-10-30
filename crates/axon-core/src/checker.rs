@@ -207,8 +207,8 @@ fn type_contains_unresolved(ty: &Type) -> bool {
 }
 
 /// True when a builtin signature's `Type::Deferred(name)` is a *type parameter*
-/// slot (`T`, `U`, `V`, `K`, `E`) rather than an opaque deferred type (`Dict`,
-/// `Uncertain<…>`) or a closure slot (`fn(T) -> U`).
+/// slot (`T`, `U`, `V`, `K`, `E`, and CS2-3a's numeric `Num`) rather than an
+/// opaque deferred type (`Dict`, `Uncertain<…>`).
 ///
 /// `parse_type_str` (infer.rs) has no type-variable arm, so every one of these
 /// lands as `Deferred`; the name is the only thing that tells them apart.
@@ -219,13 +219,12 @@ fn type_contains_unresolved(ty: &Type) -> bool {
 /// drift, and inference would then solve a slot the checker still treats as a
 /// wildcard (or the reverse).
 pub(crate) fn is_builtin_type_param_name(n: &str) -> bool {
-    !n.starts_with("fn(")
-        && !DEFERRED_PREFIXES.iter().any(|p| n.starts_with(p))
-        && !n.is_empty()
-        && n.len() <= 2
-        && n.starts_with(|c: char| c.is_ascii_uppercase())
-        && n.chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    n == "Num"
+        || (!DEFERRED_PREFIXES.iter().any(|p| n.starts_with(p))
+            && !n.is_empty()
+            && n.len() <= 2
+            && n.starts_with(|c: char| c.is_ascii_uppercase())
+            && n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()))
 }
 
 /// Structurally match a builtin's declared parameter type against a concrete
@@ -322,25 +321,47 @@ fn foreign_type_help(name: &str) -> Option<String> {
     ))
 }
 
+/// CS2-5: inference's `Type::App("B", args)` (a generic struct applied to
+/// arguments) reaches the checker as the `Deferred("B")` it resolved to before
+/// `App` existed; the argument check is inference's (E0102). CS2-3b likewise:
+/// a typed `Type::Dict(V)` reaches the checker as the opaque `Deferred("Dict")`
+/// handle, and the value-type check is inference's.
+fn erase_app(ty: Type) -> Type {
+    let rec = |t: Box<Type>| Box::new(erase_app(*t));
+    match ty {
+        Type::App(n, _) => Type::Deferred(n),
+        Type::Dict(_) => Type::Deferred("Dict".to_string()),
+        Type::Option(i) => Type::Option(rec(i)),
+        Type::Result(o, e) => Type::Result(rec(o), rec(e)),
+        Type::Slice(i) => Type::Slice(rec(i)),
+        Type::Chan(i) => Type::Chan(rec(i)),
+        Type::Uncertain(i) => Type::Uncertain(rec(i)),
+        Type::Temporal(i) => Type::Temporal(rec(i)),
+        Type::RawPtr(i) => Type::RawPtr(rec(i)),
+        Type::Tuple(ts) => Type::Tuple(ts.into_iter().map(erase_app).collect()),
+        Type::Fn(ps, r) => Type::Fn(ps.into_iter().map(erase_app).collect(), rec(r)),
+        other => other,
+    }
+}
+
+fn erase_app_sig(s: FnSig) -> FnSig {
+    FnSig {
+        params: s.params.into_iter().map(erase_app).collect(),
+        ret: erase_app(s.ret),
+    }
+}
+
 /// How many parameters a builtin's `fn(...)` parameter type declares, or `None`
 /// when the type is not a closure type.
 ///
 /// The arity is already written down in the BUILTINS table (`fn(T) -> U`,
 /// `fn(U, T) -> U`); this just reads it, so the two cannot drift.
 fn closure_arity(ty: &Type) -> Option<usize> {
-    let s = match ty {
-        Type::Deferred(n) => n.clone(),
-        _ => return None,
-    };
-    let rest = s.strip_prefix("fn(")?;
-    let inner = &rest[..rest.find(')')?];
-    let inner = inner.trim();
-    if inner.is_empty() {
-        return Some(0);
+    match ty {
+        Type::Fn(ps, _) => Some(ps.len()),
+        _ => None,
     }
-    Some(inner.split(',').count())
 }
-
 /// A concrete lambda to write, for the arity the callee wants.
 fn lambda_shape_hint(want: usize) -> String {
     match want {
@@ -505,8 +526,11 @@ pub struct CheckCtx {
     /// should have written, and a hint that says `{ field: … }` when it could say
     /// `{ r: … }` leaves the reader a second lookup.
     pub enum_variant_fields: HashMap<String, Vec<String>>,
-    /// Generic type parameter names in scope for the current function (R08 suppression).
-    current_generic_params: HashSet<String>,
+    /// Generic type parameters in scope for the current item (R08 suppression),
+    /// each with the traits it is bounded by (CS2-5: a method call on a
+    /// receiver of type `T` is looked up in these traits). A type's, enum's or
+    /// trait's own params carry no bounds.
+    current_generic_params: HashMap<String, Vec<String>>,
     /// Trait definitions collected from the program: trait_name → TraitDef.
     /// Populated during `check_program` for E0501/E0502/E0503 validation.
     trait_defs: HashMap<String, crate::ast::TraitDef>,
@@ -626,10 +650,16 @@ impl CheckCtx {
     ) -> Self {
         Self {
             file: file.into(),
-            fn_sigs,
+            fn_sigs: fn_sigs
+                .into_iter()
+                .map(|(k, s)| (k, erase_app_sig(s)))
+                .collect(),
             user_fn_sigs: HashMap::new(),
             top_let_fn_types: HashMap::new(),
-            struct_fields,
+            struct_fields: struct_fields
+                .into_iter()
+                .map(|(k, fs)| (k, fs.into_iter().map(|(n, t)| (n, erase_app(t))).collect()))
+                .collect(),
             expr_types: HashMap::new(),
             errors: Vec::new(),
             current_ret_ty: Option::None,
@@ -639,7 +669,7 @@ impl CheckCtx {
             enum_variants: HashMap::new(),
             enum_variant_fields: HashMap::new(),
             known_modules: std::collections::HashSet::new(),
-            current_generic_params: HashSet::new(),
+            current_generic_params: HashMap::new(),
             trait_defs: HashMap::new(),
             impl_table: HashMap::new(),
             type_methods: HashMap::new(),
@@ -675,10 +705,10 @@ impl CheckCtx {
             .map(|(k, v)| {
                 (
                     k.clone(),
-                    FnSig {
+                    erase_app_sig(FnSig {
                         params: v.params.clone(),
                         ret: v.ret.clone(),
-                    },
+                    }),
                 )
             })
             .collect();
@@ -928,6 +958,17 @@ impl CheckCtx {
         // A @[pure] fn may only call other @[pure] fns + the pure-builtin
         // allowlist; an impure call is E1207. Done as a pre-pass so a @[pure] fn
         // calling another (forward-declared) @[pure] fn is accepted (P05).
+        // CS2-8: the reach walker for refinement predicates, built only when
+        // the program has one.
+        let refine_walker = program
+            .items
+            .iter()
+            .any(|i| match i {
+                Item::RefineDef(_) => true,
+                Item::TypeDef(td) => td.refinement.is_some(),
+                _ => false,
+            })
+            .then(|| crate::capabilities::RefinementWalker::new(program));
         for item in &program.items {
             if let Item::FnDef(f) = item {
                 if f.attrs.iter().any(|a| a.name == "pure") {
@@ -954,12 +995,16 @@ impl CheckCtx {
                 // A refinement predicate is a STATIC, deterministic contract: it
                 // must be pure. An impure builtin in it (now_ms/random_i64/IO/AI…)
                 // makes the "type" non-deterministic and meaningless. Reject it.
-                self.reject_impure_refinement(&r.predicate, &r.name);
+                if let Some(w) = &refine_walker {
+                    self.reject_impure_refinement(&r.predicate, &r.name, w);
+                }
             }
             // Whole-struct refinement predicates must be pure for the same reason.
             if let Item::TypeDef(td) = item {
                 if let Some(pred) = &td.refinement {
-                    self.reject_impure_refinement(pred, &td.name);
+                    if let Some(w) = &refine_walker {
+                        self.reject_impure_refinement(pred, &td.name, w);
+                    }
                 }
             }
         }
@@ -1574,7 +1619,7 @@ impl CheckCtx {
                 // Generic params of the typedef (e.g. A, B in `type Pair<A,B>`) are valid.
                 let prev_generics = std::mem::replace(
                     &mut self.current_generic_params,
-                    td.generic_params.iter().cloned().collect(),
+                    td.generic_params.iter().map(|p| (p.clone(), Vec::new())).collect(),
                 );
                 if self.sealed_at(td.span) {
                     if let Some(p) = td.refinement.as_deref() {
@@ -1643,7 +1688,7 @@ impl CheckCtx {
             Item::EnumDef(e) if self.sealed_at(e.span) => {
                 let prev = std::mem::replace(
                     &mut self.current_generic_params,
-                    e.generic_params.iter().cloned().collect(),
+                    e.generic_params.iter().map(|p| (p.clone(), Vec::new())).collect(),
                 );
                 for v in &e.variants {
                     for f in &v.fields {
@@ -1662,6 +1707,7 @@ impl CheckCtx {
                         .iter()
                         .cloned()
                         .chain(std::iter::once("Self".to_string()))
+                        .map(|p| (p, Vec::new()))
                         .collect(),
                 );
                 for m in &t.methods {
@@ -1727,11 +1773,14 @@ impl CheckCtx {
                 }
             }
         }
-        // Bring generic type params into scope so R08 doesn't flag them as unknown.
-        let prev_generics = std::mem::replace(
-            &mut self.current_generic_params,
-            f.generic_params.iter().cloned().collect(),
-        );
+        // Bring generic type params into scope so R08 doesn't flag them as
+        // unknown, each with its declared bounds (CS2-5).
+        let mut generics: HashMap<String, Vec<String>> =
+            f.generic_params.iter().map(|p| (p.clone(), Vec::new())).collect();
+        for (p, traits) in &f.generic_bounds {
+            generics.entry(p.clone()).or_default().extend(traits.iter().cloned());
+        }
+        let prev_generics = std::mem::replace(&mut self.current_generic_params, generics);
         // Seed `current_span` from the function header so any diagnostic raised
         // before we descend into the body is at least pointed at the function.
         let prev_span = self.current_span;
@@ -2963,17 +3012,22 @@ impl CheckCtx {
     /// deterministic contract, so an impure builtin in it (now_ms, random_i64,
     /// I/O, AI, channels, …) makes the refinement non-deterministic and
     /// meaningless. Reject any impure builtin used in `pred` with E1209, naming
-    /// the offending builtin. (User-fn calls in predicates are handled elsewhere;
-    /// here we flag the impure-BUILTIN case, the one that silently slipped
-    /// through — `now_ms() > 0` was accepted as a refinement.)
-    fn reject_impure_refinement(&mut self, pred: &Expr, refine_name: &str) {
+    /// the offending builtin. CS2-8: when the predicate calls none directly,
+    /// it is walked with the capabilities reach walker, so an effect behind a
+    /// user fn, a method or a type hook (`Time` included), and a call nothing
+    /// can classify (`reach.unknown`), is E1209 too.
+    fn reject_impure_refinement<'p>(
+        &mut self,
+        pred: &'p Expr,
+        refine_name: &str,
+        walker: &crate::capabilities::RefinementWalker<'p>,
+    ) {
         let mut violations: Vec<(String, &'static str)> = Vec::new();
-        // `pure_fns` empty here is fine: we only care about the impure-builtin
-        // hits for a refinement (a non-pure user-fn call in a predicate is a
-        // separate concern; the impure builtin is the soundness hole we close).
         Self::collect_purity_violations(pred, &HashSet::new(), &mut violations);
+        let mut shallow = false;
         for (callee, kind) in violations {
             if kind == "impure builtin" {
+                shallow = true;
                 let file = self.file.clone();
                 self.errors.push(
                     CheckError::new(
@@ -2993,6 +3047,62 @@ impl CheckCtx {
                 );
             }
         }
+        if shallow {
+            return;
+        }
+        let reach = walker.reach(pred);
+        let effectful = !reach.capabilities.is_empty() || !reach.effects.is_empty();
+        if !effectful && !reach.unknown {
+            return;
+        }
+        let mut helpers: Vec<String> = Vec::new();
+        crate::ast::walk_expr(pred, &mut |e| {
+            if let Expr::Ident(n) = e {
+                if self.is_user_fn_name(n) && !helpers.contains(n) {
+                    helpers.push(n.clone());
+                }
+            }
+        });
+        let through = if helpers.is_empty() {
+            "a method or a type it checks".to_string()
+        } else {
+            helpers
+                .iter()
+                .map(|h| format!("`{h}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let what = if effectful {
+            let labels: Vec<&str> = reach
+                .capabilities
+                .iter()
+                .chain(reach.effects.iter())
+                .map(String::as_str)
+                .collect();
+            let names: Vec<String> = reach.builtins.iter().map(|b| format!("`{b}`")).collect();
+            format!("{} ({})", names.join(", "), labels.join(", "))
+        } else {
+            "a call nothing can classify (a function named at runtime, a fn value, or inline \
+             assembly)"
+                .to_string()
+        };
+        let file = self.file.clone();
+        self.errors.push(
+            CheckError::new(
+                E1209,
+                format!(
+                    "refinement `{refine_name}` reaches {what} through {through}; a refinement \
+                     predicate must be pure (deterministic), so nothing it calls may do I/O, AI, \
+                     time, randomness or channel work"
+                ),
+            )
+            .at(&file, 0, 0)
+            .with_span(self.current_span)
+            .fix(format!(
+                "make the predicate of `{refine_name}` depend only on the value `_` and pure \
+                 computation: move the effect out of {through}"
+            )),
+        );
     }
 
     /// Recursively collect impure operations inside a `@[pure]` function body.
@@ -4314,22 +4424,60 @@ impl CheckCtx {
                 };
                 // A GENERIC PARAMETER is not a type whose methods are known here:
                 // `fn describe<T: Shape>(s: T) { s.name() }` gets its methods from
-                // the BOUND, and `type_methods` is keyed by concrete type. Without
-                // this guard the check reported "no method `name` on type `T`" and
-                // advised "define it with `impl SomeTrait for T`" — impossible, you
-                // cannot write an impl for a type parameter.
-                //
-                // The repo's own `phase62_trait_bounds.ax` — the fixture FOR this
-                // feature, whose body is exactly `item.describe()` — failed to
-                // check. It is referenced by no test, which is why a method check
-                // added on 2026-09-17 could break it silently.
-                //
-                // Skipping is the sound direction (the bound is what authorises the
-                // call). A stronger version would look the method up on the
-                // declared bound and reject one the trait does not declare; that
-                // needs the bounds threaded here, which `current_generic_params`
-                // (a bare name set) does not carry.
-                let method_key = method_key.filter(|k| !self.current_generic_params.contains(k));
+                // the BOUND, and `type_methods` is keyed by concrete type (an
+                // `impl SomeTrait for T` cannot be written). CS2-5: the method is
+                // looked up in the declared methods of the bound traits. An
+                // unbounded `T`, or a bounded one whose traits all lack the
+                // method, is E0403: the call checked clean and panicked "no
+                // method" at run time for an argument without it. A bound naming
+                // a trait this program does not declare is left unchecked.
+                let generic_param = match &recv_ty {
+                    Type::Struct(n) | Type::Enum(n) | Type::TypeParam(n) => {
+                        self.current_generic_params.get(n).map(|b| (n.clone(), b.clone()))
+                    }
+                    _ => None,
+                };
+                if let Some((tp, bounds)) = &generic_param {
+                    let known = bounds.iter().all(|b| self.trait_defs.contains_key(b));
+                    let declared = bounds.iter().any(|b| {
+                        self.trait_defs
+                            .get(b)
+                            .is_some_and(|t| t.methods.iter().any(|m| &m.name == method))
+                    });
+                    if known && !declared {
+                        let (msg, hint) = if bounds.is_empty() {
+                            (
+                                format!(
+                                    "no method `{method}` on type parameter `{tp}` - it has no bound; add `{tp}: Trait`"
+                                ),
+                                format!(
+                                    "add `{tp}: Trait` where `trait Trait {{ fn {method}(self) ... }}` declares it"
+                                ),
+                            )
+                        } else {
+                            (
+                                format!(
+                                    "no method `{method}` on type parameter `{tp}` - its bound `{}` does not declare it",
+                                    bounds.join(" + ")
+                                ),
+                                format!(
+                                    "declare `fn {method}` in `{}`, or add a bound whose trait declares it",
+                                    bounds[0]
+                                ),
+                            )
+                        };
+                        let file = self.file.clone();
+                        let span = self.current_span;
+                        self.errors.push(
+                            CheckError::new(E0403, msg)
+                                .node(node_path)
+                                .at(&file, 0, 0)
+                                .with_span(span)
+                                .fix(hint),
+                        );
+                    }
+                }
+                let method_key = method_key.filter(|_| generic_param.is_none());
                 if let Some(key) = method_key {
                     let key = key.as_str();
                     let sealed_site = {
@@ -5281,7 +5429,7 @@ impl CheckCtx {
                     // exists because "reject ordering" is trivially
                     // satisfiable by rejecting too much.
                     Type::Struct(n) | Type::Enum(n)
-                        if !self.current_generic_params.contains(n)
+                        if !self.current_generic_params.contains_key(n)
                             && (self.struct_fields.contains_key(n)
                                 || self.known_enums.contains(n)) =>
                     {
@@ -5949,15 +6097,10 @@ impl CheckCtx {
             // an interp/native divergence (invariant I-2), which is a language
             // feature, not a fix. The diagnostic names the working form instead,
             // so the reader is one edit away rather than stuck.
-            // NOTE the type test: `parse_type_str` (infer.rs:167) has no `fn(`
-            // arm, so a builtin's `fn(T) -> U` parameter lands as
-            // `Type::Deferred("fn(T) -> U")`, not `Type::Fn`. Matching on
-            // `Type::Fn` here compiled and silently never fired — the same
-            // deferred-swallows-the-check class this function already documents
-            // for `Dict`.
-            let param_is_fn = matches!(param_ty, Type::Fn(..))
-                || matches!(param_ty, Type::Deferred(n) if n.starts_with("fn("));
-            if param_is_fn {
+            // A builtin's `fn(T) -> U` parameter parses to `Type::Fn` (CS2-3a);
+            // inference unifies the closure with it, and this keeps the arity
+            // check because its message names the shape to write.
+            if matches!(param_ty, Type::Fn(..)) {
                 // A LAMBDA with the wrong number of parameters. The expected
                 // count is already declarative — `arr_map`'s param type is
                 // `fn(T) -> U` (one), `arr_fold`'s is `fn(U, T) -> U` (two) —
@@ -7128,7 +7271,7 @@ impl CheckCtx {
             AxonType::Named(name) => {
                 // Suppress E0308 for names that are generic type parameters of the
                 // enclosing function (e.g. `T` in `fn identity<T>(x: T) -> T`).
-                if self.current_generic_params.contains(name.as_str()) {
+                if self.current_generic_params.contains_key(name.as_str()) {
                     return;
                 }
                 let known_enums = self.known_enums.clone();

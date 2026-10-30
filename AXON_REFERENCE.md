@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 27 CLI verbs, 344 builtins, 24 attributes, 151 diagnostic codes (138 live, 13 reserved), 67 environment variables.
+The complete surface of this build — 27 CLI verbs, 344 builtins, 24 attributes, 152 diagnostic codes (139 live, 13 reserved), 67 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -144,7 +144,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEE_ENCLAVE` | R24 TEE: set to 1 by the gramine-direct manifest to signal the workload is executing inside an enclave; this is what makes `tee_in_enclave()` return true. Read through the host seam, so it is recorded and replayed |
 | `AXON_TEE_MEASUREMENT` | R24 TEE: the simulated enclave launch measurement returned by `tee_attest_measurement()` when set, a stub otherwise. A genuine hardware-rooted quote comes only from confidential hardware. Read through the host seam |
 
-## Diagnostic codes (151, of which 138 live)
+## Diagnostic codes (152, of which 139 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -191,6 +191,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0604` | write through a shared `&` parameter — the caller never sees it; declare the parameter `&mut [T]` and pass `&mut a` |
 | `E0605` | invalid `&mut` borrow — `&mut` of something other than a local variable, a `&mut` argument/parameter mode mismatch, or `&mut` in a position other than a free function's `[T]` parameter |
 | `E0606` | a call mutably borrows a variable that another argument of the same call also uses |
+| `E0607` | a closure assigns a captured binding that is used outside the closure after it is created (or in a loop that re-creates the closure); closures capture by copy, so the write is not visible there |
 | `E0701` | expression not comptime-evaluable |
 | `E0702` | comptime integer division by zero |
 | `E0703` | comptime integer overflow |
@@ -338,15 +339,15 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `arr_find(xs: [T], pred: fn(T) -> bool) -> Option<T>` | First element matching the predicate closure. Returns `Some(v)` or `None`. Same closure shape as `arr_filter` but returns a single element with early exit. |
 | `arr_flatten(xss: [[T]]) -> [T]` | Flatten `[[T]]` to `[T]`. Each inner element must itself be an array. Useful after `arr_map` produces nested results. |
 | `arr_fold(xs: [T], init: U, f: fn(U, T) -> U) -> U` | Reduce `xs` to a single value via `f(acc, x) -> acc`, threading `init` as the starting accumulator. Element type `T` and accumulator type `U` are both deferred, so `arr_fold([1, 2, 3], 0.0, \|a, x\| a + i64_to_f64(x))` works — most general combinator: sum, max, count, product are all special cases. |
-| `arr_group_by(xs: [T], key_fn: fn(T) -> str) -> Dict` | Bucket `xs` by a closure that maps each element to a string key. Returns `Dict[str, [T]]`; elements appear in input order within each bucket. The natural "frequency table" / "by-category" reduction. |
+| `arr_group_by(xs: [T], key_fn: fn(T) -> str) -> Dict<[T]>` | Bucket `xs` by a closure that maps each element to a string key. Returns `Dict[str, [T]]`; elements appear in input order within each bucket. The natural "frequency table" / "by-category" reduction. |
 | `arr_index_of(xs: [T], v: T) -> Option<i64>` | First index where the element structurally equals `v`. `Some(i)` if found, `None` otherwise. Pairs with `arr_contains` for the `where` follow-up to the `whether` question. |
 | `arr_map(xs: [T], f: fn(T) -> U) -> [U]` | Apply a closure to each element, producing a fresh array of results. Element and result types are deferred — `arr_map([1, 2], \|x\| i64_to_str(x))` works. Closure panics propagate. |
-| `arr_max_by(xs: [T], key_fn: fn(T) -> f64) -> T` | Element of `xs` that maximizes the numeric key fn. Folds map+argmax+index into one. Panics on empty. |
+| `arr_max_by(xs: [T], key_fn: fn(T) -> Num) -> T` | Element of `xs` that maximizes the numeric key fn. Folds map+argmax+index into one. Panics on empty. |
 | `arr_max_f64(xs: [f64]) -> f64` | Maximum of an f64 array. Accepts i64 elements via coercion. Panics on empty. |
 | `arr_max_i64(xs: [i64]) -> i64` | Maximum of an i64 array. Panics on an empty array — caller should guard with `if len(xs) > 0` first. |
 | `arr_mean_f64(xs: [f64]) -> f64` | Arithmetic mean of an f64 (or i64-coerced) array. Empty → 0.0. |
 | `arr_mean_i64(xs: [i64]) -> f64` | Arithmetic mean of an i64 array as f64. Empty → 0.0 (no NaN). Exact sum (no overflow), one rounding to f64. |
-| `arr_min_by(xs: [T], key_fn: fn(T) -> f64) -> T` | Element of `xs` that minimizes the numeric key fn. |
+| `arr_min_by(xs: [T], key_fn: fn(T) -> Num) -> T` | Element of `xs` that minimizes the numeric key fn. |
 | `arr_min_f64(xs: [f64]) -> f64` | Minimum of an f64 array. Accepts i64 elements via coercion. Panics on empty. |
 | `arr_min_i64(xs: [i64]) -> i64` | Minimum of an i64 array. Panics on an empty array. |
 | `arr_partition(xs: [T], pred: fn(T) -> bool) -> ([T], [T])` | Split into `(yes, no)` tuple — elements satisfying `pred` and the rest. One pass over the input; complement of `arr_filter`. |
@@ -357,7 +358,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `arr_sort_by(xs: [T], cmp: fn(T, T) -> i64) -> [T]` | Return a sorted copy of `xs` using the comparator (neg = a<b, 0 = eq, pos = a>b). Element type is deferred so any sortable domain works. Stable merge sort, O(n log n) comparator calls; equal elements keep input order. Input untouched. |
 | `arr_std_f64(xs: [f64]) -> f64` | Sample standard deviation: sqrt of (sum of squared deviations from mean) / (n - 1). Panics for arrays of length < 2. |
 | `arr_sum_by(xs: [T], key_fn: fn(T) -> i64) -> i64` | Sum a projected i64 field over `xs`. Equivalent to `arr_sum_i64(&arr_map(xs, key_fn))` but doesn't materialize the mapped array — the `_by` sibling of `arr_max_by`/`arr_min_by`. Overflow panics like `+` (exit 101). |
-| `arr_sum_by_f64(xs: [T], key_fn: fn(T) -> f64) -> f64` | Sum a projected f64 field over `xs`. The f64 counterpart of `arr_sum_by`. |
+| `arr_sum_by_f64(xs: [T], key_fn: fn(T) -> Num) -> f64` | Sum a projected f64 field over `xs`. The f64 counterpart of `arr_sum_by`. |
 | `arr_sum_f64(xs: [f64]) -> f64` | Sum of an f64 (or i64-coerced) array. Empty → 0.0. |
 | `arr_sum_i64(xs: [i64]) -> i64` | Sum of an i64 array. Empty → 0. Overflow panics like `+` (exit 101). |
 | `arr_take(xs: [T], n: i64) -> [T]` | Return the first `n` elements of `xs`. Saturates at `len(xs)`; negative `n` returns empty. |
@@ -424,23 +425,23 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `dict_each(d: Dict, f: fn(str, V)) -> ()` | Iterate (k, v) pairs for side effects. The closure's return is ignored. Use this when you don't need a new dict — pair with println, write_file, etc. |
 | `dict_filter(d: Dict, pred: fn(str, V) -> bool) -> Dict` | Keep entries where the predicate `(key, value) -> bool` holds. Returns a fresh dict. The dict analogue of `arr_filter`; closure sees both key and value. |
 | `dict_from_pairs(xs: [(str, V)]) -> Dict` | Build a Dict from a slice of `(str, V)` tuples. Duplicate keys: last pair wins. |
-| `dict_from_str(s: str) -> Dict` | Parse a `dict_to_str` payload back into a Dict (lenient). Values come back as `str`; caller converts via `parse_int` / `parse_float` if numeric. Empty AND malformed lines (no `=`) are skipped — never panics. Use `dict_try_from_str` to reject malformed input as a `Result` instead. Inverse of `dict_to_str`. |
-| `dict_get(d: Dict, k: str) -> Option<T>` | Return `Some(v)` if key `k` is present in `d`, `None` otherwise. Value type is deferred. |
+| `dict_from_str(s: str) -> Dict<str>` | Parse a `dict_to_str` payload back into a Dict (lenient). Values come back as `str`; caller converts via `parse_int` / `parse_float` if numeric. Empty AND malformed lines (no `=`) are skipped — never panics. Use `dict_try_from_str` to reject malformed input as a `Result` instead. Inverse of `dict_to_str`. |
+| `dict_get(d: Dict, k: str) -> Option<V>` | Return `Some(v)` if key `k` is present in `d`, `None` otherwise. `v` has the dict's value type: one dict holds one value type. |
 | `dict_get_or(d: Dict, k: str, default: V) -> V` | Get the value at `k` or return `default` if absent. Compresses the `match dict_get(d, k) { Some(v) => v  None => default }` idiom into one call. |
 | `dict_has(d: Dict, k: str) -> bool` | Does `d` contain key `k`? |
-| `dict_inc(d: Dict, k: str) -> i64` | Atomically bump an i64 counter at `k`. Initializes to 1 if absent. Returns the new value. Overflow panics like `+` (exit 101). Replaces the four-line get-default-add-set dance for frequency / counter tables. |
+| `dict_inc(d: Dict<i64>, k: str) -> i64` | Atomically bump an i64 counter at `k`. Initializes to 1 if absent. Returns the new value. Overflow panics like `+` (exit 101). Replaces the four-line get-default-add-set dance for frequency / counter tables. |
 | `dict_keys(d: Dict) -> [str]` | All keys in `d`, in BTreeMap (lexicographic) order. Deterministic. |
 | `dict_len(d: Dict) -> i64` | Number of entries in `d`. |
-| `dict_map_values(d: Dict, f: fn(V) -> U) -> Dict` | Transform every value via the closure; keys preserved. Returns a fresh dict — the input is not mutated. The dict analogue of `arr_map`. |
+| `dict_map_values(d: Dict, f: fn(V) -> U) -> Dict<U>` | Transform every value via the closure; keys preserved. Returns a fresh dict — the input is not mutated. The dict analogue of `arr_map`. |
 | `dict_merge(d1: Dict, d2: Dict) -> Dict` | Union of two dicts; right-biased on key collision (values in `d2` win). Returns a fresh dict — inputs are unchanged. |
 | `dict_new() -> Dict` | Fresh empty string-keyed map. Reference-shared like Chan: mutating builtins update the same underlying state every handle sees. |
-| `dict_remove(d: Dict, k: str) -> Option<T>` | Remove the entry for `k` from `d`; return the prior value as `Some(v)` if present, `None` otherwise. |
-| `dict_set(d: Dict, k: str, v: T) -> ()` | Set `d[k] = v` (overwriting any prior value). Mutates `d` in place via its shared RefCell. |
+| `dict_remove(d: Dict, k: str) -> Option<V>` | Remove the entry for `k` from `d`; return the prior value as `Some(v)` if present, `None` otherwise. |
+| `dict_set(d: Dict, k: str, v: V) -> ()` | Set `d[k] = v` (overwriting any prior value). Mutates `d` in place via its shared RefCell. |
 | `dict_to_json(d: Dict) -> Result<str, str>` | Serialize a whole Dict to a JSON object. `Err` if any value has no JSON form (a closure, a channel). Distinct from `dict_to_str`, which emits Axon's own dict rendering rather than JSON. |
 | `dict_to_pairs(d: Dict) -> [(str, V)]` | Entries as a slice of `(str, V)` tuples in BTreeMap key order. The natural primitive for "sort a dict by value": `dict_to_pairs → arr_sort_by → arr_take`. |
 | `dict_to_str(d: Dict) -> Result<str, str>` | Serialize a dict to a line-oriented `key=value\n` format. Returns `Err(msg)` when a key contains `=`/`\n` or a value contains `\n` (the format can't represent them) — recoverable, never a host panic. Values are rendered via `display` (numeric values stringify). Deterministic — BTreeMap key order. `Ok(s)` round-trips through `dict_from_str`. |
-| `dict_try_from_str(s: str) -> Result<Dict, str>` | Strict `dict_from_str` (BUG_HUNT #31): parse a `dict_to_str` payload, returning `Err(message)` on the first malformed line (no `=`) instead of skipping it. The Result-returning form for parsing untrusted input — a malformed line is recoverable, not a crash. |
-| `dict_values(d: Dict) -> [T]` | All values in `d`, in key-sorted order. |
+| `dict_try_from_str(s: str) -> Result<Dict<str>, str>` | Strict `dict_from_str` (BUG_HUNT #31): parse a `dict_to_str` payload, returning `Err(message)` on the first malformed line (no `=`) instead of skipping it. The Result-returning form for parsing untrusted input — a malformed line is recoverable, not a crash. |
+| `dict_values(d: Dict) -> [V]` | All values in `d`, in key-sorted order. |
 | `dir_create(path: str) -> Result<(), str>` | Create `path`, including any missing parent directories (like `mkdir -p`). Ok(()) if it already exists. |
 | `dir_list(path: str) -> Result<[str], str>` | Entry NAMES (not full paths) directly inside `path`, sorted, non-recursive. Sorted because `read_dir` order is filesystem-dependent and a program whose output varies run-to-run breaks replay. Capability-wise a READ, and strictly more leakage than reading a file: it discloses names the caller did not already know. |
 | `dstore_apply(handle: i64, op_id: i64, delta: i64) -> i64` | Phase-7 (R12 Slice 4): apply op `op_id` with effect `delta`; returns the new value. Under linearizable a retried op_id is deduped (exactly-once, even across a process restart); under at_least_once it re-applies. An applied op is appended to the durable log. |

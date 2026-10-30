@@ -157,7 +157,16 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // R1c: a `Dict` is an opaque runtime handle (i8*), like a channel —
             // the dynamically-typed map lives behind `__axon_dict_*` externs.
-            // The builtin-sig parser lands "Dict" as `Deferred("Dict")`.
+            // The builtin-sig parser lands "Dict" as `Deferred("Dict")`; a
+            // CS2-3b typed `Dict(V)` is the same handle (its value type is
+            // inference's).
+            Type::Dict(_) => Some(
+                self.ir
+                    .context
+                    .i8_type()
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into(),
+            ),
             Type::Deferred(name) if name == "Dict" => Some(
                 self.ir
                     .context
@@ -180,7 +189,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 )
             }
             // Unresolved — skip
-            Type::Unknown | Type::Var(_) | Type::Deferred(_) => None,
+            // A CS2-5 applied generic struct is the `Deferred` name it was
+            // before `App` existed, so it lowers the same way: skipped.
+            Type::Unknown | Type::Var(_) | Type::Deferred(_) | Type::App(..) => None,
             // TypeParam should be eliminated by monomorphization.
             Type::TypeParam(_) => None,
             // DynTrait → fat pointer { ptr data, ptr vtable }

@@ -2109,7 +2109,7 @@ fn every_dict_builtin_is_a_listed_writer_or_a_reader_that_does_not_write() {
         "dict_to_str",
     ];
     for b in crate::builtins::BUILTINS {
-        if b.params.iter().any(|(_, t)| *t == "Dict") {
+        if b.params.iter().any(|(_, t)| crate::builtins::is_dict_type_str(t)) {
             assert!(
                 DICT_WRITERS.contains(&b.name) || READERS.contains(&b.name),
                 "DRIFT: `{}` takes a Dict and is neither a listed writer nor a checked reader",
@@ -2510,7 +2510,7 @@ fn a_dict_reader_is_tainted_after_a_sealed_write_and_clean_after_the_operators()
 #[test]
 fn every_dict_builtin_has_a_taint_routing_row() {
     for b in crate::builtins::BUILTINS {
-        let takes_dict = b.params.iter().any(|(_, t)| *t == "Dict");
+        let takes_dict = b.params.iter().any(|(_, t)| crate::builtins::is_dict_type_str(t));
         if takes_dict || b.name.starts_with("dict_") {
             let known = DICT_READERS.iter().any(|(n, _)| *n == b.name)
                 || DICT_WRITER_ROWS.iter().any(|(n, ..)| *n == b.name)

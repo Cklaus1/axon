@@ -1,7 +1,8 @@
 // R51 S0b: a leaf fn (its body one Load of a parameter) declared `-> Result`
-// never hands its caller a `None` (an untyped `dict_get` makes a stored `None`
-// type-check as the Result). The VM's leaf call declines it to the full path,
-// which refuses it as the tree does.
+// never hands its caller a `None`. A `None` and a `Result` stored in one dict
+// used to type-check (the VM's leaf call declined the `None` to the full
+// path, which refused it); since CS2-3b a dict holds one value type, so
+// `axon check` refuses the second write (E0102).
 fn pass(r: Result<i64, str>) -> Result<i64, str> {
     r
 }

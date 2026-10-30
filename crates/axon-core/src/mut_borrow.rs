@@ -21,14 +21,20 @@
 //!   parameter written from inside a closure (the closure owns a copy).
 //! - **E0606** aliasing within one call: the same variable borrowed `&mut`
 //!   twice, or `&mut a` alongside any other argument that mentions `a`.
+//! - **E0607** (CS2-1) a closure assigns a captured binding (`n = ..`,
+//!   `p.f = ..`, `a[i] = ..`) and the same binding is used outside that
+//!   closure after the closure literal, or the literal sits in a loop that
+//!   does not declare the binding (the loop re-captures it). Closures capture
+//!   by copy, so the write is not visible there. A closure that alone keeps
+//!   the state (a counter, a factory) stays legal.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
     AxonType, Expr, FmtPart, FnDef, HandlerExpr, Item, Pattern, Program, Stmt, UnaryOp,
 };
 use crate::checker::CheckError;
-use crate::error::{E0604, E0605, E0606};
+use crate::error::{E0604, E0605, E0606, E0607};
 use crate::span::Span;
 
 /// How a local name was introduced; decides which writes are legal.
@@ -68,6 +74,11 @@ pub fn check_program(program: &Program) -> Vec<CheckError> {
         closure_floor: 0,
         span: Span::dummy(),
         errors: Vec::new(),
+        next_id: 0,
+        lambdas: Vec::new(),
+        loops: Vec::new(),
+        written: HashMap::new(),
+        reported: HashSet::new(),
     };
     for item in &program.items {
         match item {
@@ -118,13 +129,40 @@ pub fn check_program(program: &Program) -> Vec<CheckError> {
 
 struct Walker<'a> {
     modes: &'a HashMap<String, Vec<bool>>,
-    scopes: Vec<HashMap<String, Local>>,
+    /// Each name maps to how it was introduced and its binding id (CS2-1):
+    /// every `define` takes a fresh id, so a re-declared name or a sibling
+    /// block's name is a different binding even where the scope index repeats.
+    scopes: Vec<HashMap<String, (Local, u32)>>,
     /// Scopes below this index belong to an enclosing fn body as seen from
     /// inside a closure: names there are captured copies, not places.
     closure_floor: usize,
     /// Span of the statement being checked (expressions carry none).
     span: Span,
     errors: Vec<CheckError>,
+    /// Next binding id (never reset, so ids are unique across fn bodies).
+    next_id: u32,
+    /// The lambdas being walked, outermost first.
+    lambdas: Vec<LambdaFrame>,
+    /// `scopes.len()` at the entry of each enclosing `while`/`for` loop.
+    loops: Vec<usize>,
+    /// CS2-1: binding id -> (name, span of the statement holding the closure
+    /// literal) for every captured binding a finished closure assigned. A
+    /// later use of that id is E0607.
+    written: HashMap<u32, (String, Span)>,
+    /// Binding ids already reported as E0607 (one error per binding).
+    reported: HashSet<u32>,
+}
+
+/// A lambda being walked (CS2-1).
+struct LambdaFrame {
+    /// The lambda's `closure_floor`: bindings in scopes below it are captured.
+    floor: usize,
+    /// `loops.len()` at the lambda literal: the loops around the literal.
+    loops: usize,
+    /// The statement holding the literal.
+    span: Span,
+    /// Captured bindings the body assigns: (id, name, declaring scope index).
+    writes: Vec<(u32, String, usize)>,
 }
 
 /// Root identifier of a place chain (`a`, `a.f`, `a[i].f[j]`).
@@ -191,18 +229,80 @@ impl Walker<'_> {
     }
 
     fn lookup(&self, name: &str) -> Option<(Local, bool)> {
+        self.resolve(name)
+            .map(|(i, k, _)| (k, i < self.closure_floor))
+    }
+
+    /// The innermost binding of `name`: (declaring scope index, kind, id).
+    fn resolve(&self, name: &str) -> Option<(usize, Local, u32)> {
         for (i, s) in self.scopes.iter().enumerate().rev() {
-            if let Some(k) = s.get(name) {
-                return Some((*k, i < self.closure_floor));
+            if let Some((k, id)) = s.get(name) {
+                return Some((i, *k, *id));
             }
         }
         None
     }
 
     fn define(&mut self, name: &str, kind: Local) {
+        let id = self.next_id;
+        self.next_id += 1;
         if let Some(s) = self.scopes.last_mut() {
-            s.insert(name.to_string(), kind);
+            s.insert(name.to_string(), (kind, id));
         }
+    }
+
+    /// CS2-1: an assignment to `name` (whole or through a field/index). Every
+    /// lambda being walked that captures the binding notes the write; it is
+    /// recorded when that lambda's literal ends.
+    fn note_write(&mut self, name: &str) {
+        let Some((i, Local::Plain, id)) = self.resolve(name) else {
+            return;
+        };
+        for f in self.lambdas.iter_mut() {
+            if i < f.floor && !f.writes.iter().any(|w| w.0 == id) {
+                f.writes.push((id, name.to_string(), i));
+            }
+        }
+    }
+
+    /// CS2-1: a use of `name` after a closure that assigned the same binding.
+    fn note_use(&mut self, name: &str) {
+        let Some((_, _, id)) = self.resolve(name) else {
+            return;
+        };
+        if let Some((n, at)) = self.written.get(&id).cloned() {
+            self.e0607(id, &n, at, false);
+        }
+    }
+
+    fn e0607(&mut self, id: u32, name: &str, closure: Span, in_loop: bool) {
+        if !self.reported.insert(id) {
+            return;
+        }
+        let line = crate::span::source_map_of(closure.source)
+            .map(|m| m.line_col(closure.start).0)
+            .filter(|l| *l > 0);
+        let which = match line {
+            Some(l) => format!("the closure on line {l}"),
+            None => "the closure".to_string(),
+        };
+        let msg = if in_loop {
+            format!(
+                "a closure assigns captured `{name}`, but `{name}` is used outside that closure \
+                 after it is created (the loop creates the closure again from the outer \
+                 `{name}` on every iteration); the write is not visible there"
+            )
+        } else {
+            format!(
+                "a closure assigns captured `{name}`, but `{name}` is used outside that closure \
+                 after it is created; the write is not visible there"
+            )
+        };
+        let help = format!(
+            "closures capture by copy ({which} writes its own copy of `{name}`). Return the new \
+             value from the closure, or keep the state in one closure."
+        );
+        self.err(E0607, msg, &help);
     }
 
     /// A name that refers to a free function taking `&mut` params (not
@@ -285,7 +385,10 @@ impl Walker<'_> {
         let help_local = "bind the value to a local first (`let tmp = ...`), pass `&mut tmp`, \
                           then store it back";
         match operand {
-            Expr::Ident(name) => match self.lookup(name) {
+            Expr::Ident(name) => match {
+                self.note_use(name);
+                self.lookup(name)
+            } {
                 Some((Local::Shared, _)) => {
                     self.err(
                         E0604,
@@ -578,9 +681,27 @@ impl Walker<'_> {
                     }
                     self.define(&p.name, Local::Plain);
                 }
+                self.lambdas.push(LambdaFrame {
+                    floor: self.closure_floor,
+                    loops: self.loops.len(),
+                    span: self.span,
+                    writes: Vec::new(),
+                });
                 self.visit(body);
                 self.scopes.pop();
                 self.closure_floor = saved_floor;
+                // CS2-1: record the captured bindings this closure assigned. A
+                // loop around the literal that does not declare the binding
+                // re-captures it every iteration: the literal is the later use.
+                if let Some(frame) = self.lambdas.pop() {
+                    let loop_start = frame.loops.checked_sub(1).map(|k| self.loops[k]);
+                    for (id, name, decl) in frame.writes {
+                        if loop_start.is_some_and(|d| decl < d) {
+                            self.e0607(id, &name, frame.span, true);
+                        }
+                        self.written.entry(id).or_insert((name, frame.span));
+                    }
+                }
             }
             Expr::FieldAccess { receiver, .. } => self.visit(receiver),
             Expr::Index { receiver, index } => {
@@ -593,6 +714,7 @@ impl Walker<'_> {
                 }
             }
             Expr::Ident(name) => {
+                self.note_use(name);
                 if self.mut_fn(name).is_some() {
                     self.err(
                         E0605,
@@ -618,14 +740,17 @@ impl Walker<'_> {
                 }
             }
             Expr::While { cond, body } => {
+                self.loops.push(self.scopes.len());
                 self.visit(cond);
                 self.visit_stmts(body);
+                self.loops.pop();
             }
             Expr::WhileLet {
                 pattern,
                 expr,
                 body,
             } => {
+                self.loops.push(self.scopes.len());
                 self.visit(expr);
                 self.scopes.push(HashMap::new());
                 let mut names = Vec::new();
@@ -635,6 +760,7 @@ impl Walker<'_> {
                 }
                 self.visit_stmts(body);
                 self.scopes.pop();
+                self.loops.pop();
             }
             Expr::For {
                 var,
@@ -645,10 +771,12 @@ impl Walker<'_> {
             } => {
                 self.visit(start);
                 self.visit(end);
+                self.loops.push(self.scopes.len());
                 self.scopes.push(HashMap::new());
                 self.define(var, Local::Plain);
                 self.visit_stmts(body);
                 self.scopes.pop();
+                self.loops.pop();
             }
             Expr::Assign { name, value } => {
                 if let Some((Local::MutParam, true)) = self.lookup(name) {
@@ -662,9 +790,12 @@ impl Walker<'_> {
                     );
                 }
                 self.visit(value);
+                self.note_use(name);
+                self.note_write(name);
             }
             Expr::AssignTo { place, value } => {
                 if let Some(root) = place_root(place) {
+                    self.note_write(root);
                     match self.lookup(root) {
                         Some((Local::Shared, _)) => self.err(
                             E0604,
