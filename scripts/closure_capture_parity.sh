@@ -15,7 +15,10 @@
 # Same source, two backends, two answers, no error from either. The interpreter
 # is the reference oracle (I-2), so it was the side that had to change: the
 # capture is now a shared cell that persists across calls of that closure while
-# still NOT aliasing the outer binding (note `outer n=0` on both engines).
+# still NOT aliasing the outer binding. Reading the outer binding after the
+# closure writes it (`outer n=0` above) is refused at check since
+# checker-soundness-2 CS2-1 (E0607), so `make_counter` no longer reads it and
+# `refuse` pins the refusal.
 #
 # Compares STDOUT, not just exit codes — the whole defect is in printed values.
 #
@@ -64,9 +67,28 @@ check() {
     fail=1
   fi
 }
+# A program `axon check` must refuse with CODE (neither engine runs it).
+refuse() {
+  local name="$1" code="$2" src="$3" out
+  printf '%s\n' "$src" > "$WORK/$name.ax"
+  out="$("$AXON" check "$WORK/$name.ax" 2>&1)"
+  if [ $? -eq 2 ] && printf '%s' "$out" | grep -q "\"code\":\"$code\""; then
+    echo "  OK   $name: refused $code"
+  else
+    echo "  FAIL $name: expected axon check exit 2 with $code, got:"
+    printf '%s\n' "$out" | head -3 | sed 's/^/        /'
+    fail=1
+  fi
+}
 
-# ── the headline case, verbatim from README ──────────────────────────────────
+# ── the headline case (README): the cell persists across calls ───────────────
 check make_counter \
+'fn main() { let n = 0
+    let bump = || { n = n + 1  n }
+    println("{to_str(bump())},{to_str(bump())},{to_str(bump())}") }'
+
+# ── reading the outer binding after the closure writes it is E0607 (CS2-1) ───
+refuse make_counter_outer_read E0607 \
 'fn main() { let n = 0
     let bump = || { n = n + 1  n }
     println("{to_str(bump())},{to_str(bump())},{to_str(bump())},outer={to_str(n)}") }'
