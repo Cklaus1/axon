@@ -1020,7 +1020,11 @@ impl InferCtx {
             for &v in owned {
                 collect_vars(&self.partial.apply(&Type::Var(v)), &mut free);
             }
-            let declared = self.generic_fn_params.get(name).cloned().unwrap_or_default();
+            let declared = self
+                .generic_fn_params
+                .get(name)
+                .cloned()
+                .unwrap_or_default();
             let partial = &self.partial;
             let generalize = |t: &Type| {
                 partial.apply(t).map_leaves(&mut |l| match l {

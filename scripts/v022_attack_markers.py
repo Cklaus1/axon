@@ -3386,3 +3386,9 @@ ATTACK_MARKERS.update({
     'M3928': r'ATTACK: a refinement predicate reaching an effect through a helper checked clean \[e_helper\]',
     'M3929': r'ATTACK: a refinement predicate reaching an effect through a helper checked clean \[e_unknown\]',
 })
+
+# checker-soundness-2 follow-up (ids M3940-M3941, ImplAuditCS2 F1/F2)
+ATTACK_MARKERS.update({
+    'M3940': r'ATTACK: a dict holding a value of another type checked clean \[d_generic_put\]',
+    'M3941': r'ATTACK: a generic method call or generic struct argument checked clean \[g_lambda_param_unbound\]',
+})

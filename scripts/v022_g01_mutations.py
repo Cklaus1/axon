@@ -12384,5 +12384,19 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'an_effectful_helper_in_a_refinement_is_refused_e1209'),
 ]
 
+# checker-soundness-2 follow-up (ids M3940-M3941, ImplAuditCS2 F1/F2): a generic fn's bare `Dict`
+# bound to its declared `T` reads `Dict(T)`; a method on an untyped lambda param resolved to a
+# type param is looked up in that param's bounds.
+MUTATIONS += [
+    ('M3940', 'CS2-3b follow-up: a bare `Dict` bound to a declared `T` no longer reads `Dict(T)`', 'crates/axon-core/src/infer.rs',
+     'Type::Deferred(n) if declared.contains(&n) => Type::TypeParam(n),',
+     'Type::Deferred(n) if declared.contains(&n) && false => Type::TypeParam(n),',
+     'axon-core', '--no-default-features --test cli_run', 'dict_values_are_typed'),
+    ('M3941', 'CS2-5 follow-up: a lambda-param receiver resolved to a type param is no longer handed to the checker', 'crates/axon-core/src/infer.rs',
+     'self.method_receiver_type_params.insert(recv, n);',
+     'let _ = (recv, n);',
+     'axon-core', '--no-default-features --test cli_run', 'generic_param_method_and_generic_struct_args_are_checked'),
+]
+
 if __name__ == "__main__":
     main()
