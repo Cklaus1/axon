@@ -2405,7 +2405,7 @@ pub(super) mod nest_cost {
     pub const CALL_FN_FRAME: usize = b(272, 576);
     pub const CALL_LOCAL_CLOSURE: usize = b(112, 128);
     pub const CALL_CLOSURE_ARG: usize = b(112, 272);
-    pub const CALL_CLOSURE_FRAME: usize = b(256, 336);
+    pub const CALL_CLOSURE_FRAME: usize = b(256, 352);
     pub const CALL_BUILTIN: usize = b(496, 720);
     pub const RUN_BODY_VM: usize = b(160, 208);
     /// The tree's fn body charges what a VM level does above its own
@@ -2439,7 +2439,7 @@ pub(super) mod nest_cost {
     pub const BUILTIN_SCHEDULER_RUN_ONCE: usize = b(128, 304);
     pub const CALL_CLOSURE: usize = b(112, 128);
     pub const CALL_FN_GOAL: usize = b(480, 928);
-    pub const FINISH_CALL_COLD: usize = b(224, 496);
+    pub const FINISH_CALL_COLD: usize = b(240, 496);
     pub const FLATTEN_PLACE: usize = b(128, 160);
     pub const CALL_FAST: usize = b(224, 320);
     pub const CALL_FAST_LOCAL_INT_SLOW: usize = b(176, 176);
@@ -2473,13 +2473,17 @@ pub(super) mod nest_cost {
     pub const CHAN_METHOD_SEALED: usize = b(128, 112);
     pub const ASSIGN_IN_PLACE_SEALED: usize = b(176, 0);
     pub const CALL_FN_FRAME_SEALED: usize = b(272, 592);
-    pub const CALL_CLOSURE_FRAME_SEALED: usize = b(352, 416);
+    pub const CALL_CLOSURE_FRAME_SEALED: usize = b(368, 416);
     pub const IMPL_METHOD_SEALED: usize = b(160, 256);
     pub const EVAL_TAINTED: usize = b(144, 144);
     pub const CALL_FN_SEALED: usize = b(288, 176);
     pub const CALL_MUT_SEALED: usize = b(192, 384);
     pub const RUN_ARM_SEALED: usize = b(480, 144);
     pub const STRUCT_REFINE_SEALED: usize = b(288, 112);
+    /// checker-soundness-2 CS2-7: a closure call's refined-parameter check,
+    /// out of `call_closure_frame`'s tail (only a refined parameter pays).
+    pub const CHECK_CLOSURE_PARAM_REFINES: usize = b(144, 240);
+    pub const CHECK_CLOSURE_PARAM_REFINES_SEALED: usize = b(144, 272);
 }
 
 /// Hard ceiling on the configurable recursion limit. `AXON_MAX_DEPTH` is
@@ -6916,7 +6920,9 @@ impl<'p> Interp<'p> {
     /// code's [`ClosureCode::param_refines`]), as `call_fn_common` checks a
     /// named fn's: `_` and the parameter's name bind the value, a `false`
     /// predicate is a [`Flow::RefineViolation`] (exit 6). Out of line: only a
-    /// closure with a refined parameter gets here.
+    /// closure with a refined parameter gets here. Guarded (AX-56): it calls
+    /// the evaluator, so an unguarded frame here would sit in every
+    /// `call_closure_frame` level's tail; guarded, only a refined call pays.
     #[cold]
     #[inline(never)]
     fn check_closure_param_refines<const T: bool>(
@@ -6926,6 +6932,14 @@ impl<'p> Interp<'p> {
         args: &[Value],
         entry_t: u8,
     ) -> Result<(), Flow> {
+        nest_guard!(
+            self,
+            if T {
+                CHECK_CLOSURE_PARAM_REFINES_SEALED
+            } else {
+                CHECK_CLOSURE_PARAM_REFINES
+            }
+        );
         for ((rname, &s), val) in refines.iter().zip(code.params.iter()).zip(args) {
             let Some(rname) = rname else { continue };
             let Some(pred) = self.refine_preds.get(&**rname).copied() else {
