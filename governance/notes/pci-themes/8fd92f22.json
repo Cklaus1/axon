@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "checker.rs reject_impure_refinement walks the predicate with the capabilities reach walker: a reached capability or effect (Time included) through a user fn, or an unclassifiable dispatch, is E1209. The effect ran at every coercion before, O-SP-02 (CS2-8). No evaluator change."}

@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "mut_borrow.rs: bindings get ids; a closure's write to a captured binding used outside the closure after the literal, or written by a closure literal in a loop that does not declare it, is the new E0607 (error.rs). The write was silently dropped (captures are copies), O-GAP-03 (CS2-1). No evaluator change."}

@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "checker.rs: a method call on a type param is looked up in its bound traits (E0403, fix-it adds the bound); infer.rs App unify compares a generic struct's type arguments (E0102). Refused programs panicked `no method` at run before, O-GAP-05 (CS2-5). No evaluator change."}

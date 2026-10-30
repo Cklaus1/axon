@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "infer.rs parse_type_str gains a `fn(..) -> ..` arm, so a higher-order builtin's closure param is a real fn type unified with the closure (E0102); `Num` key vars must resolve numeric (E0306); a unit-return fn param leaves the closure's return free. Refused programs panicked at run before, O-GAP-01 (CS2-3a). No evaluator change."}

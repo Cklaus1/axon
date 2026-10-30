@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "checker.rs exhaustiveness: a match on a scalar needs a catch-all, a bool match both literals, a tuple match the product of its component domains (cap 256); a guarded arm covers nothing. Each refused program panicked `no match arm matched` at run before; now E0304 at check, O-GAP-04 (CS2-4). No evaluator change."}

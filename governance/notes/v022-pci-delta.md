@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: ebe970adf4bffd5cc2a973723d595015a13630f2
+generated-at: 189fa942c0cf6f643b6d39b4ea8e2101c931a294
 
-`git diff --numstat 31413ca7..ebe970ad -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..189fa942 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -26,50 +26,50 @@ generated-at: ebe970adf4bffd5cc2a973723d595015a13630f2
 | `crates/axon-core/src/ast.rs` | 334 | 81 |
 | `crates/axon-core/src/bin/axon-run.rs` | 19 | 0 |
 | `crates/axon-core/src/borrow.rs` | 67 | 11 |
-| `crates/axon-core/src/builtins.rs` | 70 | 13 |
+| `crates/axon-core/src/builtins.rs` | 102 | 36 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
-| `crates/axon-core/src/capabilities.rs` | 940 | 340 |
-| `crates/axon-core/src/checker.rs` | 1714 | 569 |
+| `crates/axon-core/src/capabilities.rs` | 985 | 340 |
+| `crates/axon-core/src/checker.rs` | 2553 | 649 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
-| `crates/axon-core/src/codegen/asi.rs` | 172 | 37 |
-| `crates/axon-core/src/codegen/build_wrappers.rs` | 25 | 1 |
+| `crates/axon-core/src/codegen/asi.rs` | 237 | 49 |
+| `crates/axon-core/src/codegen/build_wrappers.rs` | 25 | 55 |
 | `crates/axon-core/src/codegen/builtin_externs.rs` | 8 | 0 |
-| `crates/axon-core/src/codegen/builtins.rs` | 6 | 0 |
+| `crates/axon-core/src/codegen/builtins.rs` | 14 | 6 |
 | `crates/axon-core/src/codegen/display.rs` | 514 | 0 |
 | `crates/axon-core/src/codegen/enum_layout.rs` | 451 | 0 |
 | `crates/axon-core/src/codegen/escape.rs` | 509 | 0 |
-| `crates/axon-core/src/codegen/expr.rs` | 2320 | 677 |
+| `crates/axon-core/src/codegen/expr.rs` | 2366 | 686 |
 | `crates/axon-core/src/codegen/link.rs` | 1620 | 337 |
 | `crates/axon-core/src/codegen/match_pat.rs` | 335 | 147 |
-| `crates/axon-core/src/codegen/mod.rs` | 454 | 147 |
+| `crates/axon-core/src/codegen/mod.rs` | 477 | 148 |
 | `crates/axon-core/src/codegen/option_result.rs` | 11 | 6 |
 | `crates/axon-core/src/codegen/output.rs` | 118 | 69 |
-| `crates/axon-core/src/codegen/types.rs` | 5 | 4 |
+| `crates/axon-core/src/codegen/types.rs` | 18 | 6 |
 | `crates/axon-core/src/complexity.rs` | 1 | 0 |
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
 | `crates/axon-core/src/effects.rs` | 755 | 126 |
 | `crates/axon-core/src/env_registry.rs` | 15 | 3 |
-| `crates/axon-core/src/error.rs` | 36 | 16 |
+| `crates/axon-core/src/error.rs` | 39 | 17 |
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 876 | 183 |
-| `crates/axon-core/src/interp.rs` | 7722 | 2889 |
-| `crates/axon-core/src/interp/builtins.rs` | 794 | 614 |
+| `crates/axon-core/src/infer.rs` | 1692 | 259 |
+| `crates/axon-core/src/interp.rs` | 7775 | 2884 |
+| `crates/axon-core/src/interp/builtins.rs` | 865 | 633 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 639 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1230 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 2201 | 608 |
+| `crates/axon-core/src/interp/eval.rs` | 2223 | 615 |
 | `crates/axon-core/src/interp/goal.rs` | 87 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 363 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 394 | 0 |
-| `crates/axon-core/src/interp/pin.rs` | 963 | 0 |
+| `crates/axon-core/src/interp/pin.rs` | 967 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 99 | 63 |
 | `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
-| `crates/axon-core/src/interp/sym.rs` | 1200 | 0 |
+| `crates/axon-core/src/interp/sym.rs` | 1232 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1659 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 4355 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
@@ -79,17 +79,17 @@ generated-at: ebe970adf4bffd5cc2a973723d595015a13630f2
 | `crates/axon-core/src/interp/value.rs` | 577 | 530 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1782 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3587 | 0 |
-| `crates/axon-core/src/interp/vm/pure.rs` | 1835 | 0 |
+| `crates/axon-core/src/interp/vm/pure.rs` | 1840 | 0 |
 | `crates/axon-core/src/interp/vm/purefn.rs` | 860 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 2688 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 2690 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
 | `crates/axon-core/src/lib.rs` | 303 | 77 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
-| `crates/axon-core/src/lsp.rs` | 182 | 59 |
+| `crates/axon-core/src/lsp.rs` | 187 | 59 |
 | `crates/axon-core/src/main.rs` | 1594 | 369 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
-| `crates/axon-core/src/mut_borrow.rs` | 811 | 0 |
+| `crates/axon-core/src/mut_borrow.rs` | 942 | 0 |
 | `crates/axon-core/src/parser.rs` | 460 | 32 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
 | `crates/axon-core/src/resolver.rs` | 954 | 122 |
@@ -97,10 +97,10 @@ generated-at: ebe970adf4bffd5cc2a973723d595015a13630f2
 | `crates/axon-core/src/span.rs` | 98 | 3 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
-| `crates/axon-core/src/types.rs` | 89 | 0 |
-| total | 59139 | 8328 |
+| `crates/axon-core/src/types.rs` | 116 | 2 |
+| total | 61381 | 8615 |
 
-`git log --reverse 31413ca7..ebe970ad -- crates/axon-core/src`:
+`git log --reverse 31413ca7..189fa942 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -430,7 +430,21 @@ generated-at: ebe970adf4bffd5cc2a973723d595015a13630f2
 | a02d632f | fix/fnval merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 4707cf11 | checker soundness | checker.rs: names a match-arm pattern binds shadow outer fn values for the guard and body (Type::Unknown, via resolver.rs collect_pattern_binding_names, now pub(crate)); a lambda param typed by a one-variant enum naming a primitive (`type Name = str`) types as that primitive; the native-typo E0404 help lists the module's functions. Removes false refusals only; no evaluator change (SND#1/#3/#4). |
 | ebe970ad | docs-truth DT-2 (doc strings only) | doc field of str_cmp and str_slice; read only by `axon reference` (main.rs:5254/:5376); no change to what any run accepts, refuses or computes |
-| 326 commits | | |
+| 00984298 | checker soundness | interp/builtins.rs, VM and codegen: pow_i64 (checked_pow, exponent range), arr_sum_i64, arr_sum_by and dict_inc panic `integer overflow` like the operators instead of wrapping/saturating/Rust-panicking; arr_mean_i64 and random_i64 compute in i128; str_repeat checks its size; assert_eq_f64 is exact IEEE on every engine. Evaluator change: an overflowing builtin now exits 101 where it returned a wrong i64, O-GAP-06 (CS2-2). |
+| 0df1baea | checker soundness | checker.rs exhaustiveness: a match on a scalar needs a catch-all, a bool match both literals, a tuple match the product of its component domains (cap 256); a guarded arm covers nothing. Each refused program panicked `no match arm matched` at run before; now E0304 at check, O-GAP-04 (CS2-4). No evaluator change. |
+| 3448fdba | checker soundness | codegen: remove w_int_add_sat, dead since arr_sum_i64 panics on overflow (CS2-2 follow-up). No behaviour change. |
+| 9dd11ce1 | checker soundness | checker.rs fn_value_type and infer.rs: a call whose callee is not a fn name (array element, call result, fn-typed field) is checked against the fn's type (E0305/E0306/E0102); a local lambda call is checked against its param kinds; a local/param callee name is typed by its binding, not a same-named top-level fn. Refused programs panicked at run before, O-SF-04 (CS2-6). No evaluator change. |
+| b4608f00 | cs2/a merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 54c21f06 | checker soundness | infer.rs parse_type_str gains a `fn(..) -> ..` arm, so a higher-order builtin's closure param is a real fn type unified with the closure (E0102); `Num` key vars must resolve numeric (E0306); a unit-return fn param leaves the closure's return free. Refused programs panicked at run before, O-GAP-01 (CS2-3a). No evaluator change. |
+| a4c83060 | checker soundness | interp/eval.rs, interp.rs, VM fold_leaf and codegen emit_lambda: an enum variant field's refinement is checked at construction and a refined lambda param at every call (exit 6); checker.rs: a violating constant is E1209; capabilities.rs walks the enum of an `E::V {..}` literal. Evaluator change: a violating value now exits 6 where it was accepted, O-S1-15 (CS2-7, human-decided ENFORCE). |
+| cb265159 | checker soundness | mut_borrow.rs: bindings get ids; a closure's write to a captured binding used outside the closure after the literal, or written by a closure literal in a loop that does not declare it, is the new E0607 (error.rs). The write was silently dropped (captures are copies), O-GAP-03 (CS2-1). No evaluator change. |
+| 83a3d17e | checker soundness | checker.rs: a method call on a type param is looked up in its bound traits (E0403, fix-it adds the bound); infer.rs App unify compares a generic struct's type arguments (E0102). Refused programs panicked `no method` at run before, O-GAP-05 (CS2-5). No evaluator change. |
+| 0a05b93b | cs2/b merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| fc8ab40f | checker soundness | infer.rs/types: `Dict` is `Dict(V)`, `Dict<str, V>` annotations are enforced, a bare-`Dict` fn is solved from its body before its callers, mixed dicts and non-str keys are E0102; readers of the literal "Dict" (builtins.rs is_heap_allocating_builtin, pin.rs, taint tests, checker, codegen) migrate to is_dict_type_str / Type::Dict(_). Refused programs panicked at run before, O-GAP-02 (CS2-3b, NH-1(a)). No evaluator change. |
+| 4a503b78 | cs2/b merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 8fd92f22 | checker soundness | checker.rs reject_impure_refinement walks the predicate with the capabilities reach walker: a reached capability or effect (Time included) through a user fn, or an unclassifiable dispatch, is E1209. The effect ran at every coercion before, O-SP-02 (CS2-8). No evaluator change. |
+| f9bb6236 | cs2/a merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 340 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -589,7 +603,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 530 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 568 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929
 
 | delta | rows (named in the amendment's own text) |
 |---|---|

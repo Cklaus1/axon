@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "codegen: remove w_int_add_sat, dead since arr_sum_i64 panics on overflow (CS2-2 follow-up). No behaviour change."}
