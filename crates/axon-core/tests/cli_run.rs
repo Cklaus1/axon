@@ -14112,10 +14112,11 @@ fn invariant_i9_no_silent_success_on_degenerate_input() {
             "match parse_int(\"nope\") { Ok(n) => println(to_str(n))  Err(e) => println(e) }",
             Out("could not parse `nope` as a base-10 integer"),
         ),
-        // arr_sum overflow → saturates (documented), not a wrapped negative.
+        // arr_sum overflow → panics like `+` (checker-soundness-2 CS2-2; it
+        // used to saturate: a wrong total reported as success).
         (
             "let a = [9223372036854775807, 1]\n  println(to_str(arr_sum_i64(a)))",
-            Out("9223372036854775807"),
+            Panic("integer overflow"),
         ),
     ];
     for (i, (body, exp)) in cases.iter().enumerate() {
@@ -14610,7 +14611,7 @@ fn arr_max_by_min_by_take_drop_while_dict_each() {
 }
 
 #[test]
-fn arr_sum_by_sums_a_projection_and_saturates_like_arr_sum_i64() {
+fn arr_sum_by_sums_a_projection_and_panics_like_the_operator() {
     // `arr_sum_by(xs, key_fn)` — sum a projected field without materializing
     // the mapped array, the `_by` sibling of arr_max_by/arr_min_by.
     //
@@ -14620,13 +14621,10 @@ fn arr_sum_by_sums_a_projection_and_saturates_like_arr_sum_i64() {
     // a one-arg builtin, i.e. a parse error at a high column. Four of the five
     // parse failures in sweep 20b were this exact shape.
     //
-    // The saturation case is the point of the test, not decoration:
-    // arr_sum_i64 SATURATES on i64 overflow (fuzz_parity.sh pins arr_sum_ovf ->
-    // i64::MAX in both interp and native). arr_sum_by is that reduction with a
-    // projection in front, so `arr_sum_by(xs, |x| x)` must equal
-    // `arr_sum_i64(xs)` on every input including the boundary — a checked_add
-    // panic here would be a silent divergence between two spellings of one
-    // operation.
+    // Overflow (checker-soundness-2 CS2-2): arr_sum_by is `arr_sum_i64` with a
+    // projection in front, and both now panic on i64 overflow exactly as the
+    // `+` they stand for does (`arr_fold(xs, 0, |a, x| a + x)`). They used to
+    // saturate to i64::MAX: a wrong total reported as success.
     let src = "type Row = { region: str, amount: i64 }\n\
         fn main() -> i64 {\n  \
             let rows = [\n    \
@@ -14638,13 +14636,13 @@ fn arr_sum_by_sums_a_projection_and_saturates_like_arr_sum_i64() {
             let north = arr_sum_by(&arr_filter(&rows, |r| str_eq(r.region, \"north\")), |r| r.amount)\n  \
             let empty: [i64] = []\n  \
             let zero = arr_sum_by(&empty, |x| x)\n  \
-            let ovf = [9223372036854775807, 1]\n  \
-            let sat_by = arr_sum_by(&ovf, |x| x)\n  \
-            let sat_plain = arr_sum_i64(ovf)\n  \
+            let edge = [9223372036854775806, 1]\n  \
+            let max_by = arr_sum_by(&edge, |x| x)\n  \
+            let max_plain = arr_sum_i64(edge)\n  \
             let fs = [1.5, 2.25]\n  \
             let fsum = arr_sum_by_f64(&fs, |x| x)\n  \
             if total == 245 && north == 165 && zero == 0 \
-               && sat_by == sat_plain && sat_by == 9223372036854775807 \
+               && max_by == max_plain && max_by == 9223372036854775807 \
                && fsum > 3.7 && fsum < 3.8 { 1 } else { 0 }\n\
         }\n";
     let f = std::env::temp_dir().join(format!("axon_sumby_{}.ax", std::process::id()));
@@ -14652,6 +14650,277 @@ fn arr_sum_by_sums_a_projection_and_saturates_like_arr_sum_i64() {
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(1), "arr_sum_by: {:?}", out);
+    for (tag, call) in [
+        ("sum_by", "arr_sum_by([9223372036854775807, 1], |x: i64| x)"),
+        ("sum_plain", "arr_sum_i64([9223372036854775807, 1])"),
+        ("fold", "arr_fold([9223372036854775807, 1], 0, |a: i64, x: i64| a + x)"),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_sumby_{tag}_{}.ax", std::process::id()));
+        std::fs::write(&f, format!("fn main() -> i64 {{\n  println(to_str({call}))\n  0\n}}\n")).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.code() == Some(101) && err.contains("integer overflow") && out.stdout.is_empty(),
+            "[{tag}] an overflowing sum must panic like `+`: rc {:?} stdout {:?} stderr {err}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+}
+
+/// checker-soundness-2 CS2-2 (O-GAP-06): an arithmetic builtin overflows the
+/// way the operator it stands for does -- an Axon panic, exit 101, "integer
+/// overflow" -- never a wrapped or saturated i64 reported as success and never
+/// a Rust panic. `arr_mean_i64` and `random_i64` cannot overflow, so they are
+/// exact (an i128 sum / range); `str_repeat` checks the size before it
+/// allocates. Every probe checks rc 0 first: the fix is at run time only.
+#[test]
+fn arithmetic_builtins_overflow_like_the_operators() {
+    let dir = std::env::temp_dir().join(format!("axon_cs2_2_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = |body: &str| format!("fn main() -> i64 {{\n  {body}\n  0\n}}\n");
+    let run = |tag: &str, src: &str| {
+        let f = dir.join(format!("{tag}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            check.status.code(),
+            Some(0),
+            "[{tag}] the probe must check clean: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+        axon().args(["run", f.to_str().unwrap()]).output().unwrap()
+    };
+    let panics = [
+        ("a_pow", "println(to_str(pow_i64(3, 40)))", "integer overflow: pow_i64(3, 40) exceeds i64"),
+        ("a_pow_exp", "println(to_str(pow_i64(2, 4294967296)))", "integer overflow: pow_i64(2, 4294967296) exceeds i64"),
+        ("a_sum", "println(to_str(arr_sum_i64([9223372036854775807, 1])))", "integer overflow"),
+        ("a_sumby", "println(to_str(arr_sum_by([9223372036854775807, 1], |x: i64| x)))", "integer overflow"),
+        ("a_dictinc", "let d = dict_new()\n  dict_set(d, \"k\", 9223372036854775807)\n  println(to_str(dict_inc(d, \"k\")))", "integer overflow"),
+        ("a1_rep", "println(to_str(str_len(str_repeat(\"ab\", 9223372036854775807))))", "str_repeat: result too large"),
+    ];
+    for (tag, body, want) in panics {
+        let out = run(tag, &main(body));
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.code() == Some(101)
+                && err.contains(want)
+                && err.contains("axon: panic:")
+                && !err.contains("panicked at")
+                && out.stdout.is_empty(),
+            "ATTACK: an arithmetic builtin returned a wrong i64 or a Rust panic where the operator panics [{tag}]: rc {:?} stdout {:?} stderr {err}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+    // A mean cannot overflow: the true mean of [MAX, MAX, MIN, MIN] is -0.5.
+    let out = run(
+        "a_mean2",
+        &main("let m = 9223372036854775807\n  let n = 0 - m - 1\n  println(to_str_f64(arr_mean_i64([m, m, n, n])))"),
+    );
+    assert_eq!(
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).trim().to_string()),
+        (Some(0), "-0.5".to_string()),
+        "ATTACK: arr_mean_i64 returned a saturated partial sum [a_mean2]: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The full i64 range is a valid random_i64 range; every draw is in it.
+    let out = run(
+        "rnd",
+        &main("let lo = 0 - 9223372036854775807 - 1\n  let i = 0\n  while i < 20 { let r = random_i64(lo, 9223372036854775807)\n    assert(r >= lo && r < 9223372036854775807)\n    println(to_str(r))\n    i = i + 1 }"),
+    );
+    assert!(
+        out.status.code() == Some(0)
+            && String::from_utf8_lossy(&out.stdout).lines().count() == 20,
+        "ATTACK: random_i64 over the full i64 range is a Rust panic [rnd]: rc {:?} {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Controls: in-range pow, and the negative-exponent panic, are unchanged;
+    // pow at the exponent range edge is exact for bases 0, 1 and -1.
+    let out = run("a_pow_ok", &main("println(to_str(pow_i64(3, 39)))"));
+    assert_eq!(
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).trim().to_string()),
+        (Some(0), "4052555153018976267".to_string()),
+        "a_pow_ok: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = run("a_pow_neg", &main("println(to_str(pow_i64(2, 0 - 1)))"));
+    assert!(
+        out.status.code() == Some(101)
+            && String::from_utf8_lossy(&out.stderr).contains("pow_i64: negative exponent"),
+        "a_pow_neg: {out:?}"
+    );
+    let out = run(
+        "a_pow_unit",
+        &main("println(to_str(pow_i64(1, 4294967296)))\n  println(to_str(pow_i64(0 - 1, 4294967297)))\n  println(to_str(pow_i64(0 - 1, 4294967296)))\n  println(to_str(pow_i64(0, 4294967296)))\n  println(to_str(str_len(str_repeat(\"\", 9223372036854775807))))"),
+    );
+    assert_eq!(
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()),
+        (Some(0), "1\n-1\n1\n0\n0\n".to_string()),
+        "a_pow_unit: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// checker-soundness-2 CS2-7 (O-S1-15): a refined enum variant field is
+/// checked at the `E::V { .. }` literal and a refined lambda parameter at
+/// every call of the closure (a direct call and one through a builtin), exit
+/// 6 on both engines; a constant that violates the refinement is E1209 at
+/// check, as for a struct field or a named fn's parameter. Before the fix the
+/// variant arm returned before the field checks and closures bound their
+/// arguments unchecked, so each probe printed the violating value, rc 0.
+#[test]
+fn refinements_on_variant_fields_and_lambda_params_are_enforced() {
+    let dir = std::env::temp_dir().join(format!("axon_cs2_7_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pos = "type Pos = i64 where _ > 0\n";
+    let file = |tag: &str, src: &str| {
+        let f = dir.join(format!("{tag}.ax"));
+        std::fs::write(&f, format!("{pos}{src}")).unwrap();
+        f
+    };
+    let variant = |n: &str| {
+        format!(
+            "type E = A {{ n: Pos }} | B\nfn main() -> i64 {{\n  let k = {n}\n  let e = E::A {{ n: k }}\n  \
+             match e {{\n    E::A {{ n }} => println(to_str(n)),\n    E::B => println(\"b\"),\n  }}\n  0\n}}\n"
+        )
+    };
+    let runs = [
+        ("r_variant2", variant("0 - 5"), "field `n` of `E::A` (= -5)"),
+        (
+            "r_lambda",
+            "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  let k = 0 - 5\n  println(to_str(f(k)))\n  0\n}\n".to_string(),
+            "parameter `x` of a lambda (= -5)",
+        ),
+        (
+            "r_lambda_hof",
+            "fn main() -> i64 {\n  let ys = arr_map([1, 0 - 2], |x: Pos| x * 2)\n  println(to_str(ys[1]))\n  0\n}\n".to_string(),
+            "parameter `x` of a lambda (= -2)",
+        ),
+        (
+            // The VM folds a pure two-parameter closure in registers
+            // (`fold_leaf`), skipping the call: it must decline a refined one.
+            "r_lambda_fold",
+            format!(
+                "fn main() -> i64 {{\n  let xs = [{}]\n  println(to_str(arr_fold(xs, 10, |acc: Pos, x: i64| acc - x)))\n  0\n}}\n",
+                ["1"; 20].join(", ")
+            ),
+            "parameter `acc` of a lambda (= 0)",
+        ),
+        (
+            "r_fn_ctrl",
+            "fn g(x: Pos) -> i64 { x * 2 }\nfn main() -> i64 {\n  let k = 0 - 5\n  println(to_str(g(k)))\n  0\n}\n".to_string(),
+            "parameter `x` of `g` (= -5)",
+        ),
+    ];
+    for (tag, src, want) in &runs {
+        let f = file(tag, src);
+        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            check.status.code(),
+            Some(0),
+            "[{tag}] a non-constant value is a run-time check, not a refusal: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+        for engine in ["tree", "vm"] {
+            let out = axon()
+                .args(["run", f.to_str().unwrap()])
+                .env("AXON_ENGINE", engine)
+                .output()
+                .unwrap();
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                out.status.code() == Some(6)
+                    && out.stdout.is_empty()
+                    && err.contains("refinement violated")
+                    && err.contains(want),
+                "ATTACK: a refined variant field or lambda param took a violating value [{tag}, {engine}]: \
+                 rc {:?} stdout {:?} stderr {err}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+    }
+    let consts = [
+        ("r_variant_lit", variant("0").replace("E::A { n: k }", "E::A { n: 0 }")),
+        (
+            "r_lambda_lit",
+            "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  println(to_str(f(0)))\n  0\n}\n".to_string(),
+        ),
+    ];
+    for (tag, src) in &consts {
+        let f = file(tag, src);
+        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&check.stdout),
+            String::from_utf8_lossy(&check.stderr)
+        );
+        assert!(
+            check.status.code() == Some(2) && text.contains("E1209"),
+            "ATTACK: a constant violating a variant field's or lambda param's refinement checked clean [{tag}]: {text}"
+        );
+    }
+    // False-refusal controls: a call that does not run the refined lambda (a
+    // later `let`, a match binding, an assignment, or the fn of that name
+    // once the block has ended) passes a constant the lambda would refuse.
+    let controls = [
+        ("c_shadow_let", "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  let f = |x: i64| x + 1\n  println(to_str(f(0)))\n  0\n}\n", "1\n"),
+        (
+            "c_shadow_match",
+            "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  let o = Some(|y: i64| y + 3)\n  \
+             match o {\n    Some(f) => println(to_str(f(0))),\n    None => println(\"n\"),\n  }\n  0\n}\n",
+            "3\n",
+        ),
+        ("c_assign", "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  f = |x: i64| x + 5\n  println(to_str(f(0)))\n  0\n}\n", "5\n"),
+        (
+            "c_block_end",
+            "fn f(x: i64) -> i64 { x + 9 }\nfn main() -> i64 {\n  if true {\n    let f = |x: Pos| x * 2\n    \
+             println(to_str(f(3)))\n  }\n  println(to_str(f(0)))\n  0\n}\n",
+            "6\n9\n",
+        ),
+    ];
+    for (tag, src, want) in controls {
+        let f = file(tag, src);
+        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            check.status.code(),
+            Some(0),
+            "[{tag}] false refusal: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()),
+            (Some(0), want.to_string()),
+            "[{tag}]: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    // Control: values that satisfy the refinements run unchanged.
+    let f = file(
+        "r_ok",
+        "type E = A { n: Pos } | B\nfn main() -> i64 {\n  let e = E::A { n: 3 }\n  let f = |x: Pos| x * 2\n  \
+         match e {\n    E::A { n } => println(to_str(f(n))),\n    E::B => println(\"b\"),\n  }\n  \
+         println(to_str(arr_fold([1, 2, 3], 1, |acc: Pos, x: Pos| acc + x)))\n  0\n}\n",
+    );
+    for engine in ["tree", "vm"] {
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_ENGINE", engine)
+            .output()
+            .unwrap();
+        assert_eq!(
+            (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()),
+            (Some(0), "6\n7\n".to_string()),
+            "r_ok [{engine}]: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -88,6 +88,23 @@ CASES[abs_i64_min]='let m = 0 - 9223372036854775807
 CASES[pow_neg_exp]='let e = 0 - 1
     println(to_str(pow_i64(2, e)))'
 CASES[abs_ok]='println(to_str(abs_i64(0 - 42)))'
+# Arithmetic builtins overflow like the operators (checker-soundness-2 CS2-2):
+# exit 101 with the same message on both engines -- pow_i64 used to wrap (and
+# truncate an exponent above u32::MAX to 0), arr_sum_i64 to saturate, dict_inc
+# to raise a Rust overflow panic. arr_mean_i64 sums exactly in i128.
+CASES[pow_ovf]='let e = 40
+    println(to_str(pow_i64(3, e)))'
+CASES[pow_exp_trunc]='let e = 4294967296
+    println(to_str(pow_i64(2, e)))'
+CASES[sum_ovf]='let a = [9223372036854775807, 1]
+    println(to_str(arr_sum_i64(a)))'
+CASES[dictinc_ovf]='let d = dict_new()
+    dict_set(d, "k", 9223372036854775807)
+    println(to_str(dict_inc(d, "k")))'
+CASES[mean_i128]='let m = 9223372036854775807
+    let n = 0 - m - 1
+    println(to_str_f64(arr_mean_i64([m, m, n, n])))
+    println(to_str_f64(arr_mean_i64([m, m, 1])))'
 # Array bounds: OOB read must panic 101 with the interp message on BOTH engines
 # (native used to do an unchecked GEP → garbage value / arbitrary-memory read at
 # exit 0). Index via a variable so nothing folds; len-3 slice.

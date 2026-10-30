@@ -463,18 +463,21 @@ impl<'ctx> super::Codegen<'ctx> {
     /// enforce the same predicate subset, so the observable exit code agrees
     /// (I-2). A predicate outside the lowerable subset is E0910-refused (never
     /// silently skipped — that would let native accept a value the interpreter
-    /// rejects). Call only when `self.refine_preds` is non-empty.
+    /// rejects). Call only when `self.refine_preds` is non-empty. `owner`
+    /// names the fn (or `lambda`) in the panic message; `params` are its
+    /// parameters' names and declared types, already bound in `self.locals`.
     pub(super) fn emit_refine_preconditions(
         &mut self,
-        f: &ast::FnDef,
+        owner: &str,
+        params: &[(&str, &ast::AxonType)],
         llvm_fn: FunctionValue<'ctx>,
     ) {
         let panic_fn = match self.ir.module.get_function("__axon_refine_panic") {
             Some(f) => f,
             None => return,
         };
-        for param in &f.params {
-            let ast::AxonType::Named(rname) = &param.ty else {
+        for &(param_name, param_ty) in params {
+            let ast::AxonType::Named(rname) = param_ty else {
                 continue;
             };
             let Some(pred) = self.refine_preds.get(rname.as_str()).cloned() else {
@@ -491,7 +494,7 @@ impl<'ctx> super::Codegen<'ctx> {
                      runtime-checkable subset (literals, `_`, arithmetic, comparisons, \
                      `&&`/`||`/`!`, `str_len`/`str_eq`, `_.field`, and calls to @[pure] \
                      functions). Run it under the interpreter (`axon run`).",
-                    param.name, f.name
+                    param_name, owner
                 );
                 self.record_error(msg);
                 continue;
@@ -511,8 +514,8 @@ impl<'ctx> super::Codegen<'ctx> {
             // Alias `_` to this parameter's local for the predicate emission, then
             // restore so the binder never leaks into the function body. The param
             // is already in `self.locals`/`self.local_types` from the binding loop.
-            let saved_local = self.locals.get(&param.name).copied();
-            let saved_type = self.local_types.get(&param.name).cloned();
+            let saved_local = self.locals.get(param_name).copied();
+            let saved_type = self.local_types.get(param_name).cloned();
             let prev_underscore_local = self.locals.remove("_");
             let prev_underscore_type = self.local_types.remove("_");
             if let Some(l) = saved_local {
@@ -541,7 +544,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     let msg = format!(
                         "codegen error [E0910]: refinement predicate of `{rname}` on parameter \
                          `{}` of `{}` did not lower to a boolean. Run it under the interpreter.",
-                        param.name, f.name
+                        param_name, owner
                     );
                     self.record_error(msg);
                     continue;
@@ -556,18 +559,18 @@ impl<'ctx> super::Codegen<'ctx> {
             // ── Panic path: name the violation, exit 6. ───────────────────────
             self.ir.builder.position_at_end(panic_bb);
             let i64_ty = self.ir.context.i64_type();
-            let fn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &f.name, "refine_fn");
+            let fn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, owner, "refine_fn");
             let pn_g =
-                build_wrappers::w_global_string_ptr(&self.ir.builder, &param.name, "refine_param");
+                build_wrappers::w_global_string_ptr(&self.ir.builder, param_name, "refine_param");
             let rn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, rname, "refine_name");
             let _ = build_wrappers::w_call(
                 &self.ir.builder,
                 panic_fn,
                 &[
                     fn_g.into(),
-                    i64_ty.const_int(f.name.len() as u64, false).into(),
+                    i64_ty.const_int(owner.len() as u64, false).into(),
                     pn_g.into(),
-                    i64_ty.const_int(param.name.len() as u64, false).into(),
+                    i64_ty.const_int(param_name.len() as u64, false).into(),
                     rn_g.into(),
                     i64_ty.const_int(rname.len() as u64, false).into(),
                 ],
@@ -784,6 +787,56 @@ impl<'ctx> super::Codegen<'ctx> {
             if let Some(cond) = cond {
                 self.emit_refine_branch(cond, name, "<struct>", name, llvm_fn, "refine_struct");
             }
+        }
+    }
+
+    /// checker-soundness-2 CS2-7: the per-field refinement check of an enum
+    /// variant literal `name` (`E::V`), on field `fname`'s emitted value
+    /// `fval` (semantic type `sem`) before it is stored into the payload: the
+    /// variant twin of [`Self::emit_refine_struct_checks`]'s per-field loop.
+    pub(super) fn emit_refine_variant_field_check(
+        &mut self,
+        name: &str,
+        fname: &str,
+        fval: BasicValueEnum<'ctx>,
+        sem: Type,
+        llvm_fn: FunctionValue<'ctx>,
+    ) {
+        let Some(rn) = self
+            .struct_field_refines
+            .get(name)
+            .and_then(|refs| refs.iter().find(|(f, _)| f == fname))
+            .map(|(_, rn)| rn.clone())
+        else {
+            return;
+        };
+        let Some(pred) = self.refine_preds.get(&rn).cloned() else {
+            return;
+        };
+        if self.ir.module.get_function("__axon_refine_panic").is_none() {
+            return;
+        }
+        if !Self::refine_predicate_is_lowerable(&pred, &self.fndefs) {
+            self.refuse_struct_refine(name, fname, &rn);
+            return;
+        }
+        if self.block_terminated() {
+            return;
+        }
+        let fty = fval.get_type();
+        let slot = build_wrappers::w_alloca(&self.ir.builder, fty, "refine_vfld_tmp");
+        build_wrappers::w_store(&self.ir.builder, slot, fval);
+        let label = format!("field `{fname}` of `{name}` (refinement `{rn}`)");
+        let cond = self.emit_refine_pred_with_underscore(
+            &pred,
+            &["_", fname],
+            (slot, fty),
+            Some(sem),
+            &label,
+            llvm_fn,
+        );
+        if let Some(cond) = cond {
+            self.emit_refine_branch(cond, name, fname, &rn, llvm_fn, "refine_vfld");
         }
     }
 

@@ -461,11 +461,12 @@ expect_runtime_panic mod_zero '    let z = 0\n    println(to_str(5 % z))'
 expect_runtime_panic arr_oob  '    let a = [1, 2, 3]\n    let i = 9\n    println(to_str(a[i]))'
 expect_runtime_panic arr_neg  '    let a = [1, 2, 3]\n    let i = 0 - 1\n    println(to_str(a[i]))'
 # ── array reducers — fixed cases (the awk generator doesn't build array args) ──
-# arr_sum_i64 saturates on overflow (interp uses saturating_add; native now too).
+# arr_sum_i64 panics on overflow like `+` (checked_add; native the same
+# __axon_arith_panic message), checker-soundness-2 CS2-2. It used to saturate.
 # arr_max/min/argmax/argmin panic with a MESSAGE on empty (native used to exit
 # 101 silently). Each must agree byte-for-byte on stdout/stderr + exit.
-expect_equal arr_sum_ovf    'let a = [9223372036854775807, 1]'        'arr_sum_i64(a)' '9223372036854775807'
-expect_equal arr_sum_ovfneg 'let a = [0 - 9223372036854775807, 0 - 5]' 'arr_sum_i64(a)' '-9223372036854775808'
+expect_runtime_panic arr_sum_ovf    '    let a = [9223372036854775807, 1]\n    println(to_str(arr_sum_i64(a)))'
+expect_runtime_panic arr_sum_ovfneg '    let a = [0 - 9223372036854775807, 0 - 5]\n    println(to_str(arr_sum_i64(a)))'
 expect_equal arr_sum_ok     'let a = [3, 1, 4, 1, 5]'                  'arr_sum_i64(a)' '14'
 expect_runtime_panic arr_max_empty    '    let a: [i64] = []\n    println(to_str(arr_max_i64(a)))'
 expect_runtime_panic arr_min_empty    '    let a: [i64] = []\n    println(to_str(arr_min_i64(a)))'

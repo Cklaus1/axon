@@ -247,7 +247,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "assert_eq_f64",
         params: &[("a", "f64"), ("b", "f64")],
         ret: "()",
-        doc: "Panic if `a != b`. Compares two f64 values.",
+        doc: "Panic unless `a == b` exactly (IEEE; NaN never equal). For a tolerance write `assert(abs_f64(a - b) <= eps)`.",
     },
     // ── Phase 4: I/O builtins ─────────────────────────────────────────────────
     BuiltinFn {
@@ -606,7 +606,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "arr_sum_i64",
         params: &[("xs", "[i64]")],
         ret: "i64",
-        doc: "Sum of an i64 array. Empty → 0. Saturates on overflow.",
+        doc: "Sum of an i64 array. Empty → 0. Overflow panics like `+` (exit 101).",
     },
     BuiltinFn {
         name: "arr_max_i64",
@@ -702,7 +702,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "arr_sum_by",
         params: &[("xs", "[T]"), ("key_fn", "fn(T) -> i64")],
         ret: "i64",
-        doc: "Sum a projected i64 field over `xs`. Equivalent to `arr_sum_i64(&arr_map(xs, key_fn))` but doesn't materialize the mapped array — the `_by` sibling of `arr_max_by`/`arr_min_by`.",
+        doc: "Sum a projected i64 field over `xs`. Equivalent to `arr_sum_i64(&arr_map(xs, key_fn))` but doesn't materialize the mapped array — the `_by` sibling of `arr_max_by`/`arr_min_by`. Overflow panics like `+` (exit 101).",
     },
     BuiltinFn {
         name: "arr_sum_by_f64",
@@ -834,7 +834,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "arr_mean_i64",
         params: &[("xs", "[i64]")],
         ret: "f64",
-        doc: "Arithmetic mean of an i64 array as f64. Empty → 0.0 (no NaN).",
+        doc: "Arithmetic mean of an i64 array as f64. Empty → 0.0 (no NaN). Exact sum (no overflow), one rounding to f64.",
     },
     BuiltinFn {
         name: "arr_mean_f64",
@@ -970,7 +970,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "str_repeat",
         params: &[("s", "str"), ("n", "i64")],
         ret: "str",
-        doc: "Return a string containing `s` repeated `n` times (empty string if n <= 0).",
+        doc: "Return a string containing `s` repeated `n` times (empty string if n <= 0). A result too large to allocate panics (`str_repeat: result too large`, exit 101).",
     },
     // ── R42 Slice 2: CHARACTER-indexed access, beside the byte-indexed surface ──
     //
@@ -1267,7 +1267,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "random_i64",
         params: &[("lo", "i64"), ("hi", "i64")],
         ret: "i64",
-        doc: "Return a pseudo-random `i64` in `[lo, hi)` (xorshift64). Seed via `srand(n)` or the `AXON_SEED` env var for reproducible runs. Inverted bounds (`hi < lo`) panic — they're a caller error, not a silent degenerate. `hi == lo` returns `lo` (empty range).",
+        doc: "Return a pseudo-random `i64` in `[lo, hi)` (xorshift64). Any `lo <= hi` is valid, including the full i64 range. Seed via `srand(n)` or the `AXON_SEED` env var for reproducible runs. Inverted bounds (`hi < lo`) panic — they're a caller error, not a silent degenerate. `hi == lo` returns `lo` (empty range).",
     },
     BuiltinFn {
         name: "random_f64",
@@ -1306,7 +1306,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "pow_i64",
         params: &[("base", "i64"), ("exp", "i64")],
         ret: "i64",
-        doc: "Raise `base` to the power `exp` (non-negative `exp` only).",
+        doc: "Raise `base` to the power `exp` (non-negative `exp` only). Overflow panics like `*` (exit 101); a negative `exp` panics.",
     },
     BuiltinFn {
         name: "sqrt_f64",
@@ -1993,7 +1993,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "dict_inc",
         params: &[("d", "Dict<i64>"), ("k", "str")],
         ret: "i64",
-        doc: "Atomically bump an i64 counter at `k`. Initializes to 1 if absent. Returns the new value. Replaces the four-line get-default-add-set dance for frequency / counter tables.",
+        doc: "Atomically bump an i64 counter at `k`. Initializes to 1 if absent. Returns the new value. Overflow panics like `+` (exit 101). Replaces the four-line get-default-add-set dance for frequency / counter tables.",
     },
     BuiltinFn {
         name: "dict_to_pairs",

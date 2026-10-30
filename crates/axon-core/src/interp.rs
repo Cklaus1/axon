@@ -3511,6 +3511,8 @@ pub enum SendValue {
         params: Vec<String>,
         body: Box<Expr>,
         captured: Vec<(String, SendValue)>,
+        /// The closure's refined parameters (CS2-7), kept across the copy.
+        param_refines: Option<Box<[Option<Box<str>>]>>,
     },
     Tuple(Vec<SendValue>),
     /// An owned snapshot of a `Dict`'s entries (sorted key order — the source is a
@@ -3683,6 +3685,7 @@ impl SendValue {
                         .collect(),
                     body: Box::new(code.body.clone()),
                     captured: cap?,
+                    param_refines: code.param_refines.clone(),
                 }
             }
             Value::Tuple(xs) => SendValue::Tuple(arr(&xs.vals(), &path)?),
@@ -3766,11 +3769,14 @@ impl SendValue {
                 params,
                 body,
                 captured,
+                param_refines,
             } => Value::Closure(Rc::new(ClosureVal::plain(
-                Rc::new(ClosureCode::unresolved(
-                    params.iter().map(|p| intern(p)).collect(),
-                    *body,
-                )),
+                Rc::new({
+                    let mut code =
+                        ClosureCode::unresolved(params.iter().map(|p| intern(p)).collect(), *body);
+                    code.param_refines = param_refines;
+                    code
+                }),
                 // A closure that crossed the host boundary gets a FRESH capture
                 // cell: the SendValue path is a deep clone by construction (a
                 // shared cell is exactly what it cannot carry), so the two sides
@@ -5063,7 +5069,7 @@ impl<'p> Interp<'p> {
 
         // AX-18: fns and methods with their parameter syms, indexed by name
         // sym (fns only — a method is never called by bare name) and by def.
-        let res = Resolution::build(program, &structs, &enums);
+        let res = Resolution::build(program, &structs, &enums, &refine_preds);
         let mut fn_table = Vec::new();
         let mut fn_of_sym = FxHashMap::default();
         let mut fn_of_def = FxHashMap::default();
@@ -6905,6 +6911,48 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// checker-soundness-2 CS2-7: check each argument of a closure call
+    /// against the refinement its parameter is declared as (`refines`, the
+    /// code's [`ClosureCode::param_refines`]), as `call_fn_common` checks a
+    /// named fn's: `_` and the parameter's name bind the value, a `false`
+    /// predicate is a [`Flow::RefineViolation`] (exit 6). Out of line: only a
+    /// closure with a refined parameter gets here.
+    #[cold]
+    #[inline(never)]
+    fn check_closure_param_refines<const T: bool>(
+        &self,
+        code: &ClosureCode,
+        refines: &[Option<Box<str>>],
+        args: &[Value],
+        entry_t: u8,
+    ) -> Result<(), Flow> {
+        for ((rname, &s), val) in refines.iter().zip(code.params.iter()).zip(args) {
+            let Some(rname) = rname else { continue };
+            let Some(pred) = self.refine_preds.get(&**rname).copied() else {
+                continue;
+            };
+            self.seal_refine(rname)?;
+            let mut pred_env = self.new_env();
+            pred_env.define_t::<T>(SYM_UNDERSCORE, val.clone(), entry_t);
+            pred_env.define_t::<T>(s, val.clone(), entry_t);
+            if let Value::Bool(false) =
+                contain_frame(self.eval_t::<T>(pred, &mut pred_env), FrameEdge::Predicate)?
+            {
+                return Err(Flow::RefineViolation(
+                    format!(
+                        "parameter `{}` of a lambda (= {}) violates the refinement `{}` — \
+                         the value does not satisfy the type's predicate",
+                        sym_name(s),
+                        value::display(val),
+                        rname
+                    )
+                    .into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Never inlined: a caller that picks the instance at run time
     /// ([`Interp::call_closure_arg`]) would otherwise hold both instances'
     /// locals in its one frame on every callback level (wasm32 stack budget,
@@ -7001,6 +7049,16 @@ impl<'p> Interp<'p> {
         } else {
             (false, false)
         };
+        // checker-soundness-2 CS2-7: a parameter declared as a refinement
+        // (`|x: Pos| ..`) is checked before the body runs, as a named fn's
+        // is; a closure with no refined parameter skips this.
+        if let Some(refines) = &code.param_refines {
+            if let Some(a) = pending.take() {
+                checked.reserve(n);
+                a.bind(|_, v| checked.push(v));
+            }
+            self.check_closure_param_refines::<T>(code, refines, &checked, entry_t)?;
+        }
         // A parameter whose declared type (at any layer of the closure's
         // contract) is closed is a pin: the argument was cast to it (strictly,
         // from a sealed caller), so its runtime type is the operator's; the

@@ -1835,7 +1835,7 @@ impl<'p> Interp<'p> {
                 xs.push(args[1].clone());
                 ok!(Value::Array(Rc::new(xs.into())));
             }
-            // Sum of an i64 array. Empty → 0. Saturates on overflow.
+            // Sum of an i64 array. Empty → 0. Overflow panics like `+`.
             "arr_sum_i64" => {
                 want(1)?;
                 let xs = match &args[0] {
@@ -1858,7 +1858,10 @@ impl<'p> Interp<'p> {
                             ))
                         }
                     };
-                    s = s.saturating_add(n);
+                    s = match s.checked_add(n) {
+                        Some(t) => t,
+                        None => return panic(format!("integer overflow: {s} + {n} exceeds i64")),
+                    };
                 }
                 ok!(Value::Int(s));
             }
@@ -2252,7 +2255,9 @@ impl<'p> Interp<'p> {
                 if xs.is_empty() {
                     ok!(Value::Float(0.0));
                 }
-                let mut s: i64 = 0;
+                // The i128 sum cannot overflow (2^64 elements of |n| <= 2^63),
+                // so the mean is exact up to the one f64 rounding of the sum.
+                let mut s: i128 = 0;
                 for v in xs.iter() {
                     let n = match v {
                         Value::Int(n) => *n,
@@ -2263,7 +2268,7 @@ impl<'p> Interp<'p> {
                             ))
                         }
                     };
-                    s = s.saturating_add(n);
+                    s += n as i128;
                 }
                 ok!(Value::Float(s as f64 / xs.len() as f64));
             }
@@ -2660,16 +2665,19 @@ impl<'p> Interp<'p> {
                         // likely intent, and refusing it would trade one
                         // confusing error for another.
                         Value::Int(i) if want_f64 => acc_f += i as f64,
-                        // SATURATE, do not panic. `arr_sum_i64` uses
-                        // `saturating_add` in both interp and native
-                        // (`fuzz_parity.sh` pins that: arr_sum_ovf ->
-                        // i64::MAX). `arr_sum_by` is that same reduction with a
-                        // projection in front, so it must overflow the same way
-                        // -- otherwise `arr_sum_by(xs, |x| x)` and
-                        // `arr_sum_i64(xs)` disagree on identical input, which
-                        // is the sort of divergence the parity harnesses exist
-                        // to catch.
-                        Value::Int(i) => acc_i = acc_i.saturating_add(i),
+                        // Overflow panics like `+`, as `arr_sum_i64` does: the
+                        // same reduction with a projection in front
+                        // (checker-soundness-2 CS2-2).
+                        Value::Int(i) => {
+                            acc_i = match acc_i.checked_add(i) {
+                                Some(t) => t,
+                                None => {
+                                    return panic(format!(
+                                        "integer overflow: {acc_i} + {i} exceeds i64"
+                                    ))
+                                }
+                            }
+                        }
                         Value::Float(f) if want_f64 => acc_f += f,
                         Value::Float(_) => {
                             return panic(
@@ -2966,7 +2974,25 @@ impl<'p> Interp<'p> {
                 if exp < 0 {
                     return panic("pow_i64: negative exponent");
                 }
-                ok!(Value::Int(base.wrapping_pow(exp as u32)));
+                // An exponent above u32::MAX has an in-range power only for
+                // bases 0, 1 and -1; it is never truncated (CS2-2).
+                let r = match u32::try_from(exp) {
+                    Ok(e) => base.checked_pow(e),
+                    Err(_) => match base {
+                        0 => Some(0),
+                        1 => Some(1),
+                        -1 => Some(if exp % 2 == 0 { 1 } else { -1 }),
+                        _ => None,
+                    },
+                };
+                match r {
+                    Some(v) => ok!(Value::Int(v)),
+                    None => {
+                        return panic(format!(
+                            "integer overflow: pow_i64({base}, {exp}) exceeds i64"
+                        ))
+                    }
+                }
             }
             "sqrt_f64" => {
                 want(1)?;
@@ -3019,8 +3045,12 @@ impl<'p> Interp<'p> {
                 if hi == lo {
                     ok!(Value::Int(lo));
                 }
+                // In range by construction: lo + (r mod (hi - lo)) < hi. The
+                // sum is formed in i128 so a range wider than i64::MAX does
+                // not overflow on the way.
                 let range = (hi as i128 - lo as i128) as u128;
-                ok!(Value::Int(lo + (self.rng_next()? as u128 % range) as i64));
+                let off = (self.rng_next()? as u128 % range) as i128;
+                ok!(Value::Int((lo as i128 + off) as i64));
             }
             "str_pad_start" => {
                 want(3)?;
@@ -3230,8 +3260,27 @@ impl<'p> Interp<'p> {
             }
             "str_repeat" => {
                 want(2)?;
+                let s = as_str(&args[0])?;
                 let n = as_int(&args[1])?.max(0) as usize;
-                ok!(Value::Str(Rc::new(as_str(&args[0])?.repeat(n))));
+                // Size the result before allocating: an oversized repeat is an
+                // Axon panic, never a Rust `capacity overflow` abort.
+                let mut out = String::new();
+                let total = s.len().checked_mul(n).filter(|&t| t <= isize::MAX as usize);
+                match total {
+                    Some(t) if out.try_reserve_exact(t).is_ok() => {}
+                    _ => {
+                        return panic(format!(
+                            "str_repeat: result too large ({n} copies of a {}-byte string)",
+                            s.len()
+                        ))
+                    }
+                }
+                if !s.is_empty() {
+                    for _ in 0..n {
+                        out.push_str(s);
+                    }
+                }
+                ok!(Value::Str(Rc::new(out)));
             }
             "str_replace" => {
                 want(3)?;
@@ -3776,11 +3825,11 @@ impl<'p> Interp<'p> {
             "assert_eq_f64" => {
                 want(2)?;
                 let (a, b) = (as_float(&args[0])?, as_float(&args[1])?);
-                // Stated positively so NaN FAILS: `(a - b).abs() > 1e-9` is false
-                // for NaN, which let a NaN pass any f64 assertion (v0.22 PCI
-                // candidate-1 review). Native compares OEQ, which NaN also fails;
-                // `a == b` keeps inf == inf passing, as it does natively.
-                if !(a == b || (a - b).abs() <= 1e-9) {
+                // Exact IEEE equality, as natively (OEQ) and as documented
+                // (checker-soundness-2 CS2-2): NaN never equals, `inf == inf`.
+                // A tolerance hidden inside an "eq" assertion was a different
+                // contract from native's; write `assert(abs_f64(a - b) <= eps)`.
+                if !(a == b) {
                     return Err(Flow::Panic(format!("assertion failed: {a} != {b}").into()));
                 }
                 ok!(Value::Unit);
@@ -5511,7 +5560,10 @@ impl<'p> Interp<'p> {
                 let mut m = d.borrow_mut();
                 let cur = m.get(&k).cloned().unwrap_or(Value::Int(0));
                 let n = match cur {
-                    Value::Int(n) => n + 1,
+                    Value::Int(n) => match n.checked_add(1) {
+                        Some(t) => t,
+                        None => return panic(format!("integer overflow: {n} + 1 exceeds i64")),
+                    },
                     other => {
                         return panic(format!(
                             "dict_inc: existing value at '{k}' is {}, not i64",

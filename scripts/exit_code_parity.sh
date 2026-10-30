@@ -294,6 +294,18 @@ check refine_let_ok     33 'type Pos = i64 where _ > 0
 fn neg(x: i64) -> i64 { 0 - x }
 fn main() -> i64 { let p: Pos = neg(0 - 33)
  p }'
+# checker-soundness-2 CS2-7: a refined enum VARIANT field is checked at the
+# `E::V { .. }` literal and a refined LAMBDA param at the closure's entry —
+# exit 6 on both engines (both used to run on with the bad value).
+check refine_variant_bad 6  'type Pos = i64 where _ > 0
+type E = A { n: Pos } | B
+fn neg(x: i64) -> i64 { 0 - x }
+fn main() -> i64 { let e = E::A { n: neg(5) }
+ match e { E::A { n } => n, E::B => 0 } }'
+check refine_lambda_bad  6  'type Pos = i64 where _ > 0
+fn neg(x: i64) -> i64 { 0 - x }
+fn main() -> i64 { let f = |x: Pos| x * 2
+ f(neg(5)) }'
 
 # ── AI policy (exit 5) — F141 / P6-EXIT-04 ───────────────────────────────────
 # `@[ai(policy(budget: N))]` makes the (N+1)th ai_complete a fatal E1301/exit 5

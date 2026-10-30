@@ -2611,7 +2611,9 @@ fn r51_t1d_vm_entry_callers_outside_vm() {
 
 /// `assert_eq_f64` fails on NaN on both engines (v0.22 M76; native compares
 /// OEQ): `(a - b).abs() > 1e-9` is false for NaN, so the old test let a NaN
-/// pass. `inf == inf` and a sub-1e-9 difference still pass.
+/// pass. `inf == inf` still passes. The comparison is exact IEEE equality
+/// (checker-soundness-2 CS2-2), as natively: `0.1 + 0.2` vs `0.3` fails; it used
+/// to pass inside a hidden 1e-9 tolerance that native never had.
 #[test]
 fn assert_eq_f64_fails_on_nan_on_both_engines() {
     let prog = crate::parse_source(
@@ -2634,14 +2636,14 @@ fn assert_eq_f64_fails_on_nan_on_both_engines() {
                 .unwrap_or_else(|| panic!("{name} is in the fn table"));
             interp.call_fn_entry(f, Vec::<Value>::new())
         };
-        for t in ["t_nan", "t_nan_nan", "t_far"] {
+        for t in ["t_nan", "t_nan_nan", "t_far", "t_near"] {
             let got = run(t);
             assert!(
                 matches!(got, Err(Flow::Panic(_))),
-                "ATTACK: NaN passed an f64 assertion, or a far pair did ({engine:?} {t}): {got:?}"
+                "ATTACK: NaN passed an f64 assertion, or a far pair did, or an inexact pair did ({engine:?} {t}): {got:?}"
             );
         }
-        for t in ["t_inf", "t_near"] {
+        for t in ["t_inf"] {
             let got = run(t);
             assert!(matches!(got, Ok(Value::Unit)), "{engine:?} {t}: {got:?}");
         }

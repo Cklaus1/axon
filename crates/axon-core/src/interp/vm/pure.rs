@@ -1680,6 +1680,11 @@ impl Interp<'_> {
             return 0;
         };
         let code = &*cv.code;
+        // A refined parameter is checked at the call (checker-soundness-2
+        // CS2-7), which this path skips: decline, so the general call runs.
+        if code.param_refines.is_some() {
+            return 0;
+        }
         let (Some(lb), Some(pb), [p0, p1]) = (&code.compiled, code.param_base, &code.params[..])
         else {
             return 0;

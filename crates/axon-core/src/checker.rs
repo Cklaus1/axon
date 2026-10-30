@@ -605,6 +605,13 @@ pub struct CheckCtx {
     /// an unrefined param). Populated from fn signatures so a call site can find
     /// which arguments carry a proof obligation.
     fn_param_refinements: HashMap<String, Vec<Option<String>>>,
+    /// checker-soundness-2 CS2-7: the calls (keyed by the `Expr::Call` node's
+    /// address) that provably run a block-local `let f = |x: T, ..| ..` whose
+    /// params are refinements, with `f`'s name and per-param refinement
+    /// (`None` = unrefined). Filled when the block is entered
+    /// (`refined_lambda_calls_in`); a constant argument is then checked like a
+    /// named fn's (E1209).
+    refined_lambda_calls: HashMap<usize, (String, Vec<Option<String>>)>,
     /// Phase 5: per-struct, `field_name → refinement_name` for fields whose
     /// declared type is a refinement. Drives the R04 struct-construction
     /// obligation (a constant field value is checked against the predicate).
@@ -681,6 +688,7 @@ impl CheckCtx {
             refinement_base: HashMap::new(),
             refinement_pred: HashMap::new(),
             fn_param_refinements: HashMap::new(),
+            refined_lambda_calls: HashMap::new(),
             struct_field_refinements: HashMap::new(),
             struct_refinements: HashMap::new(),
             sensitive_types: HashMap::new(),
@@ -1042,6 +1050,26 @@ impl CheckCtx {
                     if let Some(pred) = &td.refinement {
                         self.struct_refinements
                             .insert(td.name.clone(), (**pred).clone());
+                    }
+                }
+                // An enum variant's fields, keyed `E::V` as its literal is
+                // named (checker-soundness-2 CS2-7).
+                if let Item::EnumDef(ed) = item {
+                    for v in &ed.variants {
+                        let refs: HashMap<String, String> = v
+                            .fields
+                            .iter()
+                            .filter_map(|f| match &f.ty {
+                                AxonType::Named(n) if self.refinement_pred.contains_key(n) => {
+                                    Some((f.name.clone(), n.clone()))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        if !refs.is_empty() {
+                            self.struct_field_refinements
+                                .insert(format!("{}::{}", ed.name, v.name), refs);
+                        }
                     }
                 }
             }
@@ -1981,6 +2009,19 @@ impl CheckCtx {
         let Some(slots) = self.fn_param_refinements.get(fn_name).cloned() else {
             return;
         };
+        self.check_refinement_slots(fn_name, &slots, args, node_path);
+    }
+
+    /// The constant-argument obligation of [`Self::check_refinement_args`]
+    /// against `slots` (per-param refinement name): a named fn's, or a
+    /// refined lambda's (checker-soundness-2 CS2-7).
+    fn check_refinement_slots(
+        &mut self,
+        fn_name: &str,
+        slots: &[Option<String>],
+        args: &[Expr],
+        node_path: &NodePath,
+    ) {
         for (i, arg) in args.iter().enumerate() {
             let Some(Some(rname)) = slots.get(i) else {
                 continue;
@@ -2025,6 +2066,45 @@ impl CheckCtx {
                          parameter type"
                     )),
                 );
+            }
+        }
+    }
+
+    /// checker-soundness-2 CS2-7: a lambda's per-param refinement name (as
+    /// `fn_param_refinements` holds a fn's); `None` when no param is refined.
+    fn lambda_refine_slots(&self, params: &[crate::ast::LambdaParam]) -> Option<Vec<Option<String>>> {
+        let slots: Vec<Option<String>> = params
+            .iter()
+            .map(|p| match &p.ty {
+                Some(AxonType::Named(n)) if self.refinement_pred.contains_key(n) => Some(n.clone()),
+                _ => None,
+            })
+            .collect();
+        slots.iter().any(Option::is_some).then_some(slots)
+    }
+
+    /// checker-soundness-2 CS2-7: record, for each `let f = <lambda with
+    /// refined params>` in `stmts`, the later calls that provably run it
+    /// ([`calls_of_binding`]), so their constant arguments are checked.
+    fn refined_lambda_calls_in(&mut self, stmts: &[Stmt]) {
+        if self.refinement_pred.is_empty() {
+            return;
+        }
+        for (i, s) in stmts.iter().enumerate() {
+            let Expr::Let { name, value, .. } = &s.expr else {
+                continue;
+            };
+            let Expr::Lambda { params, .. } = value.as_ref() else {
+                continue;
+            };
+            let Some(slots) = self.lambda_refine_slots(params) else {
+                continue;
+            };
+            let mut calls = Vec::new();
+            calls_of_binding(name, &stmts[i + 1..], &mut calls);
+            for c in calls {
+                self.refined_lambda_calls
+                    .insert(c as *const Expr as usize, (name.clone(), slots.clone()));
             }
         }
     }
@@ -3863,6 +3943,7 @@ impl CheckCtx {
         match expr {
             // ── Block ────────────────────────────────────────────────────────
             Expr::Block(stmts) => {
+                self.refined_lambda_calls_in(stmts);
                 let n = stmts.len();
                 // Unreachable-code (W0005): once a statement unconditionally
                 // diverts control (`return`/`break`/`continue`), every following
@@ -4159,6 +4240,27 @@ impl CheckCtx {
                             }
                         }
                     }
+                }
+
+                // checker-soundness-2 CS2-7: a call that runs a lambda with
+                // refined params (the lambda itself, or a block-local
+                // `let f = |x: Pos| ..` it provably names) checks a constant
+                // argument against the refinement, as a named fn's call does.
+                // A recorded call is re-matched (callee name, a local fn
+                // value in scope) so a reused node address never matches.
+                let refined = match callee.as_ref() {
+                    Expr::Lambda { params, .. } => self
+                        .lambda_refine_slots(params)
+                        .map(|slots| ("lambda".to_string(), slots)),
+                    Expr::Ident(n) if matches!(scope.get(n.as_str()), Some(Type::Fn(..))) => self
+                        .refined_lambda_calls
+                        .get(&(expr as *const Expr as usize))
+                        .filter(|(name, _)| name == n)
+                        .cloned(),
+                    _ => None,
+                };
+                if let Some((label, slots)) = refined {
+                    self.check_refinement_slots(&label, &slots, args, node_path);
                 }
 
                 // R05 / R06 — only for named (direct) calls.
@@ -8326,6 +8428,129 @@ fn free_fn_for_method(key: &str, method: &str) -> Option<&'static str> {
 fn is_char_at_call(e: &Expr) -> bool {
     matches!(e, Expr::Call { callee, .. }
         if matches!(callee.as_ref(), Expr::Ident(n) if n == "char_at"))
+}
+
+/// checker-soundness-2 CS2-7: in `stmts` (the statements after a
+/// `let name = ..`), the calls `name(..)` that run that binding: every call
+/// whose callee is `name` where no binder in between shadows
+/// it. Conservative by construction - a form that may bind (`for`, `while
+/// let`, handlers, `select`, ..) is not entered, and any assignment to `name`
+/// anywhere in the rest of the block (`name = ..`, which a loop can make
+/// reach an earlier call too) yields no call at all - so a call is collected
+/// only when it provably runs that binding.
+fn calls_of_binding<'e>(name: &str, stmts: &'e [Stmt], out: &mut Vec<&'e Expr>) {
+    let assigned = format!("Assign {{ name: {name:?},");
+    let assigned_to = format!("AssignTo {{ place: Ident({name:?})");
+    if stmts.iter().any(|s| {
+        let text = format!("{:?}", s.expr);
+        text.contains(&assigned) || text.contains(&assigned_to)
+    }) {
+        return;
+    }
+    calls_in_stmts(name, stmts, out);
+}
+
+/// [`calls_of_binding`] over a statement list: a `let`/`own`/`ref` of
+/// `name` ends the scan (its value still sees the outer binding).
+fn calls_in_stmts<'e>(name: &str, stmts: &'e [Stmt], out: &mut Vec<&'e Expr>) {
+    for s in stmts {
+        if calls_in(name, &s.expr, out) {
+            return;
+        }
+    }
+}
+
+/// [`calls_of_binding`] over one expression; `true` when `e` rebinds `name`
+/// for the statements after it.
+fn calls_in<'e>(name: &str, e: &'e Expr, out: &mut Vec<&'e Expr>) -> bool {
+    let all = |es: &'e [Expr], out: &mut Vec<&'e Expr>| {
+        for x in es {
+            calls_in(name, x, out);
+        }
+    };
+    match e {
+        Expr::Let { name: n, value, .. }
+        | Expr::Own { name: n, value, .. }
+        | Expr::RefBind { name: n, value, .. } => {
+            calls_in(name, value, out);
+            return n == name;
+        }
+        Expr::Call { callee, args, .. } => {
+            match callee.as_ref() {
+                Expr::Ident(n) if n == name => out.push(e),
+                other => {
+                    calls_in(name, other, out);
+                }
+            }
+            all(args, out);
+        }
+        Expr::Block(stmts) => calls_in_stmts(name, stmts, out),
+        Expr::While { cond, body } => {
+            calls_in(name, cond, out);
+            calls_in_stmts(name, body, out);
+        }
+        Expr::Lambda { params, body, .. } => {
+            if params.iter().all(|p| p.name != name) {
+                calls_in(name, body, out);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            calls_in(name, subject, out);
+            for arm in arms {
+                let mut bound = Vec::new();
+                crate::resolver::collect_pattern_binding_names(&arm.pattern, &mut bound);
+                if bound.iter().all(|b| b != name) {
+                    if let Some(g) = &arm.guard {
+                        calls_in(name, g, out);
+                    }
+                    calls_in(name, &arm.body, out);
+                }
+            }
+        }
+        Expr::If { cond, then, else_ } => {
+            calls_in(name, cond, out);
+            calls_in(name, then, out);
+            if let Some(x) = else_ {
+                calls_in(name, x, out);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            calls_in(name, left, out);
+            calls_in(name, right, out);
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            calls_in(name, receiver, out);
+            all(args, out);
+        }
+        Expr::Index { receiver, index } => {
+            calls_in(name, receiver, out);
+            calls_in(name, index, out);
+        }
+        Expr::UnaryOp { operand: x, .. }
+        | Expr::FieldAccess { receiver: x, .. }
+        | Expr::Question(x)
+        | Expr::Some(x)
+        | Expr::Ok(x)
+        | Expr::Err(x)
+        | Expr::Return(Some(x)) => {
+            calls_in(name, x, out);
+        }
+        Expr::Array(es) | Expr::Tuple(es) => all(es, out),
+        Expr::StructLit { fields, .. } => {
+            for (_, x) in fields {
+                calls_in(name, x, out);
+            }
+        }
+        Expr::FmtStr { parts } => {
+            for p in parts {
+                if let crate::ast::FmtPart::Expr(x) = p {
+                    calls_in(name, x, out);
+                }
+            }
+        }
+        _ => {}
+    }
+    false
 }
 
 /// CS2-6: how a diagnostic names a callee that is not a name: `ops[..]`,

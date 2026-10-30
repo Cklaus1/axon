@@ -6,9 +6,9 @@
 # now lowered INLINE as a counted loop over the slice `{i64 len, i8* data}` —
 # pure IR, so they run on native AND wasm. This harness asserts native==interp.
 #
-# NOTE on saturating_add: the interpreter's arr_sum_i64 saturates on i64
-# overflow; codegen uses plain `add`. They agree for all non-overflowing arrays
-# (every realistic case); the harness uses small arrays where they're identical.
+# NOTE on overflow: arr_sum_i64 panics on i64 overflow like `+` on both engines
+# (checked add, checker-soundness-2 CS2-2; checked_arith_parity.sh `sum_ovf`
+# pins it); arr_mean_i64 sums in i128. This harness uses small arrays.
 #
 # Skips (exit 0) when the codegen toolchain is absent.
 set -u
