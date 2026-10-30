@@ -3336,7 +3336,8 @@ ATTACK_MARKERS.update({
     'M3923': r'ATTACK: a refined variant field or lambda param took a violating value \[r_lambda, tree\]',
     'M3924': r'ATTACK: a refined variant field or lambda param took a violating value \[r_lambda_fold, vm\]',
     'M3925': r"ATTACK: a constant violating a variant field's or lambda param's refinement checked clean \[r_variant_lit\]",
-    'M3926': r'ATTACK: refine_variant: a write the interpreter runs implicitly is missing from caps',
+    # CS2-8 (merged after lane B measured this row) moved the test's reach assertion to the library walk.
+    'M3926': r'ATTACK: refine_variant: a write the interpreter runs implicitly is missing from the reach',
     'M3927': r'ATTACK: a refined variant field or lambda param took a violating value natively \[r_lambda\]',
 })
 
@@ -3359,7 +3360,8 @@ ATTACK_MARKERS.update({
 # checker-soundness-2 CS2-4 (ids M3911-M3915)
 ATTACK_MARKERS.update({
     'M3911': r'ATTACK: a non-exhaustive match checked clean \[x_int\]',
-    'M3912': r'ATTACK: a non-exhaustive match checked clean \[x_bool_half\]',
+    # x_tuple, a `(bool, bool)` match, runs before x_bool_half: a bool literal covering both values lets it through first.
+    'M3912': r'ATTACK: a non-exhaustive match checked clean \[x_tuple\]',
     'M3913': r'ATTACK: a non-exhaustive match checked clean \[x_tuple\]',
     'M3914': r'ATTACK: a non-exhaustive match checked clean \[x_opt_guard\]',
     'M3915': r'ATTACK: an exhaustive match was refused \[x1_opt_tuple_full\]',
