@@ -479,6 +479,9 @@ fn main() { let _ = reader(1) }
 // route c6 first), so a fence built from a pristine `double` that only
 // reached `append_file` through a predicate denied nothing it needed, and a
 // candidate that ADDED such a predicate passed the static excess check.
+// Since checker-soundness-2 CS2-8 a refinement predicate may not reach an
+// effect through a user fn, so the refinement routes are refused at check
+// (E1209) and their reach is pinned through the library walker instead.
 
 /// The helper every route reaches, and a predicate that calls it.
 const LEAK: &str = r#"
@@ -533,87 +536,125 @@ fn assert_reaches_the_write(tag: &str, r: &serde_json::Value) {
     assert_eq!(strings(r, "effects"), ["IO"], "{tag}: {r}");
 }
 
+/// checker-soundness-2 CS2-8: a refinement predicate may not reach an effect
+/// through a user fn, so every refinement route through `leak` is refused at
+/// check (E1209) and `axon run` writes nothing. The walker's reach through
+/// the route stays pinned by the library: `reachable_capabilities` of
+/// `double` (the same form as
+/// `a_predicate_that_mentions_its_own_type_terminates_and_is_reached`).
+fn refused_refinement_route(tag: &str, body: &str) {
+    let d = tmp(tag);
+    let mark = d.join("written.W");
+    let src = format!(
+        "{}{body}{RUN_DOUBLE}",
+        LEAK.replace("MARK", &mark.display().to_string())
+    );
+    let f = write(&d, "p.ax", &src);
+    let check = Command::new(axon()).arg("check").arg(&f).output().unwrap();
+    let text = String::from_utf8_lossy(&check.stderr);
+    assert!(
+        check.status.code() == Some(2) && text.contains("E1209"),
+        "ATTACK: {tag}: a refinement predicate reaching a write through a helper passed check \
+         (rc {:?}): {text}",
+        check.status.code()
+    );
+    let run = Command::new(axon())
+        .arg("run")
+        .arg(&f)
+        .env("XDG_CACHE_HOME", d.join("cache"))
+        .output()
+        .unwrap();
+    assert!(
+        !mark.exists(),
+        "ATTACK: {tag}: `axon run` ran a writing refinement predicate (rc {:?})",
+        run.status.code()
+    );
+    let program = axon_core::parse_source(&src).unwrap();
+    let r = axon_core::capabilities::reachable_capabilities(&program, Some("double")).unwrap();
+    assert_eq!(
+        r.capabilities.into_iter().collect::<Vec<_>>(),
+        ["fs:write"],
+        "ATTACK: {tag}: a write the interpreter runs implicitly is missing from the reach"
+    );
+    assert_eq!(r.effects.into_iter().collect::<Vec<_>>(), ["IO"], "{tag}");
+    assert!(!r.unknown, "{tag}");
+}
+
 #[test]
 fn a_refinement_predicate_at_a_let_annotation_is_reached() {
-    let r = implicit_route(
+    refused_refinement_route(
         "refine_let",
         "type Lk = i64 where leak(_)\nfn double(n: i64) -> i64 {\n    let y: Lk = n\n    y * 2\n}\n",
     );
-    assert_reaches_the_write("refine_let", &r);
 }
 
 #[test]
 fn a_refinement_predicate_at_a_helpers_parameter_is_reached() {
-    let r = implicit_route(
+    refused_refinement_route(
         "refine_param",
         "type Lk = i64 where leak(_)\nfn twice(y: Lk) -> i64 {\n    y * 2\n}\n\
          fn double(n: i64) -> i64 {\n    twice(n)\n}\n",
     );
-    assert_reaches_the_write("refine_param", &r);
 }
 
 #[test]
 fn a_refinement_predicate_on_the_return_type_is_reached() {
-    let r = implicit_route(
+    refused_refinement_route(
         "refine_ret",
         "type Lk = i64 where leak(_)\nfn double(n: i64) -> Lk {\n    n * 2\n}\n",
     );
-    assert_reaches_the_write("refine_ret", &r);
 }
 
 #[test]
 fn an_inline_parameter_refinement_is_reached() {
-    let r = implicit_route(
+    refused_refinement_route(
         "refine_inline",
         "fn double(n: i64 where leak(n)) -> i64 {\n    n * 2\n}\n",
     );
-    assert_reaches_the_write("refine_inline", &r);
 }
 
 #[test]
 fn a_refined_struct_field_is_checked_at_construction_and_reached() {
-    let r = implicit_route(
+    refused_refinement_route(
         "refine_field",
         "type Lk = i64 where leak(_)\ntype Box = { v: Lk }\n\
          fn double(n: i64) -> i64 {\n    let b = Box { v: n }\n    b.v * 2\n}\n",
     );
-    assert_reaches_the_write("refine_field", &r);
 }
 
 /// checker-soundness-2 CS2-7: a variant field's refinement runs at the
 /// `E::V { .. }` literal (it used to be skipped, so the route was dead), and
-/// caps follows the enum's variant field types from the literal.
+/// caps follows the enum's variant field types from the literal. CS2-8: the
+/// predicate reaches a write through `leak`, so the route is refused at check.
 #[test]
 fn a_refined_variant_field_is_checked_at_construction_and_reached() {
-    let r = implicit_route(
+    refused_refinement_route(
         "refine_variant",
         "type Lk = i64 where leak(_)\ntype E = A { v: Lk } | B\n\
          fn double(n: i64) -> i64 {\n    let e = E::A { v: n }\n    \
          match e {\n        E::A { v } => v * 2,\n        E::B => 0,\n    }\n}\n",
     );
-    assert_reaches_the_write("refine_variant", &r);
 }
 
 /// checker-soundness-2 CS2-7: a lambda parameter's refinement runs when the
-/// closure is called (it used to be skipped), and caps follows it.
+/// closure is called (it used to be skipped), and caps follows it. CS2-8: the
+/// predicate reaches a write through `leak`, so the route is refused at check.
 #[test]
 fn a_refined_lambda_param_is_checked_at_call_and_reached() {
-    let r = implicit_route(
+    refused_refinement_route(
         "refine_lambda",
         "type Lk = i64 where leak(_)\n\
          fn double(n: i64) -> i64 {\n    let f = |y: Lk| y * 2\n    f(n)\n}\n",
     );
-    assert_reaches_the_write("refine_lambda", &r);
 }
 
 #[test]
 fn a_whole_struct_refinement_is_reached() {
-    let r = implicit_route(
+    refused_refinement_route(
         "refine_struct",
         "type Pair = { lo: i64, hi: i64 } where leak(_.lo)\n\
          fn double(n: i64) -> i64 {\n    let p = Pair { lo: n, hi: n }\n    p.lo * 2\n}\n",
     );
-    assert_reaches_the_write("refine_struct", &r);
 }
 
 /// CAP-1 (Q1 a2): a postcondition may only read the clock, so the verify

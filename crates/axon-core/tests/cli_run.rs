@@ -42899,3 +42899,86 @@ fn dict_values_are_typed() {
         );
     }
 }
+
+/// checker-soundness-2 CS2-8 (O-SP-02): a refinement predicate may not reach
+/// an effect through a user fn. `reject_impure_refinement` walked only the
+/// predicate's own calls, so a helper that wrote a file, read the clock or
+/// drew a random number checked clean and ran its effect at every coercion.
+/// It now walks the predicate with the capabilities reach walker: a reached
+/// capability or effect (`Time` included) is E1209, and so is a call nothing
+/// can classify (a fn named at runtime). Pure helpers stay accepted.
+#[test]
+fn an_effectful_helper_in_a_refinement_is_refused_e1209() {
+    let attack = "ATTACK: a refinement predicate reaching an effect through a helper checked clean";
+    let tail = "type W = i64 where p(_)\nfn f(n: W) -> i64 { n }\nfn main() -> i64 {\n  println(to_str(f(1)))\n  0\n}\n";
+    for (tag, helper, msg) in [
+        (
+            "e_helper",
+            "fn p(v: i64) -> bool {\n  let _ = append_file(\"/nonexistent-axon-cs2-8/x\", \"x\")\n  true\n}\n",
+            "reaches `append_file` (fs:write, IO) through `p`",
+        ),
+        (
+            "e_now",
+            "fn p(v: i64) -> bool { now_ms() > 0 }\n",
+            "reaches `now_ms` (Time) through `p`",
+        ),
+        (
+            "e_rand",
+            "fn p(v: i64) -> bool {\n  let r = random_f64()\n  r >= 0.0 && v > 0\n}\n",
+            "reaches `random_f64` (Random) through `p`",
+        ),
+        (
+            "e_unknown",
+            "fn tgt(x: i64) -> i64 { x }\nfn p(v: i64) -> bool {\n  let n = \"t\" + \"gt\"\n  let _ = scheduler_spawn(n, v)\n  true\n}\n",
+            "reaches a call nothing can classify",
+        ),
+    ] {
+        let src = format!("{helper}{tail}");
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, &src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains("E1209"), "{attack} [{tag}]: want E1209: {cmsg}");
+        assert!(cmsg.contains(msg), "{attack} [{tag}]: want {msg:?}: {cmsg}");
+    }
+    // A predicate calling the impure builtin itself keeps its own message.
+    let (crc, cmsg, _, _, _) = sf6_check_and_run(
+        "e_direct",
+        "type W = i64 where now_ms() > 0\nfn f(n: W) -> i64 { n }\nfn main() -> i64 {\n  println(to_str(f(1)))\n  0\n}\n",
+    );
+    assert_eq!(crc, Some(2), "e_direct: {cmsg}");
+    assert!(cmsg.contains("uses the impure builtin `now_ms`"), "e_direct: {cmsg}");
+    // Controls: a pure helper, helpers using a lambda, a fn array and
+    // `assert`, a fn-param dispatch; each checks clean and prints the same.
+    let attack = "ATTACK: a pure refinement predicate was refused";
+    for (tag, src, out) in [
+        (
+            "e_pure_helper",
+            "fn pos(v: i64) -> bool { v > 0 }\ntype W = i64 where pos(_)\nfn f(n: W) -> i64 { n }\nfn main() -> i64 {\n  println(to_str(f(1)))\n  0\n}\n",
+            "1\n",
+        ),
+        (
+            "e1_hof",
+            "fn all_pos(xs: [i64]) -> bool { arr_all(xs, |x| x > 0) }\nfn even(v: i64) -> bool { v % 2 == 0 }\nfn chk(v: i64) -> bool {\n  let ops = [even]\n  ops[0](v)\n}\nfn dbg(v: i64) -> bool {\n  assert(v > -100)\n  v > 0\n}\ntype P = [i64] where all_pos(_)\ntype E2 = i64 where chk(_)\ntype D = i64 where dbg(_)\nfn f(p: P, e2: E2, d: D) -> i64 { len(p) + e2 + d }\nfn main() -> i64 {\n  println(to_str(f([1, 2], 6, 1)))\n  0\n}\n",
+            "9\n",
+        ),
+        (
+            "e3_fnparam",
+            "fn via(g: fn(i64) -> i64, v: i64) -> i64 { g(v) }\nfn dbl(x: i64) -> i64 { x * 2 }\nfn p(v: i64) -> bool { via(dbl, v) > 0 }\ntype W = i64 where p(_)\nfn f(n: W) -> i64 { n }\nfn main() -> i64 {\n  println(to_str(f(1)))\n  0\n}\n",
+            "1\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+    let out = axon().args(["check", &ex("refinements.ax")]).output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{attack} [refinements.ax]: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

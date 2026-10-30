@@ -502,6 +502,7 @@ The message reads "non-exhaustive match on `i64` - add a `_ =>` arm" (E0304, `er
 - `a_refined_struct_field_is_checked_at_construction_and_reached` (:574);
 - `a_whole_struct_refinement_is_reached` (:584);
 - [REVISED: CS2A-10] CS2-7's new `a_refined_variant_field_is_checked_at_construction_and_reached`, which uses the same `LEAK`.
+- [REVISED: build CS2-8] `a_refined_lambda_param_is_checked_at_call_and_reached` (CS2-7's lambda-param twin) also routes through `LEAK` and needs `axon run` rc 0, so it is an 8th rewrite. `contained_refuses_a_write_reached_through_a_refinement_predicate` passes unchanged (still rc 2 with E1001).
 
 That is **7** rewrites. `contained_refuses_a_write_reached_through_a_refinement_predicate` (:650) asserts check rc 2 containing E1001. It still gets rc 2; if E1001 is no longer emitted next to E1209 its assertion changes to E1209 (an 8th edit, `[INFERENCE: not run]`). `a_predicate_that_mentions_its_own_type_terminates_and_is_reached` (:669) uses the library API (`reachable_capabilities`) without check: unaffected. Inline-param and whole-struct refinements already go through `reject_impure_refinement` (`checker.rs:908`, :913; `CS2A/e6_inline_direct` is E1209), so the deep walk covers them.
 

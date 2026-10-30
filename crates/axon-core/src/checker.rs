@@ -958,6 +958,17 @@ impl CheckCtx {
         // A @[pure] fn may only call other @[pure] fns + the pure-builtin
         // allowlist; an impure call is E1207. Done as a pre-pass so a @[pure] fn
         // calling another (forward-declared) @[pure] fn is accepted (P05).
+        // CS2-8: the reach walker for refinement predicates, built only when
+        // the program has one.
+        let refine_walker = program
+            .items
+            .iter()
+            .any(|i| match i {
+                Item::RefineDef(_) => true,
+                Item::TypeDef(td) => td.refinement.is_some(),
+                _ => false,
+            })
+            .then(|| crate::capabilities::RefinementWalker::new(program));
         for item in &program.items {
             if let Item::FnDef(f) = item {
                 if f.attrs.iter().any(|a| a.name == "pure") {
@@ -984,12 +995,16 @@ impl CheckCtx {
                 // A refinement predicate is a STATIC, deterministic contract: it
                 // must be pure. An impure builtin in it (now_ms/random_i64/IO/AI…)
                 // makes the "type" non-deterministic and meaningless. Reject it.
-                self.reject_impure_refinement(&r.predicate, &r.name);
+                if let Some(w) = &refine_walker {
+                    self.reject_impure_refinement(&r.predicate, &r.name, w);
+                }
             }
             // Whole-struct refinement predicates must be pure for the same reason.
             if let Item::TypeDef(td) = item {
                 if let Some(pred) = &td.refinement {
-                    self.reject_impure_refinement(pred, &td.name);
+                    if let Some(w) = &refine_walker {
+                        self.reject_impure_refinement(pred, &td.name, w);
+                    }
                 }
             }
         }
@@ -2997,17 +3012,22 @@ impl CheckCtx {
     /// deterministic contract, so an impure builtin in it (now_ms, random_i64,
     /// I/O, AI, channels, …) makes the refinement non-deterministic and
     /// meaningless. Reject any impure builtin used in `pred` with E1209, naming
-    /// the offending builtin. (User-fn calls in predicates are handled elsewhere;
-    /// here we flag the impure-BUILTIN case, the one that silently slipped
-    /// through — `now_ms() > 0` was accepted as a refinement.)
-    fn reject_impure_refinement(&mut self, pred: &Expr, refine_name: &str) {
+    /// the offending builtin. CS2-8: when the predicate calls none directly,
+    /// it is walked with the capabilities reach walker, so an effect behind a
+    /// user fn, a method or a type hook (`Time` included), and a call nothing
+    /// can classify (`reach.unknown`), is E1209 too.
+    fn reject_impure_refinement<'p>(
+        &mut self,
+        pred: &'p Expr,
+        refine_name: &str,
+        walker: &crate::capabilities::RefinementWalker<'p>,
+    ) {
         let mut violations: Vec<(String, &'static str)> = Vec::new();
-        // `pure_fns` empty here is fine: we only care about the impure-builtin
-        // hits for a refinement (a non-pure user-fn call in a predicate is a
-        // separate concern; the impure builtin is the soundness hole we close).
         Self::collect_purity_violations(pred, &HashSet::new(), &mut violations);
+        let mut shallow = false;
         for (callee, kind) in violations {
             if kind == "impure builtin" {
+                shallow = true;
                 let file = self.file.clone();
                 self.errors.push(
                     CheckError::new(
@@ -3027,6 +3047,62 @@ impl CheckCtx {
                 );
             }
         }
+        if shallow {
+            return;
+        }
+        let reach = walker.reach(pred);
+        let effectful = !reach.capabilities.is_empty() || !reach.effects.is_empty();
+        if !effectful && !reach.unknown {
+            return;
+        }
+        let mut helpers: Vec<String> = Vec::new();
+        crate::ast::walk_expr(pred, &mut |e| {
+            if let Expr::Ident(n) = e {
+                if self.is_user_fn_name(n) && !helpers.contains(n) {
+                    helpers.push(n.clone());
+                }
+            }
+        });
+        let through = if helpers.is_empty() {
+            "a method or a type it checks".to_string()
+        } else {
+            helpers
+                .iter()
+                .map(|h| format!("`{h}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let what = if effectful {
+            let labels: Vec<&str> = reach
+                .capabilities
+                .iter()
+                .chain(reach.effects.iter())
+                .map(String::as_str)
+                .collect();
+            let names: Vec<String> = reach.builtins.iter().map(|b| format!("`{b}`")).collect();
+            format!("{} ({})", names.join(", "), labels.join(", "))
+        } else {
+            "a call nothing can classify (a function named at runtime, a fn value, or inline \
+             assembly)"
+                .to_string()
+        };
+        let file = self.file.clone();
+        self.errors.push(
+            CheckError::new(
+                E1209,
+                format!(
+                    "refinement `{refine_name}` reaches {what} through {through}; a refinement \
+                     predicate must be pure (deterministic), so nothing it calls may do I/O, AI, \
+                     time, randomness or channel work"
+                ),
+            )
+            .at(&file, 0, 0)
+            .with_span(self.current_span)
+            .fix(format!(
+                "make the predicate of `{refine_name}` depend only on the value `_` and pure \
+                 computation: move the effect out of {through}"
+            )),
+        );
     }
 
     /// Recursively collect impure operations inside a `@[pure]` function body.
