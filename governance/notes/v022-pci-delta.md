@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 4562f44ce9e4dc3d78a3986516782ed63d4515ae
+generated-at: 0e2bfc6dc24999fe4eeafd70c57c63eea03e91a2
 
-`git diff --numstat 31413ca7..4562f44c -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..0e2bfc6d -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -55,7 +55,7 @@ generated-at: 4562f44ce9e4dc3d78a3986516782ed63d4515ae
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 1733 | 264 |
-| `crates/axon-core/src/interp.rs` | 7775 | 2884 |
+| `crates/axon-core/src/interp.rs` | 7787 | 2882 |
 | `crates/axon-core/src/interp/builtins.rs` | 865 | 633 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
@@ -98,9 +98,9 @@ generated-at: 4562f44ce9e4dc3d78a3986516782ed63d4515ae
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 61501 | 8631 |
+| total | 61513 | 8629 |
 
-`git log --reverse 31413ca7..4562f44c -- crates/axon-core/src`:
+`git log --reverse 31413ca7..0e2bfc6d -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -445,7 +445,8 @@ generated-at: 4562f44ce9e4dc3d78a3986516782ed63d4515ae
 | 8fd92f22 | checker soundness | checker.rs reject_impure_refinement walks the predicate with the capabilities reach walker: a reached capability or effect (Time included) through a user fn, or an unclassifiable dispatch, is E1209. The effect ran at every coercion before, O-SP-02 (CS2-8). No evaluator change. |
 | f9bb6236 | cs2/a merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 4562f44c | checker soundness | cargo fmt over the merged checker-soundness-2 lanes (builtins.rs, checker.rs, codegen/expr.rs, infer.rs, interp/sym.rs, interp/taint_tests.rs, types.rs). Formatting only; no behaviour change. |
-| 341 commits | | |
+| 0e2bfc6d | checker soundness | interp.rs nest_cost (wasm32 only): check_closure_param_refines gets its own nest_guard and CHECK_CLOSURE_PARAM_REFINES(_SEALED) budget, so only a call to a closure with a refined parameter pays its frame; CALL_CLOSURE_FRAME(_SEALED) and FINISH_CALL_COLD raised to the frames wasm_stack_budget.py measures. nest_guard compiles to nothing off wasm32; no evaluator change on native or interpreter runs. |
+| 342 commits | | |
 <!-- END MECHANICAL -->
 
 
