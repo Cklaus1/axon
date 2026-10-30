@@ -42435,3 +42435,94 @@ fn closure_counter_and_local_writes_stay_legal() {
         );
     }
 }
+
+/// CS2-5 (O-GAP-05): a method call on a generic param is looked up in its
+/// bound traits (an unbounded `T`, or a bound that does not declare the
+/// method, is E0403), and a generic struct's type arguments are compared
+/// (`B<i64>` holding a `str` is E0102). Each probe checked clean and then
+/// panicked at run time (exit 101). `g_unbounded_impl` is the pinned refusal:
+/// every caller passes a type that has the method, but `T` has no bound.
+#[test]
+fn generic_param_method_and_generic_struct_args_are_checked() {
+    let attack = "ATTACK: a generic method call or generic struct argument checked clean";
+    for (tag, src, code, msg) in [
+        (
+            "g_method",
+            "fn f<T>(x: T) -> i64 {\n  x.area()\n}\nfn main() -> i64 {\n  println(to_str(f(3)))\n  0\n}\n",
+            "E0403",
+            "it has no bound; add `T: Trait`",
+        ),
+        (
+            "g_bounded_bad",
+            "trait Shape {\n  fn area(self) -> i64\n}\ntype Sq = { s: i64 }\nimpl Shape for Sq {\n  fn area(self: Sq) -> i64 { self.s * self.s }\n}\nfn f<T: Shape>(x: T) -> i64 {\n  x.perim()\n}\nfn main() -> i64 {\n  println(to_str(f(Sq { s: 3 })))\n  0\n}\n",
+            "E0403",
+            "its bound `Shape` does not declare it",
+        ),
+        (
+            "g_struct",
+            "type B<T> = { v: T }\nfn main() -> i64 {\n  let b: B<i64> = B { v: \"s\" }\n  println(to_str(b.v + 1))\n  0\n}\n",
+            "E0102",
+            "expected i64",
+        ),
+        (
+            "g_struct_param",
+            "type B<T> = { v: T }\nfn get(b: B<i64>) -> i64 {\n  b.v + 1\n}\nfn main() -> i64 {\n  println(to_str(get(B { v: \"s\" })))\n  0\n}\n",
+            "E0102",
+            "expected i64",
+        ),
+        (
+            "g_unbounded_impl",
+            "trait Shape {\n  fn area(self) -> i64\n}\ntype Sq = { s: i64 }\nimpl Shape for Sq {\n  fn area(self: Sq) -> i64 { self.s * self.s }\n}\nfn f<T>(x: T) -> i64 { x.area() }\nfn main() -> i64 {\n  println(to_str(f(Sq { s: 3 })))\n  0\n}\n",
+            "E0403",
+            "add `T: Trait`",
+        ),
+    ] {
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains(code), "{attack} [{tag}]: want {code}: {cmsg}");
+        assert!(cmsg.contains(msg), "{attack} [{tag}]: want {msg:?}: {cmsg}");
+    }
+}
+
+/// CS2-5 controls: a bounded generic calling a method its bound declares, a
+/// generic struct built and read through annotations, a concrete field, a
+/// nested `App` and a bounded closure all check clean and print the same.
+#[test]
+fn bounded_generic_methods_and_generic_structs_stay_accepted() {
+    let attack = "ATTACK: a valid generic program was refused";
+    for (tag, src, out) in [
+        (
+            "g_bounded_ok",
+            "trait Shape {\n  fn area(self) -> i64\n}\ntype Sq = { s: i64 }\nimpl Shape for Sq {\n  fn area(self: Sq) -> i64 { self.s * self.s }\n}\nfn f<T: Shape>(x: T) -> i64 {\n  x.area()\n}\nfn main() -> i64 {\n  println(to_str(f(Sq { s: 3 })))\n  0\n}\n",
+            "9\n",
+        ),
+        (
+            "g1_mk",
+            "type B<T> = { v: T }\nfn mk<T>(v: T) -> B<T> { B { v: v } }\nfn get<T>(b: B<T>) -> T { b.v }\nfn main() -> i64 {\n  let b: B<i64> = mk(1)\n  let s: B<str> = mk(\"x\")\n  let n: i64 = get(b) + 1\n  println(to_str(n) + get(s))\n  0\n}\n",
+            "2x\n",
+        ),
+        (
+            "g2_conc_field",
+            "trait Shape {\n  fn area(self) -> i64\n}\ntype Sq = { s: i64 }\nimpl Shape for Sq {\n  fn area(self: Sq) -> i64 { self.s * self.s }\n}\ntype W<T> = { tag: T, sq: Sq }\nfn f<T>(w: W<T>) -> i64 { w.sq.area() }\nfn g<T>(x: T, s: Sq) -> i64 { s.area() }\nfn main() -> i64 {\n  println(to_str(f(W { tag: \"a\", sq: Sq { s: 2 } }) + g(1, Sq { s: 3 })))\n  0\n}\n",
+            "13\n",
+        ),
+        (
+            "g4_nested_app",
+            "type B<T> = { v: T }\nfn main() -> i64 {\n  let inner = B { v: 2 }\n  let outer: B<B<i64>> = B { v: inner }\n  let xs: [B<i64>] = [B { v: 1 }, inner]\n  println(to_str(outer.v.v + xs[0].v))\n  0\n}\n",
+            "3\n",
+        ),
+        (
+            "g5_bounded_closure",
+            "trait Shape {\n  fn area(self) -> i64\n}\ntype Sq = { s: i64 }\nimpl Shape for Sq {\n  fn area(self: Sq) -> i64 { self.s * self.s }\n}\nfn total<T: Shape>(xs: [T]) -> i64 { arr_fold(xs, 0, |acc, x| acc + x.area()) }\nfn main() -> i64 {\n  println(to_str(total([Sq { s: 2 }, Sq { s: 1 }])))\n  0\n}\n",
+            "5\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}

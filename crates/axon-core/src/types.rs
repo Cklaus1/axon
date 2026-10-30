@@ -47,6 +47,10 @@ pub enum Type {
     Struct(String),
     /// Named user-defined enum (look up in module by `{name}_enum`).
     Enum(String),
+    /// A user generic struct applied to type arguments: `B<i64>` is
+    /// `App("B", [i64])` (CS2-5). Inference only: the checker and the
+    /// compiler still see the bare name.
+    App(String, Vec<Type>),
     // Type-checker meta-types (should not reach codegen)
     /// Type has not been resolved yet.
     Unknown,
@@ -236,6 +240,10 @@ impl Type {
                 format!("fn({p}) -> {}", ret.display())
             }
             Type::Struct(n) | Type::Enum(n) | Type::Deferred(n) => n.clone(),
+            Type::App(n, args) => {
+                let a = args.iter().map(|t| t.display()).collect::<Vec<_>>().join(", ");
+                format!("{n}<{a}>")
+            }
             Type::Unknown => "<unknown>".into(),
             Type::Var(n) => format!("?{n}"),
             Type::TypeParam(n) => n.clone(),
@@ -269,7 +277,9 @@ impl Type {
                     pending.push((o, depth + 1));
                     pending.push((e, depth + 1));
                 }
-                Type::Tuple(ts) => pending.extend(ts.iter().map(|t| (t, depth + 1))),
+                Type::Tuple(ts) | Type::App(_, ts) => {
+                    pending.extend(ts.iter().map(|t| (t, depth + 1)))
+                }
                 Type::Fn(ps, r) => {
                     pending.extend(ps.iter().map(|p| (p, depth + 1)));
                     pending.push((r, depth + 1));
@@ -296,6 +306,7 @@ impl Type {
             }
             Type::Slice(i) => Type::Slice(Box::new(i.map_leaves(f))),
             Type::Tuple(ts) => Type::Tuple(ts.into_iter().map(|t| t.map_leaves(f)).collect()),
+            Type::App(n, ts) => Type::App(n, ts.into_iter().map(|t| t.map_leaves(f)).collect()),
             Type::Fn(ps, r) => Type::Fn(
                 ps.into_iter().map(|p| p.map_leaves(f)).collect(),
                 Box::new(r.map_leaves(f)),
@@ -414,6 +425,10 @@ impl Substitution {
             Type::Tuple(ts) => {
                 Type::Tuple(ts.iter().map(|t| self.apply_inner(t, visiting)).collect())
             }
+            Type::App(n, ts) => Type::App(
+                n.clone(),
+                ts.iter().map(|t| self.apply_inner(t, visiting)).collect(),
+            ),
             Type::Fn(params, ret) => Type::Fn(
                 params
                     .iter()

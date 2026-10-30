@@ -395,6 +395,8 @@ The message reads "non-exhaustive match on `i64` - add a `_ =>` arm" (E0304, `er
 
 **False-refusal risk.** [REVISED: CS2A-13] An unbounded `T` whose callers all pass a type with the method (g_unbounded_impl) is refused; the fix-it adds `T: Trait`. Tracked: 0. A trait method reached through a supertrait: Axon has no supertraits `[INFERENCE: no syntax found in compiler-phase3.md:47 type_param grammar]`. Default methods are declared in the trait, so they are found.
 
+[REVISED: build CS2-5] As built: `current_generic_params` is a param -> bounds map (fn generics from `fn_bounds`, typedef/impl/trait generics with no bounds). A bound naming a trait the program does not declare leaves the call unchecked (conservative). A bounded `T` whose traits lack the method says "its bound `Shape` does not declare it" (the unbounded text is the spec's). `Type::App` lives in inference only: a generic fn's own signature keeps its `T` args as `TypeParam` inside `App` (`generalize_app_args`), and `CheckCtx::new`/`with_user_fn_sigs` erase `App("B", ..)` to the old `Deferred("B")` (`erase_app`), so no checker path changes; `codegen/types.rs` lowers `App` like `Deferred` (skipped) and `lsp.rs` prints `B<i64>` (both needed for the `codegen`/`serde-json` builds). The E0102 message names the mismatched argument ("expected i64, found str"). The 8 generic-type fixtures run byte-identical before and after; sweeps S290 and S596 are identical to the post-CS2-1 sweeps.
+
 ### CS2-6 (P3) Callees that are not a name - O-SF-04
 
 **Problem.**

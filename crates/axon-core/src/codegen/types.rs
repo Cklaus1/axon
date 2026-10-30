@@ -180,7 +180,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 )
             }
             // Unresolved — skip
-            Type::Unknown | Type::Var(_) | Type::Deferred(_) => None,
+            // A CS2-5 applied generic struct is the `Deferred` name it was
+            // before `App` existed, so it lowers the same way: skipped.
+            Type::Unknown | Type::Var(_) | Type::Deferred(_) | Type::App(..) => None,
             // TypeParam should be eliminated by monomorphization.
             Type::TypeParam(_) => None,
             // DynTrait → fat pointer { ptr data, ptr vtable }

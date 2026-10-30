@@ -91,6 +91,52 @@ fn type_is_unresolved(ty: &Type) -> bool {
     )
 }
 
+/// CS2-5: `ty` (a generic struct's field type, its params stored as
+/// `Deferred("T")`) with each of the struct's type params `params` replaced by
+/// the matching type argument in `args`, at any depth.
+fn subst_struct_params(ty: Type, params: &[String], args: &[Type]) -> Type {
+    ty.map_leaves(&mut |t| match &t {
+        Type::Deferred(n) | Type::TypeParam(n) => params
+            .iter()
+            .position(|p| p == n)
+            .and_then(|i| args.get(i).cloned())
+            .unwrap_or(t),
+        _ => t,
+    })
+}
+
+/// CS2-5: in a generic fn's signature, the fn's own type params named as a
+/// generic struct's arguments (`B<T>`, resolved as `App("B", [Deferred("T")])`)
+/// become `TypeParam`, so each call instantiates them. Elsewhere the sig keeps
+/// its existing resolution.
+fn generalize_app_args(ty: Type, generics: &HashSet<&str>) -> Type {
+    let rec = |t: Box<Type>| Box::new(generalize_app_args(*t, generics));
+    match ty {
+        Type::App(n, args) => Type::App(
+            n,
+            args.into_iter()
+                .map(|a| {
+                    a.map_leaves(&mut |t| match t {
+                        Type::Deferred(p) if generics.contains(p.as_str()) => Type::TypeParam(p),
+                        t => t,
+                    })
+                })
+                .collect(),
+        ),
+        Type::Option(i) => Type::Option(rec(i)),
+        Type::Result(o, e) => Type::Result(rec(o), rec(e)),
+        Type::Slice(i) => Type::Slice(rec(i)),
+        Type::Tuple(ts) => {
+            Type::Tuple(ts.into_iter().map(|t| generalize_app_args(t, generics)).collect())
+        }
+        Type::Fn(ps, r) => Type::Fn(
+            ps.into_iter().map(|t| generalize_app_args(t, generics)).collect(),
+            rec(r),
+        ),
+        other => other,
+    }
+}
+
 /// CS2-6: true when `ty` has a part not yet resolved to a concrete type.
 fn has_unresolved(ty: &Type) -> bool {
     let mut found = false;
@@ -830,6 +876,18 @@ impl InferCtx {
                         .unwrap_or(Type::Unknown);
                     return Type::Temporal(Box::new(inner));
                 }
+                // CS2-5: a user generic struct with its full argument list is
+                // `App`, so `B<i64>` and `B<str>` are different types.
+                if self
+                    .struct_generic_params
+                    .get(base)
+                    .is_some_and(|ps| ps.len() == args.len())
+                {
+                    return Type::App(
+                        base.clone(),
+                        args.iter().map(|a| self.resolve_ast_type(a)).collect(),
+                    );
+                }
                 // Phase 1: other generics treated as deferred.
                 Type::Deferred(base.clone())
             }
@@ -926,7 +984,7 @@ impl InferCtx {
                                 return Type::TypeParam(n.clone());
                             }
                         }
-                        self.resolve_ast_type(ty)
+                        generalize_app_args(self.resolve_ast_type(ty), &gset)
                     };
                     let params = f
                         .params
@@ -1816,33 +1874,22 @@ impl InferCtx {
                 }
 
                 // Struct literal: constrain each provided field against declared type.
-                // For generic structs (e.g. Pair<A, B>), substitute fresh Vars for TypeParams.
+                // CS2-5: a generic struct (e.g. `Pair<A, B>`) gets a fresh Var
+                // per type param, substituted into the field types (stored as
+                // `Deferred("A")`, also inside `[A]` etc.); the literal's type is
+                // `App(name, vars)`, so an annotation `Pair<i64, str>` is compared.
                 let raw_declared: Vec<(String, Type)> =
                     self.struct_fields.get(name).cloned().unwrap_or_default();
+                let mut app_vars: Option<Vec<Type>> = None;
                 let declared: Vec<(String, Type)> =
                     if let Some(param_names) = self.struct_generic_params.get(name).cloned() {
-                        let mut var_map: HashMap<String, u32> = HashMap::new();
-                        for pname in &param_names {
-                            let vid = self.next_var;
-                            self.next_var += 1;
-                            var_map.insert(pname.clone(), vid);
-                        }
-                        raw_declared
-                            .iter()
-                            .map(|(fname, fty)| {
-                                let subst_ty = match fty {
-                                    Type::TypeParam(n) => {
-                                        if let Some(&vid) = var_map.get(n) {
-                                            Type::Var(vid)
-                                        } else {
-                                            fty.clone()
-                                        }
-                                    }
-                                    _ => fty.clone(),
-                                };
-                                (fname.clone(), subst_ty)
-                            })
-                            .collect()
+                        let vars: Vec<Type> = param_names.iter().map(|_| self.fresh()).collect();
+                        let declared = raw_declared
+                            .into_iter()
+                            .map(|(fname, fty)| (fname, subst_struct_params(fty, &param_names, &vars)))
+                            .collect();
+                        app_vars = Some(vars);
+                        declared
                     } else {
                         raw_declared
                     };
@@ -1896,7 +1943,10 @@ impl InferCtx {
                     }
                 }
 
-                Type::Struct(name.clone())
+                match app_vars {
+                    Some(vars) => Type::App(name.clone(), vars),
+                    None => Type::Struct(name.clone()),
+                }
             }
 
             // ── Field access ──────────────────────────────────────────────────
@@ -1930,6 +1980,19 @@ impl InferCtx {
                             }
                         } else {
                             self.fresh()
+                        }
+                    }
+                    // CS2-5: a field of an applied generic struct has the
+                    // struct's type args substituted for its params.
+                    Type::App(name, args) => {
+                        let field_ty = self
+                            .struct_fields
+                            .get(name)
+                            .and_then(|fs| fs.iter().find(|(n, _)| n == field))
+                            .map(|(_, t)| t.clone());
+                        match (field_ty, self.struct_generic_params.get(name)) {
+                            (Some(t), Some(ps)) => subst_struct_params(t, ps, args),
+                            _ => self.fresh(),
                         }
                     }
                     // Tuple field access: `t.0` / `t.1`. The field name is
@@ -2344,7 +2407,7 @@ impl InferCtx {
             Type::Bool => AxonType::Named("bool".into()),
             Type::Str => AxonType::Named("str".into()),
             Type::Unit => AxonType::Named("unit".into()),
-            Type::Struct(n) | Type::Enum(n) => AxonType::Named(n.clone()),
+            Type::Struct(n) | Type::Enum(n) | Type::App(n, _) => AxonType::Named(n.clone()),
             Type::Option(inner) => AxonType::Option(Box::new(Self::type_to_axon(inner))),
             Type::Slice(inner) => AxonType::Slice(Box::new(Self::type_to_axon(inner))),
             Type::Chan(inner) => AxonType::Chan(Box::new(Self::type_to_axon(inner))),
@@ -2409,6 +2472,9 @@ impl InferCtx {
                 Type::Temporal(i) => Type::Temporal(rec(i)),
                 Type::Result(a, b) => Type::Result(rec(a), rec(b)),
                 Type::Tuple(ts) => Type::Tuple(ts.iter().map(|e| subst_ty(e, var_map)).collect()),
+                Type::App(n, ts) => {
+                    Type::App(n.clone(), ts.iter().map(|e| subst_ty(e, var_map)).collect())
+                }
                 Type::Fn(ps, r) => {
                     Type::Fn(ps.iter().map(|p| subst_ty(p, var_map)).collect(), rec(r))
                 }
@@ -2656,6 +2722,16 @@ impl InferCtx {
                 }
                 self.unify(*r1, *r2, origin, subst);
             }
+            // CS2-5: an applied generic struct unifies by name and arguments.
+            (Type::App(n1, as1), Type::App(n2, as2)) if n1 == n2 && as1.len() == as2.len() => {
+                for (a, b) in as1.into_iter().zip(as2) {
+                    self.unify(a, b, origin, subst);
+                }
+            }
+            // Cutover: the bare name (`B` in a signature, no arguments) still
+            // means "some `B`".
+            (Type::App(n1, _), Type::Struct(n2)) | (Type::Struct(n2), Type::App(n1, _))
+                if n1 == n2 => {}
 
             // Deferred and Unknown pass through without error.
             (Type::Deferred(_), _) | (_, Type::Deferred(_)) => {}
@@ -2692,7 +2768,7 @@ impl InferCtx {
             | Type::Temporal(inner)
             | Type::RawPtr(inner) => self.occurs(var, inner),
             Type::Result(ok, err) => self.occurs(var, ok) || self.occurs(var, err),
-            Type::Tuple(ts) => ts.iter().any(|t| self.occurs(var, t)),
+            Type::Tuple(ts) | Type::App(_, ts) => ts.iter().any(|t| self.occurs(var, t)),
             Type::Fn(params, ret) => {
                 params.iter().any(|p| self.occurs(var, p)) || self.occurs(var, ret)
             }
