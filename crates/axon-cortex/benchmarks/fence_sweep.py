@@ -65,6 +65,11 @@ COMPILE_CAUGHT = {
     # `arr_push(&t.results, t)` pushes a Trace into an [i64]; a builtin's `T`
     # was a wildcard until 128d70be.
     ("heldout/heldout.json", "h-wrong-var-04"): "E0102",
+    # argswap mutants `dict_inc(k, b.counts)` / `dict_has(m, s.d)` pass a str
+    # where the dict goes; a bare `Dict` was unchecked until checker-soundness-2
+    # CS2-3b (a dict holds one value type).
+    ("scorecard/receipt-corpus.json", "argswap-02"): "E0102",
+    ("scorecard/receipt-corpus.json", "argswap-06"): "E0102",
 }
 
 

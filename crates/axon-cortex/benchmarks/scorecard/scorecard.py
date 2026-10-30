@@ -1344,7 +1344,12 @@ B = candidate) and names the first criterion that separates them;
   `PREREG-regress.md` amendment 3). All three are exposed, tuned-on tasks: it is
   a regression set, not generalisation evidence. Only `regress` writes these
   runs. `controls/README.md` shows what the pooled receipt detects and what it
-  does not (degraded builds, the power of the exact McNemar test).
+  does not (degraded builds, the power of the exact McNemar test). Two tasks
+  are compile-caught from checker-soundness-2 CS2-3b on: the argswap mutants of
+  `argswap-02` and `argswap-06` pass a `str` where the dict goes, now E0102, so
+  `cortex grant` exits 22 and every arm scores them not verified. The corpus
+  stays frozen (`../fence_sweep.py` `COMPILE_CAUGHT` confirms both refusals on
+  every gate run), and a receipt on that binary or later scores at most 113/115.
 - **hx-dev** / **hx-test**: `../headroom/hx-dev.json` and `hx-test.json`, the
   headroom sets. Runs repeat every task (`run_ab.py --trials K`), so their rows
   are keyed on (task, trial); `hx-test` follows the `once` rule.
