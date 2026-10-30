@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "g01 rows M3940-M3941 and their attack markers for the ImplAuditCS2 F1/F2 fix; cargo fmt over infer.rs (formatting only, no behaviour change)."}

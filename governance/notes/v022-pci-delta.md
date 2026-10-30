@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 0e2bfc6dc24999fe4eeafd70c57c63eea03e91a2
+generated-at: f516cf416f5ecde249b03bb1ffca4ca1db09ae3c
 
-`git diff --numstat 31413ca7..0e2bfc6d -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..f516cf41 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -29,7 +29,7 @@ generated-at: 0e2bfc6dc24999fe4eeafd70c57c63eea03e91a2
 | `crates/axon-core/src/builtins.rs` | 108 | 42 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 985 | 340 |
-| `crates/axon-core/src/checker.rs` | 2609 | 654 |
+| `crates/axon-core/src/checker.rs` | 2629 | 651 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
 | `crates/axon-core/src/codegen/asi.rs` | 237 | 49 |
@@ -54,7 +54,7 @@ generated-at: 0e2bfc6dc24999fe4eeafd70c57c63eea03e91a2
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 1733 | 264 |
+| `crates/axon-core/src/infer.rs` | 1762 | 264 |
 | `crates/axon-core/src/interp.rs` | 7787 | 2882 |
 | `crates/axon-core/src/interp/builtins.rs` | 865 | 633 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
@@ -84,10 +84,10 @@ generated-at: 0e2bfc6dc24999fe4eeafd70c57c63eea03e91a2
 | `crates/axon-core/src/interp/vm/tests.rs` | 2690 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
-| `crates/axon-core/src/lib.rs` | 303 | 77 |
+| `crates/axon-core/src/lib.rs` | 304 | 77 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
-| `crates/axon-core/src/lsp.rs` | 187 | 59 |
-| `crates/axon-core/src/main.rs` | 1594 | 369 |
+| `crates/axon-core/src/lsp.rs` | 188 | 59 |
+| `crates/axon-core/src/main.rs` | 1595 | 369 |
 | `crates/axon-core/src/mono.rs` | 2 | 0 |
 | `crates/axon-core/src/mut_borrow.rs` | 942 | 0 |
 | `crates/axon-core/src/parser.rs` | 460 | 32 |
@@ -98,9 +98,9 @@ generated-at: 0e2bfc6dc24999fe4eeafd70c57c63eea03e91a2
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 61513 | 8629 |
+| total | 61565 | 8626 |
 
-`git log --reverse 31413ca7..0e2bfc6d -- crates/axon-core/src`:
+`git log --reverse 31413ca7..f516cf41 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -446,7 +446,9 @@ generated-at: 0e2bfc6dc24999fe4eeafd70c57c63eea03e91a2
 | f9bb6236 | cs2/a merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 4562f44c | checker soundness | cargo fmt over the merged checker-soundness-2 lanes (builtins.rs, checker.rs, codegen/expr.rs, infer.rs, interp/sym.rs, interp/taint_tests.rs, types.rs). Formatting only; no behaviour change. |
 | 0e2bfc6d | checker soundness | interp.rs nest_cost (wasm32 only): check_closure_param_refines gets its own nest_guard and CHECK_CLOSURE_PARAM_REFINES(_SEALED) budget, so only a call to a closure with a refined parameter pays its frame; CALL_CLOSURE_FRAME(_SEALED) and FINISH_CALL_COLD raised to the frames wasm_stack_budget.py measures. nest_guard compiles to nothing off wasm32; no evaluator change on native or interpreter runs. |
-| 342 commits | | |
+| 72b15868 | checker soundness | ImplAuditCS2 F1/F2: a generic fn's bare Dict bound to its declared T reads Dict(T) in the signature, so put<T>(d: Dict, v: T) can no longer write a str into an i64 dict (E0102); a method call on an untyped lambda param that resolves to the enclosing fn's type param is looked up in that param's bounds (E0403). Both programs checked clean and panicked at run time before. |
+| f516cf41 | checker soundness | g01 rows M3940-M3941 and their attack markers for the ImplAuditCS2 F1/F2 fix; cargo fmt over infer.rs (formatting only, no behaviour change). |
+| 344 commits | | |
 <!-- END MECHANICAL -->
 
 
