@@ -699,14 +699,15 @@ impl Reach {
 /// `Walk::Type`):
 /// - a REFINEMENT PREDICATE (`type T = B where P`, and the synthetic
 ///   refinement an inline `p: B where P` desugars to) runs when a value is
-///   bound to a parameter, returned, `let`/`own`/`ref`-bound, or stored in a
-///   struct field of that type (`call_fn_in`, `bind_let`, struct
+///   bound to a parameter (a fn's or a lambda's), returned,
+///   `let`/`own`/`ref`-bound, or stored in a struct or enum variant field of
+///   that type (`call_fn_in`, the closure call, `bind_let`, struct and variant
 ///   construction). Followed from every fn's parameter and return types,
-///   every annotated binding, and every constructed struct's field types.
-///   The interpreter checks only a top-level `Named` type; the walk follows
-///   every refinement named ANYWHERE in the type (`Option<T>`, `[T]`, fn
-///   types), the base of a refinement, and lambda parameter annotations — a
-///   sound over-approximation;
+///   every lambda's parameter annotations, every annotated binding, and every
+///   constructed struct's (or variant literal's enum's) field types. The
+///   interpreter checks only a top-level `Named` type; the walk follows every
+///   refinement named ANYWHERE in the type (`Option<T>`, `[T]`, fn types) and
+///   the base of a refinement — a sound over-approximation;
 /// - a struct's WHOLE-TYPE refinement (`type S = { .. } where P`) runs at
 ///   every `S { .. }` literal: followed from the literal;
 /// - an `@[verify(P)]` predicate runs when the fn returns: followed with the fn;
@@ -719,9 +720,8 @@ impl Reach {
 /// Not in the language (checked, so a future addition must land here):
 /// operator overloading, `Display`/`to_str` hooks, drop hooks, iterator
 /// protocols (`for` is an integer range), trait default methods (a trait
-/// method has no body), `requires`/`ensures`/invariant clauses (`@[verify]` is
-/// the only contract), and refinements on enum variant fields (not checked
-/// at construction). The runtime's OWN writes (`@[adaptive]`/`@[experiment]`
+/// method has no body), and `requires`/`ensures`/invariant clauses
+/// (`@[verify]` is the only contract). The runtime's OWN writes (`@[adaptive]`/`@[experiment]`
 /// provenance, the `@[agent]` action log) run no user code and are
 /// path-fixed (`EXEMPT_IO`).
 ///
@@ -960,18 +960,21 @@ impl<'a> WalkMaps<'a> {
 }
 
 /// The program's types whose USE runs user code: refinements (named, and the
-/// synthetic ones inline `p: B where P` annotations desugar to) and structs
+/// synthetic ones inline `p: B where P` annotations desugar to), structs
 /// (a whole-type refinement and refined field types, checked at
+/// construction) and enums (refined variant field types, checked at
 /// construction). See `reachable_capabilities` for where each fires.
 struct TypeHooks<'a> {
     refines: std::collections::HashMap<&'a str, &'a RefineDef>,
     structs: std::collections::HashMap<&'a str, &'a TypeDef>,
+    enums: std::collections::HashMap<&'a str, &'a crate::ast::EnumDef>,
 }
 
 impl<'a> TypeHooks<'a> {
     fn of(program: &'a Program) -> Self {
         let mut refines = std::collections::HashMap::new();
         let mut structs = std::collections::HashMap::new();
+        let mut enums = std::collections::HashMap::new();
         for item in &program.items {
             match item {
                 Item::RefineDef(r) => {
@@ -980,10 +983,17 @@ impl<'a> TypeHooks<'a> {
                 Item::TypeDef(t) => {
                     structs.insert(t.name.as_str(), t);
                 }
+                Item::EnumDef(e) => {
+                    enums.insert(e.name.as_str(), e);
+                }
                 _ => {}
             }
         }
-        TypeHooks { refines, structs }
+        TypeHooks {
+            refines,
+            structs,
+            enums,
+        }
     }
 
     /// Every predicate a use of one of these types runs, used or not: each
@@ -1535,6 +1545,11 @@ fn drain_walk<'a>(mut work: Vec<Walk<'a>>, ctx: &mut CapCtx<'a, '_>) {
                             push_type(&f.ty, hooks, &mut work);
                         }
                     }
+                    if let Some(e) = hooks.enums.get(name).copied() {
+                        for f in e.variants.iter().flat_map(|v| &v.fields) {
+                            push_type(&f.ty, hooks, &mut work);
+                        }
+                    }
                 }
             }
             Walk::LeaveType(name) => {
@@ -1759,10 +1774,16 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
         Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => work.push(Walk::Expr(inner)),
         Expr::Array(elems) | Expr::Tuple(elems) => push_exprs(work, elems.iter()),
         // Constructing a struct runs its whole-type refinement and the
-        // predicates of its refined fields, after the fields are computed.
+        // predicates of its refined fields, after the fields are computed; an
+        // enum variant literal `E::V { .. }` runs its refined fields'
+        // predicates (the enum's variant field types are followed).
         Expr::StructLit { name, fields } => {
             if ctx.hooks.structs.contains_key(name.as_str()) {
                 work.push(Walk::Type(name));
+            } else if let Some((head, _)) = name.split_once("::") {
+                if ctx.hooks.enums.contains_key(head) {
+                    work.push(Walk::Type(head));
+                }
             }
             push_exprs(work, fields.iter().map(|(_, v)| v))
         }
@@ -1773,8 +1794,8 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
                 _ => None,
             }),
         ),
-        // A lambda parameter's refinement is not checked by the interpreter
-        // today; followed anyway, so adding that check cannot open a route.
+        // A lambda parameter's refinement is checked when the closure is
+        // called (checker-soundness-2 CS2-7): followed from the lambda.
         Expr::Lambda { params, body, .. } => {
             for p in params {
                 if let Some(ty) = &p.ty {

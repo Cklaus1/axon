@@ -758,6 +758,26 @@ impl<'ctx> Codegen<'ctx> {
                         .insert(td.name.clone(), (**pred).clone());
                 }
             }
+            // An enum variant's refined fields, keyed `E::V` as its literal
+            // is named (checker-soundness-2 CS2-7).
+            if let ast::Item::EnumDef(ed) = item {
+                for v in &ed.variants {
+                    let refs: Vec<(String, String)> = v
+                        .fields
+                        .iter()
+                        .filter_map(|f| match &f.ty {
+                            ast::AxonType::Named(rn) if self.refine_preds.contains_key(rn) => {
+                                Some((f.name.clone(), rn.clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    if !refs.is_empty() {
+                        self.struct_field_refines
+                            .insert(format!("{}::{}", ed.name, v.name), refs);
+                    }
+                }
+            }
         }
         self.declare_types(program);
 
@@ -1732,7 +1752,9 @@ impl<'ctx> Codegen<'ctx> {
         // native and `axon run` agree on the exit code (I-2). Out-of-subset
         // predicates are E0910-refused inside the helper (never silently skipped).
         if !self.refine_preds.is_empty() {
-            self.emit_refine_preconditions(f, llvm_fn);
+            let params: Vec<(&str, &ast::AxonType)> =
+                f.params.iter().map(|p| (p.name.as_str(), &p.ty)).collect();
+            self.emit_refine_preconditions(&f.name, &params, llvm_fn);
         }
 
         let body_val = self.emit_expr(&f.body, llvm_fn);

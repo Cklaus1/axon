@@ -580,6 +580,32 @@ fn a_refined_struct_field_is_checked_at_construction_and_reached() {
     assert_reaches_the_write("refine_field", &r);
 }
 
+/// checker-soundness-2 CS2-7: a variant field's refinement runs at the
+/// `E::V { .. }` literal (it used to be skipped, so the route was dead), and
+/// caps follows the enum's variant field types from the literal.
+#[test]
+fn a_refined_variant_field_is_checked_at_construction_and_reached() {
+    let r = implicit_route(
+        "refine_variant",
+        "type Lk = i64 where leak(_)\ntype E = A { v: Lk } | B\n\
+         fn double(n: i64) -> i64 {\n    let e = E::A { v: n }\n    \
+         match e {\n        E::A { v } => v * 2,\n        E::B => 0,\n    }\n}\n",
+    );
+    assert_reaches_the_write("refine_variant", &r);
+}
+
+/// checker-soundness-2 CS2-7: a lambda parameter's refinement runs when the
+/// closure is called (it used to be skipped), and caps follows it.
+#[test]
+fn a_refined_lambda_param_is_checked_at_call_and_reached() {
+    let r = implicit_route(
+        "refine_lambda",
+        "type Lk = i64 where leak(_)\n\
+         fn double(n: i64) -> i64 {\n    let f = |y: Lk| y * 2\n    f(n)\n}\n",
+    );
+    assert_reaches_the_write("refine_lambda", &r);
+}
+
 #[test]
 fn a_whole_struct_refinement_is_reached() {
     let r = implicit_route(

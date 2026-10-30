@@ -581,6 +581,13 @@ pub struct CheckCtx {
     /// an unrefined param). Populated from fn signatures so a call site can find
     /// which arguments carry a proof obligation.
     fn_param_refinements: HashMap<String, Vec<Option<String>>>,
+    /// checker-soundness-2 CS2-7: the calls (keyed by the `Expr::Call` node's
+    /// address) that provably run a block-local `let f = |x: T, ..| ..` whose
+    /// params are refinements, with `f`'s name and per-param refinement
+    /// (`None` = unrefined). Filled when the block is entered
+    /// (`refined_lambda_calls_in`); a constant argument is then checked like a
+    /// named fn's (E1209).
+    refined_lambda_calls: HashMap<usize, (String, Vec<Option<String>>)>,
     /// Phase 5: per-struct, `field_name → refinement_name` for fields whose
     /// declared type is a refinement. Drives the R04 struct-construction
     /// obligation (a constant field value is checked against the predicate).
@@ -651,6 +658,7 @@ impl CheckCtx {
             refinement_base: HashMap::new(),
             refinement_pred: HashMap::new(),
             fn_param_refinements: HashMap::new(),
+            refined_lambda_calls: HashMap::new(),
             struct_field_refinements: HashMap::new(),
             struct_refinements: HashMap::new(),
             sensitive_types: HashMap::new(),
@@ -702,6 +710,10 @@ impl CheckCtx {
     /// to one, or a user fn named as a value. A builtin (or a fn that shadows
     /// one, `call_prefers_builtin`) is not a value (the resolver refuses it).
     /// `None` for anything else, and for a name a local binds.
+    ///
+    /// CS2-6: also an element of an array of fn values (`ops[0]`), the result
+    /// of a call whose return is a fn (`mk()`), and a fn-typed struct field
+    /// (`h.f`), so a call through any of them is checked like a call by name.
     fn fn_value_type(&self, expr: &Expr, scope: &HashMap<String, Type>) -> Option<Type> {
         match expr {
             Expr::Lambda { params, .. } => Some(Type::Fn(
@@ -720,7 +732,44 @@ impl CheckCtx {
                     .or_else(|| self.fn_sigs.get(name))
                     .map(|s| Type::Fn(s.params.clone(), Box::new(s.ret.clone())))
             }
+            Expr::Index { receiver, .. } => match self.value_type(receiver, scope) {
+                Type::Slice(elem) if matches!(*elem, Type::Fn(..)) => Some(*elem),
+                _ => None,
+            },
+            Expr::Call { callee, args, .. } => {
+                let ret = match callee.as_ref() {
+                    Expr::Ident(name) => match scope.get(name.as_str()) {
+                        Some(Type::Fn(_, ret)) => (**ret).clone(),
+                        Some(_) => return None,
+                        None => self.call_sig(name, args)?.ret.clone(),
+                    },
+                    other => match self.fn_value_type(other, scope)? {
+                        Type::Fn(_, ret) => *ret,
+                        _ => return None,
+                    },
+                };
+                matches!(ret, Type::Fn(..)).then_some(ret)
+            }
+            Expr::FieldAccess { receiver, field } => match self.value_type(receiver, scope) {
+                Type::Struct(sname) => self
+                    .struct_fields
+                    .get(&sname)?
+                    .iter()
+                    .find(|(f, _)| f == field)
+                    .map(|(_, t)| t.clone())
+                    .filter(|t| matches!(t, Type::Fn(..))),
+                _ => None,
+            },
             _ => None,
+        }
+    }
+
+    /// CS2-6: the syntactic type of `expr`, a fn value's `fn(..) -> ..` type
+    /// when the fallback has none.
+    fn value_type(&self, expr: &Expr, scope: &HashMap<String, Type>) -> Type {
+        match self.resolve_expr_type(expr, &NodePath::root("#fn_value".to_string()), scope) {
+            Type::Unknown => self.fn_value_type(expr, scope).unwrap_or(Type::Unknown),
+            ty => ty,
         }
     }
 
@@ -971,6 +1020,26 @@ impl CheckCtx {
                     if let Some(pred) = &td.refinement {
                         self.struct_refinements
                             .insert(td.name.clone(), (**pred).clone());
+                    }
+                }
+                // An enum variant's fields, keyed `E::V` as its literal is
+                // named (checker-soundness-2 CS2-7).
+                if let Item::EnumDef(ed) = item {
+                    for v in &ed.variants {
+                        let refs: HashMap<String, String> = v
+                            .fields
+                            .iter()
+                            .filter_map(|f| match &f.ty {
+                                AxonType::Named(n) if self.refinement_pred.contains_key(n) => {
+                                    Some((f.name.clone(), n.clone()))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        if !refs.is_empty() {
+                            self.struct_field_refinements
+                                .insert(format!("{}::{}", ed.name, v.name), refs);
+                        }
                     }
                 }
             }
@@ -1906,6 +1975,19 @@ impl CheckCtx {
         let Some(slots) = self.fn_param_refinements.get(fn_name).cloned() else {
             return;
         };
+        self.check_refinement_slots(fn_name, &slots, args, node_path);
+    }
+
+    /// The constant-argument obligation of [`Self::check_refinement_args`]
+    /// against `slots` (per-param refinement name): a named fn's, or a
+    /// refined lambda's (checker-soundness-2 CS2-7).
+    fn check_refinement_slots(
+        &mut self,
+        fn_name: &str,
+        slots: &[Option<String>],
+        args: &[Expr],
+        node_path: &NodePath,
+    ) {
         for (i, arg) in args.iter().enumerate() {
             let Some(Some(rname)) = slots.get(i) else {
                 continue;
@@ -1950,6 +2032,45 @@ impl CheckCtx {
                          parameter type"
                     )),
                 );
+            }
+        }
+    }
+
+    /// checker-soundness-2 CS2-7: a lambda's per-param refinement name (as
+    /// `fn_param_refinements` holds a fn's); `None` when no param is refined.
+    fn lambda_refine_slots(&self, params: &[crate::ast::LambdaParam]) -> Option<Vec<Option<String>>> {
+        let slots: Vec<Option<String>> = params
+            .iter()
+            .map(|p| match &p.ty {
+                Some(AxonType::Named(n)) if self.refinement_pred.contains_key(n) => Some(n.clone()),
+                _ => None,
+            })
+            .collect();
+        slots.iter().any(Option::is_some).then_some(slots)
+    }
+
+    /// checker-soundness-2 CS2-7: record, for each `let f = <lambda with
+    /// refined params>` in `stmts`, the later calls that provably run it
+    /// ([`calls_of_binding`]), so their constant arguments are checked.
+    fn refined_lambda_calls_in(&mut self, stmts: &[Stmt]) {
+        if self.refinement_pred.is_empty() {
+            return;
+        }
+        for (i, s) in stmts.iter().enumerate() {
+            let Expr::Let { name, value, .. } = &s.expr else {
+                continue;
+            };
+            let Expr::Lambda { params, .. } = value.as_ref() else {
+                continue;
+            };
+            let Some(slots) = self.lambda_refine_slots(params) else {
+                continue;
+            };
+            let mut calls = Vec::new();
+            calls_of_binding(name, &stmts[i + 1..], &mut calls);
+            for c in calls {
+                self.refined_lambda_calls
+                    .insert(c as *const Expr as usize, (name.clone(), slots.clone()));
             }
         }
     }
@@ -3788,6 +3909,7 @@ impl CheckCtx {
         match expr {
             // ── Block ────────────────────────────────────────────────────────
             Expr::Block(stmts) => {
+                self.refined_lambda_calls_in(stmts);
                 let n = stmts.len();
                 // Unreachable-code (W0005): once a statement unconditionally
                 // diverts control (`return`/`break`/`continue`), every following
@@ -4086,6 +4208,27 @@ impl CheckCtx {
                     }
                 }
 
+                // checker-soundness-2 CS2-7: a call that runs a lambda with
+                // refined params (the lambda itself, or a block-local
+                // `let f = |x: Pos| ..` it provably names) checks a constant
+                // argument against the refinement, as a named fn's call does.
+                // A recorded call is re-matched (callee name, a local fn
+                // value in scope) so a reused node address never matches.
+                let refined = match callee.as_ref() {
+                    Expr::Lambda { params, .. } => self
+                        .lambda_refine_slots(params)
+                        .map(|slots| ("lambda".to_string(), slots)),
+                    Expr::Ident(n) if matches!(scope.get(n.as_str()), Some(Type::Fn(..))) => self
+                        .refined_lambda_calls
+                        .get(&(expr as *const Expr as usize))
+                        .filter(|(name, _)| name == n)
+                        .cloned(),
+                    _ => None,
+                };
+                if let Some((label, slots)) = refined {
+                    self.check_refinement_slots(&label, &slots, args, node_path);
+                }
+
                 // R05 / R06 — only for named (direct) calls.
                 if let Expr::Ident(name) = callee.as_ref() {
                     match scope.get(name.as_str()).cloned() {
@@ -4131,6 +4274,13 @@ impl CheckCtx {
                             self.check_refinement_args(name, args, node_path);
                         }
                     }
+                } else if let Some(Type::Fn(params, ret)) = self.fn_value_type(callee, scope) {
+                    // CS2-6: a call through a fn value that is not a name
+                    // (`ops[0](..)`, `mk()(..)`, `(h.f)(..)`) is checked against
+                    // that value's type, as a call by name is.
+                    let sig = FnSig { params, ret: *ret };
+                    let label = callee_label(callee);
+                    self.check_args_against_sig(&label, &sig, args, node_path, scope);
                 }
             }
 
@@ -6293,20 +6443,23 @@ impl CheckCtx {
             }
         }
 
-        // A wildcard pattern or a plain identifier covers all constructors.
-        let has_wildcard = arms
-            .iter()
-            .any(|arm| matches!(arm.pattern, Pattern::Wildcard | Pattern::Ident(_)));
+        // A wildcard pattern or a plain identifier covers all constructors —
+        // unless it carries a guard: a guard can be false, so a guarded arm
+        // covers nothing for exhaustiveness (CS2-4, E-7).
+        let has_wildcard = arms.iter().any(|arm| {
+            arm.guard.is_none() && matches!(arm.pattern, Pattern::Wildcard | Pattern::Ident(_))
+        });
 
         if has_wildcard {
             return;
         }
+        let unguarded = |a: &&MatchArm| a.guard.is_none();
 
         let file = self.file.clone();
         match subject_ty {
             Type::Option(_) => {
-                let has_some = arms.iter().any(|a| matches!(a.pattern, Pattern::Some(_)));
-                let has_none = arms.iter().any(|a| matches!(a.pattern, Pattern::None));
+                let has_some = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::Some(_)));
+                let has_none = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::None));
                 if !has_some {
                     self.errors.push(
                         CheckError::new(E0304, "non-exhaustive match — missing Some(_) arm")
@@ -6327,8 +6480,8 @@ impl CheckCtx {
                 }
             }
             Type::Result(_, _) => {
-                let has_ok = arms.iter().any(|a| matches!(a.pattern, Pattern::Ok(_)));
-                let has_err = arms.iter().any(|a| matches!(a.pattern, Pattern::Err(_)));
+                let has_ok = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::Ok(_)));
+                let has_err = arms.iter().filter(unguarded).any(|a| matches!(a.pattern, Pattern::Err(_)));
                 if !has_ok {
                     self.errors.push(
                         CheckError::new(E0304, "non-exhaustive match — missing Ok(_) arm")
@@ -6405,6 +6558,7 @@ impl CheckCtx {
                     }
                     let covered: std::collections::HashSet<String> = arms
                         .iter()
+                        .filter(unguarded)
                         .filter_map(|arm| match &arm.pattern {
                             Pattern::Struct { name, .. } => {
                                 // "EnumName::VariantName" → extract variant name
@@ -6440,7 +6594,271 @@ impl CheckCtx {
                     }
                 }
             }
+            // CS2-4: scalar and tuple scrutinees. int/str/float/decimal need a
+            // catch-all, bool needs `true` + `false`, and a tuple is the product
+            // of its flattened components' domains.
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::U8 | Type::U16 | Type::U32
+            | Type::U64 | Type::F32 | Type::F64 | Type::Decimal | Type::Str | Type::Bool
+            | Type::Tuple(_) => {
+                self.check_value_exhaustiveness(subject_ty, arms, node_path);
+            }
             _ => {}
+        }
+    }
+
+    /// CS2-4: exhaustiveness for a scalar or tuple scrutinee. The subject is
+    /// flattened into components (nested tuples included); each component has
+    /// a domain (bool -> {true, false}; enum/`Option`/`Result` -> its
+    /// constructors; anything else -> {*}). The match is exhaustive iff every
+    /// combination of the product is covered by one unguarded arm. Above 256
+    /// combinations an irrefutable arm is required. A component whose type is
+    /// not known here and cannot be read off the patterns skips the check.
+    fn check_value_exhaustiveness(
+        &mut self,
+        subject_ty: &Type,
+        arms: &[MatchArm],
+        node_path: &NodePath,
+    ) {
+        let rows: Vec<CoverCell> = arms
+            .iter()
+            .filter(|a| a.guard.is_none())
+            .map(|a| CoverCell::Pat(&a.pattern))
+            .collect();
+        let n_arms = rows.len();
+        let mut domains: Vec<CoverDomain> = Vec::new();
+        let mut cols: Vec<Vec<CoverCell>> = Vec::new();
+        if !self.flatten_cover(subject_ty, rows, &mut domains, &mut cols) {
+            return;
+        }
+        let total = domains
+            .iter()
+            .try_fold(1usize, |acc, d| acc.checked_mul(d.len()).filter(|t| *t <= 256));
+        let subject = subject_ty.display();
+        let message = match total {
+            Some(_) => {
+                let mut combo = vec![0usize; domains.len()];
+                let mut missing = None;
+                'combos: loop {
+                    if domains.iter().any(|d| d.len() == 0) {
+                        break;
+                    }
+                    let covered = (0..n_arms).any(|a| {
+                        cols.iter()
+                            .enumerate()
+                            .all(|(k, c)| self.cell_covers(c[a], &domains[k], combo[k]))
+                    });
+                    if !covered {
+                        missing = Some(combo.clone());
+                        break;
+                    }
+                    for k in (0..combo.len()).rev() {
+                        combo[k] += 1;
+                        if combo[k] < domains[k].len() {
+                            continue 'combos;
+                        }
+                        combo[k] = 0;
+                    }
+                    break;
+                }
+                let Some(missing) = missing else { return };
+                let all_any = domains.iter().all(|d| matches!(d, CoverDomain::Any));
+                if all_any {
+                    format!("non-exhaustive match on `{subject}` — add a `_ =>` arm")
+                } else {
+                    let parts: Vec<String> = missing
+                        .iter()
+                        .zip(&domains)
+                        .map(|(v, d)| d.render(*v))
+                        .collect();
+                    let shown = if matches!(subject_ty, Type::Tuple(_)) {
+                        format!("({})", parts.join(", "))
+                    } else {
+                        parts.join(", ")
+                    };
+                    format!(
+                        "non-exhaustive match on `{subject}` — no arm covers `{shown}`; add that arm or a `_ =>` arm"
+                    )
+                }
+            }
+            None => {
+                let irrefutable_arm = (0..n_arms).any(|a| {
+                    cols.iter().all(|c| match c[a] {
+                        CoverCell::Wild => true,
+                        CoverCell::Never => false,
+                        CoverCell::Pat(p) => self.pattern_irrefutable(p),
+                    })
+                });
+                if irrefutable_arm {
+                    return;
+                }
+                format!(
+                    "non-exhaustive match on `{subject}` — more than 256 combinations to cover; add a `_ =>` arm"
+                )
+            }
+        };
+        let file = self.file.clone();
+        self.errors.push(
+            CheckError::new(E0304, message)
+                .node(node_path)
+                .at(&file, 0, 0)
+                .with_span(self.current_span)
+                .fix("add the missing arm, or a catch-all `_ => { /* handle */ }` (a guarded arm covers nothing)"),
+        );
+    }
+
+    /// Flatten `ty` into exhaustiveness components (CS2-4). `rows` holds one
+    /// cell per unguarded arm. Returns false when a component's domain cannot be
+    /// decided, which skips the check (no refusal on an unknown type).
+    fn flatten_cover<'a>(
+        &self,
+        ty: &Type,
+        rows: Vec<CoverCell<'a>>,
+        domains: &mut Vec<CoverDomain>,
+        cols: &mut Vec<Vec<CoverCell<'a>>>,
+    ) -> bool {
+        let unknown = matches!(ty, Type::Unknown | Type::Var(_) | Type::Deferred(_) | Type::TypeParam(_));
+        let tuple: Option<Vec<Type>> = match ty {
+            Type::Tuple(ts) => Some(ts.clone()),
+            _ if unknown => {
+                let mut arity = None;
+                for c in &rows {
+                    if let CoverCell::Pat(Pattern::Tuple(ps)) = c {
+                        if arity.is_some_and(|n| n != ps.len()) {
+                            return false;
+                        }
+                        arity = Some(ps.len());
+                    }
+                }
+                arity.map(|n| vec![Type::Unknown; n])
+            }
+            _ => None,
+        };
+        if let Some(ts) = tuple {
+            for (i, t) in ts.iter().enumerate() {
+                let sub: Vec<CoverCell<'a>> = rows
+                    .iter()
+                    .map(|c| match *c {
+                        CoverCell::Wild => CoverCell::Wild,
+                        CoverCell::Never => CoverCell::Never,
+                        CoverCell::Pat(Pattern::Wildcard | Pattern::Ident(_)) => CoverCell::Wild,
+                        CoverCell::Pat(Pattern::Tuple(ps)) if ps.len() == ts.len() => {
+                            CoverCell::Pat(&ps[i])
+                        }
+                        CoverCell::Pat(_) => CoverCell::Never,
+                    })
+                    .collect();
+                if !self.flatten_cover(t, sub, domains, cols) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        let variants = |names: &[&str]| CoverDomain::Variants(names.iter().map(|s| s.to_string()).collect());
+        let dom = match ty {
+            Type::Bool => CoverDomain::Bool,
+            Type::Option(_) => variants(&["Some", "None"]),
+            Type::Result(_, _) => variants(&["Ok", "Err"]),
+            Type::Enum(n) => match self.enum_variants.get(n) {
+                Some(vs) => CoverDomain::Variants(vs.clone()),
+                None => return false,
+            },
+            Type::Struct(n) if self.enum_variants.contains_key(n) => {
+                CoverDomain::Variants(self.enum_variants[n].clone())
+            }
+            _ if unknown => match self.domain_from_patterns(&rows) {
+                Some(d) => d,
+                None => return false,
+            },
+            _ => CoverDomain::Any,
+        };
+        domains.push(dom);
+        cols.push(rows);
+        true
+    }
+
+    /// The domain of a component whose type the checker does not know, read
+    /// off the arms' patterns; `None` when they do not decide it.
+    fn domain_from_patterns(&self, rows: &[CoverCell]) -> Option<CoverDomain> {
+        let variants = |names: &[&str]| CoverDomain::Variants(names.iter().map(|s| s.to_string()).collect());
+        let mut dom: Option<CoverDomain> = None;
+        for c in rows {
+            let CoverCell::Pat(p) = c else { continue };
+            let this = match p {
+                Pattern::Wildcard | Pattern::Ident(_) => continue,
+                Pattern::Some(_) | Pattern::None => variants(&["Some", "None"]),
+                Pattern::Ok(_) | Pattern::Err(_) => variants(&["Ok", "Err"]),
+                Pattern::Literal(crate::ast::Literal::Bool(_)) => CoverDomain::Bool,
+                Pattern::Literal(_) => CoverDomain::Any,
+                Pattern::Struct { name, .. } => {
+                    if let Some((enum_name, _)) = name.split_once("::") {
+                        CoverDomain::Variants(self.enum_variants.get(enum_name)?.clone())
+                    } else if self.struct_fields.contains_key(name) {
+                        CoverDomain::Any
+                    } else {
+                        let mut owners = self.enum_variants.values().filter(|vs| vs.contains(name));
+                        let vs = owners.next()?;
+                        if owners.next().is_some() {
+                            return None;
+                        }
+                        CoverDomain::Variants(vs.clone())
+                    }
+                }
+                Pattern::Tuple(_) => return None,
+            };
+            match &dom {
+                None => dom = Some(this),
+                Some(d) if *d == this => {}
+                Some(_) => return None,
+            }
+        }
+        Some(dom.unwrap_or(CoverDomain::Any))
+    }
+
+    /// Does `cell` cover value `v` of `dom` (CS2-4)?
+    fn cell_covers(&self, cell: CoverCell, dom: &CoverDomain, v: usize) -> bool {
+        let p = match cell {
+            CoverCell::Wild => return true,
+            CoverCell::Never => return false,
+            CoverCell::Pat(p) => p,
+        };
+        if matches!(p, Pattern::Wildcard | Pattern::Ident(_)) {
+            return true;
+        }
+        match dom {
+            CoverDomain::Bool => {
+                matches!(p, Pattern::Literal(crate::ast::Literal::Bool(b)) if *b == (v == 0))
+            }
+            CoverDomain::Variants(names) => {
+                let want = names[v].as_str();
+                match p {
+                    Pattern::Some(inner) => want == "Some" && self.pattern_irrefutable(inner),
+                    Pattern::None => want == "None",
+                    Pattern::Ok(inner) => want == "Ok" && self.pattern_irrefutable(inner),
+                    Pattern::Err(inner) => want == "Err" && self.pattern_irrefutable(inner),
+                    Pattern::Struct { name, fields } => {
+                        name.rsplit("::").next() == Some(want)
+                            && fields.iter().all(|(_, f)| self.pattern_irrefutable(f))
+                    }
+                    _ => false,
+                }
+            }
+            CoverDomain::Any => self.pattern_irrefutable(p),
+        }
+    }
+
+    /// A pattern that matches every value of its type: a binding, `_`, a tuple
+    /// of irrefutable patterns, or a destructure of a known struct whose field
+    /// patterns are irrefutable.
+    fn pattern_irrefutable(&self, p: &Pattern) -> bool {
+        match p {
+            Pattern::Wildcard | Pattern::Ident(_) => true,
+            Pattern::Tuple(ps) => ps.iter().all(|q| self.pattern_irrefutable(q)),
+            Pattern::Struct { name, fields } => {
+                !name.contains("::")
+                    && self.struct_fields.contains_key(name)
+                    && fields.iter().all(|(_, f)| self.pattern_irrefutable(f))
+            }
+            _ => false,
         }
     }
 
@@ -7294,6 +7712,22 @@ impl CheckCtx {
                         }
                     }
                 }
+                // CS2-6: a call by a name a local binds runs the local, and a
+                // call through a fn value (`ops[0](..)`, `mk()(..)`, `(h.f)(..)`)
+                // runs that value: each returns its fn type's return.
+                let value_ret = match callee.as_ref() {
+                    Expr::Ident(name) => scope.get(name.as_str()).map(|t| match t {
+                        Type::Fn(_, ret) => (**ret).clone(),
+                        _ => Type::Unknown,
+                    }),
+                    other => Some(match self.fn_value_type(other, scope) {
+                        Some(Type::Fn(_, ret)) => *ret,
+                        _ => Type::Unknown,
+                    }),
+                };
+                if let Some(ret) = value_ret {
+                    return if type_contains_unresolved(&ret) { Type::Unknown } else { ret };
+                }
                 if let Expr::Ident(name) = callee.as_ref() {
                     if let Option::Some(sig) = self.call_sig(name, args) {
                         if type_contains_unresolved(&sig.ret) {
@@ -7341,7 +7775,13 @@ impl CheckCtx {
                 // a runtime panic. Empty literal → Unknown element.
                 let elem_ty = elems
                     .first()
-                    .map(|e| self.resolve_expr_type(e, &node_path.child("elem_0"), scope))
+                    .map(|e| match self.resolve_expr_type(e, &node_path.child("elem_0"), scope) {
+                        // CS2-6: an array of fn values (`[add, sub]`) keeps
+                        // its element's `fn(..) -> ..` type, so `ops[0](..)`
+                        // is checked.
+                        Type::Unknown => self.fn_value_type(e, scope).unwrap_or(Type::Unknown),
+                        ty => ty,
+                    })
                     .unwrap_or(Type::Unknown);
                 Type::Slice(Box::new(elem_ty))
             }
@@ -7733,6 +8173,47 @@ fn conclusive_pattern_key(p: &Pattern) -> Option<String> {
     }
 }
 
+/// One arm's pattern at one flattened scrutinee component (CS2-4
+/// exhaustiveness): `Wild` covers everything (a binding or `_` above a nested
+/// tuple), `Never` nothing (a pattern of another shape).
+#[derive(Clone, Copy)]
+enum CoverCell<'a> {
+    Wild,
+    Pat(&'a Pattern),
+    Never,
+}
+
+/// The values one flattened scrutinee component can take, for exhaustiveness:
+/// bool, a constructor list (enum variants, `Some`/`None`, `Ok`/`Err`), or one
+/// opaque value `{*}` that only a binding or `_` covers.
+#[derive(PartialEq)]
+enum CoverDomain {
+    Bool,
+    Variants(Vec<String>),
+    Any,
+}
+
+impl CoverDomain {
+    fn len(&self) -> usize {
+        match self {
+            CoverDomain::Bool => 2,
+            CoverDomain::Variants(v) => v.len(),
+            CoverDomain::Any => 1,
+        }
+    }
+
+    fn render(&self, v: usize) -> String {
+        match self {
+            CoverDomain::Bool => (v == 0).to_string(),
+            CoverDomain::Variants(names) => match names[v].as_str() {
+                "Some" | "Ok" | "Err" => format!("{}(_)", names[v]),
+                other => other.to_string(),
+            },
+            CoverDomain::Any => "_".to_string(),
+        }
+    }
+}
+
 /// The scalar "kind" a subject type belongs to for literal-pattern matching, or
 /// `None` for non-scalar / inference-pending types (where no E0405 should fire).
 /// `i64`/`i32` collapse to one "int" kind (mutually compatible by widening).
@@ -7880,6 +8361,141 @@ fn free_fn_for_method(key: &str, method: &str) -> Option<&'static str> {
 fn is_char_at_call(e: &Expr) -> bool {
     matches!(e, Expr::Call { callee, .. }
         if matches!(callee.as_ref(), Expr::Ident(n) if n == "char_at"))
+}
+
+/// checker-soundness-2 CS2-7: in `stmts` (the statements after a
+/// `let name = ..`), the calls `name(..)` that run that binding: every call
+/// whose callee is `name` where no binder in between shadows
+/// it. Conservative by construction - a form that may bind (`for`, `while
+/// let`, handlers, `select`, ..) is not entered, and any assignment to `name`
+/// anywhere in the rest of the block (`name = ..`, which a loop can make
+/// reach an earlier call too) yields no call at all - so a call is collected
+/// only when it provably runs that binding.
+fn calls_of_binding<'e>(name: &str, stmts: &'e [Stmt], out: &mut Vec<&'e Expr>) {
+    let assigned = format!("Assign {{ name: {name:?},");
+    let assigned_to = format!("AssignTo {{ place: Ident({name:?})");
+    if stmts.iter().any(|s| {
+        let text = format!("{:?}", s.expr);
+        text.contains(&assigned) || text.contains(&assigned_to)
+    }) {
+        return;
+    }
+    calls_in_stmts(name, stmts, out);
+}
+
+/// [`calls_of_binding`] over a statement list: a `let`/`own`/`ref` of
+/// `name` ends the scan (its value still sees the outer binding).
+fn calls_in_stmts<'e>(name: &str, stmts: &'e [Stmt], out: &mut Vec<&'e Expr>) {
+    for s in stmts {
+        if calls_in(name, &s.expr, out) {
+            return;
+        }
+    }
+}
+
+/// [`calls_of_binding`] over one expression; `true` when `e` rebinds `name`
+/// for the statements after it.
+fn calls_in<'e>(name: &str, e: &'e Expr, out: &mut Vec<&'e Expr>) -> bool {
+    let all = |es: &'e [Expr], out: &mut Vec<&'e Expr>| {
+        for x in es {
+            calls_in(name, x, out);
+        }
+    };
+    match e {
+        Expr::Let { name: n, value, .. }
+        | Expr::Own { name: n, value, .. }
+        | Expr::RefBind { name: n, value, .. } => {
+            calls_in(name, value, out);
+            return n == name;
+        }
+        Expr::Call { callee, args, .. } => {
+            match callee.as_ref() {
+                Expr::Ident(n) if n == name => out.push(e),
+                other => {
+                    calls_in(name, other, out);
+                }
+            }
+            all(args, out);
+        }
+        Expr::Block(stmts) => calls_in_stmts(name, stmts, out),
+        Expr::While { cond, body } => {
+            calls_in(name, cond, out);
+            calls_in_stmts(name, body, out);
+        }
+        Expr::Lambda { params, body, .. } => {
+            if params.iter().all(|p| p.name != name) {
+                calls_in(name, body, out);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            calls_in(name, subject, out);
+            for arm in arms {
+                let mut bound = Vec::new();
+                crate::resolver::collect_pattern_binding_names(&arm.pattern, &mut bound);
+                if bound.iter().all(|b| b != name) {
+                    if let Some(g) = &arm.guard {
+                        calls_in(name, g, out);
+                    }
+                    calls_in(name, &arm.body, out);
+                }
+            }
+        }
+        Expr::If { cond, then, else_ } => {
+            calls_in(name, cond, out);
+            calls_in(name, then, out);
+            if let Some(x) = else_ {
+                calls_in(name, x, out);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            calls_in(name, left, out);
+            calls_in(name, right, out);
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            calls_in(name, receiver, out);
+            all(args, out);
+        }
+        Expr::Index { receiver, index } => {
+            calls_in(name, receiver, out);
+            calls_in(name, index, out);
+        }
+        Expr::UnaryOp { operand: x, .. }
+        | Expr::FieldAccess { receiver: x, .. }
+        | Expr::Question(x)
+        | Expr::Some(x)
+        | Expr::Ok(x)
+        | Expr::Err(x)
+        | Expr::Return(Some(x)) => {
+            calls_in(name, x, out);
+        }
+        Expr::Array(es) | Expr::Tuple(es) => all(es, out),
+        Expr::StructLit { fields, .. } => {
+            for (_, x) in fields {
+                calls_in(name, x, out);
+            }
+        }
+        Expr::FmtStr { parts } => {
+            for p in parts {
+                if let crate::ast::FmtPart::Expr(x) = p {
+                    calls_in(name, x, out);
+                }
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
+/// CS2-6: how a diagnostic names a callee that is not a name: `ops[..]`,
+/// `mk(..)`, `h.f`, or `fn value`.
+fn callee_label(callee: &Expr) -> String {
+    match callee {
+        Expr::Ident(n) => n.clone(),
+        Expr::Index { receiver, .. } => format!("{}[..]", callee_label(receiver)),
+        Expr::Call { callee, .. } => format!("{}(..)", callee_label(callee)),
+        Expr::FieldAccess { receiver, field } => format!("{}.{field}", callee_label(receiver)),
+        _ => "fn value".to_string(),
+    }
 }
 
 fn method_lookup_key(ty: &Type) -> Option<&'static str> {

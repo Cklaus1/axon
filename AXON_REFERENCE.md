@@ -161,7 +161,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0301` | type-check failure with no more-specific code |
 | `E0302` | a `Result` returned by a call is unused — warns by default, error under AXON_STRICT |
 | `E0303` | type-check rule violation (Phase-1 R03) |
-| `E0304` | non-exhaustive match — a variant has no arm |
+| `E0304` | non-exhaustive match — a value has no arm (a variant, `true`/`false`, a tuple combination, or any int/str/float without a `_ =>` arm; a guarded arm covers nothing) |
 | `E0305` | wrong number of arguments supplied to a function |
 | `E0306` | cannot call a non-function value; also a generic fn, a builtin, or a user fn that shadows a builtin (W0003) used as a value (only a non-generic user `fn` is a first-class value — wrap the others in a lambda) |
 | `E0307` | return type mismatch between the declared type and the body |
@@ -345,7 +345,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `arr_max_f64(xs: [f64]) -> f64` | Maximum of an f64 array. Accepts i64 elements via coercion. Panics on empty. |
 | `arr_max_i64(xs: [i64]) -> i64` | Maximum of an i64 array. Panics on an empty array — caller should guard with `if len(xs) > 0` first. |
 | `arr_mean_f64(xs: [f64]) -> f64` | Arithmetic mean of an f64 (or i64-coerced) array. Empty → 0.0. |
-| `arr_mean_i64(xs: [i64]) -> f64` | Arithmetic mean of an i64 array as f64. Empty → 0.0 (no NaN). |
+| `arr_mean_i64(xs: [i64]) -> f64` | Arithmetic mean of an i64 array as f64. Empty → 0.0 (no NaN). Exact sum (no overflow), one rounding to f64. |
 | `arr_min_by(xs: [T], key_fn: fn(T) -> f64) -> T` | Element of `xs` that minimizes the numeric key fn. |
 | `arr_min_f64(xs: [f64]) -> f64` | Minimum of an f64 array. Accepts i64 elements via coercion. Panics on empty. |
 | `arr_min_i64(xs: [i64]) -> i64` | Minimum of an i64 array. Panics on an empty array. |
@@ -356,10 +356,10 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `arr_reverse(xs: [T]) -> [T]` | Return a fresh array with elements in reverse order. Works for any element type. |
 | `arr_sort_by(xs: [T], cmp: fn(T, T) -> i64) -> [T]` | Return a sorted copy of `xs` using the comparator (neg = a<b, 0 = eq, pos = a>b). Element type is deferred so any sortable domain works. Stable merge sort, O(n log n) comparator calls; equal elements keep input order. Input untouched. |
 | `arr_std_f64(xs: [f64]) -> f64` | Sample standard deviation: sqrt of (sum of squared deviations from mean) / (n - 1). Panics for arrays of length < 2. |
-| `arr_sum_by(xs: [T], key_fn: fn(T) -> i64) -> i64` | Sum a projected i64 field over `xs`. Equivalent to `arr_sum_i64(&arr_map(xs, key_fn))` but doesn't materialize the mapped array — the `_by` sibling of `arr_max_by`/`arr_min_by`. |
+| `arr_sum_by(xs: [T], key_fn: fn(T) -> i64) -> i64` | Sum a projected i64 field over `xs`. Equivalent to `arr_sum_i64(&arr_map(xs, key_fn))` but doesn't materialize the mapped array — the `_by` sibling of `arr_max_by`/`arr_min_by`. Overflow panics like `+` (exit 101). |
 | `arr_sum_by_f64(xs: [T], key_fn: fn(T) -> f64) -> f64` | Sum a projected f64 field over `xs`. The f64 counterpart of `arr_sum_by`. |
 | `arr_sum_f64(xs: [f64]) -> f64` | Sum of an f64 (or i64-coerced) array. Empty → 0.0. |
-| `arr_sum_i64(xs: [i64]) -> i64` | Sum of an i64 array. Empty → 0. Saturates on overflow. |
+| `arr_sum_i64(xs: [i64]) -> i64` | Sum of an i64 array. Empty → 0. Overflow panics like `+` (exit 101). |
 | `arr_take(xs: [T], n: i64) -> [T]` | Return the first `n` elements of `xs`. Saturates at `len(xs)`; negative `n` returns empty. |
 | `arr_take_while(xs: [T], pred: fn(T) -> bool) -> [T]` | Prefix of `xs` whose elements satisfy `pred`, up to (not including) the first failing element. The streaming-prefix dual of `arr_filter`. |
 | `arr_unique(xs: [T]) -> [T]` | Dedupe preserving first occurrence and original order. Structural equality so nested values dedupe correctly. O(n²); hash-based version waits on a HashMap primitive. |
@@ -376,7 +376,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `as_u8(v: T) -> u8` | Numeric cast to u8 (truncating/masking, no panic). Accepts i64/f64/bool/any fixed-width int. Powers the `x as u8` operator. |
 | `assert(cond: bool) -> ()` | Panic with a diagnostic message if `cond` is false. |
 | `assert_eq(a: i64, b: i64) -> ()` | Panic if `a != b`. Compares two i64 values. |
-| `assert_eq_f64(a: f64, b: f64) -> ()` | Panic if `a != b`. Compares two f64 values. |
+| `assert_eq_f64(a: f64, b: f64) -> ()` | Panic unless `a == b` exactly (IEEE; NaN never equal). For a tolerance write `assert(abs_f64(a - b) <= eps)`. |
 | `assert_eq_str(a: str, b: str) -> ()` | Panic with a diff if `a != b`. Compares two str values. |
 | `assert_err(tag: bool) -> ()` | Panic if `tag` is true (Ok). Expects the i1 tag from a Result. |
 | `atomic_cas_i64(ptr: i64, expected: i64, desired: i64, ordering: i64) -> i64` | R17 Slice 2: atomic compare-and-swap — if `*ptr == expected`, store `desired`; returns the value that WAS in memory (== expected iff the swap happened) with the named memory order. Lowers to LLVM `cmpxchg`. Substrate-only. |
@@ -428,7 +428,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `dict_get(d: Dict, k: str) -> Option<T>` | Return `Some(v)` if key `k` is present in `d`, `None` otherwise. Value type is deferred. |
 | `dict_get_or(d: Dict, k: str, default: V) -> V` | Get the value at `k` or return `default` if absent. Compresses the `match dict_get(d, k) { Some(v) => v  None => default }` idiom into one call. |
 | `dict_has(d: Dict, k: str) -> bool` | Does `d` contain key `k`? |
-| `dict_inc(d: Dict, k: str) -> i64` | Atomically bump an i64 counter at `k`. Initializes to 1 if absent. Returns the new value. Replaces the four-line get-default-add-set dance for frequency / counter tables. |
+| `dict_inc(d: Dict, k: str) -> i64` | Atomically bump an i64 counter at `k`. Initializes to 1 if absent. Returns the new value. Overflow panics like `+` (exit 101). Replaces the four-line get-default-add-set dance for frequency / counter tables. |
 | `dict_keys(d: Dict) -> [str]` | All keys in `d`, in BTreeMap (lexicographic) order. Deterministic. |
 | `dict_len(d: Dict) -> i64` | Number of entries in `d`. |
 | `dict_map_values(d: Dict, f: fn(V) -> U) -> Dict` | Transform every value via the closure; keys preserved. Returns a fresh dict — the input is not mutated. The dict analogue of `arr_map`. |
@@ -543,7 +543,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `port_in_u8(port: i64) -> i64` | R17 HAL: read one byte from an x86 I/O port (`inb port` → zero-extended i64). Used for polling UART LSR, reading keyboard status, etc. Substrate-only. |
 | `port_out_u8(port: i64, val: i64) -> ()` | R17 HAL: write one byte to an x86 I/O port (`outb val, port`). Used for PIC, serial UART, and debug console (port 0xE9 = QEMU debugcon). Substrate-only. |
 | `pow(base: f64, exp: f64) -> f64` | Raise `base` to the power `exp`. Calls C pow. |
-| `pow_i64(base: i64, exp: i64) -> i64` | Raise `base` to the power `exp` (non-negative `exp` only). |
+| `pow_i64(base: i64, exp: i64) -> i64` | Raise `base` to the power `exp` (non-negative `exp` only). Overflow panics like `*` (exit 101); a negative `exp` panics. |
 | `principal_activate(handle: i64) -> ()` | F3 (Phase 9): set the named principal as the current audit context so capability audit records (ai_call, agent_action) carry its name. A negative or unknown handle is a PANIC (E1601), not a silent reset to "root" — audit attribution that fails open would let a bad handle launder a call back to the root authority. Interp-only. |
 | `principal_authorize(handle: i64, needs_net: bool, needs_fs_write: bool, needs_exec: bool) -> bool` | Phase-7 (R12 Slice 1): action gate — authorized iff the principal holds every needed capability AND is not budget-exhausted. |
 | `principal_budget_remaining(handle: i64) -> i64` | Phase-7 (R12 Slice 1): the principal's remaining budget (cap − used, clamped at 0). 0 for an unknown handle. |
@@ -557,7 +557,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `println(msg: str) -> ()` | Write `msg` to stdout followed by a newline. |
 | `ptr_from_addr(addr: i64) -> i64` | R17 HAL: construct a raw pointer from a physical address (i64 since literals default to i64). Substrate-only (@[hal] required). Returns an opaque handle; pass to volatile_load/volatile_store. |
 | `random_f64() -> f64` | Return a pseudo-random `f64` in `[0.0, 1.0)` (xorshift64). Reproducible via `srand`/`AXON_SEED`. |
-| `random_i64(lo: i64, hi: i64) -> i64` | Return a pseudo-random `i64` in `[lo, hi)` (xorshift64). Seed via `srand(n)` or the `AXON_SEED` env var for reproducible runs. Inverted bounds (`hi < lo`) panic — they're a caller error, not a silent degenerate. `hi == lo` returns `lo` (empty range). |
+| `random_i64(lo: i64, hi: i64) -> i64` | Return a pseudo-random `i64` in `[lo, hi)` (xorshift64). Any `lo <= hi` is valid, including the full i64 range. Seed via `srand(n)` or the `AXON_SEED` env var for reproducible runs. Inverted bounds (`hi < lo`) panic — they're a caller error, not a silent degenerate. `hi == lo` returns `lo` (empty range). |
 | `re_captures(pattern: str, s: str) -> Result<[str], str>` | Capture groups of the leftmost match: element 0 is the whole match, 1.. are the groups. Empty array when there is no match. A group that did not PARTICIPATE is reported as the empty string — indistinguishable from a group that matched empty, a documented limitation rather than a `[Option<str>]` return that complicates the common case to serve the rare one. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring. |
 | `re_find(pattern: str, s: str) -> Result<Option<str>, str>` | The leftmost match, or None. **Leftmost-FIRST (Perl/PCRE), not leftmost-longest:** `re_find("a\|ab", "ab")` is `"a"`, because alternation order is priority. Lazy quantifiers (`.*?`) therefore work as models expect. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring. |
 | `re_find_all(pattern: str, s: str) -> Result<[str], str>` | Every non-overlapping match, left to right. An empty match advances one character so the scan always terminates. NOTE: in a pattern literal, DOUBLE any braces (write a{{2,3}} not a{2,3}) — `{` opens string interpolation, and the single-brace form silently becomes a different pattern instead of erroring. |
@@ -601,7 +601,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `str_len_chars(s: str) -> i64` | The number of CHARACTERS in `s`. Contrast `str_len`, which counts BYTES: `str_len("café")` is 5 and `str_len_chars("café")` is 4. |
 | `str_pad_end(s: str, width: i64, fill: str) -> str` | Right-pad `s` with the first byte of `fill` until it is `width` bytes long. Returns `s` unchanged if already >= `width` bytes. |
 | `str_pad_start(s: str, width: i64, fill: str) -> str` | Left-pad `s` with the first byte of `fill` until it is `width` bytes long. Returns `s` unchanged if already >= `width` bytes. |
-| `str_repeat(s: str, n: i64) -> str` | Return a string containing `s` repeated `n` times (empty string if n <= 0). |
+| `str_repeat(s: str, n: i64) -> str` | Return a string containing `s` repeated `n` times (empty string if n <= 0). A result too large to allocate panics (`str_repeat: result too large`, exit 101). |
 | `str_replace(s: str, from: str, to: str) -> str` | Return a copy of `s` with all non-overlapping occurrences of `from` replaced by `to`. |
 | `str_reverse(s: str) -> str` | Return a copy of `s` with its bytes in reverse order. |
 | `str_slice(s: str, start: i64, end: i64) -> str` | Return the substring of `s` from byte index `start` (inclusive) to `end` (exclusive). An out-of-range index clamps; an index inside a multi-byte character panics (E2200) - use `str_char_slice` for character indices. |

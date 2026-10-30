@@ -14105,10 +14105,11 @@ fn invariant_i9_no_silent_success_on_degenerate_input() {
             "match parse_int(\"nope\") { Ok(n) => println(to_str(n))  Err(e) => println(e) }",
             Out("could not parse `nope` as a base-10 integer"),
         ),
-        // arr_sum overflow → saturates (documented), not a wrapped negative.
+        // arr_sum overflow → panics like `+` (checker-soundness-2 CS2-2; it
+        // used to saturate: a wrong total reported as success).
         (
             "let a = [9223372036854775807, 1]\n  println(to_str(arr_sum_i64(a)))",
-            Out("9223372036854775807"),
+            Panic("integer overflow"),
         ),
     ];
     for (i, (body, exp)) in cases.iter().enumerate() {
@@ -14597,7 +14598,7 @@ fn arr_max_by_min_by_take_drop_while_dict_each() {
 }
 
 #[test]
-fn arr_sum_by_sums_a_projection_and_saturates_like_arr_sum_i64() {
+fn arr_sum_by_sums_a_projection_and_panics_like_the_operator() {
     // `arr_sum_by(xs, key_fn)` — sum a projected field without materializing
     // the mapped array, the `_by` sibling of arr_max_by/arr_min_by.
     //
@@ -14607,13 +14608,10 @@ fn arr_sum_by_sums_a_projection_and_saturates_like_arr_sum_i64() {
     // a one-arg builtin, i.e. a parse error at a high column. Four of the five
     // parse failures in sweep 20b were this exact shape.
     //
-    // The saturation case is the point of the test, not decoration:
-    // arr_sum_i64 SATURATES on i64 overflow (fuzz_parity.sh pins arr_sum_ovf ->
-    // i64::MAX in both interp and native). arr_sum_by is that reduction with a
-    // projection in front, so `arr_sum_by(xs, |x| x)` must equal
-    // `arr_sum_i64(xs)` on every input including the boundary — a checked_add
-    // panic here would be a silent divergence between two spellings of one
-    // operation.
+    // Overflow (checker-soundness-2 CS2-2): arr_sum_by is `arr_sum_i64` with a
+    // projection in front, and both now panic on i64 overflow exactly as the
+    // `+` they stand for does (`arr_fold(xs, 0, |a, x| a + x)`). They used to
+    // saturate to i64::MAX: a wrong total reported as success.
     let src = "type Row = { region: str, amount: i64 }\n\
         fn main() -> i64 {\n  \
             let rows = [\n    \
@@ -14625,13 +14623,13 @@ fn arr_sum_by_sums_a_projection_and_saturates_like_arr_sum_i64() {
             let north = arr_sum_by(&arr_filter(&rows, |r| str_eq(r.region, \"north\")), |r| r.amount)\n  \
             let empty: [i64] = []\n  \
             let zero = arr_sum_by(&empty, |x| x)\n  \
-            let ovf = [9223372036854775807, 1]\n  \
-            let sat_by = arr_sum_by(&ovf, |x| x)\n  \
-            let sat_plain = arr_sum_i64(ovf)\n  \
+            let edge = [9223372036854775806, 1]\n  \
+            let max_by = arr_sum_by(&edge, |x| x)\n  \
+            let max_plain = arr_sum_i64(edge)\n  \
             let fs = [1.5, 2.25]\n  \
             let fsum = arr_sum_by_f64(&fs, |x| x)\n  \
             if total == 245 && north == 165 && zero == 0 \
-               && sat_by == sat_plain && sat_by == 9223372036854775807 \
+               && max_by == max_plain && max_by == 9223372036854775807 \
                && fsum > 3.7 && fsum < 3.8 { 1 } else { 0 }\n\
         }\n";
     let f = std::env::temp_dir().join(format!("axon_sumby_{}.ax", std::process::id()));
@@ -14639,6 +14637,277 @@ fn arr_sum_by_sums_a_projection_and_saturates_like_arr_sum_i64() {
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(1), "arr_sum_by: {:?}", out);
+    for (tag, call) in [
+        ("sum_by", "arr_sum_by([9223372036854775807, 1], |x: i64| x)"),
+        ("sum_plain", "arr_sum_i64([9223372036854775807, 1])"),
+        ("fold", "arr_fold([9223372036854775807, 1], 0, |a: i64, x: i64| a + x)"),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_sumby_{tag}_{}.ax", std::process::id()));
+        std::fs::write(&f, format!("fn main() -> i64 {{\n  println(to_str({call}))\n  0\n}}\n")).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.code() == Some(101) && err.contains("integer overflow") && out.stdout.is_empty(),
+            "[{tag}] an overflowing sum must panic like `+`: rc {:?} stdout {:?} stderr {err}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+}
+
+/// checker-soundness-2 CS2-2 (O-GAP-06): an arithmetic builtin overflows the
+/// way the operator it stands for does -- an Axon panic, exit 101, "integer
+/// overflow" -- never a wrapped or saturated i64 reported as success and never
+/// a Rust panic. `arr_mean_i64` and `random_i64` cannot overflow, so they are
+/// exact (an i128 sum / range); `str_repeat` checks the size before it
+/// allocates. Every probe checks rc 0 first: the fix is at run time only.
+#[test]
+fn arithmetic_builtins_overflow_like_the_operators() {
+    let dir = std::env::temp_dir().join(format!("axon_cs2_2_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = |body: &str| format!("fn main() -> i64 {{\n  {body}\n  0\n}}\n");
+    let run = |tag: &str, src: &str| {
+        let f = dir.join(format!("{tag}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            check.status.code(),
+            Some(0),
+            "[{tag}] the probe must check clean: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+        axon().args(["run", f.to_str().unwrap()]).output().unwrap()
+    };
+    let panics = [
+        ("a_pow", "println(to_str(pow_i64(3, 40)))", "integer overflow: pow_i64(3, 40) exceeds i64"),
+        ("a_pow_exp", "println(to_str(pow_i64(2, 4294967296)))", "integer overflow: pow_i64(2, 4294967296) exceeds i64"),
+        ("a_sum", "println(to_str(arr_sum_i64([9223372036854775807, 1])))", "integer overflow"),
+        ("a_sumby", "println(to_str(arr_sum_by([9223372036854775807, 1], |x: i64| x)))", "integer overflow"),
+        ("a_dictinc", "let d = dict_new()\n  dict_set(d, \"k\", 9223372036854775807)\n  println(to_str(dict_inc(d, \"k\")))", "integer overflow"),
+        ("a1_rep", "println(to_str(str_len(str_repeat(\"ab\", 9223372036854775807))))", "str_repeat: result too large"),
+    ];
+    for (tag, body, want) in panics {
+        let out = run(tag, &main(body));
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.code() == Some(101)
+                && err.contains(want)
+                && err.contains("axon: panic:")
+                && !err.contains("panicked at")
+                && out.stdout.is_empty(),
+            "ATTACK: an arithmetic builtin returned a wrong i64 or a Rust panic where the operator panics [{tag}]: rc {:?} stdout {:?} stderr {err}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+    // A mean cannot overflow: the true mean of [MAX, MAX, MIN, MIN] is -0.5.
+    let out = run(
+        "a_mean2",
+        &main("let m = 9223372036854775807\n  let n = 0 - m - 1\n  println(to_str_f64(arr_mean_i64([m, m, n, n])))"),
+    );
+    assert_eq!(
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).trim().to_string()),
+        (Some(0), "-0.5".to_string()),
+        "ATTACK: arr_mean_i64 returned a saturated partial sum [a_mean2]: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The full i64 range is a valid random_i64 range; every draw is in it.
+    let out = run(
+        "rnd",
+        &main("let lo = 0 - 9223372036854775807 - 1\n  let i = 0\n  while i < 20 { let r = random_i64(lo, 9223372036854775807)\n    assert(r >= lo && r < 9223372036854775807)\n    println(to_str(r))\n    i = i + 1 }"),
+    );
+    assert!(
+        out.status.code() == Some(0)
+            && String::from_utf8_lossy(&out.stdout).lines().count() == 20,
+        "ATTACK: random_i64 over the full i64 range is a Rust panic [rnd]: rc {:?} {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Controls: in-range pow, and the negative-exponent panic, are unchanged;
+    // pow at the exponent range edge is exact for bases 0, 1 and -1.
+    let out = run("a_pow_ok", &main("println(to_str(pow_i64(3, 39)))"));
+    assert_eq!(
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).trim().to_string()),
+        (Some(0), "4052555153018976267".to_string()),
+        "a_pow_ok: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = run("a_pow_neg", &main("println(to_str(pow_i64(2, 0 - 1)))"));
+    assert!(
+        out.status.code() == Some(101)
+            && String::from_utf8_lossy(&out.stderr).contains("pow_i64: negative exponent"),
+        "a_pow_neg: {out:?}"
+    );
+    let out = run(
+        "a_pow_unit",
+        &main("println(to_str(pow_i64(1, 4294967296)))\n  println(to_str(pow_i64(0 - 1, 4294967297)))\n  println(to_str(pow_i64(0 - 1, 4294967296)))\n  println(to_str(pow_i64(0, 4294967296)))\n  println(to_str(str_len(str_repeat(\"\", 9223372036854775807))))"),
+    );
+    assert_eq!(
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()),
+        (Some(0), "1\n-1\n1\n0\n0\n".to_string()),
+        "a_pow_unit: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// checker-soundness-2 CS2-7 (O-S1-15): a refined enum variant field is
+/// checked at the `E::V { .. }` literal and a refined lambda parameter at
+/// every call of the closure (a direct call and one through a builtin), exit
+/// 6 on both engines; a constant that violates the refinement is E1209 at
+/// check, as for a struct field or a named fn's parameter. Before the fix the
+/// variant arm returned before the field checks and closures bound their
+/// arguments unchecked, so each probe printed the violating value, rc 0.
+#[test]
+fn refinements_on_variant_fields_and_lambda_params_are_enforced() {
+    let dir = std::env::temp_dir().join(format!("axon_cs2_7_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pos = "type Pos = i64 where _ > 0\n";
+    let file = |tag: &str, src: &str| {
+        let f = dir.join(format!("{tag}.ax"));
+        std::fs::write(&f, format!("{pos}{src}")).unwrap();
+        f
+    };
+    let variant = |n: &str| {
+        format!(
+            "type E = A {{ n: Pos }} | B\nfn main() -> i64 {{\n  let k = {n}\n  let e = E::A {{ n: k }}\n  \
+             match e {{\n    E::A {{ n }} => println(to_str(n)),\n    E::B => println(\"b\"),\n  }}\n  0\n}}\n"
+        )
+    };
+    let runs = [
+        ("r_variant2", variant("0 - 5"), "field `n` of `E::A` (= -5)"),
+        (
+            "r_lambda",
+            "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  let k = 0 - 5\n  println(to_str(f(k)))\n  0\n}\n".to_string(),
+            "parameter `x` of a lambda (= -5)",
+        ),
+        (
+            "r_lambda_hof",
+            "fn main() -> i64 {\n  let ys = arr_map([1, 0 - 2], |x: Pos| x * 2)\n  println(to_str(ys[1]))\n  0\n}\n".to_string(),
+            "parameter `x` of a lambda (= -2)",
+        ),
+        (
+            // The VM folds a pure two-parameter closure in registers
+            // (`fold_leaf`), skipping the call: it must decline a refined one.
+            "r_lambda_fold",
+            format!(
+                "fn main() -> i64 {{\n  let xs = [{}]\n  println(to_str(arr_fold(xs, 10, |acc: Pos, x: i64| acc - x)))\n  0\n}}\n",
+                ["1"; 20].join(", ")
+            ),
+            "parameter `acc` of a lambda (= 0)",
+        ),
+        (
+            "r_fn_ctrl",
+            "fn g(x: Pos) -> i64 { x * 2 }\nfn main() -> i64 {\n  let k = 0 - 5\n  println(to_str(g(k)))\n  0\n}\n".to_string(),
+            "parameter `x` of `g` (= -5)",
+        ),
+    ];
+    for (tag, src, want) in &runs {
+        let f = file(tag, src);
+        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            check.status.code(),
+            Some(0),
+            "[{tag}] a non-constant value is a run-time check, not a refusal: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+        for engine in ["tree", "vm"] {
+            let out = axon()
+                .args(["run", f.to_str().unwrap()])
+                .env("AXON_ENGINE", engine)
+                .output()
+                .unwrap();
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                out.status.code() == Some(6)
+                    && out.stdout.is_empty()
+                    && err.contains("refinement violated")
+                    && err.contains(want),
+                "ATTACK: a refined variant field or lambda param took a violating value [{tag}, {engine}]: \
+                 rc {:?} stdout {:?} stderr {err}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+    }
+    let consts = [
+        ("r_variant_lit", variant("0").replace("E::A { n: k }", "E::A { n: 0 }")),
+        (
+            "r_lambda_lit",
+            "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  println(to_str(f(0)))\n  0\n}\n".to_string(),
+        ),
+    ];
+    for (tag, src) in &consts {
+        let f = file(tag, src);
+        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&check.stdout),
+            String::from_utf8_lossy(&check.stderr)
+        );
+        assert!(
+            check.status.code() == Some(2) && text.contains("E1209"),
+            "ATTACK: a constant violating a variant field's or lambda param's refinement checked clean [{tag}]: {text}"
+        );
+    }
+    // False-refusal controls: a call that does not run the refined lambda (a
+    // later `let`, a match binding, an assignment, or the fn of that name
+    // once the block has ended) passes a constant the lambda would refuse.
+    let controls = [
+        ("c_shadow_let", "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  let f = |x: i64| x + 1\n  println(to_str(f(0)))\n  0\n}\n", "1\n"),
+        (
+            "c_shadow_match",
+            "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  let o = Some(|y: i64| y + 3)\n  \
+             match o {\n    Some(f) => println(to_str(f(0))),\n    None => println(\"n\"),\n  }\n  0\n}\n",
+            "3\n",
+        ),
+        ("c_assign", "fn main() -> i64 {\n  let f = |x: Pos| x * 2\n  f = |x: i64| x + 5\n  println(to_str(f(0)))\n  0\n}\n", "5\n"),
+        (
+            "c_block_end",
+            "fn f(x: i64) -> i64 { x + 9 }\nfn main() -> i64 {\n  if true {\n    let f = |x: Pos| x * 2\n    \
+             println(to_str(f(3)))\n  }\n  println(to_str(f(0)))\n  0\n}\n",
+            "6\n9\n",
+        ),
+    ];
+    for (tag, src, want) in controls {
+        let f = file(tag, src);
+        let check = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            check.status.code(),
+            Some(0),
+            "[{tag}] false refusal: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(
+            (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()),
+            (Some(0), want.to_string()),
+            "[{tag}]: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    // Control: values that satisfy the refinements run unchanged.
+    let f = file(
+        "r_ok",
+        "type E = A { n: Pos } | B\nfn main() -> i64 {\n  let e = E::A { n: 3 }\n  let f = |x: Pos| x * 2\n  \
+         match e {\n    E::A { n } => println(to_str(f(n))),\n    E::B => println(\"b\"),\n  }\n  \
+         println(to_str(arr_fold([1, 2, 3], 1, |acc: Pos, x: Pos| acc + x)))\n  0\n}\n",
+    );
+    for engine in ["tree", "vm"] {
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_ENGINE", engine)
+            .output()
+            .unwrap();
+        assert_eq!(
+            (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()),
+            (Some(0), "6\n7\n".to_string()),
+            "r_ok [{engine}]: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -37813,21 +38082,15 @@ fn vm_match_while_let_break_continue() {
     );
 }
 
-/// R50 §4: a match no arm matches panics `no match arm matched`, exit 101,
-/// after the output of the earlier calls.
+/// R50 §4 fixture, CS2-4: a match on `i64` with no catch-all is non-exhaustive,
+/// so `axon run` now refuses it at check (E0304, rc 2) on both engines before
+/// any output. It used to run and panic `no match arm matched` (exit 101).
 #[test]
-fn vm_match_non_exhaustive_panics() {
-    let (code, stdout, stderr) = vm_scalar_case(
-        "match_nomatch",
-        vm_match_src!("nomatch"),
-        &[("pick", 0), ("main", 0)],
-    );
-    assert_eq!(
-        (code, stdout.as_str()),
-        (Some(101), "one\ntwo\n"),
-        "{stderr}"
-    );
-    assert!(stderr.contains("no match arm matched"), "{stderr}");
+fn vm_match_non_exhaustive_is_refused_at_check() {
+    let (code, stdout, stderr) = vm_same_both_engines("match_nomatch", vm_match_src!("nomatch"));
+    assert_eq!((code, stdout.as_str()), (Some(2), ""), "{stderr}");
+    assert!(stderr.contains("E0304"), "{stderr}");
+    assert!(stderr.contains("non-exhaustive match on `i64`"), "{stderr}");
 }
 
 /// R50 §4 `chan_method` (Behaviour table): on a channel receiver `send`
@@ -37999,6 +38262,8 @@ type PureBoolCase = (
 /// R50 S7: `Bool` operands through untyped lambda parameters. `==`/`||` on
 /// `Bool`s compute; `<` on `Bool`s, and an `if`/`while` condition that is an
 /// `Int`, decline, and the generic ops panic as the tree does (exit 101).
+/// CS2-6: `f(2, 3)` on a lambda whose body makes `a`/`b` `bool` is refused at
+/// check (E0102), so the `if`/`while` cases reach `f` through the untyped `g`.
 #[test]
 fn vm_pure_bool_ops() {
     let cases: [PureBoolCase; 3] = [
@@ -38011,14 +38276,14 @@ fn vm_pure_bool_ops() {
         ),
         (
             "pure_bool_if",
-            "    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    println(to_str(f(2, 3)))",
+            "    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))",
             "",
             "axon: panic: if condition must be bool, got i64\n",
             (1, 0),
         ),
         (
             "pure_bool_while",
-            "    let f = |a, b| {\n        let n = 0\n        while a + b * a {\n            n = n + 1\n        }\n        n\n    }\n    println(to_str(f(2, 3)))",
+            "    let f = |a, b| {\n        let n = 0\n        while a + b * a {\n            n = n + 1\n        }\n        n\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))",
             "",
             "axon: panic: while condition must be bool, got i64\n",
             (1, 1),
@@ -39389,6 +39654,8 @@ fn vm_superop_write_shared() {
 /// negative and non-`Int` indexes panic as the tree does; in `a[i] = b[j]`
 /// the value `b[j]` is read (and fails) before the target index is converted;
 /// an `i32` target index is written, an `i32` read index panics.
+/// CS2-6: `f(a, true)` on a lambda that indexes with `k` is refused at check
+/// (E0102), so `bool_index` reaches `f` through the untyped `g`.
 #[test]
 fn vm_superop_write_panics() {
     let cases: [(&str, &str, Option<i32>, &str, &str); 12] = [
@@ -39409,7 +39676,7 @@ fn vm_superop_write_panics() {
         ("swap_oob", "swap(&mut a, 0, 3)", Some(101), "", "index 3 out of bounds (len 2)"),
         (
             "bool_index",
-            "let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    println(to_str(f(a, true)[0]))",
+            "let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    let g = |w, j| f(w, j)\n    println(to_str(g(a, true)[0]))",
             Some(101),
             "",
             "expected i64, got bool",
@@ -41736,6 +42003,442 @@ fn a_call_through_a_matching_fn_value_still_runs() {
             "snd_lambda_alias",
             "type Name = str\nfn main() -> i64 {\n    let greet = |n: Name| println(\"hi \" + n)\n    greet(\"bob\")\n    0\n}\n",
             "hi bob\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS2-4 (O-GAP-04): exhaustiveness for scalar and tuple scrutinees. A match
+/// on an int/str/float needs a catch-all, a bool needs `true` + `false`, a
+/// tuple is the product of its components' domains, and a guarded arm covers
+/// nothing. Each refused probe checked clean before and panicked
+/// `no match arm matched` (exit 101) at run time.
+#[test]
+fn non_exhaustive_scalar_and_tuple_matches_are_refused() {
+    let attack = "ATTACK: a non-exhaustive match checked clean";
+    for (tag, src) in [
+        (
+            "x_int",
+            r#"fn f(n: i64) -> str {
+  match n {
+    0 => "zero",
+    1 => "one",
+  }
+}
+fn main() -> i64 {
+  println(f(5))
+  0
+}
+"#,
+        ),
+        (
+            "x_str",
+            r#"fn f(s: str) -> i64 {
+  match s {
+    "a" => 1,
+    "b" => 2,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f("z")))
+  0
+}
+"#,
+        ),
+        (
+            "x_tuple",
+            r#"fn f(t: (bool, bool)) -> i64 {
+  match t {
+    (true, true) => 1,
+    (false, false) => 2,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f((true, false))))
+  0
+}
+"#,
+        ),
+        (
+            "x_bool_half",
+            r#"fn f(b: bool) -> i64 {
+  match b {
+    true => 1,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(false)))
+  0
+}
+"#,
+        ),
+        (
+            "x_unit_stmt",
+            r#"fn main() -> i64 {
+  let n = 5
+  match n {
+    0 => println("zero"),
+    1 => println("one"),
+  }
+  println("done")
+  0
+}
+"#,
+        ),
+        (
+            "x_opt_guard",
+            r#"fn f(o: Option<i64>) -> i64 {
+  match o {
+    Some(x) if x > 0 => x,
+    None => 0,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(Some(0 - 1))))
+  0
+}
+"#,
+        ),
+    ] {
+        let (crc, cmsg, rrc, _rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains("E0304"), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(rrc, Some(2), "{attack} [{tag}]: run: {rerr}");
+    }
+    // Controls: every shape here is exhaustive and runs today; each stays
+    // rc 0 with the same output.
+    let attack = "ATTACK: an exhaustive match was refused";
+    for (tag, src, out) in [
+        (
+            "x_bool_ok",
+            r#"fn f(b: bool) -> i64 {
+  match b {
+    true => 1,
+    false => 0,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(false)))
+  0
+}
+"#,
+            "0\n",
+        ),
+        (
+            "x_int_bind",
+            r#"fn f(n: i64) -> i64 {
+  match n {
+    0 => 1,
+    k => k * 2,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(5)))
+  0
+}
+"#,
+            "10\n",
+        ),
+        (
+            "x1_opt_tuple_full",
+            r#"fn f(t: (Option<i64>, bool)) -> i64 {
+  match t {
+    (Some(x), _) => x,
+    (None, true) => 1,
+    (None, false) => 2,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f((None, false)) + f((Some(5), true))))
+  0
+}
+"#,
+            "7\n",
+        ),
+        (
+            "x2_int_wild_comp",
+            r#"fn f(n: i64, b: bool) -> i64 {
+  match (n, b) {
+    (_, true) => n,
+    (_, false) => 0 - n,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(3, true) + f(2, false)))
+  0
+}
+"#,
+            "1\n",
+        ),
+        (
+            "x3_enum_tuple",
+            r#"type C = R | G
+fn f(c: C, d: C) -> i64 {
+  match (c, d) {
+    (C::R, C::R) => 1,
+    (C::R, C::G) => 2,
+    (C::G, _) => 3,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(C::R, C::G) + f(C::G, C::R)))
+  0
+}
+"#,
+            "5\n",
+        ),
+        (
+            "x4_bool_bind",
+            r#"fn f(b: bool) -> i64 {
+  match b {
+    true => 1,
+    other => if other { 9 } else { 0 },
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(true) + f(false)))
+  0
+}
+"#,
+            "1\n",
+        ),
+        (
+            "x5_litfn",
+            r#"fn sgn(x: i64) -> i64 { if x > 0 { 1 } else { if x < 0 { 0 - 1 } else { 0 } } }
+fn main() -> i64 {
+  let r = match sgn(5) {
+    1 => "pos",
+    0 => "zero",
+    _ => "neg",
+  }
+  println(r)
+  0
+}
+"#,
+            "pos\n",
+        ),
+        (
+            "x6_res_tuple",
+            r#"fn f(t: (Result<i64, str>, i64)) -> i64 {
+  match t {
+    (Ok(v), k) => v + k,
+    (Err(_), k) => k,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f((Ok(1), 2)) + f((Err("e"), 3))))
+  0
+}
+"#,
+            "6\n",
+        ),
+        (
+            "x7_nested_tuple",
+            r#"fn f(t: ((bool, bool), bool)) -> i64 {
+  match t {
+    ((true, _), _) => 1,
+    ((false, _), _) => 2,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(((true, false), true)) + f(((false, false), false))))
+  0
+}
+"#,
+            "3\n",
+        ),
+        (
+            "x8_char",
+            r#"fn f(s: str) -> i64 {
+  match str_len(s) {
+    0 => 0,
+    n => n,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f("") + f("ab")))
+  0
+}
+"#,
+            "2\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS2-6 (O-SF-04): a call whose callee is not a name — an array element
+/// (`ops[0](..)`), the fn a call returns (`mk()(..)`), a fn-typed field
+/// (`(h.f)(..)`) — is checked against that fn value's type like a call by
+/// name: arity E0305, argument type E0306, and inference unifies its return
+/// (E0102). Each refused probe checked clean before and panicked at run time
+/// (exit 101). A callee name a param binds is typed by the param, never by a
+/// top-level fn of the same name (`o2_shadow_fn` was E0307 and runs `true`).
+#[test]
+fn a_call_through_a_non_name_callee_checks_its_signature() {
+    let attack = "ATTACK: a bad call through a fn value checked clean";
+    for (tag, src, code) in [
+        (
+            "n_index",
+            r#"fn add(a: i64, b: i64) -> i64 { a + b }
+fn main() -> i64 {
+  let ops = [add]
+  println(to_str(ops[0](1)))
+  0
+}
+"#,
+            "E0305",
+        ),
+        (
+            "n_call",
+            r#"fn add(a: i64, b: i64) -> i64 { a + b }
+fn mk() -> fn(i64, i64) -> i64 { add }
+fn main() -> i64 {
+  println(to_str(mk()(1, 2, 3)))
+  0
+}
+"#,
+            "E0305",
+        ),
+        (
+            "n_field",
+            r#"type H = { f: fn(i64) -> i64 }
+fn main() -> i64 {
+  let h = H { f: |x: i64| x + 1 }
+  println(to_str((h.f)(1, 2)))
+  0
+}
+"#,
+            "E0305",
+        ),
+        (
+            "n_type",
+            r#"fn add(a: i64, b: i64) -> i64 { a + b }
+fn main() -> i64 {
+  let ops = [add]
+  println(to_str(ops[0](1, "x")))
+  0
+}
+"#,
+            "E0306",
+        ),
+        (
+            "n_ret",
+            r#"fn add(a: i64, b: i64) -> i64 { a + b }
+fn main() -> i64 {
+  let ops = [add]
+  let s: str = ops[0](1, 2)
+  println(s)
+  0
+}
+"#,
+            "E0102",
+        ),
+        (
+            "n_lambda_kind",
+            r#"fn main() -> i64 {
+  let f = |a, b| { if a && b { 1 } else { 2 } }
+  println(to_str(f(2, 3)))
+  0
+}
+"#,
+            "E0102",
+        ),
+    ] {
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains(code), "{attack} [{tag}]: want {code}: {cmsg}");
+    }
+    // Controls: valid calls through fn values, and a fn param named like a
+    // top-level fn; each checks clean and runs.
+    let attack = "ATTACK: a valid call through a fn value was refused";
+    for (tag, src, out) in [
+        (
+            "n_ok",
+            r#"fn add(a: i64, b: i64) -> i64 { a + b }
+fn mk() -> fn(i64, i64) -> i64 { add }
+fn main() -> i64 {
+  let ops = [add]
+  println(to_str(ops[0](1, 2) + mk()(3, 4)))
+  0
+}
+"#,
+            "10\n",
+        ),
+        (
+            "n2_hof_index",
+            r#"fn mk(k: i64) -> fn(i64) -> i64 { |x: i64| x + k }
+fn main() -> i64 {
+  let fs = arr_map([1, 2], |k| mk(k))
+  println(to_str(fs[1](10)))
+  let g = if true { mk(1) } else { mk(2) }
+  println(to_str(g(1)))
+  0
+}
+"#,
+            "12\n2\n",
+        ),
+        (
+            "n_poly",
+            r#"fn main() -> i64 {
+  let fs = [|x| x]
+  println(to_str(fs[0](1)))
+  println(fs[0]("s"))
+  let id = |x| x
+  println(to_str(id(1)))
+  println(id("t"))
+  0
+}
+"#,
+            "1\ns\n1\nt\n",
+        ),
+        (
+            "n_lambda_array",
+            r#"fn app(fs: [fn(i64) -> i64], v: i64) -> i64 { fs[0](v) }
+fn main() -> i64 {
+  let fs = [|x| x + 1, |x| x * 2]
+  println(to_str(app(fs, 3)))
+  println(to_str(fs[1](4)))
+  0
+}
+"#,
+            "4\n8\n",
+        ),
+        (
+            "o1_fnparam_bool",
+            r#"fn apply(f: fn(i64) -> bool, v: i64) -> bool { f(v) }
+fn even(v: i64) -> bool { v % 2 == 0 }
+fn main() -> i64 {
+  println(to_str(apply(even, 4)))
+  0
+}
+"#,
+            "true\n",
+        ),
+        (
+            "o2_shadow_fn",
+            r#"fn apply(f: fn(i64) -> bool, v: i64) -> bool { f(v) }
+fn even(v: i64) -> bool { v % 2 == 0 }
+fn f(n: i64) -> i64 { n }
+fn main() -> i64 {
+  println(to_str(apply(even, 4)))
+  0
+}
+"#,
+            "true\n",
         ),
     ] {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);

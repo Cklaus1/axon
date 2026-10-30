@@ -3178,7 +3178,7 @@ impl<'ctx> super::Codegen<'ctx> {
         //     interpreter's graceful panic; previously yielded garbage).
         //   • hi == lo → empty range [lo, lo): return lo (previously a signed-rem
         //     by 0 → SIGFPE hard crash).
-        //   • else      → lo + (rand() mod range), normalised non-negative.
+        //   • else      → lo + (rand() mod range), range = hi - lo as UNSIGNED.
         {
             let rand_fn = self.ir.module.get_function("rand").unwrap_or_else(|| {
                 let ft = self.ir.context.i32_type().fn_type(&[], false);
@@ -3234,7 +3234,12 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(empty_bb);
             build_wrappers::w_ret(&self.ir.builder, lo.into());
 
-            // General case: lo + (rand() mod range), range = hi - lo > 0.
+            // General case: lo + (rand() mod range), range = hi - lo > 0. The
+            // range is read as UNSIGNED: `hi - lo` wraps negative as an i64 when
+            // it exceeds i64::MAX (`random_i64(MIN, MAX)`), and a signed rem by
+            // it returned `lo` every time. As a u64 it is exact, rand() >= 0,
+            // and lo + (r urem range) < hi, so the wrapping add is exact too
+            // (checker-soundness-2 CS2-2; the interpreter sums in i128).
             self.ir.builder.position_at_end(gen_bb);
             let r_i32 = build_wrappers::w_call(&self.ir.builder, rand_fn, &[], "ri_rand")
                 .try_as_basic_value()
@@ -3243,11 +3248,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 .into_int_value();
             let r = build_wrappers::w_int_s_extend(&self.ir.builder, r_i32, i64_ty, "ri_r64");
             let range = build_wrappers::w_int_sub(&self.ir.builder, hi, lo, "ri_range");
-            let r_mod = build_wrappers::w_int_signed_rem(&self.ir.builder, r, range, "ri_mod");
-            // Ensure non-negative: (r_mod + range) % range
-            let r_pos = build_wrappers::w_int_add(&self.ir.builder, r_mod, range, "ri_pos");
             let r_final =
-                build_wrappers::w_int_signed_rem(&self.ir.builder, r_pos, range, "ri_final");
+                build_wrappers::w_int_unsigned_rem(&self.ir.builder, r, range, "ri_final");
             let result = build_wrappers::w_int_add(&self.ir.builder, r_final, lo, "ri_result");
             build_wrappers::w_ret(&self.ir.builder, result.into());
 

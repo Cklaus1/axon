@@ -3788,6 +3788,15 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.locals.insert(p.name.clone(), (alloca, pty));
             }
         }
+        // checker-soundness-2 CS2-7: a parameter declared as a refinement
+        // (`|x: Pos| ..`) is checked at entry, as a named fn's is (exit 6).
+        if !self.refine_preds.is_empty() {
+            let refined: Vec<(&str, &ast::AxonType)> = params
+                .iter()
+                .filter_map(|p| p.ty.as_ref().map(|t| (p.name.as_str(), t)))
+                .collect();
+            self.emit_refine_preconditions("lambda", &refined, lambda_fn);
+        }
 
         let body_val = self.emit_expr(body, lambda_fn);
         if self
@@ -4709,8 +4718,11 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(nonempty_bb);
         }
 
-        // Accumulator + index slots.
-        let acc_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "arr_acc");
+        // Accumulator + index slots. Mean accumulates in i128 (exact; a mean
+        // cannot overflow), every other reduction in i64.
+        let i128_ty = self.ir.context.i128_type();
+        let acc_ty = if matches!(op, ArrReduce::Mean) { i128_ty } else { i64_ty };
+        let acc_slot = build_wrappers::w_alloca(&self.ir.builder, acc_ty.into(), "arr_acc");
         // Sentinel init: 0 for Sum/Contains; i64::MIN for max / i64::MAX for min
         // so the first element always wins the running compare.
         let init: u64 = match &op {
@@ -4725,7 +4737,7 @@ impl<'ctx> super::Codegen<'ctx> {
         build_wrappers::w_store(
             &self.ir.builder,
             acc_slot,
-            i64_ty.const_int(init, false).into(),
+            acc_ty.const_int(init, false).into(),
         );
         let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "arr_i");
         build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
@@ -4767,14 +4779,27 @@ impl<'ctx> super::Codegen<'ctx> {
         let elem = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), elem_ptr, "arr_e")
             .into_int_value();
         match &op {
-            ArrReduce::Sum | ArrReduce::Mean => {
+            ArrReduce::Sum => {
                 let acc =
                     build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_a")
                         .into_int_value();
-                // SATURATING add — matches the interpreter's saturating_add
-                // accumulator. Raw wrapping add silently produced a wrong total
-                // on i64 overflow (I-9).
-                let nacc = build_wrappers::w_int_add_sat(&self.ir.builder, acc, elem, "arr_na");
+                // CHECKED add: overflow panics like `+` (the same
+                // `__axon_arith_panic` path and message), as the interpreter's
+                // checked_add does (checker-soundness-2 CS2-2). It used to
+                // saturate: a wrong total reported as success.
+                let nacc = self
+                    .emit_checked_overflow_op("llvm.sadd.with.overflow", "+", acc, elem)
+                    .unwrap_or_else(|| {
+                        build_wrappers::w_int_add(&self.ir.builder, acc, elem, "arr_na").into()
+                    });
+                build_wrappers::w_store(&self.ir.builder, acc_slot, nacc);
+            }
+            ArrReduce::Mean => {
+                let acc =
+                    build_wrappers::w_load(&self.ir.builder, i128_ty.into(), acc_slot, "arr_a")
+                        .into_int_value();
+                let wide = build_wrappers::w_int_s_extend(&self.ir.builder, elem, i128_ty, "arr_e128");
+                let nacc = build_wrappers::w_int_add(&self.ir.builder, acc, wide, "arr_na");
                 build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
             }
             ArrReduce::Contains(needle) => {
@@ -4903,7 +4928,7 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // exit: produce the result.
         self.ir.builder.position_at_end(exit_bb);
-        let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_res")
+        let acc = build_wrappers::w_load(&self.ir.builder, acc_ty.into(), acc_slot, "arr_res")
             .into_int_value();
         match op {
             ArrReduce::Sum | ArrReduce::Extreme { .. } => Some(acc.into()),
@@ -4929,8 +4954,10 @@ impl<'ctx> super::Codegen<'ctx> {
                 Some(b.into())
             }
             ArrReduce::Mean => {
-                // mean = len == 0 ? 0.0 : (f64)sum / (f64)len. Guard div-by-zero
-                // (interp returns 0.0 for an empty array, never panics).
+                // mean = len == 0 ? 0.0 : (f64)sum / (f64)len, the sum an
+                // exact i128 rounded once to f64 as the interpreter's `i128 as
+                // f64` is. Guard div-by-zero (interp returns 0.0 for an empty
+                // array, never panics).
                 let f64_ty = self.ir.context.f64_type();
                 let is_empty = build_wrappers::w_int_compare(
                     &self.ir.builder,
@@ -9150,6 +9177,17 @@ impl<'ctx> super::Codegen<'ctx> {
                         ));
                         continue;
                     }
+                    // checker-soundness-2 CS2-7: a refined variant field is
+                    // checked at construction, as a struct field is (exit 6).
+                    if self.struct_field_refines.contains_key(name) {
+                        self.emit_refine_variant_field_check(
+                            name,
+                            fname,
+                            fval,
+                            slot.ty.clone(),
+                            fn_val,
+                        );
+                    }
                     if self.store_enum_field(pay_ptr, slot, fval).is_none() {
                         self.refuse_unlowered(&format!("payload field `{fname}` of `{name}`"));
                     }
@@ -11023,9 +11061,8 @@ impl<'ctx> super::Codegen<'ctx> {
         //   arr_sum_i64(&a)      → Σ elements (0 for empty)
         //   arr_contains(&a, x)  → bool, any element == x
         // The slice arg is `&a`; `&` is a no-op at the LLVM level so it yields
-        // the slice value directly. (arr_sum uses plain i64 add, not the
-        // interpreter's saturating_add — they differ only on i64 overflow, which
-        // realistic arrays don't hit; documented in the parity harness.)
+        // the slice value directly. (arr_sum uses a checked add that panics on
+        // i64 overflow like `+`, as the interpreter's checked_add does.)
         if let ast::Expr::Ident(name) = callee {
             if name == "arr_sum_i64" && args.len() == 1 {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {

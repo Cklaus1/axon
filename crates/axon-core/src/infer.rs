@@ -90,6 +90,45 @@ fn type_is_unresolved(ty: &Type) -> bool {
     )
 }
 
+/// CS2-6: true when `ty` has a part not yet resolved to a concrete type.
+fn has_unresolved(ty: &Type) -> bool {
+    let mut found = false;
+    ty.clone().map_leaves(&mut |t| {
+        found |= type_is_unresolved(&t);
+        t
+    });
+    found
+}
+
+/// CS2-6: true when `param` and `arg` are certainly different types: two
+/// scalars of different kinds (number / `str` / `bool` / unit), compared
+/// through `[T]`, `Option`, `Result` and same-length tuples. Any other shape,
+/// and any number against any number, is left to the run time: a call
+/// through a fn value is never refused for a type the call might still run.
+fn kinds_conflict(param: &Type, arg: &Type) -> bool {
+    fn kind(t: &Type) -> Option<u8> {
+        match t {
+            t if t.is_numeric() => Some(0),
+            Type::Str => Some(1),
+            Type::Bool => Some(2),
+            Type::Unit => Some(3),
+            _ => None,
+        }
+    }
+    match (param, arg) {
+        (Type::Slice(p), Type::Slice(a)) | (Type::Option(p), Type::Option(a)) => {
+            kinds_conflict(p, a)
+        }
+        (Type::Result(po, pe), Type::Result(ao, ae)) => {
+            kinds_conflict(po, ao) || kinds_conflict(pe, ae)
+        }
+        (Type::Tuple(ps), Type::Tuple(as_)) if ps.len() == as_.len() => {
+            ps.iter().zip(as_).any(|(p, a)| kinds_conflict(p, a))
+        }
+        _ => matches!((kind(param), kind(arg)), (Some(p), Some(a)) if p != a),
+    }
+}
+
 // ── Inference error ───────────────────────────────────────────────────────────
 
 /// A diagnostic produced by the type-inference pass.
@@ -391,6 +430,18 @@ fn top_level_comma(s: &str) -> Option<usize> {
     None
 }
 
+/// CS2-6: a call through a fn value (an index, a call, a field, a lambda, or a
+/// local), checked once the substitution is final. The callee's fn type is
+/// often a variable at the call (`ops[0]`), so the check waits for `solve()`.
+struct CallObligation {
+    callee: Type,
+    /// Each argument's type.
+    args: Vec<Type>,
+    /// The fresh variable the call expression was typed as.
+    ret: Type,
+    span: crate::span::Span,
+}
+
 // ── InferCtx ──────────────────────────────────────────────────────────────────
 
 /// The type-inference context.
@@ -420,6 +471,9 @@ pub struct InferCtx {
     /// substitution is final (pinning the var to `str` at the call refused a
     /// `?`- or match-bound array).
     len_obligations: Vec<(Type, crate::span::Span)>,
+    /// CS2-6: calls whose callee is not a fn name with a signature. Checked
+    /// by `solve()` against the callee's resolved fn type.
+    call_obligations: Vec<CallObligation>,
     /// Field lists for user-defined struct types.
     pub struct_fields: HashMap<String, Vec<(String, Type)>>,
     /// Generic type parameter names for struct types (struct_name → [param_names]).
@@ -511,6 +565,7 @@ impl InferCtx {
             builtin_generic_params: HashMap::new(),
             call_instantiations: Vec::new(),
             len_obligations: Vec::new(),
+            call_obligations: Vec::new(),
             struct_fields: HashMap::new(),
             struct_generic_params: HashMap::new(),
             enum_variants: HashMap::new(),
@@ -1333,9 +1388,14 @@ impl InferCtx {
                         return Type::Str;
                     }
                 }
-                let _callee_ty = self.infer_expr(callee, scope, ret_ty);
+                // CS2-6: a callee name bound by a local or a param that holds a
+                // fn value is typed by that binding, never by the top-level fn
+                // or builtin of the same name (a call by name runs the local).
+                let local_callee = matches!(callee.as_ref(), Expr::Ident(n)
+                    if scope.lookup(n).is_some_and(|t| matches!(t, Type::Fn(..) | Type::Var(_))));
+                let callee_ty = self.infer_expr(callee, scope, ret_ty);
 
-                if let Some(name) = fn_name {
+                if let Some(name) = fn_name.filter(|_| !local_callee) {
                     // CS-4: the sig of the fn this call reaches — the builtin's
                     // for a plain call to a builtin name, the user fn's otherwise.
                     let prefers_builtin = crate::builtins::call_prefers_builtin(
@@ -1423,11 +1483,21 @@ impl InferCtx {
                         return ret;
                     }
                 }
-                // Unknown callee — infer args for side-effects, return fresh var.
-                for arg in args {
-                    self.infer_expr(arg, scope, ret_ty);
-                }
-                self.fresh()
+                // A callee with no signature by name: a local or param, an
+                // index, a call, a field, a lambda. CS2-6: once the
+                // constraints are solved, a callee that resolves to a fn type
+                // checks the call's arity and argument types, and gives its
+                // return type ([`InferCtx::solve`]).
+                let call_args: Vec<Type> =
+                    args.iter().map(|arg| self.infer_expr(arg, scope, ret_ty)).collect();
+                let ret = self.fresh();
+                self.call_obligations.push(CallObligation {
+                    callee: callee_ty,
+                    args: call_args,
+                    ret: ret.clone(),
+                    span: self.current_stmt_span,
+                });
+                ret
             }
 
             // ── Method call (Phase 1: treat as top-level fn lookup) ───────────
@@ -2329,6 +2399,52 @@ impl InferCtx {
             if !matches!(ty, Type::Slice(_)) {
                 self.current_stmt_span = span;
                 self.unify(ty, Type::Str, "arg 0 of `len`", &mut subst);
+            }
+        }
+        // CS2-6: a call through a fn value checks its arity, its argument
+        // kinds and its return against the callee's resolved fn type. A part
+        // of that type still unresolved (an unannotated lambda param, a
+        // generic) accepts anything and is never bound by the call: a lambda
+        // stays callable at more than one type, as it runs.
+        for ob in std::mem::take(&mut self.call_obligations) {
+            let Type::Fn(params, ret) = subst.apply(&ob.callee) else {
+                continue;
+            };
+            self.current_stmt_span = ob.span;
+            if params.len() != ob.args.len() {
+                let span = ob.span;
+                self.errors.push(
+                    InferError::new(
+                        E0102,
+                        format!(
+                            "the fn value called here takes {} argument{} but {} {} supplied",
+                            params.len(),
+                            if params.len() == 1 { "" } else { "s" },
+                            ob.args.len(),
+                            if ob.args.len() == 1 { "was" } else { "were" },
+                        ),
+                    )
+                    .with_span(span),
+                );
+                continue;
+            }
+            for (i, (param, arg)) in params.iter().zip(&ob.args).enumerate() {
+                let arg = subst.apply(arg);
+                if kinds_conflict(param, &arg) {
+                    let span = ob.span;
+                    self.errors.push(
+                        InferError::mismatch(
+                            &format!("arg {i} of a call through a fn value"),
+                            param,
+                            &arg,
+                        )
+                        .with_span(span),
+                    );
+                }
+            }
+            let ret = subst.apply(&ret);
+            if !has_unresolved(&ret) {
+                self.unify(ob.ret, ret, "return of a call through a fn value", &mut subst);
             }
         }
         subst
