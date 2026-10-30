@@ -2,15 +2,16 @@ let DEPTH = 100
 // vm_wasm_depth: exit0
 // AX-59 drop probe: 100 levels of recursion (under the 128 guard), then a
 // chain of DEPTH dicts, each holding the previous one, built and dropped at
-// the bottom (a dict's values are untyped, so it nests without a recursive
-// type). On wasm32 its drop runs at most `DROP_INLINE_DEPTH` levels deep
-// (interp.rs `DictMap`, `bounded_drop`). scripts/vm_wasm_depth.sh runs it at
-// DEPTH 100000 and requires exit 0.
+// the bottom. A dict holds one value type (CS2-3b), so the chain nests
+// through the one-line recursive enum `N`. On wasm32 its drop runs at most
+// `DROP_INLINE_DEPTH` levels deep (interp.rs `DictMap`, `bounded_drop`).
+// scripts/vm_wasm_depth.sh runs it at DEPTH 100000 and requires exit 0.
+enum N { Z, D { d: Dict<str, N> } }
 fn build(n: i64) -> i64 {
-    let d = dict_new()
+    let d: Dict<str, N> = dict_new()
     for i in 0..n {
         let e = dict_new()
-        dict_set(e, "k", d)
+        dict_set(e, "k", N::D { d: d })
         d = e
     }
     n

@@ -11480,8 +11480,11 @@ fn dict_get_or_and_dict_inc_compress_idioms() {
         let apples = dict_get_or(counts, \"apple\", 0)\n  \
         let bananas = dict_get_or(counts, \"banana\", 0)\n  \
         let cherries = dict_get_or(counts, \"cherry\", 0)\n  \
-        // Default-value works for any T: str default works too.\n  \
-        let name = dict_get_or(counts, \"name\", \"anon\")\n  \
+        // Default-value works for any V: a str dict takes a str default\n  \
+        // (a dict holds one value type, CS2-3b).\n  \
+        let labels = dict_new()\n  \
+        dict_set(labels, \"owner\", \"bob\")\n  \
+        let name = dict_get_or(labels, \"name\", \"anon\")\n  \
         if apples == 3 && bananas == 1 && cherries == 0 \
            && str_eq(name, \"anon\") { 1 } else { 0 }\n\
     }\n";
@@ -11570,13 +11573,17 @@ fn concrete_wrapper_arg_to_opaque_deferred_param_is_a_clean_type_error_not_a_pan
         );
     }
 
-    // NEGATIVE: storing an `Option` as a dict VALUE (the `v: T` slot, a
+    // NEGATIVE: storing an `Option` as a dict VALUE (the `v: V` slot, a
     // type-param — NOT an opaque deferred type) must STILL type-check. The guard
     // must distinguish `Deferred("Dict")` (opaque, reject wrappers) from
-    // `Deferred("T")` (generic, accept anything).
+    // `Deferred("V")` (generic, accept anything). The Option comes from another
+    // dict: a dict holds one value type (CS2-3b), so storing a dict's own
+    // `dict_get` back into it is an infinite type.
     let ok = "fn main() {\n  \
+        let src = dict_new()\n  \
+        dict_set(src, \"x\", 1)\n  \
+        let o = dict_get(src, \"x\")\n  \
         let d = dict_new()\n  \
-        let o = dict_get(d, \"x\")\n  \
         dict_set(d, \"k\", o)\n  \
         let _ = d\n\
     }\n";
@@ -14296,14 +14303,20 @@ fn dict_to_str_round_trips() {
     // dict_to_str / dict_from_str serialize a Dict to a stable
     // line-oriented `key=value\n` payload. Inverse round-trip.
     // dict_to_str returns Result<str,str> (BUG_HUNT #20); these entries are
-    // all representable, so unwrap the Ok.
+    // all representable, so unwrap the Ok. A dict holds one value type
+    // (CS2-3b), so the i64, str and f64 values live in three dicts whose
+    // payloads are joined and read back as one.
     let src = "fn main() -> i64 {\n  \
-        let d = dict_new()\n  \
-        dict_set(d, \"alpha\", 1)\n  \
-        dict_set(d, \"beta\", \"hello\")\n  \
-        dict_set(d, \"gamma\", 3.14)\n  \
-        let s = match dict_to_str(d) { Ok(v) => v  Err(_) => \"\" }\n  \
-        let d2 = dict_from_str(s)\n  \
+        let di = dict_new()\n  \
+        dict_set(di, \"alpha\", 1)\n  \
+        let ds = dict_new()\n  \
+        dict_set(ds, \"beta\", \"hello\")\n  \
+        let df = dict_new()\n  \
+        dict_set(df, \"gamma\", 3.14)\n  \
+        let si = match dict_to_str(di) { Ok(v) => v  Err(_) => \"\" }\n  \
+        let ss = match dict_to_str(ds) { Ok(v) => v  Err(_) => \"\" }\n  \
+        let sf = match dict_to_str(df) { Ok(v) => v  Err(_) => \"\" }\n  \
+        let d2 = dict_from_str(si + ss + sf)\n  \
         let alpha_s = match dict_get(d2, \"alpha\") { Some(v) => v  None => \"\" }\n  \
         let beta_s  = match dict_get(d2, \"beta\")  { Some(v) => v  None => \"\" }\n  \
         let n = match parse_int(alpha_s) { Ok(v) => v  Err(_) => -1 }\n  \
@@ -40040,39 +40053,34 @@ fn r51_s0b_loop_control_never_leaves_its_frame_on_either_engine() {
 }
 
 /// R51 §3 row 6 (veto 91c2f676): a fn declared `-> Result` never returns a
-/// `None` across its boundary (an untyped `dict_get` makes one type-check).
-/// The caller reaches `solve` through the VM's fast call from its second
-/// iteration on; the refusal is the tree's on every engine.
+/// `None` across its boundary. An untyped `dict_get` used to make one
+/// type-check, and the run-time return check refused it; since CS2-3b a dict
+/// holds one value type, so `axon check` refuses the confusion (E0102) on
+/// both engines before any output.
 #[test]
 fn r51_s0b_a_confused_result_is_refused_at_the_return_on_either_engine() {
     let (code, stdout, stderr) = vm_same_both_engines("s0b_sum", s0b_src!("sum_confusion"));
-    assert_eq!(
-        (code, stdout.as_str()),
-        (Some(101), "1\n3\n5\n"),
-        "{stderr}"
-    );
+    assert_eq!((code, stdout.as_str()), (Some(2), ""), "{stderr}");
+    assert!(stderr.contains("E0102"), "{stderr}");
     assert!(
-        stderr.contains("`solve` is declared to return Result but produced None"),
+        stderr.contains("(expected Result<i64, str>), found Option<i64>"),
         "{stderr}"
     );
 }
 
-/// R51 §3 row 6 at the VM's leaf call: `pass`'s body is one `Load` of its
-/// parameter, so the eager VM's compiled `drive` reaches it through
-/// `leaf_call`, whose return check runs out of line
-/// (`leaf_return_checked`). The confused `None` declines to the full path,
-/// which refuses it as the tree does.
+/// R51 §3 row 6 at the VM's leaf call (`pass`'s body is one `Load` of its
+/// parameter). The fixture stores a `Result` and an `Option` in one dict;
+/// since CS2-3b a dict holds one value type, so `axon check` refuses the
+/// second write (E0102) on both engines before any output.
 #[test]
 fn r51_s0b_a_confused_result_is_refused_at_a_leaf_return_on_either_engine() {
     let (code, stdout, stderr) =
         vm_same_both_engines("s0b_leaf_sum", s0b_src!("leaf_sum_confusion"));
-    assert_eq!(
-        (code, stdout.as_str()),
-        (Some(101), "0\n2\n4\n"),
-        "{stderr}"
-    );
+    assert_eq!((code, stdout.as_str()), (Some(2), ""), "{stderr}");
     assert!(
-        stderr.contains("`pass` is declared to return Result but produced None"),
+        stderr.contains(
+            "type mismatch in arg 2 of `dict_set` (expected Result<i64, str>), found Option<i64>"
+        ),
         "{stderr}"
     );
 }
@@ -42523,6 +42531,102 @@ fn bounded_generic_methods_and_generic_structs_stay_accepted() {
             (rrc, rout.as_str()),
             (Some(0), out),
             "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS2-3b (O-GAP-02, NH-1(a)): a dict holds one value type. A read used as
+/// another type, a write of another type into an annotated or a bare-`Dict`
+/// param's dict, a mixed dict and a non-`str` key are refused at check (E0102).
+/// Each refused probe checked clean before; the first three panicked
+/// `cannot apply Add to str / i64` (exit 101) at run time.
+#[test]
+fn dict_values_are_typed() {
+    let attack = "ATTACK: a dict holding a value of another type checked clean";
+    for (tag, src, code, msg) in [
+        (
+            "d_get",
+            "fn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", 1)\n  match dict_get(d, \"a\") {\n    Some(v) => println(\"got \" + v),\n    None => println(\"none\"),\n  }\n  0\n}\n",
+            "E0102",
+            "expected i64), found str",
+        ),
+        (
+            "d_ann",
+            "fn main() -> i64 {\n  let d: Dict<str, i64> = dict_new()\n  dict_set(d, \"a\", \"x\")\n  match dict_get(d, \"a\") {\n    Some(v) => println(to_str(v + 1)),\n    None => println(\"none\"),\n  }\n  0\n}\n",
+            "E0102",
+            "type mismatch in arg 2 of `dict_set` (expected i64), found str",
+        ),
+        (
+            "d_param_bare",
+            "fn total(d: Dict) -> i64 {\n  match dict_get(d, \"a\") {\n    Some(v) => v + 1,\n    None => 0,\n  }\n}\nfn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", \"s\")\n  println(to_str(total(d)))\n  0\n}\n",
+            "E0102",
+            "type mismatch in arg 0 of `total`",
+        ),
+        (
+            "d_mixed",
+            "fn main() -> i64 {\n  let d = dict_new()\n  dict_set(d, \"a\", 1)\n  dict_set(d, \"b\", \"x\")\n  println(to_str(dict_len(d)))\n  0\n}\n",
+            "E0102",
+            "type mismatch in arg 2 of `dict_set` (expected i64), found str",
+        ),
+        (
+            "d_key_i64",
+            "fn main() -> i64 {\n  let d: Dict<i64, i64> = dict_new()\n  println(to_str(dict_len(d)))\n  0\n}\n",
+            "E0102",
+            "Dict keys are str",
+        ),
+    ] {
+        let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(cmsg.contains(code), "{attack} [{tag}]: want {code}: {cmsg}");
+        assert!(cmsg.contains(msg), "{attack} [{tag}]: want {msg:?}: {cmsg}");
+    }
+    // Controls: a bare-`Dict` param whose body leaves the value free is
+    // generic per call (h6), a bare-`Dict` struct field is an implicit type
+    // param (h7), a body that fixes the value types the caller's dict (h6b),
+    // and a declared `<V>` stays generic; each checks clean and prints the same.
+    let attack = "ATTACK: a valid dict program was refused";
+    for (tag, src, out) in [
+        (
+            "h6_bare_param",
+            "fn size(d: Dict) -> i64 { dict_len(d) }\nfn main() -> i64 {\n  let a = dict_new()\n  dict_set(a, \"k\", 1)\n  let b = dict_new()\n  dict_set(b, \"k\", \"v\")\n  println(to_str(size(a) + size(b)))\n  0\n}\n",
+            "2\n",
+        ),
+        (
+            "h7_field",
+            "type Reg = { tags: Dict }\nfn main() -> i64 {\n  let a = dict_new()\n  dict_set(a, \"k\", 1)\n  let b = dict_new()\n  dict_set(b, \"k\", \"v\")\n  let r1 = Reg { tags: a }\n  let r2 = Reg { tags: b }\n  println(to_str(dict_len(r1.tags) + dict_len(r2.tags)))\n  0\n}\n",
+            "2\n",
+        ),
+        (
+            "h6b_put",
+            "fn put(d: Dict) -> () {\n  dict_set(d, \"k\", 1)\n}\nfn main() -> i64 {\n  let a = dict_new()\n  put(a)\n  match dict_get(a, \"k\") {\n    Some(v) => println(to_str(v + 1)),\n    None => println(\"none\"),\n  }\n  0\n}\n",
+            "2\n",
+        ),
+        (
+            "d_generic_v",
+            "fn count<V>(d: Dict<str, V>) -> i64 { dict_len(d) }\nfn main() -> i64 {\n  let a: Dict<str, i64> = dict_new()\n  dict_set(a, \"k\", 1)\n  let b = dict_new()\n  dict_set(b, \"k\", \"v\")\n  println(to_str(count(a) + count(b)))\n  0\n}\n",
+            "2\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+    for rel in [
+        "stdlib/set.ax",
+        "stdlib/bandit.ax",
+        "asi/corrigible.ax",
+        "asi/llm_cache.ax",
+    ] {
+        let out = axon().args(["check", &ex(rel)]).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{attack} [{rel}]: {}",
+            String::from_utf8_lossy(&out.stderr)
         );
     }
 }

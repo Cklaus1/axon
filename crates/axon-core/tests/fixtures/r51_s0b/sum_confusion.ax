@@ -1,6 +1,7 @@
-// R51 S0b: a fn declared `-> Result` never hands its caller a `None` (an
-// untyped `dict_get` makes a stored `None` type-check as the Result). The
-// fast path refuses it as the tree does.
+// R51 S0b: a fn declared `-> Result` never hands its caller a `None`. A
+// stored `None` read back from a dict used to type-check as the Result (the
+// run-time return check refused it); since CS2-3b a dict holds one value
+// type, so `axon check` refuses it (E0102).
 fn solve(x: i64) -> Result<i64, str> {
     if x < 3 {
         return Ok(x * 2)

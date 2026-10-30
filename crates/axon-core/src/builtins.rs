@@ -1878,12 +1878,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
     BuiltinFn {
         name: "dict_get",
         params: &[("d", "Dict"), ("k", "str")],
-        ret: "Option<T>",
-        doc: "Return `Some(v)` if key `k` is present in `d`, `None` otherwise. Value type is deferred.",
+        ret: "Option<V>",
+        doc: "Return `Some(v)` if key `k` is present in `d`, `None` otherwise. `v` has the dict's value type: one dict holds one value type.",
     },
     BuiltinFn {
         name: "dict_set",
-        params: &[("d", "Dict"), ("k", "str"), ("v", "T")],
+        params: &[("d", "Dict"), ("k", "str"), ("v", "V")],
         ret: "()",
         doc: "Set `d[k] = v` (overwriting any prior value). Mutates `d` in place via its shared RefCell.",
     },
@@ -1896,7 +1896,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
     BuiltinFn {
         name: "dict_remove",
         params: &[("d", "Dict"), ("k", "str")],
-        ret: "Option<T>",
+        ret: "Option<V>",
         doc: "Remove the entry for `k` from `d`; return the prior value as `Some(v)` if present, `None` otherwise.",
     },
     BuiltinFn {
@@ -1914,19 +1914,19 @@ pub const BUILTINS: &[BuiltinFn] = &[
     BuiltinFn {
         name: "dict_values",
         params: &[("d", "Dict")],
-        ret: "[T]",
+        ret: "[V]",
         doc: "All values in `d`, in key-sorted order.",
     },
     BuiltinFn {
         name: "dict_map_values",
         params: &[("d", "Dict"), ("f", "fn(V) -> U")],
-        ret: "Dict",
+        ret: "Dict<U>",
         doc: "Transform every value via the closure; keys preserved. Returns a fresh dict — the input is not mutated. The dict analogue of `arr_map`.",
     },
     BuiltinFn {
         name: "arr_group_by",
         params: &[("xs", "[T]"), ("key_fn", "fn(T) -> str")],
-        ret: "Dict",
+        ret: "Dict<[T]>",
         doc: "Bucket `xs` by a closure that maps each element to a string key. Returns `Dict[str, [T]]`; elements appear in input order within each bucket. The natural \"frequency table\" / \"by-category\" reduction.",
     },
     BuiltinFn {
@@ -1991,7 +1991,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
     },
     BuiltinFn {
         name: "dict_inc",
-        params: &[("d", "Dict"), ("k", "str")],
+        params: &[("d", "Dict<i64>"), ("k", "str")],
         ret: "i64",
         doc: "Atomically bump an i64 counter at `k`. Initializes to 1 if absent. Returns the new value. Replaces the four-line get-default-add-set dance for frequency / counter tables.",
     },
@@ -2016,13 +2016,13 @@ pub const BUILTINS: &[BuiltinFn] = &[
     BuiltinFn {
         name: "dict_from_str",
         params: &[("s", "str")],
-        ret: "Dict",
+        ret: "Dict<str>",
         doc: "Parse a `dict_to_str` payload back into a Dict (lenient). Values come back as `str`; caller converts via `parse_int` / `parse_float` if numeric. Empty AND malformed lines (no `=`) are skipped — never panics. Use `dict_try_from_str` to reject malformed input as a `Result` instead. Inverse of `dict_to_str`.",
     },
     BuiltinFn {
         name: "dict_try_from_str",
         params: &[("s", "str")],
-        ret: "Result<Dict, str>",
+        ret: "Result<Dict<str>, str>",
         doc: "Strict `dict_from_str` (BUG_HUNT #31): parse a `dict_to_str` payload, returning `Err(message)` on the first malformed line (no `=`) instead of skipping it. The Result-returning form for parsing untrusted input — a malformed line is recoverable, not a crash.",
     },
     BuiltinFn {
@@ -2507,7 +2507,7 @@ pub fn is_heap_allocating_builtin(name: &str) -> bool {
         Some(ret) => {
             let r = ret.trim();
             r == "str"
-                || r == "Dict"
+                || is_dict_type_str(r)
                 || r.starts_with('[') // any array/slice type `[T]`, `[i64]`, `[(…)]`
                 || r.starts_with("Chan")
                 || r.starts_with("Result<str")
@@ -2519,6 +2519,12 @@ pub fn is_heap_allocating_builtin(name: &str) -> bool {
         }
         None => false,
     }
+}
+
+/// CS2-3b: a builtin sig type string naming a dict: `Dict` (value `V`, the
+/// sig's own type param) or `Dict<..>` (value written out: `Dict<U>`).
+pub fn is_dict_type_str(s: &str) -> bool {
+    s == "Dict" || (s.starts_with("Dict<") && s.ends_with('>'))
 }
 
 /// R7c §4/§6 — builtins that CANNOT run on the browser host (`--host browser`),
@@ -3074,7 +3080,10 @@ mod tests {
             "str_concat",  // (if present) → str
             "arr_range",   // → [i64]
             "arr_push",    // → [T]
-            "dict_new",    // → Dict
+            "dict_new",        // → Dict
+            "dict_map_values", // → Dict<U>
+            "arr_group_by",    // → Dict<[T]>
+            "dict_from_str",   // → Dict<str>
             "dict_set",    // () but grows the dict (explicit mutator)
             "dict_remove", // () mutator
         ] {

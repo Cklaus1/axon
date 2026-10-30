@@ -323,11 +323,14 @@ fn foreign_type_help(name: &str) -> Option<String> {
 
 /// CS2-5: inference's `Type::App("B", args)` (a generic struct applied to
 /// arguments) reaches the checker as the `Deferred("B")` it resolved to before
-/// `App` existed; the argument check is inference's (E0102).
+/// `App` existed; the argument check is inference's (E0102). CS2-3b likewise:
+/// a typed `Type::Dict(V)` reaches the checker as the opaque `Deferred("Dict")`
+/// handle, and the value-type check is inference's.
 fn erase_app(ty: Type) -> Type {
     let rec = |t: Box<Type>| Box::new(erase_app(*t));
     match ty {
         Type::App(n, _) => Type::Deferred(n),
+        Type::Dict(_) => Type::Deferred("Dict".to_string()),
         Type::Option(i) => Type::Option(rec(i)),
         Type::Result(o, e) => Type::Result(rec(o), rec(e)),
         Type::Slice(i) => Type::Slice(rec(i)),

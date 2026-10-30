@@ -51,6 +51,10 @@ pub enum Type {
     /// `App("B", [i64])` (CS2-5). Inference only: the checker and the
     /// compiler still see the bare name.
     App(String, Vec<Type>),
+    /// A `Dict` with its value type: `Dict<str, i64>` is `Dict(i64)` (CS2-3b;
+    /// keys are always `str`). Inference only: the checker and the compiler
+    /// still see the opaque `Deferred("Dict")` handle.
+    Dict(Box<Type>),
     // Type-checker meta-types (should not reach codegen)
     /// Type has not been resolved yet.
     Unknown,
@@ -244,6 +248,7 @@ impl Type {
                 let a = args.iter().map(|t| t.display()).collect::<Vec<_>>().join(", ");
                 format!("{n}<{a}>")
             }
+            Type::Dict(v) => format!("Dict<str, {}>", v.display()),
             Type::Unknown => "<unknown>".into(),
             Type::Var(n) => format!("?{n}"),
             Type::TypeParam(n) => n.clone(),
@@ -284,6 +289,8 @@ impl Type {
                     pending.extend(ps.iter().map(|p| (p, depth + 1)));
                     pending.push((r, depth + 1));
                 }
+                // A dict's value type is not counted, as before CS2-3b typed it:
+                // the wasm32 limit (AX-63) measures the types it always measured.
                 _ => {}
             }
         }
@@ -307,6 +314,7 @@ impl Type {
             Type::Slice(i) => Type::Slice(Box::new(i.map_leaves(f))),
             Type::Tuple(ts) => Type::Tuple(ts.into_iter().map(|t| t.map_leaves(f)).collect()),
             Type::App(n, ts) => Type::App(n, ts.into_iter().map(|t| t.map_leaves(f)).collect()),
+            Type::Dict(v) => Type::Dict(Box::new(v.map_leaves(f))),
             Type::Fn(ps, r) => Type::Fn(
                 ps.into_iter().map(|p| p.map_leaves(f)).collect(),
                 Box::new(r.map_leaves(f)),
@@ -380,9 +388,10 @@ impl Substitution {
             | Type::Chan(inner)
             | Type::Uncertain(inner)
             | Type::Temporal(inner)
-            | Type::RawPtr(inner) => self.occurs(var, inner),
+            | Type::RawPtr(inner)
+            | Type::Dict(inner) => self.occurs(var, inner),
             Type::Result(ok, err) => self.occurs(var, ok) || self.occurs(var, err),
-            Type::Tuple(ts) => ts.iter().any(|t| self.occurs(var, t)),
+            Type::Tuple(ts) | Type::App(_, ts) => ts.iter().any(|t| self.occurs(var, t)),
             Type::Fn(params, ret) => {
                 params.iter().any(|p| self.occurs(var, p)) || self.occurs(var, ret)
             }
@@ -422,6 +431,7 @@ impl Substitution {
             Type::Uncertain(inner) => Type::Uncertain(Box::new(self.apply_inner(inner, visiting))),
             Type::Temporal(inner) => Type::Temporal(Box::new(self.apply_inner(inner, visiting))),
             Type::RawPtr(inner) => Type::RawPtr(Box::new(self.apply_inner(inner, visiting))),
+            Type::Dict(inner) => Type::Dict(Box::new(self.apply_inner(inner, visiting))),
             Type::Tuple(ts) => {
                 Type::Tuple(ts.iter().map(|t| self.apply_inner(t, visiting)).collect())
             }

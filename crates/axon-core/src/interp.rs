@@ -10392,7 +10392,7 @@ fn main() { }
             let ret = declared[name];
             let ok = match disp {
                 Open => pin::builtin_ret_open(ret),
-                Dict => ret == "Dict",
+                Dict => crate::builtins::is_dict_type_str(ret),
                 Scalar => SCALAR_RETS.contains(&ret),
                 Crossing => SCALAR_RETS.contains(&ret),
             };

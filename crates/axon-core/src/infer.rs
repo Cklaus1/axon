@@ -105,6 +105,162 @@ fn subst_struct_params(ty: Type, params: &[String], args: &[Type]) -> Type {
     })
 }
 
+/// CS2-3b: the bare `Dict`s (no `<str, V>`) written in a type, the ones
+/// `resolve_ast_type` gives an unwritten value (`Dict(Unknown)`).
+fn count_bare_dicts(t: &AxonType) -> usize {
+    match t {
+        AxonType::Named(n) => usize::from(n == "Dict"),
+        AxonType::Result { ok, err } => count_bare_dicts(ok) + count_bare_dicts(err),
+        AxonType::Option(i)
+        | AxonType::Chan(i)
+        | AxonType::Slice(i)
+        | AxonType::Ref(i)
+        | AxonType::RefMut(i)
+        | AxonType::RawPtr(i) => count_bare_dicts(i),
+        AxonType::Generic { args, .. } | AxonType::Tuple(args) => {
+            args.iter().map(count_bare_dicts).sum()
+        }
+        AxonType::Fn { params, ret } => {
+            params.iter().map(count_bare_dicts).sum::<usize>() + count_bare_dicts(ret)
+        }
+        AxonType::DynTrait(_) | AxonType::TypeParam(_) | AxonType::Union(_) => 0,
+    }
+}
+
+/// CS2-3b: give each bare `Dict`'s unwritten value (`Dict(Unknown)`), and each
+/// unwritten implicit arg of an applied struct (`App` arg `Unknown`), the type
+/// `next` makes, left to right: a var a `let` or a fn signature owns, or a
+/// struct's implicit param. With `structs` (a fn signature), a bare struct name
+/// whose only params are implicit (`type Set = { d: Dict }`) becomes `App` too.
+fn fill_bare_dicts(
+    ty: Type,
+    structs: Option<&HashMap<String, usize>>,
+    next: &mut dyn FnMut() -> Type,
+) -> Type {
+    let mut rec = |t: Box<Type>| Box::new(fill_bare_dicts(*t, structs, next));
+    match ty {
+        Type::Dict(v) if *v == Type::Unknown => Type::Dict(Box::new(next())),
+        Type::Dict(v) => Type::Dict(rec(v)),
+        Type::Struct(n) => match structs.and_then(|s| s.get(&n)) {
+            Some(&k) => Type::App(n, (0..k).map(|_| next()).collect()),
+            None => Type::Struct(n),
+        },
+        Type::Option(i) => Type::Option(rec(i)),
+        Type::Slice(i) => Type::Slice(rec(i)),
+        Type::Chan(i) => Type::Chan(rec(i)),
+        Type::Uncertain(i) => Type::Uncertain(rec(i)),
+        Type::Temporal(i) => Type::Temporal(rec(i)),
+        Type::RawPtr(i) => Type::RawPtr(rec(i)),
+        Type::Result(o, e) => {
+            let o = rec(o);
+            Type::Result(o, rec(e))
+        }
+        Type::Tuple(ts) => {
+            Type::Tuple(ts.into_iter().map(|t| fill_bare_dicts(t, structs, next)).collect())
+        }
+        Type::App(n, ts) => Type::App(
+            n,
+            ts.into_iter()
+                .map(|t| match t {
+                    Type::Unknown => next(),
+                    t => fill_bare_dicts(t, structs, next),
+                })
+                .collect(),
+        ),
+        Type::Fn(ps, r) => {
+            let ps = ps.into_iter().map(|t| fill_bare_dicts(t, structs, next)).collect();
+            Type::Fn(ps, Box::new(fill_bare_dicts(*r, structs, next)))
+        }
+        other => other,
+    }
+}
+
+/// CS2-3b: the type variables left in `ty`, each once, in order.
+fn collect_vars(ty: &Type, out: &mut Vec<u32>) {
+    ty.clone().map_leaves(&mut |l| {
+        if let Type::Var(v) = l {
+            if !out.contains(&v) {
+                out.push(v);
+            }
+        }
+        l
+    });
+}
+
+/// CS2-3b: `fns` grouped into their call graph's strongly connected
+/// components, callees before callers (Tarjan emits them in that order);
+/// `order` (source order) breaks ties. An edge is any mention of another
+/// fn's name in a body: a call, a fn value, a method call by that name.
+fn callee_first_groups<'a>(
+    order: &[&'a str],
+    fns: &HashMap<&'a str, &'a FnDef>,
+) -> Vec<Vec<&'a str>> {
+    let edges: HashMap<&str, Vec<&'a str>> = order
+        .iter()
+        .map(|&name| {
+            let mut out: Vec<&'a str> = Vec::new();
+            crate::ast::walk_expr(&fns[name].body, &mut |e| {
+                let callee = match e {
+                    Expr::Ident(n) => Some(n.as_str()),
+                    Expr::MethodCall { method, .. } => Some(method.as_str()),
+                    _ => None,
+                };
+                if let Some((&k, _)) = callee.and_then(|c| fns.get_key_value(c)) {
+                    if !out.contains(&k) {
+                        out.push(k);
+                    }
+                }
+            });
+            (name, out)
+        })
+        .collect();
+    struct Tarjan<'a, 'e> {
+        edges: &'e HashMap<&'a str, Vec<&'a str>>,
+        index: HashMap<&'a str, usize>,
+        low: HashMap<&'a str, usize>,
+        stack: Vec<&'a str>,
+        groups: Vec<Vec<&'a str>>,
+    }
+    impl<'a> Tarjan<'a, '_> {
+        fn visit(&mut self, v: &'a str) {
+            let i = self.index.len();
+            self.index.insert(v, i);
+            self.low.insert(v, i);
+            self.stack.push(v);
+            let edges = self.edges;
+            for &w in &edges[v] {
+                if !self.index.contains_key(w) {
+                    self.visit(w);
+                    let lw = self.low[w];
+                    let lv = self.low.get_mut(v).unwrap();
+                    *lv = (*lv).min(lw);
+                } else if self.stack.contains(&w) {
+                    let iw = self.index[w];
+                    let lv = self.low.get_mut(v).unwrap();
+                    *lv = (*lv).min(iw);
+                }
+            }
+            if self.low[v] == self.index[v] {
+                let at = self.stack.iter().rposition(|&x| x == v).unwrap();
+                self.groups.push(self.stack.split_off(at));
+            }
+        }
+    }
+    let mut t = Tarjan {
+        edges: &edges,
+        index: HashMap::new(),
+        low: HashMap::new(),
+        stack: Vec::new(),
+        groups: Vec::new(),
+    };
+    for &v in order {
+        if !t.index.contains_key(v) {
+            t.visit(v);
+        }
+    }
+    t.groups
+}
+
 /// CS2-5: in a generic fn's signature, the fn's own type params named as a
 /// generic struct's arguments (`B<T>`, resolved as `App("B", [Deferred("T")])`)
 /// become `TypeParam`, so each call instantiates them. Elsewhere the sig keeps
@@ -124,6 +280,11 @@ fn generalize_app_args(ty: Type, generics: &HashSet<&str>) -> Type {
                 .collect(),
         ),
         Type::Option(i) => Type::Option(rec(i)),
+        // CS2-3b: `fn f<V>(d: Dict<str, V>)` - the value is the fn's `V`.
+        Type::Dict(v) => Type::Dict(Box::new(v.map_leaves(&mut |t| match t {
+            Type::Deferred(p) if generics.contains(p.as_str()) => Type::TypeParam(p),
+            t => t,
+        }))),
         Type::Result(o, e) => Type::Result(rec(o), rec(e)),
         Type::Slice(i) => Type::Slice(rec(i)),
         Type::Tuple(ts) => {
@@ -417,6 +578,13 @@ fn parse_type_str(s: &str) -> Type {
             return Type::Tuple(split_top_level(inner).into_iter().map(parse_type_str).collect());
         }
     }
+    // CS2-3b: a builtin's `Dict` holds the sig's `V`; `Dict<X>` names its value.
+    if s == "Dict" {
+        return Type::Dict(Box::new(Type::Deferred("V".to_string())));
+    }
+    if let Some(inner) = strip_wrap(s, "Dict<", ">") {
+        return Type::Dict(Box::new(parse_type_str(inner)));
+    }
     Type::Deferred(s.to_string())
 }
 
@@ -474,7 +642,8 @@ fn collect_type_var_names(t: &Type, out: &mut Vec<String>) {
         | Type::Option(i)
         | Type::Chan(i)
         | Type::Uncertain(i)
-        | Type::Temporal(i) => collect_type_var_names(i, out),
+        | Type::Temporal(i)
+        | Type::Dict(i) => collect_type_var_names(i, out),
         Type::Result(a, b) => {
             collect_type_var_names(a, out);
             collect_type_var_names(b, out);
@@ -507,6 +676,7 @@ fn promote_type_params(t: &Type, names: &[String]) -> Type {
         Type::Chan(i) => Type::Chan(rec(i)),
         Type::Uncertain(i) => Type::Uncertain(rec(i)),
         Type::Temporal(i) => Type::Temporal(rec(i)),
+        Type::Dict(i) => Type::Dict(rec(i)),
         Type::Result(a, b) => Type::Result(rec(a), rec(b)),
         Type::Tuple(ts) => Type::Tuple(ts.iter().map(|e| promote_type_params(e, names)).collect()),
         Type::Fn(ps, r) => {
@@ -584,6 +754,18 @@ pub struct InferCtx {
     pub struct_fields: HashMap<String, Vec<(String, Type)>>,
     /// Generic type parameter names for struct types (struct_name → [param_names]).
     pub struct_generic_params: HashMap<String, Vec<String>>,
+    /// CS2-3b: how many of a struct's `struct_generic_params` are declared
+    /// (`type B<T>`); the rest are implicit, one per bare `Dict` in a field.
+    struct_declared_params: HashMap<String, usize>,
+    /// CS2-3b: a top-level fn's value vars for the bare `Dict`s in its
+    /// signature (params, then return), in order. Solved from the fn's body.
+    dict_owned_vars: HashMap<String, Vec<u32>>,
+    /// CS2-3b: the implicit type params of a fn whose bare-`Dict` value the
+    /// body left free; each call instantiates them like declared ones.
+    implicit_fn_params: HashMap<String, Vec<String>>,
+    /// CS2-3b: the constraints of the bare-`Dict` fns' bodies, unified before
+    /// the rest (`solve_pending`); `solve` starts from it.
+    partial: Substitution,
     /// Variant name lists for user-defined enum types.
     pub enum_variants: HashMap<String, Vec<String>>,
     /// Phase 5: named refinement types → their (erased) base AxonType. A
@@ -675,6 +857,10 @@ impl InferCtx {
             call_obligations: Vec::new(),
             struct_fields: HashMap::new(),
             struct_generic_params: HashMap::new(),
+            struct_declared_params: HashMap::new(),
+            dict_owned_vars: HashMap::new(),
+            implicit_fn_params: HashMap::new(),
+            partial: Substitution::new(),
             enum_variants: HashMap::new(),
             refinement_base: HashMap::new(),
             enum_variant_fields: HashMap::new(),
@@ -728,6 +914,113 @@ impl InferCtx {
             self.fn_sigs.insert(name.to_string(), sig.clone());
         }
         self.user_fn_sigs.insert(name.to_string(), sig);
+    }
+
+    /// CS2-3b: the structs whose type params are all implicit (one per bare
+    /// `Dict` field, none declared), with how many there are.
+    fn implicit_only_structs(&self) -> HashMap<String, usize> {
+        self.struct_declared_params
+            .iter()
+            .filter(|(_, &declared)| declared == 0)
+            .filter_map(|(n, _)| Some((n.clone(), self.struct_generic_params.get(n)?.len())))
+            .collect()
+    }
+
+    /// CS2-3b: `Dict<K, V>` with `K` other than `str` is refused: a dict's
+    /// keys are always strings (`dict_set` takes `k: str`).
+    fn check_dict_keys(&mut self, ty: &AxonType, span: crate::span::Span) {
+        let mut bad: Vec<String> = Vec::new();
+        fn walk(t: &AxonType, bad: &mut Vec<String>) {
+            match t {
+                AxonType::Generic { base, args } => {
+                    if base == "Dict" && args.len() == 2 {
+                        if !matches!(&args[0], AxonType::Named(n) if n == "str" || n == "String") {
+                            bad.push(format!("{:?}", args[0]));
+                        }
+                    }
+                    args.iter().for_each(|a| walk(a, bad));
+                }
+                AxonType::Result { ok, err } => {
+                    walk(ok, bad);
+                    walk(err, bad);
+                }
+                AxonType::Option(i)
+                | AxonType::Chan(i)
+                | AxonType::Slice(i)
+                | AxonType::Ref(i)
+                | AxonType::RefMut(i)
+                | AxonType::RawPtr(i) => walk(i, bad),
+                AxonType::Tuple(ts) => ts.iter().for_each(|a| walk(a, bad)),
+                AxonType::Fn { params, ret } => {
+                    params.iter().for_each(|a| walk(a, bad));
+                    walk(ret, bad);
+                }
+                _ => {}
+            }
+        }
+        walk(ty, &mut bad);
+        for _ in bad {
+            self.errors.push(
+                InferError::new(E0102, "Dict keys are str: write `Dict<str, V>`")
+                    .with_span(span),
+            );
+        }
+    }
+
+    /// CS2-3b: unify the constraints gathered so far into `self.partial`, so
+    /// a fn's own bare-`Dict` vars are known before its callers are inferred.
+    fn solve_pending(&mut self) {
+        let mut subst = std::mem::take(&mut self.partial);
+        for c in std::mem::take(&mut self.constraints) {
+            self.current_stmt_span = c.span;
+            self.unify(c.lhs, c.rhs, &c.origin, &mut subst);
+        }
+        self.partial = subst;
+    }
+
+    /// CS2-3b: after `fns`' bodies are solved, a bare-`Dict` var a body fixed
+    /// keeps its type (callers must agree); one the body left free becomes an
+    /// implicit type param of the fn, instantiated fresh per call.
+    fn generalize_dict_vars(&mut self, fns: &[&str]) {
+        for &name in fns {
+            let Some(owned) = self.dict_owned_vars.get(name) else {
+                continue;
+            };
+            let mut free: Vec<u32> = Vec::new();
+            for &v in owned {
+                collect_vars(&self.partial.apply(&Type::Var(v)), &mut free);
+            }
+            if free.is_empty() {
+                continue;
+            }
+            let partial = &self.partial;
+            let generalize = |t: &Type| {
+                partial.apply(t).map_leaves(&mut |l| match l {
+                    Type::Var(w) if free.contains(&w) => Type::TypeParam(format!("__dv{w}")),
+                    l => l,
+                })
+            };
+            let sig = match self.user_fn_sigs.get(name) {
+                Some(s) => FnSig {
+                    params: s.params.iter().map(&generalize).collect(),
+                    ret: generalize(&s.ret),
+                },
+                None => continue,
+            };
+            let names: Vec<String> = free.iter().map(|w| format!("__dv{w}")).collect();
+            self.insert_user_fn_sig(name, sig);
+            self.implicit_fn_params.insert(name.to_string(), names);
+        }
+    }
+
+    /// CS2-3b: `name`'s signature as a value or a method: the implicit type
+    /// params of a generalized bare-`Dict` fn instantiated fresh.
+    fn sig_instance(&mut self, name: &str) -> Option<FnSig> {
+        let sig = self.fn_sigs.get(name)?.clone();
+        match self.implicit_fn_params.get(name).cloned() {
+            Some(names) => Some(self.instantiate_sig(&sig, &names).0),
+            None => Some(sig),
+        }
     }
 
     /// Record that `lhs` and `rhs` must unify.
@@ -849,6 +1142,11 @@ impl InferCtx {
                     Type::Struct(name.clone())
                 } else if self.enum_variants.contains_key(name) {
                     Type::Enum(name.clone())
+                } else if name == "Dict" {
+                    // CS2-3b: a bare `Dict`. `Unknown` marks its value as not
+                    // written; `fill_bare_dicts` gives it a var where the
+                    // context owns one (a `let`, a fn signature, a field).
+                    Type::Dict(Box::new(Type::Unknown))
                 } else {
                     Type::Deferred(name.clone())
                 }
@@ -876,17 +1174,31 @@ impl InferCtx {
                         .unwrap_or(Type::Unknown);
                     return Type::Temporal(Box::new(inner));
                 }
+                // CS2-3b: `Dict<str, V>` is `Dict(V)`. Keys are `str`
+                // (`check_dict_keys` refuses another key type).
+                if base == "Dict" && !self.struct_fields.contains_key(base) {
+                    let value = match args.as_slice() {
+                        [_, v] | [v] => self.resolve_ast_type(v),
+                        _ => Type::Unknown,
+                    };
+                    return Type::Dict(Box::new(value));
+                }
                 // CS2-5: a user generic struct with its full argument list is
-                // `App`, so `B<i64>` and `B<str>` are different types.
-                if self
-                    .struct_generic_params
-                    .get(base)
-                    .is_some_and(|ps| ps.len() == args.len())
-                {
-                    return Type::App(
-                        base.clone(),
-                        args.iter().map(|a| self.resolve_ast_type(a)).collect(),
-                    );
+                // `App`, so `B<i64>` and `B<str>` are different types. CS2-3b:
+                // the struct's implicit params (its bare-`Dict` fields) follow
+                // the declared ones, unwritten (`Unknown`).
+                if let Some(ps) = self.struct_generic_params.get(base) {
+                    let declared = self
+                        .struct_declared_params
+                        .get(base)
+                        .copied()
+                        .unwrap_or(ps.len());
+                    if declared == args.len() && declared > 0 {
+                        let mut resolved: Vec<Type> =
+                            args.iter().map(|a| self.resolve_ast_type(a)).collect();
+                        resolved.resize(ps.len(), Type::Unknown);
+                        return Type::App(base.clone(), resolved);
+                    }
                 }
                 // Phase 1: other generics treated as deferred.
                 Type::Deferred(base.clone())
@@ -937,9 +1249,16 @@ impl InferCtx {
                 Item::TypeDef(td) => {
                     // Register struct name so forward refs resolve to Type::Struct.
                     self.struct_fields.insert(td.name.clone(), vec![]);
-                    if !td.generic_params.is_empty() {
-                        self.struct_generic_params
-                            .insert(td.name.clone(), td.generic_params.clone());
+                    // CS2-3b: each bare `Dict` in a field is an implicit type
+                    // param of the struct, after the declared ones, so a
+                    // literal types its dict's value (`Type::App`).
+                    let bare = td.fields.iter().map(|f| count_bare_dicts(&f.ty)).sum::<usize>();
+                    if !td.generic_params.is_empty() || bare > 0 {
+                        let mut ps = td.generic_params.clone();
+                        ps.extend((0..bare).map(|i| format!("__dict{i}")));
+                        self.struct_generic_params.insert(td.name.clone(), ps);
+                        self.struct_declared_params
+                            .insert(td.name.clone(), td.generic_params.len());
                     }
                 }
                 Item::EnumDef(ed) => {
@@ -970,6 +1289,34 @@ impl InferCtx {
         }
         self.flatten_refinement_chains();
 
+        // Pass 2a: struct fields. CS2-3b: a bare `Dict` field's value is its
+        // implicit param, `Deferred("__dictN")` like a declared `T`.
+        for item in &program.items {
+            if let Item::TypeDef(td) = item {
+                for f in &td.fields {
+                    self.check_dict_keys(&f.ty, td.span);
+                }
+                let names: Vec<String> = self
+                    .struct_generic_params
+                    .get(&td.name)
+                    .map(|ps| ps[td.generic_params.len()..].to_vec())
+                    .unwrap_or_default();
+                let mut next = names.into_iter();
+                let fields = td
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        let ty = self.resolve_ast_type(&f.ty);
+                        let ty = fill_bare_dicts(ty, None, &mut || {
+                            next.next().map(Type::Deferred).unwrap_or(Type::Unknown)
+                        });
+                        (f.name.clone(), ty)
+                    })
+                    .collect();
+                self.struct_fields.insert(td.name.clone(), fields);
+            }
+        }
+
         // Pass 2: resolve all field types now that all names are known.
         for item in &program.items {
             match item {
@@ -986,7 +1333,7 @@ impl InferCtx {
                         }
                         generalize_app_args(self.resolve_ast_type(ty), &gset)
                     };
-                    let params = f
+                    let params: Vec<Type> = f
                         .params
                         .iter()
                         .map(|p| resolve_with_generics(&p.ty))
@@ -996,19 +1343,37 @@ impl InferCtx {
                         .as_ref()
                         .map(resolve_with_generics)
                         .unwrap_or(Type::Unit);
+                    // CS2-3b: a bare `Dict` in the signature, and a bare struct
+                    // name whose params are all implicit, holds a var the fn
+                    // owns, solved from its body before its callers
+                    // (`infer_program`).
+                    for p in &f.params {
+                        self.check_dict_keys(&p.ty, f.span);
+                    }
+                    if let Some(r) = &f.return_type {
+                        self.check_dict_keys(r, f.span);
+                    }
+                    let structs = self.implicit_only_structs();
+                    let mut owned: Vec<u32> = Vec::new();
+                    let mut fresh = || {
+                        let v = self.next_var;
+                        self.next_var += 1;
+                        owned.push(v);
+                        Type::Var(v)
+                    };
+                    let params: Vec<Type> = params
+                        .into_iter()
+                        .map(|t| fill_bare_dicts(t, Some(&structs), &mut fresh))
+                        .collect();
+                    let ret = fill_bare_dicts(ret, Some(&structs), &mut fresh);
+                    if !owned.is_empty() {
+                        self.dict_owned_vars.insert(f.name.clone(), owned);
+                    }
                     self.insert_user_fn_sig(&f.name, FnSig { params, ret });
                     if !f.generic_params.is_empty() {
                         self.generic_fn_params
                             .insert(f.name.clone(), f.generic_params.clone());
                     }
-                }
-                Item::TypeDef(td) => {
-                    let fields = td
-                        .fields
-                        .iter()
-                        .map(|f| (f.name.clone(), self.resolve_ast_type(&f.ty)))
-                        .collect();
-                    self.struct_fields.insert(td.name.clone(), fields);
                 }
                 Item::EnumDef(ed) => {
                     // Fix #2: store payload field types for each variant now
@@ -1274,8 +1639,8 @@ impl InferCtx {
                 if let Some(ty) = self.module_bindings.get(name) {
                     return ty.clone();
                 }
-                if let Some(sig) = self.fn_sigs.get(name) {
-                    return Type::Fn(sig.params.clone(), Box::new(sig.ret.clone()));
+                if let Some(sig) = self.sig_instance(name) {
+                    return Type::Fn(sig.params, Box::new(sig.ret));
                 }
                 // An unresolved name is ALREADY reported by the resolver as
                 // E0001 "cannot find name" (with its own Levenshtein "did you
@@ -1299,7 +1664,11 @@ impl InferCtx {
                 // An explicit `: T` annotation constrains the value's type and
                 // becomes the binding's declared type.
                 if let Some(annot) = ty {
+                    // CS2-3b: a bare `Dict` annotation gets one var, inferred
+                    // from the binding's writes and reads.
+                    self.check_dict_keys(annot, self.current_stmt_span);
                     let annot_ty = self.resolve_ast_type(annot);
+                    let annot_ty = fill_bare_dicts(annot_ty, None, &mut || self.fresh());
                     // R19 Slice A: an integer LITERAL binds to any fixed-width /
                     // unsigned integer annotation (the literal takes that type),
                     // range-checked at compile time (E1900). A non-literal int →
@@ -1549,6 +1918,15 @@ impl InferCtx {
                             self.builtin_generic_params.contains_key(&name),
                         ),
                     };
+                    // CS2-3b: a generalized bare-`Dict` fn's implicit params
+                    // are instantiated per call like its declared ones.
+                    let declared_n = param_names.len();
+                    let mut param_names = param_names;
+                    if !prefers_builtin {
+                        if let Some(extra) = self.implicit_fn_params.get(&name) {
+                            param_names.extend(extra.iter().cloned());
+                        }
+                    }
                     if let Some(sig) = sig {
                         let (inst_sig, var_map) = if !param_names.is_empty() {
                             self.instantiate_sig(&sig, &param_names)
@@ -1614,13 +1992,17 @@ impl InferCtx {
                         // native `dict_set` silently stored nothing while the
                         // interpreter stored 20.
                         if !var_map.is_empty() && !reaches_builtin {
-                            let var_ids: Vec<u32> = param_names
+                            // CS2-3b: only the declared params; an implicit one
+                            // (a bare `Dict`'s value) has no AST name to specialize.
+                            let var_ids: Vec<u32> = param_names[..declared_n]
                                 .iter()
                                 .filter_map(|n| var_map.get(n).copied())
                                 .collect();
                             // Store pending instantiation — vars will be resolved after solving.
-                            self.call_instantiations
-                                .push((name, var_ids.iter().map(|&v| Type::Var(v)).collect()));
+                            if !var_ids.is_empty() {
+                                self.call_instantiations
+                                    .push((name, var_ids.iter().map(|&v| Type::Var(v)).collect()));
+                            }
                         }
                         return ret;
                     }
@@ -1683,7 +2065,7 @@ impl InferCtx {
                     }
                     return self.fresh();
                 }
-                if let Some(sig) = self.fn_sigs.get(method).cloned() {
+                if let Some(sig) = self.sig_instance(method) {
                     for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
                         let arg_ty = self.infer_expr(arg, scope, ret_ty);
                         self.constrain(arg_ty, param_ty.clone(), "method argument");
@@ -1960,6 +2342,22 @@ impl InferCtx {
                                 // so the type can be solved by unification at the use site.
                                 if matches!(field_ty, Type::TypeParam(_)) {
                                     self.fresh()
+                                } else if let Some(ps) = self.struct_generic_params.get(name) {
+                                    // CS2-3b: a bare struct name leaves its implicit
+                                    // params (bare-`Dict` fields) open: fresh per read,
+                                    // as the untyped dict was.
+                                    let (field_ty, ps) = (field_ty.clone(), ps.clone());
+                                    let args: Vec<Type> = ps
+                                        .iter()
+                                        .map(|p| {
+                                            if p.starts_with("__dict") {
+                                                self.fresh()
+                                            } else {
+                                                Type::Deferred(p.clone())
+                                            }
+                                        })
+                                        .collect();
+                                    subst_struct_params(field_ty, &ps, &args)
                                 } else {
                                     field_ty.clone()
                                 }
@@ -2315,12 +2713,44 @@ impl InferCtx {
                 self.module_bindings.insert(name.clone(), ty);
             }
         }
+        // CS2-3b: the fns whose signature holds a bare `Dict` are inferred
+        // first, callees before callers (a recursive group together), and
+        // each group's vars solved and generalized before its callers.
+        let dict_fns: HashMap<&str, &FnDef> = program
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::FnDef(f) if self.dict_owned_vars.contains_key(&f.name) => {
+                    Some((f.name.as_str(), f))
+                }
+                _ => None,
+            })
+            .collect();
+        let order: Vec<&str> = program
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::FnDef(f) if dict_fns.contains_key(f.name.as_str()) => Some(f.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        for group in callee_first_groups(&order, &dict_fns) {
+            for name in &group {
+                self.infer_fn(dict_fns[name], true);
+            }
+            self.solve_pending();
+            self.generalize_dict_vars(&group);
+        }
         for item in &program.items {
             match item {
-                Item::FnDef(f) => self.infer_fn(f),
+                Item::FnDef(f)
+                    if !dict_fns.get(f.name.as_str()).is_some_and(|d| std::ptr::eq(*d, f)) =>
+                {
+                    self.infer_fn(f, true)
+                }
                 Item::ImplBlock(blk) => {
                     for m in &blk.methods {
-                        self.infer_fn(m);
+                        self.infer_fn(m, false);
                     }
                 }
                 _ => {}
@@ -2470,6 +2900,7 @@ impl InferCtx {
                 Type::Chan(i) => Type::Chan(rec(i)),
                 Type::Uncertain(i) => Type::Uncertain(rec(i)),
                 Type::Temporal(i) => Type::Temporal(rec(i)),
+                Type::Dict(i) => Type::Dict(rec(i)),
                 Type::Result(a, b) => Type::Result(rec(a), rec(b)),
                 Type::Tuple(ts) => Type::Tuple(ts.iter().map(|e| subst_ty(e, var_map)).collect()),
                 Type::App(n, ts) => {
@@ -2489,16 +2920,28 @@ impl InferCtx {
         (fresh_sig, var_map)
     }
 
-    fn infer_fn(&mut self, f: &FnDef) {
+    /// Infer `f`'s body. `top_level`: `f` is a top-level fn (not an impl
+    /// method), so its bare `Dict`s hold the vars its signature owns.
+    fn infer_fn(&mut self, f: &FnDef, top_level: bool) {
+        // CS2-3b: the body sees the same value vars as the signature, in the
+        // order `collect_sigs` gave them (params, then return).
+        let owned = if top_level { self.dict_owned_vars.get(&f.name).cloned() } else { None };
+        let structs = owned.as_ref().map(|_| self.implicit_only_structs());
+        let mut owned = owned.unwrap_or_default().into_iter();
+        let mut next = || owned.next().map(Type::Var).unwrap_or(Type::Unknown);
+        let params: Vec<Type> = f
+            .params
+            .iter()
+            .map(|p| fill_bare_dicts(self.resolve_ast_type(&p.ty), structs.as_ref(), &mut next))
+            .collect();
         let ret_ty = f
             .return_type
             .as_ref()
-            .map(|t| self.resolve_ast_type(t))
+            .map(|t| fill_bare_dicts(self.resolve_ast_type(t), structs.as_ref(), &mut next))
             .unwrap_or(Type::Unit);
 
         let mut scope = Scope::new();
-        for param in &f.params {
-            let ty = self.resolve_ast_type(&param.ty);
+        for (param, ty) in f.params.iter().zip(params) {
             scope.bind(param.name.clone(), ty);
         }
 
@@ -2537,7 +2980,7 @@ impl InferCtx {
 
     /// Solve all accumulated constraints via union-find unification.
     pub fn solve(&mut self) -> Substitution {
-        let mut subst = Substitution::new();
+        let mut subst = std::mem::take(&mut self.partial);
         let constraints = std::mem::take(&mut self.constraints);
         for c in &constraints {
             self.current_stmt_span = c.span;
@@ -2684,6 +3127,10 @@ impl InferCtx {
             (Type::Temporal(a), Type::Temporal(b)) => {
                 self.unify(*a, *b, origin, subst);
             }
+            // CS2-3b: a dict holds one value type.
+            (Type::Dict(a), Type::Dict(b)) => {
+                self.unify(*a, *b, origin, subst);
+            }
             (Type::RawPtr(a), Type::RawPtr(b)) => {
                 self.unify(*a, *b, origin, subst);
             }
@@ -2766,7 +3213,8 @@ impl InferCtx {
             | Type::Chan(inner)
             | Type::Uncertain(inner)
             | Type::Temporal(inner)
-            | Type::RawPtr(inner) => self.occurs(var, inner),
+            | Type::RawPtr(inner)
+            | Type::Dict(inner) => self.occurs(var, inner),
             Type::Result(ok, err) => self.occurs(var, ok) || self.occurs(var, err),
             Type::Tuple(ts) | Type::App(_, ts) => ts.iter().any(|t| self.occurs(var, t)),
             Type::Fn(params, ret) => {

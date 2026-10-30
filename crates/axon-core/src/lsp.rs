@@ -635,6 +635,7 @@ fn format_type(ty: &crate::types::Type) -> String {
             let a: Vec<_> = args.iter().map(format_type).collect();
             format!("{n}<{}>", a.join(", "))
         }
+        Type::Dict(v) => format!("Dict<str, {}>", format_type(v)),
         Type::Uncertain(inner) => format!("Uncertain<{}>", format_type(inner)),
         Type::Temporal(inner) => format!("Temporal<{}>", format_type(inner)),
     }

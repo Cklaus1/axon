@@ -200,12 +200,15 @@ fn main() -> i64 {
     0
 }
 EOF
+  # A dict holds one value type (CS2-3b), so a dict nested in a dict goes
+  # through the one-line recursive enum `N`.
   cat >dict.ax <<'EOF'
+enum N { Z, D { d: Dict<str, N> } }
 fn main() -> i64 {
-    let d = dict_new()
+    let d: Dict<str, N> = dict_new()
     for i in 0..100000 {
         let e = dict_new()
-        dict_set(e, "k", d)
+        dict_set(e, "k", N::D { d: d })
         d = e
     }
     println("built")
@@ -239,38 +242,41 @@ fn main() -> i64 {
 }
 EOF
   cat >array.ax <<'EOF'
+enum N { Z, A { v: [Option<N>] } }
 fn build(n: i64) -> i64 {
     let d = dict_new()
-    dict_set(d, "k", 0)
-    for i in 0..n { let v = dict_get(d, "k") dict_set(d, "k", [v]) }
+    dict_set(d, "k", N::Z)
+    for i in 0..n { let v = dict_get(d, "k") dict_set(d, "k", N::A { v: [v] }) }
     n
 }
 fn main() -> i64 { println(to_str(build(100000))) 0 }
 EOF
-  # chain <name> <wrap> <n>: a chain of <n> values, each <wrap> around the
-  # previous one (read back from an untyped dict), built and dropped under
-  # 100 levels of recursion.
+  # chain <name> <field> <wrap> <n>: a chain of <n> values, each <wrap>
+  # around the previous one (read back from a dict), built and dropped under
+  # 100 levels of recursion. A dict holds one value type (CS2-3b), so each
+  # level is the one-line recursive enum `N` whose payload is <field>.
   chain() {
     cat >"$1.ax" <<EOF
+enum N { Z, W { v: $2 } }
 fn build(n: i64) -> i64 {
     let d = dict_new()
-    dict_set(d, "k", 0)
-    for i in 0..n { let v = dict_get(d, "k") dict_set(d, "k", $2) }
+    dict_set(d, "k", N::Z)
+    for i in 0..n { let v = dict_get(d, "k") dict_set(d, "k", N::W { v: $3 }) }
     n
 }
 fn r(k: i64, n: i64) -> i64 {
     if k == 0 { build(n) } else { r(k - 1, n) }
 }
 fn main() -> i64 {
-    println(to_str(r(100, $3)))
+    println(to_str(r(100, $4)))
     0
 }
 EOF
   }
-  chain deep_array '[v]' 100000
-  chain deep_tuple '(v, i)' 100000
-  chain deep_option 'Some(v)' 1000
-  chain deep_result 'Ok(v)' 1000
+  chain deep_array '[Option<N>]' '[v]' 100000
+  chain deep_tuple '(Option<N>, i64)' '(v, i)' 100000
+  chain deep_option 'Option<Option<N>>' 'Some(v)' 1000
+  chain deep_result 'Result<Option<N>, str>' 'Ok(v)' 1000
   for e in "${RUNS[@]}"; do
     for p in list dict closure deep_list array deep_array deep_tuple deep_option deep_result; do
       case "$p" in
@@ -628,14 +634,17 @@ fn build(n: i64, bottom: i64) -> L {
 EOF
     cmpmain 100000
   } >list.ax
+  # A dict holds one value type (CS2-3b), so each level of the dict and
+  # chain programs is the one-line recursive enum `N` (bottom: `N::B`).
   {
     cat <<'EOF'
-fn build(n: i64, bottom: i64) -> i64 {
+enum N { B { b: i64 }, D { d: Dict<str, N> } }
+fn build(n: i64, bottom: i64) -> Dict<str, N> {
     let d = dict_new()
-    dict_set(d, "k", bottom)
+    dict_set(d, "k", N::B { b: bottom })
     for i in 0..n {
         let e = dict_new()
-        dict_set(e, "k", d)
+        dict_set(e, "k", N::D { d: d })
         d = e
     }
     d
@@ -643,25 +652,26 @@ fn build(n: i64, bottom: i64) -> i64 {
 EOF
     cmpmain 100000
   } >dict.ax
-  # chain <name> <wrap> <n>: <n> levels of <wrap> around the bottom value,
-  # read back from an untyped dict.
+  # chain <name> <field> <wrap> <n>: <n> levels of <wrap> around the bottom
+  # value, read back from a dict; each level is `N::W` with payload <field>.
   chain() {
     {
       cat <<EOF
-fn build(n: i64, bottom: i64) -> i64 {
+enum N { B { b: i64 }, W { v: $2 } }
+fn build(n: i64, bottom: i64) -> Dict<str, N> {
     let d = dict_new()
-    dict_set(d, "k", bottom)
-    for i in 0..n { let v = dict_get(d, "k") dict_set(d, "k", $2) }
+    dict_set(d, "k", N::B { b: bottom })
+    for i in 0..n { let v = dict_get(d, "k") dict_set(d, "k", N::W { v: $3 }) }
     d
 }
 EOF
-      cmpmain "$3"
+      cmpmain "$4"
     } >"$1.ax"
   }
-  chain array '[v]' 100000
-  chain tuple '(v, i)' 100000
-  chain option 'Some(v)' 1000
-  chain result 'Ok(v)' 1000
+  chain array '[Option<N>]' '[v]' 100000
+  chain tuple '(Option<N>, i64)' '(v, i)' 100000
+  chain option 'Option<Option<N>>' 'Some(v)' 1000
+  chain result 'Result<Option<N>, str>' 'Ok(v)' 1000
   {
     cat <<'EOF'
 type S = { v: i64, next: Option<S> }
