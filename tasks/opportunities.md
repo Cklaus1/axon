@@ -2948,3 +2948,26 @@ or drop the `_i32` names), then make doc, interpreter and axon-rt agree. Not fix
 O003 re-assessed: principals are read only by the `principal_*` builtins (`kernel.rs`, `interp/builtins.rs:4196-4286`);
 no effect path consults them, so an ungated `principal_root` makes the in-language attenuation model advisory but
 does not bypass `@[contained]`, capabilities or the cortex fence. Severity stands as a design question, not an escape.
+
+## checker-soundness-2, 2026-10-29 (found during the implementation review, ImplAuditCS2)
+
+### O-CS2-01 - [high] Native code gives wrong answers for tuple matches and a generic dict `put` (predates CS2)
+Found by ImplAuditCS2 on a codegen build at edb99b89 (pre-batch) and at cs2/int: the same wrong output on both, so
+CS2 did not introduce it. Interpreter vs native: tuple matches v22 `3` vs `0`, v25 `2` vs `3`, w08 `2` vs `0`, w09
+`4` vs `0`; a `<V>` dict `put` (w31) `2` vs `0`; h11, h31 and h32 exit 101 in the interpreter and 0 natively.
+Probes are in `/var/tmp/r51-tmp/ImplAuditCS2/`. The parity scripts cover none of these shapes. The interpreter is
+the reference, so native is wrong, and silently: a deployed binary answers differently from `axon run`. Fix
+direction: add the probes to the codegen parity fixtures first (fail-first), then fix tuple-pattern lowering in
+`codegen/`.
+
+### O-CS2-02 - [medium] Check-then-panic shapes CS2 left open on purpose
+- An untyped wrapper lambda: `let f = |x| str_len(x); let g = |y| f(y); g(5)` checks clean and panics (h24). The
+  CS2-6 `[REVISED: build]` note keeps it, so that VM panic paths stay covered.
+- Literal patterns inside an enum, `Option` or `Result` payload: `match o { Some(0) => .., None => .. }` and
+  `E::A { s: "x" }` arms check clean and panic `no match arm matched` (h31, h32). CS2-4 left enum payloads unchanged.
+Fix direction: CS2-4's domain walk extended to payload literals; for the wrapper, type a lambda param from its uses
+inside another lambda.
+
+### O-CS2-03 - [low] E1209 diagnostics carry no line or column
+A refinement predicate's E1209 names only the file, both for a direct impure builtin (pre-batch) and for CS2-8's
+reach through a helper. Fix direction: carry the predicate's span (or the reached call's) into the diagnostic.
