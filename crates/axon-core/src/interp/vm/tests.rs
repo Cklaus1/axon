@@ -2643,10 +2643,8 @@ fn assert_eq_f64_fails_on_nan_on_both_engines() {
                 "ATTACK: NaN passed an f64 assertion, or a far pair did, or an inexact pair did ({engine:?} {t}): {got:?}"
             );
         }
-        for t in ["t_inf"] {
-            let got = run(t);
-            assert!(matches!(got, Ok(Value::Unit)), "{engine:?} {t}: {got:?}");
-        }
+        let got = run("t_inf");
+        assert!(matches!(got, Ok(Value::Unit)), "{engine:?} t_inf: {got:?}");
     }
 }
 

@@ -960,10 +960,11 @@ impl InferCtx {
         fn walk(t: &AxonType, bad: &mut Vec<String>) {
             match t {
                 AxonType::Generic { base, args } => {
-                    if base == "Dict" && args.len() == 2 {
-                        if !matches!(&args[0], AxonType::Named(n) if n == "str" || n == "String") {
-                            bad.push(format!("{:?}", args[0]));
-                        }
+                    if base == "Dict"
+                        && args.len() == 2
+                        && !matches!(&args[0], AxonType::Named(n) if n == "str" || n == "String")
+                    {
+                        bad.push(format!("{:?}", args[0]));
                     }
                     args.iter().for_each(|a| walk(a, bad));
                 }

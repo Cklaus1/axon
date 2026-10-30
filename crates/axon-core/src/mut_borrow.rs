@@ -385,40 +385,42 @@ impl Walker<'_> {
         let help_local = "bind the value to a local first (`let tmp = ...`), pass `&mut tmp`, \
                           then store it back";
         match operand {
-            Expr::Ident(name) => match {
+            Expr::Ident(name) => {
                 self.note_use(name);
-                self.lookup(name)
-            } {
-                Some((Local::Shared, _)) => {
-                    self.err(
+                match self.lookup(name) {
+                    Some((Local::Shared, _)) => {
+                        self.err(
                         E0604,
                         format!("cannot pass `{name}` as `&mut` — it is a shared `&` parameter"),
                         "declare the parameter `&mut [T]` (and pass `&mut a` at its call sites) \
                          so the write reaches the caller",
                     );
-                    None
-                }
-                Some((_, true)) => {
-                    self.err(
-                        E0605,
-                        format!(
-                            "cannot borrow `{name}` as `&mut` inside a closure — the closure \
+                        None
+                    }
+                    Some((_, true)) => {
+                        self.err(
+                            E0605,
+                            format!(
+                                "cannot borrow `{name}` as `&mut` inside a closure — the closure \
                              holds a copy of it"
-                        ),
-                        "call the `&mut` function outside the closure",
-                    );
-                    None
+                            ),
+                            "call the `&mut` function outside the closure",
+                        );
+                        None
+                    }
+                    Some(_) => Some(name),
+                    None => {
+                        self.err(
+                            E0605,
+                            format!(
+                                "cannot borrow `{name}` as `&mut` — it is not a local variable"
+                            ),
+                            help_local,
+                        );
+                        None
+                    }
                 }
-                Some(_) => Some(name),
-                None => {
-                    self.err(
-                        E0605,
-                        format!("cannot borrow `{name}` as `&mut` — it is not a local variable"),
-                        help_local,
-                    );
-                    None
-                }
-            },
+            }
             Expr::FieldAccess { .. } | Expr::Index { .. } => {
                 self.err(
                     E0605,

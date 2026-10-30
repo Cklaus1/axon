@@ -2987,11 +2987,9 @@ impl<'p> Interp<'p> {
                 };
                 match r {
                     Some(v) => ok!(Value::Int(v)),
-                    None => {
-                        return panic(format!(
-                            "integer overflow: pow_i64({base}, {exp}) exceeds i64"
-                        ))
-                    }
+                    None => panic(format!(
+                        "integer overflow: pow_i64({base}, {exp}) exceeds i64"
+                    )),
                 }
             }
             "sqrt_f64" => {
