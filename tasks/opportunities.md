@@ -2638,6 +2638,7 @@ S1 taught `reachable_capabilities` (the `@[contained]` / `axon caps` walker) to 
 ### O-S1-15 — [low] The interpreter does not check refinements on enum variant fields or on lambda parameters
 Noted in `crates/axon-core/src/capabilities.rs` (the `reachable_capabilities` doc and the `Expr::Lambda` arm): an enum variant field's refinement is not checked at construction, and a lambda parameter's refinement is not checked at a call. The caps walker follows lambda parameter refinements anyway, so adding the check opens no route; the variant-field case is not followed and would need a walker change with the check.
 `[DECIDED by human 2026-10-18: direction is to ENFORCE both (variant-field refinements at construction, lambda-parameter refinements at call), not document the gap; not in the follow-up batch]`
+`[FIXED 2026-10-29: checker-soundness-2 CS2-7 (a4c83060): an enum variant field's refinement is checked when `E::V { .. }` is built and a refined lambda param at every call, in the interpreter, the VM and natively (exit 6); a constant violating it is E1209 at check; `axon caps` reports the routes]`
 
 ### O-S1-16 — [medium] The build-loop skill should carry the S1 lessons
 `skill://build-loop` does not yet say: lanes run every gate stage before reporting (not filtered tests); reviewer briefs use neutral "conformance audit" wording; probe real receipt-corpus tasks on the frozen binary before the paid regress; every partial outcome (exit 27) gets an invariant that the file on disk holds the reported bytes. See `tasks/lessons.md` § S1 — governed repair episode.
@@ -2734,6 +2735,7 @@ A fn with a closed row (`| {}`) whose `@[verify]` predicate writes a file passes
 
 ### O-SP-02 — [medium] E1209 (impure refinement predicate) is bypassed through a user fn
 `refine_write` calling a builtin directly → E1209; the same call wrapped in a user helper fn → check rc 0 and the file is written. E1209 is shallow. Found by CapabilitySurface (F2). Deep E1209 breaks 6–7 route tests in `caps_verb.rs` (537-593, 617); recommended as its own spec (capability-surface Q2, needs-human).
+`[FIXED 2026-10-29: checker-soundness-2 CS2-8 (8fd92f22): the predicate is walked with the capabilities reach walker; any reached capability or effect (Time included), or a call nothing can classify, is E1209]`
 
 ### O-SP-03 — [low] Impl-method declared effect rows missing from the manifest `effect_union` (by reading only)
 Not observed: no codegen-capable binary was available. Found by CapabilitySurface (F3).
@@ -2805,6 +2807,7 @@ wrong. Out of SF-5's scope.
 `ops[0](1, 2)` or `mk()(1, 2)` with a wrong arity checks rc 0 (FnVal2 probe `c1_index_callee.ax`). O-SF-01's fix covers
 only a callee that names a local or top-level `let`. Fix direction: type the callee expression (`resolve_expr_type`) and
 reuse `check_args_against_sig` when it resolves to `Type::Fn`.
+`[FIXED 2026-10-29: checker-soundness-2 CS2-6 (9dd11ce1): a call through an array element, a call's result or a fn-typed field is checked against the fn's type (E0305/E0306/E0102); a local lambda's call is checked against its param kinds]`
 
 ### O-SF-05 — [medium] `managed_run_gate.sh` read an empty `status` once, failing the full gate
 Gate run at a02d632f (2026-10-29, load ≈ 20): `managed_run_gate: FAIL - expected exited:3, got ''`
@@ -2864,34 +2867,41 @@ The builtin's `fn(T)->U` param is `Type::Deferred` (`checker.rs:5802-5809`), so 
 never unified. Reproduced: `arr_filter([1,2,3], |x| x + 1)` -> panic "predicate must return bool, got i64";
 `arr_fold(["a"], 0, |acc, x| acc + x)` -> panic "cannot apply Add to i64 / str". GapLang also lists `arr_sort_by`,
 `arr_sum_by`, `arr_group_by`, `dict_each`, `arr_zip_with`. The largest remaining check-then-panic class.
+`[FIXED 2026-10-29: checker-soundness-2 CS2-3a (54c21f06): a builtin's `fn(..) -> ..` param is a real fn type unified with the closure (E0102); numeric key fns take `Num` (E0306 "key fn must return a number")]`
 
 ### O-GAP-02 - [high] `Dict` values are untyped
 `dict_get` returns `Option<T>` with T unconstrained; a `Dict<str, i64>` annotation is accepted, not enforced.
 Reproduced: `dict_set(d, "a", 1)` then `Some(v) => println("got " + v)` -> panic "cannot apply Add to str / i64".
 Same Deferred root as O-GAP-01; fix together.
+`[FIXED 2026-10-29: checker-soundness-2 CS2-3b (fc8ab40f): `Dict` is `Dict<str, V>`, one value type per dict (NH-1(a)); a mixed dict, a write of another type and `Dict<K, V>` with K not str are E0102]`
 
 ### O-GAP-03 - [high] Assigning to a captured variable in a closure is silently dropped
 Reproduced: `let count = 0; let inc = || { count = count + 1 }; inc(); inc(); println(to_str(count))` prints `0`,
 rc 0, no diagnostic. Captures are copies (`spec/compiler-phase3.md:322` says by-move). Silent wrong answer. Fix
 direction: refuse assignment to a captured name at check.
+`[FIXED 2026-10-29: checker-soundness-2 CS2-1 (cb265159): a closure write to a captured binding used outside the closure afterwards, or written by a closure literal in a loop that does not declare it, is E0607]`
 
 ### O-GAP-04 - [medium] Exhaustiveness is checked only for enum / Option / Result scrutinees
 Reproduced: `match n { 0 => "zero", 1 => "one" }` with `n = 5` -> panic "no match arm matched". Same for str and
 tuple scrutinees (GapLang f01/f02). Fix direction: require `_` (or a binding arm) on non-enum scrutinees.
+`[FIXED 2026-10-29: checker-soundness-2 CS2-4 (0df1baea): scalar scrutinees need a catch-all, bool needs both literals, tuples are checked over the product of their component domains, a guarded arm covers nothing (E0304)]`
 
 ### O-GAP-05 - [medium] Method call on an unbounded generic is accepted
 Reproduced: `fn f<T>(x: T) -> i64 { x.area() }`, `f(3)` -> panic "no method `area` on type `i64`". GapLang f17b:
 `let b: B<i64> = B { v: "s" }` is also accepted (generic struct annotation not enforced).
+`[FIXED 2026-10-29: checker-soundness-2 CS2-5 (83a3d17e): a method on a type param is looked up in its bound traits (E0403, fix-it adds the bound); generic struct type arguments are compared (E0102)]`
 
 ### O-GAP-06 - [medium] Arithmetic builtins wrap or saturate where the operators panic
 Reproduced: `pow_i64(3, 40)` = -6289078614652622815 (`wrapping_pow`, `interp/builtins.rs:2969`);
 `arr_sum_i64([i64::MAX, 1])` = i64::MAX. `+`/`*` panic on overflow. Silent wrong answer. GapLang also reports
 `assert_eq_f64` with a 1e-9 tolerance in the interpreter (`builtins.rs:3783`) but exact in native and in stdlib.md
 [native side read only].
+`[FIXED 2026-10-29: checker-soundness-2 CS2-2 (00984298): `pow_i64`, `arr_sum_i64`, `arr_sum_by`, `dict_inc` panic `integer overflow` like the operators; `arr_mean_i64`/`random_i64` exact; `assert_eq_f64` exact IEEE on every engine]`
 
 ### O-GAP-07 - [low] Plain recursion stops at depth 6000
 Reproduced: a 100000-deep `s(n - 1)` sum panics "recursion limit exceeded (6000)". `arr_max_i64([])` panics rather
 than returning Option (GapLang a12, not re-run).
+Not built by checker-soundness-2 (out of scope, its §0); stays open and needs its own spec.
 
 ### O-GAP-08 - [medium] Common forms refused, and diagnostics that misdirect
 GapLang (not re-run here): `Ok(())`, `if let`, `for (a, b) in pairs`, inherent `impl T {}`, trait default methods,

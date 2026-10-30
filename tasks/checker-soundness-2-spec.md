@@ -1,6 +1,6 @@
 # checker-soundness-2 - DRAFT spec
 
-**Status: AUTHORIZED for build 2026-10-29 (after Step 1 review; human: "approved, do it"). §8 NH-1 decided (a), 2026-10-29.**
+**Status: BUILT 2026-10-29 on `main` 8fd92f22 (CS2-1..CS2-8; authorized 2026-10-29 after Step 1 review, human: "approved, do it"; §8 NH-1 decided (a)).**
 
 ### Step 1 review
 
