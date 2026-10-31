@@ -1195,16 +1195,18 @@ if [ "$STRICT" = 1 ]; then
   echo "── gate: codegen-gated integration tests ────────────────────────"
   cargo test --locked -p axon-core --test integration_fixtures || fail "codegen integration tests"
 
-  # R1d Slice-3 drift kill-gate (governance/specs/R1d-single-source-builtins.md):
-  # the builtin_externs drift tests live behind #[cfg(feature = "codegen")], so
+  # Codegen lib unit tests (R1d Slice-3 drift kill-gate,
+  # governance/specs/R1d-single-source-builtins.md; native-parity NPD-3): every
+  # test under `codegen::` lives behind #[cfg(feature = "codegen")] (lib.rs), so
   # the standard-gate `cargo test --no-default-features` at the top compiles them
   # out (0 run) and the integration_fixtures line above skips --lib entirely — a
   # BUILTIN_EXTERNS/STR_OUT_EXTERNS table-drift regression passed both gates
-  # green (same class as the clippy allowlist gap above). Run them explicitly
-  # with default features (codegen on). Cheap: same build as the two stages
-  # above, 5 tests, ~0s.
-  echo "── gate: builtin-externs drift tests (R1d slice 3) ──────────────"
-  cargo test --locked -p axon-core --lib codegen::builtin_externs || fail "builtin-externs drift tests"
+  # green (same class as the clippy allowlist gap above). Run the whole
+  # `codegen::` module (builtin_externs drift tests, freestanding traps, the
+  # native-parity IR tests) explicitly with default features (codegen on).
+  # Cheap: same build as the two stages above, ~25 tests, ~0s.
+  echo "── gate: codegen lib unit tests (R1d slice 3, NPD-3) ────────────"
+  cargo test --locked -p axon-core --lib codegen:: || fail "codegen lib unit tests"
 
   # The two-engine invariant (I-2): native codegen + AOT-wasm must match the
   # interpreter oracle byte-for-byte. ~22 scripts/*_parity.sh harnesses assert
