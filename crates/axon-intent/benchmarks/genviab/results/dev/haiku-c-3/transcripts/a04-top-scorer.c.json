@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    in_path = \"./data/records.csv\"\n    out_dir = \"./out\"\n    out_path = os.path.join(out_dir, \"answer.txt\")\n\n    best_name = None\n    best_score = None\n\n    with open(in_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        for lineno, raw in enumerate(f):\n            line = raw.rstrip(\"\\r\\n\")\n            if lineno == 0 and line.strip().lower() == \"name,score\":\n                continue\n            if not line.strip():\n                continue\n            if \",\" not in line:\n                continue\n            name, score_str = line.rsplit(\",\", 1)\n            score_str = score_str.strip()\n            if not score_str.isdigit():\n                continue\n            score = int(score_str)\n            if best_score is None or score > best_score:\n                best_score = score\n                best_name = name\n\n    if best_name is None:\n        return 1\n\n    os.makedirs(out_dir, exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(best_name + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    in_path = \"./data/records.csv\"\n    out_dir = \"./out\"\n    out_path = os.path.join(out_dir, \"answer.txt\")\n\n    best_name = None\n    best_score = None\n\n    with open(in_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        for lineno, raw in enumerate(f):\n            line = raw.rstrip(\"\\r\\n\")\n            if lineno == 0 and line.strip().lower() == \"name,score\":\n                continue\n            if not line.strip():\n                continue\n            if \",\" not in line:\n                continue\n            name, score_str = line.rsplit(\",\", 1)\n            score_str = score_str.strip()\n            if not score_str.isdigit():\n                continue\n            score = int(score_str)\n            if best_score is None or score > best_score:\n                best_score = score\n                best_name = name\n\n    if best_name is None:\n        return 1\n\n    os.makedirs(out_dir, exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(best_name + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

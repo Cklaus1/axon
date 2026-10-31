@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Find the name of the highest-scoring record in ./data/records.csv. The file is CSV: a header line `name,score`, then one record per line (a name, a comma, a non-negative integer score); every line ends with a newline. Scores are distinct. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the name.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "ea85abd8131af94041b596c24a266c0e2ab1c05e208b33115fb797ccba34b6bd",
+      "candidate": "fn answer(text: str) -> str {\n    let lines = str_split(str_trim(text), \"\\n\")\n    let best = \"\"\n    let best_score = -1\n    for i in 1..len(lines) {\n        let parts = str_split(lines[i], \",\")\n        if len(parts) == 2 {\n            let score = parse_int_or(parts[1], -1)\n            if score > best_score {\n                best_score = score\n                best = str_trim(parts[0])\n            }\n        }\n    }\n    best\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/records.csv\") {\n        Ok(text) => {\n            match write_file(\"./out/answer.txt\", answer(text) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 201,
+      "report": {
+        "stage": "accepted",
+        "source": "fn answer(text: str) -> str {\n    let lines = str_split(str_trim(text), \"\\n\")\n    let best = \"\"\n    let best_score = -1\n    for i in 1..len(lines) {\n        let parts = str_split(lines[i], \",\")\n        if len(parts) == 2 {\n            let score = parse_int_or(parts[1], -1)\n            if score > best_score {\n                best_score = score\n                best = str_trim(parts[0])\n            }\n        }\n    }\n    best\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/records.csv\") {\n        Ok(text) => {\n            match write_file(\"./out/answer.txt\", answer(text) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 201,
+  "tokens": null
+}

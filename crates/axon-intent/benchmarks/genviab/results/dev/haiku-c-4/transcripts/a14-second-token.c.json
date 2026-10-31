@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nfrom collections import Counter\nimport os\n\nwith open(\"./data/tokens.txt\", \"r\") as f:\n    line = f.read().strip()\n\ntokens = [t for t in line.split(\",\") if t]\ncounts = Counter(tokens)\nranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)\nanswer = ranked[1][0]\n\nos.makedirs(\"./out\", exist_ok=True)\nwith open(\"./out/answer.txt\", \"w\") as f:\n    f.write(answer + \"\\n\")\n\nraise SystemExit(0)\n```",
+   "source": "from collections import Counter\nimport os\n\nwith open(\"./data/tokens.txt\", \"r\") as f:\n    line = f.read().strip()\n\ntokens = [t for t in line.split(\",\") if t]\ncounts = Counter(tokens)\nranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)\nanswer = ranked[1][0]\n\nos.makedirs(\"./out\", exist_ok=True)\nwith open(\"./out/answer.txt\", \"w\") as f:\n    f.write(answer + \"\\n\")\n\nraise SystemExit(0)\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

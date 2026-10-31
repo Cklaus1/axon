@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    src = \"./data/five.txt\"\n    dst_dir = \"./out\"\n    dst = \"./out/answer.txt\"\n\n    size = os.path.getsize(src)\n\n    os.makedirs(dst_dir, exist_ok=True)\n    with open(dst, \"w\", encoding=\"ascii\", newline=\"\\n\") as f:\n        f.write(str(size) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    src = \"./data/five.txt\"\n    dst_dir = \"./out\"\n    dst = \"./out/answer.txt\"\n\n    size = os.path.getsize(src)\n\n    os.makedirs(dst_dir, exist_ok=True)\n    with open(dst, \"w\", encoding=\"ascii\", newline=\"\\n\") as f:\n        f.write(str(size) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

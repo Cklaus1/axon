@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    with open(\"./data/matrix.txt\", \"r\") as f:\n        rows = [[int(x) for x in line.split()] for line in f if line.strip()]\n\n    # Transposing and summing each row of the transpose is the same as\n    # summing each column of the original matrix.\n    if rows:\n        cols = len(rows[0])\n        col_sums = [sum(r[j] for r in rows) for j in range(cols)]\n    else:\n        col_sums = []\n\n    product = 1\n    for s in col_sums:\n        product *= s\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(\"./out/answer.txt\", \"w\") as f:\n        f.write(str(product) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    with open(\"./data/matrix.txt\", \"r\") as f:\n        rows = [[int(x) for x in line.split()] for line in f if line.strip()]\n\n    # Transposing and summing each row of the transpose is the same as\n    # summing each column of the original matrix.\n    if rows:\n        cols = len(rows[0])\n        col_sums = [sum(r[j] for r in rows) for j in range(cols)]\n    else:\n        col_sums = []\n\n    product = 1\n    for s in col_sums:\n        product *= s\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(\"./out/answer.txt\", \"w\") as f:\n        f.write(str(product) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

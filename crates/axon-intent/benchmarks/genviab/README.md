@@ -70,6 +70,11 @@ before the first call, and refuses a second score.
 | `dev/smoke-a` (1 task) | 49829e13 | 1/1 | 1/1 | – | $0.0019 |
 | `dev/haiku-*-1` | 49829e13 | 6/14 | 5/14 | 14/14 | $0.0376 + $0.0040 |
 | `dev/haiku-*-2` | a0100121 | 14/14 | 14/14 | 14/14 | $0.0309 + $0.0042 |
+| `dev/haiku-*-3` (HEAD f654f8a6) | a0100121 | 14/14 | 13/14 | 13/14 (2 false acceptances: arm c has no accept gate) | $0.0334 + $0.0038 |
+| `dev/haiku-*-4` (HEAD 5c937873) | a0100121 | 14/14 | 14/14 | 14/14 | $0.0308 + $0.0036 |
+
+Total paid dev spend: $0.1501 nominal (`python3 -B genviab.py spent`). `verdict` on run 4 (dev, not a
+measurement): PASS, 14/14, Clopper-Pearson [0.768, 1.0], not ADVERSE.
 
 Run 1 found a corpus defect, not a model property: 14 intents had a second paragraph under `# Intent`
 stating the output format, but the loop shows the generator only the first paragraph (`Intent::goal`), while

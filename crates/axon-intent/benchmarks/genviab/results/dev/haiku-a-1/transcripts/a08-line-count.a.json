@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Count the lines of ./data/lines.txt.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "aab307b3d3b2b6eb62e264a87b958a7e8c5dd23fa8bedf7b7fca8986fce7fc6b",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/lines.txt\") {\n        Ok(text) => {\n            let parts = str_split(text, \"\\n\")\n            let total = len(parts)\n            let count = if total > 0 && str_eq(parts[total - 1], \"\") { total - 1 } else { total }\n            match write_file(\"./out/answer.txt\", to_str(count) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 4004,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/lines.txt\") {\n        Ok(text) => {\n            let parts = str_split(text, \"\\n\")\n            let total = len(parts)\n            let count = if total > 0 && str_eq(parts[total - 1], \"\") { total - 1 } else { total }\n            match write_file(\"./out/answer.txt\", to_str(count) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 4004,
+  "tokens": null
+}

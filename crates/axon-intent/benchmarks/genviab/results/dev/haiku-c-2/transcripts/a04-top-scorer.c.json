@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    in_path = \"./data/records.csv\"\n    out_path = \"./out/answer.txt\"\n\n    with open(in_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        lines = f.read().splitlines()\n\n    best_name = None\n    best_score = None\n\n    # Skip the header line (first line).\n    for line in lines[1:]:\n        if not line.strip():\n            continue\n        name, sep, score_text = line.rpartition(\",\")\n        if not sep:\n            continue\n        try:\n            score = int(score_text.strip())\n        except ValueError:\n            continue\n        if best_score is None or score > best_score:\n            best_score = score\n            best_name = name\n\n    if best_name is None:\n        return 1\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(best_name + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    in_path = \"./data/records.csv\"\n    out_path = \"./out/answer.txt\"\n\n    with open(in_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        lines = f.read().splitlines()\n\n    best_name = None\n    best_score = None\n\n    # Skip the header line (first line).\n    for line in lines[1:]:\n        if not line.strip():\n            continue\n        name, sep, score_text = line.rpartition(\",\")\n        if not sep:\n            continue\n        try:\n            score = int(score_text.strip())\n        except ValueError:\n            continue\n        if best_score is None or score > best_score:\n            best_score = score\n            best_name = name\n\n    if best_name is None:\n        return 1\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(best_name + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Rank the keys in ./data/counts.csv by value, highest first; where two values tie, order those keys alphabetically (ascending).",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "641e0b0f0ec3f21e9cc41295e440e61d6c840e4239fdae4e031c73305558d54b",
+      "candidate": "```axon\nfn cmp_pair(a: (str, i64), b: (str, i64)) -> i64 {\n    if a.1 != b.1 {\n        if a.1 > b.1 { -1 } else { 1 }\n    } else {\n        str_cmp(a.0, b.0)\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/counts.csv\") {\n        Ok(text) => {\n            let d = dict_new()\n            let lines = str_split(text, \"\\n\")\n            let bad = 0\n            for i in 0..len(lines) {\n                let line = str_trim(lines[i])\n                if len(line) > 0 {\n                    let parts = str_split(line, \",\")\n                    if len(parts) < 2 {\n                        bad = bad + 1\n                    } else {\n                        let key = str_trim(parts[0])\n                        match parse_int(str_trim(parts[1])) {\n                            Ok(v) => {\n                                dict_set(d, key, v)\n                            }\n                            Err(_) => {\n                                bad = bad + 1\n                            }\n                        }\n                    }\n                }\n            }\n            let pairs = dict_to_pairs(d)\n            let sorted = arr_sort_by(pairs, |a, b| cmp_pair(a, b))\n            let out = \"\"\n            for i in 0..len(sorted) {\n                let p = sorted[i]\n                out = out + p.0 + \"\\n\"\n            }\n            match write_file(\"./out/answer.txt\", out) {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 9507,
+      "report": {
+        "stage": "accepted",
+        "source": "fn cmp_pair(a: (str, i64), b: (str, i64)) -> i64 {\n    if a.1 != b.1 {\n        if a.1 > b.1 { -1 } else { 1 }\n    } else {\n        str_cmp(a.0, b.0)\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/counts.csv\") {\n        Ok(text) => {\n            let d = dict_new()\n            let lines = str_split(text, \"\\n\")\n            let bad = 0\n            for i in 0..len(lines) {\n                let line = str_trim(lines[i])\n                if len(line) > 0 {\n                    let parts = str_split(line, \",\")\n                    if len(parts) < 2 {\n                        bad = bad + 1\n                    } else {\n                        let key = str_trim(parts[0])\n                        match parse_int(str_trim(parts[1])) {\n                            Ok(v) => {\n                                dict_set(d, key, v)\n                            }\n                            Err(_) => {\n                                bad = bad + 1\n                            }\n                        }\n                    }\n                }\n            }\n            let pairs = dict_to_pairs(d)\n            let sorted = arr_sort_by(pairs, |a, b| cmp_pair(a, b))\n            let out = \"\"\n            for i in 0..len(sorted) {\n                let p = sorted[i]\n                out = out + p.0 + \"\\n\"\n            }\n            match write_file(\"./out/answer.txt\", out) {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 9507,
+  "tokens": null
+}

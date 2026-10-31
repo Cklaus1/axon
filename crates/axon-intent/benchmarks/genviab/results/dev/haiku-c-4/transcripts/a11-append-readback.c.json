@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\n\nos.makedirs(\"./out\", exist_ok=True)\n\n# Write \"one\" (overwrite/create)\nwith open(\"./out/app.txt\", \"w\", encoding=\"utf-8\") as f:\n    f.write(\"one\")\n\n# Separate append operation for \"two\"\nwith open(\"./out/app.txt\", \"a\", encoding=\"utf-8\") as f:\n    f.write(\"two\")\n\n# Read back and write contents plus a single newline\nwith open(\"./out/app.txt\", \"r\", encoding=\"utf-8\") as f:\n    contents = f.read()\n\nwith open(\"./out/answer.txt\", \"w\", encoding=\"utf-8\") as f:\n    f.write(contents + \"\\n\")\n\nraise SystemExit(0)\n```",
+   "source": "import os\n\nos.makedirs(\"./out\", exist_ok=True)\n\n# Write \"one\" (overwrite/create)\nwith open(\"./out/app.txt\", \"w\", encoding=\"utf-8\") as f:\n    f.write(\"one\")\n\n# Separate append operation for \"two\"\nwith open(\"./out/app.txt\", \"a\", encoding=\"utf-8\") as f:\n    f.write(\"two\")\n\n# Read back and write contents plus a single newline\nwith open(\"./out/app.txt\", \"r\", encoding=\"utf-8\") as f:\n    contents = f.read()\n\nwith open(\"./out/answer.txt\", \"w\", encoding=\"utf-8\") as f:\n    f.write(contents + \"\\n\")\n\nraise SystemExit(0)\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

@@ -1,0 +1,57 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "For the comma-separated tokens in ./data/tokens.txt: count how often each token occurs, then give the token with the second-highest count.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "f4febc729621236fe72db5b9ebeb14f63c2c188729c8b88f535d5d72f24c0f56",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/tokens.txt\") {\n        Ok(text) => {\n            let parts = str_split(str_replace(text, \"\\n\", \",\"), \",\")\n            let counts = dict_new()\n            for i in 0..len(parts) {\n                let t = str_trim(parts[i])\n                if str_len(t) > 0 {\n                    dict_inc(counts, t)\n                }\n            }\n            let keys = dict_keys(counts)\n            let n = len(keys)\n            if n == 0 {\n                eprintln(\"no tokens found\")\n                return 1\n            }\n            let first = 0\n            for i in 1..n {\n                if dict_get_or(counts, keys[i], 0) > dict_get_or(counts, keys[first], 0) {\n                    first = i\n                }\n            }\n            let second = n\n            for i in 0..n {\n                if i != first {\n                    if second == n {\n                        second = i\n                    } else if dict_get_or(counts, keys[i], 0) > dict_get_or(counts, keys[second], 0) {\n                        second = i\n                    }\n                }\n            }\n            if second == n {\n                eprintln(\"fewer than two distinct tokens\")\n                return 1\n            }\n            match write_file(\"./out/answer.txt\", keys[second] + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 8605,
+      "report": {
+        "stage": "check",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/tokens.txt\") {\n        Ok(text) => {\n            let parts = str_split(str_replace(text, \"\\n\", \",\"), \",\")\n            let counts = dict_new()\n            for i in 0..len(parts) {\n                let t = str_trim(parts[i])\n                if str_len(t) > 0 {\n                    dict_inc(counts, t)\n                }\n            }\n            let keys = dict_keys(counts)\n            let n = len(keys)\n            if n == 0 {\n                eprintln(\"no tokens found\")\n                return 1\n            }\n            let first = 0\n            for i in 1..n {\n                if dict_get_or(counts, keys[i], 0) > dict_get_or(counts, keys[first], 0) {\n                    first = i\n                }\n            }\n            let second = n\n            for i in 0..n {\n                if i != first {\n                    if second == n {\n                        second = i\n                    } else if dict_get_or(counts, keys[i], 0) > dict_get_or(counts, keys[second], 0) {\n                        second = i\n                    }\n                }\n            }\n            if second == n {\n                eprintln(\"fewer than two distinct tokens\")\n                return 1\n            }\n            match write_file(\"./out/answer.txt\", keys[second] + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": false,
+        "diagnostics": [
+          "{\"schema\":\"axon-diag/1\",\"severity\":\"error\",\"code\":\"E0102\",\"file\":\"main.ax\",\"line\":9,\"col\":21,\"message\":\"type mismatch in if-without-else body (expected ()), found i64\",\"expected\":\"()\",\"found\":\"i64\"}"
+        ],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": "`axon check` rejected the program:\n{\"schema\":\"axon-diag/1\",\"severity\":\"error\",\"code\":\"E0102\",\"file\":\"main.ax\",\"line\":9,\"col\":21,\"message\":\"type mismatch in if-without-else body (expected ()), found i64\",\"expected\":\"()\",\"found\":\"i64\"}\n",
+        "infrastructure": null
+      }
+    },
+    {
+      "round": 1,
+      "prompt_sha256": "4a97b01809d50db9a11d494d6f90546379444832cc709dc582c040c7ee3cf246",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/tokens.txt\") {\n        Ok(text) => {\n            let parts = str_split(str_replace(text, \"\\n\", \",\"), \",\")\n            let counts = dict_new()\n            for i in 0..len(parts) {\n                let t = str_trim(parts[i])\n                if str_len(t) > 0 {\n                    dict_set(counts, t, dict_get_or(counts, t, 0) + 1)\n                }\n            }\n            let keys = dict_keys(counts)\n            let n = len(keys)\n            if n == 0 {\n                eprintln(\"no tokens found\")\n                return 1\n            }\n            let first = 0\n            for i in 1..n {\n                if dict_get_or(counts, keys[i], 0) > dict_get_or(counts, keys[first], 0) {\n                    first = i\n                }\n            }\n            let second = n\n            for i in 0..n {\n                if i != first {\n                    if second == n {\n                        second = i\n                    } else if dict_get_or(counts, keys[i], 0) > dict_get_or(counts, keys[second], 0) {\n                        second = i\n                    }\n                }\n            }\n            if second == n {\n                eprintln(\"fewer than two distinct tokens\")\n                return 1\n            }\n            match write_file(\"./out/answer.txt\", keys[second] + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 5010,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/tokens.txt\") {\n        Ok(text) => {\n            let parts = str_split(str_replace(text, \"\\n\", \",\"), \",\")\n            let counts = dict_new()\n            for i in 0..len(parts) {\n                let t = str_trim(parts[i])\n                if str_len(t) > 0 {\n                    dict_set(counts, t, dict_get_or(counts, t, 0) + 1)\n                }\n            }\n            let keys = dict_keys(counts)\n            let n = len(keys)\n            if n == 0 {\n                eprintln(\"no tokens found\")\n                return 1\n            }\n            let first = 0\n            for i in 1..n {\n                if dict_get_or(counts, keys[i], 0) > dict_get_or(counts, keys[first], 0) {\n                    first = i\n                }\n            }\n            let second = n\n            for i in 0..n {\n                if i != first {\n                    if second == n {\n                        second = i\n                    } else if dict_get_or(counts, keys[i], 0) > dict_get_or(counts, keys[second], 0) {\n                        second = i\n                    }\n                }\n            }\n            if second == n {\n                eprintln(\"fewer than two distinct tokens\")\n                return 1\n            }\n            match write_file(\"./out/answer.txt\", keys[second] + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 13616,
+  "tokens": null
+}

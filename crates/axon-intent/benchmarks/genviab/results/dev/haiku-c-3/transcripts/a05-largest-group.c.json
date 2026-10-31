@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\nfrom collections import Counter\n\n\ndef main():\n    with open(\"./data/words.txt\", \"r\", encoding=\"utf-8\") as f:\n        words = f.read().split()\n\n    counts = Counter(w[0] for w in words if w)\n    largest = max(counts.values()) if counts else 0\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(\"./out/answer.txt\", \"w\", encoding=\"utf-8\") as f:\n        f.write(str(largest) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\nfrom collections import Counter\n\n\ndef main():\n    with open(\"./data/words.txt\", \"r\", encoding=\"utf-8\") as f:\n        words = f.read().split()\n\n    counts = Counter(w[0] for w in words if w)\n    largest = max(counts.values()) if counts else 0\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(\"./out/answer.txt\", \"w\", encoding=\"utf-8\") as f:\n        f.write(str(largest) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

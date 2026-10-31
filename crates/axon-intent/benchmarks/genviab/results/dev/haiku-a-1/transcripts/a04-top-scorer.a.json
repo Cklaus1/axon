@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Find the name of the highest-scoring record in ./data/records.csv.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "8afd0d0ecdaa9a0cb219add82d589a44b9b425c324eccb4505bfc1eaf07f1469",
+      "candidate": "```axon\nfn col_index(header: [str], want: str) -> i64 {\n    let idx = -1\n    for i in 0..len(header) {\n        if str_to_lower(str_trim(header[i])) == want { idx = i }\n    }\n    idx\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/records.csv\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let header = str_split(str_trim(lines[0]), \",\")\n            let name_col = col_index(header, \"name\")\n            let score_col = col_index(header, \"score\")\n            if name_col < 0 { name_col = 0 }\n            if score_col < 0 { score_col = len(header) - 1 }\n\n            let found = false\n            let best = 0.0\n            let best_name = \"\"\n\n            for i in 1..len(lines) {\n                let line = str_trim(lines[i])\n                if str_len(line) > 0 {\n                    let fields = str_split(line, \",\")\n                    if max_i64(name_col, score_col) < len(fields) {\n                        match parse_float(str_trim(fields[score_col])) {\n                            Ok(s) => {\n                                if found == false || s > best {\n                                    best = s\n                                    best_name = str_trim(fields[name_col])\n                                    found = true\n                                }\n                            }\n                            Err(e) => eprintln(\"skipping row {to_str(i)}: {e}\")\n                        }\n                    }\n                }\n            }\n\n            if found == false {\n                eprintln(\"no scored records found\")\n                return 1\n            }\n\n            match write_file(\"./out/answer.txt\", best_name + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 10207,
+      "report": {
+        "stage": "accepted",
+        "source": "fn col_index(header: [str], want: str) -> i64 {\n    let idx = -1\n    for i in 0..len(header) {\n        if str_to_lower(str_trim(header[i])) == want { idx = i }\n    }\n    idx\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/records.csv\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let header = str_split(str_trim(lines[0]), \",\")\n            let name_col = col_index(header, \"name\")\n            let score_col = col_index(header, \"score\")\n            if name_col < 0 { name_col = 0 }\n            if score_col < 0 { score_col = len(header) - 1 }\n\n            let found = false\n            let best = 0.0\n            let best_name = \"\"\n\n            for i in 1..len(lines) {\n                let line = str_trim(lines[i])\n                if str_len(line) > 0 {\n                    let fields = str_split(line, \",\")\n                    if max_i64(name_col, score_col) < len(fields) {\n                        match parse_float(str_trim(fields[score_col])) {\n                            Ok(s) => {\n                                if found == false || s > best {\n                                    best = s\n                                    best_name = str_trim(fields[name_col])\n                                    found = true\n                                }\n                            }\n                            Err(e) => eprintln(\"skipping row {to_str(i)}: {e}\")\n                        }\n                    }\n                }\n            }\n\n            if found == false {\n                eprintln(\"no scored records found\")\n                return 1\n            }\n\n            match write_file(\"./out/answer.txt\", best_name + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 10207,
+  "tokens": null
+}

@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    src = \"./data/report.txt\"\n    dst = \"./out/summary.txt\"\n\n    try:\n        with open(src, \"rb\") as f:\n            data = f.read()\n    except OSError as e:\n        print(f\"error: cannot read {src}: {e}\", file=sys.stderr)\n        return 1\n\n    n = len(data)\n    text = f\"report length: {n} bytes\"\n\n    try:\n        os.makedirs(os.path.dirname(dst), exist_ok=True)\n        with open(dst, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n            f.write(text)\n    except OSError as e:\n        print(f\"error: cannot write {dst}: {e}\", file=sys.stderr)\n        return 1\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    src = \"./data/report.txt\"\n    dst = \"./out/summary.txt\"\n\n    try:\n        with open(src, \"rb\") as f:\n            data = f.read()\n    except OSError as e:\n        print(f\"error: cannot read {src}: {e}\", file=sys.stderr)\n        return 1\n\n    n = len(data)\n    text = f\"report length: {n} bytes\"\n\n    try:\n        os.makedirs(os.path.dirname(dst), exist_ok=True)\n        with open(dst, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n            f.write(text)\n    except OSError as e:\n        print(f\"error: cannot write {dst}: {e}\", file=sys.stderr)\n        return 1\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

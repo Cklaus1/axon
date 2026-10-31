@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Starting from the integers listed in ./data/numbers.txt: keep those divisible by 3, square each of them, and take the sum of the squares that are even. The file holds one positive decimal integer per line; every line ends with a newline. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the sum in decimal.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "c7d702e54b1425169f647b24eea0c1a2619215ce3e5c0da949cff74f37dc63a5",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/numbers.txt\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let total = 0\n            for i in 0..len(lines) {\n                let s = str_trim(lines[i])\n                if len(s) > 0 {\n                    match parse_int(s) {\n                        Ok(n) => {\n                            if n % 3 == 0 {\n                                let sq = n * n\n                                if sq % 2 == 0 {\n                                    total = total + sq\n                                }\n                            }\n                        }\n                        Err(e) => {\n                            eprintln(\"bad line: {e}\")\n                            return 1\n                        }\n                    }\n                }\n            }\n            match write_file(\"./out/answer.txt\", to_str(total) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 4804,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/numbers.txt\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let total = 0\n            for i in 0..len(lines) {\n                let s = str_trim(lines[i])\n                if len(s) > 0 {\n                    match parse_int(s) {\n                        Ok(n) => {\n                            if n % 3 == 0 {\n                                let sq = n * n\n                                if sq % 2 == 0 {\n                                    total = total + sq\n                                }\n                            }\n                        }\n                        Err(e) => {\n                            eprintln(\"bad line: {e}\")\n                            return 1\n                        }\n                    }\n                }\n            }\n            match write_file(\"./out/answer.txt\", to_str(total) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 4804,
+  "tokens": null
+}

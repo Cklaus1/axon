@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    src = \"./data/lines.txt\"\n    dst = \"./out/answer.txt\"\n\n    # Every line, including the last, ends with a newline, so counting\n    # newline bytes gives the line count exactly.\n    count = 0\n    with open(src, \"rb\") as f:\n        while True:\n            chunk = f.read(1 << 20)\n            if not chunk:\n                break\n            count += chunk.count(b\"\\n\")\n\n    os.makedirs(os.path.dirname(dst), exist_ok=True)\n    with open(dst, \"w\", encoding=\"ascii\", newline=\"\\n\") as f:\n        f.write(str(count) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    src = \"./data/lines.txt\"\n    dst = \"./out/answer.txt\"\n\n    # Every line, including the last, ends with a newline, so counting\n    # newline bytes gives the line count exactly.\n    count = 0\n    with open(src, \"rb\") as f:\n        while True:\n            chunk = f.read(1 << 20)\n            if not chunk:\n                break\n            count += chunk.count(b\"\\n\")\n\n    os.makedirs(os.path.dirname(dst), exist_ok=True)\n    with open(dst, \"w\", encoding=\"ascii\", newline=\"\\n\") as f:\n        f.write(str(count) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}
