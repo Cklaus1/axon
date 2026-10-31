@@ -12,7 +12,9 @@ and the pool corpus written by build.py (each task carries `class`, `knob`,
 run before the freeze.
 
 * **Cells** are (class, knob), keyed `class:knob`. A cell is ELIGIBLE with
-  >= 12 dev tasks from >= 3 dev programs.
+  >= 12 dev tasks from >= 3 dev programs. Every program count (here, in the
+  cross-fit folds and in `test_programs`) is over `build.cluster(t)`: a task
+  with a `target_program` counts with that program (hx3 HX3A-3 / E12).
 * **Shrinkage.** Each cell's evidence is its task count N_c and the sum S_c of
   its tasks' k-trial rates (a task, not a trial, is the unit: trials of one
   task are not independent). A beta prior is fitted across all cells by
@@ -94,7 +96,7 @@ def cell_evidence(ids, meta, counts):
         s, k = counts[i]
         c["S"] += s / k
         c["N"] += 1
-        c["programs"].add(meta[i]["program"])
+        c["programs"].add(build.cluster(meta[i]))
     return out
 
 
@@ -114,13 +116,13 @@ def dev_ids(meta, counts):
 
 
 def crossfit(meta, counts, ids, eligible, test_weight, seed, band=BAND):
-    progs = sorted({meta[i]["program"] for i in ids})
+    progs = sorted({build.cluster(meta[i]) for i in ids})
     random.Random(seed).shuffle(progs)
     folds = [sorted(progs[0::2]), sorted(progs[1::2])]
     out, num, den = [], 0.0, 0
     for f in (0, 1):
-        sel = [i for i in ids if meta[i]["program"] in folds[f]]
-        oof = [i for i in ids if meta[i]["program"] in folds[1 - f]]
+        sel = [i for i in ids if build.cluster(meta[i]) in folds[f]]
+        oof = [i for i in ids if build.cluster(meta[i]) in folds[1 - f]]
         ev = cell_evidence(sel, meta, counts)
         a, b = eb_fit([(e["S"], e["N"]) for e in ev.values()])
         shr = shrink(ev, a, b)
@@ -179,7 +181,7 @@ def calibrate(meta, rows, seed, cap=8, cap_seed=0, band=BAND, min_tasks=MIN_TASK
         "hx_dev": sorted(i for i in ids if 0 < counts[i][0] < counts[i][1]),
         "kept_dev_ids": sorted(i for i in ids if cell_of(meta[i]) in kept),
         "test_ids": sorted(t["id"] for t in chosen),
-        "test_programs": len({t["program"] for t in chosen}),
+        "test_programs": len({build.cluster(t) for t in chosen}),
     }
 
 

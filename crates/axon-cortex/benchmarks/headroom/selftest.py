@@ -262,6 +262,38 @@ def test_calibrate():
         pass
 
 
+def test_calibrate_cluster():
+    """hx3 HX3A-3 / E12: calibrate counts programs by `build.cluster(t)`, so
+    two tasks with one `target_program` and different `program` are one
+    program in `cell_evidence`, `crossfit` and `test_programs`."""
+    import calibrate
+    meta, counts = {}, {}
+    for n in range(4):
+        for j, prog in enumerate((f"p{n}.ax", f"b/p{n}.ax")):
+            i = f"d{n}-{j}"
+            meta[i] = {"id": i, "class": "erase-long", "knob": ">=24", "program": prog,
+                       "target_program": f"p{n}.ax", "split": "dev"}
+            counts[i] = [1, 2]
+    for n in range(2):
+        for j, prog in enumerate((f"q{n}.ax", f"b/q{n}.ax")):
+            i = f"t{n}-{j}"
+            meta[i] = {"id": i, "class": "erase-long", "knob": ">=24", "program": prog,
+                       "target_program": f"q{n}.ax", "split": "test"}
+    ev = calibrate.cell_evidence(sorted(counts), meta, counts)
+    check(len(ev["erase-long:>=24"]["programs"]) == 4,
+          f"calibrate: cell_evidence must count clusters, got {sorted(ev['erase-long:>=24']['programs'])}")
+    cf = calibrate.crossfit(meta, counts, sorted(counts), ["erase-long:>=24"], {}, seed=1)
+    folds = [set(f["programs"]) for f in cf["folds"]]
+    check(folds[0] | folds[1] == {f"p{n}.ax" for n in range(4)} and not folds[0] & folds[1],
+          f"calibrate: crossfit folds must partition clusters, got {folds}")
+    rows = [{"id": i, "trial": k, "verified_clean": k <= counts[i][0]} for i in sorted(counts) for k in (1, 2)]
+    rep = calibrate.calibrate(meta, rows, seed=1, cap=8, cap_seed=1, min_tasks=4, min_programs=3)
+    check(rep["cells"]["erase-long:>=24"]["programs"] == 4,
+          f"calibrate: the report must count clusters, got {rep['cells']['erase-long:>=24']['programs']}")
+    check(len(rep["test_ids"]) == 4 and rep["test_programs"] == 2,
+          f"calibrate: test_programs must count clusters, got {rep['test_programs']} over {rep['test_ids']}")
+
+
 # ------------------------------------------------------------------ power
 
 def test_power():
@@ -966,9 +998,9 @@ def test_mutators():
 
 
 def main():
-    for t in (test_stats, test_calibrate, test_power, test_build, test_caller_pin, test_caller_check_rule,
-              test_sparse_cut, test_erase, test_mutators, test_masked_split, test_masked_rebuild, test_excerpt_rules,
-              test_bundle, test_erase_long, test_deal_dev):
+    for t in (test_stats, test_calibrate, test_calibrate_cluster, test_power, test_build, test_caller_pin,
+              test_caller_check_rule, test_sparse_cut, test_erase, test_mutators, test_masked_split,
+              test_masked_rebuild, test_excerpt_rules, test_bundle, test_erase_long, test_deal_dev):
         try:
             t()
         except (Exception, SystemExit) as e:  # a missing module, API or CLI option is a failure, not a crash
