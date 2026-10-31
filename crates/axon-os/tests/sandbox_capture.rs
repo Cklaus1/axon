@@ -293,7 +293,13 @@ type FaultCase = (&'static str, &'static str, i32, fn(&Verdict) -> bool);
 /// a halt is `Halted`, an AI-policy stop is denied on the `ai-policy` axis, a
 /// refinement breach is `RefineViolation`, an exhausted goal budget is
 /// `BudgetExhausted`. The AI case is granted net (which admits `AI`) and has
-/// no model reachable, so `ai_complete` stops with E1300.
+/// no model reachable, so `ai_complete` stops with E1300. "No model
+/// reachable" must not depend on the shell running the test: a
+/// non-reproducible grant forwards the caller's `AXON_AI_MOCK` /
+/// `AXON_AI_REPLAY` to the child (`job_child_command`, AUDIT T23), and a mock
+/// answer exits 0. The AI case therefore runs reproducible, which forwards
+/// no ambient `AXON_*`; provider keys and base URLs never reach the child
+/// (`env_clear`, `HOME` unset).
 #[test]
 fn each_interpreter_fault_line_is_its_own_verdict() {
     let cases: [FaultCase; 4] = [
@@ -327,6 +333,7 @@ fn each_interpreter_fault_line_is_its_own_verdict() {
         let mut g = grant();
         if tag == "ai_policy" {
             g.net = vec!["*".into()];
+            g.reproducible = true;
         }
         let r = capture_with(&format!("fault-{tag}"), src, Duration::from_secs(60), g);
         let ok = matches!(&r.outcome, SandboxOutcome::Faulted { code: Some(c), verdict } if *c == code && want(verdict));
