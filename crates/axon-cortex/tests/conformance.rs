@@ -2870,13 +2870,24 @@ fn r5_a_file_edited_during_acceptance_is_never_accepted() {
         "a file changed under acceptance must not be accepted, got {out:?}"
     );
     assert!(!r.episode.verified_ok(), "{:?}", r.episode.events);
-    assert!(
-        r.episode.events.iter().any(|e| matches!(
+    // NH-R1 E5: the tamper of the FIRST hidden check (the claim on the
+    // unpatched file) is a foreign edit, so the undo of that claim refuses
+    // to write over it and the episode stops there (both digests named);
+    // before E5 the undo overwrote the edit and the refusal came later.
+    let refused_in_acceptance = r.episode.events.iter().any(|e| {
+        matches!(
             e,
             EpisodeEvent::Verified { passed: false, detail, .. }
                 if detail.contains("workspace changed during acceptance")
-        )),
-        "the refusal must be recorded as a Verified failure: {:?}",
+        )
+    });
+    let stopped_by_cas = matches!(
+        &out,
+        EpisodeOutcome::Blocked { reason, .. } if reason.contains("changed by another writer")
+    );
+    assert!(
+        refused_in_acceptance || stopped_by_cas,
+        "the change must be refused, in acceptance or by the CAS write: {out:?} {:?}",
         r.episode.events
     );
 }

@@ -102,15 +102,7 @@ extern "C" fn on_termination_signal(sig: libc::c_int) {
     let errno = unsafe { *libc::__errno_location() };
     // The flag FIRST: the poll loop that sees the job die must see why.
     let _ = TERMINATION.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
-    for slot in &JOB_GROUPS {
-        let pgid = slot.load(Ordering::SeqCst);
-        // `killpg(0)` is the SUPERVISOR's own group and 1 is init's: a free
-        // slot (0) must never reach the call.
-        if pgid > 1 {
-            // SAFETY: plain syscall on a pgid registered by `Job::spawn`.
-            unsafe { libc::killpg(pgid, libc::SIGKILL) };
-        }
-    }
+    kill_running_jobs();
     if MODE.load(Ordering::SeqCst) == MODE_DIE {
         // Every termination signal is blocked while this handler runs (its
         // `sa_mask`), so the raised signal stays pending until the handler
@@ -204,6 +196,22 @@ pub fn forward_termination_signals(mode: OnSignal) {
                 continue;
             }
             set_disposition(sig, handler_address());
+        }
+    }
+}
+
+/// SIGKILL the process group of every [`Job`] registered now. Async-signal-
+/// safe (atomics and `killpg` only). The termination handler calls it, and
+/// so does a supervisor's own hard-deadline watchdog (cortex NH-R1 E3), which
+/// must stop the running check and generator before it restores and exits.
+pub fn kill_running_jobs() {
+    for slot in &JOB_GROUPS {
+        let pgid = slot.load(Ordering::SeqCst);
+        // `killpg(0)` is the SUPERVISOR's own group and 1 is init's: a free
+        // slot (0) must never reach the call.
+        if pgid > 1 {
+            // SAFETY: plain syscall on a pgid registered by `Job::spawn`.
+            unsafe { libc::killpg(pgid, libc::SIGKILL) };
         }
     }
 }

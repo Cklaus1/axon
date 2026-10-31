@@ -237,6 +237,42 @@ fn an_inner_sandbox_cannot_widen_the_ambient_scope() {
     );
 }
 
+/// NH-R1 E8: the read and net kinds of the same ceiling. An inner sandbox
+/// scoped `*` for every kind cannot read a file or reach a host the ambient
+/// (fence-pinned) scope denies.
+#[test]
+fn e8_an_inner_sandbox_cannot_widen_the_ambient_read_or_net_scope() {
+    let d = tmp("inner_rn");
+    std::fs::write(d.join("secret.txt"), "s3cr3t").unwrap();
+    let secret = lit(&d.join("secret.txt"));
+    for (var, body, word) in [
+        (
+            "AXON_ALLOWED_FS_READ",
+            format!("match read_file(\"{secret}\") {{ Ok(s) => println(s)  Err(_) => println(\"none\") }}"),
+            "read path",
+        ),
+        (
+            "AXON_ALLOWED_NET",
+            "let _ = http_get(\"http://127.0.0.1:9/x\", \"\")".to_string(),
+            "reach host `127.0.0.1`",
+        ),
+    ] {
+        let src = format!(
+            "fn w(n: i64) -> i64 {{\n    {body}\n    n\n}}\n\
+             fn main() {{\n    \
+             let p = principal_root(\"p\", false, false, false, 100)\n    \
+             let s = sandbox_create_scoped(p, \"IO,Net\", \"*\", \"*\", \"*\")\n    \
+             let _ = sandbox_run(s, \"w\", 1)\n}}\n"
+        );
+        let o = run(&d, &src, &[(var, "")]);
+        let t = text(&o);
+        assert!(
+            o.status.code() == Some(8) && t.contains(word) && !t.contains("s3cr3t"),
+            "ATTACK: E8 an inner sandbox scoped `*` widened the ambient {var}= scope:\n{t}"
+        );
+    }
+}
+
 /// The ambient entry built from scope variables alone allows every EFFECT, so
 /// it is the widest sandbox there is. Entering it by handle from inside a
 /// narrower sandbox (`sandbox_run(0, …)`) must be refused like entering any

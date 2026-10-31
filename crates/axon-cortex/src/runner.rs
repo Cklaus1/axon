@@ -106,6 +106,25 @@ const POLICY_PREFIXES: &[&str] = &["scripts/", "governance/", ".github/"];
 /// repository root and so have no protecting prefix.
 const POLICY_PATHS: &[&str] = &["AXON-COMPLETENESS.json", "AXON-COMPLETENESS.md"];
 
+#[cfg_attr(not(feature = "unattended"), allow(dead_code))]
+/// NH-R1 §5.4: whether a workspace-relative path PREFIX `rel` covers any
+/// policy path - a policy file or prefix lies at or under it, or it lies
+/// under a policy prefix. `""` (the workspace itself) covers them all.
+pub(crate) fn touches_policy(rel: &str) -> bool {
+    let rel = rel.trim_matches('/');
+    if rel.is_empty() {
+        return true;
+    }
+    let dir = format!("{rel}/");
+    POLICY_PREFIXES
+        .iter()
+        .any(|p| dir.starts_with(p) || p.starts_with(&dir))
+        || POLICY_PATHS
+            .iter()
+            .any(|p| *p == rel || p.starts_with(&dir))
+        || POLICY_FILES.iter().any(|f| rel.ends_with(f))
+}
+
 /// Proof that a specific action passed authorization.
 ///
 /// The field is private and there is no public constructor, so the only way to
@@ -523,6 +542,9 @@ pub struct Runner {
     /// that symbol reaching anything outside it is refused before it runs.
     /// `None`: no admission check (no grant was derived).
     static_grant: Option<crate::fence::StaticGrant>,
+    /// NH-R1 §5.5: the envelope an unattended run spends; it joins the
+    /// episode id so every unattended run has its own.
+    envelope_id: Option<String>,
 }
 
 /// R3: which hard limit of a walk ran out.
@@ -671,6 +693,7 @@ impl Runner {
             },
             walk: WalkBudget::default(),
             static_grant: None,
+            envelope_id: None,
         }
     }
 
@@ -688,6 +711,12 @@ impl Runner {
     /// no admission check). Set per target, before its episode.
     pub fn set_static_grant(&mut self, grant: Option<crate::fence::StaticGrant>) {
         self.static_grant = grant;
+    }
+
+    /// NH-R1 §5.5: name the envelope this run spends; the episode id becomes
+    /// `cortex-repair:{envelope_id}:{path}:{symbol}:{check}`.
+    pub fn set_envelope_id(&mut self, id: String) {
+        self.envelope_id = Some(id);
     }
 
     /// R1d: run every test of `rel_path` through this runner's executor (the
@@ -1045,7 +1074,9 @@ impl Runner {
                         ))
                     }
                 };
-                if let Err(e) = std::fs::write(&p, &after) {
+                // NH-R1 E5: over the bytes just read, never over a later edit.
+                crate::cas::observe(&p, src.as_bytes());
+                if let Err(e) = crate::cas::write(crate::cas::Site::Apply, &p, after.as_bytes()) {
                     return ExecOutcome::Failed(format!("cannot write {}: {e}", symbol.path));
                 }
                 self.episode.push(EpisodeEvent::PatchApplied {
@@ -1142,10 +1173,16 @@ impl Runner {
         // deterministic (a replay of the same request produces the same id)
         // and distinguishing (a different target or a different grader does
         // not).
-        self.episode.episode_id = format!(
-            "cortex-repair:{}:{}:{}",
-            target.path, target.symbol, hidden_check
-        );
+        self.episode.episode_id = match &self.envelope_id {
+            None => format!(
+                "cortex-repair:{}:{}:{}",
+                target.path, target.symbol, hidden_check
+            ),
+            Some(id) => format!(
+                "cortex-repair:{id}:{}:{}:{}",
+                target.path, target.symbol, hidden_check
+            ),
+        };
         // A visible copy is removed after each run, but a crash mid-run leaves
         // it beside the file. Swept once, when the episode first starts. It
         // never reaches the evidence either way: snapshots cover only the
@@ -1217,6 +1254,10 @@ impl Runner {
         // for THIS, not for whatever the previous proposal left behind.
         let candidate_base: Option<String> =
             std::fs::read_to_string(self.workspace.join(&target.path)).ok();
+        // NH-R1 E5: the bytes a later undo is compared against.
+        if let Some(base) = &candidate_base {
+            crate::cas::observe(&self.workspace.join(&target.path), base.as_bytes());
+        }
         // …and the state-pin that went with it. Undoing a patch must put the
         // grant back where it was, not re-pin it to NOW: re-pinning advanced a
         // grant whose workspace had already moved before the episode began,
@@ -1669,13 +1710,13 @@ impl Runner {
                         // generator was shown its own rejected proposal as
                         // "the body currently" while being told that same body
                         // was rejected.
-                        if restore_base(&self.workspace.join(&target.path), &candidate_base)
-                            .is_err()
+                        if let Err(e) =
+                            restore_base(&self.workspace.join(&target.path), &candidate_base)
                         {
                             return EpisodeOutcome::Blocked {
                                 steps: step,
                                 reason: format!(
-                                    "a rejected patch could not be undone in {}",
+                                    "a rejected patch could not be undone in {}: {e}",
                                     target.path
                                 ),
                             };
@@ -1715,11 +1756,14 @@ impl Runner {
                         crate::generate::RejectionReason::CheckRefused,
                         feedback,
                     );
-                    if restore_base(&self.workspace.join(&target.path), &candidate_base).is_err() {
+                    if let Err(e) =
+                        restore_base(&self.workspace.join(&target.path), &candidate_base)
+                    {
                         return EpisodeOutcome::Blocked {
                             steps: step,
                             reason: format!(
-                                "a candidate whose check did not finish could not be undone in {}",
+                                "a candidate whose check did not finish could not be undone in \
+                                 {}: {e}",
                                 target.path
                             ),
                         };
@@ -1790,7 +1834,11 @@ impl Runner {
                     // about the filesystem it never verified — in the one
                     // event whose whole purpose is that a revert is recorded
                     // rather than performed silently.
-                    if let Err(e) = std::fs::write(self.workspace.join(&target.path), &before) {
+                    if let Err(e) = crate::cas::write(
+                        crate::cas::Site::CompileRevert,
+                        &self.workspace.join(&target.path),
+                        before.as_bytes(),
+                    ) {
                         return EpisodeOutcome::Blocked {
                             steps: step,
                             reason: format!(
@@ -2130,11 +2178,13 @@ impl Runner {
                     (None, None)
                 };
                 {
-                    if restore_base(&self.workspace.join(&target.path), &candidate_base).is_err() {
+                    if let Err(e) =
+                        restore_base(&self.workspace.join(&target.path), &candidate_base)
+                    {
                         return EpisodeOutcome::Blocked {
                             steps: step,
                             reason: format!(
-                                "a rejected patch could not be undone in {}",
+                                "a rejected patch could not be undone in {}: {e}",
                                 target.path
                             ),
                         };
@@ -2392,7 +2442,9 @@ impl Runner {
         let rel_copy = rel.with_file_name(&copy_name);
         let rel_copy_str = rel_copy.to_string_lossy().into_owned();
         let abs = self.workspace.join(&rel_copy);
-        std::fs::write(&abs, &cut).map_err(|e| format!("cannot write a visible copy: {e}"))?;
+        // NH-R1 E5: created exclusively, never over a file already there.
+        crate::cas::create(crate::cas::Site::Visible, &abs, cut.as_bytes())
+            .map_err(|e| format!("cannot write a visible copy: {e}"))?;
         let abs_str = abs.to_string_lossy().into_owned();
         // Every string shown passes here: the copy's names become the real
         // ones, and — belt and braces, since the hidden check is not in the
@@ -2456,7 +2508,8 @@ impl Runner {
                 })
                 .map_err(|e| format!("the checker could not be run: {e}")),
         };
-        let _ = std::fs::remove_file(&abs);
+        // A copy someone else rewrote is left for the sweep, never deleted.
+        let _ = crate::cas::remove(crate::cas::Site::Visible, &abs);
         Ok(VisibleReport {
             feedback: ran?,
             failing,
@@ -2730,7 +2783,18 @@ fn sweep_stale_visible_copies(workspace: &Path, rel_path: &str) {
         if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
             continue;
         }
-        if let Err(e) = std::fs::remove_file(entry.path()) {
+        // NH-R1 E5: deleted through the helper (journalled), over the bytes
+        // read here and nothing written since.
+        let removed = std::fs::read(entry.path())
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                let mut ledger = crate::cas::lock();
+                ledger.observe(&entry.path(), &bytes);
+                ledger
+                    .remove(crate::cas::Site::Sweep, &entry.path())
+                    .map_err(|e| e.to_string())
+            });
+        if let Err(e) = removed {
             failed.get_or_insert(format!("{}: {e}", entry.path().display()));
         }
     }
@@ -2771,9 +2835,17 @@ fn visible_copy_owner_alive(pid: &str) -> bool {
 /// file compiling with warnings actually takes. Patches accumulated exactly as
 /// before on the majority of real files, while the commit message said
 /// otherwise. One mechanism, both call sites.
-fn restore_base(path: &std::path::Path, base: &Option<String>) -> std::io::Result<()> {
+///
+/// NH-R1 E5: through the CAS helper, so only over the bytes this run last
+/// wrote there: an edit another writer made since is left in place and the
+/// reason names both digests.
+fn restore_base(path: &std::path::Path, base: &Option<String>) -> Result<(), String> {
     match base {
-        Some(bytes) => std::fs::write(path, bytes),
+        // Already the base bytes (a claim refused with no patch applied):
+        // nothing to undo, and nothing is written.
+        Some(bytes) if std::fs::read(path).is_ok_and(|now| now == bytes.as_bytes()) => Ok(()),
+        Some(bytes) => crate::cas::write(crate::cas::Site::Restore, path, bytes.as_bytes())
+            .map_err(|e| e.to_string()),
         // Unreadable at episode start. Nothing to restore TO, and inventing
         // something would be worse than leaving it alone; the patch paths fail
         // earlier in this case anyway.
@@ -3516,6 +3588,34 @@ impl LocalInterpreterExecutor {
         self
     }
 
+    /// Every variable [`CheckExecutor::run_checks`] sets on the check
+    /// process, in the order it sets them (a later one wins).
+    fn env_set(&self) -> impl Iterator<Item = (&str, &str)> {
+        let ceiling = self
+            .limits
+            .effect_ceiling
+            .as_deref()
+            .map(|c| ("AXON_ALLOWED_EFFECTS", c));
+        ceiling.into_iter().chain(
+            self.limits
+                .env
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str())),
+        )
+    }
+
+    /// NH-R1 E6: the check process's WHOLE environment, when it starts from
+    /// an empty one ([`Self::with_clean_env`]); `None` when it inherits the
+    /// launcher's, which no caller can state in advance. The completion key
+    /// goes to stdin, never here.
+    pub fn child_env(&self) -> Option<std::collections::BTreeMap<String, String>> {
+        self.limits.clean_env.then(|| {
+            self.env_set()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        })
+    }
+
     /// Re-verify the registered executable (path + sha256) WITHOUT spawning
     /// anything. A caller that journals a launch record calls this
     /// immediately before, so a changed binary is refused before the launch
@@ -3628,10 +3728,7 @@ impl CheckExecutor for LocalInterpreterExecutor {
         if self.limits.clean_env {
             cmd.env_clear();
         }
-        if let Some(c) = &self.limits.effect_ceiling {
-            cmd.env("AXON_ALLOWED_EFFECTS", c);
-        }
-        for (k, v) in &self.limits.env {
+        for (k, v) in self.env_set() {
             cmd.env(k, v);
         }
         let (text, code, truncated) = run_limited(&mut cmd, &self.limits, Some(&key))?;
@@ -3821,6 +3918,30 @@ pub fn run_axon_caps(
     if let Some(f) = fn_name {
         cmd.arg("--fn").arg(f);
     }
+    cmd.env_clear();
+    let limits = ExecLimits {
+        wall: Some(wall),
+        max_output: Some(CHECKER_MAX_OUTPUT),
+        ..ExecLimits::default()
+    };
+    let (text, code, truncated) = run_limited(&mut cmd, &limits, None)?;
+    if truncated {
+        return Err(BoundExceeded::output(CHECKER_MAX_OUTPUT));
+    }
+    Ok((text, code))
+}
+
+/// `axon imports <file> --json` as a bounded job (NH-R1 §5.3 step 9, §5.4):
+/// the import closure's `imports_digest`, by the same pinned interpreter and
+/// the same bounds as [`run_axon_caps`]. It parses the closure; it runs none
+/// of it.
+pub fn run_axon_imports(
+    axon: &Path,
+    file: &Path,
+    wall: std::time::Duration,
+) -> std::io::Result<(String, Option<i32>)> {
+    let mut cmd = std::process::Command::new(axon);
+    cmd.arg("imports").arg(file).arg("--json");
     cmd.env_clear();
     let limits = ExecLimits {
         wall: Some(wall),
@@ -4359,6 +4480,28 @@ impl CheckExecutor for FabricSubmitExecutor {
             messages: Vec::new(),
             output: Vec::new(),
         })
+    }
+}
+
+#[cfg(test)]
+mod cas_site_tests {
+    use crate::cas::{self, Site};
+
+    /// ATTACK: E5 restore - an undo never overwrites an edit another writer made after the patch.
+    #[test]
+    fn a_rejected_patch_is_not_undone_over_a_foreign_edit() {
+        let d = std::env::temp_dir().join(format!("cortex-restore-cas-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("f.ax");
+        std::fs::write(&p, "base").unwrap();
+        cas::observe(&p, b"base");
+        cas::write(Site::Apply, &p, b"patched").unwrap();
+        std::fs::write(&p, "theirs").unwrap();
+        let undone = super::restore_base(&p, &Some("base".to_string()));
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "theirs");
+        assert!(undone.is_err());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
 

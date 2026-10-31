@@ -1792,7 +1792,7 @@ EXEMPT += [
      _LOC + "; the classifier of a run_limited error (R2): Some only for a spawn stopped at its "
      "time or output bound, which the loop turns into a rejected candidate on a patched file "
      "and Blocked on the pristine one"),
-    (_SR, '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "a candidate whose check did not finish could not be undone in {}",',
+    (_SR, '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "a candidate whose check did not finish could not be undone in \\\n                                 {}: {e}",',
      _CTX + "; R2: undoing a candidate whose check stopped at a bound; a file that cannot be "
      "restored is an environment fact"),
     (_SR, 'ExecOutcome::CheckUnfinished { why, .. } => {',
@@ -1991,6 +1991,46 @@ EXEMPT += [
     (_SVF, '            return Err(format!("firecracker not a regular file: {}", path.display()).into());',
      _VM + "; FirecrackerBin::resolve/at (axon-vm's VMM lookup)"),
 
+]
+
+# NH-R1 A4 (tasks/unattended-auth-spec.md E1/E1s/E4/E5/E9/E11, rows M4090-M4119):
+# the sites of cas.rs (the E5 write helper), unattended.rs and fence.rs's E1
+# pins that no row mutates. Each is an OS error that fails closed, an
+# unreachable arm, a constructor, or a constant whose guard has its row.
+_CAS = "crates/axon-cortex/src/cas.rs"
+_UNA = "crates/axon-cortex/src/unattended.rs"
+_CASR = (_CTX + "; cas.rs, the E5 write helper: an OS error here writes and claims nothing "
+         "(the caller reports the run Blocked / exit 22); the deciding comparisons are "
+         "rows M4090-M4095")
+EXEMPT += [
+    (_CAS, "        Err(e) => Err(CasError::Io(e.to_string())),\n    }",
+     _CASR + "; digest_now: a target that cannot be read cannot be compared, so nothing is written"),
+    (_CAS, 'return Err(CasError::Io(format!("{} names no file", path.display())));',
+     _CASR + "; a path with no parent or file name has no temp file beside it"),
+    (_CAS, "                .create_new(true)\n                .open(&tmp)?;",
+     _CASR + "; the temp file is this process's own name, removed just before: a collision "
+     "is an OS error and nothing is renamed"),
+    (_CAS, "            Err(e) => {\n                let _ = std::fs::remove_file(&tmp);\n                return Err(CasError::Io(e.to_string()));",
+     _CASR + "; the temp file could not be written: nothing is renamed"),
+    (_CAS, "            Err(e) => {\n                let _ = std::fs::remove_file(&tmp);\n                return Err(e);",
+     _CASR + "; step 2 could not read the target: nothing is renamed"),
+    (_CAS, "        if let Err(e) = std::fs::rename(&tmp, path) {",
+     _CASR + "; the rename failed: the target keeps its bytes"),
+    (_CAS, "            Err(e) => return Err(CasError::Io(e.to_string())),\n        };",
+     _CASR + "; the exclusive create failed for another reason than an existing file: nothing was created"),
+    (_UNA, "    fn refuse(id: &'static str, basis: impl Into<String>) -> Row {",
+     _CTX + "; the Row constructor, not a decision: each caller's refusal has its row (M4113-M4116, M4119)"),
+    (_UNA, '.ok_or_else(|| format!("`{p}` is not UTF-8"))?',
+     _CTX + "; unreachable: `p` is a &str, so every component of it is UTF-8"),
+    (_UNA, 'Err(e) => return Err(format!("E1s: `{}` cannot be examined: {e}", at.display())),',
+     _CTX + "; E1s: an lstat that fails for another reason than NotFound is an OS error; refused, never admitted"),
+    (_UNA, "pub const ALLOWED_FLAGS: &[&str] = &[",
+     _CTX + "; §5.2's allowlist, read only by check_flag, whose guard is M4101"),
+    (_UNA, "pub const REFUSED_ENV: &[&str] = &[",
+     _CTX + "; §5.2's refused env selectors, read only by check_env, whose guard is M4102"),
+    ('crates/axon-cortex/src/fence.rs', "pub const SCOPE_VARS: &[(&str, &str)] = &[",
+     _FEN + "; the three scope kinds and their variables, read by from_pristine (R1c) and "
+     "with_scope_pins (E1, rows M4096-M4100)"),
 ]
 
 # ── C9 round 4c, workstream GATE (amendment 74): the sites the predicate-
@@ -3236,7 +3276,7 @@ EXEMPT += [
      '                    (true, false) => VisibleCheck::Failed,',
      _CTX),
     ('crates/axon-cortex/src/runner.rs',
-     '                            return EpisodeOutcome::Blocked {\n                                steps: step,\n                                reason: format!(\n                                    "a rejected patch could not be undone in {}",',
+     '                            return EpisodeOutcome::Blocked {\n                                steps: step,\n                                reason: format!(\n                                    "a rejected patch could not be undone in {}: {e}",',
      _CTX),
     ('crates/axon-cortex/src/runner.rs',
      '                    return EpisodeOutcome::Blocked {\n                        steps: step,\n                        reason: format!("the action could not be carried out: {why}"),',
@@ -3248,7 +3288,7 @@ EXEMPT += [
      '                                return EpisodeOutcome::Blocked {\n                                    steps: step,\n                                    reason: format!("the file could not be re-checked: {e}"),',
      _CTX),
     ('crates/axon-cortex/src/runner.rs',
-     '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "a rejected patch could not be undone in {}",',
+     '                        return EpisodeOutcome::Blocked {\n                            steps: step,\n                            reason: format!(\n                                "a rejected patch could not be undone in {}: {e}",',
      _CTX),
     ('crates/axon-cortex/src/runner.rs',
      '        EpisodeOutcome::BudgetExhausted { steps: budget }',

@@ -264,6 +264,13 @@ fn endpoint_url(p: Provider) -> String {
     }
 }
 
+/// The bare host every call for provider `p` goes to - the same `host_of`
+/// the endpoint check uses. NH-R1 §5.2 compares it with the host a repair
+/// envelope names.
+pub fn endpoint_host(p: Provider) -> String {
+    host_of(&endpoint_url(p))
+}
+
 /// The API key for the active provider. Neutral `AXON_AI_API_KEY` wins, then the
 /// legacy `ANTHROPIC_API_KEY`. Returns a provider-named error when neither is set.
 fn api_key(p: Provider) -> Result<String, String> {

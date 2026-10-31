@@ -3393,6 +3393,52 @@ ATTACK_MARKERS.update({
     'M3941': r'ATTACK: a generic method call or generic struct argument checked clean \[g_lambda_param_unbound\]',
 })
 
+# NH-R1 A4 (ids M4090-M4119, M4200)
+ATTACK_MARKERS.update({
+    'M4090': r'ATTACK: E5 a foreign edit was overwritten',
+    'M4091': r'ATTACK: E5 a visible copy clobbered an existing file',
+    'M4092': r'ATTACK: E5 a delete removed bytes this run never saw',
+    'M4093': r'ATTACK: E5 another inode in place of the write was claimed as written',
+    'M4094': r'ATTACK: E5 bytes another writer put in the window were claimed as written',
+    'M4095': r"ATTACK: E5 the rename widened the file's mode",
+    'M4096': r'ATTACK: E1 a fence with no axon caps basis was pinned',
+    'M4097': r'ATTACK: E1 a fence that is not applied was pinned',
+    'M4098': r'ATTACK: E1 a used kind with no pin ran unrestricted',
+    'M4099': r'ATTACK: E1 a pin widened the deny-all of an unused kind',
+    'M4100': r'ATTACK: E1 a wildcard pin was admitted',
+    'M4101': r'ATTACK: a non-allowlisted flag --\S+ was accepted unattended',
+    'M4102': r'ATTACK: the env selector \S+ steered an unattended run',
+    'M4103': r'ATTACK: E9 the generator ai: was admitted unattended',
+    'M4104': r'ATTACK: the path "\*" normalized to a workspace path',
+    'M4105': r'ATTACK: the path "a/\.\./b" normalized to a workspace path',
+    'M4106': r'ATTACK: the path "/a" normalized to a workspace path',
+    'M4107': r'ATTACK: the path "" normalized to a workspace path',
+    'M4108': r'ATTACK: the host pin "\*" normalized to a single host',
+    'M4109': r'ATTACK: containment is not component-wise',
+    'M4110': r'ATTACK: the write prefix \S+ wider than the envelope.s was accepted',
+    'M4111': r'ATTACK: E1s the symlinked task file \S+ was admitted',
+    'M4112': r'ATTACK: E1s a symlink under a write prefix was admitted',
+    'M4113': r'ATTACK: a file of unknown capabilities was admitted',
+    'M4114': r'ATTACK: E4 a native:gfx file was admitted',
+    'M4115': r'ATTACK: E11 an Exec-effect file was admitted',
+    'M4116': r'ATTACK: E1 a used kind with no pin ran unrestricted',
+    'M4117': r'ATTACK: a second unattended run took the lock of a file in use',
+    'M4118': r'ATTACK: E6 a check child that inherits the launcher env was admitted',
+    'M4119': r'ATTACK: E3 the running check \d+ survived the deadline',
+    'M4200': r'ATTACK: E3 a writing-stalled run exited \d+ ms after its deadline',
+})
+ATTACK_MARKERS.update({
+    'M4201': r'ATTACK: E5 a visible copy clobbered an existing file',
+    'M4202': r'ATTACK: E5 another inode in place of the write was claimed as written',
+    'M4203': r'ATTACK: the path "a,b" normalized to a workspace path',
+    'M4204': r'ATTACK: the host pin "" normalized to a single host',
+    'M4205': r'ATTACK: E11 an exec-capability file was admitted',
+    'M4206': r'ATTACK: a non-allowlisted flag --check-registry was accepted unattended',
+    'M4207': r'ATTACK: the env selector \S+ steered an unattended run',
+    'M4208': r'ATTACK: E9 the generator cmd:/bin/sh was admitted unattended',
+    'M4209': r'ATTACK: E4 a native:gfx file was admitted',
+})
+
 # NH-R1 A1 (ids M4060-M4079)
 ATTACK_MARKERS.update({
     'M4060': r'ATTACK: verified under another key',

@@ -21,6 +21,8 @@ axon-jobctl = { path = "../axon-jobctl" }
 # cl22 leaf crate, one definition for every crate that reads protocol JSON.
 axon-canonical = { path = "../axon-canonical" }
 axon-ai = { path = "../axon-ai", optional = true }
+# NH-R1: the repair-envelope verifier and spent store (`axon-approval/4`).
+axon-os = { path = "../axon-os", optional = true }
 
 [features]
 default = []
@@ -28,3 +30,7 @@ default = []
 # be built without a model dependency would make the model load-bearing for
 # every part of it that does not need one.
 ai = ["dep:axon-ai"]
+# NH-R1 `cortex repair --unattended` (tasks/unattended-auth-spec.md §5.3).
+# Off by default: a build without it refuses `--unattended` (exit 29). The
+# envelope signature (ring) comes with axon-os; cl22 is already a dependency.
+unattended = ["dep:axon-os", "ai"]

@@ -26,12 +26,15 @@
 //! | 25 | no target | no candidate could be established, or the named symbol does not exist |
 //! | 26 | check cannot witness | `--check` already passes; it would accept the file unchanged |
 //! | 27 | adjudicated, not clean | the check passed and nothing regressed, but the file was already failing others — THE PATCH IS KEPT. A walk that reached such a state and then ended without a verified repair, for any reason (budget, no progress, the early stop, …), reports it: what ended the walk is `stopped_by` |
+//! | 28 | out of scope suspected | every candidate the walk asked ended in the early stop; the defect is likely outside what one symbol patch can express |
+//! | 29 | unauthorized | `--unattended` only: the repair envelope, a flag, the environment or the enforcement gate refused the run; nothing was written and no workspace code ran |
 //!
 //! Note what 0 means here: a hidden check the generator never saw accepted the
 //! result. It is not "the loop finished", and no other outcome is rounded up
 //! to it.
 
 use axon_cortex::action::SymbolRef;
+use axon_cortex::cas::Site;
 use axon_cortex::runner::{
     CheckRegistry, EditGrant, EpisodeOutcome, FabricDispatch, FabricSubmitExecutor,
     LocalInterpreterExecutor, Runner, LOCAL_AXON_TEST_ID,
@@ -270,6 +273,13 @@ fn no_target(reason: &str) -> ! {
     std::process::exit(25)
 }
 
+/// NH-R1 §5.3: an unattended run refused - exit 29 `unauthorized`, with the
+/// reason. Nothing was written and no workspace code ran.
+fn unauthorized(reason: &str) -> ! {
+    eprintln!("unauthorized: {reason}");
+    std::process::exit(29)
+}
+
 /// Build the Runner with its check executor REGISTERED before any check runs
 /// (B264). The checker is resolved from a trusted registry — the operator's
 /// `--check-registry` file, whose digests are stated up front, or else the
@@ -443,11 +453,34 @@ fn registered_runner(
                     .with_clean_env(),
                 |x, (k, v)| x.with_env(k, v),
             );
+            if let Err(why) = env_is_the_fence(&x, fence_env) {
+                eprintln!("{why}");
+                std::process::exit(22);
+            }
             Runner::with_check_executor(exe, workspace, Box::new(x))
         }
     };
     runner.set_checker_timeout(check_timeout);
     runner
+}
+
+/// NH-R1 E6: the local check process's environment is EXACTLY the fence
+/// env (the completion key goes to stdin). No `HOME`, no `XDG_*`, nothing
+/// inherited, so no cache writer in the interpreter finds a root to write
+/// under outside the signed scopes.
+fn env_is_the_fence(
+    x: &LocalInterpreterExecutor,
+    fence_env: &std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    match x.child_env() {
+        Some(env) if env == *fence_env => Ok(()),
+        Some(env) => Err(format!(
+            "E6: the check process would get {:?}, not exactly the fence env {:?}",
+            env.keys().collect::<Vec<_>>(),
+            fence_env.keys().collect::<Vec<_>>()
+        )),
+        None => Err("E6: the check process would inherit this environment".into()),
+    }
 }
 
 /// A grant `axon caps` cannot answer for stops the run (exit 22): no
@@ -565,6 +598,31 @@ fn main() {
     let mut check_timeout_ms: u64 = DEFAULT_CHECK_TIMEOUT_MS;
     let mut max_proposals: Option<usize> = None;
     let mut deadline_ms: Option<u64> = None;
+    // NH-R1: `--unattended` and its three inputs; and which limits the
+    // command line set explicitly (an absent one takes the envelope's).
+    let mut envelope_path: Option<std::path::PathBuf> = None;
+    let mut verify_key: Option<std::path::PathBuf> = None;
+    let mut spent_store: Option<std::path::PathBuf> = None;
+    let mut cli_check_timeout: Option<u64> = None;
+    let mut cli_candidates: Option<usize> = None;
+    let mut cli_budget: Option<usize> = None;
+    let argv: Vec<String> = args.collect();
+    let unattended = argv.iter().any(|a| a == "--unattended");
+    let seen_flags: Vec<String> = argv
+        .iter()
+        .filter(|a| a.starts_with("--"))
+        .cloned()
+        .collect();
+    if unattended {
+        // §5.2: every flag is checked before any is parsed, so an
+        // unknown one is refused (29), not a usage error (2).
+        for f in &seen_flags {
+            if let Err(why) = axon_cortex::unattended::check_flag(f) {
+                unauthorized(&why);
+            }
+        }
+    }
+    let mut args = argv.into_iter();
 
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
@@ -605,6 +663,10 @@ fn main() {
                 }
             }
             "--write-prefix" => write_prefixes.push(val("--write-prefix")),
+            "--unattended" => {}
+            "--envelope" => envelope_path = Some(val("--envelope").into()),
+            "--verify-key" => verify_key = Some(val("--verify-key").into()),
+            "--spent-store" => spent_store = Some(val("--spent-store").into()),
             "--candidates" => {
                 let raw = val("--candidates");
                 candidates = raw.parse().unwrap_or_else(|_| {
@@ -613,6 +675,7 @@ fn main() {
                 if candidates == 0 {
                     usage("--candidates must be at least 1");
                 }
+                cli_candidates = Some(candidates);
             }
             "--budget" => {
                 let raw = val("--budget");
@@ -622,6 +685,7 @@ fn main() {
                 if budget == 0 {
                     usage("--budget must be at least 1");
                 }
+                cli_budget = Some(budget);
             }
             "--json" => json = true,
             "--check-timeout-ms" => {
@@ -632,6 +696,7 @@ fn main() {
                 if check_timeout_ms == 0 {
                     usage("--check-timeout-ms must be at least 1");
                 }
+                cli_check_timeout = Some(check_timeout_ms);
             }
             "--max-proposals" => {
                 let raw = val("--max-proposals");
@@ -664,6 +729,59 @@ fn main() {
         }
     }
     let (workspace, axon_bin) = resolve_paths(workspace, axon_bin);
+    if !unattended && (envelope_path.is_some() || verify_key.is_some() || spent_store.is_some()) {
+        usage("--envelope, --verify-key and --spent-store are only accepted with --unattended");
+    }
+    #[cfg(not(feature = "unattended"))]
+    if unattended {
+        let _ = (
+            &cli_check_timeout,
+            &cli_candidates,
+            &cli_budget,
+            &seen_flags,
+        );
+        unauthorized("this cortex was built without unattended support (feature `unattended`)");
+    }
+    // NH-R1 §5.3 phase A: before the generator is built and before any
+    // child is spawned. The envelope's limits replace every absent one.
+    #[cfg(feature = "unattended")]
+    let phase_a = if unattended {
+        let cli = axon_cortex::auth::Cli {
+            flags: seen_flags.clone(),
+            envelope: envelope_path.clone(),
+            verify_key: verify_key.clone(),
+            spent_store: spent_store.clone(),
+            workspace: workspace.clone(),
+            file: file.clone(),
+            symbol: symbol.clone(),
+            check: check.clone(),
+            generator: generator_spec.clone(),
+            axon: axon_bin.clone(),
+            requested: axon_os::repair_envelope::Requested {
+                max_proposals: max_proposals.map(|n| n as u64),
+                deadline_ms,
+                check_timeout_ms: cli_check_timeout,
+                candidates: cli_candidates.map(|n| n as u64),
+                max_steps: cli_budget.map(|n| n as u64),
+                write_prefixes: write_prefixes.clone(),
+            },
+        };
+        let grace = axon_cortex::watchdog::HARD_GRACE.as_millis() as u64;
+        let a = axon_cortex::auth::phase_a(&cli, &axon_bin, grace)
+            .unwrap_or_else(|why| unauthorized(&why));
+        let e = &a.effective;
+        principal = a.verified.envelope.principal();
+        budget = e.max_steps as usize;
+        check_timeout_ms = e.check_timeout_ms;
+        candidates = e.candidates as usize;
+        max_proposals = Some(e.max_proposals as usize);
+        deadline_ms = Some(e.deadline_ms);
+        write_prefixes = e.write_prefixes.clone();
+        audit_flag = Some("off".into());
+        Some(a)
+    } else {
+        None
+    };
     let early_stop = if early_stop_off {
         if inert_flag.is_some() {
             usage("--inert-limit has no effect with --early-stop off");
@@ -749,6 +867,27 @@ fn main() {
     } else {
         fence
     };
+    // NH-R1 §5.3 phase B: after the pinned interpreter's static `axon caps`,
+    // before any child that runs workspace code. Consume is its last step.
+    #[cfg(feature = "unattended")]
+    let (fence, authorization) = match &phase_a {
+        None => (fence, None),
+        Some(a) => {
+            let caps = axon_cortex::fence::caps_of_file(
+                &checker.0,
+                &workspace.join(&file),
+                None,
+                check_timeout,
+            )
+            .unwrap_or_else(|why| unauthorized(&format!("`axon caps` on {file}: {why}")));
+            let b = axon_cortex::auth::phase_b(a, &checker.0, &fence, &caps, check_timeout)
+                .unwrap_or_else(|why| unauthorized(&why));
+            let auth = axon_cortex::auth::authorization_json(a, &b);
+            (b.fence, Some(auth))
+        }
+    };
+    #[cfg(not(feature = "unattended"))]
+    let authorization: Option<serde_json::Value> = None;
     let mut runner = registered_runner(
         checker,
         &workspace,
@@ -782,6 +921,10 @@ fn main() {
         max_proposals,
         deadline_ms.map(|ms| started + std::time::Duration::from_millis(ms)),
     ));
+    #[cfg(feature = "unattended")]
+    if let Some(a) = &phase_a {
+        runner.set_envelope_id(a.verified.envelope.envelope_id.clone());
+    }
     // (A grep for `fn NAME(` used to stand here as a cheaper first pass. It
     // was redundant with the check below and strictly worse: it accepted any
     // FUNCTION, so a `--check` naming an ordinary function passed it and was
@@ -826,6 +969,13 @@ fn main() {
              adjudicator at all."
         )),
         Ok(Some(false)) => {}
+    }
+    // NH-R1 §5.4: the witness run must not have changed what is graded.
+    #[cfg(feature = "unattended")]
+    if let Some(a) = &phase_a {
+        if let Err(why) = axon_cortex::auth::still_pristine(a, &checker_exe, check_timeout) {
+            unauthorized(&why);
+        }
     }
 
     // The ordered list of functions this run may try.
@@ -988,6 +1138,33 @@ fn main() {
     // success there would not mean what it says.
     let original = std::fs::read_to_string(workspace.join(&file))
         .unwrap_or_else(|e| usage(&format!("cannot read {}/{file}: {e}", workspace.display())));
+    // NH-R1 §5.4: the walk's `original` is the phase-A bytes, and E3: an
+    // unattended run is stopped at its deadline, the found bytes restored.
+    #[cfg(feature = "unattended")]
+    let watchdog = match &phase_a {
+        None => None,
+        Some(a) => {
+            if original.as_bytes() != a.pristine.as_slice() {
+                unauthorized(&format!("{file} changed after verification"));
+            }
+            let path = workspace.join(&file);
+            let found = a.pristine.clone();
+            let shown = file.clone();
+            let deadline =
+                started + std::time::Duration::from_millis(deadline_ms.unwrap_or_default());
+            Some(axon_cortex::watchdog::arm(
+                deadline,
+                move |ledger| match ledger.write(Site::Restore, &path, &found) {
+                    Ok(()) => format!(
+                        "budget exhausted: the hard deadline passed; {shown} restored as found"
+                    ),
+                    Err(e) => format!(
+                        "budget exhausted: the hard deadline passed; {shown} not restored: {e}"
+                    ),
+                },
+            ))
+        }
+    };
     // R1a: each target's static grant, from the same pristine bytes, before
     // any candidate exists — recorded in the episode with the fence.
     let static_grants =
@@ -1070,7 +1247,12 @@ fn main() {
                     &file,
                     adjudicated.as_ref().and_then(|(_, b)| b.as_deref().ok()),
                 );
-                if let Err(e) = restore_found(&workspace.join(&file), original.as_bytes(), &ours) {
+                if let Err(e) = restore_found(
+                    Site::BetweenAttempts,
+                    &workspace.join(&file),
+                    original.as_bytes(),
+                    &ours,
+                ) {
                     eprintln!("cannot restore {file} between attempts: {e}");
                     outcome = EpisodeOutcome::Blocked {
                         steps: progress[p].steps(),
@@ -1196,7 +1378,12 @@ fn main() {
         adjudicated_bytes.as_ref().and_then(|b| b.as_deref().ok()),
     );
     if code != 0 && code != 27 {
-        if let Err(e) = restore_found(&workspace.join(&file), original.as_bytes(), &ours) {
+        if let Err(e) = restore_found(
+            Site::ExitRestore,
+            &workspace.join(&file),
+            original.as_bytes(),
+            &ours,
+        ) {
             eprintln!("cortex repair: {file} {e}");
         }
     }
@@ -1204,9 +1391,7 @@ fn main() {
     // have undone on its way: its graded bytes are put back. Failing that,
     // the run fails closed below (R5), never reporting a state it lost.
     let kept_adjudicated = match (code, adjudicated_bytes) {
-        (27, Some(Ok(bytes))) => std::fs::write(workspace.join(&file), bytes).map_err(|e| {
-            format!("the adjudicated state of {file} could not be put back at exit: {e}")
-        }),
+        (27, Some(Ok(bytes))) => put_back_adjudicated(&workspace.join(&file), &file, &bytes),
         (27, Some(Err(why))) => Err(why),
         (27, None) => Err(format!("the adjudicated state of {file} was not kept")),
         _ => Ok(()),
@@ -1275,6 +1460,10 @@ fn main() {
     // reason on stderr. Only exits 0 and 27
     // keep a patch; every other run names none. An exit 27 whose adjudicated
     // state could not be put back fails closed the same way.
+    #[cfg(feature = "unattended")]
+    if let Some(w) = watchdog {
+        w.disarm();
+    }
     let settled = settle_artifact(
         &workspace.join(&file),
         &file,
@@ -1342,138 +1531,140 @@ fn main() {
     }
 
     if json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "schema": "cortex-repair/1",
-                "outcome": kind,
-                "detail": detail,
-                "steps": steps,
-                "accepted": accepted,
-                // R3: the walk's hard limits (`null` = unset), what was spent
-                // of them, and which one stopped the walk (`null`: none did).
-                "budget": {
-                    "max_proposals": max_proposals,
-                    "deadline_ms": deadline_ms,
-                    "proposals_used": runner.walk_budget().proposals_used(),
-                    "elapsed_ms": started.elapsed().as_millis() as u64,
-                    "exhausted_by": runner.walk_budget().exhausted_by().map(|b| b.as_str()),
-                },
-                // What ended a walk whose reported outcome is an earlier
-                // adjudication (kept, exit 27): `{outcome, exit_code,
-                // detail}` as that ending alone would have been reported.
-                // `null` when the outcome above is what ended the run, and on
-                // every exit but 27 (a run R5 failed closed kept nothing).
-                "stopped_by": stopped_by.as_ref().map(|o| {
-                    let (code, kind, detail, _) = verdict(o, &check);
-                    serde_json::json!({ "outcome": kind, "exit_code": code, "detail": detail })
-                }),
-                // WHICH candidate worked, and every attempt before it, in the
-                // order they ran. With a walked ranking that is no longer
-                // implied by the command line. Under the breadth-first walk a
-                // candidate resumed in pass 2 appears a second time, so this
-                // is an attempt log, not a set of candidates.
-                "symbol": repaired,
-                "attempted": attempted,
-                "exit_code": code,
-                // R1: what candidates were confined to — the pristine file's
-                // capabilities and effects, the runtime fence every check
-                // carried, and each target's static grant.
-                "grant": fence.to_json(&static_grants),
-                // The episode, verbatim. Every check that ran, every patch
-                // applied with its before/after digests, and which generator
-                // proposed it. The verdict above is a summary OF this, not a
-                // substitute for it.
-                // THE EPISODE AS DATA, not as a Rust `Debug` string.
-                //
-                // It was emitted as `format!("{:?}", …)` embedded in a JSON
-                // string, so the one artifact shipped to a consumer could not
-                // be parsed by `parse_strict`, its digest could not be
-                // recomputed, and `verified_ok()` could not be re-evaluated —
-                // while `episode.rs` describes it as append-only and
-                // replayable "so a replay can prove it re-ran the same episode
-                // rather than a similar one". Nothing in the output supported
-                // that claim.
-                "episode": serde_json::to_value(&runner.episode)
-                    .unwrap_or(serde_json::Value::Null),
-                // The digest travels WITH it, so a reader can recompute and
-                // compare rather than trusting the transport. An error here is
-                // reported rather than swallowed: a digest that could not be
-                // computed is not a digest that matched.
-                "episode_digest": match runner.episode.digest() {
-                    Ok(d) => serde_json::Value::String(d),
-                    Err(e) => serde_json::Value::String(format!("<undigestable: {e}>")),
-                },
-                // Present only under --fabric-journal: the acf-execution-receipt/1
-                // of every check this run dispatched, in order.
-                "receipts": fabric.as_ref().map(|f| f.receipts()),
-                // The ranking step: what was asked for, what ordered the walk,
-                // and why they differ when they do. `null` with --symbol,
-                // where nothing was ranked.
-                "ranker": ranker_report.as_ref().map(|r| r.to_json()),
-                // Cheap-vs-strong advice derived from that ranking. `null`
-                // where nothing was ranked.
-                "escalation": escalation.as_ref().map(|e| e.to_json()),
-                // The review-only tamper audit of a verified fix. `null`
-                // when nothing was verified.
-                "audit": audit.as_ref().map(|a| a.to_json()),
-                // What each candidate's generator was shown: `view` (the file
-                // without the hidden check, the visible failing checks and
-                // their output) or `body_only`, with the reason. Only
-                // candidates a generator was asked about appear.
-                "generator_context": targets
+        let mut record = serde_json::json!({
+            "schema": "cortex-repair/1",
+            "outcome": kind,
+            "detail": detail,
+            "steps": steps,
+            "accepted": accepted,
+            // R3: the walk's hard limits (`null` = unset), what was spent
+            // of them, and which one stopped the walk (`null`: none did).
+            "budget": {
+                "max_proposals": max_proposals,
+                "deadline_ms": deadline_ms,
+                "proposals_used": runner.walk_budget().proposals_used(),
+                "elapsed_ms": started.elapsed().as_millis() as u64,
+                "exhausted_by": runner.walk_budget().exhausted_by().map(|b| b.as_str()),
+            },
+            // What ended a walk whose reported outcome is an earlier
+            // adjudication (kept, exit 27): `{outcome, exit_code,
+            // detail}` as that ending alone would have been reported.
+            // `null` when the outcome above is what ended the run, and on
+            // every exit but 27 (a run R5 failed closed kept nothing).
+            "stopped_by": stopped_by.as_ref().map(|o| {
+                let (code, kind, detail, _) = verdict(o, &check);
+                serde_json::json!({ "outcome": kind, "exit_code": code, "detail": detail })
+            }),
+            // WHICH candidate worked, and every attempt before it, in the
+            // order they ran. With a walked ranking that is no longer
+            // implied by the command line. Under the breadth-first walk a
+            // candidate resumed in pass 2 appears a second time, so this
+            // is an attempt log, not a set of candidates.
+            "symbol": repaired,
+            "attempted": attempted,
+            "exit_code": code,
+            // R1: what candidates were confined to — the pristine file's
+            // capabilities and effects, the runtime fence every check
+            // carried, and each target's static grant.
+            "grant": fence.to_json(&static_grants),
+            // The episode, verbatim. Every check that ran, every patch
+            // applied with its before/after digests, and which generator
+            // proposed it. The verdict above is a summary OF this, not a
+            // substitute for it.
+            // THE EPISODE AS DATA, not as a Rust `Debug` string.
+            //
+            // It was emitted as `format!("{:?}", …)` embedded in a JSON
+            // string, so the one artifact shipped to a consumer could not
+            // be parsed by `parse_strict`, its digest could not be
+            // recomputed, and `verified_ok()` could not be re-evaluated —
+            // while `episode.rs` describes it as append-only and
+            // replayable "so a replay can prove it re-ran the same episode
+            // rather than a similar one". Nothing in the output supported
+            // that claim.
+            "episode": serde_json::to_value(&runner.episode)
+                .unwrap_or(serde_json::Value::Null),
+            // The digest travels WITH it, so a reader can recompute and
+            // compare rather than trusting the transport. An error here is
+            // reported rather than swallowed: a digest that could not be
+            // computed is not a digest that matched.
+            "episode_digest": match runner.episode.digest() {
+                Ok(d) => serde_json::Value::String(d),
+                Err(e) => serde_json::Value::String(format!("<undigestable: {e}>")),
+            },
+            // Present only under --fabric-journal: the acf-execution-receipt/1
+            // of every check this run dispatched, in order.
+            "receipts": fabric.as_ref().map(|f| f.receipts()),
+            // The ranking step: what was asked for, what ordered the walk,
+            // and why they differ when they do. `null` with --symbol,
+            // where nothing was ranked.
+            "ranker": ranker_report.as_ref().map(|r| r.to_json()),
+            // Cheap-vs-strong advice derived from that ranking. `null`
+            // where nothing was ranked.
+            "escalation": escalation.as_ref().map(|e| e.to_json()),
+            // The review-only tamper audit of a verified fix. `null`
+            // when nothing was verified.
+            "audit": audit.as_ref().map(|a| a.to_json()),
+            // What each candidate's generator was shown: `view` (the file
+            // without the hidden check, the visible failing checks and
+            // their output) or `body_only`, with the reason. Only
+            // candidates a generator was asked about appear.
+            "generator_context": targets
+                .iter()
+                .zip(&progress)
+                .filter_map(|(t, p)| {
+                    p.generator_context().map(|c| {
+                        serde_json::json!({
+                            "symbol": t,
+                            "used": if c.fallback_reason().is_some() {
+                                "body_only"
+                            } else {
+                                "view"
+                            },
+                            "reason": c.fallback_reason(),
+                        })
+                    })
+                })
+                .collect::<Vec<_>>(),
+            // The evidence the early stop reads, whether or not it fired:
+            // the visible failing checks, the functions every one of them
+            // reaches, and what the visible checks said about each
+            // rejected proposal (`null` where no test run was made).
+            // `null` evidence with `--symbol`, which localizes nothing.
+            "early_stop": {
+                "structural": early_stop.structural,
+                "inert_limit": early_stop.inert_limit,
+                // Candidates left out because not every failing check
+                // reaches them, and the candidates the inert rule ended.
+                "pruned": pruned,
+                "stopped_candidates": targets
+                    .iter()
+                    .zip(&stopped)
+                    .filter(|(_, s)| **s)
+                    .map(|(t, _)| t)
+                    .collect::<Vec<_>>(),
+                "visible_failing": visible_failing,
+                "reached_by_all": reached_by_all,
+                "attempts": targets
                     .iter()
                     .zip(&progress)
-                    .filter_map(|(t, p)| {
-                        p.generator_context().map(|c| {
+                    .flat_map(|(t, p)| {
+                        p.attempts().iter().map(move |a| {
                             serde_json::json!({
-                                "symbol": t,
-                                "used": if c.fallback_reason().is_some() {
-                                    "body_only"
-                                } else {
-                                    "view"
-                                },
-                                "reason": c.fallback_reason(),
+                                "candidate": t,
+                                "proposal": a.proposal,
+                                "rejection": a.rejection.slug(),
+                                "visible_failing": a.visible_failing,
                             })
                         })
                     })
                     .collect::<Vec<_>>(),
-                // The evidence the early stop reads, whether or not it fired:
-                // the visible failing checks, the functions every one of them
-                // reaches, and what the visible checks said about each
-                // rejected proposal (`null` where no test run was made).
-                // `null` evidence with `--symbol`, which localizes nothing.
-                "early_stop": {
-                    "structural": early_stop.structural,
-                    "inert_limit": early_stop.inert_limit,
-                    // Candidates left out because not every failing check
-                    // reaches them, and the candidates the inert rule ended.
-                    "pruned": pruned,
-                    "stopped_candidates": targets
-                        .iter()
-                        .zip(&stopped)
-                        .filter(|(_, s)| **s)
-                        .map(|(t, _)| t)
-                        .collect::<Vec<_>>(),
-                    "visible_failing": visible_failing,
-                    "reached_by_all": reached_by_all,
-                    "attempts": targets
-                        .iter()
-                        .zip(&progress)
-                        .flat_map(|(t, p)| {
-                            p.attempts().iter().map(move |a| {
-                                serde_json::json!({
-                                    "candidate": t,
-                                    "proposal": a.proposal,
-                                    "rejection": a.rejection.slug(),
-                                    "visible_failing": a.visible_failing,
-                                })
-                            })
-                        })
-                        .collect::<Vec<_>>(),
-                },
-            })
-        );
+            },
+        });
+        // NH-R1 §5.6: unattended runs only.
+        if let Some(a) = &authorization {
+            record["authorization"] = a.clone();
+        }
+        println!("{record}");
     } else {
         match &repaired {
             Some(sym) => println!("{kind} after {steps} step(s) — repaired `{sym}`"),
@@ -1631,11 +1822,13 @@ fn settle_artifact(
     ours: &[String],
 ) -> Result<Option<serde_json::Value>, String> {
     let settled = kept.and_then(|()| accepted_artifact(file, code, episode, std::fs::read(path)));
-    settled.map_err(|why| match restore_found(path, original, ours) {
-        Ok(true) => format!("{why}; {file} restored as found"),
-        Ok(false) => why,
-        Err(e) => format!("{why}; {file} {e}"),
-    })
+    settled.map_err(
+        |why| match restore_found(Site::Settle, path, original, ours) {
+            Ok(true) => format!("{why}; {file} restored as found"),
+            Ok(false) => why,
+            Err(e) => format!("{why}; {file} {e}"),
+        },
+    )
 }
 
 /// FU-4 (O-S1-13): the digests ([`axon_cortex::content_digest`], `axc1:`)
@@ -1675,12 +1868,22 @@ fn written_by_run(
 ///
 /// Writing `original` back unconditionally overwrote another actor's edit
 /// made after acceptance, and a failed write was dropped.
-fn restore_found(path: &std::path::Path, original: &[u8], ours: &[String]) -> Result<bool, String> {
-    restore_read(path, std::fs::read(path), original, ours)
+///
+/// NH-R1 E5: the write goes through [`axon_cortex::cas`], so a writer that
+/// gets in after the read above is not overwritten either (`site` names the
+/// call site in the journal).
+fn restore_found(
+    site: Site,
+    path: &std::path::Path,
+    original: &[u8],
+    ours: &[String],
+) -> Result<bool, String> {
+    restore_read(site, path, std::fs::read(path), original, ours)
 }
 
 /// [`restore_found`] over the file's bytes as read (`now`).
 fn restore_read(
+    site: Site,
     path: &std::path::Path,
     now: std::io::Result<Vec<u8>>,
     original: &[u8],
@@ -1693,9 +1896,19 @@ fn restore_read(
     if !ours.contains(&axon_cortex::content_digest(&now)) {
         return Err("changed by another writer; not restored".into());
     }
-    std::fs::write(path, original)
+    let mut ledger = axon_cortex::cas::lock();
+    ledger.observe(path, &now);
+    ledger
+        .write(site, path, original)
         .map(|()| true)
         .map_err(|e| format!("could not be put back as found: {e}"))
+}
+
+/// An exit 27's adjudicated bytes put back at `path` (NH-R1 E5: only over
+/// the bytes this run last wrote or read there).
+fn put_back_adjudicated(path: &std::path::Path, file: &str, bytes: &[u8]) -> Result<(), String> {
+    axon_cortex::cas::write(Site::ExitPutBack, path, bytes)
+        .map_err(|e| format!("the adjudicated state of {file} could not be put back at exit: {e}"))
 }
 
 /// `cortex locate --file F --check C [--json]`
@@ -1957,6 +2170,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
+    /// ATTACK: E5 exit-27 put-back - adjudicated bytes are never put back over a foreign edit.
+    #[test]
+    fn the_exit_27_put_back_never_overwrites_a_foreign_edit() {
+        let path = scratch("putback");
+        std::fs::write(&path, FOUND).unwrap();
+        axon_cortex::cas::observe(&path, FOUND);
+        axon_cortex::cas::write(axon_cortex::cas::Site::Apply, &path, ACCEPTED).unwrap();
+        std::fs::write(&path, EXTERNAL).unwrap();
+        let got = put_back_adjudicated(&path, "f.ax", ACCEPTED);
+        assert_eq!(std::fs::read(&path).unwrap(), EXTERNAL);
+        assert!(got.is_err(), "{got:?}");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
     /// FU-4 (c): bytes changed after acceptance by another writer are left in
     /// place, and the reason says the file was not restored.
     #[test]
@@ -1976,7 +2203,10 @@ mod tests {
         );
         // (b): bytes that already are the found ones are left alone, with
         // nothing added to the reason.
-        assert_eq!(restore_found(&path, EXTERNAL, &ours), Ok(false));
+        assert_eq!(
+            restore_found(Site::Settle, &path, EXTERNAL, &ours),
+            Ok(false)
+        );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -1990,7 +2220,7 @@ mod tests {
         let (_, ours) = wrote_accepted();
         std::fs::write(&path, ACCEPTED).unwrap();
         let unreadable = Err(std::io::Error::other("injected read failure"));
-        let got = restore_read(&path, unreadable, FOUND, &ours);
+        let got = restore_read(Site::Settle, &path, unreadable, FOUND, &ours);
         assert_eq!(
             std::fs::read(&path).unwrap(),
             ACCEPTED,
@@ -2013,11 +2243,42 @@ mod tests {
         std::fs::create_dir(&path).unwrap();
         let (_, ours) = wrote_accepted();
         let io = std::fs::write(&path, FOUND).unwrap_err().to_string();
-        let got = restore_read(&path, Ok(ACCEPTED.to_vec()), FOUND, &ours);
+        let got = restore_read(Site::Settle, &path, Ok(ACCEPTED.to_vec()), FOUND, &ours);
         assert!(
             matches!(&got, Err(why) if why.contains(&io)),
             "ATTACK: a failed restore was not reported: {got:?}"
         );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// NH-R1 E6: the check child's env is exactly the fence env; one extra
+    /// variable (a cache root) or an inherited env refuses.
+    #[test]
+    fn e6_the_check_env_is_exactly_the_fence_env() {
+        let fence: std::collections::BTreeMap<String, String> = [
+            ("AXON_ALLOWED_EFFECTS", "IO,Pure"),
+            ("AXON_ALLOWED_FS_READ", ""),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let base = || LocalInterpreterExecutor::pin_on_first_use("axon".into());
+        let exact = fence
+            .iter()
+            .fold(base().with_clean_env(), |x, (k, v)| x.with_env(k, v));
+        assert_eq!(env_is_the_fence(&exact, &fence), Ok(()));
+        let home = fence
+            .iter()
+            .fold(base().with_clean_env(), |x, (k, v)| x.with_env(k, v))
+            .with_env("HOME", "/tmp/cache-root");
+        assert!(
+            env_is_the_fence(&home, &fence).is_err(),
+            "ATTACK: E6 a check child with a HOME beside the fence env was admitted"
+        );
+        let inherits = fence.iter().fold(base(), |x, (k, v)| x.with_env(k, v));
+        assert!(
+            env_is_the_fence(&inherits, &fence).is_err(),
+            "ATTACK: E6 a check child that inherits the launcher env was admitted"
+        );
     }
 }
