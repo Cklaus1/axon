@@ -21438,15 +21438,62 @@ fn stdlib_module_acceptance_suites_pass() {
 #[test]
 fn asi_demo_set_runs_without_crashing() {
     // examples/asi/ is the documented "public face" of the language (CLAUDE.md
-    // ASI Demo Set). Only ~8 of 33 demos had a cli_run test; the rest — including
-    // 3 of the 4 flagship demos (classify/code_review/optimize/summarize) — were
-    // unguarded, so a regression that PANICKED one would go unnoticed. These demos
-    // intentionally exit non-zero (computed values, or @[verify]/goal-gate
-    // REJECTIONS — exit 3 is policy-rejection, working as designed), so we can't
-    // assert exit 0. The real regression signal is a CRASH: a panic (exit 101) or
-    // a parse/type/resolve error on stderr. This asserts every demo RUNS TO
-    // COMPLETION without crashing. (contained_violation.ax is an intentional
-    // @[contained] deny-case — it fails `check`, not `run`, so we exclude it.)
+    // ASI Demo Set). Every demo's exit code under mock is PINNED in `EXPECTED`.
+    // Many demos exit non-zero by design (a computed value, or exit 3 = a
+    // @[verify]/goal-gate rejection), so "no crash" is not enough: a demo newly
+    // refused at check (rc 2), falling to E1300 (rc 5) or diverging (rc 11) is
+    // exactly the regression to catch, and a changed computed result moves the
+    // rc too. A demo whose rc changes LEGITIMATELY updates its row here in the
+    // same commit. contained_violation.ax is an intentional @[contained]
+    // deny-case: rc 2 with E1001. Panics and compile-stage errors are still
+    // reported. The run is hermetic (asi-replay RP-2): env_clear plus an
+    // allow-list, a temp cwd/HOME/XDG cache and temp state files, so a
+    // developer's AXON_AI_REPLAY, model overrides, AXON_ENGINE,
+    // AXON_GOAL_CONTINUE or persistent-demo state can never change an rc.
+    const EXPECTED: &[(&str, i32)] = &[
+        ("ad_optimizer", 0),
+        ("agent_metacognition", 0),
+        ("ai_fallback", 1),
+        ("allocate", 0),
+        ("bandit_ucb", 1),
+        ("budget_audit", 0),
+        ("categorical_goal", 0),
+        ("classify", 3),
+        ("code_review", 3),
+        ("constrained_goal", 0),
+        ("contained", 0),
+        ("contained_violation", 2),
+        ("coord_attested", 0),
+        ("corrigible", 0),
+        ("deliberative_agent", 0),
+        ("experiment_zone", 0),
+        ("goal_attribute", 1),
+        ("kernel_orchestrator", 0),
+        ("learn_linear", 1),
+        ("learn_linear_f64", 1),
+        ("llm_cache", 1),
+        ("local_search", 0),
+        ("multi_objective", 1),
+        ("optimize", 3),
+        ("parallel_score", 88),
+        ("pareto", 0),
+        ("persistent_bandit", 0),
+        ("persistent_learner", 0),
+        ("planner", 0),
+        ("pricing", 3),
+        ("rank", 0),
+        ("risk_monitor", 0),
+        ("safe_bandit", 1),
+        ("safe_self_improve", 1),
+        ("safety_stack_demo", 0),
+        ("search_rank", 3),
+        ("self_improve", 0),
+        ("summarize", 0),
+        ("supervised_agent", 0),
+        ("taint_flow", 0),
+        ("word_freq", 1),
+        ("world_model", 0),
+    ];
     let dir = format!("{}/../../examples/asi", env!("CARGO_MANIFEST_DIR"));
     let stdlib = format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR"));
     let path = format!("{dir}:{stdlib}");
@@ -21454,34 +21501,60 @@ fn asi_demo_set_runs_without_crashing() {
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().map(|x| x == "ax").unwrap_or(false))
-        .filter(|p| {
-            p.file_name()
-                .map(|n| n != "contained_violation.ax")
-                .unwrap_or(true)
-        })
         .collect();
     files.sort();
-    assert!(
-        files.len() > 20,
-        "expected the full ASI demo set, found {}",
-        files.len()
-    );
 
-    let mut crashes = Vec::new();
-    for f in &files {
+    let mut failures = Vec::new();
+    let stems: Vec<String> = files
+        .iter()
+        .map(|f| f.file_stem().unwrap().to_string_lossy().into_owned())
+        .collect();
+    for s in &stems {
+        if !EXPECTED.iter().any(|(n, _)| n == s) {
+            failures.push(format!(
+                "ATTACK: an ASI demo is missing from the pinned exit-code table [{s}]: \
+                 examples/asi/{s}.ax has no row in EXPECTED"
+            ));
+        }
+    }
+    for (n, _) in EXPECTED {
+        if !stems.iter().any(|s| s == n) {
+            failures.push(format!(
+                "ATTACK: an ASI demo is missing from the pinned exit-code table [{n}]: \
+                 the row has no examples/asi/{n}.ax"
+            ));
+        }
+    }
+
+    let tmp = std::env::temp_dir().join(format!("axon_asirc_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    for (f, name) in files.iter().zip(&stems) {
+        let Some(&(_, want)) = EXPECTED.iter().find(|(n, _)| n == name) else {
+            continue;
+        };
         let out = axon()
             .args(["run", f.to_str().unwrap()])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &tmp)
+            .env("XDG_CACHE_HOME", tmp.join(name).join("cache"))
             .env("AXON_PATH", &path)
-            .env("AXON_AI_MOCK", "1")
             .env("AXON_SEED", "42")
+            .env("AXON_BANDIT_STATE", tmp.join("bandit.txt"))
+            .env("AXON_LEARNER_STATE", tmp.join("learner.txt"))
+            .env("AXON_AI_MOCK", "1")
+            .current_dir(&tmp)
             .output()
             .unwrap();
-        let name = f.file_name().unwrap().to_string_lossy();
         let stderr = String::from_utf8_lossy(&out.stderr);
-        // A crash = panic exit (101) OR a compile-stage error on stderr. A
-        // deliberate @[verify]/goal-gate rejection ("verify failed"/exit 3) and
-        // a non-zero computed return are NOT crashes.
-        let panicked = out.status.code() == Some(101);
+        let first = stderr
+            .lines()
+            .find(|l| !l.trim_start().starts_with("warning"))
+            .unwrap_or("");
+        let got = out.status.code();
+        // A crash = panic exit (101) OR a compile-stage error on stderr.
+        let panicked = got == Some(101);
         let compile_err = stderr.contains("parse error")
             || stderr.contains("cannot find")
             || stderr.contains("type mismatch")
@@ -21492,15 +21565,26 @@ fn asi_demo_set_runs_without_crashing() {
             } else {
                 "compile error"
             };
-            crashes.push(format!(
-                "{name}: {why} — {}",
-                stderr.lines().next().unwrap_or("")
+            failures.push(format!("{name}: {why} — {first}"));
+        }
+        if got != Some(want) {
+            failures.push(format!(
+                "ATTACK: an ASI demo exited with a different code under mock [{name}]: \
+                 expected {want}, got {got:?}; stderr: {first}"
+            ));
+        }
+        if name == "contained_violation" && !stderr.contains("E1001") {
+            failures.push(format!(
+                "ATTACK: an ASI demo exited with a different code under mock [{name}]: \
+                 the @[contained] deny-case must be refused with E1001; stderr: {first}"
             ));
         }
     }
+    let _ = std::fs::remove_dir_all(&tmp);
     assert!(
-        crashes.is_empty(),
-        "ASI demos (the documented public face) must run without crashing: {crashes:#?}"
+        failures.is_empty(),
+        "ASI demos (the documented public face) must keep their pinned exit codes:\n{}",
+        failures.join("\n")
     );
 }
 

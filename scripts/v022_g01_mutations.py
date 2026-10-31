@@ -12398,5 +12398,13 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'generic_param_method_and_generic_struct_args_are_checked'),
 ]
 
+# asi-replay (ids M4150-M4169): every ASI demo's exit code under mock is pinned (RP-2).
+MUTATIONS += [
+    ('M4154', 'RP-2: llm_cache.ax no longer returns its success code 1 (a changed computed result under mock)', 'examples/asi/llm_cache.ax',
+     'dict_len(cache) == unique { 1 } else { 0 }',
+     'dict_len(cache) == unique { 0 } else { 0 }',
+     'axon-core', '--no-default-features --test cli_run', 'asi_demo_set_runs_without_crashing'),
+]
+
 if __name__ == "__main__":
     main()

@@ -3392,3 +3392,8 @@ ATTACK_MARKERS.update({
     'M3940': r'ATTACK: a dict holding a value of another type checked clean \[d_generic_put\]',
     'M3941': r'ATTACK: a generic method call or generic struct argument checked clean \[g_lambda_param_unbound\]',
 })
+
+# asi-replay (ids M4150-M4169)
+ATTACK_MARKERS.update({
+    'M4154': r'ATTACK: an ASI demo exited with a different code under mock \[llm_cache\]',
+})
