@@ -3392,3 +3392,9 @@ ATTACK_MARKERS.update({
     'M3940': r'ATTACK: a dict holding a value of another type checked clean \[d_generic_put\]',
     'M3941': r'ATTACK: a generic method call or generic struct argument checked clean \[g_lambda_param_unbound\]',
 })
+
+# native-parity NP-6 (ids M4134-M4135)
+ATTACK_MARKERS.update({
+    'M4134': r'ATTACK: [^\n]*\[min_i32\]',
+    'M4135': r'ATTACK: [^\n]*\[max_i32\]',
+})

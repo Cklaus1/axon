@@ -251,8 +251,8 @@ let a = abs_f64(-2.5)  // 2.5
 #### `min_i32(a: i64, b: i64) -> i32`
 *Phase added: 1*
 
-Return the lesser of two integers (the interpreter does not truncate today:
-`min_i32(5000000000, 6000000000)` is `5000000000`, O-DT-01; prefer `min_i64`). Parameters accept `i64`
+Return the lesser of two integers, truncating each argument to its low 32 bits first, like
+`abs_i32`: `min_i32(3000000000, 1)` is `-1294967296`. Use the `_i64` form for wider values. Parameters accept `i64`
 so integer literals can be passed without explicit type annotation.
 
 ```axon
@@ -264,8 +264,8 @@ let m = min_i32(3, 7)   // 3
 #### `max_i32(a: i64, b: i64) -> i32`
 *Phase added: 1*
 
-Return the greater of two integers (the interpreter does not truncate today:
-`max_i32(5000000000, 1)` is `5000000000`, O-DT-01; prefer `max_i64`). Parameters accept `i64`
+Return the greater of two integers, truncating each argument to its low 32 bits first, like
+`abs_i32`: `max_i32(3000000000, 1)` is `1`. Use the `_i64` form for wider values. Parameters accept `i64`
 so integer literals can be passed without explicit type annotation.
 
 ```axon

@@ -43044,3 +43044,81 @@ fn an_effectful_helper_in_a_refinement_is_refused_e1209() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn min_max_i32_truncate_their_arguments_like_abs_i32() {
+    // native-parity NP-6 (O-DT-01): `min_i32`/`max_i32` truncate each argument
+    // to its low 32 bits, like `abs_i32` and like native (whose runtime takes
+    // i32 args). The interpreter used to compare the raw i64s, so
+    // `min_i32(3000000000, 1)` was `1` instead of `-1294967296` and an `i32`
+    // binding held a value outside i32. Checks every probe under tree and VM,
+    // then fails once with one ATTACK line per diverging builtin.
+    let attack = "ATTACK: min_i32/max_i32 compared untruncated i64 arguments";
+    let m01 = tmp_ax(
+        "np6_m01",
+        "fn main() -> i64 {\n  println(to_str(min_i32(3000000000, 1)))\n  println(to_str(max_i32(3000000000, 1)))\n  \
+         println(to_str(min_i32(5000000000, 6000000000)))\n  println(to_str(max_i32(0 - 3000000000, 0)))\n  \
+         println(to_str(abs_i32(5000000000)))\n  println(to_str(abs_i32(0 - 7)))\n  println(to_str(min_i32(2, 9)))\n  \
+         println(to_str(max_i32(2, 9)))\n  0\n}\n",
+    );
+    let m03 = tmp_ax(
+        "np6_m03",
+        "fn main() -> i64 {\n  let x: i32 = min_i32(3000000000, 1)\n  println(to_str(x))\n  let y: i32 = x + 1\n  \
+         println(to_str(y))\n  0\n}\n",
+    );
+    // (file, expected lines = native's column, builtin each line exercises)
+    let cases = [
+        (
+            &m01,
+            vec![
+                "-1294967296",
+                "1",
+                "705032704",
+                "1294967296",
+                "705032704",
+                "7",
+                "2",
+                "9",
+            ],
+            [
+                "min_i32", "max_i32", "min_i32", "max_i32", "abs_i32", "abs_i32", "min_i32",
+                "max_i32",
+            ]
+            .to_vec(),
+        ),
+        (
+            &m03,
+            vec!["-1294967296", "-1294967295"],
+            ["min_i32", "min_i32"].to_vec(),
+        ),
+    ];
+    let mut fails: Vec<String> = Vec::new();
+    for engine in ["tree", "vm"] {
+        for (f, want, probes) in &cases {
+            let out = axon()
+                .args(["run", f.to_str().unwrap()])
+                .env("AXON_ENGINE", engine)
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let got: Vec<&str> = stdout.lines().collect();
+            for (i, probe) in probes.iter().enumerate() {
+                if out.status.code() != Some(0) || got.get(i) != Some(&want[i]) {
+                    let line = format!(
+                        "{attack} [{probe}] ({engine}, {}: line {i} got {:?}, want {:?}; rc {:?})",
+                        f.file_name().unwrap().to_string_lossy(),
+                        got.get(i),
+                        want[i],
+                        out.status.code()
+                    );
+                    if !fails.iter().any(|l| l.contains(&format!("[{probe}]"))) {
+                        fails.push(line);
+                    }
+                }
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&m01);
+    let _ = std::fs::remove_file(&m03);
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
