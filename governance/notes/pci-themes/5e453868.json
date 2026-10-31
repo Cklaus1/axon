@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "On a filesystem without RENAME_EXCHANGE an attended repair now writes through the re-hash, rename, re-hash procedure the human approved, and repairs the file again; unattended runs still refuse. New tests failed before and pass after."}
