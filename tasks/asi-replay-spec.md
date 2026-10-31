@@ -325,6 +325,7 @@ Docs in the same commit:
   - Today: rc 1, "replay diverged" (observed).
   - Failure message: `ATTACK: a mock ai_extract_uncertain_* answer was not recorded to AXON_AI_REPLAY [i64 via run.sh <d>]`.
   - `[INFERENCE]` `harness` (`:44`) supplies `AXON`.
+  - `[REVISED: build RpBuilder 2026-10-31]` The test does NOT export `AXON_AI_MOCK=1`. `run.sh replay`'s record leg sets `AXON_AI_MOCK="${AXON_AI_MOCK:-1}"` itself, and its replay leg (`run.sh:110` at 77cf51fc) inherits the caller's environment, so an exported `AXON_AI_MOCK=1` mocks the replay leg too. Observed: with it exported, the test passed before the fix (all five demos "reproducible"); without it, all five failed with rc 1 before the fix and pass after it. `harness` supplies `AXON`, but `env_clear` drops it, so the test sets `AXON` to the test binary's `axon` again.
 
 **Acceptance.** Both tests pass. The RP-2 table is unchanged. Test `:34795` is unchanged.
 

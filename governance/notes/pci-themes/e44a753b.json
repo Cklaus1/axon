@@ -1,0 +1,4 @@
+{
+  "theme": "asi-replay RP-3",
+  "text": "INTERPRETER: ai_extract_uncertain_i64/_f64 consult AXON_AI_REPLAY before AXON_AI_MOCK and record the mock answer (1|0.9) to the cache; behaviour changes only when both variables are set; mock-only, live and native paths unchanged"
+}

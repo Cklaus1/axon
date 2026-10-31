@@ -6233,18 +6233,22 @@ impl<'p> Interp<'p> {
             }
             "ai_extract_uncertain_i64" => {
                 want(1)?;
-                if ai_mock_enabled() {
-                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Int(1), 0.9))));
-                }
                 // AXON_AI_REPLAY was consulted ONLY by the `ai_complete` arm, so a
                 // typed extract made a live, unrecorded model call even under a
                 // replay cache — silently defeating the reproducibility the flag
                 // promises. Found in review. The cache is keyed by
                 // sha256(model \0 prompt), so passing the BUILTIN NAME as the model
                 // keeps an extract's entry distinct from an `ai_complete` for the
-                // same prompt.
+                // same prompt. Checked BEFORE mock/live, as `ai_complete` does
+                // (asi-replay RP-3): under AXON_AI_MOCK plus a cache, the recording
+                // wins, and a mock answer is recorded so a later no-mock replay
+                // reproduces the run.
                 if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
                     ok!(replay_uncertain(&cached, name, false));
+                }
+                if ai_mock_enabled() {
+                    ai_replay_store(as_str(&args[0])?, name, "1|0.9", 0);
+                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Int(1), 0.9))));
                 }
                 #[cfg(feature = "asi-runtime")]
                 {
@@ -6265,12 +6269,14 @@ impl<'p> Interp<'p> {
             }
             "ai_extract_uncertain_f64" => {
                 want(1)?;
-                if ai_mock_enabled() {
-                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Float(1.0), 0.9))));
-                }
-                // Same replay bypass as the i64 variant above.
+                // Same replay-before-mock order and mock recording as the i64
+                // variant above.
                 if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
                     ok!(replay_uncertain(&cached, name, true));
+                }
+                if ai_mock_enabled() {
+                    ai_replay_store(as_str(&args[0])?, name, "1|0.9", 0);
+                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Float(1.0), 0.9))));
                 }
                 #[cfg(feature = "asi-runtime")]
                 {

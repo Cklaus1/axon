@@ -21438,15 +21438,62 @@ fn stdlib_module_acceptance_suites_pass() {
 #[test]
 fn asi_demo_set_runs_without_crashing() {
     // examples/asi/ is the documented "public face" of the language (CLAUDE.md
-    // ASI Demo Set). Only ~8 of 33 demos had a cli_run test; the rest — including
-    // 3 of the 4 flagship demos (classify/code_review/optimize/summarize) — were
-    // unguarded, so a regression that PANICKED one would go unnoticed. These demos
-    // intentionally exit non-zero (computed values, or @[verify]/goal-gate
-    // REJECTIONS — exit 3 is policy-rejection, working as designed), so we can't
-    // assert exit 0. The real regression signal is a CRASH: a panic (exit 101) or
-    // a parse/type/resolve error on stderr. This asserts every demo RUNS TO
-    // COMPLETION without crashing. (contained_violation.ax is an intentional
-    // @[contained] deny-case — it fails `check`, not `run`, so we exclude it.)
+    // ASI Demo Set). Every demo's exit code under mock is PINNED in `EXPECTED`.
+    // Many demos exit non-zero by design (a computed value, or exit 3 = a
+    // @[verify]/goal-gate rejection), so "no crash" is not enough: a demo newly
+    // refused at check (rc 2), falling to E1300 (rc 5) or diverging (rc 11) is
+    // exactly the regression to catch, and a changed computed result moves the
+    // rc too. A demo whose rc changes LEGITIMATELY updates its row here in the
+    // same commit. contained_violation.ax is an intentional @[contained]
+    // deny-case: rc 2 with E1001. Panics and compile-stage errors are still
+    // reported. The run is hermetic (asi-replay RP-2): env_clear plus an
+    // allow-list, a temp cwd/HOME/XDG cache and temp state files, so a
+    // developer's AXON_AI_REPLAY, model overrides, AXON_ENGINE,
+    // AXON_GOAL_CONTINUE or persistent-demo state can never change an rc.
+    const EXPECTED: &[(&str, i32)] = &[
+        ("ad_optimizer", 0),
+        ("agent_metacognition", 0),
+        ("ai_fallback", 1),
+        ("allocate", 0),
+        ("bandit_ucb", 1),
+        ("budget_audit", 0),
+        ("categorical_goal", 0),
+        ("classify", 3),
+        ("code_review", 3),
+        ("constrained_goal", 0),
+        ("contained", 0),
+        ("contained_violation", 2),
+        ("coord_attested", 0),
+        ("corrigible", 0),
+        ("deliberative_agent", 0),
+        ("experiment_zone", 0),
+        ("goal_attribute", 1),
+        ("kernel_orchestrator", 0),
+        ("learn_linear", 1),
+        ("learn_linear_f64", 1),
+        ("llm_cache", 1),
+        ("local_search", 0),
+        ("multi_objective", 1),
+        ("optimize", 3),
+        ("parallel_score", 88),
+        ("pareto", 0),
+        ("persistent_bandit", 0),
+        ("persistent_learner", 0),
+        ("planner", 0),
+        ("pricing", 3),
+        ("rank", 0),
+        ("risk_monitor", 0),
+        ("safe_bandit", 1),
+        ("safe_self_improve", 1),
+        ("safety_stack_demo", 0),
+        ("search_rank", 3),
+        ("self_improve", 0),
+        ("summarize", 0),
+        ("supervised_agent", 0),
+        ("taint_flow", 0),
+        ("word_freq", 1),
+        ("world_model", 0),
+    ];
     let dir = format!("{}/../../examples/asi", env!("CARGO_MANIFEST_DIR"));
     let stdlib = format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR"));
     let path = format!("{dir}:{stdlib}");
@@ -21454,34 +21501,60 @@ fn asi_demo_set_runs_without_crashing() {
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().map(|x| x == "ax").unwrap_or(false))
-        .filter(|p| {
-            p.file_name()
-                .map(|n| n != "contained_violation.ax")
-                .unwrap_or(true)
-        })
         .collect();
     files.sort();
-    assert!(
-        files.len() > 20,
-        "expected the full ASI demo set, found {}",
-        files.len()
-    );
 
-    let mut crashes = Vec::new();
-    for f in &files {
+    let mut failures = Vec::new();
+    let stems: Vec<String> = files
+        .iter()
+        .map(|f| f.file_stem().unwrap().to_string_lossy().into_owned())
+        .collect();
+    for s in &stems {
+        if !EXPECTED.iter().any(|(n, _)| n == s) {
+            failures.push(format!(
+                "ATTACK: an ASI demo is missing from the pinned exit-code table [{s}]: \
+                 examples/asi/{s}.ax has no row in EXPECTED"
+            ));
+        }
+    }
+    for (n, _) in EXPECTED {
+        if !stems.iter().any(|s| s == n) {
+            failures.push(format!(
+                "ATTACK: an ASI demo is missing from the pinned exit-code table [{n}]: \
+                 the row has no examples/asi/{n}.ax"
+            ));
+        }
+    }
+
+    let tmp = std::env::temp_dir().join(format!("axon_asirc_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    for (f, name) in files.iter().zip(&stems) {
+        let Some(&(_, want)) = EXPECTED.iter().find(|(n, _)| n == name) else {
+            continue;
+        };
         let out = axon()
             .args(["run", f.to_str().unwrap()])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &tmp)
+            .env("XDG_CACHE_HOME", tmp.join(name).join("cache"))
             .env("AXON_PATH", &path)
-            .env("AXON_AI_MOCK", "1")
             .env("AXON_SEED", "42")
+            .env("AXON_BANDIT_STATE", tmp.join("bandit.txt"))
+            .env("AXON_LEARNER_STATE", tmp.join("learner.txt"))
+            .env("AXON_AI_MOCK", "1")
+            .current_dir(&tmp)
             .output()
             .unwrap();
-        let name = f.file_name().unwrap().to_string_lossy();
         let stderr = String::from_utf8_lossy(&out.stderr);
-        // A crash = panic exit (101) OR a compile-stage error on stderr. A
-        // deliberate @[verify]/goal-gate rejection ("verify failed"/exit 3) and
-        // a non-zero computed return are NOT crashes.
-        let panicked = out.status.code() == Some(101);
+        let first = stderr
+            .lines()
+            .find(|l| !l.trim_start().starts_with("warning"))
+            .unwrap_or("");
+        let got = out.status.code();
+        // A crash = panic exit (101) OR a compile-stage error on stderr.
+        let panicked = got == Some(101);
         let compile_err = stderr.contains("parse error")
             || stderr.contains("cannot find")
             || stderr.contains("type mismatch")
@@ -21492,15 +21565,220 @@ fn asi_demo_set_runs_without_crashing() {
             } else {
                 "compile error"
             };
-            crashes.push(format!(
-                "{name}: {why} — {}",
-                stderr.lines().next().unwrap_or("")
+            failures.push(format!("{name}: {why} — {first}"));
+        }
+        if got != Some(want) {
+            failures.push(format!(
+                "ATTACK: an ASI demo exited with a different code under mock [{name}]: \
+                 expected {want}, got {got:?}; stderr: {first}"
+            ));
+        }
+        if name == "contained_violation" && !stderr.contains("E1001") {
+            failures.push(format!(
+                "ATTACK: an ASI demo exited with a different code under mock [{name}]: \
+                 the @[contained] deny-case must be refused with E1001; stderr: {first}"
             ));
         }
     }
+    let _ = std::fs::remove_dir_all(&tmp);
     assert!(
-        crashes.is_empty(),
-        "ASI demos (the documented public face) must run without crashing: {crashes:#?}"
+        failures.is_empty(),
+        "ASI demos (the documented public face) must keep their pinned exit codes:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn asi_model_demos_reach_their_deploy_gate_on_replay_fixtures() {
+    // asi-replay RP-1 (O-GAP-10). The six model-calling ASI demos replay
+    // hand-authored answers from examples/asi/fixtures/<d>.replay (generated by
+    // scripts/asi_replay_fixtures.py), with NO mock, NO key and NO model
+    // override (env_clear + allow-list). So the whole pipeline runs offline:
+    // prompt -> parse -> score -> goal_run choosing the one best variant (the
+    // fixtures are graded: exactly one non-start variant gets the good answers)
+    // -> @[verify] gate -> redteam. A prompt edit in a demo makes its lookup
+    // miss, which is loud here (rc 5 E1300 / rc 101), never silent: a miss
+    // could only be served by mock, a key or a fallback, and (iv) refuses any
+    // non-replay ai_call record. The test replays a temp COPY and checks it is
+    // byte-unchanged afterwards, since a miss under mock or a key appends.
+    // The expected lines live here and the answers in the generator: a change
+    // to one is reviewed against the other.
+    const DEMOS: &[(&str, &[&str], bool)] = &[
+        (
+            "optimize",
+            &[
+                "Best observed score: 99 / 100",
+                "Deploy gate: PASS — score wrapped as Uncertain<i64> with confidence >= 0.9",
+                "Confirmed best variant score: 99",
+                "Redteam: PASS — no hallucinated phone on adversarial input",
+            ],
+            true,
+        ),
+        (
+            "classify",
+            &[
+                "Best observed score: 94 / 100",
+                "Deploy gate: PASS — Uncertain<i64> with confidence >= 0.8",
+                "Confirmed best score: 94",
+                "Redteam: PASS — model expressed uncertainty on ambiguous input",
+            ],
+            false,
+        ),
+        (
+            "summarize",
+            &[
+                "Best observed score: 93 / 99",
+                "Deploy gate: PASS — confidence >= 0.85",
+                "Confirmed best score: 93",
+            ],
+            true,
+        ),
+        (
+            "code_review",
+            &[
+                "Best observed review score: 99 / 100",
+                "Deploy gate: PASS — confidence >= 0.75",
+                "Confirmed best score: 99",
+            ],
+            true,
+        ),
+        (
+            "search_rank",
+            &[
+                "Best observed score: 93 / 100",
+                "Deploy gate: PASS — confidence >= 0.8",
+                "Confirmed best score: 93",
+                "Redteam: PASS — variant 0 ignored prompt injection in document content",
+            ],
+            false,
+        ),
+        (
+            "pricing",
+            &[
+                "Best observed score: 83 / 100",
+                "Deploy gate: PASS — confidence >= 0.7",
+                "Confirmed best composite score: 83",
+            ],
+            false,
+        ),
+    ];
+    let dir = format!("{}/../../examples/asi", env!("CARGO_MANIFEST_DIR"));
+    let stdlib = format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{dir}:{stdlib}");
+    let tmp = std::env::temp_dir().join(format!("axon_asifx_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let mut failures = Vec::new();
+    for &(d, lines, needs_ai_call) in DEMOS {
+        let fixture = format!("{dir}/fixtures/{d}.replay");
+        let copy = tmp.join(format!("{d}.replay"));
+        let cache = tmp.join(d).join("cache");
+        let committed = std::fs::read(&fixture).ok();
+        let mut why = Vec::new();
+        match &committed {
+            Some(bytes) => std::fs::write(&copy, bytes).unwrap(),
+            None => why.push(format!("fixture {fixture} is missing")),
+        }
+        let out = axon()
+            .arg("run")
+            .arg(format!("{dir}/{d}.ax"))
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &tmp)
+            .env("XDG_CACHE_HOME", &cache)
+            .env("AXON_PATH", &path)
+            .env("AXON_SEED", "42")
+            .env("AXON_BANDIT_STATE", tmp.join("bandit.txt"))
+            .env("AXON_LEARNER_STATE", tmp.join("learner.txt"))
+            .env("AXON_AI_REPLAY", &copy)
+            .current_dir(&tmp)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // (i) the demo reaches its gate and exits 0.
+        if out.status.code() != Some(0) {
+            why.push(format!(
+                "rc {:?}; stderr: {}",
+                out.status.code(),
+                stderr
+                    .lines()
+                    .find(|l| !l.trim_start().starts_with("warning"))
+                    .unwrap_or("")
+            ));
+        }
+        // (ii) every key line is an exact stdout line.
+        for want in lines {
+            if !stdout.lines().any(|l| l == *want) {
+                why.push(format!("missing stdout line: {want}"));
+            }
+        }
+        // (iii) nothing was appended to (or changed in) the replayed copy.
+        if let Some(bytes) = &committed {
+            if std::fs::read(&copy).ok().as_ref() != Some(bytes) {
+                why.push("the replayed fixture copy changed (an answer was stored)".into());
+            }
+        }
+        // (iv) every ai_call was served from the cache.
+        let prov = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl"))
+            .unwrap_or_default();
+        let calls: Vec<&str> = prov
+            .lines()
+            .filter(|l| l.contains("\"event\":\"ai_call\""))
+            .collect();
+        let not_replay = calls
+            .iter()
+            .filter(|l| !l.contains("\"mode\":\"replay\""))
+            .count();
+        if not_replay > 0 {
+            why.push(format!(
+                "{not_replay} of {} ai_call records were not mode \"replay\"",
+                calls.len()
+            ));
+        }
+        if needs_ai_call && calls.is_empty() {
+            why.push("no ai_call provenance record (expected mode \"replay\" records)".into());
+        }
+        if !why.is_empty() {
+            failures.push(format!(
+                "ATTACK: a model-backed ASI demo no longer reaches its deploy gate on its replay \
+                 fixture [{d}]\n  {}\n  hint: if a prompt in examples/asi/{d}.ax changed, copy \
+                 the new prompt text into the {d} data in scripts/asi_replay_fixtures.py, run \
+                 python3 -B scripts/asi_replay_fixtures.py --write, and update the expected \
+                 lines for {d} in this test if the demo's scores changed",
+                why.join("\n  ")
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn asi_replay_fixtures_match_their_generator() {
+    // asi-replay RP-1: the committed examples/asi/fixtures/*.replay are exactly
+    // what scripts/asi_replay_fixtures.py generates, so a hand-edited fixture
+    // fails here. This does NOT detect demo/generator prompt drift (the
+    // generator never reads the demos); the replay test above does.
+    let root = script_spawn::repo_root();
+    let o = script_spawn::script(
+        "python3",
+        root.join("scripts/asi_replay_fixtures.py"),
+        Bins::NoWorkspaceBinary,
+    )
+    .arg("--check")
+    .current_dir(&root)
+    .env("PYTHONDONTWRITEBYTECODE", "1")
+    .env_remove("PYTHONPATH")
+    .output()
+    .unwrap();
+    assert!(
+        o.status.success(),
+        "scripts/asi_replay_fixtures.py --check failed (rc {:?}): {}{}",
+        o.status.code(),
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
     );
 }
 
@@ -34879,6 +35157,174 @@ fn ai_extract_uncertain_is_stamped_ai_sourced_on_mock_and_replay_paths() {
         "replay path: a recorded AI answer is still AI-sourced. stderr: {}",
         String::from_utf8_lossy(&run.stderr)
     );
+}
+
+#[test]
+fn ai_extract_replay_hit_wins_over_mock_and_a_mock_answer_is_recorded() {
+    // asi-replay RP-3. `ai_complete` consults AXON_AI_REPLAY BEFORE the mock
+    // and records a mock answer; the `ai_extract_uncertain_*` arms did the
+    // opposite (mock first, never stored). So under AXON_AI_MOCK=1 plus a
+    // cache an extract silently served the stub instead of the recording, and
+    // a mock run recorded nothing, so the later no-mock replay panicked (rc
+    // 101) and `run.sh replay` diverged for every extract demo. Each leg is
+    // asserted separately so the i64 and f64 arms are pinned on their own.
+    let src = "fn main() -> i64 {\n  \
+               match ai_extract_uncertain_i64(\"how many? 3\") {\n    \
+                 Ok(u) => println(\"{to_str(u.value)} {to_str(u.confidence)}\")\n    \
+                 Err(e) => println(e)\n  }\n  \
+               match ai_extract_uncertain_f64(\"how warm? 2.5\") {\n    \
+                 Ok(u) => println(\"{to_str(u.value)} {to_str(u.confidence)}\")\n    \
+                 Err(e) => println(e)\n  }\n  0\n}\n";
+    let f = tmp_ax("ai_extract_replay_mock", src);
+    let tmp = std::env::temp_dir().join(format!("axon_rp3_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let key = |model: &str, prompt: &str| {
+        use sha2::{Digest, Sha256};
+        let d = Sha256::digest(format!("{model}\u{0}{prompt}").as_bytes());
+        d.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let k_i64 = key("ai_extract_uncertain_i64", "how many? 3");
+    let k_f64 = key("ai_extract_uncertain_f64", "how warm? 2.5");
+    let run = |cache: &std::path::Path, mock: bool| {
+        let mut c = axon();
+        c.arg("run")
+            .arg(&f)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &tmp)
+            .env("XDG_CACHE_HOME", tmp.join("xdg"))
+            .env("AXON_SEED", "42")
+            .env("AXON_AI_REPLAY", cache)
+            .current_dir(&tmp);
+        if mock {
+            c.env("AXON_AI_MOCK", "1");
+        }
+        let o = c.output().expect("spawn");
+        let lines: Vec<String> = String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        (
+            lines,
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    };
+    let mut failures = Vec::new();
+
+    // (a) A recorded answer wins over the mock.
+    let cache = tmp.join("hit.replay");
+    std::fs::write(
+        &cache,
+        format!("{k_i64} 0 {}\n{k_f64} 0 {}\n", hex("3|0.8"), hex("2.5|0.7")),
+    )
+    .unwrap();
+    let (got, rc, err) = run(&cache, true);
+    for (i, (leg, want)) in [("i64", "3 0.8"), ("f64", "2.5 0.7")].iter().enumerate() {
+        if got.get(i).map(String::as_str) != Some(*want) {
+            failures.push(format!(
+                "ATTACK: an ai_extract_uncertain_* replay entry lost to the mock [{leg}]: \
+                 want {want:?}, got {:?} (rc {rc:?}; stderr: {err})",
+                got.get(i)
+            ));
+        }
+    }
+
+    // (b) A mock answer is recorded, keyed by the builtin name, and a later
+    // replay WITHOUT the mock reproduces it.
+    let cache = tmp.join("rec.replay");
+    std::fs::write(&cache, "").unwrap();
+    let (mocked, _, _) = run(&cache, true);
+    let body = std::fs::read_to_string(&cache).unwrap_or_default();
+    let (replayed, rc, err) = run(&cache, false);
+    let stub = hex("1|0.9");
+    for (i, (leg, k)) in [("i64", &k_i64), ("f64", &k_f64)].iter().enumerate() {
+        let stored = body.lines().any(|l| {
+            let mut p = l.split(' ');
+            p.next() == Some(k.as_str()) && p.nth(1) == Some(stub.as_str())
+        });
+        let reproduced = replayed.get(i).map(String::as_str) == Some("1 0.9")
+            && mocked.get(i).map(String::as_str) == Some("1 0.9");
+        if !stored || !reproduced {
+            failures.push(format!(
+                "ATTACK: a mock ai_extract_uncertain_* answer was not recorded to \
+                 AXON_AI_REPLAY [{leg}]: stored={stored}; mock run {:?}, no-mock replay {:?} \
+                 (rc {rc:?}; stderr: {err}); cache:\n{body}",
+                mocked.get(i),
+                replayed.get(i)
+            ));
+        }
+    }
+    if body.lines().count() != 2 {
+        failures.push(format!(
+            "the mock run must record exactly 2 lines, one per extract; cache:\n{body}"
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_file(&f);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn asi_run_sh_replay_reproduces_the_extract_demos() {
+    // asi-replay RP-3: `run.sh replay` records a mock run into a temp
+    // AXON_AI_REPLAY cache, then replays it with no mock. Before RP-3 the
+    // extract builtins never recorded a mock answer, so every demo that calls
+    // `ai_extract_uncertain_*` diverged ("replay diverged", rc 1). optimize
+    // (ai_complete only) is covered by
+    // asi_demo_replay_and_audit_commands_work_end_to_end.
+    //
+    // AXON_AI_MOCK is deliberately NOT exported: run.sh's record leg defaults
+    // it to 1 itself (`${AXON_AI_MOCK:-1}`), and its replay leg inherits the
+    // caller's environment, so an exported AXON_AI_MOCK=1 would mock the
+    // replay leg too and this test could not see a missing recording
+    // (observed: with it exported the test passed before the RP-3 fix).
+    let script = format!("{}/../../examples/asi/run.sh", env!("CARGO_MANIFEST_DIR"));
+    let asi = format!("{}/../../examples/asi", env!("CARGO_MANIFEST_DIR"));
+    let stdlib = format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR"));
+    let tmp = std::env::temp_dir().join(format!("axon_rp3sh_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut failures = Vec::new();
+    for d in [
+        "classify",
+        "summarize",
+        "code_review",
+        "search_rank",
+        "pricing",
+    ] {
+        let rep = harness(&script)
+            .arg("replay")
+            .env_clear()
+            .env("AXON", env!("CARGO_BIN_EXE_axon"))
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &tmp)
+            .env("XDG_CACHE_HOME", tmp.join(d).join("cache"))
+            .env("AXON_PATH", format!("{asi}:{stdlib}"))
+            .env("AXON_SEED", "42")
+            .env("AXON_BANDIT_STATE", tmp.join("bandit.txt"))
+            .env("AXON_LEARNER_STATE", tmp.join("learner.txt"))
+            .env("DEMO", format!("{d}.ax"))
+            .current_dir(&tmp)
+            .output()
+            .expect("run run.sh replay");
+        let r = format!(
+            "{}{}",
+            String::from_utf8_lossy(&rep.stdout),
+            String::from_utf8_lossy(&rep.stderr)
+        );
+        if !(rep.status.success() && r.contains("reproducible")) {
+            failures.push(format!(
+                "ATTACK: a mock ai_extract_uncertain_* answer was not recorded to \
+                 AXON_AI_REPLAY [i64 via run.sh {d}]: rc {:?}\n{r}",
+                rep.status.code()
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 /// C9 round 4c, PSV-1 (amendment 72), defence in depth for B2: a method call
