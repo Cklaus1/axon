@@ -31,5 +31,9 @@ axon-attest = { path = "../axon-attest" }
 # G2: the job runs as a process-group job (killed whole on its timeout, its
 # latch and a termination signal to `axon-os run`), with time-bounded drains.
 axon-jobctl = { path = "../axon-jobctl" }
+# IG0: the effect scan parses the program and reads the compiler's one
+# admission-axes table (`builtins::builtin_admission_axes`) instead of keeping
+# a second, hand-written list. The interpreter build: no codegen.
+axon-core = { path = "../axon-core", default-features = false }
 
 [dev-dependencies]

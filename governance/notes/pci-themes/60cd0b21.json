@@ -1,0 +1,1 @@
+{"theme": "intent-gen", "text": "The check->repair loop stops before a repair round once reported tokens pass the intent's token budget (default 100000), and genviab refuses a once run whose ledger is not in git history or whose reference author names no human."}

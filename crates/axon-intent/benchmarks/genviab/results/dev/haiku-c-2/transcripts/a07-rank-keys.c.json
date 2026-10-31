@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\nIN_PATH = \"./data/counts.csv\"\nOUT_DIR = \"./out\"\nOUT_PATH = \"./out/answer.txt\"\n\n\ndef main():\n    entries = []\n    with open(IN_PATH, \"r\", encoding=\"utf-8\") as f:\n        for line in f:\n            line = line.strip()\n            if not line:\n                continue\n            key, sep, val = line.partition(\",\")\n            if not sep:\n                continue\n            key = key.strip()\n            try:\n                value = int(val.strip())\n            except ValueError:\n                continue\n            entries.append((key, value))\n\n    # Highest value first; ties broken by key ascending.\n    entries.sort(key=lambda kv: (-kv[1], kv[0]))\n\n    os.makedirs(OUT_DIR, exist_ok=True)\n    with open(OUT_PATH, \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        f.write(\",\".join(k for k, _ in entries) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\nIN_PATH = \"./data/counts.csv\"\nOUT_DIR = \"./out\"\nOUT_PATH = \"./out/answer.txt\"\n\n\ndef main():\n    entries = []\n    with open(IN_PATH, \"r\", encoding=\"utf-8\") as f:\n        for line in f:\n            line = line.strip()\n            if not line:\n                continue\n            key, sep, val = line.partition(\",\")\n            if not sep:\n                continue\n            key = key.strip()\n            try:\n                value = int(val.strip())\n            except ValueError:\n                continue\n            entries.append((key, value))\n\n    # Highest value first; ties broken by key ascending.\n    entries.sort(key=lambda kv: (-kv[1], kv[0]))\n\n    os.makedirs(OUT_DIR, exist_ok=True)\n    with open(OUT_PATH, \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        f.write(\",\".join(k for k, _ in entries) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

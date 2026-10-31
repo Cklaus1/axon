@@ -383,11 +383,18 @@ fn acc_a3_quickstart_commands_execute() {
 // ── A4: hermetic, isolated synthesis with a hard timeout ─────────────────────
 #[test]
 fn acc_a4_synthesis_isolated_timeout() {
-    // Drive the REAL synthesizer (not the mock) against a fake `axon` that hangs,
-    // under a tiny timeout. The child must be killed and synthesis must fail
-    // closed (no triple). Skips if `sh` is unavailable.
+    // Drive the REAL generation path (the check→repair loop, not the mock)
+    // with a `cmd:` generator that hangs, under a tiny deadline. The
+    // generator's job must be killed and generation must fail closed (no
+    // triple). The stand-in `axon` only answers `card`.
     let dir = tmp("a4");
-    // A stand-in "axon" that ignores args and sleeps far past the timeout.
+    let fake_axon = dir.join("axon.sh");
+    common::write_executable(
+        &fake_axon,
+        "#!/bin/sh\n[ \"$1\" = card ] && { echo CARD; exit 0; }\nexit 9\n",
+        0o755,
+    );
+    // A generator that ignores its prompt and sleeps far past the deadline.
     let fake = dir.join("hang.sh");
     common::write_executable(&fake, "#!/bin/sh\nsleep 30\n", 0o755);
     let start = std::time::Instant::now();
@@ -397,10 +404,11 @@ fn acc_a4_synthesis_isolated_timeout() {
         "examples/intents/summarize.intent.md",
         "--out",
         dir.to_str().unwrap(),
+        "--generator",
+        &format!("cmd:{}", fake.display()),
     ]);
-    // NOT mock: force the real subprocess synthesizer, pointed at the hang.
     cmd.env_remove("AXON_AI_MOCK");
-    cmd.env("AXON_BIN", &fake);
+    cmd.env("AXON_BIN", &fake_axon);
     cmd.env("AXON_INTENT_TIMEOUT_MS", "400");
     cmd.current_dir(workspace_root());
     let out = cmd.output().expect("spawn axon-intent");

@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\nfrom collections import Counter\n\ndef main():\n    in_path = os.path.join(\"data\", \"tokens.txt\")\n    out_dir = \"out\"\n    out_path = os.path.join(out_dir, \"answer.txt\")\n\n    with open(in_path, \"r\", encoding=\"utf-8\") as f:\n        text = f.read()\n\n    tokens = [t.strip() for t in text.replace(\"\\n\", \",\").split(\",\")]\n    tokens = [t for t in tokens if t]\n\n    counts = Counter(tokens)\n    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)\n\n    if len(ranked) < 2:\n        return 1\n\n    answer = ranked[1][0]\n\n    os.makedirs(out_dir, exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\") as f:\n        f.write(answer + \"\\n\")\n\n    return 0\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\nfrom collections import Counter\n\ndef main():\n    in_path = os.path.join(\"data\", \"tokens.txt\")\n    out_dir = \"out\"\n    out_path = os.path.join(out_dir, \"answer.txt\")\n\n    with open(in_path, \"r\", encoding=\"utf-8\") as f:\n        text = f.read()\n\n    tokens = [t.strip() for t in text.replace(\"\\n\", \",\").split(\",\")]\n    tokens = [t for t in tokens if t]\n\n    counts = Counter(tokens)\n    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)\n\n    if len(ranked) < 2:\n        return 1\n\n    answer = ranked[1][0]\n\n    os.makedirs(out_dir, exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\") as f:\n        f.write(answer + \"\\n\")\n\n    return 0\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

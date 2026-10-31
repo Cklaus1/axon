@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Rank the keys in ./data/counts.csv by value, highest first; where two values tie, order those keys alphabetically (ascending). The file has no header: each line is a key (lowercase letters), a comma and a non-negative integer value, and ends with a newline. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the ranked keys joined by commas with no spaces.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "499d7357d24a0ba8f3da4be4699089ae3b0184ed8c7d7e425d993247570e4ff7",
+      "candidate": "```axon\nfn better(keys: &[str], vals: &[i64], a: i64, b: i64) -> bool {\n    if vals[a] > vals[b] { return true }\n    if vals[a] < vals[b] { return false }\n    str_cmp(keys[a], keys[b]) < 0\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/counts.csv\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let nl = len(lines)\n            let keys = arr_repeat(\"\", nl)\n            let vals = arr_repeat(0, nl)\n            let m = 0\n            let bad = false\n            for i in 0..nl {\n                let line = str_trim(lines[i])\n                if len(line) > 0 {\n                    let parts = str_split(line, \",\")\n                    keys[m] = str_trim(parts[0])\n                    match parse_int(str_trim(parts[1])) {\n                        Ok(v) => {\n                            vals[m] = v\n                        }\n                        Err(e) => {\n                            eprintln(\"bad value: {e}\")\n                            bad = true\n                        }\n                    }\n                    m = m + 1\n                }\n            }\n            if bad {\n                return 1\n            }\n            let idx = arr_range(0, m)\n            for i in 1..m {\n                let j = i\n                let go = true\n                while go {\n                    if j == 0 {\n                        go = false\n                    } else {\n                        if better(&keys, &vals, idx[j], idx[j - 1]) {\n                            let t = idx[j]\n                            idx[j] = idx[j - 1]\n                            idx[j - 1] = t\n                            j = j - 1\n                        } else {\n                            go = false\n                        }\n                    }\n                }\n            }\n            let out = \"\"\n            for k in 0..m {\n                if k > 0 {\n                    out = out + \",\"\n                }\n                out = out + keys[idx[k]]\n            }\n            out = out + \"\\n\"\n            match write_file(\"./out/answer.txt\", out) {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 10512,
+      "report": {
+        "stage": "accepted",
+        "source": "fn better(keys: &[str], vals: &[i64], a: i64, b: i64) -> bool {\n    if vals[a] > vals[b] { return true }\n    if vals[a] < vals[b] { return false }\n    str_cmp(keys[a], keys[b]) < 0\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/counts.csv\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let nl = len(lines)\n            let keys = arr_repeat(\"\", nl)\n            let vals = arr_repeat(0, nl)\n            let m = 0\n            let bad = false\n            for i in 0..nl {\n                let line = str_trim(lines[i])\n                if len(line) > 0 {\n                    let parts = str_split(line, \",\")\n                    keys[m] = str_trim(parts[0])\n                    match parse_int(str_trim(parts[1])) {\n                        Ok(v) => {\n                            vals[m] = v\n                        }\n                        Err(e) => {\n                            eprintln(\"bad value: {e}\")\n                            bad = true\n                        }\n                    }\n                    m = m + 1\n                }\n            }\n            if bad {\n                return 1\n            }\n            let idx = arr_range(0, m)\n            for i in 1..m {\n                let j = i\n                let go = true\n                while go {\n                    if j == 0 {\n                        go = false\n                    } else {\n                        if better(&keys, &vals, idx[j], idx[j - 1]) {\n                            let t = idx[j]\n                            idx[j] = idx[j - 1]\n                            idx[j - 1] = t\n                            j = j - 1\n                        } else {\n                            go = false\n                        }\n                    }\n                }\n            }\n            let out = \"\"\n            for k in 0..m {\n                if k > 0 {\n                    out = out + \",\"\n                }\n                out = out + keys[idx[k]]\n            }\n            out = out + \"\\n\"\n            match write_file(\"./out/answer.txt\", out) {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 10512,
+  "tokens": null
+}

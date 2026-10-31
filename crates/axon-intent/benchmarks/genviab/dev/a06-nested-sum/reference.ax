@@ -1,0 +1,36 @@
+fn answer(text: str) -> str {
+    let total = 0
+    let cur = 0
+    let in_num = false
+    for i in 0..len(text) {
+        let c = char_at(text, i)
+        if c >= 48 && c <= 57 {
+            cur = cur * 10 + (c - 48)
+            in_num = true
+        } else {
+            if in_num { total = total + cur }
+            cur = 0
+            in_num = false
+        }
+    }
+    if in_num { total = total + cur }
+    to_str(total)
+}
+
+fn main() -> i64 {
+    match read_file("./data/nested.txt") {
+        Ok(text) => {
+            match write_file("./out/answer.txt", answer(text) + "\n") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            2
+        }
+    }
+}

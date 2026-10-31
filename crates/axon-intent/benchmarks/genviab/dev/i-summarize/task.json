@@ -1,0 +1,35 @@
+{
+ "id": "i-summarize",
+ "category": "transform",
+ "source": {
+  "kind": "repo example",
+  "file": "examples/intents/summarize.intent.md",
+  "program": "examples/jobs/summarize.ax",
+  "data": "examples/jobs/data/report.txt",
+  "note": "goal and ceiling from the intent; the summary format and the data from the job program and its data file"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "repo data file",
+    "runs": [
+     {
+      "inputs": {
+       "./data/report.txt": "Quarterly report. Revenue up. Costs flat. Outlook positive.\n"
+      },
+      "outputs": {
+       "./out/summary.txt": "report length: 60 bytes"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/summary.txt",
+  "value": "report length: 60 bytes"
+ }
+}

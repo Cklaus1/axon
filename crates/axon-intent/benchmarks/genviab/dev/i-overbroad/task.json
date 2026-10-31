@@ -1,0 +1,35 @@
+{
+ "id": "i-overbroad",
+ "category": "transform",
+ "source": {
+  "kind": "repo example",
+  "file": "examples/intents/overbroad.intent.md",
+  "program": "examples/jobs/summarize.ax",
+  "data": "examples/jobs/data/report.txt",
+  "note": "the ceiling permits a host the task never needs (least-privilege demo); format and data as i-summarize"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "repo data file",
+    "runs": [
+     {
+      "inputs": {
+       "./data/report.txt": "Quarterly report. Revenue up. Costs flat. Outlook positive.\n"
+      },
+      "outputs": {
+       "./out/summary.txt": "report length: 60 bytes"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/summary.txt",
+  "value": "report length: 60 bytes"
+ }
+}

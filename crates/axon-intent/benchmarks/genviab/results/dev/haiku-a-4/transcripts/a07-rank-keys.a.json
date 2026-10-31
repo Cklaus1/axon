@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Rank the keys in ./data/counts.csv by value, highest first; where two values tie, order those keys alphabetically (ascending). The file has no header: each line is a key (lowercase letters), a comma and a non-negative integer value, and ends with a newline. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the ranked keys joined by commas with no spaces.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "499d7357d24a0ba8f3da4be4699089ae3b0184ed8c7d7e425d993247570e4ff7",
+      "candidate": "```axon\nfn sort_order(order: &mut [i64], keys: &[str], vals: &[i64]) {\n    let n = len(order)\n    for i in 0..n {\n        for j in 0..(n - 1 - i) {\n            let a = order[j]\n            let b = order[j + 1]\n            let swap = vals[a] < vals[b] || (vals[a] == vals[b] && str_cmp(keys[a], keys[b]) > 0)\n            if swap {\n                order[j] = b\n                order[j + 1] = a\n            }\n        }\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/counts.csv\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let m = len(lines)\n            let keys = arr_repeat(\"\", m)\n            let vals = arr_repeat(0, m)\n            let c = 0\n            for i in 0..m {\n                let line = str_trim(lines[i])\n                if len(line) > 0 {\n                    let comma = str_index_of(line, \",\")\n                    if comma < 0 {\n                        eprintln(\"malformed line: {line}\")\n                        return 1\n                    }\n                    match parse_int(str_slice(line, comma + 1, len(line))) {\n                        Ok(v) => {\n                            keys[c] = str_slice(line, 0, comma)\n                            vals[c] = v\n                            c = c + 1\n                        }\n                        Err(e) => {\n                            eprintln(\"bad value: {e}\")\n                            return 1\n                        }\n                    }\n                }\n            }\n            let order = arr_range(0, c)\n            sort_order(&mut order, &keys, &vals)\n            let out = \"\"\n            for k in 0..c {\n                if k > 0 { out = out + \",\" }\n                out = out + keys[order[k]]\n            }\n            match write_file(\"./out/answer.txt\", out + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 12708,
+      "report": {
+        "stage": "accepted",
+        "source": "fn sort_order(order: &mut [i64], keys: &[str], vals: &[i64]) {\n    let n = len(order)\n    for i in 0..n {\n        for j in 0..(n - 1 - i) {\n            let a = order[j]\n            let b = order[j + 1]\n            let swap = vals[a] < vals[b] || (vals[a] == vals[b] && str_cmp(keys[a], keys[b]) > 0)\n            if swap {\n                order[j] = b\n                order[j + 1] = a\n            }\n        }\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/counts.csv\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let m = len(lines)\n            let keys = arr_repeat(\"\", m)\n            let vals = arr_repeat(0, m)\n            let c = 0\n            for i in 0..m {\n                let line = str_trim(lines[i])\n                if len(line) > 0 {\n                    let comma = str_index_of(line, \",\")\n                    if comma < 0 {\n                        eprintln(\"malformed line: {line}\")\n                        return 1\n                    }\n                    match parse_int(str_slice(line, comma + 1, len(line))) {\n                        Ok(v) => {\n                            keys[c] = str_slice(line, 0, comma)\n                            vals[c] = v\n                            c = c + 1\n                        }\n                        Err(e) => {\n                            eprintln(\"bad value: {e}\")\n                            return 1\n                        }\n                    }\n                }\n            }\n            let order = arr_range(0, c)\n            sort_order(&mut order, &keys, &vals)\n            let out = \"\"\n            for k in 0..c {\n                if k > 0 { out = out + \",\" }\n                out = out + keys[order[k]]\n            }\n            match write_file(\"./out/answer.txt\", out + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 12708,
+  "tokens": null
+}

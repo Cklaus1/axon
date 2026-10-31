@@ -2905,9 +2905,6 @@ EXEMPT += [
     ('crates/axon-os/src/runtime.rs',
      'fn is_kill_file_tripped(path: &std::path::Path) -> bool {',
      _OSO + "; called only by AxonCoreRuntime (the `axon-os` binary's runtime; Fabric supplies its own AdmissionProbe)"),
-    ('crates/axon-os/src/runtime.rs',
-     'fn ran_to_completion(stdout: &str, nonce: &str) -> bool {',
-     _OSO + "; called only by AxonCoreRuntime (the `axon-os` binary's runtime; Fabric supplies its own AdmissionProbe)"),
     ('crates/axon-vm/src/firecracker.rs',
      '    pub fn satisfies_protected_linux_microvm(&self) -> bool {',
      _VM + "; satisfies_protected_linux_microvm"),
@@ -3014,15 +3011,6 @@ EXEMPT += [
      'fn host_matches(pat: &str, host: &str) -> bool {',
      _GRN),
     ('crates/axon-os/src/runtime.rs',
-     '                    verdict: Verdict::Denied {\n                        reason: format!("cannot create private staging dir: {e}"),',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '                        verdict: Verdict::Denied {',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '                    verdict: Verdict::Denied {\n                        reason: format!("could not launch interpreter: {e}"),',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
      '            Verdict::Halted {\n                reason: "kill-switch tripped by supervisor".into(),',
      _ACR),
     ('crates/axon-os/src/runtime.rs',
@@ -3044,7 +3032,7 @@ EXEMPT += [
      '            Verdict::Denied {\n                reason: first_axon_line(err, "AI policy refused the call"),',
      _ACR),
     ('crates/axon-os/src/runtime.rs',
-     '            Verdict::Malformed {',
+     '            Verdict::Malformed {\n                reason: first_axon_line(err, "program failed to compile"),',
      _ACR),
     ('crates/axon-os/src/runtime.rs',
      '                    0 => Verdict::Denied {',
@@ -3075,6 +3063,12 @@ EXEMPT += [
      _ACR),
     ('crates/axon-os/src/runtime.rs',
      '    fn run_sandboxed(\n        &self,\n        _program: &ProgramSource,',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '    fn run_sandboxed(\n        &self,\n        program: &ProgramSource,\n        _principal: &PrincipalHandle,',
+     _ACR),
+    ('crates/axon-os/src/runtime.rs',
+     '    fn classify(&self, proc: &ProcOutcome, nonce: &str) -> Verdict {',
      _ACR),
     ('crates/axon-fabric/src/journal.rs',
      '                v.state = OpState::Failed;',
@@ -3645,11 +3639,6 @@ EXEMPT += [
      'ROWED ELSEWHERE (checkable): `finish` prints the reply and exits with the code it is given (its print is M2335); the report and the code are what serve_as/serve_observe return, rowed through the exit-code tests of every launch test (they parse the reply and assert the code)'),
 ]
 
-EXEMPT += [
-    ("crates/axon-os/src/runtime.rs", "        .stdin(Stdio::null())\n        .stdout(Stdio::piped())",
-     "NOT ON THE PROTECTED ROUTE (checkable): the legacy process adapter (_ACR). REMAINDER (no row yet): its interpreter child's stdin; a test would need a hostile parent with a live stdin pipe, and the child runs a program the supervisor already admitted"),
-]
-
 
 # ── C9 round 8, EQGATE4 (amendment 95): what the new forms exposed, and what was done with each ──────
 # Every entry below was a refusal SITE the gate could not see before amendment 95: a value or atomic
@@ -4092,7 +4081,7 @@ EXEMPT += [
     ('crates/axon-os/src/runtime.rs', '    if v["schema"] != "axon-imports/1" {', _IMPD),
     ('crates/axon-os/src/runtime.rs', '        _ => Err("`axon imports --json` printed no axsha256: imports_digest".into()),', _IMPD),
     ('crates/axon-os/src/runtime.rs', 'fn imports_refusal(stderr: &str, code: Option<i32>, stdout: &str, nonce: &str) -> Option<String> {', _IMPV),
-    ('crates/axon-os/src/runtime.rs', '        } else if let Some(line) = imports_refusal(err, proc.code, &proc.stdout, &nonce) {', _IMPV),
+    ('crates/axon-os/src/runtime.rs', '        } else if let Some(line) = imports_refusal(err, proc.code, &proc.stdout, nonce) {', _IMPV),
     ('crates/axon-os/src/runtime.rs', 'pub const DEFAULT_MAX_CAPTURE_BYTES: usize = 1 << 20;', _A95['const_bound']),
 ]
 VALUE_EXEMPT += [
@@ -4243,7 +4232,7 @@ VALUE_EXEMPT += [
     ('crates/axon-os/src/runtime.rs', 'run_bounded_capped', 1, 'Stdio::null()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::null() -> Stdio::inherit()) fails the test(s) the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory; no row of its own'),
     ('crates/axon-os/src/runtime.rs', 'run_bounded_capped', 2, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) acc_a1_smoke_user_journey, acc_a2_example_agent_killed_and_overreach_denied, acc_a2_example_jobs_run_and_overreach_denied; no row of its own'),
     ('crates/axon-os/src/runtime.rs', 'run_bounded_capped', 3, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) hermetic_ignores_the_ambient_environment_and_restricted_does_not, the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory; no row of its own'),
-    ('crates/axon-os/src/runtime.rs', 'run_sandboxed', 1, '"run"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("run" -> "runx") fails the test(s) a_kill_armed_before_its_run_starts_stops_the_run, a_narrow_allowlist_denies_because_the_monitor_can_see_the_ledger, acc_a1_smoke_kill_journey; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'launch', 1, '"run"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("run" -> "runx") fails the test(s) a_kill_armed_before_its_run_starts_stops_the_run, a_narrow_allowlist_denies_because_the_monitor_can_see_the_ledger, acc_a1_smoke_kill_journey; no row of its own'),
     ('crates/axon-os/src/runtime.rs', 'write_new', 1, '0o600', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o600 -> 0o777) fails the test(s) runtime::runtime_tests::staging_dir_is_private_fresh_and_removed, the_wrapper_is_staged_privately_and_removed; no row of its own'),
     ('crates/axon-psv/src/lib.rs', 'mode_is_normalised', 1, '0o755', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o755 -> 0o777) fails the test(s) inputs_carrying_an_extended_attribute_are_refused, inputs_holding_what_the_digest_cannot_see_are_refused; no row of its own'),
     ('crates/axon-psv/src/lib.rs', 'mode_is_normalised', 2, '0o555', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o555 -> 0o777) fails the test(s) inputs_holding_what_the_digest_cannot_see_are_refused; no row of its own'),

@@ -3393,6 +3393,92 @@ ATTACK_MARKERS.update({
     'M3941': r'ATTACK: a generic method call or generic struct argument checked clean \[g_lambda_param_unbound\]',
 })
 
+# checker-soundness-3 lane A (ids M3970-M3977, M3981, M3985, M3986)
+ATTACK_MARKERS.update({
+    'M3970': r'ATTACK: a payload-literal hole checked clean \[h31\]',
+    'M3971': r'ATTACK: a covering payload match was refused \[x_wild\]',
+    'M3972': r'ATTACK: a covering payload match was refused \[c02\]',
+    'M3973': r'ATTACK: a covering payload match was refused \[q02\]',
+    'M3974': r'ATTACK: a payload-literal hole checked clean \[h31\]',
+    'M3975': r'ATTACK: a covering payload match was refused \[c05\]',
+    'M3976': r'ATTACK: a payload-literal hole checked clean \[h31g\]',
+    'M3977': r'ATTACK: a covering payload match was refused \[c22\]',
+    'M3981': r"ATTACK: E1209 lost the refinement's line \[e_helper\]",
+    'M3985': r'ATTACK: `==` on an Option/Result got the arithmetic E0301 text \[g62\]',
+    'M3986': r'ATTACK: the missing-variant fix-it is not valid Axon \[fx_unit\]',
+})
+
+# checker-soundness-3 CS3-2 (ids M3978-M3980)
+ATTACK_MARKERS.update({
+    'M3978': r'ATTACK: [^\n]*\[h24\]',
+    # w05 fails first: with depth ignored, its first call `f(y)` derives `str`
+    # (the `else` call `h(y)` is not the body's first, so no `Conflicted`).
+    'M3979': r'ATTACK: [^\n]*\[(w05|w05b|w14)\]',
+    'M3980': r'ATTACK: [^\n]*\[w02\]',
+})
+
+# checker-soundness-3 lane C (ids M3982-M3984, M3987-M3989)
+ATTACK_MARKERS.update({
+    'M3982': r'ATTACK: a bare-self impl method was refused',
+    'M3983': r'ATTACK: `loop` was told to bind a variable named loop',
+    'M3984': r"ATTACK: a refused form's parse error named no Axon spelling \[impl_inherent\]",
+    'M3987': r'ATTACK: a string split by an inner quote checked clean',
+    'M3988': r'ATTACK: a valid string program was refused \[y05\]',
+    'M3989': r'ATTACK: a module-load error named no `use` line',
+})
+
+# intent-gen IgIntent (ids M4025-M4059)
+ATTACK_MARKERS.update({
+    'M4025': r'ATTACK: println-only job refused under an empty grant',
+    'M4026': r'ATTACK: completion marker lost after an unterminated print',
+    'M4027': r'ATTACK: env_var readable without an fs_read grant',
+    'M4028': r'ATTACK: an example path escaping the ceiling parsed clean',
+    'M4029': r'ATTACK: a fixture file outside the intent directory was read',
+    'M4030': r'ATTACK: a fixture over the cap parsed clean',
+    'M4031': r'ATTACK: the no-examples deduction is not recorded',
+    'M4032': r"ATTACK: the capture loses the program's exit status or its output",
+    'M4033': r'ATTACK: a program that does not compile reads as an exit status',
+    'M4034': r'ATTACK: a run killed at its deadline reads as a fault or an exit',
+    'M4035': r"ATTACK: the wrapper's completion marker leaks into captured stdout",
+    'M4036': r'ATTACK: a hanging generator outlives its deadline',
+    'M4037': r'ATTACK: a candidate that failed an example was accepted',
+    'M4038': r'ATTACK: a candidate with an error diagnostic was accepted',
+    'M4039': r'ATTACK: a program needing the network passed the admission gates',
+    'M4040': r'ATTACK: an expected output was visible to the program',
+    'M4041': r'ATTACK: a second capability refusal did not end the loop',
+    'M4042': r'ATTACK: the loop asked for a candidate past its last repair round',
+    'M4043': r'ATTACK: a sandbox scope refusal during an example was not classed',
+    'M4044': r'ATTACK: emit --yes approved a generated program',
+    'M4045': r'ATTACK: an author program failing its example was compiled',
+    'M4046': r'ATTACK: compile without a program source did not name --generator',
+})
+
+# intent-gen IG0 (ids M4000-M4014, IgCore)
+ATTACK_MARKERS.update({
+    'M4000': r'ATTACK: append_file is not an fs_write in the admission table',
+    'M4001': r'ATTACK: `[^`]*` was denied under the grant',
+    'M4002': r'ATTACK: a comment or string widened the axes',
+    'M4003': r'ATTACK: a program importing a pure module was given every axis',
+    'M4004': r'ATTACK: ast review reported admission axes the table does not give',
+    'M4005': r'ATTACK: a correct program was refused',
+    'M4006': r'ATTACK: a non-literal write target resolved to a string literal',
+    'M4007': r'ATTACK: a complete program with a TODO comment was read as a stub',
+    'M4008': r'ATTACK: an append_file program scanned without fs_write',
+    'M4009': r'ATTACK: an append_file program was admitted without fs_write',
+    'M4010': r'ATTACK: a comment or string widened the scan',
+    'M4011': r'ATTACK: a plain call write_file\( was not seen by the effects scan',
+    'M4012': r'ATTACK: an indented `use` import \(effects in a file the scan cannot read\) was declared effect-free',
+    'M4013': r'ATTACK: a program that does not compile was recorded as an axis denial',
+    'M4014': r'ATTACK: a parsed program denied on an axis was not recorded as Denied',
+})
+# intent-gen IG2 (ids M4015-M4018, IgCore)
+ATTACK_MARKERS.update({
+    'M4015': r'ATTACK: a builtin is missing from the card',
+    'M4016': r'ATTACK: a core-group builtin lost its first doc sentence',
+    'M4017': r'ATTACK: a full stop inside backticks cut a card doc sentence',
+    'M4018': r'ATTACK: `axon card --sha256` is not the sha256 of the card text',
+})
+
 # native-parity NP-1 (ids M4120-M4122, M4136): shared killer, one ATTACK line per diverging probe
 ATTACK_MARKERS.update({
     'M4120': r'ATTACK: [^\n]*\[v22\]',
@@ -3434,40 +3520,6 @@ ATTACK_MARKERS.update({
     'M4135': r'ATTACK: [^\n]*\[max_i32\]',
 })
 
-# checker-soundness-3 lane A (ids M3970-M3977, M3981, M3985, M3986)
-ATTACK_MARKERS.update({
-    'M3970': r'ATTACK: a payload-literal hole checked clean \[h31\]',
-    'M3971': r'ATTACK: a covering payload match was refused \[x_wild\]',
-    'M3972': r'ATTACK: a covering payload match was refused \[c02\]',
-    'M3973': r'ATTACK: a covering payload match was refused \[q02\]',
-    'M3974': r'ATTACK: a payload-literal hole checked clean \[h31\]',
-    'M3975': r'ATTACK: a covering payload match was refused \[c05\]',
-    'M3976': r'ATTACK: a payload-literal hole checked clean \[h31g\]',
-    'M3977': r'ATTACK: a covering payload match was refused \[c22\]',
-    'M3981': r"ATTACK: E1209 lost the refinement's line \[e_helper\]",
-    'M3985': r'ATTACK: `==` on an Option/Result got the arithmetic E0301 text \[g62\]',
-    'M3986': r'ATTACK: the missing-variant fix-it is not valid Axon \[fx_unit\]',
-})
-
-# checker-soundness-3 CS3-2 (ids M3978-M3980)
-ATTACK_MARKERS.update({
-    'M3978': r'ATTACK: [^\n]*\[h24\]',
-    # w05 fails first: with depth ignored, its first call `f(y)` derives `str`
-    # (the `else` call `h(y)` is not the body's first, so no `Conflicted`).
-    'M3979': r'ATTACK: [^\n]*\[(w05|w05b|w14)\]',
-    'M3980': r'ATTACK: [^\n]*\[w02\]',
-})
-
-# checker-soundness-3 lane C (ids M3982-M3984, M3987-M3989)
-ATTACK_MARKERS.update({
-    'M3982': r'ATTACK: a bare-self impl method was refused',
-    'M3983': r'ATTACK: `loop` was told to bind a variable named loop',
-    'M3984': r"ATTACK: a refused form's parse error named no Axon spelling \[impl_inherent\]",
-    'M3987': r'ATTACK: a string split by an inner quote checked clean',
-    'M3988': r'ATTACK: a valid string program was refused \[y05\]',
-    'M3989': r'ATTACK: a module-load error named no `use` line',
-})
-
 # asi-replay (ids M4150-M4169)
 ATTACK_MARKERS.update({
     'M4154': r'ATTACK: an ASI demo exited with a different code under mock \[llm_cache\]',
@@ -3483,4 +3535,14 @@ ATTACK_MARKERS.update({
     'M4155': r'ATTACK: an ai_extract_uncertain_\* replay entry lost to the mock \[i64\]',
     'M4156': r'ATTACK: a mock ai_extract_uncertain_\* answer was not recorded to AXON_AI_REPLAY \[i64\]',
     'M4157': r'ATTACK: a mock ai_extract_uncertain_\* answer was not recorded to AXON_AI_REPLAY \[f64\]',
+})
+
+# intent-gen implementation audit P1/P2 (ids M4420-M4439, IgIntent)
+ATTACK_MARKERS.update({
+    'M4420': r'ATTACK: a completed run was classed by its stderr before its completion marker',
+    'M4421': r'ATTACK: fault words that are not the interpreter.s final line made a fault',
+    'M4422': r'ATTACK: a silent exit',
+    'M4423': r'ATTACK: a repair round ran past the intent.s token budget',
+    'M4424': r'ATTACK: an intent naming no tokens was not held to DEFAULT_TOKEN_BUDGET',
+    'M4425': r'ATTACK: the tokens a cmd generator reported on stderr were not counted',
 })

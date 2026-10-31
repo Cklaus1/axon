@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    with open(\"./data/sentence.txt\", \"r\", encoding=\"utf-8\") as f:\n        text = f.read()\n\n    # Map each distinct word to its length.\n    lengths = {}\n    for word in text.split():\n        lengths[word] = len(word)\n\n    # Discard entries whose length is 3 or less, then sum the remaining lengths.\n    total = sum(length for length in lengths.values() if length > 3)\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(\"./out/answer.txt\", \"w\", encoding=\"utf-8\") as f:\n        f.write(str(total) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    with open(\"./data/sentence.txt\", \"r\", encoding=\"utf-8\") as f:\n        text = f.read()\n\n    # Map each distinct word to its length.\n    lengths = {}\n    for word in text.split():\n        lengths[word] = len(word)\n\n    # Discard entries whose length is 3 or less, then sum the remaining lengths.\n    total = sum(length for length in lengths.values() if length > 3)\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(\"./out/answer.txt\", \"w\", encoding=\"utf-8\") as f:\n        f.write(str(total) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

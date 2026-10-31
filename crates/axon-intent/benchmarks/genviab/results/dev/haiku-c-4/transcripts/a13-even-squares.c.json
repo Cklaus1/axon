@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    in_path = os.path.join(\"data\", \"numbers.txt\")\n    out_dir = \"out\"\n    out_path = os.path.join(out_dir, \"answer.txt\")\n\n    total = 0\n    with open(in_path, \"r\", encoding=\"utf-8\") as f:\n        for line in f:\n            s = line.strip()\n            if not s:\n                continue\n            n = int(s)\n            if n % 3 != 0:\n                continue\n            sq = n * n\n            if sq % 2 == 0:\n                total += sq\n\n    os.makedirs(out_dir, exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\") as f:\n        f.write(str(total) + \"\\n\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    try:\n        sys.exit(main())\n    except Exception as e:\n        sys.stderr.write(f\"error: {e}\\n\")\n        sys.exit(1)\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    in_path = os.path.join(\"data\", \"numbers.txt\")\n    out_dir = \"out\"\n    out_path = os.path.join(out_dir, \"answer.txt\")\n\n    total = 0\n    with open(in_path, \"r\", encoding=\"utf-8\") as f:\n        for line in f:\n            s = line.strip()\n            if not s:\n                continue\n            n = int(s)\n            if n % 3 != 0:\n                continue\n            sq = n * n\n            if sq % 2 == 0:\n                total += sq\n\n    os.makedirs(out_dir, exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\") as f:\n        f.write(str(total) + \"\\n\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    try:\n        sys.exit(main())\n    except Exception as e:\n        sys.stderr.write(f\"error: {e}\\n\")\n        sys.exit(1)\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

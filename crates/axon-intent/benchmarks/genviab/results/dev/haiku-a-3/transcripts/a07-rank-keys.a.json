@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Rank the keys in ./data/counts.csv by value, highest first; where two values tie, order those keys alphabetically (ascending). The file has no header: each line is a key (lowercase letters), a comma and a non-negative integer value, and ends with a newline. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the ranked keys joined by commas with no spaces.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "499d7357d24a0ba8f3da4be4699089ae3b0184ed8c7d7e425d993247570e4ff7",
+      "candidate": "fn needs_swap(keys: &[str], vals: &[i64], j: i64) -> bool {\n    if j <= 0 { return false }\n    let a = j - 1\n    if vals[a] < vals[j] { return true }\n    if vals[a] == vals[j] { return str_cmp(keys[a], keys[j]) > 0 }\n    false\n}\n\nfn main() -> i64 {\n    let text = match read_file(\"./data/counts.csv\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let keys: [str] = []\n    let vals: [i64] = []\n    let lines = str_split(text, \"\\n\")\n    for li in 0..len(lines) {\n        let line = str_trim(lines[li])\n        if len(line) > 0 {\n            let parts = str_split(line, \",\")\n            let v = match parse_int(str_trim(parts[1])) {\n                Ok(n) => n\n                Err(e) => {\n                    eprintln(\"bad value: {e}\")\n                    return 1\n                }\n            }\n            keys = arr_push(keys, str_trim(parts[0]))\n            vals = arr_push(vals, v)\n        }\n    }\n    let n = len(keys)\n    for i in 1..n {\n        let j = i\n        while needs_swap(&keys, &vals, j) {\n            let a = j - 1\n            let tk = keys[a]\n            keys[a] = keys[j]\n            keys[j] = tk\n            let tv = vals[a]\n            vals[a] = vals[j]\n            vals[j] = tv\n            j = j - 1\n        }\n    }\n    let out = str_join(keys, \",\") + \"\\n\"\n    match write_file(\"./out/answer.txt\", out) {\n        Ok(_) => 0\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 10908,
+      "report": {
+        "stage": "accepted",
+        "source": "fn needs_swap(keys: &[str], vals: &[i64], j: i64) -> bool {\n    if j <= 0 { return false }\n    let a = j - 1\n    if vals[a] < vals[j] { return true }\n    if vals[a] == vals[j] { return str_cmp(keys[a], keys[j]) > 0 }\n    false\n}\n\nfn main() -> i64 {\n    let text = match read_file(\"./data/counts.csv\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let keys: [str] = []\n    let vals: [i64] = []\n    let lines = str_split(text, \"\\n\")\n    for li in 0..len(lines) {\n        let line = str_trim(lines[li])\n        if len(line) > 0 {\n            let parts = str_split(line, \",\")\n            let v = match parse_int(str_trim(parts[1])) {\n                Ok(n) => n\n                Err(e) => {\n                    eprintln(\"bad value: {e}\")\n                    return 1\n                }\n            }\n            keys = arr_push(keys, str_trim(parts[0]))\n            vals = arr_push(vals, v)\n        }\n    }\n    let n = len(keys)\n    for i in 1..n {\n        let j = i\n        while needs_swap(&keys, &vals, j) {\n            let a = j - 1\n            let tk = keys[a]\n            keys[a] = keys[j]\n            keys[j] = tk\n            let tv = vals[a]\n            vals[a] = vals[j]\n            vals[j] = tv\n            j = j - 1\n        }\n    }\n    let out = str_join(keys, \",\") + \"\\n\"\n    match write_file(\"./out/answer.txt\", out) {\n        Ok(_) => 0\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 10908,
+  "tokens": null
+}

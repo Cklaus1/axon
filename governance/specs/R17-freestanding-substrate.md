@@ -125,9 +125,10 @@ effect-subsumption walker — no laundering hardware access behind an un-annotat
 > **The expiring assumption, stated explicitly rather than left implicit.** This default was
 > proportionate while `.ax` was human-authored and R17 code was rare and hand-written. It is **not**
 > load-bearing under ROADMAP §2.1 ("treat `.ax` as an IR, not a human-authored surface; optimize for
-> machine generation") plus the Phase-10 `AXON_INTENT_GEN=1 axon intent compile` LLM body-generation
-> path, which emits `.ax` with **no marker at all** (verified 2026-07-31: no `surface` emission anywhere
-> in `crates/axon-intent/src/`). Machine-generated code therefore lands in the *unsafe* dialect by
+> machine generation") plus the Phase-10 `axon intent compile` LLM body-generation path (removed by
+> IG5, 2026-10-31; generation now runs only through the `axon-intent --generator` check→repair loop,
+> which likewise emits `.ax` with **no marker at all**; verified 2026-07-31: no `surface` emission
+> anywhere in `crates/axon-intent/src/`). Machine-generated code therefore lands in the *unsafe* dialect by
 > default. Two further points follow and must not be papered over: (a) a self-declared marker is not a
 > capability — an untrusted generator grants it to itself on line 1; (b) E1701 has **no emission site**
 > anywhere in `crates/` (§6), so `Hal` is not a capability at all today. Until Slice 4, read every

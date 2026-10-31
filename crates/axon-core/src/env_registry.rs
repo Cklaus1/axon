@@ -50,7 +50,6 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     ("AXON_BUDGET_TOKENS", "run-wide AI token cap; the call that would exceed it halts with E1303 (exit 5) BEFORE dispatch. A malformed value fails closed to 0"),
     ("AXON_DOTENV", "path to a `.env` file to load for AI configuration"),
     ("AXON_DOTENV_WALK", "walk parent directories looking for a `.env` file"),
-    ("AXON_INTENT_GEN", "let `axon intent compile` fill TODO stubs via a live model (needs `--features asi-runtime`)"),
     // ── Capabilities, principals, audit ──────────────────────────────────
     ("AXON_ALLOWED_EFFECTS", "ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset; a value that is not UTF-8 also denies every effect (with a warning). Interpreter-only"),
     ("AXON_ALLOWED_FS_READ", "ambient read-path scope for the whole run: comma-separated path prefixes, matched like `sandbox_create_scoped` (per argument, `..` refused). Unset = unrestricted, EMPTY = deny every filesystem read, `*` = unrestricted. Independent of AXON_ALLOWED_EFFECTS (with it unset every effect stays allowed and only paths are restricted); a ceiling an inner sandbox may narrow but never widen. Interpreter-only"),
@@ -88,8 +87,8 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     ("AXON_WASM_RT", "path to the wasm runtime used to execute a built wasm artifact"),
     ("AXON_ANDROID_API", "Android API level for the NDK cross-link"),
     ("AXON_NATIVE_TRACE", "trace native-FFI module calls (gfx mock)"),
-    ("AXON_BIN", "path to the `axon` binary an out-of-process synthesizer should invoke"),
-    ("AXON_INTENT_TIMEOUT_MS", "bound on the `axon intent` subprocess synthesizer"),
+    ("AXON_BIN", "path to the `axon` binary an out-of-process tool invokes (axon-os, the axon-intent check->repair loop)"),
+    ("AXON_INTENT_TIMEOUT_MS", "per-call deadline for an `axon-intent --generator` (its whole process group is killed at it)"),
     // ── Test fixtures that shipped code reads ────────────────────────────
     ("AXON_TEST_DOTENV_VAR", "(test fixture) name of a variable the .env loader test expects to find"),
     ("AXON_TEST_DOTENV_NEW", "(test fixture) asserts the .env loader does not clobber an already-set variable"),

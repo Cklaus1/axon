@@ -1,12 +1,13 @@
-//! KG5: SIGTERM to `axon-intent` reaches the synthesizer's job, and
+//! KG5: SIGTERM to `axon-intent` reaches the generator's job, and
 //! `axon-intent` still dies by SIGTERM.
 //!
-//! The synthesizer runs `$AXON_BIN intent compile …` as a process-group job
-//! (KG1). Without forwarding, a termination signal to `axon-intent` killed only
-//! `axon-intent`; the synthesizer and everything it started ran on. The script
-//! below stands in for `axon`: it records its pid and a background `sleep`'s,
-//! then waits. Liveness is `/proc/<pid>/cmdline` (a zombie or a reused pid reads
-//! as gone); no `kill` binary (`process_control_guard.rs`).
+//! A `--generator cmd:PATH` runs as a process-group job (IG3,
+//! `axon_os::run_bounded_job`). Without forwarding, a termination signal to
+//! `axon-intent` killed only `axon-intent`; the generator and everything it
+//! started ran on. The script below stands in for the generator: it records
+//! its pid and a background `sleep`'s, then waits. Liveness is
+//! `/proc/<pid>/cmdline` (a zombie or a reused pid reads as gone); no `kill`
+//! binary (`process_control_guard.rs`).
 
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
@@ -91,27 +92,35 @@ fn kg5_sigterm_to_axon_intent_kills_the_synthesizers_job_and_it_dies_by_it() {
     let dir = std::env::temp_dir().join(format!("axon_intent_kg5_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    // The stand-in `axon` answers only `card` (the loop loads it first).
     let fake_axon = dir.join("fake-axon.sh");
-    std::fs::write(
-        &fake_axon,
-        format!(
-            "#!/bin/sh\necho $$ > '{}'\nsleep 4722 </dev/null >/dev/null 2>&1 &\n\
-             echo $! > '{}'\nwait\n",
-            dir.join("synth.pid").display(),
-            dir.join("gc.pid").display()
+    let fake_gen = dir.join("fake-gen.sh");
+    for (path, body) in [
+        (
+            &fake_axon,
+            "#!/bin/sh\n[ \"$1\" = card ] && { echo CARD; exit 0; }\nexit 9\n".to_string(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        &fake_axon,
-        std::os::unix::fs::PermissionsExt::from_mode(0o755),
-    )
-    .unwrap();
+        (
+            &fake_gen,
+            format!(
+                "#!/bin/sh\necho $$ > '{}'\nsleep 4722 </dev/null >/dev/null 2>&1 &\n\
+                 echo $! > '{}'\nwait\n",
+                dir.join("synth.pid").display(),
+                dir.join("gc.pid").display()
+            ),
+        ),
+    ] {
+        std::fs::write(path, body).unwrap();
+        std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+    }
 
     let mut intent = Command::new(env!("CARGO_BIN_EXE_axon-intent"))
         .current_dir(workspace_root())
         .args(["compile", "examples/intents/summarize.intent.md", "--out"])
         .arg(dir.join("out"))
+        .arg("--generator")
+        .arg(format!("cmd:{}", fake_gen.display()))
         .env_remove("AXON_AI_MOCK")
         .env("AXON_BIN", &fake_axon)
         .env("AXON_INTENT_TIMEOUT_MS", "600000")
@@ -144,8 +153,8 @@ fn kg5_sigterm_to_axon_intent_kills_the_synthesizers_job_and_it_dies_by_it() {
         "axon-intent must still die by the SIGTERM it was sent ({status:?})"
     );
     for (who, p) in [
-        ("the synthesizer", &synth),
-        ("the synthesizer's grandchild", &grandchild),
+        ("the generator", &synth),
+        ("the generator's grandchild", &grandchild),
     ] {
         assert!(
             p.gone_within(Duration::from_secs(5)),

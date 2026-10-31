@@ -383,6 +383,8 @@ struct ProcOutcome {
     /// the exit code instead of by matching prose in stderr.
     stdout: String,
     stderr: String,
+    /// Bytes of stdout read but not retained (the capture bound).
+    stdout_omitted: u64,
     timed_out: bool,
     /// R27/R29: true if the process was killed because the kill file latch was
     /// tripped (by `axon-os kill` for R27, or by the R29 ComplianceMonitor).
@@ -402,14 +404,19 @@ fn signal_name(sig: i32) -> String {
 }
 
 /// Drain one child pipe on its own thread (T25), bounded (B259) and stoppable.
-fn spawn_drain<R>(pipe: Option<R>, max_capture: usize, stop: Arc<AtomicBool>) -> JoinHandle<String>
+/// Returns the capture and the count of bytes read but not retained.
+fn spawn_drain<R>(
+    pipe: Option<R>,
+    max_capture: usize,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<(String, u64)>
 where
     R: std::io::Read + AsRawFd + Send + 'static,
 {
     std::thread::spawn(move || {
         pipe.map(|p| {
             let fd = p.as_raw_fd();
-            read_bounded(p, max_capture, || wait_readable(fd, &stop)).0
+            read_bounded(p, max_capture, || wait_readable(fd, &stop))
         })
         .unwrap_or_default()
     })
@@ -418,10 +425,10 @@ where
 /// Join both drains, waiting at most [`DRAIN_GRACE`] for their EOF, then stop
 /// them: each returns what it read within one poll interval.
 fn join_drains(
-    out_h: JoinHandle<String>,
-    err_h: JoinHandle<String>,
+    out_h: JoinHandle<(String, u64)>,
+    err_h: JoinHandle<(String, u64)>,
     stop: &AtomicBool,
-) -> (String, String) {
+) -> ((String, u64), (String, u64)) {
     let mut joined = join_within(DRAIN_GRACE, vec![out_h, err_h], stop)
         .into_iter()
         .map(Option::unwrap_or_default);
@@ -447,15 +454,18 @@ fn run_bounded(
     timeout: Duration,
     kill_file: Option<&std::path::Path>,
 ) -> std::io::Result<ProcOutcome> {
-    run_bounded_capped(cmd, timeout, kill_file, DEFAULT_MAX_CAPTURE_BYTES)
+    run_bounded_capped(cmd, timeout, kill_file, DEFAULT_MAX_CAPTURE_BYTES, None)
 }
 
-/// [`run_bounded`] with an explicit per-stream capture bound (B259).
+/// [`run_bounded`] with an explicit per-stream capture bound (B259) and,
+/// when `stdin` is `Some`, those bytes fed to the child's stdin (then closed)
+/// from a detached writer thread; `None` is `/dev/null`.
 fn run_bounded_capped(
     cmd: &mut Command,
     timeout: Duration,
     kill_file: Option<&std::path::Path>,
     max_capture: usize,
+    stdin: Option<Vec<u8>>,
 ) -> std::io::Result<ProcOutcome> {
     /// What ended the job's watch.
     enum End {
@@ -479,13 +489,25 @@ fn run_bounded_capped(
     // monitor (R29) terminate through this path — so neither stopped a job that
     // had spawned a subprocess.
     let cmd = cmd
-        .stdin(Stdio::null())
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut job = Job::spawn(cmd)?;
 
     let stdout_pipe = job.child_mut().stdout.take();
     let stderr_pipe = job.child_mut().stderr.take();
+    // The writer is never joined: a child that never reads its stdin blocks
+    // it only until the group dies (then the write fails with EPIPE).
+    if let (Some(bytes), Some(mut pipe)) = (stdin, job.child_mut().stdin.take()) {
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = pipe.write_all(&bytes);
+        });
+    }
 
     // AUDIT T25 (finding OSK-P4-H3 / O019). These handles were taken here but
     // not READ until after the try_wait/timeout loop below, so a child emitting
@@ -539,7 +561,7 @@ fn run_bounded_capped(
 
     // Frees the job's registry slot, THEN reaps (axon_jobctl::Job::reap).
     let reaped = job.reap();
-    let (stdout, stderr) = join_drains(out_h, err_h, &stop);
+    let ((stdout, stdout_omitted), (stderr, _)) = join_drains(out_h, err_h, &stop);
     let end = watched?;
     let status = reaped?;
 
@@ -559,9 +581,51 @@ fn run_bounded_capped(
         code,
         stdout,
         stderr,
+        stdout_omitted,
         timed_out: matches!(end, End::TimedOut),
         killed_by_latch: matches!(end, End::Latch),
         killed_by_signal,
+    })
+}
+
+/// What a bounded child run ended with ([`run_bounded_job`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundedRun {
+    /// The exit status; `None` when the run was killed (its deadline, or a
+    /// termination signal to this process).
+    pub code: Option<i32>,
+    /// Captured stdout (head and tail within the capture bound).
+    pub stdout: String,
+    /// Captured stderr (head and tail within the capture bound).
+    pub stderr: String,
+    /// Bytes of stdout read but not retained: non-zero means `stdout` is not
+    /// the whole stream.
+    pub stdout_omitted: u64,
+    /// The deadline killed the job's process group.
+    pub timed_out: bool,
+    /// The termination signal this process received, if that ended the run.
+    pub killed_by_signal: Option<i32>,
+}
+
+/// Run `cmd` as a process-group job ([`axon_jobctl::Job`]) under a wall-clock
+/// `timeout`, feeding `stdin` (`None`: `/dev/null`) and capturing at most
+/// `max_capture` bytes per stream. At the deadline the whole group is
+/// SIGKILLed and reaped. The single bounded runner shared with the axon-intent
+/// generator seam; environment, arguments and cwd are the caller's.
+pub fn run_bounded_job(
+    cmd: &mut Command,
+    timeout: Duration,
+    stdin: Option<Vec<u8>>,
+    max_capture: usize,
+) -> std::io::Result<BoundedRun> {
+    let p = run_bounded_capped(cmd, timeout, None, max_capture, stdin)?;
+    Ok(BoundedRun {
+        code: p.code,
+        stdout: p.stdout,
+        stderr: p.stderr,
+        stdout_omitted: p.stdout_omitted,
+        timed_out: p.timed_out,
+        killed_by_signal: p.killed_by_signal,
     })
 }
 
@@ -588,10 +652,12 @@ fn is_kill_file_tripped(path: &std::path::Path) -> bool {
 /// `env_clear` without `AXON_RECORD`, so there is no run-id line to skip.)
 /// Did the sandbox wrapper run to completion? (AUDIT T44.) True only if stdout
 /// carries the exact marker for THIS run — the nonce makes it unforgeable by the
-/// job, which never sees the generated wrapper.
+/// job, which never sees the generated wrapper. The marker ENDS a line rather
+/// than being one: a job whose last output is `print` without a newline leaves
+/// the wrapper's `println` on that same line, and that job did finish.
 fn ran_to_completion(stdout: &str, nonce: &str) -> bool {
     let expect = format!("{DONE_SENTINEL}{nonce}");
-    stdout.lines().any(|l| l.trim() == expect)
+    stdout.lines().any(|l| l.trim_end().ends_with(&expect))
 }
 
 fn first_axon_line(stderr: &str, default: &str) -> String {
@@ -603,109 +669,104 @@ fn first_axon_line(stderr: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
-/// Over-approximate a program's declared effects by scanning its source for
-/// capability-bearing builtins (deny-by-default: a read error or any ambiguity
-/// yields the FULL set). A fully sound extractor uses `axon ast review`; this
-/// conservative scanner is sound *as a lower bound made safe by over-approx*.
-/// AUDIT T54 (finding P4-OS-03). Made `pub` so `axon-intent` can call THIS
-/// implementation instead of keeping its own. There were two copies of this
-/// security scanner, and T4's whitespace-evasion fix landed in only one — the
-/// `axon-intent` copy still read `source.contains("exec(")`, which
-/// `exec (name, args)` evades, and additionally omitted `env_var` and the whole
-/// `goal_run*` family and had no `mod`-import handling at all. Duplicated
-/// security logic does not stay in sync; the fix is to have one copy.
-pub fn scan_effects(source: &str) -> Decl {
-    // AUDIT T4 (finding OSK-P4-H1). The previous implementation tested
-    // `source.contains("exec(")`, which `exec (name, args)` — one space — parses
-    // identically and evades. That is an UNDER-approximation, the opposite of
-    // this function's documented deny-by-default contract, and it mattered
-    // because runtime collapsed fs and exec into one bucket, making this scan
-    // the sole exec control. (T8 has since given exec its own runtime effect, so
-    // this is no longer load-bearing — but a gate whose result is shown to a
-    // human as an approval assertion must not state falsehoods either way.)
-    //
-    // A module import means the effects live in a file we are not reading, so
-    // the honest answer is the full set, not "none found here".
-    if calls_name(source, "mod") || source.contains("\nmod ") || source.starts_with("mod ") {
-        return Decl {
-            row: EffectSet {
-                fs_read: true,
-                fs_write: true,
-                net: true,
-                exec: true,
-            },
-            max_label: Label::Internal,
-        };
-    }
-    let any = |names: &[&str]| names.iter().any(|m| calls_name(source, m));
-    let net = any(&[
-        "http_get",
-        "http_post",
-        "http_sse",
-        "http_sse_post",
-        "ai_complete",
-        "ai_extract_i64",
-        "ai_extract_f64",
-        "ai_extract_str",
-        "ai_extract_bool",
-        "ai_extract_uncertain_i64",
-        "ai_extract_uncertain_f64",
-        // The goal_run family re-calls @[adaptive] metrics, which may ai_complete.
-        "goal_run",
-        "goal_run_constrained",
-        "goal_run_categorical",
-        "goal_run_random",
-        "goal_run_multistart",
-        "goal_continue",
-        "goal_eval",
-    ]);
-    let fs_read = any(&["read_file", "read_line", "env_var"]);
-    let fs_write = any(&["write_file"]);
-    let exec = any(&["exec", "spawn_proc"]);
+/// A program's declared effects for admission, from the parsed program and
+/// the compiler's one admission-axes table
+/// (`axon_core::builtins::builtin_admission_axes`, through
+/// `axon_core::capabilities::program_admission_axes_in`): every builtin the
+/// program — and every module its `use`s load from `search_dirs` — calls or
+/// uses as a value, in any fn, method or module `let`; every axis when an
+/// import does not load from `search_dirs` (none given: any non-`native`
+/// `use`) or the walk reaches something it cannot classify.
+///
+/// IG0 (F12 a, b). This was a hand-written list of nine names scanned as text:
+/// `append_file` (and every other file builtin but `read_file`/`write_file`)
+/// was invisible, so an `append_file` program was admitted with "It may NOT:
+/// write files" and then refused by the sandbox; and a whole-word `mod`
+/// anywhere — the comment `// total mod 10` — read as an import and widened
+/// the row to every effect. On the AST, comments and string contents can
+/// neither add nor hide an effect.
+///
+/// The grant has no `env` axis: an `env_var` program needs `fs_read`, which
+/// is what the runtime sandbox's single `IO` tag requires of it.
+///
+/// `Err` (with the parser's message) when the program does not parse — a
+/// refusal, never "every effect".
+pub fn try_scan_effects_in(source: &str, search_dirs: &[PathBuf]) -> Result<Decl, String> {
+    let program = axon_core::parse_source(source).map_err(|e| e.to_string())?;
+    Ok(declared_from_axes(
+        axon_core::capabilities::program_admission_axes_in(&program, search_dirs),
+    ))
+}
+
+/// [`try_scan_effects_in`] with no module directory: every non-`native`
+/// `use` is every axis.
+pub fn try_scan_effects(source: &str) -> Result<Decl, String> {
+    try_scan_effects_in(source, &[])
+}
+
+/// The grant's four axes from the table's five: `env` rides on `fs_read`
+/// (see [`try_scan_effects`]).
+pub fn declared_from_axes(axes: axon_core::builtins::AdmissionAxes) -> Decl {
     Decl {
         row: EffectSet {
-            fs_read,
-            fs_write,
-            net,
-            exec,
+            fs_read: axes.fs_read || axes.env,
+            fs_write: axes.fs_write,
+            net: axes.net,
+            exec: axes.exec,
         },
         max_label: Label::Internal,
     }
 }
 
-/// True if `source` appears to CALL `name` — the identifier on a word boundary,
-/// followed by optional whitespace and `(`. Deliberately over-approximates:
-/// occurrences inside comments or string literals count, because a false
-/// positive only narrows the grant (safe) while a false negative widens it.
-fn calls_name(source: &str, name: &str) -> bool {
-    let bytes = source.as_bytes();
-    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let mut from = 0usize;
-    while let Some(rel) = source[from..].find(name) {
-        let start = from + rel;
-        let end = start + name.len();
-        from = start + 1;
-        // Must not be a suffix of a longer identifier (e.g. `my_exec`),
-        // and must not be a prefix of one (e.g. `exec_report`).
-        if start > 0 && is_word(bytes[start - 1]) {
-            continue;
-        }
-        let mut i = end;
-        if i < bytes.len() && is_word(bytes[i]) {
-            continue;
-        }
-        // `mod foo` is a declaration, not a call — accept a bare keyword.
-        if name == "mod" {
-            return true;
-        }
-        while i < bytes.len() && (bytes[i] as char).is_whitespace() {
-            i += 1;
-        }
-        if i < bytes.len() && bytes[i] == b'(' {
-            return true;
-        }
+/// [`try_scan_effects`] for the supervisor's admission gate, which has no
+/// refusal channel of its own here: a program that does not parse declares
+/// EVERY effect (deny by default) — it is refused unless the grant holds every
+/// axis, and then the interpreter refuses to compile it.
+pub fn scan_effects(source: &str) -> Decl {
+    scan_effects_in(source, &[])
+}
+
+/// [`scan_effects`] with `use` imports loaded from `search_dirs`.
+pub fn scan_effects_in(source: &str, search_dirs: &[PathBuf]) -> Decl {
+    try_scan_effects_in(source, search_dirs).unwrap_or(Decl {
+        row: EffectSet {
+            fs_read: true,
+            fs_write: true,
+            net: true,
+            exec: true,
+        },
+        max_label: Label::Internal,
+    })
+}
+
+/// The module directories a job's interpreter can load a `use` from, in its
+/// order ([`axon_core::axon_search_dirs`] under [`job_child_command`]'s
+/// environment): the forwarded `AXON_PATH` (relative entries against the
+/// program's directory, the child's cwd), no `~/.axon/lib` (`HOME` is
+/// cleared), then the interpreter binary's own library. A reproducible grant
+/// does not forward `AXON_PATH`, and the scan is not told which grant runs,
+/// so BOTH orders are returned; the caller unions what each loads.
+fn job_module_dir_sets(axon_bin: &Path, program: &Path) -> Vec<Vec<PathBuf>> {
+    let bin_lib: Vec<PathBuf> = axon_bin
+        .parent()
+        .map(|d| d.join("..").join("lib").join("axon"))
+        .into_iter()
+        .collect();
+    let base = program.parent().unwrap_or(Path::new("."));
+    let forwarded: Vec<PathBuf> = std::env::var_os("AXON_PATH")
+        .map(|v| {
+            std::env::split_paths(&v)
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(|p| base.join(p))
+                .collect()
+        })
+        .unwrap_or_default();
+    if forwarded.is_empty() {
+        return vec![bin_lib];
     }
-    false
+    let mut restricted = forwarded;
+    restricted.extend(bin_lib.iter().cloned());
+    vec![restricted, bin_lib]
 }
 
 /// Wrap a user program so it runs inside a RUNTIME sandbox enforcing `ceiling`.
@@ -743,13 +804,20 @@ fn done_nonce() -> String {
 
 fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> String {
     let ceiling = grant.effect_set();
-    let mut tags: Vec<&str> = Vec::new();
+    // `IO` is ALWAYS in the set: it is console output and `exit`, not a
+    // capability admission grants. It used to be emitted only when
+    // fs_read/fs_write/exec was granted, so a print-only job was admitted
+    // under an empty grant and refused here. What else `IO` covers stays
+    // narrowed by the interpreter: the filesystem by the allowlists below (an
+    // empty list is deny-all), process spawn by its own `Exec` tag, and
+    // `env_var` by the fs_read allowlist (deny-all when empty), the axis
+    // admission projects an environment read onto. `Time`/`Random` stay out
+    // (examples/jobs/evasion: the runtime fence for effects admission cannot
+    // represent).
+    let mut tags: Vec<&str> = vec!["IO"];
     if ceiling.net {
         tags.push("Net");
         tags.push("AI");
-    }
-    if ceiling.fs_read || ceiling.fs_write || ceiling.exec {
-        tags.push("IO");
     }
     if ceiling.exec {
         tags.push("Exec");
@@ -908,7 +976,7 @@ pub fn query_imports_digest(
     let program = absolutize(program.to_path_buf());
     let mut cmd = job_child_command(axon_bin, &program, grant);
     cmd.arg("imports").arg(&program).arg("--json");
-    let out = run_bounded_capped(&mut cmd, timeout, None, DEFAULT_MAX_CAPTURE_BYTES)
+    let out = run_bounded_capped(&mut cmd, timeout, None, DEFAULT_MAX_CAPTURE_BYTES, None)
         .map_err(|e| format!("cannot run `{} imports`: {e}", axon_bin.display()))?;
     if out.timed_out || out.code != Some(0) {
         let why = out
@@ -963,8 +1031,26 @@ impl Runtime for AxonCoreRuntime {
         Isolation::ProcessScoped
     }
 
+    /// IG0: the job's `use`s are loaded from the directories its interpreter
+    /// searches ([`job_module_dir_sets`]); a module the run can load is read,
+    /// not assumed to do everything.
     fn declared_effects(&self, program: &ProgramSource) -> DeclaredEffects {
-        scan_effects(program.text)
+        job_module_dir_sets(&self.axon_bin, program.path)
+            .iter()
+            .map(|dirs| scan_effects_in(program.text, dirs).row)
+            .fold(
+                Decl {
+                    row: EffectSet::default(),
+                    max_label: Label::Internal,
+                },
+                |mut d, r| {
+                    d.row.fs_read |= r.fs_read;
+                    d.row.fs_write |= r.fs_write;
+                    d.row.net |= r.net;
+                    d.row.exec |= r.exec;
+                    d
+                },
+            )
     }
 
     fn mint_principal(&self, _grant: &Grant) -> PrincipalHandle {
@@ -987,6 +1073,167 @@ impl Runtime for AxonCoreRuntime {
         required_imports: Option<&str>,
     ) -> RunOutcome {
         let ceiling = grant.effect_set();
+        let verdict = match self.launch(program, grant, budget, seed, required_imports, true) {
+            Ok((proc, nonce)) => self.classify(&proc, &nonce),
+            Err(verdict) => {
+                return RunOutcome {
+                    events: vec![],
+                    verdict,
+                }
+            }
+        };
+        // A single audit event recording the bounded run under the ceiling.
+        let events = vec![RE::new(
+            "run",
+            &program.path.display().to_string(),
+            ceiling,
+            "internal",
+        )];
+        RunOutcome { events, verdict }
+    }
+}
+
+/// How a captured sandbox run ended ([`AxonCoreRuntime::run_sandboxed_capture`]).
+/// Every arm is distinct, so a caller never reads prose to tell a program that
+/// did not compile from one that returned 2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SandboxOutcome {
+    /// The program did not compile; nothing ran. Read only from a run that
+    /// exited 2 with empty stdout and a stderr made solely of the
+    /// interpreter's `axon-diag/1` lines, at least one an error.
+    CompileFailed { diagnostic: String },
+    /// The process exited with `code`: `main` returned (the wrapper's
+    /// completion marker printed; 0 for a nullary `fn main()`), or the program
+    /// stopped itself with `exit(code)` (no marker, and no interpreter fault
+    /// line).
+    Exited { code: i32 },
+    /// The interpreter stopped the run: its final stderr line is its own
+    /// `axon: <fault>:` line and the status is that fault's carved exit code -
+    /// a sandbox refusal (`verdict` = `Denied { axis: "sandbox" }`), a goal
+    /// budget, a refinement, a failed `@[verify]`, a halt, an AI-policy refusal,
+    /// a panic; or a signal ended it. `code` is the raw process status.
+    Faulted { code: Option<i32>, verdict: Verdict },
+    /// The wall deadline killed the run's process group.
+    TimedOut { after_ms: u64 },
+    /// The run never started (staging or spawn failed): an infrastructure
+    /// failure, not a property of the program.
+    NotRun { reason: String },
+}
+
+/// A sandbox run with its output ([`AxonCoreRuntime::run_sandboxed_capture`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedRun {
+    pub outcome: SandboxOutcome,
+    /// The program's stdout without the wrapper's completion marker; head and
+    /// tail within the runtime's capture bound.
+    pub stdout: String,
+    /// The interpreter's stderr (diagnostics and the program's `eprintln`),
+    /// head and tail within the capture bound.
+    pub stderr: String,
+    /// Bytes of stdout read but not retained (non-zero: `stdout` is partial).
+    pub stdout_omitted: u64,
+}
+
+impl AxonCoreRuntime {
+    /// Run `program` in the sandbox [`Runtime::run_sandboxed`] uses (the
+    /// wrapper, `grant`'s allowlists, the wall deadline, the process-group
+    /// kill) and return how it ended with its captured output. For the
+    /// intent-generation loop's examples (IG4): no import binding, no audit
+    /// event, the kill file is not polled. The child's cwd is the program's
+    /// directory.
+    pub fn run_sandboxed_capture(
+        &self,
+        program: &ProgramSource,
+        grant: &Grant,
+        budget: &Budget,
+        seed: u64,
+    ) -> CapturedRun {
+        let (proc, nonce) = match self.launch(program, grant, budget, seed, None, false) {
+            Ok(p) => p,
+            Err(v) => {
+                return CapturedRun {
+                    outcome: SandboxOutcome::NotRun {
+                        reason: verdict_reason(&v),
+                    },
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    stdout_omitted: 0,
+                }
+            }
+        };
+        let outcome = self.classify_capture(&proc, &nonce);
+        CapturedRun {
+            outcome,
+            stdout: strip_done_marker(&proc.stdout, &nonce),
+            stderr: proc.stderr,
+            stdout_omitted: proc.stdout_omitted,
+        }
+    }
+
+    /// How a capture run ended (implementation audit P1/P2). Decided in this
+    /// order, and never from words the program wrote to stderr:
+    /// 1. the deadline or a signal ended it;
+    /// 2. the wrapper's completion marker printed: `main` returned;
+    /// 3. exit 2, empty stdout and a stderr of only `axon-diag/1` lines with
+    ///    an error among them: it did not compile;
+    /// 4. the final stderr line is the interpreter's own fault line for the
+    ///    exit code it carved for that fault (`axon: sandbox violation: ` with
+    ///    8, ...): a fault;
+    /// 5. otherwise the program stopped itself with `exit(code)`.
+    fn classify_capture(&self, proc: &ProcOutcome, nonce: &str) -> SandboxOutcome {
+        if proc.timed_out {
+            return SandboxOutcome::TimedOut {
+                after_ms: self.timeout.as_millis() as u64,
+            };
+        }
+        if let Some(sig) = proc.killed_by_signal {
+            return SandboxOutcome::Faulted {
+                code: proc.code,
+                verdict: Verdict::Halted {
+                    reason: format!("the run was killed by {}", signal_name(sig)),
+                },
+            };
+        }
+        if ran_to_completion(&proc.stdout, nonce) {
+            return SandboxOutcome::Exited {
+                code: proc.code.unwrap_or(0),
+            };
+        }
+        let Some(code) = proc.code else {
+            return SandboxOutcome::Faulted {
+                code: None,
+                verdict: Verdict::Denied {
+                    reason: "the run ended without an exit status".into(),
+                    axis: "runtime".into(),
+                },
+            };
+        };
+        if code == 2 && proc.stdout.is_empty() {
+            if let Some(diagnostic) = compile_failure(&proc.stderr) {
+                return SandboxOutcome::CompileFailed { diagnostic };
+            }
+        }
+        if let Some(verdict) = interpreter_fault(code, &proc.stderr) {
+            return SandboxOutcome::Faulted {
+                code: Some(code),
+                verdict,
+            };
+        }
+        SandboxOutcome::Exited { code }
+    }
+
+    /// Stage the wrapper and run it: `Ok((outcome, nonce))`, or the verdict
+    /// for a run that could not start. `poll_kill_file`: honour
+    /// `AXON_KILL_FILE` (R27/R29).
+    fn launch(
+        &self,
+        program: &ProgramSource,
+        grant: &Grant,
+        budget: &Budget,
+        seed: u64,
+        required_imports: Option<&str>,
+        poll_kill_file: bool,
+    ) -> Result<(ProcOutcome, String), Verdict> {
         // RUNTIME ENFORCEMENT (the sound fence). Rather than running the program
         // raw, wrap it: mint a principal + `sandbox_run` it inside an effect
         // ceiling. The interpreter then refuses ANY builtin whose effect row
@@ -1011,31 +1258,16 @@ impl Runtime for AxonCoreRuntime {
                     .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
             })
             .unwrap_or("job");
-        let staging = match StagingDir::create(&self.staging_root) {
-            Ok(d) => d,
-            Err(e) => {
-                return RunOutcome {
-                    events: vec![],
-                    verdict: Verdict::Denied {
-                        reason: format!("cannot create private staging dir: {e}"),
-                        axis: "io".into(),
-                    },
-                }
-            }
-        };
-        let wrapper_path =
-            match staging.write_new(&format!("{stem}.wrap.ax"), wrapper_src.as_bytes()) {
-                Ok(p) => p,
-                Err(_) => {
-                    return RunOutcome {
-                        events: vec![],
-                        verdict: Verdict::Denied {
-                            reason: "cannot stage sandbox wrapper".into(),
-                            axis: "io".into(),
-                        },
-                    };
-                }
-            };
+        let staging = StagingDir::create(&self.staging_root).map_err(|e| Verdict::Denied {
+            reason: format!("cannot create private staging dir: {e}"),
+            axis: "io".into(),
+        })?;
+        let wrapper_path = staging
+            .write_new(&format!("{stem}.wrap.ax"), wrapper_src.as_bytes())
+            .map_err(|_| Verdict::Denied {
+                reason: "cannot stage sandbox wrapper".into(),
+                axis: "io".into(),
+            })?;
         debug_assert!(wrapper_path.starts_with(staging.path()));
 
         let mut cmd = job_child_command(&self.axon_bin, program.path, grant);
@@ -1053,30 +1285,28 @@ impl Runtime for AxonCoreRuntime {
         // R27/R29: if AXON_KILL_FILE is set, poll it during run_bounded.
         // R27 uses this for operator kill (`axon-os kill`); R29 uses it for the
         // compliance monitor. Both write `{"latch":"tripped"}` to stop the job.
-        let kill_file_env = std::env::var_os("AXON_KILL_FILE").map(std::path::PathBuf::from);
+        let kill_file_env = std::env::var_os("AXON_KILL_FILE")
+            .filter(|_| poll_kill_file)
+            .map(std::path::PathBuf::from);
         let kill_file = kill_file_env.as_deref();
-        let proc_res = run_bounded_capped(&mut cmd, self.timeout, kill_file, self.max_capture);
+        let proc_res =
+            run_bounded_capped(&mut cmd, self.timeout, kill_file, self.max_capture, None);
         drop(staging); // removes the private dir and the wrapper in it
-        let proc = match proc_res {
-            Ok(p) => p,
-            Err(e) => {
-                return RunOutcome {
-                    events: vec![],
-                    verdict: Verdict::Denied {
-                        reason: format!("could not launch interpreter: {e}"),
-                        axis: "exec".into(),
-                    },
-                }
-            }
-        };
+        let proc = proc_res.map_err(|e| Verdict::Denied {
+            reason: format!("could not launch interpreter: {e}"),
+            axis: "exec".into(),
+        })?;
+        Ok((proc, nonce))
+    }
 
-        // Map the run to a verdict. Faults are detected by the interpreter's
-        // STDERR diagnostics, NOT by the raw exit code — because `axon run`
-        // propagates `main`'s integer return value as the exit code, which would
-        // otherwise collide with the carved fault codes (a program returning 7
-        // is NOT budget exhaustion). A clean run ⇒ Completed{value = exit code}.
+    /// Map a run to a verdict. Faults are detected by the interpreter's
+    /// STDERR diagnostics, NOT by the raw exit code — because `axon run`
+    /// propagates `main`'s integer return value as the exit code, which would
+    /// otherwise collide with the carved fault codes (a program returning 7
+    /// is NOT budget exhaustion). A clean run ⇒ Completed{value = exit code}.
+    fn classify(&self, proc: &ProcOutcome, nonce: &str) -> Verdict {
         let err = &proc.stderr;
-        let verdict = if let Some(sig) = proc.killed_by_signal {
+        if let Some(sig) = proc.killed_by_signal {
             // G2d: the supervisor was told to stop and took the job with it.
             // `axon-os run` writes this record and then exits 128+signal.
             Verdict::Halted {
@@ -1097,7 +1327,7 @@ impl Runtime for AxonCoreRuntime {
                 reason: format!("timed out after {} ms", self.timeout.as_millis()),
                 axis: "time".into(),
             }
-        } else if let Some(line) = imports_refusal(err, proc.code, &proc.stdout, &nonce) {
+        } else if let Some(line) = imports_refusal(err, proc.code, &proc.stdout, nonce) {
             // G1e: the loader refused the closure before executing anything —
             // a module changed since approval. An approval failure, not a
             // sandbox one.
@@ -1169,7 +1399,7 @@ impl Runtime for AxonCoreRuntime {
             // (see `wrap_in_sandbox`) — the collision that forced the stderr
             // heuristic in the first place is gone. stderr is still read, but
             // only to phrase the human-readable `reason`.
-            if ran_to_completion(&proc.stdout, &nonce) {
+            if ran_to_completion(&proc.stdout, nonce) {
                 // The wrapper's tail ran, so the job returned normally and the
                 // exit code IS its return value — including values that collide
                 // with carved fault codes, which is exactly what the old stderr
@@ -1225,16 +1455,108 @@ impl Runtime for AxonCoreRuntime {
                     },
                 }
             }
-        };
+        }
+    }
+}
 
-        // A single audit event recording the bounded run under the ceiling.
-        let events = vec![RE::new(
-            "run",
-            &program.path.display().to_string(),
-            ceiling,
-            "internal",
-        )];
-        RunOutcome { events, verdict }
+/// The human-facing reason a verdict carries (for a run that never started).
+fn verdict_reason(v: &Verdict) -> String {
+    match v {
+        Verdict::Denied { reason, .. }
+        | Verdict::Halted { reason }
+        | Verdict::Malformed { reason }
+        | Verdict::RefineViolation { reason } => reason.clone(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// The first error of a stderr made solely of the interpreter's `axon-diag/1`
+/// lines (what `axon run` prints for a program it refuses to start), or `None`
+/// when any line is something else or no line is an error.
+fn compile_failure(stderr: &str) -> Option<String> {
+    let mut first_error: Option<String> = None;
+    for line in stderr.lines().filter(|l| !l.trim().is_empty()) {
+        let d: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+        if d.get("schema").and_then(|s| s.as_str()) != Some("axon-diag/1") {
+            return None;
+        }
+        if first_error.is_none() && d.get("severity").and_then(|s| s.as_str()) == Some("error") {
+            let field = |k: &str| {
+                d.get(k)
+                    .map(|v| v.to_string().trim_matches('"').to_string())
+            };
+            first_error = Some(format!(
+                "{} at line {}:{}: {}",
+                field("code").unwrap_or_default(),
+                field("line").unwrap_or_default(),
+                field("col").unwrap_or_default(),
+                d.get("message").and_then(|m| m.as_str()).unwrap_or(""),
+            ));
+        }
+    }
+    first_error
+}
+
+/// The interpreter's fault lines (`axon_core::interp::run_program_inner`), each
+/// with the exit code it carves for that fault.
+const INTERPRETER_FAULTS: &[(i32, &str)] = &[
+    (3, "axon: verify failed"),
+    (4, "axon: halted"),
+    (5, "axon: ai policy: "),
+    (6, "axon: refinement violated: "),
+    (7, "axon: goal budget exhausted: "),
+    (8, "axon: sandbox violation: "),
+    (101, "axon: panic"),
+    (101, "axon: multi-shot resume not supported here: "),
+];
+
+/// The fault the interpreter reported, read from its own line: the LAST
+/// non-empty stderr line (the interpreter prints it and exits) must be the
+/// fault line for exactly this exit code. Anything else - a program's own
+/// `eprintln`, whatever words it holds - is not a fault.
+fn interpreter_fault(code: i32, stderr: &str) -> Option<Verdict> {
+    let line = stderr.lines().rev().find(|l| !l.trim().is_empty())?.trim();
+    let (_, prefix) = INTERPRETER_FAULTS
+        .iter()
+        .find(|(c, p)| *c == code && line.starts_with(p))?;
+    let reason = line.to_string();
+    Some(match *prefix {
+        "axon: verify failed" => Verdict::Denied {
+            reason,
+            axis: "verify".into(),
+        },
+        "axon: halted" => Verdict::Halted { reason },
+        "axon: ai policy: " => Verdict::Denied {
+            reason,
+            axis: "ai-policy".into(),
+        },
+        "axon: refinement violated: " => Verdict::RefineViolation { reason },
+        "axon: goal budget exhausted: " => Verdict::BudgetExhausted {
+            axis: "budget".into(),
+        },
+        "axon: sandbox violation: " => Verdict::Denied {
+            reason,
+            axis: "sandbox".into(),
+        },
+        _ => Verdict::Denied {
+            reason,
+            axis: "runtime".into(),
+        },
+    })
+}
+
+/// `stdout` without THIS run's completion marker and the newline the
+/// wrapper's `println` ended it with. The marker ends a line: a job whose last
+/// output had no newline keeps that output.
+fn strip_done_marker(stdout: &str, nonce: &str) -> String {
+    let marker = format!("{DONE_SENTINEL}{nonce}");
+    match stdout.rfind(&marker) {
+        Some(at) => {
+            let rest = &stdout[at + marker.len()..];
+            let rest = rest.strip_prefix('\n').unwrap_or(rest);
+            format!("{}{}", &stdout[..at], rest)
+        }
+        None => stdout.to_string(),
     }
 }
 
@@ -1502,7 +1824,7 @@ mod runtime_tests {
         let mut cmd = Command::new("sh");
         cmd.arg("-c")
             .arg("head -c 8388608 /dev/zero | tr '\\0' x; echo; echo LAST");
-        let out = run_bounded_capped(&mut cmd, Duration::from_secs(20), None, 4096).unwrap();
+        let out = run_bounded_capped(&mut cmd, Duration::from_secs(20), None, 4096, None).unwrap();
         assert_eq!(out.code, Some(0));
         assert!(out.stdout.len() < 4096 + 200, "{}", out.stdout.len());
         assert!(out.stdout.trim_end().ends_with("LAST"));
@@ -1634,12 +1956,13 @@ mod runtime_tests {
             !scan_effects("fn f() { exec_report(1) }").row.exec,
             "`exec_report` is not `exec`"
         );
-        // A module import puts effects in a file this scanner never reads, so
-        // the honest answer is the full set, not "nothing found here".
-        let m = scan_effects("mod util\nfn main() { util.go() }").row;
+        // A module import this scan does not load (no module directory) puts
+        // effects in a file it never reads, so the honest answer is the full
+        // set, not "nothing found here".
+        let m = scan_effects("mod util\nuse util.{go}\nfn main() { go() }").row;
         assert!(
             m.exec && m.net && m.fs_read && m.fs_write,
-            "a mod import must deny-by-default to the full effect set"
+            "an unloaded `use` must deny-by-default to the full effect set"
         );
         // Previously-invisible capability builtins are now classified.
         assert!(scan_effects("fn f() { env_var(\"X\") }").row.fs_read);
@@ -1649,5 +1972,53 @@ mod runtime_tests {
         // A pure program stays pure.
         let pure = scan_effects("fn add(a: i64, b: i64) -> i64 { a + b }").row;
         assert!(!pure.exec && !pure.net && !pure.fs_read && !pure.fs_write);
+    }
+
+    /// IG0 F12 (a): the scan reads the compiler's table, so every file
+    /// builtin carries its own axis — `append_file` writes.
+    #[test]
+    fn scan_effects_reads_the_one_table_for_every_file_builtin() {
+        let w = scan_effects("fn main() -> i64 {\n    match append_file(\"./out/a\", \"x\") { Ok(_) => 0, Err(_) => 1 }\n}\n").row;
+        assert!(
+            w.fs_write,
+            "ATTACK: an append_file program scanned without fs_write"
+        );
+        assert!(!w.fs_read && !w.net && !w.exec);
+        for (src, read, write) in [
+            ("fn f() { file_exists(\"./a\") }", true, false),
+            ("fn f() { dir_list(\"./a\") }", true, false),
+            ("fn f() { dir_create(\"./a/\") }", false, true),
+            ("fn f() { file_copy(\"./a\", \"./b\") }", true, true),
+            ("fn f() { file_rename(\"./a\", \"./b\") }", false, true),
+        ] {
+            let r = scan_effects(src).row;
+            assert_eq!((r.fs_read, r.fs_write), (read, write), "{src}");
+        }
+        // A builtin used as a VALUE is reached too.
+        assert!(
+            scan_effects("fn f() -> i64 { let w = write_file\n 0 }")
+                .row
+                .fs_write
+        );
+    }
+
+    /// IG0 F12 (b): a comment or a string is never an import or a call.
+    #[test]
+    fn scan_effects_ignores_comments_and_strings() {
+        let src =
+            "// total mod 10\nfn main() -> i64 {\n    println(\"exec(x) mod y\")\n    7 % 10\n}\n";
+        let r = scan_effects(src).row;
+        assert!(
+            !r.net && !r.exec && !r.fs_read && !r.fs_write,
+            "ATTACK: a comment or string widened the scan: {r:?}"
+        );
+        // A program that does not parse is refused by `try_scan_effects`,
+        // and `scan_effects` (the supervisor's) denies by default.
+        assert!(try_scan_effects("fn main( {").is_err());
+        let all = scan_effects("fn main( {").row;
+        assert!(all.fs_read && all.fs_write && all.net && all.exec);
+        // A `use` this scan cannot load (no module directory) is every effect.
+        let u = scan_effects("use util\nfn main() -> i64 { 0 }\n").row;
+        assert!(u.fs_read && u.fs_write && u.net && u.exec);
     }
 }

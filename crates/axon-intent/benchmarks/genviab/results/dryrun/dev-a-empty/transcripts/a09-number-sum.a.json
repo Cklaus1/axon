@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Sum the integers in ./data/nums.txt. The file holds one decimal integer per line; every line ends with a newline. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the sum in decimal.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "457471d9d2d7d4b6f947321dceb5e8d9fe12b975d61de3979f6dba183b1c5b27",
+      "candidate": "fn main() -> i64 {\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 201,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 201,
+  "tokens": null
+}

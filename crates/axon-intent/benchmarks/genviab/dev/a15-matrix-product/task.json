@@ -1,0 +1,36 @@
+{
+ "id": "a15-matrix-product",
+ "category": "multi-step",
+ "source": {
+  "kind": "atlas tasks_hard",
+  "file": "atlas/spikes/rlm-engine/src/tasks_hard.rs (TASKS, MIT, separate git tree)",
+  "index": 15,
+  "desc": "for the matrix [[1, 2, 3], [4, 5, 6], [7, 8, 9]]: transpose it, sum each row of the transposed matrix, and take the product of those sums",
+  "expected": "3240",
+  "atlas_category": "multi-step"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "atlas data point",
+    "runs": [
+     {
+      "inputs": {
+       "./data/matrix.txt": "1 2 3\n4 5 6\n7 8 9\n"
+      },
+      "outputs": {
+       "./out/answer.txt": "3240\n"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/answer.txt",
+  "value": "3240"
+ }
+}

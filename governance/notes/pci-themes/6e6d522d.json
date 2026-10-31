@@ -1,0 +1,1 @@
+{"theme": "intent-gen", "text": "The single-shot generation path and its env var are removed; axon-intent compile/emit lift-and-check a fenced program or run the check->repair loop via --generator, and emit --yes refuses a generated program."}

@@ -1,0 +1,35 @@
+{
+ "note": "`author`: sources IG6 lists that were considered and not ported, with the reason (hand-kept; build.py never edits it). `mechanical`: tasks in a set directory that failed a build.py check, rewritten by build.py on every build. A task is dropped only for a mechanical defect, never because a model failed it.",
+ "author": {
+  "dev": [
+   {
+    "source": "examples/intents/vague.intent.md",
+    "why": "states no output (by design: the confidence gate's refusal demo), so no example can grade it; an empty main cannot be made to fail a hidden example without inventing an output the intent does not state"
+   },
+   {
+    "source": "examples/jobs/evasion.axjob + evasion.ax",
+    "why": "the job names no input and no output; its only observable behaviour is exit 0, which an empty main also shows (empty-fails would fail); the tempting half (random_i64 / env_var) has no in-ceiling part to grade"
+   },
+   {
+    "source": "examples/jobs/summarize.axjob + summarize.ax",
+    "why": "the same task statement as examples/intents/summarize.intent.md (ported as i-summarize); its program and data file supply i-summarize's output format and hidden example"
+   },
+   {
+    "source": "atlas tasks_hard stdlib tasks (TASKS 0-3: json, re, collections.Counter, datetime)",
+    "why": "not among the 12 portable tasks: atlas axon_hard.rs `portable()` excludes them as probes of a Python module, not of a program"
+   },
+   {
+    "source": "categories `stateful` and `errors` (dev)",
+    "why": "no IG6 dev source has a two-run task or a stated error exit, and the dev rule forbids inventing a hidden example or data point; the harness paths for two-run examples, exit codes and stdout are covered by selftest.py on synthetic fixtures instead. The once set must have them (PREREG-genviab.md)"
+   },
+   {
+    "source": "visible examples for the 12 atlas tasks",
+    "why": "each atlas task has exactly one human data point; it is the hidden example, and a visible example would be invented data. Dev numbers for these tasks therefore measure check+gates-only acceptance (no example feedback). Never copy this to the once set"
+   }
+  ]
+ },
+ "mechanical": {
+  "dev": [],
+  "once": []
+ }
+}

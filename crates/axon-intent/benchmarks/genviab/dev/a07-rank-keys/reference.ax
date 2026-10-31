@@ -1,0 +1,31 @@
+fn answer(text: str) -> str {
+    let lines = str_split(str_trim(text), "\n")
+    let pairs = []
+    for i in 0..len(lines) {
+        let parts = str_split(lines[i], ",")
+        if len(parts) == 2 {
+            pairs = arr_push(pairs, (str_trim(parts[0]), parse_int_or(parts[1], 0)))
+        }
+    }
+    let sorted = arr_sort_by(pairs, |a, b| if a.1 != b.1 { b.1 - a.1 } else { str_cmp(a.0, b.0) })
+    let keys = arr_map(sorted, |p| p.0)
+    str_join(keys, ",")
+}
+
+fn main() -> i64 {
+    match read_file("./data/counts.csv") {
+        Ok(text) => {
+            match write_file("./out/answer.txt", answer(text) + "\n") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            2
+        }
+    }
+}

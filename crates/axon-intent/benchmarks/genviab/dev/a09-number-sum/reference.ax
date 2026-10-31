@@ -1,0 +1,26 @@
+fn answer(text: str) -> str {
+    let lines = str_split(str_trim(text), "\n")
+    let total = 0
+    for i in 0..len(lines) {
+        total = total + parse_int_or(lines[i], 0)
+    }
+    to_str(total)
+}
+
+fn main() -> i64 {
+    match read_file("./data/nums.txt") {
+        Ok(text) => {
+            match write_file("./out/answer.txt", answer(text) + "\n") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            2
+        }
+    }
+}

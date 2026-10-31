@@ -4134,6 +4134,49 @@ fn ast_review_names_the_module_each_imported_fn_came_from() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// IG0: `axon ast review --json` reports the admission axes from the one
+/// table admission reads — per fn and for the whole program, comments and
+/// strings never counting.
+#[test]
+fn ast_review_reports_the_admission_axes_from_the_one_table() {
+    let dir = std::env::temp_dir().join(format!("axon-ig0-review-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(
+        dir.join("p.ax"),
+        "// total mod 10\nfn log(s: str) -> i64 {\n    match append_file(\"./out/log.txt\", s) { Ok(_) => 0, Err(_) => 1 }\n}\nfn main() -> i64 {\n    println(\"exec(x)\")\n    log(\"x\")\n}\n",
+    )
+    .unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_axon"))
+        .current_dir(&dir)
+        .args(["ast", "review", "p.ax", "--json"])
+        .output()
+        .unwrap();
+    let o = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{o}");
+    let v: serde_json::Value = serde_json::from_str(&o).unwrap();
+    assert_eq!(
+        v["axes"],
+        serde_json::json!(["fs_write"]),
+        "ATTACK: ast review reported admission axes the table does not give: {o}"
+    );
+    let fn_axes = |name: &str| {
+        v["fns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == name)
+            .unwrap_or_else(|| panic!("no fn {name}: {o}"))["axes"]
+            .clone()
+    };
+    assert_eq!(fn_axes("log"), serde_json::json!(["fs_write"]));
+    assert_eq!(
+        fn_axes("main"),
+        serde_json::json!(["fs_write"]),
+        "main reaches log"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn imports_closure_agrees_with_transitive_resolution_on_every_example() {
     // G1a extra gate: for every example with a `use`, the closure the LOADER
@@ -26317,6 +26360,41 @@ fn session_jsonl_surfaces_a_refused_cell_without_ending_the_session() {
         out[2].contains("\"value\":\"7\""),
         "state must be intact after a refused cell: {}",
         out[2]
+    );
+}
+
+/// IG2: `axon card` prints the language card generated from `BUILTINS` (exit 0,
+/// identical bytes on every run), and `--sha256` prints exactly the sha256 of
+/// that stdout - the value a generation transcript records.
+#[test]
+fn axon_card_is_generated_deterministic_and_pinned_by_its_sha256() {
+    let a = axon().arg("card").output().unwrap();
+    assert_eq!(a.status.code(), Some(0), "`axon card` must succeed: {a:?}");
+    let b = axon().arg("card").output().unwrap();
+    assert_eq!(
+        a.stdout, b.stdout,
+        "ATTACK: `axon card` is not deterministic"
+    );
+    let card = String::from_utf8(a.stdout.clone()).unwrap();
+    assert!(card.starts_with("# Axon language card\n"), "{card}");
+    assert!(
+        card.contains("- `append_file(path: str, content: str) -> Result<(), str>` - "),
+        "ATTACK: the card's builtin section is not generated from BUILTINS"
+    );
+    let h = axon().args(["card", "--sha256"]).output().unwrap();
+    assert_eq!(h.status.code(), Some(0), "{h:?}");
+    let hex = String::from_utf8(h.stdout).unwrap();
+    let want: String = {
+        use sha2::Digest;
+        sha2::Sha256::digest(&a.stdout)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    assert_eq!(
+        hex,
+        format!("{want}\n"),
+        "ATTACK: `axon card --sha256` is not the sha256 of the card text"
     );
 }
 

@@ -1,0 +1,57 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "For the comma-separated tokens in ./data/tokens.txt: count how often each token occurs, then give the token with the second-highest count. The file holds one line of tokens (lowercase letters) separated by commas with no spaces, ending with a newline. The counts are distinct. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the token.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "6ddc9862e72ea422aafe659ec5fe67d521115c6f7b70f9b6a4bac0d775ad4bf1",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/tokens.txt\") {\n        Ok(text) => {\n            let line = str_trim(text)\n            let toks = str_split(line, \",\")\n            let d = dict_new()\n            for i in 0..len(toks) {\n                if str_len(toks[i]) > 0 {\n                    dict_inc(d, toks[i])\n                }\n            }\n            let keys = dict_keys(d)\n            let best = \"\"\n            let best_c = -1\n            let second = \"\"\n            let second_c = -1\n            for i in 0..len(keys) {\n                let k = keys[i]\n                let c = dict_get_or(d, k, 0)\n                if c > best_c {\n                    second = best\n                    second_c = best_c\n                    best = k\n                    best_c = c\n                } else {\n                    if c > second_c {\n                        second = k\n                        second_c = c\n                    }\n                }\n            }\n            match write_file(\"./out/answer.txt\", second + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 7204,
+      "report": {
+        "stage": "check",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/tokens.txt\") {\n        Ok(text) => {\n            let line = str_trim(text)\n            let toks = str_split(line, \",\")\n            let d = dict_new()\n            for i in 0..len(toks) {\n                if str_len(toks[i]) > 0 {\n                    dict_inc(d, toks[i])\n                }\n            }\n            let keys = dict_keys(d)\n            let best = \"\"\n            let best_c = -1\n            let second = \"\"\n            let second_c = -1\n            for i in 0..len(keys) {\n                let k = keys[i]\n                let c = dict_get_or(d, k, 0)\n                if c > best_c {\n                    second = best\n                    second_c = best_c\n                    best = k\n                    best_c = c\n                } else {\n                    if c > second_c {\n                        second = k\n                        second_c = c\n                    }\n                }\n            }\n            match write_file(\"./out/answer.txt\", second + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": false,
+        "diagnostics": [
+          "{\"schema\":\"axon-diag/1\",\"severity\":\"error\",\"code\":\"E0102\",\"file\":\"main.ax\",\"line\":9,\"col\":21,\"message\":\"type mismatch in if-without-else body (expected ()), found i64\",\"expected\":\"()\",\"found\":\"i64\"}"
+        ],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": "`axon check` rejected the program:\n{\"schema\":\"axon-diag/1\",\"severity\":\"error\",\"code\":\"E0102\",\"file\":\"main.ax\",\"line\":9,\"col\":21,\"message\":\"type mismatch in if-without-else body (expected ()), found i64\",\"expected\":\"()\",\"found\":\"i64\"}\n",
+        "infrastructure": null
+      }
+    },
+    {
+      "round": 1,
+      "prompt_sha256": "60b62e7c21b2606de4dbcb60fec724b335798918d5ba913b1dc723cee507e691",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/tokens.txt\") {\n        Ok(text) => {\n            let line = str_trim(text)\n            let toks = str_split(line, \",\")\n            let d = dict_new()\n            for i in 0..len(toks) {\n                if str_len(toks[i]) > 0 {\n                    let _c = dict_inc(d, toks[i])\n                }\n            }\n            let keys = dict_keys(d)\n            let best = \"\"\n            let best_c = -1\n            let second = \"\"\n            let second_c = -1\n            for i in 0..len(keys) {\n                let k = keys[i]\n                let c = dict_get_or(d, k, 0)\n                if c > best_c {\n                    second = best\n                    second_c = best_c\n                    best = k\n                    best_c = c\n                } else {\n                    if c > second_c {\n                        second = k\n                        second_c = c\n                    }\n                }\n            }\n            match write_file(\"./out/answer.txt\", second + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 5705,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/tokens.txt\") {\n        Ok(text) => {\n            let line = str_trim(text)\n            let toks = str_split(line, \",\")\n            let d = dict_new()\n            for i in 0..len(toks) {\n                if str_len(toks[i]) > 0 {\n                    let _c = dict_inc(d, toks[i])\n                }\n            }\n            let keys = dict_keys(d)\n            let best = \"\"\n            let best_c = -1\n            let second = \"\"\n            let second_c = -1\n            for i in 0..len(keys) {\n                let k = keys[i]\n                let c = dict_get_or(d, k, 0)\n                if c > best_c {\n                    second = best\n                    second_c = best_c\n                    best = k\n                    best_c = c\n                } else {\n                    if c > second_c {\n                        second = k\n                        second_c = c\n                    }\n                }\n            }\n            match write_file(\"./out/answer.txt\", second + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 12910,
+  "tokens": null
+}

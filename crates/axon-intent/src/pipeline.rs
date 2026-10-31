@@ -23,7 +23,7 @@ use axon_os::grant::Grant;
 pub enum GenMode {
     /// Prefer lifting a fenced block if present; else synthesize.
     Auto,
-    /// Always synthesize, even if a fenced block is present (`AXON_INTENT_GEN`).
+    /// Always synthesize, even if a fenced block is present (`--generate`).
     ForceGenerate,
 }
 
@@ -107,10 +107,18 @@ pub fn resolve(
     mode: GenMode,
     risk_floor: Option<Risk>,
 ) -> Result<Resolved, Refusal> {
-    // 1. compile (synthesis seam).
-    let draft = compile(intent, synth, mode)?;
+    resolve_draft(intent, compile(intent, synth, mode)?, risk_floor)
+}
 
-    // 2. confidence gate FIRST — refuse a low-quality draft before inferring a
+/// The gates every candidate passes, however it was produced (R22 §4, IG4
+/// step 3): confidence → least-privilege grant → admissibility → the legible
+/// request. The check→repair loop runs this on every type-checked candidate.
+pub fn resolve_draft(
+    intent: &Intent,
+    draft: ProgramDraft,
+    risk_floor: Option<Risk>,
+) -> Result<Resolved, Refusal> {
+    // 1. confidence gate FIRST — refuse a low-quality draft before inferring a
     //    grant for it (fail closed; cheap rejection).
     let confidence = score(&draft, intent);
     if let Confidence::Refuse { reason } = &confidence {
@@ -121,13 +129,13 @@ pub fn resolve(
         });
     }
 
-    // 3. least-privilege grant inference (may refuse: GrantExceedsCeiling).
+    // 2. least-privilege grant inference (may refuse: GrantExceedsCeiling).
     let grant = infer(&draft.meta.declared, &intent.cap_ceiling, &intent.budget)?;
 
-    // 4. admissibility proof (must hold by construction; refuse on any skew).
+    // 3. admissibility proof (must hold by construction; refuse on any skew).
     prove_admissible(&draft.meta.declared, &grant)?;
 
-    // 5. render the legible request.
+    // 4. render the legible request.
     let request = render_request(&draft, &grant, intent, &confidence, risk_floor);
 
     Ok(Resolved {
@@ -204,7 +212,8 @@ Summarize ./data/report.txt into ./out/summary.txt.
     #[test]
     fn low_confidence_short_circuits_no_resolve() {
         // A stub program → LowConfidence; resolve returns before inferring/admit.
-        let stub = MockSynth::with_source("fn main() -> i64 { TODO }");
+        // An empty body is a stub (IG0: a `TODO` comment is not).
+        let stub = MockSynth::with_source("fn main() -> i64 {}");
         let r = resolve(&it(), &stub, GenMode::Auto, None);
         assert!(matches!(r, Err(Refusal::LowConfidence { .. })));
         assert_eq!(r.unwrap_err().exit_code(), 5);

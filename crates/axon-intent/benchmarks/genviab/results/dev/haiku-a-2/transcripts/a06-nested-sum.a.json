@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Sum every integer anywhere inside the nested list written in ./data/nested.txt. The file holds one nested list in bracket notation (for instance `[7, [8, []]]`): square brackets, commas, spaces and non-negative decimal integers, followed by a newline. Lists nest to any depth. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the sum in decimal.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "ca05c62c9d411e479cba0116e179b6dcd5af2bbce7451e39e42cfec5b877dfe4",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/nested.txt\") {\n        Ok(text) => {\n            let total = 0\n            let cur = 0\n            let in_num = false\n            let n = str_len(text)\n            for i in 0..n {\n                let c = char_at(text, i)\n                if c >= 48 && c <= 57 {\n                    cur = cur * 10 + (c - 48)\n                    in_num = true\n                } else {\n                    if in_num { total = total + cur }\n                    cur = 0\n                    in_num = false\n                }\n            }\n            if in_num { total = total + cur }\n            match write_file(\"./out/answer.txt\", to_str(total) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 4303,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/nested.txt\") {\n        Ok(text) => {\n            let total = 0\n            let cur = 0\n            let in_num = false\n            let n = str_len(text)\n            for i in 0..n {\n                let c = char_at(text, i)\n                if c >= 48 && c <= 57 {\n                    cur = cur * 10 + (c - 48)\n                    in_num = true\n                } else {\n                    if in_num { total = total + cur }\n                    cur = 0\n                    in_num = false\n                }\n            }\n            if in_num { total = total + cur }\n            match write_file(\"./out/answer.txt\", to_str(total) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 4304,
+  "tokens": null
+}

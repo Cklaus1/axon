@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport re\nimport sys\n\n\ndef main():\n    try:\n        with open(os.path.join(\"data\", \"nested.txt\"), \"r\", encoding=\"utf-8\") as f:\n            text = f.read()\n\n        # Every non-negative decimal integer in the nested list.\n        total = sum(int(tok) for tok in re.findall(r\"[0-9]+\", text))\n\n        os.makedirs(\"out\", exist_ok=True)\n        with open(os.path.join(\"out\", \"answer.txt\"), \"w\", encoding=\"utf-8\") as f:\n            f.write(str(total) + \"\\n\")\n        return 0\n    except Exception as exc:\n        sys.stderr.write(\"error: %s\\n\" % exc)\n        return 1\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport re\nimport sys\n\n\ndef main():\n    try:\n        with open(os.path.join(\"data\", \"nested.txt\"), \"r\", encoding=\"utf-8\") as f:\n            text = f.read()\n\n        # Every non-negative decimal integer in the nested list.\n        total = sum(int(tok) for tok in re.findall(r\"[0-9]+\", text))\n\n        os.makedirs(\"out\", exist_ok=True)\n        with open(os.path.join(\"out\", \"answer.txt\"), \"w\", encoding=\"utf-8\") as f:\n            f.write(str(total) + \"\\n\")\n        return 0\n    except Exception as exc:\n        sys.stderr.write(\"error: %s\\n\" % exc)\n        return 1\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

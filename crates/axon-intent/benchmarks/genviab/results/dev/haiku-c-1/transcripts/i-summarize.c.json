@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    src = \"./data/report.txt\"\n    dst = \"./out/summary.txt\"\n\n    try:\n        size = os.path.getsize(src)\n        os.makedirs(\"./out\", exist_ok=True)\n        with open(dst, \"w\", encoding=\"ascii\", newline=\"\") as f:\n            f.write(\"report length: %d bytes\" % size)\n    except OSError as e:\n        sys.stderr.write(\"error: %s\\n\" % e)\n        return 1\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    src = \"./data/report.txt\"\n    dst = \"./out/summary.txt\"\n\n    try:\n        size = os.path.getsize(src)\n        os.makedirs(\"./out\", exist_ok=True)\n        with open(dst, \"w\", encoding=\"ascii\", newline=\"\") as f:\n            f.write(\"report length: %d bytes\" % size)\n    except OSError as e:\n        sys.stderr.write(\"error: %s\\n\" % e)\n        return 1\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

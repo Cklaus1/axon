@@ -39,7 +39,8 @@ pub use record::{
     RawEvent, RunRecord, Sealing, VerifyMismatch,
 };
 pub use runtime::{
-    Isolation, IsolationRequirement, PrincipalHandle, ProgramSource, RunOutcome, Runtime,
+    run_bounded_job, BoundedRun, CapturedRun, Isolation, IsolationRequirement, PrincipalHandle,
+    ProgramSource, RunOutcome, Runtime, SandboxOutcome,
 };
 pub use supervisor::run as supervise;
 pub use supervisor::run_requiring as supervise_requiring;

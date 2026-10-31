@@ -466,6 +466,16 @@ enum Command {
         json: bool,
     },
 
+    /// IG2 - print the language card a model reads before writing Axon:
+    /// curated syntax, the program rules, and every builtin's signature from
+    /// the same table `axon reference` prints (core groups add the first doc
+    /// sentence). Deterministic: the same binary prints the same bytes.
+    Card {
+        /// Print only the lowercase hex sha256 of the card text.
+        #[arg(long)]
+        sha256: bool,
+    },
+
     /// R44 — an accumulating typed session: bind a name in one cell, read it in
     /// the next.
     ///
@@ -1147,6 +1157,7 @@ fn dispatch(command: Command) {
             show_values,
         } => cmd_replay(journal, diff, show_values),
         Command::Reference { json } => cmd_reference(json),
+        Command::Card { sha256 } => cmd_card(sha256),
         Command::Session {
             protocol,
             show_program,
@@ -5191,6 +5202,20 @@ fn parse_cell_frame(line: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// `axon card [--sha256]` (IG2): the card on stdout, or its sha256 - the value
+/// a transcript records to pin which card a model saw.
+fn cmd_card(sha256: bool) {
+    let card = axon_core::card::card();
+    if sha256 {
+        use sha2::Digest;
+        let d = sha2::Sha256::digest(card.as_bytes());
+        let hex: String = d.iter().map(|b| format!("{b:02x}")).collect();
+        println!("{hex}");
+    } else {
+        print!("{card}");
+    }
+}
+
 /// `axon reference` — the complete surface of THIS build, generated from the
 /// tables the compiler itself uses.
 ///
@@ -5371,16 +5396,9 @@ fn cmd_reference(json: bool) {
     println!("| Signature | Purpose |");
     println!("|---|---|");
     for b in &builtins {
-        let params: Vec<String> = b.params.iter().map(|(n, t)| format!("{n}: {t}")).collect();
         // Pipes would break the table; the full text is in `--json`.
         let doc = b.doc.replace('|', "\\|").replace('\n', " ");
-        println!(
-            "| `{}({}) -> {}` | {} |",
-            b.name,
-            params.join(", "),
-            b.ret,
-            doc
-        );
+        println!("| `{}` | {} |", b.signature(), doc);
     }
 }
 
@@ -8391,59 +8409,17 @@ fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
         }
     };
 
-    let skeleton = match axon_surface::compile::emit(&goal) {
+    // A skeleton only: its TODO stubs are for a person or for the
+    // check->repair loop (`axon-intent compile --generator`, IG4/IG5) - this
+    // verb never calls a model.
+    let ax_src = match axon_surface::compile::emit(&goal) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error: intent compilation failed: {e}");
             process::exit(2);
         }
     };
-
-    // Phase-10 v1.1: LLM-driven body generation.
-    // When AXON_INTENT_GEN=1 and the skeleton contains TODO stubs, call the AI
-    // to fill in the function bodies from the prose.  Falls back to the skeleton
-    // on any AI error so the command always produces a usable .ax file.
-    let stub_count = skeleton.matches("TODO").count();
-    let (ax_src, llm_generated) = if stub_count > 0 && std::env::var("AXON_INTENT_GEN").is_ok() {
-        eprintln!("axon: LLM body generation ({stub_count} TODO stub(s))…");
-        let prose = intent_compile_prose_context(&goal);
-        let prompt = format!(
-            "You are an Axon code generator.  Fill in the TODO stubs in the Axon skeleton below \
-             so that the program correctly implements the described goal.  Return ONLY valid Axon \
-             source code — the complete file — with NO markdown fences, NO explanation, NO \
-             surrounding text.  Keep every line that is NOT a TODO unchanged.\n\n\
-             GOAL DESCRIPTION:\n{prose}\n\n\
-             SKELETON (replace every TODO with real Axon code):\n{skeleton}"
-        );
-        #[cfg(feature = "asi-runtime")]
-        {
-            match axon_ai::complete(&prompt) {
-                Ok(generated) => {
-                    // Strip any accidental markdown fences the model might emit.
-                    let body = strip_md_fences(&generated);
-                    // Prepend a provenance comment so reviewers know this was LLM-authored.
-                    let marked = format!("// LLM-generated (axon intent compile --gen)\n{body}");
-                    eprintln!("axon: LLM generation complete ({} bytes)", marked.len());
-                    (marked, true)
-                }
-                Err(e) => {
-                    eprintln!("axon: LLM generation failed ({e}); falling back to skeleton");
-                    (skeleton, false)
-                }
-            }
-        }
-        #[cfg(not(feature = "asi-runtime"))]
-        {
-            let _ = prompt; // avoid unused-variable warning
-            eprintln!(
-                "axon: LLM body generation requires `--features asi-runtime` + ANTHROPIC_API_KEY \
-                 (or AXON_AI_MOCK=1 for the deterministic path)"
-            );
-            (skeleton, false)
-        }
-    } else {
-        (skeleton, false)
-    };
+    let stub_count = ax_src.matches("TODO").count();
 
     let out_path = out.unwrap_or_else(|| file.with_extension("ax"));
 
@@ -8463,7 +8439,7 @@ fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
     });
 
     if json_flag {
-        // axon-intent-compile/1 schema (extended with `generated` + `stubs` fields)
+        // axon-intent-compile/1 schema (extended with the `stubs` field)
         let sections: Vec<String> = goal.sections.keys().map(|k| format!("{k:?}")).collect();
         let sections_joined = sections
             .iter()
@@ -8471,7 +8447,7 @@ fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
             .collect::<Vec<_>>()
             .join(",");
         println!(
-            "{{\"schema\":\"axon-intent-compile/1\",\"title\":{},\"sections\":[{}],\"path\":{},\"ax_bytes\":{},\"stubs\":{stub_count},\"generated\":{llm_generated}}}",
+            "{{\"schema\":\"axon-intent-compile/1\",\"title\":{},\"sections\":[{}],\"path\":{},\"ax_bytes\":{},\"stubs\":{stub_count}}}",
             json_str(&goal.title),
             sections_joined,
             json_str(&out_path.display().to_string()),
@@ -8480,57 +8456,12 @@ fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
         return;
     }
 
-    let gen_note = if llm_generated {
-        " (LLM-generated)"
-    } else {
-        ""
-    };
     println!(
-        "compiled {} → {} ({} bytes){gen_note}",
+        "compiled {} → {} ({} bytes)",
         file.display(),
         out_path.display(),
         ax_src.len()
     );
-}
-
-/// Build a prose context string for the LLM body-generation prompt from a parsed GoalFile.
-fn intent_compile_prose_context(goal: &axon_surface::parser::GoalFile) -> String {
-    let mut ctx = format!("Goal: {}\n\n", goal.title);
-    for name in &[
-        "Intent",
-        "Inputs",
-        "Outputs",
-        "Score",
-        "Constraints",
-        "Budget",
-        "Verify",
-    ] {
-        if let Some(sec) = goal.section(name) {
-            ctx.push_str(&format!("## {name}\n{}\n\n", sec.body.trim()));
-        }
-    }
-    ctx
-}
-
-/// Strip outermost ```axon / ``` or ``` / ``` markdown fences from a model response,
-/// returning the inner content.  If no fence is found, returns the input unchanged.
-#[cfg(feature = "asi-runtime")]
-fn strip_md_fences(s: &str) -> String {
-    let trimmed = s.trim();
-    // Try ` ```axon ` fence first, then bare ` ``` `.
-    for fence in &["```axon", "```"] {
-        if let Some(start) = trimmed.find(fence) {
-            let after_open = &trimmed[start + fence.len()..];
-            // Skip the rest of the opening line.
-            let body_start = after_open.find('\n').map(|i| i + 1).unwrap_or(0);
-            let body = &after_open[body_start..];
-            // Find the closing fence.
-            if let Some(end) = body.rfind("```") {
-                return body[..end].trim_end().to_string();
-            }
-        }
-    }
-    trimmed.to_string()
 }
 
 /// `axon ast review` / `axon ast approve` — review or approve a .ax AST.
@@ -8588,6 +8519,27 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
             .map(|d| format!("\"{}\"", flat_diag(d).replace('"', "\\\"")))
             .collect::<Vec<_>>()
             .join(",");
+        // IG0: the admission axes (`fs_read`, `fs_write`, `net`, `exec`,
+        // `env`) from the one table admission reads
+        // (`builtins::builtin_admission_axes`), over the import-merged
+        // program: per fn (its reach walk) and for the whole program. A walk
+        // that cannot classify what it met reports every axis.
+        let axes_json = |a: axon_core::builtins::AdmissionAxes| {
+            format!(
+                "[{}]",
+                a.names()
+                    .iter()
+                    .map(|n| format!("\"{n}\""))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        };
+        let axes_of = |name: Option<&str>| {
+            axon_core::capabilities::reachable_capabilities(&program, name)
+                .map(|r| axon_core::capabilities::reach_admission_axes(&r))
+                .unwrap_or(axon_core::builtins::AdmissionAxes::ALL)
+        };
+        let program_axes = axes_json(axes_of(None));
         let fns_json = fns.iter().map(|(owner, f)| {
             let params: String = f.params.iter()
                 .map(|p| format!("{}: {}", p.name, fmt_type(&p.ty)))
@@ -8640,21 +8592,23 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
                 None => "null".to_string(),
             };
             format!(
-                "{{\"name\":{},\"owner\":{owner_json},\"origin\":{origin_json},\"sig\":\"fn {}({params}){ret}\",\"attrs\":[{}],\"verified\":{},\"effects\":{},\"effect_set\":{},\"contained\":{}}}",
+                "{{\"name\":{},\"owner\":{owner_json},\"origin\":{origin_json},\"sig\":\"fn {}({params}){ret}\",\"attrs\":[{}],\"verified\":{},\"effects\":{},\"effect_set\":{},\"axes\":{},\"contained\":{}}}",
                 json_str(&f.name),
                 f.name,
                 attrs.join(","),
                 has_verify,
                 has_effect,
                 effect_set,
+                axes_json(axes_of(Some(&f.name))),
                 contained,
             )
         }).collect::<Vec<_>>().join(",");
 
         println!(
-            "{{\"schema\":\"axon-ast-review/2\",\"path\":{},\"errors\":[{}],\"fns\":[{}]}}",
+            "{{\"schema\":\"axon-ast-review/2\",\"path\":{},\"errors\":[{}],\"axes\":{},\"fns\":[{}]}}",
             json_str(&file.display().to_string()),
             errors_json,
+            program_axes,
             fns_json,
         );
         if !errors.is_empty() {

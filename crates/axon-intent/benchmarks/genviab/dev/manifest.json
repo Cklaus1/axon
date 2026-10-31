@@ -1,0 +1,425 @@
+{
+ "schema": "genviab-manifest/1",
+ "set": "dev",
+ "built": "2026-10-31",
+ "corpus_sha256": "a01001217581c573bdb872beafa28d58b44e8f106adaffb784cba1e1bc720270",
+ "axon_sha256": "5697af4dd30a25b726aeb4b750a466e670670858806a39ba14657ebddfa2710e",
+ "axon_intent_sha256": "7644e29ab0d4838bfbbefdd4a805e411ac8b546e6eb8c041dcd3c3273f715575",
+ "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+ "counts": {
+  "transform": 9,
+  "multi-step": 5,
+  "stateful": 0,
+  "errors": 0,
+  "tempting": 1
+ },
+ "n": 15,
+ "excluded": [],
+ "tasks": [
+  {
+   "id": "a04-top-scorer",
+   "category": "transform",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "bda50774b9fb2b8f7360bf8b974e535e4e50c030c4aa05b175d4e91b235a186b",
+    "task.json": "38f4f9de3f03473b720d99574f0e3a9206e93e2bff94accf3f6a638ae631a58f",
+    "reference.ax": "88bac6fcb1197059687b9798ce3146b8d6344b44df7b5e61a17b2dc0cb0aac49"
+   },
+   "task_sha256": "2c65d1750709cb88e52eb54437f74ebbfd7fad49037deae5ffc0b4acb475b44f",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "a05-largest-group",
+   "category": "transform",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "6fe3b8cf28dc89be87bd22fee75e7cdab84f9425ffa57d97b96677fe61510cd5",
+    "task.json": "adf6bc3ddf5734946c12ad738932192e17229caaacf8fe25f6da66111e8cd023",
+    "reference.ax": "a0d462b05d6e28232800d47055c5b70124690a3678252e9037e2e63d919dceda"
+   },
+   "task_sha256": "5ebf40394a711a0787b96acd095bb261a1d755721786d5b857caf90fda823051",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "a06-nested-sum",
+   "category": "transform",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "51313f9c9251f0d7efb4910cd2803175ac45762f5747e5716691da04f23b0fcc",
+    "task.json": "7adb04217d8b710536c43e742e50d3115799654462c9f5e9b52fafc7f2479552",
+    "reference.ax": "91e26b59322fef7a2662be7c6fd3dfbfad7184a579a8c74d31e67952e09df796"
+   },
+   "task_sha256": "6ef928baacff98e3b177bb379a77ad3d8d6ac6488f0b7d3249c55b540146bc63",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "a07-rank-keys",
+   "category": "transform",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "042906b844fbab77e105cc47e9fef87f5e632b0ee12480f92d0785ad8795c414",
+    "task.json": "aadb38f03ab3c0ae1ada46d2a2d86605752304102655f8ececeb45f0aff238bd",
+    "reference.ax": "7dbeb266d37760251653b392a1614dc660a3db873459630edeb931167326ea97"
+   },
+   "task_sha256": "05aeac745661a8c2e1ce0715be433cae7cefe3e5d5d304575c18396e7778c19d",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "a08-line-count",
+   "category": "transform",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "2d74fa5e6d10e518fb0bee466290be3d60d1a36e76a4233b196c89059d8c1b64",
+    "task.json": "84db0b7bfc9358389286b54f35231d459f46fb6dfc5c99c467042571f28bf1f6",
+    "reference.ax": "1e686b8e6a851eb908a37a331e3b0e868a06f6a8192545496b691b96ece4f5a9"
+   },
+   "task_sha256": "0d1a255e23ca01e7037aa8e59ba13f498ad6317139b13c1a6302376c997783c3",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "a09-number-sum",
+   "category": "transform",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "852b1afc2a7231d0544dd48eea93c7c7568fdc4f44515fca9966b669b1a12748",
+    "task.json": "0216337e710fddf25e63be92c7dfb41776664736c960511bfab0dc08aac5ac30",
+    "reference.ax": "7de329543826d201c9ec3cab23d7d8c67f7804aba4755126bcac46182b6d399a"
+   },
+   "task_sha256": "5531b2368cd5ec68f94c02c1f39431b98974bec797b5310021a0b772e6147455",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "a10-file-size",
+   "category": "transform",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "ba64fac5fa22316614a9d50793d8c50033562e9c3add7f87e6aafb58533f7e25",
+    "task.json": "1739444473470657812c63feab372cd6a7ce36fe7f98f8421dfea95f23c33516",
+    "reference.ax": "72c6dec77dfdde1731d1fadd09a4348a4676ac3afb1ebe3fb024638933af4aa5"
+   },
+   "task_sha256": "2d164fd59cb3b98f56ec9e1ff386a85f74125d56eb85e2c90e44f0b222155c68",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "a11-append-readback",
+   "category": "multi-step",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "254e7c1c2d23c465ba0a78bf053fd8c46b634448738bd0ffc368dad9454e710d",
+    "task.json": "3575e161a221e9243f76e6408b8c24bdbbd56fcd836cf81984cc1f4868335cf7",
+    "reference.ax": "ea26b854e6fc3fb17a458285e39327dc67ceb261c989c92a7c4218b22fb06d9b"
+   },
+   "task_sha256": "b7feed17c9fc3f5ffb42be37c504687f084fcabfc32acf39812996081fc29523",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "a12-long-word-lengths",
+   "category": "multi-step",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "b3b7c3d9907234b7ee9d19f68203177d85c6c5ad2ddbd5348e6a07cba22b756a",
+    "task.json": "0411d3183084142d83072c709f17063f5d338bcb1bb6531f216e5395b01d521e",
+    "reference.ax": "06d9d190fb2bcc2f1992b68243eb44ba95675660bb98ce44a9570dfea224f647"
+   },
+   "task_sha256": "5a770272d5f58ba1c36e6614568b218dfc199b950b897419ffc2fbda2f74d738",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "a13-even-squares",
+   "category": "multi-step",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "7ac89d6caa03e29ab16162d4b60a7e79d313a1962844a2d78b66a0799949ba8e",
+    "task.json": "28869f7e90dd6ec2e0d99d36ac07692b01cfe1542e12f01d0dff0fe8b17fa831",
+    "reference.ax": "510f14bd34655ee5011c9a0feecbd3aab3057df48f9daaf74aeb40565aad2850"
+   },
+   "task_sha256": "070186f12b1cdcabc8bbe5ab4cc037dddeaf39d269528fbbe7ff79703d468e21",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "a14-second-token",
+   "category": "multi-step",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "aa5db8f35bcedf85dac4df97e01ea6d837b27fae9ed419fd6e8521c7b3ea15bf",
+    "task.json": "b4257a7069efeeaadeff97c1432ee6d04b17b68f540bb514257531eb9f82ef95",
+    "reference.ax": "37cb215cedb352829ea962222bf22497388384d48c1702bbc51ed441d0f316dd"
+   },
+   "task_sha256": "c20b83c9812a6047b8189bc38c0fc9b71ea97d6c4ec4a4d91f196e2b747c5cfa",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "a15-matrix-product",
+   "category": "multi-step",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "2214eb792ddf2a260f83c1635dfbbf8667617289e1ead7998f9f86b12f36dfd2",
+    "task.json": "456c2f3c073de3a9ca54d9bb2c3ae67f3882bf1b221d442d8fb8236914bb0391",
+    "reference.ax": "7a1808a0847e9545aebb27ea1b649f0202dbe09447e89486d0f0ebd1ec4529f6"
+   },
+   "task_sha256": "b55667131293bab9c9125eddb6ef6a592f9368b0e143ab9c111579c887108bc8",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "i-overbroad",
+   "category": "transform",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "1181b1942c166c330294826382572e17caec9b7e6bdde4f6f4fbfde432211297",
+    "task.json": "230b83a8dac5407ca823b6973ea223bbc25be8085d917a6b013a1727e9327800",
+    "reference.ax": "4e05bdbfbc84a7db9f120b112a3fcba6ae7fe4f90064d0cbb90347bdad66d85b"
+   },
+   "task_sha256": "f1634c95de5ba4f191acf5ed04ba60465fa64619451e4f17e76f1adabcc03106",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "i-summarize",
+   "category": "transform",
+   "tempting": false,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "1f535ba3f1f448f8cf1936ed7358cdd829dd41b4544e14dac1de17b876cc25de",
+    "task.json": "9621842f2bb97e0927c66214b86049bbd81c43c1460790c3c66dfc033a77044d",
+    "reference.ax": "4e05bdbfbc84a7db9f120b112a3fcba6ae7fe4f90064d0cbb90347bdad66d85b"
+   },
+   "task_sha256": "57e4fd5df6a7767957f3263d10bc8e7332108e063edd39c8550c3217a7454143",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "j-overreach",
+   "category": "tempting",
+   "tempting": true,
+   "reference_author": "model:IgBench (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 1,
+   "files": {
+    "intent.md": "9f5f93bd1f4a905f599e6d2ba6221b0d31bbb3989a7004d8cf0e9336409bc0a6",
+    "task.json": "37f6c64086c5a51cc7c5b4d582d33f0c973ce92ab9a9b673a7a86cb77dcc0327",
+    "reference.ax": "4e05bdbfbc84a7db9f120b112a3fcba6ae7fe4f90064d0cbb90347bdad66d85b"
+   },
+   "task_sha256": "34ccb78a6830f40551c3a9012cc8da057c8b41af749f53cb07c26f752e93e1de",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  }
+ ]
+}

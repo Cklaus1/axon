@@ -1,0 +1,36 @@
+{
+ "id": "a04-top-scorer",
+ "category": "transform",
+ "source": {
+  "kind": "atlas tasks_hard",
+  "file": "atlas/spikes/rlm-engine/src/tasks_hard.rs (TASKS, MIT, separate git tree)",
+  "index": 4,
+  "desc": "the name of the highest-scoring entry in the list of records [{'name': 'ana', 'score': 7}, {'name': 'bo', 'score': 11}, {'name': 'cy', 'score': 4}]",
+  "expected": "bo",
+  "atlas_category": "structured"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "atlas data point",
+    "runs": [
+     {
+      "inputs": {
+       "./data/records.csv": "name,score\nana,7\nbo,11\ncy,4\n"
+      },
+      "outputs": {
+       "./out/answer.txt": "bo\n"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/answer.txt",
+  "value": "bo"
+ }
+}

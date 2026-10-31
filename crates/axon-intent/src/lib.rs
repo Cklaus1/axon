@@ -6,15 +6,19 @@
 //! R21's job. See `governance/specs/R22-intent-approve-gateway.md`.
 //!
 //! Core logic (`intent`/`grant_infer`/`admit`/`confidence`/`approval`/
-//! `pipeline`) is pure; the LLM synthesis call is the only impure seam, behind
-//! the `Synthesizer` trait. R22 reuses R21's `Grant`/`DeclaredEffects`/gate
-//! verbatim — it does not redefine capability/admission types.
+//! `pipeline`) is pure. Programs come from the intent's fenced block, the
+//! deterministic `MockSynth`, or the check→repair loop (`genloop`, IG4) behind
+//! a `generator::Generator` — the only seam to a model. R22 reuses R21's
+//! `Grant`/`DeclaredEffects`/gate verbatim — it does not redefine
+//! capability/admission types.
 
 pub mod admit;
 pub mod approval;
 pub mod cli;
 pub mod confidence;
 pub mod emit;
+pub mod generator;
+pub mod genloop;
 pub mod grant_infer;
 pub mod intent;
 pub mod pipeline;
@@ -37,6 +41,4 @@ pub use intent::{parse as parse_intent, CapCeiling, Intent};
 pub use pipeline::compile;
 pub use pipeline::{resolve, GenMode, Resolved};
 pub use refusal::{Decision, Refusal};
-pub use synth::{
-    MockSynth, MockSynthOrReal, ProgramDraft, RealSynthesizer, SynthErr, SynthMeta, Synthesizer,
-};
+pub use synth::{MockSynth, ProgramDraft, SynthErr, SynthMeta, Synthesizer};

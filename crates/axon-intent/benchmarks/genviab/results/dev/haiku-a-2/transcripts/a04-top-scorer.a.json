@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Find the name of the highest-scoring record in ./data/records.csv. The file is CSV: a header line `name,score`, then one record per line (a name, a comma, a non-negative integer score); every line ends with a newline. Scores are distinct. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the name.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "ea85abd8131af94041b596c24a266c0e2ab1c05e208b33115fb797ccba34b6bd",
+      "candidate": "fn main() -> i64 {\n    match read_file(\"./data/records.csv\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let best_name = \"\"\n            let best_score = 0 - 1\n            for i in 1..len(lines) {\n                let line = str_trim(lines[i])\n                if len(line) > 0 {\n                    let parts = str_split(line, \",\")\n                    if len(parts) >= 2 {\n                        let name = str_trim(parts[0])\n                        match parse_int(str_trim(parts[1])) {\n                            Ok(s) => {\n                                if s > best_score {\n                                    best_name = name\n                                    best_score = s\n                                }\n                            }\n                            Err(e) => {\n                                eprintln(\"bad score: {e}\")\n                                return 1\n                            }\n                        }\n                    }\n                }\n            }\n            if best_score < 0 {\n                eprintln(\"no records\")\n                return 1\n            }\n            match write_file(\"./out/answer.txt\", best_name + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 7805,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/records.csv\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let best_name = \"\"\n            let best_score = 0 - 1\n            for i in 1..len(lines) {\n                let line = str_trim(lines[i])\n                if len(line) > 0 {\n                    let parts = str_split(line, \",\")\n                    if len(parts) >= 2 {\n                        let name = str_trim(parts[0])\n                        match parse_int(str_trim(parts[1])) {\n                            Ok(s) => {\n                                if s > best_score {\n                                    best_name = name\n                                    best_score = s\n                                }\n                            }\n                            Err(e) => {\n                                eprintln(\"bad score: {e}\")\n                                return 1\n                            }\n                        }\n                    }\n                }\n            }\n            if best_score < 0 {\n                eprintln(\"no records\")\n                return 1\n            }\n            match write_file(\"./out/answer.txt\", best_name + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 7805,
+  "tokens": null
+}

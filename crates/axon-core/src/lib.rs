@@ -4,6 +4,9 @@
 pub mod ai_routing;
 pub mod ast;
 pub mod builtins;
+/// IG2: `axon card`, the language card for model prompts, generated from
+/// `BUILTINS` like `axon reference`.
+pub mod card;
 /// R23 mint cert gate — solver-free certificate check of the kernel mint
 /// obligations, compiled in EVERY build (Z3 not required).
 pub mod cert_gate;

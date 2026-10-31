@@ -1373,7 +1373,7 @@
       },
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "Read by the supervisor/launcher that spawns the job, not by any execution engine. Bounds or configures a subprocess from outside; no engine could read it.",
-      "open": " READER (verified this pass, not inherited from the category note): axon-intent tool only (crates/axon-intent/src/synth.rs); a subprocess deadline for the synthesis tool, never read by a program."
+      "open": " READER (verified this pass, not inherited from the category note): axon-intent tool only (crates/axon-intent/src/generator.rs); the per-call deadline of a `--generator` (IG3), never read by a program."
     },
     {
       "name": "AXON_CORTEX_GENERATOR_TIMEOUT_MS",
@@ -1668,20 +1668,6 @@
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb.",
       "open": " [wasm: not-applicable -> unknown] N/A was wrong: axon-run.wasm (wasip1) runs the same interpreter and wasip1 has a process environment; the reader is not cfg-gated off wasm32. Only the BROWSER target is genuinely without an environment. Unmeasured on wasip1. [native: not-applicable -> silently-ignored] The N/A premise ('E0910-refused, or reachable only from an interpreter-only verb') is false here: native goal_run exists (codegen/builtins.rs, axon-rt goal.rs) and is not refused. Its warm start reads only the in-process store, never the persisted provenance.jsonl that native itself appends to, so AXON_GOAL_CONTINUE=1 on a native binary does not resume and says nothing. From source; unmeasured."
-    },
-    {
-      "name": "AXON_INTENT_GEN",
-      "category": "interpreter-scoped",
-      "status": "open",
-      "engines": {
-        "interpreter": "unsupported",
-        "native": "not-applicable",
-        "wasm": "not-applicable",
-        "guest": "not-applicable"
-      },
-      "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
-      "note": "Interpreter-scoped by construction: the feature it configures is either E0910-refused in codegen or reachable only from an interpreter-only verb.",
-      "open": " READER (verified this pass, not inherited from the category note): the `axon intent compile` CLI verb and axon-intent (crates/axon-core/src/main.rs, crates/axon-intent/src/cli.rs); a CLI verb, not reached by a running program. [interpreter: enforced -> unsupported] Its only effect path is #[cfg(feature = \"asi-runtime\")] (main.rs); the default build prints 'requires --features asi-runtime' and falls back to the skeleton."
     },
     {
       "name": "AXON_AI_MODEL_CHEAP",

@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    out_dir = \"./out\"\n    app_path = os.path.join(out_dir, \"app.txt\")\n    answer_path = os.path.join(out_dir, \"answer.txt\")\n\n    try:\n        os.makedirs(out_dir, exist_ok=True)\n\n        # First operation: write \"one\" (no newline), truncating the file.\n        with open(app_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n            f.write(\"one\")\n\n        # Separate append operation: append \"two\" (no newline).\n        with open(app_path, \"a\", encoding=\"utf-8\", newline=\"\") as f:\n            f.write(\"two\")\n\n        # Read the file back from disk.\n        with open(app_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n            content = f.read()\n\n        # Write the full contents followed by a single newline.\n        with open(answer_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n            f.write(content + \"\\n\")\n\n    except OSError as e:\n        print(f\"error: {e}\", file=sys.stderr)\n        return 1\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    out_dir = \"./out\"\n    app_path = os.path.join(out_dir, \"app.txt\")\n    answer_path = os.path.join(out_dir, \"answer.txt\")\n\n    try:\n        os.makedirs(out_dir, exist_ok=True)\n\n        # First operation: write \"one\" (no newline), truncating the file.\n        with open(app_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n            f.write(\"one\")\n\n        # Separate append operation: append \"two\" (no newline).\n        with open(app_path, \"a\", encoding=\"utf-8\", newline=\"\") as f:\n            f.write(\"two\")\n\n        # Read the file back from disk.\n        with open(app_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n            content = f.read()\n\n        # Write the full contents followed by a single newline.\n        with open(answer_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n            f.write(content + \"\\n\")\n\n    except OSError as e:\n        print(f\"error: {e}\", file=sys.stderr)\n        return 1\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

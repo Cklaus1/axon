@@ -71,6 +71,42 @@ approval text all read it; no second list survives.
 - Critical-path extra proof: every `BUILTINS` entry has a row in the new table (a test enumerates `BUILTINS`), and the
   existing axon-os and axon-intent acceptance suites stay green unchanged.
 
+`[REVISED: build 2026-10-31 (IgCore), anchors re-located at d7690e63; F12 a-e reproduced on d7690e63 binaries: a rc 8,
+b rc 8, c rc 5, d rc 5, e rc 5/8]`
+- The table is `axon_core::builtins::builtin_admission_axes(name) -> Option<AdmissionAxes>` (`AdmissionAxes { fs_read,
+  fs_write, net, exec, env }`), DERIVED from the per-argument table the runtime sandbox and `@[contained]` already
+  enforce (`capabilities::classify_call_paths`) plus `net` for every `AI`/`Net` effect row, so it cannot drift from
+  enforcement; the only hand-made entries are the decisions for `IO` builtins that table does not classify (console,
+  `goal_*`/`sandbox_run` -> no axis; `host_await*` -> every axis), and a test makes every such builtin a decision.
+  Program level: `capabilities::program_admission_axes_in(program, search_dirs)` (reach walk over call sites and
+  builtin values after the shared loader merges every `use` from `search_dirs`; a `use` that does not load, or any
+  `native::` / unclassifiable reach -> every axis; a bare `mod` line loads nothing, so it adds nothing - F12 b).
+  axon-os: `scan_effects_in(source, dirs)`; the job runtime passes the interpreter's own module dirs for the job
+  (`job_module_dir_sets`), Fabric's admission probe passes the run's `AXON_PATH` dirs. `builtin_effect_row` keeps its
+  single `IO` row (F12 f): the split lives in the
+  admission table, not in the type-level effect row, which the checker's effect discipline uses.
+- Fabric: admission now parses the entry, so three fixtures changed with it (not the properties they test): the
+  `attestation` no-verdict suite is a type error instead of `fn (`, `grant_authority`'s import-binding test ships a
+  pure `lib.ax` under an open grant, and `joint_bypass`'s shell-script `.ax` is refused `malformed` at admission
+  instead of failing in the interpreter (still nothing spawned).
+- The grant has no `env` axis: `env` rides on `fs_read` in `DeclaredEffects` (as before), and the approval request
+  names it ("The program uses: ... env").
+- Parse failure: `axon_os::runtime::try_scan_effects` returns `Err`; the pipeline refuses as `does-not-typecheck`. The
+  supervisor's `Runtime::declared_effects` has no refusal channel, so `scan_effects` still answers every effect there,
+  and the supervisor now records a non-parsing program as `malformed: program failed to compile` (the verdict a run
+  gives it, T44) instead of an axis denial.
+- Removed as second sources: the nine-name text scan + `calls_name` (axon-os), the text `resolved_write_targets` /
+  `is_stub_body` / `has_entry` (axon-intent), and `RealSynthesizer::typecheck`'s `axon ast review --json`
+  widen-to-everything cross-check. `axon ast review --json` gains `axes` (program) and per-fn `axes` (schema stays
+  `axon-ast-review/2`, additive).
+- Path spelling: `capabilities::normalize_path`; `path_is_under` (grants) and `path_has_prefix` (`never:` clauses, the
+  over-deny direction) both compare normalised spellings; `..` still never matches. Output matching in `confidence`
+  uses the same normalisation.
+- The mock synthesizer's under-specified stub is now an empty body (it was a `// TODO` comment, which IG0 makes
+  a non-stub).
+- Console I/O under an empty grant (`println` admitted, then refused at run time) is outside F12; owner decision
+  2026-10-31: fixed by IG4's lane in the runtime sandbox, not here.
+
 ### IG1 — Examples in the intent format (critical path)
 
 Add an optional `## Examples` section: each example is one or more **runs** (a stateful task runs the program twice,
@@ -89,6 +125,11 @@ Examples are the loop's visible acceptance check.
   rubric records "no examples" as a named deduction. `[REVISED: "top band" had no referent; confidence.rs has
   weights 40/20/20/20 and a floor of 60]`
 - Tests: parse round-trip including a two-run example; each refused path form; a fixture over the cap.
+- `[REVISED: build 2026-10-31, IgIntent]` Built as written, plus two run-line forms besides the ```` ```fixture ````
+  fence: `- input PATH: "text"` (short inline) and `- input PATH from FILE` (resolved under the intent directory).
+  A run is `#### run N` under the example's `###` header; a single-run example needs no run header. Input paths
+  must sit under an `fs_read` prefix and outputs under an `fs_write` prefix (refused otherwise, line named).
+  Parsing with files is `intent::parse_with_base`; `parse` alone refuses a `from` fixture.
 
 ### IG2 — A language card generated from the compiler `[REVISED: ReviewIGDevloop 7, ReviewIGAdversarial minor 2]`
 
@@ -110,6 +151,22 @@ Every fenced example in sections 1–2 type-checks (test). The card is determini
 every transcript and row; the benchmark pins the card **text** in its directory, because any doc edit on main
 changes the sha256. Where a table signature is looser than the checker (`len`), the card states the checker's rule.
 
+`[REVISED: build 2026-10-31 (IgCore)]`
+- Built as `axon card [--sha256]` (`crates/axon-core/src/card.rs`, verb in `main.rs`). `--sha256` prints the hex
+  sha256 of exactly the card stdout, so a transcript records the pin without hashing itself. The card is 31.5 KB
+  on this tree. It also states there are no character literals (O-RLM-10's measured `c == ' '` failure).
+- "Same generator as `axon reference`": both print `BuiltinFn::signature()` (one renderer, moved into
+  `builtins.rs`; the reference output is byte-identical apart from the new verb row).
+- Groups: the five core groups as specified, plus eight signature-only groups (json; console/time/process;
+  testing; network/database/AI; goals; uncertainty/probability incl. the refinement-only `E`/`Var`/`P`;
+  concurrency/capabilities/supervision/storage incl. `Chan::new`; systems/bare metal). The first sentence ends at
+  a `.` followed by whitespace outside backticks.
+- `AXON_REFERENCE.md` is regenerated here (listed under IG8), because `axon_reference_is_in_sync_with_the_binary`
+  fails on any new verb. The `spec/axon-for-llms.md` pointer stays with IG8.
+- The curated section states the checker's rules a generated program trips on, each probed on this tree: a line
+  that starts with an operator does not continue the previous one (E0000), `len` takes `str` (bytes) or an array,
+  `x as f64`, `ref` borrows, a builtin as a value needs a lambda.
+
 ### IG3 — A generator seam in axon-intent
 
 A `Generator` trait: `id()` and `generate(prompt) -> Result<String, GenFailure>`. `cmd:<path>` reads the prompt on
@@ -120,6 +177,10 @@ already registered, becomes that deadline instead of dying with `RealSynthesizer
 timeout var reuse from MAJOR 4]`
 
 - Test: a `cmd:` script that hangs is killed with its group at the deadline (KG2 fixture shape).
+- `[REVISED: build 2026-10-31, IgIntent]` `generate` returns `Generation { text, tokens }` (tokens when the backend
+  reports them, for the transcript); failures are `GenFailure::{TimedOut, Failed, Unavailable}`. `ai:<model>` is
+  behind a cargo feature `ai` (default builds have no network path); `cmd:` runs through axon-os
+  `run_bounded_job` (process group, deadline, threaded pipe drains, candidate capped).
 
 ### IG4 — The check→repair loop (critical path)
 
@@ -153,6 +214,19 @@ generator id, rounds, refusal classes, wall time, tokens when reported).
   `fs_write` during an example refused; 4 bad candidates → exit 5 with transcript and no program; expected outputs
   are never present in the sandbox (asserted by a candidate that lists its directory).
 - Mutation rows: accepting on a failed example; accepting with an error diagnostic; skipping step 3.
+- `[REVISED: build 2026-10-31, IgIntent]` Built in `crates/axon-intent/src/genloop.rs`. Deviations: (a) the
+  scratch directory gets each `fs_write` prefix's directory created empty before the examples run, because
+  `write_file` creates no parents (expected output *files* are never staged; asserted); (b) a sandbox `Faulted`
+  outcome whose reason is a sandbox refusal is the runtime-scope class; (c) every non-accepted end (exhausted,
+  refused twice, generator failure, infrastructure failure) is `Refusal::LowConfidence` → exit 5 with the transcript
+  and no program; (d) the lifted (fenced, author-written) program goes through the same steps 2–4
+  (`evaluate_lifted`), so an author program failing its examples is refused too; (e) the round-0/repair prompts
+  embed the card from `axon card` (IG2), whose sha256 the transcript records. The F12-shaped acceptance test
+  depends on IG0 (lane admission) and is added on the merge of `ig/core`.
+- `[REVISED: build 2026-10-31, integrator decision]` The sandbox wrapper emitted the `IO` tag only when
+  fs_read/fs_write/exec was granted, so a println-only program was admitted with an empty grant and refused at run
+  time (rc 8). Fixed in axon-os `wrap_in_sandbox`: console output and `exit` run under every grant; `env_var`
+  stays behind the fs_read axis; the filesystem stays allowlist-scoped; exec keeps its own tag (78f33d81).
 
 ### IG5 — Remove the dead paths and update every caller `[REVISED: MAJOR 4 — caller list completed]`
 
@@ -167,6 +241,10 @@ generator id, rounds, refusal classes, wall time, tokens when reported).
   `env_registry.rs:53`, `AXON_REFERENCE.md:105`, `CLAUDE.md:282,507`, `AXON-COMPLETENESS.json`,
   `scripts/build_outcome_regression.sh:169`, specs R9b/R17/R22/R33/R34/R38, ROADMAP F13 (`:566`).
 - `MockSynth` stays for the existing acceptance tests; its brace heuristic is documented as a mock-only check.
+- `[REVISED: build 2026-10-31, IgIntent]` Done (6e6d522d). Anchors at d7690e63: `CLAUDE.md:293,536`. The
+  `axon-intent-compile/1` JSON loses its `generated` field (no consumer in the tree; `stubs` stays). `--generator`
+  and `AXON_AI_MOCK` are exclusive (exit 2). `governance/cortex-v015/ENV_CONTROL_AUDIT.md` is an archived session
+  transcript and keeps the old name, like CHANGELOG history.
 
 ### IG6 — The benchmark corpus `[REVISED: ReviewIGDevloop 3 + 10 — dev/once split]`
 
@@ -197,6 +275,19 @@ duplicates; a literal-path lint on the reference. `build.py --check` skips when 
 unchanged.
 
 v1 excludes tasks whose program would call `ai_complete` or `http_*` (F10) — logged as an opportunity.
+
+- `[REVISED: build 2026-10-31, IgBench]` Built: `crates/axon-intent/benchmarks/genviab/` (`gv.py`, `build.py
+  [--check]`, `dev/`, `once/`, `rejected-ideas.json`). Dev = 15 tasks: the 12 portable atlas tasks (a04-a15),
+  `intents/summarize`, `intents/overbroad`, `jobs/overreach` (tempting). Not ported, with reasons in
+  `rejected-ideas.json`: `intents/vague` (states no output), `jobs/evasion` (no observable output),
+  `jobs/summarize` (same task as `intents/summarize`). Deviations: (a) the atlas tasks carry one human data
+  point each, used as the hidden example; they have NO visible example (inventing one is forbidden), so dev
+  numbers measure check+gates-only acceptance; (b) dev references are model-written (labelled
+  `reference_author: model:IgBench (dev only)`, integrator decision) and must reproduce the source's human
+  value (`human-value` check); (c) no dev task is `stateful` or `errors` (no source has one); the grader's
+  two-run/exit/stdout paths are covered by `selftest.py`; (d) extra checks: `# Intent` is one paragraph
+  (the loop shows only `Intent::goal`), and in `once/` `reference_author` must be `human:<name>` with ≥ 1
+  visible example. The once set is an empty scaffold; its tasks are written by a human after the PREREG.
 
 ### IG7 — The harness, the drivers and the pre-registered run `[REVISED: ReviewIGDevloop 1, 2, 4, 5, 6, 8, 9; ReviewIGAdversarial MAJOR 6, 7]`
 
@@ -262,6 +353,15 @@ the not-yet-built `axon-embed` tool schema. It is the precursor measurement and 
 R38 §4(c), recorded there before the PREREG. Results are labelled "precursor, axon-intent loop, not R38 §9"; a later
 R38-compliant measurement follows R38's protocol or a formally amended version of it.
 
+- `[REVISED: build 2026-10-31, IgBench]` Built: `genviab.py` (arms a/b/c, `report`, `verdict`, `spent`),
+  `drivers/micode-program.sh` + `micode_program_log.py` (its test is `selftest.py` against a fake `micode`, not a
+  Rust test), `drivers/oracle.sh`, `once-ledger.jsonl` guard (hash-chained, written before the first call; a
+  second score of (manifest, arm, model) is refused, one resume after 30 min), `PREREG-genviab.md` **DRAFT**.
+  Grading lifts the candidate through `axon-intent compile --transcript` (the lift path now writes an
+  `axon-intent-lift/1` report). Infrastructure rows: no transcript, `infrastructure-failed`, a generator failure
+  other than an empty or oversized reply, a served model other than the requested one. Zero-cost dry run:
+  oracle 14/14, empty 0/14 (arms a, b, c). Haiku 5.5 dev runs: see the bench README.
+
 ### IG8 — CLI, approval card and docs `[REVISED: minor 8 — approval card]`
 
 `axon-intent compile|emit <intent.md> [--generate] [--generator cmd:PATH|ai:MODEL] [--max-rounds N≤3]
@@ -271,6 +371,12 @@ points at `axon card`; R38 §9 note; CHANGELOG; completeness rows; env registry;
 
 Not in scope, logged as an opportunity: axon-web reads `ax_content` (`html.rs:266`) that `axon intent compile --json`
 never emits (`main.rs:8297-8303`).
+
+- `[REVISED: build 2026-10-31, IgBench]` Done: `spec/axon-for-llms.md` points at `axon card`; R38 §4(c)
+  deviation and §9 dated note; CHANGELOG; the approval request of a generated program names its rounds, example
+  results and every capability refused during generation (`genloop::generation_note`). Env registry and
+  completeness rows already carried `AXON_INTENT_TIMEOUT_MS` (IG3); `AXON_REFERENCE.md` is unchanged by IG (the
+  regenerated file is byte-identical).
 
 ## Step 2 — open questions resolved
 

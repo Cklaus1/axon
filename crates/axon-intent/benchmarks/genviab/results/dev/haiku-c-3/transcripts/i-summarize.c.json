@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\nSRC = \"./data/report.txt\"\nDST = \"./out/summary.txt\"\n\ntry:\n    size = os.path.getsize(SRC)\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(DST, \"w\", encoding=\"utf-8\") as f:\n        f.write(f\"report length: {size}\")\n    sys.exit(0)\nexcept Exception:\n    sys.exit(1)\n```",
+   "source": "import os\nimport sys\n\nSRC = \"./data/report.txt\"\nDST = \"./out/summary.txt\"\n\ntry:\n    size = os.path.getsize(SRC)\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(DST, \"w\", encoding=\"utf-8\") as f:\n        f.write(f\"report length: {size}\")\n    sys.exit(0)\nexcept Exception:\n    sys.exit(1)\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}
