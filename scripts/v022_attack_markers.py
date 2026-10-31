@@ -3433,3 +3433,10 @@ ATTACK_MARKERS.update({
     'M4134': r'ATTACK: [^\n]*\[min_i32\]',
     'M4135': r'ATTACK: [^\n]*\[max_i32\]',
 })
+
+# checker-soundness-3 CS3-2 (ids M3978-M3980)
+ATTACK_MARKERS.update({
+    'M3978': r'ATTACK: [^\n]*\[h24\]',
+    'M3979': r'ATTACK: [^\n]*\[w14\]',
+    'M3980': r'ATTACK: [^\n]*\[w02\]',
+})

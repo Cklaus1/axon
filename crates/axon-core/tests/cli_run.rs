@@ -38313,33 +38313,20 @@ type PureBoolCase = (
 );
 
 /// R50 S7: `Bool` operands through untyped lambda parameters. `==`/`||` on
-/// `Bool`s compute; `<` on `Bool`s, and an `if`/`while` condition that is an
-/// `Int`, decline, and the generic ops panic as the tree does (exit 101).
-/// CS2-6: `f(2, 3)` on a lambda whose body makes `a`/`b` `bool` is refused at
-/// check (E0102), so the `if`/`while` cases reach `f` through the untyped `g`.
+/// `Bool`s compute; `<` on `Bool`s declines, and the generic op panics as the
+/// tree does (exit 101). CS3-2: the `if`/`while` conditions that are an `Int`
+/// (`pure_bool_if`, `pure_bool_while`) are E0102 at check even through an
+/// untyped wrapper `g`, so their VM panics are asserted below the checker
+/// (`interp::vm::tests::vm_bool_panics_without_check`).
 #[test]
 fn vm_pure_bool_ops() {
-    let cases: [PureBoolCase; 3] = [
+    let cases: [PureBoolCase; 1] = [
         (
             "pure_bool_lt",
             "    let f = |a, b| {\n        let d = a == b || a != b\n        println(to_str(d))\n        let c = a < b && b < a\n        c\n    }\n    println(to_str(f(true, false)))",
             "true\n",
             "axon: panic: cannot apply Lt to bool / bool\n",
             (2, 0),
-        ),
-        (
-            "pure_bool_if",
-            "    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))",
-            "",
-            "axon: panic: if condition must be bool, got i64\n",
-            (1, 0),
-        ),
-        (
-            "pure_bool_while",
-            "    let f = |a, b| {\n        let n = 0\n        while a + b * a {\n            n = n + 1\n        }\n        n\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))",
-            "",
-            "axon: panic: while condition must be bool, got i64\n",
-            (1, 1),
         ),
     ];
     for (tag, body, out, err, want) in cases {
@@ -39706,12 +39693,13 @@ fn vm_superop_write_shared() {
 /// R50 §4 S8: the fused index ops keep S2's texts and order. Out-of-bounds,
 /// negative and non-`Int` indexes panic as the tree does; in `a[i] = b[j]`
 /// the value `b[j]` is read (and fails) before the target index is converted;
-/// an `i32` target index is written, an `i32` read index panics.
-/// CS2-6: `f(a, true)` on a lambda that indexes with `k` is refused at check
-/// (E0102), so `bool_index` reaches `f` through the untyped `g`.
+/// an `i32` target index is written, an `i32` read index panics. CS3-2: a
+/// `bool` index through an untyped wrapper (`g(a, true)` on `|w, j| f(w, j)`)
+/// is E0102 at check, so its VM panic is asserted below the checker
+/// (`interp::vm::tests::vm_bool_panics_without_check`).
 #[test]
 fn vm_superop_write_panics() {
-    let cases: [(&str, &str, Option<i32>, &str, &str); 12] = [
+    let cases: [(&str, &str, Option<i32>, &str, &str); 11] = [
         ("oob", "let i = 5\n    a[i] = x", Some(101), "", "index 5 out of bounds (len 2)"),
         ("neg", "let i = 0 - 1\n    a[i] = 7", Some(101), "", "negative index -1"),
         ("read_oob", "let i = 1\n    let j = 9\n    a[i] = b[j]", Some(101), "", "index 9 out of bounds (len 2)"),
@@ -39727,13 +39715,6 @@ fn vm_superop_write_panics() {
         ("write_i32", "let i: i32 = 1\n    a[i] = x\n    println(to_str(a[1]))", Some(0), "5\nend\n", ""),
         ("read_i32", "let j: i32 = 1\n    a[0] = b[j]", Some(101), "", "expected i64, got i32"),
         ("swap_oob", "swap(&mut a, 0, 3)", Some(101), "", "index 3 out of bounds (len 2)"),
-        (
-            "bool_index",
-            "let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    let g = |w, j| f(w, j)\n    println(to_str(g(a, true)[0]))",
-            Some(101),
-            "",
-            "expected i64, got bool",
-        ),
         (
             "float_index",
             "let f = |v, k| {\n        let t = v[k]\n        t\n    }\n    println(to_str(f(a, 1.5)))",
@@ -43121,4 +43102,192 @@ fn min_max_i32_truncate_their_arguments_like_abs_i32() {
     let _ = std::fs::remove_file(&m01);
     let _ = std::fs::remove_file(&m03);
     assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+// ── checker-soundness-3 lane B: CS3-2, CS3-5 row 7 ─────────────────────────
+
+/// CS3-2 (O-CS2-02, h24): a param an untyped lambda always passes on to a
+/// callee (`let g = |y| f(y)`) takes the kind that callee's param has, so a
+/// call of the wrapper is checked as a call of the callee is (E0102), also
+/// along a chain (`k = |z| g(z)`, w02) and through a local (`let t = y`,
+/// w11). The last three are the VM panic programs `vm_pure_bool_ops` and
+/// `vm_superop_write_panics` reached through `g`; their VM panics are now
+/// asserted in `interp::vm::tests::vm_bool_panics_without_check`. Each case
+/// checked rc 0 and then panicked at run (rc 101).
+#[test]
+fn wrapper_lambda_param_kind_is_checked() {
+    let attack = "ATTACK: a wrong-kind argument through an untyped wrapper lambda checked clean";
+    let main = |body: &str| format!("fn main() -> i64 {{\n{body}\n    0\n}}\n");
+    let superop = |body: &str| {
+        format!(
+            "{VM_SWAP_FN}fn main() -> i64 {{\n    let a = [1, 2]\n    let b = [3, 4]\n    let x = 5\n    \
+             {body}\n    println(\"end\")\n    0\n}}\n"
+        )
+    };
+    let cases = [
+        (
+            "h24",
+            main("  let f = |x| str_len(x)\n  let g = |y| f(y)\n  println(to_str(g(5)))"),
+            "arg 0 of a call through a fn value (expected str), found i64",
+        ),
+        (
+            "w02",
+            "fn main() {\n  let f = |x| str_len(x)\n  let g = |y| f(y)\n  let k = |z| g(z)\n  println(to_str(k(5)))\n}\n".to_string(),
+            "arg 0 of a call through a fn value (expected str), found i64",
+        ),
+        (
+            "w11",
+            "fn main() {\n  let f = |x| str_len(x)\n  let g = |y| { let t = y  f(t) }\n  println(to_str(g(5)))\n}\n".to_string(),
+            "arg 0 of a call through a fn value (expected str), found i64",
+        ),
+        (
+            "w08",
+            main("    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))"),
+            "arg 0 of a call through a fn value (expected bool), found i64",
+        ),
+        (
+            "w09",
+            main("    let a = [1, 2]\n    let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    let g = |w, j| f(w, j)\n    println(to_str(g(a, true)[0]))"),
+            "arg 1 of a call through a fn value (expected i64), found bool",
+        ),
+        (
+            "pure_bool_if",
+            main("    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))"),
+            "arg 0 of a call through a fn value (expected bool), found i64",
+        ),
+        (
+            "pure_bool_while",
+            main("    let f = |a, b| {\n        let n = 0\n        while a + b * a {\n            n = n + 1\n        }\n        n\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))"),
+            "arg 0 of a call through a fn value (expected bool), found i64",
+        ),
+        (
+            "bool_index",
+            superop("let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    let g = |w, j| f(w, j)\n    println(to_str(g(a, true)[0]))"),
+            "arg 1 of a call through a fn value (expected i64), found bool",
+        ),
+    ];
+    for (tag, src, msg) in cases {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs3w_{tag}"), &src);
+        assert!(
+            crc == Some(2) && cmsg.contains("E0102") && cmsg.contains(msg),
+            "{attack} [{tag}]: want rc 2 E0102 with {msg:?}, got rc {crc:?}: {cmsg}"
+        );
+        assert!(
+            rrc == Some(2) && rout.is_empty(),
+            "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+        );
+    }
+}
+
+/// CS3-2 false-refusal guard: wrapper lambdas that run today still check rc 0
+/// and print the same. A call that may not run derives no kind: one in an
+/// `if`/`else` branch (w05, w05b, w14), after an early `return` (x10), in a
+/// loop body that runs zero times (`loop_body`), or right of `&&`
+/// (`and_right`). A polymorphic `id` stays callable at two types (w04,
+/// `id_poly`), and a wrapper passed a value it accepts runs (w03). A lambda
+/// param shared with another lambda's (`g = |w| f(w)` over `let g = |y| 0`,
+/// two lambdas in one `if` or array) derives nothing: the lambda called need
+/// not be the one whose body makes the call (`reassigned`, `if_lambdas`,
+/// `array_lambdas`). A call in a lambda that never runs derives nothing for
+/// a captured var (`captured`). An early `return` within the call's own
+/// statement (`exit_same_stmt`) and a handler that answers an effect without
+/// `resume`, inside the wrapper (`handler_inside`) or around its call after
+/// an earlier `println` (`handler_outside`), also leave the call unrun.
+#[test]
+fn wrapper_lambda_controls_stay_legal() {
+    let attack = "ATTACK: a wrapper-lambda program that runs was refused";
+    let f = "  let f = |x| str_len(x)\n";
+    let cases = [
+        ("w03", format!("fn main() {{\n{f}  let g = |y| f(y)\n  println(to_str(g(\"abc\")))\n}}\n"), "3\n"),
+        ("w04", "fn main() {\n  let id = |x| x\n  let g = |y| id(y)\n  println(to_str(g(1)) + g(\"s\"))\n}\n".to_string(), "1s\n"),
+        (
+            "w05",
+            format!("fn main() {{\n{f}  let h = |x| x + 1\n  let g = |y, c| if c {{ f(y) }} else {{ h(y) }}\n  println(to_str(g(5, false)))\n}}\n"),
+            "6\n",
+        ),
+        (
+            "w05b",
+            format!("fn main() {{\n{f}  let h = |x| x + 1\n  let g = |y, c| if c {{ f(y) }} else {{ h(y) }}\n  println(to_str(g(5, false) + g(\"ab\", true)))\n}}\n"),
+            "8\n",
+        ),
+        (
+            "w14",
+            format!("fn main() {{\n{f}  let g = |y, c| if c {{ f(y) }} else {{ 0 }}\n  println(to_str(g(5, false)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "x10",
+            format!("fn main() {{\n{f}  let g = |y, c| {{ if c {{ return 0 }}  f(y) }}\n  println(to_str(g(5, true)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "loop_body",
+            format!("fn main() {{\n{f}  let g = |y, n| {{\n    let i = 0\n    while i < n {{\n      f(y)\n      i = i + 1\n    }}\n    0\n  }}\n  println(to_str(g(5, 0)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "and_right",
+            "fn main() {\n  let f = |x| str_len(x) > 0\n  let g = |y, c| c && f(y)\n  println(to_str(g(5, false)))\n}\n".to_string(),
+            "false\n",
+        ),
+        ("id_poly", "fn main() {\n  let id = |x| x\n  id(1)\n  println(id(\"s\"))\n}\n".to_string(), "s\n"),
+        (
+            "reassigned",
+            format!("fn main() {{\n{f}  let g = |y| 0\n  let k = |z| g(z)\n  g = |w| f(w)\n  println(to_str(k(5)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "if_lambdas",
+            format!("fn main() {{\n{f}  let c = false\n  let op = if c {{ |y| f(y) }} else {{ |y| 0 }}\n  println(to_str(op(5)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "array_lambdas",
+            format!("fn main() {{\n{f}  let ops = [|y| f(y), |y| 0]\n  println(to_str(ops[1](5)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "captured",
+            format!("fn main() {{\n  let id = |x| x\n  let a = id(5)\n{f}  let h = || f(a)\n  let m = |q| q + 1\n  println(to_str(m(a)))\n}}\n"),
+            "6\n",
+        ),
+        (
+            "exit_same_stmt",
+            format!("fn main() {{\n{f}  let g = |y, c| (if c {{ return 0 }} else {{ 1 }}) + f(y)\n  println(to_str(g(5, true)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "handler_inside",
+            format!("fn main() {{\n{f}  let g = |y| {{\n    let v = with handler {{ on IO(p) => 7 }} {{\n      println(\"x\")\n      f(y)\n    }}\n    v\n  }}\n  println(to_str(g(5)))\n}}\n"),
+            "7\n",
+        ),
+        (
+            "handler_outside",
+            format!("fn main() {{\n{f}  let g = |y| {{\n    println(\"x\")\n    f(y)\n  }}\n  let v = with handler {{ on IO(p) => 7 }} {{\n    g(5)\n  }}\n  println(to_str(v))\n}}\n"),
+            "7\n",
+        ),
+    ];
+    for (tag, src, out) in cases {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs3c_{tag}"), &src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!((rrc, rout.as_str()), (Some(0), out), "{attack} [{tag}]: {rerr}");
+    }
+}
+
+/// CS3-5 (7): `?` on an `Option` in a fn returning `Result` keeps its E0102
+/// message and gains the help that names the spelling (the help was empty).
+#[test]
+fn diagnostics_for_refused_forms_infer() {
+    let src = "fn first_char(s: str) -> Option<str> {\n    if len(s) == 0 { None } else { Some(str_slice(s, 0, 1)) }\n}\n\
+               fn two(s: str, t: str) -> Result<str, str> {\n    let a = first_char(s)?\n    Ok(a)\n}\n\
+               fn main() { match two(\"ab\", \"cd\") { Ok(x) => println(x), Err(e) => println(e) } }\n";
+    let (crc, cmsg, _, _, _) = sf6_check_and_run("cs3_g06b", src);
+    assert_eq!(crc, Some(2), "{cmsg}");
+    assert!(
+        cmsg.contains("type mismatch in ? inner type (expected Result<?1, ?2>), found Option<str>")
+            && cmsg.contains(
+                "`?` works on `Result` only - convert with `match o { Some(v) => v, None => return Err(...) }`"
+            ),
+        "[g06b] want the `? inner type` E0102 with the Option help: {cmsg}"
+    );
 }
