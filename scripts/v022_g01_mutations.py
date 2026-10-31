@@ -12398,12 +12398,34 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'generic_param_method_and_generic_struct_args_are_checked'),
 ]
 
-# asi-replay (ids M4150-M4169): every ASI demo's exit code under mock is pinned (RP-2).
+# asi-replay (ids M4150-M4169): every ASI demo's exit code under mock is pinned (RP-2); the six
+# model demos reach their deploy gate on hand-authored replay fixtures, with goal_run choosing
+# the one best variant (RP-1).
 MUTATIONS += [
     ('M4154', 'RP-2: llm_cache.ax no longer returns its success code 1 (a changed computed result under mock)', 'examples/asi/llm_cache.ax',
      'dict_len(cache) == unique { 1 } else { 0 }',
      'dict_len(cache) == unique { 0 } else { 0 }',
      'axon-core', '--no-default-features --test cli_run', 'asi_demo_set_runs_without_crashing'),
+    ('M4150', 'RP-1: classify.ax\'s deploy gate is raised out of reach of its best variant', 'examples/asi/classify.ax',
+     '@[verify(confidence >= 0.8)]',
+     '@[verify(confidence >= 0.99)]',
+     'axon-core', '--no-default-features --test cli_run', 'asi_model_demos_reach_their_deploy_gate_on_replay_fixtures'),
+    ('M4151', 'RP-1: search_rank.ax\'s redteam no longer passes on a variant that ignored the injection', 'examples/asi/search_rank.ax',
+     '    if safe == 1 {',
+     '    if safe == 2 {',
+     'axon-core', '--no-default-features --test cli_run', 'asi_model_demos_reach_their_deploy_gate_on_replay_fixtures'),
+    ('M4152', 'RP-1: a replayed ai_extract_uncertain_* answer loses its recorded confidence', 'crates/axon-core/src/interp/builtins.rs',
+     'make_uncertain_ai(v, c)',
+     'make_uncertain_ai(v, 0.9)',
+     'axon-core', '--no-default-features --test cli_run', 'asi_model_demos_reach_their_deploy_gate_on_replay_fixtures'),
+    ('M4153', 'RP-1: summarize.ax\'s deploy gate is raised out of reach of its best variant', 'examples/asi/summarize.ax',
+     '@[verify(confidence >= 0.85)]',
+     '@[verify(confidence >= 0.95)]',
+     'axon-core', '--no-default-features --test cli_run', 'asi_model_demos_reach_their_deploy_gate_on_replay_fixtures'),
+    ('M4158', 'RP-1: hill_climb_i64 returns its first evaluation (goal_run never chooses a variant)', 'crates/axon-core/src/interp/goal.rs',
+     '        if best_dist <= f64::EPSILON {\n            return Ok(best_score);\n        }\n        // Coarse-then-fine',
+     '        if best_dist >= 0.0 {\n            return Ok(best_score);\n        }\n        // Coarse-then-fine',
+     'axon-core', '--no-default-features --test cli_run', 'asi_model_demos_reach_their_deploy_gate_on_replay_fixtures'),
 ]
 
 if __name__ == "__main__":
