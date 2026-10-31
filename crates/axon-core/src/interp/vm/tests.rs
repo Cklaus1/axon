@@ -2689,7 +2689,12 @@ fn handler_completion_finishes_its_own_with_on_both_engines() {
 
 /// One `vm_bool_panics_without_check` case: tag, `main` body, panic text, and
 /// `f`'s `vm: pure` counts (`None`: not asserted).
-type BoolPanicCase = (&'static str, &'static str, &'static str, Option<(usize, usize)>);
+type BoolPanicCase = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<(usize, usize)>,
+);
 
 /// CS3-2: the VM panics of three untyped-lambda programs, below the checker.
 /// `axon check` refuses each of them now (E0102: `g` passes `x`/`j` on to `f`,

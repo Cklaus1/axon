@@ -2740,9 +2740,8 @@ impl InferCtx {
                     .collect();
                 self.all_lambda_params.extend(&own);
                 let outer_params = std::mem::replace(&mut self.lambda_params, own);
-                let entry_depth = u32::from(
-                    !matches!(body.as_ref(), Expr::Block(_)) && may_leave_early(body),
-                );
+                let entry_depth =
+                    u32::from(!matches!(body.as_ref(), Expr::Block(_)) && may_leave_early(body));
                 let outer_depth = std::mem::replace(&mut self.cond_depth, entry_depth);
                 let outer_calls = std::mem::replace(&mut self.lambda_calls, 0);
                 let body_ty = self.infer_expr(body, scope, &lambda_ret_var);

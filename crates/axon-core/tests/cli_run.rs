@@ -44223,7 +44223,11 @@ fn wrapper_lambda_controls_stay_legal() {
     for (tag, src, out) in cases {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs3c_{tag}"), &src);
         assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
-        assert_eq!((rrc, rout.as_str()), (Some(0), out), "{attack} [{tag}]: {rerr}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: {rerr}"
+        );
     }
 }
 
@@ -44330,10 +44334,22 @@ fn diagnostics_for_refused_forms_resolver() {
 fn adjacent_string_literal_is_refused() {
     let attack = "ATTACK: a string split by an inner quote checked clean";
     for (tag, src) in [
-        ("y01", "fn main() {\n    let a = 1\n    let j = \"{{\"a\"}}\"\n    println(j)\n}\n"),
-        ("x01", "fn main() {\n    let a = 1\n    let j = r\"{\"a\"}\"\n    println(j)\n}\n"),
-        ("y02", "fn main() {\n    let hi = 2\n    let j = r\"say \"hi\" now\"\n    println(j)\n}\n"),
-        ("g11", "fn main() {\n    let j = r\"{\"a\": 1}\"\n    println(j)\n}\n"),
+        (
+            "y01",
+            "fn main() {\n    let a = 1\n    let j = \"{{\"a\"}}\"\n    println(j)\n}\n",
+        ),
+        (
+            "x01",
+            "fn main() {\n    let a = 1\n    let j = r\"{\"a\"}\"\n    println(j)\n}\n",
+        ),
+        (
+            "y02",
+            "fn main() {\n    let hi = 2\n    let j = r\"say \"hi\" now\"\n    println(j)\n}\n",
+        ),
+        (
+            "g11",
+            "fn main() {\n    let j = r\"{\"a\": 1}\"\n    println(j)\n}\n",
+        ),
     ] {
         let (crc, cmsg, rrc, rout, _rerr) = sf6_check_and_run(tag, src);
         assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
@@ -44406,9 +44422,15 @@ fn module_not_found_names_the_use_line() {
         "mathutil.ax",
         "pub fn square(x: i64) -> i64 { x * x }\npub fn cube(x: i64) -> i64 { x * x * x }\n",
     );
-    let nested_main = w("n_main.ax", "use n_mid.{f}\nfn main() {\n    println(to_str(f()))\n}\n");
+    let nested_main = w(
+        "n_main.ax",
+        "use n_mid.{f}\nfn main() {\n    println(to_str(f()))\n}\n",
+    );
     let mid = w("n_mid.ax", "pub fn f() -> i64 { 1 }\nuse n_missing.{g}\n");
-    let circ_main = w("c_main.ax", "use c_a.{f}\nfn main() {\n    println(to_str(f()))\n}\n");
+    let circ_main = w(
+        "c_main.ax",
+        "use c_a.{f}\nfn main() {\n    println(to_str(f()))\n}\n",
+    );
     w("c_a.ax", "use c_b.{g}\npub fn f() -> i64 { 1 }\n");
     let cb = w("c_b.ax", "pub fn g() -> i64 { 2 }\nuse c_a.{f}\n");
     let check = |file: &std::path::Path, axon_path: Option<&std::path::Path>| {
@@ -44424,7 +44446,10 @@ fn module_not_found_names_the_use_line() {
             c.env("AXON_PATH", p).env("AXON_PATH_EXCLUSIVE", "1");
         }
         let o = c.output().unwrap();
-        (o.status.code(), String::from_utf8_lossy(&o.stderr).into_owned())
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
     };
     let find = |err: &str, code: &str| -> String {
         err.lines()
@@ -44444,7 +44469,8 @@ fn module_not_found_names_the_use_line() {
     let (rc, err) = check(&nested_main, Some(&dir));
     let d = find(&err, "E0901");
     let mid_s = mid.display().to_string();
-    if rc != Some(2) || !d.contains("\"line\":2,") || !d.contains(&format!("\"file\":\"{mid_s}\"")) {
+    if rc != Some(2) || !d.contains("\"line\":2,") || !d.contains(&format!("\"file\":\"{mid_s}\""))
+    {
         fails.push(format!("nested: rc={rc:?} {d}"));
     }
     // A cycle: the `use` that closes it, in c_b.ax line 2.
@@ -44505,13 +44531,34 @@ fn wrapper_and_direct_calls_in_a_dead_branch_agree() {
 fn a_glued_keyword_bang_or_paren_after_a_string_is_refused() {
     let attack = "ATTACK: a string split at a glued keyword, `!` or `(` checked clean";
     for (tag, src) in [
-        ("kw_true", "fn main() {\n    let t = \"flag is \"true\" now\"\n    println(t)\n}\n"),
-        ("kw_bool_tail", "fn main() {\n    let t = \"a\"true\n    println(t)\n}\n"),
-        ("kw_if", "fn main() {\n    let t = \"a\"if true { println(\"x\") }\n    println(t)\n}\n"),
-        ("kw_some", "fn main() {\n    let t = \"a\"Some(1)\n    println(t)\n}\n"),
-        ("bang", "fn main() {\n    let t = \"a\"!true\n    println(t)\n}\n"),
-        ("paren", "fn main() {\n    let t = \"a\"(1)\n    println(t)\n}\n"),
-        ("raw_kw", "fn main() {\n    let t = r\"x \"false\" y\"\n    println(t)\n}\n"),
+        (
+            "kw_true",
+            "fn main() {\n    let t = \"flag is \"true\" now\"\n    println(t)\n}\n",
+        ),
+        (
+            "kw_bool_tail",
+            "fn main() {\n    let t = \"a\"true\n    println(t)\n}\n",
+        ),
+        (
+            "kw_if",
+            "fn main() {\n    let t = \"a\"if true { println(\"x\") }\n    println(t)\n}\n",
+        ),
+        (
+            "kw_some",
+            "fn main() {\n    let t = \"a\"Some(1)\n    println(t)\n}\n",
+        ),
+        (
+            "bang",
+            "fn main() {\n    let t = \"a\"!true\n    println(t)\n}\n",
+        ),
+        (
+            "paren",
+            "fn main() {\n    let t = \"a\"(1)\n    println(t)\n}\n",
+        ),
+        (
+            "raw_kw",
+            "fn main() {\n    let t = r\"x \"false\" y\"\n    println(t)\n}\n",
+        ),
     ] {
         let (crc, cmsg, rrc, rout, _rerr) = sf6_check_and_run(tag, src);
         assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
