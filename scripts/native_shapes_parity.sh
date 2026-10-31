@@ -8,7 +8,10 @@
 #   np1_*  a tuple pattern tests every component; an int literal is compared
 #          with the subject widened by its signedness; `Ok(lit)` reads the
 #          payload at its type (NP-1; `u01` looped forever natively).
-#   np2_*  a match no arm matches panics `no match arm matched`, exit 101 (NP-2).
+#   np2_*  none left: NP-2's shapes are E0304 check refusals since CS3-1.
+#   cs3_*  covering payload matches CS3-1 accepts (c05, c16, c17, c19, c20;
+#          c18 builds no binary, O-CS3-04) and a bare `self` impl method
+#          (s03, CS3-4, prints `woof`).
 #   np3_*  a generic fn at two types / called from an impl method runs every
 #          call natively (NP-3).
 #   np4_*  `break`/`continue` reaching a fn, method or closure edge panics with
@@ -287,28 +290,34 @@ fn main() -> i64 {
   0
 }'
 
-# ── NP-2: a match no arm matches panics (exit 101) ──────────────────────────
-CASES[np2_h31]='fn f(o: Option<i64>) -> i64 {
-  match o {
-    Some(0) => 0,
-    None => 1,
-  }
+# ── NP-2: no case here. Its shapes (h31 `Some(0) => .., None => ..`, u02)
+# are E0304 check refusals since checker-soundness-3 CS3-1, so `axon run` and
+# `axon build` both stop at check; `integration_fixtures` keeps NP-2's IR
+# killer `a_match_miss_edge_panics`.
+
+# ── CS3-1: covering payload matches the usefulness walk now accepts ────────
+CASES[cs3_c05]='fn f(o: Option<bool>, n: i64) -> i64 { match (o, n) { (Some(true), _) => 1, (Some(false), _) => 2, (None, _) => 3 } }
+fn main() { println(to_str(f(Some(true), 1) + f(Some(false), 1) + f(None, 1))) }'
+CASES[cs3_c16]='fn f(r: Result<bool, str>, n: i64) -> i64 { match (r, n) { (Ok(true), _) => 1, (Ok(false), _) => 2, (Err(_), _) => 3 } }
+fn main() { println(to_str(f(Ok(true), 1) + f(Ok(false), 1) + f(Err("e"), 1))) }'
+CASES[cs3_c17]='enum E { A { b: bool }, B }
+fn f(e: E, n: i64) -> i64 { match (e, n) { (E::A { b: true }, _) => 1, (E::A { b: false }, _) => 2, (E::B, _) => 3 } }
+fn main() { println(to_str(f(E::A { b: true }, 1) + f(E::A { b: false }, 1) + f(E::B, 1))) }'
+# c18 (`Option<Option<i64>>` payload) is not here: `axon build` of any
+# `Some(Some(x))` argument fails LLVM IR verification (the call passes the
+# outer Option where `f` takes the inner one), on main77 too (O-CS3-04).
+CASES[cs3_c19]='fn f(o: Option<(bool, i64)>) -> i64 { match o { Some((true, n)) => n, Some((false, _)) => 0, None => 1 } }
+fn main() { println(to_str(f(Some((true, 4))) + f(Some((false, 1))) + f(None))) }'
+CASES[cs3_c20]='fn f(o: Option<(bool, i64)>, k: i64) -> i64 { match (o, k) { (Some((true, n)), _) => n, (Some((false, _)), _) => 0, (None, _) => 1 } }
+fn main() { println(to_str(f(Some((true, 4)), 0) + f(Some((false, 1)), 0) + f(None, 0))) }'
+
+# ── CS3-4: a bare `self` in an impl method is the impl type ────────────────
+CASES[cs3_s03]='type Dog = { n: i64 }
+trait Greet {
+    fn greet(self) -> str
 }
-fn main() -> i64 {
-  println(to_str(f(Some(5))))
-  0
-}'
-CASES[np2_u02]='fn f(o: Option<i64>) {
-  match o {
-    Some(0) => println("zero"),
-    None => println("none"),
-  }
-}
-fn main() -> i64 {
-  f(Some(5))
-  println("after")
-  0
-}'
+impl Greet for Dog { fn greet(self) -> str { "woof" } }
+fn main() { println(Dog { n: 1 }.greet()) }'
 
 # ── NP-3: generic fns at several types / from impl methods ──────────────────
 CASES[np3_d12]='fn put<V>(d: Dict<str, V>, k: str, v: V) { dict_set(d, k, v) }
