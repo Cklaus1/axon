@@ -19,6 +19,7 @@ use axon_cortex::fence::{caps_of_file, Fence, ScopePins};
 use axon_os::repair_envelope::{
     self as env, Budget, Capabilities, Check, Generator, MintKey, RepairEnvelope, Scopes, Task,
 };
+use axon_os::run_ledger as rl;
 
 const OP_KEY: &[u8] = b"nh-r1 cortex unattended test operator key";
 const WALL: Duration = Duration::from_secs(60);
@@ -61,6 +62,9 @@ struct Setup {
     ws: PathBuf,
     key: PathBuf,
     store: PathBuf,
+    /// R6 §4: the run ledger and the run-record seal key file.
+    ledger: PathBuf,
+    seal: PathBuf,
     envelope: PathBuf,
     axon: PathBuf,
 }
@@ -98,12 +102,26 @@ fn setup(name: &str) -> Setup {
     private_write(&key, format!("{vk}\n").as_bytes());
     let store = ops.join("spent");
     new_store(&store);
+    let ledger = ops.join("ledger");
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&ledger)
+            .unwrap();
+    }
+    rl::init_ledger(&ledger, euid()).unwrap();
+    let seal = ops.join("run-record.key");
+    let sk = rl::SealKey::derive(OP_KEY).unwrap().to_hex();
+    private_write(&seal, format!("{sk}\n").as_bytes());
     Setup {
         envelope: ops.join("envelope.json"),
         root,
         ws,
         key,
         store,
+        ledger,
+        seal,
         axon: axon_bin(),
     }
 }
@@ -125,6 +143,7 @@ fn envelope_for(s: &Setup) -> RepairEnvelope {
         schema: env::ENVELOPE_SCHEMA.into(),
         envelope_id: env::new_id().unwrap(),
         spent_store_id: env::store_id(&s.store, euid()).unwrap(),
+        run_ledger_id: rl::ledger_id(&s.ledger, euid()).unwrap(),
         issued_by: "op:test".into(),
         issued_unix: issued,
         expires_unix: issued + 600,
@@ -215,6 +234,10 @@ fn run_with(s: &Setup, axon: &Path, extra: &[&str], envs: &[(&str, &str)]) -> Ou
         .arg(&s.key)
         .arg("--spent-store")
         .arg(&s.store)
+        .arg("--run-ledger")
+        .arg(&s.ledger)
+        .arg("--run-record-key")
+        .arg(&s.seal)
         .arg("--json")
         .args(extra);
     for (k, v) in envs {
@@ -301,6 +324,53 @@ fn s8_an_admitted_run_spends_once_and_reports_its_authorization() {
             assert!(!n.ends_with(".approved"), "S12: {n} was written");
         }
     }
+    // R6 L2: one started and one terminal record, sealed, chained, naming
+    // this envelope; the terminal record carries the exit code and the
+    // E5 journal (the walk's restore of broken.ax among its writes).
+    let ledger = run_records(&s);
+    let kinds: Vec<String> = ledger.iter().map(|r| format!("{:?}", r.kind)).collect();
+    assert_eq!(
+        kinds,
+        ["Started", "Terminal"],
+        "ATTACK: R6 L2 an admitted run did not write its started and terminal records"
+    );
+    assert!(ledger.iter().all(|r| r.envelope_id == e.envelope_id));
+    assert!(ledger[0]
+        .pinned_tree_before
+        .as_ref()
+        .unwrap()
+        .contains_key("broken.ax"));
+    assert_eq!(
+        ledger[1].exit_code,
+        Some(i64::from(o.code)),
+        "ATTACK: R6 L2 the terminal record names another exit code\n{}",
+        o.stderr
+    );
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
+/// Every record in `s`'s run ledger, seal-checked.
+fn run_records(s: &Setup) -> Vec<rl::RunRecord> {
+    let key = rl::SealKey::derive(OP_KEY).unwrap();
+    std::fs::read_to_string(s.ledger.join(rl::LEDGER_FILE))
+        .unwrap()
+        .lines()
+        .map(|l| rl::parse_record(l, &key).expect(l).0)
+        .collect()
+}
+
+#[test]
+fn r6_a_refusal_before_consume_writes_no_record() {
+    let s = setup("norecord");
+    let mut e = envelope_for(&s);
+    e.task.symbol = "other".into();
+    mint(&s, &e);
+    let o = run(&s, &[]);
+    assert_eq!(o.code, 29, "{}", o.stderr);
+    assert!(
+        run_records(&s).is_empty(),
+        "a refused run wrote a run record"
+    );
     let _ = std::fs::remove_dir_all(&s.root);
 }
 
@@ -367,6 +437,8 @@ fn setup_clone(s: &Setup) -> Setup {
         ws: s.ws.clone(),
         key: s.key.clone(),
         store: s.store.clone(),
+        ledger: s.ledger.clone(),
+        seal: s.seal.clone(),
         envelope: s.envelope.clone(),
         axon: s.axon.clone(),
     }

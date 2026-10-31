@@ -18,6 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use axon_os::repair_envelope::{self as env, Effective, Requested, VerifiedEnvelope};
+use axon_os::run_ledger as rl;
 
 use crate::unattended::{self as un, Row};
 
@@ -36,6 +37,9 @@ pub struct Cli {
     pub envelope: Option<PathBuf>,
     pub verify_key: Option<PathBuf>,
     pub spent_store: Option<PathBuf>,
+    /// R6 §4: the run ledger directory and the run-record seal key file.
+    pub run_ledger: Option<PathBuf>,
+    pub run_record_key: Option<PathBuf>,
     pub workspace: PathBuf,
     pub file: String,
     pub symbol: String,
@@ -58,6 +62,10 @@ pub struct PhaseA {
     pub pristine: Vec<u8>,
     /// The canonical spent store.
     pub store: PathBuf,
+    /// The canonical run ledger (R6 §4), its id checked against the envelope.
+    pub ledger: PathBuf,
+    /// The run-record seal key (R6 §4): it seals records, nothing else.
+    pub seal: rl::SealKey,
     /// sha256 of the `--axon` bytes, taken before any spawn of it.
     pub checker_exe_sha256: String,
     /// The run lock (E5), held for the life of the process.
@@ -192,10 +200,14 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
     let envelope_path = need(&cli.envelope, "--envelope")?;
     let key_path = need(&cli.verify_key, "--verify-key")?;
     let store = need(&cli.spent_store, "--spent-store")?;
+    let ledger = need(&cli.run_ledger, "--run-ledger")?;
+    let seal_path = need(&cli.run_record_key, "--run-record-key")?;
     let workspace = std::fs::canonicalize(&cli.workspace)
         .map_err(|e| format!("--workspace {}: {e}", cli.workspace.display()))?;
     let store = std::fs::canonicalize(&store)
         .map_err(|e| format!("--spent-store {}: {e}", store.display()))?;
+    let ledger = std::fs::canonicalize(&ledger)
+        .map_err(|e| format!("--run-ledger {}: {e}", ledger.display()))?;
     // SAFETY: geteuid has no preconditions.
     let euid = unsafe { libc::geteuid() };
     // 2-4. parse + schema, the verify key's file, signature; 5 (part): time.
@@ -253,6 +265,28 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
             store.display()
         ));
     }
+    // R6 §4: the run ledger is checked like the spent store, disjoint from
+    // the workspace and every write scope, and is the one the envelope names.
+    if ledger.starts_with(&workspace)
+        || e.scopes.fs_write.iter().any(|p| {
+            let p = Path::new(p);
+            ledger.starts_with(p) || p.starts_with(&ledger)
+        })
+    {
+        return Err(format!(
+            "the run ledger {} is not disjoint from the workspace and the write scopes",
+            ledger.display()
+        ));
+    }
+    let ledger_id = rl::ledger_id(&ledger, euid)?;
+    if ledger_id != e.run_ledger_id {
+        return Err(format!(
+            "run ledger {} has id {ledger_id}, but the envelope records into {}",
+            ledger.display(),
+            e.run_ledger_id
+        ));
+    }
+    let seal = rl::SealKey::load(&seal_path, euid, std::slice::from_ref(&workspace))?;
     let canonical_file = workspace.join(&file);
     let pristine =
         std::fs::read(&canonical_file).map_err(|e| format!("{}: {e}", canonical_file.display()))?;
@@ -287,6 +321,8 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
         file,
         pristine,
         store,
+        ledger,
+        seal,
         checker_exe_sha256,
         lock,
         euid,
@@ -457,9 +493,198 @@ pub fn authorization_json(a: &PhaseA, b: &PhaseB) -> serde_json::Value {
     })
 }
 
+/// R6 §3 `pinned_tree_before` / `_after`: every file under the run's write
+/// prefixes (workspace-relative) and its `scopes.fs_write` pins (absolute),
+/// keyed like the E5 journal's paths (workspace-relative where possible),
+/// valued by the hex sha256 of its bytes. A symlink is never followed: its
+/// value is the sha256 of `link:<target>`. A check child's write shows as a
+/// difference that the journal does not explain.
+fn tree(workspace: &Path, roots: &[PathBuf]) -> Result<rl::Tree, String> {
+    let mut out = rl::Tree::new();
+    let mut todo: Vec<PathBuf> = roots.to_vec();
+    while let Some(p) = todo.pop() {
+        let key = rel(workspace, &p);
+        let err = |e: std::io::Error| format!("pinned tree: {key}: {e}");
+        let value = match std::fs::symlink_metadata(&p) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(err(e)),
+            Ok(m) if m.file_type().is_symlink() => {
+                let t = std::fs::read_link(&p).map_err(err)?;
+                crate::label::sha256_hex(format!("link:{}", t.to_string_lossy()).as_bytes())
+            }
+            Ok(m) if m.is_dir() => {
+                for e in std::fs::read_dir(&p).map_err(err)? {
+                    todo.push(e.map_err(err)?.path());
+                }
+                continue;
+            }
+            Ok(_) => crate::label::sha256_hex(&std::fs::read(&p).map_err(err)?),
+        };
+        out.insert(key, value);
+    }
+    Ok(out)
+}
+
+/// `p` relative to the workspace when under it, else as given.
+fn rel(workspace: &Path, p: &Path) -> String {
+    p.strip_prefix(workspace)
+        .unwrap_or(p)
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// What the terminal record needs from the run, set once its started record
+/// is written. Taken exactly once: by the main thread's exit or by the E3
+/// watchdog, whichever comes first.
+struct Recorder {
+    dir: PathBuf,
+    euid: u32,
+    key: rl::SealKey,
+    verified: VerifiedEnvelope,
+    workspace: PathBuf,
+    roots: Vec<PathBuf>,
+    budget: env::Budget,
+}
+
+static RECORDER: std::sync::Mutex<Option<Recorder>> = std::sync::Mutex::new(None);
+
+/// R6 §3 `started`: after consume, before any untrusted code runs. A failed
+/// append marks the spent envelope `.unrecorded` and refuses the run (the
+/// caller exits 29; nothing ran).
+pub fn record_started(a: &PhaseA, b: &PhaseB) -> Result<(), String> {
+    let e = &a.verified.envelope;
+    let roots: Vec<PathBuf> = a
+        .effective
+        .write_prefixes
+        .iter()
+        .map(|p| a.workspace.join(p))
+        .chain(e.scopes.fs_write.iter().map(PathBuf::from))
+        .collect();
+    let f = &a.effective;
+    let budget = env::Budget {
+        max_proposals: f.max_proposals,
+        deadline_ms: f.deadline_ms,
+        check_timeout_ms: f.check_timeout_ms,
+        candidates: f.candidates,
+        max_steps: f.max_steps,
+    };
+    let appended = tree(&a.workspace, &roots).and_then(|before| {
+        let body = rl::Body::Started(rl::Started {
+            enforcement: serde_json::Value::Array(b.rows.iter().map(Row::to_json).collect()),
+            pinned_tree_before: before,
+            budget: budget.clone(),
+        });
+        rl::append(&a.ledger, a.euid, &a.seal, &a.verified, body, now_unix())
+    });
+    match appended {
+        Ok(_) => {
+            *RECORDER.lock().unwrap_or_else(|p| p.into_inner()) = Some(Recorder {
+                dir: a.ledger.clone(),
+                euid: a.euid,
+                key: a.seal.clone(),
+                verified: a.verified.clone(),
+                workspace: a.workspace.clone(),
+                roots,
+                budget,
+            });
+            Ok(())
+        }
+        Err(why) => Err(
+            match rl::mark_unrecorded(&a.store, a.euid, &e.envelope_id, &why, now_unix()) {
+                Ok(()) => format!("the run ledger's started record could not be written: {why}"),
+                Err(m) => format!(
+                    "the run ledger's started record could not be written: {why}; \
+                     and the spent store could not mark it: {m}"
+                ),
+            },
+        ),
+    }
+}
+
+/// How a run that wrote a started record ended.
+pub struct Ending {
+    pub exit_code: i32,
+    pub outcome: String,
+    pub stopped_by: Option<String>,
+    /// `(path, graded sha256)`: exit 0 and 27 only.
+    pub accepted: Option<(String, String)>,
+    pub episode_digest: Option<String>,
+}
+
+/// R6 §3 `terminal`, over the E5 journal `writes`. A no-op when no started
+/// record was written (attended runs; refusals before consume) or the
+/// terminal record already was. A failed append is one stderr line; the
+/// exit code and verdict are unchanged.
+pub fn record_terminal(end: Ending, writes: &[crate::cas::WriteRecord]) {
+    let taken = RECORDER.lock().unwrap_or_else(|p| p.into_inner()).take();
+    let Some(r) = taken else {
+        return;
+    };
+    let writes = writes
+        .iter()
+        .map(|w| rl::WriteEntry {
+            site: w.site.label().to_string(),
+            path: rel(&r.workspace, &w.path),
+            before_sha256: w.before_sha256.clone(),
+            after_sha256: w.after_sha256.clone(),
+        })
+        .collect();
+    let appended = tree(&r.workspace, &r.roots).and_then(|after| {
+        let body = rl::Body::Terminal(rl::Terminal {
+            outcome: end.outcome,
+            exit_code: i64::from(end.exit_code),
+            stopped_by: end.stopped_by,
+            accepted: end
+                .accepted
+                .map(|(path, sha256)| rl::Accepted { path, sha256 }),
+            accepted_refusal: None,
+            writes,
+            pinned_tree_after: after,
+            episode_digest: end.episode_digest,
+            budget: r.budget,
+        });
+        rl::append(&r.dir, r.euid, &r.key, &r.verified, body, now_unix())
+    });
+    if let Err(e) = appended {
+        eprintln!(
+            "run ledger {}: the terminal record could not be written ({e}); \
+             the verdict and exit code are unaffected",
+            r.dir.display()
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pinned_tree_names_every_file_under_a_root() {
+        let d = std::env::temp_dir().join(format!("cortex-tree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("w/sub")).unwrap();
+        std::fs::write(d.join("w/sub/a"), b"1").unwrap();
+        let t = || tree(&d, &[d.join("w"), d.join("gone")]).unwrap();
+        let before = t();
+        assert_eq!(
+            before.keys().collect::<Vec<_>>(),
+            ["w/sub/a"],
+            "ATTACK: R6 a file under a pinned root is not in the pinned tree"
+        );
+        std::fs::write(d.join("w/sub/b"), b"").unwrap();
+        let added = t();
+        assert_ne!(
+            before, added,
+            "ATTACK: R6 a file a check child created is not in the pinned tree"
+        );
+        std::fs::write(d.join("w/sub/a"), b"2").unwrap();
+        assert_ne!(
+            added,
+            t(),
+            "ATTACK: R6 a file a check child rewrote is not in the pinned tree"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn check_digest_is_sha256_of_the_canonical_input() {

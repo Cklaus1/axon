@@ -12597,6 +12597,24 @@ MUTATIONS += [
      'axon-cortex', _NHT, 's6_an_envelope_for_anything_else_is_refused'),
 ]
 
+# R6 L2 (tasks/r6-ledger-spec.md §3, §7, ids M4216-M4218): started + terminal
+# run records over the E5 journal (auth.rs recorder, bin/cortex.rs calls).
+_NHC = 'crates/axon-cortex/src/bin/cortex.rs'
+MUTATIONS += [
+    ('M4216', 'R6 L2: an admitted run writes no started record', _NHC,
+     '            axon_cortex::auth::record_started(a, &b).unwrap_or_else(|why| unauthorized(&why));',
+     '            let _ = axon_cortex::auth::record_started;',
+     'axon-cortex', _NHT, 's8_an_admitted_run_spends_once_and_reports_its_authorization'),
+    ('M4217', 'R6 L2: the terminal record is never written', _NHA,
+     '    let Some(r) = taken else {',
+     '    let Some(r) = taken.filter(|_| false) else {',
+     'axon-cortex', _NHT, 's8_an_admitted_run_spends_once_and_reports_its_authorization'),
+    ('M4218', 'R6 L2: the terminal record names another exit code', _NHA,
+     '            exit_code: i64::from(end.exit_code),',
+     '            exit_code: i64::from(end.exit_code) + 1,',
+     'axon-cortex', _NHT, 's8_an_admitted_run_spends_once_and_reports_its_authorization'),
+]
+
 # NH-R1 A1 (ids M4060-M4079): the axon-approval/4 repair envelope (axon-os::repair_envelope):
 # signature, domains, time, spent store, no-widen, schema separation, intrinsic checks.
 MUTATIONS += [
