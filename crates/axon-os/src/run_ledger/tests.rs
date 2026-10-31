@@ -715,16 +715,10 @@ fn c1_envelope_mismatch() {
 /// finding. It is its own finding, whether or not the run was recorded.
 #[test]
 fn c1_an_unreadable_used_record_is_a_finding() {
-    for (case, tamper) in [
-        ("garbled", 0u8),
-        ("a directory", 1),
-        ("no digest", 2),
-    ] {
+    for (case, tamper) in [("garbled", 0u8), ("a directory", 1), ("no digest", 2)] {
         let fx = Fx::new(&format!("used-{tamper}"));
         let v = clean_run(&fx);
-        let used = fx
-            .spent
-            .join(format!("{}.used", v.envelope.envelope_id));
+        let used = fx.spent.join(format!("{}.used", v.envelope.envelope_id));
         match tamper {
             0 => std::fs::write(&used, "{not json\n").unwrap(),
             1 => {

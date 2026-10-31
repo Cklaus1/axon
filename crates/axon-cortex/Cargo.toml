@@ -34,3 +34,9 @@ ai = ["dep:axon-ai"]
 # Off by default: a build without it refuses `--unattended` (exit 29). The
 # envelope signature (ring) comes with axon-os; cl22 is already a dependency.
 unattended = ["dep:axon-os", "ai"]
+
+[dev-dependencies]
+# tests/unattended.rs signs an envelope `MintKey::sign` refuses (a relative pin,
+# security F4) to show phase A refuses it too: the same seed and signature as axon-os.
+axon-attest = { path = "../axon-attest" }
+ring = "0.17"

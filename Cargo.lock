@@ -198,12 +198,14 @@ name = "axon-cortex"
 version = "0.1.0"
 dependencies = [
  "axon-ai",
+ "axon-attest",
  "axon-canonical",
  "axon-jobctl",
  "axon-os",
  "axon-workspace-recipe",
  "hex",
  "libc",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

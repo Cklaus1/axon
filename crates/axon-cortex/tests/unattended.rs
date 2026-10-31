@@ -208,6 +208,31 @@ fn envelope_pinned(s: &Setup, pins: ScopePins) -> RepairEnvelope {
 /// Sign `e`, record it as issued in `s.store`, and write it to `s.envelope`.
 fn mint(s: &Setup, e: &RepairEnvelope) -> String {
     let text = MintKey::derive(OP_KEY).unwrap().sign(e).unwrap();
+    issue(s, e, text)
+}
+
+/// As `mint`, but signed without `MintKey::sign`'s intrinsic checks: the same
+/// seed, domain and canonical form as axon-os, for an envelope the minter
+/// refuses (a relative pin, security F4) that an attacker holding the key
+/// could still sign.
+fn mint_unvalidated(s: &Setup, e: &RepairEnvelope) -> String {
+    use ring::signature::Ed25519KeyPair;
+    let mut v = serde_json::to_value(e).unwrap();
+    v.as_object_mut().unwrap().remove("sig");
+    let mut msg = env::ENVELOPE_SIG_DOMAIN.as_bytes().to_vec();
+    msg.push(0);
+    msg.extend_from_slice(&axon_canonical::canonical_bytes(&v).unwrap());
+    let seed = axon_attest::hmac_sha256(OP_KEY, env::ENVELOPE_SEED_DOMAIN.as_bytes());
+    let kp = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
+    let sig = format!("{}{}", env::SIG_PREFIX, hex::encode(kp.sign(&msg).as_ref()));
+    v.as_object_mut()
+        .unwrap()
+        .insert("sig".into(), serde_json::Value::String(sig));
+    let text = String::from_utf8(axon_canonical::canonical_bytes(&v).unwrap()).unwrap();
+    issue(s, e, text)
+}
+
+fn issue(s: &Setup, e: &RepairEnvelope, text: String) -> String {
     env::issue(
         &s.store,
         euid(),
@@ -926,7 +951,8 @@ fn s6_a_relative_fs_pin_is_refused() {
                 net: vec![],
             },
         );
-        mint(&s, &e);
+        // The minter refuses a relative pin (axon-os validate); sign around it.
+        mint_unvalidated(&s, &e);
         let o = run(&s, &[]);
         refused_over(
             &s,
