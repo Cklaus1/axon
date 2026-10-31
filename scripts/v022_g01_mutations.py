@@ -12438,7 +12438,7 @@ MUTATIONS += [
      'axon-cortex', '--lib', 'unattended::tests::e1_pins_used_kinds_only'),
     ('M4098', 'NH-R1 E1: a used kind without a pin is admitted', _NHF,
      '                (true, true) => {\n                    return Err(format!(\n                        "E1: the pristine file uses',
-     '                (true, true) if false => {\n                    return Err(format!(\n                        "E1: the pristine file uses',
+     '                (true, true) => {\n                    continue;\n                    return Err(format!(\n                        "E1: the pristine file uses',
      'axon-cortex', '--lib', 'unattended::tests::e1_pins_used_kinds_only'),
     ('M4099', 'NH-R1 E1: a pin on an unused kind widens its deny-all', _NHF,
      '                (false, false) => {\n                    return Err(format!(',

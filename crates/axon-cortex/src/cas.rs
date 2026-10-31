@@ -434,13 +434,13 @@ mod tests {
         let mut l = Ledger::default();
         l.observe(&p, b"one");
         std::fs::write(&p, b"theirs").unwrap();
-        let e = l.write(Site::Restore, &p, b"mine").unwrap_err();
+        let got = l.write(Site::Restore, &p, b"mine");
         assert_eq!(
             std::fs::read(&p).unwrap(),
             b"theirs",
             "ATTACK: E5 a foreign edit was overwritten"
         );
-        let shown = e.to_string();
+        let shown = got.unwrap_err().to_string();
         assert!(
             shown.contains(&sha(b"one")) && shown.contains(&sha(b"theirs")),
             "{shown}"
