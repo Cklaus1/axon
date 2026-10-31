@@ -108,10 +108,10 @@ pub const RUN_RECORD_KEY: Private = Private {
     exposure: "read the key and seal forged records",
 };
 
-/// The C1 finding names (§5), each distinct. `terminal-no-started` and
-/// `envelope-mismatch` are the build's additions (see the spec's
-/// `[REVISED: build ...]` notes).
-pub const FINDINGS: [&str; 12] = [
+/// The C1 finding names (§5), each distinct. `terminal-no-started`,
+/// `envelope-mismatch` and `used-unreadable` are the build's additions (see
+/// the spec's `[REVISED: ...]` notes).
+pub const FINDINGS: [&str; 13] = [
     "consumed-no-record",
     "started-no-terminal",
     "terminal-no-started",
@@ -124,6 +124,7 @@ pub const FINDINGS: [&str; 12] = [
     "accepted-mismatch",
     "unattributed-change",
     "envelope-mismatch",
+    "used-unreadable",
 ];
 
 // ── the subkey ───────────────────────────────────────────────────────────────
@@ -1022,7 +1023,17 @@ pub fn audit(
             }
         }
     }
-    for eid in used.keys() {
+    for (eid, digest) in &used {
+        // Security F10: a `.used` record C1 cannot read skips the store-side
+        // digest check above; that is a finding of its own, never silent.
+        if digest.is_none() {
+            out.push(finding(
+                "used-unreadable",
+                None,
+                Some(eid),
+                "the spent store's .used record is unreadable or names no envelope_digest",
+            ));
+        }
         if !runs.contains_key(eid) {
             out.push(finding(
                 "consumed-no-record",

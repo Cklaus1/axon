@@ -3638,3 +3638,20 @@ ATTACK_MARKERS.update({
     'M4390': r'ATTACK: an unverifiable file in \-\-envelopes was skipped',
     'M4391': r'ATTACK: records naming a different envelope digest audited clean',
 })
+
+# NH-R1 security review fixes, crates side (ids M4450-M4461)
+_SEC_F6 = r'ATTACK: an envelope was minted with '
+ATTACK_MARKERS.update({
+    'M4450': r'ATTACK: an envelope with a relative fs_read pin "data" was minted',
+    'M4451': _SEC_F6 + r'fs_write pin \S+/spent reaching its spent store',
+    'M4452': _SEC_F6 + r'fs_write pin \S+/alias/x reaching its spent store',
+    'M4453': _SEC_F6 + r'fs_read pin \S+/spent reaching its spent store',
+    'M4454': _SEC_F6 + r'fs_read pin \S+-f6-3 reaching its spent store',
+    'M4455': _SEC_F6 + r'fs_write pin \S+/spent/x\.used reaching its spent store',
+    'M4456': r'ATTACK: the operator key was handed to the cortex preview child',
+    'M4457': _SEC_F6 + r'fs_write pin \S+/verify\.pub reaching its verify key',
+    'M4458': _SEC_F6 + r'fs_write pin \S+/record\.key reaching its run\-record key',
+    'M4459': _SEC_F6 + r'fs_write pin \S+/runs reaching its run ledger',
+    'M4460': _SEC_F6 + r'fs_write pin \S+/spent reaching its spent store',
+    'M4461': r'ATTACK: a garbled \.used record skipped the digest check with no finding',
+})

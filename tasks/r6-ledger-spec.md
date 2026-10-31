@@ -102,6 +102,7 @@ against the spent store. Each finding has a distinct name:
 | `unattributed-change` | the pinned-tree diff is not explained by `writes` |
 | `terminal-no-started` | a terminal record with no started record for its envelope `[REVISED: build 2026-10-31 (NhrCrates): added; the inverse of `started-no-terminal`]` |
 | `envelope-mismatch` | a record's `envelope_digest` differs from the supplied envelope with that id `[REVISED: build 2026-10-31 (NhrCrates): added; names the "verifies envelope_digest against the supplied envelopes" check]` |
+| `used-unreadable` | a `.used` record in the spent store is unreadable or names no `envelope_digest`, so the store-side digest check cannot run `[REVISED: security F10: such a record was skipped with no finding]` |
 
 Exit codes: 0 clean, 1 findings, 2 usage. Exit 1 is added to axon-intent's USAGE (`crates/axon-intent/src/cli.rs:24-25`).
 `[REVISED: build 2026-10-31 (NhrCrates, L3): every file in `--envelopes` must be a regular `axon-approval/4` envelope

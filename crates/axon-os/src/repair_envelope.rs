@@ -109,6 +109,7 @@ pub struct Task {
 }
 
 /// The check child's pins for every kind the pristine program uses.
+/// `fs_read`/`fs_write` entries are normalized absolute paths (security F4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scopes {
@@ -644,6 +645,17 @@ pub fn validate(e: &RepairEnvelope) -> Result<(), String> {
                     "scopes.{kind} entry {s:?} is not a normalized path"
                 ));
             }
+            // Security F4: a pin is ABSOLUTE. A relative pin would resolve
+            // against the check child's cwd (the workspace) and escape the
+            // phase-A symlink walk and policy check, which only see absolute
+            // pins.
+            if !s.starts_with('/') {
+                return Err(format!(
+                    "scopes.{kind} entry {s:?} is relative: a pin must be absolute (a \
+                     relative pin resolves against the check child's cwd and escapes the \
+                     symlink walk and policy check)"
+                ));
+            }
         }
     }
     for h in &e.scopes.net {
@@ -653,12 +665,7 @@ pub fn validate(e: &RepairEnvelope) -> Result<(), String> {
     }
     let file_abs = format!("{}/{}", t.workspace.trim_end_matches('/'), t.file);
     for s in &e.scopes.fs_write {
-        let abs = if s.starts_with('/') {
-            s.clone()
-        } else {
-            format!("{}/{s}", t.workspace.trim_end_matches('/'))
-        };
-        if abs_overlap(&abs, &file_abs) {
+        if abs_overlap(s, &file_abs) {
             return Err(format!(
                 "scopes.fs_write entry {s:?} reaches the task file {:?}: the check program may \
                  never write the code under repair",
@@ -928,6 +935,45 @@ fn abs_overlap(a: &str, b: &str) -> bool {
             .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
     };
     !norm(a) || !norm(b) || a.starts_with(b) || b.starts_with(a)
+}
+
+/// `pin` through the canonical form of its deepest existing ancestor, the
+/// rest as written.
+fn resolve_pin(pin: &Path) -> PathBuf {
+    for a in pin.ancestors() {
+        if let (Ok(c), Ok(rest)) = (std::fs::canonicalize(a), pin.strip_prefix(a)) {
+            return c.join(rest);
+        }
+    }
+    pin.to_path_buf()
+}
+
+/// Security F6: refuse when an `fs_write` pin (and, with `read_too`, an
+/// `fs_read` pin) overlaps `path`, either lying within the other,
+/// component-wise. `path` is canonical. Each pin is compared through the
+/// canonical form of its deepest existing ancestor (`resolve_pin`), so a
+/// pin through a symlink cannot hide what it reaches; a pin naming `path`
+/// lexically resolves to it as well, since `path` has no symlink.
+pub fn refuse_pin_overlap(
+    scopes: &Scopes,
+    what: &str,
+    path: &Path,
+    read_too: bool,
+) -> Result<(), String> {
+    let reads: &[String] = if read_too { &scopes.fs_read } else { &[] };
+    for (kind, list) in [("fs_write", &scopes.fs_write[..]), ("fs_read", reads)] {
+        for pin in list {
+            let resolved = resolve_pin(Path::new(pin));
+            if resolved.starts_with(path) || path.starts_with(&resolved) {
+                return Err(format!(
+                    "the {what} {} overlaps scopes.{kind} pin {pin:?}: the check program could \
+                     reach it",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -106,6 +106,11 @@ false assurance. So this spec gates unattended runs on **enforcement**, not only
 | `decision` | `"authorize-operate"`, the only value |
 | `sig` | `"axenv1:" + hex Ed25519 signature over the canonical bytes without `sig`` |
 
+`[REVISED: security F4 — a relative pin resolved against the check child's cwd and skipped the phase-A symlink walk
+and policy check]` Every `scopes.fs_read` / `scopes.fs_write` entry is a normalized **absolute** path. `validate`
+(mint and verify, `crates/axon-os/src/repair_envelope.rs`) refuses a relative one with `scopes.<kind> entry "<pin>" is
+relative: a pin must be absolute (…)`.
+
 The ranker and audit fields are dropped `[REVISED: D6, D8(b)]`:
 - with `--symbol` required, the ranker is never called (`bin/cortex.rs:900-960`);
 - unattended forces `--audit off`, since the audit "can change none of them" (`bin/cortex.rs:1173-1175`).
@@ -145,12 +150,20 @@ emits `{pinned fence, fence_sha256, target_grant, check_digest_input, check_dige
 
 It computes them with the **same functions** the runner calls at verification.
 
-`axon-intent authorize-repair … --by OP --ttl-s T --out PATH`:
-1. execs that preview;
+`axon-intent authorize-repair … --spent-store D --run-ledger L --verify-key K --run-record-key R --by OP --ttl-s T --out PATH`:
+1. execs that preview, with `AXON_APPROVAL_KEY` removed from the child's environment `[REVISED: security F12]`;
 2. refuses unless every gate row is `admit`;
 3. records the sha256 of the cortex binary it invoked;
 4. writes `<store>/<envelope_id>.issued` (§5.5);
 5. writes the envelope with `create_new`.
+
+`[REVISED: security F6 (mint side) — a pin over the spent store made a spent envelope replayable; one over a key file
+let the check child replace the verify key or read the run-record key]` Before signing, the minter refuses (exit 2)
+any `fs_write` or `fs_read` pin that overlaps (either lies within the other, component-wise) the canonical spent store,
+`--verify-key` file or `--run-record-key` file, and any `fs_write` pin overlapping the run ledger (as phase A refuses
+it). A pin is compared as written and through the canonical form of its deepest existing ancestor, so a symlinked pin
+cannot hide. Helper: `repair_envelope::refuse_pin_overlap`; message `the <what> <path> overlaps scopes.<kind> pin
+"<pin>": the check program could reach it`. The phase-A side is a cortex build item.
 
 ### 5.2 Flags in unattended mode `[REVISED: F8 — the no-widen table was a denylist]`
 

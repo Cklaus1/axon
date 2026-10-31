@@ -710,6 +710,37 @@ fn c1_envelope_mismatch() {
     );
 }
 
+/// Security F10: a `.used` record C1 cannot read (garbled, not a file, or
+/// naming no `envelope_digest`) skipped the store-side digest check with no
+/// finding. It is its own finding, whether or not the run was recorded.
+#[test]
+fn c1_an_unreadable_used_record_is_a_finding() {
+    for (case, tamper) in [
+        ("garbled", 0u8),
+        ("a directory", 1),
+        ("no digest", 2),
+    ] {
+        let fx = Fx::new(&format!("used-{tamper}"));
+        let v = clean_run(&fx);
+        let used = fx
+            .spent
+            .join(format!("{}.used", v.envelope.envelope_id));
+        match tamper {
+            0 => std::fs::write(&used, "{not json\n").unwrap(),
+            1 => {
+                std::fs::remove_file(&used).unwrap();
+                std::fs::create_dir(&used).unwrap();
+            }
+            _ => std::fs::write(&used, "{\"spent_unix\":1}\n").unwrap(),
+        }
+        assert_eq!(
+            names(&fx.audit()),
+            vec!["used-unreadable"],
+            "ATTACK: a {case} .used record skipped the digest check with no finding"
+        );
+    }
+}
+
 #[test]
 fn every_finding_name_is_distinct() {
     let set: BTreeSet<&str> = FINDINGS.iter().copied().collect();

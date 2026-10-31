@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "Relative fs pins are refused at mint and verify, the minter refuses pins reaching the spent store, keys or run ledger, the preview child no longer gets the operator key, and an unreadable .used record is now a C1 finding; each change has a test that failed before it."}
