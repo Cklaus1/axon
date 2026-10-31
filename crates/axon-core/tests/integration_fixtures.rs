@@ -2789,14 +2789,14 @@ fn npb_run_and_build(
     let axon_bin = env!("CARGO_BIN_EXE_axon");
     let file = dir.join(format!("{tag}.ax"));
     std::fs::write(&file, src).unwrap();
-    let script = match vmem_kib {
+    let shell_line = match vmem_kib {
         Some(kib) => format!("ulimit -v {kib} && exec timeout 60 \"$@\""),
         None => "exec timeout 60 \"$@\"".to_string(),
     };
     let limited = |args: &[&std::ffi::OsStr]| {
         Command::new("sh")
             .arg("-c")
-            .arg(&script)
+            .arg(&shell_line)
             .arg("sh")
             .args(args)
             .output()
