@@ -1,0 +1,4 @@
+{
+  "theme": "native parity",
+  "text": "NATIVE: arr_range over a span above i64::MAX and an arr_range or arr_repeat whose storage cannot be allocated now panic natively with the interpreter's cannot-allocate line (exit 101) instead of returning an empty array or reporting a stack overflow"
+}

@@ -1,0 +1,4 @@
+{
+  "theme": "native parity",
+  "text": "NATIVE: a break or continue that reaches a fn, impl method or closure edge now panics natively with the interpreter's text naming the source fn (exit 101) instead of running on, and a closure defined inside a loop no longer fails to build"
+}
