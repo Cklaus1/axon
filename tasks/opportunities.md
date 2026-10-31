@@ -2902,6 +2902,7 @@ Reproduced: `pow_i64(3, 40)` = -6289078614652622815 (`wrapping_pow`, `interp/bui
 Reproduced: a 100000-deep `s(n - 1)` sum panics "recursion limit exceeded (6000)". `arr_max_i64([])` panics rather
 than returning Option (GapLang a12, not re-run).
 Not built by checker-soundness-2 (out of scope, its §0); stays open and needs its own spec.
+`[CLOSED 2026-10-31 on np/int 7e4a1489: native-parity NP-7: documented; NH-2 (a), NH-3 (a)]`
 
 ### O-GAP-08 - [medium] Common forms refused, and diagnostics that misdirect
 GapLang (not re-run here): `Ok(())`, `if let`, `for (a, b) in pairs`, inherent `impl T {}`, trait default methods,
@@ -2944,6 +2945,7 @@ Found drafting docs-truth DT-2 (Step 1, DTA-2). `builtins.rs:142` and `:148` say
 `min_i32(5000000000, 6000000000)` -> `5000000000`, `max_i32(5000000000, 1)` -> `5000000000` (check 0, run 0);
 `abs_i32(5000000000)` -> `705032704` does truncate. Fix direction: decide the semantics (truncate like `abs_i32`,
 or drop the `_i32` names), then make doc, interpreter and axon-rt agree. Not fixed by docs-truth.
+`[CLOSED 2026-10-31 on np/int 7e4a1489: native-parity NP-6: interpreter truncates; M4134-M4135]`
 
 O003 re-assessed: principals are read only by the `principal_*` builtins (`kernel.rs`, `interp/builtins.rs:4196-4286`);
 no effect path consults them, so an ungated `principal_root` makes the in-language attenuation model advisory but
@@ -2959,6 +2961,7 @@ Probes are in `/var/tmp/r51-tmp/ImplAuditCS2/`. The parity scripts cover none of
 the reference, so native is wrong, and silently: a deployed binary answers differently from `axon run`. Fix
 direction: add the probes to the codegen parity fixtures first (fail-first), then fix tuple-pattern lowering in
 `codegen/`.
+`[CLOSED 2026-10-31 on np/int 7e4a1489: native-parity NP-1 (tuple matches), NP-2 (h31, h32), NP-3 (w31), NP-5 (h11); M4120-M4133, M4136]`
 
 ### O-CS2-02 - [medium] Check-then-panic shapes CS2 left open on purpose
 - An untyped wrapper lambda: `let f = |x| str_len(x); let g = |y| f(y); g(5)` checks clean and panics (h24). The
@@ -2971,3 +2974,30 @@ inside another lambda.
 ### O-CS2-03 - [low] E1209 diagnostics carry no line or column
 A refinement predicate's E1209 names only the file, both for a direct impure builtin (pre-batch) and for CS2-8's
 reach through a helper. Fix direction: carry the predicate's span (or the reached call's) into the diagnostic.
+
+## native-parity, 2026-10-31 (out of scope of tasks/native-parity-spec.md, and found while building it)
+
+### O-NP-01 - [medium] Native false refusals: 125 tracked programs fail `axon build` while `axon run` works
+S608 sweep at 77cf51fc (spec §0, §5): 113 E0910, 7 IR verification failures (`headroom/programs/{paging,semver,units}.ax`
+"Function return type does not match operand type of return inst!", `vm_match/chan.ax` "Incorrect number of arguments"), 3 E0701,
+2 compiler aborts exit 134 (`vm_depth/nest/{compile_deep,expr}.ax`). A `Result` component inside a tuple pattern (t22) fails IR
+verification. Generic shapes refused E0910: result used (g01), tuple of type params (g05), generic struct (g07), generic called from
+a generic body (g09), g10, d15; recursive generic fns (`/var/tmp/r51-tmp/NPA/r6.ax`, `r2.ax`: `cnt__unknown`). Loud, not wrong answers.
+
+### O-NP-02 - [low] Interpreter/native differences native-parity did not classify
+`fixtures/ai_extract_generic.ax`: interpreter exit 101 "value of type ai_extract is not callable", native exit 0 with output (which
+side is right needs the AI-builtin owner). `fixtures/phase24_concurrency.ax`: interpreter 101 (eager `spawn`), native hangs (timeout
+124); the documented eager-spawn limitation.
+
+### O-NP-03 - [low] NP-4 panic names the mangled symbol inside a generic fn
+A `break`/`continue` escaping a monomorphised generic fn panics natively with `... outside a loop in `put__i64``; the interpreter
+names `put`. Exit codes agree, stderr differs. Not probed by the native-parity killers or `native_shapes_parity.sh`.
+
+### O-NP-04 - [low] `escape_handler_arm` still refused natively
+`crates/axon-core/tests/fixtures/r51_s0b/escape_handler_arm.ax`: interpreter exit 101 (handler-arm escape panic), `axon build`
+refuses E0910 ("does not yet lower this effect-handler"), unchanged by NP-4. Loud refusal, not a wrong answer.
+
+### O-NP-05 - [low] NP-6 has no native integration fixture
+The spec's NP-6 "plus a native case" (`integration_fixtures` `min_max_i32_agree_natively`) was not written; native vs interpreter
+agreement on wide `min_i32`/`max_i32` is covered by `scripts/native_shapes_parity.sh` (`np6_m01`, `np6_m03`, `np6_ctl_m02`), which is
+not a g01 killer. The g01 rows M4134-M4135 are killed by the interpreter test in `cli_run`.

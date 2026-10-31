@@ -1,6 +1,6 @@
 # native-parity - DRAFT spec
 
-**Status: AUTHORIZED for build 2026-10-31 (after Step 1 review; human: "do it all" on the integrator's recommendations, NH-1..NH-3 (a)).**
+**Status: BUILT 2026-10-31 on np/int 7e4a1489 (NP-1..NP-7; authorized 2026-10-31 after Step 1 review, human: "do it all" on the integrator's recommendations, NH-1..NH-3 (a)).**
 `[REVISED: integrator 2026-10-31]` Step 0 (`emit_msg_panic`, `current_src_fn`, the `gate.sh:1207` filter) is built by lane A as its first
 commit; lane B merges it before B2. checker-soundness-3 is not drafted yet, so native-parity's `infer.rs` hunk lands first and
 checker-soundness-3 adapts to it (reverses the §6 cross-spec order).

@@ -80,7 +80,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_EQ_ALONE` | TEST-ONLY re-exec marker: a test that must run in a fresh single-test process (it forks) re-runs itself with this set to its own name, so a multi-threaded test process never forks (axon-fabric observer_service, axon-guest-init) |
 | `AXON_EQ_GIT_ENV` | TEST-ONLY re-exec marker: the git_cmd environment test runs the child in a process whose environment it controls (axon-fabric git_data) |
 | `AXON_EQ_HARDEN` | TEST-ONLY re-exec marker: the helper's harden() test runs in a fresh single-test process because it forks (axon-fabric privileged_launcher) |
-| `AXON_MAX_DEPTH` | recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it |
+| `AXON_MAX_DEPTH` | interpreter recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it. Native binaries have no depth counter; they recurse until the OS stack overflows (exit 101, "stack overflow") |
 | `AXON_ENGINE` | engine for fn bodies under `axon run`/`axon-run`/`axon test`/`axon goal`: `vm` (default; R50 bytecode engine, a body compiled on its second entry or on its first when it holds a loop that may run long, same observable behaviour) or `tree` (the reference tree-walker); any other value exits 2 before the program runs. A sealed run (`axon test --seal`, R51) executes on the tree only: unset or `tree` selects it, `vm` is refused (exit 2) |
 | `AXON_VM_TRACE` | `1`: under AXON_ENGINE=vm, print one `vm: ...` stderr line per compiled body (op and tree-fallback counts), per fallback, and `vm: defer <name>` per body whose first entry runs on the tree; never changes stdout or the exit code |
 | `AXON_VM_EAGER` | `1`: under AXON_ENGINE=vm, compile every body on its first entry instead of deferring a body with no long loop to its second entry (R50 S9); never changes stdout or the exit code |
@@ -527,10 +527,10 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `ln(x: f64) -> f64` | Natural log of `x`. `x <= 0` returns NaN (matches Rust f64::ln). UCB-style algorithms use `ln(t)` where t ≥ 1, so this is fine in practice. |
 | `log10(x: f64) -> f64` | Base-10 log of `x`. Use for human-readable scales (orders of magnitude). |
 | `max_f64(a: f64, b: f64) -> f64` | Return the larger of two `f64` values. |
-| `max_i32(a: i64, b: i64) -> i32` | Return the greater of two integers (truncated to i32 range). |
+| `max_i32(a: i64, b: i64) -> i32` | Return the greater of two integers; each argument is truncated to its low 32 bits first, like `abs_i32`. |
 | `max_i64(a: i64, b: i64) -> i64` | Return the greater of two i64 values. |
 | `min_f64(a: f64, b: f64) -> f64` | Return the smaller of two `f64` values. |
-| `min_i32(a: i64, b: i64) -> i32` | Return the lesser of two integers (truncated to i32 range). |
+| `min_i32(a: i64, b: i64) -> i32` | Return the lesser of two integers; each argument is truncated to its low 32 bits first, like `abs_i32`. |
 | `min_i64(a: i64, b: i64) -> i64` | Return the lesser of two i64 values. |
 | `now_ms() -> i64` | Return the current wall-clock time as milliseconds since the Unix epoch. |
 | `now_ns() -> i64` | Return a monotonic clock reading in nanoseconds, for timing. Never decreases and never jumps with the wall clock; the origin is unspecified (not the Unix epoch), so only the difference of two reads is meaningful. Under `AXON_CLOCK` it reads the shared virtual timeline as ns since the configured start ((virtual ms − start) × 1000000) and advances it by one tick, like `now_ms`. |
