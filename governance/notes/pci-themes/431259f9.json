@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "The pin symlink walk no longer refuses a relative pin itself; the absolute-pin check is its only refusal, so removing that check now fails its tests instead of being caught by the walk."}
