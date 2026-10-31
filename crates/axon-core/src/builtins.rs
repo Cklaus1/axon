@@ -139,13 +139,13 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "min_i32",
         params: &[("a", "i64"), ("b", "i64")],
         ret: "i32",
-        doc: "Return the lesser of two integers (truncated to i32 range).",
+        doc: "Return the lesser of two integers; each argument is truncated to its low 32 bits first, like `abs_i32`.",
     },
     BuiltinFn {
         name: "max_i32",
         params: &[("a", "i64"), ("b", "i64")],
         ret: "i32",
-        doc: "Return the greater of two integers (truncated to i32 range).",
+        doc: "Return the greater of two integers; each argument is truncated to its low 32 bits first, like `abs_i32`.",
     },
     // ── R21 — Decimal (exact fixed-point money) ──────────────────────────────
     BuiltinFn {

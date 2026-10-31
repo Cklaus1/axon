@@ -12483,5 +12483,17 @@ MUTATIONS += [
      'axon-core', '--test integration_fixtures', 'huge_arrays_panic_natively_like_the_interpreter'),
 ]
 
+# native-parity lane C, NP-6 (ids M4134-M4135)
+MUTATIONS += [
+    ('M4134', 'NP-6: the interpreter `min_i32` compares untruncated i64 arguments again (min_i32(3000000000, 1) is 1, native -1294967296)', 'crates/axon-core/src/interp/builtins.rs',
+     '                ok!(Value::Int((as_int(&args[0])? as i32).min(as_int(&args[1])? as i32) as i64));',
+     '                ok!(Value::Int(as_int(&args[0])?.min(as_int(&args[1])?)));',
+     'axon-core', '--no-default-features --test cli_run', 'min_max_i32_truncate_their_arguments_like_abs_i32'),
+    ('M4135', 'NP-6: the interpreter `max_i32` compares untruncated i64 arguments again (max_i32(3000000000, 1) is 3000000000, native 1)', 'crates/axon-core/src/interp/builtins.rs',
+     '                ok!(Value::Int((as_int(&args[0])? as i32).max(as_int(&args[1])? as i32) as i64));',
+     '                ok!(Value::Int(as_int(&args[0])?.max(as_int(&args[1])?)));',
+     'axon-core', '--no-default-features --test cli_run', 'min_max_i32_truncate_their_arguments_like_abs_i32'),
+]
+
 if __name__ == "__main__":
     main()

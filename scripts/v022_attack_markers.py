@@ -3427,3 +3427,9 @@ ATTACK_MARKERS.update({
     'M4132': r'ATTACK: [^\n]*\[r01\]',
     'M4133': r'ATTACK: [^\n]*\[r05\]',
 })
+
+# native-parity NP-6 (ids M4134-M4135)
+ATTACK_MARKERS.update({
+    'M4134': r'ATTACK: [^\n]*\[min_i32\]',
+    'M4135': r'ATTACK: [^\n]*\[max_i32\]',
+})

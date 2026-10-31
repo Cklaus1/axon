@@ -2901,11 +2901,21 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 ok!(Value::Float(as_float(&args[0])?.abs()));
             }
-            "min_i32" | "min_i64" => {
+            // `_i32` forms truncate each argument to its low 32 bits, like
+            // `abs_i32` and native's i32-typed runtime (native-parity NP-6).
+            "min_i32" => {
+                want(2)?;
+                ok!(Value::Int((as_int(&args[0])? as i32).min(as_int(&args[1])? as i32) as i64));
+            }
+            "max_i32" => {
+                want(2)?;
+                ok!(Value::Int((as_int(&args[0])? as i32).max(as_int(&args[1])? as i32) as i64));
+            }
+            "min_i64" => {
                 want(2)?;
                 ok!(Value::Int(as_int(&args[0])?.min(as_int(&args[1])?)));
             }
-            "max_i32" | "max_i64" => {
+            "max_i64" => {
                 want(2)?;
                 ok!(Value::Int(as_int(&args[0])?.max(as_int(&args[1])?)));
             }
