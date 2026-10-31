@@ -218,6 +218,15 @@ In a build without it, `--unattended` exits 29 with "built without unattended su
   A mismatch stops the walk (exit 29, restore per E5).
 - The check child's FS_WRITE pins (`scopes.fs_write`) are disjoint from the task file, its imports and the policy paths,
   checked at mint and at step 9. `write_prefixes` is cortex's authority, never the test program's.
+- `[REVISED: security F5 - built]` Neither guard existed: disjointness checked the task file and policy paths only,
+  and the closure was re-hashed once, after the witness run. Now `auth::fs_write_disjoint` takes the canonical module
+  paths of `axon imports --json` (`auth::imports_closure`, the same call at preview and at step 9), and
+  `auth::DispatchGuard::check` runs before EVERY check dispatch (`Runner::set_dispatch_guard`: the fence-conflict run,
+  the witness run and every check of the walk). A mismatch restores the found bytes through the CAS helper if this
+  run wrote the file, writes the terminal record and exits 29. "Outside the symbol span" is the pristine bytes before
+  and after `runner::symbol_body`'s span (exactly what `splice_body` keeps). S-tests
+  `s6_an_fs_write_pin_over_an_imported_module_is_refused`, `s13_an_import_changed_by_a_check_stops_the_next_dispatch`,
+  and `s13_a_checker_that_rewrites_the_entry_file_during_the_witness_run_refuses` (outside / body cases).
 
 ### 5.5 Single use `[REVISED: F7 — a fresh --spent-store re-admitted a spent envelope]`
 

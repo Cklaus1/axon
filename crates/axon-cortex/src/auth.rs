@@ -135,6 +135,19 @@ pub fn imports_digest(
     file: &str,
     wall: std::time::Duration,
 ) -> Result<String, String> {
+    imports_closure(axon, workspace, file, wall).map(|(digest, _)| digest)
+}
+
+/// [`imports_digest`], and the canonical path of every module file in the
+/// closure (security review F5: no `fs_write` pin may reach one). A module
+/// whose path does not resolve refuses: an unresolved path cannot be shown
+/// disjoint from the pins.
+pub fn imports_closure(
+    axon: &Path,
+    workspace: &Path,
+    file: &str,
+    wall: std::time::Duration,
+) -> Result<(String, Vec<PathBuf>), String> {
     let (text, code) = crate::runner::run_axon_imports(axon, &workspace.join(file), wall)
         .map_err(|e| format!("`axon imports` on {file} could not be run: {e}"))?;
     if code != Some(0) {
@@ -150,12 +163,30 @@ pub fn imports_digest(
         if v["schema"] != "axon-imports/1" {
             continue;
         }
-        return match v["imports_digest"].as_str() {
-            Some(d) if d.starts_with("axsha256:") => Ok(d.to_string()),
-            _ => Err(format!(
-                "`axon imports` on {file} printed no axsha256 digest"
-            )),
+        let digest = match v["imports_digest"].as_str() {
+            Some(d) if d.starts_with("axsha256:") => d.to_string(),
+            _ => {
+                return Err(format!(
+                    "`axon imports` on {file} printed no axsha256 digest"
+                ))
+            }
         };
+        let Some(modules) = v["modules"].as_array() else {
+            return Err(format!("`axon imports` on {file} printed no module list"));
+        };
+        let mut paths = Vec::with_capacity(modules.len());
+        for m in modules {
+            let Some(p) = m["path"].as_str() else {
+                return Err(format!(
+                    "`axon imports` on {file} printed a module with no path"
+                ));
+            };
+            paths.push(
+                std::fs::canonicalize(p)
+                    .map_err(|e| format!("the imported module {p} cannot be resolved: {e}"))?,
+            );
+        }
+        return Ok((digest, paths));
     }
     Err(format!(
         "`axon imports` on {file} printed no axon-imports/1 record"
@@ -466,7 +497,7 @@ pub fn phase_b(
             e.task.symbol, e.capabilities.target_grant
         ));
     }
-    let imports = imports_digest(axon, &a.workspace, &a.file, wall())?;
+    let (imports, modules) = imports_closure(axon, &a.workspace, &a.file, wall())?;
     if imports != e.task.imports_digest {
         return Err(format!(
             "the import closure ({imports}) is not the envelope's ({})",
@@ -480,7 +511,7 @@ pub fn phase_b(
             e.check.digest
         ));
     }
-    fs_write_disjoint(&e.scopes.fs_write, &a.workspace, &a.file)?;
+    fs_write_disjoint(&e.scopes.fs_write, &a.workspace, &a.file, &modules)?;
     // 11. consume: the last check, so a refused envelope stays unspent.
     env::consume(&a.store, a.euid, &a.verified, now_unix())?;
     Ok(PhaseB {
@@ -535,15 +566,33 @@ pub fn target_grant(
     Ok(crate::fence::StaticGrant::from_caps(symbol, &caps).to_json())
 }
 
-/// §5.4: the check child's FS_WRITE pins are disjoint from the task file and
-/// the policy paths (a pin is an absolute path prefix).
-pub fn fs_write_disjoint(fs_write: &[String], workspace: &Path, file: &str) -> Result<(), String> {
+/// §5.4: the check child's FS_WRITE pins are disjoint from the task file, the
+/// modules of its import closure (`imports`, canonical paths; security review
+/// F5) and the policy paths (a pin is an absolute path prefix).
+pub fn fs_write_disjoint(
+    fs_write: &[String],
+    workspace: &Path,
+    file: &str,
+    imports: &[PathBuf],
+) -> Result<(), String> {
     let task = workspace.join(file);
     for pin in fs_write {
         let p = Path::new(pin);
         if task.starts_with(p) || p.starts_with(&task) {
             return Err(format!(
                 "the check's fs_write pin {pin} covers the task file {file}"
+            ));
+        }
+        // The module paths are canonical; the pin is compared as given and
+        // resolved (a symlinked pin directory reaches the same files).
+        let resolved = std::fs::canonicalize(p).ok();
+        let covers = |m: &PathBuf| {
+            m.starts_with(p) || resolved.as_ref().is_some_and(|r| m.starts_with(r))
+        };
+        if let Some(m) = imports.iter().find(|m| covers(m)) {
+            return Err(format!(
+                "the check's fs_write pin {pin} covers the imported module {}",
+                m.display()
             ));
         }
         if let Ok(rel) = p.strip_prefix(workspace) {
@@ -556,6 +605,72 @@ pub fn fs_write_disjoint(fs_write: &[String], workspace: &Path, file: &str) -> R
         }
     }
     Ok(())
+}
+
+/// §5.4 / security review F5: what is re-checked before EVERY check dispatch
+/// of an unattended run (the walk's included, not only the witness run's):
+/// the task file outside the target's body is the pristine file, and the
+/// import closure is still the envelope's. A check child that rewrote an
+/// imported module or the code around the target would otherwise have every
+/// later verdict graded against its own edit.
+pub struct DispatchGuard {
+    axon: PathBuf,
+    workspace: PathBuf,
+    file: String,
+    symbol: String,
+    pristine: Vec<u8>,
+    /// The target's body in `pristine` (`runner::symbol_body`): a candidate
+    /// replaces exactly this span, so everything around it is the pristine
+    /// bytes.
+    body: (usize, usize),
+    imports_digest: String,
+    wall: std::time::Duration,
+}
+
+impl DispatchGuard {
+    pub fn new(a: &PhaseA, axon: &Path, wall: std::time::Duration) -> Result<Self, String> {
+        let symbol = a.verified.envelope.task.symbol.clone();
+        let body = std::str::from_utf8(&a.pristine)
+            .ok()
+            .and_then(|src| crate::runner::symbol_body(src, &symbol))
+            .ok_or_else(|| format!("`{symbol}` has no body in the pristine {}", a.file))?;
+        Ok(DispatchGuard {
+            axon: axon.to_path_buf(),
+            workspace: a.workspace.clone(),
+            file: a.file.clone(),
+            symbol,
+            pristine: a.pristine.clone(),
+            body,
+            imports_digest: a.verified.envelope.task.imports_digest.clone(),
+            wall,
+        })
+    }
+
+    /// `Ok` when the next check may be dispatched; otherwise why not.
+    pub fn check(&self) -> Result<(), String> {
+        let now = std::fs::read(self.workspace.join(&self.file))
+            .map_err(|e| format!("{}: {e}", self.file))?;
+        let (start, end) = self.body;
+        let (head, tail) = (&self.pristine[..start], &self.pristine[end..]);
+        if now.len() < head.len() + tail.len() || !now.starts_with(head) || !now.ends_with(tail)
+        {
+            return Err(format!(
+                "{} changed outside `{}` before a check dispatch (sha256 {} -> {})",
+                self.file,
+                self.symbol,
+                crate::label::sha256_hex(&self.pristine),
+                crate::label::sha256_hex(&now)
+            ));
+        }
+        let imports = imports_digest(&self.axon, &self.workspace, &self.file, self.wall)?;
+        if imports != self.imports_digest {
+            return Err(format!(
+                "the import closure changed before a check dispatch ({} -> {imports})",
+                self.imports_digest
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// §5.4: the bytes about to be graded still are the pristine file and the
@@ -806,11 +921,38 @@ mod tests {
     #[test]
     fn an_fs_write_pin_over_the_task_file_refuses() {
         let w = Path::new("/w");
-        assert!(fs_write_disjoint(&["/w/out".into()], w, "f.ax").is_ok());
+        assert!(fs_write_disjoint(&["/w/out".into()], w, "f.ax", &[]).is_ok());
         assert!(
-            fs_write_disjoint(&["/w".into()], w, "f.ax").is_err(),
+            fs_write_disjoint(&["/w".into()], w, "f.ax", &[]).is_err(),
             "ATTACK: NH-R1 a check fs_write pin covering the task file was admitted"
         );
-        assert!(fs_write_disjoint(&["/w/scripts".into()], w, "f.ax").is_err());
+        assert!(fs_write_disjoint(&["/w/scripts".into()], w, "f.ax", &[]).is_err());
+    }
+
+    /// Security review F5: a pin over a module of the task's import closure
+    /// refuses, as given and through a symlinked pin directory.
+    #[test]
+    fn an_fs_write_pin_over_an_imported_module_refuses() {
+        let d = std::env::temp_dir().join(format!("cortex-auth-f5-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("lib")).unwrap();
+        std::fs::write(d.join("lib/helpers.ax"), "fn inc(n: i64) -> i64 { n + 1 }\n").unwrap();
+        std::os::unix::fs::symlink(d.join("lib"), d.join("alias")).unwrap();
+        let d = std::fs::canonicalize(&d).unwrap();
+        let module = d.join("lib/helpers.ax");
+        let w = Path::new("/w");
+        let pin = |p: &Path| vec![p.to_string_lossy().into_owned()];
+        let modules = std::slice::from_ref(&module);
+        assert!(fs_write_disjoint(&pin(&d.join("out")), w, "f.ax", modules).is_ok());
+        for p in [d.join("lib"), d.clone(), module.clone(), d.join("alias")] {
+            let got = fs_write_disjoint(&pin(&p), w, "f.ax", modules);
+            assert!(
+                got.as_ref().is_err_and(|why| why.contains("covers the imported module")),
+                "ATTACK: NH-R1 security F5 an fs_write pin over an imported module was admitted: \
+                 {} {got:?}",
+                p.display()
+            );
+        }
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

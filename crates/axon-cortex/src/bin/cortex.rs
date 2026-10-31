@@ -1013,6 +1013,46 @@ fn main() {
         check_timeout,
         &fence.env,
     );
+    // NH-R1 §5.4 (security review F5): before every check dispatch - the
+    // fence-conflict and witness runs and every check of the walk - the task
+    // file outside the target's body is the pristine file and the import
+    // closure is the envelope's. A mismatch stops the run: the found bytes
+    // are put back through the CAS helper if this run wrote the file, the
+    // terminal record is written, exit 29.
+    #[cfg(feature = "unattended")]
+    if let Some(a) = &phase_a {
+        let guard = axon_cortex::auth::DispatchGuard::new(a, &checker_exe, check_timeout)
+            .unwrap_or_else(|why| unauthorized(&why));
+        let path = workspace.join(&file);
+        let found = a.pristine.clone();
+        let shown = file.clone();
+        runner.set_dispatch_guard(Box::new(move || {
+            let Err(why) = guard.check() else {
+                return;
+            };
+            let mut ledger = axon_cortex::cas::lock();
+            let restore = if !ledger.journal().iter().any(|w| w.path == path) {
+                format!("{shown} was not written")
+            } else {
+                match ledger.write(Site::Restore, &path, &found) {
+                    Ok(()) => format!("{shown} restored as found"),
+                    Err(e) => format!("{shown} not restored: {e}"),
+                }
+            };
+            axon_cortex::auth::record_terminal(
+                axon_cortex::auth::Ending {
+                    exit_code: axon_cortex::auth::EXIT_UNAUTHORIZED,
+                    outcome: "unauthorized".into(),
+                    stopped_by: None,
+                    accepted: None,
+                    episode_digest: None,
+                },
+                ledger.journal(),
+            );
+            eprintln!("unauthorized: {why}; {restore}");
+            std::process::exit(axon_cortex::auth::EXIT_UNAUTHORIZED)
+        }));
+    }
     // R1d: the pristine file under the fence. A test the fence itself makes
     // fail means the fence would refuse what the original code already does:
     // the run stops, never repairing under a fence weaker or stronger than

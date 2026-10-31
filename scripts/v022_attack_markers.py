@@ -3670,4 +3670,8 @@ ATTACK_MARKERS.update({
     'M4427': r'ATTACK: NH-R1 security F8 a watchdog armed after its deadline skipped the restore',
     'M4428': r'ATTACK: NH-R1 security F8 a check stalled before the watchdog was armed outlived the deadline',
     'M4429': r'ATTACK: NH-R1 security F8 a static child outlived the deadline before the watchdog was armed',
+    'M4430': r'ATTACK: NH-R1 security F5 an fs_write pin over an imported module ran',
+    'M4431': r'ATTACK: NH-R1 security F5 a check ran on an import closure changed by an earlier check',
+    'M4432': r'ATTACK: NH-R1 security F5 a check ran on an import closure changed by an earlier check',
+    'M4433': r'ATTACK: NH-R1 S13 a file changed during the witness run was graded \(outside\)',
 })

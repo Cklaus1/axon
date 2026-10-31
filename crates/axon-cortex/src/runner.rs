@@ -545,7 +545,14 @@ pub struct Runner {
     /// NH-R1 §5.5: the envelope an unattended run spends; it joins the
     /// episode id so every unattended run has its own.
     envelope_id: Option<String>,
+    /// NH-R1 §5.4 (security review F5): called before every check dispatch;
+    /// it returns only when the dispatch may proceed (an unattended run's
+    /// guard ends the process, exit 29, otherwise). `None`: no guard.
+    dispatch_guard: Option<DispatchHook>,
 }
+
+/// See [`Runner::set_dispatch_guard`].
+pub type DispatchHook = Box<dyn Fn() + Send + Sync>;
 
 /// R3: which hard limit of a walk ran out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -694,6 +701,7 @@ impl Runner {
             walk: WalkBudget::default(),
             static_grant: None,
             envelope_id: None,
+            dispatch_guard: None,
         }
     }
 
@@ -719,6 +727,19 @@ impl Runner {
         self.envelope_id = Some(id);
     }
 
+    /// NH-R1 §5.4 (security review F5): run `guard` before every check
+    /// dispatch from now on - the fence-conflict run, the witness run, and
+    /// every check of the walk. It returns only when the dispatch may go on.
+    pub fn set_dispatch_guard(&mut self, guard: DispatchHook) {
+        self.dispatch_guard = Some(guard);
+    }
+
+    fn before_dispatch(&self) {
+        if let Some(guard) = &self.dispatch_guard {
+            guard();
+        }
+    }
+
     /// R1d: run every test of `rel_path` through this runner's executor (the
     /// fenced one) and return `(test, kind, message)` for each failure the
     /// fence caused ([`crate::fence::fence_violation`]). Run on the PRISTINE
@@ -728,6 +749,7 @@ impl Runner {
         &self,
         rel_path: &str,
     ) -> std::io::Result<Vec<(String, String, String)>> {
+        self.before_dispatch();
         let report = self.check_executor.run_checks(&CheckRequest {
             workspace: &self.workspace,
             rel_path,
@@ -2279,6 +2301,7 @@ impl Runner {
         rel_path: &str,
         filter: Option<&str>,
     ) -> std::io::Result<(Vec<String>, Vec<String>, usize)> {
+        self.before_dispatch();
         let report = self.check_executor.run_checks(&CheckRequest {
             workspace: &self.workspace,
             rel_path,

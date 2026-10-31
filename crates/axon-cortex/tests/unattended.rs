@@ -535,6 +535,120 @@ fn setup_clone(s: &Setup) -> Setup {
     }
 }
 
+/// `s` with `broken.ax` importing module `helpers` (and using the fs, so an
+/// fs pin is a used kind). The interpreter runs from a copy at
+/// `ops/bin/axon`, so it finds the module at `ops/lib/axon/helpers.ax`
+/// (binary-relative: a check child's environment is cleared). Returns the
+/// setup, the module's canonical path and the new pristine bytes.
+fn with_module(s: &Setup) -> (Setup, PathBuf, Vec<u8>) {
+    let bin = s.root.join("ops/bin");
+    let lib = s.root.join("ops/lib/axon");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    let axon = bin.join("axon");
+    common::write_executable(&axon, std::fs::read(&s.axon).unwrap(), 0o755);
+    let module = lib.join("helpers.ax");
+    std::fs::write(&module, "fn inc(n: i64) -> i64 { n + 1 }\n").unwrap();
+    let module = std::fs::canonicalize(&module).unwrap();
+    let tail = use_fs(s);
+    let mut src = b"mod helpers\nuse helpers.{inc}\n".to_vec();
+    src.extend_from_slice(&tail);
+    std::fs::write(s.ws.join("broken.ax"), &src).unwrap();
+    let s = Setup {
+        axon: std::fs::canonicalize(&axon).unwrap(),
+        ..setup_clone(s)
+    };
+    (s, module, src)
+}
+
+/// Security review F5: the check child's `fs_write` pins are disjoint from
+/// the modules of the task's import closure, not only from the task file.
+/// A pin over `lib/` let the check child rewrite an imported module, and
+/// every later verdict was graded against the tampered import.
+#[test]
+fn s6_an_fs_write_pin_over_an_imported_module_is_refused() {
+    let s = setup("s6_modpin");
+    let (s, module, pristine) = with_module(&s);
+    let scratch = s.root.join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let scratch = std::fs::canonicalize(&scratch).unwrap();
+    let e = envelope_pinned(
+        &s,
+        ScopePins {
+            fs_read: vec![scratch.to_string_lossy().into_owned()],
+            fs_write: vec![module.parent().unwrap().to_string_lossy().into_owned()],
+            net: vec![],
+        },
+    );
+    mint(&s, &e);
+    let axon = s.axon.clone();
+    let o = run_with(&s, &axon, &[], &[]);
+    refused_over(
+        &s,
+        &o,
+        &e,
+        "covers the imported module",
+        "ATTACK: NH-R1 security F5 an fs_write pin over an imported module ran",
+        &pristine,
+    );
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
+/// Security review F5: the import closure is re-hashed before EVERY check
+/// dispatch, not only once after the witness run. Here the check child
+/// rewrites an imported module during the first check (the fence-conflict
+/// run); the next dispatch must refuse (exit 29) instead of running a check
+/// on a closure nobody verified.
+#[test]
+fn s13_an_import_changed_by_a_check_stops_the_next_dispatch() {
+    let s = setup("s13_import");
+    let (s, module, pristine) = with_module(&s);
+    let wrapper = s.root.join("ops/axon-import-rewriter");
+    let log = s.root.join("ops/test-runs");
+    common::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = test ]; then echo run >> '{l}'; [ -s '{l}.done' ] || {{ echo x > '{l}.done'; printf '// changed\\n' >> '{m}'; }}; fi\nexec '{a}' \"$@\"\n",
+            l = log.display(),
+            m = module.display(),
+            a = s.axon.display()
+        ),
+        0o755,
+    );
+    let s = Setup {
+        axon: wrapper.clone(),
+        ..setup_clone(&s)
+    };
+    let scratch = s.root.join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let scratch = std::fs::canonicalize(&scratch).unwrap().to_string_lossy().into_owned();
+    let e = envelope_pinned(
+        &s,
+        ScopePins {
+            fs_read: vec![scratch.clone()],
+            fs_write: vec![scratch],
+            net: vec![],
+        },
+    );
+    mint(&s, &e);
+    let o = run_with(&s, &wrapper, &[], &[]);
+    let runs = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        (o.code, runs.lines().count()),
+        (29, 1),
+        "ATTACK: NH-R1 security F5 a check ran on an import closure changed by an earlier check\n{}{}",
+        o.stdout,
+        o.stderr
+    );
+    assert!(
+        o.stderr.contains("the import closure changed before a check dispatch"),
+        "{}",
+        o.stderr
+    );
+    assert_eq!(std::fs::read(s.ws.join("broken.ax")).unwrap(), pristine);
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
 #[test]
 fn s5_of_concurrent_runs_exactly_one_proceeds() {
     let s = setup("race");
@@ -938,49 +1052,61 @@ fn s8_a_bad_signature_never_runs_the_checker() {
     let _ = std::fs::remove_dir_all(&s.root);
 }
 
+/// §5.4: a check child that rewrites the entry file on its first `test` run
+/// (the fence-conflict run) and then runs the real interpreter: the
+/// pristine-test TOCTOU. The envelope pins THIS wrapper's sha, so only the
+/// rewrite is out of order. Outside the target's body the next dispatch
+/// refuses (security review F5: no child runs on bytes nobody verified);
+/// inside it, the full compare right after the witness run does - both name
+/// both digests.
 #[test]
 fn s13_a_checker_that_rewrites_the_entry_file_during_the_witness_run_refuses() {
-    let s = setup("s13");
-    // The check child rewrites the entry file on its first `test` run and
-    // then runs the real interpreter: the pristine-test TOCTOU (§5.4). The
-    // envelope pins THIS wrapper's sha, so only the rewrite is out of order.
-    let wrapper = s.root.join("ops/axon-rewriter");
-    let mark = s.root.join("ops/rewrote");
-    common::write_executable(
-        &wrapper,
-        format!(
-            "#!/bin/sh\nif [ \"$1\" = test ] && [ ! -e '{m}' ]; then touch '{m}'; printf '// changed\\n' >> '{f}'; fi\nexec '{a}' \"$@\"\n",
-            m = mark.display(),
-            f = s.ws.join("broken.ax").display(),
-            a = s.axon.display()
+    let cases = [
+        (
+            "outside",
+            "printf '// changed\\n' >> '{f}'",
+            "broken.ax changed outside `double` before a check dispatch (sha256 ",
         ),
-        0o755,
-    );
-    let real = s.axon.clone();
-    let s = Setup {
-        axon: wrapper.clone(),
-        ..setup_clone(&s)
-    };
-    let e = envelope_for(&s);
-    mint(&s, &e);
-    let o = run_with(&s, &wrapper, &[], &[]);
-    let _ = real;
-    assert!(mark.exists(), "the witness run never ran");
-    assert_eq!(
-        o.code, 29,
-        "ATTACK: NH-R1 S13 a file changed during the witness run was graded\n{}{}",
-        o.stdout, o.stderr
-    );
-    // The check right after the witness run (it names both digests), not
-    // only the later walk-start compare: no child runs between them on
-    // bytes nobody verified.
-    assert!(
-        o.stderr
-            .contains("broken.ax changed after verification (sha256 "),
-        "ATTACK: NH-R1 S13 a file changed during the witness run was graded\n{}",
-        o.stderr
-    );
-    let _ = std::fs::remove_dir_all(&s.root);
+        (
+            "body",
+            "sed -i 's/n + 2/n + 3/' '{f}'",
+            "broken.ax changed after verification (sha256 ",
+        ),
+    ];
+    for (name, edit, why) in cases {
+        let s = setup(&format!("s13_{name}"));
+        let wrapper = s.root.join("ops/axon-rewriter");
+        let mark = s.root.join("ops/rewrote");
+        let edit = edit.replace("{f}", &s.ws.join("broken.ax").display().to_string());
+        common::write_executable(
+            &wrapper,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = test ] && [ ! -e '{m}' ]; then touch '{m}'; {edit}; fi\nexec '{a}' \"$@\"\n",
+                m = mark.display(),
+                a = s.axon.display()
+            ),
+            0o755,
+        );
+        let s = Setup {
+            axon: wrapper.clone(),
+            ..setup_clone(&s)
+        };
+        let e = envelope_for(&s);
+        mint(&s, &e);
+        let o = run_with(&s, &wrapper, &[], &[]);
+        assert!(mark.exists(), "{name}: the first check never ran");
+        assert_eq!(
+            o.code, 29,
+            "ATTACK: NH-R1 S13 a file changed during the witness run was graded ({name})\n{}{}",
+            o.stdout, o.stderr
+        );
+        assert!(
+            o.stderr.contains(why),
+            "ATTACK: NH-R1 S13 a file changed during the witness run was graded ({name})\n{}",
+            o.stderr
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
 }
 
 /// Security review F8: the hard deadline covers every child after phase B.

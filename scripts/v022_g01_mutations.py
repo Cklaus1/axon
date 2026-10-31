@@ -13413,6 +13413,22 @@ MUTATIONS += [
      '                .saturating_duration_since(std::time::Instant::now()),',
      '                .saturating_duration_since(std::time::Instant::now()) + check_timeout,',
      'axon-cortex', _NHT, 's10_a_static_child_stalled_before_phase_b_is_bounded_by_the_deadline'),
+    ('M4430', 'NH-R1 security F5: an fs_write pin over an imported module is admitted', _NHA,
+     '        if let Some(m) = imports.iter().find(|m| covers(m)) {',
+     '        if let Some(m) = imports.iter().find(|m| covers(m)).filter(|_| false) {',
+     'axon-cortex', _NHT, 's6_an_fs_write_pin_over_an_imported_module_is_refused'),
+    ('M4431', 'NH-R1 security F5: no guard runs before a check dispatch', 'crates/axon-cortex/src/runner.rs',
+     '        if let Some(guard) = &self.dispatch_guard {',
+     '        if let Some(guard) = self.dispatch_guard.as_ref().filter(|_| false) {',
+     'axon-cortex', _NHT, 's13_an_import_changed_by_a_check_stops_the_next_dispatch'),
+    ('M4432', 'NH-R1 security F5: the dispatch guard ignores a changed import closure', _NHA,
+     '        if imports != self.imports_digest {',
+     '        if false {',
+     'axon-cortex', _NHT, 's13_an_import_changed_by_a_check_stops_the_next_dispatch'),
+    ('M4433', 'NH-R1 security F5: the dispatch guard ignores the task file outside the target', _NHA,
+     '        if now.len() < head.len() + tail.len() || !now.starts_with(head) || !now.ends_with(tail)',
+     '        if false',
+     'axon-cortex', _NHT, 's13_a_checker_that_rewrites_the_entry_file_during_the_witness_run_refuses'),
 ]
 
 if __name__ == "__main__":
