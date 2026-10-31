@@ -3437,3 +3437,10 @@ ATTACK_MARKERS.update({
     'M4013': r'ATTACK: a program that does not compile was recorded as an axis denial',
     'M4014': r'ATTACK: a parsed program denied on an axis was not recorded as Denied',
 })
+# intent-gen IG2 (ids M4015-M4018, IgCore)
+ATTACK_MARKERS.update({
+    'M4015': r'ATTACK: a builtin is missing from the card',
+    'M4016': r'ATTACK: a core-group builtin lost its first doc sentence',
+    'M4017': r'ATTACK: a full stop inside backticks cut a card doc sentence',
+    'M4018': r'ATTACK: `axon card --sha256` is not the sha256 of the card text',
+})

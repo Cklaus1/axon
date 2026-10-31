@@ -26085,6 +26085,41 @@ fn session_jsonl_surfaces_a_refused_cell_without_ending_the_session() {
     );
 }
 
+/// IG2: `axon card` prints the language card generated from `BUILTINS` (exit 0,
+/// identical bytes on every run), and `--sha256` prints exactly the sha256 of
+/// that stdout - the value a generation transcript records.
+#[test]
+fn axon_card_is_generated_deterministic_and_pinned_by_its_sha256() {
+    let a = axon().arg("card").output().unwrap();
+    assert_eq!(a.status.code(), Some(0), "`axon card` must succeed: {a:?}");
+    let b = axon().arg("card").output().unwrap();
+    assert_eq!(
+        a.stdout, b.stdout,
+        "ATTACK: `axon card` is not deterministic"
+    );
+    let card = String::from_utf8(a.stdout.clone()).unwrap();
+    assert!(card.starts_with("# Axon language card\n"), "{card}");
+    assert!(
+        card.contains("- `append_file(path: str, content: str) -> Result<(), str>` - "),
+        "ATTACK: the card's builtin section is not generated from BUILTINS"
+    );
+    let h = axon().args(["card", "--sha256"]).output().unwrap();
+    assert_eq!(h.status.code(), Some(0), "{h:?}");
+    let hex = String::from_utf8(h.stdout).unwrap();
+    let want: String = {
+        use sha2::Digest;
+        sha2::Sha256::digest(&a.stdout)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    assert_eq!(
+        hex,
+        format!("{want}\n"),
+        "ATTACK: `axon card --sha256` is not the sha256 of the card text"
+    );
+}
+
 #[test]
 fn axon_reference_is_in_sync_with_the_binary() {
     // The documentation gate, and it is a TEST rather than a shell script on

@@ -466,6 +466,16 @@ enum Command {
         json: bool,
     },
 
+    /// IG2 - print the language card a model reads before writing Axon:
+    /// curated syntax, the program rules, and every builtin's signature from
+    /// the same table `axon reference` prints (core groups add the first doc
+    /// sentence). Deterministic: the same binary prints the same bytes.
+    Card {
+        /// Print only the lowercase hex sha256 of the card text.
+        #[arg(long)]
+        sha256: bool,
+    },
+
     /// R44 — an accumulating typed session: bind a name in one cell, read it in
     /// the next.
     ///
@@ -1147,6 +1157,7 @@ fn dispatch(command: Command) {
             show_values,
         } => cmd_replay(journal, diff, show_values),
         Command::Reference { json } => cmd_reference(json),
+        Command::Card { sha256 } => cmd_card(sha256),
         Command::Session {
             protocol,
             show_program,
@@ -5191,6 +5202,20 @@ fn parse_cell_frame(line: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// `axon card [--sha256]` (IG2): the card on stdout, or its sha256 - the value
+/// a transcript records to pin which card a model saw.
+fn cmd_card(sha256: bool) {
+    let card = axon_core::card::card();
+    if sha256 {
+        use sha2::Digest;
+        let d = sha2::Sha256::digest(card.as_bytes());
+        let hex: String = d.iter().map(|b| format!("{b:02x}")).collect();
+        println!("{hex}");
+    } else {
+        print!("{card}");
+    }
+}
+
 /// `axon reference` — the complete surface of THIS build, generated from the
 /// tables the compiler itself uses.
 ///
@@ -5371,16 +5396,9 @@ fn cmd_reference(json: bool) {
     println!("| Signature | Purpose |");
     println!("|---|---|");
     for b in &builtins {
-        let params: Vec<String> = b.params.iter().map(|(n, t)| format!("{n}: {t}")).collect();
         // Pipes would break the table; the full text is in `--json`.
         let doc = b.doc.replace('|', "\\|").replace('\n', " ");
-        println!(
-            "| `{}({}) -> {}` | {} |",
-            b.name,
-            params.join(", "),
-            b.ret,
-            doc
-        );
+        println!("| `{}` | {} |", b.signature(), doc);
     }
 }
 

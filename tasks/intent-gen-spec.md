@@ -151,6 +151,22 @@ Every fenced example in sections 1–2 type-checks (test). The card is determini
 every transcript and row; the benchmark pins the card **text** in its directory, because any doc edit on main
 changes the sha256. Where a table signature is looser than the checker (`len`), the card states the checker's rule.
 
+`[REVISED: build 2026-10-31 (IgCore)]`
+- Built as `axon card [--sha256]` (`crates/axon-core/src/card.rs`, verb in `main.rs`). `--sha256` prints the hex
+  sha256 of exactly the card stdout, so a transcript records the pin without hashing itself. The card is 31.5 KB
+  on this tree. It also states there are no character literals (O-RLM-10's measured `c == ' '` failure).
+- "Same generator as `axon reference`": both print `BuiltinFn::signature()` (one renderer, moved into
+  `builtins.rs`; the reference output is byte-identical apart from the new verb row).
+- Groups: the five core groups as specified, plus eight signature-only groups (json; console/time/process;
+  testing; network/database/AI; goals; uncertainty/probability incl. the refinement-only `E`/`Var`/`P`;
+  concurrency/capabilities/supervision/storage incl. `Chan::new`; systems/bare metal). The first sentence ends at
+  a `.` followed by whitespace outside backticks.
+- `AXON_REFERENCE.md` is regenerated here (listed under IG8), because `axon_reference_is_in_sync_with_the_binary`
+  fails on any new verb. The `spec/axon-for-llms.md` pointer stays with IG8.
+- The curated section states the checker's rules a generated program trips on, each probed on this tree: a line
+  that starts with an operator does not continue the previous one (E0000), `len` takes `str` (bytes) or an array,
+  `x as f64`, `ref` borrows, a builtin as a value needs a lambda.
+
 ### IG3 — A generator seam in axon-intent
 
 A `Generator` trait: `id()` and `generate(prompt) -> Result<String, GenFailure>`. `cmd:<path>` reads the prompt on
