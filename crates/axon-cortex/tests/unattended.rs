@@ -67,6 +67,9 @@ struct Setup {
     seal: PathBuf,
     envelope: PathBuf,
     axon: PathBuf,
+    /// Security review F1: the host opt-in file's content, copied to
+    /// `/etc/axon/unattended-repair` inside the run's private mount namespace.
+    opt_in: PathBuf,
 }
 
 fn private_write(path: &Path, bytes: &[u8]) {
@@ -114,6 +117,8 @@ fn setup(name: &str) -> Setup {
     let seal = ops.join("run-record.key");
     let sk = rl::SealKey::derive(OP_KEY).unwrap().to_hex();
     private_write(&seal, format!("{sk}\n").as_bytes());
+    let opt_in = ops.join("opt-in");
+    std::fs::write(&opt_in, "decision: governance/decisions/nh-r1-test-enable.md\n").unwrap();
     Setup {
         envelope: ops.join("envelope.json"),
         root,
@@ -123,6 +128,7 @@ fn setup(name: &str) -> Setup {
         ledger,
         seal,
         axon: axon_bin(),
+        opt_in,
     }
 }
 
@@ -208,10 +214,62 @@ struct Out {
     stderr: String,
 }
 
+/// How the host opt-in file (security review F1) looks for one run: its
+/// content file (`None`: no opt-in file), mode and owner.
+struct OptIn<'a> {
+    src: Option<&'a Path>,
+    mode: &'a str,
+    owner: &'a str,
+}
+
+impl Setup {
+    /// The opt-in a host that agreed has: owned by the running uid (root
+    /// here), mode 0600, naming the decision record.
+    fn opted_in(&self) -> OptIn<'_> {
+        OptIn {
+            src: Some(&self.opt_in),
+            mode: "0600",
+            owner: "0",
+        }
+    }
+}
+
 /// `cortex repair --unattended` over `s`, with `extra` arguments and `envs`
 /// on top of a clean environment.
 fn run_with(s: &Setup, axon: &Path, extra: &[&str], envs: &[(&str, &str)]) -> Out {
-    let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_cortex"));
+    run_full(s, axon, extra, envs, &s.opted_in(), None)
+}
+
+/// [`run_with`], with the host opt-in `opt` and the working directory `cwd`.
+/// The run is in a private mount namespace whose `/etc/axon` is an empty
+/// tmpfs holding only the opt-in file `opt` describes: the host's `/etc` is
+/// never written or read (the freeze tests' pattern; needs root).
+fn run_full(
+    s: &Setup,
+    axon: &Path,
+    extra: &[&str],
+    envs: &[(&str, &str)],
+    opt: &OptIn,
+    cwd: Option<&Path>,
+) -> Out {
+    assert!(
+        euid() == 0 && Path::new("/etc/axon").is_dir(),
+        "setup: the unattended tests need root and an /etc/axon mount point (a private mount \
+         namespace holds the host opt-in file; /etc is never written)"
+    );
+    let none = s.root.join("no-opt-in");
+    let mut c = std::process::Command::new("unshare");
+    c.args(["-m", "--propagation", "private", "sh", "-c"])
+        .arg(
+            "set -e; mount -t tmpfs -o mode=0755 tmpfs /etc/axon; o=/etc/axon/unattended-repair; \
+             if [ -d \"$1\" ]; then mkdir -m 0700 \"$o\"; \
+             elif [ -e \"$1\" ]; then cp \"$1\" \"$o\"; chown \"$3\" \"$o\"; chmod \"$2\" \"$o\"; fi; \
+             shift 3; exec \"$@\"",
+        )
+        .arg("sh")
+        .arg(opt.src.unwrap_or(&none))
+        .args([opt.mode, opt.owner])
+        .arg(env!("CARGO_BIN_EXE_cortex"));
     c.env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("AXON_AI_PROVIDER", "anthropic")
@@ -240,6 +298,9 @@ fn run_with(s: &Setup, axon: &Path, extra: &[&str], envs: &[(&str, &str)]) -> Ou
         .arg(&s.seal)
         .arg("--json")
         .args(extra);
+    if let Some(d) = cwd {
+        c.current_dir(d);
+    }
     for (k, v) in envs {
         c.env(k, v);
     }
@@ -313,6 +374,11 @@ fn s8_an_admitted_run_spends_once_and_reports_its_authorization() {
     assert_eq!(a["schema"], env::ENVELOPE_SCHEMA);
     assert_eq!(a["envelope_id"], e.envelope_id.as_str());
     assert_eq!(a["issued_by"], "op:test");
+    // Security F1: the record names the host opt-in's decision record.
+    assert_eq!(
+        a["host_opt_in"]["decision"], "governance/decisions/nh-r1-test-enable.md",
+        "{a}"
+    );
     let rows = a["enforcement"].as_array().unwrap();
     assert!(rows.iter().all(|r| r["status"] == "admit"), "{rows:?}");
     // S12 (§5.7): acceptance is not approval - no `/3` token, no
@@ -441,6 +507,7 @@ fn setup_clone(s: &Setup) -> Setup {
         seal: s.seal.clone(),
         envelope: s.envelope.clone(),
         axon: s.axon.clone(),
+        opt_in: s.opt_in.clone(),
     }
 }
 
@@ -595,6 +662,54 @@ fn s6_a_cortex_env_selector_is_refused() {
         );
         let _ = std::fs::remove_dir_all(&s.root);
     }
+}
+
+/// Security review F1 / §10 Q3: a host runs unattended only after it opted
+/// in. Without `/etc/axon/unattended-repair` - or with one another uid owns,
+/// one group/other can read or write, a directory in its place, or one
+/// naming no decision record - phase A refuses (exit 29) and nothing is
+/// spent. A feature build copied to another host does not run.
+#[test]
+fn s14_a_host_that_did_not_opt_in_refuses() {
+    let s = setup("s14_optin");
+    let content = |name: &str, text: &str| {
+        let p = s.root.join("ops").join(name);
+        std::fs::write(&p, text).unwrap();
+        p
+    };
+    let no_decision = content("opt-in-none", "# this host agrees\n");
+    let other_line = content("opt-in-other", "enabled\ndecision: d.md\n");
+    let two = content("opt-in-two", "decision: a.md\ndecision: b.md\n");
+    let dir = s.root.join("ops/opt-in-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    fn file(src: &Path) -> OptIn<'_> {
+        OptIn { src: Some(src), mode: "0600", owner: "0" }
+    }
+    let cases: [(&str, OptIn); 7] = [
+        ("no opt-in file", OptIn { src: None, mode: "0600", owner: "0" }),
+        ("an opt-in of mode 0640", OptIn { src: Some(&s.opt_in), mode: "0640", owner: "0" }),
+        ("an opt-in owned by uid 1", OptIn { src: Some(&s.opt_in), mode: "0600", owner: "1" }),
+        ("a directory as its opt-in", OptIn { src: Some(&dir), mode: "0700", owner: "0" }),
+        ("an opt-in naming no decision record", file(&no_decision)),
+        ("an opt-in holding a line that is not its decision", file(&other_line)),
+        ("an opt-in naming two decision records", file(&two)),
+    ];
+    for (what, opt) in cases {
+        let e = envelope_for(&s);
+        for r in records(&s) {
+            std::fs::remove_file(s.store.join(r)).unwrap();
+        }
+        mint(&s, &e);
+        let o = run_full(&s, &s.axon, &[], &[], &opt, None);
+        refused(
+            &s,
+            &o,
+            &e,
+            "this host has not opted in to unattended repair",
+            &format!("ATTACK: NH-R1 security F1 a host with {what} ran unattended"),
+        );
+    }
+    let _ = std::fs::remove_dir_all(&s.root);
 }
 
 #[test]

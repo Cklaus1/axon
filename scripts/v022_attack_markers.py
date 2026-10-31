@@ -3647,4 +3647,10 @@ ATTACK_MARKERS.update({
     'M4403': r"ATTACK: E3 a FIFO in the target's place stalled a CAS read",
     'M4404': r"ATTACK: E3 a FIFO in the target's place stalled a CAS read",
     'M4405': r'ATTACK: E5 a file created between the re\-hash and the rename was clobbered',
+    'M4406': r'ATTACK: NH-R1 security F1 a host with no opt-in file ran unattended',
+    'M4407': r'ATTACK: NH-R1 security F1 a host with an opt-in owned by uid 1 ran unattended',
+    'M4408': r'ATTACK: NH-R1 security F1 a host with an opt-in of mode 0640 ran unattended',
+    'M4409': r'ATTACK: NH-R1 security F1 a host with an opt-in naming no decision record ran unattended',
+    'M4410': r'ATTACK: NH-R1 security F1 a host with an opt-in holding a line that is not its decision ran unattended',
+    'M4411': r'ATTACK: NH-R1 security F1 a host with an opt-in naming two decision records ran unattended',
 })

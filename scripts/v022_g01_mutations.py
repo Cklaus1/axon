@@ -13312,6 +13312,34 @@ MUTATIONS += [
      '            0\n        };',
      'axon-cortex', '--lib', 'cas::tests::a_file_created_in_the_window_is_not_clobbered'),
 ]
+_NS14 = 's14_a_host_that_did_not_opt_in_refuses'
+MUTATIONS += [
+    ('M4406', 'NH-R1 security F1: phase A runs without the host opt-in', _NHA,
+     '    let decision = host_opt_in(Path::new(OPT_IN_PATH), euid)?;',
+     '    let decision = host_opt_in(Path::new(OPT_IN_PATH), euid).unwrap_or_default();',
+     'axon-cortex', _NHT, _NS14),
+    ('M4407', 'NH-R1 security F1: an opt-in another uid owns is admitted', _NHA,
+     '    if m.uid() != euid {',
+     '    if false {',
+     'axon-cortex', _NHT, _NS14),
+    ('M4408', 'NH-R1 security F1: an opt-in group or other can reach is admitted', _NHA,
+     '    if m.mode() & 0o077 != 0 {',
+     '    if false {',
+     'axon-cortex', _NHT, _NS14),
+    ('M4409', 'NH-R1 security F1: an opt-in naming no decision record is admitted', _NHA,
+     '    decision.ok_or_else(|| refuse(format!("{} names no decision record", path.display())))',
+     '    Ok(decision.unwrap_or_default())',
+     'axon-cortex', _NHT, _NS14),
+    ('M4410', 'NH-R1 security F1: an opt-in line that is not the decision is skipped', _NHA,
+     '        else {\n            return Err(refuse(format!(\n                "{} holds',
+     '        else {\n            continue;\n        };\n        let _ = || -> Result<(), String> {\n'
+     '            return Err(refuse(format!(\n                "{} holds',
+     'axon-cortex', _NHT, _NS14),
+    ('M4411', 'NH-R1 security F1: an opt-in naming two decision records is admitted', _NHA,
+     '        if decision.replace(d.to_string()).is_some() {',
+     '        if decision.replace(d.to_string()).is_some() && false {',
+     'axon-cortex', _NHT, _NS14),
+]
 
 if __name__ == "__main__":
     main()

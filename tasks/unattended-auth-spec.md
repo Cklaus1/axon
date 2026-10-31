@@ -354,6 +354,7 @@ Each test is fail-first where it guards a behaviour.
 | S11 | Attended mode unchanged: existing suites; `cortex-repair/1` byte-identical on a pinned task |
 | S12 | Acceptance ≠ approval (§5.7) |
 | S13 | TOCTOU: a pristine test rewrites the entry file or an imported module during the witness run → exit 29 |
+| S14 | Host opt-in (§10 Q3) `[REVISED: security F1]`: no `/etc/axon/unattended-repair`, a wrong owner or mode, a non-regular file, or one not naming exactly one decision record → exit 29, nothing spent |
 
 g01 rows cover:
 - the signature compare;
@@ -419,6 +420,13 @@ design questions only. Building NH-R1 still needs a separate human go-ahead, and
   build is fit; the host file says this machine agrees. The host is shared (other users' jobs held load ≈ 48 during
   the follow-up run), so one repo decision must not enable every checkout on every host. The opt-in file's path,
   owner/mode check and refusal string are A-phase build items (§8) and get an S-test.
+  `[REVISED: security F1 — built]`: phase A's first step reads `/etc/axon/unattended-repair`
+  (`auth::OPT_IN_PATH`) with `O_NOFOLLOW|O_NONBLOCK` and refuses (exit 29, nothing read or spent) unless it is a
+  regular file owned by the euid with `mode & 0o077 == 0` whose one non-comment line is
+  `decision: <the decision record>`. The refusal starts `this host has not opted in to unattended repair:` and says
+  what to write. The decision record named there is reported in the run's `authorization.host_opt_in`. S14
+  (`s14_a_host_that_did_not_opt_in_refuses`) covers: no file, mode 0640, another owner, a directory, no decision,
+  a line that is not the decision, two decisions. The file is not in the workspace, so the repo cannot write it.
 - **Q4 → accept the residual window with E5 step 5's post-rename check; `HARD_GRACE` from S10's measured tail under
   real load, not a fixed 2 s.** The follow-up run's receipt flipped FAIL → PASS on wall time between two load levels,
   so a bound measured on an idle machine is not evidence.

@@ -71,6 +71,8 @@ pub struct PhaseA {
     /// The run lock (E5), held for the life of the process.
     pub lock: std::fs::File,
     pub euid: u32,
+    /// The decision record this host's opt-in file names (security F1).
+    pub decision: String,
 }
 
 /// What phase B established.
@@ -181,9 +183,84 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Security review F1 / §10 Q3: the host opt-in file. A human records the
+/// enabling decision; each host that agrees then holds this file. A build
+/// with feature `unattended` copied to a host without it does not run.
+pub const OPT_IN_PATH: &str = "/etc/axon/unattended-repair";
+
+/// The decision record the host opt-in file at `path` names: a regular file
+/// (never followed through a symlink, never a FIFO), owned by `euid`, that
+/// group and other can neither read nor write (`mode & 0o077 == 0`), whose
+/// one non-comment line is `decision: <the decision record>`.
+pub fn host_opt_in(path: &Path, euid: u32) -> Result<String, String> {
+    use std::io::Read as _;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let refuse = |why: String| {
+        format!(
+            "this host has not opted in to unattended repair: {why}. After a human records \
+             the enabling decision (§10 Q3), the host's owner writes {} - a regular file \
+             owned by uid {euid}, mode 0600, holding one line `decision: <the decision record>`",
+            path.display()
+        )
+    };
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|e| refuse(format!("{}: {e}", path.display())))?;
+    let m = f
+        .metadata()
+        .map_err(|e| refuse(format!("{}: {e}", path.display())))?;
+    if !m.file_type().is_file() {
+        return Err(refuse(format!("{} is not a regular file", path.display())));
+    }
+    if m.uid() != euid {
+        return Err(refuse(format!("{} is owned by uid {}", path.display(), m.uid())));
+    }
+    if m.mode() & 0o077 != 0 {
+        return Err(refuse(format!(
+            "{} has mode {:04o}: group or other can reach it",
+            path.display(),
+            m.mode() & 0o7777
+        )));
+    }
+    let mut text = String::new();
+    f.by_ref()
+        .take(4096)
+        .read_to_string(&mut text)
+        .map_err(|e| refuse(format!("{}: {e}", path.display())))?;
+    let mut decision = None;
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some(d) = line
+            .strip_prefix("decision:")
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+        else {
+            return Err(refuse(format!(
+                "{} holds `{line}`, which is not a `decision: <record>` line",
+                path.display()
+            )));
+        };
+        if decision.replace(d.to_string()).is_some() {
+            return Err(refuse(format!(
+                "{} names more than one decision record",
+                path.display()
+            )));
+        }
+    }
+    decision.ok_or_else(|| refuse(format!("{} names no decision record", path.display())))
+}
+
 /// Phase A (§5.3 steps 1-8). `axon` is the resolved `--axon` path; nothing
 /// is spawned here.
 pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, String> {
+    // 0. the host opted in (security F1), before anything else is read.
+    // SAFETY: geteuid has no preconditions.
+    let euid = unsafe { libc::geteuid() };
+    let decision = host_opt_in(Path::new(OPT_IN_PATH), euid)?;
     // 1. flag allowlist, env selectors, generator kind (E9).
     for f in &cli.flags {
         un::check_flag(f)?;
@@ -208,8 +285,6 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
         .map_err(|e| format!("--spent-store {}: {e}", store.display()))?;
     let ledger = std::fs::canonicalize(&ledger)
         .map_err(|e| format!("--run-ledger {}: {e}", ledger.display()))?;
-    // SAFETY: geteuid has no preconditions.
-    let euid = unsafe { libc::geteuid() };
     // 2-4. parse + schema, the verify key's file, signature; 5 (part): time.
     let key = env::VerifyKey::load(&key_path, euid, std::slice::from_ref(&workspace))?;
     let text = std::fs::read_to_string(&envelope_path)
@@ -326,6 +401,7 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
         checker_exe_sha256,
         lock,
         euid,
+        decision,
     })
 }
 
@@ -489,6 +565,7 @@ pub fn authorization_json(a: &PhaseA, b: &PhaseB) -> serde_json::Value {
         "envelope_digest": a.verified.digest,
         "issued_by": e.issued_by,
         "expires_unix": e.expires_unix,
+        "host_opt_in": {"path": OPT_IN_PATH, "decision": a.decision},
         "enforcement": b.rows.iter().map(Row::to_json).collect::<Vec<_>>(),
     })
 }
