@@ -251,6 +251,17 @@ pub fn caps_rows(caps: &crate::fence::Caps) -> Vec<Row> {
     } else {
         rows.push(Row::admit("E11", "no exec capability or Exec effect"));
     }
+    // Security review F11 / §10 Q2: the durable store writes a file under the
+    // cache dir whose path comes from a store KEY, so no scope pin can name
+    // it; refused by its own row, not left to the child's missing `HOME`.
+    if caps.capabilities.iter().any(|c| c == "dstore") {
+        rows.push(Row::refuse(
+            "E12",
+            "the pristine file reaches the durable store (`dstore`), a file no scope pin can name",
+        ));
+    } else {
+        rows.push(Row::admit("E12", "no dstore capability"));
+    }
     rows
 }
 
@@ -474,6 +485,22 @@ mod tests {
             caps_rows(&caps(&[], &[], true)).iter().all(|r| !r.admit),
             "ATTACK: a file of unknown capabilities was admitted"
         );
+    }
+
+    /// Security review F11 / §10 Q2: a file reaching the durable store is
+    /// refused by its own gate row, not left to the child's missing `HOME`.
+    #[test]
+    fn e12_a_dstore_file_is_refused() {
+        let rows = caps_rows(&caps(&["dstore"], &[], false));
+        assert!(
+            rows.iter().any(|r| r.id == "E12"),
+            "ATTACK: NH-R1 security F11 a dstore file had no gate row: {rows:?}"
+        );
+        assert!(
+            !admits(&rows, "E12"),
+            "ATTACK: NH-R1 security F11 a dstore file was admitted: {rows:?}"
+        );
+        assert!(admits(&caps_rows(&caps(&["fs:read"], &[], false)), "E12"));
     }
 
     #[test]

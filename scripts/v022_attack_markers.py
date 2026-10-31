@@ -3665,4 +3665,5 @@ ATTACK_MARKERS.update({
     'M4421': r'ATTACK: NH-R1 security F6 an fs_read pin over the run-record seal key ran',
     'M4422': r'ATTACK: NH-R1 security F6 an fs_write pin over the spent store ran',
     'M4423': r'ATTACK: NH-R1 security F7 a PATH interpreter other than the hashed one got past phase A',
+    'M4425': r'ATTACK: NH-R1 security F11 a dstore file was admitted',
 })

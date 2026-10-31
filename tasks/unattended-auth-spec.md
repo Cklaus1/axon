@@ -274,6 +274,7 @@ Rules for the gate as a whole:
 | E9 | untrusted processes holding authority | a `cmd:` generator is an arbitrary same-uid process | `ai:` only |
 | E10 | non-UTF-8 ceiling (O-S1-09 narrow) | — | **dropped for the cortex route** `[REVISED: D10]`: the fence always sets the value as UTF-8 and `env_clear` drops inherited values (`runner.rs:3627-3632`). FU-5 covers direct interpreter use. |
 | E11 | unscoped process spawn `[REVISED: F1, D2 — blocker]` | `exec` is gated only by the `Exec` effect (`builtins.rs:640-648, 1332-1356`); no scope (`builtins.rs:252-263`) | refuse if pristine caps contain `exec`, the effects contain `Exec`, or any module effect has `Exec`; candidate additions are already refused by `StaticGrant::excess` (`fence.rs:300-330`) |
+| E12 | durable store `[REVISED: security F11]` | `dstore_*` writes a file under the cache dir whose path comes from a store key (`capabilities.rs:148-152`); blocked only because the child gets no `HOME` (E6) | refuse if pristine caps contain `dstore` (§10 Q2), its own gate row (`unattended::caps_rows`, test `e12_a_dstore_file_is_refused`) |
 
 ### E3 watchdog `[REVISED: F11, D8]`
 

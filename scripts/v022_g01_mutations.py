@@ -13393,6 +13393,10 @@ MUTATIONS += [
      '    let checker_exe = crate::runner::resolve_executable(axon)',
      '    let checker_exe = Ok::<_, crate::runner::CheckRefusal>(axon.to_path_buf())',
      'axon-cortex', _NHT, 's6_a_bare_axon_runs_the_binary_that_was_hashed'),
+    ('M4425', 'NH-R1 security F11: a dstore file is admitted by the gate', _NHU,
+     '    if caps.capabilities.iter().any(|c| c == "dstore") {',
+     '    if caps.capabilities.iter().any(|c| c == "dstore") && false {',
+     'axon-cortex', '--lib', 'unattended::tests::e12_a_dstore_file_is_refused'),
 ]
 
 if __name__ == "__main__":
