@@ -144,6 +144,68 @@ fn the_preview_pins_what_the_runner_recomputes() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+/// A file that USES a scope kind: the preview's fence is the scope-pinned
+/// one phase B compares (`gate_rows`' E1 fence), never the pristine fence.
+#[test]
+fn a_scope_using_file_previews_the_pinned_fence() {
+    let ws = workspace("pinned");
+    std::fs::write(
+        ws.join("src/broken.ax"),
+        "fn peek() -> i64 {\n    match read_file(\"/x\") {\n        Ok(_) => 1,\n        Err(_) => 0,\n    }\n}\n\n\
+         fn double(n: i64) -> i64 {\n    n + 2\n}\n\n\
+         @[test]\nfn hidden_completion() {\n    assert_eq(double(7), 14)\n}\n\n\
+         fn main() {\n    println(to_str(double(1)))\n}\n",
+    )
+    .unwrap();
+    let axon = axon_bin();
+    let wall = Duration::from_secs(60);
+    let caps =
+        axon_cortex::fence::caps_of_file(&axon, &ws.join("src/broken.ax"), None, wall).unwrap();
+    let used = |k: &str| caps.capabilities.iter().any(|c| c == k);
+    assert!(used("fs:read"), "setup: dstore reads a store: {caps:?}");
+    let scope = std::env::temp_dir().join("axon-preview-scope");
+    let scope = scope.to_str().unwrap().to_string();
+    let pick = |k: &str| if used(k) { vec![scope.clone()] } else { vec![] };
+    let pins = axon_cortex::fence::ScopePins {
+        fs_read: pick("fs:read"),
+        fs_write: pick("fs:write"),
+        net: if used("net") {
+            vec!["api.example.com".into()]
+        } else {
+            vec![]
+        },
+    };
+    let mut extra = vec!["--generator".to_string(), "ai:m".to_string()];
+    for (flag, vals) in [
+        ("--read-prefix", &pins.fs_read),
+        ("--fs-write-scope", &pins.fs_write),
+        ("--net-host", &pins.net),
+    ] {
+        for v in vals {
+            extra.push(flag.into());
+            extra.push(v.clone());
+        }
+    }
+    let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+    let (code, out, err) = preview(&ws, &extra);
+    assert_eq!(code, 0, "{err}");
+    let v: Value = serde_json::from_str(out.trim()).unwrap();
+    let pristine = axon_cortex::fence::Fence::from_pristine(&caps);
+    let (_, pinned) = axon_cortex::auth::gate_rows(&pristine, &caps, &pins, "ai");
+    let pinned = pinned.expect("every used kind is pinned");
+    assert_ne!(
+        pinned.sha256(),
+        pristine.sha256(),
+        "setup: a pin changes the fence"
+    );
+    assert_eq!(
+        v["fence_sha256"],
+        pinned.sha256(),
+        "ATTACK: the preview's fence is not the runner's pinned fence"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
 /// A generator outside the v1 admission set (E9) is a refused gate row the
 /// minter reads, never an admitted one.
 #[test]
@@ -192,6 +254,29 @@ fn a_symlink_on_the_task_or_a_write_prefix_produces_no_preview() {
     assert!(out.is_empty(), "{out}");
     assert!(err.contains("symlink"), "{err}");
     let _ = std::fs::remove_dir_all(&ws);
+
+    // The task file alone is the symlink, outside every write prefix: only
+    // the task-file walk sees it.
+    let ws = workspace("linkonly");
+    std::fs::rename(ws.join("src/broken.ax"), ws.join("real.ax")).unwrap();
+    std::os::unix::fs::symlink(ws.join("real.ax"), ws.join("src/broken.ax")).unwrap();
+    let out = common::cortex()
+        .args(["grant", "--envelope-preview", "--workspace"])
+        .arg(&ws)
+        .args(["--file", "src/broken.ax", "--symbol", "double"])
+        .args(["--check", "hidden_completion", "--write-prefix", "gen"])
+        .args(["--generator", "ai:m", "--axon"])
+        .arg(axon_bin())
+        .output()
+        .unwrap();
+    let so = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "ATTACK: a symlinked task file was previewed: {so}"
+    );
+    assert!(so.is_empty(), "{so}");
+    let _ = std::fs::remove_dir_all(&ws);
 }
 
 /// A check `fs_write` pin over the task file (§5.4) produces no preview.
@@ -234,6 +319,9 @@ fn preview_inputs_need_the_preview_and_refuse_a_check_registry() {
         Some(2),
         "ATTACK: a preview input was accepted by plain grant: {err}"
     );
-    assert!(err.contains("only accepted with --envelope-preview"), "{err}");
+    assert!(
+        err.contains("only accepted with --envelope-preview"),
+        "{err}"
+    );
     let _ = std::fs::remove_dir_all(&ws);
 }

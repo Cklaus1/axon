@@ -12952,7 +12952,7 @@ MUTATIONS += [
     ('M4323', 'NH-R1 A2 (§5.1): the preview pins the pristine fence, not the scope-pinned one the runner compares', 'crates/axon-cortex/src/envelope_preview.rs',
      '    let fence = pinned.unwrap_or(fence);',
      '    let fence = { let _ = pinned; fence };',
-     'axon-cortex', '--features unattended --test envelope_preview', 'the_preview_pins_what_the_runner_recomputes'),
+     'axon-cortex', '--features unattended --test envelope_preview', 'a_scope_using_file_previews_the_pinned_fence'),
     ('M4324', 'NH-R1 A2 (§4.1): the preview check digest is not over the --axon bytes', 'crates/axon-cortex/src/envelope_preview.rs',
      '    let checker_exe_sha256 = crate::label::sha256_hex(&checker);',
      '    let checker_exe_sha256 = crate::label::sha256_hex(&checker[..0]);',
