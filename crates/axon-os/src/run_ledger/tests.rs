@@ -98,7 +98,9 @@ impl Fx {
     }
 
     fn audit(&self) -> Vec<Finding> {
-        audit(&self.ledger, &self.spent, me(), &key(), &BTreeMap::new()).unwrap()
+        audit(&self.ledger, &self.spent, me(), &key(), &BTreeMap::new())
+            .unwrap()
+            .findings
     }
 
     fn lines(&self) -> Vec<String> {
@@ -295,10 +297,18 @@ fn a_head_never_reads_as_a_record_and_the_reverse() {
     clean_run(&fx);
     let head = std::fs::read_to_string(fx.ledger.join(HEAD_FILE)).unwrap();
     let e = parse_record(head.trim_end(), &key()).expect_err("ATTACK: a head read as a record");
-    assert!(e.contains("schema"), "{e}");
+    // named by the schema check itself, not by a later typed-parse error
+    // that happens to list `schema` among the expected fields
+    assert!(
+        e.contains("schema is not"),
+        "ATTACK: a head was judged as a record by: {e}"
+    );
     let line = &fx.lines()[0];
     let e = parse_head(line, &key()).expect_err("ATTACK: a record read as a head");
-    assert!(e.contains("schema"), "{e}");
+    assert!(
+        e.contains("schema is not"),
+        "ATTACK: a record was judged as a head by: {e}"
+    );
 }
 
 #[test]
@@ -687,7 +697,9 @@ fn c1_envelope_mismatch() {
         v.envelope.envelope_id.clone(),
         format!("cl22:{}", "0".repeat(64)),
     );
-    let f = audit(&fx.ledger, &fx.spent, me(), &key(), &supplied).unwrap();
+    let f = audit(&fx.ledger, &fx.spent, me(), &key(), &supplied)
+        .unwrap()
+        .findings;
     assert_eq!(
         names(&f),
         vec!["envelope-mismatch"],
@@ -699,4 +711,295 @@ fn c1_envelope_mismatch() {
 fn every_finding_name_is_distinct() {
     let set: BTreeSet<&str> = FINDINGS.iter().copied().collect();
     assert_eq!(set.len(), FINDINGS.len());
+}
+
+// ── one attack per refusal site ──────────────────────────────────────────────
+
+/// The clean run's started and terminal records, as typed values.
+fn clean_records() -> (RunRecord, RunRecord) {
+    let fx = Fx::new("recs");
+    clean_run(&fx);
+    let l = fx.lines();
+    (
+        parse_record(&l[0], &key()).unwrap().0,
+        parse_record(&l[1], &key()).unwrap().0,
+    )
+}
+
+#[test]
+fn each_malformed_record_is_refused() {
+    let (s, t) = clean_records();
+    validate_record(&s).expect("control: the clean started record");
+    validate_record(&t).expect("control: the clean terminal record");
+    type Edit = fn(&mut RunRecord);
+    let cases: [(&str, bool, Edit); 26] = [
+        ("another schema", true, |r| {
+            r.schema = "cortex-run-record/2".into()
+        }),
+        ("another task family", true, |r| {
+            r.task_family = "cortex-repair".into()
+        }),
+        ("a path-shaped envelope id", true, |r| {
+            r.envelope_id = "../x".into()
+        }),
+        ("an envelope digest with no cl22 prefix", true, |r| {
+            r.envelope_digest = format!("sha256:{}", "f".repeat(64))
+        }),
+        (
+            "a cl22 envelope digest that is not 64 lowercase hex",
+            true,
+            |r| r.envelope_digest = format!("cl22:{}", "F".repeat(64)),
+        ),
+        ("a null prev after seq 0", true, |r| r.seq = 5),
+        ("a terminal field on a started record", true, |r| {
+            r.outcome = Some("repaired".into())
+        }),
+        ("a started enforcement that is not an array", true, |r| {
+            r.enforcement = Some(json!({"E1": "admit"}))
+        }),
+        ("a started record with no pinned tree", true, |r| {
+            r.pinned_tree_before = None
+        }),
+        ("a pinned tree entry with a malformed digest", true, |r| {
+            r.pinned_tree_before = Some(tree(&[("src/a", 'Z')]))
+        }),
+        ("a started field on a terminal record", false, |r| {
+            r.enforcement = Some(json!([]))
+        }),
+        ("an empty outcome", false, |r| {
+            r.outcome = Some(String::new())
+        }),
+        // the accepted artifact stays: with the exit code read as 0 the
+        // record would be valid, so only the exit-code refusal stops it
+        ("no exit code", false, |r| r.exit_code = None),
+        (
+            "exit 0 with both an accepted artifact and a refusal",
+            false,
+            |r| r.accepted_refusal = Some("settle refused".into()),
+        ),
+        (
+            "exit 0 with neither an accepted artifact nor a refusal",
+            false,
+            |r| r.accepted = None,
+        ),
+        ("an accepted artifact with a malformed digest", false, |r| {
+            if let Some(a) = &mut r.accepted {
+                a.sha256 = "x".into();
+            }
+        }),
+        ("an accepted artifact with an empty path", false, |r| {
+            if let Some(a) = &mut r.accepted {
+                a.path = String::new();
+            }
+        }),
+        ("no write journal", false, |r| r.writes = None),
+        ("a write with an empty site", false, |r| {
+            if let Some(w) = &mut r.writes {
+                w[0].site = String::new();
+            }
+        }),
+        ("a write with an empty path", false, |r| {
+            if let Some(w) = &mut r.writes {
+                w[0].path = String::new();
+            }
+        }),
+        ("a write with a malformed before digest", false, |r| {
+            if let Some(w) = &mut r.writes {
+                w[0].before_sha256 = Some("Z".repeat(64));
+            }
+        }),
+        ("a write with a malformed after digest", false, |r| {
+            if let Some(w) = &mut r.writes {
+                w[0].after_sha256 = Some("Z".repeat(64));
+            }
+        }),
+        ("a write with neither digest", false, |r| {
+            if let Some(w) = &mut r.writes {
+                w[0].before_sha256 = None;
+                w[0].after_sha256 = None;
+            }
+        }),
+        ("no pinned tree after", false, |r| {
+            r.pinned_tree_after = None
+        }),
+        ("an after-tree entry with an empty path", false, |r| {
+            r.pinned_tree_after = Some([(String::new(), "2".repeat(64))].into())
+        }),
+        (
+            "an exit-1 record carrying an accepted artifact",
+            false,
+            |r| r.exit_code = Some(1),
+        ),
+    ];
+    for (what, on_started, edit) in cases {
+        let mut r = if on_started { s.clone() } else { t.clone() };
+        edit(&mut r);
+        assert!(
+            validate_record(&r).is_err(),
+            "ATTACK: a record with {what} validated"
+        );
+    }
+    // exit 27 (accepted by the check, then refused by settle) carries
+    // exactly one of the two, like exit 0.
+    let mut r = t.clone();
+    r.exit_code = Some(27);
+    validate_record(&r).unwrap_or_else(|e| {
+        panic!("ATTACK: an exit-27 record with its accepted artifact was refused: {e}")
+    });
+}
+
+#[test]
+fn malformed_seals_are_refused_by_name() {
+    let (s, _) = clean_records();
+    let v = serde_json::to_value(&s).unwrap();
+    let mut t = v.clone();
+    t["seal"] = json!(7);
+    let e = key().check_seal(&t).unwrap_err();
+    assert!(
+        e.contains("not a string"),
+        "ATTACK: a non-string seal was reported as: {e}"
+    );
+    let mut t = v.clone();
+    t.as_object_mut().unwrap().remove("seal");
+    let e = key().check_seal(&t).unwrap_err();
+    assert!(
+        e.contains("no `seal`"),
+        "ATTACK: a missing seal was reported as: {e}"
+    );
+    // The same tag in uppercase hex: one seal has one spelling.
+    let mut t = v.clone();
+    let upper = s.seal.strip_prefix(SEAL_PREFIX).unwrap().to_uppercase();
+    t["seal"] = json!(format!("{SEAL_PREFIX}{upper}"));
+    let e = key()
+        .check_seal(&t)
+        .expect_err("ATTACK: an uppercase-hex seal verified");
+    assert!(
+        e.contains("64 lowercase hex"),
+        "ATTACK: a malformed seal was refused only by the MAC compare: {e}"
+    );
+    key()
+        .check_seal(&v)
+        .expect("control: the record's own seal");
+}
+
+#[test]
+fn a_run_record_key_that_is_not_lower_hex_is_refused() {
+    let k = key().to_hex();
+    assert_eq!(SealKey::from_hex(&k).unwrap(), key());
+    assert!(
+        SealKey::from_hex(&k.to_uppercase()).is_err(),
+        "ATTACK: an uppercase-hex run-record key loaded"
+    );
+}
+
+#[test]
+fn a_head_with_a_malformed_record_digest_is_refused() {
+    let mut h = json!({
+        "schema": HEAD_SCHEMA,
+        "ledger_id": "00112233445566778899aabbccddeeff",
+        "seq": 0,
+        "record_digest": "cl22:abc",
+    });
+    h["seal"] = json!(key().seal(&h).unwrap());
+    assert!(
+        parse_head(&h.to_string(), &key()).is_err(),
+        "ATTACK: a sealed head with a malformed record digest was read"
+    );
+}
+
+#[test]
+fn a_ledger_id_that_is_not_32_hex_is_refused() {
+    let fx = Fx::new("badid");
+    std::fs::write(fx.ledger.join(LEDGER_ID_FILE), "../other\n").unwrap();
+    assert!(
+        ledger_id(&fx.ledger, me()).is_err(),
+        "ATTACK: a path-shaped ledger id was read"
+    );
+}
+
+#[test]
+fn a_head_naming_another_ledger_refuses_the_next_append() {
+    let fx = Fx::new("headid");
+    let v = clean_run(&fx);
+    let p = fx.ledger.join(HEAD_FILE);
+    let mut h: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+    h.as_object_mut().unwrap().remove("seal");
+    h["ledger_id"] = json!("ffeeddccbbaa99887766554433221100");
+    h["seal"] = json!(key().seal(&h).unwrap());
+    std::fs::write(&p, format!("{h}\n")).unwrap();
+    let e = fx
+        .append(&v, started(Tree::new()))
+        .expect_err("ATTACK: an append under a head copied from another ledger was accepted");
+    assert!(e.contains("names ledger"), "{e}");
+}
+
+#[test]
+fn a_path_shaped_id_is_never_marked_unrecorded() {
+    let fx = Fx::new("markid");
+    assert!(
+        mark_unrecorded(&fx.spent, me(), "../escape", "x", NOW).is_err(),
+        "ATTACK: a path-shaped envelope id was marked unrecorded"
+    );
+    assert!(!fx
+        .spent
+        .parent()
+        .unwrap()
+        .join("escape.unrecorded")
+        .exists());
+}
+
+#[test]
+fn an_envelope_for_another_ledger_is_never_recorded_here() {
+    let fx = Fx::new("otherledger");
+    let mut v = fx.run();
+    v.envelope.run_ledger_id = "ffeeddccbbaa99887766554433221100".into();
+    let e = fx
+        .append(&v, started(Tree::new()))
+        .expect_err("ATTACK: a run was recorded into a ledger its envelope does not name");
+    assert!(e.contains("records into"), "{e}");
+    assert!(fx.lines().is_empty());
+}
+
+#[test]
+fn the_run_ledger_constants_are_the_documented_ones() {
+    // Literal pins (R6 §3, §4): a consistent edit of a constant is invisible
+    // to every test that reads it through the const.
+    assert_eq!(
+        RUN_RECORD_DOMAIN, "axon-approval repair-run-record v1",
+        "ATTACK: RUN_RECORD_DOMAIN changed"
+    );
+    assert_eq!(
+        RECORD_SCHEMA, "cortex-run-record/1",
+        "ATTACK: RECORD_SCHEMA changed"
+    );
+    assert_eq!(
+        HEAD_SCHEMA, "cortex-run-ledger-head/1",
+        "ATTACK: HEAD_SCHEMA changed"
+    );
+    assert_eq!(SEAL_PREFIX, "axrun1:", "ATTACK: SEAL_PREFIX changed");
+    assert_eq!(
+        TASK_FAMILY, "cortex-repair-unattended",
+        "ATTACK: TASK_FAMILY changed"
+    );
+    assert_eq!(
+        [LEDGER_ID_FILE, LEDGER_FILE, HEAD_FILE, HEAD_TMP],
+        [
+            "ledger-id",
+            "ledger.jsonl",
+            "ledger.head",
+            "ledger.head.tmp"
+        ],
+        "ATTACK: a run ledger file name changed"
+    );
+    assert_eq!(ACCEPTED_EXITS, [0, 27], "ATTACK: ACCEPTED_EXITS changed");
+    assert_eq!(
+        (RUN_LEDGER.dir, RUN_LEDGER_FILE.dir, RUN_RECORD_KEY.dir),
+        (true, false, false),
+        "ATTACK: a run ledger private-path kind changed"
+    );
+    assert_eq!(
+        (RUN_LEDGER.what, RUN_LEDGER_FILE.what, RUN_RECORD_KEY.what),
+        ("run ledger", "run ledger file", "run-record key"),
+        "ATTACK: a run ledger private-path label changed"
+    );
 }

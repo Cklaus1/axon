@@ -798,6 +798,16 @@ fn consumed(spent: &Path, euid: u32) -> Result<BTreeMap<String, Option<String>>,
     Ok(out)
 }
 
+/// What C1 read: every record that verified, by envelope id in ledger order,
+/// and the findings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Audit {
+    pub runs: BTreeMap<String, Vec<RunRecord>>,
+    /// Consumed envelope ids in the spent store.
+    pub consumed: BTreeSet<String>,
+    pub findings: Vec<Finding>,
+}
+
 /// C1: verify the chain, every seal and the head; join the records against
 /// the spent store and the supplied envelopes (`envelope_id -> digest`).
 /// `Err` only when a directory cannot be read as a private ledger or store.
@@ -807,7 +817,7 @@ pub fn audit(
     euid: u32,
     key: &SealKey,
     envelopes: &BTreeMap<String, String>,
-) -> Result<Vec<Finding>, String> {
+) -> Result<Audit, String> {
     let id = ledger_id(ledger, euid)?;
     let mut f = open_ledger_file(ledger, euid, false)?;
     let text = read_all(&mut f, ledger)?;
@@ -1025,7 +1035,11 @@ pub fn audit(
             ));
         }
     }
-    Ok(out)
+    Ok(Audit {
+        runs,
+        consumed: used.into_keys().collect(),
+        findings: out,
+    })
 }
 
 #[cfg(test)]

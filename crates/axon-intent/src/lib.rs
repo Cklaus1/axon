@@ -12,6 +12,7 @@
 
 pub mod admit;
 pub mod approval;
+pub mod audit_runs;
 pub mod authorize;
 pub mod cli;
 pub mod confidence;

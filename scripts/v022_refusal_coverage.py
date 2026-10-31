@@ -765,8 +765,11 @@ EXEMPT += [
 # axon-os repair_envelope and approval tests green).
 RE = "crates/axon-os/src/repair_envelope.rs"
 EXEMPT += [
-    (RE, '        if v.is_empty() {\n            return Err(format!("{env} is not set: only the operator mints"));', _OAK),
-    (RE, 'let bytes = decode_hex(v).ok_or_else(|| format!("{env} is not valid hex"))?;', _OAK),
+    (RE, '    if v.is_empty() {\n        return Err(format!("{env} is not set: only the operator mints"));', _OAK),
+    (RE, '.ok_or_else(|| format!("{what} {} names no file", path.display()))?;',
+     "DOMINATED (checkable): `check_private(path, euid, p)` runs first and refuses any path that is not a "
+     "regular file (rowed: M813); a path with no file name (`/`, `..`, `x/..`) names a directory, so it is "
+     "refused there before `file_name()` is asked"),
     (RE, '            return Err("repair envelope is not an object".into());',
      "UNREACHABLE (checkable): `serde_json::to_value` of the RepairEnvelope struct (a derived Serialize "
      "with named fields) is a JSON object, so the let-else's other arm never runs; the refusal converts an "
@@ -784,6 +787,25 @@ EXEMPT += [
      "DOMINATED (checkable): every caller judges its input first: VerifyKey::from_hex and verify call "
      "is_lower_hex(s, 64/128) (rowed: M4081, M4086), and MintKey::from_env's operator hex (_OAK) of odd "
      "length yields None anyway, because `s.get(i..i + 2)` is None for the last odd character"),
+]
+RL = "crates/axon-os/src/run_ledger.rs"
+EXEMPT += [
+    (RL, 'let b = decode_hex(s).ok_or("run-record key is not hex")?;',
+     "DOMINATED (checkable): the `is_lower_hex(s, 64)` refusal directly above (rowed: M4334) admits only "
+     "64 characters from 0-9a-f, which always decode"),
+    (RL, '        return Err("a record serializes to an object".into());',
+     "UNREACHABLE (checkable): both callers pass a derived-Serialize struct with named fields (RunRecord, Head), "
+     "which `serde_json::to_value` makes a JSON object, so the let-else's other arm never runs"),
+    (RL, '.custom_flags(libc::O_NOFOLLOW)',
+     "DOMINATED (checkable): `check_private(&p, euid, &RUN_LEDGER_FILE)` on the line before refuses a symlinked "
+     "ledger file (rowed: M813); O_NOFOLLOW only narrows the window between that check and the open, which "
+     "no deterministic test can enter"),
+    (RL, 'if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {',
+     "OS ERROR (checkable): a blocking flock on a descriptor this function just opened fails only with an OS "
+     "error (EINTR, ENOLCK); the append then fails closed with the error, never proceeding unlocked"),
+    (RL, 'Err(e) => return Err(format!("run ledger {}: {HEAD_TMP}: {e}", dir.display())),',
+     "OS ERROR (checkable): removing a stale head temp file fails only with an OS error other than NotFound "
+     "(the arm above); the append then fails closed before writing a head"),
 ]
 ST = "crates/axon-loop/src/store.rs"
 EXEMPT += [

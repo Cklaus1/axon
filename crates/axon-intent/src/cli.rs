@@ -22,9 +22,11 @@ USAGE:
     axon-intent approve <name.axjob> --by OP [--accept|--reject] [--approvers N]
     axon-intent emit    <intent.md> --by OP [--out DIR] [--yes]
     axon-intent authorize-repair ...   (NH-R1 repair envelope; see authorize-repair --help)
+    axon-intent audit-runs --spent-store D --run-ledger D [--envelopes DIR] [--json]
 
-Every subcommand accepts --help. Exit codes: 0 ok, 2 usage/malformed,
-3 rejected, 5 low-confidence refusal, 8 not-admissible/grant-exceeds-ceiling.
+Every subcommand accepts --help. Exit codes: 0 ok, 1 audit-runs findings,
+2 usage/malformed, 3 rejected, 5 low-confidence refusal,
+8 not-admissible/grant-exceeds-ceiling.
 Set AXON_AI_MOCK=1 for deterministic, offline synthesis.";
 
 /// Entry point. Returns the process exit code.
@@ -52,6 +54,7 @@ pub fn run(args: Vec<String>) -> ExitCode {
         ["approve", rest @ ..] => cmd_approve(rest),
         ["emit", rest @ ..] => cmd_emit(rest),
         ["authorize-repair", rest @ ..] => crate::authorize::run(rest),
+        ["audit-runs", rest @ ..] => crate::audit_runs::run(rest),
         _ => {
             eprintln!("axon-intent: unrecognized invocation\n\n{USAGE}");
             ExitCode::from(2)

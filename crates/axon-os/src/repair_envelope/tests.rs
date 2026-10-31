@@ -260,6 +260,7 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
         ),
         ("envelope id", json!({"envelope_id": "ABC"})),
         ("store id", json!({"spent_store_id": "x"})),
+        ("run ledger id", json!({"run_ledger_id": "../ledger"})),
         ("relative workspace", json!({"task": {"workspace": "ws"}})),
         (
             "dotdot workspace",
