@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "cortex workspace writes and deletes go through one compare-and-swap helper that refuses to overwrite a foreign edit and reports post-rename mismatches, plus the E3 watchdog, E1 scope pins and the unattended enforcement checks"}
