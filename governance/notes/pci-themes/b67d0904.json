@@ -1,0 +1,4 @@
+{
+  "theme": "intent-gen IG0",
+  "text": "INTERPRETER: the env_var-behind-fs_read refusal applies to program-created sandboxes only, so the ambient AXON_ALLOWED_FS_READ= deny-all (cortex's runtime fence) no longer refuses an environment read."
+}
