@@ -2,13 +2,18 @@
 //!
 //! Before it, the deadline was soft: an in-flight `ai:` call ran up to 30 s
 //! past it, checks were not cut, and nothing stopped a run stalled anywhere
-//! else. The watchdog is a thread armed with the deadline. When it passes:
+//! else. The watchdog is a thread armed with the deadline right after phase
+//! B (security review F8: the fence-conflict and witness runs already run
+//! workspace code; children before it are bounded by the time left). When
+//! the deadline passes:
 //!
-//! 1. it takes the run's write lock ([`crate::cas::freeze`]): every workspace
+//! 1. it kills the process group of every running job (the check, a
+//!    `cmd:` generator) ([`axon_jobctl::kill_running_jobs`]), which needs no
+//!    lock;
+//! 2. it takes the run's write lock ([`crate::cas::freeze`]): every workspace
 //!    write of the main thread holds it, so none is half-done, and once
-//!    frozen no other thread takes it again;
-//! 2. it kills the process group of every running job (the check, a
-//!    `cmd:` generator) ([`axon_jobctl::kill_running_jobs`]);
+//!    frozen no other thread takes it again; it kills again, for a job
+//!    spawned meanwhile;
 //! 3. it runs the caller's restore + report under the lock: the restore goes
 //!    through the CAS helper, so after the bound the only write is the found
 //!    bytes put back over this run's own;
@@ -16,9 +21,16 @@
 //!    could hold) and calls `_exit(20)`. An in-flight model call dies with
 //!    the process.
 //!
+//! A second, lock-free timer ([`STALL_AT`] after the firing) covers a write
+//! lock that is never released (security review F8): it kills, prints the
+//! caller's "not restored" report and `_exit(20)`s, so the bound holds even
+//! then and a restore that never ran is never claimed. Exactly one of the
+//! two reports reaches fd 1.
+//!
 //! [`HARD_GRACE`] bounds steps 1-4: S10 measures it under the host's real
 //! load (`tests/watchdog.rs`, §10 Q4).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -51,17 +63,45 @@ pub struct Armed {
 /// Arm the watchdog for `deadline`. `fire` runs at most once, under the
 /// run's write lock, after every running job was killed; what it returns
 /// is printed and the process exits [`EXIT_DEADLINE`].
-pub fn arm<F>(deadline: Instant, fire: F) -> Armed
+///
+/// `stalled` is the report when the write lock is NOT released in time
+/// (security review F8: a writer stalled under it): at [`STALL_AT`] past
+/// the deadline a second timer, which takes no lock, prints it and exits
+/// [`EXIT_DEADLINE`] with no restore - so the bound holds either way, and a
+/// restore that never ran is reported as not done, never claimed.
+pub fn arm<F>(deadline: Instant, fire: F, stalled: String) -> Armed
 where
     F: FnOnce(&mut crate::cas::Ledger) -> String + Send + 'static,
 {
     let shared: Shared = Arc::new((Mutex::new(State::Armed), Condvar::new()));
     let theirs = Arc::clone(&shared);
-    std::thread::spawn(move || watch(&theirs, deadline, fire));
+    std::thread::spawn(move || watch(&theirs, deadline, fire, stalled));
     Armed { shared }
 }
 
-fn watch<F>(shared: &Shared, deadline: Instant, fire: F)
+/// How long after the deadline the lock-free timer gives up on the write
+/// lock: three quarters of [`HARD_GRACE`], leaving the rest for its report
+/// and `_exit`.
+pub const STALL_AT: Duration = Duration::from_millis(HARD_GRACE.as_millis() as u64 * 3 / 4);
+
+/// Set by whichever of the two exit paths reports first; the other then
+/// prints nothing, so exactly one verdict reaches fd 1.
+static REPORTED: AtomicBool = AtomicBool::new(false);
+
+fn report_and_exit(report: &str) -> ! {
+    if REPORTED.swap(true, Ordering::SeqCst) {
+        // The other path is reporting; it exits.
+        loop {
+            std::thread::park();
+        }
+    }
+    write_fd1(report.as_bytes());
+    // SAFETY: `_exit` ends the process without running destructors or
+    // flushing stdio; the report was written straight to fd 1.
+    unsafe { libc::_exit(EXIT_DEADLINE) }
+}
+
+fn watch<F>(shared: &Shared, deadline: Instant, fire: F, stalled: String)
 where
     F: FnOnce(&mut crate::cas::Ledger) -> String,
 {
@@ -82,13 +122,24 @@ where
     }
     *s = State::Fired;
     drop(s);
+    // The lock-free timer: whatever holds the write lock, the process ends.
+    // Counted from the firing, not the deadline, so a watchdog armed after
+    // its deadline still gives the restore its share of the grace.
+    let stall = deadline.max(Instant::now()) + STALL_AT;
+    std::thread::spawn(move || {
+        let now = Instant::now();
+        if stall > now {
+            std::thread::sleep(stall - now);
+        }
+        axon_jobctl::kill_running_jobs();
+        report_and_exit(&stalled)
+    });
+    // Kill first: a running check needs no lock to be stopped.
+    axon_jobctl::kill_running_jobs();
     let mut ledger = crate::cas::freeze();
     axon_jobctl::kill_running_jobs();
     let report = fire(&mut ledger);
-    write_fd1(report.as_bytes());
-    // SAFETY: `_exit` ends the process without running destructors or
-    // flushing stdio; the report was written straight to fd 1.
-    unsafe { libc::_exit(EXIT_DEADLINE) }
+    report_and_exit(&report)
 }
 
 /// `write(2)` all of `bytes` to fd 1, retrying a short write.

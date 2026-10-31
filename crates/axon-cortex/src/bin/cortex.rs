@@ -413,17 +413,23 @@ const CHECK_MAX_OUTPUT: usize = 1 << 20;
 
 /// The pinned `axon` executable and its local executor, as the registry (or
 /// `--axon`, pinned now) names them. Exit 22 if neither can be resolved.
+/// `expected`: the file and sha256 the unattended phase A hashed; the
+/// registry pins exactly that file and refuses other bytes (security F7).
 fn resolve_checker(
     axon_bin: &std::path::Path,
     check_registry: Option<&std::path::Path>,
+    expected: Option<(&std::path::Path, &str)>,
 ) -> (std::path::PathBuf, LocalInterpreterExecutor) {
     let reg = match check_registry {
         Some(file) => CheckRegistry::load(file),
         None => {
             let mut r = CheckRegistry::new();
-            r.register_pinned(LOCAL_AXON_TEST_ID, axon_bin)
-                .map(|()| r)
-                .map_err(|e| e.to_string())
+            match expected {
+                Some((exe, sha)) => r.register_expected(LOCAL_AXON_TEST_ID, exe, sha),
+                None => r.register_pinned(LOCAL_AXON_TEST_ID, axon_bin),
+            }
+            .map(|()| r)
+            .map_err(|e| e.to_string())
         }
     };
     let exec = reg.and_then(|r| {
@@ -867,21 +873,30 @@ fn main() {
         };
     // Also before anything runs: a mistyped ranker is a command-line error,
     // not a fallback to spectrum that a reader would take for a choice.
+    // NH-R1 security F2: an unattended run never reads the selector
+    // variables (phase A refused them set; this keeps them unread).
+    let selector_env = |k: &str| {
+        if unattended {
+            None
+        } else {
+            std::env::var(k).ok()
+        }
+    };
     let ranker_spec = axon_cortex::rank::select(
         ranker_flag.as_deref(),
-        std::env::var(axon_cortex::rank::RANKER_ENV).ok().as_deref(),
+        selector_env(axon_cortex::rank::RANKER_ENV).as_deref(),
     )
     .unwrap_or_else(|e| usage(&e));
     let mut ranker_report: Option<axon_cortex::rank::RankReport> = None;
     let mut escalation: Option<axon_cortex::rank::Escalation> = None;
     let audit_spec = axon_cortex::audit::select(
         audit_flag.as_deref(),
-        std::env::var(axon_cortex::audit::AUDIT_ENV).ok().as_deref(),
+        selector_env(axon_cortex::audit::AUDIT_ENV).as_deref(),
     )
     .unwrap_or_else(|e| usage(&e));
     let label_log = axon_cortex::label::select(
         label_log_flag.as_deref(),
-        std::env::var(axon_cortex::label::LABEL_ENV).ok().as_deref(),
+        selector_env(axon_cortex::label::LABEL_ENV).as_deref(),
     )
     .unwrap_or_else(|e| usage(&e));
     if label_source && label_log.is_none() {
@@ -892,12 +907,34 @@ fn main() {
 
     let fabric = fabric_executor(&fabric_args, check_registry.as_deref());
     let check_timeout = std::time::Duration::from_millis(check_timeout_ms);
-    let checker = resolve_checker(&axon_bin, check_registry.as_deref());
+    // Security F7: an unattended run registers the file phase A hashed, with
+    // that sha256, so the bytes the check digest bound are the bytes run.
+    #[cfg(feature = "unattended")]
+    let expected = phase_a
+        .as_ref()
+        .map(|a| (a.checker_exe.as_path(), a.checker_exe_sha256.as_str()));
+    #[cfg(not(feature = "unattended"))]
+    let expected = None;
+    let checker = resolve_checker(&axon_bin, check_registry.as_deref(), expected);
     let checker_exe = checker.0.clone();
+    // E3 (security review F8): until the watchdog is armed (right after
+    // phase B), an unattended run's static children are each bounded by
+    // min(check_timeout, the time left before the deadline); attended runs
+    // keep check_timeout.
+    #[cfg(feature = "unattended")]
+    let pre_arm_wall = || match &phase_a {
+        Some(_) => check_timeout.min(
+            (started + std::time::Duration::from_millis(deadline_ms.unwrap_or_default()))
+                .saturating_duration_since(std::time::Instant::now()),
+        ),
+        None => check_timeout,
+    };
+    #[cfg(not(feature = "unattended"))]
+    let pre_arm_wall = || check_timeout;
     // R1a: the runtime fence, from the PRISTINE file, before anything of the
     // workspace runs. The Fabric executor does not take it: recorded as not
     // applied rather than claimed.
-    let fence = derive_fence(&checker.0, &workspace, &file, check_timeout);
+    let fence = derive_fence(&checker.0, &workspace, &file, pre_arm_wall());
     let fence = if fabric.is_some() {
         fence.not_applied()
     } else {
@@ -913,10 +950,10 @@ fn main() {
                 &checker.0,
                 &workspace.join(&file),
                 None,
-                check_timeout,
+                pre_arm_wall(),
             )
             .unwrap_or_else(|why| unauthorized(&format!("`axon caps` on {file}: {why}")));
-            let b = axon_cortex::auth::phase_b(a, &checker.0, &fence, &caps, check_timeout)
+            let b = axon_cortex::auth::phase_b(a, &checker.0, &fence, &caps, &pre_arm_wall)
                 .unwrap_or_else(|why| unauthorized(&why));
             // R6 §3: the started record, after consume and before any
             // untrusted code runs; a failed append refuses the run.
@@ -927,6 +964,54 @@ fn main() {
     };
     #[cfg(not(feature = "unattended"))]
     let authorization: Option<serde_json::Value> = None;
+    // E3: an unattended run is stopped at its deadline, the found bytes
+    // restored. Armed right after phase B (security review F8): the
+    // fence-conflict and witness runs below already execute workspace code,
+    // and every child from here on is killed when the deadline passes.
+    #[cfg(feature = "unattended")]
+    let watchdog = phase_a.as_ref().map(|a| {
+        let path = workspace.join(&file);
+        let found = a.pristine.clone();
+        let shown = file.clone();
+        let deadline = started + std::time::Duration::from_millis(deadline_ms.unwrap_or_default());
+        let stalled = format!(
+            "budget exhausted: the hard deadline passed; {shown} not restored: the run's write \
+             lock was not released within the grace, and the run ledger's terminal record was \
+             not written"
+        );
+        axon_cortex::watchdog::arm(
+            deadline,
+            move |ledger| {
+                let wrote = ledger.journal().iter().any(|w| w.path == path);
+                let report = if !wrote {
+                    format!("budget exhausted: the hard deadline passed; {shown} was not written")
+                } else {
+                    match ledger.write(Site::Restore, &path, &found) {
+                        Ok(()) => format!(
+                            "budget exhausted: the hard deadline passed; {shown} restored as found"
+                        ),
+                        Err(e) => format!(
+                            "budget exhausted: the hard deadline passed; {shown} not restored: {e}"
+                        ),
+                    }
+                };
+                // R6 §3: the terminal record of the E3 path, over the
+                // journal this lock guards (restore included).
+                axon_cortex::auth::record_terminal(
+                    axon_cortex::auth::Ending {
+                        exit_code: axon_cortex::watchdog::EXIT_DEADLINE,
+                        outcome: "budget_exhausted".into(),
+                        stopped_by: None,
+                        accepted: None,
+                        episode_digest: None,
+                    },
+                    ledger.journal(),
+                );
+                report
+            },
+            stalled,
+        )
+    });
     let mut runner = registered_runner(
         checker,
         &workspace,
@@ -934,6 +1019,46 @@ fn main() {
         check_timeout,
         &fence.env,
     );
+    // NH-R1 §5.4 (security review F5): before every check dispatch - the
+    // fence-conflict and witness runs and every check of the walk - the task
+    // file outside the target's body is the pristine file and the import
+    // closure is the envelope's. A mismatch stops the run: the found bytes
+    // are put back through the CAS helper if this run wrote the file, the
+    // terminal record is written, exit 29.
+    #[cfg(feature = "unattended")]
+    if let Some(a) = &phase_a {
+        let guard = axon_cortex::auth::DispatchGuard::new(a, &checker_exe, check_timeout)
+            .unwrap_or_else(|why| unauthorized(&why));
+        let path = workspace.join(&file);
+        let found = a.pristine.clone();
+        let shown = file.clone();
+        runner.set_dispatch_guard(Box::new(move || {
+            let Err(why) = guard.check() else {
+                return;
+            };
+            let mut ledger = axon_cortex::cas::lock();
+            let restore = if !ledger.journal().iter().any(|w| w.path == path) {
+                format!("{shown} was not written")
+            } else {
+                match ledger.write(Site::Restore, &path, &found) {
+                    Ok(()) => format!("{shown} restored as found"),
+                    Err(e) => format!("{shown} not restored: {e}"),
+                }
+            };
+            axon_cortex::auth::record_terminal(
+                axon_cortex::auth::Ending {
+                    exit_code: axon_cortex::auth::EXIT_UNAUTHORIZED,
+                    outcome: "unauthorized".into(),
+                    stopped_by: None,
+                    accepted: None,
+                    episode_digest: None,
+                },
+                ledger.journal(),
+            );
+            eprintln!("unauthorized: {why}; {restore}");
+            std::process::exit(axon_cortex::auth::EXIT_UNAUTHORIZED)
+        }));
+    }
     // R1d: the pristine file under the fence. A test the fence itself makes
     // fail means the fence would refuse what the original code already does:
     // the run stops, never repairing under a fence weaker or stronger than
@@ -1177,45 +1302,13 @@ fn main() {
     // success there would not mean what it says.
     let original = std::fs::read_to_string(workspace.join(&file))
         .unwrap_or_else(|e| usage(&format!("cannot read {}/{file}: {e}", workspace.display())));
-    // NH-R1 §5.4: the walk's `original` is the phase-A bytes, and E3: an
-    // unattended run is stopped at its deadline, the found bytes restored.
+    // NH-R1 §5.4: the walk's `original` is the phase-A bytes.
     #[cfg(feature = "unattended")]
-    let watchdog = match &phase_a {
-        None => None,
-        Some(a) => {
-            if original.as_bytes() != a.pristine.as_slice() {
-                unauthorized(&format!("{file} changed after verification"));
-            }
-            let path = workspace.join(&file);
-            let found = a.pristine.clone();
-            let shown = file.clone();
-            let deadline =
-                started + std::time::Duration::from_millis(deadline_ms.unwrap_or_default());
-            Some(axon_cortex::watchdog::arm(deadline, move |ledger| {
-                let report = match ledger.write(Site::Restore, &path, &found) {
-                    Ok(()) => format!(
-                        "budget exhausted: the hard deadline passed; {shown} restored as found"
-                    ),
-                    Err(e) => format!(
-                        "budget exhausted: the hard deadline passed; {shown} not restored: {e}"
-                    ),
-                };
-                // R6 §3: the terminal record of the E3 path, over the
-                // journal this lock guards (restore included).
-                axon_cortex::auth::record_terminal(
-                    axon_cortex::auth::Ending {
-                        exit_code: axon_cortex::watchdog::EXIT_DEADLINE,
-                        outcome: "budget_exhausted".into(),
-                        stopped_by: None,
-                        accepted: None,
-                        episode_digest: None,
-                    },
-                    ledger.journal(),
-                );
-                report
-            }))
+    if let Some(a) = &phase_a {
+        if original.as_bytes() != a.pristine.as_slice() {
+            unauthorized(&format!("{file} changed after verification"));
         }
-    };
+    }
     // R1a: each target's static grant, from the same pristine bytes, before
     // any candidate exists — recorded in the episode with the fence.
     let static_grants =
@@ -2040,7 +2133,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
     // writes nothing — there is no candidate whose authority could exceed
     // the original's.
     let runner = registered_runner(
-        resolve_checker(&axon_bin, check_registry.as_deref()),
+        resolve_checker(&axon_bin, check_registry.as_deref(), None),
         &workspace,
         fabric.as_ref(),
         std::time::Duration::from_millis(check_timeout_ms),
@@ -2198,7 +2291,7 @@ fn grant_only(mut args: impl Iterator<Item = String>) {
         }
     }
     let wall = std::time::Duration::from_millis(DEFAULT_CHECK_TIMEOUT_MS);
-    let (exe, _) = resolve_checker(&axon_bin, check_registry.as_deref());
+    let (exe, _) = resolve_checker(&axon_bin, check_registry.as_deref(), None);
     let fence = derive_fence(&exe, &workspace, &file, wall);
     let targets: Vec<String> = if symbol.is_empty() {
         Vec::new()
@@ -2383,20 +2476,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
-    /// FU-4 (e): a restore whose write fails says so, with the io error,
+    /// FU-4 (e): a restore that cannot be done says so, naming the reason,
     /// instead of dropping it. The target is a directory (unwritable even as
-    /// root); the bytes read are this run's, so the restore is attempted.
+    /// root); the bytes read are this run's, so the restore is attempted, and
+    /// the CAS helper refuses a target that is not a regular file before it
+    /// writes anything (security review F8).
     #[test]
     fn fu4_a_failed_restore_write_is_reported() {
         let path = scratch("fu4-e");
         std::fs::create_dir(&path).unwrap();
         let (_, ours) = wrote_accepted();
-        let io = std::fs::write(&path, FOUND).unwrap_err().to_string();
         let got = restore_read(Site::Settle, &path, Ok(ACCEPTED.to_vec()), FOUND, &ours);
         assert!(
-            matches!(&got, Err(why) if why.contains(&io)),
+            matches!(&got, Err(why) if why.contains("could not be put back as found")
+                && why.contains("is not a regular file")),
             "ATTACK: a failed restore was not reported: {got:?}"
         );
+        assert!(path.is_dir(), "the directory was replaced");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

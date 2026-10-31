@@ -66,11 +66,16 @@ pub struct PhaseA {
     pub ledger: PathBuf,
     /// The run-record seal key (R6 §4): it seals records, nothing else.
     pub seal: rl::SealKey,
-    /// sha256 of the `--axon` bytes, taken before any spawn of it.
+    /// `--axon` resolved ONCE (`runner::resolve_executable`: a bare name is
+    /// a PATH lookup), and the sha256 of that file's bytes, taken before any
+    /// spawn of it. The registry pins exactly this pair (security F7).
+    pub checker_exe: PathBuf,
     pub checker_exe_sha256: String,
     /// The run lock (E5), held for the life of the process.
     pub lock: std::fs::File,
     pub euid: u32,
+    /// The decision record this host's opt-in file names (security F1).
+    pub decision: String,
 }
 
 /// What phase B established.
@@ -130,6 +135,19 @@ pub fn imports_digest(
     file: &str,
     wall: std::time::Duration,
 ) -> Result<String, String> {
+    imports_closure(axon, workspace, file, wall).map(|(digest, _)| digest)
+}
+
+/// [`imports_digest`], and the canonical path of every module file in the
+/// closure (security review F5: no `fs_write` pin may reach one). A module
+/// whose path does not resolve refuses: an unresolved path cannot be shown
+/// disjoint from the pins.
+pub fn imports_closure(
+    axon: &Path,
+    workspace: &Path,
+    file: &str,
+    wall: std::time::Duration,
+) -> Result<(String, Vec<PathBuf>), String> {
     let (text, code) = crate::runner::run_axon_imports(axon, &workspace.join(file), wall)
         .map_err(|e| format!("`axon imports` on {file} could not be run: {e}"))?;
     if code != Some(0) {
@@ -145,12 +163,30 @@ pub fn imports_digest(
         if v["schema"] != "axon-imports/1" {
             continue;
         }
-        return match v["imports_digest"].as_str() {
-            Some(d) if d.starts_with("axsha256:") => Ok(d.to_string()),
-            _ => Err(format!(
-                "`axon imports` on {file} printed no axsha256 digest"
-            )),
+        let digest = match v["imports_digest"].as_str() {
+            Some(d) if d.starts_with("axsha256:") => d.to_string(),
+            _ => {
+                return Err(format!(
+                    "`axon imports` on {file} printed no axsha256 digest"
+                ))
+            }
         };
+        let Some(modules) = v["modules"].as_array() else {
+            return Err(format!("`axon imports` on {file} printed no module list"));
+        };
+        let mut paths = Vec::with_capacity(modules.len());
+        for m in modules {
+            let Some(p) = m["path"].as_str() else {
+                return Err(format!(
+                    "`axon imports` on {file} printed a module with no path"
+                ));
+            };
+            paths.push(
+                std::fs::canonicalize(p)
+                    .map_err(|e| format!("the imported module {p} cannot be resolved: {e}"))?,
+            );
+        }
+        return Ok((digest, paths));
     }
     Err(format!(
         "`axon imports` on {file} printed no axon-imports/1 record"
@@ -181,10 +217,93 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Security review F1 / §10 Q3: the host opt-in file. A human records the
+/// enabling decision; each host that agrees then holds this file. A build
+/// with feature `unattended` copied to a host without it does not run.
+pub const OPT_IN_PATH: &str = "/etc/axon/unattended-repair";
+
+/// The decision record the host opt-in file at `path` names: a regular file
+/// (never followed through a symlink, never a FIFO), owned by `euid`, that
+/// group and other can neither read nor write (`mode & 0o077 == 0`), whose
+/// one non-comment line is `decision: <the decision record>`.
+pub fn host_opt_in(path: &Path, euid: u32) -> Result<String, String> {
+    use std::io::Read as _;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let refuse = |why: String| {
+        format!(
+            "this host has not opted in to unattended repair: {why}. After a human records \
+             the enabling decision (§10 Q3), the host's owner writes {} - a regular file \
+             owned by uid {euid}, mode 0600, holding one line `decision: <the decision record>`",
+            path.display()
+        )
+    };
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|e| refuse(format!("{}: {e}", path.display())))?;
+    let m = f
+        .metadata()
+        .map_err(|e| refuse(format!("{}: {e}", path.display())))?;
+    if !m.file_type().is_file() {
+        return Err(refuse(format!("{} is not a regular file", path.display())));
+    }
+    if m.uid() != euid {
+        return Err(refuse(format!(
+            "{} is owned by uid {}",
+            path.display(),
+            m.uid()
+        )));
+    }
+    if m.mode() & 0o077 != 0 {
+        return Err(refuse(format!(
+            "{} has mode {:04o}: group or other can reach it",
+            path.display(),
+            m.mode() & 0o7777
+        )));
+    }
+    let mut text = String::new();
+    f.by_ref()
+        .take(4096)
+        .read_to_string(&mut text)
+        .map_err(|e| refuse(format!("{}: {e}", path.display())))?;
+    let mut decision = None;
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some(d) = line
+            .strip_prefix("decision:")
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+        else {
+            return Err(refuse(format!(
+                "{} holds `{line}`, which is not a `decision: <record>` line",
+                path.display()
+            )));
+        };
+        if decision.replace(d.to_string()).is_some() {
+            return Err(refuse(format!(
+                "{} names more than one decision record",
+                path.display()
+            )));
+        }
+    }
+    decision.ok_or_else(|| refuse(format!("{} names no decision record", path.display())))
+}
+
 /// Phase A (§5.3 steps 1-8). `axon` is the resolved `--axon` path; nothing
 /// is spawned here.
 pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, String> {
-    // 1. flag allowlist, env selectors, generator kind (E9).
+    // 0. the host opted in (security F1), before anything else is read.
+    // SAFETY: geteuid has no preconditions.
+    let euid = unsafe { libc::geteuid() };
+    let decision = host_opt_in(Path::new(OPT_IN_PATH), euid)?;
+    // 1. flag allowlist, env selectors, generator kind (E9). The selectors
+    // are refused in the real environment, and no `.env` is ever loaded
+    // (security F2): one in the workspace or named by `AXON_DOTENV` would
+    // set what this check never saw.
+    axon_ai::forbid_dotenv().map_err(|why| format!("--unattended runs without a .env: {why}"))?;
     for f in &cli.flags {
         un::check_flag(f)?;
     }
@@ -208,8 +327,6 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
         .map_err(|e| format!("--spent-store {}: {e}", store.display()))?;
     let ledger = std::fs::canonicalize(&ledger)
         .map_err(|e| format!("--run-ledger {}: {e}", ledger.display()))?;
-    // SAFETY: geteuid has no preconditions.
-    let euid = unsafe { libc::geteuid() };
     // 2-4. parse + schema, the verify key's file, signature; 5 (part): time.
     let key = env::VerifyKey::load(&key_path, euid, std::slice::from_ref(&workspace))?;
     let text = std::fs::read_to_string(&envelope_path)
@@ -223,6 +340,17 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
     e.fits_before_expiry(now, effective.deadline_ms, hard_grace_ms)?;
     let (provider, host) = resolved_generator();
     e.check_generator("ai", model, &provider, &host)?;
+    // Security F4 / F6: every fs pin is absolute, and none reaches the spent
+    // store or a key file (the ledger is checked with the workspace below).
+    un::absolute_fs_pins(&e.scopes.fs_read, &e.scopes.fs_write)?;
+    for (what, p) in [
+        ("the spent store", &store),
+        ("the verify key", &key_path),
+        ("the run-record seal key", &seal_path),
+    ] {
+        let p = std::fs::canonicalize(p).map_err(|err| format!("{what} {}: {err}", p.display()))?;
+        un::outside_fs_pins(what, &p, &e.scopes.fs_read, &e.scopes.fs_write)?;
+    }
     // 8. the task: canonical workspace and file, the symlink walk, one read.
     let file = un::normalize_rel(&cli.file)?;
     if workspace.to_string_lossy() != e.task.workspace {
@@ -297,8 +425,12 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
             e.task.pristine_sha256
         ));
     }
-    // 7. the check digest over the `--axon` bytes, before any spawn of it.
-    let checker_exe_sha256 = sha256_file(axon)?;
+    // 7. the check digest over the `--axon` bytes, before any spawn of it:
+    // the file `--axon` resolves to (a bare name through PATH, as the spawn
+    // would), so the bytes hashed are the bytes that run (security F7).
+    let checker_exe = crate::runner::resolve_executable(axon)
+        .map_err(|why| format!("--axon {}: {why}", axon.display()))?;
+    let checker_exe_sha256 = sha256_file(&checker_exe)?;
     let want = check_digest(
         &e.check.name,
         &checker_exe_sha256,
@@ -323,22 +455,25 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
         store,
         ledger,
         seal,
+        checker_exe,
         checker_exe_sha256,
         lock,
         euid,
+        decision,
     })
 }
 
 /// Phase B (§5.3 steps 9-11): after the pinned interpreter's static `axon
 /// caps`, before any child that executes workspace code. `fence` is the
 /// pristine fence `derive_fence` built; `caps` the whole-file answer it was
-/// built from.
+/// built from. `wall` is asked once per child for its bound (E3, security
+/// review F8: min(check_timeout, the time left)).
 pub fn phase_b(
     a: &PhaseA,
     axon: &Path,
     fence: &crate::fence::Fence,
     caps: &crate::fence::Caps,
-    wall: std::time::Duration,
+    wall: &dyn Fn() -> std::time::Duration,
 ) -> Result<PhaseB, String> {
     let e = &a.verified.envelope;
     let pins = crate::fence::ScopePins {
@@ -359,14 +494,14 @@ pub fn phase_b(
             e.capabilities.fence_sha256
         ));
     }
-    let grant = target_grant(axon, &a.workspace, &a.file, &e.task.symbol, wall)?;
+    let grant = target_grant(axon, &a.workspace, &a.file, &e.task.symbol, wall())?;
     if grant != e.capabilities.target_grant {
         return Err(format!(
             "the static grant of `{}` ({grant}) is not the envelope's ({})",
             e.task.symbol, e.capabilities.target_grant
         ));
     }
-    let imports = imports_digest(axon, &a.workspace, &a.file, wall)?;
+    let (imports, modules) = imports_closure(axon, &a.workspace, &a.file, wall())?;
     if imports != e.task.imports_digest {
         return Err(format!(
             "the import closure ({imports}) is not the envelope's ({})",
@@ -380,7 +515,7 @@ pub fn phase_b(
             e.check.digest
         ));
     }
-    fs_write_disjoint(&e.scopes.fs_write, &a.workspace, &a.file)?;
+    fs_write_disjoint(&e.scopes.fs_write, &a.workspace, &a.file, &modules)?;
     // 11. consume: the last check, so a refused envelope stays unspent.
     env::consume(&a.store, a.euid, &a.verified, now_unix())?;
     Ok(PhaseB {
@@ -435,15 +570,32 @@ pub fn target_grant(
     Ok(crate::fence::StaticGrant::from_caps(symbol, &caps).to_json())
 }
 
-/// §5.4: the check child's FS_WRITE pins are disjoint from the task file and
-/// the policy paths (a pin is an absolute path prefix).
-pub fn fs_write_disjoint(fs_write: &[String], workspace: &Path, file: &str) -> Result<(), String> {
+/// §5.4: the check child's FS_WRITE pins are disjoint from the task file, the
+/// modules of its import closure (`imports`, canonical paths; security review
+/// F5) and the policy paths (a pin is an absolute path prefix).
+pub fn fs_write_disjoint(
+    fs_write: &[String],
+    workspace: &Path,
+    file: &str,
+    imports: &[PathBuf],
+) -> Result<(), String> {
     let task = workspace.join(file);
     for pin in fs_write {
         let p = Path::new(pin);
         if task.starts_with(p) || p.starts_with(&task) {
             return Err(format!(
                 "the check's fs_write pin {pin} covers the task file {file}"
+            ));
+        }
+        // The module paths are canonical; the pin is compared as given and
+        // resolved (a symlinked pin directory reaches the same files).
+        let resolved = std::fs::canonicalize(p).ok();
+        let covers =
+            |m: &PathBuf| m.starts_with(p) || resolved.as_ref().is_some_and(|r| m.starts_with(r));
+        if let Some(m) = imports.iter().find(|m| covers(m)) {
+            return Err(format!(
+                "the check's fs_write pin {pin} covers the imported module {}",
+                m.display()
             ));
         }
         if let Ok(rel) = p.strip_prefix(workspace) {
@@ -456,6 +608,71 @@ pub fn fs_write_disjoint(fs_write: &[String], workspace: &Path, file: &str) -> R
         }
     }
     Ok(())
+}
+
+/// §5.4 / security review F5: what is re-checked before EVERY check dispatch
+/// of an unattended run (the walk's included, not only the witness run's):
+/// the task file outside the target's body is the pristine file, and the
+/// import closure is still the envelope's. A check child that rewrote an
+/// imported module or the code around the target would otherwise have every
+/// later verdict graded against its own edit.
+pub struct DispatchGuard {
+    axon: PathBuf,
+    workspace: PathBuf,
+    file: String,
+    symbol: String,
+    pristine: Vec<u8>,
+    /// The target's body in `pristine` (`runner::symbol_body`): a candidate
+    /// replaces exactly this span, so everything around it is the pristine
+    /// bytes.
+    body: (usize, usize),
+    imports_digest: String,
+    wall: std::time::Duration,
+}
+
+impl DispatchGuard {
+    pub fn new(a: &PhaseA, axon: &Path, wall: std::time::Duration) -> Result<Self, String> {
+        let symbol = a.verified.envelope.task.symbol.clone();
+        let body = std::str::from_utf8(&a.pristine)
+            .ok()
+            .and_then(|src| crate::runner::symbol_body(src, &symbol))
+            .ok_or_else(|| format!("`{symbol}` has no body in the pristine {}", a.file))?;
+        Ok(DispatchGuard {
+            axon: axon.to_path_buf(),
+            workspace: a.workspace.clone(),
+            file: a.file.clone(),
+            symbol,
+            pristine: a.pristine.clone(),
+            body,
+            imports_digest: a.verified.envelope.task.imports_digest.clone(),
+            wall,
+        })
+    }
+
+    /// `Ok` when the next check may be dispatched; otherwise why not.
+    pub fn check(&self) -> Result<(), String> {
+        let now = std::fs::read(self.workspace.join(&self.file))
+            .map_err(|e| format!("{}: {e}", self.file))?;
+        let (start, end) = self.body;
+        let (head, tail) = (&self.pristine[..start], &self.pristine[end..]);
+        if now.len() < head.len() + tail.len() || !now.starts_with(head) || !now.ends_with(tail) {
+            return Err(format!(
+                "{} changed outside `{}` before a check dispatch (sha256 {} -> {})",
+                self.file,
+                self.symbol,
+                crate::label::sha256_hex(&self.pristine),
+                crate::label::sha256_hex(&now)
+            ));
+        }
+        let imports = imports_digest(&self.axon, &self.workspace, &self.file, self.wall)?;
+        if imports != self.imports_digest {
+            return Err(format!(
+                "the import closure changed before a check dispatch ({} -> {imports})",
+                self.imports_digest
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// §5.4: the bytes about to be graded still are the pristine file and the
@@ -489,6 +706,7 @@ pub fn authorization_json(a: &PhaseA, b: &PhaseB) -> serde_json::Value {
         "envelope_digest": a.verified.digest,
         "issued_by": e.issued_by,
         "expires_unix": e.expires_unix,
+        "host_opt_in": {"path": OPT_IN_PATH, "decision": a.decision},
         "enforcement": b.rows.iter().map(Row::to_json).collect::<Vec<_>>(),
     })
 }
@@ -705,11 +923,43 @@ mod tests {
     #[test]
     fn an_fs_write_pin_over_the_task_file_refuses() {
         let w = Path::new("/w");
-        assert!(fs_write_disjoint(&["/w/out".into()], w, "f.ax").is_ok());
+        assert!(fs_write_disjoint(&["/w/out".into()], w, "f.ax", &[]).is_ok());
         assert!(
-            fs_write_disjoint(&["/w".into()], w, "f.ax").is_err(),
+            fs_write_disjoint(&["/w".into()], w, "f.ax", &[]).is_err(),
             "ATTACK: NH-R1 a check fs_write pin covering the task file was admitted"
         );
-        assert!(fs_write_disjoint(&["/w/scripts".into()], w, "f.ax").is_err());
+        assert!(fs_write_disjoint(&["/w/scripts".into()], w, "f.ax", &[]).is_err());
+    }
+
+    /// Security review F5: a pin over a module of the task's import closure
+    /// refuses, as given and through a symlinked pin directory.
+    #[test]
+    fn an_fs_write_pin_over_an_imported_module_refuses() {
+        let d = std::env::temp_dir().join(format!("cortex-auth-f5-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("lib")).unwrap();
+        std::fs::write(
+            d.join("lib/helpers.ax"),
+            "fn inc(n: i64) -> i64 { n + 1 }\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(d.join("lib"), d.join("alias")).unwrap();
+        let d = std::fs::canonicalize(&d).unwrap();
+        let module = d.join("lib/helpers.ax");
+        let w = Path::new("/w");
+        let pin = |p: &Path| vec![p.to_string_lossy().into_owned()];
+        let modules = std::slice::from_ref(&module);
+        assert!(fs_write_disjoint(&pin(&d.join("out")), w, "f.ax", modules).is_ok());
+        for p in [d.join("lib"), d.clone(), module.clone(), d.join("alias")] {
+            let got = fs_write_disjoint(&pin(&p), w, "f.ax", modules);
+            assert!(
+                got.as_ref()
+                    .is_err_and(|why| why.contains("covers the imported module")),
+                "ATTACK: NH-R1 security F5 an fs_write pin over an imported module was admitted: \
+                 {} {got:?}",
+                p.display()
+            );
+        }
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

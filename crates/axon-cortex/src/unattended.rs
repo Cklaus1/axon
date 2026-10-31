@@ -36,13 +36,17 @@ pub const ALLOWED_FLAGS: &[&str] = &[
 ];
 
 /// §5.2: environment selectors that steer a run outside the envelope; set,
-/// they refuse.
+/// they refuse. `AXON_AI_MOCK` and `AXON_AI_REPLAY` (security build) would
+/// answer the generator from a stub or a cache instead of the pinned
+/// endpoint.
 pub const REFUSED_ENV: &[&str] = &[
     crate::rank::RANKER_ENV,
     crate::audit::AUDIT_ENV,
     crate::label::LABEL_ENV,
     "CORTEX_MODEL",
     "AXON_CORTEX_GENERATOR_TIMEOUT_MS",
+    "AXON_AI_MOCK",
+    "AXON_AI_REPLAY",
 ];
 
 /// One enforcement-gate row (§5.6 `enforcement`).
@@ -251,6 +255,17 @@ pub fn caps_rows(caps: &crate::fence::Caps) -> Vec<Row> {
     } else {
         rows.push(Row::admit("E11", "no exec capability or Exec effect"));
     }
+    // Security review F11 / §10 Q2: the durable store writes a file under the
+    // cache dir whose path comes from a store KEY, so no scope pin can name
+    // it; refused by its own row, not left to the child's missing `HOME`.
+    if caps.capabilities.iter().any(|c| c == "dstore") {
+        rows.push(Row::refuse(
+            "E12",
+            "the pristine file reaches the durable store (`dstore`), a file no scope pin can name",
+        ));
+    } else {
+        rows.push(Row::admit("E12", "no dstore capability"));
+    }
     rows
 }
 
@@ -269,6 +284,49 @@ pub fn pin_row(
         ),
         Err(why) => (Row::refuse("E1", why), None),
     }
+}
+
+/// Security review F4: every `fs_read` / `fs_write` pin is an absolute path.
+/// The interpreter matches a pin as a plain path prefix and the check child's
+/// cwd is the workspace, so a relative pin resolves inside it - and the
+/// symlink walk and the policy check only see pins under the absolute
+/// workspace, so a relative one (`out -> /home/op/keys`) passed both.
+pub fn absolute_fs_pins(fs_read: &[String], fs_write: &[String]) -> Result<(), String> {
+    for (kind, pins) in [("fs_read", fs_read), ("fs_write", fs_write)] {
+        if let Some(p) = pins.iter().find(|p| !p.starts_with('/')) {
+            return Err(format!(
+                "scopes.{kind} entry {p:?} is relative: a pin must be absolute (a relative pin \
+                 resolves against the check child's cwd and escapes the symlink walk and policy check)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Security review F6: `path` (the canonical spent store or a key file) and
+/// every `fs_read` / `fs_write` pin are disjoint - neither lies at or under
+/// the other. A pin over the store lets the check child rename `.used` back
+/// to `.issued` (a replay); over the verify key, overwrite it (self-mint);
+/// over the seal key, read it (forge run records).
+pub fn outside_fs_pins(
+    what: &str,
+    path: &Path,
+    fs_read: &[String],
+    fs_write: &[String],
+) -> Result<(), String> {
+    for (kind, pins) in [("fs_read", fs_read), ("fs_write", fs_write)] {
+        let overlaps = |p: &&String| {
+            let p = Path::new(p.as_str());
+            path.starts_with(p) || p.starts_with(path)
+        };
+        if let Some(p) = pins.iter().find(overlaps) {
+            return Err(format!(
+                "{what} {} overlaps the scopes.{kind} pin {p}: the check child could reach it",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// E5 / §6: the exclusive run lock, keyed by the canonical file path, held
@@ -431,6 +489,22 @@ mod tests {
             caps_rows(&caps(&[], &[], true)).iter().all(|r| !r.admit),
             "ATTACK: a file of unknown capabilities was admitted"
         );
+    }
+
+    /// Security review F11 / §10 Q2: a file reaching the durable store is
+    /// refused by its own gate row, not left to the child's missing `HOME`.
+    #[test]
+    fn e12_a_dstore_file_is_refused() {
+        let rows = caps_rows(&caps(&["dstore"], &[], false));
+        assert!(
+            rows.iter().any(|r| r.id == "E12"),
+            "ATTACK: NH-R1 security F11 a dstore file had no gate row: {rows:?}"
+        );
+        assert!(
+            !admits(&rows, "E12"),
+            "ATTACK: NH-R1 security F11 a dstore file was admitted: {rows:?}"
+        );
+        assert!(admits(&caps_rows(&caps(&["fs:read"], &[], false)), "E12"));
     }
 
     #[test]

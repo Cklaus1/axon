@@ -3425,7 +3425,7 @@ ATTACK_MARKERS.update({
     'M4117': r'ATTACK: a second unattended run took the lock of a file in use',
     'M4118': r'ATTACK: E6 a check child that inherits the launcher env was admitted',
     'M4119': r'ATTACK: E3 the running check \d+ survived the deadline',
-    'M4200': r'ATTACK: E3 a writing-stalled run exited \d+ ms after its deadline',
+    'M4200': r'ATTACK: E3 the main thread re-took the write lock after the watchdog fired',
 })
 ATTACK_MARKERS.update({
     'M4201': r'ATTACK: E5 a visible copy clobbered an existing file',
@@ -3637,6 +3637,45 @@ ATTACK_MARKERS.update({
     'M4389': r'ATTACK: a consumed envelope with no run record audited clean',
     'M4390': r'ATTACK: an unverifiable file in \-\-envelopes was skipped',
     'M4391': r'ATTACK: records naming a different envelope digest audited clean',
+})
+
+# NH-R1 security review fixes, cortex lane (ids M4400-M4449)
+ATTACK_MARKERS.update({
+    'M4400': r'ATTACK: E5 an edit between the re\-hash and the rename was overwritten silently',
+    'M4401': r'ATTACK: E5 an edit between the re\-hash and the rename was overwritten silently',
+    'M4402': r'ATTACK: E5 a delete removed an edit made between its re\-hash and its unlink',
+    'M4403': r"ATTACK: E3 a FIFO in the target's place stalled a CAS read",
+    'M4404': r"ATTACK: E3 a FIFO in the target's place stalled a CAS read",
+    'M4405': r'ATTACK: E5 a file created between the re\-hash and the rename was clobbered',
+    'M4406': r'ATTACK: NH-R1 security F1 a host with no opt-in file ran unattended',
+    'M4407': r'ATTACK: NH-R1 security F1 a host with an opt-in owned by uid 1 ran unattended',
+    'M4408': r'ATTACK: NH-R1 security F1 a host with an opt-in of mode 0640 ran unattended',
+    'M4409': r'ATTACK: NH-R1 security F1 a host with an opt-in naming no decision record ran unattended',
+    'M4410': r'ATTACK: NH-R1 security F1 a host with an opt-in holding a line that is not its decision ran unattended',
+    'M4411': r'ATTACK: NH-R1 security F1 a host with an opt-in naming two decision records ran unattended',
+    'M4412': r"ATTACK: NH-R1 security F2 a \.env \(cwd\) answered an unattended run's generator \(AXON_AI_MOCK\)",
+    'M4413': r'ATTACK: NH-R1 security F2 a \.env lookup that already ran was reported as forbidden',
+    'M4414': r'ATTACK: NH-R1 security F4 a relative fs_read pin through a workspace symlink ran',
+    'M4415': r'ATTACK: NH-R1 security F4 a relative fs_read pin through a workspace symlink ran',
+    'M4416': r'ATTACK: NH-R1 security F4 a relative \-\-read\-prefix pin was previewed',
+    'M4417': r'ATTACK: NH-R1 security F6 an fs_read pin over the operator directory above both keys ran',
+    'M4418': r'ATTACK: NH-R1 security F6 an fs_write pin over a directory under the spent store ran',
+    'M4419': r'ATTACK: NH-R1 security F6 an fs_write pin over the spent store ran',
+    'M4420': r'ATTACK: NH-R1 security F6 an fs_write pin over the verify key ran',
+    'M4421': r'ATTACK: NH-R1 security F6 an fs_read pin over the run-record seal key ran',
+    'M4422': r'ATTACK: NH-R1 security F6 an fs_write pin over the spent store ran',
+    'M4423': r'ATTACK: NH-R1 security F7 a PATH interpreter other than the hashed one got past phase A',
+    'M4425': r'ATTACK: NH-R1 security F11 a dstore file was admitted',
+    'M4426': r'ATTACK: NH-R1 security F8 a run holding its write lock outlived its deadline',
+    'M4427': r'ATTACK: NH-R1 security F8 a watchdog armed after its deadline skipped the restore',
+    'M4428': r'ATTACK: NH-R1 security F8 a check stalled before the watchdog was armed outlived the deadline',
+    'M4429': r'ATTACK: NH-R1 security F8 a static child outlived the deadline before the watchdog was armed',
+    'M4430': r'ATTACK: NH-R1 security F5 an fs_write pin over an imported module ran',
+    'M4431': r'ATTACK: NH-R1 security F5 a check ran on an import closure changed by an earlier check',
+    'M4432': r'ATTACK: NH-R1 security F5 a check ran on an import closure changed by an earlier check',
+    'M4433': r'ATTACK: NH-R1 S13 a file changed during the witness run was graded \(outside\)',
+    'M4434': r'ATTACK: NH-R1 security build AXON_AI_MOCK in the real environment answered',
+    'M4435': r'ATTACK: NH-R1 security build AXON_AI_REPLAY in the real environment ran unattended',
 })
 
 # NH-R1 security review fixes, crates side (ids M4450-M4461)

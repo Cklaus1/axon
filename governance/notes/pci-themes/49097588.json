@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "An unattended run never loads a .env file, so one in the workspace or named by AXON_DOTENV can no longer set a selector the environment refusal never saw; a new S-test showed a label log written before the fix."}

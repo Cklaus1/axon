@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "The unattended gate now has a row that refuses a file reaching the durable store, as the v1 admission set requires; a new unit test showed no such row before."}

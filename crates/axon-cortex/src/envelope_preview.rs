@@ -52,6 +52,10 @@ pub fn envelope_preview(
     if r.write_prefixes.is_empty() {
         return Err("at least one --write-prefix is required with --envelope-preview".into());
     }
+    // Security F7: `--axon` resolved once, as phase A does; every child
+    // below and the checker digest use that one file.
+    let axon = &crate::runner::resolve_executable(axon)
+        .map_err(|why| format!("--axon {}: {why}", axon.display()))?;
     let workspace = std::fs::canonicalize(&r.workspace)
         .map_err(|e| format!("--workspace {}: {e}", r.workspace.display()))?;
     let ws = workspace
@@ -69,12 +73,15 @@ pub fn envelope_preview(
     for p in &write_prefixes {
         un::no_symlink_at_or_under(&workspace, p)?;
     }
+    // Security F4: a relative pin would skip the walk below; refused first.
+    un::absolute_fs_pins(&r.pins.fs_read, &r.pins.fs_write)?;
     for p in r.pins.fs_read.iter().chain(&r.pins.fs_write) {
         if let Ok(rel) = Path::new(p).strip_prefix(&workspace) {
             un::no_symlink_at_or_under(&workspace, &rel.to_string_lossy())?;
         }
     }
-    auth::fs_write_disjoint(&r.pins.fs_write, &workspace, &file)?;
+    let (imports_digest, modules) = auth::imports_closure(axon, &workspace, &file, wall)?;
+    auth::fs_write_disjoint(&r.pins.fs_write, &workspace, &file, &modules)?;
     let canonical_file = workspace.join(&file);
     let pristine =
         std::fs::read(&canonical_file).map_err(|e| format!("{}: {e}", canonical_file.display()))?;
@@ -87,7 +94,6 @@ pub fn envelope_preview(
     let fence = pinned.unwrap_or(fence);
     let fence_sha256 = fence.sha256();
     let target_grant = auth::target_grant(axon, &workspace, &file, &r.symbol, wall)?;
-    let imports_digest = auth::imports_digest(axon, &workspace, &file, wall)?;
     // Phase A step 7: the checker is the `--axon` bytes.
     let checker = std::fs::read(axon).map_err(|e| format!("--axon {}: {e}", axon.display()))?;
     let checker_exe_sha256 = crate::label::sha256_hex(&checker);

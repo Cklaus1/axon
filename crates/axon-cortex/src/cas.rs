@@ -7,12 +7,31 @@
 //! 1. writes a temp file in the target's directory (the target's mode kept);
 //! 2. re-hashes the target against the last digest this process wrote or
 //!    read for it ([`Ledger::observe`]); a mismatch writes nothing;
-//! 3. renames the temp file over the target;
-//! 4. checks that the target is the inode it renamed, `(dev, ino)`;
-//! 5. re-hashes the renamed file against the bytes it wrote. A mismatch means
-//!    a writer got in during the residual window between 2 and 3 (POSIX has
-//!    no atomic compare-and-rename): it is reported with both digests, never
-//!    claimed as written, so a lost foreign edit is visible, not silent.
+//! 3. EXCHANGES the temp file and the target (`renameat2(RENAME_EXCHANGE)`;
+//!    `RENAME_NOREPLACE` when the target is expected absent), so the target's
+//!    old inode is not unlinked but moved to the temp name;
+//! 4. re-hashes that displaced inode against step 2's digest. POSIX has no
+//!    atomic compare-and-rename, so a writer can still change the target
+//!    between 2 and 3; such an edit is now NEVER lost and never silent: the
+//!    displaced file is kept beside the target (`.cortex-cas-displaced-*`)
+//!    and the write is reported ([`CasError::Displaced`]) with both digests
+//!    and the kept path - the caller blocks (exit 22). (Security review F3:
+//!    the plain rename and the re-hash of the renamed file in steps 4-5 of
+//!    the earlier helper missed exactly this window.)
+//! 5. checks that the target is the inode it placed, `(dev, ino)`, and
+//!    re-hashes it against the bytes it wrote: a write AFTER the exchange is
+//!    reported with both digests, never claimed as written.
+//!
+//! What remains: a writer that keeps an fd open on the old inode and writes
+//! through it after step 4's re-hash writes into an inode no longer linked
+//! anywhere (step 4 matched, so it was unlinked): that write is lost
+//! unreported; only a writer through the path is covered. Every
+//! read here opens with `O_NOFOLLOW | O_NONBLOCK` and refuses anything but a
+//! regular file (F8), so a FIFO or a symlink in the target's place cannot
+//! stall a read under the run's write lock.
+//!
+//! A delete renames the target to a temp name first, re-hashes what it moved
+//! and only then unlinks it; a mismatch renames it back (F9).
 //!
 //! Every write and delete is journalled (`{site, path, before, after}`, hex
 //! sha256), the record R6's run ledger carries. One process-wide [`Ledger`]
@@ -88,13 +107,24 @@ pub enum CasError {
         expected: Option<String>,
         found: Option<String>,
     },
-    /// Step 4: the target is no longer the inode renamed into place.
+    /// Step 5: the target is no longer the inode placed.
     Replaced { path: PathBuf },
     /// Step 5: the target does not hold the bytes just written.
     Lost {
         path: PathBuf,
         wrote: String,
         found: Option<String>,
+    },
+    /// Step 4 (security review F3): the inode the exchange displaced is not
+    /// what step 2 hashed, so a writer got in between. This run's bytes are
+    /// in place and journalled; the displaced file is kept at `kept`, never
+    /// deleted. For a delete (F9): the moved file could not be renamed back
+    /// and is kept at `kept`.
+    Displaced {
+        path: PathBuf,
+        expected: Option<String>,
+        displaced: Option<String>,
+        kept: PathBuf,
     },
     /// The filesystem refused (the io error's text).
     Io(String),
@@ -134,6 +164,20 @@ impl std::fmt::Display for CasError {
                  sha256 {}",
                 path.display(),
                 shown(found)
+            ),
+            CasError::Displaced {
+                path,
+                expected,
+                displaced,
+                kept,
+            } => write!(
+                f,
+                "{} was edited by another writer during this run's write (expected sha256 {}, \
+                 the edited file holds sha256 {}); the edited file is kept at {}",
+                path.display(),
+                shown(expected),
+                shown(displaced),
+                kept.display()
             ),
             CasError::Io(e) => f.write_str(e),
         }
@@ -206,13 +250,89 @@ fn sha(bytes: &[u8]) -> String {
     crate::label::sha256_hex(bytes)
 }
 
+// A test's writer inside the residual window (between the re-hash and the
+// rename of a write; between the re-hash and the unlink of a delete).
+#[cfg(test)]
+type WindowHook = Box<dyn FnMut(&Path)>;
+#[cfg(test)]
+thread_local! {
+    static IN_WINDOW: std::cell::RefCell<Option<WindowHook>> = std::cell::RefCell::new(None);
+}
+#[cfg(test)]
+fn in_window(path: &Path) {
+    IN_WINDOW.with(|h| {
+        if let Some(f) = h.borrow_mut().as_mut() {
+            f(path)
+        }
+    })
+}
+#[cfg(not(test))]
+fn in_window(_path: &Path) {}
+
+/// The bytes of the regular file at `path`, read without following a
+/// symlink and without blocking on a FIFO (security review F8: the E3
+/// watchdog's restore reads under the run's write lock, and a FIFO or a
+/// link to `/dev/zero` in the target's place stalled it past its grace).
+fn read_regular(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read as _;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let m = f.metadata()?;
+    if !m.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} is not a regular file", path.display()),
+        ));
+    }
+    let mut b = Vec::with_capacity(m.len() as usize);
+    f.read_to_end(&mut b)?;
+    Ok(b)
+}
+
 /// The digest of the file at `path` now; `None` when it does not exist.
 fn digest_now(path: &Path) -> Result<Option<String>, CasError> {
-    match std::fs::read(path) {
+    match read_regular(path) {
         Ok(b) => Ok(Some(sha(&b))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(CasError::Io(e.to_string())),
+        Err(e) => Err(CasError::Io(format!("{}: {e}", path.display()))),
     }
+}
+
+/// `renameat2(from, to, flags)` (`RENAME_EXCHANGE` / `RENAME_NOREPLACE`; a
+/// filesystem without them refuses, so the write fails closed).
+fn rename2(from: &Path, to: &Path, flags: libc::c_uint) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let a = std::ffi::CString::new(from.as_os_str().as_bytes())?;
+    let b = std::ffi::CString::new(to.as_os_str().as_bytes())?;
+    // SAFETY: both are valid NUL-terminated paths; AT_FDCWD resolves them as given.
+    let rc = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            a.as_ptr(),
+            libc::AT_FDCWD,
+            b.as_ptr(),
+            flags,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// A fresh name beside `path` to keep a displaced file under.
+fn kept_name(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    dir.join(format!(
+        ".cortex-cas-displaced-{}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::SeqCst),
+        name.to_string_lossy()
+    ))
 }
 
 #[cfg(unix)]
@@ -288,19 +408,52 @@ impl Ledger {
                 found,
             });
         }
-        // 3.
-        if let Err(e) = std::fs::rename(&tmp, path) {
+        in_window(path);
+        // 3. The exchange: the target's old inode moves to the temp name.
+        // Expected absent: an exclusive rename, so nothing created meanwhile
+        // is clobbered.
+        let flags = if found.is_some() {
+            libc::RENAME_EXCHANGE
+        } else {
+            libc::RENAME_NOREPLACE
+        };
+        if let Err(e) = rename2(&tmp, path, flags) {
             let _ = std::fs::remove_file(&tmp);
-            return Err(CasError::Io(e.to_string()));
+            return Err(match e.raw_os_error() {
+                Some(libc::ENOENT) | Some(libc::EEXIST) => CasError::Foreign {
+                    path: path.to_path_buf(),
+                    expected,
+                    found: digest_now(path).unwrap_or(None),
+                },
+                _ => CasError::Io(format!("{}: {e}", path.display())),
+            });
         }
         let after = sha(bytes);
         self.known.insert(path.to_path_buf(), Some(after.clone()));
         self.journal.push(WriteRecord {
             site,
             path: path.to_path_buf(),
-            before_sha256: found,
+            before_sha256: found.clone(),
             after_sha256: Some(after.clone()),
         });
+        // 4. The displaced inode is what step 2 hashed, or it is kept.
+        if found.is_some() {
+            let displaced = read_regular(&tmp).ok().map(|b| sha(&b));
+            if displaced != found {
+                let kept = kept_name(dir, name);
+                let kept = match rename2(&tmp, &kept, libc::RENAME_NOREPLACE) {
+                    Ok(()) => kept,
+                    Err(_) => tmp,
+                };
+                return Err(CasError::Displaced {
+                    path: path.to_path_buf(),
+                    expected: found,
+                    displaced,
+                    kept,
+                });
+            }
+            let _ = std::fs::remove_file(&tmp);
+        }
         self.verify_placed(path, tmp_id, after)
     }
 
@@ -340,7 +493,10 @@ impl Ledger {
     }
 
     /// Delete `path`, which must still be what this process last wrote or
-    /// read. The target is re-hashed first; a mismatch deletes nothing.
+    /// read. The target is re-hashed first; a mismatch deletes nothing. Then
+    /// it is renamed to a temp name and what was moved is re-hashed before
+    /// the unlink: an edit made in between is renamed back and reported,
+    /// never deleted (security review F9).
     pub fn remove(&mut self, site: Site, path: &Path) -> Result<(), CasError> {
         let expected = self
             .known
@@ -357,7 +513,38 @@ impl Ledger {
                 found,
             });
         }
-        std::fs::remove_file(path).map_err(|e| CasError::Io(e.to_string()))?;
+        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+            return Err(CasError::Io(format!(
+                "{} names no file to delete",
+                path.display()
+            )));
+        };
+        let tmp = dir.join(format!(
+            ".cortex-cas-rm-{}-{}",
+            std::process::id(),
+            name.to_string_lossy()
+        ));
+        let _ = std::fs::remove_file(&tmp);
+        in_window(path);
+        rename2(path, &tmp, libc::RENAME_NOREPLACE)
+            .map_err(|e| CasError::Io(format!("{}: {e}", path.display())))?;
+        let moved = read_regular(&tmp).ok().map(|b| sha(&b));
+        if moved != found {
+            return Err(match rename2(&tmp, path, libc::RENAME_NOREPLACE) {
+                Ok(()) => CasError::Foreign {
+                    path: path.to_path_buf(),
+                    expected,
+                    found: moved,
+                },
+                Err(_) => CasError::Displaced {
+                    path: path.to_path_buf(),
+                    expected,
+                    displaced: moved,
+                    kept: tmp,
+                },
+            });
+        }
+        std::fs::remove_file(&tmp).map_err(|e| CasError::Io(format!("{}: {e}", path.display())))?;
         self.known.insert(path.to_path_buf(), None);
         self.journal.push(WriteRecord {
             site,
@@ -576,6 +763,160 @@ mod tests {
         assert!(
             matches!(l.remove(Site::Sweep, &p), Err(CasError::Foreign { .. })) && p.exists(),
             "ATTACK: E5 a delete removed bytes this run never saw"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Another writer rewrites `path`'s inode in place inside the window.
+    fn rewrite_in_window(bytes: &'static [u8]) {
+        IN_WINDOW.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move |p: &Path| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(p)
+                    .unwrap()
+                    .write_all(bytes)
+                    .unwrap();
+            }))
+        });
+    }
+
+    fn close_window() {
+        IN_WINDOW.with(|h| *h.borrow_mut() = None);
+    }
+
+    /// Every file in `d` but `keep`, by contents.
+    fn others(d: &Path, keep: &Path) -> Vec<Vec<u8>> {
+        std::fs::read_dir(d)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p != keep)
+            .map(|p| std::fs::read(p).unwrap())
+            .collect()
+    }
+
+    /// Security review F3: an edit between step 2's re-hash and the rename is
+    /// kept (the displaced inode) and reported with both digests.
+    #[test]
+    fn a_writer_between_the_rehash_and_the_rename_is_kept_and_reported() {
+        let d = dir("exchange");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"one").unwrap();
+        let mut l = Ledger::default();
+        l.observe(&p, b"one");
+        rewrite_in_window(b"theirs");
+        let got = l.write(Site::Apply, &p, b"mine");
+        close_window();
+        let shown = format!(
+            "{got:?} {}",
+            got.as_ref()
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        );
+        let kept = others(&d, &p);
+        assert!(
+            matches!(got, Err(CasError::Displaced { .. }))
+                && shown.contains(&sha(b"one"))
+                && shown.contains(&sha(b"theirs"))
+                && kept == [b"theirs".to_vec()],
+            "ATTACK: E5 an edit between the re-hash and the rename was overwritten silently: \
+             {shown}; kept {kept:?}"
+        );
+        // The run's bytes are in place and journalled: the report says so.
+        assert_eq!(std::fs::read(&p).unwrap(), b"mine");
+        assert_eq!(l.journal().len(), 1);
+        // A later write never deletes the kept file.
+        l.write(Site::Restore, &p, b"one").unwrap();
+        assert_eq!(others(&d, &p), [b"theirs".to_vec()]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Security review F3: a write over a target expected ABSENT never
+    /// clobbers a file created in the window.
+    #[test]
+    fn a_file_created_in_the_window_is_not_clobbered() {
+        let d = dir("noreplace");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"one").unwrap();
+        let mut l = Ledger::default();
+        l.observe(&p, b"one");
+        l.remove(Site::Sweep, &p).unwrap();
+        IN_WINDOW.with(|h| {
+            *h.borrow_mut() = Some(Box::new(|p: &Path| std::fs::write(p, b"theirs").unwrap()))
+        });
+        let got = l.write(Site::Apply, &p, b"mine");
+        close_window();
+        assert!(
+            matches!(got, Err(CasError::Foreign { .. })) && std::fs::read(&p).unwrap() == b"theirs",
+            "ATTACK: E5 a file created between the re-hash and the rename was clobbered: {got:?}"
+        );
+        assert!(others(&d, &p).is_empty(), "the temp file is removed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Security review F9: an edit between a delete's re-hash and its unlink
+    /// is never deleted.
+    #[test]
+    fn a_writer_between_the_rehash_and_the_unlink_is_not_deleted() {
+        let d = dir("rmwindow");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"one").unwrap();
+        let mut l = Ledger::default();
+        l.observe(&p, b"one");
+        rewrite_in_window(b"theirs");
+        let got = l.remove(Site::Sweep, &p);
+        close_window();
+        let shown = format!(
+            "{got:?} {}",
+            got.as_ref()
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        );
+        assert!(
+            std::fs::read(&p).ok().as_deref() == Some(b"theirs".as_slice())
+                && shown.contains(&sha(b"one"))
+                && shown.contains(&sha(b"theirs")),
+            "ATTACK: E5 a delete removed an edit made between its re-hash and its unlink: {shown}"
+        );
+        assert!(l.journal().is_empty());
+        assert!(others(&d, &p).is_empty(), "the temp name is renamed back");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Security review F8: a FIFO in the target's place never stalls a read
+    /// (the E3 watchdog's restore reads under the write lock).
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_in_the_targets_place_never_stalls_a_read() {
+        use std::os::unix::ffi::OsStrExt;
+        let d = dir("fifo");
+        let p = d.join("f.ax");
+        let c = std::ffi::CString::new(p.as_os_str().as_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let q = p.clone();
+        std::thread::spawn(move || {
+            let mut l = Ledger::default();
+            l.observe(&q, b"one");
+            let _ = tx.send(l.write(Site::ExitRestore, &q, b"one"));
+        });
+        let got = rx.recv_timeout(std::time::Duration::from_secs(5));
+        if got.is_err() {
+            // Release the stalled reader: a writer end, opened and closed.
+            // SAFETY: as above.
+            let fd = unsafe { libc::open(c.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK) };
+            if fd >= 0 {
+                // SAFETY: fd was just opened here.
+                unsafe { libc::close(fd) };
+            }
+        }
+        assert!(
+            matches!(got, Ok(Err(CasError::Io(_)))),
+            "ATTACK: E3 a FIFO in the target's place stalled a CAS read: {got:?}"
         );
         let _ = std::fs::remove_dir_all(&d);
     }

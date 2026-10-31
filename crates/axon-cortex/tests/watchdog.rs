@@ -51,19 +51,28 @@ fn e3_child() {
     let job = axon_jobctl::Job::spawn(&mut sleeper).unwrap();
     std::fs::write(dir.join("check.pid"), job.id().to_string()).unwrap();
     let restore_to = file.clone();
-    let deadline = Instant::now() + DEADLINE;
-    std::fs::write(
-        dir.join("deadline"),
-        (epoch_ms() + DEADLINE.as_millis()).to_string(),
-    )
-    .unwrap();
-    let _armed = watchdog::arm(deadline, move |ledger| {
-        let restored = ledger
-            .write(Site::ExitRestore, &restore_to, FOUND)
-            .map(|()| "restored".to_string())
-            .unwrap_or_else(|e| e.to_string());
-        format!("{{\"outcome\":\"hard_deadline\",\"restore\":\"{restored}\"}}\n")
-    });
+    // "late": armed 5 s after its deadline (phase B ran long), while the
+    // main thread finishes a 300 ms write under the lock.
+    let late = case == "late";
+    let (deadline, deadline_epoch) = if late {
+        (Instant::now() - Duration::from_secs(5), epoch_ms() - 5_000)
+    } else {
+        (Instant::now() + DEADLINE, epoch_ms() + DEADLINE.as_millis())
+    };
+    std::fs::write(dir.join("deadline"), deadline_epoch.to_string()).unwrap();
+    let held = late.then(cas::lock);
+    let _armed = watchdog::arm(
+        deadline,
+        move |ledger| {
+            let restored = ledger
+                .write(Site::ExitRestore, &restore_to, FOUND)
+                .map(|()| "restored".to_string())
+                .unwrap_or_else(|e| e.to_string());
+            format!("{{\"outcome\":\"hard_deadline\",\"restore\":\"{restored}\"}}\n")
+        },
+        "{\"outcome\":\"hard_deadline\",\"restore\":\"not restored: the write lock was held\"}\n"
+            .to_string(),
+    );
     match case.as_str() {
         // An `ai:` call to an endpoint that accepts and never answers.
         "model" => {
@@ -89,6 +98,25 @@ fn e3_child() {
                 break;
             }
             let _ = l.write(Site::Apply, &file, PATCHED);
+        },
+        // Security review F8: the main thread holds the write lock and never
+        // lets go (a CAS read or write stalled under it). The restore cannot
+        // run; the process must still end within the grace.
+        "held" => {
+            let _l = cas::lock();
+            std::thread::sleep(Duration::from_secs(600));
+        }
+        "late" => {
+            std::thread::sleep(Duration::from_millis(300));
+            drop(held);
+        }
+        // The main thread re-takes the write lock in a loop, holding it
+        // 100 ms each time and letting go for an instant: an unfair mutex
+        // would hand it back to the main thread every time, so only the
+        // freeze (no `lock` after the watchdog fired) lets the restore in.
+        "relock" => loop {
+            let _l = cas::lock();
+            std::thread::sleep(Duration::from_millis(100));
         },
         other => panic!("unknown case {other}"),
     }
@@ -227,11 +255,73 @@ fn s10_e3_a_stalled_run_is_stopped_restored_and_reported_by_the_grace() {
 /// (firing would end this whole test process with exit 20).
 #[test]
 fn a_disarmed_watchdog_never_fires() {
-    let armed = watchdog::arm(Instant::now() + Duration::from_millis(200), |_| {
-        "ATTACK: E3 a disarmed watchdog fired\n".to_string()
-    });
+    let armed = watchdog::arm(
+        Instant::now() + Duration::from_millis(200),
+        |_| "ATTACK: E3 a disarmed watchdog fired\n".to_string(),
+        "ATTACK: E3 a disarmed watchdog fired\n".to_string(),
+    );
     armed.disarm();
     std::thread::sleep(Duration::from_millis(500));
+}
+
+/// Security review F8: a write lock held past the deadline does not stretch
+/// it. The `_exit` has its own timer: the run exits 20 within `HARD_GRACE`,
+/// kills the running check, and reports the restore as not done - never
+/// claims it.
+#[test]
+fn s10_e3_a_held_write_lock_still_exits_by_the_grace() {
+    let e = run_case("held", 0);
+    assert_eq!(
+        e.code,
+        Some(watchdog::EXIT_DEADLINE),
+        "ATTACK: NH-R1 security F8 a run holding its write lock outlived its deadline (stdout {:?})",
+        e.stdout
+    );
+    assert!(
+        e.overshoot_ms <= watchdog::HARD_GRACE.as_millis() as i128,
+        "ATTACK: NH-R1 security F8 a run holding its write lock exited {} ms after its deadline",
+        e.overshoot_ms
+    );
+    assert!(
+        e.stdout.contains("not restored") && !e.stdout.contains("\"restore\":\"restored\""),
+        "ATTACK: NH-R1 security F8 a restore that never ran was not reported: {:?}",
+        e.stdout
+    );
+    assert!(
+        gone(e.check_pid),
+        "ATTACK: NH-R1 security F8 the running check {} survived the deadline",
+        e.check_pid
+    );
+}
+
+/// Security review F8: a watchdog armed after its deadline (phase B ran
+/// long) still gives the restore its share of the grace. Its lock-free
+/// timer counts from the firing, so a write lock released 300 ms later is
+/// taken and the found bytes are restored - not a stalled report at once.
+#[test]
+fn s10_e3_a_watchdog_armed_late_still_restores() {
+    let e = run_case("late", 0);
+    assert_eq!(e.code, Some(watchdog::EXIT_DEADLINE), "{:?}", e.stdout);
+    assert!(
+        e.stdout.contains("\"restore\":\"restored\"") && e.file == FOUND,
+        "ATTACK: NH-R1 security F8 a watchdog armed after its deadline skipped the restore: {:?}",
+        e.stdout
+    );
+}
+
+/// E3: once the watchdog fired, the main thread never takes the write lock
+/// again. A main thread that re-takes it in a loop would otherwise starve
+/// the restore until the lock-free timer exits with nothing restored.
+#[test]
+fn s10_e3_a_relocking_main_thread_cannot_starve_the_restore() {
+    let e = run_case("relock", 0);
+    assert_eq!(e.code, Some(watchdog::EXIT_DEADLINE), "{:?}", e.stdout);
+    assert!(
+        e.stdout.contains("\"restore\":\"restored\"") && e.file == FOUND,
+        "ATTACK: E3 the main thread re-took the write lock after the watchdog fired \
+         and starved the restore: {:?}",
+        e.stdout
+    );
 }
 
 /// S10's measurement of `HARD_GRACE` (§10 Q4): the overshoot past the

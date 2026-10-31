@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "A new S10 case shows that after the deadline the main thread never takes the write lock again, so the restore always runs. Removing the freeze now fails the case every time, where before it failed only some of the time."}

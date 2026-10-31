@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "An unattended run now refuses when AXON_AI_MOCK or AXON_AI_REPLAY is set in its environment. Before, an exported AXON_AI_MOCK had the generator answered by the mock stub instead of the endpoint the envelope pins; a new S6 test showed it."}

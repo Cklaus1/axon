@@ -178,7 +178,7 @@ Any other flag → exit 29.
 | Input | Rule |
 |---|---|
 | `--symbol` | required |
-| `CORTEX_RANKER`, `CORTEX_AUDIT`, `CORTEX_LABEL_LOG`, `CORTEX_MODEL`, `AXON_CORTEX_GENERATOR_TIMEOUT_MS` | refused if set (`rank.rs:42`, `audit.rs:47`, `label.rs:23`) |
+| `CORTEX_RANKER`, `CORTEX_AUDIT`, `CORTEX_LABEL_LOG`, `CORTEX_MODEL`, `AXON_CORTEX_GENERATOR_TIMEOUT_MS`, `AXON_AI_MOCK`, `AXON_AI_REPLAY` | refused if set (`rank.rs:42`, `audit.rs:47`, `label.rs:23`); never read afterwards. `[REVISED: security F2]` no `.env` is loaded: phase A consumes `axon-ai`'s dotenv once first (`axon_ai::forbid_dotenv`; `Err` if a lookup already ran -> exit 29), so neither `./.env` nor `$AXON_DOTENV` can set a variable the refusal never saw (S6 `s6_a_dotenv_steers_nothing`). `[REVISED: security build]` `AXON_AI_MOCK` and `AXON_AI_REPLAY` in the REAL environment refuse too (`unattended::REFUSED_ENV`): E6 scrubs only the check child's env, and the `ai:` generator runs in cortex's own process, where `AXON_AI_MOCK` answered it from the mock stub instead of the pinned endpoint (S6 `s6_a_real_env_model_override_is_refused`). `AXON_AI_REPLAY` is read only by the interpreter's `ai_complete`; no cortex child that executes code inherits the env (the check child and the static verbs `env_clear`; `axon check` inherits it but only type-checks), so it steered nothing observed. It is refused anyway, since an answer cache is not the pinned endpoint. Not refused: `AXON_AI_PROVIDER` / `AXON_AI_BASE_URL` / `ANTHROPIC_BASE_URL` (they resolve the endpoint, which must equal the envelope's, row "generator"), the API keys, and `AXON_AI_MODEL_*` (tier defaults; the generator always passes the pinned model explicitly, `ai.rs:85`) |
 | `principal` | `envelope:<envelope_id>` |
 | `write_prefixes` | CLI ⊆ envelope (component-wise, after normalization) |
 | `max_proposals`, `deadline_ms`, `check_timeout_ms`, `candidates`, `--budget` | CLI ≤ envelope; an absent CLI value takes the envelope's |
@@ -197,8 +197,10 @@ Any other flag → exit 29.
 | 4 | signature |
 | 5 | time: `issued ≤ now + 60 s`, `now < expires`, TTL ≤ max, `now + deadline_ms + HARD_GRACE ≤ expires` |
 | 6 | §5.2 limit comparisons |
-| 7 | `resolve_checker`'s sha256 of `--axon` = `checker_exe_sha256` **before** any spawn of it |
+| 7 | `resolve_checker`'s sha256 of `--axon` = `checker_exe_sha256` **before** any spawn of it. `[REVISED: security F7]` `--axon` is resolved ONCE (`runner::resolve_executable`, a bare name through PATH as the spawn would); that file is hashed, and the registry pins that file with that sha256 (`register_expected`), so the bytes bound are the bytes run (S-test `s6_a_bare_axon_runs_the_binary_that_was_hashed`) |
 | 8 | task: canonical workspace and file, symlink walk (F2), read the entry file ONCE → sha = `pristine_sha256` |
+| 8a | `[REVISED: security F4]` every `scopes.fs_read` / `scopes.fs_write` pin is absolute (`unattended::absolute_fs_pins`; the preview refuses one too): a relative pin resolves against the check child's cwd (the workspace) and skipped the symlink walk and the policy check |
+| 8b | `[REVISED: security F6]` the canonical spent store, verify-key file and seal-key file are disjoint from every `fs_read` / `fs_write` pin, at, above or below (`unattended::outside_fs_pins`); the minter's counterpart is axon-intent's |
 
 **Phase B** runs after `derive_fence` (the only child before it is the pinned interpreter's static `axon caps`) and
 before `fence_conflicts` (:738):
@@ -229,6 +231,15 @@ In a build without it, `--unattended` exits 29 with "built without unattended su
   A mismatch stops the walk (exit 29, restore per E5).
 - The check child's FS_WRITE pins (`scopes.fs_write`) are disjoint from the task file, its imports and the policy paths,
   checked at mint and at step 9. `write_prefixes` is cortex's authority, never the test program's.
+- `[REVISED: security F5 - built]` Neither guard existed: disjointness checked the task file and policy paths only,
+  and the closure was re-hashed once, after the witness run. Now `auth::fs_write_disjoint` takes the canonical module
+  paths of `axon imports --json` (`auth::imports_closure`, the same call at preview and at step 9), and
+  `auth::DispatchGuard::check` runs before EVERY check dispatch (`Runner::set_dispatch_guard`: the fence-conflict run,
+  the witness run and every check of the walk). A mismatch restores the found bytes through the CAS helper if this
+  run wrote the file, writes the terminal record and exits 29. "Outside the symbol span" is the pristine bytes before
+  and after `runner::symbol_body`'s span (exactly what `splice_body` keeps). S-tests
+  `s6_an_fs_write_pin_over_an_imported_module_is_refused`, `s13_an_import_changed_by_a_check_stops_the_next_dispatch`,
+  and `s13_a_checker_that_rewrites_the_entry_file_during_the_witness_run_refuses` (outside / body cases).
 
 ### 5.5 Single use `[REVISED: F7 — a fresh --spent-store re-admitted a spent envelope]`
 
@@ -285,6 +296,7 @@ Rules for the gate as a whole:
 | E9 | untrusted processes holding authority | a `cmd:` generator is an arbitrary same-uid process | `ai:` only |
 | E10 | non-UTF-8 ceiling (O-S1-09 narrow) | — | **dropped for the cortex route** `[REVISED: D10]`: the fence always sets the value as UTF-8 and `env_clear` drops inherited values (`runner.rs:3627-3632`). FU-5 covers direct interpreter use. |
 | E11 | unscoped process spawn `[REVISED: F1, D2 — blocker]` | `exec` is gated only by the `Exec` effect (`builtins.rs:640-648, 1332-1356`); no scope (`builtins.rs:252-263`) | refuse if pristine caps contain `exec`, the effects contain `Exec`, or any module effect has `Exec`; candidate additions are already refused by `StaticGrant::excess` (`fence.rs:300-330`) |
+| E12 | durable store `[REVISED: security F11]` | `dstore_*` writes a file under the cache dir whose path comes from a store key (`capabilities.rs:148-152`); blocked only because the child gets no `HOME` (E6) | refuse if pristine caps contain `dstore` (§10 Q2), its own gate row (`unattended::caps_rows`, test `e12_a_dstore_file_is_refused`) |
 
 ### E3 watchdog `[REVISED: F11, D8]`
 
@@ -301,6 +313,17 @@ Rules for the gate as a whole:
   set from S10's measured tail (p99 of lock wait + restore + report over the stall cases, run under the host's real
   load, not on an idle machine) plus a stated margin; the measured value and its load are recorded with S10.]`
 - Every child (checks, per-proposal `axon caps`) is also bounded by `min(configured, remaining)`.
+- `[REVISED: security F8 - built]` The watchdog is armed right after phase B (`bin/cortex.rs`, before the
+  fence-conflict and witness runs, which execute workspace code); every static child before it (`derive_fence`'s and
+  phase B's `axon caps`, `axon imports`) is bounded by `min(check_timeout, remaining)`, asked per child; every child
+  after it is killed at the deadline. It kills before it waits for the lock. A second, lock-free timer at
+  `max(deadline, firing) + 3/4 HARD_GRACE` kills, prints the "not restored" report (no terminal record: the journal
+  is behind the lock) and calls `_exit(20)`, so a write lock that is never released (a stalled CAS read) cannot
+  stretch the bound, and a restore that never ran is never claimed. A run that wrote nothing reports "was not
+  written" instead of a restore. S10 cases: `s10_e3_a_held_write_lock_still_exits_by_the_grace`,
+  `s10_e3_a_watchdog_armed_late_still_restores`, `s10_a_witness_run_stalled_past_the_deadline_is_stopped_by_the_grace`,
+  `s10_a_static_child_stalled_before_phase_b_is_bounded_by_the_deadline`. CAS reads open `O_NOFOLLOW|O_NONBLOCK`
+  and require a regular file (commit 947de502).
 
 ### E5 write helper `[REVISED: F10, D10]`
 
@@ -318,14 +341,22 @@ All workspace writes and deletes go through one helper:
 | settle | `bin/cortex.rs:1591` |
 | sweep deletes | `runner.rs:1148-1150` |
 
-The helper:
+The helper `[REVISED: security F3, F9, F8 - a plain rename lost an edit made between step 2 and step 3 silently (step 5
+re-hashed this run's own inode); a delete unlinked an edit made after its re-hash; a FIFO or a symlink in the target's
+place stalled the re-hash under the write lock]`:
 1. writes a temp file in the same directory;
 2. re-hashes the target against the last digest cortex wrote or read;
-3. renames;
-4. checks `(dev, ino)` afterwards;
-5. re-hashes the renamed file and compares it with the bytes it wrote. `[DECIDED by human 2026-10-19 (§10 Q4)]` A
-   mismatch means a writer got in during the residual window: the run reports it (exit 22, both digests named) instead
-   of claiming the write. A lost foreign edit is then visible, never silent.
+3. exchanges the temp file and the target atomically (`renameat2(RENAME_EXCHANGE)`; `RENAME_NOREPLACE` when the target
+   is expected absent), so the old inode moves to the temp name instead of being unlinked;
+4. re-hashes that displaced inode against step 2's digest. A mismatch means a writer got in between steps 2 and 3:
+   the displaced file is **kept** beside the target (`.cortex-cas-displaced-*`) and the write is reported (exit 22,
+   both digests and the kept path named). The foreign edit is never lost and never silent.
+5. checks `(dev, ino)` and re-hashes the placed file against the bytes it wrote: a write after the exchange is reported
+   (exit 22, both digests named), never claimed.
+
+A delete renames the target to a temp name, re-hashes what it moved, and unlinks only on a match; otherwise it renames
+it back (or keeps it and names the kept path) and reports. Every read opens with `O_NOFOLLOW|O_NONBLOCK` and refuses
+anything but a regular file.
 
 A step-2 mismatch writes nothing; any mismatch stops the walk and exits 22 with the reason.
 
@@ -333,8 +364,12 @@ Supporting rules:
 - An exclusive `flock` on a store-side lock keyed by the canonical file path means a second unattended run on the same
   file → exit 29.
 - The visible copy goes to a private temp directory.
-- **Residual window:** a non-cooperating writer between re-hash and rename. `[DECIDED by human 2026-10-19 (§10 Q4):
-  accepted, on condition of step 5's post-rename check; POSIX has no atomic compare-and-rename.]`
+- **Residual window** `[DECIDED by human 2026-10-19 (§10 Q4): accepted, on condition that it is never silent]`
+  `[REVISED: security F3]`: what is guaranteed is that no foreign edit made through the target's path before the
+  exchange is overwritten or deleted without a report and a kept copy. What is NOT guaranteed: that the target's path
+  holds the foreign edit afterwards (it holds this run's bytes; the edit is in the kept file); and a writer that keeps
+  an fd open on the old inode and writes through it AFTER step 4's re-hash writes into an inode no longer linked
+  anywhere (step 4 matched, so it was unlinked): that write is lost unreported. Only a path-based writer is covered.
 
 ## 7. Security and correctness tests (all must pass before §9)
 
@@ -355,6 +390,7 @@ Each test is fail-first where it guards a behaviour.
 | S11 | Attended mode unchanged: existing suites; `cortex-repair/1` byte-identical on a pinned task |
 | S12 | Acceptance ≠ approval (§5.7) |
 | S13 | TOCTOU: a pristine test rewrites the entry file or an imported module during the witness run → exit 29 |
+| S14 | Host opt-in (§10 Q3) `[REVISED: security F1]`: no `/etc/axon/unattended-repair`, a wrong owner or mode, a non-regular file, or one not naming exactly one decision record → exit 29, nothing spent |
 
 g01 rows cover:
 - the signature compare;
@@ -420,6 +456,13 @@ design questions only. Building NH-R1 still needs a separate human go-ahead, and
   build is fit; the host file says this machine agrees. The host is shared (other users' jobs held load ≈ 48 during
   the follow-up run), so one repo decision must not enable every checkout on every host. The opt-in file's path,
   owner/mode check and refusal string are A-phase build items (§8) and get an S-test.
+  `[REVISED: security F1 — built]`: phase A's first step reads `/etc/axon/unattended-repair`
+  (`auth::OPT_IN_PATH`) with `O_NOFOLLOW|O_NONBLOCK` and refuses (exit 29, nothing read or spent) unless it is a
+  regular file owned by the euid with `mode & 0o077 == 0` whose one non-comment line is
+  `decision: <the decision record>`. The refusal starts `this host has not opted in to unattended repair:` and says
+  what to write. The decision record named there is reported in the run's `authorization.host_opt_in`. S14
+  (`s14_a_host_that_did_not_opt_in_refuses`) covers: no file, mode 0640, another owner, a directory, no decision,
+  a line that is not the decision, two decisions. The file is not in the workspace, so the repo cannot write it.
 - **Q4 → accept the residual window with E5 step 5's post-rename check; `HARD_GRACE` from S10's measured tail under
   real load, not a fixed 2 s.** The follow-up run's receipt flipped FAIL → PASS on wall time between two load levels,
   so a bound measured on an idle machine is not evidence.

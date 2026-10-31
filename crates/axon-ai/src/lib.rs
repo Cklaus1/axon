@@ -98,6 +98,22 @@ fn load_dotenv_once() {
     });
 }
 
+/// Never load a `.env` in this process: the once is consumed with nothing,
+/// so no later key lookup reads `$AXON_DOTENV` or `./.env`. NH-R1 security
+/// F2: an unattended `cortex repair` runs on the real environment only - a
+/// `.env` in the workspace (which the run itself may write) or named by
+/// `AXON_DOTENV` would set selectors its environment refusal never saw.
+/// `Err` when a `.env` lookup already ran (it may have set variables).
+pub fn forbid_dotenv() -> Result<(), &'static str> {
+    let mut forbidden = false;
+    DOTENV_ONCE.call_once(|| forbidden = true);
+    if forbidden {
+        Ok(())
+    } else {
+        Err("a .env lookup already ran in this process")
+    }
+}
+
 // ── T35 / RT-02: pin the resolved endpoint host to the program's net grant ────
 
 /// Hosts the running program is statically permitted to reach, if it declared
@@ -1291,6 +1307,18 @@ static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// NH-R1 security F2: once the `.env` once has run - a lookup or an
+    /// earlier forbid - `forbid_dotenv` reports it, never claims a clean
+    /// environment it cannot vouch for.
+    #[test]
+    fn forbid_dotenv_after_the_once_ran_refuses() {
+        let _ = forbid_dotenv();
+        assert!(
+            forbid_dotenv().is_err(),
+            "ATTACK: NH-R1 security F2 a .env lookup that already ran was reported as forbidden"
+        );
+    }
 
     // ── T35 / RT-02: the resolved endpoint host is pinned to the net grant ──
 

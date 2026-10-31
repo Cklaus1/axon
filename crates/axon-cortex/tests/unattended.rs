@@ -67,6 +67,9 @@ struct Setup {
     seal: PathBuf,
     envelope: PathBuf,
     axon: PathBuf,
+    /// Security review F1: the host opt-in file's content, copied to
+    /// `/etc/axon/unattended-repair` inside the run's private mount namespace.
+    opt_in: PathBuf,
 }
 
 fn private_write(path: &Path, bytes: &[u8]) {
@@ -114,6 +117,12 @@ fn setup(name: &str) -> Setup {
     let seal = ops.join("run-record.key");
     let sk = rl::SealKey::derive(OP_KEY).unwrap().to_hex();
     private_write(&seal, format!("{sk}\n").as_bytes());
+    let opt_in = ops.join("opt-in");
+    std::fs::write(
+        &opt_in,
+        "decision: governance/decisions/nh-r1-test-enable.md\n",
+    )
+    .unwrap();
     Setup {
         envelope: ops.join("envelope.json"),
         root,
@@ -123,19 +132,29 @@ fn setup(name: &str) -> Setup {
         ledger,
         seal,
         axon: axon_bin(),
+        opt_in,
     }
 }
 
 /// The envelope the minter would issue for `s` (the same functions the
 /// runner calls), before any test's change.
 fn envelope_for(s: &Setup) -> RepairEnvelope {
+    envelope_pinned(s, ScopePins::default())
+}
+
+/// [`envelope_for`] with the scope `pins` signed in (E1).
+fn envelope_pinned(s: &Setup, pins: ScopePins) -> RepairEnvelope {
     let file = s.ws.join("broken.ax");
     let caps = caps_of_file(&s.axon, &file, None, WALL).unwrap();
     let fence = Fence::from_pristine(&caps);
-    let pins = ScopePins::default();
     let (rows, pinned) = auth::gate_rows(&fence, &caps, &pins, "ai");
     assert!(rows.iter().all(|r| r.admit), "{rows:?}");
     let fence_sha = pinned.unwrap().sha256();
+    let ScopePins {
+        fs_read,
+        fs_write,
+        net,
+    } = pins;
     let imports = auth::imports_digest(&s.axon, &s.ws, "broken.ax", WALL).unwrap();
     let checker = sha(&std::fs::read(&s.axon).unwrap());
     let issued = now();
@@ -156,9 +175,9 @@ fn envelope_for(s: &Setup) -> RepairEnvelope {
         },
         write_prefixes: vec!["broken.ax".into()],
         scopes: Scopes {
-            fs_read: vec![],
-            fs_write: vec![],
-            net: vec![],
+            fs_read,
+            fs_write,
+            net,
         },
         capabilities: Capabilities {
             fence_sha256: fence_sha.clone(),
@@ -208,10 +227,62 @@ struct Out {
     stderr: String,
 }
 
+/// How the host opt-in file (security review F1) looks for one run: its
+/// content file (`None`: no opt-in file), mode and owner.
+struct OptIn<'a> {
+    src: Option<&'a Path>,
+    mode: &'a str,
+    owner: &'a str,
+}
+
+impl Setup {
+    /// The opt-in a host that agreed has: owned by the running uid (root
+    /// here), mode 0600, naming the decision record.
+    fn opted_in(&self) -> OptIn<'_> {
+        OptIn {
+            src: Some(&self.opt_in),
+            mode: "0600",
+            owner: "0",
+        }
+    }
+}
+
 /// `cortex repair --unattended` over `s`, with `extra` arguments and `envs`
 /// on top of a clean environment.
 fn run_with(s: &Setup, axon: &Path, extra: &[&str], envs: &[(&str, &str)]) -> Out {
-    let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_cortex"));
+    run_full(s, axon, extra, envs, &s.opted_in(), None)
+}
+
+/// [`run_with`], with the host opt-in `opt` and the working directory `cwd`.
+/// The run is in a private mount namespace whose `/etc/axon` is an empty
+/// tmpfs holding only the opt-in file `opt` describes: the host's `/etc` is
+/// never written or read (the freeze tests' pattern; needs root).
+fn run_full(
+    s: &Setup,
+    axon: &Path,
+    extra: &[&str],
+    envs: &[(&str, &str)],
+    opt: &OptIn,
+    cwd: Option<&Path>,
+) -> Out {
+    assert!(
+        euid() == 0 && Path::new("/etc/axon").is_dir(),
+        "setup: the unattended tests need root and an /etc/axon mount point (a private mount \
+         namespace holds the host opt-in file; /etc is never written)"
+    );
+    let none = s.root.join("no-opt-in");
+    let mut c = std::process::Command::new("unshare");
+    c.args(["-m", "--propagation", "private", "sh", "-c"])
+        .arg(
+            "set -e; mount -t tmpfs -o mode=0755 tmpfs /etc/axon; o=/etc/axon/unattended-repair; \
+             if [ -d \"$1\" ]; then mkdir -m 0700 \"$o\"; \
+             elif [ -e \"$1\" ]; then cp \"$1\" \"$o\"; chown \"$3\" \"$o\"; chmod \"$2\" \"$o\"; fi; \
+             shift 3; exec \"$@\"",
+        )
+        .arg("sh")
+        .arg(opt.src.unwrap_or(&none))
+        .args([opt.mode, opt.owner])
+        .arg(env!("CARGO_BIN_EXE_cortex"));
     c.env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("AXON_AI_PROVIDER", "anthropic")
@@ -240,6 +311,9 @@ fn run_with(s: &Setup, axon: &Path, extra: &[&str], envs: &[(&str, &str)]) -> Ou
         .arg(&s.seal)
         .arg("--json")
         .args(extra);
+    if let Some(d) = cwd {
+        c.current_dir(d);
+    }
     for (k, v) in envs {
         c.env(k, v);
     }
@@ -269,6 +343,12 @@ fn records(s: &Setup) -> Vec<String> {
 /// A refused run: exit 29, the reason on stderr, the file untouched, the
 /// envelope still `.issued` (never spent by a refusal).
 fn refused(s: &Setup, o: &Out, e: &RepairEnvelope, why: &str, attack: &str) {
+    let fixture = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax"));
+    refused_over(s, o, e, why, attack, &fixture.unwrap());
+}
+
+/// [`refused`] for a run whose `broken.ax` held `pristine` (not the fixture).
+fn refused_over(s: &Setup, o: &Out, e: &RepairEnvelope, why: &str, attack: &str, pristine: &[u8]) {
     assert_eq!(o.code, 29, "{attack}: {}{}", o.stdout, o.stderr);
     assert!(
         o.stderr.contains(why),
@@ -276,13 +356,26 @@ fn refused(s: &Setup, o: &Out, e: &RepairEnvelope, why: &str, attack: &str) {
         o.stderr
     );
     let found = std::fs::read(s.ws.join("broken.ax")).unwrap();
-    let fixture = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax"));
-    assert_eq!(found, fixture.unwrap(), "{attack}: the file changed");
+    assert_eq!(found, pristine, "{attack}: the file changed");
     assert_eq!(
         records(s),
         vec![format!("{}.issued", e.envelope_id)],
         "{attack}: a refused envelope was spent"
     );
+}
+
+/// `broken.ax` with one `read_file` and one `write_file`, so `fs_read` and
+/// `fs_write` pins are used kinds (E1 refuses a pin on an unused kind).
+/// Returns the new pristine bytes.
+fn use_fs(s: &Setup) -> Vec<u8> {
+    let p = s.ws.join("broken.ax");
+    let mut src = std::fs::read_to_string(&p).unwrap();
+    src.push_str(
+        "\nfn touch() -> i64 {\n    let _ = write_file(\"/x\", \"y\")\n    match read_file(\"/x\") {\n        \
+         Ok(_) => 1,\n        Err(_) => 0,\n    }\n}\n",
+    );
+    std::fs::write(&p, &src).unwrap();
+    src.into_bytes()
 }
 
 /// A run that got past consume: never 29, and the envelope is `.used`.
@@ -313,6 +406,11 @@ fn s8_an_admitted_run_spends_once_and_reports_its_authorization() {
     assert_eq!(a["schema"], env::ENVELOPE_SCHEMA);
     assert_eq!(a["envelope_id"], e.envelope_id.as_str());
     assert_eq!(a["issued_by"], "op:test");
+    // Security F1: the record names the host opt-in's decision record.
+    assert_eq!(
+        a["host_opt_in"]["decision"], "governance/decisions/nh-r1-test-enable.md",
+        "{a}"
+    );
     let rows = a["enforcement"].as_array().unwrap();
     assert!(rows.iter().all(|r| r["status"] == "admit"), "{rows:?}");
     // S12 (§5.7): acceptance is not approval - no `/3` token, no
@@ -441,7 +539,126 @@ fn setup_clone(s: &Setup) -> Setup {
         seal: s.seal.clone(),
         envelope: s.envelope.clone(),
         axon: s.axon.clone(),
+        opt_in: s.opt_in.clone(),
     }
+}
+
+/// `s` with `broken.ax` importing module `helpers` (and using the fs, so an
+/// fs pin is a used kind). The interpreter runs from a copy at
+/// `ops/bin/axon`, so it finds the module at `ops/lib/axon/helpers.ax`
+/// (binary-relative: a check child's environment is cleared). Returns the
+/// setup, the module's canonical path and the new pristine bytes.
+fn with_module(s: &Setup) -> (Setup, PathBuf, Vec<u8>) {
+    let bin = s.root.join("ops/bin");
+    let lib = s.root.join("ops/lib/axon");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    let axon = bin.join("axon");
+    common::write_executable(&axon, std::fs::read(&s.axon).unwrap(), 0o755);
+    let module = lib.join("helpers.ax");
+    std::fs::write(&module, "fn inc(n: i64) -> i64 { n + 1 }\n").unwrap();
+    let module = std::fs::canonicalize(&module).unwrap();
+    let tail = use_fs(s);
+    let mut src = b"mod helpers\nuse helpers.{inc}\n".to_vec();
+    src.extend_from_slice(&tail);
+    std::fs::write(s.ws.join("broken.ax"), &src).unwrap();
+    let s = Setup {
+        axon: std::fs::canonicalize(&axon).unwrap(),
+        ..setup_clone(s)
+    };
+    (s, module, src)
+}
+
+/// Security review F5: the check child's `fs_write` pins are disjoint from
+/// the modules of the task's import closure, not only from the task file.
+/// A pin over `lib/` let the check child rewrite an imported module, and
+/// every later verdict was graded against the tampered import.
+#[test]
+fn s6_an_fs_write_pin_over_an_imported_module_is_refused() {
+    let s = setup("s6_modpin");
+    let (s, module, pristine) = with_module(&s);
+    let scratch = s.root.join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let scratch = std::fs::canonicalize(&scratch).unwrap();
+    let e = envelope_pinned(
+        &s,
+        ScopePins {
+            fs_read: vec![scratch.to_string_lossy().into_owned()],
+            fs_write: vec![module.parent().unwrap().to_string_lossy().into_owned()],
+            net: vec![],
+        },
+    );
+    mint(&s, &e);
+    let axon = s.axon.clone();
+    let o = run_with(&s, &axon, &[], &[]);
+    refused_over(
+        &s,
+        &o,
+        &e,
+        "covers the imported module",
+        "ATTACK: NH-R1 security F5 an fs_write pin over an imported module ran",
+        &pristine,
+    );
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
+/// Security review F5: the import closure is re-hashed before EVERY check
+/// dispatch, not only once after the witness run. Here the check child
+/// rewrites an imported module during the first check (the fence-conflict
+/// run); the next dispatch must refuse (exit 29) instead of running a check
+/// on a closure nobody verified.
+#[test]
+fn s13_an_import_changed_by_a_check_stops_the_next_dispatch() {
+    let s = setup("s13_import");
+    let (s, module, pristine) = with_module(&s);
+    let wrapper = s.root.join("ops/axon-import-rewriter");
+    let log = s.root.join("ops/test-runs");
+    common::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = test ]; then echo run >> '{l}'; [ -s '{l}.done' ] || {{ echo x > '{l}.done'; printf '// changed\\n' >> '{m}'; }}; fi\nexec '{a}' \"$@\"\n",
+            l = log.display(),
+            m = module.display(),
+            a = s.axon.display()
+        ),
+        0o755,
+    );
+    let s = Setup {
+        axon: wrapper.clone(),
+        ..setup_clone(&s)
+    };
+    let scratch = s.root.join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let scratch = std::fs::canonicalize(&scratch)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let e = envelope_pinned(
+        &s,
+        ScopePins {
+            fs_read: vec![scratch.clone()],
+            fs_write: vec![scratch],
+            net: vec![],
+        },
+    );
+    mint(&s, &e);
+    let o = run_with(&s, &wrapper, &[], &[]);
+    let runs = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        (o.code, runs.lines().count()),
+        (29, 1),
+        "ATTACK: NH-R1 security F5 a check ran on an import closure changed by an earlier check\n{}{}",
+        o.stdout,
+        o.stderr
+    );
+    assert!(
+        o.stderr
+            .contains("the import closure changed before a check dispatch"),
+        "{}",
+        o.stderr
+    );
+    assert_eq!(std::fs::read(s.ws.join("broken.ax")).unwrap(), pristine);
+    let _ = std::fs::remove_dir_all(&s.root);
 }
 
 #[test]
@@ -597,6 +814,355 @@ fn s6_a_cortex_env_selector_is_refused() {
     }
 }
 
+/// Security review F2: a `.env` cortex would load (in its working directory,
+/// or named by `AXON_DOTENV`) steers nothing. It sets `CORTEX_LABEL_LOG` -
+/// a §5.2 selector `check_env` refuses when it is in the real environment -
+/// and the run must not append a label row (a write outside the pins, the
+/// E5 helper and the journal) there. It also sets `AXON_AI_MOCK`, which no
+/// later guard reads: loaded, the generator would be answered by the mock
+/// stub instead of the endpoint the envelope pins (here a closed port, so
+/// every call must fail as unavailable).
+#[test]
+fn s6_a_dotenv_steers_nothing() {
+    for how in ["cwd", "AXON_DOTENV"] {
+        let s = setup(&format!("s6_dotenv_{how}"));
+        let e = envelope_for(&s);
+        mint(&s, &e);
+        let log = s.root.join("label.log");
+        let dotenv = format!("CORTEX_LABEL_LOG={}\nAXON_AI_MOCK=1\n", log.display());
+        let named = s.root.join("ops/steer.env");
+        std::fs::write(&named, &dotenv).unwrap();
+        let o = if how == "cwd" {
+            std::fs::write(s.ws.join(".env"), &dotenv).unwrap();
+            run_full(&s, &s.axon, &[], &[], &s.opted_in(), Some(&s.ws))
+        } else {
+            run_with(
+                &s,
+                &s.axon,
+                &[],
+                &[("AXON_DOTENV", named.to_str().unwrap())],
+            )
+        };
+        assert!(
+            !log.exists(),
+            "ATTACK: NH-R1 security F2 a .env ({how}) steered an unattended run's label log\n{}{}",
+            o.stdout,
+            o.stderr
+        );
+        assert!(
+            !o.stdout.contains("\"kind\":\"proposed\""),
+            "ATTACK: NH-R1 security F2 a .env ({how}) answered an unattended run's generator \
+             (AXON_AI_MOCK) instead of the pinned endpoint\n{}{}",
+            o.stdout,
+            o.stderr
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
+/// Security build: a model-steering variable in the REAL environment is
+/// refused like the §5.2 selectors. `AXON_AI_MOCK` would have the in-process
+/// generator answered by the mock stub instead of the endpoint the envelope
+/// pins (here a closed port, so every call must fail as unavailable);
+/// `AXON_AI_REPLAY` would serve `ai_complete` answers from a cache file.
+#[test]
+fn s6_a_real_env_model_override_is_refused() {
+    for var in ["AXON_AI_MOCK", "AXON_AI_REPLAY"] {
+        let s = setup(&format!("s6_aienv_{var}"));
+        let e = envelope_for(&s);
+        mint(&s, &e);
+        let cache = s.root.join("ops/replay.jsonl");
+        std::fs::write(&cache, "").unwrap();
+        let value = if var == "AXON_AI_MOCK" {
+            "1"
+        } else {
+            cache.to_str().unwrap()
+        };
+        let o = run_with(&s, &s.axon, &[], &[(var, value)]);
+        assert!(
+            !o.stdout.contains("\"kind\":\"proposed\""),
+            "ATTACK: NH-R1 security build {var} in the real environment answered an \
+             unattended run's generator instead of the pinned endpoint\n{}{}",
+            o.stdout,
+            o.stderr
+        );
+        refused(
+            &s,
+            &o,
+            &e,
+            var,
+            &format!("ATTACK: NH-R1 security build {var} in the real environment ran unattended"),
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
+/// Security review F4: a relative `fs_read` / `fs_write` pin is refused. The
+/// check child's cwd is the workspace, so `out` resolves to `ws/out` - here a
+/// symlink to the operator's key directory - and a relative pin passed the
+/// symlink walk and the policy check, which only saw absolute pins.
+#[test]
+fn s6_a_relative_fs_pin_is_refused() {
+    for kind in ["fs_read", "fs_write"] {
+        let s = setup(&format!("s6_relpin_{kind}"));
+        let pristine = use_fs(&s);
+        std::os::unix::fs::symlink(s.root.join("ops"), s.ws.join("out")).unwrap();
+        let scratch = s.root.join("scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let scratch = std::fs::canonicalize(scratch)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let (fs_read, fs_write) = if kind == "fs_read" {
+            (vec!["out".to_string()], vec![scratch])
+        } else {
+            (vec![scratch], vec!["out".to_string()])
+        };
+        let e = envelope_pinned(
+            &s,
+            ScopePins {
+                fs_read,
+                fs_write,
+                net: vec![],
+            },
+        );
+        mint(&s, &e);
+        let o = run(&s, &[]);
+        refused_over(
+            &s,
+            &o,
+            &e,
+            &format!("scopes.{kind} entry \"out\" is relative"),
+            &format!(
+                "ATTACK: NH-R1 security F4 a relative {kind} pin through a workspace symlink ran"
+            ),
+            &pristine,
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
+/// Security review F6: no `fs_read` / `fs_write` pin reaches the spent store
+/// or a key file - at, above or below it. Over the store the check child
+/// could rename `.used` back to `.issued` (replay); over the verify key,
+/// overwrite it (self-mint); over the seal key, read it (forge records).
+#[test]
+fn s6_a_pin_over_the_store_or_a_key_is_refused() {
+    type Case = (
+        &'static str,
+        &'static str,
+        fn(&Setup) -> PathBuf,
+        &'static str,
+    );
+    let cases: [Case; 5] = [
+        (
+            "fs_write",
+            "the spent store",
+            |s| s.store.clone(),
+            "the spent store",
+        ),
+        (
+            "fs_write",
+            "a directory under the spent store",
+            |s| s.store.join("sub"),
+            "the spent store",
+        ),
+        (
+            "fs_write",
+            "the verify key",
+            |s| s.key.clone(),
+            "the verify key",
+        ),
+        (
+            "fs_read",
+            "the run-record seal key",
+            |s| s.seal.clone(),
+            "the run-record seal key",
+        ),
+        (
+            "fs_read",
+            "the operator directory above both keys",
+            |s| s.root.join("ops"),
+            "the spent store",
+        ),
+    ];
+    for (i, (kind, what, pin, why)) in cases.into_iter().enumerate() {
+        let s = setup(&format!("s6_keypin_{i}"));
+        let pristine = use_fs(&s);
+        let scratch = s.root.join("scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let canon = |p: PathBuf| {
+            let parent = std::fs::canonicalize(p.parent().unwrap()).unwrap();
+            parent
+                .join(p.file_name().unwrap())
+                .to_string_lossy()
+                .into_owned()
+        };
+        let (pin, scratch) = (canon(pin(&s)), canon(scratch));
+        let (fs_read, fs_write) = if kind == "fs_read" {
+            (vec![pin], vec![scratch])
+        } else {
+            (vec![scratch], vec![pin])
+        };
+        let e = envelope_pinned(
+            &s,
+            ScopePins {
+                fs_read,
+                fs_write,
+                net: vec![],
+            },
+        );
+        mint(&s, &e);
+        let o = run(&s, &[]);
+        refused_over(
+            &s,
+            &o,
+            &e,
+            &format!("{why} "),
+            &format!("ATTACK: NH-R1 security F6 an {kind} pin over {what} ran"),
+            &pristine,
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
+/// Security review F7: the interpreter the check digest binds is the one
+/// that runs. A bare `--axon axon` was hashed from the cwd (here the genuine
+/// interpreter) and then resolved through `PATH` (here another one) for
+/// `axon caps` and every check. Resolved once, the PATH binary's sha256 is
+/// not the envelope's: refused before it runs.
+#[test]
+fn s6_a_bare_axon_runs_the_binary_that_was_hashed() {
+    let s = setup("s6_bare_axon");
+    let e = envelope_for(&s);
+    mint(&s, &e);
+    let cwd = s.root.join("cwd");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::os::unix::fs::symlink(&s.axon, cwd.join("axon")).unwrap();
+    let bin = s.root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let mark = s.root.join("ops/path-axon-ran");
+    common::write_executable(
+        &bin.join("axon"),
+        format!(
+            "#!/bin/sh\ntouch '{}'\nexec '{}' \"$@\"\n",
+            mark.display(),
+            s.axon.display()
+        ),
+        0o755,
+    );
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let o = run_full(
+        &s,
+        Path::new("axon"),
+        &[],
+        &[("PATH", &path)],
+        &s.opted_in(),
+        Some(&cwd),
+    );
+    assert!(
+        !mark.exists(),
+        "ATTACK: NH-R1 security F7 a PATH interpreter other than the hashed one ran\n{}{}",
+        o.stdout,
+        o.stderr
+    );
+    refused(
+        &s,
+        &o,
+        &e,
+        "is not the envelope's",
+        "ATTACK: NH-R1 security F7 a PATH interpreter other than the hashed one got past phase A",
+    );
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
+/// Security review F1 / §10 Q3: a host runs unattended only after it opted
+/// in. Without `/etc/axon/unattended-repair` - or with one another uid owns,
+/// one group/other can read or write, a directory in its place, or one
+/// naming no decision record - phase A refuses (exit 29) and nothing is
+/// spent. A feature build copied to another host does not run.
+#[test]
+fn s14_a_host_that_did_not_opt_in_refuses() {
+    let s = setup("s14_optin");
+    let content = |name: &str, text: &str| {
+        let p = s.root.join("ops").join(name);
+        std::fs::write(&p, text).unwrap();
+        p
+    };
+    let no_decision = content("opt-in-none", "# this host agrees\n");
+    let other_line = content("opt-in-other", "enabled\ndecision: d.md\n");
+    let two = content("opt-in-two", "decision: a.md\ndecision: b.md\n");
+    let dir = s.root.join("ops/opt-in-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    fn file(src: &Path) -> OptIn<'_> {
+        OptIn {
+            src: Some(src),
+            mode: "0600",
+            owner: "0",
+        }
+    }
+    let cases: [(&str, OptIn); 7] = [
+        (
+            "no opt-in file",
+            OptIn {
+                src: None,
+                mode: "0600",
+                owner: "0",
+            },
+        ),
+        (
+            "an opt-in of mode 0640",
+            OptIn {
+                src: Some(&s.opt_in),
+                mode: "0640",
+                owner: "0",
+            },
+        ),
+        (
+            "an opt-in owned by uid 1",
+            OptIn {
+                src: Some(&s.opt_in),
+                mode: "0600",
+                owner: "1",
+            },
+        ),
+        (
+            "a directory as its opt-in",
+            OptIn {
+                src: Some(&dir),
+                mode: "0700",
+                owner: "0",
+            },
+        ),
+        ("an opt-in naming no decision record", file(&no_decision)),
+        (
+            "an opt-in holding a line that is not its decision",
+            file(&other_line),
+        ),
+        ("an opt-in naming two decision records", file(&two)),
+    ];
+    for (what, opt) in cases {
+        let e = envelope_for(&s);
+        for r in records(&s) {
+            std::fs::remove_file(s.store.join(r)).unwrap();
+        }
+        mint(&s, &e);
+        let o = run_full(&s, &s.axon, &[], &[], &opt, None);
+        refused(
+            &s,
+            &o,
+            &e,
+            "this host has not opted in to unattended repair",
+            &format!("ATTACK: NH-R1 security F1 a host with {what} ran unattended"),
+        );
+    }
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
 #[test]
 fn s6_another_checker_binary_is_refused() {
     let s = setup("s6_checker");
@@ -652,47 +1218,157 @@ fn s8_a_bad_signature_never_runs_the_checker() {
     let _ = std::fs::remove_dir_all(&s.root);
 }
 
+/// §5.4: a check child that rewrites the entry file on its first `test` run
+/// (the fence-conflict run) and then runs the real interpreter: the
+/// pristine-test TOCTOU. The envelope pins THIS wrapper's sha, so only the
+/// rewrite is out of order. Outside the target's body the next dispatch
+/// refuses (security review F5: no child runs on bytes nobody verified);
+/// inside it, the full compare right after the witness run does - both name
+/// both digests.
 #[test]
 fn s13_a_checker_that_rewrites_the_entry_file_during_the_witness_run_refuses() {
-    let s = setup("s13");
-    // The check child rewrites the entry file on its first `test` run and
-    // then runs the real interpreter: the pristine-test TOCTOU (§5.4). The
-    // envelope pins THIS wrapper's sha, so only the rewrite is out of order.
-    let wrapper = s.root.join("ops/axon-rewriter");
-    let mark = s.root.join("ops/rewrote");
+    let cases = [
+        (
+            "outside",
+            "printf '// changed\\n' >> '{f}'",
+            "broken.ax changed outside `double` before a check dispatch (sha256 ",
+        ),
+        (
+            "body",
+            "sed -i 's/n + 2/n + 3/' '{f}'",
+            "broken.ax changed after verification (sha256 ",
+        ),
+    ];
+    for (name, edit, why) in cases {
+        let s = setup(&format!("s13_{name}"));
+        let wrapper = s.root.join("ops/axon-rewriter");
+        let mark = s.root.join("ops/rewrote");
+        let edit = edit.replace("{f}", &s.ws.join("broken.ax").display().to_string());
+        common::write_executable(
+            &wrapper,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = test ] && [ ! -e '{m}' ]; then touch '{m}'; {edit}; fi\nexec '{a}' \"$@\"\n",
+                m = mark.display(),
+                a = s.axon.display()
+            ),
+            0o755,
+        );
+        let s = Setup {
+            axon: wrapper.clone(),
+            ..setup_clone(&s)
+        };
+        let e = envelope_for(&s);
+        mint(&s, &e);
+        let o = run_with(&s, &wrapper, &[], &[]);
+        assert!(mark.exists(), "{name}: the first check never ran");
+        assert_eq!(
+            o.code, 29,
+            "ATTACK: NH-R1 S13 a file changed during the witness run was graded ({name})\n{}{}",
+            o.stdout, o.stderr
+        );
+        assert!(
+            o.stderr.contains(why),
+            "ATTACK: NH-R1 S13 a file changed during the witness run was graded ({name})\n{}",
+            o.stderr
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
+/// Security review F8: the hard deadline covers every child after phase B.
+/// The witness run (and the fence-conflict run before it) executes
+/// workspace code; armed only after them, a check that stalls there ran for
+/// the whole `check_timeout`, far past `deadline + HARD_GRACE`. Here the
+/// witness check sleeps 20 s under a 4 s deadline: the run must exit 20
+/// (budget exhausted) by the deadline plus the grace, the file as found.
+#[test]
+fn s10_a_witness_run_stalled_past_the_deadline_is_stopped_by_the_grace() {
+    let s = setup("s10_witness");
+    let wrapper = s.root.join("ops/axon-sleeper");
     common::write_executable(
         &wrapper,
         format!(
-            "#!/bin/sh\nif [ \"$1\" = test ] && [ ! -e '{m}' ]; then touch '{m}'; printf '// changed\\n' >> '{f}'; fi\nexec '{a}' \"$@\"\n",
-            m = mark.display(),
-            f = s.ws.join("broken.ax").display(),
+            "#!/bin/sh\nif [ \"$1\" = test ]; then sleep 20; fi\nexec '{a}' \"$@\"\n",
             a = s.axon.display()
         ),
         0o755,
     );
-    let real = s.axon.clone();
     let s = Setup {
         axon: wrapper.clone(),
         ..setup_clone(&s)
     };
-    let e = envelope_for(&s);
+    let mut e = envelope_for(&s);
+    e.budget.deadline_ms = 4_000;
     mint(&s, &e);
+    let t0 = std::time::Instant::now();
     let o = run_with(&s, &wrapper, &[], &[]);
-    let _ = real;
-    assert!(mark.exists(), "the witness run never ran");
-    assert_eq!(
-        o.code, 29,
-        "ATTACK: NH-R1 S13 a file changed during the witness run was graded\n{}{}",
-        o.stdout, o.stderr
-    );
-    // The check right after the witness run (it names both digests), not
-    // only the later walk-start compare: no child runs between them on
-    // bytes nobody verified.
+    let took = t0.elapsed();
+    // Process start-up (the namespace wrapper, phase A/B's static children)
+    // comes before the deadline's clock and on top of it.
+    let bound = Duration::from_millis(4_000)
+        + axon_cortex::watchdog::HARD_GRACE
+        + Duration::from_millis(1_500);
     assert!(
-        o.stderr
-            .contains("broken.ax changed after verification (sha256 "),
-        "ATTACK: NH-R1 S13 a file changed during the witness run was graded\n{}",
+        o.code == axon_cortex::watchdog::EXIT_DEADLINE && took <= bound,
+        "ATTACK: NH-R1 security F8 a check stalled before the watchdog was armed outlived the \
+         deadline (exit {}, {took:?} > {bound:?})\n{}{}",
+        o.code,
+        o.stdout,
         o.stderr
     );
+    assert_eq!(
+        std::fs::read(s.ws.join("broken.ax")).unwrap(),
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax")).unwrap(),
+        "the stopped run left the file changed"
+    );
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
+/// Security review F8: before the watchdog is armed, an unattended run's
+/// static children (`axon caps`, `axon imports`) are each bounded by the
+/// time left before the deadline, not by `check_timeout` alone. Here every
+/// `caps` after the mint sleeps 20 s under a 4 s deadline: the run must end
+/// by the deadline plus the grace, refused before consume (envelope unspent).
+#[test]
+fn s10_a_static_child_stalled_before_phase_b_is_bounded_by_the_deadline() {
+    let s = setup("s10_static");
+    let wrapper = s.root.join("ops/axon-caps-sleeper");
+    let mark = s.root.join("ops/minted");
+    common::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = caps ] && [ -e '{m}' ]; then sleep 20; fi\nexec '{a}' \"$@\"\n",
+            m = mark.display(),
+            a = s.axon.display()
+        ),
+        0o755,
+    );
+    let s = Setup {
+        axon: wrapper.clone(),
+        ..setup_clone(&s)
+    };
+    let mut e = envelope_for(&s);
+    e.budget.deadline_ms = 4_000;
+    mint(&s, &e);
+    std::fs::write(&mark, b"").unwrap();
+    let t0 = std::time::Instant::now();
+    let o = run_with(&s, &wrapper, &[], &[]);
+    let took = t0.elapsed();
+    let bound = Duration::from_millis(4_000)
+        + axon_cortex::watchdog::HARD_GRACE
+        + Duration::from_millis(1_500);
+    assert!(
+        took <= bound,
+        "ATTACK: NH-R1 security F8 a static child outlived the deadline before the watchdog was \
+         armed (exit {}, {took:?} > {bound:?})\n{}{}",
+        o.code,
+        o.stdout,
+        o.stderr
+    );
+    // `derive_fence`'s own `axon caps` is the child cut: blocked (22),
+    // before consume.
+    assert_eq!(o.code, 22, "{}{}", o.stdout, o.stderr);
+    assert!(o.stderr.contains("wall-clock limit"), "{}", o.stderr);
+    assert_eq!(records(&s), vec![format!("{}.issued", e.envelope_id)]);
     let _ = std::fs::remove_dir_all(&s.root);
 }
