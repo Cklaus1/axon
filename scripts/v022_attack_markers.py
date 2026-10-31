@@ -3413,4 +3413,5 @@ ATTACK_MARKERS.update({
     'M4040': r'ATTACK: an expected output was visible to the program',
     'M4041': r'ATTACK: a second capability refusal did not end the loop',
     'M4042': r'ATTACK: the loop asked for a candidate past its last repair round',
+    'M4043': r'ATTACK: a sandbox scope refusal during an example was not classed',
 })

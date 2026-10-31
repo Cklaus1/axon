@@ -239,6 +239,51 @@ fn a_static_overreach_refused_twice_ends_the_loop() {
     assert!(refused(&out.resolved), "exit 5, no program");
 }
 
+/// Passes check and the static gates (the copy's destination is not a
+/// `write_file` literal), then writes outside `fs_write` during the example.
+const WRITES_OUTSIDE: &str = r#"fn main() -> i64 {
+    match read_file("./data/in.txt") {
+        Ok(text) => {
+            match write_file("./out/copy.txt", text) {
+                Ok(_) => {
+                    match file_copy("./out/copy.txt", "./data/leak.txt") {
+                        Ok(_) => 0
+                        Err(_) => 3
+                    }
+                }
+                Err(_) => 1
+            }
+        }
+        Err(_) => 2
+    }
+}
+"#;
+
+#[test]
+fn a_write_outside_fs_write_during_an_example_is_a_runtime_scope_refusal() {
+    let gen = ScriptedGenerator::new([WRITES_OUTSIDE, GOOD]);
+    let out = genloop::run(&with_examples(), &gen, &cfg());
+    let t = &out.transcript;
+    let r0 = t.rounds[0].report.as_ref().unwrap();
+    assert_eq!(
+        r0.refusal_class,
+        Some(RefusalClass::RuntimeScope),
+        "ATTACK: a sandbox scope refusal during an example was not classed: {}",
+        t.to_json()
+    );
+    assert_eq!(r0.stage, Stage::Examples);
+    assert_eq!(t.refusal_classes, vec![RefusalClass::RuntimeScope]);
+    assert!(gen.prompts()[1].contains("sandbox"), "fed back once");
+    assert_eq!(t.outcome, LoopOutcome::Accepted);
+    assert_eq!(out.resolved.unwrap().draft.source.trim(), GOOD.trim());
+
+    let gen = ScriptedGenerator::new([WRITES_OUTSIDE, WRITES_OUTSIDE, GOOD]);
+    let out = genloop::run(&with_examples(), &gen, &cfg());
+    assert_eq!(out.transcript.outcome, LoopOutcome::RefusedTwice);
+    assert_eq!(gen.prompts().len(), 2);
+    assert!(refused(&out.resolved));
+}
+
 #[test]
 fn four_bad_candidates_exhaust_the_loop_with_a_transcript_and_no_program() {
     let gen = ScriptedGenerator::new([TYPE_ERROR, TYPE_ERROR, WRONG_OUTPUT, TYPE_ERROR, GOOD]);

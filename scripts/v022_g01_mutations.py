@@ -12496,6 +12496,10 @@ MUTATIONS += [
      '    for round in 0..=repairs {',
      '    for round in 0..=repairs + 1 {',
      'axon-intent', '--test genloop', 'four_bad_candidates_exhaust_the_loop_with_a_transcript_and_no_program'),
+    ('M4043', 'IG4: a sandbox scope refusal during an example is not classed as a runtime scope refusal', 'crates/axon-intent/src/genloop.rs',
+     'rep.refusal_class = Some(RefusalClass::RuntimeScope);',
+     'let _ = Some(RefusalClass::RuntimeScope);',
+     'axon-intent', '--test genloop', 'a_write_outside_fs_write_during_an_example_is_a_runtime_scope_refusal'),
 ]
 
 if __name__ == "__main__":
