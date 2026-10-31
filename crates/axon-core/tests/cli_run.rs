@@ -35040,15 +35040,16 @@ fn a_native_binary_refuses_interpreter_only_env_controls() {
 /// the browser target, whose runtime does not provide it. The link failed with
 /// `undefined symbol`, and the stock message reported it as the ABI gap.
 ///
-/// A `println` program for wasm32-unknown-unknown is the stable case: that
-/// target has no libc `puts`, so the link fails on an undefined symbol that has
-/// nothing to do with the i64/i32 ABI.
+/// The stable case is a program calling a symbol neither libc-less
+/// wasm32-unknown-unknown nor its axon-rt provides: `exit` (a `println`
+/// program used to be it, until the browser rt shimmed `puts`). The link fails
+/// on an undefined symbol that has nothing to do with the i64/i32 ABI.
 #[test]
 fn a_wasm_link_failure_reports_the_linkers_own_error() {
     let dir = std::env::temp_dir().join(format!("axon_wasm_linkerr_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let src = dir.join("io.ax");
-    std::fs::write(&src, "fn main() { println(\"hi\") }\n").unwrap();
+    std::fs::write(&src, "fn main() { exit(3) }\n").unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_axon"))
         .args([
@@ -35077,7 +35078,7 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
     // quietly passing.
     assert!(
         err.contains("wasm link failed"),
-        "expected a reported wasm link failure for a str program on \
+        "expected a reported wasm link failure for an `exit` program on \
          wasm32-unknown-unknown; got:\n{err}"
     );
     assert!(
@@ -35085,6 +35086,98 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
         "the linker's OWN error was not surfaced — the caller's stock ABI \
          sentence is not evidence about this failure. stderr:\n{err}"
     );
+}
+
+/// A linked wasm module is labelled RUNNABLE, with a `wasmtime --invoke main`
+/// command, only when it imports nothing but WASI. A browser `println` module
+/// imports `env.axon_host_write`; it used to be labelled RUNNABLE with a
+/// wasmtime command that fails to instantiate it ("unknown import"). Every
+/// printed command is run when its tool is on PATH.
+#[test]
+fn a_wasm_runnable_label_is_only_printed_for_a_module_that_runs() {
+    let dir = std::env::temp_dir().join(format!("axon_wasm_label_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let has = |tool: &str| {
+        Command::new(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    let mut fails = Vec::new();
+    for (tag, prog, needs_host, want) in [
+        // 42: not a reserved exit code (7 is, and `main` would return 1).
+        ("pure", "fn main() -> i64 { 42 }\n", false, "42"),
+        ("println", "fn main() { println(\"hi\") }\n", true, "hi"),
+    ] {
+        let src = dir.join(format!("{tag}.ax"));
+        std::fs::write(&src, prog).unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_axon"))
+            .args(["target", "build", "--engine", "codegen", "--target"])
+            .args(["wasm32-unknown-unknown", src.to_str().unwrap()])
+            .current_dir(&dir)
+            .output()
+            .expect("axon target build");
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        if !err.contains("wasm:") {
+            eprintln!(
+                "[{tag}] skipped: no linked module (wasm codegen, rust-lld or the \
+                 wasm32-unknown-unknown axon-rt is absent): {err}"
+            );
+            continue;
+        }
+        let linked = dir.join(format!("{tag}.linked.wasm"));
+        if needs_host {
+            if err.contains("RUNNABLE") || err.contains("wasmtime") {
+                fails.push(format!(
+                    "ATTACK: a module needing a host import was labelled runnable [{tag}]: {err}"
+                ));
+            }
+            if !err.contains("env.axon_host_write") || !err.contains("not runnable standalone") {
+                fails.push(format!(
+                    "[{tag}] the label does not name the host import: {err}"
+                ));
+            }
+            if has("node") && err.contains("node scripts/wasm_browser_host.js") {
+                let r = Command::new("node")
+                    .arg(repo.join("scripts/wasm_browser_host.js"))
+                    .arg(&linked)
+                    .output()
+                    .unwrap();
+                let got = String::from_utf8_lossy(&r.stdout);
+                if !r.status.success() || got.trim() != want {
+                    fails.push(format!(
+                        "[{tag}] the printed host command did not print {want}: {r:?}"
+                    ));
+                }
+            } else {
+                eprintln!("[{tag}] host command not run: node is not on PATH");
+            }
+        } else {
+            if !err.contains("RUNNABLE") || !err.contains("wasmtime --invoke main") {
+                fails.push(format!(
+                    "[{tag}] a WASI-only module lost its RUNNABLE label: {err}"
+                ));
+            }
+            if has("wasmtime") {
+                let r = Command::new("wasmtime")
+                    .args(["--invoke", "main"])
+                    .arg(&linked)
+                    .output()
+                    .unwrap();
+                let got = String::from_utf8_lossy(&r.stdout);
+                if !r.status.success() || got.trim() != want {
+                    fails.push(format!(
+                        "ATTACK: a module labelled RUNNABLE did not run under its printed command [{tag}]: {r:?}"
+                    ));
+                }
+            } else {
+                eprintln!("[{tag}] RUNNABLE command not run: wasmtime is not on PATH");
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
 }
 
 #[test]

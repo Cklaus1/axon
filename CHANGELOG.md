@@ -1,5 +1,9 @@
 # Axon Changelog
 
+## `axon target build` wasm: RUNNABLE only for a module that runs standalone (integration int/31)
+
+- **Fixed a false RUNNABLE:** a linked `wasm32-unknown-unknown` module that prints imports `env.axon_host_write`, but was labelled `linked, RUNNABLE` with `run: wasmtime --invoke main …`, which fails ("unknown import"). The label now reads the linked module's imports: RUNNABLE and the wasmtime command only when every import is WASI; a `println` module says `needs host import env.axon_host_write, not runnable standalone` and names the repo host (`node scripts/wasm_browser_host.js <wasm>`, which prints the output); any other import set is listed. Exit code unchanged (0, the module was built). g01 row M4517. The link-failure diagnostic test now uses `exit(3)` (still an undefined symbol on that target), since the browser rt shims `puts`.
+
 ## Payload matches checked by usefulness, wrapper lambdas, bare `self`, glued strings, located E0901/E0902/E1209 (checker-soundness-3 CS3-1 to CS3-7)
 
 - **Newly refused: a literal inside a payload that leaves a hole (CS3-1, O-CS2-02, E0304):** `match o { Some(0) => .., None => .. }` (h31), the same with `Ok`/`Err` and enum fields (`E::A { s: "x" }`, h32), and the same shapes on an unannotated lambda param, checked clean and then panicked `no match arm matched` (exit 101). They are now E0304 at check (`axon run` exit 2, `axon build` exit 1). Untyped lambdas matching a `str` with no catch-all (b2, b3) are E0304 too, as their typed twin already was.

@@ -12924,6 +12924,10 @@ MUTATIONS += [
      'if first_error.is_none() && d.get("severity")',
      'if true && d.get("severity")',
      'axon-os', '--test sandbox_capture', 'a_compile_failure_names_its_first_error_not_a_warning'),
+    ('M4517', 'integration int/31: a linked wasm module is labelled RUNNABLE with a wasmtime command whatever it imports (a browser println module that wasmtime cannot instantiate)', 'crates/axon-core/src/main.rs',
+     '                    if foreign.is_empty() {',
+     '                    if true {',
+     'axon-core', '--test cli_run', 'a_wasm_runnable_label_is_only_printed_for_a_module_that_runs'),
 ]
 
 if __name__ == "__main__":

@@ -3556,4 +3556,5 @@ ATTACK_MARKERS.update({
     'M4514': r'ATTACK: an interpreter panic was not a runtime fault',
     'M4515': r'ATTACK: an interpreter panic was not a runtime fault',
     'M4516': r'ATTACK: a compile failure named a warning instead of its first error',
+    'M4517': r'ATTACK: a module needing a host import was labelled runnable \[println\]',
 })

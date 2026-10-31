@@ -3353,12 +3353,40 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
             // with wasm32's i32 libc — those report the link error honestly (the
             // i64→i32 ABI retarget is the remaining gap).
             match try_link_wasm(&out, llvm_triple) {
-                Some(linked) => eprintln!(
-                    "wasm: {} (target {llvm_triple}) — IR→wasm emitted, linked, RUNNABLE.\n  \
-                     run:  wasmtime --invoke main {}",
-                    linked.display(),
-                    linked.display()
-                ),
+                Some(linked) => {
+                    let imports = std::fs::read(&linked)
+                        .ok()
+                        .and_then(|b| wasm_imports(&b))
+                        .unwrap_or_else(|| vec![("?".into(), "?".into())]);
+                    let foreign: Vec<String> = imports
+                        .iter()
+                        .filter(|(m, _)| m != "wasi_snapshot_preview1")
+                        .map(|(m, f)| format!("{m}.{f}"))
+                        .collect();
+                    if foreign.is_empty() {
+                        eprintln!(
+                            "wasm: {} (target {llvm_triple}) — IR→wasm emitted, linked, RUNNABLE.\n  \
+                             run:  wasmtime --invoke main {}",
+                            linked.display(),
+                            linked.display()
+                        );
+                    } else if foreign == ["env.axon_host_write"] {
+                        eprintln!(
+                            "wasm: {} (target {llvm_triple}) — IR→wasm emitted, linked; needs host \
+                             import env.axon_host_write, not runnable standalone.\n  \
+                             host: node scripts/wasm_browser_host.js {}   (axon repo; or examples/browser/index.html)",
+                            linked.display(),
+                            linked.display()
+                        );
+                    } else {
+                        eprintln!(
+                            "wasm: {} (target {llvm_triple}) — IR→wasm emitted, linked; needs host \
+                             imports {}, not runnable standalone.",
+                            linked.display(),
+                            foreign.join(", ")
+                        );
+                    }
+                }
                 None => eprintln!(
                     "wasm object: {} (target {llvm_triple}) — IR→wasm emitted + magic-verified. \
                      Link to a runnable .wasm needs `rust-lld` + a wasi libc (pure-int programs \
@@ -3372,6 +3400,81 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
             process::exit(2);
         }
     }
+}
+
+/// The `(module, field)` pairs of a wasm module's import section, or `None`
+/// when the bytes are not a well-formed module. A linked module is RUNNABLE
+/// under `wasmtime --invoke main` only when every import is WASI.
+#[cfg(feature = "codegen")]
+fn wasm_imports(b: &[u8]) -> Option<Vec<(String, String)>> {
+    fn leb(b: &[u8], i: &mut usize) -> Option<u64> {
+        let (mut v, mut s) = (0u64, 0u32);
+        loop {
+            let x = *b.get(*i)?;
+            *i += 1;
+            v |= u64::from(x & 0x7f) << s;
+            if x & 0x80 == 0 {
+                return Some(v);
+            }
+            s += 7;
+            if s > 63 {
+                return None;
+            }
+        }
+    }
+    fn name(b: &[u8], i: &mut usize) -> Option<String> {
+        let n = leb(b, i)? as usize;
+        let s = b.get(*i..i.checked_add(n)?)?;
+        *i += n;
+        Some(String::from_utf8_lossy(s).into_owned())
+    }
+    fn limits(b: &[u8], i: &mut usize) -> Option<()> {
+        let flag = *b.get(*i)?;
+        *i += 1;
+        leb(b, i)?;
+        if flag & 1 == 1 {
+            leb(b, i)?;
+        }
+        Some(())
+    }
+    if b.get(0..8)? != b"\0asm\x01\0\0\0" {
+        return None;
+    }
+    let mut i = 8;
+    let mut out = Vec::new();
+    while i < b.len() {
+        let id = b[i];
+        i += 1;
+        let len = leb(b, &mut i)? as usize;
+        let end = i.checked_add(len)?;
+        if end > b.len() {
+            return None;
+        }
+        if id == 2 {
+            let mut j = i;
+            for _ in 0..leb(b, &mut j)? {
+                let m = name(b, &mut j)?;
+                let f = name(b, &mut j)?;
+                let kind = *b.get(j)?;
+                j += 1;
+                match kind {
+                    0 => {
+                        leb(b, &mut j)?;
+                    }
+                    1 => {
+                        j += 1;
+                        limits(b, &mut j)?;
+                    }
+                    2 => limits(b, &mut j)?,
+                    3 => j += 2,
+                    _ => return None,
+                }
+                out.push((m, f));
+            }
+        }
+        i = end;
+    }
+    Some(out)
 }
 
 /// Locate the wasm32 build of `libaxon_rt.a`, the runtime carrying the
