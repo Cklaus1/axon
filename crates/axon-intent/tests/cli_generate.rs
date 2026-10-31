@@ -28,9 +28,8 @@ fn real_axon() -> PathBuf {
     )
 }
 
-/// A per-test directory holding a stand-in `axon` that answers `card` (IG2's
-/// verb, not needed by these tests' semantics) and hands every other verb to
-/// the real interpreter.
+/// A per-test directory; the CLI runs against the real `axon` (checker,
+/// sandbox and IG2's `axon card`).
 struct Dir(PathBuf);
 
 impl Dir {
@@ -39,14 +38,6 @@ impl Dir {
             std::env::temp_dir().join(format!("axon-intent-cli-gen-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
-        common::write_executable(
-            &d.join("axon.sh"),
-            format!(
-                "#!/bin/sh\n[ \"$1\" = card ] && {{ echo 'CARD: test stand-in'; exit 0; }}\nexec '{}' \"$@\"\n",
-                real_axon().display()
-            ),
-            0o755,
-        );
         Dir(d)
     }
 
@@ -82,7 +73,7 @@ impl Dir {
             .args(args)
             .env_remove("AXON_AI_MOCK")
             .env_remove("AXON_APPROVAL_KEY")
-            .env("AXON_BIN", self.0.join("axon.sh"))
+            .env("AXON_BIN", real_axon())
             .current_dir(&self.0)
             .output()
             .expect("spawn axon-intent")
@@ -286,6 +277,16 @@ fn a_generated_program_compiles_with_a_transcript_and_needs_a_human_approve() {
     assert_eq!(t["schema"], "axon-intent-gen/1");
     assert_eq!(t["outcome"], "accepted");
     assert_eq!(t["rounds"].as_array().unwrap().len(), 2);
+    // The prompt carried the real language card (IG2), byte for byte.
+    let card_sha = Command::new(real_axon())
+        .args(["card", "--sha256"])
+        .output()
+        .expect("spawn axon card --sha256");
+    assert_eq!(
+        t["card_sha256"].as_str().unwrap(),
+        String::from_utf8_lossy(&card_sha.stdout).trim(),
+        "ATTACK: the loop's card is not the one `axon card` prints"
+    );
 
     // `emit --yes` writes the triple but never approves a generated program.
     let _ = std::fs::remove_file(d.path().join("n"));
