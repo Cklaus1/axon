@@ -1,0 +1,4 @@
+{
+  "theme": "native parity",
+  "text": "NATIVE: a tuple pattern now tests every component and an int literal is compared with the subject widened by its signedness, so native takes the same match arm as the interpreter where it used to take the first tuple arm, hang in while-let, or fail the build"
+}
