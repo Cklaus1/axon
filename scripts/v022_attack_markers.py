@@ -3694,6 +3694,11 @@ ATTACK_MARKERS.update({
     'M4532': r'ATTACK: NH-R1 security N3 a write on a filesystem without RENAME_EXCHANGE was not refused clearly',
     'M4533': r'ATTACK: NH-R1 security N3 a write on a filesystem without RENAME_EXCHANGE was not refused clearly',
     'M4534': r'ATTACK: NH-R1 security N3 a create-by-write on a filesystem without RENAME_EXCHANGE was not refused clearly',
+    'M4535': r'ATTACK: NH-R1 security N3 a write on a filesystem without RENAME_EXCHANGE was not refused clearly',
+    'M4536': r'ATTACK: NH-R1 security N3 the attended fallback clobbered a file created before its rename',
+    'M4537': r'ATTACK: NH-R1 security N3 an attended write on a filesystem without RENAME_EXCHANGE was refused',
+    'M4538': r'ATTACK: NH-R1 security N3 an attended repair on ntfs3 was refused',
+    'M4539': r'ATTACK: NH-R1 security N3 the attended fallback deleted an edit made before its unlink',
 })
 
 # NH-R1 security review fixes, crates side (ids M4450-M4461)

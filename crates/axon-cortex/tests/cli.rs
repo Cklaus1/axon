@@ -3760,6 +3760,65 @@ fn r5_a_candidate_failing_after_an_adjudication_does_not_discard_it() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+/// Security re-review N3 ruling: an ATTENDED repair on a filesystem whose
+/// `renameat2` has no `RENAME_EXCHANGE` (ntfs3, mounted from a loop image in
+/// a private mount namespace) takes the §10 Q4 rename procedure: it repairs
+/// the file and exits 0, as the build before E5 did, and leaves no temp or
+/// visible copy behind.
+#[test]
+fn n3_an_attended_repair_on_ntfs3_repairs_the_file() {
+    let root = std::env::temp_dir().join(format!("cortex_cli_ntfs3_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("mnt")).unwrap();
+    let img = root.join("ntfs.img");
+    common::ntfs3_image(&img);
+    let cortex = common::cortex();
+    let mut c = Command::new("unshare");
+    c.args(["-m", "sh", "-c"]).arg(
+        "img=$1 mnt=$2 fixture=$3 out=$4; shift 4\n\
+         mount --make-rprivate / && mount -t ntfs3 -o loop \"$img\" \"$mnt\" || exit 97\n\
+         mkdir \"$mnt/ws\" && cp \"$fixture\" \"$mnt/ws/broken.ax\" || exit 98\n\
+         \"$@\" --workspace \"$mnt/ws\"\n\
+         rc=$?\n\
+         cp \"$mnt/ws/broken.ax\" \"$out\"\n\
+         ls -A \"$mnt/ws\" > \"$out.ls\"\n\
+         exit $rc\n",
+    );
+    c.arg("sh")
+        .arg(&img)
+        .arg(root.join("mnt"))
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax"))
+        .arg(root.join("out"))
+        .arg(cortex.get_program())
+        .args(["repair", "--file", "broken.ax", "--symbol", "double"])
+        .args([
+            "--check",
+            "hidden_completion",
+            "--write-prefix",
+            "broken.ax",
+        ])
+        .args(["--generator", "literal:\n    n * 2\n", "--axon"])
+        .arg(axon_bin());
+    for (k, v) in cortex.get_envs() {
+        match v {
+            Some(v) => c.env(k, v),
+            None => c.env_remove(k),
+        };
+    }
+    let o = c.output().expect("run unshare");
+    let (code, err) = (o.status.code(), String::from_utf8_lossy(&o.stderr));
+    let after = std::fs::read_to_string(root.join("out")).unwrap_or_default();
+    let left = std::fs::read_to_string(root.join("out.ls")).unwrap_or_default();
+    assert!(
+        code == Some(0) && after.contains("n * 2"),
+        "ATTACK: NH-R1 security N3 an attended repair on ntfs3 was refused: {code:?} \
+         {}{err}\n{after}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+    assert_eq!(left.trim(), "broken.ax", "no temp or visible copy is left");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A walk over `a`, `b`, `c` in which `a` is adjudicated on its second
 /// proposal: the visible `t` reaches all three and still fails once `a` is
 /// repaired (`c` stays wrong), the hidden check passes. `later` is the

@@ -637,6 +637,13 @@ fn main() {
     let mut cli_budget: Option<usize> = None;
     let argv: Vec<String> = args.collect();
     let unattended = argv.iter().any(|a| a == "--unattended");
+    // Security re-review N3 ruling: an attended run on a filesystem (or a
+    // platform) without `renameat2` flags takes the human-approved §10 Q4
+    // rename (`cas` module doc); an unattended run's writes refuse (exit
+    // 22), naming the flag.
+    if !unattended {
+        axon_cortex::cas::allow_rename_fallback();
+    }
     let seen_flags: Vec<String> = argv
         .iter()
         .filter(|a| a.starts_with("--"))

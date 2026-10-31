@@ -2034,11 +2034,6 @@ EXEMPT += [
      _CASR + "; rename2 returns the OS error of a refused renameat2: nothing was exchanged"),
     (_CAS, '            return Err(CasError::Io(format!(\n                "{} names no file to delete",',
      _CASR + "; remove: a path with no parent or file name has no temp name beside it"),
-    (_CAS, "        rename2(path, &tmp, libc::RENAME_NOREPLACE)\n",
-     _CASR + "; remove's rename to the temp name failed: nothing was moved or deleted"),
-    (_CAS, "                let kept = match rename2(&tmp, &kept, libc::RENAME_NOREPLACE) {",
-     _CASR + "; security F3: moving the displaced file to a fresh name is best-effort; either way "
-     "it is kept and the Displaced report names where (the comparison is row M4400)"),
     (_CAS, "                    Err(_) => tmp,\n",
      _CASR + "; security F3: the displaced file could not be moved to a fresh name, so it stays "
      "kept under the temp name, which the Displaced report names (the comparison is row M4400)"),
@@ -2051,10 +2046,17 @@ EXEMPT += [
      _CASR + "; the temp file could not be written: nothing is renamed"),
     (_CAS, "            Err(e) => {\n                let _ = std::fs::remove_file(&tmp);\n                return Err(e);",
      _CASR + "; step 2 could not read the target: nothing is renamed"),
-    (_CAS, "        if let Err(e) = rename2(&tmp, path, flags) {",
+    (_CAS, "            Err(e) => {\n                let _ = std::fs::remove_file(&tmp);\n                return Err(match e.raw_os_error() {",
      _CASR + "; the exchange failed: the target keeps its bytes"),
     (_CAS, "            Err(e) => return Err(CasError::Io(e.to_string())),\n        };",
      _CASR + "; the exclusive create failed for another reason than an existing file: nothing was created"),
+    (_CAS, '    Err(std::io::Error::new(\n        std::io::ErrorKind::Unsupported,\n        format!("this platform does not support',
+     _CASR + "; security re-review N3: a platform without renameat2 has no flagged rename, so an "
+     "unattended write refuses and an attended one takes the Q4 rename (the choice is row M4535)"),
+    (_CAS, "        if e.kind() != std::io::ErrorKind::Unsupported {\n            return Err(e);",
+     _CASR + "; security re-review N3: an OS error other than a missing flag is returned as it is "
+     "(the callers map ENOENT / EEXIST to Foreign, rows M4401 and M4405); only a missing flag "
+     "reaches the Q4 choice (row M4535)"),
     (_UNA, "    pub(crate) fn refuse(id: &'static str, basis: impl Into<String>) -> Row {",
      _CTX + "; the Row constructor, not a decision: each caller's refusal has its row (M4113-M4116, M4119)"),
     (_SR, 'pub(crate) fn touches_policy(rel: &str) -> bool {',

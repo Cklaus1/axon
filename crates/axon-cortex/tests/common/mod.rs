@@ -69,3 +69,24 @@ pub fn cortex() -> std::process::Command {
         .env("CORTEX_AUDIT", "off");
     c
 }
+
+/// A fresh 16 MiB ntfs image at `img`: a filesystem whose `renameat2`
+/// answers EINVAL to `RENAME_EXCHANGE` (security re-review N3). A test
+/// mounts it with `mount -t ntfs3 -o loop` in a private mount namespace
+/// (`unshare -m`), so the host's mounts are never touched; that needs root,
+/// `mkfs.ntfs` (ntfs-3g) and the kernel's ntfs3 module.
+pub fn ntfs3_image(img: &Path) {
+    // SAFETY: geteuid has no preconditions.
+    let root = unsafe { libc::geteuid() } == 0;
+    std::fs::File::create(img)
+        .and_then(|f| f.set_len(16 << 20))
+        .unwrap();
+    let mk = std::process::Command::new("mkfs.ntfs")
+        .args(["-F", "-Q"])
+        .arg(img)
+        .output();
+    assert!(
+        root && mk.as_ref().is_ok_and(|o| o.status.success()),
+        "setup: the ntfs3 tests need root, mkfs.ntfs (ntfs-3g) and the ntfs3 module: {mk:?}"
+    );
+}

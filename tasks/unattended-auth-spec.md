@@ -1,6 +1,6 @@
 # Unattended repair authorization (NH-R1) — DRAFT spec (after Step 1 review)
 
-**Status: PARTIAL 2026-10-31 on nhr/int: security fixes merged (F1-F12 fixed in 91114bcc..dcd60815 and be47b23e; A0-A4 and the §7 S-tests: 1093c268, 9a825ace, c4f4c12c, 219e1360, 9ed0ad16, 60651b37). The security re-review (N1-N6) is answered on nhr/fix-c: N1-N4 fixed (`[REVISED: security re-review N#]` markers), N5/N6 and the N3 attended regression recorded in O-NHR-06. Unattended execution is NOT authorized or enabled: `--unattended` refuses by default (exit 29); enabling needs the §9 evidence and a separate human decision.**
+**Status: PARTIAL 2026-10-31 on nhr/int: security fixes merged (F1-F12 fixed in 91114bcc..dcd60815 and be47b23e; A0-A4 and the §7 S-tests: 1093c268, 9a825ace, c4f4c12c, 219e1360, 9ed0ad16, 60651b37). The security re-review (N1-N6) is answered on nhr/fix-c: N1-N4 fixed (`[REVISED: security re-review N#]` markers; N3 per the human ruling: attended runs take the §10 Q4 rename, unattended runs refuse), N5/N6 and N3 portability recorded in O-NHR-06. Unattended execution is NOT authorized or enabled: `--unattended` refuses by default (exit 29); enabling needs the §9 evidence and a separate human decision.**
 - `[DECIDED by human 2026-10-31: build go-ahead.]` Building it (A0-A4, E1-E7, §7 S-tests) is authorized.
 - Enabling it after the build (§9) still needs the §9 evidence (S-tests and full gate green, a read-only adversarial
   security review, R6 L1-L3 built with a clean C1 audit) and then a second, separate human decision made on that evidence.
@@ -361,14 +361,20 @@ anything but a regular file.
 
 A step-2 mismatch writes nothing; any mismatch stops the walk and exits 22 with the reason.
 
-`[REVISED: security re-review N3]` steps 3 and the delete's rename need `renameat2` flags. A filesystem without them
-answers EINVAL (ntfs3 does; ext2, vfat and tmpfs on this kernel support both): the write or delete is refused with
-`the filesystem does not support renameat2(RENAME_EXCHANGE); the compare-and-swap write is refused and no plain rename
-replaces it`, the target keeps its bytes and no temp file is left (`cas::tests::a_filesystem_without_exchange_refuses_clearly`).
-There is no plain-rename fallback: it is exactly the unchecked overwrite E5 removed. This applies to ATTENDED runs
-too (every write of `cortex repair` goes through the helper): on ntfs3 the base build (`d7690e63`) repaired
-`broken.ax` (exit 0) and this build blocks (exit 22, file unchanged) - a known attended regression on such
-filesystems, recorded in O-NHR-06.
+`[REVISED: security re-review N3, human ruling 2026-10-31]` steps 3 and the delete's rename need `renameat2` flags. A
+filesystem without them answers EINVAL (ntfs3 does; ext2, vfat and tmpfs on this kernel support both), and a platform
+other than Linux has no `renameat2` at all (the call is behind `cfg(target_os = "linux")`).
+- **Unattended runs** refuse the write or delete (exit 22) with `the filesystem does not support
+  renameat2(RENAME_EXCHANGE); the compare-and-swap write is refused and no plain rename replaces it`, naming the flag;
+  the target keeps its bytes and no temp file is left (`cas::tests::a_filesystem_without_exchange_refuses_clearly`).
+- **Attended runs** take the human-approved §10 Q4 procedure instead: step 2's re-hash against the last digest (an
+  expected-absent target is re-checked absent just before the rename), a plain `rename(2)`, then step 5's re-hash of
+  the renamed file against the bytes written; a mismatch is reported with both digests (exit 22), never claimed. A
+  delete renames to a temp name, re-hashes and unlinks the same way, renaming a mismatch back. What it does NOT
+  guarantee: there is no displaced inode for step 4 to re-hash, so an edit made through the path between step 2 and
+  the rename is overwritten unreported - the residual window Q4 accepted. On an ntfs3 loop mount the attended repair
+  of `broken.ax` exits 0 with the file repaired, as the base build (`d7690e63`) did
+  (`cli::n3_an_attended_repair_on_ntfs3_repairs_the_file`); the fallback's own checks are the `cas::tests::*q4*` tests.
 
 Supporting rules:
 - An exclusive `flock` on a store-side lock keyed by the canonical file path means a second unattended run on the same

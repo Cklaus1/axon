@@ -33,6 +33,20 @@
 //! A delete renames the target to a temp name first, re-hashes what it moved
 //! and only then unlinks it; a mismatch renames it back (F9).
 //!
+//! Where `renameat2(RENAME_EXCHANGE / RENAME_NOREPLACE)` does not exist - a
+//! filesystem that answers EINVAL (ntfs3; security re-review N3) or a
+//! platform other than Linux - an UNATTENDED run refuses the write or delete
+//! (exit 22), naming the flag. An ATTENDED run ([`allow_rename_fallback`])
+//! takes the human-approved §10 Q4 procedure instead: step 2's re-hash
+//! against the last digest (an exclusive rename re-checks the target absent),
+//! a plain `rename(2)`, then step 5's re-hash of the renamed file against
+//! the bytes written - a mismatch is reported with both digests, never
+//! claimed as written. A delete renames, re-hashes and unlinks the same way.
+//! What the fallback does NOT guarantee: there is no displaced inode to
+//! re-hash (step 4), so an edit made through the path between step 2 and
+//! the rename is overwritten unreported - the residual window §10 Q4
+//! accepted for attended runs.
+//!
 //! Every write and delete is journalled (`{site, path, before, after}`, hex
 //! sha256), the record R6's run ledger carries. One process-wide [`Ledger`]
 //! behind one mutex: it is also the run's write lock, which the NH-R1 E3
@@ -191,6 +205,9 @@ impl std::error::Error for CasError {}
 pub struct Ledger {
     known: HashMap<PathBuf, Option<String>>,
     journal: Vec<WriteRecord>,
+    /// An attended run: without `renameat2` flags, the §10 Q4 plain-rename
+    /// procedure runs instead of a refusal. Off by default (fail closed).
+    rename_fallback: bool,
 }
 
 static LEDGER: LazyLock<Mutex<Ledger>> = LazyLock::new(Default::default);
@@ -219,6 +236,13 @@ pub fn lock() -> MutexGuard<'static, Ledger> {
 pub fn freeze() -> MutexGuard<'static, Ledger> {
     FROZEN.store(true, Ordering::SeqCst);
     LEDGER.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// An ATTENDED `cortex repair`: where the filesystem or platform has no
+/// `renameat2` flags, take the §10 Q4 rename procedure (module doc) instead
+/// of refusing. Never called for an unattended run, whose writes refuse.
+pub fn allow_rename_fallback() {
+    lock().rename_fallback = true;
 }
 
 /// [`Ledger::observe`] under the lock.
@@ -269,6 +293,22 @@ fn in_window(path: &Path) {
 #[cfg(not(test))]
 fn in_window(_path: &Path) {}
 
+// A test's writer right after step 3's rename (before step 5's re-hash).
+#[cfg(test)]
+thread_local! {
+    static AFTER_RENAME: std::cell::RefCell<Option<WindowHook>> = std::cell::RefCell::new(None);
+}
+#[cfg(test)]
+fn after_rename(path: &Path) {
+    AFTER_RENAME.with(|h| {
+        if let Some(f) = h.borrow_mut().as_mut() {
+            f(path)
+        }
+    })
+}
+#[cfg(not(test))]
+fn after_rename(_path: &Path) {}
+
 /// The bytes of the regular file at `path`, read without following a
 /// symlink and without blocking on a FIFO (security review F8: the E3
 /// watchdog's restore reads under the run's write lock, and a FIFO or a
@@ -308,39 +348,56 @@ thread_local! {
     static RENAME2_ERRNO: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
 }
 
-/// `renameat2(from, to, flags)` (`RENAME_EXCHANGE` / `RENAME_NOREPLACE`; a
-/// filesystem without them refuses, so the write fails closed). EINVAL - the
-/// answer of a filesystem without the flag (ntfs3; security re-review N3) -
-/// is reported as that, never retried as a plain rename: a plain rename is
-/// exactly the unchecked overwrite E5 removed.
-fn rename2(from: &Path, to: &Path, flags: libc::c_uint) -> std::io::Result<()> {
-    let e = match renameat2(from, to, flags) {
+/// The two atomic renames E5 needs (`renameat2` flags).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Swap {
+    /// `RENAME_EXCHANGE`: the target's old inode moves to the source name.
+    Exchange,
+    /// `RENAME_NOREPLACE`: refused when the target exists.
+    NoReplace,
+}
+
+impl Swap {
+    fn flag(self) -> &'static str {
+        match self {
+            Swap::Exchange => "RENAME_EXCHANGE",
+            Swap::NoReplace => "RENAME_NOREPLACE",
+        }
+    }
+}
+
+/// `renameat2(from, to, how)`. EINVAL - the answer of a filesystem without
+/// the flag (ntfs3; security re-review N3) - is reported as that
+/// ([`std::io::ErrorKind::Unsupported`], naming the flag), never as a bare
+/// OS error; [`Ledger::rename`] decides whether the §10 Q4 rename runs.
+fn rename2(from: &Path, to: &Path, how: Swap) -> std::io::Result<()> {
+    let e = match renameat2(from, to, how) {
         Ok(()) => return Ok(()),
         Err(e) => e,
     };
     if e.raw_os_error() != Some(libc::EINVAL) {
         return Err(e);
     }
-    let flag = if flags == libc::RENAME_EXCHANGE {
-        "RENAME_EXCHANGE"
-    } else {
-        "RENAME_NOREPLACE"
-    };
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         format!(
-            "{e}: the filesystem does not support renameat2({flag}); the compare-and-swap \
-             write is refused and no plain rename replaces it"
+            "{e}: the filesystem does not support renameat2({})",
+            how.flag()
         ),
     ))
 }
 
-fn renameat2(from: &Path, to: &Path, flags: libc::c_uint) -> std::io::Result<()> {
+#[cfg(target_os = "linux")]
+fn renameat2(from: &Path, to: &Path, how: Swap) -> std::io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     #[cfg(test)]
     if let Some(errno) = RENAME2_ERRNO.with(|e| e.get()) {
         return Err(std::io::Error::from_raw_os_error(errno));
     }
+    let flags = match how {
+        Swap::Exchange => libc::RENAME_EXCHANGE,
+        Swap::NoReplace => libc::RENAME_NOREPLACE,
+    };
     let a = std::ffi::CString::new(from.as_os_str().as_bytes())?;
     let b = std::ffi::CString::new(to.as_os_str().as_bytes())?;
     // SAFETY: both are valid NUL-terminated paths; AT_FDCWD resolves them as given.
@@ -358,6 +415,15 @@ fn renameat2(from: &Path, to: &Path, flags: libc::c_uint) -> std::io::Result<()>
     } else {
         Err(std::io::Error::last_os_error())
     }
+}
+
+/// `renameat2` is Linux-only: elsewhere every flagged rename is unsupported.
+#[cfg(not(target_os = "linux"))]
+fn renameat2(_from: &Path, _to: &Path, how: Swap) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!("this platform does not support renameat2({})", how.flag()),
+    ))
 }
 
 /// A fresh name beside `path` to keep a displaced file under.
@@ -387,6 +453,37 @@ impl Ledger {
     /// Every write and delete so far, in order.
     pub fn journal(&self) -> &[WriteRecord] {
         &self.journal
+    }
+
+    /// Step 3's atomic rename, `Ok(true)`. Where the filesystem or platform
+    /// has no `renameat2` flag, an attended run ([`allow_rename_fallback`])
+    /// takes the §10 Q4 procedure: the caller re-hashed the target (step 2),
+    /// an exclusive rename re-checks `to` absent, a plain rename places the
+    /// file and the caller re-hashes what it placed (step 5); `Ok(false)`:
+    /// no inode was displaced, so step 4 has nothing to re-hash. Otherwise
+    /// the write or delete is refused, naming the flag.
+    fn rename(&self, from: &Path, to: &Path, how: Swap) -> std::io::Result<bool> {
+        let e = match rename2(from, to, how) {
+            Ok(()) => return Ok(true),
+            Err(e) => e,
+        };
+        if e.kind() != std::io::ErrorKind::Unsupported {
+            return Err(e);
+        }
+        if !self.rename_fallback {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!(
+                    "{e}; the compare-and-swap write is refused and no plain rename \
+                     replaces it (only an attended run takes the §10 Q4 rename)"
+                ),
+            ));
+        }
+        if how == Swap::NoReplace && std::fs::symlink_metadata(to).is_ok() {
+            return Err(std::io::Error::from_raw_os_error(libc::EEXIST));
+        }
+        std::fs::rename(from, to)?;
+        Ok(false)
     }
 
     /// Replace the file at `path` with `bytes`, steps 1-5 of the module doc.
@@ -448,22 +545,26 @@ impl Ledger {
         // 3. The exchange: the target's old inode moves to the temp name.
         // Expected absent: an exclusive rename, so nothing created meanwhile
         // is clobbered.
-        let flags = if found.is_some() {
-            libc::RENAME_EXCHANGE
+        let how = if found.is_some() {
+            Swap::Exchange
         } else {
-            libc::RENAME_NOREPLACE
+            Swap::NoReplace
         };
-        if let Err(e) = rename2(&tmp, path, flags) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(match e.raw_os_error() {
-                Some(libc::ENOENT) | Some(libc::EEXIST) => CasError::Foreign {
-                    path: path.to_path_buf(),
-                    expected,
-                    found: digest_now(path).unwrap_or(None),
-                },
-                _ => CasError::Io(format!("{}: {e}", path.display())),
-            });
-        }
+        let exchanged = match self.rename(&tmp, path, how) {
+            Ok(x) => x,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(match e.raw_os_error() {
+                    Some(libc::ENOENT) | Some(libc::EEXIST) => CasError::Foreign {
+                        path: path.to_path_buf(),
+                        expected,
+                        found: digest_now(path).unwrap_or(None),
+                    },
+                    _ => CasError::Io(format!("{}: {e}", path.display())),
+                });
+            }
+        };
+        after_rename(path);
         let after = sha(bytes);
         self.known.insert(path.to_path_buf(), Some(after.clone()));
         self.journal.push(WriteRecord {
@@ -472,12 +573,13 @@ impl Ledger {
             before_sha256: found.clone(),
             after_sha256: Some(after.clone()),
         });
-        // 4. The displaced inode is what step 2 hashed, or it is kept.
-        if found.is_some() {
+        // 4. The displaced inode is what step 2 hashed, or it is kept. The
+        // §10 Q4 plain rename displaced nothing: step 5 alone checks it.
+        if exchanged && found.is_some() {
             let displaced = read_regular(&tmp).ok().map(|b| sha(&b));
             if displaced != found {
                 let kept = kept_name(dir, name);
-                let kept = match rename2(&tmp, &kept, libc::RENAME_NOREPLACE) {
+                let kept = match rename2(&tmp, &kept, Swap::NoReplace) {
                     Ok(()) => kept,
                     Err(_) => tmp,
                 };
@@ -562,12 +664,12 @@ impl Ledger {
         ));
         let _ = std::fs::remove_file(&tmp);
         in_window(path);
-        rename2(path, &tmp, libc::RENAME_NOREPLACE)
+        self.rename(path, &tmp, Swap::NoReplace)
             .map_err(|e| CasError::Io(format!("{}: {e}", path.display())))?;
         let moved = read_regular(&tmp).ok().map(|b| sha(&b));
         if moved != found {
-            return Err(match rename2(&tmp, path, libc::RENAME_NOREPLACE) {
-                Ok(()) => CasError::Foreign {
+            return Err(match self.rename(&tmp, path, Swap::NoReplace) {
+                Ok(_) => CasError::Foreign {
                     path: path.to_path_buf(),
                     expected,
                     found: moved,
@@ -947,6 +1049,146 @@ mod tests {
             1,
             "nothing after the fault is journalled"
         );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// An attended run's ledger ([`allow_rename_fallback`]).
+    fn attended() -> Ledger {
+        Ledger {
+            rename_fallback: true,
+            ..Default::default()
+        }
+    }
+
+    /// Security re-review N3 ruling: on a filesystem without `renameat2`
+    /// flags an ATTENDED run writes, creates and deletes through the §10 Q4
+    /// plain-rename procedure, journalled, leaving no temp file.
+    #[test]
+    fn an_attended_run_without_exchange_takes_the_q4_rename() {
+        let d = dir("q4");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"one").unwrap();
+        let q = d.join("absent.ax");
+        std::fs::write(&q, b"old").unwrap();
+        let mut l = attended();
+        l.observe(&p, b"one");
+        l.observe(&q, b"old");
+        l.remove(Site::Sweep, &q).unwrap();
+        RENAME2_ERRNO.with(|e| e.set(Some(libc::EINVAL)));
+        let got = [
+            l.write(Site::Apply, &p, b"mine"),
+            l.write(Site::Apply, &q, b"new"),
+            l.remove(Site::Sweep, &q),
+        ];
+        RENAME2_ERRNO.with(|e| e.set(None));
+        assert!(
+            got.iter().all(Result::is_ok) && std::fs::read(&p).unwrap() == b"mine" && !q.exists(),
+            "ATTACK: NH-R1 security N3 an attended write on a filesystem without \
+             RENAME_EXCHANGE was refused: {got:?}"
+        );
+        assert!(others(&d, &p).is_empty(), "no temp file is left");
+        assert_eq!(l.journal().len(), 4, "every write and delete is journalled");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The §10 Q4 fallback's step 5: an edit made after the plain rename is
+    /// reported with both digests, never claimed as written.
+    #[test]
+    fn a_writer_after_the_q4_rename_is_reported_with_both_digests() {
+        let d = dir("q4after");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"one").unwrap();
+        let mut l = attended();
+        l.observe(&p, b"one");
+        AFTER_RENAME.with(|h| {
+            *h.borrow_mut() = Some(Box::new(|p: &Path| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(p)
+                    .unwrap()
+                    .write_all(b"theirs")
+                    .unwrap();
+            }))
+        });
+        RENAME2_ERRNO.with(|e| e.set(Some(libc::EINVAL)));
+        let got = l.write(Site::Apply, &p, b"mine");
+        RENAME2_ERRNO.with(|e| e.set(None));
+        AFTER_RENAME.with(|h| *h.borrow_mut() = None);
+        let shown = format!(
+            "{got:?} {}",
+            got.as_ref()
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        );
+        assert!(
+            matches!(got, Err(CasError::Lost { .. }))
+                && shown.contains(&sha(b"mine"))
+                && shown.contains(&sha(b"theirs"))
+                && std::fs::read(&p).unwrap() == b"theirs",
+            "ATTACK: NH-R1 security N3 an edit after the attended fallback's rename was \
+             claimed as written: {shown}"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The fallback's exclusive rename re-checks the target absent: a file
+    /// created after step 2's re-hash is not clobbered.
+    #[test]
+    fn a_file_created_before_the_q4_rename_is_not_clobbered() {
+        let d = dir("q4noreplace");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"one").unwrap();
+        let mut l = attended();
+        l.observe(&p, b"one");
+        l.remove(Site::Sweep, &p).unwrap();
+        IN_WINDOW.with(|h| {
+            *h.borrow_mut() = Some(Box::new(|p: &Path| std::fs::write(p, b"theirs").unwrap()))
+        });
+        RENAME2_ERRNO.with(|e| e.set(Some(libc::EINVAL)));
+        let got = l.write(Site::Apply, &p, b"mine");
+        RENAME2_ERRNO.with(|e| e.set(None));
+        close_window();
+        assert!(
+            matches!(got, Err(CasError::Foreign { .. })) && std::fs::read(&p).unwrap() == b"theirs",
+            "ATTACK: NH-R1 security N3 the attended fallback clobbered a file created before \
+             its rename: {got:?}"
+        );
+        assert!(others(&d, &p).is_empty(), "the temp file is removed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The fallback's delete: an edit made between its re-hash and its
+    /// rename is renamed back and reported with both digests.
+    #[test]
+    fn a_writer_before_the_q4_delete_is_not_deleted() {
+        let d = dir("q4rm");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"one").unwrap();
+        let mut l = attended();
+        l.observe(&p, b"one");
+        rewrite_in_window(b"theirs");
+        RENAME2_ERRNO.with(|e| e.set(Some(libc::EINVAL)));
+        let got = l.remove(Site::Sweep, &p);
+        RENAME2_ERRNO.with(|e| e.set(None));
+        close_window();
+        let shown = format!(
+            "{got:?} {}",
+            got.as_ref()
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        );
+        assert!(
+            std::fs::read(&p).ok().as_deref() == Some(b"theirs".as_slice())
+                && shown.contains(&sha(b"one"))
+                && shown.contains(&sha(b"theirs")),
+            "ATTACK: NH-R1 security N3 the attended fallback deleted an edit made before its \
+             unlink: {shown}"
+        );
+        assert!(l.journal().is_empty());
+        assert!(others(&d, &p).is_empty(), "the temp name is renamed back");
         let _ = std::fs::remove_dir_all(&d);
     }
 
