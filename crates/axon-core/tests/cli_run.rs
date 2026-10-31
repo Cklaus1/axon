@@ -43389,6 +43389,13 @@ fn main() { println(to_str(f(Ok(true), 1) + f(Ok(false), 1) + f(Err("e"), 1))) }
             "fn f(a: bool, b: bool) -> i64 { match (a, b) { (true, _) => 1, (false, true) => 2, (_, false) => 3 } }\nfn main() { println(to_str(f(true, false) + f(false, true) + f(false, false))) }\n",
             "6\n",
         ),
+        (
+            // Fields are matched by name: the pattern's field order is not the
+            // declaration order here.
+            "c22",
+            "enum E { A { b: bool, c: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { c: true } => 1, E::A { b: true, c: false } => 2, E::A { b: false, c: false } => 3, E::B => 4 } }\nfn main() { println(to_str(f(E::A { b: false, c: true }) + f(E::A { b: true, c: false }) + f(E::A { b: false, c: false }) + f(E::B))) }\n",
+            "10\n",
+        ),
     ] {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs3c_{tag}"), src);
         if crc != Some(0) || rrc != Some(0) || rout != out {

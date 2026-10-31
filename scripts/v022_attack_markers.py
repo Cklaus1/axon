@@ -3443,7 +3443,7 @@ ATTACK_MARKERS.update({
     'M3974': r'ATTACK: a payload-literal hole checked clean \[h31\]',
     'M3975': r'ATTACK: a covering payload match was refused \[c05\]',
     'M3976': r'ATTACK: a payload-literal hole checked clean \[h31g\]',
-    'M3977': r'ATTACK: a covering payload match was refused \[c21\]',
+    'M3977': r'ATTACK: a covering payload match was refused \[c22\]',
     'M3981': r"ATTACK: E1209 lost the refinement's line \[e_helper\]",
     'M3985': r'ATTACK: `==` on an Option/Result got the arithmetic E0301 text \[g62\]',
     'M3986': r'ATTACK: the missing-variant fix-it is not valid Axon \[fx_unit\]',
