@@ -1,0 +1,1 @@
+{"theme": "r6-ledger-spec", "text": "The torn-record append test now names a torn record that only a later check refused, so its mutation row is killed by its own attack."}
