@@ -1,0 +1,4 @@
+{
+  "theme": "intent-gen IG2",
+  "text": "CLI (card text only): `axon card` states that Axon has no character literals and how to compare one character (char_at byte value, or a one-character str_slice)."
+}
