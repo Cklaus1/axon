@@ -3014,7 +3014,7 @@ Terminal `accepted_refusal` is always null (an R5 refusal turns the exit into 22
 tree roots are the effective write prefixes plus the envelope's fs_write scopes. Confirm or revise these in
 `tasks/r6-ledger-spec.md` before enabling.
 
-### O-NHR-06 - [low] Residuals the security fixes (F1-F12) state and do not close
+### O-NHR-06 - [low] Residuals the security fixes (F1-F12, re-review N1-N6) state and do not close
 All twelve NhrSecurity findings (F1-F12) were fixed on nhr/fix-a and nhr/fix-b and merged into nhr/int. What remains,
 by design or not yet done:
 - E5 (F3): a writer holding an fd on the old inode that writes after the exchange is not caught; only path-based
@@ -3029,8 +3029,10 @@ by design or not yet done:
   - N3 portability: `renameat2` is now behind `cfg(target_os = "linux")` (elsewhere every flagged rename is
     unsupported: unattended writes refuse, attended ones take the Q4 rename). `cargo check -p axon-cortex --target
     x86_64-apple-darwin` (default features) passed only with a local, uncommitted patch to `axon-jobctl`, which
-    itself does not compile for darwin (`libc::__errno_location`). With `unattended` or `ai` the check stops at
-    `ring`'s C build (no darwin C toolchain here). So no non-Linux build is shown working.
+    itself does not compile for darwin (`libc::__errno_location`, glibc/Linux only). That is pre-existing, not
+    an NH-R1 regression: `git log -S __errno_location` finds only ec4e2acc (KG1, 2026-10-17, on main before
+    d7690e63), so axon-cortex, which depends on axon-jobctl, has not built for darwin since KG1. With
+    `unattended` or `ai` the check stops at `ring`'s C build (no darwin C toolchain here). So no non-Linux build is shown working.
   - N5 (info): the run lock is per spent store and file, so two envelopes for the same file minted into two
     different stores run at once; the CAS still reports the overlap (exit 22) [INFERENCE].
   - N6 (info): `renameat2` resolves the full path again at write time, so a `setsid` child that survived the
