@@ -210,7 +210,6 @@ pub fn meta_from_source(source: &str, typechecks: bool, notes: Vec<String>) -> S
     }
 }
 
-
 // ── MockSynth — the deterministic test/audit synthesizer (no I/O) ─────────────
 
 /// A deterministic, in-memory synthesizer for tests + reproducible audit. It is

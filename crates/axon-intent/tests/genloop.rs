@@ -214,6 +214,48 @@ fn a_warning_only_candidate_is_accepted() {
     assert!(out.resolved.is_ok());
 }
 
+/// F12 (a)-(e) in one correct program: a comment holding the word `mod`, a
+/// `TODO` comment, a write target that is a variable rather than a literal, and
+/// `append_file` (a write the old text scan did not know). With IG0's
+/// AST-based admission it passes check, gates and the example in round 0.
+const F12_SHAPED: &str = r#"// total mod 10 is not an import
+// TODO: nothing - this comment is not a stub
+fn main() -> i64 {
+    let out = "./out/copy.txt"
+    match read_file("./data/in.txt") {
+        Ok(text) => {
+            match append_file(out, text) {
+                Ok(_) => 0
+                Err(_) => 1
+            }
+        }
+        Err(_) => 2
+    }
+}
+"#;
+
+#[test]
+fn an_f12_shaped_candidate_is_accepted() {
+    let gen = ScriptedGenerator::new([F12_SHAPED]);
+    let out = genloop::run(&with_examples(), &gen, &cfg());
+    assert_eq!(
+        out.transcript.outcome,
+        LoopOutcome::Accepted,
+        "ATTACK: an F12-shaped correct candidate was refused: {}",
+        out.transcript.to_json()
+    );
+    assert_eq!(out.transcript.rounds.len(), 1, "accepted in round 0");
+    let resolved = out.resolved.expect("accepted");
+    assert!(
+        resolved.grant.effect_set().fs_write,
+        "append_file is a write"
+    );
+    assert!(
+        !resolved.grant.effect_set().net,
+        "a `mod` comment is not an import"
+    );
+}
+
 #[test]
 fn a_static_overreach_refused_twice_ends_the_loop() {
     // The third candidate would pass; the loop must not ask for it.
@@ -239,14 +281,16 @@ fn a_static_overreach_refused_twice_ends_the_loop() {
     assert!(refused(&out.resolved), "exit 5, no program");
 }
 
-/// Passes check and the static gates (the copy's destination is not a
-/// `write_file` literal), then writes outside `fs_write` during the example.
+/// Passes check and the static gates (the copy's destination is a variable, so
+/// IG0's AST scan leaves it unresolved rather than refusing it), then writes
+/// outside `fs_write` during the example.
 const WRITES_OUTSIDE: &str = r#"fn main() -> i64 {
+    let dest = "./data/leak.txt"
     match read_file("./data/in.txt") {
         Ok(text) => {
             match write_file("./out/copy.txt", text) {
                 Ok(_) => {
-                    match file_copy("./out/copy.txt", "./data/leak.txt") {
+                    match file_copy("./out/copy.txt", dest) {
                         Ok(_) => 0
                         Err(_) => 3
                     }
