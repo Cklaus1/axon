@@ -300,10 +300,10 @@ fn a_generated_program_compiles_with_a_transcript_and_needs_a_human_approve() {
         "--generator",
         &gen,
     ]);
-    assert_eq!(e.status.code(), Some(2), "{}", text(&e));
     assert!(
-        !d.path().join("e/job.approval").exists(),
-        "ATTACK: emit --yes approved a generated program: {}",
+        !d.path().join("e/job.approval").exists() && e.status.code() == Some(2),
+        "ATTACK: emit --yes approved a generated program: rc={:?} {}",
+        e.status.code(),
         text(&e)
     );
     // The human approves it explicitly.
