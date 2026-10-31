@@ -569,7 +569,9 @@ pub fn validate(e: &RepairEnvelope) -> Result<(), String> {
     if e.expires_unix <= e.issued_unix {
         return Err("expires_unix is not after issued_unix".into());
     }
-    if e.expires_unix - e.issued_unix > MAX_TTL_S {
+    // Saturating: the order check above is the ONLY refusal of an envelope
+    // expiring before its issue (never an overflow panic standing in for it).
+    if e.expires_unix.saturating_sub(e.issued_unix) > MAX_TTL_S {
         return Err(format!(
             "repair envelope lives {} s, more than MAX_TTL_S ({MAX_TTL_S})",
             e.expires_unix - e.issued_unix
