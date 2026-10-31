@@ -239,9 +239,12 @@ pub const HELP: &str = "authorize-repair — mint one axon-approval/4 repair env
     authorize-repair --export-run-record-key PATH
     authorize-repair --cortex BIN --workspace W --file F --symbol S --check C
         --write-prefix P... [--read-prefix R...] [--fs-write-scope X...] [--net-host H...]
-        --axon A --generator ai:MODEL --spent-store DIR --run-ledger DIR --by OP --ttl-s T
+        --axon A --generator ai:M --spent-store DIR --run-ledger DIR
+        --verify-key K --run-record-key R --by OP --ttl-s T
         --max-proposals N --deadline-ms N --check-timeout-ms N --candidates N --max-steps N
         --out PATH
+  --verify-key and --run-record-key name the runner's key files: no check pin
+  may reach them, the spent store or the run ledger (security F6).
   Needs AXON_APPROVAL_KEY (hex) to export or mint. Exit 0 minted, 2 refused or
   malformed, 8 a gate row refuses. An envelope authorizes nothing by itself:
   `cortex repair --unattended` refuses by default (§9).";
@@ -357,6 +360,8 @@ struct Args {
     check: Option<String>,
     spent_store: Option<PathBuf>,
     run_ledger: Option<PathBuf>,
+    verify_key: Option<PathBuf>,
+    run_record_key: Option<PathBuf>,
     by: Option<String>,
     ttl_s: Option<u64>,
     budget: [Option<u64>; 5],
@@ -391,6 +396,8 @@ fn parse_args(rest: &[&str]) -> Result<Args, String> {
             "--check" => a.check = Some(val.to_string()),
             "--spent-store" => a.spent_store = Some(PathBuf::from(val)),
             "--run-ledger" => a.run_ledger = Some(PathBuf::from(val)),
+            "--verify-key" => a.verify_key = Some(PathBuf::from(val)),
+            "--run-record-key" => a.run_record_key = Some(PathBuf::from(val)),
             "--by" => a.by = Some(val.to_string()),
             "--ttl-s" => a.ttl_s = Some(num()?),
             "--out" => a.out = Some(PathBuf::from(val)),
@@ -423,6 +430,8 @@ fn parse_args(rest: &[&str]) -> Result<Args, String> {
         ("--check", a.check.is_none()),
         ("--spent-store", a.spent_store.is_none()),
         ("--run-ledger", a.run_ledger.is_none()),
+        ("--verify-key", a.verify_key.is_none()),
+        ("--run-record-key", a.run_record_key.is_none()),
         ("--by", a.by.is_none()),
         ("--ttl-s", a.ttl_s.is_none()),
         ("--out", a.out.is_none()),
@@ -445,10 +454,18 @@ fn mint(a: &Args) -> ExitCode {
         Ok(k) => k,
         Err(e) => return fail(2, &e),
     };
-    let (Some(cortex), Some(store), Some(ledger), Some(out)) =
-        (&a.cortex, &a.spent_store, &a.run_ledger, &a.out)
-    else {
-        return fail(2, "missing --cortex, --spent-store, --run-ledger or --out");
+    let (Some(cortex), Some(store), Some(ledger), Some(vkey), Some(rkey), Some(out)) = (
+        &a.cortex,
+        &a.spent_store,
+        &a.run_ledger,
+        &a.verify_key,
+        &a.run_record_key,
+        &a.out,
+    ) else {
+        return fail(
+            2,
+            "missing --cortex, --spent-store, --run-ledger, --verify-key, --run-record-key or --out",
+        );
     };
     let mint_path = PathBuf::from(format!("{}.mint", out.display()));
     for p in [out, &mint_path] {
@@ -468,6 +485,19 @@ fn mint(a: &Args) -> ExitCode {
         Ok(id) => id,
         Err(e) => return fail(2, &e),
     };
+    // Security F6: what the check pins may never reach, canonical.
+    let mut guarded: Vec<(&str, PathBuf, bool)> = Vec::new();
+    for (what, flag, p, read_too) in [
+        ("spent store", "--spent-store", store, true),
+        ("run ledger", "--run-ledger", ledger, false),
+        ("verify key", "--verify-key", vkey, true),
+        ("run-record key", "--run-record-key", rkey, true),
+    ] {
+        match std::fs::canonicalize(p) {
+            Ok(c) => guarded.push((what, c, read_too)),
+            Err(e) => return fail(2, &format!("{flag} {}: {e}", p.display())),
+        }
+    }
     // Step 1: the preview, from the exact binary whose bytes are recorded.
     let cortex = match std::fs::canonicalize(cortex) {
         Ok(p) => p,
@@ -478,9 +508,11 @@ fn mint(a: &Args) -> ExitCode {
         Ok(h) => h,
         Err(e) => return fail(2, &format!("cannot read {}: {e}", cortex.display())),
     };
+    // Security F12: the preview needs no operator key; its child never sees it.
     let run = std::process::Command::new(&cortex)
         .args(["grant", "--envelope-preview"])
         .args(&a.preview)
+        .env_remove(axon_os::approval::APPROVAL_KEY_ENV)
         .stdin(std::process::Stdio::null())
         .output();
     let run = match run {
@@ -553,6 +585,11 @@ fn mint(a: &Args) -> ExitCode {
         Err(Refused::Gate(e)) => return fail(8, &e),
         Err(Refused::Bad(e)) => return fail(2, &e),
     };
+    for (what, path, read_too) in &guarded {
+        if let Err(e) = repair_envelope::refuse_pin_overlap(&env.scopes, what, path, *read_too) {
+            return fail(2, &e);
+        }
+    }
     let json = match key.sign(&env) {
         Ok(j) => j,
         Err(e) => return fail(2, &e),

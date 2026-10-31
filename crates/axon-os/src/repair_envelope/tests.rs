@@ -31,8 +31,8 @@ fn sample() -> RepairEnvelope {
         },
         write_prefixes: vec!["src".into()],
         scopes: Scopes {
-            fs_read: vec!["data".into()],
-            fs_write: vec!["out".into()],
+            fs_read: vec!["/srv/data".into()],
+            fs_write: vec!["/srv/out".into()],
             net: vec!["api.example.com".into()],
         },
         capabilities: Capabilities {
@@ -132,11 +132,11 @@ fn s1_seed_public_key_and_signature_known_answers() {
 }
 
 // Computed independently (Python `hmac` + `cryptography` Ed25519 + `json.dumps(sort_keys=True,
-// separators=(',', ':'), ensure_ascii=False)`) from the same fixture.
+// separators=(',', ':'), ensure_ascii=False)`) from the same fixture (absolute pins since security F4).
 const KAT_SEED: &str = "b73c9e09b4c8941b5d5a34cc772396ee467235a588b81bf6556c72e153edbbcd";
 const KAT_PUBLIC: &str = "7817267170d04cbb2259f5a63ee290e1d6d494a28a0c9bf75f0e7f270aec4aed";
-const KAT_SIG: &str = "axenv1:52cb920b4ae476cb12b33595665aae7a6fb833ad49571434f41f87d3e224154b7ca0859bb90b11a7dd6b20f61013cd68e394231726d58992ec71368fc3c8bb0a";
-const KAT_DIGEST: &str = "cl22:4d9b41552dc58f2fce3bd8efc3b9851712c6db2cc8467545a816343985540832";
+const KAT_SIG: &str = "axenv1:8f07c460326dbb730be31ee76d2e7b0458d257800dd6febf23fb43cd5fa161fd5baf4f28ddcaca9425cbb4f36f381e1d691f2b0e0ae409352d0fd111dd4a2a03";
+const KAT_DIGEST: &str = "cl22:59622d322f13429875a9713e95736d30eec6ed4f7e0ba3f11f14ecb20a61ee85";
 
 #[test]
 fn s1_the_envelope_is_written_in_its_canonical_form() {
@@ -274,7 +274,7 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
         ("dotdot prefix", json!({"write_prefixes": ["src/../.."]})),
         (
             "fs_write over the file",
-            json!({"scopes": {"fs_write": ["src"]}}),
+            json!({"scopes": {"fs_write": ["/srv/ws/src"]}}),
         ),
         (
             "fs_write absolute over the file",
@@ -282,9 +282,9 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
         ),
         (
             "fs_write under the file",
-            json!({"scopes": {"fs_write": ["src/main.axon/x"]}}),
+            json!({"scopes": {"fs_write": ["/srv/ws/src/main.axon/x"]}}),
         ),
-        ("fs_write star", json!({"scopes": {"fs_write": ["*"]}})),
+        ("fs_write star", json!({"scopes": {"fs_write": ["/srv/*"]}})),
         ("net star", json!({"scopes": {"net": ["*"]}})),
         ("zero budget", json!({"budget": {"max_proposals": 0}})),
         (
@@ -337,6 +337,37 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
         e.contains("task.workspace"),
         "ATTACK: a `..` workspace was admitted as a workspace: {e}"
     );
+}
+
+/// Security F4: a relative `fs_read`/`fs_write` pin resolves against the
+/// check child's cwd (the workspace) and skips the phase-A symlink walk and
+/// policy check, which only see absolute pins. It is refused at mint (sign)
+/// and at verify, whatever it names.
+#[test]
+fn f4_a_relative_pin_is_refused_at_mint_and_at_verify() {
+    let key = mint().verify_key();
+    for (kind, pin) in [
+        ("fs_read", "data"),
+        ("fs_write", "out"),
+        ("fs_read", "src/lib"),
+        ("fs_write", "keys/verify.pub"),
+    ] {
+        let mut e = sample();
+        match kind {
+            "fs_read" => e.scopes.fs_read = vec![pin.into()],
+            _ => e.scopes.fs_write = vec![pin.into()],
+        }
+        let err = mint().sign(&e).expect_err(&format!(
+            "ATTACK: an envelope with a relative {kind} pin {pin:?} was minted"
+        ));
+        assert!(err.contains("is relative"), "{kind} {pin}: {err}");
+        let mut v: Value = serde_json::from_str(&signed()).unwrap();
+        merge(&mut v, &json!({"scopes": {kind: [pin]}}));
+        let err = verify(&sign_raw(v), &key, NOW).expect_err(&format!(
+            "ATTACK: a signed envelope with a relative {kind} pin {pin:?} verified"
+        ));
+        assert!(err.contains("is relative"), "{kind} {pin}: {err}");
+    }
 }
 
 fn merge(v: &mut Value, patch: &Value) {

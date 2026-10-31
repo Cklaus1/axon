@@ -92,7 +92,7 @@ fn preview(ws: &Path) -> Value {
         "check_digest_input": input,
         "check_digest": digest,
         "write_prefixes": ["src"],
-        "scopes": {"fs_read": ["data"], "fs_write": [], "net": []},
+        "scopes": {"fs_read": [ws.join("data").display().to_string()], "fs_write": [], "net": []},
         "fence": {"env": {"AXON_FS_READ": "data"}},
         "fence_sha256": "f".repeat(64),
         "target_grant": {"fs_read": ["data"]},
@@ -124,8 +124,21 @@ struct Setup {
     ws: PathBuf,
     store: PathBuf,
     ledger: PathBuf,
+    vkey: PathBuf,
+    rkey: PathBuf,
     out: PathBuf,
     cortex: PathBuf,
+}
+
+/// Export the runner's two key files into `dir` (`verify.pub`, `record.key`).
+fn export_keys(dir: &Path) -> (PathBuf, PathBuf) {
+    let vkey = dir.join("verify.pub");
+    let o = intent(&["--export-verify-key", vkey.to_str().unwrap()], true);
+    assert_eq!(o.code, 0, "export: {}", o.stderr);
+    let rkey = dir.join("record.key");
+    let o = intent(&["--export-run-record-key", rkey.to_str().unwrap()], true);
+    assert_eq!(o.code, 0, "export: {}", o.stderr);
+    (vkey, rkey)
 }
 
 fn setup(name: &str, doc: Option<String>, code: i32) -> Setup {
@@ -138,6 +151,7 @@ fn setup(name: &str, doc: Option<String>, code: i32) -> Setup {
     let ledger = dir.join("runs");
     let o = intent(&["--init-run-ledger", ledger.to_str().unwrap()], false);
     assert_eq!(o.code, 0, "init: {}", o.stderr);
+    let (vkey, rkey) = export_keys(&dir);
     let doc = doc.unwrap_or_else(|| preview(&ws).to_string());
     let cortex = fake_cortex(&dir, &doc, code);
     Setup {
@@ -146,6 +160,8 @@ fn setup(name: &str, doc: Option<String>, code: i32) -> Setup {
         ws,
         store,
         ledger,
+        vkey,
+        rkey,
         cortex,
     }
 }
@@ -170,7 +186,7 @@ fn mint_check(s: &Setup, ttl: &str, symbol: &str, check: &str) -> Out {
             "--write-prefix",
             "src",
             "--read-prefix",
-            "data",
+            s.ws.join("data").to_str().unwrap(),
             "--axon",
             "/usr/local/bin/axon",
             "--generator",
@@ -179,6 +195,10 @@ fn mint_check(s: &Setup, ttl: &str, symbol: &str, check: &str) -> Out {
             s.store.to_str().unwrap(),
             "--run-ledger",
             s.ledger.to_str().unwrap(),
+            "--verify-key",
+            s.vkey.to_str().unwrap(),
+            "--run-record-key",
+            s.rkey.to_str().unwrap(),
             "--by",
             "operator-a",
             "--ttl-s",
@@ -372,7 +392,7 @@ fn authorize_repair_mints_a_verifiable_issued_envelope_from_the_preview() {
         ["--symbol", "parse"],
         ["--check", "check_parse"],
         ["--write-prefix", "src"],
-        ["--read-prefix", "data"],
+        ["--read-prefix", s.ws.join("data").to_str().unwrap()],
         ["--axon", "/usr/local/bin/axon"],
         ["--generator", "ai:m-1"],
     ] {
@@ -461,6 +481,51 @@ fn a_refused_gate_row_mints_nothing() {
         "E4",
         "ATTACK: an envelope was minted over a refused gate row",
     );
+}
+
+/// Security F6 (mint side): a check pin reaching the spent store would let
+/// the check child rename `<id>.used` back to `<id>.issued` (a replayable
+/// envelope); one reaching the verify key could replace it, one reaching the
+/// run-record key could forge records; an `fs_write` pin over the run ledger
+/// is refused as phase A refuses it. The minter refuses each before anything
+/// is issued, whether the pin names the path, lies above it, or reaches it
+/// through a symlink.
+#[test]
+fn f6_a_pin_reaching_the_store_keys_or_ledger_mints_nothing() {
+    let cases: &[(&str, &str, &str)] = &[
+        ("fs_write", "spent", "spent store"),
+        ("fs_read", "spent", "spent store"),
+        ("fs_write", "spent/x.used", "spent store"),
+        ("fs_read", "", "spent store"),
+        ("fs_write", "verify.pub", "verify key"),
+        ("fs_read", "verify.pub", "verify key"),
+        ("fs_write", "record.key", "run-record key"),
+        ("fs_read", "record.key", "run-record key"),
+        ("fs_write", "runs", "run ledger"),
+        ("fs_write", "alias/x", "spent store"),
+    ];
+    for (i, (kind, rel, what)) in cases.iter().enumerate() {
+        let name = format!("f6-{i}");
+        let s0 = setup(&name, None, 0);
+        let pin = if rel.is_empty() {
+            s0.dir.display().to_string()
+        } else {
+            s0.dir.join(rel).display().to_string()
+        };
+        let mut p = preview(&s0.ws);
+        p["scopes"][*kind] = json!([pin]);
+        let s = setup(&name, Some(p.to_string()), 0);
+        std::os::unix::fs::symlink(&s.store, s.dir.join("alias")).unwrap();
+        let o = mint(&s, "3600", "parse");
+        refused_mints_nothing(
+            &s,
+            &o,
+            2,
+            what,
+            &format!("ATTACK: an envelope was minted with {kind} pin {pin} reaching its {what}"),
+        );
+        assert!(o.stderr.contains("overlaps scopes."), "{}", o.stderr);
+    }
 }
 
 #[test]
@@ -568,6 +633,31 @@ fn a_cortex_binary_changed_during_its_preview_mints_nothing() {
     );
 }
 
+/// Security F12: the cortex preview needs no operator key, so its child
+/// environment never carries `AXON_APPROVAL_KEY` (only that the variable is
+/// present is recorded; the value is never written).
+#[test]
+fn f12_the_preview_child_never_sees_the_operator_key() {
+    let s = setup("f12-env", None, 0);
+    let seen = s.dir.join("key-seen.txt");
+    let script = std::fs::read_to_string(&s.cortex).unwrap().replacen(
+        "cat '",
+        &format!(
+            "if [ -n \"${{AXON_APPROVAL_KEY+x}}\" ]; then echo present; else echo absent; fi > '{}'\ncat '",
+            seen.display()
+        ),
+        1,
+    );
+    common::write_executable(&s.cortex, script, 0o700);
+    let o = mint(&s, "3600", "parse");
+    assert_eq!(o.code, 0, "control: the mint succeeds: {}", o.stderr);
+    assert_eq!(
+        std::fs::read_to_string(&seen).unwrap().trim(),
+        "absent",
+        "ATTACK: the operator key was handed to the cortex preview child"
+    );
+}
+
 #[test]
 fn a_malformed_preview_mints_nothing() {
     let s0 = setup("malformed", None, 0);
@@ -656,6 +746,8 @@ fn minting_without_the_operator_key_mints_nothing() {
         ("--generator", "ai:m-1".into()),
         ("--spent-store", s.store.display().to_string()),
         ("--run-ledger", s.ledger.display().to_string()),
+        ("--verify-key", s.vkey.display().to_string()),
+        ("--run-record-key", s.rkey.display().to_string()),
         ("--by", "operator-a".into()),
         ("--ttl-s", "60".into()),
         ("--max-proposals", "1".into()),
@@ -728,6 +820,7 @@ fn the_real_cortex_preview_mints_a_verifiable_envelope() {
     let ledger = dir.join("runs");
     let o = intent(&["--init-run-ledger", ledger.to_str().unwrap()], false);
     assert_eq!(o.code, 0, "init: {}", o.stderr);
+    let (vkey, rkey) = export_keys(&dir);
     let out = dir.join("repair.envelope");
     let o = intent(
         &[
@@ -751,6 +844,10 @@ fn the_real_cortex_preview_mints_a_verifiable_envelope() {
             store.to_str().unwrap(),
             "--run-ledger",
             ledger.to_str().unwrap(),
+            "--verify-key",
+            vkey.to_str().unwrap(),
+            "--run-record-key",
+            rkey.to_str().unwrap(),
             "--by",
             "operator-a",
             "--ttl-s",

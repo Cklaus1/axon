@@ -193,7 +193,7 @@ fn envelope_sample() -> RepairEnvelope {
                  "pristine_sha256": "a".repeat(64),
                  "imports_digest": format!("axsha256:{}", "b".repeat(64))},
         "write_prefixes": ["src"],
-        "scopes": {"fs_read": ["data"], "fs_write": ["out"], "net": ["api.example.com"]},
+        "scopes": {"fs_read": ["/srv/data"], "fs_write": ["/srv/out"], "net": ["api.example.com"]},
         "capabilities": {"fence_sha256": "c".repeat(64),
                          "target_grant": {"symbol": "parse", "effects": ["fs_read"]}},
         "check": {"name": "test_parse", "digest": "d".repeat(64)},
@@ -570,10 +570,11 @@ const KAT_COMPLETION_KEY: &str = "9560211e3d5b588d490e073f28fbba5a3dfe0d9f40b0e0
 const KAT_PASS_TOKEN: &str = "a875b3413a17359d72e634a6f4fe07f2de3e20de9d4d2359b370ac51c0cb9f54";
 const KAT_FAIL_TOKEN: &str = "c9ed37e39e339072d5c5984526379387efc65131001b8da55dd17dd69a67f5bd";
 const KAT_LEDGER_MAC: &str = "bdda876a50e9d7514e92b4e6cf0f5108a69092bb68f855e0aa3185206f9660c5";
-// NH-R1: computed independently (Python `hmac` + `cryptography` Ed25519 + sorted compact JSON)
+// NH-R1: computed independently (Python `hmac` + `cryptography` Ed25519 + sorted compact JSON);
+// the fixture's pins are absolute since security F4.
 const KAT_ENVELOPE_PUBLIC: &str =
     "7817267170d04cbb2259f5a63ee290e1d6d494a28a0c9bf75f0e7f270aec4aed";
-const KAT_ENVELOPE_SIG: &str = "axenv1:52cb920b4ae476cb12b33595665aae7a6fb833ad49571434f41f87d3e224154b7ca0859bb90b11a7dd6b20f61013cd68e394231726d58992ec71368fc3c8bb0a";
+const KAT_ENVELOPE_SIG: &str = "axenv1:8f07c460326dbb730be31ee76d2e7b0458d257800dd6febf23fb43cd5fa161fd5baf4f28ddcaca9425cbb4f36f381e1d691f2b0e0ae409352d0fd111dd4a2a03";
 // R6: computed independently (Python `hmac` + sorted-key compact `json.dumps`).
 const KAT_RUN_RECORD_SUBKEY: &str =
     "a21dd6a4cf2e986bb2ac1f9b84475e7647d007b1494b7ddfd795643dcff13e7e";
