@@ -1,0 +1,120 @@
+{
+ "seed": 1,
+ "cap": 8,
+ "cap_seed": 1,
+ "band": [
+  0.3,
+  0.7
+ ],
+ "min_tasks": 12,
+ "min_programs": 3,
+ "prior": {
+  "a": 1315.1996236972207,
+  "b": 590.8867874581717,
+  "mean": 0.69,
+  "precision": 1906.0864111553924
+ },
+ "cells": {
+  "erase-long:>=24": {
+   "tasks": 24,
+   "programs": 13,
+   "raw_rate": 0.6944444444444443,
+   "shrunk_rate": 0.6900552652285671,
+   "eligible": true,
+   "kept": true,
+   "test_pool": 0
+  }
+ },
+ "eligible": [
+  "erase-long:>=24"
+ ],
+ "kept": [
+  "erase-long:>=24"
+ ],
+ "crossfit": {
+  "seed": 1,
+  "folds": [
+   {
+    "programs": [
+     "crates/axon-cortex/benchmarks/headroom/programs-c/checksums.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/chessmoves.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/globmatch.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/payroll.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/poker.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/stackvm.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/taxcalc.ax"
+    ],
+    "prior": [
+     1124.5909825816814,
+     781.4954285737109
+    ],
+    "kept": [
+     "erase-long:>=24"
+    ],
+    "cells": {
+     "erase-long:>=24": {
+      "oof_rate": 0.8181818181818182,
+      "oof_tasks": 11,
+      "test_weight": 0
+     }
+    }
+   },
+   {
+    "programs": [
+     "crates/axon-cortex/benchmarks/headroom/programs-c/lifegrid.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/mdlite.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/rooms.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/sudoku.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/vending.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/gridpath.ax"
+    ],
+    "prior": [
+     1562.9908571474216,
+     343.09555400797075
+    ],
+    "kept": [],
+    "cells": {}
+   }
+  ],
+  "predicted_test_rate": null
+ },
+ "hx_dev": [
+  "hx-erase-long-5a490dc013",
+  "hx-erase-long-f1582523e6",
+  "hx-erase-long-faa5cc3d57"
+ ],
+ "kept_dev_ids": [
+  "hx-erase-long-09d091fed3",
+  "hx-erase-long-17f914b64c",
+  "hx-erase-long-3b5432b8d5",
+  "hx-erase-long-495a95b844",
+  "hx-erase-long-4e404dfb2d",
+  "hx-erase-long-5a490dc013",
+  "hx-erase-long-6e103917dc",
+  "hx-erase-long-79d95585d4",
+  "hx-erase-long-7ff6b007fb",
+  "hx-erase-long-80455d7868",
+  "hx-erase-long-8186423ec7",
+  "hx-erase-long-84c6ebc2cf",
+  "hx-erase-long-88bfbdd468",
+  "hx-erase-long-9989154306",
+  "hx-erase-long-9e7a22b0b4",
+  "hx-erase-long-a93a7e8261",
+  "hx-erase-long-abe013b07e",
+  "hx-erase-long-bec9589b47",
+  "hx-erase-long-c305637ec8",
+  "hx-erase-long-d2710c6e28",
+  "hx-erase-long-e66a8b55f6",
+  "hx-erase-long-f1582523e6",
+  "hx-erase-long-f63ebca8ae",
+  "hx-erase-long-faa5cc3d57"
+ ],
+ "test_ids": [],
+ "test_programs": 0,
+ "h45": {
+  "n": 24,
+  "rate": 0.4166666666666667,
+  "informative": true
+ },
+ "pool_sha256": "98417c664822de1e7481815525024250757c7f8a9995b3a26607ad472c537281"
+}

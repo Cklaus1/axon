@@ -415,6 +415,68 @@ Decision after the pass:
   same dev rows; a paid re-pass only if N5a changes the dev tasks.
 - **Acceptance ok:** N6 (power, §3, freeze).
 
+### 2.1 Pass 1 (2026-10-31): rows and dev decision
+
+Rows: `hx3-cal-2026-10-31/DEV-H55.jsonl` (72 rows) and `DEV-H45.jsonl` (24
+rows), with the §1.1 commands (`/var/tmp/r51-tmp/hx3-cal-h55.sh`,
+`hx3-cal-h45.sh`: pool, axon and cortex sha256 and the spend root checked
+first). Every row carries commit `59eadadb`, cortex `1b2f8edb101d3fba`, axon
+and grading axon `f15fad70807e5f51`, driver `0a56dfa6da6428b0`. No row was
+rate-limited; neither run hit the cap or the reserve.
+
+| run | rows | clean | false successes | spend (cost + ranker) | expected / overrun limit | wall (run) | expected / overrun limit |
+|---|---|---|---|---|---|---|---|
+| h55 `claude-haiku-5-5`, k = 3 | 72 | 50 (0.694) | 0 | $0.2462 ($0.2462 + $0) | $0.265 / $0.530 | 1,912 s (rows 1,851.1 s) | 1,791 s / 3,582 s |
+| h45 `claude-haiku-4-5-20251001`, k = 1 | 24 | 10 (0.417) | 0 | $0.4699 ($0.4699 + $0) | $0.238 / $0.476 | 323 s (rows 302.8 s) | 539 s / 1,078 s |
+| pass 1 | 96 | | 0 | **$0.7160** (`spent()` on the root: $0.716022) | cap $5.00 | | |
+
+The h45 expected values use §1.1's formula with r = 50/72 and w_f = 53.0 s
+(the 22 not-clean h55 rows). h45 spend is 1.97× its expected cost: within
+the 2× rule, so no stop. Load at the starts ≈ 15-16 after the §0.8 wait,
+≈ 22-31 at the ends.
+
+`calibrate.py` (the §2 command; `hx3-cal-2026-10-31/calibration.json`): prior
+mean 0.69; cell (erase-long, `>=24`) 24 dev tasks over 13 clusters, raw rate
+0.694, shrunk 0.690: **eligible and kept**; h45 kept-cell rate 0.417
+(n = 24): **informative**; 0 false successes. Per task (h55 successes of 3):
+15 tasks 3/3, 2 tasks 2/3, 1 task 1/3, 6 tasks 0/3; hx-dev (mixed) 3 tasks.
+Acceptance fails on the test side only (0 tasks, 0 clusters, predicted
+rate undefined): **only the test-set size is short → N5a** (§2).
+
+### 2.2 N5a (committed before any N5a program is built into a pool)
+
+- **Why both levers.** At `--per-cell-program 2` a program gives ≤ 2
+  erase-long tasks, so 150 test tasks would need ≥ 75 test programs, ≈ 113
+  authored (an extension split deals round(n/3) to dev). N5a therefore uses
+  `--per-cell-program 4` **and** authored programs with ≥ 4 long functions
+  each. [REVISED: build 2026-10-31: the spec's N5a names the two as
+  alternatives; one alone cannot reach 150.]
+- **Programs:** 76 neutral statements (`/var/tmp/r51-tmp/hx3-n5a/statements.md`,
+  not committed; names in the commit that adds them), 19 authoring agents × 4,
+  into `programs-c2/`. Rules as §0.7 (reading only `AXON_REFERENCE.md`,
+  `docs/` without cortex/asi/benchmark/headroom/review paths, `examples/`; no
+  benchmark source, prompt, pool or result), plus: ≥ 4 functions of 24-60
+  lines returning a type with a typed default, ≥ 3 direct tests each, 13-30
+  tests, no brace in a string or comment, `check` silent and `test` exit 0
+  under both axons (`/var/tmp/r51-tmp/hx3-n5a/lint.py`). Programs that fail
+  the lint are not used. They are committed before any defect is derived.
+- **N4 rebuild:** the §1 command with `--programs-dir programs-c2` added,
+  `--prior-split /var/tmp/r51-tmp/hx3-n4/hx-pool.json`, `--split-seed 3`,
+  `--per-cell-program 4`, `--out /var/tmp/r51-tmp/hx3-n5a/hx-pool.json`; then
+  `build.py --check`. Old programs keep their side; new ones split by seed 3.
+  Old erase-long task ids do not change (ids hash the broken file); `--per-cell-program 4`
+  adds the third long function of 8 `programs-c/` programs.
+- **Pass 2 (paid, fresh root `hx3-cal-2026-10-31-n5a/`, `--cap-usd 5.00
+  --reserve-usd 0.10`, ≤ $10 cumulative with pass 1):** h55 k = 3 and h45
+  k = 1 on the dev erase-long tasks of the N5a pool **not in pass 1**, same
+  binaries, ranker and flags as §1.1. Its ids, count, expected cost and wall
+  (pass-1 measured: h55 $0.00342 and 26.6 s per row, h45 $0.0196 and 13.5 s
+  per row; overrun > 2×) are recorded in §2.3 and committed alone before its
+  first row.
+- **Calibration:** `calibrate.py --rows` both h55 files, `--rows-h45` both h45
+  files, seeds and cap as §2. The §2 decision table applies unchanged; there
+  is no further N5a.
+
 ## 6. HX3-0 pilot rows and verdict (2026-10-29)
 
 Rows: `hx3-pilot-2026-10-29/<class>/pilot.jsonl`, one class at a time, with
