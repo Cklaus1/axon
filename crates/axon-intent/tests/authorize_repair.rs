@@ -9,6 +9,8 @@
 //! it. The operator key is a TEST key derived from a fixed, public string.
 
 mod common;
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 
 use axon_os::repair_envelope::{self, MintKey, VerifyKey};
 use serde_json::{json, Value};
@@ -598,4 +600,104 @@ fn minting_without_the_operator_key_mints_nothing() {
         !s.dir.join("argv.txt").exists(),
         "the preview ran before the key was checked"
     );
+}
+
+// -- the real preview ----------------------------------------------------------
+
+/// The minter against the REAL `cortex grant --envelope-preview` (built from
+/// this tree with feature `unattended`) and the real interpreter: the
+/// preview passes the strict parse, every gate row admits a pure file, and
+/// the minted envelope verifies and pins the preview's values.
+#[test]
+fn the_real_cortex_preview_mints_a_verifiable_envelope() {
+    let axon = script_spawn::workspace_bin(
+        "AXON_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-core",
+            "--no-default-features",
+            "--bin",
+            "axon",
+        ],
+        "axon",
+    );
+    let cortex = script_spawn::workspace_bin(
+        "CORTEX_UNATTENDED_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-cortex",
+            "--features",
+            "unattended",
+            "--bin",
+            "cortex",
+        ],
+        "cortex",
+    );
+    let dir = tmp("real");
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(ws.join("src")).unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../axon-cortex/fixtures/broken.ax");
+    std::fs::copy(&fixture, ws.join("src/broken.ax")).unwrap();
+    let ws = std::fs::canonicalize(&ws).unwrap();
+    let store = dir.join("spent");
+    let o = intent(&["--init-spent-store", store.to_str().unwrap()], false);
+    assert_eq!(o.code, 0, "init: {}", o.stderr);
+    let out = dir.join("repair.envelope");
+    let o = intent(
+        &[
+            "--cortex",
+            cortex.to_str().unwrap(),
+            "--workspace",
+            ws.to_str().unwrap(),
+            "--file",
+            "src/broken.ax",
+            "--symbol",
+            "double",
+            "--check",
+            "hidden_completion",
+            "--write-prefix",
+            "src",
+            "--axon",
+            axon.to_str().unwrap(),
+            "--generator",
+            "ai:m-1",
+            "--spent-store",
+            store.to_str().unwrap(),
+            "--by",
+            "operator-a",
+            "--ttl-s",
+            "600",
+            "--max-proposals",
+            "3",
+            "--deadline-ms",
+            "60000",
+            "--check-timeout-ms",
+            "5000",
+            "--candidates",
+            "2",
+            "--max-steps",
+            "100000",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+        true,
+    );
+    assert_eq!(
+        o.code, 0,
+        "ATTACK: the real cortex preview did not mint: {}",
+        o.stderr
+    );
+    let json = std::fs::read_to_string(&out).unwrap();
+    let vk = MintKey::derive(OP_KEY).unwrap().verify_key();
+    let v = repair_envelope::verify(&json, &vk, now()).expect("the minted envelope verifies");
+    let e = &v.envelope;
+    let pristine = std::fs::read(ws.join("src/broken.ax")).unwrap();
+    assert_eq!(e.task.pristine_sha256, sha256_hex(&pristine));
+    assert_eq!(e.task.symbol, "double");
+    assert_eq!(e.check.name, "hidden_completion");
+    assert!(e.task.imports_digest.starts_with("axsha256:"), "{json}");
+    assert_eq!(e.capabilities.target_grant["symbol"], "double", "{json}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

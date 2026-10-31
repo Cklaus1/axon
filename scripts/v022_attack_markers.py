@@ -3540,3 +3540,16 @@ ATTACK_MARKERS.update({
     'M4321': r'ATTACK: a preview with an unknown field was minted',
     'M4322': r'ATTACK: the envelope was not issued into the store it names',
 })
+
+# NH-R1 A2 cortex preview (ids M4323-M4331)
+ATTACK_MARKERS.update({
+    'M4323': r"ATTACK: the preview's fence is not the runner's pinned fence",
+    'M4324': r"ATTACK: the preview's check digest is not the runner's",
+    'M4325': r'ATTACK: a symlink under a write prefix was previewed',
+    'M4326': r'ATTACK: a symlinked task file was previewed',
+    'M4327': r'ATTACK: an fs_write pin over the task file was previewed',
+    'M4328': r'ATTACK: a check registry was accepted with \-\-envelope\-preview',
+    'M4329': r'ATTACK: a preview input was accepted by plain grant',
+    'M4330': r'ATTACK: a cmd: generator was admitted by the preview',
+    'M4331': r"ATTACK: the preview's target grant is not the runner's",
+})
