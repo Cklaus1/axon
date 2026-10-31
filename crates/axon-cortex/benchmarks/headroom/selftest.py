@@ -12,7 +12,7 @@ Covers (README.md "Self-test"):
     selection by cell membership only, the h45 informativeness check; every
     program count keyed on `build.cluster(t)` (hx3 HX3A-3);
   * power.py: a tiny grid runs, is deterministic per seed, and power grows
-    with the effect;
+    with the effect; `--alpha`, `--floor` and `--fixed-design` (hx3 HX3-3);
   * build.py pure helpers: split determinism and inheritance, the
     per-program cap, dropping thin programs, the inputs digest; the hx2
     caller pin and its `--check` rule (HX-1), the erase mutator (HX-3a) and
@@ -331,6 +331,44 @@ def test_power():
                             costs={"success": 0.001, "failure": 0.004}, arms=3, cap_usd=0.0001,
                             min_programs=4, per_program=6, target=0.0)
     check(d["chosen"] is None, "power: a design over the cost cap must not be chosen")
+
+
+def test_power_flags():
+    """hx3 HX3-3 (F14; hx2 HXA#10/HXD#8 design): `alpha` and `floor` reach the
+    test; on the test_power fixture power(alpha 0.025) < power(alpha 0.05) and
+    floor -1 power >= floor 0.05 power; `--fixed-design n,k` reports that one
+    design (no search) with a Monte Carlo SE; the CLI takes --alpha/--floor."""
+    import contextlib
+    import io
+    import json
+    import power
+    rates = power.posterior_rates([(1, 3), (2, 3), (0, 3), (3, 3), (1, 3), (2, 3)])
+    kw = dict(n=48, k=3, sims=60, seed=4, min_programs=8, per_program=6)
+    p05 = power.simulate_power(rates, sigma_g=1.0, mde=0.10, alpha=0.05, **kw)
+    p025 = power.simulate_power(rates, sigma_g=1.0, mde=0.10, alpha=0.025, **kw)
+    check(p025 < p05, f"power: power(alpha 0.025) must be < power(alpha 0.05): {p025} vs {p05}")
+    check(p05 == power.simulate_power(rates, sigma_g=1.0, mde=0.10, **kw), "power: alpha defaults to 0.05")
+    pf = power.simulate_power(rates, sigma_g=1.0, mde=0.10, floor=-1, **kw)
+    check(pf >= power.simulate_power(rates, sigma_g=1.0, mde=0.10, floor=0.05, **kw),
+          f"power: floor -1 power must be >= floor 0.05 power ({pf})")
+    args = ["--synthetic", "2,2,30,3", "--cost-success", "0.001", "--cost-failure", "0.009", "--cap-usd", "100",
+            "--seed", "4", "--sims", "40", "--min-programs", "8", "--per-program", "6"]
+    outs = {}
+    for name, extra in (("fixed", ["--fixed-design", "48,3", "--alpha", "0.025", "--floor", "-1"]),
+                        ("fixed05", ["--fixed-design", "48,3"])):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            power.main(args + extra)
+        outs[name] = json.loads(buf.getvalue())
+    o = outs["fixed"]
+    c = o["chosen"]
+    check(c is not None and (c["n"], c["k"]) == (48, 3) and [(r["n"], r["k"]) for r in o["evaluated"]] == [(48, 3)],
+          f"power: --fixed-design 48,3 evaluates that design only: {o['evaluated']}")
+    check(o["alpha"] == 0.025 and o["floor"] == -1, f"power: the report records alpha and floor: {o.get('alpha')}")
+    se = math.sqrt(c["power"] * (1 - c["power"]) / 40)
+    check(abs(c["power_mc_se"] - se) < 1e-12, f"power: the report gives the Monte Carlo SE: {c.get('power_mc_se')}")
+    check(outs["fixed05"]["alpha"] == 0.05 and outs["fixed05"]["floor"] == 0.05,
+          "power: --alpha / --floor default to 0.05 / 0.05")
 
 
 # ------------------------------------------------------------------ build helpers
@@ -761,8 +799,8 @@ def test_mutators():
 
 
 def main():
-    for t in (test_stats, test_calibrate, test_calibrate_cluster, test_power, test_build, test_caller_pin,
-              test_caller_check_rule, test_erase, test_mutators, test_erase_long, test_deal_dev):
+    for t in (test_stats, test_calibrate, test_calibrate_cluster, test_power, test_power_flags, test_build,
+              test_caller_pin, test_caller_check_rule, test_erase, test_mutators, test_erase_long, test_deal_dev):
         try:
             t()
         except (Exception, SystemExit) as e:  # a missing module, API or CLI option is a failure, not a crash
