@@ -12500,6 +12500,18 @@ MUTATIONS += [
      'rep.refusal_class = Some(RefusalClass::RuntimeScope);',
      'let _ = Some(RefusalClass::RuntimeScope);',
      'axon-intent', '--test genloop', 'a_write_outside_fs_write_during_an_example_is_a_runtime_scope_refusal'),
+    ('M4044', 'IG5: emit --yes approves a generated program', 'crates/axon-intent/src/cli.rs',
+     '    if resolved.draft.generated {\n        // A generated program is approved by a human',
+     '    if false && resolved.draft.generated {\n        // A generated program is approved by a human',
+     'axon-intent', '--test cli_generate', 'a_generated_program_compiles_with_a_transcript_and_needs_a_human_approve'),
+    ('M4045', 'IG5: a lifted program failing its examples falls back to the static pipeline', 'crates/axon-intent/src/cli.rs',
+     '(rep, None) => return Err(Produce::Refused(rep.refusal())),',
+     '(_, None) => return pipeline::resolve(intent, &MockSynth::new(), GenMode::Auto, risk_floor).map_err(Produce::Refused),',
+     'axon-intent', '--test cli_generate', 'a_lifted_program_failing_its_example_is_refused'),
+    ('M4046', 'IG5: compile without a program source does not name --generator', 'crates/axon-intent/src/cli.rs',
+     '"the intent has no fenced ```axon program: pass --generator cmd:PATH|ai:MODEL \\',
+     '"the intent has no fenced ```axon program: pass a generator cmd:PATH|ai:MODEL \\',
+     'axon-intent', '--test cli_generate', 'no_program_and_no_generator_exits_2_naming_the_flag'),
 ]
 
 if __name__ == "__main__":

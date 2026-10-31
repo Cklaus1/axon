@@ -166,7 +166,7 @@ note "build_outcome_regression: \$AXON = $AXON (codegen proven: built and ran a 
 # AXON_* vars that change a BUILD outcome or a run's observable output; they are
 # neutralised so a developer's ambient environment cannot silently move the
 # baseline. AXON_AI_MOCK is set PER CASE below where a program needs it.
-unset AXON_STRICT AXON_RECORD AXON_REPLAY AXON_AI_MOCK AXON_INTENT_GEN \
+unset AXON_STRICT AXON_RECORD AXON_REPLAY AXON_AI_MOCK \
       AXON_ALLOWED_EFFECTS AXON_BUDGET_TOKENS AXON_SEED AXON_CLOCK AXON_AI_REPLAY \
       AXON_REQUIRE_IMPORTS_DIGEST AXON_ALLOWED_FS_READ AXON_ALLOWED_FS_WRITE \
       AXON_ALLOWED_NET

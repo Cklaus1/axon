@@ -277,8 +277,8 @@ they must also compromise a majority of the peer fleet.
   human `--approve`/`--deny` per Risk ≥ High action (`cmd_quorum_vote`); §5.3's automated policy
   was never built. R33 therefore assumes a rate of Risk ≥ High proposals that N humans can
   genuinely adjudicate. That assumption **expires** the moment artifacts are machine-generated at
-  volume — which this project commits to (`ROADMAP.md` 53–55; Phase 10 v1.1's
-  `AXON_INTENT_GEN=1 axon intent compile` already generates whole function bodies). The failure
+  volume — which this project commits to (`ROADMAP.md` 53–55; the `axon-intent --generator`
+  check→repair loop generates whole programs - IG4/IG5 replaced Phase 10 v1.1's single-shot path). The failure
   mode when it expires is not refusal but *rubber-stamping*, and (per the bullet above) the thing
   being rubber-stamped is proposer-authored prose. Tracked as §12 Q3/Q5.
 - **No cross-root coalition bounding.** R27's coalition ceiling is per lineage root. A persuaded

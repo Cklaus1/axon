@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 27 CLI verbs, 344 builtins, 24 attributes, 152 diagnostic codes (139 live, 13 reserved), 67 environment variables.
+The complete surface of this build — 27 CLI verbs, 344 builtins, 24 attributes, 152 diagnostic codes (139 live, 13 reserved), 66 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -70,7 +70,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (67)
+## Environment variables (66)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -103,7 +103,6 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_BUDGET_TOKENS` | run-wide AI token cap; the call that would exceed it halts with E1303 (exit 5) BEFORE dispatch. A malformed value fails closed to 0 |
 | `AXON_DOTENV` | path to a `.env` file to load for AI configuration |
 | `AXON_DOTENV_WALK` | walk parent directories looking for a `.env` file |
-| `AXON_INTENT_GEN` | let `axon intent compile` fill TODO stubs via a live model (needs `--features asi-runtime`) |
 | `AXON_ALLOWED_EFFECTS` | ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset; a value that is not UTF-8 also denies every effect (with a warning). Interpreter-only |
 | `AXON_ALLOWED_FS_READ` | ambient read-path scope for the whole run: comma-separated path prefixes, matched like `sandbox_create_scoped` (per argument, `..` refused). Unset = unrestricted, EMPTY = deny every filesystem read, `*` = unrestricted. Independent of AXON_ALLOWED_EFFECTS (with it unset every effect stays allowed and only paths are restricted); a ceiling an inner sandbox may narrow but never widen. Interpreter-only |
 | `AXON_ALLOWED_FS_WRITE` | ambient write-path scope for the whole run, as AXON_ALLOWED_FS_READ for writes (`write_file`, `append_file`, `file_copy`'s destination, both `file_rename` paths, `dir_create`, the durable store, the `@[adaptive]` provenance row). EMPTY = deny every write while `println` keeps working. Interpreter-only |
@@ -136,8 +135,8 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_WASM_RT` | path to the wasm runtime used to execute a built wasm artifact |
 | `AXON_ANDROID_API` | Android API level for the NDK cross-link |
 | `AXON_NATIVE_TRACE` | trace native-FFI module calls (gfx mock) |
-| `AXON_BIN` | path to the `axon` binary an out-of-process synthesizer should invoke |
-| `AXON_INTENT_TIMEOUT_MS` | bound on the `axon intent` subprocess synthesizer |
+| `AXON_BIN` | path to the `axon` binary an out-of-process tool invokes (axon-os, the axon-intent check->repair loop) |
+| `AXON_INTENT_TIMEOUT_MS` | per-call deadline for an `axon-intent --generator` (its whole process group is killed at it) |
 | `AXON_TEST_DOTENV_VAR` | (test fixture) name of a variable the .env loader test expects to find |
 | `AXON_TEST_DOTENV_NEW` | (test fixture) asserts the .env loader does not clobber an already-set variable |
 | `AXON_HOST_TEST_VAR` | (test fixture) exercises the host seam's env_var path |

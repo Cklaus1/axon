@@ -1,15 +1,17 @@
-//! R22 §3.2 + §4.5 — the `Synthesizer` seam: the ONLY impure module. It turns
-//! an `Intent` into an `.ax` source string (the LLM call) and type-checks it.
+//! R22 §3.2 — the `Synthesizer` seam the MOCK path uses, plus the pure source
+//! analysis every candidate goes through (`strip_fences`, `meta_from_source`).
 //!
-//! - `MockSynth` is the deterministic test/audit path (no network, no key); a
-//!   given `(intent, seed)` yields a byte-identical draft (A5).
-//! - `RealSynthesizer` invokes the canonical `axon` entrypoint in a fresh,
-//!   time-bounded subprocess (`axon intent compile` with `AXON_INTENT_GEN=1`),
-//!   then `axon check` for the type-check — isolated + hard-timeout (A4).
+//! - `MockSynth` is the deterministic test/audit path (`AXON_AI_MOCK=1`; no
+//!   network, no key); a given `(intent, seed)` yields a byte-identical draft
+//!   (A5). Its "type-check" (an entry, balanced braces, no stub body) is a
+//!   MOCK-ONLY heuristic: it never stands in for `axon check` outside the mock.
+//! - Real generation is the check→repair loop (`crate::genloop`, IG4) behind a
+//!   `crate::generator::Generator`; every candidate it accepts passed the real
+//!   `axon check`, the gates and the intent's examples. (IG5 removed the
+//!   single-shot `RealSynthesizer` that shelled out to `axon intent compile`.)
 //!
 //! Everything downstream (`grant_infer`/`admit`/`confidence`/`approval`) is a
-//! pure function of `(Intent, ProgramDraft)`, so S1–S5 are built entirely
-//! against `MockSynth`.
+//! pure function of `(Intent, ProgramDraft)`.
 
 use crate::intent::Intent;
 use axon_os::gate::DeclaredEffects;
@@ -52,8 +54,8 @@ pub trait Synthesizer {
     fn synthesize(&self, intent: &Intent) -> Result<String, SynthErr>;
 
     /// Type-check a candidate source and extract its `SynthMeta` (declared
-    /// effects, entry presence, the outputs it writes). Pure-ish: the real impl
-    /// shells out to `axon check`; the mock derives it structurally.
+    /// effects, entry presence, the outputs it writes). The mock derives it
+    /// structurally.
     fn typecheck(&self, source: &str) -> SynthMeta;
 }
 
@@ -150,260 +152,6 @@ pub fn meta_from_source(source: &str, typechecks: bool, notes: Vec<String>) -> S
     }
 }
 
-// ── RealSynthesizer — the impure seam: hermetic, time-bounded subprocess (A4) ─
-
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::Duration;
-
-/// The real synthesizer (R22 §4.5). Invokes the canonical `axon` entrypoint in a
-/// FRESH, time-bounded subprocess: `axon intent compile --gen` for synthesis and
-/// `axon check` for the type-check. The entrypoint is resolved by ABSOLUTE path
-/// from `AXON_BIN` (not an ambient PATH search). On timeout the child is killed
-/// (no leaked handle) and synthesis fails closed. This is the ONLY place a model
-/// / subprocess is touched — gated so tests never need a network or a key.
-pub struct RealSynthesizer {
-    axon_bin: PathBuf,
-    timeout: Duration,
-}
-
-impl RealSynthesizer {
-    /// Resolve `AXON_BIN` (absolute) + `AXON_INTENT_TIMEOUT_MS` (default 60s).
-    pub fn from_env() -> Self {
-        let axon_bin = std::env::var_os("AXON_BIN")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("target/debug/axon"));
-        let ms = std::env::var("AXON_INTENT_TIMEOUT_MS")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(60_000);
-        RealSynthesizer {
-            axon_bin: absolutize(axon_bin),
-            timeout: Duration::from_millis(ms),
-        }
-    }
-
-    pub fn with_bin_and_timeout(axon_bin: PathBuf, timeout: Duration) -> Self {
-        RealSynthesizer {
-            axon_bin: absolutize(axon_bin),
-            timeout,
-        }
-    }
-}
-
-/// Resolve a possibly-relative entrypoint to an absolute path now (hermetic — no
-/// ambient PATH search at spawn time). Mirrors R21's `absolutize`.
-fn absolutize(p: PathBuf) -> PathBuf {
-    if p.is_absolute() {
-        return p;
-    }
-    std::fs::canonicalize(&p)
-        .unwrap_or_else(|_| std::env::current_dir().map(|d| d.join(&p)).unwrap_or(p))
-}
-
-/// Outcome of a bounded subprocess (None code ⇒ killed by timeout).
-struct ProcOutcome {
-    code: Option<i32>,
-    stdout: String,
-    timed_out: bool,
-}
-
-/// Run a command with a hard wall-clock timeout; kill + reap on expiry (no
-/// leaked child). Mirrors R21's `run_bounded`. Hermetic: a minimal explicit env.
-fn run_bounded(cmd: &mut Command, timeout: Duration) -> std::io::Result<ProcOutcome> {
-    use std::io::Read;
-    // A process-group JOB, so a timeout kill takes down the whole subtree
-    // (e.g. a shell that spawned `sleep`) — otherwise a grandchild can keep
-    // the stdout pipe open and deadlock the drain (hermetic kill, A4). Never an
-    // external `kill` binary: see `axon_jobctl::Job::kill`.
-    let mut job = axon_jobctl::Job::spawn(
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped()),
-    )?;
-    let mut stdout = job.child_mut().stdout.take();
-    let mut stderr = job.child_mut().stderr.take();
-    let start = std::time::Instant::now();
-    let killed = loop {
-        if job.has_exited()? {
-            break false;
-        }
-        if start.elapsed() >= timeout {
-            job.kill();
-            break true;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    let status = job.reap()?; // no zombie
-    let code = (!killed).then(|| status.code().unwrap_or(-1));
-    // Close our read ends if we killed, so the drain can't block on a grandchild
-    // that still holds the pipe (we already have the verdict).
-    if killed {
-        drop(stdout.take());
-        drop(stderr.take());
-    }
-    let mut out = String::new();
-    if let Some(s) = stdout.as_mut() {
-        let _ = s.read_to_string(&mut out);
-    }
-    let mut _err = String::new();
-    if let Some(s) = stderr.as_mut() {
-        let _ = s.read_to_string(&mut _err);
-    }
-    Ok(ProcOutcome {
-        code,
-        stdout: out,
-        timed_out: code.is_none(),
-    })
-}
-
-impl Synthesizer for RealSynthesizer {
-    fn synthesize(&self, intent: &Intent) -> Result<String, SynthErr> {
-        // Write the intent to a temp `.md` and run `axon intent compile --gen`,
-        // capturing the generated `.ax` to stdout via `--out -` is not supported,
-        // so we write to a temp `.ax` and read it back.
-        let tmp = std::env::temp_dir().join(format!(
-            "axon-intent-synth-{}-{}.md",
-            std::process::id(),
-            intent.seed
-        ));
-        let out = tmp.with_extension("ax");
-        if std::fs::write(&tmp, render_intent_md(intent)).is_err() {
-            return Err(SynthErr {
-                reason: "could not stage intent for synthesis".into(),
-            });
-        }
-        let mut cmd = Command::new(&self.axon_bin);
-        cmd.arg("intent")
-            .arg("compile")
-            .arg(&tmp)
-            .arg("--out")
-            .arg(&out);
-        cmd.env_clear();
-        cmd.env("AXON_INTENT_GEN", "1");
-        // Forward the mock/replay + key env so synthesis is reproducible/offline
-        // in tests; the deterministic mock path needs AXON_AI_MOCK.
-        for k in [
-            "AXON_AI_MOCK",
-            "AXON_AI_REPLAY",
-            "ANTHROPIC_API_KEY",
-            "PATH",
-        ] {
-            if let Some(v) = std::env::var_os(k) {
-                cmd.env(k, v);
-            }
-        }
-        let proc = match run_bounded(&mut cmd, self.timeout) {
-            Ok(p) => p,
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
-                return Err(SynthErr {
-                    reason: format!("could not launch synthesizer: {e}"),
-                });
-            }
-        };
-        let _ = std::fs::remove_file(&tmp);
-        if proc.timed_out {
-            let _ = std::fs::remove_file(&out);
-            return Err(SynthErr {
-                reason: "synthesis timed out".into(),
-            });
-        }
-        let source = std::fs::read_to_string(&out).unwrap_or_default();
-        let _ = std::fs::remove_file(&out);
-        if source.trim().is_empty() {
-            // fall back to stdout (older CLI emits there)
-            if proc.stdout.trim().is_empty() {
-                return Err(SynthErr {
-                    reason: "synthesizer produced no program".into(),
-                });
-            }
-            return Ok(proc.stdout);
-        }
-        Ok(source)
-    }
-
-    fn typecheck(&self, source: &str) -> SynthMeta {
-        // Write the candidate to a temp `.ax` and run `axon check`.
-        let tmp = std::env::temp_dir().join(format!("axon-intent-check-{}.ax", std::process::id()));
-        let (typechecks, review_effects) = if std::fs::write(&tmp, source).is_ok() {
-            let mut cmd = Command::new(&self.axon_bin);
-            cmd.arg("check").arg(&tmp);
-            cmd.env_clear();
-            if let Some(p) = std::env::var_os("PATH") {
-                cmd.env("PATH", p);
-            }
-            let ok = run_bounded(&mut cmd, self.timeout)
-                .map(|p| !p.timed_out && p.code == Some(0))
-                .unwrap_or(false);
-            // Cross-check the substring scan against the COMPILER's own effect
-            // analysis (`axon ast review --json` reports per-fn `effects:bool`).
-            let mut rev = Command::new(&self.axon_bin);
-            rev.arg("ast").arg("review").arg(&tmp).arg("--json");
-            rev.env_clear();
-            if let Some(p) = std::env::var_os("PATH") {
-                rev.env("PATH", p);
-            }
-            let effects = run_bounded(&mut rev, self.timeout)
-                .map(|p| p.stdout.contains("\"effects\":true"))
-                .unwrap_or(true); // can't tell ⇒ assume effects (conservative)
-            let _ = std::fs::remove_file(&tmp);
-            (ok, effects)
-        } else {
-            (false, true)
-        };
-        let mut meta = meta_from_source(source, typechecks, Vec::new());
-        // CONSERVATIVE CROSS-CHECK (ASI review): if the compiler says the program
-        // HAS effects but the substring scan categorized NONE, the scan missed an
-        // effect it can't pattern-match — widen to the full set (deny-by-default)
-        // rather than silently under-grant. (An under-grant would also fail closed
-        // at the R21 runtime sandbox, but catching it here surfaces it to the human
-        // at approval time instead of as a late runtime denial.)
-        let r = meta.declared.row;
-        let scan_empty = !(r.fs_read || r.fs_write || r.net || r.exec);
-        if review_effects && scan_empty {
-            meta.declared = DeclaredEffects::unknown();
-            meta.uncertainty_notes.push(
-                "compiler reports effects the source scan could not categorize — \
-                 widened to full effect set (deny-by-default)"
-                    .to_string(),
-            );
-        }
-        meta
-    }
-}
-
-/// Render an `Intent` back to the `.intent.md` form the `axon intent compile`
-/// path consumes (a prose goal + the named sections).
-fn render_intent_md(intent: &Intent) -> String {
-    let bullets = |xs: &[String]| {
-        xs.iter()
-            .map(|x| format!("- {x}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let net = if intent.cap_ceiling.net.is_empty() {
-        "none".to_string()
-    } else {
-        intent.cap_ceiling.net.join(", ")
-    };
-    format!(
-        "# Intent\n{}\n\n## Inputs\n{}\n\n## Outputs\n{}\n\n## Allowed\n- fs_read: {}\n- fs_write: {}\n- net: {}\n- exec: {}\n- max_label: {}\n\n## Budget\n- calls: {}\n- tokens: {}\n- cost_micro: {}\n\n## Seed\n- {}\n",
-        intent.goal,
-        bullets(&intent.inputs),
-        bullets(&intent.outputs),
-        if intent.cap_ceiling.fs_read.is_empty() { "none".into() } else { intent.cap_ceiling.fs_read.join(", ") },
-        if intent.cap_ceiling.fs_write.is_empty() { "none".into() } else { intent.cap_ceiling.fs_write.join(", ") },
-        net,
-        intent.cap_ceiling.exec.as_str(),
-        intent.cap_ceiling.max_label.as_str(),
-        intent.budget.calls,
-        intent.budget.tokens,
-        intent.budget.cost_micro,
-        intent.seed,
-    )
-}
-
 // ── MockSynth — the deterministic test/audit synthesizer (no I/O) ─────────────
 
 /// A deterministic, in-memory synthesizer for tests + reproducible audit. It is
@@ -483,29 +231,8 @@ impl Synthesizer for MockSynth {
     }
 }
 
-/// A runtime dispatcher over the two synthesizers, so the CLI can pick mock
-/// (offline, `AXON_AI_MOCK=1`) or real (subprocess) at run time without generics.
-pub enum MockSynthOrReal {
-    Mock(MockSynth),
-    Real(RealSynthesizer),
-}
-
-impl Synthesizer for MockSynthOrReal {
-    fn synthesize(&self, intent: &Intent) -> Result<String, SynthErr> {
-        match self {
-            MockSynthOrReal::Mock(m) => m.synthesize(intent),
-            MockSynthOrReal::Real(r) => r.synthesize(intent),
-        }
-    }
-    fn typecheck(&self, source: &str) -> SynthMeta {
-        match self {
-            MockSynthOrReal::Mock(m) => m.typecheck(source),
-            MockSynthOrReal::Real(r) => r.typecheck(source),
-        }
-    }
-}
-
-/// A trivial balanced-brace check (the mock's stand-in for the real type-check).
+/// A trivial balanced-brace check: the mock's stand-in for a type-check, never
+/// used outside the mock.
 fn braces_balanced(s: &str) -> bool {
     let mut depth: i64 = 0;
     for c in s.chars() {
@@ -617,72 +344,6 @@ Summarize ./data/report.txt into ./out/summary.txt.
         assert_eq!(a, b, "mock synthesis is byte-identical (A5 building block)");
         assert!(a.contains("read_file(\"./data/report.txt\")"));
         assert!(a.contains("write_file(\"./out/summary.txt\""));
-    }
-
-    /// The timeout kill must reach ONLY the child's own process group.
-    ///
-    /// `kill_group` used to shell out to `kill -KILL -<pid>`. procps parses
-    /// `-<pid>` as another option and turns its leading digits into a signal
-    /// number, so the syscall actually made was `kill(-5, SIGKILL)` or
-    /// `kill(-1, SIGKILL)` — SIGKILL to an unrelated group, or to every process
-    /// the caller may signal. As root under WSL that killed systemd's services
-    /// and every terminal window; the journal recorded thirteen services
-    /// `status=9/KILL` in one second, with ~105 GB of memory free and no OOM.
-    ///
-    /// The earlier test (below) could not see this. It asserts the runaway
-    /// child DIED, which is also true when `-1` killed everything. So this one
-    /// asserts the other half: a BYSTANDER in a different process group, owned
-    /// by this test, SURVIVES the kill. Under the old implementation the
-    /// bystander would have been SIGKILLed along with everything else.
-    #[cfg(unix)]
-    #[test]
-    fn the_timeout_kill_reaches_only_the_childs_own_group() {
-        use std::os::unix::process::CommandExt;
-        // A bystander in its OWN process group, alive for the whole test.
-        let mut bystander = Command::new("sleep")
-            .arg("30")
-            .process_group(0)
-            .spawn()
-            .expect("spawn bystander");
-        let bystander_pid = bystander.id() as i32;
-
-        let mut cmd = Command::new("sleep");
-        cmd.arg("5");
-        let out = run_bounded(&mut cmd, Duration::from_millis(150)).expect("spawn runaway");
-        assert!(out.timed_out, "the runaway itself must still be killed");
-
-        // NOT `kill(pid, 0)`: a SIGKILLed child we have not reaped is a zombie,
-        // and kill(pid, 0) SUCCEEDS on a zombie — so that probe reported the
-        // bystander "alive" even when the kill had reached it. Found by
-        // mutation: a deliberately mis-targeted kill hit the bystander and this
-        // test still passed. `try_wait` reaps and says HOW it ended.
-        let before_cleanup = bystander.try_wait().expect("poll bystander");
-        let _ = bystander.kill();
-        let _ = bystander.wait();
-        let _ = bystander_pid;
-        assert!(
-            before_cleanup.is_none(),
-            "a process in an UNRELATED group was killed by the timeout kill \
-             ({before_cleanup:?}) — the kill escaped the child's process group \
-             (the kill(-1) bug)"
-        );
-    }
-
-    #[test]
-    fn run_bounded_kills_a_runaway_at_the_timeout() {
-        // The hermetic-execution primitive (A4): a `sleep 5` under a 150 ms
-        // timeout is killed (timed_out), and the call returns promptly — no
-        // leaked child, no 5 s hang.
-        let start = std::time::Instant::now();
-        let mut cmd = Command::new("sleep");
-        cmd.arg("5");
-        let out = run_bounded(&mut cmd, Duration::from_millis(150)).expect("spawn sleep (POSIX)");
-        assert!(out.timed_out, "runaway must be killed at the timeout");
-        assert!(out.code.is_none());
-        assert!(
-            start.elapsed() < Duration::from_secs(2),
-            "must return promptly after the kill"
-        );
     }
 
     #[test]

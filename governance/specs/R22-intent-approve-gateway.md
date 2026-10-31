@@ -310,8 +310,10 @@ Exit 0 = an approved triple was emitted. (5 reuses Axon's AI-policy band; 3/8 re
 ```
 fn compile(intent: &Intent, synth: &impl Synthesizer) -> Result<ProgramDraft, Refusal>
 ```
-1. If the intent embeds a fenced ```axon block AND `AXON_INTENT_GEN` is off → **lift** it verbatim
-   (`generated=false`); else call `synth.synthesize(intent)` (`generated=true`).
+1. If the intent embeds a fenced ```axon block and generation is not forced (`--generate`) → **lift**
+   it verbatim (`generated=false`); else synthesize (`generated=true`). `[REVISED: IG5, 2026-10-31 -
+   the env switch is gone; outside the `AXON_AI_MOCK` path a lifted block is checked, gated and run on
+   the intent's examples by the IG4 loop's evaluator, and generation is `--generator` only]`
 2. Strip accidental ```axon fences from model output (`fences_stripped`).
 3. Type-check the result (`synth.typecheck(source)`), populate `SynthMeta` (declared effects via the
    R21 extractor, entry presence, resolved outputs).
@@ -367,12 +369,15 @@ The grant is the **intersection of what the program needs and what the intent pe
   (`approval_invalidated_by_any_edit`); a module rewritten after approval is refused at run
   (`a_module_rewritten_after_approval_is_refused_at_run`).
 
-### 4.5 Hermetic, isolated synthesis (`RealSynthesizer`) — the impure seam (A4)
-- Synthesis invokes the canonical `axon` entrypoint (resolved by absolute path from `AXON_BIN`, not
-  ambient PATH) running `axon intent compile` in a **fresh subprocess** with `AXON_INTENT_GEN=1`,
-  wrapped in a **hard timeout** (`AXON_INTENT_TIMEOUT_MS`, default 60000); on expiry the child group
-  is killed (RAII guard) → `Refusal::LowConfidence{"synthesis timed out"}` (fail closed). Type-check
-  likewise via `axon check` in a bounded subprocess. No leaked handles; minimal explicit environment.
+### 4.5 Hermetic, isolated synthesis — the impure seam (A4) `[REVISED: IG5, 2026-10-31]`
+- `[REVISED]` The single-shot `RealSynthesizer` (a subprocess `axon intent compile` with an env
+  switch that made it call a model once and write the result unchecked) is **removed**
+  (`tasks/intent-gen-spec.md` IG5, owner decision Q1). Generation is the IG4 check→repair loop behind
+  `axon-intent compile|emit --generator cmd:PATH|ai:MODEL`: a `cmd:` generator runs as a process-group
+  job with a **hard timeout** (`AXON_INTENT_TIMEOUT_MS`, default 60000); on expiry the whole group is
+  killed → `Refusal::LowConfidence` (fail closed, exit 5). Candidates are checked with `axon check
+  --json` (resolved by absolute path from `AXON_BIN`) in a bounded subprocess. No leaked handles;
+  minimal explicit environment.
 
 ### 4.6 Determinism (A5)
 - Volatile inputs are **only**: the intent's `seed`, and the model. For tests + audit, synthesis runs

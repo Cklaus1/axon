@@ -115,8 +115,24 @@ the named deduction `no-examples`.
 ## Determinism
 
 Under `AXON_AI_MOCK=1` synthesis is offline + deterministic: the same
-`(intent, seed)` yields a byte-identical `{.ax, .axjob, .approval}` triple. The
-live-model path is opt-in and never in the acceptance gate.
+`(intent, seed)` yields a byte-identical `{.ax, .axjob, .approval}` triple.
+
+## Generation (`--generator`)
+
+A fenced ```` ```axon ```` program in the intent is lifted and then checked,
+gated and run on the intent's examples like any other candidate. Otherwise
+`--generator cmd:<path>` (an operator command: prompt on stdin, candidate on
+stdout, run as a process-group job killed at `AXON_INTENT_TIMEOUT_MS`) or
+`--generator ai:<model>` (build with `--features ai`) drives the check->repair
+loop: round 0 plus at most 3 repair rounds (`--max-rounds`), each candidate
+going through `axon check`, the confidence/grant/admission gates and the
+examples in the axon-os sandbox; `--generate` forces generation over a fenced
+program and `--transcript PATH` writes the `axon-intent-gen/1` transcript. A
+loop that ends without an accepted program (rounds exhausted, a second
+capability refusal, a failed generator) refuses with exit 5 and emits nothing.
+With neither a fenced program nor a generator, `compile` exits 2
+naming the flag. `emit --yes` refuses a generated program: a human runs
+`approve`. The live-model path is opt-in and never in the acceptance gate.
 
 ## Exit codes
 

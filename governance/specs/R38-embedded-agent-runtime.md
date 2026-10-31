@@ -143,7 +143,7 @@ the tree at spec time:
 | Kill-switch | ⚠️ partial | **[corrected 2026-07-31]** the R27 one-way latch (exit 4, `@[corrigible]`) is shipped — but it is tripped only by the **in-language** builtin `corrigible_halt()` writing an interpreter-internal non-`Sync` `Cell<bool>` (interp.rs ~378). There is no API, signal, or cross-thread path for an **embedder** to trip it from outside the running program — which is the entire R38 posture (authority imposed from outside, §7 I-11). A generated `while true {}` between tool calls is unstoppable by any shipped mechanism. External host-imposed cancellation is greenfield, counted in the Slice-0 build list (§9) |
 | Deterministic replay | ⚠️ partial | **[corrected 2026-07-31]** `AXON_SEED` + `AXON_AI_REPLAY` (memoized `(prompt,model)` `ai_complete` re-runs) + run-ids + `axon trace --replay` ARE shipped — but that covers only RNG + AI calls. The `AxonHost` surface (host.rs: `read_file`/`write_file`/`env_var`/`now_ms`/`exec`/`http_*`) has **zero record/replay machinery**, and the R15 contract is the opposite: `r15_host_await_effects_fire_once_not_per_resume` (interp.rs ~3046) asserts "host must be called exactly once per host_await (no replay)". For an embedded runtime whose product IS host-tool calls, byte-identical replay requires recording and re-feeding every `host_await` reply plus the rest of the `AxonHost` surface — greenfield, counted in Slice 1 (§9) where the replay feature demos |
 | Tamper-evident audit | ✅ shipped | R28 hash-chained capability ledger (FS/Net/AI/Exec/Random/IO), `axon-os audit verify`; mandatory I-13 provenance |
-| Structured diagnostics for an LLM repair loop | ⚠️ partial | R8 `axon-diag/1`: versioned JSON with code/line/col/`expected`/`found`/`help` — purpose-built for machine consumption — **is** shipped. But the repair *loop* is not: **[corrected 2026-07-31]** `axon intent compile` under `AXON_INTENT_GEN` is a SINGLE-SHOT `axon_ai::complete` call (main.rs ~4750–4794) — the generated source is written to disk unchecked, no diagnostics are fed back to the model, zero repair rounds (AI error silently falls back to the skeleton). The check→repair harness is greenfield Slice-0 work (modest, since the diagnostics side exists) |
+| Structured diagnostics for an LLM repair loop | ⚠️ partial | R8 `axon-diag/1`: versioned JSON with code/line/col/`expected`/`found`/`help` — purpose-built for machine consumption — **is** shipped. But the repair *loop* is not: **[corrected 2026-07-31]** `axon intent compile`'s generation path was a SINGLE-SHOT `axon_ai::complete` call (main.rs ~4750–4794) — the generated source is written to disk unchecked, no diagnostics are fed back to the model, zero repair rounds (AI error silently falls back to the skeleton). The check→repair harness is greenfield Slice-0 work (modest, since the diagnostics side exists). **[IG4/IG5, 2026-10-31]** The single-shot path and its env switch are removed; the check→repair loop is `axon-intent compile --generator` (`crates/axon-intent/src/genloop.rs`); viability is still unmeasured (IG7) |
 | **A stable embedding API** (`Runtime::builder()`, typed tool registration, per-run ceilings as *data* not source attributes) | ❌ **greenfield** | today the ceiling lives in `@[contained]` source attributes and env vars; an embedder needs to impose it *from outside* the program, per run, via API. This is the core Slice-0 build: a thin crate (`axon-embed`) wrapping interp + checker, injecting the ceiling and tool schema |
 | **Host-tool typing** (declare a tool's arg/return schema + effect row; generated code type-checks against it) | ❌ **part-greenfield** | **[corrected 2026-07-31]** `host_await_val` is typed `T -> U` at the call site, but the request is an **opaque payload — the tool NAME is data inside it, invisible to the resolver/checker** (builtins.rs ~700–740). Static "check against the tool schema" therefore needs a new checkable calling convention (§4: a literal-name `tool(...)` form; dynamic names refused fail-closed) — a language-surface + checker change, not derived work on shipped pieces |
 | Embedded-profile language freeze + conformance suite + semver | ❌ greenfield | and politically expensive (§12 Q3) |
@@ -261,7 +261,9 @@ ceiling-conformant program without building the loop themselves. **[corrected 20
 draft claimed `axon intent compile` + `axon-diag/1` "already implement" this loop; that is false — the
 `axon-diag/1` diagnostics are shipped (R8), but `axon intent compile`'s generation path is single-shot with
 no post-generation check and no diagnostic feedback (see §3 table row). The loop itself is greenfield
-Slice-0 work, built on the shipped diagnostics.
+Slice-0 work, built on the shipped diagnostics. **[IG4/IG5, 2026-10-31]** The single-shot path is
+removed; the loop now exists in `axon-intent` (`crates/axon-intent/src/genloop.rs`, `--generator`),
+not yet in `axon-embed`.
 
 ### 5. Who the buyer is (and who it is not)
 
@@ -423,8 +425,9 @@ claim, not TODOs; they belong next to the invariants so nobody reads §7 as a co
 - [ ] `embed_generation_viability_measured` — N ≥ 30 realistic automation tasks × a frontier model emitting
       Axon against a documented tool schema, with ≤ 3 `axon-diag/1` repair rounds. The **repair-loop
       harness itself is part of the Slice-0 build list** (generate → check → feed `axon-diag/1` back →
-      regenerate, round-capped): it does not exist today — `axon intent compile` is single-shot (§3/§4,
-      corrected 2026-07-31) — so its cost is counted here, before the measurement is scheduled.
+      regenerate, round-capped): it did not exist on 2026-07-31 — `axon intent compile` was single-shot
+      (§3/§4) — so its cost is counted here, before the measurement is scheduled. **[IG4, 2026-10-31]**
+      Built as `axon-intent`'s `genloop` (≤ 3 repair rounds); the single-shot path is removed (IG5).
       **Pre-registered kill threshold: < 80% of tasks reaching checking-clean + behaviorally-correct kills
       the wedge** (record the number either way; do not move the goalposts after seeing it). **The
       correctness oracle must be pre-registered alongside the threshold, before any measurement run:**

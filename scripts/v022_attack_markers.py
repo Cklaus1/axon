@@ -3414,4 +3414,7 @@ ATTACK_MARKERS.update({
     'M4041': r'ATTACK: a second capability refusal did not end the loop',
     'M4042': r'ATTACK: the loop asked for a candidate past its last repair round',
     'M4043': r'ATTACK: a sandbox scope refusal during an example was not classed',
+    'M4044': r'ATTACK: emit --yes approved a generated program',
+    'M4045': r'ATTACK: an author program failing its example was compiled',
+    'M4046': r'ATTACK: compile without a program source did not name --generator',
 })

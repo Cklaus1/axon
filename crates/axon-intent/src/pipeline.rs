@@ -23,7 +23,7 @@ use axon_os::grant::Grant;
 pub enum GenMode {
     /// Prefer lifting a fenced block if present; else synthesize.
     Auto,
-    /// Always synthesize, even if a fenced block is present (`AXON_INTENT_GEN`).
+    /// Always synthesize, even if a fenced block is present (`--generate`).
     ForceGenerate,
 }
 

@@ -137,12 +137,35 @@ pub struct CandidateReport {
     pub warnings: usize,
     /// The gates' refusal, legible.
     pub gate_refusal: Option<String>,
+    /// The gates' refusal itself (its exit code), for a caller that refuses
+    /// with it (the lifted path); the transcript carries `gate_refusal`.
+    #[serde(skip)]
+    pub gate_error: Option<Refusal>,
     pub examples: Vec<ExampleResult>,
     pub refusal_class: Option<RefusalClass>,
     /// What the next round's prompt tells the generator (None when accepted).
     pub feedback: Option<String>,
     /// Infrastructure failure detail (stage `Infrastructure`).
     pub infrastructure: Option<String>,
+}
+
+impl CandidateReport {
+    /// The refusal a caller returns for a report that was not accepted: the
+    /// gates' own refusal when they refused, else exit 5 with the reason.
+    pub fn refusal(&self) -> Refusal {
+        if let Some(r) = &self.gate_error {
+            return r.clone();
+        }
+        let detail = self
+            .infrastructure
+            .as_deref()
+            .or(self.feedback.as_deref())
+            .unwrap_or("not accepted");
+        Refusal::LowConfidence {
+            reason: detail.lines().take(6).collect::<Vec<_>>().join(" | "),
+            score: 0,
+        }
+    }
 }
 
 /// One round of the loop in the transcript.
@@ -332,6 +355,26 @@ pub fn evaluate_candidate(
     answer: &str,
     cfg: &LoopConfig,
 ) -> (CandidateReport, Option<Resolved>) {
+    evaluate(intent, answer, true, cfg)
+}
+
+/// Evaluate the intent's own fenced program (lifted, not generated) through
+/// the same steps: `axon check`, the gates and the examples. No model is
+/// involved and nothing is fed back; a failure is a refusal.
+pub fn evaluate_lifted(
+    intent: &Intent,
+    source: &str,
+    cfg: &LoopConfig,
+) -> (CandidateReport, Option<Resolved>) {
+    evaluate(intent, source, false, cfg)
+}
+
+fn evaluate(
+    intent: &Intent,
+    answer: &str,
+    generated: bool,
+    cfg: &LoopConfig,
+) -> (CandidateReport, Option<Resolved>) {
     let (source, fences_stripped) = strip_fences(answer);
     let mut rep = CandidateReport {
         stage: Stage::Check,
@@ -341,6 +384,7 @@ pub fn evaluate_candidate(
         diagnostics: Vec::new(),
         warnings: 0,
         gate_refusal: None,
+        gate_error: None,
         examples: Vec::new(),
         refusal_class: None,
         feedback: None,
@@ -377,7 +421,7 @@ pub fn evaluate_candidate(
     rep.stage = Stage::Gates;
     let draft = ProgramDraft {
         source: source.clone(),
-        generated: true,
+        generated,
         fences_stripped,
         meta: meta_from_source(&source, true, Vec::new()),
     };
@@ -396,6 +440,7 @@ pub fn evaluate_candidate(
                  outside and never widens; change the program, not its authority):\n{}",
                 r.legible()
             ));
+            rep.gate_error = Some(r);
             return (rep, None);
         }
     };
@@ -457,6 +502,29 @@ pub struct CheckReport {
     /// checker failed without one).
     pub errors: Vec<String>,
     pub warnings: usize,
+}
+
+/// The language card: `axon card` on stdout, exit 0 (IG2). Bounded like a
+/// check; an empty, truncated or failed answer is an error, never a guess.
+pub fn load_card(axon_bin: &Path, timeout: Duration) -> Result<String, String> {
+    let mut cmd = Command::new(axon_bin);
+    cmd.arg("card").env_clear();
+    if let Some(p) = std::env::var_os("PATH") {
+        cmd.env("PATH", p);
+    }
+    let run = axon_os::run_bounded_job(&mut cmd, timeout, None, 1 << 20)
+        .map_err(|e| format!("cannot run {} card: {e}", axon_bin.display()))?;
+    if run.timed_out {
+        return Err(format!("`axon card` timed out after {} ms", ms(timeout)));
+    }
+    if run.code != Some(0) {
+        let why = run.stderr.lines().next().unwrap_or("").trim().to_string();
+        return Err(format!("`axon card` exited {:?}: {why}", run.code));
+    }
+    if run.stdout_omitted > 0 || run.stdout.trim().is_empty() {
+        return Err("`axon card` printed no card (or more than 1 MiB)".into());
+    }
+    Ok(run.stdout)
 }
 
 /// Write `source` to `dir`/[`CANDIDATE_FILE`] and run `axon check --json` on
