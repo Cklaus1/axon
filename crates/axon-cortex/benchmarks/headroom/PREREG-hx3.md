@@ -343,6 +343,53 @@ Rules 1-4 of `PREREG.md` §1 hold unchanged (split by program, ≤ 8 test tasks
 per cluster by a seeded draw, extensions by seeded split, freeze by
 `PROTECTED_SETS`).
 
+### 1.1 N4 addendum: the pool (committed alone, before any calibration row)
+
+| field | value |
+|---|---|
+| pool | `/var/tmp/r51-tmp/hx3-n4/hx-pool.json` sha256 `98417c664822de1e7481815525024250757c7f8a9995b3a26607ad472c537281` (1,957,339 bytes; not committed), built with the §1 command verbatim at 967b6329 + b6545f33; wall 583.3 s (load ≈ 10-20) |
+| `build.py --check` | 757 tasks, 0 failures (rc 0) |
+| inputs digest in `meta.headroom` | `46b9ebf0a9cca15a830d8b8506ab878133c09135e8d54168747d23ff24459c44`, not §1's `ab816165…`: c4ce9604 (`power.py --alpha/--floor/--fixed-design`, `selftest.py`) landed while the build ran and both are digest inputs (`HERE/*.py`). `build.py`, `mutators.py`, `../ab/corpus.py`, `../common.py`, `../heldout/mutators.py` and every program are unchanged from 967b6329, so no task differs; `--check` above ran at c4ce9604 |
+| tasks | 757: refine 14, caps 48, caller 172, subtle 228, multi 271, erase-long 24; stratum C 706, D 51; 7 D programs dropped (< 3 tasks), `programs/validate.ax` rejected (ungradeable, as FU-1) |
+| split | 68 programs: 30 dev (18 FU-1 dev + 12 `programs-c/`) / 38 test; every program inherited from the prior split, none new; `split_ok` true |
+| erase-long (the calibrated cell) | **dev 24 tasks over 13 clusters** (12 `programs-c/` programs, 11 with 2 tasks and checksums with 1, plus `programs/` 1); **test 0 tasks**: the 7 test-side functions of ≥ 24 lines (F9) all return a type without a typed default (`Result<…>` ×6, `Tally`), so `M.erase` makes no task |
+| dev ids | the 24 erase-long dev ids, `/var/tmp/r51-tmp/hx3-n4/dev-erase-long-ids.txt` sha256 `d4ffc9135605c0608f8b1a627a62bfebb0b4c0b08d28c8a90b6471f470ac6258`: hx-erase-long-09d091fed3, 17f914b64c, 3b5432b8d5, 495a95b844, 4e404dfb2d, 5a490dc013, 6e103917dc, 79d95585d4, 7ff6b007fb, 80455d7868, 8186423ec7, 84c6ebc2cf, 88bfbdd468, 9989154306, 9e7a22b0b4, a93a7e8261, abe013b07e, bec9589b47, c305637ec8, d2710c6e28, e66a8b55f6, f1582523e6, f63ebca8ae, faa5cc3d57 (23 are the pilot pool's; a93a7e8261 is the `programs/` one) |
+
+**h55 command** (`/var/tmp/r51-tmp/hx3-cal-h55.sh`: checks the pool,
+axon and cortex sha256 and the empty spend root, waits for the §0.8 start
+condition, 1-min load ≤ 15 checked once a minute for ≤ 60 min, then runs):
+
+```
+AXON_BIN=/var/tmp/r51-tmp/hx3-inc-bin/axon CORTEX_BIN=/var/tmp/r51-tmp/hx3-inc-bin/cortex \
+nice -n 10 python3 crates/axon-cortex/benchmarks/ab/run_ab.py \
+  /var/tmp/r51-tmp/hx3-n4/hx-pool.json --arm B --generator real --transport micode \
+  --model claude-haiku-5-5 --trials 3 --parallel 1 --only <the 24 dev ids> \
+  --grade-axon /var/tmp/r51-tmp/hx3-inc-bin/axon --ranker openrouter:anthropic/claude-haiku-5.5 \
+  --spend-root crates/axon-cortex/benchmarks/headroom/hx3-cal-2026-10-31/ \
+  --out crates/axon-cortex/benchmarks/headroom/hx3-cal-2026-10-31/DEV-H55.jsonl \
+  --reserve-usd 0.10 --cap-usd 5.00
+```
+
+The h45 command is the same with `--model claude-haiku-4-5-20251001
+--trials 1`, `--only` the kept cells' dev ids and `--out …/DEV-H45.jsonl`.
+
+**Expected cost and wall (the overrun basis, §5 rule: > 2× stops).** The
+spec's ≈ $2.2-2.6 assumed ≤ 111 dev tasks over several classes; here the
+count is 24, so the basis is the class C pilot (§6.4: 20 rows, $0.0735 cost
++ ranker, mean row wall 24.9 s):
+- h55: 72 rows × $0.00368 = **$0.265** (overrun > $0.530); 72 × 24.9 s =
+  **1,791 s** (overrun > 3,582 s).
+- h45 (24 rows): cost 24 × (r · $0.0044 + (1 − r) · $0.0224) and wall
+  24 × (r · 9.0 s + (1 − r) · w_f), where r is the h55 dev clean rate and
+  w_f the mean wall of the h55 not-clean rows ($0.0044/$0.0224 and 9.0 s:
+  FU-1 h45 rows, `PREREG.md` §2 and `calibration-2026-10-18/DEV-H45.jsonl`).
+
+**Test side.** With 0 erase-long test tasks the capped test set is empty and
+the cross-fitted predicted test rate is undefined. That counts as "only the
+test-set size is short" (§2 decision), not as a rate out of band; the dev
+decision (cell kept, h45 informative, no false success) is taken on the dev
+rows alone, and N5a follows only if it passes.
+
 ## 2. Calibration on dev (node N5; HX3-3, NH-1)
 
 | field | value |
