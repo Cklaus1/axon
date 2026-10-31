@@ -148,8 +148,8 @@ changes the sha256. Where a table signature is looser than the checker (`len`), 
 
 `[REVISED: build 2026-10-31 (IgCore)]`
 - Built as `axon card [--sha256]` (`crates/axon-core/src/card.rs`, verb in `main.rs`). `--sha256` prints the hex
-  sha256 of exactly the card stdout, so a transcript records the pin without hashing itself. The card is 31.2 KB
-  on this tree.
+  sha256 of exactly the card stdout, so a transcript records the pin without hashing itself. The card is 31.5 KB
+  on this tree. It also states there are no character literals (O-RLM-10's measured `c == ' '` failure).
 - "Same generator as `axon reference`": both print `BuiltinFn::signature()` (one renderer, moved into
   `builtins.rs`; the reference output is byte-identical apart from the new verb row).
 - Groups: the five core groups as specified, plus eight signature-only groups (json; console/time/process;
