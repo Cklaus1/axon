@@ -83,7 +83,13 @@ fn name_of(path: &Path) -> String {
 fn read_intent(path: &Path, seed_override: Option<u64>) -> Result<Intent, String> {
     let src = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let mut i = intent::parse(&src).map_err(|r| r.legible())?;
+    // `## Examples` fixtures written `from <file>` resolve under the intent
+    // file's own directory, never outside it (IG1).
+    let base = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let mut i = intent::parse_with_base(&src, Some(base)).map_err(|r| r.legible())?;
     if let Some(s) = seed_override {
         i.seed = s;
     }

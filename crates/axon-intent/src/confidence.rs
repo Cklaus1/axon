@@ -14,23 +14,39 @@ use crate::synth::{is_stub_body, ProgramDraft};
 /// The minimum score to ship. Below this, the draft is refused (R22 §3.3).
 pub const CONFIDENCE_FLOOR: u8 = 60;
 
-// The fixed, documented rubric weights (R22 §4.3). Sum = 100.
+// The fixed, documented rubric weights (R22 §4.3). Sum = 100. Typecheck +
+// entry alone reach the floor, so no deduction can refuse a draft on its own:
+// a deduction lowers the score the human sees, never ships-vs-refuses.
 const W_TYPECHECKS: u8 = 40;
 const W_ENTRY: u8 = 20;
-const W_OUTPUTS_MATCH: u8 = 20;
-const W_NO_UNCERTAINTY: u8 = 20;
+const W_OUTPUTS_MATCH: u8 = 15;
+const W_NO_UNCERTAINTY: u8 = 15;
+/// IG1: the intent states `## Examples`, so the loop checked the program
+/// against them before it reached the rubric.
+const W_EXAMPLES: u8 = 10;
+
+/// The named rubric deductions a shipped draft may carry (R22 §4.3, IG1).
+pub const DEDUCT_OUTPUTS: &str = "outputs-not-matched";
+pub const DEDUCT_UNCERTAINTY: &str = "uncertainty-notes";
+pub const DEDUCT_NO_EXAMPLES: &str = "no-examples";
 
 /// The confidence verdict (R22 §3.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Confidence {
-    Ship { score: u8 },
-    Refuse { reason: String },
+    /// `deductions` names every rubric weight the draft did not earn.
+    Ship {
+        score: u8,
+        deductions: Vec<&'static str>,
+    },
+    Refuse {
+        reason: String,
+    },
 }
 
 impl Confidence {
     pub fn score(&self) -> u8 {
         match self {
-            Confidence::Ship { score } => *score,
+            Confidence::Ship { score, .. } => *score,
             Confidence::Refuse { .. } => 0,
         }
     }
@@ -56,13 +72,23 @@ pub fn score(draft: &ProgramDraft, intent: &Intent) -> Confidence {
 
     // ── deterministic rubric ────────────────────────────────────────────────
     let mut s: u8 = 0;
+    let mut deductions = Vec::new();
     s += W_TYPECHECKS; // typechecks (already asserted above)
     s += W_ENTRY; // has_entry (already asserted)
     if outputs_match(&m.resolved_outputs, &intent.outputs) {
         s += W_OUTPUTS_MATCH;
+    } else {
+        deductions.push(DEDUCT_OUTPUTS);
     }
     if m.uncertainty_notes.is_empty() {
         s += W_NO_UNCERTAINTY;
+    } else {
+        deductions.push(DEDUCT_UNCERTAINTY);
+    }
+    if intent.examples.is_empty() {
+        deductions.push(DEDUCT_NO_EXAMPLES);
+    } else {
+        s += W_EXAMPLES;
     }
 
     if s < CONFIDENCE_FLOOR {
@@ -70,7 +96,10 @@ pub fn score(draft: &ProgramDraft, intent: &Intent) -> Confidence {
             reason: format!("below-threshold (score {s} < {CONFIDENCE_FLOOR})"),
         }
     } else {
-        Confidence::Ship { score: s }
+        Confidence::Ship {
+            score: s,
+            deductions,
+        }
     }
 }
 
@@ -140,9 +169,51 @@ Summarize ./data/report.txt into ./out/summary.txt.
     #[test]
     fn well_formed_program_ships_high() {
         let d = draft(GOOD, true, vec![]);
+        // No `## Examples`: the one named deduction.
+        assert_eq!(
+            score(&d, &it()),
+            Confidence::Ship {
+                score: 90,
+                deductions: vec![DEDUCT_NO_EXAMPLES]
+            }
+        );
+        // With examples, nothing is deducted.
+        let mut i = it();
+        i.examples = vec![intent::Example {
+            name: "e".into(),
+            runs: vec![intent::ExampleRun::default()],
+        }];
+        assert_eq!(
+            score(&d, &i),
+            Confidence::Ship {
+                score: 100,
+                deductions: vec![]
+            }
+        );
+    }
+
+    #[test]
+    fn no_examples_is_a_named_deduction_that_never_refuses() {
+        // ATTACK: the no-examples deduction is not recorded
+        // The weakest shippable draft (typechecks + entry only) still ships
+        // without examples: a deduction never crosses the floor on its own.
+        let mut m = meta_from_source("fn main() -> i64 { let x = 1 x }", true, vec!["n".into()]);
+        m.resolved_outputs = vec![];
+        let d = ProgramDraft {
+            source: "fn main() -> i64 { let x = 1 x }".into(),
+            generated: true,
+            fences_stripped: false,
+            meta: m,
+        };
         match score(&d, &it()) {
-            Confidence::Ship { score } => assert_eq!(score, 100),
-            other => panic!("expected Ship, got {other:?}"),
+            Confidence::Ship { score, deductions } => {
+                assert_eq!(score, CONFIDENCE_FLOOR);
+                assert!(
+                    deductions.contains(&DEDUCT_NO_EXAMPLES),
+                    "ATTACK: the no-examples deduction is not recorded: {deductions:?}"
+                );
+            }
+            other => panic!("the floor ships: {other:?}"),
         }
     }
 
@@ -199,7 +270,7 @@ Summarize ./data/report.txt into ./out/summary.txt.
         // 40 (typechecks) + 20 (entry) + 0 (outputs not matched) + 0 (note) = 60.
         // That's exactly the floor → Ship. Tighten: remove entry to drive < 60.
         match score(&d, &it()) {
-            Confidence::Ship { score } => assert_eq!(score, 60, "exactly the floor ships"),
+            Confidence::Ship { score, .. } => assert_eq!(score, 60, "exactly the floor ships"),
             other => panic!("expected Ship at floor, got {other:?}"),
         }
     }
@@ -223,7 +294,10 @@ Summarize ./data/report.txt into ./out/summary.txt.
     fn uncertainty_notes_lower_the_score() {
         let d = draft(GOOD, true, vec!["which input?".into()]);
         match score(&d, &it()) {
-            Confidence::Ship { score } => assert_eq!(score, 80),
+            Confidence::Ship { score, deductions } => {
+                assert_eq!(score, 75);
+                assert!(deductions.contains(&DEDUCT_UNCERTAINTY));
+            }
             other => panic!("expected Ship, got {other:?}"),
         }
     }

@@ -72,6 +72,46 @@ reaches it — so the inferred grant has `net=∅` (least privilege: permission 
 program doesn't need is never granted). `vague.intent.md` is under-specified and
 is **refused** (exit 5), no triple emitted.
 
+### `## Examples` (optional)
+
+Examples are the generation loop's visible acceptance check: each example is
+one or more runs of the program, each run naming input fixture files (a path
+under an `fs_read` prefix → its contents, staged before the run), expected
+output files (a path under an `fs_write` prefix → exact contents), the expected
+exit status (default 0) and optionally the exact expected stdout. A run sees
+the files earlier runs of the same example left behind.
+
+````markdown
+## Examples
+
+### counts lines
+- input ./data/report.txt:
+```fixture
+a
+b
+```
+- output ./out/summary.txt: "2 lines"
+
+### keeps a running total
+#### run 1
+- input ./data/n.txt: "1"
+- output ./out/total.txt: "1"
+#### run 2
+- input ./data/n.txt from fixtures/two.txt
+- output ./out/total.txt: "3"
+- exit: 0
+- stdout: "done\n"
+````
+
+Contents are a ```` ```fixture ```` fence (never ```` ```axon ````, which is
+lifted as the program), one JSON string literal, or `from <file>` — a file
+under the intent file's own directory: absolute paths, `..` and symlinks are
+refused, and parsing reads no other host file. Each fixture is capped at 64 KB.
+A malformed example is refused (exit 2) naming its line. **Fixture contents are
+sent to the model and kept in the generation transcript** — never put a secret
+in one. An intent without examples still compiles; its confidence then carries
+the named deduction `no-examples`.
+
 ## Determinism
 
 Under `AXON_AI_MOCK=1` synthesis is offline + deterministic: the same

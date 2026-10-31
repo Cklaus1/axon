@@ -12415,5 +12415,26 @@ MUTATIONS += [
      'axon-os', '--test sandbox_console', 'an_environment_read_needs_the_fs_read_grant'),
 ]
 
+# intent-gen IgIntent IG1: `## Examples` paths stay under the ceiling, fixture files under the
+# intent directory, fixtures under the cap; a missing `## Examples` is a named deduction.
+MUTATIONS += [
+    ('M4028', 'IG1: an example path outside every ceiling prefix parses', 'crates/axon-intent/src/intent.rs',
+     'if !under_any(&comps, prefixes) {',
+     'if false && !under_any(&comps, prefixes) {',
+     'axon-intent', '--lib', 'intent::tests::example_paths_outside_the_ceiling_or_escaping_are_refused'),
+    ('M4029', 'IG1: a symlinked directory on a fixture path is followed out of the intent directory', 'crates/axon-intent/src/intent.rs',
+     'if meta.file_type().is_symlink() {',
+     'if false && meta.file_type().is_symlink() {',
+     'axon-intent', '--lib', 'intent::tests::fixture_files_resolve_only_inside_the_intent_directory'),
+    ('M4030', 'IG1: an inline fixture over the cap parses', 'crates/axon-intent/src/intent.rs',
+     'let contents = cap_check(contents, "fixture", line)?;',
+     'let contents = contents;',
+     'axon-intent', '--lib', 'intent::tests::an_inline_fixture_over_the_cap_is_refused'),
+    ('M4031', 'IG1: an intent without examples carries no named deduction', 'crates/axon-intent/src/confidence.rs',
+     'deductions.push(DEDUCT_NO_EXAMPLES);',
+     '{}',
+     'axon-intent', '--lib', 'confidence::tests::no_examples_is_a_named_deduction_that_never_refuses'),
+]
+
 if __name__ == "__main__":
     main()

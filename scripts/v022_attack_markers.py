@@ -3398,4 +3398,8 @@ ATTACK_MARKERS.update({
     'M4025': r'ATTACK: println-only job refused under an empty grant',
     'M4026': r'ATTACK: completion marker lost after an unterminated print',
     'M4027': r'ATTACK: env_var readable without an fs_read grant',
+    'M4028': r'ATTACK: an example path escaping the ceiling parsed clean',
+    'M4029': r'ATTACK: a fixture file outside the intent directory was read',
+    'M4030': r'ATTACK: a fixture over the cap parsed clean',
+    'M4031': r'ATTACK: the no-examples deduction is not recorded',
 })
