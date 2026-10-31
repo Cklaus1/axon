@@ -43122,3 +43122,221 @@ fn min_max_i32_truncate_their_arguments_like_abs_i32() {
     let _ = std::fs::remove_file(&m03);
     assert!(fails.is_empty(), "{}", fails.join("\n"));
 }
+
+// ── checker-soundness-3 lane C: CS3-4, CS3-5 row 9, CS3-6, CS3-7 ──────────────
+
+/// CS3-4: a bare `self` param in an `impl` method is the impl's type. The
+/// parser typed it `Self`, which the checker binds only inside a `trait`, so
+/// each program below was refused E0308 `unknown type 'Self'` (rc 2) though
+/// the interpreter already ran it. `traits_doc` is the documented example in
+/// `spec/compiler-phase3.md` ("prints `woof` then `meow`").
+#[test]
+fn bare_self_in_impl_method_is_the_impl_type() {
+    let attack = "ATTACK: a bare-self impl method was refused";
+    for (tag, src, out) in [
+        (
+            "s03",
+            "type Dog = { n: i64 }\ntrait Greet {\n    fn greet(self) -> str\n}\nimpl Greet for Dog { fn greet(self) -> str { \"woof\" } }\nfn main() { println(Dog { n: 1 }.greet()) }\n",
+            "woof\n",
+        ),
+        (
+            "a12_self_used",
+            "type Dog = { n: i64 }\ntrait Greet {\n    fn greet(self) -> i64\n}\nimpl Greet for Dog { fn greet(self) -> i64 { self.n } }\nfn main() { println(to_str(Dog { n: 1 }.greet())) }\n",
+            "1\n",
+        ),
+        (
+            "a04_returns_impl_type",
+            "type Counter = { count: i64 }\ntrait CounterOps {\n    fn incr(self) -> Counter\n}\nimpl CounterOps for Counter {\n    fn incr(self) -> Counter { Counter { count: self.count + 1 } }\n}\nfn main() {\n    let c = Counter { count: 0 }\n    println(to_str(c.incr().count))\n}\n",
+            "1\n",
+        ),
+        (
+            "traits_doc",
+            "trait Greet { fn greet(self) -> str }\ntype Dog = { name: str }\ntype Cat = { name: str }\nimpl Greet for Dog { fn greet(self) -> str { \"woof\" } }\nimpl Greet for Cat { fn greet(self) -> str { \"meow\" } }\nfn announce(g: dyn Greet) { println(g.greet()) }\nfn main() {\n    announce(Dog { name: \"Rex\" })\n    announce(Cat { name: \"Luna\" })\n}\n",
+            "woof\nmeow\n",
+        ),
+        (
+            "s02_typed_self_control",
+            "type Dog = { n: i64 }\ntrait Greet {\n    fn greet(self) -> str\n}\nimpl Greet for Dog { fn greet(self: Dog) -> str { \"woof\" } }\nfn main() { println(Dog { n: 1 }.greet()) }\n",
+            "woof\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS3-5 row 9: `loop { … }` parses as the name `loop` and a block, so the
+/// resolver used to answer "introduce `loop` with `let loop = ...`". It now
+/// names the Axon form. Still refused (rc 2, E0001).
+#[test]
+fn diagnostics_for_refused_forms_resolver() {
+    let attack = "ATTACK: `loop` was told to bind a variable named loop";
+    for (tag, src) in [
+        (
+            "33_loop_kw",
+            "fn main() {\n    let n = 0\n    loop {\n        n = n + 1\n        if n == 5 { break }\n    }\n    println(to_str(n))\n}\n",
+        ),
+        (
+            "g09b_loop_val",
+            "fn main() {\n    let n = 0\n    let r = loop {\n        n = n + 1\n        if n == 5 { break n * 2 }\n    }\n    println(to_str(r))\n}\n",
+        ),
+    ] {
+        let (crc, cmsg, _rrc, _rout, _rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "[{tag}] must stay refused: {cmsg}");
+        let line = cmsg
+            .lines()
+            .find(|l| l.contains("\"code\":\"E0001\"") && l.contains("`loop`"))
+            .unwrap_or_else(|| panic!("[{tag}] E0001 on `loop`: {cmsg}"));
+        assert!(
+            line.contains("while true") && !line.contains("let loop"),
+            "{attack} [{tag}]: {line}"
+        );
+    }
+}
+
+/// CS3-6: the lexer ends a string at the next `"`, so a `"` inside a string
+/// split it, and statement juxtaposition ran the tail as separate statements.
+/// y01/x01/y02 checked 0 and printed a truncated string (y02: `say `); g11
+/// was E0001 on a name that is really string text. A token glued to the
+/// closing quote (no gap) is now a parse error naming the fix.
+#[test]
+fn adjacent_string_literal_is_refused() {
+    let attack = "ATTACK: a string split by an inner quote checked clean";
+    for (tag, src) in [
+        ("y01", "fn main() {\n    let a = 1\n    let j = \"{{\"a\"}}\"\n    println(j)\n}\n"),
+        ("x01", "fn main() {\n    let a = 1\n    let j = r\"{\"a\"}\"\n    println(j)\n}\n"),
+        ("y02", "fn main() {\n    let hi = 2\n    let j = r\"say \"hi\" now\"\n    println(j)\n}\n"),
+        ("g11", "fn main() {\n    let j = r\"{\"a\": 1}\"\n    println(j)\n}\n"),
+    ] {
+        let (crc, cmsg, rrc, rout, _rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(
+            cmsg.contains("\"code\":\"E0000\"") && cmsg.contains("this string ends at the"),
+            "{attack} [{tag}]: {cmsg}"
+        );
+        assert_eq!(rrc, Some(2), "{attack} [{tag}]: run printed {rout:?}");
+    }
+    // Controls: each runs today and must keep its output. A `{` right after a
+    // string is a valid block head (a1, a2); a gap makes adjacency legal
+    // juxtaposition (y04, y06); a newline after a raw string is a gap (y05).
+    let attack = "ATTACK: a valid string program was refused";
+    for (tag, src, out) in [
+        ("y04", "fn main() {\n    let x = 1 let y = 2\n    println(to_str(x + y))\n}\n", "3\n"),
+        (
+            "y05",
+            "fn main() {\n    let s = \"ab\"\n    println(to_str(len(s)))\n    let t = r\"a\\b\"\n    println(t + \"!\")\n    println(\"x\"+\"y\")\n}\n",
+            "2\na\\b!\nxy\n",
+        ),
+        ("y06", "fn main() {\n    let s = \"a\" let t = 1\n    println(s) println(to_str(t))\n}\n", "a\n1\n"),
+        ("g11c", "fn main() {\n    let p = r\"C:\\dir\\file\"\n    println(p)\n}\n", "C:\\dir\\file\n"),
+        (
+            "g11g",
+            "fn main() {\n    let p = r\"abc\"\n    let q = r\"x{1 + 1}y\"\n    println(p + q)\n}\n",
+            "abcx{1 + 1}y\n",
+        ),
+        ("g11h", "fn main() {\n    let r = 5\n    let p = r\"abc\"\n    println(p)\n}\n", "abc\n"),
+        (
+            "a1",
+            "fn main() {\n    let s = \"bob\"\n    if s == \"bob\"{ println(\"yes\") } else { println(\"no\") }\n    while s != \"bob\"{ println(\"x\") }\n    let m = match s { \"bob\"=> 1, _ => 2 }\n    println(to_str(m))\n}\n",
+            "yes\n1\n",
+        ),
+        (
+            "a2",
+            "fn main() {\n    let s = \"bob\"\n    let r = match s == \"bob\"{ true => 1, false => 2 }\n    println(to_str(r))\n    for c in [\"a\", \"b\"]{ println(c) }\n}\n",
+            "1\na\nb\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS3-7: an E0901 (module not found) or E0902 (circular import) names the
+/// `use` line. It used to carry no line at all (`None:None`). When the failing
+/// `use` is inside an imported module, the diagnostic names that module's
+/// file and line.
+#[test]
+fn module_not_found_names_the_use_line() {
+    let attack = "ATTACK: a module-load error named no `use` line";
+    let dir = std::env::temp_dir().join(format!("axon_cs3_7_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let w = |name: &str, src: &str| {
+        let p = dir.join(name);
+        std::fs::write(&p, src).unwrap();
+        p
+    };
+    let main = w(
+        "main.ax",
+        "mod mathutil\nuse mathutil.{square, cube}\nfn main() {\n    println(to_str(square(4)))\n    println(to_str(cube(3)))\n}\n",
+    );
+    w(
+        "mathutil.ax",
+        "pub fn square(x: i64) -> i64 { x * x }\npub fn cube(x: i64) -> i64 { x * x * x }\n",
+    );
+    let nested_main = w("n_main.ax", "use n_mid.{f}\nfn main() {\n    println(to_str(f()))\n}\n");
+    let mid = w("n_mid.ax", "pub fn f() -> i64 { 1 }\nuse n_missing.{g}\n");
+    let circ_main = w("c_main.ax", "use c_a.{f}\nfn main() {\n    println(to_str(f()))\n}\n");
+    w("c_a.ax", "use c_b.{g}\npub fn f() -> i64 { 1 }\n");
+    let cb = w("c_b.ax", "pub fn g() -> i64 { 2 }\nuse c_a.{f}\n");
+    let check = |file: &std::path::Path, axon_path: Option<&std::path::Path>| {
+        let mut c = axon();
+        c.args(["check", file.to_str().unwrap()])
+            .env_remove("AXON_PATH")
+            .env_remove("AXON_PATH_EXCLUSIVE")
+            .env_remove("AXON_REQUIRE_IMPORTS_DIGEST")
+            .current_dir(std::env::temp_dir());
+        // With a path, search only it (no `~/.axon/lib`); without one the
+        // default dirs are searched, as for a user with `AXON_PATH` unset.
+        if let Some(p) = axon_path {
+            c.env("AXON_PATH", p).env("AXON_PATH_EXCLUSIVE", "1");
+        }
+        let o = c.output().unwrap();
+        (o.status.code(), String::from_utf8_lossy(&o.stderr).into_owned())
+    };
+    let find = |err: &str, code: &str| -> String {
+        err.lines()
+            .find(|l| l.contains(&format!("\"code\":\"{code}\"")))
+            .unwrap_or_else(|| panic!("no {code}: {err}"))
+            .to_string()
+    };
+    let mut fails = Vec::new();
+    // Entry-file `use` with `AXON_PATH` unset: the module beside main is not
+    // searched (documented), and the error names line 2.
+    let (rc, err) = check(&main, None);
+    let d = find(&err, "E0901");
+    if rc != Some(2) || !d.contains("\"line\":2,") || !d.contains("main.ax\"") {
+        fails.push(format!("entry: rc={rc:?} {d}"));
+    }
+    // A missing `use` inside an imported module: that module's file, line 2.
+    let (rc, err) = check(&nested_main, Some(&dir));
+    let d = find(&err, "E0901");
+    let mid_s = mid.display().to_string();
+    if rc != Some(2) || !d.contains("\"line\":2,") || !d.contains(&format!("\"file\":\"{mid_s}\"")) {
+        fails.push(format!("nested: rc={rc:?} {d}"));
+    }
+    // A cycle: the `use` that closes it, in c_b.ax line 2.
+    let (rc, err) = check(&circ_main, Some(&dir));
+    let d = find(&err, "E0902");
+    let cb_s = cb.display().to_string();
+    if rc != Some(2) || !d.contains("\"line\":2,") || !d.contains(&format!("\"file\":\"{cb_s}\"")) {
+        fails.push(format!("circular: rc={rc:?} {d}"));
+    }
+    // Control: with the module on `AXON_PATH` the program checks clean.
+    let (rc, err) = check(&main, Some(&dir));
+    if rc != Some(0) {
+        fails.push(format!("control: rc={rc:?} {err}"));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(fails.is_empty(), "{attack}: {}", fails.join("\n"));
+}

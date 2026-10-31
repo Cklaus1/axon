@@ -664,3 +664,131 @@ fn a_collection_where_a_str_is_expected_is_not_told_to_cast() {
         "must name the index-one-element route: {help}"
     );
 }
+
+/// CS3-5 rows 1-6, 10 and 11: forms Axon refuses on purpose. Each parse error
+/// used to name a token (`unexpected token: LBrace, expected For`) and carry no
+/// help; each now names the Axon spelling. The sources are the O-GAP-08 probes
+/// (`b_unit`, `c04`, `g03`, `c14`, `52`, `71`, `q01`, `c03`, `g10b`, `g10e`,
+/// `g10d`, `g11b`), inlined.
+#[test]
+fn refused_forms_point_at_the_axon_spelling() {
+    let attack = "ATTACK: a refused form's parse error named no Axon spelling";
+    for (tag, src, want) in [
+        (
+            "unit_ok",
+            "fn f() -> Result<(), str> {\n    Ok(())\n}\nfn main() { match f() { Ok(_) => println(\"ok\") Err(e) => println(e) } }\n",
+            "the unit value is an empty block: `Ok({})`",
+        ),
+        (
+            "unit_let",
+            "fn main() {\n    let u = ()\n    println(\"x\")\n}\n",
+            "Axon has no `()` value",
+        ),
+        (
+            "if_let",
+            "fn main() {\n    let o = Some(3)\n    if let Some(v) = o { println(to_str(v)) }\n}\n",
+            "Axon has no `if let`",
+        ),
+        (
+            "else_if_let",
+            "fn main() {\n    let o = Some(3)\n    if false { println(\"a\") } else if let Some(v) = o { println(to_str(v)) }\n}\n",
+            "Axon has no `if let`",
+        ),
+        (
+            "for_tuple",
+            "fn main() {\n    let pairs = [(1, \"a\"), (2, \"b\")]\n    for (n, s) in pairs {\n        println(\"{to_str(n)}={s}\")\n    }\n}\n",
+            "`for` binds one name — write `for p in xs { let (a, b) = p … }`",
+        ),
+        (
+            "impl_inherent",
+            "type V = { x: i64 }\nimpl V {\n    fn double(self: V) -> i64 { self.x * 2 }\n}\nfn main() { println(to_str(V { x: 2 }.double())) }\n",
+            "Axon has no inherent `impl T { … }`",
+        ),
+        (
+            "trait_default",
+            "trait Greeter {\n    fn name(self) -> str\n    fn greet(self) -> str { \"hello \" + self.name() }\n}\nfn main() { println(\"x\") }\n",
+            "a trait declares signatures only",
+        ),
+        (
+            "trait_default_multiline",
+            "trait Greeter {\n    fn name(self) -> str\n    fn greet(self) -> str {\n        \"hello \" + self.name()\n    }\n}\nfn main() { println(\"x\") }\n",
+            "a trait declares signatures only",
+        ),
+        (
+            "struct_update",
+            "type Cfg = { a: i64, b: i64 }\nfn main() {\n    let base = Cfg { a: 1, b: 2 }\n    let c2 = Cfg { a: 9, ..base }\n    println(to_str(c2.a + c2.b))\n}\n",
+            "Axon has no struct update `..base`",
+        ),
+        (
+            "pattern_dotdot",
+            "enum E { A { b: bool, c: i64 }, B }\nfn f(e: E) -> i64 {\n    match e {\n        E::A { b: true } => 1,\n        E::B { .. } => 3,\n    }\n}\nfn main() { println(to_str(f(E::B))) }\n",
+            "patterns have no `..`",
+        ),
+        (
+            "tuple_variant_type",
+            "type Shape = Circle(f64) | Square(f64)\nfn main() { println(\"x\") }\n",
+            "variants carry NAMED fields",
+        ),
+        (
+            "tuple_variant_enum",
+            "enum Shape { Circle(f64), Square(f64) }\nfn main() { println(\"x\") }\n",
+            "variants carry NAMED fields",
+        ),
+        (
+            "tuple_variant_enum_multiline",
+            "enum Shape {\n    Circle(f64),\n    Square(f64),\n}\nfn main() { println(\"x\") }\n",
+            "variants carry NAMED fields",
+        ),
+        (
+            "tuple_variant_pattern",
+            "type Shape = Circle { r: f64 } | Square { a: f64 }\nfn area(s: Shape) -> f64 { match s { Shape::Circle(r) => r, Shape::Square(a) => a } }\nfn main() { println(to_str(area(Shape::Circle { r: 1.0 }))) }\n",
+            "matched `Shape::Circle { r }`",
+        ),
+        (
+            "raw_hash",
+            "fn main() {\n    let j = r#\"{\"a\": 1}\"#\n    println(j)\n}\n",
+            "Axon has no `r#\"...\"#`",
+        ),
+    ] {
+        let (code, help) = first_diag(src);
+        assert_eq!(code, "E0000", "{attack} [{tag}]: still a parse error");
+        let help = help.unwrap_or_default();
+        assert!(help.contains(want), "{attack} [{tag}]: help {help:?}");
+    }
+}
+
+/// The advice the CS3-5 rows give is itself valid Axon: the empty-block unit
+/// value, `match` for `if let`, a `let (a, b) = p` in a `for` body, and an
+/// escaped `"` in a normal string. A hint that does not compile is worse than
+/// none.
+#[test]
+fn the_refused_form_advice_actually_compiles() {
+    for (label, src) in [
+        (
+            "unit block",
+            "fn f() -> Result<(), str> {\n    let u: () = {}\n    if false { return Ok({}) }\n    Ok({})\n}\nfn main() -> i64 {\n    match f() { Ok(_) => println(\"ok\"), Err(e) => println(e) }\n    0\n}\n",
+        ),
+        (
+            "match for if let",
+            "fn main() -> i64 {\n    let o = Some(3)\n    match o { Some(v) => println(to_str(v)), None => println(\"none\") }\n    0\n}\n",
+        ),
+        (
+            "let tuple in for",
+            "fn main() -> i64 {\n    for p in [(1, \"a\")] {\n        let (a, b) = p\n        println(\"{to_str(a)}{b}\")\n    }\n    0\n}\n",
+        ),
+        (
+            "escaped quote",
+            "fn main() -> i64 {\n    let j = \"{{\\\"a\\\": 1}}\"\n    println(j)\n    0\n}\n",
+        ),
+        (
+            "named variant fields",
+            "type Shape = Circle { r: f64 } | Square { a: f64 }\nfn main() -> i64 {\n    let s = Shape::Circle { r: 1.0 }\n    match s { Shape::Circle { r } => println(to_str(r)), Shape::Square { a } => println(to_str(a)) }\n    0\n}\n",
+        ),
+    ] {
+        let errs: Vec<_> = check_pipeline(src, "probe.ax")
+            .into_iter()
+            .filter(|d| d.severity == "error")
+            .collect();
+        assert!(errs.is_empty(), "`{label}` advice must compile: {errs:?}");
+    }
+}
