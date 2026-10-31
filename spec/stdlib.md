@@ -13,6 +13,11 @@ Axon's builtins are compiler-known and injected into the global scope before you
 there is no import to forget. Everything this guide names is available everywhere unless it is listed
 under "Not shipped".
 
+Recursion depth is bounded in the interpreter: past 6000 nested calls (`AXON_MAX_DEPTH` raises it,
+up to 1,000,000) a run exits 101 with `recursion limit exceeded`. Native binaries have no depth
+counter; they recurse until the OS stack overflows (exit 101, "stack overflow"). Write deep loops
+as `while` loops to run the same on both.
+
 ---
 
 ## 2. Builtin Functions
