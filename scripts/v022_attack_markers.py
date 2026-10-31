@@ -3479,6 +3479,10 @@ ATTACK_MARKERS.update({
     'M4017': r'ATTACK: a full stop inside backticks cut a card doc sentence',
     'M4018': r'ATTACK: `axon card --sha256` is not the sha256 of the card text',
 })
+# int/31 S02 follow-up (id M4019, IgCore)
+ATTACK_MARKERS.update({
+    'M4019': r'ATTACK: the ambient fs_read deny-all refused an environment read',
+})
 
 # native-parity NP-1 (ids M4120-M4122, M4136): shared killer, one ATTACK line per diverging probe
 ATTACK_MARKERS.update({

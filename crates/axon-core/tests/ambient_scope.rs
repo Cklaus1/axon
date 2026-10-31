@@ -195,6 +195,40 @@ fn fs_read_empty_refuses_reads_and_existence_probes() {
     assert!(w.exists());
 }
 
+/// The ambient `AXON_ALLOWED_FS_READ=` scope is about FILE paths. cortex's
+/// runtime fence sets it empty for every file that reads no file, and treats
+/// `env` as a capability of its own - so the ambient read deny-all must not
+/// refuse `env_var`. A sandbox the PROGRAM creates with an empty read
+/// allowlist (the shape axon-os's job wrapper builds) still does.
+#[test]
+fn an_ambient_read_deny_all_does_not_refuse_the_environment() {
+    let d = tmp("envamb");
+    let o = run(
+        &d,
+        "fn main() {\n    match env_var(\"AXON_ALLOWED_FS_READ\") {\n        \
+         Ok(v) => println(\"set:\" + v),\n        Err(_) => println(\"unset\"),\n    }\n}\n",
+        &[("AXON_ALLOWED_FS_READ", "")],
+    );
+    let t = text(&o);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "ATTACK: the ambient fs_read deny-all refused an environment read:\n{t}"
+    );
+    assert!(t.contains("set:"), "{t}");
+
+    let src = "fn e(n: i64) -> i64 {\n    match env_var(\"HOME\") {\n        \
+               Ok(_) => n,\n        Err(_) => n + 1,\n    }\n}\n\
+               fn main() {\n    \
+               let p = principal_root(\"p\", false, false, false, 100)\n    \
+               let s = sandbox_create_scoped(p, \"IO\", \"\", \"*\", \"*\")\n    \
+               let _ = sandbox_run(s, \"e\", 1)\n}\n";
+    let o = run(&d, src, &[]);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(8), "{t}");
+    assert!(t.contains("read the environment variable"), "{t}");
+}
+
 /// Offline-safe: the refusal is a scope check before any socket is opened, so
 /// the message is the sandbox's, not a connection error.
 #[test]

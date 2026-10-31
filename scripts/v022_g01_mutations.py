@@ -12697,6 +12697,14 @@ MUTATIONS += [
      'let d = sha2::Sha256::digest(card.trim_end().as_bytes());',
      'axon-core', '--no-default-features --test cli_run', 'axon_card_is_generated_deterministic_and_pinned_by_its_sha256'),
 ]
+# int/31 S02 follow-up (id M4019, IgCore): the env_var-behind-fs_read rule is a
+# program-created sandbox's, not the ambient AXON_ALLOWED_FS_READ= scope's.
+MUTATIONS += [
+    ('M4019', 'IG sandbox: the ambient fs_read deny-all refuses `env_var` again', 'crates/axon-core/src/interp/builtins.rs',
+     'caps::IoKind::Env if !sb.ambient => sb',
+     'caps::IoKind::Env => sb',
+     'axon-core', '--no-default-features --test ambient_scope', 'an_ambient_read_deny_all_does_not_refuse_the_environment'),
+]
 # IG0 replaced axon-os's text scanner (`calls_name`) with the AST walk over the
 # one admission-axes table: a call is a parsed `Expr::Call` whatever its
 # spacing, and a bare `mod` line loads nothing (F12 b), so an unloadable `use`

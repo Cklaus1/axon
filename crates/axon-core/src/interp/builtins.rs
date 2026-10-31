@@ -264,8 +264,12 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
                 // `env_var` onto the fs_read axis at admission, so a job is
                 // given the environment exactly when it is given a read
                 // prefix. A non-empty or unrestricted read scope leaves it
-                // as before.
-                caps::IoKind::Env => sb
+                // as before. The AMBIENT entry (the `AXON_ALLOWED_FS_READ`
+                // variable) is not such a sandbox: its consumers - cortex's
+                // runtime fence sets it empty for every file that reads no
+                // FILE - scope paths only, and `env` is a capability of its
+                // own there, so it does not deny the environment.
+                caps::IoKind::Env if !sb.ambient => sb
                     .scope
                     .fs_read
                     .as_deref()
