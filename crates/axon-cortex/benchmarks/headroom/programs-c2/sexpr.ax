@@ -1,0 +1,477 @@
+// Parse and evaluate S-expressions with integer arithmetic, comparisons,
+// conditionals and sequential let-bindings.
+
+type Node = Atom { text: str } | List { items: [Node] }
+type Parsed = { node: Node, pos: i64, ok: bool }
+type Outcome = { value: i64, ok: bool, err: str }
+
+fn tokenize(src: str) -> [str] {
+    let tokens: [str] = []
+    let current = ""
+    let in_comment = false
+    for c in str_chars(src) {
+        if in_comment {
+            if c == "\n" {
+                in_comment = false
+            }
+            continue
+        }
+        let is_delim = c == ";" || c == "(" || c == ")" || c == "[" || c == "]"
+        if is_delim || char_is_space(c) {
+            if current != "" {
+                tokens = arr_push(tokens, str_to_lower(current))
+                current = ""
+            }
+            if c == ";" {
+                in_comment = true
+            } else if c == "(" || c == "[" {
+                tokens = arr_push(tokens, "(")
+            } else if c == ")" || c == "]" {
+                tokens = arr_push(tokens, ")")
+            }
+        } else {
+            current = current + c
+        }
+    }
+    if current != "" {
+        tokens = arr_push(tokens, str_to_lower(current))
+    }
+    tokens
+}
+
+fn is_number(s: str) -> bool {
+    let digits = if str_starts_with(s, "-") { str_slice(s, 1, len(s)) } else { s }
+    if len(digits) == 0 {
+        return false
+    }
+    let ok = true
+    for c in str_chars(digits) {
+        if !char_is_digit(c) {
+            ok = false
+        }
+    }
+    ok
+}
+
+fn is_comparison(op: str) -> bool {
+    op == "<" || op == ">" || op == "=" || op == "<=" || op == ">="
+}
+
+fn is_operator(op: str) -> bool {
+    let arith = ["+", "-", "*", "/", "mod", "min", "max", "abs", "not"]
+    arr_contains(arith, op) || is_comparison(op)
+}
+
+fn arity_error(op: str, n: i64) -> str {
+    if (op == "abs" || op == "not") && n != 1 {
+        return op + " takes one argument"
+    }
+    if (op == "/" || op == "mod") && n != 2 {
+        return op + " takes two arguments"
+    }
+    if (op == "-" || op == "min" || op == "max") && n < 1 {
+        return op + " needs an argument"
+    }
+    if is_comparison(op) && n < 2 {
+        return op + " needs two or more arguments"
+    }
+    ""
+}
+
+fn apply_op(op: str, args: [i64]) -> i64 {
+    let n = len(args)
+    if op == "+" || op == "*" {
+        let acc = if op == "+" { 0 } else { 1 }
+        for a in args {
+            acc = if op == "+" { acc + a } else { acc * a }
+        }
+        return acc
+    }
+    if n == 0 {
+        return 0
+    }
+    if op == "-" && n == 1 {
+        return 0 - args[0]
+    }
+    if op == "abs" {
+        return abs_i64(args[0])
+    }
+    if op == "not" {
+        return if args[0] == 0 { 1 } else { 0 }
+    }
+    if op == "/" {
+        return args[0] / args[1]
+    }
+    if op == "mod" {
+        let r = args[0] % args[1]
+        if r != 0 && (r < 0) != (args[1] < 0) {
+            r = r + args[1]
+        }
+        return r
+    }
+    let acc = args[0]
+    let holds = true
+    for i in 1..n {
+        let x = args[i]
+        if op == "-" {
+            acc = acc - x
+        } else if op == "min" {
+            acc = min_i64(acc, x)
+        } else if op == "max" {
+            acc = max_i64(acc, x)
+        } else {
+            let prev = args[i - 1]
+            let pair_ok = (op == "<" && prev < x) || (op == ">" && prev > x) || (op == "=" && prev == x) || (op == "<=" && prev <= x) || (op == ">=" && prev >= x)
+            holds = holds && pair_ok
+        }
+    }
+    if is_comparison(op) {
+        return if holds { 1 } else { 0 }
+    }
+    acc
+}
+
+fn parse_at(tokens: [str], pos: i64) -> Parsed {
+    let empty = Node::Atom { text: "" }
+    if pos >= len(tokens) || tokens[pos] == ")" {
+        return Parsed { node: empty, pos: pos, ok: false }
+    }
+    if tokens[pos] != "(" {
+        return Parsed { node: Node::Atom { text: tokens[pos] }, pos: pos + 1, ok: true }
+    }
+    let items: [Node] = []
+    let p = pos + 1
+    let good = true
+    while good && p < len(tokens) && tokens[p] != ")" {
+        let r = parse_at(tokens, p)
+        good = r.ok
+        p = r.pos
+        if good {
+            items = arr_push(items, r.node)
+        }
+    }
+    if !good || p >= len(tokens) {
+        return Parsed { node: empty, pos: p, ok: false }
+    }
+    Parsed { node: Node::List { items: items }, pos: p + 1, ok: true }
+}
+
+fn parse_program(src: str) -> Node {
+    parse_at(tokenize(src), 0).node
+}
+
+fn atom_text(n: Node) -> str {
+    match n {
+        Node::Atom { text } => text
+        Node::List { items } => ""
+    }
+}
+
+fn is_list(n: Node) -> bool {
+    match n {
+        Node::Atom { text } => false
+        Node::List { items } => true
+    }
+}
+
+fn list_items(n: Node) -> [Node] {
+    match n {
+        Node::Atom { text } => []
+        Node::List { items } => items
+    }
+}
+
+fn fail(msg: str) -> Outcome {
+    Outcome { value: 0, ok: false, err: msg }
+}
+
+fn lookup(name: str, names: [str], values: [i64]) -> Outcome {
+    let i = len(names) - 1
+    while i >= 0 {
+        if names[i] == name {
+            return Outcome { value: values[i], ok: true, err: "" }
+        }
+        i = i - 1
+    }
+    fail("unbound name " + name)
+}
+
+fn eval_let(items: [Node], names: [str], values: [i64]) -> Outcome {
+    if len(items) != 3 || !is_list(items[1]) {
+        return fail("let needs a binding list and a body")
+    }
+    let scope_names: [str] = arr_concat(names, [])
+    let scope_values: [i64] = arr_concat(values, [])
+    for binding in list_items(items[1]) {
+        let pair = list_items(binding)
+        if len(pair) != 2 {
+            return fail("malformed binding")
+        }
+        let name = atom_text(pair[0])
+        if name == "" || is_number(name) || is_operator(name) || name == "let" || name == "if" {
+            return fail("invalid binding name")
+        }
+        let r = eval_node(pair[1], scope_names, scope_values)
+        if !r.ok {
+            return r
+        }
+        scope_names = arr_push(scope_names, name)
+        scope_values = arr_push(scope_values, r.value)
+    }
+    eval_node(items[2], scope_names, scope_values)
+}
+
+fn eval_list(items: [Node], names: [str], values: [i64]) -> Outcome {
+    if len(items) == 0 {
+        return fail("empty list")
+    }
+    let head = atom_text(items[0])
+    if head == "let" {
+        return eval_let(items, names, values)
+    }
+    if head == "if" {
+        if len(items) != 4 {
+            return fail("if takes three arguments")
+        }
+        let cond = eval_node(items[1], names, values)
+        if !cond.ok {
+            return cond
+        }
+        let branch = if cond.value != 0 { 2 } else { 3 }
+        return eval_node(items[branch], names, values)
+    }
+    if !is_operator(head) {
+        return fail("unknown operator " + head)
+    }
+    let args: [i64] = []
+    for i in 1..len(items) {
+        let r = eval_node(items[i], names, values)
+        if !r.ok {
+            return r
+        }
+        args = arr_push(args, r.value)
+    }
+    let arity = arity_error(head, len(args))
+    if arity != "" {
+        return fail(arity)
+    }
+    if (head == "/" || head == "mod") && args[1] == 0 {
+        return fail("division by zero")
+    }
+    Outcome { value: apply_op(head, args), ok: true, err: "" }
+}
+
+fn eval_node(n: Node, names: [str], values: [i64]) -> Outcome {
+    if is_list(n) {
+        return eval_list(list_items(n), names, values)
+    }
+    let text = atom_text(n)
+    if is_number(text) {
+        return Outcome { value: parse_int_or(text, 0), ok: true, err: "" }
+    }
+    lookup(text, names, values)
+}
+
+fn evaluate(src: str) -> str {
+    let tokens = tokenize(src)
+    if len(tokens) == 0 {
+        return "error: empty input"
+    }
+    let depth = 0
+    for t in tokens {
+        if t == "(" {
+            depth = depth + 1
+        } else if t == ")" {
+            depth = depth - 1
+            if depth < 0 {
+                return "error: unexpected )"
+            }
+        }
+    }
+    if depth > 0 {
+        return "error: missing )"
+    }
+    let no_names: [str] = []
+    let no_values: [i64] = []
+    let results: [str] = []
+    let pos = 0
+    while pos < len(tokens) {
+        let parsed = parse_at(tokens, pos)
+        if !parsed.ok {
+            return "error: malformed expression"
+        }
+        let outcome = eval_node(parsed.node, no_names, no_values)
+        if !outcome.ok {
+            return "error: " + outcome.err
+        }
+        results = arr_push(results, to_str(outcome.value))
+        pos = parsed.pos
+    }
+    str_join(results, " ")
+}
+
+fn free_names(n: Node, bound: [str]) -> [str] {
+    let found: [str] = []
+    let scope: [str] = arr_concat(bound, [])
+    if !is_list(n) {
+        let text = atom_text(n)
+        let reserved = is_operator(text) || text == "let" || text == "if"
+        if text != "" && !is_number(text) && !reserved && !arr_contains(scope, text) {
+            found = arr_push(found, text)
+        }
+        return found
+    }
+    let items = list_items(n)
+    let start = 0
+    if len(items) == 3 && atom_text(items[0]) == "let" && is_list(items[1]) {
+        for binding in list_items(items[1]) {
+            let pair = list_items(binding)
+            if len(pair) == 2 {
+                for name in free_names(pair[1], scope) {
+                    found = arr_push(found, name)
+                }
+                scope = arr_push(scope, atom_text(pair[0]))
+            }
+        }
+        start = 2
+    }
+    for i in start..len(items) {
+        for name in free_names(items[i], scope) {
+            found = arr_push(found, name)
+        }
+    }
+    arr_sort_by(arr_unique(found), |a: str, b: str| str_cmp(a, b))
+}
+
+fn simplify(n: Node) -> str {
+    if !is_list(n) {
+        return atom_text(n)
+    }
+    let parts: [str] = []
+    for item in list_items(n) {
+        parts = arr_push(parts, simplify(item))
+    }
+    if len(parts) == 0 {
+        return "()"
+    }
+    let head = parts[0]
+    let foldable = is_operator(head)
+    let args: [i64] = []
+    for i in 1..len(parts) {
+        if is_number(parts[i]) {
+            args = arr_push(args, parse_int_or(parts[i], 0))
+        } else {
+            foldable = false
+        }
+    }
+    if foldable && arity_error(head, len(args)) == "" {
+        let divides_by_zero = (head == "/" || head == "mod") && args[1] == 0
+        if !divides_by_zero {
+            return to_str(apply_op(head, args))
+        }
+    }
+    if head == "if" && len(parts) == 4 && is_number(parts[1]) {
+        return if parts[1] != "0" { parts[2] } else { parts[3] }
+    }
+    if head == "let" && len(parts) == 3 && parts[1] == "()" {
+        return parts[2]
+    }
+    "(" + str_join(parts, " ") + ")"
+}
+
+@[test]
+fn test_tokenize_nested() {
+    assert(tokenize("(+ 1 (* 2 3))") == ["(", "+", "1", "(", "*", "2", "3", ")", ")"])
+}
+
+@[test]
+fn test_tokenize_brackets_case_and_comment() {
+    let src = "[LET ((X 2)) x] ; trailing note"
+    assert(tokenize(src) == ["(", "let", "(", "(", "x", "2", ")", ")", "x", ")"])
+}
+
+@[test]
+fn test_tokenize_bare_atoms() {
+    assert(tokenize("  -12\nfoo ; gone\nbar") == ["-12", "foo", "bar"])
+}
+
+@[test]
+fn test_apply_subtraction() {
+    assert_eq(apply_op("-", [10, 3, 2]), 5)
+    assert_eq(apply_op("-", [4]), 0 - 4)
+}
+
+@[test]
+fn test_apply_division_and_mod() {
+    assert_eq(apply_op("/", [0 - 7, 2]), 0 - 3)
+    assert_eq(apply_op("mod", [0 - 7, 3]), 2)
+    assert_eq(apply_op("mod", [7, 0 - 3]), 0 - 2)
+}
+
+@[test]
+fn test_apply_comparisons_and_folds() {
+    assert_eq(apply_op("<", [1, 2, 3]), 1)
+    assert_eq(apply_op("<", [1, 3, 2]), 0)
+    assert_eq(apply_op("max", [3, 9, 2]), 9)
+    assert_eq(apply_op("*", [2, 3, 4]), 24)
+}
+
+@[test]
+fn test_evaluate_arithmetic() {
+    assert_eq_str(evaluate("(+ 1 (* 2 3))"), "7")
+}
+
+@[test]
+fn test_evaluate_sequential_let() {
+    assert_eq_str(evaluate("(let ((x 2) (y (* x 5))) (- y x))"), "8")
+    assert_eq_str(evaluate("(let ((x 1)) (let ((x 10)) x))"), "10")
+}
+
+@[test]
+fn test_evaluate_several_forms() {
+    assert_eq_str(evaluate("(if (< 1 2) 10 20) (mod 17 5) 4"), "10 2 4")
+}
+
+@[test]
+fn test_evaluate_errors() {
+    assert_eq_str(evaluate("(/ 1 0)"), "error: division by zero")
+    assert_eq_str(evaluate("(+ 1 2"), "error: missing )")
+    assert_eq_str(evaluate("(foo 1)"), "error: unknown operator foo")
+    assert_eq_str(evaluate("(+ x 1)"), "error: unbound name x")
+    assert_eq_str(evaluate("(abs 1 2)"), "error: abs takes one argument")
+}
+
+@[test]
+fn test_free_names_simple() {
+    let none: [str] = []
+    assert(free_names(parse_program("(+ x (* y x))"), none) == ["x", "y"])
+}
+
+@[test]
+fn test_free_names_respects_let() {
+    let none: [str] = []
+    assert(free_names(parse_program("(let ((a 1) (b (+ a c))) (* a b d))"), none) == ["c", "d"])
+}
+
+@[test]
+fn test_free_names_binding_uses_outer_scope() {
+    let none: [str] = []
+    assert(free_names(parse_program("(let ((x x)) x)"), none) == ["x"])
+    assert(free_names(parse_program("(+ q 1)"), ["q"]) == none)
+}
+
+@[test]
+fn test_simplify_partial_fold() {
+    assert_eq_str(simplify(parse_program("(+ 1 (* 2 3) x)")), "(+ 1 6 x)")
+}
+
+@[test]
+fn test_simplify_full_fold() {
+    assert_eq_str(simplify(parse_program("(* (+ 1 2) (- 10 4))")), "18")
+}
+
+@[test]
+fn test_simplify_branches_and_empty_let() {
+    assert_eq_str(simplify(parse_program("(if (> 3 1) (+ y 0) z)")), "(+ y 0)")
+    assert_eq_str(simplify(parse_program("(let () (/ 8 0))")), "(/ 8 0)")
+}

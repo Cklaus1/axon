@@ -1,0 +1,32 @@
+fn answer(text: str) -> str {
+    let rows = str_split(str_trim(text), "\n")
+    let ncols = len(str_split(rows[0], " "))
+    let product = 1
+    for j in 0..ncols {
+        let col = 0
+        for i in 0..len(rows) {
+            let cells = str_split(rows[i], " ")
+            col = col + parse_int_or(cells[j], 0)
+        }
+        product = product * col
+    }
+    to_str(product)
+}
+
+fn main() -> i64 {
+    match read_file("./data/matrix.txt") {
+        Ok(text) => {
+            match write_file("./out/answer.txt", answer(text) + "\n") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            2
+        }
+    }
+}

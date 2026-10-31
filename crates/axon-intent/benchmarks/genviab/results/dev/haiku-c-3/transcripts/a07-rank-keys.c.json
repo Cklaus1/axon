@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    in_path = \"./data/counts.csv\"\n    out_path = \"./out/answer.txt\"\n\n    entries = []\n    with open(in_path, \"r\", encoding=\"utf-8\") as f:\n        for line in f:\n            line = line.strip()\n            if not line:\n                continue\n            key, value = line.split(\",\", 1)\n            entries.append((key.strip(), int(value.strip())))\n\n    # Highest value first; ties broken alphabetically ascending by key.\n    entries.sort(key=lambda kv: (-kv[1], kv[0]))\n\n    result = \",\".join(k for k, _ in entries) + \"\\n\"\n\n    os.makedirs(os.path.dirname(out_path), exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        f.write(result)\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    in_path = \"./data/counts.csv\"\n    out_path = \"./out/answer.txt\"\n\n    entries = []\n    with open(in_path, \"r\", encoding=\"utf-8\") as f:\n        for line in f:\n            line = line.strip()\n            if not line:\n                continue\n            key, value = line.split(\",\", 1)\n            entries.append((key.strip(), int(value.strip())))\n\n    # Highest value first; ties broken alphabetically ascending by key.\n    entries.sort(key=lambda kv: (-kv[1], kv[0]))\n\n    result = \",\".join(k for k, _ in entries) + \"\\n\"\n\n    os.makedirs(os.path.dirname(out_path), exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        f.write(result)\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

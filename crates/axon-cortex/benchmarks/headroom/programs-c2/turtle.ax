@@ -1,0 +1,350 @@
+// Turtle graphics on an integer grid.
+//
+// A program is a space-separated list of tokens:
+//   F, B      move forward / backward one cell (optional count, e.g. F3)
+//   L, R      turn left / right by 90 degrees (optional count)
+//   U, D      lift / lower the pen
+//   N [ ... ] repeat the bracketed tokens N times (may nest)
+// The turtle starts at (0, 0) facing north (+y) with the pen down.
+// Every cell the turtle occupies while the pen is down is drawn.
+
+fn heading_dx(h: i64) -> i64 {
+    if h == 1 {
+        1
+    } else if h == 3 {
+        -1
+    } else {
+        0
+    }
+}
+
+fn heading_dy(h: i64) -> i64 {
+    if h == 0 {
+        1
+    } else if h == 2 {
+        -1
+    } else {
+        0
+    }
+}
+
+fn cell_key(x: i64, y: i64) -> str {
+    to_str(x) + ":" + to_str(y)
+}
+
+fn expand_program(src: str) -> str {
+    let tokens = str_split(src, " ")
+    let out = ""
+    let starts: [i64] = []
+    let counts: [i64] = []
+    let pending = 1
+    let awaiting_block = false
+    for tok in tokens {
+        if str_len(tok) == 0 {
+            continue
+        }
+        let head = str_slice(tok, 0, 1)
+        if awaiting_block && tok != "[" {
+            return ""
+        }
+        if char_is_digit(head) {
+            pending = parse_int_or(tok, -1)
+            if pending < 0 {
+                return ""
+            }
+            awaiting_block = true
+        } else if tok == "[" {
+            starts = arr_push(starts, str_len(out))
+            counts = arr_push(counts, pending)
+            pending = 1
+            awaiting_block = false
+        } else if tok == "]" {
+            let depth = len(starts)
+            if depth == 0 {
+                return ""
+            }
+            let start = starts[depth - 1]
+            let times = counts[depth - 1]
+            starts = arr_take(starts, depth - 1)
+            counts = arr_take(counts, depth - 1)
+            let body = str_slice(out, start, str_len(out))
+            out = str_slice(out, 0, start) + str_repeat(body, times)
+        } else if str_contains("FBLRUD", head) {
+            let reps = 1
+            if str_len(tok) > 1 {
+                reps = parse_int_or(str_slice(tok, 1, str_len(tok)), -1)
+            }
+            if reps < 0 {
+                return ""
+            }
+            out = out + str_repeat(head, reps)
+        } else {
+            return ""
+        }
+    }
+    if awaiting_block || len(starts) > 0 {
+        return ""
+    }
+    out
+}
+
+fn trace_cells(src: str) -> [i64] {
+    let prog = expand_program(src)
+    let x = 0
+    let y = 0
+    let heading = 0
+    let pen = true
+    let cells = [0, 0]
+    let i = 0
+    while i < str_len(prog) {
+        let c = str_char_at(prog, i)
+        if c == "L" {
+            heading = (heading + 3) % 4
+        } else if c == "R" {
+            heading = (heading + 1) % 4
+        } else if c == "U" {
+            pen = false
+        } else if c == "D" {
+            if !pen {
+                pen = true
+                cells = arr_push(cells, x)
+                cells = arr_push(cells, y)
+            }
+        } else {
+            let sign = 1
+            if c == "B" {
+                sign = -1
+            }
+            x = x + sign * heading_dx(heading)
+            y = y + sign * heading_dy(heading)
+            if pen {
+                cells = arr_push(cells, x)
+                cells = arr_push(cells, y)
+            }
+        }
+        i = i + 1
+    }
+    cells
+}
+
+fn cell_summary(src: str) -> [i64] {
+    let cells = trace_cells(src)
+    let seen = dict_new()
+    let distinct = 0
+    let revisits = 0
+    let busiest = 0
+    let i = 0
+    while i + 1 < len(cells) {
+        let key = cell_key(cells[i], cells[i + 1])
+        let visits = 1
+        if dict_has(seen, key) {
+            visits = dict_get_or(seen, key, 0) + 1
+            revisits = revisits + 1
+        } else {
+            distinct = distinct + 1
+        }
+        dict_set(seen, key, visits)
+        if visits > busiest {
+            busiest = visits
+        }
+        i = i + 2
+    }
+    [distinct, revisits, busiest]
+}
+
+fn bounding_box(src: str) -> [i64] {
+    let cells = trace_cells(src)
+    let min_x = cells[0]
+    let max_x = cells[0]
+    let min_y = cells[1]
+    let max_y = cells[1]
+    let i = 2
+    while i + 1 < len(cells) {
+        let x = cells[i]
+        let y = cells[i + 1]
+        if x < min_x {
+            min_x = x
+        }
+        if x > max_x {
+            max_x = x
+        }
+        if y < min_y {
+            min_y = y
+        }
+        if y > max_y {
+            max_y = y
+        }
+        i = i + 2
+    }
+    let width = max_x - min_x + 1
+    let height = max_y - min_y + 1
+    [min_x, min_y, max_x, max_y, width, height]
+}
+
+fn render_grid(src: str) -> str {
+    let cells = trace_cells(src)
+    let drawn = dict_new()
+    let min_x = cells[0]
+    let max_x = cells[0]
+    let min_y = cells[1]
+    let max_y = cells[1]
+    let i = 0
+    while i + 1 < len(cells) {
+        let x = cells[i]
+        let y = cells[i + 1]
+        min_x = min_i64(min_x, x)
+        max_x = max_i64(max_x, x)
+        min_y = min_i64(min_y, y)
+        max_y = max_i64(max_y, y)
+        dict_set(drawn, cell_key(x, y), true)
+        i = i + 2
+    }
+    let rows: [str] = []
+    let y = max_y
+    while y >= min_y {
+        let line = ""
+        let x = min_x
+        while x <= max_x {
+            if dict_has(drawn, cell_key(x, y)) {
+                line = line + "#"
+            } else {
+                line = line + "."
+            }
+            x = x + 1
+        }
+        rows = arr_push(rows, line)
+        y = y - 1
+    }
+    str_join(rows, "\n")
+}
+
+fn final_pose(src: str) -> str {
+    let prog = expand_program(src)
+    let x = 0
+    let y = 0
+    let heading = 0
+    let pen = true
+    let i = 0
+    while i < str_len(prog) {
+        let c = str_char_at(prog, i)
+        if c == "L" {
+            heading = (heading + 3) % 4
+        } else if c == "R" {
+            heading = (heading + 1) % 4
+        } else if c == "U" {
+            pen = false
+        } else if c == "D" {
+            pen = true
+        } else if c == "F" {
+            x = x + heading_dx(heading)
+            y = y + heading_dy(heading)
+        } else {
+            x = x - heading_dx(heading)
+            y = y - heading_dy(heading)
+        }
+        i = i + 1
+    }
+    let names = ["N", "E", "S", "W"]
+    let pen_name = "up"
+    if pen {
+        pen_name = "down"
+    }
+    to_str(x) + "," + to_str(y) + "," + names[heading] + "," + pen_name
+}
+
+@[test]
+fn test_expand_counts_and_turns() {
+    assert_eq_str(expand_program("F3 R F2"), "FFFRFF")
+}
+
+@[test]
+fn test_expand_repeat_block() {
+    assert_eq_str(expand_program("2 [ F R ] L"), "FRFRL")
+}
+
+@[test]
+fn test_expand_nested_repeat() {
+    assert_eq_str(expand_program("2 [ F 3 [ R ] ] U"), "FRRRFRRRU")
+}
+
+@[test]
+fn test_expand_rejects_unbalanced() {
+    assert_eq_str(expand_program("F2 ]"), "")
+    assert_eq_str(expand_program("3 F"), "")
+    assert_eq_str(expand_program("F X2"), "")
+}
+
+@[test]
+fn test_trace_turn_right() {
+    assert(trace_cells("F2 R F1") == [0, 0, 0, 1, 0, 2, 1, 2])
+}
+
+@[test]
+fn test_trace_pen_up_skips_cells() {
+    assert(trace_cells("F U F D F") == [0, 0, 0, 1, 0, 2, 0, 3])
+}
+
+@[test]
+fn test_trace_backward_moves() {
+    assert(trace_cells("L F B2") == [0, 0, -1, 0, 0, 0, 1, 0])
+}
+
+@[test]
+fn test_summary_square_loop() {
+    assert(cell_summary("4 [ F R ]") == [4, 1, 2])
+}
+
+@[test]
+fn test_summary_straight_line() {
+    assert(cell_summary("F3") == [4, 0, 1])
+}
+
+@[test]
+fn test_summary_back_and_forth() {
+    assert(cell_summary("F B F B") == [2, 3, 3])
+}
+
+@[test]
+fn test_box_right_turn() {
+    assert(bounding_box("F2 R F3") == [0, 0, 3, 2, 4, 3])
+}
+
+@[test]
+fn test_box_negative_quadrant() {
+    assert(bounding_box("L F2 L F") == [-2, -1, 0, 0, 3, 2])
+}
+
+@[test]
+fn test_box_spans_pen_up_jump() {
+    assert(bounding_box("U F5 D R F") == [0, 0, 1, 5, 2, 6])
+}
+
+@[test]
+fn test_render_corner() {
+    assert_eq_str(render_grid("F R F"), "##\n#.")
+}
+
+@[test]
+fn test_render_gap_from_pen_up() {
+    assert_eq_str(render_grid("R F2 U F2 D F"), "###.##")
+}
+
+@[test]
+fn test_render_square_ring() {
+    assert_eq_str(render_grid("4 [ F2 R ]"), "###\n#.#\n###")
+}
+
+@[test]
+fn test_pose_after_moves() {
+    assert_eq_str(final_pose("F2 R F U"), "1,2,E,up")
+}
+
+@[test]
+fn test_pose_backward_facing_south() {
+    assert_eq_str(final_pose("L L B3"), "0,3,S,down")
+}
+
+@[test]
+fn test_pose_repeated_turns() {
+    assert_eq_str(final_pose("3 [ R ]"), "0,0,W,down")
+}

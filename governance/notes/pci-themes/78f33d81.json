@@ -1,0 +1,1 @@
+{"theme": "intent-gen", "text": "The axon-os sandbox wrapper grants console IO to every job (env_var stays behind the fs_read allowlist, fs behind its allowlists, exec behind Exec), and a job ending in an unterminated print keeps its completion marker."}

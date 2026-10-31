@@ -1,0 +1,36 @@
+{
+ "id": "a09-number-sum",
+ "category": "transform",
+ "source": {
+  "kind": "atlas tasks_hard",
+  "file": "atlas/spikes/rlm-engine/src/tasks_hard.rs (TASKS, MIT, separate git tree)",
+  "index": 9,
+  "desc": "the sum of the numbers found in a file you must first create in the current directory named nums.txt holding the integers 1 to 10 one per line, read back from disk",
+  "expected": "55",
+  "atlas_category": "file-io"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "atlas data point",
+    "runs": [
+     {
+      "inputs": {
+       "./data/nums.txt": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n"
+      },
+      "outputs": {
+       "./out/answer.txt": "55\n"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/answer.txt",
+  "value": "55"
+ }
+}

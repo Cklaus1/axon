@@ -4,6 +4,7 @@
     python3 power.py (--dev-rows DEV.jsonl [...] | --synthetic A,B,N,K) \\
         --cost-success USD --cost-failure USD [--cost2-success USD --cost2-failure USD --k2 1] \\
         --arms 3 --cap-usd 25 --seed N [--sims 1000] [--n-grid 80:241:16] [--ks 3,5] \\
+        [--alpha 0.05] [--floor 0.05] [--fixed-design N,K] \\
         [--c-fraction 0.5] [--calibration calibration.json] [--out power.json]
 
 * **Baseline rates.** Per task, the beta-binomial posterior mean of its dev
@@ -24,18 +25,21 @@
   the MDE (capped at 1, reported).
 * **Test per replicate** (FU-1h i): k trials per arm, d_i = difference of the
   k-trial rates; reject when the one-sided sign flip on program sums gives
-  p < 0.05 AND the mean d >= +5 points. The sign-flip null is approximated by
-  its normal limit (mean 0, variance sum S_g^2), which keeps thousands of
-  replicates fast; `--exact` uses stats.py's test itself (1 000 Monte Carlo
-  flips) to cross-check.
+  p < `--alpha` (0.05) AND the mean d >= `--floor` (+5 points; `--floor -1`
+  drops it, FU-10 route 1). The sign-flip null is approximated by its normal
+  limit (mean 0, variance sum S_g^2), which keeps thousands of replicates
+  fast; `--exact` uses stats.py's test itself (1 000 Monte Carlo flips) to
+  cross-check.
 * **Choice.** Designs (n, k), k in {3, 5}, are tried in order of total trials
   n*k (then n); the first with power >= 0.80 at sigma_g = 1.0 whose cost is
   within `--cap-usd` is chosen. Cost = arms * n * k * (r * c_success +
   (1 - r) * c_failure), r the mean baseline rate, plus the second model's
   arms * n * k2 trials at its own per-outcome costs.
+  `--fixed-design N,K` skips the search and reports that one design.
   For the chosen design the report gives power at sigma_g in {0, 0.5, 1.0},
   the flip model, the C-only secondary row (`--c-fraction` of tasks and
-  programs), and P(delta_2 > 0) for the second model at k2.
+  programs), P(delta_2 > 0) for the second model at k2, and the Monte Carlo
+  SE of its power, sqrt(p (1 - p) / sims).
 
 Deterministic for a given `--seed`.
 """
@@ -44,6 +48,7 @@ import json
 import math
 import os
 import random
+import statistics
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -51,7 +56,6 @@ sys.path.insert(0, HERE)
 from calibrate import eb_fit  # noqa: E402
 import stats  # noqa: E402
 
-Z95 = 1.6448536269514722  # one-sided 0.05
 SIGMA_GRID = (0.0, 0.5, 1.0)
 
 
@@ -119,9 +123,10 @@ def flip_fraction(rates, mde, share):
 
 def simulate_power(rates, n, k, sigma_g, mde=0.10, model="logit", sigma_e=0.5, sims=1000, seed=0,
                    per_program=8, min_programs=20, floor=0.05, flip_share=0.3, exact=False,
-                   stat="primary"):
+                   stat="primary", alpha=0.05):
     """Fraction of replicates meeting the criterion. stat "primary": sign-flip
-    p < 0.05 and mean d >= floor; stat "positive": mean d > 0 (FU-1h iii)."""
+    p < alpha and mean d >= floor; stat "positive": mean d > 0 (FU-1h iii)."""
+    z = statistics.NormalDist().inv_cdf(1 - alpha)
     G, prog = programs_for(n, per_program, min_programs)
     rng = random.Random(f"{seed}:{n}:{k}:{sigma_g}:{model}:{mde}:{sigma_e}:{stat}")
     beta = calibrate_beta(rates, sigma_g, sigma_e, mde, seed) if model == "logit" else None
@@ -153,10 +158,10 @@ def simulate_power(rates, n, k, sigma_g, mde=0.10, model="logit", sigma_e=0.5, s
             continue
         if exact:
             p_val, _ = stats.sign_flip_p(diffs, {i: prog[i] for i in range(n)}, mc=1000, seed=rng.random())
-            hits += p_val < 0.05
+            hits += p_val < alpha
         else:
             v = sum(s * s for s in S)
-            hits += v > 0 and sum(S) / math.sqrt(v) > Z95
+            hits += v > 0 and sum(S) / math.sqrt(v) > z
     return hits / sims
 
 
@@ -170,26 +175,34 @@ def design_cost(n, k, rate, costs, arms, k2=0, costs2=None, rate2=None):
 
 def choose_design(rates, n_grid, ks=(3, 5), sims=1000, seed=0, costs=None, arms=3, cap_usd=25.0,
                   min_programs=20, per_program=8, target=0.80, sigma_g=1.0, mde=0.10, sigma_e=0.5,
-                  costs2=None, k2=0, rates2=None, c_fraction=0.5, exact=False):
+                  costs2=None, k2=0, rates2=None, c_fraction=0.5, exact=False, alpha=0.05, floor=0.05,
+                  fixed=None):
+    """The first design of the (n_grid x ks) search, ordered by n*k then n,
+    with power >= target within cap_usd; `fixed` (n, k) evaluates that one
+    design instead (chosen whatever its power, flagged when over the cap)."""
     rate = sum(rates) / len(rates)
     rate2 = sum(rates2) / len(rates2) if rates2 else None
     kw = dict(mde=mde, sigma_e=sigma_e, sims=sims, seed=seed, per_program=per_program,
-              min_programs=min_programs, exact=exact)
+              min_programs=min_programs, exact=exact, alpha=alpha, floor=floor)
     evaluated, chosen = [], None
-    for n, k in sorted(((n, k) for n in n_grid for k in ks), key=lambda d: (d[0] * d[1], d[0])):
+    designs = [fixed] if fixed else sorted(((n, k) for n in n_grid for k in ks), key=lambda d: (d[0] * d[1], d[0]))
+    for n, k in designs:
         cost = design_cost(n, k, rate, costs, arms, k2, costs2, rate2)
         row = {"n": n, "k": k, "programs": programs_for(n, per_program, min_programs)[0],
                "cost_usd": round(cost, 4)}
         if cost > cap_usd:
             row["over_cap"] = True
-            evaluated.append(row)
-            continue
+            if not fixed:
+                evaluated.append(row)
+                continue
         row["power"] = simulate_power(rates, n, k, sigma_g, **kw)
+        row["power_mc_se"] = math.sqrt(row["power"] * (1 - row["power"]) / sims)
         evaluated.append(row)
-        if row["power"] >= target:
+        if fixed or row["power"] >= target:
             chosen = row
             break
-    out = {"target": target, "sigma_g": sigma_g, "mde": mde, "mean_baseline_rate": rate,
+    out = {"target": target, "sigma_g": sigma_g, "mde": mde, "alpha": alpha, "floor": floor,
+           "fixed_design": list(fixed) if fixed else None, "mean_baseline_rate": rate,
            "evaluated": evaluated, "chosen": None}
     if chosen:
         n, k = chosen["n"], chosen["k"]
@@ -215,6 +228,11 @@ def parse_grid(s):
         a, b, c = (int(x) for x in s.split(":"))
         return list(range(a, b, c))
     return [int(x) for x in s.split(",")]
+
+
+def parse_design(s):
+    n, k = (int(x) for x in s.split(","))
+    return n, k
 
 
 def kept_rates(rows, keep=None):
@@ -248,6 +266,11 @@ def main(argv=None):
     ap.add_argument("--per-program", type=int, default=8)
     ap.add_argument("--target", type=float, default=0.80)
     ap.add_argument("--exact", action="store_true")
+    ap.add_argument("--alpha", type=float, default=0.05, help="one-sided level of the sign-flip test")
+    ap.add_argument("--floor", type=float, default=0.05,
+                    help="minimum mean d for a rejection (FU-1h i: +5 points); -1 = no floor")
+    ap.add_argument("--fixed-design", type=parse_design, metavar="N,K",
+                    help="report power at this one design instead of searching --n-grid x --ks")
     ap.add_argument("--out")
     ap.add_argument("--calibration", metavar="REPORT",
                     help="calibrate.py report: only its kept_dev_ids (dev tasks in kept cells) are used")
@@ -270,7 +293,8 @@ def main(argv=None):
     out = choose_design(rates, parse_grid(a.n_grid), tuple(int(k) for k in a.ks.split(",")), a.sims,
                         a.seed, {"success": a.cost_success, "failure": a.cost_failure}, a.arms,
                         a.cap_usd, a.min_programs, a.per_program, a.target, 1.0, a.mde, a.sigma_e,
-                        costs2, a.k2 if costs2 else 0, rates2, a.c_fraction, a.exact)
+                        costs2, a.k2 if costs2 else 0, rates2, a.c_fraction, a.exact, a.alpha, a.floor,
+                        a.fixed_design)
     out["inputs"] = {"tasks": len(counts), "seed": a.seed, "sims": a.sims, "sigma_e": a.sigma_e,
                      "arms": a.arms, "cap_usd": a.cap_usd, "source": "dev-rows" if a.dev_rows else
                      f"synthetic:{a.synthetic}", "approximation": "exact-mc1000" if a.exact else "normal"}

@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Rank the keys in ./data/counts.csv by value, highest first; where two values tie, order those keys alphabetically (ascending). The file has no header: each line is a key (lowercase letters), a comma and a non-negative integer value, and ends with a newline. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the ranked keys joined by commas with no spaces.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "499d7357d24a0ba8f3da4be4699089ae3b0184ed8c7d7e425d993247570e4ff7",
+      "candidate": "fn answer(text: str) -> str {\n    let lines = str_split(str_trim(text), \"\\n\")\n    let pairs = []\n    for i in 0..len(lines) {\n        let parts = str_split(lines[i], \",\")\n        if len(parts) == 2 {\n            pairs = arr_push(pairs, (str_trim(parts[0]), parse_int_or(parts[1], 0)))\n        }\n    }\n    let sorted = arr_sort_by(pairs, |a, b| if a.1 != b.1 { b.1 - a.1 } else { str_cmp(a.0, b.0) })\n    let keys = arr_map(sorted, |p| p.0)\n    str_join(keys, \",\")\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/counts.csv\") {\n        Ok(text) => {\n            match write_file(\"./out/answer.txt\", answer(text) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 201,
+      "report": {
+        "stage": "accepted",
+        "source": "fn answer(text: str) -> str {\n    let lines = str_split(str_trim(text), \"\\n\")\n    let pairs = []\n    for i in 0..len(lines) {\n        let parts = str_split(lines[i], \",\")\n        if len(parts) == 2 {\n            pairs = arr_push(pairs, (str_trim(parts[0]), parse_int_or(parts[1], 0)))\n        }\n    }\n    let sorted = arr_sort_by(pairs, |a, b| if a.1 != b.1 { b.1 - a.1 } else { str_cmp(a.0, b.0) })\n    let keys = arr_map(sorted, |p| p.0)\n    str_join(keys, \",\")\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/counts.csv\") {\n        Ok(text) => {\n            match write_file(\"./out/answer.txt\", answer(text) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 201,
+  "tokens": null
+}

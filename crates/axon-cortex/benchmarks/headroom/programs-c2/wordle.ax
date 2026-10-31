@@ -1,0 +1,304 @@
+// Wordle helpers. Words are lowercase; feedback patterns use "G" for a
+// letter in the right place, "Y" for a letter elsewhere in the answer and
+// "." for a letter that is not (or no longer) available.
+
+// Feedback for one guess. Greens are assigned first; each remaining answer
+// letter can then turn at most one guess letter yellow, so repeated letters
+// in the guess are only marked as often as the answer contains them.
+fn feedback(answer: str, guess: str) -> str {
+    let n = len(guess)
+    if n != len(answer) {
+        return ""
+    }
+    let marks = arr_repeat(".", n)
+    let remaining = arr_repeat(0, 256)
+    let i = 0
+    while i < n {
+        let a = char_at(answer, i)
+        if a == char_at(guess, i) {
+            marks[i] = "G"
+        } else {
+            remaining[a] = remaining[a] + 1
+        }
+        i = i + 1
+    }
+    i = 0
+    while i < n {
+        let g = char_at(guess, i)
+        if marks[i] != "G" && remaining[g] > 0 {
+            marks[i] = "Y"
+            remaining[g] = remaining[g] - 1
+        }
+        i = i + 1
+    }
+    str_join(marks, "")
+}
+
+// Keeps the words compatible with every (guess, pattern) pair. Each pair
+// fixes green positions, forbids the guessed letter at non-green positions,
+// gives a minimum count per letter (greens plus yellows) and, when a letter
+// is also marked ".", makes that minimum exact.
+fn filter_words(words: [str], guesses: [str], patterns: [str]) -> [str] {
+    let out: [str] = []
+    for w in words {
+        let ok = true
+        let k = 0
+        while ok && k < len(guesses) {
+            let g = guesses[k]
+            let p = patterns[k]
+            if len(w) != len(g) || len(p) != len(g) {
+                ok = false
+            } else {
+                let need = arr_repeat(0, 256)
+                let capped = arr_repeat(false, 256)
+                let have = arr_repeat(0, 256)
+                let i = 0
+                while i < len(g) {
+                    let c = char_at(g, i)
+                    let wc = char_at(w, i)
+                    let mark = str_slice(p, i, i + 1)
+                    have[wc] = have[wc] + 1
+                    if mark == "G" {
+                        need[c] = need[c] + 1
+                        if wc != c {
+                            ok = false
+                        }
+                    } else {
+                        if wc == c {
+                            ok = false
+                        }
+                        if mark == "Y" {
+                            need[c] = need[c] + 1
+                        } else {
+                            capped[c] = true
+                        }
+                    }
+                    i = i + 1
+                }
+                let b = 0
+                while ok && b < 256 {
+                    if have[b] < need[b] || (capped[b] && have[b] > need[b]) {
+                        ok = false
+                    }
+                    b = b + 1
+                }
+            }
+            k = k + 1
+        }
+        if ok {
+            out = arr_push(out, w)
+        }
+    }
+    out
+}
+
+// Hard mode: the next guess must keep every green letter in place and use
+// every revealed letter at least as often as it was revealed.
+fn hard_mode_ok(prev_guess: str, prev_pattern: str, next: str) -> bool {
+    let n = len(prev_guess)
+    if len(next) != n || len(prev_pattern) != n {
+        return false
+    }
+    let need = arr_repeat(0, 256)
+    let i = 0
+    while i < n {
+        let c = char_at(prev_guess, i)
+        let mark = str_slice(prev_pattern, i, i + 1)
+        if mark == "G" {
+            if char_at(next, i) != c {
+                return false
+            }
+            need[c] = need[c] + 1
+        } else if mark == "Y" {
+            need[c] = need[c] + 1
+        }
+        i = i + 1
+    }
+    let have = arr_repeat(0, 256)
+    i = 0
+    while i < n {
+        let c = char_at(next, i)
+        have[c] = have[c] + 1
+        i = i + 1
+    }
+    let b = 0
+    while b < 256 {
+        if have[b] < need[b] {
+            return false
+        }
+        b = b + 1
+    }
+    true
+}
+
+// On-screen keyboard state for the letters a to z: "G" once a letter has
+// been green anywhere, else "Y" if it has been yellow, else "." if it has
+// been guessed at all, else "-".
+fn keyboard(guesses: [str], patterns: [str]) -> str {
+    let rank = arr_repeat(0, 26)
+    let k = 0
+    while k < len(guesses) && k < len(patterns) {
+        let g = guesses[k]
+        let p = patterns[k]
+        let i = 0
+        while i < len(g) && i < len(p) {
+            let idx = char_at(g, i) - 97
+            let mark = str_slice(p, i, i + 1)
+            let r = 1
+            if mark == "G" {
+                r = 3
+            } else if mark == "Y" {
+                r = 2
+            }
+            if idx >= 0 && idx < 26 && r > rank[idx] {
+                rank[idx] = r
+            }
+            i = i + 1
+        }
+        k = k + 1
+    }
+    let out = ""
+    let j = 0
+    while j < 26 {
+        let r = rank[j]
+        if r == 3 {
+            out = out + "G"
+        } else if r == 2 {
+            out = out + "Y"
+        } else if r == 1 {
+            out = out + "."
+        } else {
+            out = out + "-"
+        }
+        j = j + 1
+    }
+    out
+}
+
+// Picks the word that splits the list into the most feedback groups; ties
+// go to the smaller largest group, then to the earlier word.
+fn pick_guess(words: [str]) -> str {
+    let best = ""
+    let best_groups = -1
+    let best_largest = 0
+    for g in words {
+        let seen: [str] = []
+        let counts: [i64] = []
+        for w in words {
+            let f = feedback(w, g)
+            let found = -1
+            let i = 0
+            while i < len(seen) && found < 0 {
+                if seen[i] == f {
+                    found = i
+                }
+                i = i + 1
+            }
+            if found < 0 {
+                seen = arr_push(seen, f)
+                counts = arr_push(counts, 1)
+            } else {
+                counts[found] = counts[found] + 1
+            }
+        }
+        let largest = arr_max_i64(counts)
+        let groups = len(seen)
+        if groups > best_groups || (groups == best_groups && largest < best_largest) {
+            best = g
+            best_groups = groups
+            best_largest = largest
+        }
+    }
+    best
+}
+
+@[test]
+fn test_feedback_exact_and_mixed() {
+    assert_eq_str(feedback("crane", "crane"), "GGGGG")
+    assert_eq_str(feedback("abbey", "babes"), "YYGG.")
+}
+
+@[test]
+fn test_feedback_repeated_guess_letters() {
+    assert_eq_str(feedback("hello", "lllll"), "..GG.")
+    assert_eq_str(feedback("speed", "eerie"), "YY...")
+}
+
+@[test]
+fn test_feedback_length_mismatch() {
+    assert_eq_str(feedback("abc", "abcd"), "")
+    assert_eq_str(feedback("robot", "otter"), "YY..Y")
+}
+
+@[test]
+fn test_filter_words_greens() {
+    let words = ["crane", "crate", "trace", "react", "caret"]
+    assert(filter_words(words, ["crane"], ["GGG.G"]) == ["crate"])
+}
+
+@[test]
+fn test_filter_words_duplicate_cap() {
+    let words = ["speed", "spied", "sleep", "geese", "steep"]
+    assert(filter_words(words, ["eerie"], ["YY..."]) == ["speed", "sleep", "steep"])
+}
+
+@[test]
+fn test_filter_words_two_rounds() {
+    let words = ["crate", "trace", "grate", "grates", "irate"]
+    assert(filter_words(words, ["slate", "crate"], ["..GGG", ".GGGG"]) == ["grate", "irate"])
+}
+
+@[test]
+fn test_hard_mode_greens() {
+    assert(hard_mode_ok("crane", ".YG..", "trail"))
+    assert(!hard_mode_ok("crane", "G....", "slate"))
+}
+
+@[test]
+fn test_hard_mode_repeated_letters() {
+    assert(hard_mode_ok("eerie", "YY...", "steep"))
+    assert(!hard_mode_ok("eerie", "YY...", "sheds"))
+}
+
+@[test]
+fn test_hard_mode_yellows() {
+    assert(hard_mode_ok("crane", "..Y.Y", "ideas"))
+    assert(!hard_mode_ok("crane", "..Y.Y", "idea"))
+}
+
+@[test]
+fn test_keyboard_single_guess() {
+    let k = keyboard(["crane"], ["..G.Y"])
+    assert_eq(len(k), 26)
+    assert_eq_str(str_slice(k, 0, 5), "G-.-Y")
+    assert_eq_str(str_slice(k, 13, 18), ".---.")
+}
+
+@[test]
+fn test_keyboard_upgrades() {
+    let k = keyboard(["eerie", "speed"], ["YY...", "GGGGG"])
+    assert_eq_str(str_slice(k, 3, 5), "GG")
+    assert_eq_str(str_char_at(k, 8), ".")
+    assert_eq_str(str_slice(k, 15, 19), "G-.G")
+}
+
+@[test]
+fn test_keyboard_never_downgrades() {
+    let k = keyboard(["abc", "cab"], ["G..", "Y.."])
+    assert_eq_str(str_slice(k, 0, 4), "G.Y-")
+}
+
+@[test]
+fn test_pick_guess_skips_poor_splitter() {
+    assert_eq_str(pick_guess(["xyz", "abc", "abd", "abe"]), "abc")
+}
+
+@[test]
+fn test_pick_guess_most_groups() {
+    assert_eq_str(pick_guess(["cut", "cot", "cat", "bat", "bot"]), "cot")
+}
+
+@[test]
+fn test_pick_guess_single_word() {
+    assert_eq_str(pick_guess(["solo"]), "solo")
+}

@@ -512,11 +512,12 @@ impl Target {
         }
     }
 
-    /// For a check suite, the text the admission probe scans: the entry
-    /// with each `mod NAME` line replaced by the candidate's `NAME.ax` (the
-    /// module the suite will actually load through `AXON_PATH`). A module
-    /// the candidate does not hold stays a `mod` line, which scans as EVERY
-    /// effect (deny-by-default) — never as none. `None` for a plain file.
+    /// For a check suite, the text the admission probe's module test reads
+    /// ([`AdmissionProbe::declares_module`]): the entry with each `mod NAME`
+    /// line replaced by the candidate's `NAME.ax` (the module the suite will
+    /// actually load through `AXON_PATH`). A module the candidate does not
+    /// hold stays a `mod` line. `None` for a plain file. (The effect scan
+    /// loads the entry's imports itself, from [`Self::scan_dirs`].)
     fn scan_source(&self) -> Option<String> {
         let (Some(_), Some(cand)) = (&self.suite, self.candidate_dir()) else {
             return None;
@@ -546,6 +547,16 @@ impl Target {
             out.push('\n');
         }
         Some(out)
+    }
+
+    /// The module directories the run loads a `use` from — exactly
+    /// [`Self::module_path`], which the executor sets as an exclusive
+    /// `AXON_PATH` — so the admission scan reads the modules the run will
+    /// load (IG0), in the same order.
+    fn scan_dirs(&self) -> Vec<PathBuf> {
+        std::env::split_paths(&self.module_path())
+            .filter(|p| !p.as_os_str().is_empty())
+            .collect()
     }
 
     /// `AXON_PATH` for the run. A check suite's own directory comes FIRST:
@@ -887,17 +898,19 @@ fn check_suite_target(
 
 /// An axon-os `Runtime` that performs NO effect: it states the selected
 /// backend's isolation and the program's SCANNED effect row
-/// (`axon_os::runtime::scan_effects`, deny-by-default: unreadable ⇒ every
-/// effect). `supervise_requiring` over it answers one question through the
-/// code path every axon-os job takes — may this program run on this backend
-/// under THIS grant, with THIS approval policy? The real effect runs later,
-/// after the journal's launch record, bounded by the same grant's ceiling.
-struct AdmissionProbe(axon_os::Isolation, Option<String>);
+/// (`axon_os::runtime::scan_effects_in` over the run's module directories
+/// `self.2`, deny-by-default: unparseable or an import that does not load ⇒
+/// every effect). `supervise_requiring` over it answers one question through
+/// the code path every axon-os job takes — may this program run on this
+/// backend under THIS grant, with THIS approval policy? The real effect runs
+/// later, after the journal's launch record, bounded by the same grant's
+/// ceiling.
+struct AdmissionProbe(axon_os::Isolation, Option<String>, Vec<PathBuf>);
 
 impl AdmissionProbe {
     /// Whether the entry may declare a module, on the scanned source: whether
     /// `use` or `mod` occurs ANYWHERE in it as a whole word (on an identifier
-    /// boundary) — deny by default, like `axon_os::runtime::calls_name`. Not a
+    /// boundary) — deny by default. Not a
     /// parse: a line-prefix test missed `pub mod`, `use\tlib`, a comment or
     /// attribute before the keyword, an item after `}` on the same line, and
     /// lone-`\r` separators, all of which the interpreter loads. Comments and
@@ -925,10 +938,11 @@ impl axon_os::Runtime for AdmissionProbe {
         self.0
     }
     /// The probe keeps the default `load_program` (the entry bytes, which the
-    /// supervisor verifies the token against); a check suite's scan source
-    /// (`self.1`, the entry with its modules inlined) is what is scanned.
+    /// supervisor verifies the token against). IG0: the entry is parsed and
+    /// its `use`s loaded from the directories the run loads them from
+    /// (`self.2`), so every module the run can reach is read.
     fn declared_effects(&self, p: &axon_os::ProgramSource) -> axon_os::DeclaredEffects {
-        axon_os::runtime::scan_effects(self.1.as_deref().unwrap_or(p.text))
+        axon_os::runtime::scan_effects_in(p.text, &self.2)
     }
     fn mint_principal(&self, _g: &axon_os::Grant) -> axon_os::PrincipalHandle {
         axon_os::PrincipalHandle(0)
@@ -1013,6 +1027,7 @@ fn supervisor_admits(
     grant: &ResolvedGrant,
     program: &Path,
     scan_source: Option<String>,
+    scan_dirs: Vec<PathBuf>,
 ) -> Result<String, String> {
     use axon_os::IsolationRequirement;
     let requirement =
@@ -1032,7 +1047,7 @@ fn supervisor_admits(
         ));
     }
     let manifest = grant.manifest_for(program, format!("fabric {}", req.operation_id));
-    let rt = AdmissionProbe(profile.isolation, scan_source);
+    let rt = AdmissionProbe(profile.isolation, scan_source, scan_dirs);
     // The job path is the GRANT FILE: its `.approval` sibling is the sign-off
     // token axon-os verifies against (program, grant).
     let rec = axon_os::supervise_requiring(
@@ -1342,7 +1357,14 @@ pub fn submit(req_json: &str, cfg: &SubmitConfig) -> Result<Submission, SubmitEr
 
     // 6. Supervisor admission (axon-os).
     let program = target.dir(cfg).join(&target.file);
-    let approval = match supervisor_admits(&req, &profile, &grant, &program, target.scan_source()) {
+    let approval = match supervisor_admits(
+        &req,
+        &profile,
+        &grant,
+        &program,
+        target.scan_source(),
+        target.scan_dirs(),
+    ) {
         Ok(a) => a,
         Err(why) => {
             let r = receipt(

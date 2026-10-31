@@ -255,6 +255,11 @@ pub struct Codegen<'ctx> {
         inkwell::basic_block::BasicBlock<'ctx>,
         inkwell::basic_block::BasicBlock<'ctx>,
     )>,
+    /// Source name of the fn whose body is being emitted (`f.name` at the top
+    /// of `emit_fn`: unmangled for an impl method, the mono-mangled symbol for
+    /// an instantiated generic). Runtime panics that name their frame use it so
+    /// native stderr matches the interpreter's (native-parity NP-4).
+    pub(super) current_src_fn: String,
     /// Current lambda's closure environment, set when emitting a lambda body.
     /// Tuple of (env_ptr, env_struct_ty, capture_index_map).
     /// When set, `Ident` lookups that miss `self.locals` fall back to loading
@@ -507,6 +512,7 @@ impl<'ctx> Codegen<'ctx> {
             vtable_thunk_types: HashMap::new(),
             comptime_env: HashMap::new(),
             loop_stack: Vec::new(),
+            current_src_fn: String::new(),
             current_lambda_env: None,
             pending_lambda_param_tys: None,
             current_adaptive_fn: None,
@@ -676,6 +682,49 @@ impl<'ctx> Codegen<'ctx> {
         } else {
             v
         }
+    }
+
+    /// Emit a runtime panic with a fixed message at the current insertion
+    /// point and terminate the block (`unreachable`). Hosted: call
+    /// `__axon_msg_panic(msg, len)` (declared unconditionally in
+    /// `builtins.rs`), which prints `axon: panic: {msg}` and exits 101 — the
+    /// interpreter's exact stderr line and exit code. Freestanding (no axon-rt,
+    /// no stderr): call the synthesized `__axon_msg_trap` (marker `P`).
+    pub(super) fn emit_msg_panic(&mut self, msg: &str) {
+        if self.freestanding {
+            let trap = match self.ir.module.get_function("__axon_msg_trap") {
+                Some(f) => f,
+                None => {
+                    let saved = self.ir.builder.get_insert_block();
+                    let trap_ty = self.ir.context.void_type().fn_type(&[], false);
+                    let f = self.synthesize_freestanding_trap("__axon_msg_trap", trap_ty, b'P');
+                    if let Some(bb) = saved {
+                        self.ir.builder.position_at_end(bb);
+                    }
+                    f
+                }
+            };
+            build_wrappers::w_call(&self.ir.builder, trap, &[], "");
+        } else {
+            let i64_ty = self.ir.context.i64_type();
+            let panic_fn = self
+                .ir
+                .module
+                .get_function("__axon_msg_panic")
+                .unwrap_or_else(|| {
+                    let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                    let mp_ty = self
+                        .ir
+                        .context
+                        .void_type()
+                        .fn_type(&[i8_ptr.into(), i64_ty.into()], false);
+                    self.ir.module.add_function("__axon_msg_panic", mp_ty, None)
+                });
+            let g = build_wrappers::w_global_string_ptr(&self.ir.builder, msg, "panic_msg");
+            let len = i64_ty.const_int(msg.len() as u64, false);
+            build_wrappers::w_call(&self.ir.builder, panic_fn, &[g.into(), len.into()], "");
+        }
+        build_wrappers::w_unreachable(&self.ir.builder);
     }
 
     /// R7: get-or-declare `malloc` with the target-correct `size_t` width, and
@@ -1490,6 +1539,7 @@ impl<'ctx> Codegen<'ctx> {
     // ── Function bodies ───────────────────────────────────────────────────────
 
     fn emit_fn(&mut self, f: &ast::FnDef, llvm_fn: FunctionValue<'ctx>) {
+        self.current_src_fn = f.name.clone();
         let entry = self.ir.context.append_basic_block(llvm_fn, "entry");
         self.ir.builder.position_at_end(entry);
 

@@ -1,0 +1,36 @@
+{
+ "id": "a07-rank-keys",
+ "category": "transform",
+ "source": {
+  "kind": "atlas tasks_hard",
+  "file": "atlas/spikes/rlm-engine/src/tasks_hard.rs (TASKS, MIT, separate git tree)",
+  "index": 7,
+  "desc": "the keys of {'pear': 5, 'fig': 5, 'apple': 2, 'date': 9} joined by commas with no spaces, ordered by value descending and, where values tie, by key ascending",
+  "expected": "date,fig,pear,apple",
+  "atlas_category": "structured"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "atlas data point",
+    "runs": [
+     {
+      "inputs": {
+       "./data/counts.csv": "pear,5\nfig,5\napple,2\ndate,9\n"
+      },
+      "outputs": {
+       "./out/answer.txt": "date,fig,pear,apple\n"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/answer.txt",
+  "value": "date,fig,pear,apple"
+ }
+}

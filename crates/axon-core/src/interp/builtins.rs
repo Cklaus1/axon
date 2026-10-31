@@ -257,6 +257,24 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
             let allow = match kind {
                 caps::IoKind::FsRead => sb.scope.fs_read.as_deref().map(|l| ("read path", l)),
                 caps::IoKind::FsWrite => sb.scope.fs_write.as_deref().map(|l| ("write path", l)),
+                // An environment read is an ambient secret channel. Under a
+                // scoped sandbox whose read allowlist is EXPLICITLY empty
+                // (deny-all) it is refused: `IO` (console output) must not
+                // imply it. axon-os grants `IO` to every job and projects
+                // `env_var` onto the fs_read axis at admission, so a job is
+                // given the environment exactly when it is given a read
+                // prefix. A non-empty or unrestricted read scope leaves it
+                // as before. The AMBIENT entry (the `AXON_ALLOWED_FS_READ`
+                // variable) is not such a sandbox: its consumers - cortex's
+                // runtime fence sets it empty for every file that reads no
+                // FILE - scope paths only, and `env` is a capability of its
+                // own there, so it does not deny the environment.
+                caps::IoKind::Env if !sb.ambient => sb
+                    .scope
+                    .fs_read
+                    .as_deref()
+                    .filter(|l| l.is_empty())
+                    .map(|l| ("read the environment variable", l)),
                 _ => None,
             };
             let Some((what, allow)) = allow else { continue };
@@ -2901,11 +2919,21 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 ok!(Value::Float(as_float(&args[0])?.abs()));
             }
-            "min_i32" | "min_i64" => {
+            // `_i32` forms truncate each argument to its low 32 bits, like
+            // `abs_i32` and native's i32-typed runtime (native-parity NP-6).
+            "min_i32" => {
+                want(2)?;
+                ok!(Value::Int((as_int(&args[0])? as i32).min(as_int(&args[1])? as i32) as i64));
+            }
+            "max_i32" => {
+                want(2)?;
+                ok!(Value::Int((as_int(&args[0])? as i32).max(as_int(&args[1])? as i32) as i64));
+            }
+            "min_i64" => {
                 want(2)?;
                 ok!(Value::Int(as_int(&args[0])?.min(as_int(&args[1])?)));
             }
-            "max_i32" | "max_i64" => {
+            "max_i64" => {
                 want(2)?;
                 ok!(Value::Int(as_int(&args[0])?.max(as_int(&args[1])?)));
             }
@@ -6223,18 +6251,22 @@ impl<'p> Interp<'p> {
             }
             "ai_extract_uncertain_i64" => {
                 want(1)?;
-                if ai_mock_enabled() {
-                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Int(1), 0.9))));
-                }
                 // AXON_AI_REPLAY was consulted ONLY by the `ai_complete` arm, so a
                 // typed extract made a live, unrecorded model call even under a
                 // replay cache — silently defeating the reproducibility the flag
                 // promises. Found in review. The cache is keyed by
                 // sha256(model \0 prompt), so passing the BUILTIN NAME as the model
                 // keeps an extract's entry distinct from an `ai_complete` for the
-                // same prompt.
+                // same prompt. Checked BEFORE mock/live, as `ai_complete` does
+                // (asi-replay RP-3): under AXON_AI_MOCK plus a cache, the recording
+                // wins, and a mock answer is recorded so a later no-mock replay
+                // reproduces the run.
                 if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
                     ok!(replay_uncertain(&cached, name, false));
+                }
+                if ai_mock_enabled() {
+                    ai_replay_store(as_str(&args[0])?, name, "1|0.9", 0);
+                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Int(1), 0.9))));
                 }
                 #[cfg(feature = "asi-runtime")]
                 {
@@ -6255,12 +6287,14 @@ impl<'p> Interp<'p> {
             }
             "ai_extract_uncertain_f64" => {
                 want(1)?;
-                if ai_mock_enabled() {
-                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Float(1.0), 0.9))));
-                }
-                // Same replay bypass as the i64 variant above.
+                // Same replay-before-mock order and mock recording as the i64
+                // variant above.
                 if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
                     ok!(replay_uncertain(&cached, name, true));
+                }
+                if ai_mock_enabled() {
+                    ai_replay_store(as_str(&args[0])?, name, "1|0.9", 0);
+                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Float(1.0), 0.9))));
                 }
                 #[cfg(feature = "asi-runtime")]
                 {

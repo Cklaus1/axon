@@ -1,0 +1,317 @@
+// URL query strings: percent-decoding (with UTF-8 reassembly), percent-
+// encoding, parsing into key/value pairs and rebuilding. Parsed pairs are
+// returned flat: [key0, value0, key1, value1, ...].
+
+fn hex_val(c: i64) -> i64 {
+    if c >= 48 && c <= 57 {
+        c - 48
+    } else if c >= 97 && c <= 102 {
+        c - 87
+    } else if c >= 65 && c <= 70 {
+        c - 55
+    } else {
+        -1
+    }
+}
+
+fn utf8_text(bytes: [i64]) -> str {
+    let out = ""
+    let n = len(bytes)
+    let i = 0
+    while i < n {
+        let b = bytes[i]
+        let need = -1
+        let cp = 0
+        if b >= 0 && b < 128 {
+            need = 0
+            cp = b
+        } else if b >= 194 && b < 224 {
+            need = 1
+            cp = bit_and(b, 31)
+        } else if b >= 224 && b < 240 {
+            need = 2
+            cp = bit_and(b, 15)
+        } else if b >= 240 && b < 245 {
+            need = 3
+            cp = bit_and(b, 7)
+        }
+        let ok = need >= 0 && i + need < n
+        let j = 1
+        while ok && j <= need {
+            let cb = bytes[i + j]
+            if cb >= 128 && cb < 192 {
+                cp = cp * 64 + bit_and(cb, 63)
+            } else {
+                ok = false
+            }
+            j = j + 1
+        }
+        if ok && need == 2 && (cp < 2048 || (cp >= 55296 && cp < 57344)) {
+            ok = false
+        }
+        if ok && need == 3 && (cp < 65536 || cp > 1114111) {
+            ok = false
+        }
+        if ok {
+            out = out + chr(cp)
+            i = i + need + 1
+        } else {
+            out = out + chr(65533)
+            i = i + 1
+        }
+    }
+    out
+}
+
+fn percent_decode(s: str, form: bool) -> str {
+    let bytes: [i64] = []
+    let n = len(s)
+    let i = 0
+    while i < n {
+        let c = char_at(s, i)
+        if c == 37 && i + 2 < n {
+            let hi = hex_val(char_at(s, i + 1))
+            let lo = hex_val(char_at(s, i + 2))
+            if hi >= 0 && lo >= 0 {
+                bytes = arr_push(bytes, hi * 16 + lo)
+                i = i + 3
+            } else {
+                bytes = arr_push(bytes, c)
+                i = i + 1
+            }
+        } else if c == 43 && form {
+            bytes = arr_push(bytes, 32)
+            i = i + 1
+        } else {
+            bytes = arr_push(bytes, c)
+            i = i + 1
+        }
+    }
+    utf8_text(bytes)
+}
+
+fn percent_encode(s: str, form: bool, keep: str) -> str {
+    let digits = "0123456789ABCDEF"
+    let out = ""
+    for i in 0..len(s) {
+        let c = char_at(s, i)
+        let alnum = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57)
+        let mark = c == 45 || c == 46 || c == 95 || c == 126
+        if alnum || mark {
+            out = out + chr(c)
+        } else if c == 32 && form {
+            out = out + "+"
+        } else if c < 128 && str_contains(keep, chr(c)) {
+            out = out + chr(c)
+        } else {
+            let hi = shr(c, 4)
+            let lo = bit_and(c, 15)
+            out = out + "%" + str_slice(digits, hi, hi + 1) + str_slice(digits, lo, lo + 1)
+        }
+    }
+    out
+}
+
+fn parse_query(url: str) -> [str] {
+    let body = url
+    let hash = str_index_of(body, "#")
+    if hash >= 0 {
+        body = str_slice(body, 0, hash)
+    }
+    let q = str_index_of(body, "?")
+    if q >= 0 {
+        body = str_slice(body, q + 1, len(body))
+    }
+    let out: [str] = []
+    let parts = str_split(body, "&")
+    for i in 0..len(parts) {
+        let part = parts[i]
+        if len(part) > 0 {
+            let eq = str_index_of(part, "=")
+            let key = ""
+            let value = ""
+            if eq < 0 {
+                key = percent_decode(part, true)
+            } else {
+                key = percent_decode(str_slice(part, 0, eq), true)
+                value = percent_decode(str_slice(part, eq + 1, len(part)), true)
+            }
+            if len(key) > 0 {
+                out = arr_push(out, key)
+                out = arr_push(out, value)
+            }
+        }
+    }
+    out
+}
+
+fn build_query(pairs: [str], sorted: bool) -> str {
+    let keys: [str] = []
+    let values: [str] = []
+    let i = 0
+    while i < len(pairs) {
+        let value = if i + 1 < len(pairs) { pairs[i + 1] } else { "" }
+        if len(pairs[i]) > 0 {
+            keys = arr_push(keys, pairs[i])
+            values = arr_push(values, value)
+        }
+        i = i + 2
+    }
+    let n = len(keys)
+    if sorted {
+        let a = 1
+        while a < n {
+            let b = a
+            while b > 0 && str_cmp(keys[b - 1], keys[b]) > 0 {
+                let tk = keys[b - 1]
+                keys[b - 1] = keys[b]
+                keys[b] = tk
+                let tv = values[b - 1]
+                values[b - 1] = values[b]
+                values[b] = tv
+                b = b - 1
+            }
+            a = a + 1
+        }
+    }
+    let parts: [str] = []
+    for k in 0..n {
+        parts = arr_push(parts, percent_encode(keys[k], true, "") + "=" + percent_encode(values[k], true, "/:,"))
+    }
+    str_join(parts, "&")
+}
+
+fn set_param(url: str, key: str, value: str) -> str {
+    let base = url
+    let fragment = ""
+    let hash = str_index_of(base, "#")
+    if hash >= 0 {
+        fragment = str_slice(base, hash, len(base))
+        base = str_slice(base, 0, hash)
+    }
+    let q = str_index_of(base, "?")
+    let path = if q >= 0 { str_slice(base, 0, q) } else { "" }
+    let pairs = parse_query(base)
+    let out: [str] = []
+    let placed = len(value) == 0
+    let i = 0
+    while i + 1 < len(pairs) {
+        if str_eq(pairs[i], key) {
+            if !placed {
+                out = arr_push(out, key)
+                out = arr_push(out, value)
+                placed = true
+            }
+        } else {
+            out = arr_push(out, pairs[i])
+            out = arr_push(out, pairs[i + 1])
+        }
+        i = i + 2
+    }
+    if !placed {
+        out = arr_push(out, key)
+        out = arr_push(out, value)
+    }
+    let query = build_query(out, false)
+    let sep = if len(query) > 0 { "?" } else { "" }
+    path + sep + query + fragment
+}
+
+@[test]
+fn test_utf8_text_ascii_and_multibyte() {
+    assert_eq_str(utf8_text([104, 105]), "hi")
+    assert_eq_str(utf8_text([99, 97, 102, 195, 169]), "café")
+    assert_eq_str(utf8_text([226, 130, 172]), "€")
+}
+
+@[test]
+fn test_utf8_text_four_byte() {
+    assert_eq_str(utf8_text([240, 159, 152, 128]), "😀")
+}
+
+@[test]
+fn test_utf8_text_invalid_sequences() {
+    assert_eq_str(utf8_text([65, 255, 66, 226, 130]), "A" + chr(65533) + "B" + chr(65533) + chr(65533))
+}
+
+@[test]
+fn test_percent_decode_basic() {
+    assert_eq_str(percent_decode("a%20b%2Fc", false), "a b/c")
+    assert_eq_str(percent_decode("x+y", false), "x+y")
+}
+
+@[test]
+fn test_percent_decode_form_and_utf8() {
+    assert_eq_str(percent_decode("caf%C3%A9+au+lait", true), "café au lait")
+}
+
+@[test]
+fn test_percent_decode_malformed_escapes() {
+    assert_eq_str(percent_decode("100%", true), "100%")
+    assert_eq_str(percent_decode("%zz%4", true), "%zz%4")
+    assert_eq_str(percent_decode("%41%4a", true), "AJ")
+}
+
+@[test]
+fn test_percent_encode_reserved() {
+    assert_eq_str(percent_encode("a b&c=d", false, ""), "a%20b%26c%3Dd")
+}
+
+@[test]
+fn test_percent_encode_form_and_utf8() {
+    assert_eq_str(percent_encode("café au lait", true, ""), "caf%C3%A9+au+lait")
+}
+
+@[test]
+fn test_percent_encode_keep_set() {
+    assert_eq_str(percent_encode("/docs/a b.txt", false, "/"), "/docs/a%20b.txt")
+    assert_eq_str(percent_encode("~user_1-x.y", false, ""), "~user_1-x.y")
+}
+
+@[test]
+fn test_parse_query_full_url() {
+    assert(parse_query("https://example.com/s?q=rust+lang&page=2#top") == ["q", "rust lang", "page", "2"])
+}
+
+@[test]
+fn test_parse_query_flags_and_empty_segments() {
+    assert(parse_query("?debug&&x=&=orphan&y=1") == ["debug", "", "x", "", "y", "1"])
+}
+
+@[test]
+fn test_parse_query_encoded_keys_and_repeats() {
+    assert(parse_query("tag=a&tag=b&first%20name=J%C3%BCrgen&eq=a%3Db") == ["tag", "a", "tag", "b", "first name", "Jürgen", "eq", "a=b"])
+    assert(parse_query("") == [])
+}
+
+@[test]
+fn test_build_query_in_order() {
+    assert_eq_str(build_query(["q", "a b", "lang", "en"], false), "q=a+b&lang=en")
+}
+
+@[test]
+fn test_build_query_sorted_and_escaped() {
+    assert_eq_str(build_query(["z", "1", "a&b", "x=y", "m", "/p:1"], true), "a%26b=x%3Dy&m=/p:1&z=1")
+}
+
+@[test]
+fn test_build_query_odd_and_empty_keys() {
+    assert_eq_str(build_query(["", "skip", "k", "v", "last"], false), "k=v&last=")
+    assert_eq_str(build_query([], true), "")
+}
+
+@[test]
+fn test_set_param_replaces_first_and_drops_duplicates() {
+    assert_eq_str(set_param("/search?q=a&page=2&page=3", "page", "4"), "/search?q=a&page=4")
+}
+
+@[test]
+fn test_set_param_appends_and_keeps_fragment() {
+    assert_eq_str(set_param("/list?sort=asc#results", "limit", "50"), "/list?sort=asc&limit=50#results")
+}
+
+@[test]
+fn test_set_param_removes_with_empty_value() {
+    assert_eq_str(set_param("/a?x=1&y=2", "x", ""), "/a?y=2")
+    assert_eq_str(set_param("/a?x=1", "x", ""), "/a")
+}

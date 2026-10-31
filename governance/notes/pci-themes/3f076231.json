@@ -1,0 +1,1 @@
+{"theme": "intent-gen", "text": "axon-os run_sandboxed_capture now decides how a run ended by deadline, signal, completion marker and the interpreter's own final fault line, so stderr words or a direct exit(2)/exit(3) no longer read as a sandbox fault or compile failure."}

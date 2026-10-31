@@ -556,27 +556,53 @@ impl MonoContext {
     }
 }
 
+/// One instance the inference pass asks for: (generic fn name, type args,
+/// call sites). A site is the address of a call's callee `Expr` in the program
+/// that was inferred (`InferCtx::call_instantiations`), the program handed to
+/// `monomorphise`.
+pub type Instantiation = (String, Vec<AxonType>, Vec<usize>);
+
+/// How a call to a generic fn is renamed to an instance.
+struct Renames {
+    /// native-parity NP-3: callee address -> the instance THAT call needs.
+    sites: HashMap<usize, String>,
+    /// Generic fn name -> its instance, when it has exactly one.
+    single: HashMap<String, String>,
+}
+
 /// Top-level entry point: monomorphise `program` and return a `MonoProgram`.
 ///
-/// `instantiations` is a list of `(fn_name, type_args)` produced by the
-/// inference pass; each entry represents one required concrete instance.
-pub fn monomorphise(
-    program: &Program,
-    instantiations: Vec<(String, Vec<AxonType>)>,
-) -> MonoProgram {
+/// Each `instantiations` entry, produced by the inference pass, is one
+/// required concrete instance and the call sites that need it.
+pub fn monomorphise(program: &Program, instantiations: Vec<Instantiation>) -> MonoProgram {
     let mut ctx = MonoContext::new(program);
 
-    // Build a rename map: generic function name → list of mangled concrete names.
+    // Build a rename map: generic function name → list of mangled concrete
+    // names, and the per-site map. A site recorded with two different
+    // instances is dropped: the call is then left to `single`, or to codegen's
+    // E0910 refusal of an unresolved callee, never to a guess.
     let mut rename: HashMap<String, Vec<String>> = HashMap::new();
-    for (name, type_args) in &instantiations {
+    let mut sites: HashMap<usize, String> = HashMap::new();
+    let mut ambiguous: HashSet<usize> = HashSet::new();
+    for (name, type_args, call_sites) in &instantiations {
         let mangled = ctx.request_fn(name, type_args.clone());
+        for &site in call_sites {
+            if let Some(prev) = sites.insert(site, mangled.clone()) {
+                if prev != mangled {
+                    ambiguous.insert(site);
+                }
+            }
+        }
         rename.entry(name.clone()).or_default().push(mangled);
+    }
+    for site in &ambiguous {
+        sites.remove(site);
     }
 
     // Build a single-instantiation rename map: name → unique mangled name.
-    // (If a generic function has multiple distinct instantiations, call-site
-    // renaming for it isn't yet supported — leave as-is and let codegen warn.)
-    let single_rename: HashMap<String, String> = rename
+    // A call no site key covers (a call inside a generic body, whose instance
+    // is a clone) is renamed by it only when the fn has one instance.
+    let single: HashMap<String, String> = rename
         .into_iter()
         .filter_map(|(k, mut v)| {
             v.sort();
@@ -588,16 +614,41 @@ pub fn monomorphise(
             }
         })
         .collect();
+    let renames = Renames { sites, single };
 
     let mut prog = ctx.run();
 
-    // Rename call sites in non-generic functions.
+    // Rename call sites. The site keys are addresses in the ORIGINAL program,
+    // so each body is renamed from its original, not from the `prog` copy.
+    // `MonoContext::new` pushed the non-generic fns first, in program order;
+    // the generic instances after them are clones (only `single` applies).
+    let mut originals = program.items.iter().filter_map(|it| match it {
+        Item::FnDef(f) if f.generic_params.is_empty() => Some(f),
+        _ => None,
+    });
     for fndef in &mut prog.fns {
-        fndef.body = rename_calls_expr(&fndef.body, &single_rename);
+        let renamed = match originals.next() {
+            Some(orig) => {
+                debug_assert_eq!(orig.name, fndef.name);
+                rename_calls_expr(&orig.body, &renames)
+            }
+            None => rename_calls_expr(&fndef.body, &renames),
+        };
+        fndef.body = renamed;
     }
+    // NPA-2: impl method bodies, in the same order `other_items` kept them.
+    let mut impls = program.items.iter().filter_map(|it| match it {
+        Item::ImplBlock(b) => Some(b),
+        _ => None,
+    });
     for item in &mut prog.other_items {
-        if let Item::FnDef(f) = item {
-            f.body = rename_calls_expr(&f.body, &single_rename);
+        if let Item::ImplBlock(blk) = item {
+            let orig = impls
+                .next()
+                .expect("other_items keeps every impl block in order");
+            for (m, om) in blk.methods.iter_mut().zip(&orig.methods) {
+                m.body = rename_calls_expr(&om.body, &renames);
+            }
         }
     }
 
@@ -605,11 +656,12 @@ pub fn monomorphise(
 }
 
 /// Recursively rename calls to generic functions to their mangled concrete names.
-fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
+fn rename_calls_expr(expr: &Expr, rename: &Renames) -> Expr {
     match expr {
         Expr::Call { callee, args, tier } => {
             let new_callee = if let Expr::Ident(name) = callee.as_ref() {
-                if let Some(mangled) = rename.get(name) {
+                let site = callee.as_ref() as *const Expr as usize;
+                if let Some(mangled) = rename.sites.get(&site).or_else(|| rename.single.get(name)) {
                     Box::new(Expr::Ident(mangled.clone()))
                 } else {
                     Box::new(rename_calls_expr(callee, rename))

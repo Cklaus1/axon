@@ -1,0 +1,32 @@
+fn answer(text: str) -> str {
+    let words = str_split(str_trim(text), " ")
+    let lengths = dict_new()
+    for i in 0..len(words) {
+        dict_set(lengths, words[i], len(words[i]))
+    }
+    let total = 0
+    let keys = dict_keys(lengths)
+    for i in 0..len(keys) {
+        let n = dict_get_or(lengths, keys[i], 0)
+        if n > 3 { total = total + n }
+    }
+    to_str(total)
+}
+
+fn main() -> i64 {
+    match read_file("./data/sentence.txt") {
+        Ok(text) => {
+            match write_file("./out/answer.txt", answer(text) + "\n") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            2
+        }
+    }
+}

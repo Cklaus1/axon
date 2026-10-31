@@ -132,7 +132,7 @@ AX
 # probe that never got that far would find no mismatch and report success
 # having compared nothing — the same vacuous pass this harness exists to
 # prevent one level down.
-if grep -qE "linked, RUNNABLE|wasm object:|wasm link failed" "$WORK/agent_build.log"; then
+if grep -qE "emitted, linked|wasm object:|wasm link failed" "$WORK/agent_build.log"; then
   if grep -q "function signature mismatch" "$WORK/agent_build.log"; then
     echo "wasm_object_prune: FAIL — codegen and axon-rt disagree on a runtime signature:"
     grep -A2 "function signature mismatch" "$WORK/agent_build.log" | sed 's/^/    /'

@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nfrom collections import Counter\n\ndef main():\n    with open(\"./data/tokens.txt\", \"r\") as f:\n        line = f.read().strip()\n    tokens = [t for t in line.split(\",\") if t]\n    counts = Counter(tokens)\n    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)\n    if len(ranked) < 2:\n        return 1\n    answer = ranked[1][0]\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(\"./out/answer.txt\", \"w\") as f:\n        f.write(answer + \"\\n\")\n    return 0\n\nif __name__ == \"__main__\":\n    import sys\n    sys.exit(main())\n```",
+   "source": "import os\nfrom collections import Counter\n\ndef main():\n    with open(\"./data/tokens.txt\", \"r\") as f:\n        line = f.read().strip()\n    tokens = [t for t in line.split(\",\") if t]\n    counts = Counter(tokens)\n    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)\n    if len(ranked) < 2:\n        return 1\n    answer = ranked[1][0]\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(\"./out/answer.txt\", \"w\") as f:\n        f.write(answer + \"\\n\")\n    return 0\n\nif __name__ == \"__main__\":\n    import sys\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

@@ -3571,6 +3571,43 @@ pub extern "C" fn __axon_msg_panic_i64(msg_ptr: *const u8, msg_len: i64, n: i64)
     std::process::exit(RUNTIME_PANIC_EXIT_CODE);
 }
 
+/// native-parity NP-5: the interpreter's `alloc_array_err` text for an
+/// `arr_range`/`arr_repeat` whose storage cannot be allocated. `kind` 0: the
+/// byte size exceeds `isize::MAX` (std's `CapacityOverflow`); 1: `malloc`
+/// returned null (std's `AllocError`). The reasons are std's
+/// `TryReserveError` `Display` texts, pinned by a test below.
+fn format_alloc_array_panic(name: &str, count: u64, kind: i64) -> String {
+    let reason = if kind == 0 {
+        "the computed capacity exceeded the collection's maximum"
+    } else {
+        "the memory allocator returned an error"
+    };
+    format!("{name}: cannot allocate an array of {count} elements (memory allocation failed because {reason})")
+}
+
+/// native-parity NP-5: prints `axon: panic: <format_alloc_array_panic>` and
+/// exits 101, the interpreter's line for the same refused allocation (native
+/// used to die in the SIGSEGV handler saying "stack overflow").
+#[no_mangle]
+pub extern "C" fn __axon_alloc_array_panic(
+    name_ptr: *const u8,
+    name_len: i64,
+    count: u64,
+    kind: i64,
+) -> ! {
+    let name = if name_ptr.is_null() || name_len <= 0 {
+        ""
+    } else {
+        let bytes = unsafe { std::slice::from_raw_parts(name_ptr, name_len as usize) };
+        std::str::from_utf8(bytes).unwrap_or("")
+    };
+    eprintln!(
+        "axon: panic: {}",
+        format_alloc_array_panic(name, count, kind)
+    );
+    std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+}
+
 // ── assert_eq panic helpers (I-2 stderr text + values) ───────────────────────
 // The interpreter prints `axon: panic: assertion failed: <a> != <b>` to STDERR
 // with the ACTUAL values; native codegen used to printf a generic message to
@@ -3774,6 +3811,31 @@ mod verify_panic_tests {
         // ...and the placeholder must survive into the message the user sees.
         let msg = format_verify_panic(unknown, unknown, unknown, 0.5, 0.1);
         assert!(msg.contains("<unknown>"), "msg: {msg}");
+    }
+}
+
+#[cfg(test)]
+mod alloc_array_panic_tests {
+    use super::*;
+
+    /// native-parity NP-5: the two reasons are std's `TryReserveError` texts,
+    /// which the interpreter prints; a toolchain change must not drift them.
+    #[test]
+    fn reasons_match_std_try_reserve_error_display() {
+        let overflow = Vec::<i64>::new().try_reserve_exact(usize::MAX).unwrap_err();
+        assert_eq!(
+            format_alloc_array_panic("arr_range", 7, 0),
+            format!("arr_range: cannot allocate an array of 7 elements ({overflow})")
+        );
+        // `isize::MAX` bytes passes the capacity check and reaches the
+        // allocator, which refuses it.
+        let refused = Vec::<u8>::new()
+            .try_reserve_exact(isize::MAX as usize)
+            .unwrap_err();
+        assert_eq!(
+            format_alloc_array_panic("arr_repeat", 9, 1),
+            format!("arr_repeat: cannot allocate an array of 9 elements ({refused})")
+        );
     }
 }
 

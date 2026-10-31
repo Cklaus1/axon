@@ -1,0 +1,262 @@
+// A small LZ77 codec over ASCII strings. Tokens are stored flat as
+// offset, length, next-byte triples; a next-byte of -1 marks a final
+// match with no trailing literal.
+
+fn longest_match(text: str, pos: i64, window: i64, max_len: i64) -> [i64] {
+    let n = str_len(text)
+    if pos < 0 || pos >= n || window <= 0 || max_len <= 0 {
+        return [0, 0]
+    }
+    let start = pos - window
+    if start < 0 {
+        start = 0
+    }
+    let limit = max_len
+    if n - pos < limit {
+        limit = n - pos
+    }
+    let best_offset = 0
+    let best_length = 0
+    let candidate = pos - 1
+    while candidate >= start {
+        let length = 0
+        while length < limit && char_at(text, candidate + length) == char_at(text, pos + length) {
+            length = length + 1
+        }
+        if length > best_length {
+            best_length = length
+            best_offset = pos - candidate
+        }
+        candidate = candidate - 1
+    }
+    [best_offset, best_length]
+}
+
+fn lz77_compress(text: str, window: i64, max_len: i64, min_match: i64) -> [i64] {
+    let tokens: [i64] = []
+    let n = str_len(text)
+    let threshold = min_match
+    if threshold < 1 {
+        threshold = 1
+    }
+    let pos = 0
+    while pos < n {
+        let found = longest_match(text, pos, window, max_len)
+        let offset = found[0]
+        let length = found[1]
+        if length < threshold {
+            offset = 0
+            length = 0
+        }
+        let next = -1
+        if pos + length < n {
+            next = char_at(text, pos + length)
+        }
+        tokens = arr_push(tokens, offset)
+        tokens = arr_push(tokens, length)
+        tokens = arr_push(tokens, next)
+        pos = pos + length + 1
+    }
+    tokens
+}
+
+fn lz77_decompress(tokens: [i64]) -> str {
+    if len(tokens) % 3 != 0 {
+        return ""
+    }
+    let out: [str] = []
+    let valid = true
+    let i = 0
+    while i < len(tokens) && valid {
+        let offset = tokens[i]
+        let length = tokens[i + 1]
+        let next = tokens[i + 2]
+        if offset < 0 || length < 0 || offset > len(out) || (length > 0 && offset == 0) {
+            valid = false
+        } else {
+            let k = 0
+            while k < length {
+                out = arr_push(out, out[len(out) - offset])
+                k = k + 1
+            }
+            if next >= 0 && next < 128 {
+                out = arr_push(out, chr(next))
+            } else if next >= 128 || i + 3 < len(tokens) {
+                valid = false
+            }
+        }
+        i = i + 3
+    }
+    if valid {
+        str_join(out, "")
+    } else {
+        ""
+    }
+}
+
+fn token_stats(tokens: [i64]) -> [i64] {
+    let empty: [i64] = []
+    if len(tokens) % 3 != 0 {
+        return empty
+    }
+    let count = 0
+    let literals = 0
+    let matches = 0
+    let longest = 0
+    let decoded = 0
+    let i = 0
+    while i < len(tokens) {
+        let length = tokens[i + 1]
+        if tokens[i] < 0 || length < 0 {
+            return empty
+        }
+        count = count + 1
+        if length == 0 {
+            literals = literals + 1
+        } else {
+            matches = matches + 1
+            longest = max_i64(longest, length)
+        }
+        decoded = decoded + length
+        if tokens[i + 2] >= 0 {
+            decoded = decoded + 1
+        }
+        i = i + 3
+    }
+    [count, literals, matches, longest, decoded]
+}
+
+fn compressed_bits(tokens: [i64], window: i64, max_len: i64) -> i64 {
+    if len(tokens) % 3 != 0 || window <= 0 || max_len <= 0 {
+        return -1
+    }
+    let offset_bits = 0
+    let v = window
+    while v > 0 {
+        offset_bits = offset_bits + 1
+        v = v / 2
+    }
+    let length_bits = 0
+    v = max_len
+    while v > 0 {
+        length_bits = length_bits + 1
+        v = v / 2
+    }
+    let total = 0
+    let i = 0
+    while i < len(tokens) && total >= 0 {
+        let offset = tokens[i]
+        let length = tokens[i + 1]
+        if offset < 0 || offset > window || length < 0 || length > max_len {
+            total = -1
+        } else if length == 0 {
+            total = total + 9
+        } else {
+            total = total + 1 + offset_bits + length_bits
+            if tokens[i + 2] >= 0 {
+                total = total + 8
+            }
+        }
+        i = i + 3
+    }
+    total
+}
+
+@[test]
+fn test_longest_match_overlapping_run() {
+    assert(longest_match("abcabcabc", 3, 8, 8) == [3, 6])
+}
+
+@[test]
+fn test_longest_match_partial() {
+    assert(longest_match("xyzxyw", 3, 8, 8) == [3, 2])
+}
+
+@[test]
+fn test_longest_match_prefers_nearest() {
+    assert(longest_match("abab ab", 5, 8, 8) == [3, 2])
+}
+
+@[test]
+fn test_longest_match_limits() {
+    assert(longest_match("aaaaaaaa", 1, 8, 3) == [1, 3])
+    assert(longest_match("abcdefab", 6, 4, 8) == [0, 0])
+}
+
+@[test]
+fn test_lz77_compress_repeating_pair() {
+    assert(lz77_compress("abababab", 8, 8, 1) == [0, 0, 97, 0, 0, 98, 2, 6, -1])
+}
+
+@[test]
+fn test_lz77_compress_min_match() {
+    assert_eq(len(lz77_compress("abcabd", 8, 8, 3)), 18)
+    assert(lz77_compress("abcabd", 8, 8, 2) == [0, 0, 97, 0, 0, 98, 0, 0, 99, 3, 2, 100])
+}
+
+@[test]
+fn test_lz77_compress_window() {
+    assert_eq(len(lz77_compress("abcXabc", 3, 8, 1)), 21)
+    assert(lz77_compress("abcXabc", 4, 8, 1) == [0, 0, 97, 0, 0, 98, 0, 0, 99, 0, 0, 88, 4, 3, -1])
+}
+
+@[test]
+fn test_lz77_decompress_overlap() {
+    assert_eq_str(lz77_decompress([0, 0, 97, 0, 0, 98, 2, 6, -1]), "abababab")
+}
+
+@[test]
+fn test_lz77_decompress_literals() {
+    assert_eq_str(lz77_decompress([0, 0, 104, 0, 0, 105, 0, 0, 33]), "hi!")
+}
+
+@[test]
+fn test_lz77_decompress_run_then_literal() {
+    assert_eq_str(lz77_decompress([0, 0, 120, 1, 4, 121]), "xxxxxy")
+}
+
+@[test]
+fn test_lz77_decompress_rejects_bad_tokens() {
+    assert_eq_str(lz77_decompress([3, 1, 97]), "")
+    assert_eq_str(lz77_decompress([0, 0, 97, 1, 1]), "")
+    assert_eq_str(lz77_decompress([0, 0, 97, 1, 1, -1, 0, 0, 98]), "")
+}
+
+@[test]
+fn test_lz77_round_trip() {
+    let text = "the rain in spain stays mainly in the plain"
+    let tokens = lz77_compress(text, 16, 8, 2)
+    assert_eq_str(lz77_decompress(tokens), text)
+}
+
+@[test]
+fn test_token_stats_mixed() {
+    assert(token_stats([0, 0, 97, 0, 0, 98, 2, 6, -1]) == [3, 2, 1, 6, 8])
+}
+
+@[test]
+fn test_token_stats_trailing_literal() {
+    assert(token_stats([0, 0, 120, 1, 4, 121]) == [2, 1, 1, 4, 6])
+}
+
+@[test]
+fn test_token_stats_empty_and_malformed() {
+    assert(token_stats([]) == [0, 0, 0, 0, 0])
+    assert_eq(len(token_stats([1, 2])), 0)
+}
+
+@[test]
+fn test_compressed_bits_window_eight() {
+    assert_eq(compressed_bits([0, 0, 97, 0, 0, 98, 2, 6, -1], 8, 8), 27)
+}
+
+@[test]
+fn test_compressed_bits_window_four() {
+    assert_eq(compressed_bits([0, 0, 120, 1, 4, 121], 4, 4), 24)
+}
+
+@[test]
+fn test_compressed_bits_rejects_long_match() {
+    assert_eq(compressed_bits([0, 0, 97, 1, 9, -1], 8, 8), -1)
+    assert_eq(compressed_bits([0, 0, 97, 9, 1, -1], 8, 8), -1)
+}

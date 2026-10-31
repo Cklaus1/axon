@@ -43,7 +43,8 @@ pub use record::{
 };
 pub use repair_envelope::{ENVELOPE_SCHEMA, ENVELOPE_SEED_DOMAIN, ENVELOPE_SIG_DOMAIN};
 pub use runtime::{
-    Isolation, IsolationRequirement, PrincipalHandle, ProgramSource, RunOutcome, Runtime,
+    run_bounded_job, BoundedRun, CapturedRun, Isolation, IsolationRequirement, PrincipalHandle,
+    ProgramSource, RunOutcome, Runtime, SandboxOutcome,
 };
 pub use supervisor::run as supervise;
 pub use supervisor::run_requiring as supervise_requiring;

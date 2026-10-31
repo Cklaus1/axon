@@ -1,0 +1,17 @@
+fn main() -> i64 {
+    match file_size("./data/five.txt") {
+        Ok(n) => {
+            match write_file("./out/answer.txt", to_str(n) + "\n") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln("cannot stat: {e}")
+            2
+        }
+    }
+}

@@ -1,0 +1,29 @@
+fn answer(text: str) -> str {
+    let tokens = str_split(str_trim(text), ",")
+    let counts = dict_new()
+    for i in 0..len(tokens) {
+        dict_inc(counts, tokens[i])
+    }
+    let pairs = dict_to_pairs(counts)
+    let sorted = arr_sort_by(pairs, |a, b| b.1 - a.1)
+    if len(sorted) < 2 { return "" }
+    sorted[1].0
+}
+
+fn main() -> i64 {
+    match read_file("./data/tokens.txt") {
+        Ok(text) => {
+            match write_file("./out/answer.txt", answer(text) + "\n") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            2
+        }
+    }
+}

@@ -1,0 +1,1 @@
+{"theme": "native parity", "text": "min_i32/max_i32 truncate each argument to its low 32 bits in the interpreter (tree and VM), matching abs_i32 and native."}

@@ -1,0 +1,262 @@
+// Latin and magic square checks over integer grids given as lists of rows.
+
+fn is_square(sq: [[i64]]) -> bool {
+    let n = len(sq)
+    if n == 0 {
+        return false
+    }
+    for r in 0..n {
+        if len(sq[r]) != n {
+            return false
+        }
+    }
+    true
+}
+
+// An n x n grid is latin when every row and every column holds each of the
+// symbols 1..n exactly once.
+fn is_latin_square(sq: [[i64]]) -> bool {
+    if !is_square(sq) {
+        return false
+    }
+    let n = len(sq)
+    for r in 0..n {
+        let seen = arr_repeat(false, n + 1)
+        for c in 0..n {
+            let v = sq[r][c]
+            if v < 1 || v > n {
+                return false
+            }
+            if seen[v] {
+                return false
+            }
+            seen[v] = true
+        }
+    }
+    for c in 0..n {
+        let seen = arr_repeat(false, n + 1)
+        for r in 0..n {
+            let v = sq[r][c]
+            if seen[v] {
+                return false
+            }
+            seen[v] = true
+        }
+    }
+    true
+}
+
+// A normal magic square holds 1..n*n once each, and every row, column and both
+// main diagonals add up to n*(n*n+1)/2.
+fn is_magic_square(sq: [[i64]]) -> bool {
+    if !is_square(sq) {
+        return false
+    }
+    let n = len(sq)
+    let target = n * (n * n + 1) / 2
+    let seen = arr_repeat(false, n * n + 1)
+    let diag = 0
+    let anti = 0
+    for r in 0..n {
+        let row_sum = 0
+        let col_sum = 0
+        for c in 0..n {
+            let v = sq[r][c]
+            if v < 1 || v > n * n || seen[v] {
+                return false
+            }
+            seen[v] = true
+            row_sum = row_sum + v
+            col_sum = col_sum + sq[c][r]
+        }
+        if row_sum != target || col_sum != target {
+            return false
+        }
+        diag = diag + sq[r][r]
+        anti = anti + sq[r][n - 1 - r]
+    }
+    diag == target && anti == target
+}
+
+// Row sums, then column sums, then the main and anti diagonal sums. Returns []
+// when the grid is not square.
+fn line_sums(sq: [[i64]]) -> [i64] {
+    let out: [i64] = []
+    if !is_square(sq) {
+        return out
+    }
+    let n = len(sq)
+    for r in 0..n {
+        let s = 0
+        for c in 0..n {
+            s = s + sq[r][c]
+        }
+        out = arr_push(out, s)
+    }
+    for c in 0..n {
+        let s = 0
+        for r in 0..n {
+            s = s + sq[r][c]
+        }
+        out = arr_push(out, s)
+    }
+    let diag = 0
+    let anti = 0
+    for i in 0..n {
+        diag = diag + sq[i][i]
+        anti = anti + sq[i][n - 1 - i]
+    }
+    out = arr_push(out, diag)
+    arr_push(out, anti)
+}
+
+// How far a square grid is from latin: one point per cell value outside 1..n
+// plus one per extra repeat of a value within a row or a column. Returns -1
+// when the grid is not square.
+fn latin_conflicts(sq: [[i64]]) -> i64 {
+    if !is_square(sq) {
+        return -1
+    }
+    let n = len(sq)
+    let total = 0
+    for r in 0..n {
+        let row_counts = arr_repeat(0, n + 1)
+        let col_counts = arr_repeat(0, n + 1)
+        for c in 0..n {
+            let v = sq[r][c]
+            if v < 1 || v > n {
+                total = total + 1
+            } else {
+                if row_counts[v] > 0 {
+                    total = total + 1
+                }
+                row_counts[v] = row_counts[v] + 1
+            }
+            let w = sq[c][r]
+            if w >= 1 && w <= n {
+                if col_counts[w] > 0 {
+                    total = total + 1
+                }
+                col_counts[w] = col_counts[w] + 1
+            }
+        }
+    }
+    total
+}
+
+// Mean absolute difference between each row, column and main-diagonal sum and
+// the normal magic constant. Returns -1.0 when the grid is not square.
+fn magic_deviation(sq: [[i64]]) -> f64 {
+    if !is_square(sq) {
+        return -1.0
+    }
+    let n = len(sq)
+    let target = n * (n * n + 1) / 2
+    let total = 0
+    let diag = 0
+    let anti = 0
+    for i in 0..n {
+        let row_sum = 0
+        let col_sum = 0
+        for j in 0..n {
+            row_sum = row_sum + sq[i][j]
+            col_sum = col_sum + sq[j][i]
+        }
+        total = total + abs_i64(row_sum - target) + abs_i64(col_sum - target)
+        diag = diag + sq[i][i]
+        anti = anti + sq[i][n - 1 - i]
+    }
+    total = total + abs_i64(diag - target) + abs_i64(anti - target)
+    let lines = 2 * n + 2
+    i64_to_f64(total) / i64_to_f64(lines)
+}
+
+@[test]
+fn test_latin_square_order_three() {
+    assert(is_latin_square([[1, 2, 3], [2, 3, 1], [3, 1, 2]]))
+    assert(!is_latin_square([[1, 2, 3], [2, 1, 3], [3, 2, 1]]))
+}
+
+@[test]
+fn test_latin_square_small_orders() {
+    assert(is_latin_square([[1, 2], [2, 1]]))
+    assert(is_latin_square([[1]]))
+    assert(!is_latin_square([[1, 2], [1, 2]]))
+}
+
+@[test]
+fn test_latin_square_shape_and_range() {
+    assert(is_latin_square([[2, 1, 4, 3], [4, 3, 2, 1], [1, 2, 3, 4], [3, 4, 1, 2]]))
+    assert(!is_latin_square([[1, 2, 3], [2, 3, 1]]))
+    assert(!is_latin_square([[0, 1], [1, 0]]))
+}
+
+@[test]
+fn test_magic_square_lo_shu() {
+    assert(is_magic_square([[2, 7, 6], [9, 5, 1], [4, 3, 8]]))
+    assert(!is_magic_square([[2, 7, 6], [9, 5, 1], [4, 3, 9]]))
+}
+
+@[test]
+fn test_magic_square_order_four() {
+    assert(is_magic_square([[16, 3, 2, 13], [5, 10, 11, 8], [9, 6, 7, 12], [4, 15, 14, 1]]))
+    assert(!is_magic_square([[1, 2], [3, 4]]))
+}
+
+@[test]
+fn test_magic_square_trivial_and_repeated() {
+    assert(is_magic_square([[1]]))
+    assert(!is_magic_square([[5, 5, 5], [5, 5, 5], [5, 5, 5]]))
+}
+
+@[test]
+fn test_line_sums_lo_shu() {
+    assert(line_sums([[2, 7, 6], [9, 5, 1], [4, 3, 8]]) == [15, 15, 15, 15, 15, 15, 15, 15])
+}
+
+@[test]
+fn test_line_sums_order_two() {
+    assert(line_sums([[1, 2], [3, 4]]) == [3, 7, 4, 6, 5, 5])
+}
+
+@[test]
+fn test_line_sums_counting_grid() {
+    assert(line_sums([[1, 2, 3], [4, 5, 6], [7, 8, 9]]) == [6, 15, 24, 12, 15, 18, 15, 15])
+    let none: [i64] = []
+    assert(line_sums([[1, 2], [3]]) == none)
+}
+
+@[test]
+fn test_latin_conflicts_repeated_rows() {
+    assert_eq(latin_conflicts([[1, 2], [1, 2]]), 2)
+    assert_eq(latin_conflicts([[1, 2, 3], [2, 3, 1], [3, 1, 2]]), 0)
+}
+
+@[test]
+fn test_latin_conflicts_constant_grid() {
+    assert_eq(latin_conflicts([[1, 1, 1], [1, 1, 1], [1, 1, 1]]), 12)
+}
+
+@[test]
+fn test_latin_conflicts_mixed_faults() {
+    assert_eq(latin_conflicts([[1, 2, 3], [2, 1, 3], [3, 2, 1]]), 2)
+    assert_eq(latin_conflicts([[0, 1], [1, 0]]), 2)
+    assert_eq(latin_conflicts([[1, 2]]), 0 - 1)
+}
+
+@[test]
+fn test_magic_deviation_order_two() {
+    assert_eq_f64(magic_deviation([[1, 2], [3, 4]]), 1.0)
+    assert_eq_f64(magic_deviation([[2, 7, 6], [9, 5, 1], [4, 3, 8]]), 0.0)
+}
+
+@[test]
+fn test_magic_deviation_counting_grid() {
+    assert_eq_f64(magic_deviation([[1, 2, 3], [4, 5, 6], [7, 8, 9]]), 3.0)
+}
+
+@[test]
+fn test_magic_deviation_not_square() {
+    assert_eq_f64(magic_deviation([[1, 2, 3]]), 0.0 - 1.0)
+    assert_eq_f64(magic_deviation([[3, 3], [3, 3]]), 1.0)
+}

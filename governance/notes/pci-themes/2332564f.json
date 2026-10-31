@@ -1,0 +1,4 @@
+{
+  "theme": "checker-soundness-3 lane C",
+  "text": "PARSER: a keyword or bool token, a `!` (not `!=`) or a `(` glued to a closing string quote is now the CS3-6 parse error, as a glued name already was: `\"flag is \"true\" now\"` no longer checks clean and prints a truncated string, and `\"a\"(1)` no longer checks clean and panics. A glued `{` stays legal. No interpreter or runtime path changes."
+}

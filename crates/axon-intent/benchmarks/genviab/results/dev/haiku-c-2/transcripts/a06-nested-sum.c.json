@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport re\nimport sys\n\n\ndef main():\n    src = \"./data/nested.txt\"\n    dst = \"./out/answer.txt\"\n\n    try:\n        with open(src, \"r\", encoding=\"utf-8\") as f:\n            text = f.read()\n    except OSError:\n        return 1\n\n    # Every run of decimal digits is one non-negative integer. Scanning with a\n    # regex avoids recursion-depth limits and never evaluates the input.\n    total = sum(int(tok) for tok in re.findall(r\"\\d+\", text))\n\n    try:\n        os.makedirs(os.path.dirname(dst), exist_ok=True)\n        with open(dst, \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n            f.write(str(total) + \"\\n\")\n    except OSError:\n        return 1\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport re\nimport sys\n\n\ndef main():\n    src = \"./data/nested.txt\"\n    dst = \"./out/answer.txt\"\n\n    try:\n        with open(src, \"r\", encoding=\"utf-8\") as f:\n            text = f.read()\n    except OSError:\n        return 1\n\n    # Every run of decimal digits is one non-negative integer. Scanning with a\n    # regex avoids recursion-depth limits and never evaluates the input.\n    total = sum(int(tok) for tok in re.findall(r\"\\d+\", text))\n\n    try:\n        os.makedirs(os.path.dirname(dst), exist_ok=True)\n        with open(dst, \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n            f.write(str(total) + \"\\n\")\n    except OSError:\n        return 1\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

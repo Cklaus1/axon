@@ -4134,6 +4134,49 @@ fn ast_review_names_the_module_each_imported_fn_came_from() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// IG0: `axon ast review --json` reports the admission axes from the one
+/// table admission reads — per fn and for the whole program, comments and
+/// strings never counting.
+#[test]
+fn ast_review_reports_the_admission_axes_from_the_one_table() {
+    let dir = std::env::temp_dir().join(format!("axon-ig0-review-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(
+        dir.join("p.ax"),
+        "// total mod 10\nfn log(s: str) -> i64 {\n    match append_file(\"./out/log.txt\", s) { Ok(_) => 0, Err(_) => 1 }\n}\nfn main() -> i64 {\n    println(\"exec(x)\")\n    log(\"x\")\n}\n",
+    )
+    .unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_axon"))
+        .current_dir(&dir)
+        .args(["ast", "review", "p.ax", "--json"])
+        .output()
+        .unwrap();
+    let o = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{o}");
+    let v: serde_json::Value = serde_json::from_str(&o).unwrap();
+    assert_eq!(
+        v["axes"],
+        serde_json::json!(["fs_write"]),
+        "ATTACK: ast review reported admission axes the table does not give: {o}"
+    );
+    let fn_axes = |name: &str| {
+        v["fns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == name)
+            .unwrap_or_else(|| panic!("no fn {name}: {o}"))["axes"]
+            .clone()
+    };
+    assert_eq!(fn_axes("log"), serde_json::json!(["fs_write"]));
+    assert_eq!(
+        fn_axes("main"),
+        serde_json::json!(["fs_write"]),
+        "main reaches log"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn imports_closure_agrees_with_transitive_resolution_on_every_example() {
     // G1a extra gate: for every example with a `use`, the closure the LOADER
@@ -10784,8 +10827,9 @@ fn build_aborts_on_codegen_unsupported_builtin_e0910() {
     // E0907/feature-required message too.)
     let f = std::env::temp_dir().join(format!("axon_e0910_{}.ax", std::process::id()));
     // arr_group_by is a known builtin that is NOT yet codegen-lowered (the
-    // nested-slice ops flatten/chunk now are; group_by/partition are not).
-    std::fs::write(&f, "fn main() -> i64 { let a = [1, 2, 3, 4]\n let b = arr_group_by(&a, |x| x % 2)\n len(b) }\n").unwrap();
+    // nested-slice ops flatten/chunk now are; group_by/partition are not). The
+    // key fn returns `str` and the result is a Dict, so the program checks clean.
+    std::fs::write(&f, "fn main() -> i64 { let a = [1, 2, 3, 4]\n let b = arr_group_by(&a, |x| to_str(x % 2))\n dict_len(b) }\n").unwrap();
     let out = axon()
         .args(["build", f.to_str().unwrap(), "-o"])
         .arg(std::env::temp_dir().join(format!("axon_e0910_{}.bin", std::process::id())))
@@ -21438,15 +21482,62 @@ fn stdlib_module_acceptance_suites_pass() {
 #[test]
 fn asi_demo_set_runs_without_crashing() {
     // examples/asi/ is the documented "public face" of the language (CLAUDE.md
-    // ASI Demo Set). Only ~8 of 33 demos had a cli_run test; the rest — including
-    // 3 of the 4 flagship demos (classify/code_review/optimize/summarize) — were
-    // unguarded, so a regression that PANICKED one would go unnoticed. These demos
-    // intentionally exit non-zero (computed values, or @[verify]/goal-gate
-    // REJECTIONS — exit 3 is policy-rejection, working as designed), so we can't
-    // assert exit 0. The real regression signal is a CRASH: a panic (exit 101) or
-    // a parse/type/resolve error on stderr. This asserts every demo RUNS TO
-    // COMPLETION without crashing. (contained_violation.ax is an intentional
-    // @[contained] deny-case — it fails `check`, not `run`, so we exclude it.)
+    // ASI Demo Set). Every demo's exit code under mock is PINNED in `EXPECTED`.
+    // Many demos exit non-zero by design (a computed value, or exit 3 = a
+    // @[verify]/goal-gate rejection), so "no crash" is not enough: a demo newly
+    // refused at check (rc 2), falling to E1300 (rc 5) or diverging (rc 11) is
+    // exactly the regression to catch, and a changed computed result moves the
+    // rc too. A demo whose rc changes LEGITIMATELY updates its row here in the
+    // same commit. contained_violation.ax is an intentional @[contained]
+    // deny-case: rc 2 with E1001. Panics and compile-stage errors are still
+    // reported. The run is hermetic (asi-replay RP-2): env_clear plus an
+    // allow-list, a temp cwd/HOME/XDG cache and temp state files, so a
+    // developer's AXON_AI_REPLAY, model overrides, AXON_ENGINE,
+    // AXON_GOAL_CONTINUE or persistent-demo state can never change an rc.
+    const EXPECTED: &[(&str, i32)] = &[
+        ("ad_optimizer", 0),
+        ("agent_metacognition", 0),
+        ("ai_fallback", 1),
+        ("allocate", 0),
+        ("bandit_ucb", 1),
+        ("budget_audit", 0),
+        ("categorical_goal", 0),
+        ("classify", 3),
+        ("code_review", 3),
+        ("constrained_goal", 0),
+        ("contained", 0),
+        ("contained_violation", 2),
+        ("coord_attested", 0),
+        ("corrigible", 0),
+        ("deliberative_agent", 0),
+        ("experiment_zone", 0),
+        ("goal_attribute", 1),
+        ("kernel_orchestrator", 0),
+        ("learn_linear", 1),
+        ("learn_linear_f64", 1),
+        ("llm_cache", 1),
+        ("local_search", 0),
+        ("multi_objective", 1),
+        ("optimize", 3),
+        ("parallel_score", 88),
+        ("pareto", 0),
+        ("persistent_bandit", 0),
+        ("persistent_learner", 0),
+        ("planner", 0),
+        ("pricing", 3),
+        ("rank", 0),
+        ("risk_monitor", 0),
+        ("safe_bandit", 1),
+        ("safe_self_improve", 1),
+        ("safety_stack_demo", 0),
+        ("search_rank", 3),
+        ("self_improve", 0),
+        ("summarize", 0),
+        ("supervised_agent", 0),
+        ("taint_flow", 0),
+        ("word_freq", 1),
+        ("world_model", 0),
+    ];
     let dir = format!("{}/../../examples/asi", env!("CARGO_MANIFEST_DIR"));
     let stdlib = format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR"));
     let path = format!("{dir}:{stdlib}");
@@ -21454,34 +21545,60 @@ fn asi_demo_set_runs_without_crashing() {
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().map(|x| x == "ax").unwrap_or(false))
-        .filter(|p| {
-            p.file_name()
-                .map(|n| n != "contained_violation.ax")
-                .unwrap_or(true)
-        })
         .collect();
     files.sort();
-    assert!(
-        files.len() > 20,
-        "expected the full ASI demo set, found {}",
-        files.len()
-    );
 
-    let mut crashes = Vec::new();
-    for f in &files {
+    let mut failures = Vec::new();
+    let stems: Vec<String> = files
+        .iter()
+        .map(|f| f.file_stem().unwrap().to_string_lossy().into_owned())
+        .collect();
+    for s in &stems {
+        if !EXPECTED.iter().any(|(n, _)| n == s) {
+            failures.push(format!(
+                "ATTACK: an ASI demo is missing from the pinned exit-code table [{s}]: \
+                 examples/asi/{s}.ax has no row in EXPECTED"
+            ));
+        }
+    }
+    for (n, _) in EXPECTED {
+        if !stems.iter().any(|s| s == n) {
+            failures.push(format!(
+                "ATTACK: an ASI demo is missing from the pinned exit-code table [{n}]: \
+                 the row has no examples/asi/{n}.ax"
+            ));
+        }
+    }
+
+    let tmp = std::env::temp_dir().join(format!("axon_asirc_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    for (f, name) in files.iter().zip(&stems) {
+        let Some(&(_, want)) = EXPECTED.iter().find(|(n, _)| n == name) else {
+            continue;
+        };
         let out = axon()
             .args(["run", f.to_str().unwrap()])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &tmp)
+            .env("XDG_CACHE_HOME", tmp.join(name).join("cache"))
             .env("AXON_PATH", &path)
-            .env("AXON_AI_MOCK", "1")
             .env("AXON_SEED", "42")
+            .env("AXON_BANDIT_STATE", tmp.join("bandit.txt"))
+            .env("AXON_LEARNER_STATE", tmp.join("learner.txt"))
+            .env("AXON_AI_MOCK", "1")
+            .current_dir(&tmp)
             .output()
             .unwrap();
-        let name = f.file_name().unwrap().to_string_lossy();
         let stderr = String::from_utf8_lossy(&out.stderr);
-        // A crash = panic exit (101) OR a compile-stage error on stderr. A
-        // deliberate @[verify]/goal-gate rejection ("verify failed"/exit 3) and
-        // a non-zero computed return are NOT crashes.
-        let panicked = out.status.code() == Some(101);
+        let first = stderr
+            .lines()
+            .find(|l| !l.trim_start().starts_with("warning"))
+            .unwrap_or("");
+        let got = out.status.code();
+        // A crash = panic exit (101) OR a compile-stage error on stderr.
+        let panicked = got == Some(101);
         let compile_err = stderr.contains("parse error")
             || stderr.contains("cannot find")
             || stderr.contains("type mismatch")
@@ -21492,15 +21609,220 @@ fn asi_demo_set_runs_without_crashing() {
             } else {
                 "compile error"
             };
-            crashes.push(format!(
-                "{name}: {why} — {}",
-                stderr.lines().next().unwrap_or("")
+            failures.push(format!("{name}: {why} — {first}"));
+        }
+        if got != Some(want) {
+            failures.push(format!(
+                "ATTACK: an ASI demo exited with a different code under mock [{name}]: \
+                 expected {want}, got {got:?}; stderr: {first}"
+            ));
+        }
+        if name == "contained_violation" && !stderr.contains("E1001") {
+            failures.push(format!(
+                "ATTACK: an ASI demo exited with a different code under mock [{name}]: \
+                 the @[contained] deny-case must be refused with E1001; stderr: {first}"
             ));
         }
     }
+    let _ = std::fs::remove_dir_all(&tmp);
     assert!(
-        crashes.is_empty(),
-        "ASI demos (the documented public face) must run without crashing: {crashes:#?}"
+        failures.is_empty(),
+        "ASI demos (the documented public face) must keep their pinned exit codes:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn asi_model_demos_reach_their_deploy_gate_on_replay_fixtures() {
+    // asi-replay RP-1 (O-GAP-10). The six model-calling ASI demos replay
+    // hand-authored answers from examples/asi/fixtures/<d>.replay (generated by
+    // scripts/asi_replay_fixtures.py), with NO mock, NO key and NO model
+    // override (env_clear + allow-list). So the whole pipeline runs offline:
+    // prompt -> parse -> score -> goal_run choosing the one best variant (the
+    // fixtures are graded: exactly one non-start variant gets the good answers)
+    // -> @[verify] gate -> redteam. A prompt edit in a demo makes its lookup
+    // miss, which is loud here (rc 5 E1300 / rc 101), never silent: a miss
+    // could only be served by mock, a key or a fallback, and (iv) refuses any
+    // non-replay ai_call record. The test replays a temp COPY and checks it is
+    // byte-unchanged afterwards, since a miss under mock or a key appends.
+    // The expected lines live here and the answers in the generator: a change
+    // to one is reviewed against the other.
+    const DEMOS: &[(&str, &[&str], bool)] = &[
+        (
+            "optimize",
+            &[
+                "Best observed score: 99 / 100",
+                "Deploy gate: PASS — score wrapped as Uncertain<i64> with confidence >= 0.9",
+                "Confirmed best variant score: 99",
+                "Redteam: PASS — no hallucinated phone on adversarial input",
+            ],
+            true,
+        ),
+        (
+            "classify",
+            &[
+                "Best observed score: 94 / 100",
+                "Deploy gate: PASS — Uncertain<i64> with confidence >= 0.8",
+                "Confirmed best score: 94",
+                "Redteam: PASS — model expressed uncertainty on ambiguous input",
+            ],
+            false,
+        ),
+        (
+            "summarize",
+            &[
+                "Best observed score: 93 / 99",
+                "Deploy gate: PASS — confidence >= 0.85",
+                "Confirmed best score: 93",
+            ],
+            true,
+        ),
+        (
+            "code_review",
+            &[
+                "Best observed review score: 99 / 100",
+                "Deploy gate: PASS — confidence >= 0.75",
+                "Confirmed best score: 99",
+            ],
+            true,
+        ),
+        (
+            "search_rank",
+            &[
+                "Best observed score: 93 / 100",
+                "Deploy gate: PASS — confidence >= 0.8",
+                "Confirmed best score: 93",
+                "Redteam: PASS — variant 0 ignored prompt injection in document content",
+            ],
+            false,
+        ),
+        (
+            "pricing",
+            &[
+                "Best observed score: 83 / 100",
+                "Deploy gate: PASS — confidence >= 0.7",
+                "Confirmed best composite score: 83",
+            ],
+            false,
+        ),
+    ];
+    let dir = format!("{}/../../examples/asi", env!("CARGO_MANIFEST_DIR"));
+    let stdlib = format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{dir}:{stdlib}");
+    let tmp = std::env::temp_dir().join(format!("axon_asifx_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let mut failures = Vec::new();
+    for &(d, lines, needs_ai_call) in DEMOS {
+        let fixture = format!("{dir}/fixtures/{d}.replay");
+        let copy = tmp.join(format!("{d}.replay"));
+        let cache = tmp.join(d).join("cache");
+        let committed = std::fs::read(&fixture).ok();
+        let mut why = Vec::new();
+        match &committed {
+            Some(bytes) => std::fs::write(&copy, bytes).unwrap(),
+            None => why.push(format!("fixture {fixture} is missing")),
+        }
+        let out = axon()
+            .arg("run")
+            .arg(format!("{dir}/{d}.ax"))
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &tmp)
+            .env("XDG_CACHE_HOME", &cache)
+            .env("AXON_PATH", &path)
+            .env("AXON_SEED", "42")
+            .env("AXON_BANDIT_STATE", tmp.join("bandit.txt"))
+            .env("AXON_LEARNER_STATE", tmp.join("learner.txt"))
+            .env("AXON_AI_REPLAY", &copy)
+            .current_dir(&tmp)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // (i) the demo reaches its gate and exits 0.
+        if out.status.code() != Some(0) {
+            why.push(format!(
+                "rc {:?}; stderr: {}",
+                out.status.code(),
+                stderr
+                    .lines()
+                    .find(|l| !l.trim_start().starts_with("warning"))
+                    .unwrap_or("")
+            ));
+        }
+        // (ii) every key line is an exact stdout line.
+        for want in lines {
+            if !stdout.lines().any(|l| l == *want) {
+                why.push(format!("missing stdout line: {want}"));
+            }
+        }
+        // (iii) nothing was appended to (or changed in) the replayed copy.
+        if let Some(bytes) = &committed {
+            if std::fs::read(&copy).ok().as_ref() != Some(bytes) {
+                why.push("the replayed fixture copy changed (an answer was stored)".into());
+            }
+        }
+        // (iv) every ai_call was served from the cache.
+        let prov = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl"))
+            .unwrap_or_default();
+        let calls: Vec<&str> = prov
+            .lines()
+            .filter(|l| l.contains("\"event\":\"ai_call\""))
+            .collect();
+        let not_replay = calls
+            .iter()
+            .filter(|l| !l.contains("\"mode\":\"replay\""))
+            .count();
+        if not_replay > 0 {
+            why.push(format!(
+                "{not_replay} of {} ai_call records were not mode \"replay\"",
+                calls.len()
+            ));
+        }
+        if needs_ai_call && calls.is_empty() {
+            why.push("no ai_call provenance record (expected mode \"replay\" records)".into());
+        }
+        if !why.is_empty() {
+            failures.push(format!(
+                "ATTACK: a model-backed ASI demo no longer reaches its deploy gate on its replay \
+                 fixture [{d}]\n  {}\n  hint: if a prompt in examples/asi/{d}.ax changed, copy \
+                 the new prompt text into the {d} data in scripts/asi_replay_fixtures.py, run \
+                 python3 -B scripts/asi_replay_fixtures.py --write, and update the expected \
+                 lines for {d} in this test if the demo's scores changed",
+                why.join("\n  ")
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn asi_replay_fixtures_match_their_generator() {
+    // asi-replay RP-1: the committed examples/asi/fixtures/*.replay are exactly
+    // what scripts/asi_replay_fixtures.py generates, so a hand-edited fixture
+    // fails here. This does NOT detect demo/generator prompt drift (the
+    // generator never reads the demos); the replay test above does.
+    let root = script_spawn::repo_root();
+    let o = script_spawn::script(
+        "python3",
+        root.join("scripts/asi_replay_fixtures.py"),
+        Bins::NoWorkspaceBinary,
+    )
+    .arg("--check")
+    .current_dir(&root)
+    .env("PYTHONDONTWRITEBYTECODE", "1")
+    .env_remove("PYTHONPATH")
+    .output()
+    .unwrap();
+    assert!(
+        o.status.success(),
+        "scripts/asi_replay_fixtures.py --check failed (rc {:?}): {}{}",
+        o.status.code(),
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
     );
 }
 
@@ -26042,6 +26364,41 @@ fn session_jsonl_surfaces_a_refused_cell_without_ending_the_session() {
     );
 }
 
+/// IG2: `axon card` prints the language card generated from `BUILTINS` (exit 0,
+/// identical bytes on every run), and `--sha256` prints exactly the sha256 of
+/// that stdout - the value a generation transcript records.
+#[test]
+fn axon_card_is_generated_deterministic_and_pinned_by_its_sha256() {
+    let a = axon().arg("card").output().unwrap();
+    assert_eq!(a.status.code(), Some(0), "`axon card` must succeed: {a:?}");
+    let b = axon().arg("card").output().unwrap();
+    assert_eq!(
+        a.stdout, b.stdout,
+        "ATTACK: `axon card` is not deterministic"
+    );
+    let card = String::from_utf8(a.stdout.clone()).unwrap();
+    assert!(card.starts_with("# Axon language card\n"), "{card}");
+    assert!(
+        card.contains("- `append_file(path: str, content: str) -> Result<(), str>` - "),
+        "ATTACK: the card's builtin section is not generated from BUILTINS"
+    );
+    let h = axon().args(["card", "--sha256"]).output().unwrap();
+    assert_eq!(h.status.code(), Some(0), "{h:?}");
+    let hex = String::from_utf8(h.stdout).unwrap();
+    let want: String = {
+        use sha2::Digest;
+        sha2::Sha256::digest(&a.stdout)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    assert_eq!(
+        hex,
+        format!("{want}\n"),
+        "ATTACK: `axon card --sha256` is not the sha256 of the card text"
+    );
+}
+
 #[test]
 fn axon_reference_is_in_sync_with_the_binary() {
     // The documentation gate, and it is a TEST rather than a shell script on
@@ -29649,7 +30006,7 @@ fn native_closures_capture_any_enclosing_scope_like_the_interpreter() {
         ),
         (
             "ax19_snapshot",
-            "fn main() -> i64 {\n let k = 1\n let f = |x: i64| x + k\n k = 5\n println(to_str(f(0)))\n let xs = [1, 2, 3]\n let s = |x: i64| arr_sum_i64(&xs) + x\n xs[0] = 100\n println(to_str(s(0)))\n let ys = [5, 5]\n let g = |i: i64| {\n  ys[i] = ys[i] + 1\n  ys[i]\n }\n println(to_str(g(0)))\n println(to_str(g(0)))\n println(to_str(ys[0]))\n let counter = 0\n let inc = |d: i64| {\n  counter = counter + d\n  counter\n }\n println(to_str(inc(2)))\n println(to_str(inc(3)))\n println(to_str(counter))\n 0\n}\n",
+            "fn main() -> i64 {\n let k = 1\n let f = |x: i64| x + k\n k = 5\n println(to_str(f(0)))\n let xs = [1, 2, 3]\n let s = |x: i64| arr_sum_i64(&xs) + x\n xs[0] = 100\n println(to_str(s(0)))\n let ys = [5, 5]\n let g = |i: i64| {\n  ys[i] = ys[i] + 1\n  ys[i]\n }\n println(to_str(g(0)))\n println(to_str(g(0)))\n let counter = 0\n let inc = |d: i64| {\n  counter = counter + d\n  counter\n }\n println(to_str(inc(2)))\n println(to_str(inc(3)))\n 0\n}\n",
         ),
     ];
     for (tag, src) in progs {
@@ -29663,6 +30020,25 @@ fn native_closures_capture_any_enclosing_scope_like_the_interpreter() {
             "[{tag}] native != interpreter"
         );
     }
+    // The old ax19_snapshot read `ys`/`counter` after a closure wrote them;
+    // CS2-1 refuses that shape (E0607: the write is not visible outside).
+    let f = std::env::temp_dir().join(format!("axon_ax19_e0607_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n let counter = 0\n let inc = |d: i64| {\n  counter = counter + d\n  counter\n }\n println(to_str(inc(2)))\n println(to_str(counter))\n 0\n}\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg =
+        String::from_utf8_lossy(&out.stderr).to_string() + &String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.code() == Some(2) && msg.contains("E0607"),
+        "[ax19_snapshot_old] a read of `counter` after the closure wrote it must be E0607: {msg}"
+    );
 }
 
 /// AX-13: native refused (E0910) array `+`, `arr_concat` on non-`i64`
@@ -34664,15 +35040,16 @@ fn a_native_binary_refuses_interpreter_only_env_controls() {
 /// the browser target, whose runtime does not provide it. The link failed with
 /// `undefined symbol`, and the stock message reported it as the ABI gap.
 ///
-/// A `println` program for wasm32-unknown-unknown is the stable case: that
-/// target has no libc `puts`, so the link fails on an undefined symbol that has
-/// nothing to do with the i64/i32 ABI.
+/// The stable case is a program calling a symbol neither libc-less
+/// wasm32-unknown-unknown nor its axon-rt provides: `exit` (a `println`
+/// program used to be it, until the browser rt shimmed `puts`). The link fails
+/// on an undefined symbol that has nothing to do with the i64/i32 ABI.
 #[test]
 fn a_wasm_link_failure_reports_the_linkers_own_error() {
     let dir = std::env::temp_dir().join(format!("axon_wasm_linkerr_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let src = dir.join("io.ax");
-    std::fs::write(&src, "fn main() { println(\"hi\") }\n").unwrap();
+    std::fs::write(&src, "fn main() { exit(3) }\n").unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_axon"))
         .args([
@@ -34701,7 +35078,7 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
     // quietly passing.
     assert!(
         err.contains("wasm link failed"),
-        "expected a reported wasm link failure for a str program on \
+        "expected a reported wasm link failure for an `exit` program on \
          wasm32-unknown-unknown; got:\n{err}"
     );
     assert!(
@@ -34709,6 +35086,101 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
         "the linker's OWN error was not surfaced — the caller's stock ABI \
          sentence is not evidence about this failure. stderr:\n{err}"
     );
+}
+
+/// A linked wasm module is labelled RUNNABLE, with a `wasmtime --invoke main`
+/// command, only when it imports nothing but WASI. A browser `println` module
+/// imports `env.axon_host_write`; it used to be labelled RUNNABLE with a
+/// wasmtime command that fails to instantiate it ("unknown import"). Every
+/// printed command is run when its tool is on PATH.
+#[test]
+fn a_wasm_runnable_label_is_only_printed_for_a_module_that_runs() {
+    let dir = std::env::temp_dir().join(format!("axon_wasm_label_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let repo = script_spawn::repo_root();
+    let has = |tool: &str| {
+        Command::new(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    let mut fails = Vec::new();
+    for (tag, prog, needs_host, want) in [
+        // 42: not a reserved exit code (7 is, and `main` would return 1).
+        ("pure", "fn main() -> i64 { 42 }\n", false, "42"),
+        ("println", "fn main() { println(\"hi\") }\n", true, "hi"),
+    ] {
+        let src = dir.join(format!("{tag}.ax"));
+        std::fs::write(&src, prog).unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_axon"))
+            .args(["target", "build", "--engine", "codegen", "--target"])
+            .args(["wasm32-unknown-unknown", src.to_str().unwrap()])
+            .current_dir(&dir)
+            .output()
+            .expect("axon target build");
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        if !err.contains("wasm:") {
+            eprintln!(
+                "[{tag}] skipped: no linked module (wasm codegen, rust-lld or the \
+                 wasm32-unknown-unknown axon-rt is absent): {err}"
+            );
+            continue;
+        }
+        let linked = dir.join(format!("{tag}.linked.wasm"));
+        if needs_host {
+            if err.contains("RUNNABLE") || err.contains("wasmtime") {
+                fails.push(format!(
+                    "ATTACK: a module needing a host import was labelled runnable [{tag}]: {err}"
+                ));
+            }
+            if !err.contains("env.axon_host_write") || !err.contains("not runnable standalone") {
+                fails.push(format!(
+                    "[{tag}] the label does not name the host import: {err}"
+                ));
+            }
+            if has("node") && err.contains("node scripts/wasm_browser_host.js") {
+                let r = script_spawn::script(
+                    "node",
+                    repo.join("scripts/wasm_browser_host.js"),
+                    Bins::NoWorkspaceBinary,
+                )
+                .arg(&linked)
+                .output()
+                .unwrap();
+                let got = String::from_utf8_lossy(&r.stdout);
+                if !r.status.success() || got.trim() != want {
+                    fails.push(format!(
+                        "[{tag}] the printed host command did not print {want}: {r:?}"
+                    ));
+                }
+            } else {
+                eprintln!("[{tag}] host command not run: node is not on PATH");
+            }
+        } else {
+            if !err.contains("RUNNABLE") || !err.contains("wasmtime --invoke main") {
+                fails.push(format!(
+                    "[{tag}] a WASI-only module lost its RUNNABLE label: {err}"
+                ));
+            }
+            if has("wasmtime") {
+                let r = Command::new("wasmtime")
+                    .args(["--invoke", "main"])
+                    .arg(&linked)
+                    .output()
+                    .unwrap();
+                let got = String::from_utf8_lossy(&r.stdout);
+                if !r.status.success() || got.trim() != want {
+                    fails.push(format!(
+                        "ATTACK: a module labelled RUNNABLE did not run under its printed command [{tag}]: {r:?}"
+                    ));
+                }
+            } else {
+                eprintln!("[{tag}] RUNNABLE command not run: wasmtime is not on PATH");
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
 }
 
 #[test]
@@ -34879,6 +35351,174 @@ fn ai_extract_uncertain_is_stamped_ai_sourced_on_mock_and_replay_paths() {
         "replay path: a recorded AI answer is still AI-sourced. stderr: {}",
         String::from_utf8_lossy(&run.stderr)
     );
+}
+
+#[test]
+fn ai_extract_replay_hit_wins_over_mock_and_a_mock_answer_is_recorded() {
+    // asi-replay RP-3. `ai_complete` consults AXON_AI_REPLAY BEFORE the mock
+    // and records a mock answer; the `ai_extract_uncertain_*` arms did the
+    // opposite (mock first, never stored). So under AXON_AI_MOCK=1 plus a
+    // cache an extract silently served the stub instead of the recording, and
+    // a mock run recorded nothing, so the later no-mock replay panicked (rc
+    // 101) and `run.sh replay` diverged for every extract demo. Each leg is
+    // asserted separately so the i64 and f64 arms are pinned on their own.
+    let src = "fn main() -> i64 {\n  \
+               match ai_extract_uncertain_i64(\"how many? 3\") {\n    \
+                 Ok(u) => println(\"{to_str(u.value)} {to_str(u.confidence)}\")\n    \
+                 Err(e) => println(e)\n  }\n  \
+               match ai_extract_uncertain_f64(\"how warm? 2.5\") {\n    \
+                 Ok(u) => println(\"{to_str(u.value)} {to_str(u.confidence)}\")\n    \
+                 Err(e) => println(e)\n  }\n  0\n}\n";
+    let f = tmp_ax("ai_extract_replay_mock", src);
+    let tmp = std::env::temp_dir().join(format!("axon_rp3_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let key = |model: &str, prompt: &str| {
+        use sha2::{Digest, Sha256};
+        let d = Sha256::digest(format!("{model}\u{0}{prompt}").as_bytes());
+        d.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let k_i64 = key("ai_extract_uncertain_i64", "how many? 3");
+    let k_f64 = key("ai_extract_uncertain_f64", "how warm? 2.5");
+    let run = |cache: &std::path::Path, mock: bool| {
+        let mut c = axon();
+        c.arg("run")
+            .arg(&f)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &tmp)
+            .env("XDG_CACHE_HOME", tmp.join("xdg"))
+            .env("AXON_SEED", "42")
+            .env("AXON_AI_REPLAY", cache)
+            .current_dir(&tmp);
+        if mock {
+            c.env("AXON_AI_MOCK", "1");
+        }
+        let o = c.output().expect("spawn");
+        let lines: Vec<String> = String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        (
+            lines,
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    };
+    let mut failures = Vec::new();
+
+    // (a) A recorded answer wins over the mock.
+    let cache = tmp.join("hit.replay");
+    std::fs::write(
+        &cache,
+        format!("{k_i64} 0 {}\n{k_f64} 0 {}\n", hex("3|0.8"), hex("2.5|0.7")),
+    )
+    .unwrap();
+    let (got, rc, err) = run(&cache, true);
+    for (i, (leg, want)) in [("i64", "3 0.8"), ("f64", "2.5 0.7")].iter().enumerate() {
+        if got.get(i).map(String::as_str) != Some(*want) {
+            failures.push(format!(
+                "ATTACK: an ai_extract_uncertain_* replay entry lost to the mock [{leg}]: \
+                 want {want:?}, got {:?} (rc {rc:?}; stderr: {err})",
+                got.get(i)
+            ));
+        }
+    }
+
+    // (b) A mock answer is recorded, keyed by the builtin name, and a later
+    // replay WITHOUT the mock reproduces it.
+    let cache = tmp.join("rec.replay");
+    std::fs::write(&cache, "").unwrap();
+    let (mocked, _, _) = run(&cache, true);
+    let body = std::fs::read_to_string(&cache).unwrap_or_default();
+    let (replayed, rc, err) = run(&cache, false);
+    let stub = hex("1|0.9");
+    for (i, (leg, k)) in [("i64", &k_i64), ("f64", &k_f64)].iter().enumerate() {
+        let stored = body.lines().any(|l| {
+            let mut p = l.split(' ');
+            p.next() == Some(k.as_str()) && p.nth(1) == Some(stub.as_str())
+        });
+        let reproduced = replayed.get(i).map(String::as_str) == Some("1 0.9")
+            && mocked.get(i).map(String::as_str) == Some("1 0.9");
+        if !stored || !reproduced {
+            failures.push(format!(
+                "ATTACK: a mock ai_extract_uncertain_* answer was not recorded to \
+                 AXON_AI_REPLAY [{leg}]: stored={stored}; mock run {:?}, no-mock replay {:?} \
+                 (rc {rc:?}; stderr: {err}); cache:\n{body}",
+                mocked.get(i),
+                replayed.get(i)
+            ));
+        }
+    }
+    if body.lines().count() != 2 {
+        failures.push(format!(
+            "the mock run must record exactly 2 lines, one per extract; cache:\n{body}"
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_file(&f);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn asi_run_sh_replay_reproduces_the_extract_demos() {
+    // asi-replay RP-3: `run.sh replay` records a mock run into a temp
+    // AXON_AI_REPLAY cache, then replays it with no mock. Before RP-3 the
+    // extract builtins never recorded a mock answer, so every demo that calls
+    // `ai_extract_uncertain_*` diverged ("replay diverged", rc 1). optimize
+    // (ai_complete only) is covered by
+    // asi_demo_replay_and_audit_commands_work_end_to_end.
+    //
+    // AXON_AI_MOCK is deliberately NOT exported: run.sh's record leg defaults
+    // it to 1 itself (`${AXON_AI_MOCK:-1}`), and its replay leg inherits the
+    // caller's environment, so an exported AXON_AI_MOCK=1 would mock the
+    // replay leg too and this test could not see a missing recording
+    // (observed: with it exported the test passed before the RP-3 fix).
+    let script = format!("{}/../../examples/asi/run.sh", env!("CARGO_MANIFEST_DIR"));
+    let asi = format!("{}/../../examples/asi", env!("CARGO_MANIFEST_DIR"));
+    let stdlib = format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR"));
+    let tmp = std::env::temp_dir().join(format!("axon_rp3sh_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut failures = Vec::new();
+    for d in [
+        "classify",
+        "summarize",
+        "code_review",
+        "search_rank",
+        "pricing",
+    ] {
+        let rep = harness(&script)
+            .arg("replay")
+            .env_clear()
+            .env("AXON", env!("CARGO_BIN_EXE_axon"))
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &tmp)
+            .env("XDG_CACHE_HOME", tmp.join(d).join("cache"))
+            .env("AXON_PATH", format!("{asi}:{stdlib}"))
+            .env("AXON_SEED", "42")
+            .env("AXON_BANDIT_STATE", tmp.join("bandit.txt"))
+            .env("AXON_LEARNER_STATE", tmp.join("learner.txt"))
+            .env("DEMO", format!("{d}.ax"))
+            .current_dir(&tmp)
+            .output()
+            .expect("run run.sh replay");
+        let r = format!(
+            "{}{}",
+            String::from_utf8_lossy(&rep.stdout),
+            String::from_utf8_lossy(&rep.stderr)
+        );
+        if !(rep.status.success() && r.contains("reproducible")) {
+            failures.push(format!(
+                "ATTACK: a mock ai_extract_uncertain_* answer was not recorded to \
+                 AXON_AI_REPLAY [i64 via run.sh {d}]: rc {:?}\n{r}",
+                rep.status.code()
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 /// C9 round 4c, PSV-1 (amendment 72), defence in depth for B2: a method call
@@ -38313,33 +38953,20 @@ type PureBoolCase = (
 );
 
 /// R50 S7: `Bool` operands through untyped lambda parameters. `==`/`||` on
-/// `Bool`s compute; `<` on `Bool`s, and an `if`/`while` condition that is an
-/// `Int`, decline, and the generic ops panic as the tree does (exit 101).
-/// CS2-6: `f(2, 3)` on a lambda whose body makes `a`/`b` `bool` is refused at
-/// check (E0102), so the `if`/`while` cases reach `f` through the untyped `g`.
+/// `Bool`s compute; `<` on `Bool`s declines, and the generic op panics as the
+/// tree does (exit 101). CS3-2: the `if`/`while` conditions that are an `Int`
+/// (`pure_bool_if`, `pure_bool_while`) are E0102 at check even through an
+/// untyped wrapper `g`, so their VM panics are asserted below the checker
+/// (`interp::vm::tests::vm_bool_panics_without_check`).
 #[test]
 fn vm_pure_bool_ops() {
-    let cases: [PureBoolCase; 3] = [
+    let cases: [PureBoolCase; 1] = [
         (
             "pure_bool_lt",
             "    let f = |a, b| {\n        let d = a == b || a != b\n        println(to_str(d))\n        let c = a < b && b < a\n        c\n    }\n    println(to_str(f(true, false)))",
             "true\n",
             "axon: panic: cannot apply Lt to bool / bool\n",
             (2, 0),
-        ),
-        (
-            "pure_bool_if",
-            "    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))",
-            "",
-            "axon: panic: if condition must be bool, got i64\n",
-            (1, 0),
-        ),
-        (
-            "pure_bool_while",
-            "    let f = |a, b| {\n        let n = 0\n        while a + b * a {\n            n = n + 1\n        }\n        n\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))",
-            "",
-            "axon: panic: while condition must be bool, got i64\n",
-            (1, 1),
         ),
     ];
     for (tag, body, out, err, want) in cases {
@@ -39706,12 +40333,13 @@ fn vm_superop_write_shared() {
 /// R50 §4 S8: the fused index ops keep S2's texts and order. Out-of-bounds,
 /// negative and non-`Int` indexes panic as the tree does; in `a[i] = b[j]`
 /// the value `b[j]` is read (and fails) before the target index is converted;
-/// an `i32` target index is written, an `i32` read index panics.
-/// CS2-6: `f(a, true)` on a lambda that indexes with `k` is refused at check
-/// (E0102), so `bool_index` reaches `f` through the untyped `g`.
+/// an `i32` target index is written, an `i32` read index panics. CS3-2: a
+/// `bool` index through an untyped wrapper (`g(a, true)` on `|w, j| f(w, j)`)
+/// is E0102 at check, so its VM panic is asserted below the checker
+/// (`interp::vm::tests::vm_bool_panics_without_check`).
 #[test]
 fn vm_superop_write_panics() {
-    let cases: [(&str, &str, Option<i32>, &str, &str); 12] = [
+    let cases: [(&str, &str, Option<i32>, &str, &str); 11] = [
         ("oob", "let i = 5\n    a[i] = x", Some(101), "", "index 5 out of bounds (len 2)"),
         ("neg", "let i = 0 - 1\n    a[i] = 7", Some(101), "", "negative index -1"),
         ("read_oob", "let i = 1\n    let j = 9\n    a[i] = b[j]", Some(101), "", "index 9 out of bounds (len 2)"),
@@ -39727,13 +40355,6 @@ fn vm_superop_write_panics() {
         ("write_i32", "let i: i32 = 1\n    a[i] = x\n    println(to_str(a[1]))", Some(0), "5\nend\n", ""),
         ("read_i32", "let j: i32 = 1\n    a[0] = b[j]", Some(101), "", "expected i64, got i32"),
         ("swap_oob", "swap(&mut a, 0, 3)", Some(101), "", "index 3 out of bounds (len 2)"),
-        (
-            "bool_index",
-            "let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    let g = |w, j| f(w, j)\n    println(to_str(g(a, true)[0]))",
-            Some(101),
-            "",
-            "expected i64, got bool",
-        ),
         (
             "float_index",
             "let f = |v, k| {\n        let t = v[k]\n        t\n    }\n    println(to_str(f(a, 1.5)))",
@@ -43043,4 +43664,1077 @@ fn an_effectful_helper_in_a_refinement_is_refused_e1209() {
         "{attack} [refinements.ax]: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+#[test]
+fn min_max_i32_truncate_their_arguments_like_abs_i32() {
+    // native-parity NP-6 (O-DT-01): `min_i32`/`max_i32` truncate each argument
+    // to its low 32 bits, like `abs_i32` and like native (whose runtime takes
+    // i32 args). The interpreter used to compare the raw i64s, so
+    // `min_i32(3000000000, 1)` was `1` instead of `-1294967296` and an `i32`
+    // binding held a value outside i32. Checks every probe under tree and VM,
+    // then fails once with one ATTACK line per diverging builtin.
+    let attack = "ATTACK: min_i32/max_i32 compared untruncated i64 arguments";
+    let m01 = tmp_ax(
+        "np6_m01",
+        "fn main() -> i64 {\n  println(to_str(min_i32(3000000000, 1)))\n  println(to_str(max_i32(3000000000, 1)))\n  \
+         println(to_str(min_i32(5000000000, 6000000000)))\n  println(to_str(max_i32(0 - 3000000000, 0)))\n  \
+         println(to_str(abs_i32(5000000000)))\n  println(to_str(abs_i32(0 - 7)))\n  println(to_str(min_i32(2, 9)))\n  \
+         println(to_str(max_i32(2, 9)))\n  0\n}\n",
+    );
+    let m03 = tmp_ax(
+        "np6_m03",
+        "fn main() -> i64 {\n  let x: i32 = min_i32(3000000000, 1)\n  println(to_str(x))\n  let y: i32 = x + 1\n  \
+         println(to_str(y))\n  0\n}\n",
+    );
+    // (file, expected lines = native's column, builtin each line exercises)
+    let cases = [
+        (
+            &m01,
+            vec![
+                "-1294967296",
+                "1",
+                "705032704",
+                "1294967296",
+                "705032704",
+                "7",
+                "2",
+                "9",
+            ],
+            [
+                "min_i32", "max_i32", "min_i32", "max_i32", "abs_i32", "abs_i32", "min_i32",
+                "max_i32",
+            ]
+            .to_vec(),
+        ),
+        (
+            &m03,
+            vec!["-1294967296", "-1294967295"],
+            ["min_i32", "min_i32"].to_vec(),
+        ),
+    ];
+    let mut fails: Vec<String> = Vec::new();
+    for engine in ["tree", "vm"] {
+        for (f, want, probes) in &cases {
+            let out = axon()
+                .args(["run", f.to_str().unwrap()])
+                .env("AXON_ENGINE", engine)
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let got: Vec<&str> = stdout.lines().collect();
+            for (i, probe) in probes.iter().enumerate() {
+                if out.status.code() != Some(0) || got.get(i) != Some(&want[i]) {
+                    let line = format!(
+                        "{attack} [{probe}] ({engine}, {}: line {i} got {:?}, want {:?}; rc {:?})",
+                        f.file_name().unwrap().to_string_lossy(),
+                        got.get(i),
+                        want[i],
+                        out.status.code()
+                    );
+                    if !fails.iter().any(|l| l.contains(&format!("[{probe}]"))) {
+                        fails.push(line);
+                    }
+                }
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&m01);
+    let _ = std::fs::remove_file(&m03);
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+// ── checker-soundness-3 lane A (CS3-1, CS3-3, CS3-5 rows 6 and 8) ──────────
+
+/// CS3-1 (O-CS2-02): a literal pattern inside a payload covers only that
+/// value. `Some(0)` used to cover all of `Some`, and `E::A { s: "x" }` all of
+/// `A`, so each of these checked clean and then panicked `no match arm
+/// matched` (exit 101). Exhaustiveness is now one usefulness walk over the
+/// unguarded arms, so each is E0304 at check.
+#[test]
+fn payload_literal_holes_are_refused() {
+    let attack = "ATTACK: a payload-literal hole checked clean";
+    let mut fails: Vec<String> = Vec::new();
+    for (tag, src) in [
+        (
+            "h31",
+            "fn f(o: Option<i64>) -> i64 {\n  match o {\n    Some(0) => 0,\n    None => 1,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(Some(5))))\n  0\n}\n",
+        ),
+        (
+            "h31b",
+            r#"fn f(r: Result<str, str>) -> i64 { match r { Ok("x") => 0, Err(_) => 1 } }
+fn main() { println(to_str(f(Ok("y")))) }
+"#,
+        ),
+        (
+            "h31c",
+            "fn f(o: Option<Option<i64>>) -> i64 { match o { Some(Some(0)) => 0, Some(None) => 2, None => 1 } }\nfn main() { println(to_str(f(Some(Some(3))))) }\n",
+        ),
+        (
+            "h31d",
+            "fn f(o: Option<i64>, n: i64) -> i64 { match (o, n) { (Some(0), _) => 0, (None, _) => 1 } }\nfn main() { println(to_str(f(Some(3), 1))) }\n",
+        ),
+        (
+            "h31e",
+            "enum E { A { b: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { b: true } => 1, E::B => 3 } }\nfn main() { println(to_str(f(E::A { b: false }))) }\n",
+        ),
+        (
+            "h31f",
+            "fn f(o: Option<bool>) -> i64 { match o { Some(true) => 1, None => 3 } }\nfn main() { println(to_str(f(Some(false)))) }\n",
+        ),
+        (
+            "h31g",
+            "fn main() {\n  let g = |o| match o { Some(0) => 0, None => 1 }\n  println(to_str(g(Some(4))))\n}\n",
+        ),
+        (
+            "h31h",
+            "type C = Red | Green\ntype S = Paint { c: C } | Blank\nfn f(s: S) -> i64 { match s { S::Paint { c: C::Red } => 1, S::Blank => 3 } }\nfn main() { println(to_str(f(S::Paint { c: C::Green }))) }\n",
+        ),
+        (
+            "h31i",
+            "enum E { A { b: bool, c: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { b: true, c: true } => 1, E::A { b: false, c: _ } => 3, E::B => 4 } }\nfn main() { println(to_str(f(E::A { b: true, c: false }))) }\n",
+        ),
+        (
+            "h31j",
+            r#"fn f(o: Option<str>) -> i64 { match o { Some("a") => 1, None => 0 } }
+fn main() { println(to_str(f(Some("b")))) }
+"#,
+        ),
+        (
+            "h32",
+            r#"enum E { A { s: str }, B }
+fn f(e: E) -> i64 {
+  match e {
+    E::A { s: "x" } => 0,
+    E::B => 1,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(E::A { s: "y" })))
+  0
+}
+"#,
+        ),
+        (
+            "b2",
+            r#"fn main() {
+  let f = |s| match s { "a" => 1, "b" => 2 }
+  println(to_str(f("a")))
+}
+"#,
+        ),
+        (
+            "b3",
+            "fn main() {\n  let f = |o| match o { Some(0) => 0, None => 1 }\n  println(to_str(f(Some(0)) + f(None)))\n}\n",
+        ),
+        (
+            "guard",
+            "fn f(o: Option<i64>) -> i64 { match o { Some(n) if n > 0 => n, None => 0 } }\nfn main() { println(to_str(f(Some(0)))) }\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, _rout, rerr) = sf6_check_and_run(&format!("cs3h_{tag}"), src);
+        if crc != Some(2) || !cmsg.contains("E0304") || rrc != Some(2) {
+            fails.push(format!(
+                "{attack} [{tag}]: check rc {crc:?} {cmsg}; run rc {rrc:?} {rerr}"
+            ));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// CS3-1: matches whose arms cover every value stay legal with their output,
+/// including the tuple shapes CS2-4 refused (c05, c16, c17, c18, c20: a
+/// payload covered by two refutable arms together), an omitted enum field
+/// (q02), and wide all-binding arms (e9, t9).
+#[test]
+fn payload_matches_that_cover_stay_legal() {
+    let attack = "ATTACK: a covering payload match was refused";
+    let mut fails: Vec<String> = Vec::new();
+    for (tag, src, out) in [
+        (
+            "c01",
+            "fn f(o: Option<i64>) -> i64 { match o { Some(0) => 0, Some(_) => 2, None => 1 } }\nfn main() { println(to_str(f(Some(5)) + f(Some(0)) + f(None))) }\n",
+            "3\n",
+        ),
+        (
+            "c02",
+            "fn f(o: Option<bool>) -> i64 { match o { Some(true) => 1, Some(false) => 2, None => 3 } }\nfn main() { println(to_str(f(Some(true)) + f(Some(false)) + f(None))) }\n",
+            "6\n",
+        ),
+        (
+            "c03",
+            "fn f(o: Option<Option<i64>>) -> i64 { match o { Some(Some(x)) => x, Some(None) => 0, None => 1 } }\nfn main() { println(to_str(f(Some(Some(5))) + f(Some(None)) + f(None))) }\n",
+            "6\n",
+        ),
+        (
+            "c04",
+            r#"fn f(r: Result<i64, str>) -> i64 { match r { Ok(0) => 0, Ok(n) => n, Err(_) => 1 } }
+fn main() { println(to_str(f(Ok(0)) + f(Ok(7)) + f(Err("e")))) }
+"#,
+            "8\n",
+        ),
+        (
+            "c05",
+            "fn f(o: Option<bool>, n: i64) -> i64 { match (o, n) { (Some(true), _) => 1, (Some(false), _) => 2, (None, _) => 3 } }\nfn main() { println(to_str(f(Some(true), 1) + f(Some(false), 1) + f(None, 1))) }\n",
+            "6\n",
+        ),
+        (
+            "c06",
+            r#"enum E { A { s: str }, B }
+fn f(e: E) -> i64 { match e { E::A { s: "x" } => 0, E::A { s } => len(s), E::B => 1 } }
+fn main() { println(to_str(f(E::A { s: "x" }) + f(E::A { s: "yy" }) + f(E::B))) }
+"#,
+            "3\n",
+        ),
+        (
+            "c07",
+            "enum E { A { b: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { b: true } => 1, E::A { b: false } => 2, E::B => 3 } }\nfn main() { println(to_str(f(E::A { b: true }) + f(E::A { b: false }) + f(E::B))) }\n",
+            "6\n",
+        ),
+        (
+            "c08",
+            r#"fn f(r: Result<Option<i64>, str>) -> i64 { match r { Ok(Some(n)) => n, Ok(None) => 0, Err(_) => 1 } }
+fn main() { println(to_str(f(Ok(Some(4))) + f(Ok(None)) + f(Err("e")))) }
+"#,
+            "5\n",
+        ),
+        (
+            "c09",
+            "fn f(o: Option<(i64, bool)>) -> i64 { match o { Some((n, true)) => n, Some((_, false)) => 0, None => 1 } }\nfn main() { println(to_str(f(Some((4, true))) + f(Some((4, false))) + f(None))) }\n",
+            "5\n",
+        ),
+        (
+            "c11",
+            "type C = Red | Green\ntype S = Paint { c: C } | Blank\nfn f(s: S) -> i64 { match s { S::Paint { c: C::Red } => 1, S::Paint { c: C::Green } => 2, S::Blank => 3 } }\nfn main() { println(to_str(f(S::Paint { c: C::Red }) + f(S::Paint { c: C::Green }) + f(S::Blank))) }\n",
+            "6\n",
+        ),
+        (
+            "c12",
+            "fn f(o: Option<i64>) -> i64 { match o { Some(n) if n > 0 => n, Some(0) => 0, Some(_) => 9, None => 1 } }\nfn main() { println(to_str(f(Some(5)) + f(Some(0)) + f(Some(-1)) + f(None))) }\n",
+            "15\n",
+        ),
+        (
+            "c13",
+            "fn f<T>(o: Option<T>) -> i64 { match o { Some(_) => 1, None => 0 } }\nfn main() { println(to_str(f(Some(1)) + f(None))) }\n",
+            "1\n",
+        ),
+        (
+            "c14",
+            "enum E { A { b: bool }, B { b: bool }, C { b: bool }, D { b: bool }, F { b: bool }, G { b: bool }, H { b: bool }, I { b: bool }, J { b: bool } }
+fn f(e: E) -> i64 { match e {
+  E::A { b: true } => 1, E::A { b: false } => 2, E::B { b: true } => 1, E::B { b: false } => 2,
+  E::C { b: true } => 1, E::C { b: false } => 2, E::D { b: true } => 1, E::D { b: false } => 2,
+  E::F { b: true } => 1, E::F { b: false } => 2, E::G { b: true } => 1, E::G { b: false } => 2,
+  E::H { b: true } => 1, E::H { b: false } => 2, E::I { b: true } => 1, E::I { b: false } => 2,
+  E::J { b: true } => 1, E::J { b: false } => 2 } }
+fn main() { println(to_str(f(E::A { b: true }) + f(E::J { b: false }))) }
+",
+            "3\n",
+        ),
+        (
+            "c15",
+            "fn main() {\n  let xs = [Some(1), None, Some(0)]\n  let n = arr_fold(xs, 0, |acc, o| acc + match o { Some(0) => 10, Some(k) => k, None => 100 })\n  println(to_str(n))\n}\n",
+            "111\n",
+        ),
+        (
+            "c16",
+            r#"fn f(r: Result<bool, str>, n: i64) -> i64 { match (r, n) { (Ok(true), _) => 1, (Ok(false), _) => 2, (Err(_), _) => 3 } }
+fn main() { println(to_str(f(Ok(true), 1) + f(Ok(false), 1) + f(Err("e"), 1))) }
+"#,
+            "6\n",
+        ),
+        (
+            "c17",
+            "enum E { A { b: bool }, B }\nfn f(e: E, n: i64) -> i64 { match (e, n) { (E::A { b: true }, _) => 1, (E::A { b: false }, _) => 2, (E::B, _) => 3 } }\nfn main() { println(to_str(f(E::A { b: true }, 1) + f(E::A { b: false }, 1) + f(E::B, 1))) }\n",
+            "6\n",
+        ),
+        (
+            "c18",
+            "fn f(o: Option<Option<i64>>, b: bool) -> i64 { match (o, b) { (Some(Some(x)), _) => x, (Some(None), _) => 0, (None, _) => 1 } }\nfn main() { println(to_str(f(Some(Some(4)), true) + f(Some(None), true) + f(None, false))) }\n",
+            "5\n",
+        ),
+        (
+            "c19",
+            "fn f(o: Option<(bool, i64)>) -> i64 { match o { Some((true, n)) => n, Some((false, _)) => 0, None => 1 } }\nfn main() { println(to_str(f(Some((true, 4))) + f(Some((false, 1))) + f(None))) }\n",
+            "5\n",
+        ),
+        (
+            "c20",
+            "fn f(o: Option<(bool, i64)>, k: i64) -> i64 { match (o, k) { (Some((true, n)), _) => n, (Some((false, _)), _) => 0, (None, _) => 1 } }\nfn main() { println(to_str(f(Some((true, 4)), 0) + f(Some((false, 1)), 0) + f(None, 0))) }\n",
+            "5\n",
+        ),
+        (
+            "c21",
+            "enum E { A { b: bool, c: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { b: true, c } => if c { 1 } else { 2 }, E::A { b: false, c: _ } => 3, E::B => 4 } }\nfn main() { println(to_str(f(E::A { b: true, c: false }) + f(E::A { b: false, c: true }) + f(E::B))) }\n",
+            "9\n",
+        ),
+        (
+            "q02",
+            "enum E { A { b: bool, c: i64 }, B }\nfn f(e: E) -> i64 {\n    match e {\n        E::A { b: true } => 1,\n        E::A { c } => c,\n        E::B => 3,\n    }\n}\nfn main() { println(to_str(f(E::A { b: true, c: 5 }) + f(E::A { b: false, c: 5 }) + f(E::B))) }\n",
+            "9\n",
+        ),
+        (
+            "e9",
+            "enum E { A { a: bool, b: bool, c: bool, d: bool, e: bool, f: bool, g: bool, h: bool, i: bool }, B }\nfn f(x: E) -> i64 { match x { E::A { a, b, c, d, e, f, g, h, i } => if a { 1 } else { 2 }, E::B => 0 } }\nfn main() { println(to_str(f(E::A { a: true, b: true, c: true, d: true, e: true, f: true, g: true, h: true, i: true }) + f(E::B))) }\n",
+            "1\n",
+        ),
+        (
+            "t9",
+            "fn f(t: (bool, bool, bool, bool, bool, bool, bool, bool, bool)) -> i64 { match t { (a, b, c, d, e, f, g, h, i) => 1 } }\nfn main() { println(to_str(f((true, true, true, true, true, true, true, true, true)))) }\n",
+            "1\n",
+        ),
+        (
+            "a3",
+            "enum E { A { b: bool, n: i64 }, B }\nfn f(e: E) -> i64 { match e { E::A => 1, E::B => 2 } }\nfn main() { println(to_str(f(E::A { b: true, n: 1 }) + f(E::B))) }\n",
+            "3\n",
+        ),
+        (
+            "a4",
+            "enum E { A { b: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { b: true } => 1, E::A { b: false } => 2, E::B => 3 } }\nfn g(o: Option<bool>) -> i64 { match o { Some(true) => 1, Some(false) => 2, None => 3 } }\nfn main() { println(to_str(f(E::A { b: true }) + f(E::B) + g(Some(false)))) }\n",
+            "6\n",
+        ),
+        (
+            "a5",
+            r#"fn main() {
+    let h = |o| match o { Some(n) => n, None => 0 }
+    let k = |p| match p { (true, x) => x, (false, _) => 0 }
+    let s = |v| match v { "a" => 1, x => 2 }
+    println(to_str(h(Some(3)) + k((true, 2)) + s("a")))
+}
+"#,
+            "6\n",
+        ),
+        (
+            // A `_` head beside `true`/`false` heads stands for both.
+            "x_wild",
+            "fn f(a: bool, b: bool) -> i64 { match (a, b) { (true, _) => 1, (false, true) => 2, (_, false) => 3 } }\nfn main() { println(to_str(f(true, false) + f(false, true) + f(false, false))) }\n",
+            "6\n",
+        ),
+        (
+            // Fields are matched by name: the pattern's field order is not the
+            // declaration order here.
+            "c22",
+            "enum E { A { b: bool, c: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { c: true } => 1, E::A { b: true, c: false } => 2, E::A { b: false, c: false } => 3, E::B => 4 } }\nfn main() { println(to_str(f(E::A { b: false, c: true }) + f(E::A { b: true, c: false }) + f(E::A { b: false, c: false }) + f(E::B))) }\n",
+            "10\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs3c_{tag}"), src);
+        if crc != Some(0) || rrc != Some(0) || rout != out {
+            fails.push(format!(
+                "{attack} [{tag}]: check rc {crc:?} {cmsg}; run rc {rrc:?} out {rout:?} {rerr}"
+            ));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// `axon check --json` for `src`: the stderr lines (one diagnostic each)
+/// whose code is `code`.
+fn cs3_json_diags(tag: &str, src: &str, code: &str) -> (Option<i32>, Vec<String>) {
+    let f = std::env::temp_dir().join(format!("axon_cs3a_{tag}_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon()
+        .args(["check", "--json", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let want = format!("\"code\":\"{code}\"");
+    let lines = String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter(|l| l.contains(&want))
+        .map(str::to_string)
+        .collect();
+    (out.status.code(), lines)
+}
+
+/// CS3-3 (O-CS2-03): E1209 (an impure refinement predicate) is reported at
+/// the refinement's item, not at line 0: the JSON used to carry no `line`.
+#[test]
+fn e1209_carries_the_refinement_line() {
+    let attack = "ATTACK: E1209 lost the refinement's line";
+    let mut fails: Vec<String> = Vec::new();
+    for (tag, src, line) in [
+        (
+            "e_direct",
+            "type P = i64 where str_len(read_file(\"/x\")) > 0\nfn f(x: P) -> i64 { x }\nfn main() -> i64 {\n  println(to_str(f(2)))\n  0\n}\n",
+            1,
+        ),
+        (
+            "x04",
+            "fn helper(x: i64) -> i64 { x }\n\ntype P = i64 where\n    str_len(read_file(\"/x\")) > 0\nfn f(x: P) -> i64 { x }\nfn main() { println(to_str(f(2))) }\n",
+            3,
+        ),
+        (
+            "e_helper",
+            "fn leak(v: i64) -> bool {\n    let _ = append_file(\"/nonexistent-axon-cs3/leak.txt\", \"x\")\n    true\n}\ntype W = i64 where leak(_)\nfn f(w: W) -> i64 { w }\nfn main() { println(to_str(f(1))) }\n",
+            5,
+        ),
+        (
+            "e_inline",
+            "fn f(x: i64 where now_ms() > 0) -> i64 { x }\n\nfn main() { println(to_str(f(1))) }\n",
+            1,
+        ),
+        (
+            "e_struct",
+            "fn leak(v: i64) -> bool {\n    let _ = append_file(\"/nonexistent-axon-cs3/leak.txt\", \"x\")\n    true\n}\n\ntype S = { a: i64 } where leak(_.a)\nfn main() { let s = S { a: 1 } println(to_str(s.a)) }\n",
+            6,
+        ),
+    ] {
+        let (rc, diags) = cs3_json_diags(tag, src, "E1209");
+        let want = format!("\"line\":{line},");
+        if rc != Some(2) || diags.is_empty() || !diags.iter().all(|d| d.contains(&want)) {
+            fails.push(format!("{attack} [{tag}]: rc {rc:?}, want {want}: {diags:?}"));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// CS3-5 rows 6 and 8 (lane A, the checker's diagnostics for refused forms).
+/// Row 8: `==`/`!=` on an `Option`/`Result` says that the comparison is the
+/// problem and how to write it as a match, with no "(expected T)"; arithmetic
+/// keeps the old text. Row 6: the E0304 fix-it for a missing enum variant is
+/// valid Axon, so pasting it as an arm checks clean (it was `E::B { .. }`, a
+/// parse error).
+#[test]
+fn diagnostics_for_refused_forms_checker() {
+    let mut fails: Vec<String> = Vec::new();
+    let attack = "ATTACK: `==` on an Option/Result got the arithmetic E0301 text";
+    for (tag, src, want) in [
+        (
+            "g62",
+            "fn main() {\n    let o = Some(1)\n    let same = o == Some(1)\n    println(to_str(same))\n}\n",
+            "`==` does not compare `Option` values",
+        ),
+        (
+            "g07b",
+            "fn main() {\n    let o = Some(1)\n    if o != None { println(\"some\") }\n}\n",
+            "`!=` does not compare `Option` values",
+        ),
+        (
+            "g07e",
+            "fn main() {\n    let o: Option<i64> = None\n    if o == None { println(\"none\") }\n}\n",
+            "`==` does not compare `Option` values",
+        ),
+        (
+            "g07c",
+            "fn main() {\n    let r: Result<i64, str> = Ok(1)\n    println(to_str(r == Ok(1)))\n}\n",
+            "`==` does not compare `Result` values",
+        ),
+    ] {
+        let (rc, diags) = cs3_json_diags(tag, src, "E0301");
+        if rc != Some(2)
+            || diags.is_empty()
+            || !diags
+                .iter()
+                .all(|d| d.contains(want) && d.contains("match it: `match") && !d.contains("(expected"))
+        {
+            fails.push(format!("{attack} [{tag}]: rc {rc:?}, want {want:?}: {diags:?}"));
+        }
+    }
+    let attack = "ATTACK: arithmetic on an Option lost its E0301 text";
+    let (rc, diags) = cs3_json_diags(
+        "arith",
+        "fn main() {\n    let o = Some(1)\n    println(to_str(o + 1))\n}\n",
+        "E0301",
+    );
+    if rc != Some(2) || !diags.iter().any(|d| d.contains("cannot be used directly")) {
+        fails.push(format!("{attack} [arith]: rc {rc:?}: {diags:?}"));
+    }
+    let attack = "ATTACK: the missing-variant fix-it is not valid Axon";
+    for (tag, head, tail) in [
+        (
+            "fx_unit",
+            "enum E { A { b: bool }, B }\nfn f(e: E) {\n    match e {\n        E::A { b } => println(to_str(b)),\n",
+            "    }\n}\nfn main() { f(E::A { b: true }) f(E::B) }\n",
+        ),
+        (
+            "fx_fields",
+            "enum E { A { b: bool, c: i64 }, B }\nfn f(e: E) {\n    match e {\n        E::B => println(\"b\"),\n",
+            "    }\n}\nfn main() { f(E::A { b: true, c: 1 }) f(E::B) }\n",
+        ),
+    ] {
+        let (rc, diags) = cs3_json_diags(tag, &format!("{head}{tail}"), "E0304");
+        let fix = diags.first().and_then(|d| {
+            let at = d.find("\"help\":\"add arm: ")? + "\"help\":\"add arm: ".len();
+            Some(d[at..d[at..].find('"')? + at].to_string())
+        });
+        let Some(fix) = fix.filter(|_| rc == Some(2)) else {
+            fails.push(format!("{attack} [{tag}]: no fix-it: rc {rc:?}: {diags:?}"));
+            continue;
+        };
+        let pasted = format!("{head}        {fix}\n{tail}");
+        let (crc, cmsg, rrc, _rout, rerr) = sf6_check_and_run(&format!("cs3fx_{tag}"), &pasted);
+        if crc != Some(0) || rrc != Some(0) {
+            fails.push(format!(
+                "{attack} [{tag}]: pasted `{fix}`: check rc {crc:?} {cmsg}; run rc {rrc:?} {rerr}"
+            ));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+// ── checker-soundness-3 lane B: CS3-2, CS3-5 row 7 ─────────────────────────
+
+/// CS3-2 (O-CS2-02, h24): a param an untyped lambda always passes on to a
+/// callee (`let g = |y| f(y)`) takes the kind that callee's param has, so a
+/// call of the wrapper is checked as a call of the callee is (E0102), also
+/// along a chain (`k = |z| g(z)`, w02) and through a local (`let t = y`,
+/// w11). The last three are the VM panic programs `vm_pure_bool_ops` and
+/// `vm_superop_write_panics` reached through `g`; their VM panics are now
+/// asserted in `interp::vm::tests::vm_bool_panics_without_check`. Each case
+/// checked rc 0 and then panicked at run (rc 101).
+#[test]
+fn wrapper_lambda_param_kind_is_checked() {
+    let attack = "ATTACK: a wrong-kind argument through an untyped wrapper lambda checked clean";
+    let main = |body: &str| format!("fn main() -> i64 {{\n{body}\n    0\n}}\n");
+    let superop = |body: &str| {
+        format!(
+            "{VM_SWAP_FN}fn main() -> i64 {{\n    let a = [1, 2]\n    let b = [3, 4]\n    let x = 5\n    \
+             {body}\n    println(\"end\")\n    0\n}}\n"
+        )
+    };
+    let cases = [
+        (
+            "h24",
+            main("  let f = |x| str_len(x)\n  let g = |y| f(y)\n  println(to_str(g(5)))"),
+            "arg 0 of a call through a fn value (expected str), found i64",
+        ),
+        (
+            "w02",
+            "fn main() {\n  let f = |x| str_len(x)\n  let g = |y| f(y)\n  let k = |z| g(z)\n  println(to_str(k(5)))\n}\n".to_string(),
+            "arg 0 of a call through a fn value (expected str), found i64",
+        ),
+        (
+            "w11",
+            "fn main() {\n  let f = |x| str_len(x)\n  let g = |y| { let t = y  f(t) }\n  println(to_str(g(5)))\n}\n".to_string(),
+            "arg 0 of a call through a fn value (expected str), found i64",
+        ),
+        (
+            "w08",
+            main("    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))"),
+            "arg 0 of a call through a fn value (expected bool), found i64",
+        ),
+        (
+            "w09",
+            main("    let a = [1, 2]\n    let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    let g = |w, j| f(w, j)\n    println(to_str(g(a, true)[0]))"),
+            "arg 1 of a call through a fn value (expected i64), found bool",
+        ),
+        (
+            "pure_bool_if",
+            main("    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))"),
+            "arg 0 of a call through a fn value (expected bool), found i64",
+        ),
+        (
+            "pure_bool_while",
+            main("    let f = |a, b| {\n        let n = 0\n        while a + b * a {\n            n = n + 1\n        }\n        n\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))"),
+            "arg 0 of a call through a fn value (expected bool), found i64",
+        ),
+        (
+            "bool_index",
+            superop("let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    let g = |w, j| f(w, j)\n    println(to_str(g(a, true)[0]))"),
+            "arg 1 of a call through a fn value (expected i64), found bool",
+        ),
+    ];
+    for (tag, src, msg) in cases {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs3w_{tag}"), &src);
+        assert!(
+            crc == Some(2) && cmsg.contains("E0102") && cmsg.contains(msg),
+            "{attack} [{tag}]: want rc 2 E0102 with {msg:?}, got rc {crc:?}: {cmsg}"
+        );
+        assert!(
+            rrc == Some(2) && rout.is_empty(),
+            "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+        );
+    }
+}
+
+/// CS3-2 false-refusal guard: wrapper lambdas that run today still check rc 0
+/// and print the same. A call that may not run derives no kind: one in an
+/// `if`/`else` branch (w05, w05b, w14), after an early `return` (x10), in a
+/// loop body that runs zero times (`loop_body`), or right of `&&`
+/// (`and_right`). A polymorphic `id` stays callable at two types (w04,
+/// `id_poly`), and a wrapper passed a value it accepts runs (w03). A lambda
+/// param shared with another lambda's (`g = |w| f(w)` over `let g = |y| 0`,
+/// two lambdas in one `if` or array) derives nothing: the lambda called need
+/// not be the one whose body makes the call (`reassigned`, `if_lambdas`,
+/// `array_lambdas`). A call in a lambda that never runs derives nothing for
+/// a captured var (`captured`). An early `return` within the call's own
+/// statement (`exit_same_stmt`) and a handler that answers an effect without
+/// `resume`, inside the wrapper (`handler_inside`) or around its call after
+/// an earlier `println` (`handler_outside`), also leave the call unrun.
+#[test]
+fn wrapper_lambda_controls_stay_legal() {
+    let attack = "ATTACK: a wrapper-lambda program that runs was refused";
+    let f = "  let f = |x| str_len(x)\n";
+    let cases = [
+        ("w03", format!("fn main() {{\n{f}  let g = |y| f(y)\n  println(to_str(g(\"abc\")))\n}}\n"), "3\n"),
+        ("w04", "fn main() {\n  let id = |x| x\n  let g = |y| id(y)\n  println(to_str(g(1)) + g(\"s\"))\n}\n".to_string(), "1s\n"),
+        (
+            "w05",
+            format!("fn main() {{\n{f}  let h = |x| x + 1\n  let g = |y, c| if c {{ f(y) }} else {{ h(y) }}\n  println(to_str(g(5, false)))\n}}\n"),
+            "6\n",
+        ),
+        (
+            "w05b",
+            format!("fn main() {{\n{f}  let h = |x| x + 1\n  let g = |y, c| if c {{ f(y) }} else {{ h(y) }}\n  println(to_str(g(5, false) + g(\"ab\", true)))\n}}\n"),
+            "8\n",
+        ),
+        (
+            "w14",
+            format!("fn main() {{\n{f}  let g = |y, c| if c {{ f(y) }} else {{ 0 }}\n  println(to_str(g(5, false)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "x10",
+            format!("fn main() {{\n{f}  let g = |y, c| {{ if c {{ return 0 }}  f(y) }}\n  println(to_str(g(5, true)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "loop_body",
+            format!("fn main() {{\n{f}  let g = |y, n| {{\n    let i = 0\n    while i < n {{\n      f(y)\n      i = i + 1\n    }}\n    0\n  }}\n  println(to_str(g(5, 0)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "and_right",
+            "fn main() {\n  let f = |x| str_len(x) > 0\n  let g = |y, c| c && f(y)\n  println(to_str(g(5, false)))\n}\n".to_string(),
+            "false\n",
+        ),
+        ("id_poly", "fn main() {\n  let id = |x| x\n  id(1)\n  println(id(\"s\"))\n}\n".to_string(), "s\n"),
+        (
+            "reassigned",
+            format!("fn main() {{\n{f}  let g = |y| 0\n  let k = |z| g(z)\n  g = |w| f(w)\n  println(to_str(k(5)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "if_lambdas",
+            format!("fn main() {{\n{f}  let c = false\n  let op = if c {{ |y| f(y) }} else {{ |y| 0 }}\n  println(to_str(op(5)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "array_lambdas",
+            format!("fn main() {{\n{f}  let ops = [|y| f(y), |y| 0]\n  println(to_str(ops[1](5)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "captured",
+            format!("fn main() {{\n  let id = |x| x\n  let a = id(5)\n{f}  let h = || f(a)\n  let m = |q| q + 1\n  println(to_str(m(a)))\n}}\n"),
+            "6\n",
+        ),
+        (
+            "exit_same_stmt",
+            format!("fn main() {{\n{f}  let g = |y, c| (if c {{ return 0 }} else {{ 1 }}) + f(y)\n  println(to_str(g(5, true)))\n}}\n"),
+            "0\n",
+        ),
+        (
+            "handler_inside",
+            format!("fn main() {{\n{f}  let g = |y| {{\n    let v = with handler {{ on IO(p) => 7 }} {{\n      println(\"x\")\n      f(y)\n    }}\n    v\n  }}\n  println(to_str(g(5)))\n}}\n"),
+            "7\n",
+        ),
+        (
+            "handler_outside",
+            format!("fn main() {{\n{f}  let g = |y| {{\n    println(\"x\")\n    f(y)\n  }}\n  let v = with handler {{ on IO(p) => 7 }} {{\n    g(5)\n  }}\n  println(to_str(v))\n}}\n"),
+            "7\n",
+        ),
+    ];
+    for (tag, src, out) in cases {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs3c_{tag}"), &src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: {rerr}"
+        );
+    }
+}
+
+/// CS3-5 (7): `?` on an `Option` in a fn returning `Result` keeps its E0102
+/// message and gains the help that names the spelling (the help was empty).
+#[test]
+fn diagnostics_for_refused_forms_infer() {
+    let src = "fn first_char(s: str) -> Option<str> {\n    if len(s) == 0 { None } else { Some(str_slice(s, 0, 1)) }\n}\n\
+               fn two(s: str, t: str) -> Result<str, str> {\n    let a = first_char(s)?\n    Ok(a)\n}\n\
+               fn main() { match two(\"ab\", \"cd\") { Ok(x) => println(x), Err(e) => println(e) } }\n";
+    let (crc, cmsg, _, _, _) = sf6_check_and_run("cs3_g06b", src);
+    assert_eq!(crc, Some(2), "{cmsg}");
+    assert!(
+        cmsg.contains("type mismatch in ? inner type (expected Result<?1, ?2>), found Option<str>")
+            && cmsg.contains(
+                "`?` works on `Result` only - convert with `match o { Some(v) => v, None => return Err(...) }`"
+            ),
+        "[g06b] want the `? inner type` E0102 with the Option help: {cmsg}"
+    );
+}
+
+// ── checker-soundness-3 lane C: CS3-4, CS3-5 row 9, CS3-6, CS3-7 ──────────────
+
+/// CS3-4: a bare `self` param in an `impl` method is the impl's type. The
+/// parser typed it `Self`, which the checker binds only inside a `trait`, so
+/// each program below was refused E0308 `unknown type 'Self'` (rc 2) though
+/// the interpreter already ran it. `traits_doc` is the documented example in
+/// `spec/compiler-phase3.md` ("prints `woof` then `meow`").
+#[test]
+fn bare_self_in_impl_method_is_the_impl_type() {
+    let attack = "ATTACK: a bare-self impl method was refused";
+    for (tag, src, out) in [
+        (
+            "s03",
+            "type Dog = { n: i64 }\ntrait Greet {\n    fn greet(self) -> str\n}\nimpl Greet for Dog { fn greet(self) -> str { \"woof\" } }\nfn main() { println(Dog { n: 1 }.greet()) }\n",
+            "woof\n",
+        ),
+        (
+            "a12_self_used",
+            "type Dog = { n: i64 }\ntrait Greet {\n    fn greet(self) -> i64\n}\nimpl Greet for Dog { fn greet(self) -> i64 { self.n } }\nfn main() { println(to_str(Dog { n: 1 }.greet())) }\n",
+            "1\n",
+        ),
+        (
+            "a04_returns_impl_type",
+            "type Counter = { count: i64 }\ntrait CounterOps {\n    fn incr(self) -> Counter\n}\nimpl CounterOps for Counter {\n    fn incr(self) -> Counter { Counter { count: self.count + 1 } }\n}\nfn main() {\n    let c = Counter { count: 0 }\n    println(to_str(c.incr().count))\n}\n",
+            "1\n",
+        ),
+        (
+            "traits_doc",
+            "trait Greet { fn greet(self) -> str }\ntype Dog = { name: str }\ntype Cat = { name: str }\nimpl Greet for Dog { fn greet(self) -> str { \"woof\" } }\nimpl Greet for Cat { fn greet(self) -> str { \"meow\" } }\nfn announce(g: dyn Greet) { println(g.greet()) }\nfn main() {\n    announce(Dog { name: \"Rex\" })\n    announce(Cat { name: \"Luna\" })\n}\n",
+            "woof\nmeow\n",
+        ),
+        (
+            "s02_typed_self_control",
+            "type Dog = { n: i64 }\ntrait Greet {\n    fn greet(self) -> str\n}\nimpl Greet for Dog { fn greet(self: Dog) -> str { \"woof\" } }\nfn main() { println(Dog { n: 1 }.greet()) }\n",
+            "woof\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS3-5 row 9: `loop { … }` parses as the name `loop` and a block, so the
+/// resolver used to answer "introduce `loop` with `let loop = ...`". It now
+/// names the Axon form. Still refused (rc 2, E0001).
+#[test]
+fn diagnostics_for_refused_forms_resolver() {
+    let attack = "ATTACK: `loop` was told to bind a variable named loop";
+    for (tag, src) in [
+        (
+            "33_loop_kw",
+            "fn main() {\n    let n = 0\n    loop {\n        n = n + 1\n        if n == 5 { break }\n    }\n    println(to_str(n))\n}\n",
+        ),
+        (
+            "g09b_loop_val",
+            "fn main() {\n    let n = 0\n    let r = loop {\n        n = n + 1\n        if n == 5 { break n * 2 }\n    }\n    println(to_str(r))\n}\n",
+        ),
+    ] {
+        let (crc, cmsg, _rrc, _rout, _rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "[{tag}] must stay refused: {cmsg}");
+        let line = cmsg
+            .lines()
+            .find(|l| l.contains("\"code\":\"E0001\"") && l.contains("`loop`"))
+            .unwrap_or_else(|| panic!("[{tag}] E0001 on `loop`: {cmsg}"));
+        assert!(
+            line.contains("while true") && !line.contains("let loop"),
+            "{attack} [{tag}]: {line}"
+        );
+    }
+}
+
+/// CS3-6: the lexer ends a string at the next `"`, so a `"` inside a string
+/// split it, and statement juxtaposition ran the tail as separate statements.
+/// y01/x01/y02 checked 0 and printed a truncated string (y02: `say `); g11
+/// was E0001 on a name that is really string text. A token glued to the
+/// closing quote (no gap) is now a parse error naming the fix.
+#[test]
+fn adjacent_string_literal_is_refused() {
+    let attack = "ATTACK: a string split by an inner quote checked clean";
+    for (tag, src) in [
+        (
+            "y01",
+            "fn main() {\n    let a = 1\n    let j = \"{{\"a\"}}\"\n    println(j)\n}\n",
+        ),
+        (
+            "x01",
+            "fn main() {\n    let a = 1\n    let j = r\"{\"a\"}\"\n    println(j)\n}\n",
+        ),
+        (
+            "y02",
+            "fn main() {\n    let hi = 2\n    let j = r\"say \"hi\" now\"\n    println(j)\n}\n",
+        ),
+        (
+            "g11",
+            "fn main() {\n    let j = r\"{\"a\": 1}\"\n    println(j)\n}\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, _rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(
+            cmsg.contains("\"code\":\"E0000\"") && cmsg.contains("this string ends at the"),
+            "{attack} [{tag}]: {cmsg}"
+        );
+        assert_eq!(rrc, Some(2), "{attack} [{tag}]: run printed {rout:?}");
+    }
+    // Controls: each runs today and must keep its output. A `{` right after a
+    // string is a valid block head (a1, a2); a gap makes adjacency legal
+    // juxtaposition (y04, y06); a newline after a raw string is a gap (y05).
+    let attack = "ATTACK: a valid string program was refused";
+    for (tag, src, out) in [
+        ("y04", "fn main() {\n    let x = 1 let y = 2\n    println(to_str(x + y))\n}\n", "3\n"),
+        (
+            "y05",
+            "fn main() {\n    let s = \"ab\"\n    println(to_str(len(s)))\n    let t = r\"a\\b\"\n    println(t + \"!\")\n    println(\"x\"+\"y\")\n}\n",
+            "2\na\\b!\nxy\n",
+        ),
+        ("y06", "fn main() {\n    let s = \"a\" let t = 1\n    println(s) println(to_str(t))\n}\n", "a\n1\n"),
+        ("g11c", "fn main() {\n    let p = r\"C:\\dir\\file\"\n    println(p)\n}\n", "C:\\dir\\file\n"),
+        (
+            "g11g",
+            "fn main() {\n    let p = r\"abc\"\n    let q = r\"x{1 + 1}y\"\n    println(p + q)\n}\n",
+            "abcx{1 + 1}y\n",
+        ),
+        ("g11h", "fn main() {\n    let r = 5\n    let p = r\"abc\"\n    println(p)\n}\n", "abc\n"),
+        (
+            "a1",
+            "fn main() {\n    let s = \"bob\"\n    if s == \"bob\"{ println(\"yes\") } else { println(\"no\") }\n    while s != \"bob\"{ println(\"x\") }\n    let m = match s { \"bob\"=> 1, _ => 2 }\n    println(to_str(m))\n}\n",
+            "yes\n1\n",
+        ),
+        (
+            "a2",
+            "fn main() {\n    let s = \"bob\"\n    let r = match s == \"bob\"{ true => 1, false => 2 }\n    println(to_str(r))\n    for c in [\"a\", \"b\"]{ println(c) }\n}\n",
+            "1\na\nb\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}
+
+/// CS3-7: an E0901 (module not found) or E0902 (circular import) names the
+/// `use` line. It used to carry no line at all (`None:None`). When the failing
+/// `use` is inside an imported module, the diagnostic names that module's
+/// file and line.
+#[test]
+fn module_not_found_names_the_use_line() {
+    let attack = "ATTACK: a module-load error named no `use` line";
+    let dir = std::env::temp_dir().join(format!("axon_cs3_7_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let w = |name: &str, src: &str| {
+        let p = dir.join(name);
+        std::fs::write(&p, src).unwrap();
+        p
+    };
+    let main = w(
+        "main.ax",
+        "mod mathutil\nuse mathutil.{square, cube}\nfn main() {\n    println(to_str(square(4)))\n    println(to_str(cube(3)))\n}\n",
+    );
+    w(
+        "mathutil.ax",
+        "pub fn square(x: i64) -> i64 { x * x }\npub fn cube(x: i64) -> i64 { x * x * x }\n",
+    );
+    let nested_main = w(
+        "n_main.ax",
+        "use n_mid.{f}\nfn main() {\n    println(to_str(f()))\n}\n",
+    );
+    let mid = w("n_mid.ax", "pub fn f() -> i64 { 1 }\nuse n_missing.{g}\n");
+    let circ_main = w(
+        "c_main.ax",
+        "use c_a.{f}\nfn main() {\n    println(to_str(f()))\n}\n",
+    );
+    w("c_a.ax", "use c_b.{g}\npub fn f() -> i64 { 1 }\n");
+    let cb = w("c_b.ax", "pub fn g() -> i64 { 2 }\nuse c_a.{f}\n");
+    let check = |file: &std::path::Path, axon_path: Option<&std::path::Path>| {
+        let mut c = axon();
+        c.args(["check", file.to_str().unwrap()])
+            .env_remove("AXON_PATH")
+            .env_remove("AXON_PATH_EXCLUSIVE")
+            .env_remove("AXON_REQUIRE_IMPORTS_DIGEST")
+            .current_dir(std::env::temp_dir());
+        // With a path, search only it (no `~/.axon/lib`); without one the
+        // default dirs are searched, as for a user with `AXON_PATH` unset.
+        if let Some(p) = axon_path {
+            c.env("AXON_PATH", p).env("AXON_PATH_EXCLUSIVE", "1");
+        }
+        let o = c.output().unwrap();
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    };
+    let find = |err: &str, code: &str| -> String {
+        err.lines()
+            .find(|l| l.contains(&format!("\"code\":\"{code}\"")))
+            .unwrap_or_else(|| panic!("no {code}: {err}"))
+            .to_string()
+    };
+    let mut fails = Vec::new();
+    // Entry-file `use` with `AXON_PATH` unset: the module beside main is not
+    // searched (documented), and the error names line 2.
+    let (rc, err) = check(&main, None);
+    let d = find(&err, "E0901");
+    if rc != Some(2) || !d.contains("\"line\":2,") || !d.contains("main.ax\"") {
+        fails.push(format!("entry: rc={rc:?} {d}"));
+    }
+    // A missing `use` inside an imported module: that module's file, line 2.
+    let (rc, err) = check(&nested_main, Some(&dir));
+    let d = find(&err, "E0901");
+    let mid_s = mid.display().to_string();
+    if rc != Some(2) || !d.contains("\"line\":2,") || !d.contains(&format!("\"file\":\"{mid_s}\""))
+    {
+        fails.push(format!("nested: rc={rc:?} {d}"));
+    }
+    // A cycle: the `use` that closes it, in c_b.ax line 2.
+    let (rc, err) = check(&circ_main, Some(&dir));
+    let d = find(&err, "E0902");
+    let cb_s = cb.display().to_string();
+    if rc != Some(2) || !d.contains("\"line\":2,") || !d.contains(&format!("\"file\":\"{cb_s}\"")) {
+        fails.push(format!("circular: rc={rc:?} {d}"));
+    }
+    // Control: with the module on `AXON_PATH` the program checks clean.
+    let (rc, err) = check(&main, Some(&dir));
+    if rc != Some(0) {
+        fails.push(format!("control: rc={rc:?} {err}"));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(fails.is_empty(), "{attack}: {}", fails.join("\n"));
+}
+
+/// CS3-2 ruling (ImplAuditCS3 F1): a wrong-kind call of a wrapper lambda in a
+/// branch that never runs is E0102, as its direct-call twin already was on
+/// the base. A dead branch does not exempt a type error. Each pair agrees:
+/// c01 (`g(1)` under `if n > 0`) with c02 (`f(1)` there), c03 (`g(1)` in the
+/// untaken arm of an `if` value) with c04 (`f(1)` there). The wrapper forms
+/// checked rc 0 and printed before CS3-2. NH-13 (w14) is a different shape:
+/// its conditional call is inside the wrapper's body.
+#[test]
+fn wrapper_and_direct_calls_in_a_dead_branch_agree() {
+    let f = "fn main() { let f = |x| str_len(x)\n";
+    let pairs = [
+        (
+            ("c01", format!("{f}let g = |y| f(y)\nlet n = 0\nif n > 0 {{ println(to_str(g(1))) }}\nprintln(\"ok\") }}\n")),
+            ("c02", format!("{f}let n = 0\nif n > 0 {{ println(to_str(f(1))) }}\nprintln(\"ok\") }}\n")),
+        ),
+        (
+            ("c03", format!("{f}let g = |y| f(y)\nlet n = 0\nlet r = if n > 0 {{ g(1) }} else {{ g(\"ab\") }}\nprintln(to_str(r)) }}\n")),
+            ("c04", format!("{f}let n = 0\nlet r = if n > 0 {{ f(1) }} else {{ f(\"ab\") }}\nprintln(to_str(r)) }}\n")),
+        ),
+    ];
+    for ((wtag, wsrc), (dtag, dsrc)) in pairs {
+        for (tag, src) in [(wtag, &wsrc), (dtag, &dsrc)] {
+            let (crc, cmsg, _, _, _) = sf6_check_and_run(&format!("cs3dead_{tag}"), src);
+            assert!(
+                crc == Some(2)
+                    && cmsg.contains("E0102")
+                    && cmsg.contains("(expected str), found i64"),
+                "[{tag}] (pair {wtag}/{dtag}) want check rc 2 E0102 `expected str, found i64`, got rc {crc:?}: {cmsg}"
+            );
+        }
+    }
+}
+
+/// CS3-6 follow-up (ImplAuditCS3 F2): a keyword or bool glued to a closing
+/// quote is the tail of a split string too (`"flag is "true" now"` checked 0
+/// and printed `flag is `), as is a glued `!` (`"a"!true` printed `a`). A glued
+/// `(` made the string a callee: check 0, then a run-time panic. Each is now
+/// the CS3-6 parse error.
+#[test]
+fn a_glued_keyword_bang_or_paren_after_a_string_is_refused() {
+    let attack = "ATTACK: a string split at a glued keyword, `!` or `(` checked clean";
+    for (tag, src) in [
+        (
+            "kw_true",
+            "fn main() {\n    let t = \"flag is \"true\" now\"\n    println(t)\n}\n",
+        ),
+        (
+            "kw_bool_tail",
+            "fn main() {\n    let t = \"a\"true\n    println(t)\n}\n",
+        ),
+        (
+            "kw_if",
+            "fn main() {\n    let t = \"a\"if true { println(\"x\") }\n    println(t)\n}\n",
+        ),
+        (
+            "kw_some",
+            "fn main() {\n    let t = \"a\"Some(1)\n    println(t)\n}\n",
+        ),
+        (
+            "bang",
+            "fn main() {\n    let t = \"a\"!true\n    println(t)\n}\n",
+        ),
+        (
+            "paren",
+            "fn main() {\n    let t = \"a\"(1)\n    println(t)\n}\n",
+        ),
+        (
+            "raw_kw",
+            "fn main() {\n    let t = r\"x \"false\" y\"\n    println(t)\n}\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, _rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(
+            cmsg.contains("\"code\":\"E0000\"") && cmsg.contains("this string ends at the"),
+            "{attack} [{tag}]: {cmsg}"
+        );
+        assert_eq!(rrc, Some(2), "{attack} [{tag}]: run printed {rout:?}");
+    }
+}
+
+/// Controls for the F2 rule: each runs today and keeps its output. A string
+/// directly followed by `{` (a block head), `}`, `)`, `]`, `,`, `=>`, `!=`,
+/// `==`, `+` or `.`, or by a keyword after a gap, is not a split string.
+#[test]
+fn a_string_followed_by_punctuation_or_a_spaced_keyword_stays_legal() {
+    let attack = "ATTACK: a valid program with a string before punctuation was refused";
+    for (tag, src, out) in [
+        (
+            "brace_else",
+            "fn main() {\n    let c = true\n    let t = if c {\"a\"}else{\"b\"}\n    println(t)\n}\n",
+            "a\n",
+        ),
+        (
+            "spaced_brace",
+            "fn main() {\n    let s = \"a\"\n    if s == \"a\" { println(\"y\") }\n    if s == \"a\"{ println(\"z\") }\n}\n",
+            "y\nz\n",
+        ),
+        (
+            "fat_arrow",
+            "fn main() {\n    let s = \"a\"\n    let m = match s { \"a\"=> 1, _ => 2 }\n    println(to_str(m))\n}\n",
+            "1\n",
+        ),
+        (
+            "paren_close",
+            "fn main() {\n    println(\"a\")\n    println(to_str(len(\"ab\")))\n}\n",
+            "a\n2\n",
+        ),
+        (
+            "not_eq_and_eq",
+            "fn main() {\n    let s = \"b\"\n    println(to_str(s!=\"a\"))\n    println(to_str(\"b\"==s))\n}\n",
+            "true\ntrue\n",
+        ),
+        (
+            "array_comma_plus",
+            "fn main() {\n    let xs = [\"a\",\"b\"]\n    println(xs[0]+\"c\"+xs[1])\n}\n",
+            "acb\n",
+        ),
+        (
+            "spaced_keyword",
+            "fn main() {\n    let s = \"a\" let b = true\n    if b { println(s) }\n}\n",
+            "a\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
 }

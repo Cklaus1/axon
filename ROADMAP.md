@@ -564,7 +564,7 @@ prioritized as input to the Phase 5–10 schedule. Replace any conflicting handw
 
 | # | Gap | Phase target | Notes |
 |---|---|---|---|
-| F13 | ~~No structured-prose surface — non-programmer cannot author the demo today~~ — **CLOSED.** Phase 10 delivered `axon intent compile <goal.md>` → typed `.ax` skeleton + LLM body generation (Phase 10 v1.1). Acid Test 2 (First Goal) is demonstrable end-to-end. | 10 | ✅ DONE. |
+| F13 | ~~No structured-prose surface — non-programmer cannot author the demo today~~ — **CLOSED.** Phase 10 delivered `axon intent compile <goal.md>` → typed `.ax` skeleton. Program generation is `axon-intent compile --generator` (the IG4 check→repair loop; IG5 removed Phase 10 v1.1's single-shot, unchecked generation). | 10 | ✅ DONE. |
 | F14 | ~~No human-in-the-loop approval between "best variant found" and "deploy_gate fires"~~ — **CLOSED.** Phase 12 web UI (axon-web) delivers the full approval flow: Intent → AST Review → Approve → Improve → Redteam → Deploy → Trace. Acid Tests 3 and 4 demonstrable. | 12 | ✅ DONE. |
 | F15 | ~~No `simulate → stress → redteam → verify → deploy` pipeline; demo conflates "score on test set" with "simulate"~~ — **CLOSED.** Phase 11 delivered risk-typed pipeline gate: Risk derived from effect rows + budget + irreversibility; `Risk ≥ High` triggers `simulate→stress→redteam→verify→deploy`; `axon deploy --risk LEVEL` enforces the gate chain. | 11 | ✅ DONE. |
 
@@ -683,7 +683,7 @@ Until all three pass, Axon is a demo, not a product.
 **Status — ALL FOUR acid tests are now DEMONSTRABLE on shipped primitives (commit 73cc2ba).**
 
 - **Hello Goal (#1, CLI, engineering-v1):** `examples/asi/run.sh hello-goal` drives the full loop: **run** (goal_run hill-climbs the metric) → `@[verify]` **deploy gate** (safety catch, exit 3) → **trace** → **audit** (`axon trace --ai`) → **improve** → **replay** (`AXON_AI_REPLAY`, byte-identical). Gated by `asi_hello_goal_acid_test_loop_runs_end_to_end`.
-- **First Goal (#2, web UI + CLI):** `axon intent compile` + web UI approval flow: Intent pane → AST Review pane → Approve pane → Deploy pane. Covered by `axon-web` e2e test + Phase-10 v1.1 LLM generation.
+- **First Goal (#2, web UI + CLI):** `axon intent compile` + web UI approval flow: Intent pane → AST Review pane → Approve pane → Deploy pane. Covered by `axon-web` e2e test; generation is the `axon-intent --generator` check→repair loop (IG4), which replaced Phase-10 v1.1's single-shot path.
 - **First Improvement (#3, web UI `/api/goal/improve` pane):** User clicks "Run Improve Cycle"; score trajectory (e.g. 51→96) displayed. Gated by `post_goal_improve_returns_json` test + `axon-goal-improve/1` schema.
 - **First Redteam Catch (#4, web UI redteam reason text):** `run_json_merged` extracts prose reasoning lines alongside JSON; UI shows `⚠ REDTEAM CAUGHT: REDTEAM FAILED: blocking deploy` in plain English.
 

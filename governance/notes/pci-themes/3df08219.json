@@ -1,0 +1,4 @@
+{
+  "theme": "intent-gen IG2",
+  "text": "CLI: new verb `axon card [--sha256]` prints a deterministic language card for model prompts (curated syntax and program rules whose examples type-check, plus every builtin's signature from the same renderer `axon reference` uses)."
+}

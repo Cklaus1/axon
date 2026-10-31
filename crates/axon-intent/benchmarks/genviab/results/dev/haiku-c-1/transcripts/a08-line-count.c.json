@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    src = \"./data/lines.txt\"\n    dst = \"./out/answer.txt\"\n\n    with open(src, \"rb\") as f:\n        data = f.read()\n\n    # Every line ends with a newline, so the newline count equals the line count.\n    count = data.count(b\"\\n\")\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(dst, \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        f.write(str(count) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    try:\n        sys.exit(main())\n    except Exception:\n        sys.exit(1)\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    src = \"./data/lines.txt\"\n    dst = \"./out/answer.txt\"\n\n    with open(src, \"rb\") as f:\n        data = f.read()\n\n    # Every line ends with a newline, so the newline count equals the line count.\n    count = data.count(b\"\\n\")\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(dst, \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        f.write(str(count) + \"\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    try:\n        sys.exit(main())\n    except Exception:\n        sys.exit(1)\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

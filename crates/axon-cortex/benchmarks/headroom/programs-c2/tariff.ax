@@ -1,0 +1,361 @@
+// Electricity billing: time-of-use periods, block tariffs, daily standing
+// charges and a printable bill summary.
+// Energy rates are in tenths of a cent per kWh; amounts returned are cents.
+
+fn is_leap(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+fn days_in_month(y: i64, m: i64) -> i64 {
+    if m == 2 {
+        if is_leap(y) {
+            29
+        } else {
+            28
+        }
+    } else if m == 4 || m == 6 || m == 9 || m == 11 {
+        30
+    } else {
+        31
+    }
+}
+
+// Days since 2000-01-01 for a [year, month, day] date, or -1 when invalid.
+fn day_index(date: [i64]) -> i64 {
+    if len(date) != 3 {
+        return -1
+    }
+    let y = date[0]
+    let m = date[1]
+    let d = date[2]
+    if y < 2000 || m < 1 || m > 12 || d < 1 || d > days_in_month(y, m) {
+        return -1
+    }
+    let n = 0
+    let yy = 2000
+    while yy < y {
+        n = n + 365
+        if is_leap(yy) {
+            n = n + 1
+        }
+        yy = yy + 1
+    }
+    let mm = 1
+    while mm < m {
+        n = n + days_in_month(y, mm)
+        mm = mm + 1
+    }
+    n + d - 1
+}
+
+fn money_str(cents: i64) -> str {
+    let sign = ""
+    let v = cents
+    if v < 0 {
+        sign = "-"
+        v = 0 - v
+    }
+    sign + to_str(v / 100) + "." + str_pad_start(to_str(v % 100), 2, "0")
+}
+
+// Weekday 0 is Monday. Returns "peak", "mid", "offpeak" or "invalid".
+fn tou_period(hour: i64, weekday: i64, summer: bool) -> str {
+    if hour < 0 || hour > 23 || weekday < 0 || weekday > 6 {
+        return "invalid"
+    }
+    if hour < 7 || hour >= 23 {
+        return "offpeak"
+    }
+    if weekday >= 5 {
+        if summer && hour >= 14 && hour < 18 {
+            return "mid"
+        }
+        if !summer && hour >= 17 && hour < 20 {
+            return "mid"
+        }
+        return "offpeak"
+    }
+    if summer {
+        if hour >= 14 && hour < 20 {
+            return "peak"
+        }
+        if hour >= 10 {
+            return "mid"
+        }
+        return "offpeak"
+    }
+    if (hour >= 7 && hour < 9) || (hour >= 17 && hour < 21) {
+        return "peak"
+    }
+    "mid"
+}
+
+// Hourly readings in Wh starting at start_hour. rates = [peak, mid, offpeak,
+// export]; a negative reading is exported energy credited at the export rate.
+fn tou_energy_cost(readings_wh: [i64], start_hour: i64, start_weekday: i64, summer: bool, rates: [i64]) -> i64 {
+    if len(rates) != 4 {
+        return -1
+    }
+    let hour = start_hour
+    let weekday = start_weekday
+    let total = 0
+    for wh in readings_wh {
+        let period = tou_period(hour, weekday, summer)
+        if period == "invalid" {
+            return -1
+        }
+        if wh < 0 {
+            total = total + wh * rates[3]
+        } else if period == "peak" {
+            total = total + wh * rates[0]
+        } else if period == "mid" {
+            total = total + wh * rates[1]
+        } else {
+            total = total + wh * rates[2]
+        }
+        hour = hour + 1
+        if hour == 24 {
+            hour = 0
+            weekday = (weekday + 1) % 7
+        }
+    }
+    if total >= 0 {
+        (total + 5000) / 10000
+    } else {
+        0 - (0 - total + 5000) / 10000
+    }
+}
+
+// Block tariff: bounds are ascending kWh thresholds and rates has one more
+// entry than bounds, the last rate applying above the final threshold.
+fn tiered_energy_cost(kwh: i64, bounds: [i64], rates: [i64]) -> i64 {
+    if kwh < 0 || len(rates) != len(bounds) + 1 {
+        return -1
+    }
+    if len(bounds) > 0 && bounds[0] <= 0 {
+        return -1
+    }
+    let i = 1
+    while i < len(bounds) {
+        if bounds[i] <= bounds[i - 1] {
+            return -1
+        }
+        i = i + 1
+    }
+    let remaining = kwh
+    let lower = 0
+    let total = 0
+    let tier = 0
+    while remaining > 0 {
+        let width = remaining
+        if tier < len(bounds) {
+            width = min_i64(remaining, bounds[tier] - lower)
+            lower = bounds[tier]
+        }
+        total = total + width * rates[tier]
+        remaining = remaining - width
+        tier = tier + 1
+    }
+    (total + 5) / 10
+}
+
+// Standing charge from start (inclusive) to end (exclusive). When change is a
+// valid date, new_rate applies from that day on. Daily rates in tenths of a cent.
+fn standing_charge_cents(start: [i64], end: [i64], daily_rate: i64, change: [i64], new_rate: i64) -> i64 {
+    let a = day_index(start)
+    let b = day_index(end)
+    if a < 0 || b < 0 || b < a || daily_rate < 0 {
+        return -1
+    }
+    let days = b - a
+    if days > 366 {
+        return -1
+    }
+    let old_days = days
+    let new_days = 0
+    if len(change) == 3 {
+        let c = day_index(change)
+        if c < 0 || new_rate < 0 {
+            return -1
+        }
+        if c <= a {
+            old_days = 0
+            new_days = days
+        } else if c < b {
+            old_days = c - a
+            new_days = b - c
+        }
+    }
+    let total = old_days * daily_rate + new_days * new_rate
+    (total + 5) / 10
+}
+
+fn format_bill(energy_cents: i64, standing_cents: i64, vat_pct: i64, credit_cents: i64) -> str {
+    if standing_cents < 0 || vat_pct < 0 || credit_cents < 0 {
+        return "error"
+    }
+    let taxable = energy_cents + standing_cents
+    let vat = 0
+    if taxable > 0 {
+        vat = (taxable * vat_pct + 50) / 100
+    }
+    let parts: [str] = []
+    parts = arr_push(parts, "energy " + money_str(energy_cents))
+    parts = arr_push(parts, "standing " + money_str(standing_cents))
+    if vat > 0 {
+        parts = arr_push(parts, "vat " + money_str(vat))
+    }
+    if credit_cents > 0 {
+        parts = arr_push(parts, "credit " + money_str(credit_cents))
+    }
+    let total = taxable + vat - credit_cents
+    if total < 0 {
+        parts = arr_push(parts, "total " + money_str(0 - total) + " CR")
+    } else if total == 0 {
+        parts = arr_push(parts, "total nil")
+    } else {
+        parts = arr_push(parts, "total " + money_str(total))
+    }
+    str_join(parts, "; ")
+}
+
+@[test]
+fn test_tou_period_summer_weekday() {
+    assert_eq_str(tou_period(15, 2, true), "peak")
+    assert_eq_str(tou_period(11, 2, true), "mid")
+    assert_eq_str(tou_period(8, 1, true), "offpeak")
+}
+
+@[test]
+fn test_tou_period_winter_weekday() {
+    assert_eq_str(tou_period(8, 1, false), "peak")
+    assert_eq_str(tou_period(12, 1, false), "mid")
+    assert_eq_str(tou_period(22, 4, false), "mid")
+}
+
+@[test]
+fn test_tou_period_weekend_and_night() {
+    assert_eq_str(tou_period(16, 6, true), "mid")
+    assert_eq_str(tou_period(18, 5, false), "mid")
+    assert_eq_str(tou_period(3, 3, false), "offpeak")
+}
+
+@[test]
+fn test_tou_period_invalid() {
+    assert_eq_str(tou_period(24, 0, true), "invalid")
+    assert_eq_str(tou_period(10, 7, true), "invalid")
+}
+
+@[test]
+fn test_tou_energy_cost_peak_hours() {
+    let rates = [300, 200, 100, 50]
+    assert_eq(tou_energy_cost([1000, 1000], 14, 0, true, rates), 60)
+}
+
+@[test]
+fn test_tou_energy_cost_wraps_midnight() {
+    let rates = [300, 200, 100, 50]
+    assert_eq(tou_energy_cost([500, 1500, 2000], 22, 4, false, rates), 45)
+}
+
+@[test]
+fn test_tou_energy_cost_export_credit() {
+    let rates = [300, 200, 100, 50]
+    assert_eq(tou_energy_cost([-3000, 1000], 3, 2, false, rates), -5)
+    assert_eq(tou_energy_cost([-1000, 1000, 1000], 16, 1, true, rates), 55)
+}
+
+@[test]
+fn test_tou_energy_cost_bad_input() {
+    assert_eq(tou_energy_cost([1000], 10, 1, true, [300, 200]), -1)
+    assert_eq(tou_energy_cost([1000], 25, 1, true, [300, 200, 100, 50]), -1)
+    assert_eq(tou_energy_cost([1000, 1000], 23, 6, true, [300, 200, 100, 50]), 20)
+}
+
+@[test]
+fn test_tiered_cost_first_block() {
+    assert_eq(tiered_energy_cost(80, [100, 300], [150, 200, 300]), 1200)
+}
+
+@[test]
+fn test_tiered_cost_spans_blocks() {
+    assert_eq(tiered_energy_cost(250, [100, 300], [150, 200, 300]), 4500)
+    assert_eq(tiered_energy_cost(450, [100, 300], [150, 200, 300]), 10000)
+}
+
+@[test]
+fn test_tiered_cost_flat_and_rounding() {
+    let none: [i64] = []
+    assert_eq(tiered_energy_cost(7, none, [155]), 109)
+    assert_eq(tiered_energy_cost(1, [10], [155, 200]), 16)
+}
+
+@[test]
+fn test_tiered_cost_rejects_bad_tables() {
+    assert_eq(tiered_energy_cost(50, [100, 300], [150, 200]), -1)
+    assert_eq(tiered_energy_cost(50, [300, 100], [150, 200, 300]), -1)
+    assert_eq(tiered_energy_cost(0, [100], [150, 200]), 0)
+}
+
+@[test]
+fn test_standing_charge_leap_year() {
+    let none: [i64] = []
+    assert_eq(standing_charge_cents([2024, 1, 1], [2024, 3, 1], 650, none, 0), 3900)
+    assert_eq(standing_charge_cents([2023, 1, 1], [2023, 3, 1], 650, none, 0), 3835)
+}
+
+@[test]
+fn test_standing_charge_rate_change() {
+    assert_eq(standing_charge_cents([2024, 1, 1], [2024, 3, 1], 650, [2024, 2, 1], 700), 4045)
+    assert_eq(standing_charge_cents([2024, 1, 10], [2024, 1, 20], 650, [2023, 12, 1], 700), 700)
+}
+
+@[test]
+fn test_standing_charge_across_year_end() {
+    let none: [i64] = []
+    assert_eq(standing_charge_cents([2023, 12, 15], [2024, 1, 15], 333, none, 0), 1032)
+}
+
+@[test]
+fn test_standing_charge_invalid_dates() {
+    let none: [i64] = []
+    assert_eq(standing_charge_cents([2024, 3, 1], [2024, 1, 1], 650, none, 0), -1)
+    assert_eq(standing_charge_cents([2023, 2, 29], [2023, 3, 1], 650, none, 0), -1)
+}
+
+@[test]
+fn test_format_bill_standard() {
+    assert_eq_str(format_bill(4500, 3900, 5, 0), "energy 45.00; standing 39.00; vat 4.20; total 88.20")
+}
+
+@[test]
+fn test_format_bill_in_credit() {
+    assert_eq_str(format_bill(1200, 300, 20, 2000), "energy 12.00; standing 3.00; vat 3.00; credit 20.00; total 2.00 CR")
+    assert_eq_str(format_bill(-5, 0, 5, 0), "energy -0.05; standing 0.00; total 0.05 CR")
+}
+
+@[test]
+fn test_format_bill_zero_and_error() {
+    assert_eq_str(format_bill(0, 0, 5, 0), "energy 0.00; standing 0.00; total nil")
+    assert_eq_str(format_bill(100, -1, 5, 0), "error")
+}
+
+@[test]
+fn test_day_index_epoch_and_leap_day() {
+    assert_eq(day_index([2000, 1, 1]), 0)
+    assert_eq(day_index([2000, 3, 1]), 60)
+    assert_eq(day_index([2001, 1, 1]), 366)
+}
+
+@[test]
+fn test_day_index_later_years() {
+    assert_eq(day_index([2024, 2, 29]), 8825)
+    assert_eq(day_index([2100, 3, 1]), 36584)
+}
+
+@[test]
+fn test_day_index_rejects_invalid() {
+    assert_eq(day_index([1999, 12, 31]), -1)
+    assert_eq(day_index([2100, 2, 29]), -1)
+    assert_eq(day_index([2024, 13, 1]), -1)
+}

@@ -1,0 +1,292 @@
+// Spreadsheet A1-style references: parsing, shifting, range expansion and
+// simple aggregate formulas over a grid of cell texts (row-major, 1-based refs).
+
+fn column_letters(n: i64) -> str {
+    let out = ""
+    let k = n
+    while k > 0 {
+        out = chr(65 + (k - 1) % 26) + out
+        k = (k - 1) / 26
+    }
+    out
+}
+
+fn parse_ref(r: str) -> [i64] {
+    let s = str_trim(r)
+    let n = len(s)
+    let i = 0
+    let abs_col = 0
+    if i < n && char_at(s, i) == 36 {
+        abs_col = 1
+        i = i + 1
+    }
+    let col = 0
+    let letters = 0
+    while i < n && ((char_at(s, i) >= 65 && char_at(s, i) <= 90) || (char_at(s, i) >= 97 && char_at(s, i) <= 122)) {
+        let c = char_at(s, i)
+        let upper = if c >= 97 { c - 32 } else { c }
+        col = col * 26 + (upper - 64)
+        letters = letters + 1
+        i = i + 1
+    }
+    let abs_row = 0
+    if i < n && char_at(s, i) == 36 {
+        abs_row = 1
+        i = i + 1
+    }
+    let row = 0
+    let digits = 0
+    while i < n && char_at(s, i) >= 48 && char_at(s, i) <= 57 {
+        row = row * 10 + (char_at(s, i) - 48)
+        digits = digits + 1
+        i = i + 1
+    }
+    if i != n || letters == 0 || letters > 3 || digits == 0 || digits > 7 {
+        return []
+    }
+    if row < 1 || row > 1048576 || col > 16384 {
+        return []
+    }
+    [row, col, abs_row, abs_col]
+}
+
+fn shift_ref(r: str, drow: i64, dcol: i64) -> str {
+    let parts = str_split(str_trim(r), ":")
+    if len(parts) > 2 {
+        return "#REF!"
+    }
+    let out: [str] = []
+    for p in parts {
+        let cell = parse_ref(p)
+        if len(cell) != 4 {
+            return "#REF!"
+        }
+        let row = cell[0]
+        let col = cell[1]
+        if cell[2] == 0 {
+            row = row + drow
+        }
+        if cell[3] == 0 {
+            col = col + dcol
+        }
+        if row < 1 || col < 1 || row > 1048576 || col > 16384 {
+            return "#REF!"
+        }
+        let text = if cell[3] == 1 { "$" } else { "" }
+        text = text + column_letters(col)
+        if cell[2] == 1 {
+            text = text + "$"
+        }
+        out = arr_push(out, text + to_str(row))
+    }
+    str_join(out, ":")
+}
+
+fn range_cells(range: str) -> [str] {
+    let cells: [str] = []
+    let parts = str_split(str_trim(range), ":")
+    if len(parts) > 2 {
+        return cells
+    }
+    let a = parse_ref(parts[0])
+    let b = if len(parts) == 2 { parse_ref(parts[1]) } else { parse_ref(parts[0]) }
+    if len(a) != 4 || len(b) != 4 {
+        return cells
+    }
+    let r1 = min_i64(a[0], b[0])
+    let r2 = max_i64(a[0], b[0])
+    let c1 = min_i64(a[1], b[1])
+    let c2 = max_i64(a[1], b[1])
+    if (r2 - r1 + 1) * (c2 - c1 + 1) > 10000 {
+        return cells
+    }
+    let r = r1
+    while r <= r2 {
+        let c = c1
+        while c <= c2 {
+            cells = arr_push(cells, column_letters(c) + to_str(r))
+            c = c + 1
+        }
+        r = r + 1
+    }
+    cells
+}
+
+fn range_values(grid: [[str]], range: str) -> [i64] {
+    let vals: [i64] = []
+    let parts = str_split(str_trim(range), ":")
+    if len(parts) > 2 {
+        return vals
+    }
+    let a = parse_ref(parts[0])
+    let b = if len(parts) == 2 { parse_ref(parts[1]) } else { parse_ref(parts[0]) }
+    if len(a) != 4 || len(b) != 4 {
+        return vals
+    }
+    let r2 = min_i64(max_i64(a[0], b[0]), len(grid))
+    let c1 = min_i64(a[1], b[1])
+    let c2 = max_i64(a[1], b[1])
+    let r = min_i64(a[0], b[0])
+    while r <= r2 {
+        let row = grid[r - 1]
+        let c = c1
+        while c <= c2 && c <= len(row) {
+            let t = str_trim(row[c - 1])
+            let body = if str_starts_with(t, "-") { str_slice(t, 1, len(t)) } else { str_slice(t, 0, len(t)) }
+            if len(body) > 0 && str_digits_only(body) == body {
+                vals = arr_push(vals, parse_int_or(t, 0))
+            }
+            c = c + 1
+        }
+        r = r + 1
+    }
+    vals
+}
+
+fn eval_formula(grid: [[str]], formula: str) -> i64 {
+    let f = str_to_upper(str_trim(formula))
+    if str_starts_with(f, "=") {
+        f = str_slice(f, 1, len(f))
+    }
+    let open = str_index_of(f, "(")
+    if open < 0 || !str_ends_with(f, ")") {
+        let single = range_values(grid, f)
+        if len(single) == 1 {
+            return single[0]
+        }
+        return parse_int_or(f, 0)
+    }
+    let name = str_trim(str_slice(f, 0, open))
+    let vals: [i64] = []
+    for arg in str_split(str_slice(f, open + 1, len(f) - 1), ",") {
+        let t = str_trim(arg)
+        let c = char_at(t, 0)
+        if c == 36 || (c >= 65 && c <= 90) {
+            vals = arr_concat(vals, range_values(grid, t))
+        } else {
+            match parse_int(t) {
+                Ok(v) => { vals = arr_push(vals, v) }
+                Err(_) => {}
+            }
+        }
+    }
+    if name == "COUNT" {
+        return len(vals)
+    }
+    if name == "SUM" || len(vals) == 0 {
+        return arr_sum_i64(vals)
+    }
+    if name == "MAX" {
+        arr_max_i64(vals)
+    } else if name == "MIN" {
+        arr_min_i64(vals)
+    } else {
+        0
+    }
+}
+
+@[test]
+fn test_column_letters() {
+    assert_eq_str(column_letters(1), "A")
+    assert_eq_str(column_letters(28), "AB")
+    assert_eq_str(column_letters(16384), "XFD")
+}
+
+@[test]
+fn test_parse_ref_relative() {
+    assert(parse_ref("B3") == [3, 2, 0, 0])
+    assert(parse_ref("xfd1048576") == [1048576, 16384, 0, 0])
+}
+
+@[test]
+fn test_parse_ref_absolute_markers() {
+    assert(parse_ref("$AA$10") == [10, 27, 1, 1])
+    assert(parse_ref("C$7") == [7, 3, 1, 0])
+}
+
+@[test]
+fn test_parse_ref_rejects_malformed() {
+    assert(parse_ref("A0") == [])
+    assert(parse_ref("1A") == [])
+    assert(parse_ref("ABCD1") == [])
+    assert(parse_ref("A$") == [])
+    assert(parse_ref("XFE1") == [])
+}
+
+@[test]
+fn test_shift_ref_relative() {
+    assert_eq_str(shift_ref("B3", 1, 2), "D4")
+    assert_eq_str(shift_ref("Z9", 0, 1), "AA9")
+}
+
+@[test]
+fn test_shift_ref_keeps_anchors() {
+    assert_eq_str(shift_ref("$B3:C$4", 2, 1), "$B5:D$4")
+    assert_eq_str(shift_ref("$A$1", 5, 5), "$A$1")
+}
+
+@[test]
+fn test_shift_ref_out_of_sheet() {
+    assert_eq_str(shift_ref("A1", -1, 0), "#REF!")
+    assert_eq_str(shift_ref("A1:B2", 0, -1), "#REF!")
+    assert_eq_str(shift_ref("A1:B2:C3", 0, 0), "#REF!")
+}
+
+@[test]
+fn test_range_cells_block() {
+    assert(range_cells("A1:B2") == ["A1", "B1", "A2", "B2"])
+    assert(range_cells("D4") == ["D4"])
+}
+
+@[test]
+fn test_range_cells_reversed_corners() {
+    assert(range_cells("C2:A1") == ["A1", "B1", "C1", "A2", "B2", "C2"])
+}
+
+@[test]
+fn test_range_cells_column_rollover() {
+    assert(range_cells("Y5:AA5") == ["Y5", "Z5", "AA5"])
+    assert(range_cells("bad") == [])
+}
+
+@[test]
+fn test_range_values_skips_text_and_blanks() {
+    let grid = [["1", "2", "x"], ["4", "", "-6"], ["7", "8", "9"]]
+    assert(range_values(grid, "A1:C2") == [1, 2, 4, -6])
+}
+
+@[test]
+fn test_range_values_clamps_to_grid() {
+    let grid = [["1", "2", "x"], ["4", "", "-6"], ["7", "8", "9"]]
+    assert(range_values(grid, "B2:C9") == [-6, 8, 9])
+    assert(range_values(grid, "D1") == [])
+}
+
+@[test]
+fn test_range_values_ragged_rows() {
+    let grid = [["5"], ["6", " 12 "], ["-", "3"]]
+    assert(range_values(grid, "$A$1:B3") == [5, 6, 12, 3])
+}
+
+@[test]
+fn test_eval_formula_sum_and_count() {
+    let grid = [["1", "2", "x"], ["4", "", "-6"], ["7", "8", "9"]]
+    assert_eq(eval_formula(grid, "=SUM(A1:C3)"), 25)
+    assert_eq(eval_formula(grid, "=COUNT(A1:C3)"), 7)
+}
+
+@[test]
+fn test_eval_formula_max_min_with_literals() {
+    let grid = [["1", "2", "x"], ["4", "", "-6"], ["7", "8", "9"]]
+    assert_eq(eval_formula(grid, "=max(A1:B3, 20)"), 20)
+    assert_eq(eval_formula(grid, "=MIN(A1:C3)"), -6)
+    assert_eq(eval_formula(grid, "=SUM(A1, C3, 100)"), 110)
+}
+
+@[test]
+fn test_eval_formula_plain_values() {
+    let grid = [["1", "2", "x"], ["4", "", "-6"], ["7", "8", "9"]]
+    assert_eq(eval_formula(grid, "=C3"), 9)
+    assert_eq(eval_formula(grid, "=42"), 42)
+    assert_eq(eval_formula(grid, "=AVG(A1)"), 0)
+}

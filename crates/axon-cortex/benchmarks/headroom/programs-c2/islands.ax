@@ -1,0 +1,284 @@
+// Connected regions in a character grid: labelling, sizes, perimeter, lakes.
+
+fn grid_width(rows: [str]) -> i64 {
+    let w = 0
+    for i in arr_range(0, len(rows)) {
+        w = max_i64(w, str_len(rows[i]))
+    }
+    w
+}
+
+fn is_land(rows: [str], r: i64, c: i64, land: str) -> bool {
+    if r < 0 || r >= len(rows) || c < 0 {
+        return false
+    }
+    str_char_at(rows[r], c) == land
+}
+
+fn label_regions(rows: [str], land: str, diagonal: bool) -> [i64] {
+    let h = len(rows)
+    let w = grid_width(rows)
+    let labels = arr_repeat(-1, h * w)
+    let next = 0
+    for start in arr_range(0, h * w) {
+        let sr = start / w
+        let sc = start % w
+        if labels[start] >= 0 || !is_land(rows, sr, sc, land) {
+            continue
+        }
+        labels[start] = next
+        let stack = [start]
+        while len(stack) > 0 {
+            let cur = stack[len(stack) - 1]
+            stack = arr_take(stack, len(stack) - 1)
+            let r = cur / w
+            let c = cur % w
+            for dr in [-1, 0, 1] {
+                for dc in [-1, 0, 1] {
+                    let straight = dr == 0 || dc == 0
+                    if (dr == 0 && dc == 0) || (!straight && !diagonal) {
+                        continue
+                    }
+                    let nr = r + dr
+                    let nc = c + dc
+                    if nc < w && is_land(rows, nr, nc, land) && labels[nr * w + nc] < 0 {
+                        labels[nr * w + nc] = next
+                        stack = arr_push(stack, nr * w + nc)
+                    }
+                }
+            }
+        }
+        next = next + 1
+    }
+    labels
+}
+
+fn region_sizes(rows: [str], land: str) -> [i64] {
+    let labels = label_regions(rows, land, false)
+    let count = 0
+    for i in arr_range(0, len(labels)) {
+        if labels[i] + 1 > count {
+            count = labels[i] + 1
+        }
+    }
+    let sizes = arr_repeat(0, count)
+    for i in arr_range(0, len(labels)) {
+        let l = labels[i]
+        if l >= 0 {
+            sizes[l] = sizes[l] + 1
+        }
+    }
+    let i = 1
+    while i < len(sizes) {
+        let j = i
+        while j > 0 && sizes[j - 1] < sizes[j] {
+            let tmp = sizes[j]
+            sizes[j] = sizes[j - 1]
+            sizes[j - 1] = tmp
+            j = j - 1
+        }
+        i = i + 1
+    }
+    sizes
+}
+
+fn region_perimeter(rows: [str], land: str, row: i64, col: i64) -> i64 {
+    if !is_land(rows, row, col, land) {
+        return 0
+    }
+    let w = grid_width(rows)
+    let labels = label_regions(rows, land, false)
+    let target = labels[row * w + col]
+    let perimeter = 0
+    for idx in arr_range(0, len(labels)) {
+        if labels[idx] != target {
+            continue
+        }
+        let r = idx / w
+        let c = idx % w
+        let open = 0
+        if !is_land(rows, r - 1, c, land) {
+            open = open + 1
+        }
+        if !is_land(rows, r + 1, c, land) {
+            open = open + 1
+        }
+        if c == 0 || !is_land(rows, r, c - 1, land) {
+            open = open + 1
+        }
+        if c + 1 >= w || !is_land(rows, r, c + 1, land) {
+            open = open + 1
+        }
+        perimeter = perimeter + open
+    }
+    perimeter
+}
+
+fn count_lakes(rows: [str], land: str) -> i64 {
+    let h = len(rows)
+    let w = grid_width(rows)
+    let seen = arr_repeat(false, h * w)
+    let lakes = 0
+    for start in arr_range(0, h * w) {
+        if seen[start] || is_land(rows, start / w, start % w, land) {
+            continue
+        }
+        seen[start] = true
+        let stack = [start]
+        let touches_edge = false
+        while len(stack) > 0 {
+            let cur = stack[len(stack) - 1]
+            stack = arr_take(stack, len(stack) - 1)
+            let r = cur / w
+            let c = cur % w
+            if r == 0 || c == 0 || r == h - 1 || c == w - 1 {
+                touches_edge = true
+            }
+            let neighbours = [cur - w, cur + w, cur - 1, cur + 1]
+            let valid = [r > 0, r < h - 1, c > 0, c < w - 1]
+            for k in arr_range(0, 4) {
+                let n = neighbours[k]
+                if valid[k] && !seen[n] && !is_land(rows, n / w, n % w, land) {
+                    seen[n] = true
+                    stack = arr_push(stack, n)
+                }
+            }
+        }
+        if !touches_edge {
+            lakes = lakes + 1
+        }
+    }
+    lakes
+}
+
+fn describe_map(rows: [str], land: str) -> str {
+    let sizes = region_sizes(rows, land)
+    if len(sizes) == 0 {
+        return "no land"
+    }
+    let total = 0
+    for s in sizes {
+        total = total + s
+    }
+    let w = grid_width(rows)
+    let cells = len(rows) * w
+    let pct = 0
+    if cells > 0 {
+        pct = total * 100 / cells
+    }
+    let word = "islands"
+    if len(sizes) == 1 {
+        word = "island"
+    }
+    let shape = "scattered"
+    if sizes[0] * 2 > total {
+        shape = "dominant"
+    }
+    if len(sizes) > 1 && sizes[0] == sizes[len(sizes) - 1] {
+        shape = "uniform"
+    }
+    let out = to_str(len(sizes)) + " " + word
+    out = out + ", largest " + to_str(sizes[0])
+    out = out + ", land " + to_str(pct) + "%"
+    out + ", " + shape
+}
+
+@[test]
+fn test_label_regions_two_islands() {
+    let labels = label_regions(["##.", "...", ".##"], "#", false)
+    assert(labels == [0, 0, -1, -1, -1, -1, -1, 1, 1])
+}
+
+@[test]
+fn test_label_regions_diagonal_joins() {
+    let labels = label_regions(["#..", ".#.", "..#"], "#", true)
+    assert(labels == [0, -1, -1, -1, 0, -1, -1, -1, 0])
+}
+
+@[test]
+fn test_label_regions_diagonal_separate() {
+    let labels = label_regions(["#..", ".#.", "..#"], "#", false)
+    assert(labels == [0, -1, -1, -1, 1, -1, -1, -1, 2])
+}
+
+@[test]
+fn test_label_regions_all_water() {
+    let labels = label_regions(["..", ".."], "#", false)
+    assert(labels == [-1, -1, -1, -1])
+}
+
+@[test]
+fn test_region_sizes_sorted() {
+    let sizes = region_sizes(["#..##", "#..##", "....#", "#...."], "#")
+    assert(sizes == [5, 2, 1])
+}
+
+@[test]
+fn test_region_sizes_single() {
+    assert(region_sizes(["###", "#.#", "###"], "#") == [8])
+}
+
+@[test]
+fn test_region_sizes_custom_char() {
+    assert(region_sizes(["LwL", "LwL"], "L") == [2, 2])
+}
+
+@[test]
+fn test_region_perimeter_square() {
+    assert_eq(region_perimeter(["##.", "##.", "..."], "#", 0, 1), 8)
+}
+
+@[test]
+fn test_region_perimeter_single_cell() {
+    assert_eq(region_perimeter(["...", ".#.", "..."], "#", 1, 1), 4)
+}
+
+@[test]
+fn test_region_perimeter_ring() {
+    assert_eq(region_perimeter(["###", "#.#", "###"], "#", 2, 2), 16)
+}
+
+@[test]
+fn test_region_perimeter_on_water() {
+    assert_eq(region_perimeter(["#.", ".#"], "#", 0, 1), 0)
+}
+
+@[test]
+fn test_count_lakes_ring() {
+    assert_eq(count_lakes(["###", "#.#", "###"], "#"), 1)
+}
+
+@[test]
+fn test_count_lakes_two_enclosed() {
+    assert_eq(count_lakes(["#####", "#.#.#", "#####", "....."], "#"), 2)
+}
+
+@[test]
+fn test_count_lakes_open_bay() {
+    assert_eq(count_lakes(["###", "#..", "###"], "#"), 0)
+}
+
+@[test]
+fn test_count_lakes_mixed() {
+    assert_eq(count_lakes(["......", ".####.", ".#..#.", ".####.", "......"], "#"), 1)
+}
+
+@[test]
+fn test_describe_map_two_islands() {
+    assert_eq_str(describe_map(["##.", "...", "..#"], "#"), "2 islands, largest 2, land 33%, dominant")
+}
+
+@[test]
+fn test_describe_map_uniform() {
+    assert_eq_str(describe_map(["#.#", "...", "#.#"], "#"), "4 islands, largest 1, land 44%, uniform")
+}
+
+@[test]
+fn test_describe_map_single() {
+    assert_eq_str(describe_map(["##", "##"], "#"), "1 island, largest 4, land 100%, dominant")
+}
+
+@[test]
+fn test_describe_map_empty() {
+    assert_eq_str(describe_map(["..", ".."], "#"), "no land")
+}

@@ -1,0 +1,251 @@
+// Ranked-ballot tallies. A ballot lists candidate indices from most to least
+// preferred; ballots[i] was cast by counts[i] voters. Indices outside
+// 0..n are ignored, as is any repeat of a candidate already ranked on the same
+// ballot. Candidates left off a ballot share last place on it.
+
+// Borda count: on each ballot the candidate in position p earns n - 1 - p
+// points, multiplied by the number of voters who cast that ballot.
+fn borda_scores(ballots: [[i64]], counts: [i64], n: i64) -> [i64] {
+    let empty: [i64] = []
+    if n <= 0 || len(ballots) != len(counts) {
+        return empty
+    }
+    let scores = arr_repeat(0, n)
+    for k in 0..len(ballots) {
+        let weight = counts[k]
+        if weight <= 0 {
+            continue
+        }
+        let seen = arr_repeat(false, n)
+        let pos = 0
+        for c in ballots[k] {
+            if c < 0 || c >= n {
+                continue
+            }
+            if seen[c] {
+                continue
+            }
+            seen[c] = true
+            scores[c] = scores[c] + (n - 1 - pos) * weight
+            pos = pos + 1
+        }
+    }
+    scores
+}
+
+// Standings in descending score order using competition ranking, so tied
+// candidates share a rank and the next rank is skipped. Equal scores keep
+// their original candidate order.
+fn borda_standings(scores: [i64], names: [str]) -> str {
+    let n = len(scores)
+    if n == 0 || len(names) != n {
+        return ""
+    }
+    let used = arr_repeat(false, n)
+    let parts: [str] = []
+    let rank = 0
+    let prev = 0
+    for step in 0..n {
+        let pick = -1
+        for i in 0..n {
+            if !used[i] && (pick < 0 || scores[i] > scores[pick]) {
+                pick = i
+            }
+        }
+        used[pick] = true
+        if step == 0 || scores[pick] != prev {
+            rank = step + 1
+        }
+        prev = scores[pick]
+        parts = arr_push(parts, to_str(rank) + " " + names[pick] + " " + to_str(scores[pick]))
+    }
+    str_join(parts, ", ")
+}
+
+// m[a][b] is the number of voters who rank candidate a above candidate b.
+fn pairwise_matrix(ballots: [[i64]], counts: [i64], n: i64) -> [[i64]] {
+    let empty: [[i64]] = []
+    if n <= 0 || len(ballots) != len(counts) {
+        return empty
+    }
+    let m = arr_repeat(arr_repeat(0, n), n)
+    for k in 0..len(ballots) {
+        if counts[k] <= 0 {
+            continue
+        }
+        let pos = arr_repeat(n, n)
+        let rank = 0
+        for c in ballots[k] {
+            if c >= 0 && c < n && pos[c] == n {
+                pos[c] = rank
+                rank = rank + 1
+            }
+        }
+        for a in 0..n {
+            for b in 0..n {
+                if a != b && pos[a] < pos[b] {
+                    m[a][b] = m[a][b] + counts[k]
+                }
+            }
+        }
+    }
+    m
+}
+
+// The Condorcet winner beats every rival head to head. Without one, the
+// candidates who lose to nobody are reported as weak winners.
+fn condorcet_result(ballots: [[i64]], counts: [i64], names: [str]) -> str {
+    let n = len(names)
+    let m = pairwise_matrix(ballots, counts, n)
+    if len(m) == 0 {
+        return "none"
+    }
+    let strict = -1
+    let weak: [str] = []
+    for a in 0..n {
+        let wins = 0
+        let losses = 0
+        for b in 0..n {
+            if a == b {
+                continue
+            }
+            if m[a][b] > m[b][a] {
+                wins = wins + 1
+            } else if m[a][b] < m[b][a] {
+                losses = losses + 1
+            }
+        }
+        if wins == n - 1 {
+            strict = a
+        } else if losses == 0 {
+            weak = arr_push(weak, names[a])
+        }
+    }
+    if strict >= 0 {
+        return names[strict]
+    }
+    if len(weak) > 0 {
+        return "weak:" + str_join(weak, ",")
+    }
+    "none"
+}
+
+// Borda winner with ties resolved by most first preferences, then by most
+// head-to-head wins inside the tied group, then by lowest index.
+fn tie_break_winner(ballots: [[i64]], counts: [i64], n: i64) -> i64 {
+    let scores = borda_scores(ballots, counts, n)
+    if len(scores) == 0 {
+        return -1
+    }
+    let top = arr_max_i64(scores)
+    let firsts = arr_repeat(0, n)
+    for k in 0..len(ballots) {
+        let b = ballots[k]
+        if counts[k] > 0 && len(b) > 0 && b[0] >= 0 && b[0] < n {
+            firsts[b[0]] = firsts[b[0]] + counts[k]
+        }
+    }
+    let most = -1
+    for c in 0..n {
+        if scores[c] == top {
+            most = max_i64(most, firsts[c])
+        }
+    }
+    let finalists: [i64] = []
+    for c in 0..n {
+        if scores[c] == top && firsts[c] == most {
+            finalists = arr_push(finalists, c)
+        }
+    }
+    let m = pairwise_matrix(ballots, counts, n)
+    let best = finalists[0]
+    let best_wins = -1
+    for a in finalists {
+        let wins = 0
+        for b in finalists {
+            if a != b && m[a][b] > m[b][a] {
+                wins = wins + 1
+            }
+        }
+        if wins > best_wins {
+            best = a
+            best_wins = wins
+        }
+    }
+    best
+}
+
+@[test]
+fn test_borda_scores_weighted() {
+    assert(borda_scores([[0, 1, 2], [1, 2, 0]], [2, 1], 3) == [4, 4, 1])
+}
+
+@[test]
+fn test_borda_scores_partial_and_invalid() {
+    assert(borda_scores([[3, 3, 1, 9]], [1], 4) == [0, 2, 0, 3])
+}
+
+@[test]
+fn test_borda_scores_skips_empty_weight() {
+    assert(borda_scores([[0, 1], [1, 0]], [0, 3], 2) == [0, 3])
+}
+
+@[test]
+fn test_standings_with_tie() {
+    assert_eq_str(borda_standings([4, 4, 1], ["A", "B", "C"]), "1 A 4, 1 B 4, 3 C 1")
+}
+
+@[test]
+fn test_standings_reordered() {
+    assert_eq_str(borda_standings([2, 9, 5], ["A", "B", "C"]), "1 B 9, 2 C 5, 3 A 2")
+}
+
+@[test]
+fn test_standings_single() {
+    assert_eq_str(borda_standings([7], ["X"]), "1 X 7")
+}
+
+@[test]
+fn test_pairwise_full_ballots() {
+    assert(pairwise_matrix([[0, 1, 2], [2, 0, 1]], [1, 1], 3) == [[0, 2, 1], [0, 0, 1], [1, 1, 0]])
+}
+
+@[test]
+fn test_pairwise_bullet_vote() {
+    assert(pairwise_matrix([[1]], [3], 3) == [[0, 0, 0], [3, 0, 3], [0, 0, 0]])
+}
+
+@[test]
+fn test_pairwise_repeats_ignored() {
+    assert(pairwise_matrix([[2, 5, 2, 0]], [1], 3) == [[0, 1, 0], [0, 0, 0], [1, 1, 0]])
+}
+
+@[test]
+fn test_condorcet_strict_winner() {
+    assert_eq_str(condorcet_result([[0, 1, 2], [2, 0, 1], [1, 0, 2]], [1, 1, 1], ["A", "B", "C"]), "A")
+}
+
+@[test]
+fn test_condorcet_cycle() {
+    assert_eq_str(condorcet_result([[0, 1, 2], [1, 2, 0], [2, 0, 1]], [1, 1, 1], ["A", "B", "C"]), "none")
+}
+
+@[test]
+fn test_condorcet_weak_winners() {
+    assert_eq_str(condorcet_result([[0, 1, 2], [1, 0, 2]], [1, 1], ["A", "B", "C"]), "weak:A,B")
+}
+
+@[test]
+fn test_tie_break_clear_borda() {
+    assert_eq(tie_break_winner([[1, 0, 2], [1, 2, 0], [0, 1, 2]], [1, 1, 1], 3), 1)
+}
+
+@[test]
+fn test_tie_break_first_preferences() {
+    assert_eq(tie_break_winner([[2, 1, 0], [0, 1, 2], [1, 0, 2], [2, 0, 1], [1, 2, 0]], [2, 1, 1, 1, 1], 3), 2)
+}
+
+@[test]
+fn test_tie_break_head_to_head() {
+    assert_eq(tie_break_winner([[1, 0, 2], [1, 2, 0], [2, 1, 0], [0, 2, 1]], [1, 1, 2, 1], 3), 2)
+}

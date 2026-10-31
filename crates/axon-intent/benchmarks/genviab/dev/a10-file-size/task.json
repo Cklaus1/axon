@@ -1,0 +1,36 @@
+{
+ "id": "a10-file-size",
+ "category": "transform",
+ "source": {
+  "kind": "atlas tasks_hard",
+  "file": "atlas/spikes/rlm-engine/src/tasks_hard.rs (TASKS, MIT, separate git tree)",
+  "index": 10,
+  "desc": "the size in bytes on disk of a file you must first create in the current directory named five.txt whose entire contents are the five characters \"hello\"",
+  "expected": "5",
+  "atlas_category": "file-io"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "atlas data point",
+    "runs": [
+     {
+      "inputs": {
+       "./data/five.txt": "hello"
+      },
+      "outputs": {
+       "./out/answer.txt": "5\n"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/answer.txt",
+  "value": "5"
+ }
+}

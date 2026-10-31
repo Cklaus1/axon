@@ -1,0 +1,120 @@
+{
+ "seed": 1,
+ "cap": 8,
+ "cap_seed": 1,
+ "band": [
+  0.3,
+  0.7
+ ],
+ "min_tasks": 12,
+ "min_programs": 3,
+ "prior": {
+  "a": 1505.8082648127602,
+  "b": 400.27814634263234,
+  "mean": 0.7900000000000001,
+  "precision": 1906.0864111553924
+ },
+ "cells": {
+  "erase-long:>=24": {
+   "tasks": 133,
+   "programs": 38,
+   "raw_rate": 0.7869674185463659,
+   "shrunk_rate": 0.7898021989989602,
+   "eligible": true,
+   "kept": false,
+   "test_pool": 204
+  }
+ },
+ "eligible": [
+  "erase-long:>=24"
+ ],
+ "kept": [],
+ "crossfit": {
+  "seed": 1,
+  "folds": [
+   {
+    "programs": [
+     "crates/axon-cortex/benchmarks/headroom/programs-c/globmatch.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/poker.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/taxcalc.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/vending.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/battleship.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/boolformula.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/ciphers.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/colors.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/editdist.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/exchange.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/lz77.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/phonenum.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/rule110.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/scrabble.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/sexpr.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/shifts.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/snake.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/sokoban.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/turtle.ax"
+    ],
+    "prior": [
+     1467.6865365896522,
+     438.3998745657402
+    ],
+    "kept": [],
+    "cells": {}
+   },
+   {
+    "programs": [
+     "crates/axon-cortex/benchmarks/headroom/programs-c/checksums.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/chessmoves.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/lifegrid.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/mdlite.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/payroll.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/rooms.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/stackvm.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c/sudoku.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/binpack.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/darts.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/islands.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/monthcal.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/orderbook.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/prereqs.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/primes.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/readability.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/robotgrid.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs-c2/tennis.ax",
+     "crates/axon-cortex/benchmarks/headroom/programs/gridpath.ax"
+    ],
+    "prior": [
+     1524.869128924314,
+     381.2172822310784
+    ],
+    "kept": [],
+    "cells": {}
+   }
+  ],
+  "predicted_test_rate": null
+ },
+ "hx_dev": [
+  "hx-erase-long-04d7c62dd5",
+  "hx-erase-long-21361539db",
+  "hx-erase-long-33227f2f2d",
+  "hx-erase-long-36b442831d",
+  "hx-erase-long-4a420c3029",
+  "hx-erase-long-4c6cb1db35",
+  "hx-erase-long-51e46220bf",
+  "hx-erase-long-5a490dc013",
+  "hx-erase-long-a470f0d5ea",
+  "hx-erase-long-cfe7fd3270",
+  "hx-erase-long-d6b98825a7",
+  "hx-erase-long-f1582523e6",
+  "hx-erase-long-faa5cc3d57"
+ ],
+ "kept_dev_ids": [],
+ "test_ids": [],
+ "test_programs": 0,
+ "h45": {
+  "n": 0,
+  "rate": null,
+  "informative": false
+ },
+ "pool_sha256": "7882eec4e46ae8812a11c18476e056427b731d62dff7e2395e93c9d378572456"
+}

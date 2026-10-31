@@ -1,0 +1,352 @@
+// Train timetable queries: parse clock times, find the earliest arrival and
+// the journey plan honoring per-station minimum transfer times, list direct
+// trains, departure boards and feasible transfers at a station.
+
+type Leg = { train: str, from: str, to: str, dep: i64, arr: i64 }
+
+type Transfer = { station: str, minutes: i64 }
+
+fn leg(train: str, from: str, to: str, dep_hhmm: i64, arr_hhmm: i64) -> Leg {
+    Leg { train: train, from: from, to: to, dep: dep_hhmm / 100 * 60 + dep_hhmm % 100, arr: arr_hhmm / 100 * 60 + arr_hhmm % 100 }
+}
+
+fn format_time(mins: i64) -> str {
+    let day = mins / 1440
+    let m = mins % 1440
+    let text = str_pad_start(to_str(m / 60), 2, "0") + ":" + str_pad_start(to_str(m % 60), 2, "0")
+    if day > 0 { text + "+" + to_str(day) } else { text }
+}
+
+fn min_transfer(transfers: [Transfer], station: str) -> i64 {
+    let found = 5
+    for t in transfers {
+        if t.station == station {
+            found = t.minutes
+        }
+    }
+    found
+}
+
+fn index_of(names: [str], name: str) -> i64 {
+    let i = 0
+    while i < len(names) {
+        if names[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+fn parse_time(s: str) -> i64 {
+    let text = str_trim(s)
+    let day = 0
+    let plus = str_index_of(text, "+")
+    if plus >= 0 {
+        let extra = parse_int_or(str_slice(text, plus + 1, len(text)), 0 - 1)
+        if extra < 0 || extra > 7 {
+            return 0 - 1
+        }
+        day = extra
+        text = str_slice(text, 0, plus)
+    }
+    let colon = str_index_of(text, ":")
+    let hh = ""
+    let mm = ""
+    if colon >= 0 {
+        hh = str_slice(text, 0, colon)
+        mm = str_slice(text, colon + 1, len(text))
+    } else if len(text) == 4 {
+        hh = str_slice(text, 0, 2)
+        mm = str_slice(text, 2, 4)
+    }
+    if len(hh) < 1 || len(hh) > 2 || len(mm) != 2 {
+        return 0 - 1
+    }
+    if len(str_digits_only(hh)) != len(hh) || len(str_digits_only(mm)) != 2 {
+        return 0 - 1
+    }
+    let h = parse_int_or(hh, 0 - 1)
+    let m = parse_int_or(mm, 0 - 1)
+    if h < 0 || h > 23 || m < 0 || m > 59 {
+        return 0 - 1
+    }
+    day * 1440 + h * 60 + m
+}
+
+fn earliest_arrival(legs: [Leg], transfers: [Transfer], origin: str, dest: str, start: i64) -> i64 {
+    let conns = arr_sort_by(legs, |a, b| a.dep - b.dep)
+    let stations = [origin]
+    let best = [start]
+    let boarded = []
+    for c in conns {
+        let on_train = arr_contains(boarded, c.train)
+        let si = index_of(stations, c.from)
+        let reachable = on_train
+        if !on_train && si >= 0 {
+            let change = if c.from == origin { 0 } else { min_transfer(transfers, c.from) }
+            reachable = best[si] + change <= c.dep
+        }
+        if reachable {
+            if !on_train {
+                boarded = arr_push(boarded, c.train)
+            }
+            let ti = index_of(stations, c.to)
+            if ti < 0 {
+                stations = arr_push(stations, c.to)
+                best = arr_push(best, c.arr)
+            } else if c.arr < best[ti] {
+                best[ti] = c.arr
+            }
+        }
+    }
+    let di = index_of(stations, dest)
+    if di < 0 || dest == origin {
+        return 0 - 1
+    }
+    best[di]
+}
+
+fn plan_journey(legs: [Leg], transfers: [Transfer], origin: str, dest: str, start: i64) -> [str] {
+    let conns = arr_sort_by(legs, |a, b| a.dep - b.dep)
+    let stations = [origin]
+    let best = [start]
+    let board_at = [0 - 1]
+    let leave_at = [0 - 1]
+    let trips = []
+    let trip_entry = []
+    let k = 0
+    while k < len(conns) {
+        let c = conns[k]
+        let tr = index_of(trips, c.train)
+        let si = index_of(stations, c.from)
+        if tr < 0 && si >= 0 {
+            let change = if c.from == origin { 0 } else { min_transfer(transfers, c.from) }
+            if best[si] + change <= c.dep {
+                trips = arr_push(trips, c.train)
+                trip_entry = arr_push(trip_entry, k)
+                tr = len(trips) - 1
+            }
+        }
+        if tr >= 0 {
+            let ti = index_of(stations, c.to)
+            if ti < 0 {
+                stations = arr_push(stations, c.to)
+                best = arr_push(best, c.arr)
+                board_at = arr_push(board_at, trip_entry[tr])
+                leave_at = arr_push(leave_at, k)
+            } else if c.arr < best[ti] {
+                best[ti] = c.arr
+                board_at[ti] = trip_entry[tr]
+                leave_at[ti] = k
+            }
+        }
+        k = k + 1
+    }
+    let out = []
+    let at = index_of(stations, dest)
+    while at > 0 {
+        let first = conns[board_at[at]]
+        let last = conns[leave_at[at]]
+        out = arr_push(out, first.train + " " + first.from + " " + format_time(first.dep) + " - " + last.to + " " + format_time(last.arr))
+        at = index_of(stations, first.from)
+    }
+    arr_reverse(out)
+}
+
+fn direct_trains(legs: [Leg], from: str, to: str, after: i64) -> [str] {
+    let conns = arr_sort_by(legs, |a, b| a.dep - b.dep)
+    let seen = []
+    let out = []
+    let i = 0
+    while i < len(conns) {
+        let c = conns[i]
+        if c.from == from && c.dep >= after && !arr_contains(seen, c.train) {
+            let arrive = 0 - 1
+            let j = i
+            while j < len(conns) && arrive < 0 {
+                let d = conns[j]
+                if d.train == c.train && d.dep >= c.dep {
+                    if d.to == to {
+                        arrive = d.arr
+                    } else if d.to == from {
+                        j = len(conns)
+                    }
+                }
+                j = j + 1
+            }
+            if arrive >= 0 {
+                seen = arr_push(seen, c.train)
+                out = arr_push(out, format_time(c.dep) + " " + c.train + " " + format_time(arrive))
+            }
+        }
+        i = i + 1
+    }
+    out
+}
+
+fn departure_board(legs: [Leg], station: str, after: i64, limit: i64) -> [str] {
+    let conns = arr_sort_by(legs, |a, b| if a.dep == b.dep { str_cmp(a.train, b.train) } else { a.dep - b.dep })
+    let out = []
+    for c in conns {
+        if len(out) < limit && c.from == station && c.dep >= after {
+            let final_stop = c.to
+            let final_arr = c.arr
+            let via = []
+            for d in conns {
+                if d.train == c.train && d.dep >= final_arr {
+                    via = arr_push(via, final_stop)
+                    final_stop = d.to
+                    final_arr = d.arr
+                }
+            }
+            let line = format_time(c.dep) + " " + c.train + " to " + final_stop
+            if len(via) > 0 && len(via) <= 3 {
+                line = line + " via " + str_join(via, ", ")
+            } else if len(via) > 3 {
+                line = line + " via " + via[0] + " and " + to_str(len(via) - 1) + " more"
+            }
+            if final_stop == station {
+                line = line + " terminates"
+            }
+            out = arr_push(out, line)
+        }
+    }
+    out
+}
+
+fn feasible_transfers(legs: [Leg], transfers: [Transfer], station: str, window: i64) -> [str] {
+    let arrivals = arr_sort_by(arr_filter(legs, |l| l.to == station), |a, b| a.arr - b.arr)
+    let departures = arr_sort_by(arr_filter(legs, |l| l.from == station), |a, b| a.dep - b.dep)
+    let need = min_transfer(transfers, station)
+    let out = []
+    for a in arrivals {
+        for d in departures {
+            let gap = d.dep - a.arr
+            if a.train != d.train && gap >= need && gap <= window {
+                out = arr_push(out, a.train + " " + format_time(a.arr) + " > " + d.train + " " + format_time(d.dep))
+            }
+        }
+    }
+    out
+}
+
+fn sample_legs() -> [Leg] {
+    [leg("IC1", "Zurich", "Olten", 802, 833), leg("IC1", "Olten", "Bern", 835, 900),
+     leg("IC3", "Basel", "Olten", 810, 835), leg("IC3", "Olten", "Zurich", 837, 905),
+     leg("IR5", "Zurich", "Olten", 810, 845), leg("IC6", "Olten", "Basel", 838, 900),
+     leg("RE7", "Bern", "Thun", 904, 922), leg("RE9", "Bern", "Thun", 934, 952),
+     leg("IC8", "Zurich", "Olten", 902, 933), leg("IC8", "Olten", "Bern", 935, 1000),
+     leg("RE11", "Bern", "Thun", 1004, 1022)]
+}
+
+fn sample_transfers() -> [Transfer] {
+    [Transfer { station: "Bern", minutes: 4 }, Transfer { station: "Olten", minutes: 3 }, Transfer { station: "Zurich", minutes: 7 }]
+}
+
+@[test]
+fn test_parse_time_formats() {
+    assert_eq(parse_time("08:05"), 485)
+    assert_eq(parse_time(" 7:30 "), 450)
+    assert_eq(parse_time("0930"), 570)
+}
+
+@[test]
+fn test_parse_time_next_day() {
+    assert_eq(parse_time("23:59+1"), 2879)
+    assert_eq(parse_time("00:10+2"), 2890)
+}
+
+@[test]
+fn test_parse_time_invalid() {
+    assert_eq(parse_time("24:00"), 0 - 1)
+    assert_eq(parse_time("12:60"), 0 - 1)
+    assert_eq(parse_time("ab:cd"), 0 - 1)
+    assert_eq(parse_time("9:5"), 0 - 1)
+}
+
+@[test]
+fn test_earliest_arrival_with_transfer() {
+    assert_eq(earliest_arrival(sample_legs(), sample_transfers(), "Zurich", "Thun", 480), 562)
+    assert_eq(earliest_arrival(sample_legs(), sample_transfers(), "Zurich", "Basel", 480), 540)
+}
+
+@[test]
+fn test_earliest_arrival_longer_transfer_misses_connection() {
+    let slow = [Transfer { station: "Bern", minutes: 6 }]
+    assert_eq(earliest_arrival(sample_legs(), slow, "Zurich", "Thun", 480), 592)
+}
+
+@[test]
+fn test_earliest_arrival_late_start_and_unreachable() {
+    assert_eq(earliest_arrival(sample_legs(), sample_transfers(), "Zurich", "Thun", 485), 622)
+    assert_eq(earliest_arrival(sample_legs(), sample_transfers(), "Thun", "Zurich", 480), 0 - 1)
+}
+
+@[test]
+fn test_plan_journey_two_trains() {
+    assert(plan_journey(sample_legs(), sample_transfers(), "Zurich", "Thun", 480) == ["IC1 Zurich 08:02 - Bern 09:00", "RE7 Bern 09:04 - Thun 09:22"])
+}
+
+@[test]
+fn test_plan_journey_cross_platform_change() {
+    assert(plan_journey(sample_legs(), sample_transfers(), "Zurich", "Basel", 480) == ["IC1 Zurich 08:02 - Olten 08:33", "IC6 Olten 08:38 - Basel 09:00"])
+}
+
+@[test]
+fn test_plan_journey_single_train_and_none() {
+    assert(plan_journey(sample_legs(), sample_transfers(), "Basel", "Zurich", 480) == ["IC3 Basel 08:10 - Zurich 09:05"])
+    assert(len(plan_journey(sample_legs(), sample_transfers(), "Thun", "Bern", 480)) == 0)
+}
+
+@[test]
+fn test_direct_trains_all_day() {
+    assert(direct_trains(sample_legs(), "Zurich", "Bern", 480) == ["08:02 IC1 09:00", "09:02 IC8 10:00"])
+}
+
+@[test]
+fn test_direct_trains_after_time() {
+    assert(direct_trains(sample_legs(), "Zurich", "Bern", 510) == ["09:02 IC8 10:00"])
+    assert(len(direct_trains(sample_legs(), "Bern", "Zurich", 480)) == 0)
+}
+
+@[test]
+fn test_direct_trains_other_direction() {
+    assert(direct_trains(sample_legs(), "Basel", "Zurich", 480) == ["08:10 IC3 09:05"])
+}
+
+@[test]
+fn test_departure_board_limit() {
+    assert(departure_board(sample_legs(), "Olten", 510, 3) == ["08:35 IC1 to Bern", "08:37 IC3 to Zurich", "08:38 IC6 to Basel"])
+}
+
+@[test]
+fn test_departure_board_via_stops() {
+    assert(departure_board(sample_legs(), "Zurich", 540, 5) == ["09:02 IC8 to Bern via Olten"])
+    let line = [leg("S1", "Aarau", "Olten", 700, 710), leg("S1", "Olten", "Zofingen", 712, 720),
+                leg("S1", "Zofingen", "Sursee", 721, 735), leg("S1", "Sursee", "Sempach", 736, 742),
+                leg("S1", "Sempach", "Lucerne", 743, 755)]
+    assert(departure_board(line, "Aarau", 0, 2) == ["07:00 S1 to Lucerne via Olten and 3 more"])
+    assert(departure_board(line, "Zofingen", 0, 2) == ["07:21 S1 to Lucerne via Sursee, Sempach"])
+}
+
+@[test]
+fn test_departure_board_terminal_lines() {
+    assert(departure_board(sample_legs(), "Bern", 570, 5) == ["09:34 RE9 to Thun", "10:04 RE11 to Thun"])
+}
+
+@[test]
+fn test_feasible_transfers_bern() {
+    assert(feasible_transfers(sample_legs(), sample_transfers(), "Bern", 40) == ["IC1 09:00 > RE7 09:04", "IC1 09:00 > RE9 09:34", "IC8 10:00 > RE11 10:04"])
+}
+
+@[test]
+fn test_feasible_transfers_olten() {
+    assert(feasible_transfers(sample_legs(), sample_transfers(), "Olten", 10) == ["IC1 08:33 > IC3 08:37", "IC1 08:33 > IC6 08:38", "IC3 08:35 > IC6 08:38"])
+}
+
+@[test]
+fn test_feasible_transfers_strict_minimum() {
+    let strict = [Transfer { station: "Olten", minutes: 5 }]
+    assert(feasible_transfers(sample_legs(), strict, "Olten", 10) == ["IC1 08:33 > IC6 08:38"])
+}

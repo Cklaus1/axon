@@ -1,0 +1,306 @@
+// Base64 (RFC 4648, standard and URL-safe alphabets) and hexadecimal
+// encoding over byte arrays, with validation of malformed input.
+
+fn b64_char(v: i64, url_safe: bool) -> str {
+    if v < 26 {
+        chr(65 + v)
+    } else if v < 52 {
+        chr(97 + v - 26)
+    } else if v < 62 {
+        chr(48 + v - 52)
+    } else if v == 62 {
+        if url_safe { "-" } else { "+" }
+    } else {
+        if url_safe { "_" } else { "/" }
+    }
+}
+
+fn b64_value(c: i64) -> i64 {
+    if c >= 65 && c <= 90 {
+        c - 65
+    } else if c >= 97 && c <= 122 {
+        c - 97 + 26
+    } else if c >= 48 && c <= 57 {
+        c - 48 + 52
+    } else if c == 43 || c == 45 {
+        62
+    } else if c == 47 || c == 95 {
+        63
+    } else {
+        -1
+    }
+}
+
+fn hex_digit_value(c: i64) -> i64 {
+    if c >= 48 && c <= 57 {
+        c - 48
+    } else if c >= 97 && c <= 102 {
+        c - 87
+    } else if c >= 65 && c <= 70 {
+        c - 55
+    } else {
+        -1
+    }
+}
+
+fn b64_encode(bytes: [i64], url_safe: bool, pad: bool) -> str {
+    let n = len(bytes)
+    for k in 0..n {
+        if bytes[k] < 0 || bytes[k] > 255 {
+            return ""
+        }
+    }
+    let out = ""
+    let i = 0
+    while i + 2 < n {
+        let v = bytes[i] * 65536 + bytes[i + 1] * 256 + bytes[i + 2]
+        out = out + b64_char(shr(v, 18), url_safe) + b64_char(bit_and(shr(v, 12), 63), url_safe)
+        out = out + b64_char(bit_and(shr(v, 6), 63), url_safe) + b64_char(bit_and(v, 63), url_safe)
+        i = i + 3
+    }
+    let rest = n - i
+    if rest == 1 {
+        let v = bytes[i] * 65536
+        out = out + b64_char(shr(v, 18), url_safe) + b64_char(bit_and(shr(v, 12), 63), url_safe)
+        if pad {
+            out = out + "=="
+        }
+    } else if rest == 2 {
+        let v = bytes[i] * 65536 + bytes[i + 1] * 256
+        out = out + b64_char(shr(v, 18), url_safe) + b64_char(bit_and(shr(v, 12), 63), url_safe)
+        out = out + b64_char(bit_and(shr(v, 6), 63), url_safe)
+        if pad {
+            out = out + "="
+        }
+    }
+    out
+}
+
+fn b64_error(s: str) -> str {
+    let n = len(s)
+    let pads = 0
+    let i = 0
+    while i < n {
+        let c = char_at(s, i)
+        if c == 61 {
+            pads = pads + 1
+        } else if pads > 0 {
+            return "data after padding at " + to_str(i)
+        } else if b64_value(c) < 0 {
+            return "invalid character at " + to_str(i)
+        }
+        i = i + 1
+    }
+    if pads > 2 {
+        return "too much padding"
+    }
+    let data = n - pads
+    if (pads > 0 && n % 4 != 0) || data % 4 == 1 {
+        return "bad length"
+    }
+    if data > 0 {
+        let last = b64_value(char_at(s, data - 1))
+        let rem = data % 4
+        if (rem == 2 && bit_and(last, 15) != 0) || (rem == 3 && bit_and(last, 3) != 0) {
+            return "nonzero trailing bits"
+        }
+    }
+    ""
+}
+
+fn b64_decode(s: str) -> [i64] {
+    let clean = ""
+    for i in 0..len(s) {
+        let c = char_at(s, i)
+        if c != 32 && c != 10 && c != 13 && c != 9 {
+            clean = clean + chr(c)
+        }
+    }
+    if len(b64_error(clean)) > 0 {
+        return []
+    }
+    let out: [i64] = []
+    let acc = 0
+    let bits = 0
+    let i = 0
+    while i < len(clean) {
+        let c = char_at(clean, i)
+        if c != 61 {
+            acc = acc * 64 + b64_value(c)
+            bits = bits + 6
+            if bits >= 8 {
+                bits = bits - 8
+                out = arr_push(out, bit_and(shr(acc, bits), 255))
+                acc = bit_and(acc, shl(1, bits) - 1)
+            }
+        }
+        i = i + 1
+    }
+    out
+}
+
+fn hex_dump(bytes: [i64], width: i64) -> str {
+    let digits = "0123456789abcdef"
+    let per_line = if width > 0 { width } else { 16 }
+    let lines: [str] = []
+    let start = 0
+    while start < len(bytes) {
+        let end = min_i64(start + per_line, len(bytes))
+        let hex = ""
+        let text = ""
+        for i in start..end {
+            let b = bytes[i]
+            if b < 0 || b > 255 {
+                return ""
+            }
+            hex = hex + str_slice(digits, shr(b, 4), shr(b, 4) + 1) + str_slice(digits, b % 16, b % 16 + 1) + " "
+            if b >= 32 && b < 127 {
+                text = text + chr(b)
+            } else {
+                text = text + "."
+            }
+        }
+        let offset = str_pad_start(i64_to_str_radix(start, 16), 8, "0")
+        let gap = str_repeat("   ", per_line - (end - start))
+        lines = arr_push(lines, offset + "  " + hex + gap + "|" + text + "|")
+        start = end
+    }
+    str_join(lines, "\n")
+}
+
+fn hex_parse(s: str) -> [i64] {
+    let n = len(s)
+    let i = 0
+    if n >= 2 && char_at(s, 0) == 48 && (char_at(s, 1) == 120 || char_at(s, 1) == 88) {
+        i = 2
+    }
+    let out: [i64] = []
+    let high = -1
+    while i < n {
+        let c = char_at(s, i)
+        let v = hex_digit_value(c)
+        if v >= 0 {
+            if high < 0 {
+                high = v
+            } else {
+                out = arr_push(out, high * 16 + v)
+                high = -1
+            }
+        } else if c == 32 || c == 58 || c == 45 {
+            if high >= 0 {
+                return []
+            }
+        } else {
+            return []
+        }
+        i = i + 1
+    }
+    if high >= 0 {
+        return []
+    }
+    out
+}
+
+@[test]
+fn test_b64_encode_padding_cases() {
+    assert_eq_str(b64_encode([77, 97, 110], false, true), "TWFu")
+    assert_eq_str(b64_encode([77, 97], false, true), "TWE=")
+    assert_eq_str(b64_encode([77], false, true), "TQ==")
+}
+
+@[test]
+fn test_b64_encode_url_safe_unpadded() {
+    assert_eq_str(b64_encode([251, 255, 191], true, false), "-_-_")
+    assert_eq_str(b64_encode([251, 255], true, false), "-_8")
+}
+
+@[test]
+fn test_b64_encode_standard_alphabet() {
+    assert_eq_str(b64_encode([251, 255, 191], false, true), "+/+/")
+    assert_eq_str(b64_encode([102, 111, 111, 98, 97, 114], false, true), "Zm9vYmFy")
+}
+
+@[test]
+fn test_b64_encode_rejects_bad_byte() {
+    assert_eq_str(b64_encode([65, 256], false, true), "")
+    assert_eq_str(b64_encode([], false, true), "")
+}
+
+@[test]
+fn test_b64_error_valid_inputs() {
+    assert_eq_str(b64_error("Zm9vYmE="), "")
+    assert_eq_str(b64_error("Zm9vYg"), "")
+}
+
+@[test]
+fn test_b64_error_characters() {
+    assert_eq_str(b64_error("Zm9v*mE="), "invalid character at 4")
+    assert_eq_str(b64_error("Zm=vYmE="), "data after padding at 3")
+}
+
+@[test]
+fn test_b64_error_lengths() {
+    assert_eq_str(b64_error("Zm9vY"), "bad length")
+    assert_eq_str(b64_error("Zm9=="), "bad length")
+    assert_eq_str(b64_error("Zg==="), "too much padding")
+}
+
+@[test]
+fn test_b64_error_trailing_bits() {
+    assert_eq_str(b64_error("Zh=="), "nonzero trailing bits")
+    assert_eq_str(b64_error("Zm9="), "nonzero trailing bits")
+}
+
+@[test]
+fn test_b64_decode_basic() {
+    assert(b64_decode("TWFu") == [77, 97, 110])
+    assert(b64_decode("TWE=") == [77, 97])
+    assert(b64_decode("TQ") == [77])
+}
+
+@[test]
+fn test_b64_decode_wrapped_and_url_safe() {
+    assert(b64_decode("Zm9v\nYmFy") == [102, 111, 111, 98, 97, 114])
+    assert(b64_decode("-_-_") == [251, 255, 191])
+}
+
+@[test]
+fn test_b64_decode_malformed() {
+    assert(b64_decode("TW=u") == [])
+    assert(b64_decode("T") == [])
+}
+
+@[test]
+fn test_hex_dump_single_line() {
+    assert_eq_str(hex_dump([72, 105, 10], 4), "00000000  48 69 0a    |Hi.|")
+}
+
+@[test]
+fn test_hex_dump_multiple_lines() {
+    assert_eq_str(hex_dump([65, 66, 67, 0, 255], 2), "00000000  41 42 |AB|\n00000002  43 00 |C.|\n00000004  ff    |.|")
+}
+
+@[test]
+fn test_hex_dump_invalid() {
+    assert_eq_str(hex_dump([1, -3], 8), "")
+    assert_eq_str(hex_dump([126], 0), "00000000  7e " + str_repeat("   ", 15) + "|~|")
+}
+
+@[test]
+fn test_hex_parse_plain_and_prefixed() {
+    assert(hex_parse("48656c6c6f") == [72, 101, 108, 108, 111])
+    assert(hex_parse("0xFF00") == [255, 0])
+}
+
+@[test]
+fn test_hex_parse_separators() {
+    assert(hex_parse("de:ad be-EF") == [222, 173, 190, 239])
+}
+
+@[test]
+fn test_hex_parse_malformed() {
+    assert(hex_parse("abc") == [])
+    assert(hex_parse("a:b") == [])
+    assert(hex_parse("zz") == [])
+    assert(hex_parse("0x7f") == [127])
+}

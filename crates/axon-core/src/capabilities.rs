@@ -199,7 +199,35 @@ pub(crate) fn ai_builtin_host(name: &str) -> Option<&'static str> {
 
 // ── Path / host matching ──────────────────────────────────────────────────────
 
-/// Returns true if `path` has `prefix` as a path prefix.
+/// IG0: one spelling per path, so that `./out/x`, `out/x` and `./out//x` meet
+/// the same prefix test. Empty and `.` components are dropped; a leading `/`
+/// (absolute) and a trailing `/` (a directory prefix) are kept; `..` is kept
+/// verbatim, because every caller refuses a `..` path before comparing. The
+/// relative root (`./`, `.`) normalises to the empty string.
+///
+/// The operating system resolves all of these spellings to the same file,
+/// so a test on the raw text denied `write_file("out/a.txt")` under a
+/// `./out/` grant (F12 e) without denying anything the grant does not cover.
+pub fn normalize_path(path: &str) -> String {
+    let abs = path.starts_with('/');
+    let dir = path.ends_with('/') || path.ends_with("/.");
+    let parts: Vec<&str> = path
+        .split('/')
+        .filter(|c| !c.is_empty() && *c != ".")
+        .collect();
+    let mut out = String::with_capacity(path.len());
+    if abs {
+        out.push('/');
+    }
+    out.push_str(&parts.join("/"));
+    if dir && !parts.is_empty() {
+        out.push('/');
+    }
+    out
+}
+
+/// Returns true if `path` has `prefix` as a path prefix, compared in their
+/// [`normalize_path`] spelling.
 /// e.g. `path_has_prefix("./data/x.txt", "./data/")` → true
 ///
 /// SECURITY: a path containing a `..` component never matches — otherwise
@@ -207,17 +235,18 @@ pub(crate) fn ai_builtin_host(name: &str) -> Option<&'static str> {
 /// escape the sandbox via traversal. A `..` path can't be statically proven to
 /// stay within the allowed prefix, so the capability check denies it (the call
 /// is refused, the conservative-safe outcome). Paths without `..` use the plain
-/// prefix test.
+/// prefix test on the normalised spelling.
 pub(crate) fn path_has_prefix(path: &str, prefix: &str) -> bool {
     if path_has_dotdot(path) {
         return false;
     }
-    path.starts_with(prefix)
+    normalize_path(path).starts_with(&normalize_path(prefix))
 }
 
 /// Returns true if `path` lies under `prefix` as a PATH prefix — component-wise,
-/// not as a raw string.
+/// not as a raw string, and in the [`normalize_path`] spelling of both.
 /// e.g. `path_is_under("./out/a.txt", "./out")` → true
+///      `path_is_under("out//a.txt", "./out/")` → true
 ///      `path_is_under("./outsider/secret", "./out")` → **false**
 ///
 /// SECURITY: this is the test for GRANTS. `path_has_prefix` is a string test,
@@ -230,13 +259,25 @@ pub(crate) fn path_has_prefix(path: &str, prefix: &str) -> bool {
 /// A grant is narrow and a deny is broad, so the two lists deliberately use
 /// different tests: `never:` clauses stay on `path_has_prefix`, where the
 /// string test over-denies and over-denying a hard deny is the safe direction.
+/// Both normalise, so a `never:` clause cannot be walked around by a spelling
+/// the grant test accepts.
 pub(crate) fn path_is_under(path: &str, prefix: &str) -> bool {
     if path_has_dotdot(path) {
         return false;
     }
+    if prefix.is_empty() {
+        // The raw empty prefix keeps its pre-normalisation meaning: it is
+        // not the relative root `./`.
+        return path.is_empty() || path.starts_with('/');
+    }
+    let (path, prefix) = (normalize_path(path), normalize_path(prefix));
+    if prefix.is_empty() {
+        // `./`: the working directory holds every relative path.
+        return !path.is_empty() && !path.starts_with('/');
+    }
     if prefix.ends_with('/') {
-        // Already component-aligned: "./out/" cannot match "./outsider".
-        return path.starts_with(prefix);
+        // Already component-aligned: "out/" cannot match "outsider".
+        return path.starts_with(&prefix);
     }
     path == prefix || path.starts_with(&format!("{prefix}/"))
 }
@@ -752,6 +793,52 @@ pub fn reachable_capabilities(program: &Program, fn_name: Option<&str>) -> Optio
     }
     push_exprs(&mut work, maps.inits.iter().copied());
     Some(maps.reach(work, false))
+}
+
+/// IG0: the admission axes a reach walk met, from the one table
+/// ([`crate::builtins::builtin_admission_axes`]). Every axis when the walk met
+/// something it cannot classify (`unknown`) or a native module (whose own
+/// effect rows name no admission axis).
+pub fn reach_admission_axes(reach: &Reach) -> crate::builtins::AdmissionAxes {
+    use crate::builtins::AdmissionAxes;
+    if reach.unknown || reach.capabilities.iter().any(|c| c.starts_with("native:")) {
+        return AdmissionAxes::ALL;
+    }
+    reach
+        .builtins
+        .iter()
+        .filter_map(|b| crate::builtins::builtin_admission_axes(b))
+        .fold(AdmissionAxes::NONE, AdmissionAxes::union)
+}
+
+/// IG0: the admission axes of a PARSED entry program whose imports have not
+/// been loaded: [`program_admission_axes_in`] with no module directory, so a
+/// `use` of anything but `native::` is every axis — that module's effects
+/// live in a file this does not read.
+pub fn program_admission_axes(program: &Program) -> crate::builtins::AdmissionAxes {
+    program_admission_axes_in(program, &[])
+}
+
+/// IG0: the admission axes of a parsed entry program with its `use` imports
+/// loaded from `search_dirs` by the loader the run uses
+/// ([`crate::load_use_decls_recorded`], first match wins, transitive): the
+/// whole-program reach walk over the merged items (call sites and builtins
+/// used as values; comments and string contents never count). Every axis when
+/// any import fails to load or was never searched (no directory). A `mod NAME`
+/// line loads nothing — only a `use` brings a module in — so it adds nothing.
+pub fn program_admission_axes_in(
+    program: &Program,
+    search_dirs: &[std::path::PathBuf],
+) -> crate::builtins::AdmissionAxes {
+    use crate::builtins::AdmissionAxes;
+    let mut merged = program.clone();
+    let (errors, closure) = crate::load_use_decls_recorded(&mut merged, search_dirs);
+    if !errors.is_empty() || !closure.unsearched.is_empty() {
+        return AdmissionAxes::ALL;
+    }
+    reachable_capabilities(&merged, None)
+        .map(|r| reach_admission_axes(&r))
+        .unwrap_or(AdmissionAxes::ALL)
 }
 
 /// CAP-1 — what each `@[verify]` predicate of `program` can exercise when
@@ -2362,6 +2449,96 @@ mod tests {
             native_grants: Vec::new(),
             span: Span::dummy(),
         }
+    }
+
+    /// IG0 F12 (e): `./out/x`, `out/x` and `./out//x` meet the same prefix
+    /// test; `..` stays refused and a sibling directory stays outside.
+    #[test]
+    fn path_spellings_meet_the_same_prefix_test() {
+        for p in ["./out/a.txt", "out/a.txt", "./out//a.txt", "out/./a.txt"] {
+            for g in ["./out/", "out/", "./out", "out", ".//out/"] {
+                assert!(
+                    path_is_under(p, g),
+                    "ATTACK: `{p}` was denied under the grant `{g}`"
+                );
+            }
+            assert!(path_has_prefix(p, "./out/"), "{p}");
+        }
+        assert!(!path_is_under("./outsider/a", "./out/"));
+        assert!(!path_is_under("outsider/a", "out"));
+        assert!(!path_is_under("./out/../etc/passwd", "./out/"));
+        assert!(!path_is_under("/etc/passwd", "./"));
+        assert!(path_is_under("a.txt", "./"));
+        assert!(!path_is_under("/out/a", "./out/"));
+        assert!(
+            !path_is_under("./a", ""),
+            "the empty prefix grants nothing relative"
+        );
+        assert_eq!(normalize_path("./out//a/./b/"), "out/a/b/");
+        assert_eq!(normalize_path("/x//y"), "/x/y");
+        assert_eq!(normalize_path("./"), "");
+    }
+
+    /// IG0 F12 (a), (b): program axes come from call sites and builtin values
+    /// in the AST, never from comments or strings.
+    #[test]
+    fn program_admission_axes_reads_the_ast() {
+        let axes = |src: &str| program_admission_axes(&crate::parse_source(src).unwrap());
+        let a = axes("fn main() -> i64 {\n match append_file(\"./out/a\", \"x\") { Ok(_) => 0, Err(_) => 1 }\n}\n");
+        assert_eq!(a.names(), vec!["fs_write"]);
+        let b = axes(
+            "// total mod 10\nfn main() -> i64 {\n println(\"exec(x) mod http_get\")\n 7 % 10\n}\n",
+        );
+        assert!(
+            b.is_empty(),
+            "ATTACK: a comment or string widened the axes: {b:?}"
+        );
+        assert_eq!(
+            axes("mod util\nuse util.{double}\nfn main() -> i64 { double(1) }\n"),
+            crate::builtins::AdmissionAxes::ALL,
+            "a `use` this does not load is every axis"
+        );
+        assert!(
+            axes("mod util\nfn main() -> i64 { 0 }\n").is_empty(),
+            "a bare `mod` line loads nothing"
+        );
+        assert!(axes("use native::foo\nfn main() -> i64 { 0 }\n").is_empty());
+        let m = axes("type S = { x: i64 }\ntrait T { fn go(self: S) -> i64 }\nimpl T for S { fn go(self: S) -> i64 { match env_var(\"H\") { Some(_) => 1, None => 0 } } }\nfn main() -> i64 { 0 }\n");
+        assert_eq!(m.names(), vec!["env"], "a method body is walked");
+    }
+
+    /// IG0: a `use` resolved through the loader contributes its module's
+    /// axes — not every axis — so a program built from pure modules is not
+    /// refused; a module that is missing is still every axis.
+    #[test]
+    fn program_admission_axes_in_reads_loaded_modules() {
+        let dir = std::env::temp_dir().join(format!("axon-ig0-mods-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("f")).unwrap();
+        std::fs::write(dir.join("pure.ax"), "fn double(n: i64) -> i64 { n * 2 }\n").unwrap();
+        std::fs::write(
+            dir.join("f/h.ax"),
+            "fn log(s: str) -> i64 { match append_file(\"./out/log\", s) { Ok(_) => 0, Err(_) => 1 } }\n",
+        )
+        .unwrap();
+        let dirs = vec![dir.clone()];
+        let axes = |src: &str| program_admission_axes_in(&crate::parse_source(src).unwrap(), &dirs);
+        let p = axes("mod pure\nuse pure.{double}\nfn main() -> i64 { double(2) }\n");
+        assert!(
+            p.is_empty(),
+            "ATTACK: a program importing a pure module was given every axis: {p:?}"
+        );
+        assert_eq!(
+            axes("use f::h\nfn main() -> i64 { log(\"x\") }\n").names(),
+            vec!["fs_write"],
+            "the module's own builtins are read"
+        );
+        assert_eq!(
+            axes("use absent\nfn main() -> i64 { 0 }\n"),
+            crate::builtins::AdmissionAxes::ALL,
+            "a module that does not load is every axis"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Build a spec granting a net allowlist (make_spec hardcodes empty net).

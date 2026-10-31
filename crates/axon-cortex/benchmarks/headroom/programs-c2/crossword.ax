@@ -1,0 +1,272 @@
+// Crossword grid utilities. A grid is a list of equal-length rows; `#` marks a
+// black square, `.` an empty white square and a letter a filled white square.
+
+fn cell_at(rows: [str], r: i64, c: i64) -> str {
+    if r < 0 || r >= len(rows) {
+        return "#"
+    }
+    if c < 0 || c >= str_len(rows[r]) {
+        return "#"
+    }
+    str_to_upper(str_char_at(rows[r], c))
+}
+
+fn is_open(rows: [str], r: i64, c: i64) -> bool {
+    cell_at(rows, r, c) != "#"
+}
+
+fn starts_across(rows: [str], r: i64, c: i64) -> bool {
+    is_open(rows, r, c) && !is_open(rows, r, c - 1) && is_open(rows, r, c + 1)
+}
+
+fn starts_down(rows: [str], r: i64, c: i64) -> bool {
+    is_open(rows, r, c) && !is_open(rows, r - 1, c) && is_open(rows, r + 1, c)
+}
+
+// A grid is valid when it is a non-empty rectangle of legal characters, its
+// black squares are symmetric under a half turn, and every white square sits
+// in at least one word of two or more letters.
+fn grid_is_valid(rows: [str]) -> bool {
+    let h = len(rows)
+    if h == 0 {
+        return false
+    }
+    let w = str_len(rows[0])
+    if w == 0 {
+        return false
+    }
+    let open_count = 0
+    for r in 0..h {
+        if str_len(rows[r]) != w {
+            return false
+        }
+        for c in 0..w {
+            let ch = str_char_at(rows[r], c)
+            if ch != "#" && ch != "." && !char_is_alpha(ch) {
+                return false
+            }
+            let mirrored = cell_at(rows, h - 1 - r, w - 1 - c)
+            if (ch == "#") != (mirrored == "#") {
+                return false
+            }
+            if ch != "#" {
+                open_count = open_count + 1
+                let horizontal = is_open(rows, r, c - 1) || is_open(rows, r, c + 1)
+                let vertical = is_open(rows, r - 1, c) || is_open(rows, r + 1, c)
+                if !horizontal && !vertical {
+                    return false
+                }
+            }
+        }
+    }
+    open_count > 0
+}
+
+// Clue numbers in row-major order, flattened; 0 marks an unnumbered square.
+fn numbering(rows: [str]) -> [i64] {
+    let out: [i64] = []
+    let h = len(rows)
+    let next = 1
+    for r in 0..h {
+        let w = str_len(rows[r])
+        for c in 0..w {
+            let numbered = false
+            if is_open(rows, r, c) {
+                if starts_across(rows, r, c) {
+                    numbered = true
+                } else if starts_down(rows, r, c) {
+                    numbered = true
+                }
+            }
+            if numbered {
+                out = arr_push(out, next)
+                next = next + 1
+            } else {
+                out = arr_push(out, 0)
+            }
+        }
+    }
+    out
+}
+
+// Across entries as `<number>A <cells>`, in clue order.
+fn across_slots(rows: [str]) -> [str] {
+    let out: [str] = []
+    let h = len(rows)
+    let num = 0
+    for r in 0..h {
+        let w = str_len(rows[r])
+        for c in 0..w {
+            let across = starts_across(rows, r, c)
+            let down = starts_down(rows, r, c)
+            if across || down {
+                num = num + 1
+            }
+            if across {
+                let word = ""
+                let k = c
+                while is_open(rows, r, k) {
+                    word = word + cell_at(rows, r, k)
+                    k = k + 1
+                }
+                out = arr_push(out, to_str(num) + "A " + word)
+            }
+        }
+    }
+    out
+}
+
+// Down entries as `<number>D <cells>`, in clue order.
+fn down_slots(rows: [str]) -> [str] {
+    let out: [str] = []
+    let h = len(rows)
+    let num = 0
+    for r in 0..h {
+        let w = str_len(rows[r])
+        for c in 0..w {
+            let across = starts_across(rows, r, c)
+            let down = starts_down(rows, r, c)
+            if across || down {
+                num = num + 1
+            }
+            if down {
+                let word = ""
+                let k = r
+                while is_open(rows, k, c) {
+                    word = word + cell_at(rows, k, c)
+                    k = k + 1
+                }
+                out = arr_push(out, to_str(num) + "D " + word)
+            }
+        }
+    }
+    out
+}
+
+// The cells of the entry with the given clue number and direction, or "" when
+// the grid has no such entry.
+fn slot_word(rows: [str], number: i64, across: bool) -> str {
+    if number <= 0 {
+        return ""
+    }
+    let h = len(rows)
+    let num = 0
+    for r in 0..h {
+        let w = str_len(rows[r])
+        for c in 0..w {
+            let a = starts_across(rows, r, c)
+            let d = starts_down(rows, r, c)
+            if a || d {
+                num = num + 1
+                if num == number {
+                    if across && !a {
+                        return ""
+                    }
+                    if !across && !d {
+                        return ""
+                    }
+                    let word = ""
+                    let rr = r
+                    let cc = c
+                    while is_open(rows, rr, cc) {
+                        word = word + cell_at(rows, rr, cc)
+                        if across {
+                            cc = cc + 1
+                        } else {
+                            rr = rr + 1
+                        }
+                    }
+                    return word
+                }
+            }
+        }
+    }
+    ""
+}
+
+@[test]
+fn test_grid_valid_full_square() {
+    assert(grid_is_valid(["CAT", "ARE", "TEN"]))
+    assert(!grid_is_valid(["CAT", "AR", "TEN"]))
+    assert(!grid_is_valid([]))
+}
+
+@[test]
+fn test_grid_valid_symmetric_blacks() {
+    assert(grid_is_valid(["#..", "...", "..#"]))
+    assert(!grid_is_valid(["#..", "...", "..."]))
+}
+
+@[test]
+fn test_grid_valid_rejects_isolated_and_bad_chars() {
+    assert(grid_is_valid(["ab.", "c.d", ".ef"]))
+    assert(!grid_is_valid([".#.", "#.#", ".#."]))
+    assert(!grid_is_valid(["a1.", "...", "..."]))
+}
+
+@[test]
+fn test_numbering_small_grid() {
+    let got = numbering(["HELP#", "A.O..", "TOP#X"])
+    assert(got == [1, 2, 3, 4, 0, 5, 0, 0, 0, 6, 7, 0, 0, 0, 0])
+}
+
+@[test]
+fn test_numbering_full_square() {
+    assert(numbering(["CAT", "ARE", "TEN"]) == [1, 2, 3, 4, 0, 0, 5, 0, 0])
+}
+
+@[test]
+fn test_numbering_corner_blacks() {
+    assert(numbering(["#..", "...", "..#"]) == [0, 1, 2, 3, 0, 0, 4, 0, 0])
+}
+
+@[test]
+fn test_across_slots_small_grid() {
+    let got = across_slots(["HELP#", "A.O..", "TOP#X"])
+    assert(got == ["1A HELP", "5A A.O..", "7A TOP"])
+}
+
+@[test]
+fn test_across_slots_full_square() {
+    assert(across_slots(["cat", "are", "ten"]) == ["1A CAT", "4A ARE", "5A TEN"])
+}
+
+@[test]
+fn test_across_slots_skips_single_cells() {
+    assert(across_slots(["A#B", "CDE", "F#G"]) == ["3A CDE"])
+}
+
+@[test]
+fn test_down_slots_small_grid() {
+    let got = down_slots(["HELP#", "A.O..", "TOP#X"])
+    assert(got == ["1D HAT", "2D E.O", "3D LOP", "4D P.", "6D .X"])
+}
+
+@[test]
+fn test_down_slots_full_square() {
+    assert(down_slots(["CAT", "ARE", "TEN"]) == ["1D CAT", "2D ARE", "3D TEN"])
+}
+
+@[test]
+fn test_down_slots_skips_single_cells() {
+    assert(down_slots(["A#B", "CDE", "F#G"]) == ["1D ACF", "2D BEG"])
+}
+
+@[test]
+fn test_slot_word_across() {
+    assert_eq_str(slot_word(["HELP#", "A.O..", "TOP#X"], 5, true), "A.O..")
+    assert_eq_str(slot_word(["HELP#", "A.O..", "TOP#X"], 2, true), "")
+}
+
+@[test]
+fn test_slot_word_down() {
+    assert_eq_str(slot_word(["HELP#", "A.O..", "TOP#X"], 4, false), "P.")
+    assert_eq_str(slot_word(["HELP#", "A.O..", "TOP#X"], 6, false), ".X")
+}
+
+@[test]
+fn test_slot_word_shared_start() {
+    assert_eq_str(slot_word(["CAT", "ARE", "TEN"], 1, true), "CAT")
+    assert_eq_str(slot_word(["CAT", "ARE", "TEN"], 1, false), "CAT")
+    assert_eq_str(slot_word(["CAT", "ARE", "TEN"], 9, true), "")
+}

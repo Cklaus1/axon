@@ -1,0 +1,269 @@
+// Moving averages, trend detection and anomaly flags over sensor readings.
+
+fn moving_average(xs: [f64], window: i64, kind: str) -> [f64] {
+    let out: [f64] = []
+    let n = len(xs)
+    if window <= 0 || window > n {
+        return out
+    }
+    if kind == "ema" {
+        let alpha = 2.0 / i64_to_f64(window + 1)
+        let seed = 0.0
+        for i in 0..window {
+            seed = seed + xs[i]
+        }
+        let level = seed / i64_to_f64(window)
+        out = arr_push(out, level)
+        for i in window..n {
+            level = alpha * xs[i] + (1.0 - alpha) * level
+            out = arr_push(out, level)
+        }
+    } else if kind == "sma" || kind == "wma" {
+        let weight_total = i64_to_f64(window * (window + 1) / 2)
+        let running = 0.0
+        for i in 0..n {
+            running = running + xs[i]
+            if i >= window {
+                running = running - xs[i - window]
+            }
+            if i + 1 >= window {
+                if kind == "wma" {
+                    let acc = 0.0
+                    for k in 0..window {
+                        acc = acc + xs[i - window + 1 + k] * i64_to_f64(k + 1)
+                    }
+                    out = arr_push(out, acc / weight_total)
+                } else {
+                    out = arr_push(out, running / i64_to_f64(window))
+                }
+            }
+        }
+    }
+    out
+}
+
+fn trend_direction(xs: [f64], window: i64, tolerance: f64) -> str {
+    let n = len(xs)
+    if window < 2 || n < window {
+        return "insufficient"
+    }
+    let start = n - window
+    let sum_x = 0.0
+    let sum_y = 0.0
+    let sum_xy = 0.0
+    let sum_xx = 0.0
+    for i in 0..window {
+        let x = i64_to_f64(i)
+        let y = xs[start + i]
+        sum_x = sum_x + x
+        sum_y = sum_y + y
+        sum_xy = sum_xy + x * y
+        sum_xx = sum_xx + x * x
+    }
+    let w = i64_to_f64(window)
+    let slope = (w * sum_xy - sum_x * sum_y) / (w * sum_xx - sum_x * sum_x)
+    let scale = abs_f64(sum_y / w)
+    let relative = if scale > 0.0 { slope / scale } else { slope }
+    let reversals = 0
+    for i in (start + 2)..n {
+        let before = xs[i - 1] - xs[i - 2]
+        let after = xs[i] - xs[i - 1]
+        if (before > 0.0 && after < 0.0) || (before < 0.0 && after > 0.0) {
+            reversals = reversals + 1
+        }
+    }
+    if relative > tolerance {
+        "rising"
+    } else if relative < 0.0 - tolerance {
+        "falling"
+    } else if reversals * 2 > window - 2 {
+        "volatile"
+    } else {
+        "flat"
+    }
+}
+
+fn anomaly_flags(xs: [f64], window: i64, threshold: f64) -> [bool] {
+    let flags: [bool] = []
+    let n = len(xs)
+    for i in 0..n {
+        if window < 2 || i < window {
+            flags = arr_push(flags, false)
+            continue
+        }
+        let mean = 0.0
+        for k in (i - window)..i {
+            mean = mean + xs[k]
+        }
+        mean = mean / i64_to_f64(window)
+        let spread = 0.0
+        for k in (i - window)..i {
+            let d = xs[k] - mean
+            spread = spread + d * d
+        }
+        let sd = sqrt_f64(spread / i64_to_f64(window))
+        let deviation = abs_f64(xs[i] - mean)
+        if sd == 0.0 {
+            flags = arr_push(flags, deviation > 0.0)
+        } else {
+            flags = arr_push(flags, deviation > threshold * sd)
+        }
+    }
+    flags
+}
+
+fn fill_gaps(xs: [f64], missing: f64) -> [f64] {
+    let n = len(xs)
+    let out: [f64] = []
+    let prev = 0 - 1
+    let i = 0
+    while i < n {
+        if xs[i] != missing {
+            out = arr_push(out, xs[i])
+            prev = i
+            i = i + 1
+            continue
+        }
+        let j = i
+        while j < n && xs[j] == missing {
+            j = j + 1
+        }
+        for k in i..j {
+            if prev < 0 && j >= n {
+                out = arr_push(out, 0.0)
+            } else if prev < 0 {
+                out = arr_push(out, xs[j])
+            } else if j >= n {
+                out = arr_push(out, xs[prev])
+            } else {
+                let frac = i64_to_f64(k - prev) / i64_to_f64(j - prev)
+                out = arr_push(out, xs[prev] + (xs[j] - xs[prev]) * frac)
+            }
+        }
+        i = j
+    }
+    out
+}
+
+fn count_crossovers(xs: [f64], short_w: i64, long_w: i64) -> i64 {
+    let n = len(xs)
+    if short_w <= 0 || long_w <= short_w || n < long_w {
+        return 0
+    }
+    let short_sum = 0.0
+    let long_sum = 0.0
+    let last_sign = 0
+    let crossings = 0
+    for i in 0..n {
+        short_sum = short_sum + xs[i]
+        long_sum = long_sum + xs[i]
+        if i >= short_w {
+            short_sum = short_sum - xs[i - short_w]
+        }
+        if i >= long_w {
+            long_sum = long_sum - xs[i - long_w]
+        }
+        if i + 1 >= long_w {
+            let diff = short_sum / i64_to_f64(short_w) - long_sum / i64_to_f64(long_w)
+            let sign = 0
+            if diff > 0.000001 {
+                sign = 1
+            } else if diff < 0.0 - 0.000001 {
+                sign = 0 - 1
+            }
+            if sign != 0 {
+                if last_sign != 0 && sign != last_sign {
+                    crossings = crossings + 1
+                }
+                last_sign = sign
+            }
+        }
+    }
+    crossings
+}
+
+@[test]
+fn test_simple_moving_average() {
+    assert(moving_average([1.0, 2.0, 3.0, 4.0, 5.0], 2, "sma") == [1.5, 2.5, 3.5, 4.5])
+}
+
+@[test]
+fn test_weighted_moving_average() {
+    assert(moving_average([3.0, 3.0, 6.0], 2, "wma") == [3.0, 5.0])
+}
+
+@[test]
+fn test_exponential_moving_average() {
+    assert(moving_average([2.0, 4.0, 6.0, 8.0], 3, "ema") == [4.0, 6.0])
+}
+
+@[test]
+fn test_moving_average_window_too_large() {
+    assert_eq(len(moving_average([1.0, 2.0], 3, "sma")), 0)
+}
+
+@[test]
+fn test_trend_rising() {
+    assert_eq_str(trend_direction([1.0, 2.0, 3.0, 4.0, 5.0], 5, 0.01), "rising")
+}
+
+@[test]
+fn test_trend_falling_on_tail() {
+    assert_eq_str(trend_direction([1.0, 10.0, 9.0, 8.0, 7.0], 4, 0.01), "falling")
+}
+
+@[test]
+fn test_trend_volatile_and_flat() {
+    assert_eq_str(trend_direction([5.0, 6.0, 5.0, 6.0, 5.0, 6.0], 6, 0.05), "volatile")
+    assert_eq_str(trend_direction([4.0, 4.0, 4.0], 3, 0.05), "flat")
+    assert_eq_str(trend_direction([4.0], 3, 0.05), "insufficient")
+}
+
+@[test]
+fn test_anomaly_after_constant_run() {
+    assert(anomaly_flags([10.0, 10.0, 10.0, 10.0, 20.0], 3, 2.0) == [false, false, false, false, true])
+}
+
+@[test]
+fn test_anomaly_spike_in_noise() {
+    assert(anomaly_flags([1.0, 2.0, 1.0, 2.0, 1.0, 9.0], 4, 3.0) == [false, false, false, false, false, true])
+}
+
+@[test]
+fn test_anomaly_threshold_respected() {
+    let flags = anomaly_flags([5.0, 6.0, 5.0, 7.0], 2, 1.0)
+    assert(flags == [false, false, false, true])
+}
+
+@[test]
+fn test_fill_single_gap() {
+    assert(fill_gaps([1.0, 0.0 - 1.0, 3.0], 0.0 - 1.0) == [1.0, 2.0, 3.0])
+}
+
+@[test]
+fn test_fill_edges_use_nearest() {
+    let m = 0.0 - 1.0
+    assert(fill_gaps([m, m, 4.0, m], m) == [4.0, 4.0, 4.0, 4.0])
+}
+
+@[test]
+fn test_fill_long_gap_interpolates() {
+    let m = 0.0 - 1.0
+    assert(fill_gaps([2.0, m, m, m, 6.0], m) == [2.0, 3.0, 4.0, 5.0, 6.0])
+}
+
+@[test]
+fn test_crossovers_oscillating() {
+    assert_eq(count_crossovers([5.0, 1.0, 5.0, 1.0, 5.0], 1, 2), 3)
+}
+
+@[test]
+fn test_crossovers_two_swings() {
+    assert_eq(count_crossovers([1.0, 2.0, 3.0, 2.0, 1.0, 2.0, 3.0], 1, 2), 2)
+}
+
+@[test]
+fn test_crossovers_single_spike() {
+    assert_eq(count_crossovers([1.0, 1.0, 1.0, 5.0, 1.0, 1.0, 1.0], 1, 3), 1)
+    assert_eq(count_crossovers([1.0, 2.0], 2, 1), 0)
+}

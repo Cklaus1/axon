@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Write the text `one` (no newline) to ./out/app.txt, then in a separate append operation append the text `two` (no newline) to the same file. Then read ./out/app.txt back from disk and write its full contents, followed by a single newline, to ./out/answer.txt.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "a9755272f708a8bb509120e9bad446be5923e5e87cf0125b3e1697f9e3bda24a",
+      "candidate": "fn main() -> i64 {\n    match write_file(\"./out/app.txt\", \"one\") {\n        Ok(_) => {\n            match append_file(\"./out/app.txt\", \"two\") {\n                Ok(_) => {\n                    match read_file(\"./out/app.txt\") {\n                        Ok(text) => {\n                            match write_file(\"./out/answer.txt\", text + \"\\n\") {\n                                Ok(_) => 0\n                                Err(e) => {\n                                    eprintln(\"cannot write answer: {e}\")\n                                    1\n                                }\n                            }\n                        }\n                        Err(e) => {\n                            eprintln(\"cannot read app: {e}\")\n                            2\n                        }\n                    }\n                }\n                Err(e) => {\n                    eprintln(\"cannot append: {e}\")\n                    3\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            4\n        }\n    }\n}",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 3303,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match write_file(\"./out/app.txt\", \"one\") {\n        Ok(_) => {\n            match append_file(\"./out/app.txt\", \"two\") {\n                Ok(_) => {\n                    match read_file(\"./out/app.txt\") {\n                        Ok(text) => {\n                            match write_file(\"./out/answer.txt\", text + \"\\n\") {\n                                Ok(_) => 0\n                                Err(e) => {\n                                    eprintln(\"cannot write answer: {e}\")\n                                    1\n                                }\n                            }\n                        }\n                        Err(e) => {\n                            eprintln(\"cannot read app: {e}\")\n                            2\n                        }\n                    }\n                }\n                Err(e) => {\n                    eprintln(\"cannot append: {e}\")\n                    3\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            4\n        }\n    }\n}",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 3303,
+  "tokens": null
+}

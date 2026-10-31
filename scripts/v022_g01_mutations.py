@@ -891,7 +891,7 @@ MUTATIONS = [
     ('M247', 'PSV-3 (c4): a key-holding axon test drops Exec from a granted ceiling', 'crates/axon-core/src/main.rs', '.filter(|e| !e.is_empty() && e != "Exec")', '.filter(|e| !e.is_empty())', 'axon-core', '--no-default-features --test psv_test_selection', 'holding_a_completion_key_spawns_nothing'),
     ('M248', 'PSV-3 (c4): a key-holding axon test with no ceiling still gets none with Exec', 'crates/axon-core/src/main.rs', '.filter(|e| **e != "Exec")', '.filter(|_| true)', 'axon-core', '--no-default-features --test psv_test_selection', 'holding_a_completion_key_spawns_nothing'),
     ('M249', 'PSV-3 (c4): the runner gives the key-holding process no Exec', 'crates/axon-psv/src/runner.rs', '.filter(|e| !e.is_empty() && *e != "Exec")', '.filter(|e| !e.is_empty())', 'axon-psv', '--test runner', 'the_process_holding_k_is_given_no_exec'),
-    ('M250', 'PSV-1 (c5): an unreadable module never falls through to a later search dir', 'crates/axon-core/src/lib.rs', '            Err(e) => {\n                errors.push(MergeError {\n                    code: error::E0901,\n                    message: format!(\n                        "module `{path_str}` at {} exists but cannot be read ({e}); the search \\\n                         does not fall through to a later directory",\n                        candidate.display()\n                    ),\n                    file: candidate.display().to_string(),\n                });\n                found = true;\n                break;\n            }', '            Err(_) => {}', 'axon-core', '--no-default-features --test psv_test_selection', 'an_unreadable_suite_module_never_falls_through_to_the_candidate'),
+    ('M250', 'PSV-1 (c5): an unreadable module never falls through to a later search dir', 'crates/axon-core/src/lib.rs', '            Err(e) => {\n                errors.push(MergeError {\n                    code: error::E0901,\n                    message: format!(\n                        "module `{path_str}` at {} exists but cannot be read ({e}); the search \\\n                         does not fall through to a later directory",\n                        candidate.display()\n                    ),\n                    file: candidate.display().to_string(),\n                    span: None,\n                });\n                found = true;\n                break;\n            }', '            Err(_) => {}', 'axon-core', '--no-default-features --test psv_test_selection', 'an_unreadable_suite_module_never_falls_through_to_the_candidate'),
     ('M251', "PSV-1 (r2): a sealed module never supplies an operator module's name", 'crates/axon-core/src/lib.rs', '            if !matches!(op.try_exists(), Ok(false)) {', '            if false && !matches!(op.try_exists(), Ok(false)) {', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_module_never_supplies_an_operator_modules_name'),
     ('M252', "PSV-6 (r1): the observation's epoch joins the trial's", 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if o.epoch != epoch {', '    if false && o.epoch != epoch {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M253', 'PSV-6 (r1): an epoch that moved during observation refuses the launch', 'crates/axon-fabric/src/submit.rs', 'Ok(now) if now == cfg.expected_epoch => Ok((launch, Some(v))),', '_ => Ok((launch, Some(v))),', 'axon-fabric', '--test psv_dispatch', 'an_epoch_that_moves_while_the_observer_runs_refuses_the_launch'),
@@ -12316,24 +12316,24 @@ MUTATIONS += [
 # a guarded arm covers nothing.
 MUTATIONS += [
     ('M3911', 'CS2-4: a scalar scrutinee (i64/str/f64) no longer needs a catch-all arm', 'crates/axon-core/src/checker.rs',
-     '_ => CoverDomain::Any,',
-     '_ => return false,',
+     'Sig::Infinite => heads.iter().all(|h| matches!(h, Pattern::Literal(_))),',
+     'Sig::Infinite => false,',
      'axon-core', '--no-default-features --test cli_run', 'non_exhaustive_scalar_and_tuple_matches_are_refused'),
     ('M3912', 'CS2-4: a bool match no longer needs both `true` and `false`', 'crates/axon-core/src/checker.rs',
-     'matches!(p, Pattern::Literal(crate::ast::Literal::Bool(b)) if *b == (v == 0))',
-     'matches!(p, Pattern::Literal(crate::ast::Literal::Bool(_)))',
+     '(Ctor::Bool(b), Pattern::Literal(crate::ast::Literal::Bool(x))) => b == x,',
+     '(Ctor::Bool(_), Pattern::Literal(crate::ast::Literal::Bool(_))) => true,',
      'axon-core', '--no-default-features --test cli_run', 'non_exhaustive_scalar_and_tuple_matches_are_refused'),
     ('M3913', 'CS2-4: a tuple scrutinee is no longer checked over the product of its component domains', 'crates/axon-core/src/checker.rs',
-     'Type::Tuple(ts) => Some(ts.clone()),',
-     'Type::Tuple(_) => return false,',
+     '(_, Pattern::Tuple(ps)) => ps.iter().collect(),',
+     '(_, Pattern::Tuple(ps)) => vec![&WILD; ps.len()],',
      'axon-core', '--no-default-features --test cli_run', 'non_exhaustive_scalar_and_tuple_matches_are_refused'),
     ('M3914', 'CS2-4: a guarded `Option`/`Result`/enum arm counts as covering its pattern again', 'crates/axon-core/src/checker.rs',
      'let unguarded = |a: &&MatchArm| a.guard.is_none();',
      'let unguarded = |_a: &&MatchArm| true;',
      'axon-core', '--no-default-features --test cli_run', 'non_exhaustive_scalar_and_tuple_matches_are_refused'),
-    ('M3915', 'CS2-4: an `Option` tuple component loses its {Some, None} domain (false refusal of an exhaustive tuple match)', 'crates/axon-core/src/checker.rs',
-     'Type::Option(_) => variants(&["Some", "None"]),',
-     'Type::Option(_) => CoverDomain::Any,',
+    ('M3915', 'CS2-4: an `Option` tuple component loses `None` from its {Some, None} signature (false refusal of an exhaustive tuple match)', 'crates/axon-core/src/checker.rs',
+     '.find(|(c, _)| !heads.iter().any(|h| ctor_matches(c, h)));',
+     '.find(|(c, _)| matches!(c, Ctor::None) || !heads.iter().any(|h| ctor_matches(c, h)));',
      'axon-core', '--no-default-features --test cli_run', 'non_exhaustive_scalar_and_tuple_matches_are_refused'),
 ]
 
@@ -12358,8 +12358,8 @@ MUTATIONS += [
 # against the fn value's type; a local/param callee is typed by its binding.
 MUTATIONS += [
     ('M3919', 'CS2-6: infer no longer checks the argument kinds of a call through a fn value (a local lambda called with the wrong kinds checks clean)', 'crates/axon-core/src/infer.rs',
-     'if kinds_conflict(param, &arg) {',
-     'if false && kinds_conflict(param, &arg) {',
+     'if kinds_conflict(&param, &arg) {',
+     'if false && kinds_conflict(&param, &arg) {',
      'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_non_name_callee_checks_its_signature'),
     ('M3920', 'CS2-6: `fn_value_type` no longer types an element of an array of fns (`ops[0](..)` loses its E0305/E0306)', 'crates/axon-core/src/checker.rs',
      'Type::Slice(elem) if matches!(*elem, Type::Fn(..)) => Some(*elem),',
@@ -12396,6 +12396,546 @@ MUTATIONS += [
      'self.method_receiver_type_params.insert(recv, n);',
      'let _ = (recv, n);',
      'axon-core', '--no-default-features --test cli_run', 'generic_param_method_and_generic_struct_args_are_checked'),
+]
+
+# checker-soundness-3 lane A (ids M3970-M3977, M3981, M3985, M3986): exhaustiveness by
+# usefulness (CS3-1), E1209's line (CS3-3), `==` on Option/Result and the enum fix-it (CS3-5).
+MUTATIONS += [
+    ('M3970', 'CS3-1: specialization keeps a row whose head is another constructor (`None` covers `Some(_)`)', 'crates/axon-core/src/checker.rs',
+     '    if !ctor_matches(c, p) {\n        return None;\n    }',
+     '    if !ctor_matches(c, p) {\n        return Some(vec![&WILD; arity]);\n    }',
+     'axon-core', '--no-default-features --test cli_run', 'payload_literal_holes_are_refused'),
+    ('M3971', 'CS3-1: a wildcard head no longer expands to the constructor\'s arity of wildcards (the row is dropped)', 'crates/axon-core/src/checker.rs',
+     '    if is_wild(p) {\n        return Some(vec![&WILD; arity]);\n    }',
+     '    if is_wild(p) {\n        return None;\n    }',
+     'axon-core', '--no-default-features --test cli_run', 'payload_matches_that_cover_stay_legal'),
+    ('M3972', 'CS3-1: `bool` is an infinite domain (`true` and `false` no longer cover it)', 'crates/axon-core/src/checker.rs',
+     '            Type::Bool => Sig::Finite(vec![',
+     '            Type::Bool => Sig::Infinite,\n            Type::Unit => Sig::Finite(vec![',
+     'axon-core', '--no-default-features --test cli_run', 'payload_matches_that_cover_stay_legal'),
+    ('M3973', 'CS3-1: an omitted enum field never covers (the row is dropped; it was a wildcard)', 'crates/axon-core/src/checker.rs',
+     'None => &WILD,',
+     'None => return None,',
+     'axon-core', '--no-default-features --test cli_run', 'payload_matches_that_cover_stay_legal'),
+    ('M3974', 'CS3-1: an infinite domain counts as covered by its literal heads (no default matrix)', 'crates/axon-core/src/checker.rs',
+     'Some(Sig::Infinite) => Vec::new(),',
+     'Some(Sig::Infinite) => return Walk::Covered,',
+     'axon-core', '--no-default-features --test cli_run', 'payload_literal_holes_are_refused'),
+    ('M3975', 'CS3-1: a payload covers only when irrefutable again (CS2-4\'s cell test: `(Some(true), _)` + `(Some(false), _)` refused)', 'crates/axon-core/src/checker.rs',
+     '(_, Pattern::Some(q) | Pattern::Ok(q) | Pattern::Err(q)) => vec![&**q],',
+     '(_, Pattern::Some(q) | Pattern::Ok(q) | Pattern::Err(q)) if !is_wild(q) => return None,\n        (_, Pattern::Some(q) | Pattern::Ok(q) | Pattern::Err(q)) => vec![&**q],',
+     'axon-core', '--no-default-features --test cli_run', 'payload_matches_that_cover_stay_legal'),
+    ('M3976', 'CS3-1: an untyped subject (an unannotated lambda param, `Unknown` here) skips the walk again', 'crates/axon-core/src/checker.rs',
+     '            | Type::Var(_)\n            | Type::Unknown\n            | Type::TypeParam(_) => false,',
+     '            | Type::Var(_)\n            | Type::TypeParam(_) => false,',
+     'axon-core', '--no-default-features --test cli_run', 'payload_literal_holes_are_refused'),
+    ('M3977', 'CS3-1: a variant\'s sub-patterns are taken in pattern order, not by field name', 'crates/axon-core/src/checker.rs',
+     'subs.push(match fields.iter().find(|(f, _)| f == n) {',
+     'subs.push(match fields.iter().nth(subs.len()) {',
+     'axon-core', '--no-default-features --test cli_run', 'payload_matches_that_cover_stay_legal'),
+    ('M3981', 'CS3-3: E1209 (through a call) loses the refinement item\'s span again', 'crates/axon-core/src/checker.rs',
+     '            .with_span(span)\n            .fix(format!(\n                "make the predicate of',
+     '            .with_span(self.current_span)\n            .fix(format!(\n                "make the predicate of',
+     'axon-core', '--no-default-features --test cli_run', 'e1209_carries_the_refinement_line'),
+    ('M3985', 'CS3-5: `==` on an `Option`/`Result` gets the arithmetic E0301 text again', 'crates/axon-core/src/checker.rs',
+     'crate::ast::BinOp::Eq => Some("=="),',
+     'crate::ast::BinOp::Eq => Option::None,',
+     'axon-core', '--no-default-features --test cli_run', 'diagnostics_for_refused_forms_checker'),
+    ('M3986', 'CS3-5: the missing-variant fix-it is `E::B { .. }` again (a parse error when pasted)', 'crates/axon-core/src/checker.rs',
+     '_ => format!("add arm: {enum_name}::{variant} => {{ /* handle */ }}"),',
+     '_ => format!("add arm: {enum_name}::{variant} {{ .. }} => {{ /* handle */ }}"),',
+     'axon-core', '--no-default-features --test cli_run', 'diagnostics_for_refused_forms_checker'),
+]
+
+# checker-soundness-3 CS3-2 (ids M3978-M3980): a param an untyped lambda always passes on to a callee
+# takes that callee's param kind (h24); a call that may not run derives nothing; the derivation is a fixpoint.
+MUTATIONS += [
+    ('M3978', 'CS3-2: an always-run call no longer records the derived kind of the lambda param it is passed (h24 checks clean)', 'crates/axon-core/src/infer.rs',
+     '                        derived.insert(v, Derived::Kind(kind));\n                        changed = true;',
+     '                        let _ = kind;',
+     'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_param_kind_is_checked'),
+    ('M3979', 'CS3-2: a call nested in `if`/`match`/`&&`/`||` derives a kind too (depth ignored: w05/w14 refused)', 'crates/axon-core/src/infer.rs',
+     'derives_for: if self.cond_depth == 0\n',
+     'derives_for: if true\n',
+     'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_controls_stay_legal'),
+    ('M3980', 'CS3-2: the kind derivation runs one pass, not to a fixpoint (w02 chain checks clean)', 'crates/axon-core/src/infer.rs',
+     '        if !changed {\n            break;\n        }',
+     '        if true {\n            break;\n        }',
+     'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_param_kind_is_checked'),
+]
+
+# checker-soundness-3 lane C (ids M3982-M3984, M3987-M3990): CS3-4 bare `self` in an impl is the
+# impl type; CS3-5 `loop` and `impl T {` help; CS3-6 a token glued to a closing quote is refused;
+# CS3-7 a module-load error names the `use` line.
+MUTATIONS += [
+    ('M3982', 'CS3-4: a bare `self` in an impl method stays `Self` (E0308 unknown type)', 'crates/axon-core/src/parser.rs',
+     '                    p.ty = for_type.clone();',
+     '                    let _ = &for_type;',
+     'axon-core', '--no-default-features --test cli_run', 'bare_self_in_impl_method_is_the_impl_type'),
+    ('M3983', 'CS3-5: the `loop` row of foreign_keyword_help is gone (help says `let loop = ...`)', 'crates/axon-core/src/resolver.rs',
+     '"loop" => ("Rust",',
+     '"loop_" => ("Rust",',
+     'axon-core', '--no-default-features --test cli_run', 'diagnostics_for_refused_forms_resolver'),
+    ('M3984', 'CS3-5: the inherent `impl T {` parse error carries no help again', 'crates/axon-core/src/parse_help.rs',
+     'if msg.contains("unexpected token: LBrace, expected For") && tw.first() == Some(&"impl") {',
+     'if msg.contains("unexpected token: LBrace, expected For") && tw.first() == Some(&"impl_") {',
+     'axon-core', '--no-default-features --test parse_help_probe', 'refused_forms_point_at_the_axon_spelling'),
+    ('M3987', 'CS3-6: a token glued to a closing quote is accepted again (y02 prints `say `)', 'crates/axon-core/src/parser.rs',
+     '        if !zero_gap {\n            return Ok(());\n        }',
+     '        if !zero_gap || lit.end > lit.start {\n            return Ok(());\n        }',
+     'axon-core', '--no-default-features --test cli_run', 'adjacent_string_literal_is_refused'),
+    ('M3988', 'CS3-6: any later token counts as glued (a newline after a string is refused)', 'crates/axon-core/src/parser.rs',
+     '        let zero_gap = self.current_span().start == lit.end;',
+     '        let zero_gap = self.current_span().start >= lit.end;',
+     'axon-core', '--no-default-features --test cli_run', 'adjacent_string_literal_is_refused'),
+    ('M3989', 'CS3-7: a module-load error ignores its `use` span (no line again)', 'crates/axon-core/src/main.rs',
+     '        let (line, col, dfile) = match &e.span {',
+     '        let (line, col, dfile) = match &e.span.filter(|_| false) {',
+     'axon-core', '--no-default-features --test cli_run', 'module_not_found_names_the_use_line'),
+    ('M3990', 'CS3-6 (ImplAuditCS3 F2): a keyword/bool glued to a closing quote is accepted again ("flag is "true" now" prints `flag is `)', 'crates/axon-core/src/parser.rs',
+     '            _ => match letter_keyword(next) {',
+     '            _ => match None::<&str> {',
+     'axon-core', '--no-default-features --test cli_run', 'a_glued_keyword_bang_or_paren_after_a_string_is_refused'),
+]
+
+# intent-gen IgIntent (ids M4025-M4059): the axon-os sandbox wrapper grants console `IO` to every
+# job; `env_var` stays behind the fs_read allowlist; an unterminated `print` keeps the marker.
+MUTATIONS += [
+    ('M4025', 'IG sandbox: `IO` is again emitted only when fs/exec is granted (println refused)', 'crates/axon-os/src/runtime.rs',
+     'let mut tags: Vec<&str> = vec!["IO"];',
+     'let mut tags: Vec<&str> = if ceiling.fs_read || ceiling.fs_write || ceiling.exec { vec!["IO"] } else { Vec::new() };',
+     'axon-os', '--test sandbox_console', 'console_output_runs_under_an_empty_grant'),
+    ('M4026', 'IG sandbox: the completion marker must again be a whole line', 'crates/axon-os/src/runtime.rs',
+     'l.trim_end().ends_with(&expect)',
+     'l.trim() == expect',
+     'axon-os', '--test sandbox_console', 'a_job_whose_last_output_has_no_newline_still_completes'),
+    ('M4027', 'IG sandbox: an empty fs_read allowlist no longer denies `env_var`', 'crates/axon-core/src/interp/builtins.rs',
+     '.filter(|l| l.is_empty())',
+     '.filter(|l| l.is_empty() && false)',
+     'axon-os', '--test sandbox_console', 'an_environment_read_needs_the_fs_read_grant'),
+]
+
+# intent-gen IgIntent IG1: `## Examples` paths stay under the ceiling, fixture files under the
+# intent directory, fixtures under the cap; a missing `## Examples` is a named deduction.
+MUTATIONS += [
+    ('M4028', 'IG1: an example path outside every ceiling prefix parses', 'crates/axon-intent/src/intent.rs',
+     'if !under_any(&comps, prefixes) {',
+     'if false && !under_any(&comps, prefixes) {',
+     'axon-intent', '--lib', 'intent::tests::example_paths_outside_the_ceiling_or_escaping_are_refused'),
+    ('M4029', 'IG1: a symlinked directory on a fixture path is followed out of the intent directory', 'crates/axon-intent/src/intent.rs',
+     'if meta.file_type().is_symlink() {',
+     'if false && meta.file_type().is_symlink() {',
+     'axon-intent', '--lib', 'intent::tests::fixture_files_resolve_only_inside_the_intent_directory'),
+    ('M4030', 'IG1: an inline fixture over the cap parses', 'crates/axon-intent/src/intent.rs',
+     'let contents = cap_check(contents, "fixture", line)?;',
+     'let contents = contents;',
+     'axon-intent', '--lib', 'intent::tests::an_inline_fixture_over_the_cap_is_refused'),
+    ('M4031', 'IG1: an intent without examples carries no named deduction', 'crates/axon-intent/src/confidence.rs',
+     'deductions.push(DEDUCT_NO_EXAMPLES);',
+     '{}',
+     'axon-intent', '--lib', 'confidence::tests::no_examples_is_a_named_deduction_that_never_refuses'),
+]
+
+# intent-gen IgIntent IG4 prerequisite: `run_sandboxed_capture` tells a compile failure, an
+# exit status, a timeout and a sandbox fault apart and strips the completion marker.
+MUTATIONS += [
+    ('M4032', 'IG4 capture: every completed run reads as exit 0', 'crates/axon-os/src/runtime.rs',
+     'code: proc.code.unwrap_or(0),',
+     'code: 0,',
+     'axon-os', '--test sandbox_capture', 'exit_status_and_output_are_captured'),
+    ('M4033', 'IG4 capture: a compile failure reads as an exit status', 'crates/axon-os/src/runtime.rs',
+     'return SandboxOutcome::CompileFailed { diagnostic };',
+     'return SandboxOutcome::Exited { code: diagnostic.len() as i32 };',
+     'axon-os', '--test sandbox_capture', 'a_compile_failure_is_not_an_exit_status'),
+    ('M4034', 'IG4 capture: a timeout reads as a fault', 'crates/axon-os/src/runtime.rs',
+     '        if proc.timed_out {\n            return SandboxOutcome::TimedOut {',
+     '        if false && proc.timed_out {\n            return SandboxOutcome::TimedOut {',
+     'axon-os', '--test sandbox_capture', 'a_timeout_is_its_own_outcome'),
+    ('M4035', "IG4 capture: the wrapper's completion marker stays in stdout", 'crates/axon-os/src/runtime.rs',
+     'stdout: strip_done_marker(&proc.stdout, &nonce),',
+     'stdout: proc.stdout.clone(),',
+     'axon-os', '--test sandbox_capture', 'a_nullary_main_exits_zero_and_unterminated_output_is_kept'),
+]
+
+# intent-gen IgIntent IG3: a `cmd:` generator past its deadline is a timeout, its group killed.
+MUTATIONS += [
+    ('M4036', 'IG3: a hanging `cmd:` generator is not reported as timed out', 'crates/axon-intent/src/generator.rs',
+     'if run.timed_out {',
+     'if false && run.timed_out {',
+     'axon-intent', '--lib', 'generator::tests::a_hanging_cmd_generator_is_killed_with_its_group_at_the_deadline'),
+]
+
+# intent-gen IgIntent IG4: the check->repair loop accepts only a candidate that passed check, gates and examples.
+MUTATIONS += [
+    ('M4037', 'IG4: a candidate that failed an example is accepted', 'crates/axon-intent/src/genloop.rs',
+     '    if failed {',
+     '    if false && failed {',
+     'axon-intent', '--test genloop', 'a_failed_example_fed_back_and_fixed_is_accepted'),
+    ('M4038', 'IG4: a candidate with an error diagnostic is accepted', 'crates/axon-intent/src/genloop.rs',
+     '    if !check.ok {',
+     '    if false && !check.ok {',
+     'axon-intent', '--test genloop', 'a_candidate_with_an_error_diagnostic_is_never_accepted'),
+    ('M4039', 'IG4: the pipeline gates (step 3) are skipped', 'crates/axon-intent/src/genloop.rs',
+     '    let resolved = match pipeline::resolve_draft(intent, draft, None) {\n        Ok(r) => r,\n',
+     '    let resolved = match pipeline::resolve_draft(intent, draft.clone(), None) {\n        Ok(r) => r,\n'
+     '        Err(_) if true => {\n'
+     '            let c = crate::confidence::Confidence::Ship { score: 100, deductions: vec![] };\n'
+     '            let g = ceiling_grant(intent);\n'
+     '            Resolved { request: crate::approval::render_request(&draft, &g, intent, &c, None), draft, grant: g, confidence: c }\n'
+     '        }\n',
+     'axon-intent', '--test genloop', 'a_static_overreach_refused_twice_ends_the_loop'),
+    ('M4040', 'IG4: an expected output is staged next to the program', 'crates/axon-intent/src/genloop.rs',
+     '        for f in &run.inputs {',
+     '        for f in run.inputs.iter().chain(&run.outputs) {',
+     'axon-intent', '--test genloop', 'expected_outputs_are_never_present_in_the_sandbox'),
+    ('M4041', 'IG4: a second capability refusal does not end the loop', 'crates/axon-intent/src/genloop.rs',
+     '        if classes.len() >= 2 {',
+     '        if classes.len() >= 3 {',
+     'axon-intent', '--test genloop', 'a_static_overreach_refused_twice_ends_the_loop'),
+    ('M4042', 'IG4: the loop runs a round past its last repair round', 'crates/axon-intent/src/genloop.rs',
+     '    for round in 0..=repairs {',
+     '    for round in 0..=repairs + 1 {',
+     'axon-intent', '--test genloop', 'four_bad_candidates_exhaust_the_loop_with_a_transcript_and_no_program'),
+    ('M4043', 'IG4: a sandbox scope refusal during an example is not classed as a runtime scope refusal', 'crates/axon-intent/src/genloop.rs',
+     'rep.refusal_class = Some(RefusalClass::RuntimeScope);',
+     'let _ = Some(RefusalClass::RuntimeScope);',
+     'axon-intent', '--test genloop', 'a_write_outside_fs_write_during_an_example_is_a_runtime_scope_refusal'),
+    ('M4044', 'IG5: emit --yes approves a generated program', 'crates/axon-intent/src/cli.rs',
+     '    if resolved.draft.generated {\n        // A generated program is approved by a human',
+     '    if false && resolved.draft.generated {\n        // A generated program is approved by a human',
+     'axon-intent', '--test cli_generate', 'a_generated_program_compiles_with_a_transcript_and_needs_a_human_approve'),
+    ('M4045', 'IG5: a lifted program failing its examples falls back to the static pipeline', 'crates/axon-intent/src/cli.rs',
+     'None => return Err(Produce::Refused(rep.refusal())),',
+     'None => return pipeline::resolve(intent, &MockSynth::new(), GenMode::Auto, risk_floor).map_err(Produce::Refused),',
+     'axon-intent', '--test cli_generate', 'a_lifted_program_failing_its_example_is_refused'),
+    ('M4046', 'IG5: compile without a program source does not name --generator', 'crates/axon-intent/src/cli.rs',
+     '"the intent has no fenced ```axon program: pass --generator cmd:PATH|ai:MODEL \\',
+     '"the intent has no fenced ```axon program: pass a generator cmd:PATH|ai:MODEL \\',
+     'axon-intent', '--test cli_generate', 'no_program_and_no_generator_exits_2_naming_the_flag'),
+]
+# intent-gen IG0 (ids M4000-M4014, IgCore): one admission-axes table in axon-core
+# (`builtin_admission_axes`) read on the AST by axon-os `scan_effects`, axon-intent and
+# `axon ast review --json`; each row re-introduces one F12 a-e defect or drops a table guard.
+MUTATIONS += [
+    ('M4000', 'IG0 F12a: the admission table no longer maps a per-argument fs_write kind to fs_write', 'crates/axon-core/src/builtins.rs',
+     'IoKind::FsWrite => a.fs_write = true,',
+     'IoKind::FsWrite => {}',
+     'axon-core', '--no-default-features --lib', 'builtins::tests::admission_axes_split_reads_writes_exec_env_net'),
+    ('M4001', 'IG0 F12e: path normalisation keeps `.` components, so `./out/x` and `out/x` differ', 'crates/axon-core/src/capabilities.rs',
+     '.filter(|c| !c.is_empty() && *c != ".")',
+     '.filter(|c| !c.is_empty())',
+     'axon-core', '--no-default-features --lib', 'capabilities::tests::path_spellings_meet_the_same_prefix_test'),
+    ('M4002', 'IG0: console output loses its no-axis decision and widens to every axis', 'crates/axon-core/src/builtins.rs',
+     '"println" | "print" | "eprintln" | "eprint" | "read_line" | "exit" => {',
+     '"print" | "eprintln" | "eprint" | "read_line" | "exit" => {',
+     'axon-core', '--no-default-features --lib', 'capabilities::tests::program_admission_axes_reads_the_ast'),
+    ('M4003', 'IG0: every loaded module widens to every axis instead of being walked', 'crates/axon-core/src/capabilities.rs',
+     'if !errors.is_empty() || !closure.unsearched.is_empty() {',
+     'if !errors.is_empty() || !closure.unsearched.is_empty() || !closure.modules.is_empty() {',
+     'axon-core', '--no-default-features --lib', 'capabilities::tests::program_admission_axes_in_reads_loaded_modules'),
+    ('M4004', 'IG0: `axon ast review --json` reports every axis instead of the table\'s', 'crates/axon-core/src/main.rs',
+     '.map(|r| axon_core::capabilities::reach_admission_axes(&r))',
+     '.map(|_r| axon_core::builtins::AdmissionAxes::ALL)',
+     'axon-core', '--no-default-features --test cli_run', 'ast_review_reports_the_admission_axes_from_the_one_table'),
+    ('M4005', 'IG0 F12e: the outputs check compares raw path text, so `out/x` mismatches `./out/x`', 'crates/axon-intent/src/confidence.rs',
+     'normalize_path(a) == normalize_path(b)',
+     'a == b',
+     'axon-intent', '--lib', 'confidence::tests::correct_programs_are_not_refused_by_text_heuristics'),
+    ('M4006', 'IG0 F12c: a non-literal write target takes the next string literal', 'crates/axon-intent/src/synth.rs',
+     'if let Some(Expr::Literal(Literal::Str(path))) = args.get(i) {',
+     'let mut lit = None;\n                if let Some(a) = args.get(i + 1) {\n                    walk_expr(a, &mut |x| {\n                        if lit.is_none() {\n                            if let Expr::Literal(Literal::Str(s)) = x {\n                                lit = Some(s.clone());\n                            }\n                        }\n                    });\n                }\n                if let Some(path) = args\n                    .get(i)\n                    .and_then(|a| match a {\n                        Expr::Literal(Literal::Str(s)) => Some(s.clone()),\n                        _ => lit.clone(),\n                    })\n                    .as_ref()\n                {',
+     'axon-intent', '--lib', 'synth::tests::a_non_literal_write_target_is_unresolved_not_the_next_literal'),
+    ('M4007', 'IG0 F12d: a `TODO` anywhere in the text reads as a stub', 'crates/axon-intent/src/synth.rs',
+     '    if source.trim().is_empty() {\n        return true;\n    }\n    let Ok(program)',
+     '    if source.trim().is_empty() || source.contains("TODO") {\n        return true;\n    }\n    let Ok(program)',
+     'axon-intent', '--lib', 'synth::tests::a_todo_comment_is_not_a_stub_but_an_empty_body_is'),
+    ('M4008', 'IG0 F12a: the declared row drops the table\'s fs_write axis', 'crates/axon-os/src/runtime.rs',
+     'fs_write: axes.fs_write,',
+     'fs_write: false,',
+     'axon-os', '--lib', 'runtime::runtime_tests::scan_effects_reads_the_one_table_for_every_file_builtin'),
+    ('M4009', 'IG0: the synthesizer meta no longer reads the admission table', 'crates/axon-intent/src/synth.rs',
+     '.map(program_admission_axes)',
+     '.map(|_| AdmissionAxes::NONE)',
+     'axon-intent', '--lib', 'synth::tests::meta_declares_append_file_as_a_write'),
+    ('M4010', 'IG0 F12b: a whole-word `mod` anywhere in the text widens the scan to every effect', 'crates/axon-os/src/runtime.rs',
+     'axon_core::capabilities::program_admission_axes_in(&program, search_dirs),',
+     'if source.split_whitespace().any(|w| w == "mod") {\n            axon_core::builtins::AdmissionAxes::ALL\n        } else {\n            axon_core::capabilities::program_admission_axes_in(&program, search_dirs)\n        },',
+     'axon-os', '--lib', 'runtime::runtime_tests::scan_effects_ignores_comments_and_strings'),
+    ('M4011', 'IG0: Fabric admission no longer sees a written file (the table\'s fs_write is dropped from the scanned row)', 'crates/axon-os/src/runtime.rs',
+     'fs_write: axes.fs_write,',
+     'fs_write: false,',
+     'axon-fabric', '--test admit_route', 'the_effects_scan_is_not_evaded_by_spacing_or_an_import'),
+    ('M4012', 'IG0: an import the run cannot load is walked as if absent instead of every effect', 'crates/axon-core/src/capabilities.rs',
+     'if !errors.is_empty() || !closure.unsearched.is_empty() {',
+     'if false {',
+     'axon-fabric', '--test admit_route', 'the_effects_scan_is_not_evaded_by_spacing_or_an_import'),
+    ('M4013', 'IG0: a program that does not parse is recorded as an axis denial, not malformed', 'crates/axon-os/src/supervisor.rs',
+     'if let Err(e) = crate::runtime::try_scan_effects(&program_text) {',
+     'if let Err(e) = crate::runtime::try_scan_effects("fn main() {}") {',
+     'axon-os', '--lib', 'supervisor::tests::an_unparseable_program_is_malformed_a_parsed_one_is_denied'),
+    ('M4014', 'IG0: a parsed program denied on an axis is recorded as malformed instead of Denied', 'crates/axon-os/src/supervisor.rs',
+     '            Verdict::Denied { reason, axis },',
+     '            Verdict::Malformed { reason },',
+     'axon-os', '--lib', 'supervisor::tests::an_unparseable_program_is_malformed_a_parsed_one_is_denied'),
+]
+# intent-gen IG2 (ids M4015-M4018, IgCore): `axon card`, generated from BUILTINS.
+MUTATIONS += [
+    ('M4015', 'IG2: a builtin is dropped from the card groups', 'crates/axon-core/src/card.rs',
+     '            "Chan::new",\n',
+     '',
+     'axon-core', '--no-default-features --lib', 'card::tests::card_groups_cover_every_builtin_exactly_once'),
+    ('M4016', 'IG2: core-group builtins lose their first doc sentence', 'crates/axon-core/src/card.rs',
+     'if *core {',
+     'if false {',
+     'axon-core', '--no-default-features --lib', 'card::tests::the_card_is_deterministic_and_signs_every_builtin'),
+    ('M4017', 'IG2: a full stop inside backticks ends a card doc sentence', 'crates/axon-core/src/card.rs',
+     "b'`' => code = !code,",
+     "b'`' => {}",
+     'axon-core', '--no-default-features --lib', 'card::tests::first_sentence_stops_at_the_first_sentence_end_outside_code'),
+    ('M4018', 'IG2: `axon card --sha256` hashes something other than the card text', 'crates/axon-core/src/main.rs',
+     'let d = sha2::Sha256::digest(card.as_bytes());',
+     'let d = sha2::Sha256::digest(card.trim_end().as_bytes());',
+     'axon-core', '--no-default-features --test cli_run', 'axon_card_is_generated_deterministic_and_pinned_by_its_sha256'),
+]
+# int/31 S02 follow-up (id M4019, IgCore): the env_var-behind-fs_read rule is a
+# program-created sandbox's, not the ambient AXON_ALLOWED_FS_READ= scope's.
+MUTATIONS += [
+    ('M4019', 'IG sandbox: the ambient fs_read deny-all refuses `env_var` again', 'crates/axon-core/src/interp/builtins.rs',
+     'caps::IoKind::Env if !sb.ambient => sb',
+     'caps::IoKind::Env => sb',
+     'axon-core', '--no-default-features --test ambient_scope', 'an_ambient_read_deny_all_does_not_refuse_the_environment'),
+]
+# IG0 replaced axon-os's text scanner (`calls_name`) with the AST walk over the
+# one admission-axes table: a call is a parsed `Expr::Call` whatever its
+# spacing, and a bare `mod` line loads nothing (F12 b), so an unloadable `use`
+# is the import that scans as every effect.
+_IG0_STALE = {
+    "M1793": {"property": "the effects scan sees a call with whitespace before its parenthesis", "replacement": "M4011",
+              "how": "IG0: the scan parses the program; spacing is no longer a scanner branch, and the scanned row's fs_write is what M4011 drops"},
+    "M1794": {"property": "the effects scan sees a call of a name", "replacement": "M4011",
+              "how": "IG0: the text-scanner call test became the AST walk over the admission table; M4011 drops its fs_write"},
+    "M1795": {"property": "an import whose effects the scan cannot read is every effect", "replacement": "M4012",
+              "how": "IG0: a bare `mod` loads nothing (F12 b); an unloadable `use` is every axis, the guard M4012 removes"},
+}
+STALE_REFACTORED.update(_IG0_STALE)
+RETIRED |= set(_IG0_STALE)
+
+# native-parity NP-1 (ids M4120-M4122, M4136): a tuple pattern tests every component natively; an
+# int literal is compared with the subject widened by its semantic signedness, never truncated.
+MUTATIONS += [
+    ('M4120', 'NP-1: a tuple pattern with a refutable component matches natively without testing it again', 'crates/axon-core/src/codegen/match_pat.rs',
+     'if pats.iter().all(Self::pattern_is_irrefutable) {',
+     'if !pats.is_empty() {',
+     'axon-core', '--test integration_fixtures', 'tuple_patterns_test_every_component_natively'),
+    ('M4121', 'NP-1: only component 0 of a tuple pattern is folded into the match test', 'crates/axon-core/src/codegen/match_pat.rs',
+     'acc = self.emit_test_when(acc, pat, |s| s.emit_pattern_test(pat, elem, ety));',
+     'if i == 0 { acc = self.emit_test_when(acc, pat, |s| s.emit_pattern_test(pat, elem, ety)); }',
+     'axon-core', '--test integration_fixtures', 'tuple_patterns_test_every_component_natively'),
+    ('M4122', 'NP-1: a narrower int subject is compared with an i64 literal at its own width (not widened)', 'crates/axon-core/src/codegen/match_pat.rs',
+     '.build_int_compare(IntPredicate::EQ, wide, l, "patlitw")',
+     '.build_int_compare(IntPredicate::EQ, s, l, "patlitw")',
+     'axon-core', '--test integration_fixtures', 'tuple_patterns_test_every_component_natively'),
+    ('M4136', 'NP-1: an unsigned narrower int subject is sign-extended before the literal compare', 'crates/axon-core/src/codegen/match_pat.rs',
+     'let wide = if unsigned {',
+     'let wide = if false && unsigned {',
+     'axon-core', '--test integration_fixtures', 'tuple_patterns_test_every_component_natively'),
+]
+
+# native-parity NP-2 (ids M4123-M4125): a match with no matching arm panics natively like the
+# interpreter (`no match arm matched`, exit 101) instead of falling through to the merge block.
+MUTATIONS += [
+    ('M4123', 'NP-2: the last arm\'s false edge branches to the match merge block again', 'crates/axon-core/src/codegen/match_pat.rs',
+     'miss_bb.unwrap_or(merge_bb)',
+     'merge_bb',
+     'axon-core', '--lib', 'codegen::match_pat::tests::a_match_miss_edge_panics'),
+    ('M4124', 'NP-2: the match_miss block is built but emit_msg_panic is not called (unreachable only)', 'crates/axon-core/src/codegen/match_pat.rs',
+     'self.emit_msg_panic("no match arm matched");',
+     'build_wrappers::w_unreachable(&self.ir.builder);',
+     'axon-core', '--lib', 'codegen::match_pat::tests::a_match_miss_edge_panics'),
+    ('M4125', 'NP-2: emit_msg_panic\'s hosted branch omits the __axon_msg_panic call', 'crates/axon-core/src/codegen/mod.rs',
+     'build_wrappers::w_call(&self.ir.builder, panic_fn, &[g.into(), len.into()], "");',
+     'let _ = (panic_fn, g, len);',
+     'axon-core', '--test integration_fixtures', 'a_match_with_no_matching_arm_panics_natively_like_the_interpreter'),
+]
+
+# native-parity lane B: NP-3 (M4126-M4128) -- a generic fn at two types or called from an impl
+# method is renamed per call site; an unresolved user callee is refused E0910.
+MUTATIONS += [
+    ('M4126', 'NP-3: mono ignores the per-site map (only the single-instance rename applies)', 'crates/axon-core/src/mono.rs',
+     'if let Some(mangled) = rename.sites.get(&site).or_else(|| rename.single.get(name)) {',
+     'if let Some(mangled) = rename.single.get(name).filter(|_| site != 0) {',
+     'axon-core', '--test integration_fixtures', 'a_generic_fn_used_at_two_types_runs_every_call_natively'),
+    ('M4127', 'NP-3: infer records no call-site key (every site collides at 0)', 'crates/axon-core/src/infer.rs',
+     '                                    callee.as_ref() as *const Expr as usize,',
+     '                                    0,',
+     'axon-core', '--test integration_fixtures', 'a_generic_fn_used_at_two_types_runs_every_call_natively'),
+    ('M4128', 'NP-3: codegen drops an unresolved user callee silently again (no E0910)', 'crates/axon-core/src/codegen/expr.rs',
+     '        // `?` below used to drop it silently, so the program ran on without it.\n        if maybe_fn_v.is_none() {',
+     '        // `?` below used to drop it silently, so the program ran on without it.\n        if maybe_fn_v.is_none() && false {',
+     'axon-core', '--lib', 'codegen::expr::tests::an_unresolved_user_callee_is_refused_e0910'),
+]
+
+# native-parity lane B: NP-4 (M4129-M4130) -- a `break`/`continue` reaching a frame edge panics
+# natively like the interpreter; a lambda body does not see the enclosing fn's loops.
+MUTATIONS += [
+    ('M4129', 'NP-4: a `break`/`continue` with no loop of its frame open emits no panic again', 'crates/axon-core/src/codegen/expr.rs',
+     '        self.emit_msg_panic(&format!("`break`/`continue` outside a loop in {edge}"));',
+     '        let _ = edge;',
+     'axon-core', '--test integration_fixtures', 'loop_control_never_leaves_its_frame_natively'),
+    ('M4130', "NP-4: `emit_lambda` keeps the enclosing fn's `loop_stack`", 'crates/axon-core/src/codegen/expr.rs',
+     '        let saved_loop_stack = std::mem::take(&mut self.loop_stack);',
+     '        let saved_loop_stack = self.loop_stack.clone();',
+     'axon-core', '--test integration_fixtures', 'loop_control_never_leaves_its_frame_natively'),
+]
+
+# native-parity lane B: NP-5 (M4131-M4133) -- an `arr_range` span above i64::MAX and a refused
+# array allocation panic natively with the interpreter's `alloc_array_err` line.
+MUTATIONS += [
+    ('M4131', 'NP-5: `arr_range` tests the wrapped difference `> 0` again (a huge span returns `[]`)', 'crates/axon-core/src/codegen/expr.rs',
+     '            end,\n            start,\n            "rg_pos",',
+     '            raw,\n            i64_ty.const_zero(),\n            "rg_pos",',
+     'axon-core', '--test integration_fixtures', 'huge_arrays_panic_natively_like_the_interpreter'),
+    ('M4132', 'NP-5: the array byte-size capacity guard is removed (the size multiply wraps)', 'crates/axon-core/src/codegen/expr.rs',
+     '        self.emit_alloc_array_panic_if(too_big, builtin, count, 0, fn_val);',
+     '        let _ = too_big;',
+     'axon-core', '--test integration_fixtures', 'huge_arrays_panic_natively_like_the_interpreter'),
+    ('M4133', 'NP-5: a null `malloc` for an array is not checked (dies as "stack overflow")', 'crates/axon-core/src/codegen/expr.rs',
+     '        self.emit_alloc_array_panic_if(refused, builtin, count, 1, fn_val);',
+     '        let _ = refused;',
+     'axon-core', '--test integration_fixtures', 'huge_arrays_panic_natively_like_the_interpreter'),
+]
+
+# native-parity lane C, NP-6 (ids M4134-M4135)
+MUTATIONS += [
+    ('M4134', 'NP-6: the interpreter `min_i32` compares untruncated i64 arguments again (min_i32(3000000000, 1) is 1, native -1294967296)', 'crates/axon-core/src/interp/builtins.rs',
+     '                ok!(Value::Int((as_int(&args[0])? as i32).min(as_int(&args[1])? as i32) as i64));',
+     '                ok!(Value::Int(as_int(&args[0])?.min(as_int(&args[1])?)));',
+     'axon-core', '--no-default-features --test cli_run', 'min_max_i32_truncate_their_arguments_like_abs_i32'),
+    ('M4135', 'NP-6: the interpreter `max_i32` compares untruncated i64 arguments again (max_i32(3000000000, 1) is 3000000000, native 1)', 'crates/axon-core/src/interp/builtins.rs',
+     '                ok!(Value::Int((as_int(&args[0])? as i32).max(as_int(&args[1])? as i32) as i64));',
+     '                ok!(Value::Int(as_int(&args[0])?.max(as_int(&args[1])?)));',
+     'axon-core', '--no-default-features --test cli_run', 'min_max_i32_truncate_their_arguments_like_abs_i32'),
+]
+
+# asi-replay (ids M4150-M4169): every ASI demo's exit code under mock is pinned (RP-2); the six
+# model demos reach their deploy gate on hand-authored replay fixtures, with goal_run choosing
+# the one best variant (RP-1).
+MUTATIONS += [
+    ('M4154', 'RP-2: llm_cache.ax no longer returns its success code 1 (a changed computed result under mock)', 'examples/asi/llm_cache.ax',
+     'dict_len(cache) == unique { 1 } else { 0 }',
+     'dict_len(cache) == unique { 0 } else { 0 }',
+     'axon-core', '--no-default-features --test cli_run', 'asi_demo_set_runs_without_crashing'),
+    ('M4150', 'RP-1: classify.ax\'s deploy gate is raised out of reach of its best variant', 'examples/asi/classify.ax',
+     '@[verify(confidence >= 0.8)]',
+     '@[verify(confidence >= 0.99)]',
+     'axon-core', '--no-default-features --test cli_run', 'asi_model_demos_reach_their_deploy_gate_on_replay_fixtures'),
+    ('M4151', 'RP-1: search_rank.ax\'s redteam no longer passes on a variant that ignored the injection', 'examples/asi/search_rank.ax',
+     '    if safe == 1 {',
+     '    if safe == 2 {',
+     'axon-core', '--no-default-features --test cli_run', 'asi_model_demos_reach_their_deploy_gate_on_replay_fixtures'),
+    ('M4152', 'RP-1: a replayed ai_extract_uncertain_* answer loses its recorded confidence', 'crates/axon-core/src/interp/builtins.rs',
+     'make_uncertain_ai(v, c)',
+     'make_uncertain_ai(v, 0.9)',
+     'axon-core', '--no-default-features --test cli_run', 'asi_model_demos_reach_their_deploy_gate_on_replay_fixtures'),
+    ('M4153', 'RP-1: summarize.ax\'s deploy gate is raised out of reach of its best variant', 'examples/asi/summarize.ax',
+     '@[verify(confidence >= 0.85)]',
+     '@[verify(confidence >= 0.95)]',
+     'axon-core', '--no-default-features --test cli_run', 'asi_model_demos_reach_their_deploy_gate_on_replay_fixtures'),
+    ('M4158', 'RP-1: hill_climb_i64 returns its first evaluation (goal_run never chooses a variant)', 'crates/axon-core/src/interp/goal.rs',
+     '        if best_dist <= f64::EPSILON {\n            return Ok(best_score);\n        }\n        // Coarse-then-fine',
+     '        if best_dist >= 0.0 {\n            return Ok(best_score);\n        }\n        // Coarse-then-fine',
+     'axon-core', '--no-default-features --test cli_run', 'asi_model_demos_reach_their_deploy_gate_on_replay_fixtures'),
+]
+
+# asi-replay (ids M4150-M4169), RP-3: ai_extract_uncertain_i64/_f64 consult AXON_AI_REPLAY before
+# AXON_AI_MOCK and record the mock answer.
+MUTATIONS += [
+    ('M4155', 'RP-3: an ai_extract_uncertain_i64 replay hit is ignored under mock (the old precedence)', 'crates/axon-core/src/interp/builtins.rs',
+     '                    ok!(replay_uncertain(&cached, name, false));',
+     '                    if !ai_mock_enabled() { ok!(replay_uncertain(&cached, name, false)); }',
+     'axon-core', '--no-default-features --test cli_run', 'ai_extract_replay_hit_wins_over_mock_and_a_mock_answer_is_recorded'),
+    ('M4156', 'RP-3: the ai_extract_uncertain_i64 mock answer is no longer recorded to AXON_AI_REPLAY', 'crates/axon-core/src/interp/builtins.rs',
+     '                    ai_replay_store(as_str(&args[0])?, name, "1|0.9", 0);\n                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Int(1), 0.9))));',
+     '                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Int(1), 0.9))));',
+     'axon-core', '--no-default-features --test cli_run', 'ai_extract_replay_hit_wins_over_mock_and_a_mock_answer_is_recorded'),
+    ('M4157', 'RP-3: the ai_extract_uncertain_f64 mock answer is no longer recorded to AXON_AI_REPLAY', 'crates/axon-core/src/interp/builtins.rs',
+     '                    ai_replay_store(as_str(&args[0])?, name, "1|0.9", 0);\n                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Float(1.0), 0.9))));',
+     '                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Float(1.0), 0.9))));',
+     'axon-core', '--no-default-features --test cli_run', 'ai_extract_replay_hit_wins_over_mock_and_a_mock_answer_is_recorded'),
+]
+
+# intent-gen implementation audit P1/P2a/P2b (ids M4500-M4519, IgIntent; were M4420-M4425, renumbered: nhr/fix-a owns M4420-M4425): how a captured
+# sandbox run ended is decided by deadline, signal, completion marker, then the interpreter's
+# own final fault line - never stderr words; a repair round counts against the token budget.
+MUTATIONS += [
+    ('M4500', 'audit P1: a completed run is classed by its stderr before its completion marker', 'crates/axon-os/src/runtime.rs',
+     '        if ran_to_completion(&proc.stdout, nonce) {\n            return SandboxOutcome::Exited {',
+     '        if false && ran_to_completion(&proc.stdout, nonce) {\n            return SandboxOutcome::Exited {',
+     'axon-os', '--test sandbox_capture', 'a_completed_run_returning_a_fault_code_is_an_exit_status'),
+    ('M4501', 'audit P1: fault words anywhere in stderr, not the final line, make a fault', 'crates/axon-os/src/runtime.rs',
+     '.find(|(c, p)| *c == code && line.starts_with(p))?;',
+     '.find(|(c, p)| *c == code && stderr.contains(p))?;',
+     'axon-os', '--test sandbox_capture', 'fault_words_before_a_direct_exit_are_not_a_fault'),
+    ('M4502', 'audit P2a: exit(2) without an axon-diag/1 error reads as a compile failure', 'crates/axon-os/src/runtime.rs',
+     '    first_error\n}\n',
+     '    first_error.or(Some(String::new()))\n}\n',
+     'axon-os', '--test sandbox_capture', 'a_silent_exit_2_is_not_a_compile_failure'),
+    ('M4503', 'audit P2b: a repair round runs past the intent token budget', 'crates/axon-intent/src/genloop.rs',
+     'if round < repairs && tokens_reported > token_budget {',
+     'if false && round < repairs && tokens_reported > token_budget {',
+     'axon-intent', '--test genloop', 'repair_rounds_stop_once_reported_tokens_pass_the_intent_budget'),
+    ('M4504', 'audit P2b: an intent naming no tokens is not held to DEFAULT_TOKEN_BUDGET', 'crates/axon-intent/src/genloop.rs',
+     'Ok(n) if n > 0 => n,',
+     'Ok(n) => n,',
+     'axon-intent', '--test genloop', 'an_intent_naming_no_tokens_is_held_to_the_default_budget'),
+    ('M4505', 'audit P2b: the tokens a cmd generator reports are dropped', 'crates/axon-intent/src/generator.rs',
+     'tokens: reported_tokens(&run.stderr),',
+     'tokens: None,',
+     'axon-intent', '--test genloop', 'a_cmd_generator_s_reported_tokens_count_against_the_budget'),
+    ('M4506', 'integration int/31: a compile failure is named by its first diagnostic of any severity (a warning)', 'crates/axon-os/src/runtime.rs',
+     'if first_error.is_none() && d.get("severity").and_then(|s| s.as_str()) == Some("error") {',
+     'if first_error.is_none() {',
+     'axon-os', '--test sandbox_capture', 'a_compile_failure_names_its_first_error_not_a_warning'),
+    ('M4507', 'integration int/31: the verify fault arm no longer matches, so a failed verify falls to the runtime axis', 'crates/axon-os/src/runtime.rs',
+     '        "axon: verify failed" => Verdict::Denied {',
+     '        "axon: verify failed_" => Verdict::Denied {',
+     'axon-os', '--test sandbox_capture', 'a_failed_verify_is_a_verify_denial'),
+    ('M4509', 'integration int/31: an interpreter halt is denied on the runtime axis, not Halted', 'crates/axon-os/src/runtime.rs',
+     '        "axon: halted" => Verdict::Halted { reason },',
+     '        "axon: halted" => Verdict::Denied { reason, axis: "runtime".into() },',
+     'axon-os', '--test sandbox_capture', 'each_interpreter_fault_line_is_its_own_verdict'),
+    ('M4510', 'integration int/31: the AI-policy fault arm no longer matches, so the stop falls to the runtime axis', 'crates/axon-os/src/runtime.rs',
+     '        "axon: ai policy: " => Verdict::Denied {',
+     '        "axon: ai policy:_ " => Verdict::Denied {',
+     'axon-os', '--test sandbox_capture', 'each_interpreter_fault_line_is_its_own_verdict'),
+    ('M4511', 'integration int/31: a refinement breach is denied on the runtime axis, not RefineViolation', 'crates/axon-os/src/runtime.rs',
+     '        "axon: refinement violated: " => Verdict::RefineViolation { reason },',
+     '        "axon: refinement violated: " => Verdict::Denied { reason, axis: "runtime".into() },',
+     'axon-os', '--test sandbox_capture', 'each_interpreter_fault_line_is_its_own_verdict'),
+    ('M4512', 'integration int/31: an exhausted goal budget is a plain denial, not BudgetExhausted', 'crates/axon-os/src/runtime.rs',
+     '        "axon: goal budget exhausted: " => Verdict::BudgetExhausted {',
+     '        "axon: goal budget exhausted: " => Verdict::Denied {\n            reason: String::new(),',
+     'axon-os', '--test sandbox_capture', 'each_interpreter_fault_line_is_its_own_verdict'),
+    ('M4513', 'integration int/31: the sandbox fault arm no longer matches, so a violation falls to the runtime axis', 'crates/axon-os/src/runtime.rs',
+     '        "axon: sandbox violation: " => Verdict::Denied {',
+     '        "axon: sandbox violation:_ " => Verdict::Denied {',
+     'axon-os', '--test sandbox_capture', 'a_write_outside_the_allowlist_is_a_sandbox_fault'),
+    ('M4514', 'integration int/31: an unlisted fault line (a panic) is Malformed, not a runtime denial', 'crates/axon-os/src/runtime.rs',
+     '        _ => Verdict::Denied {\n            reason,\n            axis: "runtime".into(),',
+     '        _ => Verdict::Malformed {\n            reason,\n            // axis: "runtime".into(),',
+     'axon-os', '--test sandbox_capture', 'an_interpreter_panic_is_still_a_fault'),
+    ('M4515', 'integration int/31: the panic fault line is keyed to exit 102, so a panic (101) reads as an exit status', 'crates/axon-os/src/runtime.rs',
+     '    (101, "axon: panic"),',
+     '    (102, "axon: panic"),',
+     'axon-os', '--test sandbox_capture', 'an_interpreter_panic_is_still_a_fault'),
+    ('M4516', 'integration int/31: a compile failure keeps the LAST error, not the first', 'crates/axon-os/src/runtime.rs',
+     'if first_error.is_none() && d.get("severity")',
+     'if true && d.get("severity")',
+     'axon-os', '--test sandbox_capture', 'a_compile_failure_names_its_first_error_not_a_warning'),
+    ('M4517', 'integration int/31: a linked wasm module is labelled RUNNABLE with a wasmtime command whatever it imports (a browser println module that wasmtime cannot instantiate)', 'crates/axon-core/src/main.rs',
+     '                    if foreign.is_empty() {',
+     '                    if true {',
+     'axon-core', '--test cli_run', 'a_wasm_runnable_label_is_only_printed_for_a_module_that_runs'),
 ]
 
 # NH-R1 A4 (tasks/unattended-auth-spec.md E1/E1s/E3/E4/E5/E6/E9/E11, ids M4090-M4119, M4200):

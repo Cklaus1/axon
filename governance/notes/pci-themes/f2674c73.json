@@ -1,0 +1,4 @@
+{
+  "theme": "native parity",
+  "text": "NATIVE: a match with no matching arm now panics with the interpreter's `no match arm matched` and exit 101, where native used to return a zero at exit 0 or run on past a statement match"
+}

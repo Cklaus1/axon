@@ -1,0 +1,36 @@
+{
+ "id": "a05-largest-group",
+ "category": "transform",
+ "source": {
+  "kind": "atlas tasks_hard",
+  "file": "atlas/spikes/rlm-engine/src/tasks_hard.rs (TASKS, MIT, separate git tree)",
+  "index": 5,
+  "desc": "after grouping the words \"apple avocado apricot banana blueberry cherry\" by their first letter, the number of words in the largest group",
+  "expected": "3",
+  "atlas_category": "structured"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "atlas data point",
+    "runs": [
+     {
+      "inputs": {
+       "./data/words.txt": "apple avocado apricot banana blueberry cherry\n"
+      },
+      "outputs": {
+       "./out/answer.txt": "3\n"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/answer.txt",
+  "value": "3"
+ }
+}

@@ -1,0 +1,302 @@
+// IPv4 addresses, CIDR masks, network and broadcast addresses, containment.
+
+fn all_ones() -> i64 {
+    4294967295
+}
+
+fn prefix_mask(prefix: i64) -> i64 {
+    if prefix <= 0 {
+        0
+    } else {
+        bit_and(shl(all_ones(), 32 - prefix), all_ones())
+    }
+}
+
+fn parse_prefix(text: str) -> i64 {
+    let digits = str_trim(text)
+    if str_len(digits) == 0 || str_len(digits) > 2 || str_digits_only(digits) != digits {
+        return -1
+    }
+    let value = parse_int_or(digits, -1)
+    if value > 32 { -1 } else { value }
+}
+
+fn format_ipv4(addr: i64) -> str {
+    let a = bit_and(shr(addr, 24), 255)
+    let b = bit_and(shr(addr, 16), 255)
+    let c = bit_and(shr(addr, 8), 255)
+    let d = bit_and(addr, 255)
+    to_str(a) + "." + to_str(b) + "." + to_str(c) + "." + to_str(d)
+}
+
+fn block_range(cidr: str) -> [i64] {
+    let pieces = str_split(str_trim(cidr), "/")
+    let empty: [i64] = []
+    if len(pieces) > 2 {
+        return empty
+    }
+    let addr = parse_ipv4(pieces[0])
+    let prefix = 32
+    if len(pieces) == 2 {
+        prefix = parse_prefix(pieces[1])
+    }
+    if addr < 0 || prefix < 0 {
+        return empty
+    }
+    let network = bit_and(addr, prefix_mask(prefix))
+    [network, bit_or(network, bit_xor(prefix_mask(prefix), all_ones())), prefix]
+}
+
+fn parse_ipv4(text: str) -> i64 {
+    let parts = str_split(str_trim(text), ".")
+    if len(parts) != 4 {
+        return -1
+    }
+    let addr = 0
+    let valid = true
+    for part in parts {
+        let n = str_len(part)
+        if n == 0 || n > 3 {
+            valid = false
+        } else if n > 1 && char_at(part, 0) == 48 {
+            valid = false
+        } else {
+            let value = 0
+            let i = 0
+            while i < n {
+                let c = char_at(part, i)
+                if c < 48 || c > 57 {
+                    valid = false
+                }
+                value = value * 10 + (c - 48)
+                i = i + 1
+            }
+            if value > 255 {
+                valid = false
+            }
+            addr = addr * 256 + value
+        }
+    }
+    if valid { addr } else { -1 }
+}
+
+fn mask_to_prefix(mask: str, wildcard: bool) -> i64 {
+    let value = parse_ipv4(mask)
+    if value < 0 {
+        return -1
+    }
+    if wildcard {
+        value = bit_xor(value, all_ones())
+    }
+    let ones = 0
+    let seen_zero = false
+    let contiguous = true
+    let bit = 31
+    while bit >= 0 {
+        let set = bit_and(shr(value, bit), 1) == 1
+        if set {
+            if seen_zero {
+                contiguous = false
+            } else {
+                ones = ones + 1
+            }
+        } else {
+            seen_zero = true
+        }
+        bit = bit - 1
+    }
+    if contiguous {
+        ones
+    } else {
+        -1
+    }
+}
+
+fn cidr_bounds(cidr: str) -> [str] {
+    let pieces = str_split(str_trim(cidr), "/")
+    let empty: [str] = []
+    let prefix = 32
+    if len(pieces) == 2 {
+        prefix = parse_prefix(pieces[1])
+    } else if len(pieces) != 1 {
+        return empty
+    }
+    let addr = parse_ipv4(pieces[0])
+    if addr < 0 || prefix < 0 {
+        return empty
+    }
+    let mask = prefix_mask(prefix)
+    let network = bit_and(addr, mask)
+    let broadcast = bit_or(network, bit_xor(mask, all_ones()))
+    let first = network
+    let last = broadcast
+    if prefix < 31 {
+        first = network + 1
+        last = broadcast - 1
+    }
+    [format_ipv4(network), format_ipv4(broadcast), format_ipv4(first), format_ipv4(last)]
+}
+
+fn cidr_contains(cidr: str, candidate: str) -> bool {
+    let outer = block_range(cidr)
+    if len(outer) != 3 {
+        return false
+    }
+    let inner_start = -1
+    let inner_end = -1
+    if str_contains(candidate, "/") {
+        let inner = block_range(candidate)
+        if len(inner) == 3 {
+            if inner[2] >= outer[2] {
+                inner_start = inner[0]
+                inner_end = inner[1]
+            }
+        }
+    } else {
+        let addr = parse_ipv4(candidate)
+        if addr >= 0 {
+            inner_start = addr
+            inner_end = addr
+        }
+    }
+    if inner_start < 0 {
+        false
+    } else if inner_start < outer[0] {
+        false
+    } else {
+        inner_end <= outer[1]
+    }
+}
+
+fn covered_addresses(cidrs: [str]) -> i64 {
+    let ranges: [[i64]] = []
+    for text in cidrs {
+        let r = block_range(text)
+        if len(r) == 3 {
+            ranges = arr_push(ranges, [r[0], r[1]])
+        }
+    }
+    if len(ranges) == 0 {
+        return 0
+    }
+    let sorted = arr_sort_by(ranges, |a, b| a[0] - b[0])
+    let total = 0
+    let cur_start = sorted[0][0]
+    let cur_end = sorted[0][1]
+    let i = 1
+    while i < len(sorted) {
+        let next = sorted[i]
+        if next[0] <= cur_end + 1 {
+            if next[1] > cur_end {
+                cur_end = next[1]
+            }
+        } else {
+            total = total + (cur_end - cur_start + 1)
+            cur_start = next[0]
+            cur_end = next[1]
+        }
+        i = i + 1
+    }
+    total + (cur_end - cur_start + 1)
+}
+
+@[test]
+fn test_parse_ipv4_private() {
+    assert_eq(parse_ipv4("192.168.1.10"), 3232235786)
+}
+
+@[test]
+fn test_parse_ipv4_small() {
+    assert_eq(parse_ipv4(" 0.0.0.1 "), 1)
+}
+
+@[test]
+fn test_parse_ipv4_rejects_out_of_range() {
+    assert_eq(parse_ipv4("10.0.0.256"), -1)
+}
+
+@[test]
+fn test_parse_ipv4_rejects_leading_zero_and_short() {
+    assert_eq(parse_ipv4("01.2.3.4"), -1)
+    assert_eq(parse_ipv4("1.2.3"), -1)
+    assert_eq(parse_ipv4("1.2.x.4"), -1)
+}
+
+@[test]
+fn test_mask_to_prefix_dotted() {
+    assert_eq(mask_to_prefix("255.255.255.0", false), 24)
+    assert_eq(mask_to_prefix("255.255.255.255", false), 32)
+}
+
+@[test]
+fn test_mask_to_prefix_wildcard() {
+    assert_eq(mask_to_prefix("0.0.15.255", true), 20)
+}
+
+@[test]
+fn test_mask_to_prefix_non_contiguous() {
+    assert_eq(mask_to_prefix("255.0.255.0", false), -1)
+    assert_eq(mask_to_prefix("255.255.0", false), -1)
+}
+
+@[test]
+fn test_cidr_bounds_slash_24() {
+    let b = cidr_bounds("192.168.1.77/24")
+    assert(b == ["192.168.1.0", "192.168.1.255", "192.168.1.1", "192.168.1.254"])
+}
+
+@[test]
+fn test_cidr_bounds_point_to_point() {
+    let b = cidr_bounds("10.0.0.5/31")
+    assert(b == ["10.0.0.4", "10.0.0.5", "10.0.0.4", "10.0.0.5"])
+}
+
+@[test]
+fn test_cidr_bounds_bare_host() {
+    let b = cidr_bounds("172.16.5.4")
+    assert(b == ["172.16.5.4", "172.16.5.4", "172.16.5.4", "172.16.5.4"])
+}
+
+@[test]
+fn test_cidr_bounds_invalid_prefix() {
+    let b = cidr_bounds("1.2.3.4/33")
+    assert_eq(len(b), 0)
+}
+
+@[test]
+fn test_cidr_contains_address() {
+    assert(cidr_contains("10.0.0.0/8", "10.255.3.4"))
+    assert(cidr_contains("0.0.0.0/0", "8.8.8.8"))
+}
+
+@[test]
+fn test_cidr_contains_outside() {
+    assert(!cidr_contains("10.0.0.0/8", "11.0.0.1"))
+}
+
+@[test]
+fn test_cidr_contains_subnet() {
+    assert(cidr_contains("192.168.0.0/16", "192.168.4.0/24"))
+    assert(!cidr_contains("192.168.4.0/24", "192.168.0.0/16"))
+}
+
+@[test]
+fn test_cidr_contains_upper_edge() {
+    assert(cidr_contains("172.16.0.0/12", "172.31.255.255"))
+    assert(!cidr_contains("172.16.0.0/12", "172.32.0.0"))
+}
+
+@[test]
+fn test_covered_addresses_overlap() {
+    assert_eq(covered_addresses(["10.0.0.0/24", "10.0.0.128/25", "10.0.1.0/24"]), 512)
+}
+
+@[test]
+fn test_covered_addresses_duplicates_and_garbage() {
+    assert_eq(covered_addresses(["192.168.0.1", "192.168.0.1/32", "bad"]), 1)
+}
+
+@[test]
+fn test_covered_addresses_disjoint() {
+    assert_eq(covered_addresses(["10.0.0.0/30", "10.0.0.8/29", "0.0.0.0/32"]), 13)
+}

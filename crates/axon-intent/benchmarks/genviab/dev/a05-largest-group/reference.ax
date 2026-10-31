@@ -1,0 +1,30 @@
+fn answer(text: str) -> str {
+    let words = str_split(str_trim(text), " ")
+    let counts = dict_new()
+    let best = 0
+    for i in 0..len(words) {
+        if len(words[i]) > 0 {
+            let n = dict_inc(counts, str_slice(words[i], 0, 1))
+            if n > best { best = n }
+        }
+    }
+    to_str(best)
+}
+
+fn main() -> i64 {
+    match read_file("./data/words.txt") {
+        Ok(text) => {
+            match write_file("./out/answer.txt", answer(text) + "\n") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            2
+        }
+    }
+}

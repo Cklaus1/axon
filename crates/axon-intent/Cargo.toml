@@ -16,18 +16,24 @@ path = "src/lib.rs"
 # Exposes `MockSynth` to integration tests / external callers (the unit tests
 # get it via cfg(test) automatically).
 mock = []
+# IG3: the `--generator ai:<model>` generator, through axon-ai.
+ai = ["dep:axon-ai"]
 
 [dependencies]
 axon-os = { path = "../axon-os" }
+# IG0: synth's write-target / stub / entry analysis walks the parsed program
+# and reads the compiler's one admission-axes table. The interpreter build.
+axon-core = { path = "../axon-core", default-features = false }
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# The synthesizer's and the imports digest's children run as process-group
-# jobs: a timeout kills the whole job, and `main` forwards termination signals.
+# A `cmd:` generator runs as a process-group job (axon-os `run_bounded_job`):
+# its deadline kills the whole job, and `main` forwards termination signals.
 axon-jobctl = { path = "../axon-jobctl" }
+axon-ai = { path = "../axon-ai", optional = true }
 # NH-R1 A2 (`authorize-repair`): the strict parse of cortex's envelope preview
 # and the cl22 bytes its check digest is taken over.
 axon-canonical = { path = "../axon-canonical" }
-# geteuid for the spent store's and the verify key's owner check; kill(2) and
-# /proc liveness in the signal test (tests/signals.rs).
+# geteuid for the spent store's and the verify key's owner check (authorize-repair,
+# audit-runs); kill(2) and /proc liveness in the signal test (tests/signals.rs).
 libc = "0.2"

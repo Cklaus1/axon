@@ -41,9 +41,18 @@ impl<'ctx> super::Codegen<'ctx> {
         let merge_bb = self.ir.context.append_basic_block(fn_val, "match_merge");
         let mut arm_results: Vec<(BasicValueEnum<'ctx>, inkwell::basic_block::BasicBlock<'ctx>)> =
             Vec::new();
-        // Blocks whose "no arm matched" edge flows into merge_bb (the last
-        // arm's test, and its guard if it has one): each needs a phi incoming.
-        let mut miss_preds: Vec<inkwell::basic_block::BasicBlock<'ctx>> = Vec::new();
+        // The "no arm matched" edge (the last arm's failed test, and its
+        // failed guard if it has one) panics like the interpreter: `no match
+        // arm matched`, exit 101. It used to branch to merge_bb, where the phi
+        // took a zero for it (a fabricated result at exit 0) and a statement
+        // `match` simply ran on. A last arm that is unguarded and irrefutable
+        // cannot fail, so it gets no miss block.
+        let last = &arms[arms.len() - 1];
+        let miss_bb = if last.guard.is_none() && Self::pattern_is_irrefutable(&last.pattern) {
+            None
+        } else {
+            Some(self.ir.context.append_basic_block(fn_val, "match_miss"))
+        };
 
         for (i, arm) in arms.iter().enumerate() {
             let test_bb = self
@@ -59,7 +68,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     .context
                     .append_basic_block(fn_val, &format!("arm{i}_next"))
             } else {
-                merge_bb
+                miss_bb.unwrap_or(merge_bb)
             };
             let is_last = i + 1 == arms.len();
 
@@ -67,13 +76,10 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(test_bb);
 
             // Emit pattern test.
-            let matches = match self.emit_pattern_test(&arm.pattern, subject) {
+            let matches = match self.emit_pattern_test(&arm.pattern, subject, subject_sem_ty) {
                 BasicValueEnum::IntValue(i) => i,
                 _ => self.ir.context.bool_type().const_int(1, false),
             };
-            if is_last {
-                miss_preds.push(self.ir.builder.get_insert_block().unwrap());
-            }
 
             // The arm's bindings are scoped to the arm (see `end_pattern_scope`).
             let scope = self.begin_pattern_scope(&arm.pattern);
@@ -97,13 +103,15 @@ impl<'ctx> super::Codegen<'ctx> {
                         self.ir.context.bool_type().const_int(1, false)
                     }
                 };
-                if is_last {
-                    miss_preds.push(self.ir.builder.get_insert_block().unwrap());
-                }
                 build_wrappers::w_cond_br(&self.ir.builder, guard, body_bb, next_bb);
                 self.ir.builder.position_at_end(body_bb);
             } else {
-                build_wrappers::w_cond_br(&self.ir.builder, matches, body_bb, next_bb);
+                if is_last && miss_bb.is_none() {
+                    // Irrefutable and unguarded: nothing to test.
+                    build_wrappers::w_br(&self.ir.builder, body_bb);
+                } else {
+                    build_wrappers::w_cond_br(&self.ir.builder, matches, body_bb, next_bb);
+                }
                 self.ir.builder.position_at_end(body_bb);
                 self.emit_pattern_bindings(&arm.pattern, subject, subject_sem_ty);
             }
@@ -125,11 +133,15 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
 
+        if let Some(miss_bb) = miss_bb {
+            self.ir.builder.position_at_end(miss_bb);
+            self.emit_msg_panic("no match arm matched");
+        }
+
         self.ir.builder.position_at_end(merge_bb);
 
-        // Build phi if all arms produce a value of the same type.
-        // Note: the last arm's test_bb false-branch also goes to merge_bb, so
-        // we must add an `undef` incoming for that predecessor to keep the phi valid.
+        // Build phi if all arms produce a value of the same type. Every
+        // predecessor of merge_bb is an arm body: a miss never reaches it.
         if arm_results.len() == arms.len() && !arm_results.is_empty() {
             let val_ty = arm_results[0].0.get_type();
             // A phi's operands must all have the RESULT type. This built the
@@ -161,23 +173,22 @@ impl<'ctx> super::Codegen<'ctx> {
             for (v, bb) in &arm_results {
                 phi.add_incoming(&[(v, *bb)]);
             }
-            // Every "no arm matched" edge also flows to merge_bb. LLVM
-            // requires an incoming per predecessor; the value is never used.
-            let zero = val_ty.const_zero();
-            for bb in &miss_preds {
-                phi.add_incoming(&[(&zero, *bb)]);
-            }
             Some(phi.as_basic_value())
         } else {
             None
         }
     }
 
-    /// Emit a boolean test for whether `subject` matches `pattern`.
+    /// Emit a boolean test for whether `subject` matches `pattern`. `sem` is
+    /// the SEMANTIC type of `subject` when codegen knows it (narrowed as the
+    /// walk descends, as in `emit_pattern_bindings`): an int literal needs the
+    /// subject's signedness to widen it, a `Result` payload its `Ok`/`Err`
+    /// type to be read, a tuple component its element type.
     pub(super) fn emit_pattern_test(
         &mut self,
         pattern: &ast::Pattern,
         subject: BasicValueEnum<'ctx>,
+        sem: Option<&Type>,
     ) -> BasicValueEnum<'ctx> {
         let true_val = self.ir.context.bool_type().const_int(1, false);
         let false_val = self.ir.context.bool_type().const_int(0, false);
@@ -188,12 +199,9 @@ impl<'ctx> super::Codegen<'ctx> {
             ast::Pattern::Literal(lit) => {
                 let lit_val = self.emit_literal(lit);
                 match (subject, lit_val) {
-                    (BasicValueEnum::IntValue(s), BasicValueEnum::IntValue(l)) => self
-                        .ir
-                        .builder
-                        .build_int_compare(IntPredicate::EQ, s, l, "patlit")
-                        .unwrap()
-                        .into(),
+                    (BasicValueEnum::IntValue(s), BasicValueEnum::IntValue(l)) => {
+                        self.emit_int_literal_test(s, l, sem).into()
+                    }
                     (BasicValueEnum::FloatValue(s), BasicValueEnum::FloatValue(l)) => self
                         .ir
                         .builder
@@ -248,7 +256,18 @@ impl<'ctx> super::Codegen<'ctx> {
                             .unwrap()
                             .into()
                     }
-                    _ => true_val.into(),
+                    // A subject whose value native cannot compare with the
+                    // literal (no layout for it here). This used to answer
+                    // `true`, taking the arm whatever the value was.
+                    _ => {
+                        self.record_error(
+                            "codegen error [E0910]: native codegen cannot test this literal \
+                             pattern (the matched value has no native layout here). The \
+                             interpreter supports it; run under `axon run`."
+                                .to_string(),
+                        );
+                        false_val.into()
+                    }
                 }
             }
 
@@ -298,9 +317,13 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_extract_value(sv, 1, "optval")
                             .unwrap();
+                        let inner_sem = match sem {
+                            Some(Type::Option(t)) => Some(&**t),
+                            _ => None,
+                        };
                         return self
                             .emit_test_when(is_some, inner_pat, |s| {
-                                s.emit_pattern_test(inner_pat, inner_val)
+                                s.emit_pattern_test(inner_pat, inner_val, inner_sem)
                             })
                             .into();
                     }
@@ -328,9 +351,18 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_extract_value(sv, 1, "resval")
                             .unwrap();
+                        // The payload is an `[N x i8]` array: read it at the
+                        // `Ok` type before testing it (as the bindings do).
+                        let ok_sem = match sem {
+                            Some(Type::Result(ok, _)) => Some(&**ok),
+                            _ => None,
+                        };
                         return self
                             .emit_test_when(is_ok, inner_pat, |s| {
-                                s.emit_pattern_test(inner_pat, inner)
+                                let inner = ok_sem
+                                    .and_then(|t| s.extract_result_payload(inner, t))
+                                    .unwrap_or(inner);
+                                s.emit_pattern_test(inner_pat, inner, ok_sem)
                             })
                             .into();
                     }
@@ -358,9 +390,16 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_extract_value(sv, 1, "resval")
                             .unwrap();
+                        let err_sem = match sem {
+                            Some(Type::Result(_, e)) => Some(&**e),
+                            _ => None,
+                        };
                         return self
                             .emit_test_when(is_err, inner_pat, |s| {
-                                s.emit_pattern_test(inner_pat, inner)
+                                let inner = err_sem
+                                    .and_then(|t| s.extract_result_payload(inner, t))
+                                    .unwrap_or(inner);
+                                s.emit_pattern_test(inner_pat, inner, err_sem)
                             })
                             .into();
                     }
@@ -416,14 +455,101 @@ impl<'ctx> super::Codegen<'ctx> {
                 false_val.into()
             }
 
-            // Plain struct / tuple patterns: phase 1 — always match (wildcard semantics).
-            ast::Pattern::Struct { .. } | ast::Pattern::Tuple(_) => true_val.into(),
+            // Tuple pattern: test every component, left to right, each only
+            // once the ones before it matched. This used to answer `true`
+            // without looking at the components, so the first tuple arm always
+            // won (and `while let (true, m) = ..` never exited).
+            ast::Pattern::Tuple(pats) => {
+                if pats.iter().all(Self::pattern_is_irrefutable) {
+                    return true_val.into();
+                }
+                let BasicValueEnum::StructValue(sv) = subject else {
+                    self.record_error(
+                        "codegen error [E0910]: native codegen cannot test this tuple pattern \
+                         (the matched tuple has no native layout here). The interpreter \
+                         supports it; run under `axon run`."
+                            .to_string(),
+                    );
+                    return false_val.into();
+                };
+                let elt_sem: Option<&Vec<Type>> = match sem {
+                    Some(Type::Tuple(elts)) => Some(elts),
+                    _ => None,
+                };
+                let mut acc = true_val;
+                for (i, pat) in pats.iter().enumerate() {
+                    let elem =
+                        build_wrappers::w_extract_value(&self.ir.builder, sv, i as u32, "telem");
+                    let ety = elt_sem.and_then(|v| v.get(i));
+                    acc = self.emit_test_when(acc, pat, |s| s.emit_pattern_test(pat, elem, ety));
+                }
+                acc.into()
+            }
+
+            // Plain struct patterns do not parse (only `Enum::Variant { .. }`
+            // does, above): phase 1 — always match (wildcard semantics).
+            ast::Pattern::Struct { .. } => true_val.into(),
         }
     }
 
-    /// A sub-pattern that matches every value of its type.
+    /// A sub-pattern that matches every value of its type: a wildcard, a
+    /// binding, or a tuple of those.
     fn pattern_is_irrefutable(pattern: &ast::Pattern) -> bool {
-        matches!(pattern, ast::Pattern::Wildcard | ast::Pattern::Ident(_))
+        match pattern {
+            ast::Pattern::Wildcard | ast::Pattern::Ident(_) => true,
+            ast::Pattern::Tuple(pats) => pats.iter().all(Self::pattern_is_irrefutable),
+            _ => false,
+        }
+    }
+
+    /// `s == l` for an int literal pattern. The literal is never truncated: a
+    /// subject narrower than the literal is widened to its width by the
+    /// subject's semantic signedness (`zext` for `u8`/`u16`/`u32`, `sext` for
+    /// `i8`/`i16`/`i32`), so a literal outside the subject's range never
+    /// matches, as in the interpreter (`x: u8` never equals `256` or `-1`). A
+    /// narrower subject of unknown signedness is refused (E0910): comparing
+    /// mismatched widths fails IR verification, so that is no new refusal.
+    fn emit_int_literal_test(
+        &mut self,
+        s: IntValue<'ctx>,
+        l: IntValue<'ctx>,
+        sem: Option<&Type>,
+    ) -> IntValue<'ctx> {
+        let sw = s.get_type().get_bit_width();
+        let lw = l.get_type().get_bit_width();
+        if sw == lw {
+            return self
+                .ir
+                .builder
+                .build_int_compare(IntPredicate::EQ, s, l, "patlit")
+                .unwrap();
+        }
+        let unsigned = matches!(sem, Some(Type::U8 | Type::U16 | Type::U32));
+        let signed = matches!(sem, Some(Type::I8 | Type::I16 | Type::I32));
+        if sw < lw && (unsigned || signed) {
+            let wide = if unsigned {
+                self.ir
+                    .builder
+                    .build_int_z_extend(s, l.get_type(), "patzext")
+                    .unwrap()
+            } else {
+                self.ir
+                    .builder
+                    .build_int_s_extend(s, l.get_type(), "patsext")
+                    .unwrap()
+            };
+            return self
+                .ir
+                .builder
+                .build_int_compare(IntPredicate::EQ, wide, l, "patlitw")
+                .unwrap();
+        }
+        self.record_error(format!(
+            "codegen error [E0910]: native codegen cannot compare an i{sw} value of unknown \
+             signedness with an int literal pattern. The interpreter supports it; run under \
+             `axon run`."
+        ));
+        self.ir.context.bool_type().const_zero()
     }
 
     /// `cond && test(self)`, where the code `test` emits runs only once `cond`
@@ -475,15 +601,15 @@ impl<'ctx> super::Codegen<'ctx> {
         };
         let mut all = bool_ty.const_int(1, false);
         for (fname, pat) in fields {
-            let field_val = layout
-                .iter()
-                .find(|f| &f.name == fname)
-                .and_then(|slot| self.load_enum_field(pay_ptr, slot));
+            let slot = layout.iter().find(|f| &f.name == fname);
+            let field_val = slot.and_then(|slot| self.load_enum_field(pay_ptr, slot));
             let Some(field_val) = field_val else {
                 self.refuse_unlowered(&format!("the pattern for field `{fname}` of `{enum_name}`"));
                 continue;
             };
-            if let BasicValueEnum::IntValue(ok) = self.emit_pattern_test(pat, field_val) {
+            let field_sem = slot.map(|slot| &slot.ty);
+            if let BasicValueEnum::IntValue(ok) = self.emit_pattern_test(pat, field_val, field_sem)
+            {
                 all = build_wrappers::w_and(&self.ir.builder, all, ok, "fieldsok");
             }
         }
@@ -833,5 +959,87 @@ fn collect_pattern_names(pattern: &ast::Pattern, out: &mut Vec<String>) {
             }
         }
         ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::codegen::Codegen;
+    use inkwell::context::Context;
+
+    /// ImplAudit h31's match (`Some(5)` matches neither arm), without the
+    /// `println` a bare `Codegen` has no builtin for. The checker is bypassed,
+    /// so this holds whatever the checker later refuses.
+    const H31: &str = "fn f(o: Option<i64>) -> i64 {\n  match o {\n    Some(0) => 0,\n    None => 1,\n  }\n}\nfn main() -> i64 {\n  f(Some(5))\n}\n";
+
+    /// The IR text of `define ... @f(` up to its closing brace.
+    fn fn_f_ir(cg: &Codegen) -> String {
+        let module = cg.emit_llvm_ir();
+        let body = module
+            .split("\ndefine ")
+            .find(|d| d.lines().next().is_some_and(|l| l.contains(" @f(")))
+            .expect("fn f defined");
+        body[..body.find("\n}").expect("fn f closes")].to_string()
+    }
+
+    /// native-parity NP-2: the last arm's "no arm matched" edge must reach a
+    /// `match_miss` block that panics like the interpreter (`no match arm
+    /// matched`, exit 101). It used to branch to the merge block, where the
+    /// phi took a zero for it: `f(Some(5))` returned 0 at exit 0.
+    #[test]
+    fn a_match_miss_edge_panics() {
+        let program = crate::parse_source(H31).expect("h31 parses");
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx, "np2_match_miss");
+        cg.emit_program(&program);
+        assert!(
+            cg.codegen_errors().is_empty(),
+            "h31 failed to lower: {:?}",
+            cg.codegen_errors()
+        );
+        let ir = fn_f_ir(&cg);
+        assert!(
+            ir.contains("label %arm1_body, label %match_miss"),
+            "ATTACK: a match miss fell through natively (the last arm's false edge does not branch to %match_miss):\n{ir}"
+        );
+        let miss_block: String = ir
+            .split("\n\n")
+            .find(|b| b.starts_with("match_miss:"))
+            .unwrap_or("")
+            .to_string();
+        assert!(
+            miss_block.contains("call void @__axon_msg_panic("),
+            "ATTACK: a match miss reached no panic call natively (match_miss block: {miss_block:?}):\n{ir}"
+        );
+        for phi in ir.lines().filter(|l| l.contains("%match_val = phi")) {
+            assert!(
+                !phi.contains("%match_miss") && !phi.contains("%arm1_test"),
+                "ATTACK: a match miss fell through natively (a match_val phi takes a value from the miss edge): {phi}"
+            );
+        }
+        cg.ir
+            .module
+            .verify()
+            .unwrap_or_else(|e| panic!("IR verification failed: {}\n{ir}", e.to_string()));
+    }
+
+    /// A match whose last arm is unguarded and irrefutable cannot miss: no
+    /// `match_miss` block is emitted.
+    #[test]
+    fn an_irrefutable_last_arm_emits_no_match_miss() {
+        let src = "fn f(o: Option<i64>) -> i64 {\n  match o {\n    Some(0) => 0,\n    _ => 1,\n  }\n}\nfn main() -> i64 {\n  f(Some(5))\n}\n";
+        let program = crate::parse_source(src).expect("parses");
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx, "np2_no_miss");
+        cg.emit_program(&program);
+        let ir = fn_f_ir(&cg);
+        assert!(
+            !ir.contains("match_miss"),
+            "unexpected match_miss block:\n{ir}"
+        );
+        cg.ir
+            .module
+            .verify()
+            .unwrap_or_else(|e| panic!("IR verification failed: {}\n{ir}", e.to_string()));
     }
 }

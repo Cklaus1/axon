@@ -166,9 +166,14 @@ fn a_request_cannot_ask_for_speculative_dispatch() {
 /// shell work. `evil.ax` is an EXECUTABLE shell script with a shebang that
 /// would create a sentinel OUTSIDE the workspace. Fabric's argv is only ever a
 /// file for the registered interpreter to run (`[file]` / `[file, filter]`),
-/// never a command: under both job kinds the script is handed to the Axon
-/// interpreter as source, so it cannot pass, and the sentinel never appears.
-/// An argv that tries to smuggle a command after the file is refused first.
+/// never a command: under both job kinds the script is read as Axon source,
+/// so it cannot pass, and the sentinel never appears. An argv that tries to
+/// smuggle a command after the file is refused first.
+///
+/// IG0: the admission scan now PARSES the program (it no longer scans text),
+/// and a file that does not parse is refused there (`malformed`), so a
+/// registered check of the script spawns nothing at all (it used to reach the
+/// interpreter, which failed it).
 #[test]
 fn a_fake_axon_file_is_interpreted_never_executed_as_native_shell() {
     let env = Env::new();
@@ -182,14 +187,14 @@ fn a_fake_axon_file_is_interpreted_never_executed_as_native_shell() {
         (
             "registered_check",
             json!(["evil.ax", "t_ok"]),
-            1,
-            ReceiptStatus::Failed,
+            0,
+            ReceiptStatus::Denied,
         ),
         (
             "registered_check",
             json!(["evil.ax"]),
-            1,
-            ReceiptStatus::Failed,
+            0,
+            ReceiptStatus::Denied,
         ),
         (
             "interpreter_run",
@@ -207,10 +212,9 @@ fn a_fake_axon_file_is_interpreted_never_executed_as_native_shell() {
         r["workspace_version_ref"] = json!(digest);
         let before = spawn_count(&env.spawns);
         let s = submit(&r.to_string(), &env.cfg(0)).unwrap();
-        // Not refused early: a registered check really HANDS the file to the
-        // Axon interpreter (the counting wrapper around it spawned), which
-        // runs it as Axon source and fails it; an uncovered job kind is an
-        // explicit Unsupported with nothing spawned.
+        // A registered check is refused at admission: the script does not
+        // parse as Axon (IG0), so nothing is spawned; an uncovered job kind
+        // is an explicit Unsupported with nothing spawned.
         assert_eq!(spawn_count(&env.spawns) - before, spawned, "{kind} {argv}");
         assert_eq!(s.receipt.status, status, "{kind} {argv}");
         assert_ne!(

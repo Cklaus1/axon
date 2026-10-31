@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Starting from the sentence in ./data/sentence.txt: build a mapping from each distinct word to its length, discard the entries whose length is 3 or less, and take the sum of the lengths that remain.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "41d8aff5632974afbce50b05d347e85ffd26d39c9b03e4103f12264201d6df9a",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/sentence.txt\") {\n        Ok(text) => {\n            match re_find_all(\"[A-Za-z0-9]+\", text) {\n                Ok(words) => {\n                    let lengths = dict_new()\n                    for i in 0..len(words) {\n                        let w = words[i]\n                        dict_set(lengths, w, str_len(w))\n                    }\n                    let kept = arr_filter(dict_values(lengths), |n| n > 3)\n                    let total = arr_sum_i64(kept)\n                    match write_file(\"./out/answer.txt\", to_str(total)) {\n                        Ok(_) => 0\n                        Err(e) => {\n                            eprintln(\"cannot write: {e}\")\n                            1\n                        }\n                    }\n                }\n                Err(e) => {\n                    eprintln(\"bad pattern: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 6109,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/sentence.txt\") {\n        Ok(text) => {\n            match re_find_all(\"[A-Za-z0-9]+\", text) {\n                Ok(words) => {\n                    let lengths = dict_new()\n                    for i in 0..len(words) {\n                        let w = words[i]\n                        dict_set(lengths, w, str_len(w))\n                    }\n                    let kept = arr_filter(dict_values(lengths), |n| n > 3)\n                    let total = arr_sum_i64(kept)\n                    match write_file(\"./out/answer.txt\", to_str(total)) {\n                        Ok(_) => 0\n                        Err(e) => {\n                            eprintln(\"cannot write: {e}\")\n                            1\n                        }\n                    }\n                }\n                Err(e) => {\n                    eprintln(\"bad pattern: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 6109,
+  "tokens": null
+}

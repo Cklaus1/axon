@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Starting from the sentence in ./data/sentence.txt: build a mapping from each distinct word to its length, discard the entries whose length is 3 or less, and take the sum of the lengths that remain. The file holds one line of lowercase words separated by single spaces, ending with a newline. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the sum in decimal.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "6e60c957f1741b791bc3020ce637cc75558435a48ea31d8fb52926b5723e3128",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/sentence.txt\") {\n        Ok(text) => {\n            let words = str_split(str_trim(text), \" \")\n            let d = dict_new()\n            for i in 0..len(words) {\n                dict_set(d, words[i], str_len(words[i]))\n            }\n            let vals = dict_values(d)\n            let total = 0\n            for i in 0..len(vals) {\n                if vals[i] > 3 { total = total + vals[i] }\n            }\n            match write_file(\"./out/answer.txt\", to_str(total) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 5205,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/sentence.txt\") {\n        Ok(text) => {\n            let words = str_split(str_trim(text), \" \")\n            let d = dict_new()\n            for i in 0..len(words) {\n                dict_set(d, words[i], str_len(words[i]))\n            }\n            let vals = dict_values(d)\n            let total = 0\n            for i in 0..len(vals) {\n                if vals[i] > 3 { total = total + vals[i] }\n            }\n            match write_file(\"./out/answer.txt\", to_str(total) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 5205,
+  "tokens": null
+}

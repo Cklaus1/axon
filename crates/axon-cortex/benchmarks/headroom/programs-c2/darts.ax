@@ -1,0 +1,292 @@
+// 501 darts scoring: dart values, turns with busts and double-out,
+// leg statistics, turn labels and checkout routes.
+// A dart is written S n, D n or T n (n from 1 to 20), SB or 25 for the
+// outer bull, BULL or DB for the bullseye, and MISS or 0 for a miss.
+
+fn dart_value(dart: str) -> i64 {
+    let s = str_to_upper(str_trim(dart))
+    if s == "BULL" || s == "DB" {
+        return 50
+    }
+    if s == "SB" || s == "25" {
+        return 25
+    }
+    if s == "MISS" || s == "0" {
+        return 0
+    }
+    if str_len(s) == 0 {
+        return -1
+    }
+    let first = str_slice(s, 0, 1)
+    let mult = 1
+    let digits = s
+    if first == "S" {
+        digits = str_slice(s, 1, str_len(s))
+    } else if first == "D" {
+        mult = 2
+        digits = str_slice(s, 1, str_len(s))
+    } else if first == "T" {
+        mult = 3
+        digits = str_slice(s, 1, str_len(s))
+    }
+    if str_len(digits) == 0 || str_len(str_digits_only(digits)) != str_len(digits) {
+        return -1
+    }
+    let n = parse_int_or(digits, -1)
+    if n < 1 || n > 20 {
+        return -1
+    }
+    n * mult
+}
+
+// Remaining score after one turn; a bust leaves the score unchanged and
+// -1 marks an invalid turn.
+fn apply_turn(remaining: i64, darts: [str]) -> i64 {
+    if len(darts) > 3 {
+        return -1
+    }
+    let left = remaining
+    for d in darts {
+        let v = dart_value(d)
+        if v < 0 {
+            return -1
+        }
+        let after = left - v
+        let s = str_to_upper(str_trim(d))
+        let is_double = str_starts_with(s, "D") || s == "BULL"
+        if after < 0 || after == 1 {
+            return remaining
+        }
+        if after == 0 {
+            if is_double {
+                return 0
+            }
+            return remaining
+        }
+        left = after
+    }
+    left
+}
+
+// Returns [remaining, turns taken, busts, darts thrown, best scoring turn].
+fn leg_stats(start: i64, turns: [[str]]) -> [i64] {
+    let remaining = start
+    let taken = 0
+    let busts = 0
+    let thrown = 0
+    let best = 0
+    for turn in turns {
+        if remaining > 0 {
+            let after = apply_turn(remaining, turn)
+            taken = taken + 1
+            let raw = 0
+            let used = 0
+            for d in turn {
+                let v = max_i64(dart_value(d), 0)
+                if after != 0 || raw < remaining {
+                    used = used + 1
+                }
+                raw = raw + v
+            }
+            thrown = thrown + used
+            if after < 0 || (after == remaining && raw > 0) {
+                busts = busts + 1
+            } else {
+                best = max_i64(best, remaining - after)
+                remaining = after
+            }
+        }
+    }
+    [remaining, taken, busts, thrown, best]
+}
+
+fn turn_label(darts: [str]) -> str {
+    if len(darts) == 0 || len(darts) > 3 {
+        return "invalid"
+    }
+    let total = 0
+    let same_bed = len(darts) == 3
+    let first = str_to_upper(str_trim(darts[0]))
+    for d in darts {
+        let v = dart_value(d)
+        if v < 0 {
+            return "invalid"
+        }
+        total = total + v
+        if str_to_upper(str_trim(d)) != first {
+            same_bed = false
+        }
+    }
+    if total == 180 {
+        return "maximum"
+    }
+    if same_bed && total > 0 {
+        return "three in a bed"
+    }
+    if total >= 140 {
+        return "ton-forty"
+    }
+    if total >= 100 {
+        return "ton"
+    }
+    if total == 26 && len(darts) == 3 {
+        return "bed and breakfast"
+    }
+    if total == 0 {
+        return "no score"
+    }
+    to_str(total)
+}
+
+// Checkout routes finishing on a double, fewest darts first, at most `limit`.
+fn checkout_options(remaining: i64, limit: i64) -> [str] {
+    let out = []
+    if remaining < 2 || remaining > 170 || limit <= 0 {
+        return out
+    }
+    let names = []
+    let values = []
+    for m in [3, 2, 1] {
+        let prefix = if m == 3 { "T" } else if m == 2 { "D" } else { "S" }
+        for k in 0..20 {
+            names = arr_push(names, prefix + to_str(20 - k))
+            values = arr_push(values, (20 - k) * m)
+        }
+        if m == 3 {
+            names = arr_concat(names, ["BULL", "SB"])
+            values = arr_concat(values, [50, 25])
+        }
+    }
+    let doubles = []
+    for i in 0..len(names) {
+        if str_starts_with(names[i], "D") || names[i] == "BULL" {
+            doubles = arr_push(doubles, i)
+        }
+    }
+    for f in doubles {
+        if values[f] == remaining && len(out) < limit {
+            out = arr_push(out, names[f])
+        }
+    }
+    for a in 0..len(names) {
+        for f in doubles {
+            if values[a] + values[f] == remaining && len(out) < limit {
+                out = arr_push(out, names[a] + " " + names[f])
+            }
+        }
+    }
+    for a in 0..len(names) {
+        for b in a..len(names) {
+            let need = remaining - values[a] - values[b]
+            for f in doubles {
+                if values[f] == need && len(out) < limit {
+                    out = arr_push(out, names[a] + " " + names[b] + " " + names[f])
+                }
+            }
+        }
+    }
+    out
+}
+
+@[test]
+fn test_dart_value_segments() {
+    assert_eq(dart_value("T20"), 60)
+    assert_eq(dart_value("d16"), 32)
+    assert_eq(dart_value("S7"), 7)
+    assert_eq(dart_value("13"), 13)
+}
+
+@[test]
+fn test_dart_value_bulls_and_miss() {
+    assert_eq(dart_value("BULL"), 50)
+    assert_eq(dart_value("SB"), 25)
+    assert_eq(dart_value(" 25 "), 25)
+    assert_eq(dart_value("miss"), 0)
+}
+
+@[test]
+fn test_dart_value_invalid() {
+    assert_eq(dart_value("T21"), -1)
+    assert_eq(dart_value("D"), -1)
+    assert_eq(dart_value("X5"), -1)
+    assert_eq(dart_value("T2a"), -1)
+}
+
+@[test]
+fn test_apply_turn_scores() {
+    assert_eq(apply_turn(501, ["T20", "T20", "T20"]), 321)
+    assert_eq(apply_turn(301, ["S1", "MISS", "D10"]), 280)
+}
+
+@[test]
+fn test_apply_turn_double_out() {
+    assert_eq(apply_turn(100, ["T20", "S20", "D10"]), 0)
+    assert_eq(apply_turn(50, ["BULL", "T20"]), 0)
+    assert_eq(apply_turn(20, ["S20"]), 20)
+}
+
+@[test]
+fn test_apply_turn_busts() {
+    assert_eq(apply_turn(32, ["S20", "S11", "S1"]), 32)
+    assert_eq(apply_turn(40, ["T20"]), 40)
+    assert_eq(apply_turn(60, ["S1", "S1", "S1", "S1"]), -1)
+    assert_eq(apply_turn(60, ["S1", "Q1"]), -1)
+}
+
+@[test]
+fn test_leg_stats_scoring_turns() {
+    let turns = [["T20", "T20", "T20"], ["T20", "T19", "D12"]]
+    assert(leg_stats(501, turns) == [180, 2, 0, 6, 180])
+}
+
+@[test]
+fn test_leg_stats_checkout_counts_darts() {
+    assert(leg_stats(100, [["T20", "S20", "D10"]]) == [0, 1, 0, 3, 100])
+    assert(leg_stats(60, [["S20", "D20", "S1"], ["T20"]]) == [0, 1, 0, 2, 60])
+}
+
+@[test]
+fn test_leg_stats_busts() {
+    assert(leg_stats(32, [["S20", "S11"], ["D16"]]) == [0, 2, 1, 3, 32])
+    assert(leg_stats(20, [["S20"], ["MISS", "MISS", "MISS"]]) == [20, 2, 1, 4, 0])
+}
+
+@[test]
+fn test_turn_label_big_scores() {
+    assert_eq_str(turn_label(["T20", "T20", "T20"]), "maximum")
+    assert_eq_str(turn_label(["T20", "T20", "S20"]), "ton-forty")
+    assert_eq_str(turn_label(["T20", "S20", "S20"]), "ton")
+}
+
+@[test]
+fn test_turn_label_named_turns() {
+    assert_eq_str(turn_label(["T19", "t19", "T19"]), "three in a bed")
+    assert_eq_str(turn_label(["S20", "S5", "S1"]), "bed and breakfast")
+    assert_eq_str(turn_label(["MISS", "0", "miss"]), "no score")
+}
+
+@[test]
+fn test_turn_label_plain_and_invalid() {
+    assert_eq_str(turn_label(["D7", "S3"]), "17")
+    assert_eq_str(turn_label(["X5"]), "invalid")
+    assert_eq_str(turn_label([]), "invalid")
+}
+
+@[test]
+fn test_checkout_options_maximum() {
+    assert(checkout_options(170, 5) == ["T20 T20 BULL"])
+    assert(checkout_options(171, 5) == [])
+}
+
+@[test]
+fn test_checkout_options_ordering() {
+    assert(checkout_options(50, 3) == ["BULL", "T16 D1", "T14 D4"])
+    assert(checkout_options(100, 2) == ["T20 D20", "BULL BULL"])
+}
+
+@[test]
+fn test_checkout_options_small_and_bogey() {
+    assert(checkout_options(2, 3) == ["D1"])
+    assert(checkout_options(159, 5) == [])
+    assert(checkout_options(1, 5) == [])
+}

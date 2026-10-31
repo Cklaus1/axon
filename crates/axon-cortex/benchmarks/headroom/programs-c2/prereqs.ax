@@ -1,0 +1,335 @@
+// Course planning from a prerequisite catalog.
+
+type Prereq = { course: str, requires: str }
+
+fn name_index(names: &[str], name: str) -> i64 {
+    let i = 0
+    let found = -1
+    while i < len(names) && found < 0 {
+        if names[i] == name {
+            found = i
+        }
+        i = i + 1
+    }
+    found
+}
+
+// A full study order in which every course follows its prerequisites. When
+// several courses are available the alphabetically first is taken. Returns an
+// empty list when the catalog contains a cycle. Requirements naming courses
+// outside the catalog are ignored.
+fn course_order(courses: [str], reqs: [Prereq]) -> [str] {
+    let n = len(courses)
+    let indeg = arr_repeat(0, n)
+    for r in reqs {
+        let c = name_index(&courses, r.course)
+        let p = name_index(&courses, r.requires)
+        if c >= 0 && p >= 0 {
+            indeg[c] = indeg[c] + 1
+        }
+    }
+    let taken = arr_repeat(false, n)
+    let order: [str] = []
+    let pick = 0
+    while pick >= 0 {
+        pick = -1
+        let i = 0
+        while i < n {
+            if !taken[i] && indeg[i] == 0 {
+                if pick < 0 || str_cmp(courses[i], courses[pick]) < 0 {
+                    pick = i
+                }
+            }
+            i = i + 1
+        }
+        if pick >= 0 {
+            taken[pick] = true
+            order = arr_push(order, courses[pick])
+            for r in reqs {
+                let c = name_index(&courses, r.course)
+                if c >= 0 && r.requires == courses[pick] {
+                    indeg[c] = indeg[c] - 1
+                }
+            }
+        }
+    }
+    if len(order) < n {
+        []
+    } else {
+        order
+    }
+}
+
+// True when the prerequisite relation among catalog courses is circular.
+fn has_cycle(courses: [str], reqs: [Prereq]) -> bool {
+    let n = len(courses)
+    let adj: [[i64]] = arr_repeat([], n)
+    for r in reqs {
+        let c = name_index(&courses, r.course)
+        let p = name_index(&courses, r.requires)
+        if c >= 0 && p >= 0 {
+            adj[p] = arr_push(adj[p], c)
+        }
+    }
+    let color = arr_repeat(0, n)
+    let found = false
+    let s = 0
+    while s < n && !found {
+        if color[s] == 0 {
+            let stack = [s]
+            let pos = [0]
+            color[s] = 1
+            while len(stack) > 0 && !found {
+                let top = len(stack) - 1
+                let u = stack[top]
+                let edges: [i64] = adj[u]
+                if pos[top] < len(edges) {
+                    let v = edges[pos[top]]
+                    pos[top] = pos[top] + 1
+                    if color[v] == 1 {
+                        found = true
+                    } else if color[v] == 0 {
+                        color[v] = 1
+                        stack = arr_push(stack, v)
+                        pos = arr_push(pos, 0)
+                    }
+                } else {
+                    color[u] = 2
+                    stack = arr_take(stack, top)
+                    pos = arr_take(pos, top)
+                }
+            }
+        }
+        s = s + 1
+    }
+    found
+}
+
+// Number of terms needed when at most `per_term` courses fit in one term
+// (zero or less means no limit). A course may be taken once all its
+// prerequisites were finished in earlier terms; available courses are chosen
+// alphabetically. Returns -1 when the plan can never finish.
+fn term_count(courses: [str], reqs: [Prereq], per_term: i64) -> i64 {
+    let n = len(courses)
+    let done = arr_repeat(false, n)
+    let finished = 0
+    let terms = 0
+    while finished < n {
+        let ready: [i64] = []
+        let i = 0
+        while i < n {
+            let blocked = false
+            for r in reqs {
+                let p = name_index(&courses, r.requires)
+                if r.course == courses[i] && p >= 0 && !done[p] {
+                    blocked = true
+                }
+            }
+            if !done[i] && !blocked {
+                ready = arr_push(ready, i)
+            }
+            i = i + 1
+        }
+        if len(ready) == 0 {
+            return -1
+        }
+        let sorted = arr_sort_by(ready, |a, b| str_cmp(courses[a], courses[b]))
+        if per_term > 0 {
+            sorted = arr_take(sorted, per_term)
+        }
+        for k in sorted {
+            done[k] = true
+            finished = finished + 1
+        }
+        terms = terms + 1
+    }
+    terms
+}
+
+// The earliest term (1-based) in which `target` can be taken with no limit on
+// courses per term: one more than its longest prerequisite chain. Returns -1
+// for an unknown course or one that depends on a cycle.
+fn earliest_term(courses: [str], reqs: [Prereq], target: str) -> i64 {
+    let n = len(courses)
+    let t = name_index(&courses, target)
+    if t < 0 {
+        return -1
+    }
+    let depth = arr_repeat(1, n)
+    let changed = true
+    let rounds = 0
+    while changed && rounds < 2 * n + 2 {
+        changed = false
+        for r in reqs {
+            let c = name_index(&courses, r.course)
+            let p = name_index(&courses, r.requires)
+            if c >= 0 && p >= 0 && depth[p] + 1 > depth[c] {
+                depth[c] = depth[p] + 1
+                changed = true
+            }
+        }
+        rounds = rounds + 1
+    }
+    if depth[t] > n {
+        -1
+    } else {
+        depth[t]
+    }
+}
+
+// Prerequisites of `target`, direct or indirect, that are not yet completed,
+// listed in an order that can be taken (alphabetical among the available
+// ones). Prerequisites of completed courses are assumed satisfied; courses
+// caught in a cycle are left out.
+fn outstanding_prereqs(reqs: [Prereq], target: str, completed: [str]) -> [str] {
+    let need: [str] = []
+    let queue = [target]
+    let head = 0
+    while head < len(queue) {
+        let cur = queue[head]
+        head = head + 1
+        for r in reqs {
+            if r.course == cur && r.requires != target && !arr_contains(completed, r.requires) && !arr_contains(need, r.requires) {
+                need = arr_push(need, r.requires)
+                queue = arr_push(queue, r.requires)
+            }
+        }
+    }
+    let order: [str] = []
+    let progress = true
+    while progress {
+        progress = false
+        let pick = ""
+        for c in need {
+            if !arr_contains(order, c) {
+                let ready = true
+                for r in reqs {
+                    if r.course == c && arr_contains(need, r.requires) && !arr_contains(order, r.requires) {
+                        ready = false
+                    }
+                }
+                if ready && (pick == "" || str_cmp(c, pick) < 0) {
+                    pick = c
+                }
+            }
+        }
+        if pick != "" {
+            order = arr_push(order, pick)
+            progress = true
+        }
+    }
+    order
+}
+
+fn pr(course: str, requires: str) -> Prereq {
+    Prereq { course: course, requires: requires }
+}
+
+fn catalog() -> [str] {
+    ["calc1", "calc2", "linalg", "prob", "ml", "algo", "intro"]
+}
+
+fn catalog_reqs() -> [Prereq] {
+    [pr("calc2", "calc1"), pr("linalg", "calc1"), pr("prob", "calc2"), pr("ml", "prob"), pr("ml", "linalg"), pr("ml", "algo"), pr("algo", "intro")]
+}
+
+fn cyclic_reqs() -> [Prereq] {
+    [pr("calc2", "calc1"), pr("linalg", "calc1"), pr("prob", "calc2"), pr("ml", "prob"), pr("ml", "linalg"), pr("ml", "algo"), pr("algo", "intro"), pr("calc1", "prob")]
+}
+
+@[test]
+fn test_order_catalog() {
+    assert(course_order(catalog(), catalog_reqs()) == ["calc1", "calc2", "intro", "algo", "linalg", "prob", "ml"])
+}
+
+@[test]
+fn test_order_star() {
+    let reqs = [pr("b", "a"), pr("c", "a"), pr("d", "a"), pr("e", "d")]
+    assert(course_order(["e", "d", "c", "b", "a"], reqs) == ["a", "b", "c", "d", "e"])
+}
+
+@[test]
+fn test_order_ignores_unknown() {
+    assert(course_order(["y", "x"], [pr("x", "y"), pr("y", "outside")]) == ["y", "x"])
+}
+
+@[test]
+fn test_order_cycle_is_empty() {
+    assert(len(course_order(catalog(), cyclic_reqs())) == 0)
+}
+
+@[test]
+fn test_cycle_absent() {
+    assert(!has_cycle(catalog(), catalog_reqs()))
+}
+
+@[test]
+fn test_cycle_long_loop() {
+    assert(has_cycle(catalog(), cyclic_reqs()))
+}
+
+@[test]
+fn test_cycle_self_requirement() {
+    assert(has_cycle(["a", "b"], [pr("b", "a"), pr("b", "b")]))
+}
+
+@[test]
+fn test_cycle_second_component() {
+    assert(has_cycle(["a", "b", "c", "d"], [pr("b", "a"), pr("c", "d"), pr("d", "c")]))
+}
+
+@[test]
+fn test_terms_two_per_term() {
+    assert_eq(term_count(catalog(), catalog_reqs(), 2), 4)
+}
+
+@[test]
+fn test_terms_one_per_term() {
+    assert_eq(term_count(catalog(), catalog_reqs(), 1), 7)
+}
+
+@[test]
+fn test_terms_capacity_matters() {
+    let reqs = [pr("b", "a"), pr("c", "a"), pr("d", "a"), pr("e", "d")]
+    assert_eq(term_count(["a", "b", "c", "d", "e"], reqs, 3), 3)
+}
+
+@[test]
+fn test_terms_cycle() {
+    assert_eq(term_count(catalog(), cyclic_reqs(), 0), -1)
+}
+
+@[test]
+fn test_earliest_deep_course() {
+    assert_eq(earliest_term(catalog(), catalog_reqs(), "ml"), 4)
+}
+
+@[test]
+fn test_earliest_shallow_course() {
+    assert_eq(earliest_term(catalog(), catalog_reqs(), "algo"), 2)
+}
+
+@[test]
+fn test_earliest_after_cycle() {
+    assert_eq(earliest_term(catalog(), cyclic_reqs(), "ml"), -1)
+}
+
+@[test]
+fn test_earliest_unaffected_by_cycle() {
+    assert_eq(earliest_term(catalog(), cyclic_reqs(), "algo"), 2)
+}
+
+@[test]
+fn test_outstanding_from_scratch() {
+    assert(outstanding_prereqs(catalog_reqs(), "ml", []) == ["calc1", "calc2", "intro", "algo", "linalg", "prob"])
+}
+
+@[test]
+fn test_outstanding_partial_progress() {
+    assert(outstanding_prereqs(catalog_reqs(), "ml", ["calc2", "intro"]) == ["algo", "calc1", "linalg", "prob"])
+}
+
+@[test]
+fn test_outstanding_single() {
+    assert(outstanding_prereqs(catalog_reqs(), "prob", ["calc1"]) == ["calc2"])
+}

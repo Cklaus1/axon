@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\nos.makedirs(\"out\", exist_ok=True)\n\nwith open(\"out/app.txt\", \"w\") as f:\n    f.write(\"one\")\n\nwith open(\"out/app.txt\", \"a\") as f:\n    f.write(\"two\")\n\nwith open(\"out/app.txt\", \"r\") as f:\n    data = f.read()\n\nwith open(\"out/answer.txt\", \"w\") as f:\n    f.write(data + \"\\n\")\n\nsys.exit(0)\n```",
+   "source": "import os\nimport sys\n\nos.makedirs(\"out\", exist_ok=True)\n\nwith open(\"out/app.txt\", \"w\") as f:\n    f.write(\"one\")\n\nwith open(\"out/app.txt\", \"a\") as f:\n    f.write(\"two\")\n\nwith open(\"out/app.txt\", \"r\") as f:\n    data = f.read()\n\nwith open(\"out/answer.txt\", \"w\") as f:\n    f.write(data + \"\\n\")\n\nsys.exit(0)\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

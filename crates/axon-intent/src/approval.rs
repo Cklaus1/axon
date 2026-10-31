@@ -211,6 +211,14 @@ pub fn render_request(
         None => derived,
     };
     let conf = confidence.score();
+    let mut legible = legible_bound(grant, risk, conf);
+    // The human sees why the score is what it is (IG1: "no-examples" says the
+    // program was checked against no stated example).
+    if let Confidence::Ship { deductions, .. } = confidence {
+        if !deductions.is_empty() {
+            legible.push_str(&format!(" Deductions: {}.", deductions.join(", ")));
+        }
+    }
     ApprovalRequest {
         program_digest: program_digest(&draft.source),
         grant_digest: grant_digest(grant),
@@ -218,8 +226,23 @@ pub fn render_request(
         intent_goal: intent.goal.clone(),
         risk,
         confidence: conf,
-        legible: legible_bound(grant, risk, conf),
+        legible: format!(
+            "{legible}\n  The program uses: {}.",
+            uses_line(draft.meta.axes)
+        ),
         uncertainty: draft.meta.uncertainty_notes.clone(),
+    }
+}
+
+/// IG0: every admission axis the program uses, by name, from the compiler's
+/// one table (`SynthMeta::axes`) — so the approval can no longer say "may NOT
+/// write files" of an `append_file` program, and it names `env`, which the
+/// grant carries on `fs_read`.
+fn uses_line(axes: axon_core::builtins::AdmissionAxes) -> String {
+    if axes.is_empty() {
+        "no capability axis (pure computation and console output)".to_string()
+    } else {
+        axes.names().join(", ")
     }
 }
 
@@ -363,7 +386,10 @@ Summarize ./data/report.txt into ./out/summary.txt.
             &draft(),
             &grant(),
             &it(),
-            &Confidence::Ship { score: 100 },
+            &Confidence::Ship {
+                score: 100,
+                deductions: vec![],
+            },
             None,
         )
     }
@@ -375,6 +401,27 @@ Summarize ./data/report.txt into ./out/summary.txt.
         assert!(r.legible.contains("may NOT") && r.legible.contains("use the network"));
         assert!(r.legible.contains("Risk: Medium")); // fs but no net ⇒ Medium
         assert!(r.legible.contains("Confidence: 100/100"));
+        assert!(!r.legible.contains("Deductions"), "nothing deducted");
+    }
+
+    #[test]
+    fn legible_names_the_deductions() {
+        let r = render_request(
+            &draft(),
+            &grant(),
+            &it(),
+            &Confidence::Ship {
+                score: 90,
+                deductions: vec![crate::confidence::DEDUCT_NO_EXAMPLES],
+            },
+            None,
+        );
+        assert!(
+            r.legible
+                .contains("Confidence: 90/100. Deductions: no-examples."),
+            "{}",
+            r.legible
+        );
     }
 
     #[test]
@@ -383,7 +430,10 @@ Summarize ./data/report.txt into ./out/summary.txt.
             &draft(),
             &grant(),
             &it(),
-            &Confidence::Ship { score: 90 },
+            &Confidence::Ship {
+                score: 90,
+                deductions: vec![],
+            },
             Some(Risk::High),
         );
         assert_eq!(r.risk, Risk::High, "floor raises Medium→High");
@@ -391,7 +441,10 @@ Summarize ./data/report.txt into ./out/summary.txt.
             &draft(),
             &grant(),
             &it(),
-            &Confidence::Ship { score: 90 },
+            &Confidence::Ship {
+                score: 90,
+                deductions: vec![],
+            },
             Some(Risk::Low),
         );
         assert_eq!(r2.risk, Risk::Medium, "floor cannot lower below derived");

@@ -733,15 +733,22 @@ impl<'ctx> super::Codegen<'ctx> {
             } => self.emit_for_in(var, start, end, body, *inclusive, fn_val),
 
             // ── Break / Continue ──────────────────────────────────────────────
+            // native-parity NP-4: with no loop of this frame open, the
+            // interpreter panics at the frame edge (`FrameEdge::
+            // loop_control_escape`); native used to emit nothing and run on.
             ast::Expr::Break => {
                 if let Some(&(_cont, exit)) = self.loop_stack.last() {
                     build_wrappers::w_br(&self.ir.builder, exit);
+                } else {
+                    self.emit_loop_control_escape(fn_val);
                 }
                 None
             }
             ast::Expr::Continue => {
                 if let Some(&(cont, _exit)) = self.loop_stack.last() {
                     build_wrappers::w_br(&self.ir.builder, cont);
+                } else {
+                    self.emit_loop_control_escape(fn_val);
                 }
                 None
             }
@@ -3041,7 +3048,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 return Some(self.ir.context.i64_type().const_zero().into());
             }
         };
-        let matches = self.emit_pattern_test(pattern, subject);
+        let matches =
+            self.emit_pattern_test(pattern, subject, self.infer_expr_sem_type(expr).as_ref());
         let cond_int = match matches {
             BasicValueEnum::IntValue(i) => i,
             _ => self.ir.context.bool_type().const_int(1, false),
@@ -3627,6 +3635,19 @@ impl<'ctx> super::Codegen<'ctx> {
         out
     }
 
+    /// native-parity NP-4: a `break`/`continue` with no loop of its frame open
+    /// panics with the interpreter's frame-edge text: "a closure" in a lambda
+    /// body, else the source fn (`current_src_fn`: an impl method's unmangled
+    /// name; a mono-instantiated generic keeps its mangled symbol).
+    fn emit_loop_control_escape(&mut self, fn_val: FunctionValue<'ctx>) {
+        let edge = if fn_val.get_name().to_bytes().starts_with(b"__lambda_") {
+            "a closure".to_string()
+        } else {
+            format!("`{}`", self.current_src_fn)
+        };
+        self.emit_msg_panic(&format!("`break`/`continue` outside a loop in {edge}"));
+    }
+
     pub(super) fn emit_lambda(
         &mut self,
         params: &[ast::LambdaParam],
@@ -3745,6 +3766,10 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
         let saved_lambda_env = self.current_lambda_env.take();
+        // native-parity NP-4: the body is its own frame. An enclosing loop's
+        // blocks belong to another LLVM fn, so a `break` in the body must not
+        // see them (it branched there and failed IR verification).
+        let saved_loop_stack = std::mem::take(&mut self.loop_stack);
 
         self.ir.builder.position_at_end(entry_bb);
 
@@ -3916,6 +3941,7 @@ impl<'ctx> super::Codegen<'ctx> {
         self.local_types = saved_local_types;
         self.poisoned = saved_poisoned;
         self.current_lambda_env = saved_lambda_env;
+        self.loop_stack = saved_loop_stack;
         if let Some(b) = saved_ip {
             self.ir.builder.position_at_end(b);
         }
@@ -7679,9 +7705,11 @@ impl<'ctx> super::Codegen<'ctx> {
 
     /// Build a fresh i64 slice `{i64 len, i8* data}` of length `count`, filling
     /// each slot via `fill(self, dst_i64_ptr, index)`. Shared backend for the
-    /// constructor builtins. `count` must be ≥ 0 (callers clamp).
+    /// constructor builtins. `count` must be ≥ 0 (callers clamp); `builtin`
+    /// names the caller in an allocation-refusal panic.
     fn emit_arr_i64_build(
         &mut self,
+        builtin: &str,
         count: inkwell::values::IntValue<'ctx>,
         fn_val: FunctionValue<'ctx>,
         fill: impl FnMut(
@@ -7691,7 +7719,43 @@ impl<'ctx> super::Codegen<'ctx> {
         ),
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        self.emit_arr_build_elem(i64_ty.into(), count, fn_val, fill)
+        self.emit_arr_build_elem(builtin, i64_ty.into(), count, fn_val, fill)
+    }
+
+    /// native-parity NP-5: if `fail`, panic like the interpreter's
+    /// `alloc_array_err` (`<builtin>: cannot allocate an array of <count>
+    /// elements (...)`, exit 101) via `__axon_alloc_array_panic`; `kind` 0 is
+    /// a byte size above `isize::MAX`, 1 a null `malloc`. Freestanding: the
+    /// message trap. Leaves the builder in the not-failed block.
+    fn emit_alloc_array_panic_if(
+        &mut self,
+        fail: inkwell::values::IntValue<'ctx>,
+        builtin: &str,
+        count: inkwell::values::IntValue<'ctx>,
+        kind: u64,
+        fn_val: FunctionValue<'ctx>,
+    ) {
+        let fail_bb = self.ir.context.append_basic_block(fn_val, "ab.nomem");
+        let ok_bb = self.ir.context.append_basic_block(fn_val, "ab.mem");
+        build_wrappers::w_cond_br(&self.ir.builder, fail, fail_bb, ok_bb);
+        self.ir.builder.position_at_end(fail_bb);
+        match self.ir.module.get_function("__axon_alloc_array_panic") {
+            Some(panic_fn) if !self.freestanding => {
+                let i64_ty = self.ir.context.i64_type();
+                let g = build_wrappers::w_global_string_ptr(&self.ir.builder, builtin, "ab_name");
+                let len = i64_ty.const_int(builtin.len() as u64, false);
+                let kind = i64_ty.const_int(kind, false);
+                build_wrappers::w_call(
+                    &self.ir.builder,
+                    panic_fn,
+                    &[g.into(), len.into(), count.into(), kind.into()],
+                    "",
+                );
+                build_wrappers::w_unreachable(&self.ir.builder);
+            }
+            _ => self.emit_msg_panic(&format!("{builtin}: cannot allocate an array")),
+        }
+        self.ir.builder.position_at_end(ok_bb);
     }
 
     /// Same as `emit_arr_i64_build` for an arbitrary element type: `dp` points
@@ -7699,6 +7763,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// on the semantic element type) uses, so bool arrays are 1 byte/element.
     fn emit_arr_build_elem(
         &mut self,
+        builtin: &str,
         elem_ty: BasicTypeEnum<'ctx>,
         count: inkwell::values::IntValue<'ctx>,
         fn_val: FunctionValue<'ctx>,
@@ -7715,8 +7780,46 @@ impl<'ctx> super::Codegen<'ctx> {
             .context
             .struct_type(&[i64_ty.into(), ptr_ty.into()], false);
         let elem_size = elem_ty.size_of()?;
+        // native-parity NP-5: a byte size above the target's isize::MAX is
+        // the interpreter's capacity-overflow refusal (the multiply below
+        // used to wrap, and `malloc` got a wrong size).
+        let isize_max = if self.target_is_wasm {
+            i32::MAX as u64
+        } else {
+            i64::MAX as u64
+        };
+        let max_count = self
+            .ir
+            .builder
+            .build_int_unsigned_div(i64_ty.const_int(isize_max, false), elem_size, "ab_maxn")
+            .unwrap();
+        let too_big = build_wrappers::w_int_compare(
+            &self.ir.builder,
+            inkwell::IntPredicate::UGT,
+            count,
+            max_count,
+            "ab_big",
+        );
+        self.emit_alloc_array_panic_if(too_big, builtin, count, 0, fn_val);
         let total = build_wrappers::w_int_mul(&self.ir.builder, count, elem_size, "ab_bytes");
         let dst_raw = self.emit_malloc(total, "ab_dst");
+        // native-parity NP-5: a refused allocation (null, for a nonzero size)
+        // is the interpreter's allocator refusal, not a SIGSEGV on the first
+        // store (reported as "stack overflow").
+        let is_null = self.ir.builder.build_is_null(dst_raw, "ab_null").unwrap();
+        let nonzero = build_wrappers::w_int_compare(
+            &self.ir.builder,
+            inkwell::IntPredicate::NE,
+            total,
+            i64_ty.const_zero(),
+            "ab_nz",
+        );
+        let refused = self
+            .ir
+            .builder
+            .build_and(is_null, nonzero, "ab_refused")
+            .unwrap();
+        self.emit_alloc_array_panic_if(refused, builtin, count, 1, fn_val);
         let dst = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
@@ -7792,12 +7895,17 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
+        // native-parity NP-5: the span is `end > start`, and the count is the
+        // wrapped difference read as unsigned (equal to the true difference
+        // for every `end > start`, up to 2^64-1), like the interpreter's i128
+        // length. Testing the wrapped difference `> 0` turned a span above
+        // i64::MAX into `[]`.
         let raw = build_wrappers::w_int_sub(&self.ir.builder, end, start, "rg_raw");
         let pos = build_wrappers::w_int_compare(
             &self.ir.builder,
             inkwell::IntPredicate::SGT,
-            raw,
-            i64_ty.const_zero(),
+            end,
+            start,
             "rg_pos",
         );
         let count = self
@@ -7806,7 +7914,7 @@ impl<'ctx> super::Codegen<'ctx> {
             .build_select(pos, raw, i64_ty.const_zero(), "rg_cnt")
             .unwrap()
             .into_int_value();
-        self.emit_arr_i64_build(count, fn_val, move |slf, dp, i| {
+        self.emit_arr_i64_build("arr_range", count, fn_val, move |slf, dp, i| {
             let v = build_wrappers::w_int_add(&slf.ir.builder, start, i, "rg_v");
             build_wrappers::w_store(&slf.ir.builder, dp, v.into());
         })
@@ -7841,7 +7949,7 @@ impl<'ctx> super::Codegen<'ctx> {
         } else {
             i64_ty.into()
         };
-        self.emit_arr_build_elem(elem_ty, count, fn_val, move |slf, dp, _i| {
+        self.emit_arr_build_elem("arr_repeat", elem_ty, count, fn_val, move |slf, dp, _i| {
             build_wrappers::w_store(&slf.ir.builder, dp, v.into());
         })
     }
@@ -12057,6 +12165,20 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
 
+        // native-parity NP-3: a call by name that still resolves to nothing (a
+        // generic fn mono could not rename to an instance) is refused. The
+        // `?` below used to drop it silently, so the program ran on without it.
+        if maybe_fn_v.is_none() {
+            if let ast::Expr::Ident(name) = callee {
+                self.record_error(format!(
+                    "codegen error [E0910]: native codegen could not resolve the call to `{name}` \
+                     (a generic fn used at several types?); building it would silently drop the \
+                     call. The interpreter supports it; run under `axon run`."
+                ));
+                return Some(self.ir.context.i64_type().const_zero().into());
+            }
+        }
+
         // Resolve the callee to an LLVM FunctionValue (direct call).
         let fn_v = maybe_fn_v?;
 
@@ -12366,6 +12488,34 @@ mod freestanding_trap_tests {
         assert!(
             ir.contains("outb"),
             "empty triple changed the x86 default:\n{ir}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::codegen::Codegen;
+    use inkwell::context::Context;
+
+    /// native-parity NP-3 step 1: a call by name that resolves to no fn (a
+    /// generic fn mono could not rename, say) is refused E0910. It used to be
+    /// dropped silently, so the program ran on without the call. The checker
+    /// is bypassed: no check-clean program reaches this path once mono renames
+    /// every site, which is exactly why the guard needs its own test.
+    #[test]
+    fn an_unresolved_user_callee_is_refused_e0910() {
+        let prog = crate::parse_source("fn main() -> i64 {\n  ghost(1)\n  0\n}\n")
+            .expect("fixture must parse");
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx, "np3_ghost");
+        cg.declare_functions(&prog);
+        cg.emit_program(&prog);
+        assert!(
+            cg.codegen_errors()
+                .iter()
+                .any(|e| e.contains("E0910") && e.contains("ghost")),
+            "ATTACK: a call to an unresolved fn was dropped silently natively [ghost]: errors {:?}",
+            cg.codegen_errors()
         );
     }
 }

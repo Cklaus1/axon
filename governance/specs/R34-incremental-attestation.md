@@ -540,8 +540,8 @@ When `required_prog_hashes` is non-empty, each voting VM:
 **Identity-vs-property caveat on `required_prog_hashes` (added 2026-07-31, third fold-in).**
 `required_prog_hashes` is *identity*-based compliance: a relying party pre-enumerates
 `hex(sha256(source))` values. That works when programs are a small, stable, pre-known set of
-artifacts. It does not survive machine-authored or regenerated programs — Axon's own Phase-10
-`AXON_INTENT_GEN=1 axon intent compile goal.md` path emits LLM-authored bodies whose bytes change
+artifacts. It does not survive machine-authored or regenerated programs — Axon's own generation
+path (`axon-intent compile --generator`, the IG4 loop that replaced Phase-10's single-shot path) emits LLM-authored programs whose bytes change
 on every regeneration and every model-version bump, and §8.4 forbids any normalization ("no
 newline normalization, no BOM stripping … Operators MUST not post-process source files"), so even
 a formatter run invalidates a pinned hash. Combined with this section's own enforcement caveat

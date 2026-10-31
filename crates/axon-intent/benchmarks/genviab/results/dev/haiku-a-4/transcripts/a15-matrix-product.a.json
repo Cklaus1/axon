@@ -1,0 +1,34 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "For the matrix in ./data/matrix.txt: transpose it, sum each row of the transposed matrix, and take the product of those sums. The file holds one matrix row per line, the integers of a row separated by single spaces; every row has the same number of columns and every line ends with a newline. Write the answer to ./out/answer.txt as a single line ending in a newline, nothing else. The answer is the product in decimal.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "28345df698fc9f7e2057d76af70e6a80d155649079152f4d3584c864b67ec0e4",
+      "candidate": "fn main() -> i64 {\n    match read_file(\"./data/matrix.txt\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let first = str_trim(lines[0])\n            let ncols = len(str_split(first, \" \"))\n            let sums = arr_repeat(0, ncols)\n            for i in 0..len(lines) {\n                let line = str_trim(lines[i])\n                if len(line) > 0 {\n                    let cells = str_split(line, \" \")\n                    for j in 0..len(cells) {\n                        sums[j] = sums[j] + parse_int_or(cells[j], 0)\n                    }\n                }\n            }\n            let prod = 1\n            for j in 0..ncols {\n                prod = prod * sums[j]\n            }\n            match write_file(\"./out/answer.txt\", to_str(prod) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 6505,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/matrix.txt\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let first = str_trim(lines[0])\n            let ncols = len(str_split(first, \" \"))\n            let sums = arr_repeat(0, ncols)\n            for i in 0..len(lines) {\n                let line = str_trim(lines[i])\n                if len(line) > 0 {\n                    let cells = str_split(line, \" \")\n                    for j in 0..len(cells) {\n                        sums[j] = sums[j] + parse_int_or(cells[j], 0)\n                    }\n                }\n            }\n            let prod = 1\n            for j in 0..ncols {\n                prod = prod * sums[j]\n            }\n            match write_file(\"./out/answer.txt\", to_str(prod) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 6505,
+  "tokens": null
+}

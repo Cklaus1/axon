@@ -25,7 +25,7 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     ("AXON_EQ_ALONE", "TEST-ONLY re-exec marker: a test that must run in a fresh single-test process (it forks) re-runs itself with this set to its own name, so a multi-threaded test process never forks (axon-fabric observer_service, axon-guest-init)"),
     ("AXON_EQ_GIT_ENV", "TEST-ONLY re-exec marker: the git_cmd environment test runs the child in a process whose environment it controls (axon-fabric git_data)"),
     ("AXON_EQ_HARDEN", "TEST-ONLY re-exec marker: the helper's harden() test runs in a fresh single-test process because it forks (axon-fabric privileged_launcher)"),
-    ("AXON_MAX_DEPTH", "recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it"),
+    ("AXON_MAX_DEPTH", "interpreter recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it. Native binaries have no depth counter; they recurse until the OS stack overflows (exit 101, \"stack overflow\")"),
     ("AXON_ENGINE", "engine for fn bodies under `axon run`/`axon-run`/`axon test`/`axon goal`: `vm` (default; R50 bytecode engine, a body compiled on its second entry or on its first when it holds a loop that may run long, same observable behaviour) or `tree` (the reference tree-walker); any other value exits 2 before the program runs. A sealed run (`axon test --seal`, R51) executes on the tree only: unset or `tree` selects it, `vm` is refused (exit 2)"),
     ("AXON_VM_TRACE", "`1`: under AXON_ENGINE=vm, print one `vm: ...` stderr line per compiled body (op and tree-fallback counts), per fallback, and `vm: defer <name>` per body whose first entry runs on the tree; never changes stdout or the exit code"),
     ("AXON_VM_EAGER", "`1`: under AXON_ENGINE=vm, compile every body on its first entry instead of deferring a body with no long loop to its second entry (R50 S9); never changes stdout or the exit code"),
@@ -37,7 +37,7 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     // ── Record / replay ──────────────────────────────────────────────────
     ("AXON_RECORD", "path to write a host journal: every call through the AxonHost seam, performed for real and appended with its outcome. As sensitive as the run it records"),
     ("AXON_REPLAY", "serve a run from a host journal instead of the world; nothing is performed, and any miss is a divergence (exit 11). Mutually exclusive with AXON_RECORD"),
-    ("AXON_AI_REPLAY", "path to an LLM-call replay cache; memoizes `ai_complete` by (prompt, model) so an AI run reproduces with no live call"),
+    ("AXON_AI_REPLAY", "path to an LLM-call replay cache; memoizes `ai_complete` and `ai_extract_uncertain_*` by (prompt, model / builtin name) so an AI run reproduces with no live call"),
     // ── AI routing & policy ──────────────────────────────────────────────
     ("AXON_AI_MOCK", "use deterministic stub AI responses instead of live calls (the real per-token cost is still metered)"),
     ("AXON_CORTEX_GENERATOR_TIMEOUT_MS", "how long `cortex repair --generator cmd:PATH` waits for the operator's program to answer (default 120s). Exists so the deadline can be TESTED: a suite cannot wait two minutes, and an untested deadline is the kind of check that turns out never to fire. A malformed or zero value is ignored in favour of the default rather than disabling every generator"),
@@ -50,7 +50,6 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     ("AXON_BUDGET_TOKENS", "run-wide AI token cap; the call that would exceed it halts with E1303 (exit 5) BEFORE dispatch. A malformed value fails closed to 0"),
     ("AXON_DOTENV", "path to a `.env` file to load for AI configuration"),
     ("AXON_DOTENV_WALK", "walk parent directories looking for a `.env` file"),
-    ("AXON_INTENT_GEN", "let `axon intent compile` fill TODO stubs via a live model (needs `--features asi-runtime`)"),
     // ── Capabilities, principals, audit ──────────────────────────────────
     ("AXON_ALLOWED_EFFECTS", "ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset; a value that is not UTF-8 also denies every effect (with a warning). Interpreter-only"),
     ("AXON_ALLOWED_FS_READ", "ambient read-path scope for the whole run: comma-separated path prefixes, matched like `sandbox_create_scoped` (per argument, `..` refused). Unset = unrestricted, EMPTY = deny every filesystem read, `*` = unrestricted. Independent of AXON_ALLOWED_EFFECTS (with it unset every effect stays allowed and only paths are restricted); a ceiling an inner sandbox may narrow but never widen. Interpreter-only"),
@@ -88,8 +87,8 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     ("AXON_WASM_RT", "path to the wasm runtime used to execute a built wasm artifact"),
     ("AXON_ANDROID_API", "Android API level for the NDK cross-link"),
     ("AXON_NATIVE_TRACE", "trace native-FFI module calls (gfx mock)"),
-    ("AXON_BIN", "path to the `axon` binary an out-of-process synthesizer should invoke"),
-    ("AXON_INTENT_TIMEOUT_MS", "bound on the `axon intent` subprocess synthesizer"),
+    ("AXON_BIN", "path to the `axon` binary an out-of-process tool invokes (axon-os, the axon-intent check->repair loop)"),
+    ("AXON_INTENT_TIMEOUT_MS", "per-call deadline for an `axon-intent --generator` (its whole process group is killed at it)"),
     // ── Test fixtures that shipped code reads ────────────────────────────
     ("AXON_TEST_DOTENV_VAR", "(test fixture) name of a variable the .env loader test expects to find"),
     ("AXON_TEST_DOTENV_NEW", "(test fixture) asserts the .env loader does not clobber an already-set variable"),

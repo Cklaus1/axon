@@ -275,7 +275,9 @@ version = "0.1.0"
 name = "axon-intent"
 version = "0.1.0"
 dependencies = [
+ "axon-ai",
  "axon-canonical",
+ "axon-core",
  "axon-jobctl",
  "axon-os",
  "libc",
@@ -340,6 +342,7 @@ dependencies = [
  "axon-attest",
  "axon-audit",
  "axon-canonical",
+ "axon-core",
  "axon-jobctl",
  "libc",
  "ring",

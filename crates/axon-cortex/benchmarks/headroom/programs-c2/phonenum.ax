@@ -1,0 +1,342 @@
+// Phone number normalization: parse free-form input into E.164 form,
+// validate national number lengths per country, pull out extensions,
+// and render numbers for display.
+
+fn known_country_codes() -> [str] {
+    ["1", "7", "20", "27", "30", "31", "32", "33", "34", "36", "39", "41", "43", "44", "45",
+     "46", "47", "48", "49", "52", "55", "61", "64", "81", "82", "86", "90", "91",
+     "351", "353", "354", "358", "372", "420", "852", "971"]
+}
+
+fn country_code_of(intl: str) -> str {
+    let known = known_country_codes()
+    let size = 3
+    let found = ""
+    while size >= 1 && found == "" {
+        if len(intl) > size {
+            let prefix = str_slice(intl, 0, size)
+            if arr_contains(known, prefix) {
+                found = prefix
+            }
+        }
+        size = size - 1
+    }
+    found
+}
+
+fn is_separator(c: str) -> bool {
+    c == " " || c == "-" || c == "." || c == "(" || c == ")" || c == "/"
+}
+
+fn extension_start(raw: str) -> i64 {
+    let lower = str_to_lower(raw)
+    let markers = [";ext=", "extension", "ext.", "ext", "x", "#"]
+    let best = 0 - 1
+    for m in markers {
+        let idx = str_index_of(lower, m)
+        if idx >= 0 && (best < 0 || idx < best) {
+            best = idx
+        }
+    }
+    best
+}
+
+fn extract_extension(raw: str) -> str {
+    let lower = str_to_lower(raw)
+    let markers = [";ext=", "extension", "ext.", "ext", "x", "#"]
+    let best = 0 - 1
+    let best_len = 0
+    for m in markers {
+        let idx = str_index_of(lower, m)
+        if idx >= 0 && (best < 0 || idx < best || (idx == best && len(m) > best_len)) {
+            best = idx
+            best_len = len(m)
+        }
+    }
+    if best < 0 {
+        return ""
+    }
+    let chars = str_chars(str_slice(lower, best + best_len, len(lower)))
+    let i = 0
+    while i < len(chars) && (chars[i] == " " || chars[i] == ":" || chars[i] == "." || chars[i] == "=") {
+        i = i + 1
+    }
+    let digits = ""
+    while i < len(chars) && char_is_digit(chars[i]) {
+        digits = digits + chars[i]
+        i = i + 1
+    }
+    if len(digits) == 0 || len(digits) > 6 {
+        return ""
+    }
+    digits
+}
+
+fn is_valid_national(cc: str, national: str) -> bool {
+    let n = len(national)
+    if n == 0 || len(cc) + n > 15 {
+        return false
+    }
+    let chars = str_chars(national)
+    for c in chars {
+        if !char_is_digit(c) {
+            return false
+        }
+    }
+    let first = chars[0]
+    if cc == "1" {
+        if n != 10 || first == "0" || first == "1" || chars[3] == "0" || chars[3] == "1" {
+            return false
+        }
+        return !(chars[1] == "1" && chars[2] == "1")
+    }
+    if first == "0" && cc != "39" {
+        return false
+    }
+    if cc == "44" {
+        return n == 10 || (n == 9 && first == "1")
+    }
+    if cc == "33" || cc == "34" || cc == "61" {
+        return n == 9
+    }
+    if cc == "49" || cc == "39" {
+        return n >= 6 && n <= 11
+    }
+    if cc == "81" {
+        return n == 9 || n == 10
+    }
+    n >= 4 && n <= 12
+}
+
+fn normalize_number(raw: str, default_cc: str) -> str {
+    let cut = extension_start(raw)
+    let main = if cut >= 0 { str_slice(raw, 0, cut) } else { str_trim(raw) }
+    let chars = str_chars(str_trim(main))
+    let digits = ""
+    let plus = false
+    for c in chars {
+        if char_is_digit(c) {
+            digits = digits + c
+        } else if c == "+" {
+            if len(digits) > 0 || plus {
+                return ""
+            }
+            plus = true
+        } else if !is_separator(c) {
+            return ""
+        }
+    }
+    let intl = ""
+    if plus {
+        intl = digits
+    } else if str_starts_with(digits, "00") {
+        intl = str_slice(digits, 2, len(digits))
+    } else if default_cc == "1" && len(digits) == 11 && str_starts_with(digits, "1") {
+        intl = digits
+    } else if str_starts_with(digits, "0") && default_cc != "39" {
+        intl = default_cc + str_slice(digits, 1, len(digits))
+    } else {
+        intl = default_cc + digits
+    }
+    let cc = country_code_of(intl)
+    if cc == "" {
+        return ""
+    }
+    let national = str_slice(intl, len(cc), len(intl))
+    if str_starts_with(national, "0") && cc != "39" && cc != "1" {
+        national = str_slice(national, 1, len(national))
+    }
+    if !is_valid_national(cc, national) {
+        return ""
+    }
+    "+" + cc + national
+}
+
+fn format_display(e164: str, ext: str) -> str {
+    if !str_starts_with(e164, "+") {
+        return ""
+    }
+    let intl = str_slice(e164, 1, len(e164))
+    let cc = country_code_of(intl)
+    if cc == "" {
+        return ""
+    }
+    let nat = str_slice(intl, len(cc), len(intl))
+    let n = len(nat)
+    let groups = []
+    if cc == "1" && n == 10 {
+        groups = ["(" + str_slice(nat, 0, 3) + ")", str_slice(nat, 3, 6) + "-" + str_slice(nat, 6, 10)]
+    } else if cc == "33" && n == 9 {
+        groups = [str_slice(nat, 0, 1)]
+        let i = 1
+        while i < n {
+            groups = arr_push(groups, str_slice(nat, i, i + 2))
+            i = i + 2
+        }
+    } else if cc == "44" && n == 10 && str_starts_with(nat, "2") {
+        groups = [str_slice(nat, 0, 2), str_slice(nat, 2, 6), str_slice(nat, 6, 10)]
+    } else if cc == "44" && n == 10 && str_starts_with(nat, "7") {
+        groups = [str_slice(nat, 0, 4), str_slice(nat, 4, 10)]
+    } else {
+        let i = 0
+        while n - i > 4 {
+            groups = arr_push(groups, str_slice(nat, i, i + 3))
+            i = i + 3
+        }
+        if i < n {
+            groups = arr_push(groups, str_slice(nat, i, n))
+        }
+    }
+    let out = "+" + cc + " " + str_join(groups, " ")
+    if len(ext) > 0 {
+        out = out + " ext. " + ext
+    }
+    out
+}
+
+fn classify_number(e164: str) -> str {
+    if !str_starts_with(e164, "+") || len(e164) < 6 {
+        return "invalid"
+    }
+    let intl = str_slice(e164, 1, len(e164))
+    let cc = country_code_of(intl)
+    if cc == "" {
+        return "invalid"
+    }
+    let nat = str_slice(intl, len(cc), len(intl))
+    let p1 = str_slice(nat, 0, 1)
+    let p2 = str_slice(nat, 0, 2)
+    let p3 = str_slice(nat, 0, 3)
+    if cc == "1" {
+        let free = ["800", "833", "844", "855", "866", "877", "888"]
+        if arr_contains(free, p3) {
+            return "toll-free"
+        }
+        if p3 == "900" {
+            return "premium"
+        }
+        return "geographic"
+    }
+    if p3 == "800" || (cc == "44" && p3 == "808") {
+        return "toll-free"
+    }
+    if p3 == "900" || (cc == "44" && p1 == "9") || (cc == "33" && p2 == "89") {
+        return "premium"
+    }
+    if cc == "44" && p1 == "7" && p2 != "70" && p2 != "76" {
+        return "mobile"
+    }
+    if cc == "49" && (p2 == "15" || p2 == "16" || p2 == "17") {
+        return "mobile"
+    }
+    if cc == "33" && (p1 == "6" || p1 == "7") {
+        return "mobile"
+    }
+    "geographic"
+}
+
+@[test]
+fn test_extract_extension_ext_dot() {
+    assert_eq_str(extract_extension("+1 415 555 0142 ext. 204"), "204")
+}
+
+@[test]
+fn test_extract_extension_short_x_and_hash() {
+    assert_eq_str(extract_extension("020 7946 0958 x12"), "12")
+    assert_eq_str(extract_extension("555-0100#9"), "9")
+}
+
+@[test]
+fn test_extract_extension_rfc3966() {
+    assert_eq_str(extract_extension("tel:+1-201-555-0123;ext=77"), "77")
+}
+
+@[test]
+fn test_extract_extension_absent_or_too_long() {
+    assert_eq_str(extract_extension("4155550142"), "")
+    assert_eq_str(extract_extension("4155550142 ext 1234567"), "")
+}
+
+@[test]
+fn test_normalize_number_nanp() {
+    assert_eq_str(normalize_number("(415) 555-0142", "1"), "+14155550142")
+    assert_eq_str(normalize_number("1-415-555-0142 ext. 9", "1"), "+14155550142")
+}
+
+@[test]
+fn test_normalize_number_trunk_prefix() {
+    assert_eq_str(normalize_number("020 7946 0958", "44"), "+442079460958")
+    assert_eq_str(normalize_number("+44 (0)20 7946 0958", "1"), "+442079460958")
+}
+
+@[test]
+fn test_normalize_number_international_prefix() {
+    assert_eq_str(normalize_number("0049 30 901820", "1"), "+4930901820")
+    assert_eq_str(normalize_number("+39 06 6982 1234", "1"), "+390669821234")
+}
+
+@[test]
+fn test_normalize_number_rejects_bad_input() {
+    assert_eq_str(normalize_number("415-555-01a2", "1"), "")
+    assert_eq_str(normalize_number("(115) 555-0142", "1"), "")
+    assert_eq_str(normalize_number("41+5 555 0142", "1"), "")
+}
+
+@[test]
+fn test_is_valid_national_nanp() {
+    assert(is_valid_national("1", "4155550142"))
+    assert(!is_valid_national("1", "4151550142"))
+    assert(!is_valid_national("1", "415555014"))
+}
+
+@[test]
+fn test_is_valid_national_europe() {
+    assert(is_valid_national("44", "2079460958"))
+    assert(is_valid_national("33", "612345678"))
+    assert(!is_valid_national("33", "0612345678"))
+}
+
+@[test]
+fn test_is_valid_national_lengths() {
+    assert(is_valid_national("49", "30901820"))
+    assert(!is_valid_national("49", "30901"))
+    assert(is_valid_national("39", "0669821234"))
+}
+
+@[test]
+fn test_format_display_nanp() {
+    assert_eq_str(format_display("+14155550142", ""), "+1 (415) 555-0142")
+}
+
+@[test]
+fn test_format_display_uk_with_extension() {
+    assert_eq_str(format_display("+442079460958", "12"), "+44 20 7946 0958 ext. 12")
+    assert_eq_str(format_display("+447700900123", ""), "+44 7700 900123")
+}
+
+@[test]
+fn test_format_display_grouping() {
+    assert_eq_str(format_display("+33612345678", ""), "+33 6 12 34 56 78")
+    assert_eq_str(format_display("+4930901820", ""), "+49 309 018 20")
+}
+
+@[test]
+fn test_classify_number_nanp() {
+    assert_eq_str(classify_number("+18005550199"), "toll-free")
+    assert_eq_str(classify_number("+19005550199"), "premium")
+    assert_eq_str(classify_number("+14155550142"), "geographic")
+}
+
+@[test]
+fn test_classify_number_mobile() {
+    assert_eq_str(classify_number("+447700900123"), "mobile")
+    assert_eq_str(classify_number("+4915112345678"), "mobile")
+    assert_eq_str(classify_number("+33612345678"), "mobile")
+}
+
+@[test]
+fn test_classify_number_other() {
+    assert_eq_str(classify_number("+33892123456"), "premium")
+    assert_eq_str(classify_number("+448081570000"), "toll-free")
+    assert_eq_str(classify_number("12345"), "invalid")
+}

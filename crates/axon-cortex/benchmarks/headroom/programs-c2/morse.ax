@@ -1,0 +1,278 @@
+// Morse code: text encoding, decoding with letter and word gaps,
+// error counting, on/off signal timing.
+
+fn morse_table() -> [str] {
+    [".-", "-...", "-.-.", "-..", ".", "..-.", "--.", "....", "..", ".---",
+     "-.-", ".-..", "--", "-.", "---", ".--.", "--.-", ".-.", "...", "-",
+     "..-", "...-", ".--", "-..-", "-.--", "--..",
+     "-----", ".----", "..---", "...--", "....-", ".....", "-....", "--...", "---..", "----.",
+     ".-.-.-", "--..--", "..--.."]
+}
+
+fn morse_alphabet() -> str {
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,?"
+}
+
+fn encode_morse(text: str) -> str {
+    let table = morse_table()
+    let words: [str] = []
+    let current: [str] = []
+    for ch in str_chars(str_to_upper(text)) {
+        let byte = char_at(ch, 0)
+        let idx = -1
+        if byte >= 65 && byte <= 90 {
+            idx = byte - 65
+        } else if byte >= 48 && byte <= 57 {
+            idx = byte - 48 + 26
+        } else if ch == "." {
+            idx = 36
+        } else if ch == "," {
+            idx = 37
+        } else if ch == "?" {
+            idx = 38
+        }
+        if char_is_space(ch) {
+            if len(current) > 0 {
+                words = arr_push(words, str_join(current, " "))
+                current = []
+            }
+        } else if idx >= 0 {
+            current = arr_push(current, table[idx])
+        }
+    }
+    if len(current) > 0 {
+        words = arr_push(words, str_join(current, " "))
+    }
+    str_join(words, " / ")
+}
+
+fn decode_morse(code: str) -> str {
+    let table = morse_table()
+    let alphabet = morse_alphabet()
+    let normalized = str_replace(code, "   ", " / ")
+    let words: [str] = []
+    for chunk in str_split(normalized, "/") {
+        let letters = ""
+        for token in str_split(str_trim(chunk), " ") {
+            if str_len(token) > 0 {
+                let found = -1
+                let i = 0
+                while i < len(table) && found < 0 {
+                    if table[i] == token {
+                        found = i
+                    }
+                    i = i + 1
+                }
+                if found >= 0 {
+                    letters = letters + str_slice(alphabet, found, found + 1)
+                } else {
+                    letters = letters + "?"
+                }
+            }
+        }
+        if str_len(letters) > 0 {
+            words = arr_push(words, letters)
+        }
+    }
+    str_join(words, " ")
+}
+
+fn count_decode_errors(code: str) -> i64 {
+    let table = morse_table()
+    let chunks = str_split(str_replace(code, "   ", " / "), "/")
+    let errors = 0
+    let i = 0
+    while i < len(chunks) {
+        let tokens = arr_filter(str_split(str_trim(chunks[i]), " "), |t| str_len(t) > 0)
+        if len(tokens) == 0 && i > 0 && i < len(chunks) - 1 {
+            errors = errors + 1
+        }
+        for token in tokens {
+            let clean = true
+            for mark in str_chars(token) {
+                if mark != "." && mark != "-" {
+                    clean = false
+                }
+            }
+            if !clean {
+                errors = errors + 1
+            } else if !arr_contains(table, token) {
+                errors = errors + 1
+            }
+        }
+        i = i + 1
+    }
+    errors
+}
+
+fn transmission_units(code: str) -> i64 {
+    let total = 0
+    let pending_gap = 0
+    let started = false
+    let valid = true
+    for ch in str_chars(code) {
+        if ch == "." || ch == "-" {
+            if started {
+                if pending_gap > 0 {
+                    total = total + pending_gap
+                } else {
+                    total = total + 1
+                }
+            }
+            if ch == "." {
+                total = total + 1
+            } else {
+                total = total + 3
+            }
+            started = true
+            pending_gap = 0
+        } else if ch == "/" {
+            if started {
+                pending_gap = 7
+            }
+        } else if char_is_space(ch) {
+            if started && pending_gap < 3 {
+                pending_gap = 3
+            }
+        } else {
+            valid = false
+        }
+    }
+    if valid { total } else { -1 }
+}
+
+fn decode_timing(signal: str) -> str {
+    let runs: [i64] = []
+    let kinds: [bool] = []
+    let prev = ""
+    for ch in str_chars(signal) {
+        if ch != "0" && ch != "1" {
+            return ""
+        }
+        if ch == prev {
+            runs[len(runs) - 1] = runs[len(runs) - 1] + 1
+        } else {
+            runs = arr_push(runs, 1)
+            kinds = arr_push(kinds, ch == "1")
+            prev = ch
+        }
+    }
+    let unit = 0
+    let i = 0
+    while i < len(runs) {
+        let inner = kinds[i] || (i > 0 && i < len(runs) - 1)
+        if inner && (unit == 0 || runs[i] < unit) {
+            unit = runs[i]
+        }
+        i = i + 1
+    }
+    let out = ""
+    i = 0
+    while i < len(runs) && unit > 0 {
+        if kinds[i] {
+            if runs[i] < 2 * unit {
+                out = out + "."
+            } else {
+                out = out + "-"
+            }
+        } else if i > 0 && i < len(runs) - 1 {
+            if runs[i] >= 5 * unit {
+                out = out + " / "
+            } else if runs[i] >= 2 * unit {
+                out = out + " "
+            }
+        }
+        i = i + 1
+    }
+    out
+}
+
+@[test]
+fn test_encode_morse_sos() {
+    assert_eq_str(encode_morse("SOS"), "... --- ...")
+}
+
+@[test]
+fn test_encode_morse_words_and_case() {
+    assert_eq_str(encode_morse("Hi  there"), ".... .. / - .... . .-. .")
+}
+
+@[test]
+fn test_encode_morse_digits_punctuation_unknown() {
+    assert_eq_str(encode_morse("  a1, #"), ".- .---- --..--")
+    assert_eq_str(encode_morse("#"), "")
+}
+
+@[test]
+fn test_decode_morse_sos() {
+    assert_eq_str(decode_morse("... --- ..."), "SOS")
+}
+
+@[test]
+fn test_decode_morse_word_gaps() {
+    assert_eq_str(decode_morse(".... .. / - .... . .-. ."), "HI THERE")
+    assert_eq_str(decode_morse(".-   -..."), "A B")
+}
+
+@[test]
+fn test_decode_morse_unknown_symbol() {
+    assert_eq_str(decode_morse("...... .- ..--.."), "?A?")
+}
+
+@[test]
+fn test_count_decode_errors_clean() {
+    assert_eq(count_decode_errors("... --- ..."), 0)
+}
+
+@[test]
+fn test_count_decode_errors_bad_tokens() {
+    assert_eq(count_decode_errors("...... .- x-."), 2)
+}
+
+@[test]
+fn test_count_decode_errors_empty_word() {
+    assert_eq(count_decode_errors(".- / / -"), 1)
+}
+
+@[test]
+fn test_count_decode_errors_mixed() {
+    assert_eq(count_decode_errors("..-.. . / ab"), 2)
+}
+
+@[test]
+fn test_transmission_units_single_letters() {
+    assert_eq(transmission_units("."), 1)
+    assert_eq(transmission_units(".-"), 5)
+}
+
+@[test]
+fn test_transmission_units_sos() {
+    assert_eq(transmission_units("... --- ..."), 27)
+}
+
+@[test]
+fn test_transmission_units_word_gap() {
+    assert_eq(transmission_units(".- / -"), 15)
+    assert_eq(transmission_units(".x"), -1)
+}
+
+@[test]
+fn test_decode_timing_letter() {
+    assert_eq_str(decode_timing("10111"), ".-")
+}
+
+@[test]
+fn test_decode_timing_letter_gap_and_padding() {
+    assert_eq_str(decode_timing("0010101000111011101110"), "... ---")
+}
+
+@[test]
+fn test_decode_timing_word_gap() {
+    assert_eq_str(decode_timing("100000001110111"), ". / --")
+}
+
+@[test]
+fn test_decode_timing_slow_sender() {
+    assert_eq_str(decode_timing("11001111110011"), ".-.")
+    assert_eq_str(decode_timing("10201"), "")
+}

@@ -1,0 +1,357 @@
+// Road toll calculation: vehicle classification, time-of-day bands,
+// distance-based charges between gates, and monthly caps.
+
+type Trip = { kind: str, axles: i64, weight_kg: i64, entry: i64, exit: i64, weekday: i64, minute: i64, holiday: bool, electric: bool }
+
+fn class_rate_cents(cls: i64) -> i64 {
+    if cls == 1 {
+        6
+    } else if cls == 2 {
+        10
+    } else if cls == 3 {
+        15
+    } else if cls == 4 {
+        22
+    } else {
+        30
+    }
+}
+
+fn band_percent(band: str) -> i64 {
+    if band == "peak" {
+        150
+    } else if band == "shoulder" {
+        120
+    } else if band == "night" {
+        70
+    } else {
+        100
+    }
+}
+
+// Toll class 1..5, or 0 when the vehicle description is not valid.
+fn vehicle_class(kind: str, axles: i64, weight_kg: i64) -> i64 {
+    if kind == "motorcycle" {
+        if axles == 2 && weight_kg > 0 {
+            return 1
+        }
+        return 0
+    }
+    if axles < 2 || weight_kg <= 0 {
+        return 0
+    }
+    let cls = 0
+    if kind == "car" {
+        cls = 2
+        if axles >= 3 {
+            cls = 3
+        }
+    } else if kind == "van" {
+        cls = 2
+        if weight_kg > 3500 || axles >= 3 {
+            cls = 3
+        }
+    } else if kind == "bus" {
+        cls = 4
+    } else if kind == "truck" {
+        if axles <= 2 {
+            cls = 3
+        } else if axles <= 4 {
+            cls = 4
+        } else {
+            cls = 5
+        }
+    } else {
+        cls = min_i64(5, axles)
+    }
+    if weight_kg > 40000 {
+        cls = 5
+    } else if weight_kg > 12000 && cls < 4 {
+        cls = 4
+    }
+    cls
+}
+
+// Weekday 0 is Monday; minute is minutes after midnight.
+fn time_band(weekday: i64, minute: i64, holiday: bool) -> str {
+    if weekday < 0 || weekday > 6 || minute < 0 || minute >= 1440 {
+        return "invalid"
+    }
+    if minute < 360 || minute >= 1320 {
+        return "night"
+    }
+    if weekday >= 5 || holiday {
+        if minute >= 600 && minute < 1080 {
+            return "shoulder"
+        }
+        return "offpeak"
+    }
+    let evening_start = 960
+    if weekday == 4 {
+        evening_start = 900
+    }
+    if minute >= 420 && minute < 570 {
+        return "peak"
+    }
+    if minute >= evening_start && minute < 1110 {
+        return "peak"
+    }
+    if minute < 420 || (minute >= 570 && minute < 660) {
+        return "shoulder"
+    }
+    if minute >= 1110 && minute < 1200 {
+        return "shoulder"
+    }
+    "offpeak"
+}
+
+// Distance charge between two gates; gate_km holds each gate's road position.
+// The first 50 km are charged in full, the next 100 km at 80 percent and the
+// remainder at 60 percent. Returns -1 for unknown gates or a malformed table.
+fn segment_charge_cents(gate_km: [i64], entry: i64, exit: i64, rate: i64) -> i64 {
+    let n = len(gate_km)
+    if entry < 0 || exit < 0 || entry >= n || exit >= n || rate <= 0 {
+        return -1
+    }
+    let i = 1
+    while i < n {
+        if gate_km[i] <= gate_km[i - 1] {
+            return -1
+        }
+        i = i + 1
+    }
+    if entry == exit {
+        return 50
+    }
+    let dist = abs_i64(gate_km[exit] - gate_km[entry])
+    let full = min_i64(dist, 50)
+    let mid = 0
+    if dist > 50 {
+        mid = min_i64(dist, 150) - 50
+    }
+    let far = max_i64(dist - 150, 0)
+    let tenths = full * rate * 10 + mid * rate * 8 + far * rate * 6
+    let charge = (tenths + 5) / 10
+    if charge < 50 {
+        charge = 50
+    }
+    charge
+}
+
+fn trip_fee_cents(trip: Trip, gate_km: [i64]) -> i64 {
+    let cls = vehicle_class(trip.kind, trip.axles, trip.weight_kg)
+    if cls == 0 {
+        return -1
+    }
+    let band = time_band(trip.weekday, trip.minute, trip.holiday)
+    if band == "invalid" {
+        return -1
+    }
+    let base = segment_charge_cents(gate_km, trip.entry, trip.exit, class_rate_cents(cls))
+    if base < 0 {
+        return -1
+    }
+    let pct = band_percent(band)
+    if cls >= 4 && pct < 100 {
+        pct = 100
+    }
+    if cls == 5 && band == "peak" {
+        pct = pct + 25
+    }
+    let fee = (base * pct + 50) / 100
+    if trip.electric && cls <= 2 {
+        fee = fee - fee / 4
+    }
+    let rounded = (fee + 5) / 10 * 10
+    if rounded < 50 {
+        rounded = 50
+    }
+    rounded
+}
+
+// Amount actually charged per trip after the frequent-user discount (from
+// the eleventh valid trip of the month) and the daily and monthly caps.
+// A cap of 0 means no cap. Trips are given in chronological order.
+fn monthly_charges(fees: [i64], days: [i64], daily_cap: i64, monthly_cap: i64) -> [i64] {
+    let out: [i64] = []
+    let n = min_i64(len(fees), len(days))
+    let month_total = 0
+    let day_total = 0
+    let current_day = -1
+    let counted = 0
+    let i = 0
+    while i < n {
+        let fee = fees[i]
+        if fee <= 0 || days[i] < 1 || days[i] > 31 {
+            out = arr_push(out, 0)
+        } else {
+            if days[i] != current_day {
+                current_day = days[i]
+                day_total = 0
+            }
+            counted = counted + 1
+            if counted > 10 {
+                fee = fee - fee / 10
+            }
+            let charge = fee
+            if daily_cap > 0 && day_total + charge > daily_cap {
+                charge = max_i64(daily_cap - day_total, 0)
+            }
+            if monthly_cap > 0 && month_total + charge > monthly_cap {
+                charge = max_i64(monthly_cap - month_total, 0)
+            }
+            day_total = day_total + charge
+            month_total = month_total + charge
+            out = arr_push(out, charge)
+        }
+        i = i + 1
+    }
+    out
+}
+
+@[test]
+fn test_vehicle_class_light_vehicles() {
+    assert_eq(vehicle_class("motorcycle", 2, 250), 1)
+    assert_eq(vehicle_class("car", 2, 1400), 2)
+    assert_eq(vehicle_class("car", 3, 2100), 3)
+}
+
+@[test]
+fn test_vehicle_class_heavy_vehicles() {
+    assert_eq(vehicle_class("truck", 5, 30000), 5)
+    assert_eq(vehicle_class("truck", 2, 15000), 4)
+    assert_eq(vehicle_class("bus", 2, 11000), 4)
+}
+
+@[test]
+fn test_vehicle_class_van_and_unknown_kind() {
+    assert_eq(vehicle_class("van", 2, 4200), 3)
+    assert_eq(vehicle_class("van", 2, 3000), 2)
+    assert_eq(vehicle_class("tractor", 3, 8000), 3)
+}
+
+@[test]
+fn test_vehicle_class_rejects_invalid() {
+    assert_eq(vehicle_class("car", 1, 1000), 0)
+    assert_eq(vehicle_class("motorcycle", 3, 300), 0)
+    assert_eq(vehicle_class("truck", 4, 41000), 5)
+}
+
+@[test]
+fn test_time_band_weekday_peaks() {
+    assert_eq_str(time_band(0, 480, false), "peak")
+    assert_eq_str(time_band(4, 920, false), "peak")
+    assert_eq_str(time_band(1, 920, false), "offpeak")
+}
+
+@[test]
+fn test_time_band_weekend_and_holiday() {
+    assert_eq_str(time_band(5, 480, false), "offpeak")
+    assert_eq_str(time_band(2, 600, true), "shoulder")
+    assert_eq_str(time_band(6, 700, false), "shoulder")
+}
+
+@[test]
+fn test_time_band_night_and_shoulder() {
+    assert_eq_str(time_band(2, 1350, false), "night")
+    assert_eq_str(time_band(3, 380, false), "shoulder")
+    assert_eq_str(time_band(3, 1150, false), "shoulder")
+}
+
+@[test]
+fn test_time_band_invalid_input() {
+    assert_eq_str(time_band(2, 1500, false), "invalid")
+    assert_eq_str(time_band(7, 600, false), "invalid")
+    assert_eq_str(time_band(1, 1300, false), "offpeak")
+}
+
+@[test]
+fn test_segment_charge_short_trip() {
+    let gates = [0, 12, 30, 75, 160, 240]
+    assert_eq(segment_charge_cents(gates, 0, 2, 10), 300)
+    assert_eq(segment_charge_cents(gates, 0, 1, 6), 72)
+}
+
+@[test]
+fn test_segment_charge_tapered_long_trip() {
+    let gates = [0, 12, 30, 75, 160, 240]
+    assert_eq(segment_charge_cents(gates, 5, 0, 10), 1840)
+    assert_eq(segment_charge_cents(gates, 1, 4, 10), 1284)
+}
+
+@[test]
+fn test_segment_charge_minimum_and_same_gate() {
+    let gates = [0, 12, 30, 75, 160, 240]
+    assert_eq(segment_charge_cents(gates, 1, 1, 10), 50)
+    assert_eq(segment_charge_cents(gates, 2, 3, 1), 50)
+}
+
+@[test]
+fn test_segment_charge_rejects_bad_table() {
+    assert_eq(segment_charge_cents([0, 10, 5], 0, 2, 10), -1)
+    assert_eq(segment_charge_cents([0, 10, 20], 0, 3, 10), -1)
+    assert_eq(segment_charge_cents([0, 10, 20], 0, 2, 10), 200)
+}
+
+@[test]
+fn test_trip_fee_car_peak_and_electric() {
+    let gates = [0, 12, 30, 75, 160, 240]
+    let t = Trip { kind: "car", axles: 2, weight_kg: 1400, entry: 0, exit: 2, weekday: 0, minute: 480, holiday: false, electric: false }
+    assert_eq(trip_fee_cents(t, gates), 450)
+    let e = Trip { kind: "car", axles: 2, weight_kg: 1400, entry: 0, exit: 2, weekday: 0, minute: 480, holiday: false, electric: true }
+    assert_eq(trip_fee_cents(e, gates), 340)
+}
+
+@[test]
+fn test_trip_fee_heavy_truck_bands() {
+    let gates = [0, 12, 30, 75, 160, 240]
+    let night = Trip { kind: "truck", axles: 5, weight_kg: 30000, entry: 0, exit: 5, weekday: 2, minute: 60, holiday: false, electric: false }
+    assert_eq(trip_fee_cents(night, gates), 5520)
+    let peak = Trip { kind: "truck", axles: 5, weight_kg: 30000, entry: 0, exit: 5, weekday: 2, minute: 480, holiday: false, electric: false }
+    assert_eq(trip_fee_cents(peak, gates), 9660)
+}
+
+@[test]
+fn test_trip_fee_motorcycle_offpeak() {
+    let gates = [0, 12, 30, 75, 160, 240]
+    let t = Trip { kind: "motorcycle", axles: 2, weight_kg: 220, entry: 1, exit: 2, weekday: 2, minute: 720, holiday: false, electric: false }
+    assert_eq(trip_fee_cents(t, gates), 110)
+}
+
+@[test]
+fn test_trip_fee_invalid_vehicle_or_gate() {
+    let gates = [0, 12, 30, 75, 160, 240]
+    let bad_axles = Trip { kind: "car", axles: 1, weight_kg: 1400, entry: 0, exit: 2, weekday: 0, minute: 480, holiday: false, electric: false }
+    assert_eq(trip_fee_cents(bad_axles, gates), -1)
+    let bad_gate = Trip { kind: "car", axles: 2, weight_kg: 1400, entry: 0, exit: 9, weekday: 0, minute: 480, holiday: false, electric: false }
+    assert_eq(trip_fee_cents(bad_gate, gates), -1)
+}
+
+@[test]
+fn test_monthly_charges_daily_cap() {
+    let r = monthly_charges([400, 400, 400], [1, 1, 2], 700, 0)
+    assert(r == [400, 300, 400])
+}
+
+@[test]
+fn test_monthly_charges_monthly_cap() {
+    let r = monthly_charges([500, 500, 500], [1, 2, 3], 0, 1200)
+    assert(r == [500, 500, 200])
+}
+
+@[test]
+fn test_monthly_charges_frequent_discount() {
+    let fees = [100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100]
+    let days = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    let r = monthly_charges(fees, days, 0, 0)
+    assert_eq(len(r), 12)
+    assert_eq(r[9], 100)
+    assert_eq(r[10], 90)
+    assert_eq(r[11], 90)
+}
+
+@[test]
+fn test_monthly_charges_skips_invalid_trips() {
+    let r = monthly_charges([-1, 300, 250], [1, 1, 40], 0, 0)
+    assert(r == [0, 300, 0])
+}

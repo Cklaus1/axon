@@ -1,0 +1,314 @@
+// American Soundex, a simplified consonant-skeleton phonetic key, and
+// matching of name lists by sound.
+
+fn soundex(name: str) -> str {
+    let table = "0123012-02245501262301-202"
+    let letters = ""
+    for ch in str_chars(str_to_upper(name)) {
+        let code = char_at(ch, 0)
+        if str_len(ch) == 1 && code >= 65 && code <= 90 {
+            letters = letters + ch
+        }
+    }
+    if str_len(letters) == 0 {
+        return ""
+    }
+    let out = str_slice(letters, 0, 1)
+    let first = char_at(letters, 0) - 65
+    let last = str_slice(table, first, first + 1)
+    let i = 1
+    while i < str_len(letters) && str_len(out) < 4 {
+        let idx = char_at(letters, i) - 65
+        let code = str_slice(table, idx, idx + 1)
+        if code == "0" {
+            last = "0"
+        } else if code != "-" && code != last {
+            out = out + code
+            last = code
+        }
+        i = i + 1
+    }
+    while str_len(out) < 4 {
+        out = out + "0"
+    }
+    out
+}
+
+fn phonetic_key(name: str) -> str {
+    let s = ""
+    for ch in str_chars(str_to_upper(name)) {
+        if str_len(ch) == 1 && char_at(ch, 0) >= 65 && char_at(ch, 0) <= 90 {
+            s = s + ch
+        }
+    }
+    let n = str_len(s)
+    let two = str_slice(s, 0, 2)
+    let i = 0
+    if two == "KN" || two == "GN" || two == "PN" || two == "WR" || two == "PS" {
+        i = 1
+    }
+    let out = ""
+    while i < n {
+        let c = str_slice(s, i, i + 1)
+        let next = str_slice(s, i + 1, i + 2)
+        let pair = c + next
+        let soft = str_len(next) == 1 && str_contains("EIY", next)
+        let code = c
+        let step = 1
+        if pair == "PH" || pair == "CK" || pair == "TH" {
+            code = if pair == "PH" { "F" } else if pair == "CK" { "K" } else { "T" }
+            step = 2
+        } else if str_slice(s, i, i + 3) == "SCH" {
+            code = "SK"
+            step = 3
+        } else if pair == "SH" || pair == "CH" {
+            code = "X"
+            step = 2
+        } else if pair == "GH" {
+            code = if i == 0 { "G" } else { "" }
+            step = 2
+        } else if c == "C" || c == "G" {
+            code = if c == "C" && soft { "S" } else if soft { "J" } else { "K" }
+        } else if c == "Q" || c == "Z" || c == "V" {
+            code = if c == "Q" { "K" } else if c == "Z" { "S" } else { "F" }
+        } else if c == "X" {
+            code = if i == 0 { "S" } else { "KS" }
+        } else if str_contains("AEIOUYHW", c) && i > 0 {
+            code = ""
+        }
+        for k in str_chars(code) {
+            if !str_ends_with(out, k) {
+                out = out + k
+            }
+        }
+        i = i + step
+    }
+    out
+}
+
+fn surname_key(raw: str) -> str {
+    let text = str_replace(str_to_upper(str_trim(raw)), "-", "")
+    let comma = str_index_of(text, ",")
+    if comma >= 0 {
+        text = str_slice(text, 0, comma)
+    }
+    let cleaned = ""
+    for ch in str_chars(text) {
+        if ch == " " || (str_len(ch) == 1 && char_at(ch, 0) >= 65 && char_at(ch, 0) <= 90) {
+            cleaned = cleaned + ch
+        }
+    }
+    let skip = ["MR", "MRS", "MS", "DR", "JR", "SR", "II", "III", "IV", "PHD", "MD"]
+    let parts: [str] = []
+    for w in str_split(cleaned, " ") {
+        if str_len(w) > 0 && !arr_contains(skip, w) {
+            parts = arr_push(parts, w)
+        }
+    }
+    if len(parts) == 0 {
+        return ""
+    }
+    let particles = ["VAN", "VON", "DE", "DER", "DEN", "DI", "DA", "DEL", "LA", "LE", "DU", "TER"]
+    let start = len(parts) - 1
+    if comma >= 0 {
+        start = 0
+    }
+    while start > 0 && arr_contains(particles, parts[start - 1]) {
+        start = start - 1
+    }
+    let key = ""
+    let k = start
+    while k < len(parts) {
+        key = key + parts[k]
+        k = k + 1
+    }
+    key
+}
+
+fn group_by_code(names: [str]) -> [str] {
+    let codes: [str] = []
+    let members: [str] = []
+    let seen: [str] = []
+    for raw in names {
+        let name = str_trim(raw)
+        let code = soundex(name)
+        let low = str_to_lower(name)
+        if str_len(code) > 0 && !arr_contains(seen, low) {
+            seen = arr_push(seen, low)
+            let pos = -1
+            let k = 0
+            while k < len(codes) {
+                if codes[k] == code {
+                    pos = k
+                }
+                k = k + 1
+            }
+            if pos < 0 {
+                codes = arr_push(codes, code)
+                members = arr_push(members, name)
+            } else {
+                let updated: [str] = []
+                let j = 0
+                while j < len(members) {
+                    let entry = if j == pos { members[j] + ", " + name } else { members[j] }
+                    updated = arr_push(updated, entry)
+                    j = j + 1
+                }
+                members = updated
+            }
+        }
+    }
+    let out: [str] = []
+    let g = 0
+    while g < len(codes) {
+        out = arr_push(out, codes[g] + ": " + members[g])
+        g = g + 1
+    }
+    out
+}
+
+fn best_matches(query: str, names: [str], min_score: i64) -> [str] {
+    let qs = soundex(query)
+    let qk = phonetic_key(query)
+    let kept: [str] = []
+    let scores: [i64] = []
+    for raw in names {
+        let name = str_trim(raw)
+        let s = soundex(name)
+        let score = 0
+        let i = 0
+        while i < str_len(s) && i < str_len(qs) {
+            if str_slice(s, i, i + 1) == str_slice(qs, i, i + 1) {
+                score = score + 1
+            }
+            i = i + 1
+        }
+        if str_len(qk) > 0 && phonetic_key(name) == qk {
+            score = score + 2
+        }
+        if str_len(s) > 0 && score >= min_score {
+            kept = arr_push(kept, name)
+            scores = arr_push(scores, score)
+        }
+    }
+    let out: [str] = []
+    let target = 6
+    while target >= min_score && target >= 0 {
+        let k = 0
+        while k < len(kept) {
+            if scores[k] == target {
+                out = arr_push(out, kept[k] + "=" + to_str(target))
+            }
+            k = k + 1
+        }
+        target = target - 1
+    }
+    out
+}
+
+@[test]
+fn test_soundex_standard_examples() {
+    assert_eq_str(soundex("Robert"), "R163")
+    assert_eq_str(soundex("Rupert"), "R163")
+    assert_eq_str(soundex("Rubin"), "R150")
+}
+
+@[test]
+fn test_soundex_h_and_w_do_not_separate() {
+    assert_eq_str(soundex("Ashcraft"), "A261")
+    assert_eq_str(soundex("Tymczak"), "T522")
+    assert_eq_str(soundex("Pfister"), "P236")
+}
+
+@[test]
+fn test_soundex_padding_and_punctuation() {
+    assert_eq_str(soundex("Lee"), "L000")
+    assert_eq_str(soundex("o'hara"), "O600")
+    assert_eq_str(soundex("Honeyman"), "H555")
+    assert_eq_str(soundex("42"), "")
+}
+
+@[test]
+fn test_phonetic_key_digraphs() {
+    assert_eq_str(phonetic_key("Philip"), "FLP")
+    assert_eq_str(phonetic_key("Phillips"), "FLPS")
+    assert_eq_str(phonetic_key("Schmidt"), "SKMDT")
+}
+
+@[test]
+fn test_phonetic_key_silent_letters() {
+    assert_eq_str(phonetic_key("Knight"), "NT")
+    assert_eq_str(phonetic_key("Wright"), "RT")
+    assert_eq_str(phonetic_key("Ashley"), "AXL")
+}
+
+@[test]
+fn test_phonetic_key_soft_consonants() {
+    assert_eq_str(phonetic_key("Catherine"), "KTRN")
+    assert_eq_str(phonetic_key("Kathryn"), "KTRN")
+    assert_eq_str(phonetic_key("George"), "JRJ")
+    assert_eq_str(phonetic_key("Xavier"), "SFR")
+}
+
+@[test]
+fn test_surname_key_drops_titles_and_suffixes() {
+    assert_eq_str(surname_key("Dr. Martin Luther King Jr."), "KING")
+}
+
+@[test]
+fn test_surname_key_keeps_particles() {
+    assert_eq_str(surname_key("Ludwig Mies van der Rohe"), "VANDERROHE")
+    assert_eq_str(surname_key("Anne Smith-Jones"), "SMITHJONES")
+}
+
+@[test]
+fn test_surname_key_comma_form() {
+    assert_eq_str(surname_key("O'Brien, Patrick"), "OBRIEN")
+    assert_eq_str(surname_key("de la Cruz, Maria"), "DELACRUZ")
+}
+
+@[test]
+fn test_group_by_code_merges_and_dedupes() {
+    let groups = group_by_code(["Robert", "Rupert", "Rubin", "robert", "Ashcraft", "Ashcroft", "Tymczak"])
+    assert_eq(len(groups), 4)
+    assert_eq_str(groups[0], "R163: Robert, Rupert")
+    assert_eq_str(groups[1], "R150: Rubin")
+    assert_eq_str(groups[2], "A261: Ashcraft, Ashcroft")
+    assert_eq_str(groups[3], "T522: Tymczak")
+}
+
+@[test]
+fn test_group_by_code_skips_names_without_letters() {
+    let groups = group_by_code(["  Lee ", "123", "Leigh"])
+    assert_eq_str(str_join(groups, "|"), "L000: Lee|L200: Leigh")
+}
+
+@[test]
+fn test_group_by_code_single_group() {
+    let groups = group_by_code(["Smith", "Smyth", "Schmidt", "Smithe"])
+    assert_eq_str(str_join(groups, "|"), "S530: Smith, Smyth, Schmidt, Smithe")
+}
+
+@[test]
+fn test_best_matches_ranks_by_score() {
+    let got = best_matches("Catherine", ["Kathryn", "Catherine", "Katharina", "Carter", "Bob"], 3)
+    assert_eq_str(str_join(got, ","), "Catherine=6,Kathryn=5,Katharina=5")
+}
+
+@[test]
+fn test_best_matches_stable_for_ties() {
+    let got = best_matches("Lee", ["Leigh", "Lee", "Li"], 4)
+    assert_eq_str(str_join(got, ","), "Lee=6,Li=6,Leigh=5")
+}
+
+@[test]
+fn test_best_matches_zero_threshold_keeps_all() {
+    let got = best_matches("Catherine", ["Bob", "Carter"], 0)
+    assert_eq_str(str_join(got, ","), "Carter=1,Bob=0")
+}
+
+@[test]
+fn test_best_matches_nothing_close() {
+    let got = best_matches("Zhang", ["Robert", "Ashcraft"], 3)
+    assert_eq(len(got), 0)
+}

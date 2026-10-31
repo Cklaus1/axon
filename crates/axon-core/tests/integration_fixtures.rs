@@ -2772,3 +2772,524 @@ fn refinements_on_variant_fields_and_lambda_params_are_enforced_natively() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// native-parity: one engine's result for a probe (`code` is `None` when the
+/// native binary was killed at its timeout).
+#[cfg(feature = "codegen")]
+struct NpRun {
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+/// native-parity: run `src` under `axon run` (the reference) and as an
+/// `axon build` binary killed after `native_timeout`. The native side is
+/// `Err(build stderr)` when the build fails.
+#[cfg(feature = "codegen")]
+fn np_engines(
+    dir: &std::path::Path,
+    tag: &str,
+    src: &str,
+    native_timeout: std::time::Duration,
+) -> (NpRun, Result<NpRun, String>) {
+    use std::process::{Command, Stdio};
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let file = dir.join(format!("{tag}.ax"));
+    std::fs::write(&file, src).unwrap();
+    let run = Command::new(axon_bin)
+        .arg("run")
+        .arg(&file)
+        .output()
+        .unwrap();
+    let interp = NpRun {
+        code: run.status.code(),
+        stdout: String::from_utf8_lossy(&run.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&run.stderr).into_owned(),
+    };
+    let bin = dir.join(format!("{tag}_bin"));
+    let build = Command::new(axon_bin)
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .unwrap();
+    if !build.status.success() {
+        let err = String::from_utf8_lossy(&build.stderr);
+        let err: String = err.trim().chars().take(400).collect();
+        return (interp, Err(err));
+    }
+    let mut child = Command::new(&bin)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    let mut timed_out = false;
+    while child.try_wait().unwrap().is_none() {
+        if start.elapsed() > native_timeout {
+            let _ = child.kill();
+            timed_out = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().unwrap();
+    let native = NpRun {
+        code: if timed_out { None } else { out.status.code() },
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+    };
+    (interp, Ok(native))
+}
+
+/// native-parity NP-1: a tuple pattern used to match natively without testing
+/// any component (`match_pat.rs`, `Pattern::Tuple(_) => true`), so the first
+/// tuple arm always won and `while let (true, m) = ..` never exited; a literal
+/// pattern on an `i32`/`u8` scrutinee failed IR verification. Every probe must
+/// give the interpreter's exit code and stdout; the shared-killer protocol
+/// (spec §4) reports every diverging probe in one panic.
+#[cfg(feature = "codegen")]
+#[test]
+fn tuple_patterns_test_every_component_natively() {
+    let dir = std::env::temp_dir().join(format!("axon_np1_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // (tag, source, interpreter stdout, is_control)
+    let cases: &[(&str, &str, &str, bool)] = &[
+        ("v22", "fn f(p: (i64, i64)) -> i64 {\n  match p {\n    (0, 0) => 0,\n    (0, y) => y,\n    (x, _) => x,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f((3, 4))))\n  0\n}\n", "3\n", false),
+        ("v25", "fn f(p: (bool, bool)) -> i64 {\n  match p {\n    (true, true) => 3,\n    (true, false) => 2,\n    (false, true) => 1,\n    (false, false) => 0,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f((true, false))))\n  0\n}\n", "2\n", false),
+        ("w08", "enum C { R, G }\nfn f(p: (C, C)) -> i64 {\n  match p {\n    (C::R, C::R) => 0,\n    (C::R, C::G) => 1,\n    (C::G, _) => 2,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f((C::G, C::R))))\n  0\n}\n", "2\n", false),
+        ("w09", "fn f(p: ((i64, bool), str)) -> i64 {\n  match p {\n    ((0, true), _) => 0,\n    ((n, _), s) => n + str_len(s),\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(((2, false), \"ab\"))))\n  0\n}\n", "4\n", false),
+        ("t06", "fn f(p: (str, i64)) -> i64 {\n  match p {\n    (\"a\", n) => n,\n    (\"b\", n) => n * 2,\n    _ => 0,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f((\"b\", 5))))\n  println(to_str(f((\"z\", 5))))\n  0\n}\n", "10\n0\n", false),
+        ("t09", "enum C { R, G, B }\nfn f(p: (C, i64)) -> i64 {\n  match p {\n    (C::R, n) => n,\n    (C::G, n) => n * 2,\n    (C::B, n) => n * 3,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f((C::B, 5))))\n  0\n}\n", "15\n", false),
+        ("t14", "fn f(o: Option<(i64, i64)>) -> i64 {\n  match o {\n    Some((0, y)) => y,\n    Some((x, _)) => x * 100,\n    None => -1,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(Some((3, 4)))))\n  0\n}\n", "300\n", false),
+        ("t17", "fn f(p: (i64, bool)) {\n  match p {\n    (0, true) => println(\"zero-true\"),\n    (_, false) => println(\"false\"),\n    (_, true) => println(\"true\"),\n  }\n}\nfn main() -> i64 {\n  f((5, true))\n  0\n}\n", "true\n", false),
+        ("t21", "fn f(p: (i64, i64)) -> i64 {\n  match p {\n    (_, 0) => 100,\n    (x, _) => x,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f((3, 4))))\n  0\n}\n", "3\n", false),
+        ("t27", "fn f(p: (i64, i64, i64)) -> i64 {\n  match p {\n    (1, 1, 1) => 0,\n    (_, _, z) => z,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f((2, 2, 9))))\n  0\n}\n", "9\n", false),
+        ("u01", "fn step(n: i64) -> (bool, i64) { (n < 3, n + 1) }\nfn main() -> i64 {\n  let n = 0\n  let c = 0\n  while let (true, m) = step(n) {\n    n = m\n    c = c + 1\n  }\n  println(to_str(c))\n  0\n}\n", "3\n", false),
+        ("u05", "fn f(n: i32) -> i64 {\n  match n {\n    0 => 100,\n    _ => 7,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(0)))\n  0\n}\n", "100\n", false),
+        ("a1", "fn f(x: u8) -> i64 {\n  match x {\n    256 => 1,\n    _ => 2,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(0)))\n  0\n}\n", "2\n", false),
+        ("a2", "fn f(x: i32) -> i64 {\n  match x {\n    4294967297 => 1,\n    _ => 2,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(1)))\n  0\n}\n", "2\n", false),
+        ("a3", "fn f(t: (i32, i64)) -> i64 {\n  match t {\n    (4294967297, _) => 1,\n    _ => 2,\n  }\n}\nfn main() -> i64 {\n  let y: i32 = 1\n  println(to_str(f((y, 0))))\n  0\n}\n", "2\n", false),
+        ("a4", "fn f(x: u8) -> i64 {\n  match x {\n    -1 => 1,\n    _ => 2,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(255)))\n  0\n}\n", "2\n", false),
+        // An `Ok` payload is read at its type before its literal is tested.
+        ("okl", "fn f(r: Result<i64, str>) -> i64 {\n  match r {\n    Ok(0) => 0,\n    Ok(n) => n,\n    Err(_) => 1,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(Ok(5))))\n  0\n}\n", "5\n", false),
+        // Controls: identical on both engines before the change.
+        ("t04", "fn main() -> i64 {\n  let r = match (1, 2) {\n    (_, _) => 9,\n  }\n  println(to_str(r))\n  0\n}\n", "9\n", true),
+        ("t05", "fn main() -> i64 {\n  let r = match (3, 4) {\n    (x, y) => x * 10 + y,\n  }\n  println(to_str(r))\n  0\n}\n", "34\n", true),
+        ("t11", "fn f(p: (i64, i64)) -> i64 {\n  match p {\n    (x, y) if x > y => x,\n    (_, y) => y,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f((3, 9))))\n  println(to_str(f((9, 3))))\n  0\n}\n", "9\n9\n", true),
+        ("t12", "fn main() -> i64 {\n  let p = (3, 4)\n  let (a, b) = p\n  println(to_str(a * 10 + b))\n  0\n}\n", "34\n", true),
+        ("u06", "fn f(o: Option<i64>) -> i64 {\n  match o {\n    Some(0) => 100,\n    Some(n) => n,\n    None => 0 - 1,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(Some(0))))\n  println(to_str(f(Some(4))))\n  0\n}\n", "100\n4\n", true),
+        ("v26", "fn f(p: (Option<i64>, bool)) -> i64 {\n  match p {\n    (Some(x), true) => x,\n    (Some(_), false) => 1,\n    (None, _) => 0,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f((Some(5), true))))\n  0\n}\n", "5\n", true),
+    ];
+    let mut attacks: Vec<String> = Vec::new();
+    for (tag, src, want, control) in cases {
+        let (interp, native) = np_engines(&dir, tag, src, std::time::Duration::from_secs(10));
+        assert!(
+            interp.code == Some(0) && interp.stdout == *want,
+            "[{tag}] interpreter (the reference) changed: exit {:?}, stdout {:?}, stderr {:?}",
+            interp.code,
+            interp.stdout,
+            interp.stderr
+        );
+        let native = match native {
+            Ok(n) => n,
+            Err(build) if *control => panic!("[{tag}] control failed to build: {build}"),
+            Err(build) => {
+                attacks.push(format!(
+                    "ATTACK: a pattern match diverged from the interpreter natively [{tag}] (build: {build})"
+                ));
+                continue;
+            }
+        };
+        if native.code != interp.code || native.stdout != interp.stdout {
+            let line = format!(
+                "ATTACK: a pattern match diverged from the interpreter natively [{tag}] interp exit {:?} stdout {:?}; native exit {:?}{} stdout {:?} stderr {:?}",
+                interp.code,
+                interp.stdout,
+                native.code,
+                if native.code.is_none() { " (timed out after 10 s)" } else { "" },
+                native.stdout,
+                native.stderr
+            );
+            assert!(!*control, "[{tag}] control diverged: {line}");
+            attacks.push(line);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(attacks.is_empty(), "{}", attacks.join("\n"));
+}
+
+/// native-parity NP-2: a match with no matching arm used to fall through
+/// natively (exit 0, the phi's zero, or the next statement); the interpreter
+/// panics `no match arm matched` (exit 101). Both engines must give the same
+/// exit code, stdout and stderr. A probe the checker refuses (checker-
+/// soundness-3) must be refused with E0304 by both `axon run` (exit 2) and
+/// `axon build` (exit 1, as for every check refusal: "build aborted");
+/// the codegen unit test `codegen::match_pat::tests::a_match_miss_edge_panics`
+/// then stays the killer.
+#[cfg(feature = "codegen")]
+#[test]
+fn a_match_with_no_matching_arm_panics_natively_like_the_interpreter() {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_np2_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cases: &[(&str, &str, &str)] = &[
+        ("h31", "fn f(o: Option<i64>) -> i64 {\n  match o {\n    Some(0) => 0,\n    None => 1,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(Some(5))))\n  0\n}\n", ""),
+        ("h32", "enum E { A { s: str }, B }\nfn f(e: E) -> i64 {\n  match e {\n    E::A { s: \"x\" } => 0,\n    E::B => 1,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(E::A { s: \"y\" })))\n  0\n}\n", ""),
+        ("x03", "fn f(r: Result<i64, str>) -> i64 {\n  match r {\n    Ok(0) => 0,\n    Err(_) => 1,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(Ok(5))))\n  0\n}\n", ""),
+        ("u02", "fn f(o: Option<i64>) {\n  match o {\n    Some(0) => println(\"zero\"),\n    None => println(\"none\"),\n  }\n}\nfn main() -> i64 {\n  f(Some(5))\n  println(\"after\")\n  0\n}\n", ""),
+    ];
+    let mut attacks: Vec<String> = Vec::new();
+    for (tag, src, want_stdout) in cases {
+        let file = dir.join(format!("{tag}.ax"));
+        std::fs::write(&file, src).unwrap();
+        let check = Command::new(axon_bin)
+            .arg("check")
+            .arg(&file)
+            .output()
+            .unwrap();
+        if !check.status.success() {
+            let run = Command::new(axon_bin)
+                .arg("run")
+                .arg(&file)
+                .output()
+                .unwrap();
+            let build = Command::new(axon_bin)
+                .arg("build")
+                .arg(&file)
+                .arg("-o")
+                .arg(dir.join(format!("{tag}_bin")))
+                .arg("--no-cache")
+                .output()
+                .unwrap();
+            let refused =
+                |o: &std::process::Output| String::from_utf8_lossy(&o.stderr).contains("E0304");
+            assert!(
+                run.status.code() == Some(2)
+                    && build.status.code() == Some(1)
+                    && refused(&run)
+                    && refused(&build),
+                "[{tag}] refused at check, but run exit {:?} / build exit {:?}: {} / {}",
+                run.status.code(),
+                build.status.code(),
+                String::from_utf8_lossy(&run.stderr),
+                String::from_utf8_lossy(&build.stderr)
+            );
+            continue;
+        }
+        let (interp, native) = np_engines(&dir, tag, src, std::time::Duration::from_secs(10));
+        assert!(
+            interp.code == Some(101)
+                && interp.stdout == *want_stdout
+                && interp.stderr.contains("axon: panic: no match arm matched"),
+            "[{tag}] interpreter (the reference) changed: exit {:?}, stdout {:?}, stderr {:?}",
+            interp.code,
+            interp.stdout,
+            interp.stderr
+        );
+        match native {
+            Err(build) => attacks.push(format!(
+                "ATTACK: a match with no matching arm ran on natively [{tag}] (build: {build})"
+            )),
+            Ok(n) if n.code != interp.code || n.stdout != interp.stdout || n.stderr != interp.stderr => {
+                attacks.push(format!(
+                    "ATTACK: a match with no matching arm ran on natively [{tag}] interp exit {:?} stdout {:?} stderr {:?}; native exit {:?} stdout {:?} stderr {:?}",
+                    interp.code, interp.stdout, interp.stderr, n.code, n.stdout, n.stderr
+                ))
+            }
+            Ok(_) => {}
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(attacks.is_empty(), "{}", attacks.join("\n"));
+}
+
+/// native-parity lane B: write `src` as `<tag>.ax`, run it under `axon run`
+/// and as a native binary. `Err(stderr)` when `axon build` refuses. Both runs
+/// go through `timeout 60` (a native hang fails the case instead of wedging
+/// the test); `vmem_kib` caps the address space of both runs (`ulimit -v`),
+/// never the build.
+#[cfg(feature = "codegen")]
+fn npb_run_and_build(
+    dir: &std::path::Path,
+    tag: &str,
+    src: &str,
+    vmem_kib: Option<u64>,
+) -> (std::process::Output, Result<std::process::Output, String>) {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let file = dir.join(format!("{tag}.ax"));
+    std::fs::write(&file, src).unwrap();
+    let shell_line = match vmem_kib {
+        Some(kib) => format!("ulimit -v {kib} && exec timeout 60 \"$@\""),
+        None => "exec timeout 60 \"$@\"".to_string(),
+    };
+    let limited = |args: &[&std::ffi::OsStr]| {
+        Command::new("sh")
+            .arg("-c")
+            .arg(&shell_line)
+            .arg("sh")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let run = limited(&[axon_bin.as_ref(), "run".as_ref(), file.as_os_str()]);
+    let bin = dir.join(format!("{tag}_bin"));
+    let build = Command::new(axon_bin)
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .unwrap();
+    if !build.status.success() {
+        return (
+            run,
+            Err(String::from_utf8_lossy(&build.stderr).into_owned()),
+        );
+    }
+    (run, Ok(limited(&[bin.as_os_str()])))
+}
+
+/// native-parity lane B, §4 shared-killer protocol: compare one probe's
+/// interpreter and native runs (exit code and stdout, plus the whole stderr
+/// when `with_stderr`), and push one `ATTACK: <attack> [<tag>] ...` line on a
+/// divergence or a native build refusal. `interp_code` pins the reference
+/// side, so a fixture that stopped doing what the case is about is reported
+/// too (without `ATTACK:`).
+#[cfg(feature = "codegen")]
+fn npb_compare(
+    attack: &str,
+    tag: &str,
+    interp_code: i32,
+    with_stderr: bool,
+    (run, native): (std::process::Output, Result<std::process::Output, String>),
+    fails: &mut Vec<String>,
+) {
+    let s = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    if run.status.code() != Some(interp_code) {
+        fails.push(format!(
+            "[{tag}] fixture: interpreter exit {:?} (expected {interp_code}) stdout {:?} stderr {:?}",
+            run.status.code(),
+            s(&run.stdout),
+            s(&run.stderr)
+        ));
+        return;
+    }
+    let native = match native {
+        Ok(n) => n,
+        Err(stderr) => {
+            fails.push(format!(
+                "ATTACK: {attack} [{tag}] (build: {})",
+                stderr.trim()
+            ));
+            return;
+        }
+    };
+    if native.status.code() != run.status.code()
+        || native.stdout != run.stdout
+        || (with_stderr && native.stderr != run.stderr)
+    {
+        fails.push(format!(
+            "ATTACK: {attack} [{tag}] interp exit {:?} stdout {:?} stderr {:?} / native exit {:?} stdout {:?} stderr {:?}",
+            run.status.code(),
+            s(&run.stdout),
+            s(&run.stderr),
+            native.status.code(),
+            s(&native.stdout),
+            s(&native.stderr)
+        ));
+    }
+}
+
+/// native-parity NP-3 (O-CS2-01 w31, NPA-2): a generic fn called at two or
+/// more types, or from an `impl` method body, runs every call natively. Mono
+/// renamed a call site only when the fn had ONE instantiation and never in an
+/// impl method, and codegen dropped the unresolved call silently. Recursive
+/// generics stay refused at build (out of scope, NPA-4).
+#[cfg(feature = "codegen")]
+#[test]
+fn a_generic_fn_used_at_two_types_runs_every_call_natively() {
+    let dir = std::env::temp_dir().join(format!("axon_np3_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let attack = "a generic fn call was dropped natively";
+    let put = "fn put<V>(d: Dict<str, V>, k: str, v: V) { dict_set(d, k, v) }\n";
+    let tell_unit = "fn tell<T>(x: T, m: str) { println(m) }\n";
+    let impl_s = "type S = { k: i64 }\ntrait G {\n  fn go(self) -> i64\n}\n";
+    let main_s = "fn main() -> i64 {\n  let s = S { k: 1 }\n  println(to_str(s.go()))\n  0\n}\n";
+    let probes: Vec<(&str, String)> = vec![
+        (
+            "d12",
+            format!("{put}fn main() -> i64 {{\n  let a = dict_new()\n  put(a, \"x\", 1)\n  println(to_str(dict_len(a)))\n  \
+                     let b = dict_new()\n  put(b, \"y\", \"s\")\n  println(to_str(dict_len(b)))\n  0\n}}\n"),
+        ),
+        (
+            "d14",
+            "fn show<T>(x: T) -> T { x }\nfn put<V>(d: Dict<str, V>, k: str, v: V) { println(\"put \" + k)\n  dict_set(d, k, v) }\n\
+             fn main() -> i64 {\n  let a = dict_new()\n  put(a, \"x\", 1)\n  let b = dict_new()\n  put(b, \"y\", true)\n  \
+             println(to_str(dict_len(a)))\n  println(to_str(dict_len(b)))\n  0\n}\n"
+                .to_string(),
+        ),
+        (
+            "g02",
+            "fn log<T>(x: T, msg: str) { println(msg) }\nfn main() -> i64 {\n  log(1, \"one\")\n  log(\"a\", \"two\")\n  println(\"end\")\n  0\n}\n"
+                .to_string(),
+        ),
+        (
+            "g06",
+            "fn log<T>(x: T, msg: str) { println(msg) }\nfn main() -> i64 {\n  if true { log(1, \"one\") }\n  let k = 0\n  \
+             while k < 2 { log(\"a\", \"loop\")\n    k = k + 1 }\n  0\n}\n"
+                .to_string(),
+        ),
+        (
+            "g08",
+            "fn tell<T>(x: T) -> i64 { println(\"told\")\n  1 }\nfn main() -> i64 {\n  tell(1)\n  tell(\"a\")\n  0\n}\n".to_string(),
+        ),
+        (
+            "w31",
+            "fn put<V>(d: Dict<V>, k: str, v: V) { dict_set(d, k, v) }\nfn main() -> i64 {\n  let a = dict_new()\n  put(a, \"x\", 1)\n  \
+             let b = dict_new()\n  put(b, \"y\", \"s\")\n  println(to_str(dict_len(a) + dict_len(b)))\n  0\n}\n"
+                .to_string(),
+        ),
+        (
+            "i3",
+            format!("{tell_unit}{impl_s}impl G for S {{\n  fn go(self: S) -> i64 {{\n    tell(self.k, \"in-method\")\n    5\n  }}\n}}\n{main_s}"),
+        ),
+        (
+            "i1",
+            format!("fn tell<T>(x: T, m: str) -> i64 {{ println(m)\n  7 }}\n{impl_s}impl G for S {{\n  \
+                     fn go(self: S) -> i64 {{ tell(self.k, \"in-method\") }}\n}}\n{main_s}"),
+        ),
+        // Controls (identical before the fix): one instantiation; two `[T]`
+        // element types that both mangle to one `__unknown` instance.
+        (
+            "g03",
+            "fn log<T>(x: T, msg: str) { println(msg) }\nfn main() -> i64 {\n  log(1, \"one\")\n  log(2, \"two\")\n  println(\"end\")\n  0\n}\n"
+                .to_string(),
+        ),
+        (
+            "g04",
+            "fn n<T>(xs: [T]) -> i64 { len(xs) }\nfn main() -> i64 {\n  let a = n([1, 2, 3])\n  let b = n([\"x\"])\n  println(to_str(a + b))\n  0\n}\n"
+                .to_string(),
+        ),
+    ];
+    let mut fails = Vec::new();
+    for (tag, src) in &probes {
+        npb_compare(
+            attack,
+            tag,
+            0,
+            false,
+            npb_run_and_build(&dir, tag, src, None),
+            &mut fails,
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// native-parity NP-4: a `break`/`continue` that reaches a frame edge (a
+/// callee with no loop of its own, an impl method, a closure) panics natively
+/// with the interpreter's text, naming the source fn or "a closure", exit 101.
+/// Native used to emit nothing for it (the code after it ran on), and a
+/// closure defined inside a loop branched to a block of the enclosing fn.
+#[cfg(feature = "codegen")]
+#[test]
+fn loop_control_never_leaves_its_frame_natively() {
+    let dir = std::env::temp_dir().join(format!("axon_np4_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let attack = "loop control left its frame natively";
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/r51_s0b");
+    let mut probes: Vec<(&str, String)> = [
+        "escape_fast_local_int",
+        "escape_closure",
+        "escape_fast_inline",
+    ]
+    .iter()
+    .map(|name| {
+        (
+            *name,
+            std::fs::read_to_string(fixtures.join(format!("{name}.ax"))).unwrap(),
+        )
+    })
+    .collect();
+    probes.push((
+        "b01",
+        "fn main() {\n    for i in 0..4 {\n        let g = |n: i64| {\n            if n > 1 { break }\n            n\n        }\n        \
+         println(to_str(g(i)))\n    }\n    println(\"after\")\n}\n"
+            .to_string(),
+    ));
+    probes.push((
+        "b02",
+        "fn stop(n: i64) -> i64 {\n    if n > 1 { continue }\n    n\n}\nfn main() {\n    let i = 0\n    while i < 4 {\n        \
+         i = i + 1\n        println(to_str(stop(i)))\n    }\n    println(\"after\")\n}\n"
+            .to_string(),
+    ));
+    probes.push((
+        "bm",
+        "type S = { k: i64 }\ntrait G {\n  fn go(self) -> i64\n}\nimpl G for S {\n  fn go(self: S) -> i64 {\n    \
+         if self.k > 1 { break }\n    self.k\n  }\n}\nfn main() -> i64 {\n  let i = 0\n  while i < 4 {\n    \
+         let s = S { k: i }\n    println(to_str(s.go()))\n    i = i + 1\n  }\n  0\n}\n"
+            .to_string(),
+    ));
+    let mut fails = Vec::new();
+    for (tag, src) in &probes {
+        npb_compare(
+            attack,
+            tag,
+            101,
+            true,
+            npb_run_and_build(&dir, tag, src, None),
+            &mut fails,
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// native-parity NP-5 (O-CS2-01 h11): an `arr_range`/`arr_repeat` whose
+/// storage cannot be allocated panics natively with the interpreter's
+/// `alloc_array_err` line, exit 101. Native returned `[]` for a span above
+/// i64::MAX (the wrapped difference tested `> 0`), and a refused allocation
+/// died in the SIGSEGV handler saying "stack overflow". Both runs under
+/// `ulimit -v 16000000`, so the 8 TiB case is refused on any host.
+#[cfg(all(feature = "codegen", target_os = "linux"))]
+#[test]
+fn huge_arrays_panic_natively_like_the_interpreter() {
+    let dir = std::env::temp_dir().join(format!("axon_np5_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let attack = "a huge array allocation diverged natively";
+    let probe = |call: &str| {
+        format!("fn main() -> i64 {{\n  let xs = {call}\n  println(to_str(len(xs)))\n  0\n}}\n")
+    };
+    let probes = [
+        (
+            "h11",
+            "arr_range(-9223372036854775807, 9223372036854775807)",
+            101,
+        ),
+        ("r01", "arr_range(0, 9223372036854775807)", 101),
+        ("r02", "arr_range(0, 4611686018427387904)", 101),
+        ("r03", "arr_repeat(1, 9223372036854775807)", 101),
+        ("r05", "arr_range(0, 1099511627776)", 101),
+        ("r06", "arr_repeat(true, 9223372036854775807)", 101),
+        ("r04", "arr_range(-3, 3)", 0),
+    ];
+    let mut fails = Vec::new();
+    for (tag, call, code) in probes {
+        npb_compare(
+            attack,
+            tag,
+            code,
+            true,
+            npb_run_and_build(&dir, tag, &probe(call), Some(16_000_000)),
+            &mut fails,
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}

@@ -1,0 +1,289 @@
+// 2048 board logic. A board is a flat square array of tiles stored row by row;
+// 0 marks an empty cell. Directions are "left", "right", "up" and "down".
+
+fn board_side(board: [i64]) -> i64 {
+    let n = 0
+    while n * n < len(board) {
+        n = n + 1
+    }
+    n
+}
+
+fn line_cells(n: i64, dir: str, i: i64) -> [i64] {
+    let cells: [i64] = []
+    for k in 0..n {
+        if dir == "left" {
+            cells = arr_push(cells, i * n + k)
+        } else if dir == "right" {
+            cells = arr_push(cells, i * n + n - 1 - k)
+        } else if dir == "up" {
+            cells = arr_push(cells, k * n + i)
+        } else {
+            cells = arr_push(cells, (n - 1 - k) * n + i)
+        }
+    }
+    cells
+}
+
+fn slide_row(row: [i64], toward_end: bool) -> [i64] {
+    let n = len(row)
+    let src = arr_repeat(0, n)
+    for i in 0..n {
+        if toward_end {
+            src[i] = row[n - 1 - i]
+        } else {
+            src[i] = row[i]
+        }
+    }
+    let packed = arr_repeat(0, n)
+    let pos = 0
+    let pending = 0
+    for v in src {
+        if v != 0 {
+            if pending == 0 {
+                pending = v
+            } else if pending == v {
+                packed[pos] = v * 2
+                pos = pos + 1
+                pending = 0
+            } else {
+                packed[pos] = pending
+                pos = pos + 1
+                pending = v
+            }
+        }
+    }
+    if pending != 0 {
+        packed[pos] = pending
+    }
+    if toward_end {
+        arr_reverse(packed)
+    } else {
+        packed
+    }
+}
+
+fn move_board(board: [i64], dir: str) -> [i64] {
+    let n = board_side(board)
+    let empty: [i64] = []
+    let known = dir == "left" || dir == "right" || dir == "up" || dir == "down"
+    if n == 0 || n * n != len(board) || !known {
+        return empty
+    }
+    let out = arr_take(board, len(board))
+    let horizontal = dir == "left" || dir == "right"
+    let toward_end = dir == "right" || dir == "down"
+    for i in 0..n {
+        let values = arr_repeat(0, n)
+        for k in 0..n {
+            if horizontal {
+                values[k] = board[i * n + k]
+            } else {
+                values[k] = board[k * n + i]
+            }
+        }
+        let slid = slide_row(values, toward_end)
+        for k in 0..n {
+            if horizontal {
+                out[i * n + k] = slid[k]
+            } else {
+                out[k * n + i] = slid[k]
+            }
+        }
+    }
+    out
+}
+
+fn move_score(board: [i64], dir: str) -> i64 {
+    let n = board_side(board)
+    let known = dir == "left" || dir == "right" || dir == "up" || dir == "down"
+    if n == 0 || n * n != len(board) || !known {
+        return -1
+    }
+    let total = 0
+    let moved = false
+    for i in 0..n {
+        let pending = 0
+        let gap = false
+        for cell in line_cells(n, dir, i) {
+            let v = board[cell]
+            if v == 0 {
+                gap = true
+            } else {
+                if gap {
+                    moved = true
+                }
+                if pending == v {
+                    total = total + v * 2
+                    moved = true
+                    pending = 0
+                } else {
+                    pending = v
+                }
+            }
+        }
+    }
+    if moved {
+        total
+    } else {
+        -1
+    }
+}
+
+fn game_state(board: [i64], target: i64) -> str {
+    let n = board_side(board)
+    if n == 0 || n * n != len(board) {
+        return "invalid"
+    }
+    let won = false
+    let open = false
+    for r in 0..n {
+        for c in 0..n {
+            let v = board[r * n + c]
+            if v >= target {
+                won = true
+            }
+            if v == 0 {
+                open = true
+            } else if c + 1 < n && board[r * n + c + 1] == v {
+                open = true
+            } else if r + 1 < n && board[(r + 1) * n + c] == v {
+                open = true
+            }
+        }
+    }
+    if won {
+        "won"
+    } else if open {
+        "playing"
+    } else {
+        "lost"
+    }
+}
+
+fn best_direction(board: [i64]) -> str {
+    let n = board_side(board)
+    let best = "none"
+    let best_rank = -1
+    for dir in ["left", "right", "up", "down"] {
+        let score = move_score(board, dir)
+        if score >= 0 {
+            let after = move_board(board, dir)
+            let empties = 0
+            let top = 0
+            let top_cell = 0
+            for i in 0..len(after) {
+                if after[i] == 0 {
+                    empties = empties + 1
+                } else if after[i] > top {
+                    top = after[i]
+                    top_cell = i
+                }
+            }
+            let cornered = 0
+            if top_cell == 0 || top_cell == n - 1 || top_cell == n * (n - 1) || top_cell == n * n - 1 {
+                cornered = 1
+            }
+            let rank = score * 1000 + cornered * 100 + empties
+            if rank > best_rank {
+                best = dir
+                best_rank = rank
+            }
+        }
+    }
+    best
+}
+
+fn sample_board() -> [i64] {
+    [2, 0, 0, 2, 0, 4, 4, 0, 2, 0, 0, 0, 2, 0, 0, 8]
+}
+
+@[test]
+fn test_slide_row_pairs_merge_once() {
+    assert(slide_row([2, 2, 2, 2], false) == [4, 4, 0, 0])
+}
+
+@[test]
+fn test_slide_row_keeps_unmatched_tail() {
+    assert(slide_row([2, 2, 4, 2], false) == [4, 4, 2, 0])
+}
+
+@[test]
+fn test_slide_row_toward_end() {
+    assert(slide_row([2, 2, 4, 8], true) == [0, 4, 4, 8])
+}
+
+@[test]
+fn test_slide_row_no_chain_merge() {
+    assert(slide_row([4, 4, 8, 0], false) == [8, 8, 0, 0])
+}
+
+@[test]
+fn test_move_board_left() {
+    assert(move_board(sample_board(), "left") == [4, 0, 0, 0, 8, 0, 0, 0, 2, 0, 0, 0, 2, 8, 0, 0])
+}
+
+@[test]
+fn test_move_board_up() {
+    assert(move_board(sample_board(), "up") == [4, 4, 4, 2, 2, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0])
+}
+
+@[test]
+fn test_move_board_down() {
+    assert(move_board(sample_board(), "down") == [0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 2, 4, 4, 4, 8])
+}
+
+@[test]
+fn test_move_board_right_three_by_three() {
+    assert(move_board([2, 2, 2, 0, 0, 0, 4, 0, 4], "right") == [0, 2, 4, 0, 0, 0, 0, 0, 8])
+}
+
+@[test]
+fn test_move_score_left() {
+    assert_eq(move_score(sample_board(), "left"), 12)
+}
+
+@[test]
+fn test_move_score_up() {
+    assert_eq(move_score(sample_board(), "up"), 4)
+}
+
+@[test]
+fn test_move_score_blocked_move() {
+    assert_eq(move_score([2, 4, 8, 16], "left"), -1)
+}
+
+@[test]
+fn test_game_state_lost() {
+    assert_eq_str(game_state([2, 4, 4, 8], 2048), "lost")
+}
+
+@[test]
+fn test_game_state_won() {
+    assert_eq_str(game_state([2, 4, 2048, 8], 2048), "won")
+}
+
+@[test]
+fn test_game_state_playing() {
+    assert_eq_str(game_state([2, 2, 4, 8], 2048), "playing")
+}
+
+@[test]
+fn test_best_direction_prefers_left_on_tie() {
+    assert_eq_str(best_direction(sample_board()), "left")
+}
+
+@[test]
+fn test_best_direction_vertical() {
+    assert_eq_str(best_direction([2, 4, 2, 4]), "up")
+}
+
+@[test]
+fn test_best_direction_stuck() {
+    assert_eq_str(best_direction([2, 4, 8, 16]), "none")
+}
+
+@[test]
+fn test_best_direction_keeps_top_tile_in_corner() {
+    assert_eq_str(best_direction([0, 0, 2, 0, 0, 8, 0, 0, 0]), "down")
+}

@@ -346,6 +346,99 @@ fn kinds_conflict(param: &Type, arg: &Type) -> bool {
     }
 }
 
+/// CS3-2: `ty` with each var that has a derived kind replaced by it.
+fn with_derived(ty: &Type, derived: &HashMap<u32, Derived>) -> Type {
+    if derived.is_empty() {
+        return ty.clone();
+    }
+    ty.clone().map_leaves(&mut |t| match t {
+        Type::Var(v) => match derived.get(&v) {
+            Some(Derived::Kind(k)) => k.clone(),
+            _ => Type::Var(v),
+        },
+        t => t,
+    })
+}
+
+/// CS3-2: the type each lambda param var is passed to by a call its lambda's
+/// body always makes (`CallObligation::derives_for`), as a fixpoint:
+/// `let k = |z| g(z)` derives `z` from `g`'s param `y` once
+/// `let g = |y| f(y)` has derived `y` from `f` (w02). Nothing is unified. A
+/// var passed to two different param types is `Conflicted`, and a var two
+/// lambdas' params share (`lambda_params` resolving to one var) derives
+/// nothing: either way the run time decides, as before.
+fn derive_param_kinds(
+    obligations: &[CallObligation],
+    lambda_params: &[u32],
+    subst: &Substitution,
+) -> HashMap<u32, Derived> {
+    let resolve = |v: u32| match subst.apply(&Type::Var(v)) {
+        Type::Var(r) => Some(r),
+        _ => None,
+    };
+    let mut owners: HashMap<u32, u32> = HashMap::new();
+    for &v in lambda_params {
+        if let Some(r) = resolve(v) {
+            *owners.entry(r).or_default() += 1;
+        }
+    }
+    // Each call's resolved params, and per argument the param var of the
+    // calling lambda that the argument is, when it is one.
+    let sites: Vec<(Vec<Type>, Vec<Option<u32>>)> = obligations
+        .iter()
+        .filter(|ob| !ob.derives_for.is_empty())
+        .filter_map(|ob| {
+            let Type::Fn(params, _) = subst.apply(&ob.callee) else {
+                return None;
+            };
+            if params.len() != ob.args.len() {
+                return None;
+            }
+            let own: Vec<u32> = ob.derives_for.iter().filter_map(|&v| resolve(v)).collect();
+            let targets = ob
+                .args
+                .iter()
+                .map(|a| match subst.apply(a) {
+                    Type::Var(v) if own.contains(&v) && owners.get(&v) == Some(&1) => Some(v),
+                    _ => None,
+                })
+                .collect();
+            Some((params, targets))
+        })
+        .collect();
+    let mut derived: HashMap<u32, Derived> = HashMap::new();
+    loop {
+        let mut changed = false;
+        // Newest call first. The order does not change the fixpoint.
+        for (params, targets) in sites.iter().rev() {
+            for (param, target) in params.iter().zip(targets) {
+                let Some(v) = *target else {
+                    continue;
+                };
+                let kind = with_derived(param, &derived);
+                if has_unresolved(&kind) {
+                    continue;
+                }
+                match derived.get(&v) {
+                    None => {
+                        derived.insert(v, Derived::Kind(kind));
+                        changed = true;
+                    }
+                    Some(Derived::Kind(k)) if *k != kind => {
+                        derived.insert(v, Derived::Conflicted);
+                        changed = true;
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    derived
+}
+
 // ── Inference error ───────────────────────────────────────────────────────────
 
 /// A diagnostic produced by the type-inference pass.
@@ -390,6 +483,15 @@ fn mismatch_help(origin: &str, expected: &Type, found: &Type) -> Option<String> 
                 .to_string(),
         );
     }
+    // CS3-5 (7): `?` on an `Option` (`first_char(s)?`) in a fn returning
+    // `Result`. The message names the two types; the help names the spelling.
+    if origin == "? inner type" && matches!(found, Type::Option(_)) {
+        return Some(
+            "`?` works on `Result` only - convert with \
+             `match o { Some(v) => v, None => return Err(...) }`"
+                .to_string(),
+        );
+    }
     wrapper_misuse_help(expected, found)
 }
 
@@ -423,6 +525,22 @@ fn body_diverges(e: &crate::ast::Expr) -> bool {
         Expr::Block(stmts) => stmts.last().is_some_and(|s| body_diverges(&s.expr)),
         _ => false,
     }
+}
+
+/// CS3-2: whether running `e` may skip what follows it in its block: a
+/// `return`, `?`, `break`, `continue` or `exit(..)` anywhere inside it (one in
+/// a nested lambda counts too, which only means fewer kinds are derived).
+fn may_leave_early(e: &crate::ast::Expr) -> bool {
+    use crate::ast::Expr;
+    let mut found = false;
+    crate::ast::walk_expr(e, &mut |x| {
+        found |= match x {
+            Expr::Return(_) | Expr::Question(_) | Expr::Break | Expr::Continue => true,
+            Expr::Call { callee, .. } => matches!(callee.as_ref(), Expr::Ident(n) if n == "exit"),
+            _ => false,
+        };
+    });
+    found
 }
 
 impl InferError {
@@ -731,6 +849,24 @@ struct CallObligation {
     /// The fresh variable the call expression was typed as.
     ret: Type,
     span: crate::span::Span,
+    /// CS3-2: the param vars of the innermost enclosing lambda when this call
+    /// runs every time that lambda runs (not inside an `if`/`else` branch, a
+    /// `match` arm, the right operand of `&&`/`||`, a loop body, a handler,
+    /// or after a statement that may leave early) and is the first call the
+    /// lambda's body makes (`InferCtx::lambda_calls`). Empty otherwise, and
+    /// outside a lambda.
+    /// `solve()` derives a kind for these params only (see
+    /// [`derive_param_kinds`]).
+    derives_for: Vec<u32>,
+}
+
+/// CS3-2: the kind the calls in a lambda's body require of one of its params.
+#[derive(Clone, PartialEq)]
+enum Derived {
+    /// The callee param type the param var is passed to.
+    Kind(Type),
+    /// Passed to params of different types: no kind is derived.
+    Conflicted,
 }
 
 // ── InferCtx ──────────────────────────────────────────────────────────────────
@@ -754,9 +890,11 @@ pub struct InferCtx {
     /// (CS-4), and the names a call instantiates must come from the sig that
     /// call actually reaches.
     builtin_generic_params: HashMap<String, Vec<String>>,
-    /// Recorded call-site instantiations (fn_name → Vec<concrete Type args>).
-    /// Populated during infer; consumed by the mono pass.
-    pub call_instantiations: Vec<(String, Vec<Type>)>,
+    /// Recorded call-site instantiations (fn_name, concrete Type args, site).
+    /// `site` is the callee `Expr`'s address (`callee.as_ref() as *const Expr
+    /// as usize`), so mono can rename each call to ITS instance (native-parity
+    /// NP-3). Populated during infer; consumed by the mono pass.
+    pub call_instantiations: Vec<(String, Vec<Type>, usize)>,
     /// CS-5: `len` args that were still a type variable at the call. Each
     /// must resolve to `str` or `[T]`; checked by `solve()` once the
     /// substitution is final (pinning the var to `str` at the call refused a
@@ -818,6 +956,23 @@ pub struct InferCtx {
     /// that is an operand of an arithmetic or comparison `BinOp`, with the
     /// other operand's (unsolved) type and the span (CS-1/CS-2, E-6).
     predicate_int_operands: Option<Vec<(i64, Type, crate::span::Span)>>,
+    /// CS3-2: how many conditional regions (a branch, an arm, a loop body,
+    /// the right of `&&`/`||`, the rest of a block after an early exit)
+    /// enclose the expression being inferred, counted from the innermost
+    /// lambda's body.
+    cond_depth: u32,
+    /// CS3-2: the param vars of the innermost lambda being inferred.
+    lambda_params: Vec<u32>,
+    /// CS3-2: the calls started so far in the innermost lambda's body. Only
+    /// a call that is the body's first, with no call in its callee or args,
+    /// derives kinds: a call run before it may perform an effect that an
+    /// enclosing handler answers without `resume`, so the call never runs.
+    lambda_calls: u32,
+    /// CS3-2: the param vars of every lambda inferred. A var two lambda
+    /// params share after solving (`g = |w| ...` over `let g = |y| ...`, two
+    /// lambdas in one array or `if`) derives no kind: the call reaching one of
+    /// those lambdas need not be the call that reaches the other.
+    all_lambda_params: Vec<u32>,
 }
 
 /// What [`InferCtx::infer_predicate`] found in one predicate.
@@ -898,6 +1053,10 @@ impl InferCtx {
             current_stmt_span: crate::span::Span::dummy(),
             max_type_depth: MAX_TYPE_DEPTH,
             predicate_int_operands: None,
+            cond_depth: 0,
+            lambda_params: Vec::new(),
+            lambda_calls: 0,
+            all_lambda_params: Vec::new(),
         };
         for (name, sig) in builtin_sigs() {
             let params: Vec<Type> = sig.params.iter().map(|s| parse_type_str(s)).collect();
@@ -1491,7 +1650,11 @@ impl InferCtx {
         // `cur` is the innermost left operand: not a `BinOp`.
         let mut lt = self.infer_expr(cur, scope, ret_ty);
         for (op, left, right) in spine.into_iter().rev() {
+            // CS3-2: the right operand of `&&`/`||` may not run.
+            let short_circuit = matches!(op, BinOp::And | BinOp::Or);
+            self.cond_depth += u32::from(short_circuit);
             let rt = self.infer_expr(right, scope, ret_ty);
+            self.cond_depth -= u32::from(short_circuit);
             lt = self.infer_binop_node(op, left, right, lt, rt);
         }
         lt
@@ -1734,6 +1897,9 @@ impl InferCtx {
             // inline-handler arm bodies are inferred for their side effects on
             // the type environment, then discarded.
             Expr::WithHandler { handler, body } => {
+                // CS3-2: a handler arm may not run, and one that does not
+                // `resume` ends the body early: neither part always runs.
+                self.cond_depth += 1;
                 if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
                     for arm in arms.iter().chain(return_arm.as_deref()) {
                         scope.push();
@@ -1741,20 +1907,34 @@ impl InferCtx {
                         scope.pop();
                     }
                 }
-                self.infer_expr(body, scope, ret_ty)
+                let ty = self.infer_expr(body, scope, ret_ty);
+                self.cond_depth -= 1;
+                ty
             }
 
             Expr::Block(stmts) => {
                 scope.push();
                 let mut last = Type::Unit;
                 let n = stmts.len();
+                let depth = self.cond_depth;
                 for (i, stmt) in stmts.iter().enumerate() {
                     self.current_stmt_span = stmt.span;
+                    // CS3-2: a statement that may leave early, and the
+                    // statements after it, may not run in full (x10:
+                    // `if c { return 0 }  f(y)`; also `(if c { return 0 }
+                    // else { 1 }) + f(y)` within one statement).
+                    if self.cond_depth == 0
+                        && !self.lambda_params.is_empty()
+                        && may_leave_early(&stmt.expr)
+                    {
+                        self.cond_depth = 1;
+                    }
                     let ty = self.infer_expr(&stmt.expr, scope, ret_ty);
                     if i + 1 == n {
                         last = ty;
                     }
                 }
+                self.cond_depth = depth;
                 scope.pop();
                 last
             }
@@ -1786,6 +1966,9 @@ impl InferCtx {
 
             // ── Function call ─────────────────────────────────────────────────
             Expr::Call { callee, args, .. } => {
+                // CS3-2: this call, and every call in its callee and args.
+                let calls_before = self.lambda_calls;
+                self.lambda_calls += 1;
                 let fn_name = match callee.as_ref() {
                     Expr::Ident(n) => Some(n.clone()),
                     // Chan::new(n) / chan<T>() both parse as StructLit { name: ... }
@@ -2041,8 +2224,11 @@ impl InferCtx {
                                 .collect();
                             // Store pending instantiation — vars will be resolved after solving.
                             if !var_ids.is_empty() {
-                                self.call_instantiations
-                                    .push((name, var_ids.iter().map(|&v| Type::Var(v)).collect()));
+                                self.call_instantiations.push((
+                                    name,
+                                    var_ids.iter().map(|&v| Type::Var(v)).collect(),
+                                    callee.as_ref() as *const Expr as usize,
+                                ));
                             }
                         }
                         return ret;
@@ -2063,6 +2249,14 @@ impl InferCtx {
                     args: call_args,
                     ret: ret.clone(),
                     span: self.current_stmt_span,
+                    derives_for: if self.cond_depth == 0
+                        && calls_before == 0
+                        && self.lambda_calls == 1
+                    {
+                        self.lambda_params.clone()
+                    } else {
+                        Vec::new()
+                    },
                 });
                 ret
             }
@@ -2073,6 +2267,8 @@ impl InferCtx {
                 method,
                 args,
             } => {
+                // CS3-2: a method call counts as a call (see `lambda_calls`).
+                self.lambda_calls += 1;
                 let recv_ty = self.infer_expr(receiver, scope, ret_ty);
                 if matches!(recv_ty, Type::Var(_)) {
                     self.method_receiver_vars
@@ -2155,12 +2351,15 @@ impl InferCtx {
                 if arms.is_empty() {
                     return Type::Unit;
                 }
+                // CS3-2: an arm (its guard included) may not run.
+                self.cond_depth += 1;
                 let first_ty =
                     self.infer_match_arm_with_subj(&arms[0], scope, ret_ty, Some(&subj_ty));
                 for arm in &arms[1..] {
                     let arm_ty = self.infer_match_arm_with_subj(arm, scope, ret_ty, Some(&subj_ty));
                     self.constrain(arm_ty, first_ty.clone(), "match arm type");
                 }
+                self.cond_depth -= 1;
                 first_ty
             }
 
@@ -2168,8 +2367,10 @@ impl InferCtx {
             Expr::If { cond, then, else_ } => {
                 let cond_ty = self.infer_expr(cond, scope, ret_ty);
                 self.constrain(cond_ty, Type::Bool, "if condition");
+                // CS3-2: either branch may not run.
+                self.cond_depth += 1;
                 let then_ty = self.infer_expr(then, scope, ret_ty);
-                if let Some(else_expr) = else_ {
+                let ty = if let Some(else_expr) = else_ {
                     let else_ty = self.infer_expr(else_expr, scope, ret_ty);
                     self.constrain(else_ty, then_ty.clone(), "if-else branch types");
                     then_ty
@@ -2178,7 +2379,9 @@ impl InferCtx {
                     // is no value to produce when the condition is false.
                     self.constrain(then_ty, Type::Unit, "if-without-else body");
                     Type::Unit
-                }
+                };
+                self.cond_depth -= 1;
+                ty
             }
 
             // ── Return ────────────────────────────────────────────────────────
@@ -2482,16 +2685,22 @@ impl InferCtx {
 
             // ── Spawn (Phase 1: sequential stub) ──────────────────────────────
             Expr::Spawn(body) => {
+                // CS3-2: a spawned body is not counted as always run.
+                self.cond_depth += 1;
                 self.infer_expr(body, scope, ret_ty);
+                self.cond_depth -= 1;
                 Type::Unit
             }
 
             // ── Select ────────────────────────────────────────────────────────
             Expr::Select(arms) => {
+                // CS3-2: one arm runs; which one is not known here.
+                self.cond_depth += 1;
                 for arm in arms {
                     self.infer_expr(&arm.recv, scope, ret_ty);
                     self.infer_expr(&arm.body, scope, ret_ty);
                 }
+                self.cond_depth -= 1;
                 Type::Unit
             }
 
@@ -2517,7 +2726,28 @@ impl InferCtx {
                 for (p, ty) in params.iter().zip(param_types.iter()) {
                     scope.bind(p.name.clone(), ty.clone());
                 }
+                // CS3-2: the body's calls are counted from the lambda's own
+                // entry, and derive kinds only for this lambda's params. A
+                // body that is not a block and may leave early (`(if c {
+                // return 0 } else { 1 }) + f(y)`) starts conditional; a block
+                // body decides per statement.
+                let own: Vec<u32> = param_types
+                    .iter()
+                    .filter_map(|t| match t {
+                        Type::Var(v) => Some(*v),
+                        _ => None,
+                    })
+                    .collect();
+                self.all_lambda_params.extend(&own);
+                let outer_params = std::mem::replace(&mut self.lambda_params, own);
+                let entry_depth =
+                    u32::from(!matches!(body.as_ref(), Expr::Block(_)) && may_leave_early(body));
+                let outer_depth = std::mem::replace(&mut self.cond_depth, entry_depth);
+                let outer_calls = std::mem::replace(&mut self.lambda_calls, 0);
                 let body_ty = self.infer_expr(body, scope, &lambda_ret_var);
+                self.lambda_calls = outer_calls;
+                self.cond_depth = outer_depth;
+                self.lambda_params = outer_params;
                 scope.pop();
                 Type::Fn(param_types, Box::new(body_ty))
             }
@@ -2537,10 +2767,13 @@ impl InferCtx {
                 // diagnostic for the same failure, so both were reported with
                 // the useless one first.
                 let outer_span = self.current_stmt_span;
+                // CS3-2: a loop body may run zero times.
+                self.cond_depth += 1;
                 for stmt in body {
                     self.current_stmt_span = stmt.span;
                     self.infer_expr(&stmt.expr, scope, ret_ty);
                 }
+                self.cond_depth -= 1;
                 self.current_stmt_span = outer_span;
                 scope.pop();
                 Type::Unit
@@ -2567,10 +2800,12 @@ impl InferCtx {
                 // diagnostic for the same failure, so both were reported with
                 // the useless one first.
                 let outer_span = self.current_stmt_span;
+                self.cond_depth += 1;
                 for stmt in body {
                     self.current_stmt_span = stmt.span;
                     self.infer_expr(&stmt.expr, scope, ret_ty);
                 }
+                self.cond_depth -= 1;
                 self.current_stmt_span = outer_span;
                 scope.pop();
                 Type::Unit
@@ -2600,10 +2835,12 @@ impl InferCtx {
                 // diagnostic for the same failure, so both were reported with
                 // the useless one first.
                 let outer_span = self.current_stmt_span;
+                self.cond_depth += 1;
                 for stmt in body {
                     self.current_stmt_span = stmt.span;
                     self.infer_expr(&stmt.expr, scope, ret_ty);
                 }
+                self.cond_depth -= 1;
                 self.current_stmt_span = outer_span;
                 scope.pop();
                 Type::Unit
@@ -2815,7 +3052,7 @@ impl InferCtx {
             }
         }
         // Resolve pending generic instantiations now that the substitution is final.
-        for (_, type_args) in &mut self.call_instantiations {
+        for (_, type_args, _) in &mut self.call_instantiations {
             for ty in type_args.iter_mut() {
                 *ty = subst.apply(ty);
             }
@@ -2906,20 +3143,24 @@ impl InferCtx {
         }
     }
 
-    /// Return all recorded call-site instantiations as (fn_name, [AxonType args]).
-    /// Deduplicates identical instantiations.
-    pub fn drain_instantiations(&mut self) -> Vec<(String, Vec<crate::ast::AxonType>)> {
-        use std::collections::HashSet;
-        let mut seen: HashSet<(String, Vec<String>)> = HashSet::new();
-        let mut result = Vec::new();
-        for (name, type_args) in self.call_instantiations.drain(..) {
+    /// Return the recorded call-site instantiations as (fn_name, [AxonType
+    /// args], sites), deduplicated on (fn_name, args): each entry is one
+    /// instance to request, `sites` every call (callee address) that needs it.
+    pub fn drain_instantiations(&mut self) -> Vec<crate::mono::Instantiation> {
+        let mut index: HashMap<(String, Vec<String>), usize> = HashMap::new();
+        let mut result: Vec<crate::mono::Instantiation> = Vec::new();
+        for (name, type_args, site) in self.call_instantiations.drain(..) {
             let axon_args: Vec<_> = type_args.iter().map(Self::type_to_axon).collect();
             let key = (
                 name.clone(),
                 axon_args.iter().map(|t| format!("{t:?}")).collect(),
             );
-            if seen.insert(key) {
-                result.push((name, axon_args));
+            match index.get(&key) {
+                Some(&i) => result[i].2.push(site),
+                None => {
+                    index.insert(key, result.len());
+                    result.push((name, axon_args, vec![site]));
+                }
             }
         }
         result
@@ -3060,7 +3301,13 @@ impl InferCtx {
         // of that type still unresolved (an unannotated lambda param, a
         // generic) accepts anything and is never bound by the call: a lambda
         // stays callable at more than one type, as it runs.
-        for ob in std::mem::take(&mut self.call_obligations) {
+        //
+        // CS3-2: a param a lambda's body always passes to a callee
+        // (`let g = |y| f(y)`) takes the kind that callee's param has, so
+        // `g(5)` is checked as `f(5)` is (h24). Kinds only: nothing is bound.
+        let obligations = std::mem::take(&mut self.call_obligations);
+        let derived = derive_param_kinds(&obligations, &self.all_lambda_params, &subst);
+        for ob in obligations {
             let Type::Fn(params, ret) = subst.apply(&ob.callee) else {
                 continue;
             };
@@ -3084,12 +3331,13 @@ impl InferCtx {
             }
             for (i, (param, arg)) in params.iter().zip(&ob.args).enumerate() {
                 let arg = subst.apply(arg);
-                if kinds_conflict(param, &arg) {
+                let param = with_derived(param, &derived);
+                if kinds_conflict(&param, &arg) {
                     let span = ob.span;
                     self.errors.push(
                         InferError::mismatch(
                             &format!("arg {i} of a call through a fn value"),
-                            param,
+                            &param,
                             &arg,
                         )
                         .with_span(span),
@@ -3349,7 +3597,7 @@ mod tests {
         let queued: Vec<&str> = ctx
             .call_instantiations
             .iter()
-            .map(|(n, _)| n.as_str())
+            .map(|(n, _, _)| n.as_str())
             .collect();
         assert!(
             !queued.contains(&"dict_set"),
@@ -3373,7 +3621,7 @@ mod tests {
         let queued: Vec<&str> = ctx
             .call_instantiations
             .iter()
-            .map(|(n, _)| n.as_str())
+            .map(|(n, _, _)| n.as_str())
             .collect();
         assert!(
             queued.contains(&"arr_reverse"),
@@ -3964,6 +4212,23 @@ fn main() -> i64 {
             "two identical instantiations should deduplicate to one"
         );
         assert_eq!(insts[0].0, "double");
+        // native-parity NP-3: the dedup keeps every call site (callee address).
+        let Item::FnDef(main_def) = &program.items[1] else {
+            unreachable!("main is item 1")
+        };
+        let crate::ast::Expr::Block(stmts) = &main_def.body else {
+            unreachable!("main's body is a block")
+        };
+        let callee_sites: Vec<usize> = stmts
+            .iter()
+            .map(|s| match &s.expr {
+                crate::ast::Expr::Call { callee, .. } => {
+                    callee.as_ref() as *const crate::ast::Expr as usize
+                }
+                other => unreachable!("a call statement, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(insts[0].2, callee_sites, "both call sites must be kept");
     }
 
     #[test]

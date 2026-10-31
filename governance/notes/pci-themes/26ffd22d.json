@@ -1,0 +1,4 @@
+{
+  "theme": "native parity",
+  "text": "NATIVE: a generic fn called at two or more types, or from an impl method body, now runs every call natively (each call site is renamed to its own instance), and a call that still resolves to no fn is refused at build with E0910 instead of being dropped silently"
+}

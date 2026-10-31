@@ -1,0 +1,273 @@
+// Online bin-packing heuristics. Each strategy returns, for every item, the
+// index of the bin it was placed in. Items that cannot be packed at all
+// (non-positive size, or larger than the capacity) are marked -1.
+
+fn first_fit(items: [i64], cap: i64) -> [i64] {
+    let assign: [i64] = []
+    let loads: [i64] = []
+    for size in items {
+        if cap <= 0 || size <= 0 || size > cap {
+            assign = arr_push(assign, -1)
+            continue
+        }
+        let placed = -1
+        let b = 0
+        while b < len(loads) && placed < 0 {
+            if loads[b] + size <= cap {
+                placed = b
+            }
+            b = b + 1
+        }
+        if placed < 0 {
+            loads = arr_push(loads, size)
+            placed = len(loads) - 1
+        } else {
+            loads[placed] = loads[placed] + size
+        }
+        assign = arr_push(assign, placed)
+    }
+    assign
+}
+
+// Best fit puts each item in the open bin it fills most tightly; equal
+// leftover space goes to the lower bin index.
+fn best_fit(items: [i64], cap: i64) -> [i64] {
+    let assign: [i64] = []
+    let loads: [i64] = []
+    for size in items {
+        if cap <= 0 || size <= 0 || size > cap {
+            assign = arr_push(assign, -1)
+            continue
+        }
+        let placed = -1
+        let tightest = cap + 1
+        for b in 0..len(loads) {
+            let left = cap - loads[b] - size
+            if left >= 0 && left < tightest {
+                tightest = left
+                placed = b
+            }
+        }
+        if placed < 0 {
+            loads = arr_push(loads, size)
+            placed = len(loads) - 1
+        } else {
+            loads[placed] = loads[placed] + size
+        }
+        assign = arr_push(assign, placed)
+    }
+    assign
+}
+
+// Next fit keeps only the most recent bin open and starts a new one as soon
+// as an item does not fit.
+fn next_fit(items: [i64], cap: i64) -> [i64] {
+    let assign: [i64] = []
+    let current = -1
+    let load = 0
+    for size in items {
+        if cap <= 0 || size <= 0 || size > cap {
+            assign = arr_push(assign, -1)
+            continue
+        }
+        if current < 0 {
+            current = 0
+            load = size
+        } else if load + size <= cap {
+            load = load + size
+        } else {
+            current = current + 1
+            load = size
+        }
+        assign = arr_push(assign, current)
+    }
+    assign
+}
+
+// First fit decreasing: sort the packable items largest first, then place
+// them by first fit. Returns the final load of every bin used.
+fn ffd_loads(items: [i64], cap: i64) -> [i64] {
+    let sorted: [i64] = []
+    for size in items {
+        if cap <= 0 || size <= 0 || size > cap {
+            continue
+        }
+        sorted = arr_push(sorted, size)
+        let j = len(sorted) - 1
+        while j > 0 && sorted[j - 1] < sorted[j] {
+            let tmp = sorted[j - 1]
+            sorted[j - 1] = sorted[j]
+            sorted[j] = tmp
+            j = j - 1
+        }
+    }
+    let loads: [i64] = []
+    for size in sorted {
+        let placed = false
+        for b in 0..len(loads) {
+            if !placed && loads[b] + size <= cap {
+                loads[b] = loads[b] + size
+                placed = true
+            }
+        }
+        if !placed {
+            loads = arr_push(loads, size)
+        }
+    }
+    loads
+}
+
+// Unused capacity summed over every bin from 0 up to the highest bin index
+// referenced by the assignment. Returns -1 for an assignment that does not
+// match the items or that overfills a bin.
+fn packing_waste(assign: [i64], items: [i64], cap: i64) -> i64 {
+    if len(assign) != len(items) || cap <= 0 {
+        return -1
+    }
+    let bins = 0
+    for b in assign {
+        if b + 1 > bins {
+            bins = b + 1
+        }
+    }
+    let loads = arr_repeat(0, bins)
+    for i in 0..len(items) {
+        let b = assign[i]
+        if b < 0 {
+            continue
+        }
+        loads[b] = loads[b] + items[i]
+    }
+    let waste = 0
+    for load in loads {
+        if load > cap {
+            return -1
+        }
+        waste = waste + (cap - load)
+    }
+    waste
+}
+
+// Bin count and waste for each online strategy, the strategy that needs the
+// fewest bins (earlier strategies win ties) and how many items fit nowhere.
+fn strategy_summary(items: [i64], cap: i64) -> str {
+    let names = ["first-fit", "best-fit", "next-fit"]
+    let plans = [first_fit(items, cap), best_fit(items, cap), next_fit(items, cap)]
+    let parts: [str] = []
+    let best = -1
+    let best_bins = 0
+    for i in 0..len(plans) {
+        let plan = plans[i]
+        let bins = 0
+        for b in plan {
+            bins = max_i64(bins, b + 1)
+        }
+        let waste = packing_waste(plan, items, cap)
+        parts = arr_push(parts, names[i] + " " + to_str(bins) + "/" + to_str(waste))
+        if best < 0 || bins < best_bins {
+            best = i
+            best_bins = bins
+        }
+    }
+    let unpacked = 0
+    for b in plans[0] {
+        if b < 0 {
+            unpacked = unpacked + 1
+        }
+    }
+    let summary = str_join(parts, ", ") + "; best " + names[best]
+    if unpacked > 0 {
+        summary = summary + "; unpacked " + to_str(unpacked)
+    }
+    summary
+}
+
+@[test]
+fn test_first_fit_reuses_early_bins() {
+    assert(first_fit([4, 8, 1, 4, 2, 1], 10) == [0, 1, 0, 0, 1, 0])
+}
+
+@[test]
+fn test_first_fit_oversized_item() {
+    assert(first_fit([5, 12, 5, 3], 10) == [0, -1, 0, 1])
+}
+
+@[test]
+fn test_first_fit_lowest_bin_wins() {
+    assert(first_fit([5, 7, 3, 2], 10) == [0, 1, 0, 0])
+}
+
+@[test]
+fn test_best_fit_tightest_bin() {
+    assert(best_fit([4, 8, 1, 4, 2, 1], 10) == [0, 1, 1, 0, 0, 1])
+}
+
+@[test]
+fn test_best_fit_differs_from_first_fit() {
+    assert(best_fit([5, 7, 3, 2], 10) == [0, 1, 1, 0])
+}
+
+@[test]
+fn test_best_fit_oversized_item() {
+    assert(best_fit([3, 3, 20, 4], 6) == [0, 0, -1, 1])
+}
+
+@[test]
+fn test_next_fit_never_looks_back() {
+    assert(next_fit([4, 8, 1, 4, 2, 1], 10) == [0, 1, 1, 2, 2, 2])
+}
+
+@[test]
+fn test_next_fit_oversized_keeps_bin_open() {
+    assert(next_fit([3, 11, 4, 9], 10) == [0, -1, 0, 1])
+}
+
+@[test]
+fn test_next_fit_uniform_items() {
+    assert(next_fit([2, 2, 2, 2, 2, 2], 5) == [0, 0, 1, 1, 2, 2])
+}
+
+@[test]
+fn test_ffd_fills_bins() {
+    assert(ffd_loads([4, 8, 1, 4, 2, 1], 10) == [10, 10])
+}
+
+@[test]
+fn test_ffd_no_pairs_fit() {
+    assert(ffd_loads([5, 5, 5, 5, 5], 9) == [5, 5, 5, 5, 5])
+}
+
+@[test]
+fn test_ffd_skips_oversized() {
+    assert(ffd_loads([7, 3, 15, 2, 6], 10) == [10, 8])
+}
+
+@[test]
+fn test_waste_next_fit_assignment() {
+    assert_eq(packing_waste([0, 1, 1, 2, 2, 2], [4, 8, 1, 4, 2, 1], 10), 10)
+}
+
+@[test]
+fn test_waste_overfilled_bin() {
+    assert_eq(packing_waste([0, 0], [6, 6], 10), -1)
+}
+
+@[test]
+fn test_waste_counts_empty_bins() {
+    assert_eq(packing_waste([-1, 2, 0], [12, 3, 5], 10), 22)
+}
+
+@[test]
+fn test_strategy_summary_next_fit_worst() {
+    assert_eq_str(strategy_summary([4, 8, 1, 4, 2, 1], 10), "first-fit 2/0, best-fit 2/0, next-fit 3/10; best first-fit")
+}
+
+@[test]
+fn test_strategy_summary_best_fit_wins() {
+    assert_eq_str(strategy_summary([2, 9, 1, 8], 10), "first-fit 3/10, best-fit 2/0, next-fit 3/10; best best-fit")
+}
+
+@[test]
+fn test_strategy_summary_reports_unpacked() {
+    assert_eq_str(strategy_summary([5, 12, 5, 3], 10), "first-fit 2/7, best-fit 2/7, next-fit 2/7; best first-fit; unpacked 1")
+}

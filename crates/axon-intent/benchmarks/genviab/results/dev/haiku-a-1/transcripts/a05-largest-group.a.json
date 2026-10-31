@@ -1,0 +1,57 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/ig-bench/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+  "intent_goal": "Group the words in ./data/words.txt by their first letter and report how many words the largest group has.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "4cc0f946b507130925bce3482ef76fc05f6dd04c35b4fba4b018c470ae8bcd65",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/words.txt\") {\n        Ok(text) => {\n            let counts = dict_new()\n            let lines = str_split(text, \"\\n\")\n            for i in 0..len(lines) {\n                let w = str_trim(lines[i])\n                if len(w) > 0 {\n                    let k = str_to_lower(str_char_slice(w, 0, 1))\n                    dict_inc(counts, k)\n                }\n            }\n            let vals = dict_values(counts)\n            let best = if len(vals) > 0 { arr_max_i64(vals) } else { 0 }\n            match write_file(\"./out/answer.txt\", to_str(best) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 5906,
+      "report": {
+        "stage": "check",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/words.txt\") {\n        Ok(text) => {\n            let counts = dict_new()\n            let lines = str_split(text, \"\\n\")\n            for i in 0..len(lines) {\n                let w = str_trim(lines[i])\n                if len(w) > 0 {\n                    let k = str_to_lower(str_char_slice(w, 0, 1))\n                    dict_inc(counts, k)\n                }\n            }\n            let vals = dict_values(counts)\n            let best = if len(vals) > 0 { arr_max_i64(vals) } else { 0 }\n            match write_file(\"./out/answer.txt\", to_str(best) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": false,
+        "diagnostics": [
+          "{\"schema\":\"axon-diag/1\",\"severity\":\"error\",\"code\":\"E0102\",\"file\":\"main.ax\",\"line\":10,\"col\":21,\"message\":\"type mismatch in if-without-else body (expected ()), found i64\",\"expected\":\"()\",\"found\":\"i64\"}"
+        ],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": "`axon check` rejected the program:\n{\"schema\":\"axon-diag/1\",\"severity\":\"error\",\"code\":\"E0102\",\"file\":\"main.ax\",\"line\":10,\"col\":21,\"message\":\"type mismatch in if-without-else body (expected ()), found i64\",\"expected\":\"()\",\"found\":\"i64\"}\n",
+        "infrastructure": null
+      }
+    },
+    {
+      "round": 1,
+      "prompt_sha256": "c01355ade2a84644717e52dfd56a92d04df01233b6d87550f62139aee8966729",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/words.txt\") {\n        Ok(text) => {\n            let counts = dict_new()\n            let lines = str_split(text, \"\\n\")\n            for i in 0..len(lines) {\n                let w = str_trim(lines[i])\n                if len(w) > 0 {\n                    let k = str_to_lower(str_char_slice(w, 0, 1))\n                    let cur = dict_get_or(counts, k, 0)\n                    dict_set(counts, k, cur + 1)\n                }\n            }\n            let vals = dict_values(counts)\n            let best = if len(vals) > 0 { arr_max_i64(vals) } else { 0 }\n            match write_file(\"./out/answer.txt\", to_str(best) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 8612,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/words.txt\") {\n        Ok(text) => {\n            let counts = dict_new()\n            let lines = str_split(text, \"\\n\")\n            for i in 0..len(lines) {\n                let w = str_trim(lines[i])\n                if len(w) > 0 {\n                    let k = str_to_lower(str_char_slice(w, 0, 1))\n                    let cur = dict_get_or(counts, k, 0)\n                    dict_set(counts, k, cur + 1)\n                }\n            }\n            let vals = dict_values(counts)\n            let best = if len(vals) > 0 { arr_max_i64(vals) } else { 0 }\n            match write_file(\"./out/answer.txt\", to_str(best) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 14518,
+  "tokens": null
+}

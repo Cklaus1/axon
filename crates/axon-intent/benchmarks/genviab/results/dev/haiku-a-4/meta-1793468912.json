@@ -1,0 +1,19 @@
+{
+ "set": "dev",
+ "arm": "a",
+ "generator": "micode",
+ "model": "claude-haiku-5-5",
+ "effort": null,
+ "max_repair_rounds": 3,
+ "manifest_sha256": "8b97f66a69062ed7eac8e289b14392092cd4cd7d6f79c0da0bd2ee1bf10390be",
+ "corpus_sha256": "a01001217581c573bdb872beafa28d58b44e8f106adaffb784cba1e1bc720270",
+ "git_head": "5c937873db9170723cad14ed99d31703c4839934",
+ "axon_sha256": "5697af4dd30a25b726aeb4b750a466e670670858806a39ba14657ebddfa2710e",
+ "axon_intent_sha256": "7644e29ab0d4838bfbbefdd4a805e411ac8b546e6eb8c041dcd3c3273f715575",
+ "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
+ "driver_sha256": "ddc2bbc01d1a120c773f6818de84447a21bab1573b78f651241e897a20bc70d7",
+ "micode_version": "micode 0.3.0+945 (b1b4beea)",
+ "cost_basis": "OpenRouter list prices recorded 2026-10-12; cache read 0.1x and cache write 1.25x input (assumed Anthropic convention); OAuth grant, not billed per call",
+ "bwrap": null,
+ "started": "2026-10-31T17:48:32+00:00"
+}

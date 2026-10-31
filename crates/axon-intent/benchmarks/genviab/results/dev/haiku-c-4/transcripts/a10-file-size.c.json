@@ -1,0 +1,15 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\nSRC = \"./data/five.txt\"\nDST = \"./out/answer.txt\"\n\ndef main():\n    try:\n        size = os.path.getsize(SRC)\n    except OSError:\n        return 1\n    try:\n        os.makedirs(os.path.dirname(DST), exist_ok=True)\n        with open(DST, \"w\", encoding=\"ascii\", newline=\"\\n\") as f:\n            f.write(str(size) + \"\\n\")\n    except OSError:\n        return 1\n    return 0\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\nSRC = \"./data/five.txt\"\nDST = \"./out/answer.txt\"\n\ndef main():\n    try:\n        size = os.path.getsize(SRC)\n    except OSError:\n        return 1\n    try:\n        os.makedirs(os.path.dirname(DST), exist_ok=True)\n        with open(DST, \"w\", encoding=\"ascii\", newline=\"\\n\") as f:\n            f.write(str(size) + \"\\n\")\n    except OSError:\n        return 1\n    return 0\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true
+}

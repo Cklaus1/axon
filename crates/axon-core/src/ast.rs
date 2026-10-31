@@ -156,6 +156,9 @@ pub struct EnumVariant {
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
 pub struct ModDecl {
     pub name: String,
+    /// CS3-7: the `mod` line, so a module-load error (E0901) can name it.
+    #[cfg_attr(feature = "serde-json", serde(default))]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +166,9 @@ pub struct ModDecl {
 pub struct UseDecl {
     pub path: Vec<String>,
     pub items: Vec<String>,
+    /// CS3-7: the `use` line, so a module-load error (E0901) can name it.
+    #[cfg_attr(feature = "serde-json", serde(default))]
+    pub span: Span,
 }
 
 // ── Phase 3: Traits and impl blocks ──────────────────────────────────────────

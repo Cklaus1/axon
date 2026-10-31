@@ -1,0 +1,268 @@
+// Elementary one-dimensional cellular automata addressed by Wolfram rule number.
+// Rows are either arrays of 0/1 cells or strings using '#' for live and '.' for dead.
+
+fn rule_bit(rule: i64, left: i64, center: i64, right: i64) -> i64 {
+    bit_and(shr(rule, left * 4 + center * 2 + right), 1)
+}
+
+fn cell_of(s: str, i: i64) -> i64 {
+    let ch = str_slice(s, i, i + 1)
+    if str_eq(ch, "#") {
+        1
+    } else if str_eq(ch, ".") {
+        0
+    } else {
+        -1
+    }
+}
+
+fn step_row(cells: [i64], rule: i64, wrap: bool) -> [i64] {
+    let n = len(cells)
+    let out: [i64] = []
+    if n == 0 || rule < 0 || rule > 255 {
+        return out
+    }
+    let i = 0
+    while i < n {
+        let left = 0
+        let right = 0
+        if i > 0 {
+            left = cells[i - 1]
+        } else if wrap {
+            left = cells[n - 1]
+        }
+        if i < n - 1 {
+            right = cells[i + 1]
+        } else if wrap {
+            right = cells[0]
+        }
+        let center = cells[i]
+        if center != 0 { center = 1 }
+        if left != 0 { left = 1 }
+        if right != 0 { right = 1 }
+        out = arr_push(out, rule_bit(rule, left, center, right))
+        i = i + 1
+    }
+    out
+}
+
+fn diagram(start: str, rule: i64, gens: i64) -> str {
+    if gens < 0 || rule < 0 || rule > 255 {
+        return ""
+    }
+    let cells: [i64] = []
+    for ch in str_chars(start) {
+        if str_eq(ch, "#") {
+            cells = arr_push(cells, 1)
+        } else if str_eq(ch, ".") {
+            cells = arr_push(cells, 0)
+        } else {
+            return ""
+        }
+    }
+    if len(cells) == 0 {
+        return ""
+    }
+    let lines: [str] = []
+    let g = 0
+    while g <= gens {
+        let row = ""
+        for c in cells {
+            if c == 1 { row = row + "#" } else { row = row + "." }
+        }
+        lines = arr_push(lines, row)
+        cells = step_row(cells, rule, true)
+        g = g + 1
+    }
+    str_join(lines, "\n")
+}
+
+fn cycle_info(cells: [i64], rule: i64, max_gens: i64) -> [i64] {
+    let none: [i64] = [-1, 0]
+    if len(cells) == 0 || rule < 0 || rule > 255 || max_gens < 0 {
+        return none
+    }
+    let current: [i64] = []
+    for c in cells {
+        if c != 0 {
+            current = arr_push(current, 1)
+        } else {
+            current = arr_push(current, 0)
+        }
+    }
+    let history: [[i64]] = []
+    let gen = 0
+    while gen <= max_gens {
+        let j = 0
+        while j < len(history) {
+            if history[j] == current {
+                return [j, gen - j]
+            }
+            j = j + 1
+        }
+        history = arr_push(history, current)
+        current = step_row(current, rule, true)
+        gen = gen + 1
+    }
+    none
+}
+
+fn rule_info(rule: i64) -> str {
+    if rule < 0 || rule > 255 {
+        return "invalid"
+    }
+    let table = ""
+    let mirror = 0
+    let complement = 0
+    let k = 7
+    while k >= 0 {
+        let bit = bit_and(shr(rule, k), 1)
+        table = table + to_str(bit)
+        let l = shr(k, 2)
+        let c = bit_and(shr(k, 1), 1)
+        let r = bit_and(k, 1)
+        if bit == 1 {
+            mirror = mirror + shl(1, r * 4 + c * 2 + l)
+        } else {
+            complement = complement + shl(1, 7 - k)
+        }
+        k = k - 1
+    }
+    let traits = ""
+    if mirror == rule {
+        traits = traits + " symmetric"
+    }
+    if complement == rule {
+        traits = traits + " self-complementary"
+    }
+    if bit_and(rule, 1) == 1 {
+        traits = traits + " flashing"
+    }
+    "rule " + to_str(rule) + " table " + table + " mirror " + to_str(mirror) + " complement " + to_str(complement) + traits
+}
+
+fn infer_rule(before: str, after: str) -> i64 {
+    let n = str_len(before)
+    if n == 0 || n != str_len(after) {
+        return -1
+    }
+    let known = 0
+    let value = 0
+    let i = 0
+    while i < n {
+        let l = cell_of(before, (i + n - 1) % n)
+        let c = cell_of(before, i)
+        let r = cell_of(before, (i + 1) % n)
+        let out = cell_of(after, i)
+        if l < 0 || c < 0 || r < 0 || out < 0 {
+            return -1
+        }
+        let mask = shl(1, l * 4 + c * 2 + r)
+        if bit_and(known, mask) != 0 {
+            let seen = bit_and(value, mask) != 0
+            if seen != (out == 1) {
+                return -1
+            }
+        } else {
+            known = bit_or(known, mask)
+            if out == 1 {
+                value = bit_or(value, mask)
+            }
+        }
+        i = i + 1
+    }
+    value
+}
+
+@[test]
+fn test_step_row_rule90_open_edges() {
+    assert(step_row([0, 0, 1, 0, 0], 90, false) == [0, 1, 0, 1, 0])
+}
+
+@[test]
+fn test_step_row_rule110_wrapped() {
+    assert(step_row([0, 1, 0, 0, 1, 1], 110, true) == [1, 1, 0, 1, 1, 1])
+}
+
+@[test]
+fn test_step_row_edge_handling_differs() {
+    assert(step_row([1, 0, 0, 0], 2, false) == [0, 0, 0, 0])
+    assert(step_row([1, 0, 0, 0], 2, true) == [0, 0, 0, 1])
+}
+
+@[test]
+fn test_step_row_rejects_bad_rule() {
+    assert_eq(len(step_row([1, 0, 1], 256, true)), 0)
+}
+
+@[test]
+fn test_diagram_rule90() {
+    assert_eq_str(diagram("..#..", 90, 2), "..#..\n.#.#.\n#...#")
+}
+
+@[test]
+fn test_diagram_rule110_growth() {
+    assert_eq_str(diagram("......#", 110, 3), "......#\n.....##\n....###\n...##.#")
+}
+
+@[test]
+fn test_diagram_zero_generations() {
+    assert_eq_str(diagram(".#.", 30, 0), ".#.")
+}
+
+@[test]
+fn test_diagram_invalid_char() {
+    assert_eq_str(diagram("..x..", 30, 2), "")
+}
+
+@[test]
+fn test_cycle_info_dies_out() {
+    assert(cycle_info([1, 0, 1], 0, 10) == [1, 1])
+}
+
+@[test]
+fn test_cycle_info_shift_rule() {
+    assert(cycle_info([1, 0, 0, 0], 170, 10) == [0, 4])
+    assert(cycle_info([1, 0, 0, 0], 170, 3) == [-1, 0])
+}
+
+@[test]
+fn test_cycle_info_rule110_ring() {
+    assert(cycle_info([0, 0, 0, 0, 0, 1], 110, 100) == [2, 9])
+}
+
+@[test]
+fn test_rule_info_110() {
+    assert_eq_str(rule_info(110), "rule 110 table 01101110 mirror 124 complement 137")
+}
+
+@[test]
+fn test_rule_info_90_symmetric() {
+    assert_eq_str(rule_info(90), "rule 90 table 01011010 mirror 90 complement 165 symmetric")
+}
+
+@[test]
+fn test_rule_info_51_all_traits() {
+    assert_eq_str(rule_info(51), "rule 51 table 00110011 mirror 51 complement 51 symmetric self-complementary flashing")
+}
+
+@[test]
+fn test_infer_rule_lowest_consistent() {
+    assert_eq(infer_rule("..#..", ".###."), 22)
+}
+
+@[test]
+fn test_infer_rule_two_cells() {
+    assert_eq(infer_rule("#.", "#."), 4)
+}
+
+@[test]
+fn test_infer_rule_full_table() {
+    assert_eq(infer_rule("...#.###", "..####.#"), 110)
+}
+
+@[test]
+fn test_infer_rule_conflict() {
+    assert_eq(infer_rule("...", ".#."), -1)
+    assert_eq(infer_rule("..", "..."), -1)
+}

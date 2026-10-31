@@ -1815,6 +1815,15 @@ impl Parser {
             let mut m = self.parse_fn(public, attrs)?;
             m.contained = contained_spec;
             m.verify = verify_spec;
+            // CS3-4: a bare `self` param is typed `Self` by `parse_params`;
+            // inside an impl that IS the impl's type. Rewrite it here so the
+            // checker, infer, interpreter and codegen all see the AST that
+            // `self: Dog` produces (the checker binds `Self` only in a trait).
+            for p in &mut m.params {
+                if p.name == "self" && matches!(&p.ty, AxonType::Named(n) if n == "Self") {
+                    p.ty = for_type.clone();
+                }
+            }
             methods.push(m);
         }
         self.expect(&Token::RBrace)?;
@@ -1830,12 +1839,18 @@ impl Parser {
     }
 
     fn parse_mod(&mut self) -> Result<ModDecl> {
+        let start = self.current_span().start;
         self.expect(&Token::Mod)?;
         let name = self.expect_ident()?;
-        Ok(ModDecl { name })
+        let end = self.spans.get(self.pos - 1).map_or(start, |s| s.end);
+        Ok(ModDecl {
+            name,
+            span: self.sp(start, end),
+        })
     }
 
     fn parse_use(&mut self) -> Result<UseDecl> {
+        let start = self.current_span().start;
         self.expect(&Token::Use)?;
         let mut path = vec![self.expect_ident()?];
         while self.eat(&Token::Dot) || self.eat(&Token::ColonColon) {
@@ -1852,7 +1867,12 @@ impl Parser {
             }
             self.expect(&Token::RBrace)?;
         }
-        Ok(UseDecl { path, items })
+        let end = self.spans.get(self.pos - 1).map_or(start, |s| s.end);
+        Ok(UseDecl {
+            path,
+            items,
+            span: self.sp(start, end),
+        })
     }
 
     // ── Blocks & Statements ──────────────────────────────────────────────────
@@ -3268,6 +3288,47 @@ impl Parser {
         self.too_deep()
     }
 
+    /// CS3-6: refuse a string literal (just consumed, its span `lit`) that is
+    /// followed with NO gap by an identifier, another string or a number.
+    ///
+    /// The lexer ends a string at the next `"`, so `r"say "hi" now"` lexes as
+    /// `r"say "`, `hi`, `" now"`, and statement juxtaposition then runs the
+    /// tail as separate statements: check 0 and a silently wrong value. The
+    /// same holds for a glued keyword or bool (`"flag is "true" now"`, `"a"if`)
+    /// and a glued `!` (`"a"!b`, where `!=` is one token and stays legal); a
+    /// glued `(` makes the string a callee, which panics at run time. None of
+    /// these byte pairs occurs in the tracked `.ax` files or the frozen
+    /// corpora. A zero-gap `{` is NOT refused: `if s == "bob"{ … }` is a valid
+    /// head. Spaced adjacency (`r"{" a "}"`) is legal juxtaposition and stays legal.
+    fn refuse_adjacent_after_string(&self, lit: Span) -> Result<()> {
+        // A zero-width literal span means the stream carries no real spans
+        // (`Parser::new`), so adjacency cannot be decided: accept.
+        if lit.end <= lit.start {
+            return Ok(());
+        }
+        let Some(next) = self.tokens.get(self.pos) else {
+            return Ok(());
+        };
+        let zero_gap = self.current_span().start == lit.end;
+        if !zero_gap {
+            return Ok(());
+        }
+        let shown = match next {
+            Token::Ident(_) | Token::Int(_) | Token::Float(_) | Token::Str(_) => next.to_string(),
+            Token::RawStr(s) => format!("r\"{s}\""),
+            Token::Bang => "!".to_string(),
+            Token::LParen => "(".to_string(),
+            _ => match letter_keyword(next) {
+                Some(kw) => kw.to_string(),
+                None => return Ok(()),
+            },
+        };
+        Err(ParseError::Other(format!(
+            "this string ends at the `\"` before `{shown}` — write a `\"` inside a string \
+             as `\\\"`; a raw string `r\"...\"` cannot contain `\"`"
+        )))
+    }
+
     fn parse_primary_inner(&mut self) -> Result<Expr> {
         match self.peek() {
             Some(Token::Asm) => self.parse_inline_asm(),
@@ -3331,7 +3392,9 @@ impl Parser {
                 }
             }
             Some(Token::Str(_)) => {
+                let lit = self.current_span();
                 if let Token::Str(s) = self.advance()?.clone() {
+                    self.refuse_adjacent_after_string(lit)?;
                     parse_fmt_str_raw(&s, self.expr_depth, &mut self.too_deep, &mut self.tall)
                 } else {
                     unreachable!()
@@ -3340,7 +3403,9 @@ impl Parser {
             // Raw strings skip interpolation entirely — the body lands as a
             // plain string literal. `{` / `}` / `\` pass through untouched.
             Some(Token::RawStr(_)) => {
+                let lit = self.current_span();
                 if let Token::RawStr(s) = self.advance()?.clone() {
+                    self.refuse_adjacent_after_string(lit)?;
                     Ok(Expr::Literal(Literal::Str(s)))
                 } else {
                     unreachable!()
@@ -3792,6 +3857,50 @@ fn axon_type_to_str(ty: &AxonType) -> String {
             inner.join("|")
         }
     }
+}
+
+/// The source text of a keyword token that begins with a letter (`true`,
+/// `if`, `Some`, ...), or `None`. CS3-6: such a token glued to a closing `"`
+/// is the tail of a string the lexer split, like an identifier there.
+fn letter_keyword(t: &Token) -> Option<&'static str> {
+    Some(match t {
+        Token::Fn => "fn",
+        Token::Let => "let",
+        Token::Own => "own",
+        Token::Ref => "ref",
+        Token::Type => "type",
+        Token::Enum => "enum",
+        Token::Mod => "mod",
+        Token::Use => "use",
+        Token::Match => "match",
+        Token::Spawn => "spawn",
+        Token::Select => "select",
+        Token::Comptime => "comptime",
+        Token::If => "if",
+        Token::Else => "else",
+        Token::While => "while",
+        Token::Break => "break",
+        Token::Continue => "continue",
+        Token::Return => "return",
+        Token::Ok => "Ok",
+        Token::Err => "Err",
+        Token::Some => "Some",
+        Token::None => "None",
+        Token::True => "true",
+        Token::False => "false",
+        Token::Pub => "pub",
+        Token::Trait => "trait",
+        Token::Impl => "impl",
+        Token::Dyn => "dyn",
+        Token::For => "for",
+        Token::In => "in",
+        Token::SelfKw => "self",
+        Token::Where => "where",
+        Token::Chan => "chan",
+        Token::As => "as",
+        Token::Asm => "asm",
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
