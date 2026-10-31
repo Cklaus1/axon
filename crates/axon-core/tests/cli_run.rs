@@ -44495,3 +44495,83 @@ fn wrapper_and_direct_calls_in_a_dead_branch_agree() {
         }
     }
 }
+
+/// CS3-6 follow-up (ImplAuditCS3 F2): a keyword or bool glued to a closing
+/// quote is the tail of a split string too (`"flag is "true" now"` checked 0
+/// and printed `flag is `), as is a glued `!` (`"a"!true` printed `a`). A glued
+/// `(` made the string a callee: check 0, then a run-time panic. Each is now
+/// the CS3-6 parse error.
+#[test]
+fn a_glued_keyword_bang_or_paren_after_a_string_is_refused() {
+    let attack = "ATTACK: a string split at a glued keyword, `!` or `(` checked clean";
+    for (tag, src) in [
+        ("kw_true", "fn main() {\n    let t = \"flag is \"true\" now\"\n    println(t)\n}\n"),
+        ("kw_bool_tail", "fn main() {\n    let t = \"a\"true\n    println(t)\n}\n"),
+        ("kw_if", "fn main() {\n    let t = \"a\"if true { println(\"x\") }\n    println(t)\n}\n"),
+        ("kw_some", "fn main() {\n    let t = \"a\"Some(1)\n    println(t)\n}\n"),
+        ("bang", "fn main() {\n    let t = \"a\"!true\n    println(t)\n}\n"),
+        ("paren", "fn main() {\n    let t = \"a\"(1)\n    println(t)\n}\n"),
+        ("raw_kw", "fn main() {\n    let t = r\"x \"false\" y\"\n    println(t)\n}\n"),
+    ] {
+        let (crc, cmsg, rrc, rout, _rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(2), "{attack} [{tag}]: {cmsg}");
+        assert!(
+            cmsg.contains("\"code\":\"E0000\"") && cmsg.contains("this string ends at the"),
+            "{attack} [{tag}]: {cmsg}"
+        );
+        assert_eq!(rrc, Some(2), "{attack} [{tag}]: run printed {rout:?}");
+    }
+}
+
+/// Controls for the F2 rule: each runs today and keeps its output. A string
+/// directly followed by `{` (a block head), `}`, `)`, `]`, `,`, `=>`, `!=`,
+/// `==`, `+` or `.`, or by a keyword after a gap, is not a split string.
+#[test]
+fn a_string_followed_by_punctuation_or_a_spaced_keyword_stays_legal() {
+    let attack = "ATTACK: a valid program with a string before punctuation was refused";
+    for (tag, src, out) in [
+        (
+            "brace_else",
+            "fn main() {\n    let c = true\n    let t = if c {\"a\"}else{\"b\"}\n    println(t)\n}\n",
+            "a\n",
+        ),
+        (
+            "spaced_brace",
+            "fn main() {\n    let s = \"a\"\n    if s == \"a\" { println(\"y\") }\n    if s == \"a\"{ println(\"z\") }\n}\n",
+            "y\nz\n",
+        ),
+        (
+            "fat_arrow",
+            "fn main() {\n    let s = \"a\"\n    let m = match s { \"a\"=> 1, _ => 2 }\n    println(to_str(m))\n}\n",
+            "1\n",
+        ),
+        (
+            "paren_close",
+            "fn main() {\n    println(\"a\")\n    println(to_str(len(\"ab\")))\n}\n",
+            "a\n2\n",
+        ),
+        (
+            "not_eq_and_eq",
+            "fn main() {\n    let s = \"b\"\n    println(to_str(s!=\"a\"))\n    println(to_str(\"b\"==s))\n}\n",
+            "true\ntrue\n",
+        ),
+        (
+            "array_comma_plus",
+            "fn main() {\n    let xs = [\"a\",\"b\"]\n    println(xs[0]+\"c\"+xs[1])\n}\n",
+            "acb\n",
+        ),
+        (
+            "spaced_keyword",
+            "fn main() {\n    let s = \"a\" let b = true\n    if b { println(s) }\n}\n",
+            "a\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: run: {rerr}"
+        );
+    }
+}

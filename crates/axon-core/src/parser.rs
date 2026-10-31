@@ -3293,9 +3293,13 @@ impl Parser {
     ///
     /// The lexer ends a string at the next `"`, so `r"say "hi" now"` lexes as
     /// `r"say "`, `hi`, `" now"`, and statement juxtaposition then runs the
-    /// tail as separate statements: check 0 and a silently wrong value. A
-    /// zero-gap `{` is NOT refused: `if s == "bob"{ … }` is a valid head.
-    /// Spaced adjacency (`r"{" a "}"`) is legal juxtaposition and stays legal.
+    /// tail as separate statements: check 0 and a silently wrong value. The
+    /// same holds for a glued keyword or bool (`"flag is "true" now"`, `"a"if`)
+    /// and a glued `!` (`"a"!b`, where `!=` is one token and stays legal); a
+    /// glued `(` makes the string a callee, which panics at run time. None of
+    /// these byte pairs occurs in the tracked `.ax` files or the frozen
+    /// corpora. A zero-gap `{` is NOT refused: `if s == "bob"{ … }` is a valid
+    /// head. Spaced adjacency (`r"{" a "}"`) is legal juxtaposition and stays legal.
     fn refuse_adjacent_after_string(&self, lit: Span) -> Result<()> {
         // A zero-width literal span means the stream carries no real spans
         // (`Parser::new`), so adjacency cannot be decided: accept.
@@ -3312,7 +3316,12 @@ impl Parser {
         let shown = match next {
             Token::Ident(_) | Token::Int(_) | Token::Float(_) | Token::Str(_) => next.to_string(),
             Token::RawStr(s) => format!("r\"{s}\""),
-            _ => return Ok(()),
+            Token::Bang => "!".to_string(),
+            Token::LParen => "(".to_string(),
+            _ => match letter_keyword(next) {
+                Some(kw) => kw.to_string(),
+                None => return Ok(()),
+            },
         };
         Err(ParseError::Other(format!(
             "this string ends at the `\"` before `{shown}` — write a `\"` inside a string \
@@ -3848,6 +3857,50 @@ fn axon_type_to_str(ty: &AxonType) -> String {
             inner.join("|")
         }
     }
+}
+
+/// The source text of a keyword token that begins with a letter (`true`,
+/// `if`, `Some`, ...), or `None`. CS3-6: such a token glued to a closing `"`
+/// is the tail of a string the lexer split, like an identifier there.
+fn letter_keyword(t: &Token) -> Option<&'static str> {
+    Some(match t {
+        Token::Fn => "fn",
+        Token::Let => "let",
+        Token::Own => "own",
+        Token::Ref => "ref",
+        Token::Type => "type",
+        Token::Enum => "enum",
+        Token::Mod => "mod",
+        Token::Use => "use",
+        Token::Match => "match",
+        Token::Spawn => "spawn",
+        Token::Select => "select",
+        Token::Comptime => "comptime",
+        Token::If => "if",
+        Token::Else => "else",
+        Token::While => "while",
+        Token::Break => "break",
+        Token::Continue => "continue",
+        Token::Return => "return",
+        Token::Ok => "Ok",
+        Token::Err => "Err",
+        Token::Some => "Some",
+        Token::None => "None",
+        Token::True => "true",
+        Token::False => "false",
+        Token::Pub => "pub",
+        Token::Trait => "trait",
+        Token::Impl => "impl",
+        Token::Dyn => "dyn",
+        Token::For => "for",
+        Token::In => "in",
+        Token::SelfKw => "self",
+        Token::Where => "where",
+        Token::Chan => "chan",
+        Token::As => "as",
+        Token::Asm => "asm",
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

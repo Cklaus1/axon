@@ -12464,7 +12464,7 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_param_kind_is_checked'),
 ]
 
-# checker-soundness-3 lane C (ids M3982-M3984, M3987-M3989): CS3-4 bare `self` in an impl is the
+# checker-soundness-3 lane C (ids M3982-M3984, M3987-M3990): CS3-4 bare `self` in an impl is the
 # impl type; CS3-5 `loop` and `impl T {` help; CS3-6 a token glued to a closing quote is refused;
 # CS3-7 a module-load error names the `use` line.
 MUTATIONS += [
@@ -12492,6 +12492,10 @@ MUTATIONS += [
      '        let (line, col, dfile) = match &e.span {',
      '        let (line, col, dfile) = match &e.span.filter(|_| false) {',
      'axon-core', '--no-default-features --test cli_run', 'module_not_found_names_the_use_line'),
+    ('M3990', 'CS3-6 (ImplAuditCS3 F2): a keyword/bool glued to a closing quote is accepted again ("flag is "true" now" prints `flag is `)', 'crates/axon-core/src/parser.rs',
+     '            _ => match letter_keyword(next) {',
+     '            _ => match None::<&str> {',
+     'axon-core', '--no-default-features --test cli_run', 'a_glued_keyword_bang_or_paren_after_a_string_is_refused'),
 ]
 
 # intent-gen IgIntent (ids M4025-M4059): the axon-os sandbox wrapper grants console `IO` to every
