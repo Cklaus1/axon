@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "Phase A and the envelope preview refuse relative file-scope pins, and phase A refuses pins that reach the spent store or a key file; new S-tests showed both attacks admitted before."}
