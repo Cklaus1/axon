@@ -3392,3 +3392,10 @@ ATTACK_MARKERS.update({
     'M3940': r'ATTACK: a dict holding a value of another type checked clean \[d_generic_put\]',
     'M3941': r'ATTACK: a generic method call or generic struct argument checked clean \[g_lambda_param_unbound\]',
 })
+
+# native-parity lane B: NP-3 (M4126-M4128)
+ATTACK_MARKERS.update({
+    'M4126': r'ATTACK: [^\n]*\[d12\]',
+    'M4127': r'ATTACK: [^\n]*\[g02\]',
+    'M4128': r'ATTACK: a call to an unresolved fn was dropped silently natively \[ghost\]',
+})

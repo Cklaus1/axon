@@ -12398,5 +12398,22 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'generic_param_method_and_generic_struct_args_are_checked'),
 ]
 
+# native-parity lane B: NP-3 (M4126-M4128) -- a generic fn at two types or called from an impl
+# method is renamed per call site; an unresolved user callee is refused E0910.
+MUTATIONS += [
+    ('M4126', 'NP-3: mono ignores the per-site map (only the single-instance rename applies)', 'crates/axon-core/src/mono.rs',
+     'if let Some(mangled) = rename.sites.get(&site).or_else(|| rename.single.get(name)) {',
+     'if let Some(mangled) = rename.single.get(name).filter(|_| site != 0) {',
+     'axon-core', '--test integration_fixtures', 'a_generic_fn_used_at_two_types_runs_every_call_natively'),
+    ('M4127', 'NP-3: infer records no call-site key (every site collides at 0)', 'crates/axon-core/src/infer.rs',
+     '                                    callee.as_ref() as *const Expr as usize,',
+     '                                    0,',
+     'axon-core', '--test integration_fixtures', 'a_generic_fn_used_at_two_types_runs_every_call_natively'),
+    ('M4128', 'NP-3: codegen drops an unresolved user callee silently again (no E0910)', 'crates/axon-core/src/codegen/expr.rs',
+     '        // `?` below used to drop it silently, so the program ran on without it.\n        if maybe_fn_v.is_none() {',
+     '        // `?` below used to drop it silently, so the program ran on without it.\n        if maybe_fn_v.is_none() && false {',
+     'axon-core', '--lib', 'codegen::expr::tests::an_unresolved_user_callee_is_refused_e0910'),
+]
+
 if __name__ == "__main__":
     main()

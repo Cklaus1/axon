@@ -754,9 +754,11 @@ pub struct InferCtx {
     /// (CS-4), and the names a call instantiates must come from the sig that
     /// call actually reaches.
     builtin_generic_params: HashMap<String, Vec<String>>,
-    /// Recorded call-site instantiations (fn_name → Vec<concrete Type args>).
-    /// Populated during infer; consumed by the mono pass.
-    pub call_instantiations: Vec<(String, Vec<Type>)>,
+    /// Recorded call-site instantiations (fn_name, concrete Type args, site).
+    /// `site` is the callee `Expr`'s address (`callee.as_ref() as *const Expr
+    /// as usize`), so mono can rename each call to ITS instance (native-parity
+    /// NP-3). Populated during infer; consumed by the mono pass.
+    pub call_instantiations: Vec<(String, Vec<Type>, usize)>,
     /// CS-5: `len` args that were still a type variable at the call. Each
     /// must resolve to `str` or `[T]`; checked by `solve()` once the
     /// substitution is final (pinning the var to `str` at the call refused a
@@ -2041,8 +2043,11 @@ impl InferCtx {
                                 .collect();
                             // Store pending instantiation — vars will be resolved after solving.
                             if !var_ids.is_empty() {
-                                self.call_instantiations
-                                    .push((name, var_ids.iter().map(|&v| Type::Var(v)).collect()));
+                                self.call_instantiations.push((
+                                    name,
+                                    var_ids.iter().map(|&v| Type::Var(v)).collect(),
+                                    callee.as_ref() as *const Expr as usize,
+                                ));
                             }
                         }
                         return ret;
@@ -2815,7 +2820,7 @@ impl InferCtx {
             }
         }
         // Resolve pending generic instantiations now that the substitution is final.
-        for (_, type_args) in &mut self.call_instantiations {
+        for (_, type_args, _) in &mut self.call_instantiations {
             for ty in type_args.iter_mut() {
                 *ty = subst.apply(ty);
             }
@@ -2906,20 +2911,24 @@ impl InferCtx {
         }
     }
 
-    /// Return all recorded call-site instantiations as (fn_name, [AxonType args]).
-    /// Deduplicates identical instantiations.
-    pub fn drain_instantiations(&mut self) -> Vec<(String, Vec<crate::ast::AxonType>)> {
-        use std::collections::HashSet;
-        let mut seen: HashSet<(String, Vec<String>)> = HashSet::new();
-        let mut result = Vec::new();
-        for (name, type_args) in self.call_instantiations.drain(..) {
+    /// Return the recorded call-site instantiations as (fn_name, [AxonType
+    /// args], sites), deduplicated on (fn_name, args): each entry is one
+    /// instance to request, `sites` every call (callee address) that needs it.
+    pub fn drain_instantiations(&mut self) -> Vec<crate::mono::Instantiation> {
+        let mut index: HashMap<(String, Vec<String>), usize> = HashMap::new();
+        let mut result: Vec<crate::mono::Instantiation> = Vec::new();
+        for (name, type_args, site) in self.call_instantiations.drain(..) {
             let axon_args: Vec<_> = type_args.iter().map(Self::type_to_axon).collect();
             let key = (
                 name.clone(),
                 axon_args.iter().map(|t| format!("{t:?}")).collect(),
             );
-            if seen.insert(key) {
-                result.push((name, axon_args));
+            match index.get(&key) {
+                Some(&i) => result[i].2.push(site),
+                None => {
+                    index.insert(key, result.len());
+                    result.push((name, axon_args, vec![site]));
+                }
             }
         }
         result
@@ -3349,7 +3358,7 @@ mod tests {
         let queued: Vec<&str> = ctx
             .call_instantiations
             .iter()
-            .map(|(n, _)| n.as_str())
+            .map(|(n, _, _)| n.as_str())
             .collect();
         assert!(
             !queued.contains(&"dict_set"),
@@ -3373,7 +3382,7 @@ mod tests {
         let queued: Vec<&str> = ctx
             .call_instantiations
             .iter()
-            .map(|(n, _)| n.as_str())
+            .map(|(n, _, _)| n.as_str())
             .collect();
         assert!(
             queued.contains(&"arr_reverse"),
@@ -3964,6 +3973,23 @@ fn main() -> i64 {
             "two identical instantiations should deduplicate to one"
         );
         assert_eq!(insts[0].0, "double");
+        // native-parity NP-3: the dedup keeps every call site (callee address).
+        let Item::FnDef(main_def) = &program.items[1] else {
+            unreachable!("main is item 1")
+        };
+        let crate::ast::Expr::Block(stmts) = &main_def.body else {
+            unreachable!("main's body is a block")
+        };
+        let callee_sites: Vec<usize> = stmts
+            .iter()
+            .map(|s| match &s.expr {
+                crate::ast::Expr::Call { callee, .. } => {
+                    callee.as_ref() as *const crate::ast::Expr as usize
+                }
+                other => unreachable!("a call statement, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(insts[0].2, callee_sites, "both call sites must be kept");
     }
 
     #[test]

@@ -2772,3 +2772,188 @@ fn refinements_on_variant_fields_and_lambda_params_are_enforced_natively() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// native-parity lane B: write `src` as `<tag>.ax`, run it under `axon run`
+/// and as a native binary. `Err(stderr)` when `axon build` refuses. Both runs
+/// go through `timeout 60` (a native hang fails the case instead of wedging
+/// the test); `vmem_kib` caps the address space of both runs (`ulimit -v`),
+/// never the build.
+#[cfg(feature = "codegen")]
+fn npb_run_and_build(
+    dir: &std::path::Path,
+    tag: &str,
+    src: &str,
+    vmem_kib: Option<u64>,
+) -> (std::process::Output, Result<std::process::Output, String>) {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let file = dir.join(format!("{tag}.ax"));
+    std::fs::write(&file, src).unwrap();
+    let script = match vmem_kib {
+        Some(kib) => format!("ulimit -v {kib} && exec timeout 60 \"$@\""),
+        None => "exec timeout 60 \"$@\"".to_string(),
+    };
+    let limited = |args: &[&std::ffi::OsStr]| {
+        Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .arg("sh")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let run = limited(&[axon_bin.as_ref(), "run".as_ref(), file.as_os_str()]);
+    let bin = dir.join(format!("{tag}_bin"));
+    let build = Command::new(axon_bin)
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .unwrap();
+    if !build.status.success() {
+        return (
+            run,
+            Err(String::from_utf8_lossy(&build.stderr).into_owned()),
+        );
+    }
+    (run, Ok(limited(&[bin.as_os_str()])))
+}
+
+/// native-parity lane B, §4 shared-killer protocol: compare one probe's
+/// interpreter and native runs (exit code and stdout, plus the whole stderr
+/// when `with_stderr`), and push one `ATTACK: <attack> [<tag>] ...` line on a
+/// divergence or a native build refusal. `interp_code` pins the reference
+/// side, so a fixture that stopped doing what the case is about is reported
+/// too (without `ATTACK:`).
+#[cfg(feature = "codegen")]
+fn npb_compare(
+    attack: &str,
+    tag: &str,
+    interp_code: i32,
+    with_stderr: bool,
+    (run, native): (std::process::Output, Result<std::process::Output, String>),
+    fails: &mut Vec<String>,
+) {
+    let s = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    if run.status.code() != Some(interp_code) {
+        fails.push(format!(
+            "[{tag}] fixture: interpreter exit {:?} (expected {interp_code}) stdout {:?} stderr {:?}",
+            run.status.code(),
+            s(&run.stdout),
+            s(&run.stderr)
+        ));
+        return;
+    }
+    let native = match native {
+        Ok(n) => n,
+        Err(stderr) => {
+            fails.push(format!(
+                "ATTACK: {attack} [{tag}] (build: {})",
+                stderr.trim()
+            ));
+            return;
+        }
+    };
+    if native.status.code() != run.status.code()
+        || native.stdout != run.stdout
+        || (with_stderr && native.stderr != run.stderr)
+    {
+        fails.push(format!(
+            "ATTACK: {attack} [{tag}] interp exit {:?} stdout {:?} stderr {:?} / native exit {:?} stdout {:?} stderr {:?}",
+            run.status.code(),
+            s(&run.stdout),
+            s(&run.stderr),
+            native.status.code(),
+            s(&native.stdout),
+            s(&native.stderr)
+        ));
+    }
+}
+
+/// native-parity NP-3 (O-CS2-01 w31, NPA-2): a generic fn called at two or
+/// more types, or from an `impl` method body, runs every call natively. Mono
+/// renamed a call site only when the fn had ONE instantiation and never in an
+/// impl method, and codegen dropped the unresolved call silently. Recursive
+/// generics stay refused at build (out of scope, NPA-4).
+#[cfg(feature = "codegen")]
+#[test]
+fn a_generic_fn_used_at_two_types_runs_every_call_natively() {
+    let dir = std::env::temp_dir().join(format!("axon_np3_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let attack = "a generic fn call was dropped natively";
+    let put = "fn put<V>(d: Dict<str, V>, k: str, v: V) { dict_set(d, k, v) }\n";
+    let tell_unit = "fn tell<T>(x: T, m: str) { println(m) }\n";
+    let impl_s = "type S = { k: i64 }\ntrait G {\n  fn go(self) -> i64\n}\n";
+    let main_s = "fn main() -> i64 {\n  let s = S { k: 1 }\n  println(to_str(s.go()))\n  0\n}\n";
+    let probes: Vec<(&str, String)> = vec![
+        (
+            "d12",
+            format!("{put}fn main() -> i64 {{\n  let a = dict_new()\n  put(a, \"x\", 1)\n  println(to_str(dict_len(a)))\n  \
+                     let b = dict_new()\n  put(b, \"y\", \"s\")\n  println(to_str(dict_len(b)))\n  0\n}}\n"),
+        ),
+        (
+            "d14",
+            "fn show<T>(x: T) -> T { x }\nfn put<V>(d: Dict<str, V>, k: str, v: V) { println(\"put \" + k)\n  dict_set(d, k, v) }\n\
+             fn main() -> i64 {\n  let a = dict_new()\n  put(a, \"x\", 1)\n  let b = dict_new()\n  put(b, \"y\", true)\n  \
+             println(to_str(dict_len(a)))\n  println(to_str(dict_len(b)))\n  0\n}\n"
+                .to_string(),
+        ),
+        (
+            "g02",
+            "fn log<T>(x: T, msg: str) { println(msg) }\nfn main() -> i64 {\n  log(1, \"one\")\n  log(\"a\", \"two\")\n  println(\"end\")\n  0\n}\n"
+                .to_string(),
+        ),
+        (
+            "g06",
+            "fn log<T>(x: T, msg: str) { println(msg) }\nfn main() -> i64 {\n  if true { log(1, \"one\") }\n  let k = 0\n  \
+             while k < 2 { log(\"a\", \"loop\")\n    k = k + 1 }\n  0\n}\n"
+                .to_string(),
+        ),
+        (
+            "g08",
+            "fn tell<T>(x: T) -> i64 { println(\"told\")\n  1 }\nfn main() -> i64 {\n  tell(1)\n  tell(\"a\")\n  0\n}\n".to_string(),
+        ),
+        (
+            "w31",
+            "fn put<V>(d: Dict<V>, k: str, v: V) { dict_set(d, k, v) }\nfn main() -> i64 {\n  let a = dict_new()\n  put(a, \"x\", 1)\n  \
+             let b = dict_new()\n  put(b, \"y\", \"s\")\n  println(to_str(dict_len(a) + dict_len(b)))\n  0\n}\n"
+                .to_string(),
+        ),
+        (
+            "i3",
+            format!("{tell_unit}{impl_s}impl G for S {{\n  fn go(self: S) -> i64 {{\n    tell(self.k, \"in-method\")\n    5\n  }}\n}}\n{main_s}"),
+        ),
+        (
+            "i1",
+            format!("fn tell<T>(x: T, m: str) -> i64 {{ println(m)\n  7 }}\n{impl_s}impl G for S {{\n  \
+                     fn go(self: S) -> i64 {{ tell(self.k, \"in-method\") }}\n}}\n{main_s}"),
+        ),
+        // Controls (identical before the fix): one instantiation; two `[T]`
+        // element types that both mangle to one `__unknown` instance.
+        (
+            "g03",
+            "fn log<T>(x: T, msg: str) { println(msg) }\nfn main() -> i64 {\n  log(1, \"one\")\n  log(2, \"two\")\n  println(\"end\")\n  0\n}\n"
+                .to_string(),
+        ),
+        (
+            "g04",
+            "fn n<T>(xs: [T]) -> i64 { len(xs) }\nfn main() -> i64 {\n  let a = n([1, 2, 3])\n  let b = n([\"x\"])\n  println(to_str(a + b))\n  0\n}\n"
+                .to_string(),
+        ),
+    ];
+    let mut fails = Vec::new();
+    for (tag, src) in &probes {
+        npb_compare(
+            attack,
+            tag,
+            0,
+            false,
+            npb_run_and_build(&dir, tag, src, None),
+            &mut fails,
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}

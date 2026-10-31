@@ -12057,6 +12057,20 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
 
+        // native-parity NP-3: a call by name that still resolves to nothing (a
+        // generic fn mono could not rename to an instance) is refused. The
+        // `?` below used to drop it silently, so the program ran on without it.
+        if maybe_fn_v.is_none() {
+            if let ast::Expr::Ident(name) = callee {
+                self.record_error(format!(
+                    "codegen error [E0910]: native codegen could not resolve the call to `{name}` \
+                     (a generic fn used at several types?); building it would silently drop the \
+                     call. The interpreter supports it; run under `axon run`."
+                ));
+                return Some(self.ir.context.i64_type().const_zero().into());
+            }
+        }
+
         // Resolve the callee to an LLVM FunctionValue (direct call).
         let fn_v = maybe_fn_v?;
 
@@ -12366,6 +12380,34 @@ mod freestanding_trap_tests {
         assert!(
             ir.contains("outb"),
             "empty triple changed the x86 default:\n{ir}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::codegen::Codegen;
+    use inkwell::context::Context;
+
+    /// native-parity NP-3 step 1: a call by name that resolves to no fn (a
+    /// generic fn mono could not rename, say) is refused E0910. It used to be
+    /// dropped silently, so the program ran on without the call. The checker
+    /// is bypassed: no check-clean program reaches this path once mono renames
+    /// every site, which is exactly why the guard needs its own test.
+    #[test]
+    fn an_unresolved_user_callee_is_refused_e0910() {
+        let prog = crate::parse_source("fn main() -> i64 {\n  ghost(1)\n  0\n}\n")
+            .expect("fixture must parse");
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx, "np3_ghost");
+        cg.declare_functions(&prog);
+        cg.emit_program(&prog);
+        assert!(
+            cg.codegen_errors()
+                .iter()
+                .any(|e| e.contains("E0910") && e.contains("ghost")),
+            "ATTACK: a call to an unresolved fn was dropped silently natively [ghost]: errors {:?}",
+            cg.codegen_errors()
         );
     }
 }
