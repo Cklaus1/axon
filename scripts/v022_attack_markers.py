@@ -3433,7 +3433,7 @@ ATTACK_MARKERS.update({
     'M4134': r'ATTACK: [^\n]*\[min_i32\]',
     'M4135': r'ATTACK: [^\n]*\[max_i32\]',
 })
-# checker-soundness-3 lane C (ids M3982-M3984, M3987-M3989)
+# checker-soundness-3 lane C (ids M3982-M3984, M3987-M3990)
 ATTACK_MARKERS.update({
     'M3982': r'ATTACK: a bare-self impl method was refused',
     'M3983': r'ATTACK: `loop` was told to bind a variable named loop',
@@ -3441,4 +3441,5 @@ ATTACK_MARKERS.update({
     'M3987': r'ATTACK: a string split by an inner quote checked clean',
     'M3988': r'ATTACK: a valid string program was refused \[y05\]',
     'M3989': r'ATTACK: a module-load error named no `use` line',
+    'M3990': r'ATTACK: a string split at a glued keyword[^\n]*\[kw_true\]',
 })
