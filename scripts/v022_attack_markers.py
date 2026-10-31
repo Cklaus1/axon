@@ -3537,12 +3537,12 @@ ATTACK_MARKERS.update({
     'M4157': r'ATTACK: a mock ai_extract_uncertain_\* answer was not recorded to AXON_AI_REPLAY \[f64\]',
 })
 
-# intent-gen implementation audit P1/P2 (ids M4420-M4439, IgIntent)
+# intent-gen implementation audit P1/P2 (ids M4500-M4519, IgIntent; were M4420-M4425, renumbered: nhr/fix-a owns M4420-M4425)
 ATTACK_MARKERS.update({
-    'M4420': r'ATTACK: a completed run was classed by its stderr before its completion marker',
-    'M4421': r'ATTACK: fault words that are not the interpreter.s final line made a fault',
-    'M4422': r'ATTACK: a silent exit',
-    'M4423': r'ATTACK: a repair round ran past the intent.s token budget',
-    'M4424': r'ATTACK: an intent naming no tokens was not held to DEFAULT_TOKEN_BUDGET',
-    'M4425': r'ATTACK: the tokens a cmd generator reported on stderr were not counted',
+    'M4500': r'ATTACK: a completed run was classed by its stderr before its completion marker',
+    'M4501': r'ATTACK: fault words that are not the interpreter.s final line made a fault',
+    'M4502': r'ATTACK: a silent exit',
+    'M4503': r'ATTACK: a repair round ran past the intent.s token budget',
+    'M4504': r'ATTACK: an intent naming no tokens was not held to DEFAULT_TOKEN_BUDGET',
+    'M4505': r'ATTACK: the tokens a cmd generator reported on stderr were not counted',
 })

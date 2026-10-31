@@ -3061,7 +3061,7 @@ CS3-7 gives E0901/E0902 the `use` line on the CLI; the LSP path still reports th
 
 ### O-IG-01 - [medium] The sandbox classifier can still be fooled by a program's own stderr
 A program whose last stderr line imitates the interpreter's fault line and whose exit code matches, or that prints only `axon-diag/1`
-JSON and then exits 2, is classed as a fault / compile failure rather than as its own exit (IgIntent audit residual after M4420-M4425).
+JSON and then exits 2, is classed as a fault / compile failure rather than as its own exit (IgIntent audit residual after M4500-M4505).
 
 ### O-IG-02 - [medium] The once-ledger guard relies on `git log --all`
 An unpushed ledger commit is invisible to a fresh clone, so the once chain can restart there (ImplAuditIG). Fix direction: an origin-side

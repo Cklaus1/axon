@@ -12852,31 +12852,31 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'ai_extract_replay_hit_wins_over_mock_and_a_mock_answer_is_recorded'),
 ]
 
-# intent-gen implementation audit P1/P2a/P2b (ids M4420-M4439, IgIntent): how a captured
+# intent-gen implementation audit P1/P2a/P2b (ids M4500-M4519, IgIntent; were M4420-M4425, renumbered: nhr/fix-a owns M4420-M4425): how a captured
 # sandbox run ended is decided by deadline, signal, completion marker, then the interpreter's
 # own final fault line - never stderr words; a repair round counts against the token budget.
 MUTATIONS += [
-    ('M4420', 'audit P1: a completed run is classed by its stderr before its completion marker', 'crates/axon-os/src/runtime.rs',
+    ('M4500', 'audit P1: a completed run is classed by its stderr before its completion marker', 'crates/axon-os/src/runtime.rs',
      '        if ran_to_completion(&proc.stdout, nonce) {\n            return SandboxOutcome::Exited {',
      '        if false && ran_to_completion(&proc.stdout, nonce) {\n            return SandboxOutcome::Exited {',
      'axon-os', '--test sandbox_capture', 'a_completed_run_returning_a_fault_code_is_an_exit_status'),
-    ('M4421', 'audit P1: fault words anywhere in stderr, not the final line, make a fault', 'crates/axon-os/src/runtime.rs',
+    ('M4501', 'audit P1: fault words anywhere in stderr, not the final line, make a fault', 'crates/axon-os/src/runtime.rs',
      '.find(|(c, p)| *c == code && line.starts_with(p))?;',
      '.find(|(c, p)| *c == code && stderr.contains(p))?;',
      'axon-os', '--test sandbox_capture', 'fault_words_before_a_direct_exit_are_not_a_fault'),
-    ('M4422', 'audit P2a: exit(2) without an axon-diag/1 error reads as a compile failure', 'crates/axon-os/src/runtime.rs',
+    ('M4502', 'audit P2a: exit(2) without an axon-diag/1 error reads as a compile failure', 'crates/axon-os/src/runtime.rs',
      '    first_error\n}\n',
      '    first_error.or(Some(String::new()))\n}\n',
      'axon-os', '--test sandbox_capture', 'a_silent_exit_2_is_not_a_compile_failure'),
-    ('M4423', 'audit P2b: a repair round runs past the intent token budget', 'crates/axon-intent/src/genloop.rs',
+    ('M4503', 'audit P2b: a repair round runs past the intent token budget', 'crates/axon-intent/src/genloop.rs',
      'if round < repairs && tokens_reported > token_budget {',
      'if false && round < repairs && tokens_reported > token_budget {',
      'axon-intent', '--test genloop', 'repair_rounds_stop_once_reported_tokens_pass_the_intent_budget'),
-    ('M4424', 'audit P2b: an intent naming no tokens is not held to DEFAULT_TOKEN_BUDGET', 'crates/axon-intent/src/genloop.rs',
+    ('M4504', 'audit P2b: an intent naming no tokens is not held to DEFAULT_TOKEN_BUDGET', 'crates/axon-intent/src/genloop.rs',
      'Ok(n) if n > 0 => n,',
      'Ok(n) => n,',
      'axon-intent', '--test genloop', 'an_intent_naming_no_tokens_is_held_to_the_default_budget'),
-    ('M4425', 'audit P2b: the tokens a cmd generator reports are dropped', 'crates/axon-intent/src/generator.rs',
+    ('M4505', 'audit P2b: the tokens a cmd generator reports are dropped', 'crates/axon-intent/src/generator.rs',
      'tokens: reported_tokens(&run.stderr),',
      'tokens: None,',
      'axon-intent', '--test genloop', 'a_cmd_generator_s_reported_tokens_count_against_the_budget'),
