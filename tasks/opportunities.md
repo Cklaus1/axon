@@ -2928,9 +2928,10 @@ reproduced E0901 with a sibling `mathutil.ax`).
 
 ### O-GAP-10 - [medium] No offline test shows a model-backed ASI workflow succeeding
 The mock returns one fixed answer (`axon-ai/src/lib.rs:438`, `:810-813`), so the model-calling demos mostly stop
-at their deploy gate; the all-demos test (`cli_run.rs:21118-21170`) passes unless a demo exits 101. Fix
+at their deploy gate; the all-demos test (`cli_run.rs:21118-21170`, at 77cf51fc `:21438-21505`) passes unless a demo exits 101. Fix
 direction: recorded replay fixtures for `optimize`, `classify`, `summarize`, `code_review`, `search_rank`,
 `pricing` and output asserts against them.
+`[BUILT 2026-10-31 on rp/int f866d9d6: asi-replay RP-1 (fixtures + deploy-gate test), RP-2 (pinned exit codes); M4150-M4154, M4158]`
 
 ### O-GAP-11 - [low] Spec status lines lag the code
 `approval-residue`, `killgroup`, `lsp-residue`, `harness-hygiene`, `gaps`, `followup`, `repair`, `small-fixes`
@@ -3001,3 +3002,23 @@ refuses E0910 ("does not yet lower this effect-handler"), unchanged by NP-4. Lou
 The spec's NP-6 "plus a native case" (`integration_fixtures` `min_max_i32_agree_natively`) was not written; native vs interpreter
 agreement on wide `min_i32`/`max_i32` is covered by `scripts/native_shapes_parity.sh` (`np6_m01`, `np6_m03`, `np6_ctl_m02`), which is
 not a g01 killer. The g01 rows M4134-M4135 are killed by the interpreter test in `cli_run`.
+
+## asi-replay, 2026-10-31 (out of scope of tasks/asi-replay-spec.md, and found while building it)
+
+### O-RP-01 - [medium] `ai_extract_uncertain_*` ignored the replay cache under mock and never recorded mock answers
+Found drafting asi-replay (§1): the mock branch answered before the cache lookup and stored nothing, so `run.sh replay`
+diverged for 5 of the 6 model demos.
+`[BUILT 2026-10-31 on rp/int f866d9d6: asi-replay RP-3; M4155-M4157]`
+
+### O-RP-02 - [low] No strict replay mode for users
+A replay miss falls through to the mock or a live call. A mode where a miss is a divergence (exit 11, via `replay.rs`
+`diverge`/`finish`) would need a new env var (language surface). RP-1 detects misses without it (no mock, no key).
+
+### O-RP-03 - [low] Extracts leave no audit record
+`ai_extract_uncertain_*` writes no `ai_call` provenance record and no cost on any path (`interp/builtins.rs` extract arms,
+against `ai_complete`'s records); the live path stores tokens `0`. An audit gap, not a replay gap.
+
+### O-RP-04 - [low] `persistent_bandit` / `persistent_learner` keep state across runs
+Default state files `/tmp/axon_persistent_*.txt` (`persistent_bandit.ax:33-36`, `persistent_learner.ax:32-35`);
+`persistent_bandit`'s stdout changes between back-to-back runs (exit code stays 0). RP-2 points both state variables
+at a temp dir in the test only.

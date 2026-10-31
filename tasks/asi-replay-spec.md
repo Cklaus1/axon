@@ -1,6 +1,6 @@
 # asi-replay - DRAFT spec
 
-**Status: AUTHORIZED for build 2026-10-31 (after Step 1 review; human: "do it all" on the integrator's recommendations, NH-1 no, NH-2 approve).**
+**Status: BUILT 2026-10-31 on rp/int f866d9d6 (RP-1..RP-3; authorized 2026-10-31 after Step 1 review; human: "do it all" on the integrator's recommendations, NH-1 no, NH-2 approve).**
 
 ### Step 1 review
 
