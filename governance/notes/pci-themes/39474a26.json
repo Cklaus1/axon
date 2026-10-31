@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "Phase A resolves --axon once and the check registry pins that file with the sha256 phase A took, so a PATH interpreter other than the hashed one no longer runs; a new S-test showed it ran before."}
