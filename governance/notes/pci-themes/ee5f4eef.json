@@ -1,0 +1,4 @@
+{
+  "theme": "checker-soundness-3 lane C",
+  "text": "PARSER + DIAGNOSTICS: a bare `self` in an impl method is parsed as the impl's type (programs refused E0308 now run, as the interpreter already did); a string literal glued to a following name/number/string is a parse error instead of a silently truncated string; module-load errors (E0901/E0902) carry the `use` line; parse-tier help for refused forms and a `loop` hint. No interpreter or runtime path changes."
+}
