@@ -106,6 +106,25 @@ const POLICY_PREFIXES: &[&str] = &["scripts/", "governance/", ".github/"];
 /// repository root and so have no protecting prefix.
 const POLICY_PATHS: &[&str] = &["AXON-COMPLETENESS.json", "AXON-COMPLETENESS.md"];
 
+#[cfg_attr(not(feature = "unattended"), allow(dead_code))]
+/// NH-R1 §5.4: whether a workspace-relative path PREFIX `rel` covers any
+/// policy path - a policy file or prefix lies at or under it, or it lies
+/// under a policy prefix. `""` (the workspace itself) covers them all.
+pub(crate) fn touches_policy(rel: &str) -> bool {
+    let rel = rel.trim_matches('/');
+    if rel.is_empty() {
+        return true;
+    }
+    let dir = format!("{rel}/");
+    POLICY_PREFIXES
+        .iter()
+        .any(|p| dir.starts_with(p) || p.starts_with(&dir))
+        || POLICY_PATHS
+            .iter()
+            .any(|p| *p == rel || p.starts_with(&dir))
+        || POLICY_FILES.iter().any(|f| rel.ends_with(f))
+}
+
 /// Proof that a specific action passed authorization.
 ///
 /// The field is private and there is no public constructor, so the only way to
@@ -523,6 +542,9 @@ pub struct Runner {
     /// that symbol reaching anything outside it is refused before it runs.
     /// `None`: no admission check (no grant was derived).
     static_grant: Option<crate::fence::StaticGrant>,
+    /// NH-R1 §5.5: the envelope an unattended run spends; it joins the
+    /// episode id so every unattended run has its own.
+    envelope_id: Option<String>,
 }
 
 /// R3: which hard limit of a walk ran out.
@@ -671,6 +693,7 @@ impl Runner {
             },
             walk: WalkBudget::default(),
             static_grant: None,
+            envelope_id: None,
         }
     }
 
@@ -688,6 +711,12 @@ impl Runner {
     /// no admission check). Set per target, before its episode.
     pub fn set_static_grant(&mut self, grant: Option<crate::fence::StaticGrant>) {
         self.static_grant = grant;
+    }
+
+    /// NH-R1 §5.5: name the envelope this run spends; the episode id becomes
+    /// `cortex-repair:{envelope_id}:{path}:{symbol}:{check}`.
+    pub fn set_envelope_id(&mut self, id: String) {
+        self.envelope_id = Some(id);
     }
 
     /// R1d: run every test of `rel_path` through this runner's executor (the
@@ -1144,10 +1173,16 @@ impl Runner {
         // deterministic (a replay of the same request produces the same id)
         // and distinguishing (a different target or a different grader does
         // not).
-        self.episode.episode_id = format!(
-            "cortex-repair:{}:{}:{}",
-            target.path, target.symbol, hidden_check
-        );
+        self.episode.episode_id = match &self.envelope_id {
+            None => format!(
+                "cortex-repair:{}:{}:{}",
+                target.path, target.symbol, hidden_check
+            ),
+            Some(id) => format!(
+                "cortex-repair:{id}:{}:{}:{}",
+                target.path, target.symbol, hidden_check
+            ),
+        };
         // A visible copy is removed after each run, but a crash mid-run leaves
         // it beside the file. Swept once, when the episode first starts. It
         // never reaches the evidence either way: snapshots cover only the
@@ -3883,6 +3918,30 @@ pub fn run_axon_caps(
     if let Some(f) = fn_name {
         cmd.arg("--fn").arg(f);
     }
+    cmd.env_clear();
+    let limits = ExecLimits {
+        wall: Some(wall),
+        max_output: Some(CHECKER_MAX_OUTPUT),
+        ..ExecLimits::default()
+    };
+    let (text, code, truncated) = run_limited(&mut cmd, &limits, None)?;
+    if truncated {
+        return Err(BoundExceeded::output(CHECKER_MAX_OUTPUT));
+    }
+    Ok((text, code))
+}
+
+/// `axon imports <file> --json` as a bounded job (NH-R1 §5.3 step 9, §5.4):
+/// the import closure's `imports_digest`, by the same pinned interpreter and
+/// the same bounds as [`run_axon_caps`]. It parses the closure; it runs none
+/// of it.
+pub fn run_axon_imports(
+    axon: &Path,
+    file: &Path,
+    wall: std::time::Duration,
+) -> std::io::Result<(String, Option<i32>)> {
+    let mut cmd = std::process::Command::new(axon);
+    cmd.arg("imports").arg(file).arg("--json");
     cmd.env_clear();
     let limits = ExecLimits {
         wall: Some(wall),

@@ -51,14 +51,14 @@ pub struct Row {
 }
 
 impl Row {
-    fn admit(id: &'static str, basis: impl Into<String>) -> Row {
+    pub(crate) fn admit(id: &'static str, basis: impl Into<String>) -> Row {
         Row {
             id,
             admit: true,
             basis: basis.into(),
         }
     }
-    fn refuse(id: &'static str, basis: impl Into<String>) -> Row {
+    pub(crate) fn refuse(id: &'static str, basis: impl Into<String>) -> Row {
         Row {
             id,
             admit: false,

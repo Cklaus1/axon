@@ -28,6 +28,8 @@ pub mod action;
 #[cfg(feature = "ai")]
 pub mod ai;
 pub mod audit;
+#[cfg(feature = "unattended")]
+pub mod auth;
 pub mod cas;
 pub mod earlystop;
 pub mod episode;
