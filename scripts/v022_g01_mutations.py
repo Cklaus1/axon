@@ -12398,6 +12398,44 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'generic_param_method_and_generic_struct_args_are_checked'),
 ]
 
+# native-parity NP-1 (ids M4120-M4122, M4136): a tuple pattern tests every component natively; an
+# int literal is compared with the subject widened by its semantic signedness, never truncated.
+MUTATIONS += [
+    ('M4120', 'NP-1: a tuple pattern with a refutable component matches natively without testing it again', 'crates/axon-core/src/codegen/match_pat.rs',
+     'if pats.iter().all(Self::pattern_is_irrefutable) {',
+     'if !pats.is_empty() {',
+     'axon-core', '--test integration_fixtures', 'tuple_patterns_test_every_component_natively'),
+    ('M4121', 'NP-1: only component 0 of a tuple pattern is folded into the match test', 'crates/axon-core/src/codegen/match_pat.rs',
+     'acc = self.emit_test_when(acc, pat, |s| s.emit_pattern_test(pat, elem, ety));',
+     'if i == 0 { acc = self.emit_test_when(acc, pat, |s| s.emit_pattern_test(pat, elem, ety)); }',
+     'axon-core', '--test integration_fixtures', 'tuple_patterns_test_every_component_natively'),
+    ('M4122', 'NP-1: a narrower int subject is compared with an i64 literal at its own width (not widened)', 'crates/axon-core/src/codegen/match_pat.rs',
+     '.build_int_compare(IntPredicate::EQ, wide, l, "patlitw")',
+     '.build_int_compare(IntPredicate::EQ, s, l, "patlitw")',
+     'axon-core', '--test integration_fixtures', 'tuple_patterns_test_every_component_natively'),
+    ('M4136', 'NP-1: an unsigned narrower int subject is sign-extended before the literal compare', 'crates/axon-core/src/codegen/match_pat.rs',
+     'let wide = if unsigned {',
+     'let wide = if false && unsigned {',
+     'axon-core', '--test integration_fixtures', 'tuple_patterns_test_every_component_natively'),
+]
+
+# native-parity NP-2 (ids M4123-M4125): a match with no matching arm panics natively like the
+# interpreter (`no match arm matched`, exit 101) instead of falling through to the merge block.
+MUTATIONS += [
+    ('M4123', 'NP-2: the last arm\'s false edge branches to the match merge block again', 'crates/axon-core/src/codegen/match_pat.rs',
+     'miss_bb.unwrap_or(merge_bb)',
+     'merge_bb',
+     'axon-core', '--lib', 'codegen::match_pat::tests::a_match_miss_edge_panics'),
+    ('M4124', 'NP-2: the match_miss block is built but emit_msg_panic is not called (unreachable only)', 'crates/axon-core/src/codegen/match_pat.rs',
+     'self.emit_msg_panic("no match arm matched");',
+     'build_wrappers::w_unreachable(&self.ir.builder);',
+     'axon-core', '--lib', 'codegen::match_pat::tests::a_match_miss_edge_panics'),
+    ('M4125', 'NP-2: emit_msg_panic\'s hosted branch omits the __axon_msg_panic call', 'crates/axon-core/src/codegen/mod.rs',
+     'build_wrappers::w_call(&self.ir.builder, panic_fn, &[g.into(), len.into()], "");',
+     'let _ = (panic_fn, g, len);',
+     'axon-core', '--test integration_fixtures', 'a_match_with_no_matching_arm_panics_natively_like_the_interpreter'),
+]
+
 # native-parity lane B: NP-3 (M4126-M4128) -- a generic fn at two types or called from an impl
 # method is renamed per call site; an unresolved user callee is refused E0910.
 MUTATIONS += [
