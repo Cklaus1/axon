@@ -21,6 +21,9 @@ ai = ["dep:axon-ai"]
 
 [dependencies]
 axon-os = { path = "../axon-os" }
+# IG0: synth's write-target / stub / entry analysis walks the parsed program
+# and reads the compiler's one admission-axes table. The interpreter build.
+axon-core = { path = "../axon-core", default-features = false }
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

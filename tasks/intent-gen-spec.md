@@ -71,6 +71,42 @@ approval text all read it; no second list survives.
 - Critical-path extra proof: every `BUILTINS` entry has a row in the new table (a test enumerates `BUILTINS`), and the
   existing axon-os and axon-intent acceptance suites stay green unchanged.
 
+`[REVISED: build 2026-10-31 (IgCore), anchors re-located at d7690e63; F12 a-e reproduced on d7690e63 binaries: a rc 8,
+b rc 8, c rc 5, d rc 5, e rc 5/8]`
+- The table is `axon_core::builtins::builtin_admission_axes(name) -> Option<AdmissionAxes>` (`AdmissionAxes { fs_read,
+  fs_write, net, exec, env }`), DERIVED from the per-argument table the runtime sandbox and `@[contained]` already
+  enforce (`capabilities::classify_call_paths`) plus `net` for every `AI`/`Net` effect row, so it cannot drift from
+  enforcement; the only hand-made entries are the decisions for `IO` builtins that table does not classify (console,
+  `goal_*`/`sandbox_run` -> no axis; `host_await*` -> every axis), and a test makes every such builtin a decision.
+  Program level: `capabilities::program_admission_axes_in(program, search_dirs)` (reach walk over call sites and
+  builtin values after the shared loader merges every `use` from `search_dirs`; a `use` that does not load, or any
+  `native::` / unclassifiable reach -> every axis; a bare `mod` line loads nothing, so it adds nothing - F12 b).
+  axon-os: `scan_effects_in(source, dirs)`; the job runtime passes the interpreter's own module dirs for the job
+  (`job_module_dir_sets`), Fabric's admission probe passes the run's `AXON_PATH` dirs. `builtin_effect_row` keeps its
+  single `IO` row (F12 f): the split lives in the
+  admission table, not in the type-level effect row, which the checker's effect discipline uses.
+- Fabric: admission now parses the entry, so three fixtures changed with it (not the properties they test): the
+  `attestation` no-verdict suite is a type error instead of `fn (`, `grant_authority`'s import-binding test ships a
+  pure `lib.ax` under an open grant, and `joint_bypass`'s shell-script `.ax` is refused `malformed` at admission
+  instead of failing in the interpreter (still nothing spawned).
+- The grant has no `env` axis: `env` rides on `fs_read` in `DeclaredEffects` (as before), and the approval request
+  names it ("The program uses: ... env").
+- Parse failure: `axon_os::runtime::try_scan_effects` returns `Err`; the pipeline refuses as `does-not-typecheck`. The
+  supervisor's `Runtime::declared_effects` has no refusal channel, so `scan_effects` still answers every effect there,
+  and the supervisor now records a non-parsing program as `malformed: program failed to compile` (the verdict a run
+  gives it, T44) instead of an axis denial.
+- Removed as second sources: the nine-name text scan + `calls_name` (axon-os), the text `resolved_write_targets` /
+  `is_stub_body` / `has_entry` (axon-intent), and `RealSynthesizer::typecheck`'s `axon ast review --json`
+  widen-to-everything cross-check. `axon ast review --json` gains `axes` (program) and per-fn `axes` (schema stays
+  `axon-ast-review/2`, additive).
+- Path spelling: `capabilities::normalize_path`; `path_is_under` (grants) and `path_has_prefix` (`never:` clauses, the
+  over-deny direction) both compare normalised spellings; `..` still never matches. Output matching in `confidence`
+  uses the same normalisation.
+- The mock synthesizer's under-specified stub is now an empty body (it was a `// TODO` comment, which IG0 makes
+  a non-stub).
+- Console I/O under an empty grant (`println` admitted, then refused at run time) is outside F12; owner decision
+  2026-10-31: fixed by IG4's lane in the runtime sandbox, not here.
+
 ### IG1 — Examples in the intent format (critical path)
 
 Add an optional `## Examples` section: each example is one or more **runs** (a stateful task runs the program twice,

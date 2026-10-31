@@ -296,17 +296,25 @@ fn tenant() -> axon_loop_contracts::TenantId {
     axon_loop_contracts::TenantId::new("tenant-t").unwrap()
 }
 
-/// A registered suite that produced NO verdict (here: it does not compile, so
-/// `axon test` emits no summary) still records which suite was running, so an
-/// honest "unknown" names what it was unknown about and can be pinned.
+/// A registered suite that produced NO verdict (here: it does not type-check,
+/// so `axon test` emits no summary) still records which suite was running, so
+/// an honest "unknown" names what it was unknown about and can be pinned.
 /// Mutation: emit `evidence: vec![]` in local_receipt's no-summary branch →
 /// the check-suite ref is missing and this fails.
+///
+/// (IG0: the fixture was `fn (`, which no longer reaches the run: the
+/// admission scan parses the program, and a program that does not parse is
+/// refused there, `malformed`.)
 #[test]
 fn a_suite_run_without_a_verdict_still_names_its_suite() {
     let env = Env::new();
     let root = env.dir.path().join("suites/broken");
     std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("accept.ax"), "fn (\n").unwrap();
+    std::fs::write(
+        root.join("accept.ax"),
+        "@[test]\nfn accept_x() { let x: i64 = \"not an integer\" }\n",
+    )
+    .unwrap();
     let r = WorkspaceTree::import_dir(&root, &Quota::default())
         .unwrap()
         .reference()

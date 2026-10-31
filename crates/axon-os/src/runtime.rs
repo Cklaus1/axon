@@ -669,109 +669,104 @@ fn first_axon_line(stderr: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
-/// Over-approximate a program's declared effects by scanning its source for
-/// capability-bearing builtins (deny-by-default: a read error or any ambiguity
-/// yields the FULL set). A fully sound extractor uses `axon ast review`; this
-/// conservative scanner is sound *as a lower bound made safe by over-approx*.
-/// AUDIT T54 (finding P4-OS-03). Made `pub` so `axon-intent` can call THIS
-/// implementation instead of keeping its own. There were two copies of this
-/// security scanner, and T4's whitespace-evasion fix landed in only one — the
-/// `axon-intent` copy still read `source.contains("exec(")`, which
-/// `exec (name, args)` evades, and additionally omitted `env_var` and the whole
-/// `goal_run*` family and had no `mod`-import handling at all. Duplicated
-/// security logic does not stay in sync; the fix is to have one copy.
-pub fn scan_effects(source: &str) -> Decl {
-    // AUDIT T4 (finding OSK-P4-H1). The previous implementation tested
-    // `source.contains("exec(")`, which `exec (name, args)` — one space — parses
-    // identically and evades. That is an UNDER-approximation, the opposite of
-    // this function's documented deny-by-default contract, and it mattered
-    // because runtime collapsed fs and exec into one bucket, making this scan
-    // the sole exec control. (T8 has since given exec its own runtime effect, so
-    // this is no longer load-bearing — but a gate whose result is shown to a
-    // human as an approval assertion must not state falsehoods either way.)
-    //
-    // A module import means the effects live in a file we are not reading, so
-    // the honest answer is the full set, not "none found here".
-    if calls_name(source, "mod") || source.contains("\nmod ") || source.starts_with("mod ") {
-        return Decl {
-            row: EffectSet {
-                fs_read: true,
-                fs_write: true,
-                net: true,
-                exec: true,
-            },
-            max_label: Label::Internal,
-        };
-    }
-    let any = |names: &[&str]| names.iter().any(|m| calls_name(source, m));
-    let net = any(&[
-        "http_get",
-        "http_post",
-        "http_sse",
-        "http_sse_post",
-        "ai_complete",
-        "ai_extract_i64",
-        "ai_extract_f64",
-        "ai_extract_str",
-        "ai_extract_bool",
-        "ai_extract_uncertain_i64",
-        "ai_extract_uncertain_f64",
-        // The goal_run family re-calls @[adaptive] metrics, which may ai_complete.
-        "goal_run",
-        "goal_run_constrained",
-        "goal_run_categorical",
-        "goal_run_random",
-        "goal_run_multistart",
-        "goal_continue",
-        "goal_eval",
-    ]);
-    let fs_read = any(&["read_file", "read_line", "env_var"]);
-    let fs_write = any(&["write_file"]);
-    let exec = any(&["exec", "spawn_proc"]);
+/// A program's declared effects for admission, from the parsed program and
+/// the compiler's one admission-axes table
+/// (`axon_core::builtins::builtin_admission_axes`, through
+/// `axon_core::capabilities::program_admission_axes_in`): every builtin the
+/// program — and every module its `use`s load from `search_dirs` — calls or
+/// uses as a value, in any fn, method or module `let`; every axis when an
+/// import does not load from `search_dirs` (none given: any non-`native`
+/// `use`) or the walk reaches something it cannot classify.
+///
+/// IG0 (F12 a, b). This was a hand-written list of nine names scanned as text:
+/// `append_file` (and every other file builtin but `read_file`/`write_file`)
+/// was invisible, so an `append_file` program was admitted with "It may NOT:
+/// write files" and then refused by the sandbox; and a whole-word `mod`
+/// anywhere — the comment `// total mod 10` — read as an import and widened
+/// the row to every effect. On the AST, comments and string contents can
+/// neither add nor hide an effect.
+///
+/// The grant has no `env` axis: an `env_var` program needs `fs_read`, which
+/// is what the runtime sandbox's single `IO` tag requires of it.
+///
+/// `Err` (with the parser's message) when the program does not parse — a
+/// refusal, never "every effect".
+pub fn try_scan_effects_in(source: &str, search_dirs: &[PathBuf]) -> Result<Decl, String> {
+    let program = axon_core::parse_source(source).map_err(|e| e.to_string())?;
+    Ok(declared_from_axes(
+        axon_core::capabilities::program_admission_axes_in(&program, search_dirs),
+    ))
+}
+
+/// [`try_scan_effects_in`] with no module directory: every non-`native`
+/// `use` is every axis.
+pub fn try_scan_effects(source: &str) -> Result<Decl, String> {
+    try_scan_effects_in(source, &[])
+}
+
+/// The grant's four axes from the table's five: `env` rides on `fs_read`
+/// (see [`try_scan_effects`]).
+pub fn declared_from_axes(axes: axon_core::builtins::AdmissionAxes) -> Decl {
     Decl {
         row: EffectSet {
-            fs_read,
-            fs_write,
-            net,
-            exec,
+            fs_read: axes.fs_read || axes.env,
+            fs_write: axes.fs_write,
+            net: axes.net,
+            exec: axes.exec,
         },
         max_label: Label::Internal,
     }
 }
 
-/// True if `source` appears to CALL `name` — the identifier on a word boundary,
-/// followed by optional whitespace and `(`. Deliberately over-approximates:
-/// occurrences inside comments or string literals count, because a false
-/// positive only narrows the grant (safe) while a false negative widens it.
-fn calls_name(source: &str, name: &str) -> bool {
-    let bytes = source.as_bytes();
-    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let mut from = 0usize;
-    while let Some(rel) = source[from..].find(name) {
-        let start = from + rel;
-        let end = start + name.len();
-        from = start + 1;
-        // Must not be a suffix of a longer identifier (e.g. `my_exec`),
-        // and must not be a prefix of one (e.g. `exec_report`).
-        if start > 0 && is_word(bytes[start - 1]) {
-            continue;
-        }
-        let mut i = end;
-        if i < bytes.len() && is_word(bytes[i]) {
-            continue;
-        }
-        // `mod foo` is a declaration, not a call — accept a bare keyword.
-        if name == "mod" {
-            return true;
-        }
-        while i < bytes.len() && (bytes[i] as char).is_whitespace() {
-            i += 1;
-        }
-        if i < bytes.len() && bytes[i] == b'(' {
-            return true;
-        }
+/// [`try_scan_effects`] for the supervisor's admission gate, which has no
+/// refusal channel of its own here: a program that does not parse declares
+/// EVERY effect (deny by default) — it is refused unless the grant holds every
+/// axis, and then the interpreter refuses to compile it.
+pub fn scan_effects(source: &str) -> Decl {
+    scan_effects_in(source, &[])
+}
+
+/// [`scan_effects`] with `use` imports loaded from `search_dirs`.
+pub fn scan_effects_in(source: &str, search_dirs: &[PathBuf]) -> Decl {
+    try_scan_effects_in(source, search_dirs).unwrap_or(Decl {
+        row: EffectSet {
+            fs_read: true,
+            fs_write: true,
+            net: true,
+            exec: true,
+        },
+        max_label: Label::Internal,
+    })
+}
+
+/// The module directories a job's interpreter can load a `use` from, in its
+/// order ([`axon_core::axon_search_dirs`] under [`job_child_command`]'s
+/// environment): the forwarded `AXON_PATH` (relative entries against the
+/// program's directory, the child's cwd), no `~/.axon/lib` (`HOME` is
+/// cleared), then the interpreter binary's own library. A reproducible grant
+/// does not forward `AXON_PATH`, and the scan is not told which grant runs,
+/// so BOTH orders are returned; the caller unions what each loads.
+fn job_module_dir_sets(axon_bin: &Path, program: &Path) -> Vec<Vec<PathBuf>> {
+    let bin_lib: Vec<PathBuf> = axon_bin
+        .parent()
+        .map(|d| d.join("..").join("lib").join("axon"))
+        .into_iter()
+        .collect();
+    let base = program.parent().unwrap_or(Path::new("."));
+    let forwarded: Vec<PathBuf> = std::env::var_os("AXON_PATH")
+        .map(|v| {
+            std::env::split_paths(&v)
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(|p| base.join(p))
+                .collect()
+        })
+        .unwrap_or_default();
+    if forwarded.is_empty() {
+        return vec![bin_lib];
     }
-    false
+    let mut restricted = forwarded;
+    restricted.extend(bin_lib.iter().cloned());
+    vec![restricted, bin_lib]
 }
 
 /// Wrap a user program so it runs inside a RUNTIME sandbox enforcing `ceiling`.
@@ -1036,8 +1031,26 @@ impl Runtime for AxonCoreRuntime {
         Isolation::ProcessScoped
     }
 
+    /// IG0: the job's `use`s are loaded from the directories its interpreter
+    /// searches ([`job_module_dir_sets`]); a module the run can load is read,
+    /// not assumed to do everything.
     fn declared_effects(&self, program: &ProgramSource) -> DeclaredEffects {
-        scan_effects(program.text)
+        job_module_dir_sets(&self.axon_bin, program.path)
+            .iter()
+            .map(|dirs| scan_effects_in(program.text, dirs).row)
+            .fold(
+                Decl {
+                    row: EffectSet::default(),
+                    max_label: Label::Internal,
+                },
+                |mut d, r| {
+                    d.row.fs_read |= r.fs_read;
+                    d.row.fs_write |= r.fs_write;
+                    d.row.net |= r.net;
+                    d.row.exec |= r.exec;
+                    d
+                },
+            )
     }
 
     fn mint_principal(&self, _grant: &Grant) -> PrincipalHandle {
@@ -1820,12 +1833,13 @@ mod runtime_tests {
             !scan_effects("fn f() { exec_report(1) }").row.exec,
             "`exec_report` is not `exec`"
         );
-        // A module import puts effects in a file this scanner never reads, so
-        // the honest answer is the full set, not "nothing found here".
-        let m = scan_effects("mod util\nfn main() { util.go() }").row;
+        // A module import this scan does not load (no module directory) puts
+        // effects in a file it never reads, so the honest answer is the full
+        // set, not "nothing found here".
+        let m = scan_effects("mod util\nuse util.{go}\nfn main() { go() }").row;
         assert!(
             m.exec && m.net && m.fs_read && m.fs_write,
-            "a mod import must deny-by-default to the full effect set"
+            "an unloaded `use` must deny-by-default to the full effect set"
         );
         // Previously-invisible capability builtins are now classified.
         assert!(scan_effects("fn f() { env_var(\"X\") }").row.fs_read);
@@ -1835,5 +1849,53 @@ mod runtime_tests {
         // A pure program stays pure.
         let pure = scan_effects("fn add(a: i64, b: i64) -> i64 { a + b }").row;
         assert!(!pure.exec && !pure.net && !pure.fs_read && !pure.fs_write);
+    }
+
+    /// IG0 F12 (a): the scan reads the compiler's table, so every file
+    /// builtin carries its own axis — `append_file` writes.
+    #[test]
+    fn scan_effects_reads_the_one_table_for_every_file_builtin() {
+        let w = scan_effects("fn main() -> i64 {\n    match append_file(\"./out/a\", \"x\") { Ok(_) => 0, Err(_) => 1 }\n}\n").row;
+        assert!(
+            w.fs_write,
+            "ATTACK: an append_file program scanned without fs_write"
+        );
+        assert!(!w.fs_read && !w.net && !w.exec);
+        for (src, read, write) in [
+            ("fn f() { file_exists(\"./a\") }", true, false),
+            ("fn f() { dir_list(\"./a\") }", true, false),
+            ("fn f() { dir_create(\"./a/\") }", false, true),
+            ("fn f() { file_copy(\"./a\", \"./b\") }", true, true),
+            ("fn f() { file_rename(\"./a\", \"./b\") }", false, true),
+        ] {
+            let r = scan_effects(src).row;
+            assert_eq!((r.fs_read, r.fs_write), (read, write), "{src}");
+        }
+        // A builtin used as a VALUE is reached too.
+        assert!(
+            scan_effects("fn f() -> i64 { let w = write_file\n 0 }")
+                .row
+                .fs_write
+        );
+    }
+
+    /// IG0 F12 (b): a comment or a string is never an import or a call.
+    #[test]
+    fn scan_effects_ignores_comments_and_strings() {
+        let src =
+            "// total mod 10\nfn main() -> i64 {\n    println(\"exec(x) mod y\")\n    7 % 10\n}\n";
+        let r = scan_effects(src).row;
+        assert!(
+            !r.net && !r.exec && !r.fs_read && !r.fs_write,
+            "ATTACK: a comment or string widened the scan: {r:?}"
+        );
+        // A program that does not parse is refused by `try_scan_effects`,
+        // and `scan_effects` (the supervisor's) denies by default.
+        assert!(try_scan_effects("fn main( {").is_err());
+        let all = scan_effects("fn main( {").row;
+        assert!(all.fs_read && all.fs_write && all.net && all.exec);
+        // A `use` this scan cannot load (no module directory) is every effect.
+        let u = scan_effects("use util\nfn main() -> i64 { 0 }\n").row;
+        assert!(u.fs_read && u.fs_write && u.net && u.exec);
     }
 }

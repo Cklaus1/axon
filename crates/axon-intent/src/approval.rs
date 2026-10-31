@@ -226,8 +226,23 @@ pub fn render_request(
         intent_goal: intent.goal.clone(),
         risk,
         confidence: conf,
-        legible,
+        legible: format!(
+            "{legible}\n  The program uses: {}.",
+            uses_line(draft.meta.axes)
+        ),
         uncertainty: draft.meta.uncertainty_notes.clone(),
+    }
+}
+
+/// IG0: every admission axis the program uses, by name, from the compiler's
+/// one table (`SynthMeta::axes`) — so the approval can no longer say "may NOT
+/// write files" of an `append_file` program, and it names `env`, which the
+/// grant carries on `fs_read`.
+fn uses_line(axes: axon_core::builtins::AdmissionAxes) -> String {
+    if axes.is_empty() {
+        "no capability axis (pure computation and console output)".to_string()
+    } else {
+        axes.names().join(", ")
     }
 }
 

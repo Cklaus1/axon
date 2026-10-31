@@ -10,6 +10,7 @@
 
 use crate::intent::Intent;
 use crate::synth::{is_stub_body, ProgramDraft};
+use axon_core::capabilities::normalize_path;
 
 /// The minimum score to ship. Below this, the draft is refused (R22 §3.3).
 pub const CONFIDENCE_FLOOR: u8 = 60;
@@ -109,10 +110,20 @@ fn refuse(reason: &str) -> Confidence {
     }
 }
 
+/// Whether two path spellings name the same file: `./out/x`, `out/x` and
+/// `./out//x` do (IG0 F12 e: `write_file("out/summary.txt")` for the intent's
+/// `./out/summary.txt` was refused as outputs-mismatch). The sandbox's prefix
+/// test uses the same normalisation (`axon_core::capabilities::normalize_path`).
+fn same_path(a: &str, b: &str) -> bool {
+    normalize_path(a) == normalize_path(b)
+}
+
 /// Every output the program writes is one the intent asked for (no smuggled
 /// scope expansion). An empty `resolved_outputs` is trivially a subset.
 fn outputs_subset(resolved: &[String], wanted: &[String]) -> bool {
-    resolved.iter().all(|o| wanted.contains(o))
+    resolved
+        .iter()
+        .all(|o| wanted.iter().any(|w| same_path(o, w)))
 }
 
 /// The program writes EXACTLY the intent's outputs (subset both ways, modulo an
@@ -123,7 +134,10 @@ fn outputs_match(resolved: &[String], wanted: &[String]) -> bool {
     if wanted.is_empty() {
         return resolved.is_empty();
     }
-    wanted.iter().all(|w| resolved.contains(w)) && outputs_subset(resolved, wanted)
+    wanted
+        .iter()
+        .all(|w| resolved.iter().any(|o| same_path(o, w)))
+        && outputs_subset(resolved, wanted)
 }
 
 #[cfg(test)]
@@ -231,9 +245,9 @@ Summarize ./data/report.txt into ./out/summary.txt.
             score(&draft(no_entry, true, vec![]), &it()),
             Confidence::Refuse { ref reason } if reason == "no-entry-point"
         ));
-        // empty-or-stub-body
+        // empty-or-stub-body (an empty body; a `TODO` comment is no stub, IG0)
         assert!(matches!(
-            score(&draft("fn main() -> i64 { TODO }", true, vec![]), &it()),
+            score(&draft("fn main() -> i64 {}", true, vec![]), &it()),
             Confidence::Refuse { ref reason } if reason == "empty-or-stub-body"
         ));
         // outputs-mismatch (writes a file the intent didn't list)
@@ -300,5 +314,30 @@ Summarize ./data/report.txt into ./out/summary.txt.
             }
             other => panic!("expected Ship, got {other:?}"),
         }
+    }
+
+    /// IG0 F12 (c), (d), (e): three correct programs the static gates refused.
+    #[test]
+    fn correct_programs_are_not_refused_by_text_heuristics() {
+        let cases = [
+            // (c) the write target is a variable, not the next literal
+            "fn main() -> i64 {\n  let out = \"./out/summary.txt\"\n  match read_file(\"./data/report.txt\") {\n    Ok(t) => match write_file(out, \"report: \" + t) { Ok(_) => 0, Err(_) => 1 },\n    Err(_) => 2\n  }\n}",
+            // (d) a TODO comment is not a stub
+            "// TODO: handle a missing report more gracefully\nfn main() -> i64 {\n  match read_file(\"./data/report.txt\") {\n    Ok(t) => match write_file(\"./out/summary.txt\", t) { Ok(_) => 0, Err(_) => 1 },\n    Err(_) => 2\n  }\n}",
+            // (e) `out/summary.txt` is the intent's `./out/summary.txt`
+            "fn main() -> i64 {\n  match read_file(\"data/report.txt\") {\n    Ok(t) => match write_file(\"out/summary.txt\", t) { Ok(_) => 0, Err(_) => 1 },\n    Err(_) => 2\n  }\n}",
+        ];
+        for src in cases {
+            match score(&draft(src, true, vec![]), &it()) {
+                Confidence::Ship { .. } => {}
+                other => panic!("ATTACK: a correct program was refused: {other:?}\n{src}"),
+            }
+        }
+        // Normalising the spelling widens nothing: an unasked file still mismatches.
+        let esc = "fn main() -> i64 {\n  match write_file(\"out/SECRET.txt\", \"x\") { Ok(_) => 0, Err(_) => 1 }\n}";
+        assert!(matches!(
+            score(&draft(esc, true, vec![]), &it()),
+            Confidence::Refuse { ref reason } if reason == "outputs-mismatch"
+        ));
     }
 }

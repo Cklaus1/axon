@@ -12513,6 +12513,85 @@ MUTATIONS += [
      '"the intent has no fenced ```axon program: pass a generator cmd:PATH|ai:MODEL \\',
      'axon-intent', '--test cli_generate', 'no_program_and_no_generator_exits_2_naming_the_flag'),
 ]
+# intent-gen IG0 (ids M4000-M4014, IgCore): one admission-axes table in axon-core
+# (`builtin_admission_axes`) read on the AST by axon-os `scan_effects`, axon-intent and
+# `axon ast review --json`; each row re-introduces one F12 a-e defect or drops a table guard.
+MUTATIONS += [
+    ('M4000', 'IG0 F12a: the admission table no longer maps a per-argument fs_write kind to fs_write', 'crates/axon-core/src/builtins.rs',
+     'IoKind::FsWrite => a.fs_write = true,',
+     'IoKind::FsWrite => {}',
+     'axon-core', '--no-default-features --lib', 'admission_axes_split_reads_writes_exec_env_net'),
+    ('M4001', 'IG0 F12e: path normalisation keeps `.` components, so `./out/x` and `out/x` differ', 'crates/axon-core/src/capabilities.rs',
+     '.filter(|c| !c.is_empty() && *c != ".")',
+     '.filter(|c| !c.is_empty())',
+     'axon-core', '--no-default-features --lib', 'path_spellings_meet_the_same_prefix_test'),
+    ('M4002', 'IG0: console output loses its no-axis decision and widens to every axis', 'crates/axon-core/src/builtins.rs',
+     '"println" | "print" | "eprintln" | "eprint" | "read_line" | "exit" => {',
+     '"print" | "eprintln" | "eprint" | "read_line" | "exit" => {',
+     'axon-core', '--no-default-features --lib', 'program_admission_axes_reads_the_ast'),
+    ('M4003', 'IG0: every loaded module widens to every axis instead of being walked', 'crates/axon-core/src/capabilities.rs',
+     'if !errors.is_empty() || !closure.unsearched.is_empty() {',
+     'if !errors.is_empty() || !closure.unsearched.is_empty() || !closure.modules.is_empty() {',
+     'axon-core', '--no-default-features --lib', 'program_admission_axes_in_reads_loaded_modules'),
+    ('M4004', 'IG0: `axon ast review --json` reports every axis instead of the table\'s', 'crates/axon-core/src/main.rs',
+     '.map(|r| axon_core::capabilities::reach_admission_axes(&r))',
+     '.map(|_r| axon_core::builtins::AdmissionAxes::ALL)',
+     'axon-core', '--no-default-features --test cli_run', 'ast_review_reports_the_admission_axes_from_the_one_table'),
+    ('M4005', 'IG0 F12e: the outputs check compares raw path text, so `out/x` mismatches `./out/x`', 'crates/axon-intent/src/confidence.rs',
+     'normalize_path(a) == normalize_path(b)',
+     'a == b',
+     'axon-intent', '--lib', 'correct_programs_are_not_refused_by_text_heuristics'),
+    ('M4006', 'IG0 F12c: a non-literal write target takes the next string literal', 'crates/axon-intent/src/synth.rs',
+     'if let Some(Expr::Literal(Literal::Str(path))) = args.get(i) {',
+     'let mut lit = None;\n                if let Some(a) = args.get(i + 1) {\n                    walk_expr(a, &mut |x| {\n                        if lit.is_none() {\n                            if let Expr::Literal(Literal::Str(s)) = x {\n                                lit = Some(s.clone());\n                            }\n                        }\n                    });\n                }\n                if let Some(path) = args\n                    .get(i)\n                    .and_then(|a| match a {\n                        Expr::Literal(Literal::Str(s)) => Some(s.clone()),\n                        _ => lit.clone(),\n                    })\n                    .as_ref()\n                {',
+     'axon-intent', '--lib', 'a_non_literal_write_target_is_unresolved_not_the_next_literal'),
+    ('M4007', 'IG0 F12d: a `TODO` anywhere in the text reads as a stub', 'crates/axon-intent/src/synth.rs',
+     '    if source.trim().is_empty() {\n        return true;\n    }\n    let Ok(program)',
+     '    if source.trim().is_empty() || source.contains("TODO") {\n        return true;\n    }\n    let Ok(program)',
+     'axon-intent', '--lib', 'a_todo_comment_is_not_a_stub_but_an_empty_body_is'),
+    ('M4008', 'IG0 F12a: the declared row drops the table\'s fs_write axis', 'crates/axon-os/src/runtime.rs',
+     'fs_write: axes.fs_write,',
+     'fs_write: false,',
+     'axon-os', '--lib', 'scan_effects_reads_the_one_table_for_every_file_builtin'),
+    ('M4009', 'IG0: the synthesizer meta no longer reads the admission table', 'crates/axon-intent/src/synth.rs',
+     '.map(program_admission_axes)',
+     '.map(|_| AdmissionAxes::NONE)',
+     'axon-intent', '--lib', 'meta_declares_append_file_as_a_write'),
+    ('M4010', 'IG0 F12b: a whole-word `mod` anywhere in the text widens the scan to every effect', 'crates/axon-os/src/runtime.rs',
+     'axon_core::capabilities::program_admission_axes_in(&program, search_dirs),',
+     'if source.split_whitespace().any(|w| w == "mod") {\n            axon_core::builtins::AdmissionAxes::ALL\n        } else {\n            axon_core::capabilities::program_admission_axes_in(&program, search_dirs)\n        },',
+     'axon-os', '--lib', 'scan_effects_ignores_comments_and_strings'),
+    ('M4011', 'IG0: Fabric admission no longer sees a written file (the table\'s fs_write is dropped from the scanned row)', 'crates/axon-os/src/runtime.rs',
+     'fs_write: axes.fs_write,',
+     'fs_write: false,',
+     'axon-fabric', '--test admit_route', 'the_effects_scan_is_not_evaded_by_spacing_or_an_import'),
+    ('M4012', 'IG0: an import the run cannot load is walked as if absent instead of every effect', 'crates/axon-core/src/capabilities.rs',
+     'if !errors.is_empty() || !closure.unsearched.is_empty() {',
+     'if false {',
+     'axon-fabric', '--test admit_route', 'the_effects_scan_is_not_evaded_by_spacing_or_an_import'),
+    ('M4013', 'IG0: a program that does not parse is recorded as an axis denial, not malformed', 'crates/axon-os/src/supervisor.rs',
+     'if let Err(e) = crate::runtime::try_scan_effects(&program_text) {',
+     'if let Err(e) = crate::runtime::try_scan_effects("fn main() {}") {',
+     'axon-os', '--lib', 'an_unparseable_program_is_malformed_a_parsed_one_is_denied'),
+    ('M4014', 'IG0: a parsed program denied on an axis is recorded as malformed instead of Denied', 'crates/axon-os/src/supervisor.rs',
+     '            Verdict::Denied { reason, axis },',
+     '            Verdict::Malformed { reason },',
+     'axon-os', '--lib', 'an_unparseable_program_is_malformed_a_parsed_one_is_denied'),
+]
+# IG0 replaced axon-os's text scanner (`calls_name`) with the AST walk over the
+# one admission-axes table: a call is a parsed `Expr::Call` whatever its
+# spacing, and a bare `mod` line loads nothing (F12 b), so an unloadable `use`
+# is the import that scans as every effect.
+_IG0_STALE = {
+    "M1793": {"property": "the effects scan sees a call with whitespace before its parenthesis", "replacement": "M4011",
+              "how": "IG0: the scan parses the program; spacing is no longer a scanner branch, and the scanned row's fs_write is what M4011 drops"},
+    "M1794": {"property": "the effects scan sees a call of a name", "replacement": "M4011",
+              "how": "IG0: the text-scanner call test became the AST walk over the admission table; M4011 drops its fs_write"},
+    "M1795": {"property": "an import whose effects the scan cannot read is every effect", "replacement": "M4012",
+              "how": "IG0: a bare `mod` loads nothing (F12 b); an unloadable `use` is every axis, the guard M4012 removes"},
+}
+STALE_REFACTORED.update(_IG0_STALE)
+RETIRED |= set(_IG0_STALE)
 
 if __name__ == "__main__":
     main()

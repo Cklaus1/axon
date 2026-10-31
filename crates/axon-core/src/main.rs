@@ -8492,6 +8492,27 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
             .map(|d| format!("\"{}\"", flat_diag(d).replace('"', "\\\"")))
             .collect::<Vec<_>>()
             .join(",");
+        // IG0: the admission axes (`fs_read`, `fs_write`, `net`, `exec`,
+        // `env`) from the one table admission reads
+        // (`builtins::builtin_admission_axes`), over the import-merged
+        // program: per fn (its reach walk) and for the whole program. A walk
+        // that cannot classify what it met reports every axis.
+        let axes_json = |a: axon_core::builtins::AdmissionAxes| {
+            format!(
+                "[{}]",
+                a.names()
+                    .iter()
+                    .map(|n| format!("\"{n}\""))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        };
+        let axes_of = |name: Option<&str>| {
+            axon_core::capabilities::reachable_capabilities(&program, name)
+                .map(|r| axon_core::capabilities::reach_admission_axes(&r))
+                .unwrap_or(axon_core::builtins::AdmissionAxes::ALL)
+        };
+        let program_axes = axes_json(axes_of(None));
         let fns_json = fns.iter().map(|(owner, f)| {
             let params: String = f.params.iter()
                 .map(|p| format!("{}: {}", p.name, fmt_type(&p.ty)))
@@ -8544,21 +8565,23 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
                 None => "null".to_string(),
             };
             format!(
-                "{{\"name\":{},\"owner\":{owner_json},\"origin\":{origin_json},\"sig\":\"fn {}({params}){ret}\",\"attrs\":[{}],\"verified\":{},\"effects\":{},\"effect_set\":{},\"contained\":{}}}",
+                "{{\"name\":{},\"owner\":{owner_json},\"origin\":{origin_json},\"sig\":\"fn {}({params}){ret}\",\"attrs\":[{}],\"verified\":{},\"effects\":{},\"effect_set\":{},\"axes\":{},\"contained\":{}}}",
                 json_str(&f.name),
                 f.name,
                 attrs.join(","),
                 has_verify,
                 has_effect,
                 effect_set,
+                axes_json(axes_of(Some(&f.name))),
                 contained,
             )
         }).collect::<Vec<_>>().join(",");
 
         println!(
-            "{{\"schema\":\"axon-ast-review/2\",\"path\":{},\"errors\":[{}],\"fns\":[{}]}}",
+            "{{\"schema\":\"axon-ast-review/2\",\"path\":{},\"errors\":[{}],\"axes\":{},\"fns\":[{}]}}",
             json_str(&file.display().to_string()),
             errors_json,
+            program_axes,
             fns_json,
         );
         if !errors.is_empty() {
