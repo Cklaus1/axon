@@ -477,6 +477,40 @@ rate undefined): **only the test-set size is short → N5a** (§2).
   files, seeds and cap as §2. The §2 decision table applies unchanged; there
   is no further N5a.
 
+### 2.3 N5a pool and pass 2 (committed alone, before pass 2's first row)
+
+| field | value |
+|---|---|
+| programs | `programs-c2/`, 76 files (63ca1c34; lint OK on all; sha256 over sorted per-file lines `e59f2c15…82a3`) |
+| pool | `/var/tmp/r51-tmp/hx3-n5a/hx-pool.json` sha256 `7882eec4e46ae8812a11c18476e056427b731d62dff7e2395e93c9d378572456` (9,336,474 bytes; not committed), the §2.2 command at 63ca1c34, inputs digest `b9ee488309fc8ffbfff820b2c57945421b2abd25c23f8f75da539ae02275b56c` (= HEAD's), wall 1,745.6 s |
+| `build.py --check` | 3,065 tasks, 0 failures (rc 0, 885 s) |
+| tasks | 3,065 (refine 20, caps 96, caller 573, subtle 912, multi 1,127, erase-long 337); 144 programs kept, 7 D programs dropped, `programs/validate.ax` rejected as before; no `programs-c2/` program rejected or dropped |
+| split | 144 programs with tasks: 55 dev / 89 test (the recorded cumulative split holds 202: 73 / 129); `programs-c2/` 25 dev / 51 test (seed 3); every prior program kept its side; `split_ok` true |
+| erase-long | **dev 133 tasks / 38 clusters** (the 24 of pass 1, all unchanged ids, + 109 new: 100 from 25 `programs-c2/` programs, 9 third functions of `programs-c/` programs); **test 204 tasks / 51 clusters** (4 each, under the cap of 8) |
+| pass-2 ids | the 109 new dev ids, `/var/tmp/r51-tmp/hx3-n5a/new-dev-ids.txt` sha256 `66cf696544877e234838db4a8468d57c60b4cd05c83caece964fb40311fd6927` |
+
+**Pass 2 commands** (`/var/tmp/r51-tmp/hx3-cal-pass2.sh h55`, then `… h45`:
+pool, ids, axon and cortex sha256 and the spend root checked first, the
+§0.8 start condition, then): the §1.1 command with the N5a pool, `--only`
+the 109 ids, `--spend-root …/headroom/hx3-cal-2026-10-31-n5a/` and `--out
+…-n5a/DEV-H55.jsonl` (h55, k = 3) / `DEV-H45.jsonl` (h45, k = 1),
+`--reserve-usd 0.10 --cap-usd 5.00` (one cap for the pass). h45 runs only if
+the cell is still kept on the h55 rows of both passes.
+
+**Expected (pass-1 per-row measurements; overrun > 2×):**
+- h55: 327 rows × $0.00342 = **$1.118** (overrun > $2.236); 327 × 26.6 s =
+  **8,698 s** (overrun > 17,396 s).
+- h45: 109 rows × $0.0196 = **$2.136** (overrun > $4.272); 109 × 13.5 s =
+  **1,472 s** (overrun > 2,944 s).
+- Pass 2 ≈ $3.25 of its $5.00 cap; cumulative with pass 1 ≈ $3.97 of $10.
+
+**Calibration after pass 2:** `calibrate.py --pool <N5a pool> --rows
+hx3-cal-2026-10-31/DEV-H55.jsonl hx3-cal-2026-10-31-n5a/DEV-H55.jsonl
+--rows-h45 hx3-cal-2026-10-31/DEV-H45.jsonl hx3-cal-2026-10-31-n5a/DEV-H45.jsonl
+--seed 1 --cap-seed 1 --cap 8 --report hx3-cal-2026-10-31-n5a/calibration.json`;
+the §2 decision table, with "test-set size short" now a stop (no second
+N5a).
+
 ## 6. HX3-0 pilot rows and verdict (2026-10-29)
 
 Rows: `hx3-pilot-2026-10-29/<class>/pilot.jsonl`, one class at a time, with
