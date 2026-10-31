@@ -3545,4 +3545,6 @@ ATTACK_MARKERS.update({
     'M4503': r'ATTACK: a repair round ran past the intent.s token budget',
     'M4504': r'ATTACK: an intent naming no tokens was not held to DEFAULT_TOKEN_BUDGET',
     'M4505': r'ATTACK: the tokens a cmd generator reported on stderr were not counted',
+    'M4506': r'ATTACK: a compile failure named a warning instead of its first error',
+    'M4507': r'ATTACK: a failed verify was not classed on the verify axis',
 })

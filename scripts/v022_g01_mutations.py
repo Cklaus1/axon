@@ -12880,6 +12880,14 @@ MUTATIONS += [
      'tokens: reported_tokens(&run.stderr),',
      'tokens: None,',
      'axon-intent', '--test genloop', 'a_cmd_generator_s_reported_tokens_count_against_the_budget'),
+    ('M4506', 'integration int/31: a compile failure is named by its first diagnostic of any severity (a warning)', 'crates/axon-os/src/runtime.rs',
+     'if first_error.is_none() && d.get("severity").and_then(|s| s.as_str()) == Some("error") {',
+     'if first_error.is_none() {',
+     'axon-os', '--test sandbox_capture', 'a_compile_failure_names_its_first_error_not_a_warning'),
+    ('M4507', 'integration int/31: a failed verify is classed on the runtime axis, not verify', 'crates/axon-os/src/runtime.rs',
+     '        "axon: verify failed" => Verdict::Denied {\n            reason,\n            axis: "verify".into(),',
+     '        "axon: verify failed" => Verdict::Denied {\n            reason,\n            axis: "runtime".into(),',
+     'axon-os', '--test sandbox_capture', 'a_failed_verify_is_a_verify_denial'),
 ]
 
 if __name__ == "__main__":

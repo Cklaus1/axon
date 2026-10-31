@@ -251,3 +251,34 @@ fn an_interpreter_panic_is_still_a_fault() {
         "{r:?}"
     );
 }
+
+#[test]
+fn a_compile_failure_names_its_first_error_not_a_warning() {
+    // ATTACK: a compile failure named a warning instead of its first error
+    let r = capture(
+        "compile-warn",
+        "fn main() -> i64 {\n    let unused = 5\n    let x: i64 = \"s\"\n    x\n}\n",
+        Duration::from_secs(60),
+    );
+    assert!(
+        matches!(&r.outcome, SandboxOutcome::CompileFailed { diagnostic } if diagnostic.starts_with("E0102 at line 3:5")),
+        "ATTACK: a compile failure named a warning instead of its first error: {r:?}"
+    );
+}
+
+#[test]
+fn a_failed_verify_is_a_verify_denial() {
+    // ATTACK: a failed verify was not classed on the verify axis
+    let r = capture(
+        "verify",
+        "@[verify(value > 0)]\nfn f(x: i64) -> i64 { x }\nfn main() -> i64 {\n    f(0 - 1)\n}\n",
+        Duration::from_secs(60),
+    );
+    assert!(
+        matches!(
+            &r.outcome,
+            SandboxOutcome::Faulted { code: Some(3), verdict: Verdict::Denied { axis, .. } } if axis == "verify"
+        ),
+        "ATTACK: a failed verify was not classed on the verify axis: {r:?}"
+    );
+}
