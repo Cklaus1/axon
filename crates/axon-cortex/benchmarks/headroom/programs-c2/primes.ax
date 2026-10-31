@@ -1,0 +1,325 @@
+// Prime sieves, factorization, divisor counts and Euler's totient.
+
+// All primes up to and including limit, by the sieve of Eratosthenes.
+fn sieve(limit: i64) -> [i64] {
+    if limit < 2 {
+        return []
+    }
+    let marks = arr_repeat(true, limit + 1)
+    marks[0] = false
+    marks[1] = false
+    let p = 2
+    while p * p <= limit {
+        if marks[p] {
+            let m = p * p
+            while m <= limit {
+                marks[m] = false
+                m = m + p
+            }
+        }
+        p = p + 1
+    }
+    let primes: [i64] = []
+    for i in 2..(limit + 1) {
+        if marks[i] {
+            primes = arr_push(primes, i)
+        }
+    }
+    primes
+}
+
+// Primes in the closed range [lo, hi] using a segmented sieve, so only the
+// window and the base primes up to sqrt(hi) are held in memory.
+fn primes_between(lo: i64, hi: i64) -> [i64] {
+    let start = max_i64(lo, 2)
+    if hi < start {
+        return []
+    }
+    let root = 1
+    while (root + 1) * (root + 1) <= hi {
+        root = root + 1
+    }
+    let width = hi - start + 1
+    let window = arr_repeat(true, width)
+    for p in sieve(root) {
+        let first = (start + p - 1) / p * p
+        if first < p * p {
+            first = p * p
+        }
+        let m = first
+        while m <= hi {
+            window[m - start] = false
+            m = m + p
+        }
+    }
+    let found: [i64] = []
+    for i in 0..width {
+        if window[i] {
+            found = arr_push(found, start + i)
+        }
+    }
+    found
+}
+
+// Prime factors in ascending order with multiplicity. A negative input
+// contributes a leading -1; 0 and 1 have no factors.
+fn factorize(n: i64) -> [i64] {
+    if n == 0 || n == 1 {
+        return []
+    }
+    let factors: [i64] = []
+    let m = n
+    if m < 0 {
+        factors = arr_push(factors, -1)
+        m = 0 - m
+    }
+    for small in [2, 3] {
+        while m % small == 0 {
+            factors = arr_push(factors, small)
+            m = m / small
+        }
+    }
+    let d = 5
+    while d * d <= m {
+        for c in [d, d + 2] {
+            while m % c == 0 {
+                factors = arr_push(factors, c)
+                m = m / c
+            }
+        }
+        d = d + 6
+    }
+    if m > 1 {
+        factors = arr_push(factors, m)
+    }
+    factors
+}
+
+// Writes n as a product of prime powers, for example "2^3 * 3 * 5".
+fn factor_string(n: i64) -> str {
+    if n == 0 || n == 1 || n == -1 {
+        return to_str(n)
+    }
+    let fs = factorize(n)
+    let parts: [str] = []
+    let i = 0
+    while i < len(fs) {
+        let p = fs[i]
+        let e = 0
+        while i < len(fs) && fs[i] == p {
+            e = e + 1
+            i = i + 1
+        }
+        if p == -1 {
+            parts = arr_push(parts, "-1")
+        } else if e == 1 {
+            parts = arr_push(parts, to_str(p))
+        } else {
+            parts = arr_push(parts, to_str(p) + "^" + to_str(e))
+        }
+    }
+    if len(parts) > 1 && parts[0] == "-1" {
+        let rest = str_join(arr_drop(parts, 1), " * ")
+        return "-" + rest
+    }
+    str_join(parts, " * ")
+}
+
+// Number of positive divisors of |n|, from the exponents of its prime
+// factorization: the product of (exponent + 1).
+fn divisor_count(n: i64) -> i64 {
+    let m = abs_i64(n)
+    if m == 0 {
+        return 0
+    }
+    let count = 1
+    let e = 0
+    while m % 2 == 0 {
+        e = e + 1
+        m = m / 2
+    }
+    count = count * (e + 1)
+    let d = 3
+    while d * d <= m {
+        e = 0
+        while m % d == 0 {
+            e = e + 1
+            m = m / d
+        }
+        count = count * (e + 1)
+        d = d + 2
+    }
+    if m > 1 {
+        count = count * 2
+    }
+    count
+}
+
+// Euler's totient: how many integers in 1..n are coprime to n.
+fn totient(n: i64) -> i64 {
+    if n < 1 {
+        return 0
+    }
+    let result = n
+    let m = n
+    let p = 2
+    while p * p <= m {
+        if m % p == 0 {
+            while m % p == 0 {
+                m = m / p
+            }
+            result = result - result / p
+        }
+        if p == 2 {
+            p = 3
+        } else {
+            p = p + 2
+        }
+    }
+    if m > 1 {
+        result = result - result / m
+    }
+    result
+}
+
+// Totients of 0..limit computed together with a sieve, where entry k is phi(k).
+fn totient_table(limit: i64) -> [i64] {
+    if limit < 0 {
+        return []
+    }
+    let phi = arr_range(0, limit + 1)
+    for p in 2..(limit + 1) {
+        if phi[p] == p {
+            let m = p
+            while m <= limit {
+                phi[m] = phi[m] - phi[m] / p
+                m = m + p
+            }
+        }
+    }
+    phi
+}
+
+@[test]
+fn test_sieve_small() {
+    assert(sieve(30) == [2, 3, 5, 7, 11, 13, 17, 19, 23, 29])
+}
+
+@[test]
+fn test_sieve_boundaries() {
+    assert(sieve(2) == [2])
+    assert(sieve(13) == [2, 3, 5, 7, 11, 13])
+    assert(sieve(1) == [])
+}
+
+@[test]
+fn test_sieve_count() {
+    assert_eq(len(sieve(1000)), 168)
+}
+
+@[test]
+fn test_primes_between_window() {
+    assert(primes_between(90, 110) == [97, 101, 103, 107, 109])
+}
+
+@[test]
+fn test_primes_between_low_start() {
+    assert(primes_between(0, 10) == [2, 3, 5, 7])
+    assert(primes_between(5, 4) == [])
+}
+
+@[test]
+fn test_primes_between_large() {
+    assert(primes_between(1000000, 1000040) == [1000003, 1000033, 1000037, 1000039])
+}
+
+@[test]
+fn test_factorize_composites() {
+    assert(factorize(360) == [2, 2, 2, 3, 3, 5])
+    assert(factorize(1001) == [7, 11, 13])
+}
+
+@[test]
+fn test_factorize_primes_and_squares() {
+    assert(factorize(97) == [97])
+    assert(factorize(49) == [7, 7])
+    assert(factorize(600851475143) == [71, 839, 1471, 6857])
+}
+
+@[test]
+fn test_factorize_signs_and_units() {
+    assert(factorize(-12) == [-1, 2, 2, 3])
+    assert(factorize(1) == [])
+}
+
+@[test]
+fn test_factor_string_powers() {
+    assert_eq_str(factor_string(360), "2^3 * 3^2 * 5")
+    assert_eq_str(factor_string(1024), "2^10")
+}
+
+@[test]
+fn test_factor_string_negative() {
+    assert_eq_str(factor_string(-18), "-2 * 3^2")
+    assert_eq_str(factor_string(-1), "-1")
+}
+
+@[test]
+fn test_factor_string_prime() {
+    assert_eq_str(factor_string(13), "13")
+    assert_eq_str(factor_string(1), "1")
+}
+
+@[test]
+fn test_divisor_count_highly_composite() {
+    assert_eq(divisor_count(360), 24)
+    assert_eq(divisor_count(5040), 60)
+}
+
+@[test]
+fn test_divisor_count_primes_and_squares() {
+    assert_eq(divisor_count(97), 2)
+    assert_eq(divisor_count(49), 3)
+    assert_eq(divisor_count(1), 1)
+}
+
+@[test]
+fn test_divisor_count_sign_and_zero() {
+    assert_eq(divisor_count(-12), 6)
+    assert_eq(divisor_count(0), 0)
+}
+
+@[test]
+fn test_totient_values() {
+    assert_eq(totient(36), 12)
+    assert_eq(totient(97), 96)
+}
+
+@[test]
+fn test_totient_powers() {
+    assert_eq(totient(1024), 512)
+    assert_eq(totient(1), 1)
+}
+
+@[test]
+fn test_totient_nonpositive() {
+    assert_eq(totient(0), 0)
+    assert_eq(totient(-5), 0)
+    assert_eq(totient(30), 8)
+}
+
+@[test]
+fn test_totient_table_values() {
+    assert(totient_table(10) == [0, 1, 1, 2, 2, 4, 2, 6, 4, 6, 4])
+}
+
+@[test]
+fn test_totient_table_edges() {
+    assert(totient_table(0) == [0])
+    assert(totient_table(-1) == [])
+}
+
+@[test]
+fn test_totient_table_sum() {
+    assert_eq(arr_sum_i64(totient_table(100)), 3044)
+}

@@ -1,0 +1,353 @@
+// Price-time priority order book. The book lists resting bids best-first,
+// followed by resting asks best-first. Order kinds: "limit", "market" and
+// "ioc" (a limit order whose unfilled remainder is cancelled).
+
+type Order = { id: i64, side: str, kind: str, price: i64, qty: i64, seq: i64 }
+
+type Fill = { maker: i64, taker: i64, price: i64, qty: i64 }
+
+// True when a ranks ahead of b; both orders are on the same side.
+fn has_priority(a: Order, b: Order) -> bool {
+    if a.price != b.price {
+        if a.side == "buy" {
+            a.price > b.price
+        } else {
+            a.price < b.price
+        }
+    } else {
+        a.seq < b.seq
+    }
+}
+
+fn crosses(taker: Order, maker: Order) -> bool {
+    if taker.side == maker.side {
+        return false
+    }
+    if taker.kind == "market" {
+        return true
+    }
+    if taker.side == "buy" {
+        maker.price <= taker.price
+    } else {
+        maker.price >= taker.price
+    }
+}
+
+fn insert_resting(book: [Order], o: Order) -> [Order] {
+    let valid = o.kind == "limit" && o.qty > 0 && o.price > 0
+    if o.side != "buy" && o.side != "sell" {
+        valid = false
+    }
+    for e in book {
+        if e.id == o.id {
+            valid = false
+        }
+    }
+    let out: [Order] = []
+    let placed = false
+    for e in book {
+        if !placed {
+            let before = false
+            if e.side == o.side {
+                before = has_priority(o, e)
+            } else if o.side == "buy" && e.side == "sell" {
+                before = true
+            }
+            if before {
+                out = arr_push(out, o)
+                placed = true
+            }
+        }
+        out = arr_push(out, e)
+    }
+    if !placed {
+        out = arr_push(out, o)
+    }
+    if valid {
+        out
+    } else {
+        book
+    }
+}
+
+// Fills an incoming order would receive against the book, best maker first.
+fn fills_for(book: [Order], incoming: Order) -> [Fill] {
+    let fills: [Fill] = []
+    if incoming.qty <= 0 {
+        return fills
+    }
+    if incoming.kind != "market" && incoming.price <= 0 {
+        return fills
+    }
+    let left = arr_map(book, |o| o.qty)
+    let remaining = incoming.qty
+    while remaining > 0 {
+        let best = -1
+        let i = 0
+        while i < len(book) {
+            if left[i] > 0 && crosses(incoming, book[i]) {
+                if best < 0 || has_priority(book[i], book[best]) {
+                    best = i
+                }
+            }
+            i = i + 1
+        }
+        if best < 0 {
+            break
+        }
+        let q = min_i64(remaining, left[best])
+        left[best] = left[best] - q
+        remaining = remaining - q
+        fills = arr_push(fills, Fill { maker: book[best].id, taker: incoming.id, price: book[best].price, qty: q })
+    }
+    fills
+}
+
+// The book after the incoming order has traded; a limit remainder rests.
+fn book_after_match(book: [Order], incoming: Order) -> [Order] {
+    let valid_side = incoming.side == "buy" || incoming.side == "sell"
+    let fills: [Fill] = []
+    if valid_side {
+        fills = fills_for(book, incoming)
+    }
+    let out: [Order] = []
+    for o in book {
+        let q = o.qty
+        for f in fills {
+            if f.maker == o.id {
+                q = q - f.qty
+            }
+        }
+        if q > 0 {
+            out = arr_push(out, Order { id: o.id, side: o.side, kind: o.kind, price: o.price, qty: q, seq: o.seq })
+        }
+    }
+    let traded = 0
+    for f in fills {
+        traded = traded + f.qty
+    }
+    let rest = incoming.qty - traded
+    if incoming.kind == "limit" && rest > 0 {
+        let resting = Order { id: incoming.id, side: incoming.side, kind: "limit", price: incoming.price, qty: rest, seq: incoming.seq }
+        out = insert_resting(out, resting)
+    }
+    out
+}
+
+// Aggregated depth for one side, e.g. "14@100(2) 5@99(1)": quantity, price
+// and number of orders per level, best level first.
+fn level_summary(book: [Order], side: str, levels: i64) -> str {
+    let prices: [i64] = []
+    for o in book {
+        if o.side == side && o.qty > 0 && !arr_contains(prices, o.price) {
+            prices = arr_push(prices, o.price)
+        }
+    }
+    if len(prices) == 0 || levels <= 0 {
+        return "empty"
+    }
+    let sorted = arr_sort_by(prices, |a, b| a - b)
+    if side == "buy" {
+        sorted = arr_reverse(sorted)
+    }
+    let parts: [str] = []
+    let i = 0
+    while i < len(sorted) && i < levels {
+        let p = sorted[i]
+        let total = 0
+        let count = 0
+        for o in book {
+            if o.side == side && o.price == p && o.qty > 0 {
+                total = total + o.qty
+                count = count + 1
+            }
+        }
+        parts = arr_push(parts, to_str(total) + "@" + to_str(p) + "(" + to_str(count) + ")")
+        i = i + 1
+    }
+    str_join(parts, " ")
+}
+
+// Average price a market order of qty on `side` would pay, or -1.0 when the
+// opposite side lacks the liquidity to fill it completely.
+fn market_vwap(book: [Order], side: str, qty: i64) -> f64 {
+    if qty <= 0 {
+        return 0.0
+    }
+    let opposite = "sell"
+    if side == "sell" {
+        opposite = "buy"
+    } else if side != "buy" {
+        return 0.0
+    }
+    let makers = arr_filter(book, |o| o.side == opposite && o.qty > 0)
+    let ranked = arr_sort_by(makers, |a, b| a.price - b.price)
+    if opposite == "buy" {
+        ranked = arr_reverse(ranked)
+    }
+    let remaining = qty
+    let cost = 0
+    for o in ranked {
+        if remaining > 0 {
+            let take = min_i64(remaining, o.qty)
+            cost = cost + take * o.price
+            remaining = remaining - take
+        }
+    }
+    if remaining > 0 {
+        return -1.0
+    }
+    i64_to_f64(cost) / i64_to_f64(qty)
+}
+
+fn sample_book() -> [Order] {
+    [
+        Order { id: 1, side: "buy", kind: "limit", price: 100, qty: 10, seq: 1 },
+        Order { id: 3, side: "buy", kind: "limit", price: 100, qty: 4, seq: 3 },
+        Order { id: 2, side: "buy", kind: "limit", price: 99, qty: 5, seq: 2 },
+        Order { id: 4, side: "sell", kind: "limit", price: 101, qty: 6, seq: 4 },
+        Order { id: 6, side: "sell", kind: "limit", price: 101, qty: 3, seq: 6 },
+        Order { id: 5, side: "sell", kind: "limit", price: 102, qty: 10, seq: 5 }
+    ]
+}
+
+@[test]
+fn test_insert_into_empty_book() {
+    let empty: [Order] = []
+    let b = insert_resting(empty, Order { id: 7, side: "buy", kind: "limit", price: 100, qty: 5, seq: 1 })
+    assert_eq(len(b), 1)
+    assert_eq(b[0].id, 7)
+}
+
+@[test]
+fn test_insert_better_bid_goes_first() {
+    let book = [
+        Order { id: 1, side: "buy", kind: "limit", price: 100, qty: 5, seq: 1 },
+        Order { id: 2, side: "sell", kind: "limit", price: 105, qty: 5, seq: 2 }
+    ]
+    let b = insert_resting(book, Order { id: 3, side: "buy", kind: "limit", price: 101, qty: 2, seq: 3 })
+    assert(arr_map(b, |o| o.id) == [3, 1, 2])
+    let c = insert_resting(book, Order { id: 4, side: "buy", kind: "limit", price: 99, qty: 2, seq: 4 })
+    assert(arr_map(c, |o| o.id) == [1, 4, 2])
+}
+
+@[test]
+fn test_insert_ask_respects_time_priority() {
+    let book = [
+        Order { id: 1, side: "buy", kind: "limit", price: 100, qty: 5, seq: 1 },
+        Order { id: 2, side: "sell", kind: "limit", price: 105, qty: 5, seq: 2 },
+        Order { id: 5, side: "sell", kind: "limit", price: 106, qty: 5, seq: 3 }
+    ]
+    let b = insert_resting(book, Order { id: 4, side: "sell", kind: "limit", price: 105, qty: 1, seq: 4 })
+    assert(arr_map(b, |o| o.id) == [1, 2, 4, 5])
+}
+
+@[test]
+fn test_insert_ignores_market_and_duplicates() {
+    let book = [Order { id: 1, side: "buy", kind: "limit", price: 100, qty: 5, seq: 1 }]
+    let m = insert_resting(book, Order { id: 2, side: "sell", kind: "market", price: 0, qty: 5, seq: 2 })
+    assert_eq(len(m), 1)
+    let d = insert_resting(book, Order { id: 1, side: "buy", kind: "limit", price: 101, qty: 5, seq: 3 })
+    assert_eq(d[0].price, 100)
+}
+
+@[test]
+fn test_fills_market_buy_walks_time_priority() {
+    let f = fills_for(sample_book(), Order { id: 10, side: "buy", kind: "market", price: 0, qty: 8, seq: 7 })
+    assert_eq(len(f), 2)
+    assert_eq(f[0].maker, 4)
+    assert_eq(f[0].qty, 6)
+    assert_eq(f[1].maker, 6)
+    assert_eq(f[1].qty, 2)
+    assert_eq(f[1].price, 101)
+}
+
+@[test]
+fn test_fills_limit_sell_stops_at_limit() {
+    let f = fills_for(sample_book(), Order { id: 11, side: "sell", kind: "limit", price: 100, qty: 20, seq: 7 })
+    assert_eq(len(f), 2)
+    assert_eq(f[0].maker, 1)
+    assert_eq(f[1].maker, 3)
+    assert_eq(f[1].qty, 4)
+    assert_eq(f[1].taker, 11)
+}
+
+@[test]
+fn test_fills_market_sell_sweeps_levels() {
+    let f = fills_for(sample_book(), Order { id: 12, side: "sell", kind: "market", price: 0, qty: 30, seq: 7 })
+    assert_eq(len(f), 3)
+    assert_eq(f[2].maker, 2)
+    assert_eq(f[2].price, 99)
+    assert_eq(f[2].qty, 5)
+}
+
+@[test]
+fn test_fills_none_when_not_crossing() {
+    let f = fills_for(sample_book(), Order { id: 13, side: "buy", kind: "limit", price: 100, qty: 5, seq: 7 })
+    assert_eq(len(f), 0)
+    let g = fills_for(sample_book(), Order { id: 14, side: "buy", kind: "ioc", price: 102, qty: 1, seq: 8 })
+    assert_eq(g[0].maker, 4)
+}
+
+@[test]
+fn test_book_after_limit_buy_rests_remainder() {
+    let b = book_after_match(sample_book(), Order { id: 20, side: "buy", kind: "limit", price: 101, qty: 10, seq: 7 })
+    assert(arr_map(b, |o| o.id) == [20, 1, 3, 2, 5])
+    assert_eq(b[0].qty, 1)
+}
+
+@[test]
+fn test_book_after_market_buy_reduces_maker() {
+    let b = book_after_match(sample_book(), Order { id: 21, side: "buy", kind: "market", price: 0, qty: 8, seq: 7 })
+    assert_eq(len(b), 5)
+    assert_eq(b[3].id, 6)
+    assert_eq(b[3].qty, 1)
+}
+
+@[test]
+fn test_book_after_ioc_discards_remainder() {
+    let b = book_after_match(sample_book(), Order { id: 22, side: "sell", kind: "ioc", price: 100, qty: 20, seq: 7 })
+    assert(arr_map(b, |o| o.id) == [2, 4, 6, 5])
+}
+
+@[test]
+fn test_book_after_passive_order_appends() {
+    let b = book_after_match(sample_book(), Order { id: 23, side: "sell", kind: "limit", price: 103, qty: 5, seq: 7 })
+    assert_eq(len(b), 7)
+    assert_eq(b[6].id, 23)
+}
+
+@[test]
+fn test_level_summary_bids() {
+    assert_eq_str(level_summary(sample_book(), "buy", 2), "14@100(2) 5@99(1)")
+}
+
+@[test]
+fn test_level_summary_asks() {
+    assert_eq_str(level_summary(sample_book(), "sell", 5), "9@101(2) 10@102(1)")
+    assert_eq_str(level_summary(sample_book(), "sell", 1), "9@101(2)")
+}
+
+@[test]
+fn test_level_summary_empty_side() {
+    let bids = [Order { id: 1, side: "buy", kind: "limit", price: 100, qty: 5, seq: 1 }]
+    assert_eq_str(level_summary(bids, "sell", 3), "empty")
+    assert_eq_str(level_summary(bids, "buy", 3), "5@100(1)")
+}
+
+@[test]
+fn test_market_vwap_single_and_multi_level() {
+    assert_eq_f64(market_vwap(sample_book(), "buy", 8), 101.0)
+    assert_eq_f64(market_vwap(sample_book(), "buy", 12), 101.25)
+}
+
+@[test]
+fn test_market_vwap_sell_side() {
+    assert_eq_f64(market_vwap(sample_book(), "sell", 16), 99.875)
+}
+
+@[test]
+fn test_market_vwap_insufficient_liquidity() {
+    assert_eq_f64(market_vwap(sample_book(), "buy", 100), -1.0)
+    assert_eq_f64(market_vwap(sample_book(), "sell", 19), 1895.0 / 19.0)
+}

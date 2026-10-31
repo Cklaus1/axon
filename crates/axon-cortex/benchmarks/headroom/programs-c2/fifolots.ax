@@ -1,0 +1,322 @@
+// FIFO cost accounting for inventory lots.
+// Prices are integer cents per unit. A "split" transaction multiplies every
+// open lot quantity by `qty` and divides its unit cost by the same factor.
+
+type Txn = {
+    kind: str,
+    qty: i64,
+    price: i64
+}
+
+fn realized_gain(txns: [Txn]) -> i64 {
+    let lot_qty: [i64] = []
+    let lot_price: [i64] = []
+    let head = 0
+    let gain = 0
+    for t in txns {
+        if t.kind == "buy" && t.qty > 0 {
+            lot_qty = arr_push(lot_qty, t.qty)
+            lot_price = arr_push(lot_price, t.price)
+        } else if t.kind == "sell" {
+            let need = t.qty
+            while need > 0 && head < len(lot_qty) {
+                let avail = lot_qty[head]
+                let take = min_i64(avail, need)
+                gain = gain + take * (t.price - lot_price[head])
+                lot_qty[head] = avail - take
+                need = need - take
+                if lot_qty[head] == 0 {
+                    head = head + 1
+                }
+            }
+        } else if t.kind == "split" && t.qty > 1 {
+            let i = head
+            while i < len(lot_qty) {
+                lot_qty[i] = lot_qty[i] * t.qty
+                lot_price[i] = lot_price[i] / t.qty
+                i = i + 1
+            }
+        }
+    }
+    gain
+}
+
+fn open_lots(txns: [Txn]) -> [i64] {
+    let lot_qty: [i64] = []
+    let head = 0
+    for t in txns {
+        if t.kind == "buy" && t.qty > 0 {
+            lot_qty = arr_push(lot_qty, t.qty)
+        } else if t.kind == "sell" {
+            let need = t.qty
+            while need > 0 && head < len(lot_qty) {
+                let take = min_i64(lot_qty[head], need)
+                lot_qty[head] = lot_qty[head] - take
+                need = need - take
+                if lot_qty[head] == 0 {
+                    head = head + 1
+                }
+            }
+        } else if t.kind == "split" && t.qty > 1 {
+            for i in head..len(lot_qty) {
+                lot_qty[i] = lot_qty[i] * t.qty
+            }
+        }
+    }
+    let remaining: [i64] = []
+    for i in head..len(lot_qty) {
+        if lot_qty[i] > 0 {
+            remaining = arr_push(remaining, lot_qty[i])
+        }
+    }
+    remaining
+}
+
+fn average_open_cost(txns: [Txn]) -> f64 {
+    let lot_qty: [i64] = []
+    let lot_price: [i64] = []
+    let head = 0
+    for t in txns {
+        if t.kind == "buy" && t.qty > 0 {
+            lot_qty = arr_push(lot_qty, t.qty)
+            lot_price = arr_push(lot_price, t.price)
+        } else if t.kind == "sell" {
+            let need = t.qty
+            while need > 0 && head < len(lot_qty) {
+                let take = min_i64(lot_qty[head], need)
+                lot_qty[head] = lot_qty[head] - take
+                need = need - take
+                if lot_qty[head] == 0 {
+                    head = head + 1
+                }
+            }
+        } else if t.kind == "split" && t.qty > 1 {
+            for i in head..len(lot_qty) {
+                lot_qty[i] = lot_qty[i] * t.qty
+                lot_price[i] = lot_price[i] / t.qty
+            }
+        }
+    }
+    let units = 0
+    let cost = 0
+    for i in head..len(lot_qty) {
+        units = units + lot_qty[i]
+        cost = cost + lot_qty[i] * lot_price[i]
+    }
+    if units == 0 {
+        0.0
+    } else {
+        i64_to_f64(cost) / i64_to_f64(units) / 100.0
+    }
+}
+
+fn sale_report(txns: [Txn]) -> [str] {
+    let lot_qty: [i64] = []
+    let lot_price: [i64] = []
+    let head = 0
+    let lines: [str] = []
+    for t in txns {
+        if t.kind == "buy" && t.qty > 0 {
+            lot_qty = arr_push(lot_qty, t.qty)
+            lot_price = arr_push(lot_price, t.price)
+        } else if t.kind == "split" && t.qty > 1 {
+            for i in head..len(lot_qty) {
+                lot_qty[i] = lot_qty[i] * t.qty
+                lot_price[i] = lot_price[i] / t.qty
+            }
+        } else if t.kind == "sell" && t.qty > 0 {
+            let need = t.qty
+            let cost = 0
+            while need > 0 && head < len(lot_qty) {
+                let take = min_i64(lot_qty[head], need)
+                cost = cost + take * lot_price[head]
+                lot_qty[head] = lot_qty[head] - take
+                need = need - take
+                if lot_qty[head] == 0 {
+                    head = head + 1
+                }
+            }
+            let filled = t.qty - need
+            let gain = filled * t.price - cost
+            let line = "sell " + to_str(t.qty) + " @ " + to_str(t.price) + ": cost " + to_str(cost) + ", gain " + to_str(gain)
+            if need > 0 {
+                line = line + ", unfilled " + to_str(need)
+            }
+            lines = arr_push(lines, line)
+        }
+    }
+    lines
+}
+
+fn ledger_errors(txns: [Txn]) -> [str] {
+    let errors: [str] = []
+    let held = 0
+    for i in 0..len(txns) {
+        let t = txns[i]
+        let tag = "txn " + to_str(i) + ": "
+        if t.qty <= 0 {
+            errors = arr_push(errors, tag + "non-positive quantity")
+        } else if t.kind == "buy" {
+            if t.price < 0 {
+                errors = arr_push(errors, tag + "negative price")
+            } else {
+                held = held + t.qty
+            }
+        } else if t.kind == "sell" {
+            if t.price < 0 {
+                errors = arr_push(errors, tag + "negative price")
+            } else if t.qty > held {
+                errors = arr_push(errors, tag + "sell " + to_str(t.qty) + " exceeds holding " + to_str(held))
+                held = 0
+            } else {
+                held = held - t.qty
+            }
+        } else if t.kind == "split" {
+            if t.qty < 2 {
+                errors = arr_push(errors, tag + "split factor below 2")
+            } else {
+                held = held * t.qty
+            }
+        } else {
+            errors = arr_push(errors, tag + "unknown kind " + t.kind)
+        }
+    }
+    errors
+}
+
+@[test]
+fn test_realized_gain_single_lot() {
+    let txns = [Txn { kind: "buy", qty: 10, price: 1000 }, Txn { kind: "sell", qty: 4, price: 1500 }]
+    assert_eq(realized_gain(txns), 2000)
+}
+
+@[test]
+fn test_realized_gain_spans_lots_in_order() {
+    let txns = [
+        Txn { kind: "buy", qty: 5, price: 1000 },
+        Txn { kind: "buy", qty: 5, price: 2000 },
+        Txn { kind: "sell", qty: 7, price: 1800 }
+    ]
+    assert_eq(realized_gain(txns), 5 * 800 - 2 * 200)
+}
+
+@[test]
+fn test_realized_gain_loss_after_split() {
+    let txns = [
+        Txn { kind: "buy", qty: 10, price: 4000 },
+        Txn { kind: "split", qty: 2, price: 0 },
+        Txn { kind: "sell", qty: 20, price: 1500 }
+    ]
+    assert_eq(realized_gain(txns), -10000)
+}
+
+@[test]
+fn test_realized_gain_ignores_oversell_excess() {
+    let txns = [Txn { kind: "buy", qty: 3, price: 100 }, Txn { kind: "sell", qty: 5, price: 300 }]
+    assert_eq(realized_gain(txns), 600)
+}
+
+@[test]
+fn test_open_lots_partial_consumption() {
+    let txns = [
+        Txn { kind: "buy", qty: 5, price: 1000 },
+        Txn { kind: "buy", qty: 8, price: 1200 },
+        Txn { kind: "sell", qty: 6, price: 1300 },
+        Txn { kind: "buy", qty: 2, price: 900 }
+    ]
+    assert(open_lots(txns) == [7, 2])
+}
+
+@[test]
+fn test_open_lots_after_split() {
+    let txns = [
+        Txn { kind: "buy", qty: 4, price: 900 },
+        Txn { kind: "buy", qty: 6, price: 600 },
+        Txn { kind: "split", qty: 3, price: 0 }
+    ]
+    assert(open_lots(txns) == [12, 18])
+}
+
+@[test]
+fn test_open_lots_fully_sold() {
+    let txns = [Txn { kind: "buy", qty: 4, price: 900 }, Txn { kind: "sell", qty: 4, price: 950 }]
+    assert(open_lots(txns) == [])
+    assert(open_lots([Txn { kind: "buy", qty: 1, price: 5 }]) == [1])
+}
+
+@[test]
+fn test_average_open_cost_mixed_lots() {
+    let txns = [
+        Txn { kind: "buy", qty: 10, price: 1000 },
+        Txn { kind: "buy", qty: 10, price: 2000 },
+        Txn { kind: "sell", qty: 15, price: 2500 }
+    ]
+    assert_eq_f64(average_open_cost(txns), 20.0)
+}
+
+@[test]
+fn test_average_open_cost_weighted() {
+    let txns = [Txn { kind: "buy", qty: 1, price: 1000 }, Txn { kind: "buy", qty: 3, price: 2000 }]
+    assert_eq_f64(average_open_cost(txns), 17.5)
+}
+
+@[test]
+fn test_average_open_cost_split_and_empty() {
+    let txns = [Txn { kind: "buy", qty: 5, price: 3000 }, Txn { kind: "split", qty: 2, price: 0 }]
+    assert_eq_f64(average_open_cost(txns), 15.0)
+    assert_eq_f64(average_open_cost([]), 0.0)
+}
+
+@[test]
+fn test_sale_report_lines() {
+    let txns = [
+        Txn { kind: "buy", qty: 5, price: 1000 },
+        Txn { kind: "buy", qty: 5, price: 1200 },
+        Txn { kind: "sell", qty: 6, price: 1100 }
+    ]
+    let lines = sale_report(txns)
+    assert_eq(len(lines), 1)
+    assert_eq_str(lines[0], "sell 6 @ 1100: cost 6200, gain 400")
+}
+
+@[test]
+fn test_sale_report_unfilled() {
+    let txns = [Txn { kind: "buy", qty: 2, price: 500 }, Txn { kind: "sell", qty: 3, price: 700 }]
+    let lines = sale_report(txns)
+    assert_eq_str(lines[0], "sell 3 @ 700: cost 1000, gain 400, unfilled 1")
+}
+
+@[test]
+fn test_sale_report_multiple_sells() {
+    let txns = [
+        Txn { kind: "buy", qty: 4, price: 800 },
+        Txn { kind: "sell", qty: 1, price: 900 },
+        Txn { kind: "sell", qty: 3, price: 600 }
+    ]
+    assert(sale_report(txns) == ["sell 1 @ 900: cost 800, gain 100", "sell 3 @ 600: cost 2400, gain -600"])
+}
+
+@[test]
+fn test_ledger_errors_clean() {
+    let txns = [Txn { kind: "buy", qty: 3, price: 100 }, Txn { kind: "split", qty: 2, price: 0 }, Txn { kind: "sell", qty: 6, price: 80 }]
+    assert(ledger_errors(txns) == [])
+    assert_eq(len(ledger_errors([Txn { kind: "sell", qty: 1, price: 10 }])), 1)
+}
+
+@[test]
+fn test_ledger_errors_oversell() {
+    let txns = [Txn { kind: "buy", qty: 3, price: 100 }, Txn { kind: "sell", qty: 4, price: 120 }]
+    assert(ledger_errors(txns) == ["txn 1: sell 4 exceeds holding 3"])
+}
+
+@[test]
+fn test_ledger_errors_several_problems() {
+    let txns = [
+        Txn { kind: "buy", qty: 0, price: 100 },
+        Txn { kind: "gift", qty: 2, price: 0 },
+        Txn { kind: "buy", qty: 2, price: -5 },
+        Txn { kind: "split", qty: 1, price: 0 }
+    ]
+    let errs = ledger_errors(txns)
+    assert(errs == ["txn 0: non-positive quantity", "txn 1: unknown kind gift", "txn 2: negative price", "txn 3: split factor below 2"])
+}

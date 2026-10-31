@@ -1,0 +1,259 @@
+// Bank queue simulation with several tellers.
+//
+// Customers arrive in order (arrival times are non-decreasing) and each
+// needs a known service duration. A single first-come-first-served queue
+// feeds all tellers: an arriving customer goes to the lowest-numbered
+// idle teller, otherwise waits for whichever teller frees up first
+// (lowest number on a tie).
+
+fn simulate_bank(arrivals: [i64], services: [i64], tellers: i64) -> [i64] {
+    let n = len(arrivals)
+    if tellers <= 0 || n != len(services) {
+        return []
+    }
+    let free_at = arr_repeat(0, tellers)
+    let out: [i64] = []
+    let prev = 0
+    let i = 0
+    while i < n {
+        let arrive = arrivals[i]
+        if arrive < prev || services[i] < 0 {
+            return []
+        }
+        prev = arrive
+        let chosen = -1
+        let t = 0
+        while t < tellers && chosen < 0 {
+            if free_at[t] <= arrive {
+                chosen = t
+            }
+            t = t + 1
+        }
+        if chosen < 0 {
+            chosen = 0
+            t = 1
+            while t < tellers {
+                if free_at[t] < free_at[chosen] {
+                    chosen = t
+                }
+                t = t + 1
+            }
+        }
+        let start = max_i64(arrive, free_at[chosen])
+        free_at[chosen] = start + services[i]
+        out = arr_push(out, start)
+        out = arr_push(out, chosen)
+        i = i + 1
+    }
+    out
+}
+
+fn wait_summary(arrivals: [i64], services: [i64], tellers: i64) -> str {
+    let n = len(arrivals)
+    let plan = simulate_bank(arrivals, services, tellers)
+    if tellers <= 0 || len(plan) != 2 * n {
+        return "invalid"
+    }
+    let total = 0
+    let waited = 0
+    let longest = 0
+    let i = 0
+    while i < n {
+        let wait = plan[2 * i] - arrivals[i]
+        total = total + wait
+        if wait > 0 {
+            waited = waited + 1
+        }
+        if wait > longest {
+            longest = wait
+        }
+        i = i + 1
+    }
+    let hundredths = 0
+    if n > 0 {
+        hundredths = (total * 100 + n / 2) / n
+    }
+    let frac = to_str(hundredths % 100)
+    if hundredths % 100 < 10 {
+        frac = "0" + frac
+    }
+    let avg = to_str(hundredths / 100) + "." + frac
+    "served=" + to_str(n) + " waited=" + to_str(waited) + " avg=" + avg + " max=" + to_str(longest)
+}
+
+fn teller_utilization(arrivals: [i64], services: [i64], tellers: i64) -> [i64] {
+    let n = len(arrivals)
+    let plan = simulate_bank(arrivals, services, tellers)
+    if n == 0 || len(plan) != 2 * n {
+        return []
+    }
+    let busy = arr_repeat(0, tellers)
+    let window_start = arrivals[0]
+    let window_end = window_start
+    let i = 0
+    while i < n {
+        let teller = plan[2 * i + 1]
+        busy[teller] = busy[teller] + services[i]
+        let finish = plan[2 * i] + services[i]
+        if finish > window_end {
+            window_end = finish
+        }
+        i = i + 1
+    }
+    let span = window_end - window_start
+    let out: [i64] = []
+    for b in busy {
+        if span == 0 {
+            out = arr_push(out, 0)
+        } else {
+            out = arr_push(out, b * 100 / span)
+        }
+    }
+    out
+}
+
+fn max_queue_length(arrivals: [i64], services: [i64], tellers: i64) -> i64 {
+    let n = len(arrivals)
+    let plan = simulate_bank(arrivals, services, tellers)
+    if len(plan) != 2 * n {
+        return -1
+    }
+    let best = 0
+    let i = 0
+    while i < n {
+        let now = arrivals[i]
+        let waiting = 0
+        let j = 0
+        while j < n && arrivals[j] <= now {
+            if plan[2 * j] > now {
+                waiting = waiting + 1
+            }
+            j = j + 1
+        }
+        if waiting > best {
+            best = waiting
+        }
+        i = i + 1
+    }
+    best
+}
+
+fn min_tellers_for(arrivals: [i64], services: [i64], max_wait: i64) -> i64 {
+    let n = len(arrivals)
+    if max_wait < 0 || n != len(services) {
+        return -1
+    }
+    if n == 0 {
+        return 0
+    }
+    let k = 1
+    while k <= n {
+        let plan = simulate_bank(arrivals, services, k)
+        if len(plan) != 2 * n {
+            return -1
+        }
+        let worst = 0
+        let i = 0
+        while i < n {
+            let wait = plan[2 * i] - arrivals[i]
+            if wait > worst {
+                worst = wait
+            }
+            i = i + 1
+        }
+        if worst <= max_wait {
+            return k
+        }
+        k = k + 1
+    }
+    n
+}
+
+@[test]
+fn test_schedule_two_tellers() {
+    assert(simulate_bank([0, 1, 2, 3], [5, 5, 1, 1], 2) == [0, 0, 1, 1, 5, 0, 6, 0])
+}
+
+@[test]
+fn test_schedule_single_teller() {
+    assert(simulate_bank([0, 2, 3], [3, 1, 2], 1) == [0, 0, 3, 0, 4, 0])
+}
+
+@[test]
+fn test_schedule_prefers_lowest_idle() {
+    assert(simulate_bank([0, 0, 10], [4, 2, 1], 3) == [0, 0, 0, 1, 10, 0])
+}
+
+@[test]
+fn test_schedule_rejects_bad_input() {
+    assert_eq(len(simulate_bank([3, 1], [1, 1], 2)), 0)
+    assert_eq(len(simulate_bank([1, 2], [1, 1], 0)), 0)
+}
+
+@[test]
+fn test_summary_two_tellers() {
+    assert_eq_str(wait_summary([0, 1, 2, 3], [5, 5, 1, 1], 2), "served=4 waited=2 avg=1.50 max=3")
+}
+
+@[test]
+fn test_summary_rounds_average() {
+    assert_eq_str(wait_summary([0, 2, 3], [3, 1, 2], 1), "served=3 waited=2 avg=0.67 max=1")
+}
+
+@[test]
+fn test_summary_no_waiting() {
+    assert_eq_str(wait_summary([0, 0, 10], [4, 2, 1], 3), "served=3 waited=0 avg=0.00 max=0")
+}
+
+@[test]
+fn test_summary_invalid() {
+    assert_eq_str(wait_summary([0, 1], [2], 1), "invalid")
+}
+
+@[test]
+fn test_utilization_two_tellers() {
+    assert(teller_utilization([0, 1, 2, 3], [5, 5, 1, 1], 2) == [100, 71])
+}
+
+@[test]
+fn test_utilization_single_teller() {
+    assert(teller_utilization([0, 2, 3], [3, 1, 2], 1) == [100])
+}
+
+@[test]
+fn test_utilization_with_idle_teller() {
+    assert(teller_utilization([0, 0, 10], [4, 2, 1], 3) == [45, 18, 0])
+}
+
+@[test]
+fn test_queue_builds_up() {
+    assert_eq(max_queue_length([0, 1, 2, 3], [5, 5, 1, 1], 2), 2)
+}
+
+@[test]
+fn test_queue_simultaneous_arrivals() {
+    assert_eq(max_queue_length([0, 0, 0, 0], [2, 2, 2, 2], 1), 3)
+}
+
+@[test]
+fn test_queue_invalid_input() {
+    assert_eq(max_queue_length([5, 1], [1, 1], 1), -1)
+    assert_eq(max_queue_length([0, 0, 10], [4, 2, 1], 3), 0)
+}
+
+@[test]
+fn test_min_tellers_no_wait() {
+    assert_eq(min_tellers_for([0, 1, 2, 3], [5, 5, 1, 1], 0), 3)
+}
+
+@[test]
+fn test_min_tellers_allowing_wait() {
+    assert_eq(min_tellers_for([0, 1, 2, 3], [5, 5, 1, 1], 3), 2)
+    assert_eq(min_tellers_for([0, 0, 0, 0], [2, 2, 2, 2], 2), 2)
+}
+
+@[test]
+fn test_min_tellers_strict_limit() {
+    assert_eq(min_tellers_for([0, 0, 0, 0], [2, 2, 2, 2], 1), 4)
+    assert_eq(min_tellers_for([0, 1], [1, 1], -1), -1)
+}

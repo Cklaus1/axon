@@ -1,0 +1,332 @@
+// Email address validation and canonicalization: syntax checks for the
+// local part and domain, provider-specific canonical forms (dots, plus
+// tags, case), and typo suggestions for common mail domains.
+
+fn is_atext(c: str) -> bool {
+    if char_is_digit(c) {
+        return true
+    }
+    let code = char_at(c, 0)
+    if (code >= 97 && code <= 122) || (code >= 65 && code <= 90) {
+        return len(c) == 1
+    }
+    str_contains("!#$%&'*+-/=?^_`|~", c) && len(c) == 1
+}
+
+fn is_valid_local_part(local: str) -> bool {
+    let n = len(local)
+    if n == 0 || n > 64 {
+        return false
+    }
+    if str_starts_with(local, ".") || str_ends_with(local, ".") {
+        return false
+    }
+    let chars = str_chars(local)
+    let prev_dot = false
+    for c in chars {
+        if c == "." {
+            if prev_dot {
+                return false
+            }
+            prev_dot = true
+        } else if is_atext(c) {
+            prev_dot = false
+        } else {
+            return false
+        }
+    }
+    true
+}
+
+fn is_valid_domain(domain: str) -> bool {
+    let n = len(domain)
+    if n == 0 || n > 253 {
+        return false
+    }
+    if str_starts_with(domain, "[") && str_ends_with(domain, "]") {
+        let parts = str_split(str_slice(domain, 1, n - 1), ".")
+        if len(parts) != 4 {
+            return false
+        }
+        for p in parts {
+            if len(p) == 0 || len(p) > 3 || len(str_digits_only(p)) != len(p) || parse_int_or(p, 256) > 255 {
+                return false
+            }
+        }
+        return true
+    }
+    let labels = str_split(str_to_lower(domain), ".")
+    if len(labels) < 2 {
+        return false
+    }
+    for label in labels {
+        if len(label) == 0 || len(label) > 63 || str_starts_with(label, "-") || str_ends_with(label, "-") {
+            return false
+        }
+        for c in str_chars(label) {
+            if !(char_is_digit(c) || c == "-" || (char_is_alpha(c) && char_at(c, 0) < 128)) {
+                return false
+            }
+        }
+    }
+    let tld = labels[len(labels) - 1]
+    if len(tld) < 2 || len(str_digits_only(tld)) > 0 {
+        return false
+    }
+    true
+}
+
+fn validate_email(addr: str) -> str {
+    let s = str_trim(addr)
+    if len(s) == 0 {
+        return "empty"
+    }
+    if len(s) > 254 {
+        return "too-long"
+    }
+    let ats = str_count(s, "@")
+    if ats == 0 {
+        return "missing-at"
+    }
+    if ats > 1 {
+        return "multiple-at"
+    }
+    let at = str_index_of(s, "@")
+    let local = str_slice(s, 0, at)
+    let domain = str_slice(s, at + 1, len(s))
+    if len(local) == 0 {
+        return "missing-local"
+    }
+    if len(domain) == 0 {
+        return "missing-domain"
+    }
+    if !is_valid_local_part(local) {
+        return "bad-local"
+    }
+    if !is_valid_domain(domain) {
+        return "bad-domain"
+    }
+    "ok"
+}
+
+fn canonicalize_email(addr: str) -> str {
+    if validate_email(addr) != "ok" {
+        return ""
+    }
+    let s = str_trim(addr)
+    let at = str_index_of(s, "@")
+    let local = str_slice(s, 0, at)
+    let domain = str_to_lower(str_slice(s, at + 1, len(s)))
+    if domain == "googlemail.com" {
+        domain = "gmail.com"
+    }
+    let tag_sep = ""
+    let fold_case = false
+    let drop_dots = false
+    if domain == "gmail.com" {
+        tag_sep = "+"
+        fold_case = true
+        drop_dots = true
+    } else if domain == "outlook.com" || domain == "hotmail.com" || domain == "live.com" {
+        tag_sep = "+"
+        fold_case = true
+    } else if domain == "yahoo.com" || domain == "ymail.com" {
+        tag_sep = "-"
+        fold_case = true
+    } else if domain == "fastmail.com" || domain == "proton.me" || domain == "icloud.com" {
+        tag_sep = "+"
+        fold_case = true
+    }
+    if tag_sep != "" {
+        let cut = str_index_of(local, tag_sep)
+        if cut > 0 {
+            local = str_slice(local, 0, cut)
+        }
+    }
+    if drop_dots {
+        local = str_replace(local, ".", "")
+    }
+    if fold_case {
+        local = str_to_lower(local)
+    }
+    local + "@" + domain
+}
+
+fn edit_distance(a: str, b: str) -> i64 {
+    let xs = str_chars(a)
+    let ys = str_chars(b)
+    let m = len(xs)
+    let n = len(ys)
+    let older = arr_range(0, n + 1)
+    let prev = arr_range(0, n + 1)
+    let i = 1
+    while i <= m {
+        let cur = arr_repeat(0, n + 1)
+        cur[0] = i
+        let j = 1
+        while j <= n {
+            let cost = if xs[i - 1] == ys[j - 1] { 0 } else { 1 }
+            let best = min_i64(prev[j] + 1, cur[j - 1] + 1)
+            best = min_i64(best, prev[j - 1] + cost)
+            if i > 1 && j > 1 && xs[i - 1] == ys[j - 2] && xs[i - 2] == ys[j - 1] {
+                best = min_i64(best, older[j - 2] + 1)
+            }
+            cur[j] = best
+            j = j + 1
+        }
+        older = prev
+        prev = cur
+        i = i + 1
+    }
+    prev[n]
+}
+
+fn suggest_domain_fix(addr: str) -> str {
+    let s = str_trim(addr)
+    let at = str_index_of(s, "@")
+    if at <= 0 || at == len(s) - 1 {
+        return ""
+    }
+    let local = str_slice(s, 0, at)
+    let domain = str_to_lower(str_slice(s, at + 1, len(s)))
+    let popular = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "aol.com", "proton.me"]
+    if arr_contains(popular, domain) {
+        return ""
+    }
+    let best = ""
+    let best_dist = 3
+    for cand in popular {
+        let limit = if len(cand) <= 7 { 1 } else { 2 }
+        let d = edit_distance(domain, cand)
+        if d <= limit && d < best_dist {
+            best = cand
+            best_dist = d
+        }
+    }
+    if best == "" {
+        let dot = str_index_of(domain, ".")
+        if dot < 0 {
+            for cand in popular {
+                if str_starts_with(cand, domain + ".") {
+                    best = cand
+                }
+            }
+        }
+    }
+    if best == "" {
+        return ""
+    }
+    local + "@" + best
+}
+
+@[test]
+fn test_is_valid_local_part_accepts() {
+    assert(is_valid_local_part("john.smith"))
+    assert(is_valid_local_part("o'brien+news"))
+}
+
+@[test]
+fn test_is_valid_local_part_rejects_dots() {
+    assert(!is_valid_local_part(".john"))
+    assert(!is_valid_local_part("john..smith"))
+    assert(is_valid_local_part("j.s"))
+}
+
+@[test]
+fn test_is_valid_local_part_rejects_chars() {
+    assert(!is_valid_local_part("john smith"))
+    assert(!is_valid_local_part("a(b)"))
+    assert(is_valid_local_part("x_y-z"))
+}
+
+@[test]
+fn test_is_valid_domain_names() {
+    assert(is_valid_domain("mail.example.co.uk"))
+    assert(!is_valid_domain("localhost"))
+    assert(!is_valid_domain("bad-.example.com"))
+}
+
+@[test]
+fn test_is_valid_domain_tld_rules() {
+    assert(is_valid_domain("Example.ORG"))
+    assert(!is_valid_domain("example.c"))
+    assert(!is_valid_domain("example.123"))
+}
+
+@[test]
+fn test_is_valid_domain_ip_literal() {
+    assert(is_valid_domain("[192.168.0.1]"))
+    assert(!is_valid_domain("[192.168.0.300]"))
+    assert(!is_valid_domain("[10.0.1]"))
+}
+
+@[test]
+fn test_validate_email_ok() {
+    assert_eq_str(validate_email("  Jane.Doe+work@Example.com "), "ok")
+}
+
+@[test]
+fn test_validate_email_at_sign_errors() {
+    assert_eq_str(validate_email("jane.example.com"), "missing-at")
+    assert_eq_str(validate_email("jane@doe@example.com"), "multiple-at")
+    assert_eq_str(validate_email("@example.com"), "missing-local")
+}
+
+@[test]
+fn test_validate_email_part_errors() {
+    assert_eq_str(validate_email("jane..doe@example.com"), "bad-local")
+    assert_eq_str(validate_email("jane@example"), "bad-domain")
+    assert_eq_str(validate_email("jane@"), "missing-domain")
+}
+
+@[test]
+fn test_canonicalize_email_gmail() {
+    assert_eq_str(canonicalize_email("J.Doe+Shopping@GoogleMail.com"), "jdoe@gmail.com")
+}
+
+@[test]
+fn test_canonicalize_email_other_providers() {
+    assert_eq_str(canonicalize_email("Jane.Doe+news@Outlook.com"), "jane.doe@outlook.com")
+    assert_eq_str(canonicalize_email("bob-alerts@yahoo.com"), "bob@yahoo.com")
+}
+
+@[test]
+fn test_canonicalize_email_unknown_domain_keeps_local() {
+    assert_eq_str(canonicalize_email(" Ann.Lee+x@Corp.Example.com"), "Ann.Lee+x@corp.example.com")
+    assert_eq_str(canonicalize_email("not-an-address"), "")
+}
+
+@[test]
+fn test_edit_distance_basic() {
+    assert_eq(edit_distance("kitten", "sitting"), 3)
+    assert_eq(edit_distance("", "abc"), 3)
+}
+
+@[test]
+fn test_edit_distance_transposition() {
+    assert_eq(edit_distance("gmial.com", "gmail.com"), 1)
+    assert_eq(edit_distance("same", "same"), 0)
+}
+
+@[test]
+fn test_edit_distance_substitution() {
+    assert_eq(edit_distance("hotmail.com", "hotmall.con"), 2)
+}
+
+@[test]
+fn test_suggest_domain_fix_typos() {
+    assert_eq_str(suggest_domain_fix("ann@gmial.com"), "ann@gmail.com")
+    assert_eq_str(suggest_domain_fix("bo@hotmal.com"), "bo@hotmail.com")
+}
+
+@[test]
+fn test_suggest_domain_fix_missing_tld() {
+    assert_eq_str(suggest_domain_fix("cy@yahoo"), "cy@yahoo.com")
+}
+
+@[test]
+fn test_suggest_domain_fix_none_needed() {
+    assert_eq_str(suggest_domain_fix("dee@outlook.com"), "")
+    assert_eq_str(suggest_domain_fix("eve@unrelated.org"), "")
+    assert_eq_str(suggest_domain_fix("fay@outlok.com"), "fay@outlook.com")
+}

@@ -1,0 +1,294 @@
+// Month calendars and weekday arithmetic on the proleptic Gregorian calendar.
+// Weekday numbers run 0 = Sunday through 6 = Saturday.
+
+fn is_leap(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+fn days_in_month(y: i64, m: i64) -> i64 {
+    if m == 2 {
+        if is_leap(y) { 29 } else { 28 }
+    } else if m == 4 || m == 6 || m == 9 || m == 11 {
+        30
+    } else {
+        31
+    }
+}
+
+fn day_of_week(y: i64, m: i64, d: i64) -> i64 {
+    let offsets = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
+    let yy = if m < 3 { y - 1 } else { y }
+    (yy + yy / 4 - yy / 100 + yy / 400 + offsets[m - 1] + d) % 7
+}
+
+fn weekday_of(date: str) -> str {
+    let s = str_trim(date)
+    let y = -1
+    let m = -1
+    let d = -1
+    if str_contains(s, "-") {
+        let parts = str_split(s, "-")
+        if len(parts) == 3 && len(parts[0]) == 4 {
+            y = parse_int_or(parts[0], -1)
+            m = parse_int_or(parts[1], -1)
+            d = parse_int_or(parts[2], -1)
+        }
+    } else if str_contains(s, "/") {
+        let parts = str_split(s, "/")
+        if len(parts) == 3 && len(parts[2]) == 4 {
+            d = parse_int_or(parts[0], -1)
+            m = parse_int_or(parts[1], -1)
+            y = parse_int_or(parts[2], -1)
+        }
+    }
+    if y < 1 || m < 1 || m > 12 || d < 1 || d > days_in_month(y, m) {
+        return "invalid"
+    }
+    let y1 = y - 1
+    let days = y1 * 365 + y1 / 4 - y1 / 100 + y1 / 400
+    for k in 1..m {
+        days = days + days_in_month(y, k)
+    }
+    days = days + d - 1
+    let names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    names[days % 7]
+}
+
+fn month_grid(y: i64, m: i64, week_start: i64, show_adjacent: bool) -> [i64] {
+    let cells: [i64] = []
+    if y < 2 || m < 1 || m > 12 || week_start < 0 || week_start > 6 {
+        return cells
+    }
+    let lead = (day_of_week(y, m, 1) - week_start + 7) % 7
+    let prev_m = if m == 1 { 12 } else { m - 1 }
+    let prev_y = if m == 1 { y - 1 } else { y }
+    let prev_dim = days_in_month(prev_y, prev_m)
+    let i = 0
+    while i < lead {
+        let v = if show_adjacent { 0 - (prev_dim - lead + 1 + i) } else { 0 }
+        cells = arr_push(cells, v)
+        i = i + 1
+    }
+    let dim = days_in_month(y, m)
+    let d = 1
+    while d <= dim {
+        cells = arr_push(cells, d)
+        d = d + 1
+    }
+    let next = 1
+    while len(cells) % 7 != 0 {
+        let v = if show_adjacent { 0 - next } else { 0 }
+        cells = arr_push(cells, v)
+        next = next + 1
+    }
+    cells
+}
+
+fn render_month(y: i64, m: i64, week_start: i64) -> str {
+    if m < 1 || m > 12 || week_start < 0 || week_start > 6 {
+        return ""
+    }
+    let names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    let labels = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
+    let title = names[m - 1] + " " + to_str(y)
+    let pad = max_i64(0, (20 - len(title)) / 2)
+    let lines = [str_repeat(" ", pad) + title]
+    let header: [str] = []
+    for i in 0..7 {
+        header = arr_push(header, labels[(week_start + i) % 7])
+    }
+    lines = arr_push(lines, str_join(header, " "))
+    let cells = month_grid(y, m, week_start, false)
+    let row: [str] = []
+    for c in cells {
+        if c > 0 {
+            row = arr_push(row, str_pad_start(to_str(c), 2, " "))
+        } else {
+            row = arr_push(row, "  ")
+        }
+        if len(row) == 7 {
+            lines = arr_push(lines, str_trim_end(str_join(row, " ")))
+            row = []
+        }
+    }
+    str_join(lines, "\n")
+}
+
+fn iso_week_label(y: i64, m: i64, d: i64) -> str {
+    if y < 2 || m < 1 || m > 12 || d < 1 || d > days_in_month(y, m) {
+        return ""
+    }
+    let doy = d
+    for k in 1..m {
+        doy = doy + days_in_month(y, k)
+    }
+    let dow = day_of_week(y, m, d)
+    let iso_dow = if dow == 0 { 7 } else { dow }
+    let week = (doy - iso_dow + 10) / 7
+    let week_year = y
+    if week < 1 {
+        let prev_jan1 = day_of_week(y - 1, 1, 1)
+        let long_prev = prev_jan1 == 4 || (is_leap(y - 1) && prev_jan1 == 3)
+        week = if long_prev { 53 } else { 52 }
+        week_year = y - 1
+    } else if week == 53 {
+        let jan1 = day_of_week(y, 1, 1)
+        let long_year = jan1 == 4 || (is_leap(y) && jan1 == 3)
+        if !long_year {
+            week = 1
+            week_year = y + 1
+        }
+    }
+    to_str(week_year) + "-W" + str_pad_start(to_str(week), 2, "0")
+}
+
+fn add_business_days(date: str, n: i64) -> str {
+    let parts = str_split(str_trim(date), "-")
+    if len(parts) != 3 {
+        return "invalid"
+    }
+    let y = parse_int_or(parts[0], -1)
+    let m = parse_int_or(parts[1], -1)
+    let d = parse_int_or(parts[2], -1)
+    if y < 2 || m < 1 || m > 12 || d < 1 || d > days_in_month(y, m) {
+        return "invalid"
+    }
+    let step = if n < 0 { -1 } else { 1 }
+    let remaining = abs_i64(n)
+    while remaining > 0 {
+        d = d + step
+        if d > days_in_month(y, m) {
+            d = 1
+            m = m + 1
+            if m > 12 {
+                m = 1
+                y = y + 1
+            }
+        } else if d < 1 {
+            m = m - 1
+            if m < 1 {
+                m = 12
+                y = y - 1
+            }
+            d = days_in_month(y, m)
+        }
+        let wd = day_of_week(y, m, d)
+        if wd != 0 && wd != 6 {
+            remaining = remaining - 1
+        }
+    }
+    str_pad_start(to_str(y), 4, "0") + "-" + str_pad_start(to_str(m), 2, "0") + "-" + str_pad_start(to_str(d), 2, "0")
+}
+
+@[test]
+fn test_weekday_of_iso_dates() {
+    assert_eq_str(weekday_of("2026-10-31"), "Saturday")
+    assert_eq_str(weekday_of("2000-02-29"), "Tuesday")
+}
+
+@[test]
+fn test_weekday_of_day_first_format() {
+    assert_eq_str(weekday_of("01/01/2026"), "Thursday")
+    assert_eq_str(weekday_of(" 25/12/1999 "), "Saturday")
+}
+
+@[test]
+fn test_weekday_of_epoch_start() {
+    assert_eq_str(weekday_of("0001-01-01"), "Monday")
+}
+
+@[test]
+fn test_weekday_of_invalid() {
+    assert_eq_str(weekday_of("2026-02-29"), "invalid")
+    assert_eq_str(weekday_of("2026-13-01"), "invalid")
+    assert_eq_str(weekday_of("26-01-01"), "invalid")
+}
+
+@[test]
+fn test_month_grid_exact_weeks() {
+    let cells = month_grid(2026, 2, 0, false)
+    assert(cells == arr_range(1, 29))
+}
+
+@[test]
+fn test_month_grid_blank_padding() {
+    let cells = month_grid(2026, 10, 0, false)
+    assert_eq(len(cells), 35)
+    assert(arr_take(cells, 5) == [0, 0, 0, 0, 1])
+    assert_eq(cells[34], 31)
+}
+
+@[test]
+fn test_month_grid_adjacent_days() {
+    let cells = month_grid(2026, 10, 1, true)
+    assert_eq(len(cells), 35)
+    assert(arr_take(cells, 4) == [-28, -29, -30, 1])
+    assert_eq(cells[34], -1)
+    assert(month_grid(2026, 13, 0, false) == [])
+}
+
+@[test]
+fn test_month_grid_january_uses_december() {
+    let cells = month_grid(2027, 1, 0, true)
+    assert(arr_take(cells, 6) == [-27, -28, -29, -30, -31, 1])
+}
+
+@[test]
+fn test_render_month_february() {
+    let expected = "   February 2026\nSu Mo Tu We Th Fr Sa\n 1  2  3  4  5  6  7\n 8  9 10 11 12 13 14\n15 16 17 18 19 20 21\n22 23 24 25 26 27 28"
+    assert_eq_str(render_month(2026, 2, 0), expected)
+}
+
+@[test]
+fn test_render_month_monday_start() {
+    let lines = str_split(render_month(2026, 2, 1), "\n")
+    assert_eq(len(lines), 7)
+    assert_eq_str(lines[1], "Mo Tu We Th Fr Sa Su")
+    assert_eq_str(lines[2], str_repeat(" ", 19) + "1")
+    assert_eq_str(lines[6], "23 24 25 26 27 28")
+}
+
+@[test]
+fn test_render_month_october() {
+    let lines = str_split(render_month(2026, 10, 0), "\n")
+    assert_eq_str(lines[0], "    October 2026")
+    assert_eq_str(lines[2], str_repeat(" ", 13) + "1  2  3")
+    assert_eq_str(render_month(2026, 0, 0), "")
+}
+
+@[test]
+fn test_iso_week_label_mid_year() {
+    assert_eq_str(iso_week_label(2026, 10, 31), "2026-W44")
+    assert_eq_str(iso_week_label(2026, 1, 1), "2026-W01")
+}
+
+@[test]
+fn test_iso_week_label_previous_year() {
+    assert_eq_str(iso_week_label(2027, 1, 1), "2026-W53")
+    assert_eq_str(iso_week_label(2023, 1, 1), "2022-W52")
+}
+
+@[test]
+fn test_iso_week_label_next_year() {
+    assert_eq_str(iso_week_label(2024, 12, 30), "2025-W01")
+    assert_eq_str(iso_week_label(2026, 12, 31), "2026-W53")
+}
+
+@[test]
+fn test_add_business_days_over_weekend() {
+    assert_eq_str(add_business_days("2026-10-30", 1), "2026-11-02")
+    assert_eq_str(add_business_days("2026-10-30", 0), "2026-10-30")
+}
+
+@[test]
+fn test_add_business_days_backwards() {
+    assert_eq_str(add_business_days("2026-11-02", -1), "2026-10-30")
+    assert_eq_str(add_business_days("2026-03-02", -1), "2026-02-27")
+}
+
+@[test]
+fn test_add_business_days_year_end() {
+    assert_eq_str(add_business_days("2026-12-31", 2), "2027-01-04")
+    assert_eq_str(add_business_days("2026-12-31", 10), "2027-01-14")
+    assert_eq_str(add_business_days("2026-02-30", 1), "invalid")
+}

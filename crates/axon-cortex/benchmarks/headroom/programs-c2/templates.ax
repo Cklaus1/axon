@@ -1,0 +1,280 @@
+// Text templates with <<name>> placeholders, <<name|default>> fallbacks,
+// <<#each>> list loops and <<?name>> / <<!name>> conditional sections.
+
+fn render_vars(tpl: str, keys: [str], vals: [str]) -> str {
+    let out = ""
+    let n = str_len(tpl)
+    let i = 0
+    while i < n {
+        let rest = str_slice(tpl, i, n)
+        let open = str_index_of(rest, "<<")
+        let close = -1
+        if open >= 0 {
+            close = str_index_of(str_slice(rest, open + 2, str_len(rest)), ">>")
+        }
+        if open < 0 || close < 0 {
+            out = out + rest
+            i = n
+        } else {
+            out = out + str_slice(rest, 0, open)
+            let inner = str_trim(str_slice(rest, open + 2, open + 2 + close))
+            let bar = str_index_of(inner, "|")
+            let cut = if bar >= 0 { bar } else { str_len(inner) }
+            let name = str_trim(str_slice(inner, 0, cut))
+            let found = false
+            let value = ""
+            let k = 0
+            while k < len(keys) && k < len(vals) {
+                if keys[k] == name {
+                    value = vals[k]
+                    found = true
+                }
+                k = k + 1
+            }
+            if found && str_len(value) > 0 {
+                out = out + value
+            } else if bar >= 0 {
+                out = out + str_trim(str_slice(inner, bar + 1, str_len(inner)))
+            } else if !found {
+                out = out + "<<" + inner + ">>"
+            }
+            i = i + open + 2 + close + 2
+        }
+    }
+    out
+}
+
+fn render_each(tpl: str, items: [str], sep: str) -> str {
+    let open_tag = "<<#each>>"
+    let close_tag = "<</each>>"
+    let empty_tag = "<<#empty>>"
+    let out = ""
+    let rest = str_slice(tpl, 0, str_len(tpl))
+    let going = true
+    while going {
+        let start = str_index_of(rest, open_tag)
+        let tail = str_slice(rest, start + str_len(open_tag), str_len(rest))
+        let stop = str_index_of(tail, close_tag)
+        if start < 0 || stop < 0 {
+            out = out + rest
+            going = false
+        } else {
+            out = out + str_slice(rest, 0, start)
+            let block = str_slice(tail, 0, stop)
+            let empty_at = str_index_of(block, empty_tag)
+            let body_end = if empty_at >= 0 { empty_at } else { str_len(block) }
+            let body = str_slice(block, 0, body_end)
+            if len(items) == 0 {
+                if empty_at >= 0 {
+                    out = out + str_slice(block, empty_at + str_len(empty_tag), str_len(block))
+                }
+            } else {
+                let k = 0
+                while k < len(items) {
+                    if k > 0 {
+                        out = out + sep
+                    }
+                    let piece = str_replace(body, "<<.>>", items[k])
+                    out = out + str_replace(piece, "<<#>>", to_str(k + 1))
+                    k = k + 1
+                }
+            }
+            rest = str_slice(tail, stop + str_len(close_tag), str_len(tail))
+        }
+    }
+    out
+}
+
+fn render_conditionals(tpl: str, keys: [str], vals: [str]) -> str {
+    let out = ""
+    let rest = str_slice(tpl, 0, str_len(tpl))
+    let going = true
+    while going {
+        let at = str_index_of(rest, "<<?")
+        let neg = str_index_of(rest, "<<!")
+        if at < 0 || (neg >= 0 && neg < at) {
+            at = neg
+        }
+        let head_end = -1
+        if at >= 0 {
+            head_end = str_index_of(str_slice(rest, at, str_len(rest)), ">>")
+        }
+        let positive = at >= 0 && str_slice(rest, at + 2, at + 3) == "?"
+        let closer = if positive { "<</?>>" } else { "<</!>>" }
+        let body_rest = str_slice(rest, at + head_end + 2, str_len(rest))
+        let stop = str_index_of(body_rest, closer)
+        if at < 0 || head_end < 0 || stop < 0 {
+            out = out + rest
+            going = false
+        } else {
+            let name = str_trim(str_slice(rest, at + 3, at + head_end))
+            let truthy = false
+            let k = 0
+            while k < len(keys) && k < len(vals) {
+                let v = str_trim(vals[k])
+                if keys[k] == name && str_len(v) > 0 && v != "false" && v != "0" {
+                    truthy = true
+                }
+                k = k + 1
+            }
+            out = out + str_slice(rest, 0, at)
+            if truthy == positive {
+                out = out + str_slice(body_rest, 0, stop)
+            }
+            rest = str_slice(body_rest, stop + str_len(closer), str_len(body_rest))
+        }
+    }
+    out
+}
+
+fn find_placeholders(tpl: str) -> [str] {
+    let names: [str] = []
+    let n = str_len(tpl)
+    let i = 0
+    while i < n {
+        let rest = str_slice(tpl, i, n)
+        let open = str_index_of(rest, "<<")
+        let close = -1
+        if open >= 0 {
+            close = str_index_of(str_slice(rest, open + 2, str_len(rest)), ">>")
+        }
+        if open < 0 || close < 0 {
+            i = n
+        } else {
+            let inner = str_trim(str_slice(rest, open + 2, open + 2 + close))
+            let first = str_slice(inner, 0, 1)
+            let control = first == "#" || first == "/" || first == "." || first == "?" || first == "!"
+            let bar = str_index_of(inner, "|")
+            let cut = if bar >= 0 { bar } else { str_len(inner) }
+            let name = str_trim(str_slice(inner, 0, cut))
+            if !control && str_len(name) > 0 && !arr_contains(names, name) {
+                names = arr_push(names, name)
+            }
+            i = i + open + 2 + close + 2
+        }
+    }
+    names
+}
+
+fn count_unresolved(tpl: str, keys: [str]) -> i64 {
+    let missing = 0
+    let n = str_len(tpl)
+    let i = 0
+    while i < n {
+        let rest = str_slice(tpl, i, n)
+        let open = str_index_of(rest, "<<")
+        let close = -1
+        if open >= 0 {
+            close = str_index_of(str_slice(rest, open + 2, str_len(rest)), ">>")
+        }
+        if open < 0 || close < 0 {
+            i = n
+        } else {
+            let inner = str_trim(str_slice(rest, open + 2, open + 2 + close))
+            let first = str_slice(inner, 0, 1)
+            let control = first == "#" || first == "/" || first == "."
+            let has_default = str_index_of(inner, "|") >= 0
+            let skip = if first == "?" || first == "!" { 1 } else { 0 }
+            let name = str_trim(str_slice(inner, skip, str_len(inner)))
+            if !control && !has_default && str_len(name) > 0 && !arr_contains(keys, name) {
+                missing = missing + 1
+            }
+            i = i + open + 2 + close + 2
+        }
+    }
+    missing
+}
+
+@[test]
+fn test_render_vars_substitutes_known_keys() {
+    let got = render_vars("Hello, <<name>>! You have <<count>> new messages.", ["name", "count"], ["Ada", "3"])
+    assert_eq_str(got, "Hello, Ada! You have 3 new messages.")
+}
+
+@[test]
+fn test_render_vars_uses_default_when_missing_or_empty() {
+    let got = render_vars("<<greeting|Hi>> <<name | guest>>, from <<city|nowhere>>", ["name", "city"], ["", "Oslo"])
+    assert_eq_str(got, "Hi guest, from Oslo")
+}
+
+@[test]
+fn test_render_vars_keeps_unknown_placeholder() {
+    let got = render_vars("Dear <<title>> <<last>>,", ["last"], ["Turing"])
+    assert_eq_str(got, "Dear <<title>> Turing,")
+}
+
+@[test]
+fn test_render_vars_unterminated_marker_is_literal() {
+    let got = render_vars("a <<x>> b << c", ["x"], ["1"])
+    assert_eq_str(got, "a 1 b << c")
+}
+
+@[test]
+fn test_render_each_numbers_items() {
+    let got = render_each("Items:<<#each>> <<#>>.<<.>><</each>>", ["tea", "milk", "bread"], ";")
+    assert_eq_str(got, "Items: 1.tea; 2.milk; 3.bread")
+}
+
+@[test]
+fn test_render_each_empty_list_uses_empty_section() {
+    let got = render_each("Cart: <<#each>><<.>><<#empty>>nothing yet<</each>>.", [], ", ")
+    assert_eq_str(got, "Cart: nothing yet.")
+}
+
+@[test]
+fn test_render_each_two_loops_and_separator() {
+    let got = render_each("[<<#each>><<.>><<#empty>>-<</each>>] (<<#each>><<#>><</each>>)", ["a", "b"], ",")
+    assert_eq_str(got, "[a,b] (1,2)")
+}
+
+@[test]
+fn test_render_conditionals_positive_section() {
+    let got = render_conditionals("Order<<?vip>> (priority)<</?>> received", ["vip"], ["yes"])
+    assert_eq_str(got, "Order (priority) received")
+}
+
+@[test]
+fn test_render_conditionals_negative_section() {
+    let got = render_conditionals("<<!email>>No email on file. <</!>>Done", ["email"], [""])
+    assert_eq_str(got, "No email on file. Done")
+}
+
+@[test]
+fn test_render_conditionals_false_values_hide_section() {
+    let got = render_conditionals("A<<?x>>1<</?>>B<<?y>>2<</?>>C<<!y>>3<</!>>", ["x", "y"], ["1", "false"])
+    assert_eq_str(got, "A1BC3")
+}
+
+@[test]
+fn test_find_placeholders_unique_in_order() {
+    let got = find_placeholders("<<b>> and <<a|x>> then <<b>> and << c >>")
+    assert_eq(len(got), 3)
+    assert_eq_str(str_join(got, ","), "b,a,c")
+}
+
+@[test]
+fn test_find_placeholders_skips_control_markers() {
+    let got = find_placeholders("<<#each>><<.>><</each>><<?vip>>x<</?>><<total>>")
+    assert_eq_str(str_join(got, ","), "total")
+}
+
+@[test]
+fn test_find_placeholders_handles_unclosed_tail() {
+    let got = find_placeholders("<<first>> text <<second")
+    assert_eq_str(str_join(got, ","), "first")
+}
+
+@[test]
+fn test_count_unresolved_counts_each_occurrence() {
+    assert_eq(count_unresolved("<<a>> <<b>> <<a>> <<c|0>>", ["c"]), 3)
+}
+
+@[test]
+fn test_count_unresolved_includes_conditional_names() {
+    assert_eq(count_unresolved("<<?vip>>x<</?>> <<!mail>>y<</!>> <<name>>", ["name"]), 2)
+}
+
+@[test]
+fn test_count_unresolved_ignores_loops_and_defaults() {
+    assert_eq(count_unresolved("<<#each>><<.>><</each>> <<x|1>> <<y>>", []), 1)
+}

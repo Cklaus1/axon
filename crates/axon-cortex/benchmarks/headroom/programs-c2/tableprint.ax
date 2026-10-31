@@ -1,0 +1,289 @@
+// Formatting rows of text cells into aligned plain-text tables.
+
+fn column_widths(header: [str], rows: [[str]], max_width: i64) -> [i64] {
+    let cols = len(header)
+    for row in rows {
+        if len(row) > cols {
+            cols = len(row)
+        }
+    }
+    let widths: [i64] = []
+    let c = 0
+    while c < cols {
+        let w = 1
+        if c < len(header) {
+            w = max_i64(w, str_len_chars(str_trim(header[c])))
+        }
+        for row in rows {
+            if c < len(row) {
+                let cell_w = str_len_chars(str_trim(row[c]))
+                if cell_w > w {
+                    w = cell_w
+                }
+            }
+        }
+        if max_width > 0 && w > max_width {
+            w = max_width
+        }
+        widths = arr_push(widths, w)
+        c = c + 1
+    }
+    widths
+}
+
+fn fit_cell(text: str, width: i64, align: str) -> str {
+    let t = str_trim(text)
+    let n = str_len_chars(t)
+    if width <= 0 {
+        return ""
+    }
+    if n > width {
+        if width <= 2 {
+            return str_char_slice(t, 0, width)
+        }
+        return str_char_slice(t, 0, width - 2) + ".."
+    }
+    let numeric = n > 0
+    let digits = 0
+    let dots = 0
+    let idx = 0
+    for ch in str_chars(t) {
+        if char_is_digit(ch) {
+            digits = digits + 1
+        } else if ch == "." {
+            dots = dots + 1
+        } else if (ch == "-" || ch == "+") && idx == 0 {
+            digits = digits + 0
+        } else if (ch == "," && digits > 0) || (ch == "%" && idx == n - 1) {
+            digits = digits + 0
+        } else {
+            numeric = false
+        }
+        idx = idx + 1
+    }
+    numeric = numeric && digits > 0 && dots <= 1
+    let right = align == "right" || (align == "auto" && numeric)
+    let gap = width - n
+    if right {
+        str_repeat(" ", gap) + t
+    } else if align == "center" {
+        let left = gap / 2
+        str_repeat(" ", left) + t + str_repeat(" ", gap - left)
+    } else {
+        t + str_repeat(" ", gap)
+    }
+}
+
+fn parse_aligns(spec: str, count: i64) -> [str] {
+    let by_comma = str_contains(spec, ",")
+    let tokens: [str] = []
+    if by_comma {
+        tokens = str_split(spec, ",")
+    } else {
+        tokens = str_chars(spec)
+    }
+    let out: [str] = []
+    for raw in tokens {
+        let tok = str_to_lower(str_trim(raw))
+        if len(out) >= count {
+            break
+        }
+        if str_len(tok) == 0 && !by_comma {
+            continue
+        }
+        if tok == "r" || tok == ">" || tok == "right" {
+            out = arr_push(out, "right")
+        } else if tok == "c" || tok == "^" || tok == "center" || tok == "centre" {
+            out = arr_push(out, "center")
+        } else if tok == "a" || tok == "auto" {
+            out = arr_push(out, "auto")
+        } else {
+            out = arr_push(out, "left")
+        }
+    }
+    while len(out) < count {
+        out = arr_push(out, "left")
+    }
+    out
+}
+
+fn wrap_cell(text: str, width: i64) -> [str] {
+    let lines: [str] = []
+    if width <= 0 {
+        return lines
+    }
+    let current = ""
+    for word in str_split(str_trim(text), " ") {
+        let piece = str_trim(word)
+        while str_len_chars(piece) > width {
+            if str_len(current) > 0 {
+                lines = arr_push(lines, current)
+                current = ""
+            }
+            lines = arr_push(lines, str_char_slice(piece, 0, width))
+            piece = str_char_slice(piece, width, str_len_chars(piece))
+        }
+        if str_len(piece) == 0 {
+            continue
+        }
+        if str_len(current) == 0 {
+            current = piece
+        } else if str_len_chars(current) + 1 + str_len_chars(piece) <= width {
+            current = current + " " + piece
+        } else {
+            lines = arr_push(lines, current)
+            current = piece
+        }
+    }
+    if str_len(current) > 0 {
+        lines = arr_push(lines, current)
+    }
+    lines
+}
+
+fn render_table(header: [str], rows: [[str]], spec: str) -> [str] {
+    let widths = column_widths(header, rows, 0)
+    let aligns = parse_aligns(spec, len(widths))
+    let top = "+"
+    let rule = "+"
+    let bottom = "+"
+    for w in widths {
+        top = top + str_repeat("-", w + 2) + "+"
+        rule = rule + str_repeat("=", w + 2) + "+"
+        bottom = bottom + str_repeat("-", w + 2) + "+"
+    }
+    let lines: [str] = []
+    lines = arr_push(lines, top)
+    let head = "|"
+    let c = 0
+    while c < len(widths) {
+        let title = if c < len(header) { header[c] } else { "" }
+        head = head + " " + fit_cell(title, widths[c], "center") + " |"
+        c = c + 1
+    }
+    lines = arr_push(lines, head)
+    lines = arr_push(lines, rule)
+    for row in rows {
+        let line = "|"
+        let k = 0
+        while k < len(widths) {
+            let cell = if k < len(row) { row[k] } else { "" }
+            line = line + " " + fit_cell(cell, widths[k], aligns[k]) + " |"
+            k = k + 1
+        }
+        lines = arr_push(lines, line)
+    }
+    lines = arr_push(lines, bottom)
+    lines
+}
+
+@[test]
+fn test_column_widths_uses_longest_cell() {
+    let w = column_widths(["Name", "Qty"], [["apple", "3"], ["kiwi", "12", "x"]], 0)
+    assert_eq(len(w), 3)
+    assert_eq(w[0], 5)
+    assert_eq(w[1], 3)
+    assert_eq(w[2], 1)
+}
+
+@[test]
+fn test_column_widths_caps_at_max() {
+    let w = column_widths(["Description", "N"], [["short", "1000000"]], 6)
+    assert_eq(w[0], 6)
+    assert_eq(w[1], 6)
+}
+
+@[test]
+fn test_column_widths_trims_and_counts_chars() {
+    let w = column_widths(["City"], [["  Zürich  "], ["Bern"]], 0)
+    assert_eq(len(w), 1)
+    assert_eq(w[0], 6)
+}
+
+@[test]
+fn test_fit_cell_center_puts_extra_space_right() {
+    assert_eq_str(fit_cell("abc", 7, "center"), "  abc  ")
+    assert_eq_str(fit_cell("ab", 5, "center"), " ab  ")
+}
+
+@[test]
+fn test_fit_cell_auto_right_aligns_numbers() {
+    assert_eq_str(fit_cell("42.5", 6, "auto"), "  42.5")
+    assert_eq_str(fit_cell("-1,200", 8, "auto"), "  -1,200")
+    assert_eq_str(fit_cell("n/a", 5, "auto"), "n/a  ")
+    assert_eq_str(fit_cell("1.2.3", 6, "auto"), "1.2.3 ")
+}
+
+@[test]
+fn test_fit_cell_truncates_long_text() {
+    assert_eq_str(fit_cell("description", 6, "left"), "desc..")
+    assert_eq_str(fit_cell("description", 2, "right"), "de")
+}
+
+@[test]
+fn test_fit_cell_right_pads_left() {
+    assert_eq_str(fit_cell(" x ", 4, "right"), "   x")
+}
+
+@[test]
+fn test_parse_aligns_letters_and_fill() {
+    let a = parse_aligns("lrc", 5)
+    assert_eq_str(str_join(a, ","), "left,right,center,left,left")
+}
+
+@[test]
+fn test_parse_aligns_comma_words() {
+    let a = parse_aligns("Right, centre,,auto", 4)
+    assert_eq_str(str_join(a, ","), "right,center,left,auto")
+}
+
+@[test]
+fn test_parse_aligns_symbols_truncated() {
+    let a = parse_aligns("> ^ < >", 3)
+    assert_eq_str(str_join(a, ","), "right,center,left")
+}
+
+@[test]
+fn test_wrap_cell_greedy_lines() {
+    let lines = wrap_cell("the quick brown fox jumps", 10)
+    assert_eq_str(str_join(lines, "/"), "the quick/brown fox/jumps")
+}
+
+@[test]
+fn test_wrap_cell_splits_long_word() {
+    let lines = wrap_cell("a supercalifragilistic word", 8)
+    assert_eq_str(str_join(lines, "/"), "a/supercal/ifragili/stic/word")
+}
+
+@[test]
+fn test_wrap_cell_collapses_extra_spaces() {
+    let lines = wrap_cell("  one   two  ", 20)
+    assert_eq(len(lines), 1)
+    assert_eq_str(lines[0], "one two")
+}
+
+@[test]
+fn test_render_table_full_layout() {
+    let lines = render_table(["Item", "Qty"], [["tea", "2"], ["coffee", "10"]], "la")
+    assert_eq(len(lines), 6)
+    assert_eq_str(lines[0], "+--------+-----+")
+    assert_eq_str(lines[1], "|  Item  | Qty |")
+    assert_eq_str(lines[2], "+========+=====+")
+    assert_eq_str(lines[3], "| tea    |   2 |")
+    assert_eq_str(lines[4], "| coffee |  10 |")
+    assert_eq_str(lines[5], "+--------+-----+")
+}
+
+@[test]
+fn test_render_table_pads_short_rows() {
+    let lines = render_table(["A", "B"], [["x"]], "rr")
+    assert_eq_str(lines[3], "| x |   |")
+}
+
+@[test]
+fn test_render_table_header_only() {
+    let lines = render_table(["Key", "Value"], [], "")
+    assert_eq(len(lines), 4)
+    assert_eq_str(lines[1], "| Key | Value |")
+    assert_eq_str(lines[3], "+-----+-------+")
+}

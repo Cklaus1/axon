@@ -1,0 +1,260 @@
+// Seat reservation for buses and ferries. A layout is one row pattern such as
+// "AB_CD" (bus) or "ABC_DEFG_HJK" (ferry): letters are seat columns, '_' is an aisle.
+// Rows are numbered from 1 and a seat code is the row number followed by the letter.
+
+fn seat_code(row: i64, letter: str) -> str {
+    to_str(row) + letter
+}
+
+fn is_free(taken: [str], code: str) -> bool {
+    !arr_contains(taken, code)
+}
+
+fn find_block(pattern: str, rows: i64, taken: [str], size: i64) -> [str] {
+    let cols = str_chars(pattern)
+    let found: [str] = []
+    let row = 1
+    while row <= rows && size > 0 && len(found) == 0 {
+        let run: [str] = []
+        let i = 0
+        while i < len(cols) && len(found) == 0 {
+            let col = cols[i]
+            if str_eq(col, "_") {
+                run = []
+            } else {
+                let code = seat_code(row, col)
+                if is_free(taken, code) {
+                    run = arr_push(run, code)
+                    if len(run) == size {
+                        found = run
+                    }
+                } else {
+                    run = []
+                }
+            }
+            i = i + 1
+        }
+        row = row + 1
+    }
+    found
+}
+
+fn book_group(pattern: str, rows: i64, taken: [str], size: i64) -> [str] {
+    let block = find_block(pattern, rows, taken, size)
+    if len(block) == size || size <= 0 {
+        return block
+    }
+    let letters = arr_filter(str_chars(pattern), |c| !str_eq(c, "_"))
+    let per_row: [[str]] = []
+    let r = 1
+    while r <= rows {
+        let free: [str] = []
+        for col in letters {
+            let code = seat_code(r, col)
+            if is_free(taken, code) {
+                free = arr_push(free, code)
+            }
+        }
+        per_row = arr_push(per_row, free)
+        r = r + 1
+    }
+    let chosen: [str] = []
+    for free in per_row {
+        if len(chosen) == 0 && len(free) >= size {
+            chosen = arr_take(free, size)
+        }
+    }
+    let i = 0
+    while len(chosen) == 0 && i + 1 < len(per_row) {
+        let a = per_row[i]
+        let b = per_row[i + 1]
+        if len(a) > 0 && len(b) > 0 && len(a) + len(b) >= size {
+            chosen = arr_take(arr_concat(a, b), size)
+        }
+        i = i + 1
+    }
+    chosen
+}
+
+fn free_by_kind(pattern: str, rows: i64, taken: [str], kind: str) -> [str] {
+    let cols = str_chars(pattern)
+    let n = len(cols)
+    let kinds: [str] = []
+    let i = 0
+    while i < n {
+        let label = "middle"
+        if str_eq(cols[i], "_") {
+            label = "gap"
+        } else if i == 0 || i == n - 1 {
+            label = "window"
+        } else if str_eq(cols[i - 1], "_") || str_eq(cols[i + 1], "_") {
+            label = "aisle"
+        }
+        kinds = arr_push(kinds, label)
+        i = i + 1
+    }
+    let out: [str] = []
+    let row = 1
+    while row <= rows {
+        let j = 0
+        while j < n {
+            if str_eq(kinds[j], kind) {
+                let code = seat_code(row, cols[j])
+                if is_free(taken, code) {
+                    out = arr_push(out, code)
+                }
+            }
+            j = j + 1
+        }
+        row = row + 1
+    }
+    out
+}
+
+fn seat_map(pattern: str, rows: i64, taken: [str]) -> str {
+    let cols = str_chars(pattern)
+    let width = str_len(to_str(max_i64(rows, 0)))
+    let header = str_repeat(" ", width + 1)
+    for col in cols {
+        if str_eq(col, "_") { header = header + " " } else { header = header + col }
+    }
+    let lines: [str] = [header]
+    let free = 0
+    let total = 0
+    let row = 1
+    while row <= rows {
+        let line = str_pad_start(to_str(row), width, " ") + " "
+        for col in cols {
+            if str_eq(col, "_") {
+                line = line + " "
+            } else {
+                total = total + 1
+                if is_free(taken, seat_code(row, col)) {
+                    line = line + "."
+                    free = free + 1
+                } else {
+                    line = line + "x"
+                }
+            }
+        }
+        lines = arr_push(lines, line)
+        row = row + 1
+    }
+    lines = arr_push(lines, to_str(free) + " of " + to_str(total) + " free")
+    str_join(lines, "\n")
+}
+
+fn orphan_seats(pattern: str, rows: i64, taken: [str]) -> i64 {
+    let cols = str_chars(pattern)
+    let n = len(cols)
+    let count = 0
+    let row = 1
+    while row <= rows {
+        let i = 0
+        while i < n {
+            let col = cols[i]
+            if !str_eq(col, "_") && is_free(taken, seat_code(row, col)) {
+                let left_free = false
+                if i > 0 && !str_eq(cols[i - 1], "_") {
+                    left_free = is_free(taken, seat_code(row, cols[i - 1]))
+                }
+                let right_free = false
+                if i < n - 1 && !str_eq(cols[i + 1], "_") {
+                    right_free = is_free(taken, seat_code(row, cols[i + 1]))
+                }
+                if !left_free && !right_free {
+                    count = count + 1
+                }
+            }
+            i = i + 1
+        }
+        row = row + 1
+    }
+    count
+}
+
+@[test]
+fn test_find_block_empty_bus() {
+    assert(find_block("AB_CD", 3, [], 2) == ["1A", "1B"])
+}
+
+@[test]
+fn test_find_block_skips_broken_pairs() {
+    assert(find_block("AB_CD", 3, ["1A", "1D", "2B"], 2) == ["2C", "2D"])
+}
+
+@[test]
+fn test_find_block_ferry_four() {
+    assert(find_block("ABC_DEFG_HJK", 2, ["1E", "2A"], 4) == ["2D", "2E", "2F", "2G"])
+}
+
+@[test]
+fn test_find_block_never_crosses_aisle() {
+    assert_eq(len(find_block("AB_CD", 3, [], 3)), 0)
+}
+
+@[test]
+fn test_book_group_prefers_block() {
+    assert(book_group("AB_CD", 2, ["1B"], 2) == ["1C", "1D"])
+}
+
+@[test]
+fn test_book_group_same_row_across_aisle() {
+    assert(book_group("AB_CD", 3, [], 3) == ["1A", "1B", "1C"])
+    assert(book_group("AB_CD", 2, ["1A", "1C", "2B", "2D"], 2) == ["1B", "1D"])
+}
+
+@[test]
+fn test_book_group_neighbouring_rows() {
+    let taken = ["1A", "1B", "1C", "2A", "2B", "3A", "3B", "3C", "3D"]
+    assert(book_group("AB_CD", 3, taken, 3) == ["1D", "2C", "2D"])
+    assert_eq(len(book_group("AB_CD", 1, [], 5)), 0)
+}
+
+@[test]
+fn test_free_by_kind_window() {
+    assert(free_by_kind("AB_CD", 2, ["1A", "2D"], "window") == ["1D", "2A"])
+}
+
+@[test]
+fn test_free_by_kind_aisle() {
+    assert(free_by_kind("AB_CD", 1, [], "aisle") == ["1B", "1C"])
+}
+
+@[test]
+fn test_free_by_kind_ferry_middle() {
+    assert(free_by_kind("ABC_DEFG_HJK", 1, ["1F"], "middle") == ["1B", "1E", "1J"])
+}
+
+@[test]
+fn test_seat_map_small_bus() {
+    assert_eq_str(seat_map("AB_CD", 2, ["1B", "2C"]), "  AB CD\n1 .x ..\n2 .. x.\n6 of 8 free")
+}
+
+@[test]
+fn test_seat_map_two_digit_rows() {
+    let expected = "   AB\n 1 ..\n 2 ..\n 3 ..\n 4 ..\n 5 ..\n 6 ..\n 7 ..\n 8 ..\n 9 ..\n10 x.\n19 of 20 free"
+    assert_eq_str(seat_map("AB", 10, ["10A"]), expected)
+}
+
+@[test]
+fn test_seat_map_no_rows() {
+    assert_eq_str(seat_map("AB_CD", 0, []), "  AB CD\n0 of 0 free")
+}
+
+@[test]
+fn test_orphan_seats_bus() {
+    assert_eq(orphan_seats("AB_CD", 2, ["1A", "2C"]), 2)
+    assert_eq(orphan_seats("AB_CD", 1, ["1B", "1C"]), 2)
+}
+
+@[test]
+fn test_orphan_seats_ferry() {
+    assert_eq(orphan_seats("ABC_DEFG_HJK", 1, ["1A", "1C", "1E", "1G", "1J"]), 5)
+}
+
+@[test]
+fn test_orphan_seats_none() {
+    assert_eq(orphan_seats("AB_CD", 2, []), 0)
+    assert_eq(orphan_seats("ABC", 1, ["1B"]), 2)
+}

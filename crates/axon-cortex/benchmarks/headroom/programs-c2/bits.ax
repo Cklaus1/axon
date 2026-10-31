@@ -1,0 +1,318 @@
+// Bit manipulation utilities: population count and related statistics,
+// Gray code generation and ranking, bit reversal, and packing small
+// integer fields into a single word.
+//
+// Field widths: a positive width W is an unsigned field of W bits, a
+// negative width -W is a signed two's-complement field of W bits. Fields
+// are laid out from the least significant bit upwards, and a packed word
+// holds at most 62 bits so it always stays non-negative.
+
+fn bit_profile(n: i64) -> [i64] {
+    let count = 0
+    let trailing = 0
+    let run = 0
+    let best_run = 0
+    let seen_one = false
+    let i = 0
+    while i < 64 {
+        if bit_and(shr(n, i), 1) == 1 {
+            count = count + 1
+            run = run + 1
+            if run > best_run {
+                best_run = run
+            }
+            seen_one = true
+        } else {
+            run = 0
+            if !seen_one {
+                trailing = trailing + 1
+            }
+        }
+        i = i + 1
+    }
+    let leading = 0
+    let j = 63
+    while j >= 0 && bit_and(shr(n, j), 1) == 0 {
+        leading = leading + 1
+        j = j - 1
+    }
+    [count, leading, trailing, best_run, count % 2]
+}
+
+fn gray_walk(width: i64) -> [i64] {
+    if width <= 0 || width > 20 {
+        return []
+    }
+    let total = shl(1, width)
+    let code = 0
+    let seq = [0]
+    let step = 1
+    while step < total {
+        let ones = 0
+        let k = 0
+        while k < width {
+            ones = ones + bit_and(shr(code, k), 1)
+            k = k + 1
+        }
+        if ones % 2 == 0 {
+            code = bit_xor(code, 1)
+        } else {
+            let low = 0
+            while bit_and(shr(code, low), 1) == 0 {
+                low = low + 1
+            }
+            code = bit_xor(code, shl(1, low + 1))
+        }
+        seq = arr_push(seq, code)
+        step = step + 1
+    }
+    seq
+}
+
+fn gray_rank(code: str) -> i64 {
+    let value = 0
+    let acc = 0
+    let digits = 0
+    let i = 0
+    while i < str_len(code) {
+        let ch = str_char_at(code, i)
+        if ch != "_" {
+            if ch != "0" && ch != "1" {
+                return -1
+            }
+            let bit = 0
+            if ch == "1" {
+                bit = 1
+            }
+            acc = bit_xor(acc, bit)
+            value = value * 2 + acc
+            digits = digits + 1
+            if digits > 62 {
+                return -1
+            }
+        }
+        i = i + 1
+    }
+    if digits == 0 {
+        return -1
+    }
+    value
+}
+
+fn reverse_bits(n: i64, width: i64) -> i64 {
+    if n < 0 || width < 1 || width > 62 {
+        return -1
+    }
+    let upper = shl(shr(n, width), width)
+    let low = n - upper
+    let reversed = 0
+    let i = 0
+    while i < width {
+        reversed = shl(reversed, 1)
+        if bit_and(low, 1) == 1 {
+            reversed = bit_or(reversed, 1)
+        }
+        low = shr(low, 1)
+        i = i + 1
+    }
+    bit_or(upper, reversed)
+}
+
+fn format_bits(n: i64, width: i64, group: i64) -> str {
+    if width < 1 || width > 64 {
+        return ""
+    }
+    let out = ""
+    let i = width - 1
+    while i >= 0 {
+        if bit_and(shr(n, i), 1) == 1 {
+            out = out + "1"
+        } else {
+            out = out + "0"
+        }
+        if group > 0 && i > 0 && i % group == 0 {
+            out = out + "_"
+        }
+        i = i - 1
+    }
+    out
+}
+
+fn pack_fields(values: [i64], widths: [i64]) -> i64 {
+    if len(values) != len(widths) || len(values) == 0 {
+        return -1
+    }
+    let packed = 0
+    let offset = 0
+    let i = 0
+    while i < len(values) {
+        let w = abs_i64(widths[i])
+        let v = values[i]
+        if w == 0 || offset + w > 62 {
+            return -1
+        }
+        let limit = shl(1, w)
+        if widths[i] > 0 {
+            if v < 0 || v >= limit {
+                return -1
+            }
+        } else {
+            let half = shl(1, w - 1)
+            if v < 0 - half || v >= half {
+                return -1
+            }
+            if v < 0 {
+                v = v + limit
+            }
+        }
+        packed = bit_or(packed, shl(v, offset))
+        offset = offset + w
+        i = i + 1
+    }
+    packed
+}
+
+fn unpack_fields(packed: i64, widths: [i64]) -> [i64] {
+    if packed < 0 {
+        return []
+    }
+    let out: [i64] = []
+    let offset = 0
+    for w in widths {
+        let size = abs_i64(w)
+        if size == 0 || offset + size > 62 {
+            return []
+        }
+        let mask = shl(1, size) - 1
+        let field = bit_and(shr(packed, offset), mask)
+        if w < 0 && field >= shl(1, size - 1) {
+            field = field - shl(1, size)
+        }
+        out = arr_push(out, field)
+        offset = offset + size
+    }
+    if shr(packed, offset) != 0 {
+        return []
+    }
+    out
+}
+
+@[test]
+fn test_profile_zero() {
+    assert(bit_profile(0) == [0, 64, 64, 0, 0])
+}
+
+@[test]
+fn test_profile_sparse_byte() {
+    assert(bit_profile(176) == [3, 56, 4, 2, 1])
+}
+
+@[test]
+fn test_profile_all_ones() {
+    assert(bit_profile(-1) == [64, 0, 0, 64, 0])
+}
+
+@[test]
+fn test_profile_two_runs() {
+    assert(bit_profile(119) == [6, 57, 0, 3, 0])
+}
+
+@[test]
+fn test_gray_one_bit() {
+    assert(gray_walk(1) == [0, 1])
+}
+
+@[test]
+fn test_gray_two_bits() {
+    assert(gray_walk(2) == [0, 1, 3, 2])
+}
+
+@[test]
+fn test_gray_three_bits() {
+    assert(gray_walk(3) == [0, 1, 3, 2, 6, 7, 5, 4])
+    assert_eq(len(gray_walk(0)), 0)
+}
+
+@[test]
+fn test_rank_three_bits() {
+    assert_eq(gray_rank("110"), 4)
+}
+
+@[test]
+fn test_rank_four_bits() {
+    assert_eq(gray_rank("0111"), 5)
+}
+
+@[test]
+fn test_rank_with_separator() {
+    assert_eq(gray_rank("1000_0000"), 255)
+}
+
+@[test]
+fn test_rank_invalid_digit() {
+    assert_eq(gray_rank("10a"), -1)
+    assert_eq(gray_rank(""), -1)
+}
+
+@[test]
+fn test_reverse_low_nibble() {
+    assert_eq(reverse_bits(1, 4), 8)
+    assert_eq(reverse_bits(6, 3), 3)
+}
+
+@[test]
+fn test_reverse_keeps_upper_bits() {
+    assert_eq(reverse_bits(211, 4), 220)
+}
+
+@[test]
+fn test_format_grouped_nibbles() {
+    assert_eq_str(format_bits(5, 8, 4), "0000_0101")
+}
+
+@[test]
+fn test_format_negative_and_groups_of_three() {
+    assert_eq_str(format_bits(-2, 8, 0), "11111110")
+    assert_eq_str(format_bits(10, 6, 3), "001_010")
+}
+
+@[test]
+fn test_pack_unsigned_fields() {
+    assert_eq(pack_fields([5, 3, 1], [4, 2, 1]), 117)
+}
+
+@[test]
+fn test_pack_signed_field() {
+    assert_eq(pack_fields([-1, 2], [-3, 4]), 23)
+}
+
+@[test]
+fn test_pack_value_too_wide() {
+    assert_eq(pack_fields([16], [4]), -1)
+}
+
+@[test]
+fn test_pack_exceeds_word() {
+    assert_eq(pack_fields([1, 1], [40, 30]), -1)
+    assert_eq(pack_fields([-5], [-3]), -1)
+}
+
+@[test]
+fn test_unpack_unsigned_fields() {
+    assert(unpack_fields(117, [4, 2, 1]) == [5, 3, 1])
+}
+
+@[test]
+fn test_unpack_signed_field() {
+    assert(unpack_fields(23, [-3, 4]) == [-1, 2])
+}
+
+@[test]
+fn test_unpack_middle_field() {
+    assert(unpack_fields(240, [4, 4, 4]) == [0, 15, 0])
+}
+
+@[test]
+fn test_unpack_leftover_bits() {
+    assert_eq(len(unpack_fields(256, [4, 4])), 0)
+}

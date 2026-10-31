@@ -1,0 +1,399 @@
+// Parse propositional formulas, evaluate them under an assignment and count
+// or find satisfying assignments.
+//
+// Operators by binding strength: ! (not), & (and), ^ (xor), | (or),
+// -> (implies, right associative), <-> (iff). Words and, or, not, xor
+// and the constants true, false, 1, 0 are accepted too.
+
+fn precedence(op: str) -> i64 {
+    if op == "!" {
+        5
+    } else if op == "&" {
+        4
+    } else if op == "^" {
+        3
+    } else if op == "|" {
+        2
+    } else if op == "->" {
+        1
+    } else if op == "<->" {
+        0
+    } else {
+        0 - 1
+    }
+}
+
+fn is_binary(tok: str) -> bool {
+    tok == "&" || tok == "|" || tok == "^" || tok == "->" || tok == "<->"
+}
+
+fn is_variable(tok: str) -> bool {
+    tok != "true" && tok != "false" && precedence(tok) < 0 && tok != "(" && tok != ")"
+}
+
+fn tokenize_formula(src: str) -> [str] {
+    let none: [str] = []
+    let cs = str_chars(src)
+    let n = len(cs)
+    let tokens: [str] = []
+    let i = 0
+    while i < n {
+        let c = cs[i]
+        if char_is_space(c) {
+            i = i + 1
+        } else if char_is_alpha(c) || char_is_digit(c) || c == "_" {
+            let word = ""
+            while i < n && (char_is_alpha(cs[i]) || char_is_digit(cs[i]) || cs[i] == "_") {
+                word = word + cs[i]
+                i = i + 1
+            }
+            word = str_to_lower(word)
+            if word == "and" {
+                word = "&"
+            } else if word == "or" {
+                word = "|"
+            } else if word == "not" {
+                word = "!"
+            } else if word == "xor" {
+                word = "^"
+            } else if word == "1" || word == "0" {
+                word = if word == "1" { "true" } else { "false" }
+            } else if char_is_digit(str_char_at(word, 0)) {
+                return none
+            }
+            tokens = arr_push(tokens, word)
+        } else if c == "-" && i + 1 < n && cs[i + 1] == ">" {
+            tokens = arr_push(tokens, "->")
+            i = i + 2
+        } else if c == "<" && i + 2 < n && cs[i + 1] == "-" && cs[i + 2] == ">" {
+            tokens = arr_push(tokens, "<->")
+            i = i + 3
+        } else if (c == "&" || c == "|") && i + 1 < n && cs[i + 1] == c {
+            tokens = arr_push(tokens, c)
+            i = i + 2
+        } else if c == "!" || c == "~" || c == "&" || c == "|" || c == "^" || c == "(" || c == ")" {
+            tokens = arr_push(tokens, if c == "~" { "!" } else { c })
+            i = i + 1
+        } else {
+            return none
+        }
+    }
+    tokens
+}
+
+fn to_postfix(tokens: [str]) -> [str] {
+    let none: [str] = []
+    let out: [str] = []
+    let ops: [str] = []
+    let expect_operand = true
+    for tok in tokens {
+        if tok == "(" || tok == "!" {
+            if !expect_operand {
+                return none
+            }
+            ops = arr_push(ops, tok)
+        } else if tok == ")" {
+            if expect_operand {
+                return none
+            }
+            while len(ops) > 0 && ops[len(ops) - 1] != "(" {
+                out = arr_push(out, ops[len(ops) - 1])
+                ops = arr_take(ops, len(ops) - 1)
+            }
+            if len(ops) == 0 {
+                return none
+            }
+            ops = arr_take(ops, len(ops) - 1)
+        } else if is_binary(tok) {
+            if expect_operand {
+                return none
+            }
+            let p = precedence(tok)
+            while len(ops) > 0 && ops[len(ops) - 1] != "(" && (precedence(ops[len(ops) - 1]) > p || (precedence(ops[len(ops) - 1]) == p && tok != "->")) {
+                out = arr_push(out, ops[len(ops) - 1])
+                ops = arr_take(ops, len(ops) - 1)
+            }
+            ops = arr_push(ops, tok)
+            expect_operand = true
+        } else {
+            if !expect_operand {
+                return none
+            }
+            out = arr_push(out, tok)
+            expect_operand = false
+        }
+    }
+    if expect_operand {
+        return none
+    }
+    for op in arr_reverse(ops) {
+        if op == "(" {
+            return none
+        }
+        out = arr_push(out, op)
+    }
+    out
+}
+
+fn eval_postfix(post: [str], true_vars: [str]) -> bool {
+    let stack = arr_repeat(false, len(post) + 1)
+    let top = 0
+    for tok in post {
+        if tok == "!" {
+            if top < 1 {
+                return false
+            }
+            stack[top - 1] = !stack[top - 1]
+        } else if is_binary(tok) {
+            if top < 2 {
+                return false
+            }
+            let b = stack[top - 1]
+            let a = stack[top - 2]
+            let r = a == b
+            if tok == "&" {
+                r = a && b
+            } else if tok == "|" {
+                r = a || b
+            } else if tok == "^" {
+                r = a != b
+            } else if tok == "->" {
+                r = !a || b
+            }
+            stack[top - 2] = r
+            top = top - 1
+        } else {
+            stack[top] = tok == "true" || (tok != "false" && arr_contains(true_vars, tok))
+            top = top + 1
+        }
+    }
+    top == 1 && stack[0]
+}
+
+fn variables_of(post: [str]) -> [str] {
+    let names: [str] = []
+    for tok in post {
+        if is_variable(tok) && !arr_contains(names, tok) {
+            names = arr_push(names, tok)
+        }
+    }
+    arr_sort_by(names, |a: str, b: str| str_cmp(a, b))
+}
+
+fn assignment(vars: [str], mask: i64) -> [str] {
+    let chosen: [str] = []
+    let n = len(vars)
+    for i in 0..n {
+        if bit_and(shr(mask, n - 1 - i), 1) == 1 {
+            chosen = arr_push(chosen, vars[i])
+        }
+    }
+    chosen
+}
+
+fn count_satisfying(src: str, assumptions: [str]) -> i64 {
+    let post = to_postfix(tokenize_formula(src))
+    if len(post) == 0 {
+        return 0 - 1
+    }
+    let forced_true: [str] = []
+    let forced_false: [str] = []
+    for lit in assumptions {
+        if str_starts_with(lit, "!") {
+            forced_false = arr_push(forced_false, str_slice(lit, 1, len(lit)))
+        } else {
+            forced_true = arr_push(forced_true, lit)
+        }
+    }
+    let vars = variables_of(post)
+    if len(vars) > 20 {
+        return 0 - 1
+    }
+    let count = 0
+    for mask in 0..shl(1, len(vars)) {
+        let on = assignment(vars, mask)
+        let consistent = true
+        for v in vars {
+            let value = arr_contains(on, v)
+            if (value && arr_contains(forced_false, v)) || (!value && arr_contains(forced_true, v)) {
+                consistent = false
+            }
+        }
+        if consistent && eval_postfix(post, on) {
+            count = count + 1
+        }
+    }
+    count
+}
+
+fn first_model(src: str) -> str {
+    let post = to_postfix(tokenize_formula(src))
+    if len(post) == 0 {
+        return "invalid"
+    }
+    let vars = variables_of(post)
+    let n = len(vars)
+    if n > 20 {
+        return "invalid"
+    }
+    let mask = 0
+    let limit = shl(1, n)
+    while mask < limit {
+        let on = assignment(vars, mask)
+        if eval_postfix(post, on) {
+            if n == 0 {
+                return "always"
+            }
+            let parts: [str] = []
+            for v in vars {
+                let bit = if arr_contains(on, v) { "1" } else { "0" }
+                parts = arr_push(parts, v + "=" + bit)
+            }
+            return str_join(parts, " ")
+        }
+        mask = mask + 1
+    }
+    "unsat"
+}
+
+fn equivalent(left: str, right: str) -> bool {
+    let a = to_postfix(tokenize_formula(left))
+    let b = to_postfix(tokenize_formula(right))
+    if len(a) == 0 || len(b) == 0 {
+        return false
+    }
+    let vars = variables_of(a)
+    for v in variables_of(b) {
+        if !arr_contains(vars, v) {
+            vars = arr_push(vars, v)
+        }
+    }
+    if len(vars) > 20 {
+        return false
+    }
+    let same = true
+    let mask = 0
+    let limit = shl(1, len(vars))
+    while same && mask < limit {
+        let on = assignment(vars, mask)
+        let x = eval_postfix(a, on)
+        let y = eval_postfix(b, on)
+        if x != y {
+            same = false
+        }
+        mask = mask + 1
+    }
+    same
+}
+
+@[test]
+fn test_tokenize_symbols() {
+    assert(tokenize_formula("a & !b") == ["a", "&", "!", "b"])
+}
+
+@[test]
+fn test_tokenize_multichar_operators() {
+    let toks = tokenize_formula("(x1 -> y) <-> NOT z || w")
+    assert(toks == ["(", "x1", "->", "y", ")", "<->", "!", "z", "|", "w"])
+}
+
+@[test]
+fn test_tokenize_words_and_constants() {
+    assert(tokenize_formula("p and q or 1 xor ~r") == ["p", "&", "q", "|", "true", "^", "!", "r"])
+    assert_eq(len(tokenize_formula("a $ b")), 0)
+}
+
+@[test]
+fn test_postfix_unary_and_precedence() {
+    assert(to_postfix(["a", "&", "!", "b"]) == ["a", "b", "!", "&"])
+    assert(to_postfix(["a", "|", "b", "&", "c"]) == ["a", "b", "c", "&", "|"])
+}
+
+@[test]
+fn test_postfix_implication_right_assoc() {
+    assert(to_postfix(["a", "->", "b", "->", "c"]) == ["a", "b", "c", "->", "->"])
+    assert(to_postfix(["a", "<->", "b", "<->", "c"]) == ["a", "b", "<->", "c", "<->"])
+}
+
+@[test]
+fn test_postfix_parentheses_and_errors() {
+    assert(to_postfix(["(", "a", "|", "b", ")", "&", "c"]) == ["a", "b", "|", "c", "&"])
+    assert_eq(len(to_postfix(["a", "&"])), 0)
+    assert_eq(len(to_postfix(["(", "a"])), 0)
+    assert_eq(len(to_postfix(["a", "b"])), 0)
+}
+
+@[test]
+fn test_eval_negation_and_conjunction() {
+    assert(eval_postfix(["a", "b", "!", "&"], ["a"]))
+    assert(!eval_postfix(["a", "b", "!", "&"], ["a", "b"]))
+}
+
+@[test]
+fn test_eval_implication() {
+    assert(eval_postfix(["a", "b", "->"], ["b"]))
+    assert(!eval_postfix(["a", "b", "->"], ["a"]))
+}
+
+@[test]
+fn test_eval_xor_iff_and_constants() {
+    assert(eval_postfix(["a", "b", "^"], ["b"]))
+    assert(eval_postfix(["true", "x", "<->"], ["x"]))
+    assert(!eval_postfix(["a", "&"], ["a"]))
+}
+
+@[test]
+fn test_count_disjunction_and_parity() {
+    assert_eq(count_satisfying("a | b", []), 3)
+    assert_eq(count_satisfying("a ^ b ^ c", []), 4)
+}
+
+@[test]
+fn test_count_with_assumptions() {
+    assert_eq(count_satisfying("a -> b", ["a"]), 1)
+    assert_eq(count_satisfying("(a | b) & c", ["!a"]), 1)
+    assert_eq(count_satisfying("(a | b) & c", ["!c"]), 0)
+}
+
+@[test]
+fn test_count_constants_and_invalid() {
+    assert_eq(count_satisfying("true", []), 1)
+    assert_eq(count_satisfying("x & !x", []), 0)
+    assert_eq(count_satisfying("a &", []), 0 - 1)
+}
+
+@[test]
+fn test_first_model_simple() {
+    assert_eq_str(first_model("a & !b"), "a=1 b=0")
+}
+
+@[test]
+fn test_first_model_prefers_false() {
+    assert_eq_str(first_model("!a | b"), "a=0 b=0")
+    assert_eq_str(first_model("(p <-> q) & q"), "p=1 q=1")
+}
+
+@[test]
+fn test_first_model_edge_cases() {
+    assert_eq_str(first_model("p & !p"), "unsat")
+    assert_eq_str(first_model("p |"), "invalid")
+    assert_eq_str(first_model("1 | 0"), "always")
+}
+
+@[test]
+fn test_equivalent_implication() {
+    assert(equivalent("a -> b", "!a | b"))
+    assert(!equivalent("a -> b", "b -> a"))
+}
+
+@[test]
+fn test_equivalent_de_morgan() {
+    assert(equivalent("!(a & b)", "!a | !b"))
+    assert(!equivalent("a", "a | c"))
+}
+
+@[test]
+fn test_equivalent_xor_expansion() {
+    assert(equivalent("a ^ b", "(a | b) & !(a & b)"))
+    assert(!equivalent("a &", "a"))
+}

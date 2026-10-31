@@ -1,0 +1,300 @@
+// Connect Four on a board of rows listed top to bottom. "." is an empty
+// slot, "X" and "O" are the two players' pieces. Pieces fall to the lowest
+// empty slot of a column.
+
+fn cell(rows: [str], r: i64, c: i64) -> str {
+    if r < 0 || r >= len(rows) || c < 0 {
+        return ""
+    }
+    str_char_at(rows[r], c)
+}
+
+fn run_length(rows: [str], r: i64, c: i64, dr: i64, dc: i64) -> i64 {
+    let piece = cell(rows, r, c)
+    if piece != "X" && piece != "O" {
+        return 0
+    }
+    let n = 1
+    while cell(rows, r + dr * n, c + dc * n) == piece {
+        n = n + 1
+    }
+    n
+}
+
+fn drop_piece(rows: [str], col: i64, piece: str) -> [str] {
+    let h = len(rows)
+    let target = -1
+    let valid_piece = piece == "X" || piece == "O"
+    if valid_piece && h > 0 && col >= 0 && col < str_len(rows[0]) {
+        let r = h - 1
+        while r >= 0 && target < 0 {
+            if str_char_at(rows[r], col) == "." {
+                target = r
+            }
+            r = r - 1
+        }
+    }
+    let out: [str] = []
+    for i in arr_range(0, h) {
+        let row = rows[i]
+        if i == target {
+            let before = str_slice(row, 0, col)
+            let after = str_slice(row, col + 1, str_len(row))
+            out = arr_push(out, before + piece + after)
+        } else {
+            out = arr_push(out, row)
+        }
+    }
+    out
+}
+
+fn winner(rows: [str]) -> str {
+    let x_wins = false
+    let o_wins = false
+    let empty = 0
+    let dirs = [(0, 1), (1, 0), (1, 1), (1, -1)]
+    for r in arr_range(0, len(rows)) {
+        for c in arr_range(0, str_len(rows[r])) {
+            let piece = cell(rows, r, c)
+            if piece == "." {
+                empty = empty + 1
+                continue
+            }
+            for d in dirs {
+                if run_length(rows, r, c, d.0, d.1) >= 4 {
+                    if piece == "X" {
+                        x_wins = true
+                    } else if piece == "O" {
+                        o_wins = true
+                    }
+                }
+            }
+        }
+    }
+    if x_wins && o_wins {
+        return "invalid"
+    }
+    if x_wins {
+        return "X"
+    }
+    if o_wins {
+        return "O"
+    }
+    if empty == 0 {
+        return "draw"
+    }
+    "none"
+}
+
+fn legal_columns(rows: [str], center_first: bool) -> [i64] {
+    let result = winner(rows)
+    let cols: [i64] = []
+    if len(rows) == 0 || result != "none" {
+        return cols
+    }
+    let w = str_len(rows[0])
+    for c in arr_range(0, w) {
+        if str_char_at(rows[0], c) == "." {
+            cols = arr_push(cols, c)
+        }
+    }
+    if !center_first {
+        return cols
+    }
+    let twice_center = w - 1
+    let i = 1
+    while i < len(cols) {
+        let j = i
+        while j > 0 {
+            let a = abs_i64(2 * cols[j - 1] - twice_center)
+            let b = abs_i64(2 * cols[j] - twice_center)
+            if a <= b {
+                break
+            }
+            let tmp = cols[j]
+            cols[j] = cols[j - 1]
+            cols[j - 1] = tmp
+            j = j - 1
+        }
+        i = i + 1
+    }
+    cols
+}
+
+fn longest_line(rows: [str], piece: str) -> i64 {
+    let best = 0
+    let drs = [0, 1, 1, 1]
+    let dcs = [1, 0, 1, -1]
+    for r in arr_range(0, len(rows)) {
+        for c in arr_range(0, str_len(rows[r])) {
+            if cell(rows, r, c) != piece {
+                continue
+            }
+            for k in arr_range(0, 4) {
+                let dr = drs[k]
+                let dc = dcs[k]
+                if cell(rows, r - dr, c - dc) == piece {
+                    continue
+                }
+                let n = 1
+                while cell(rows, r + dr * n, c + dc * n) == piece {
+                    n = n + 1
+                }
+                if n > best {
+                    best = n
+                }
+            }
+        }
+    }
+    best
+}
+
+fn play_moves(moves: [i64], height: i64, width: i64) -> str {
+    if height <= 0 || width <= 0 {
+        return "invalid board"
+    }
+    let board = arr_repeat(str_repeat(".", width), height)
+    let placed = 0
+    for i in arr_range(0, len(moves)) {
+        let col = moves[i]
+        if col < 0 || col >= width || str_char_at(board[0], col) != "." {
+            return "illegal move " + to_str(i + 1)
+        }
+        let piece = "X"
+        if i % 2 == 1 {
+            piece = "O"
+        }
+        board = drop_piece(board, col, piece)
+        placed = placed + 1
+        let w = winner(board)
+        if w == "X" || w == "O" {
+            if i + 1 < len(moves) {
+                return "moves after win at " + to_str(i + 1)
+            }
+            return w + " wins on move " + to_str(i + 1)
+        }
+    }
+    if placed == height * width {
+        return "draw"
+    }
+    let next = "X"
+    if placed % 2 == 1 {
+        next = "O"
+    }
+    next + " to move"
+}
+
+@[test]
+fn test_drop_piece_empty_column() {
+    let b = drop_piece(["....", "....", "...."], 1, "X")
+    assert(b == ["....", "....", ".X.."])
+}
+
+@[test]
+fn test_drop_piece_stacks() {
+    let b = drop_piece(["....", "....", ".X.."], 1, "O")
+    assert(b == ["....", ".O..", ".X.."])
+}
+
+@[test]
+fn test_drop_piece_full_column() {
+    let b = drop_piece(["X...", "O...", "X..."], 0, "O")
+    assert(b == ["X...", "O...", "X..."])
+}
+
+@[test]
+fn test_drop_piece_bad_column() {
+    let b = drop_piece(["....", "...."], 9, "X")
+    assert(b == ["....", "...."])
+}
+
+@[test]
+fn test_winner_horizontal() {
+    assert_eq_str(winner([".......", ".......", "OOO....", "XXXX..."]), "X")
+}
+
+@[test]
+fn test_winner_vertical() {
+    assert_eq_str(winner(["......", "O.....", "OX....", "OX....", "OX...X"]), "O")
+}
+
+@[test]
+fn test_winner_diagonal() {
+    assert_eq_str(winner(["...X...", "..XO...", ".XOO...", "XOOX..."]), "X")
+}
+
+@[test]
+fn test_winner_anti_diagonal() {
+    assert_eq_str(winner(["O......", "XO.....", "XXO....", "XXXO..."]), "O")
+}
+
+@[test]
+fn test_winner_draw_and_none() {
+    assert_eq_str(winner(["XOXO", "XOXO", "OXOX"]), "draw")
+    assert_eq_str(winner(["....", "XXX.", "OOO."]), "none")
+}
+
+@[test]
+fn test_legal_columns_left_to_right() {
+    assert(legal_columns(["X.O..", "X.O..", "X.O.."], false) == [1, 3, 4])
+}
+
+@[test]
+fn test_legal_columns_center_first() {
+    assert(legal_columns([".......", ".......", "......."], true) == [3, 2, 4, 1, 5, 0, 6])
+}
+
+@[test]
+fn test_legal_columns_center_first_partial() {
+    assert(legal_columns(["..XO...", "..XO...", "..OX..."], true) == [4, 1, 5, 0, 6])
+}
+
+@[test]
+fn test_legal_columns_after_win() {
+    assert(legal_columns(["....", "XXXX", "OOO."], false) == [])
+}
+
+@[test]
+fn test_longest_line_horizontal() {
+    assert_eq(longest_line([".......", "..XXX..", ".OOXO.."], "X"), 3)
+}
+
+@[test]
+fn test_longest_line_diagonal() {
+    assert_eq(longest_line(["...O", "..OX", ".OXX", "OXXX"], "O"), 4)
+}
+
+@[test]
+fn test_longest_line_scattered() {
+    assert_eq(longest_line(["O.O", "...", "O.O"], "O"), 1)
+}
+
+@[test]
+fn test_longest_line_vertical_x() {
+    assert_eq(longest_line(["X..", "X.O", "XOO"], "X"), 3)
+}
+
+@[test]
+fn test_play_moves_vertical_win() {
+    assert_eq_str(play_moves([0, 1, 0, 1, 0, 1, 0], 6, 7), "X wins on move 7")
+}
+
+@[test]
+fn test_play_moves_illegal_full_column() {
+    assert_eq_str(play_moves([2, 2, 2, 2], 3, 4), "illegal move 4")
+}
+
+@[test]
+fn test_play_moves_in_progress() {
+    assert_eq_str(play_moves([3, 3, 4], 6, 7), "O to move")
+}
+
+@[test]
+fn test_play_moves_after_win() {
+    assert_eq_str(play_moves([0, 1, 0, 1, 0, 1, 0, 2], 6, 7), "moves after win at 7")
+}
+
+@[test]
+fn test_play_moves_draw() {
+    assert_eq_str(play_moves([0, 1, 0, 1, 1, 0], 3, 2), "draw")
+}

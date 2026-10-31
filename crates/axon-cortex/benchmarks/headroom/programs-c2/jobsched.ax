@@ -1,0 +1,338 @@
+// Job scheduling: weighted interval selection and deadline-driven sequencing.
+
+type Interval = { start: i64, finish: i64, weight: i64 }
+
+type Task = { name: str, release: i64, duration: i64, deadline: i64 }
+
+fn finish_order(jobs: &[Interval]) -> [i64] {
+    let idx = arr_range(0, len(jobs))
+    arr_sort_by(idx, |a, b| jobs[a].finish - jobs[b].finish)
+}
+
+fn task_index(tasks: &[Task], name: str) -> i64 {
+    let i = 0
+    let found = -1
+    while i < len(tasks) && found < 0 {
+        if tasks[i].name == name {
+            found = i
+        }
+        i = i + 1
+    }
+    found
+}
+
+// Maximum total weight of mutually compatible intervals. Intervals that only
+// touch at an endpoint are compatible.
+fn best_schedule_weight(jobs: [Interval]) -> i64 {
+    let n = len(jobs)
+    let order = finish_order(&jobs)
+    let dp = arr_repeat(0, n + 1)
+    let i = 1
+    while i <= n {
+        let cur = order[i - 1]
+        let lo = 0
+        let hi = i - 1
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if jobs[order[mid]].finish <= jobs[cur].start {
+                lo = mid + 1
+            } else {
+                hi = mid
+            }
+        }
+        let take = dp[lo] + jobs[cur].weight
+        let skip = dp[i - 1]
+        if take > skip {
+            dp[i] = take
+        } else {
+            dp[i] = skip
+        }
+        i = i + 1
+    }
+    dp[n]
+}
+
+// Indices (ascending) of one optimal set of compatible intervals. An interval
+// is only taken when it strictly improves the total.
+fn chosen_intervals(jobs: [Interval]) -> [i64] {
+    let n = len(jobs)
+    let order = finish_order(&jobs)
+    let dp = arr_repeat(0, n + 1)
+    let prev = arr_repeat(0, n + 1)
+    let i = 1
+    while i <= n {
+        let cur = order[i - 1]
+        let p = 0
+        while p < i - 1 && jobs[order[p]].finish <= jobs[cur].start {
+            p = p + 1
+        }
+        prev[i] = p
+        dp[i] = max_i64(dp[i - 1], dp[p] + jobs[cur].weight)
+        i = i + 1
+    }
+    let picked: [i64] = []
+    let k = n
+    while k > 0 {
+        let cur = order[k - 1]
+        if dp[prev[k]] + jobs[cur].weight > dp[k - 1] {
+            picked = arr_push(picked, cur)
+            k = prev[k]
+        } else {
+            k = k - 1
+        }
+    }
+    arr_sort_by(picked, |a, b| a - b)
+}
+
+// Non-preemptive earliest-deadline-first dispatch with release times. Among
+// released tasks the earliest deadline wins, then the shorter duration. When
+// nothing is released the clock jumps to the next release.
+fn edf_dispatch(tasks: &[Task]) -> [i64] {
+    let n = len(tasks)
+    let done = arr_repeat(false, n)
+    let order: [i64] = []
+    let time = 0
+    while len(order) < n {
+        let best = -1
+        let next_release = -1
+        let i = 0
+        while i < n {
+            if !done[i] {
+                if tasks[i].release <= time {
+                    if best < 0 || tasks[i].deadline < tasks[best].deadline {
+                        best = i
+                    } else if tasks[i].deadline == tasks[best].deadline && tasks[i].duration < tasks[best].duration {
+                        best = i
+                    }
+                } else if next_release < 0 || tasks[i].release < next_release {
+                    next_release = tasks[i].release
+                }
+            }
+            i = i + 1
+        }
+        if best < 0 {
+            time = next_release
+        } else {
+            done[best] = true
+            order = arr_push(order, best)
+            time = time + tasks[best].duration
+        }
+    }
+    order
+}
+
+// Human-readable EDF timetable: one entry per task or idle gap, with late
+// tasks annotated by how far past the deadline they finish, followed by a
+// summary of the end time, total idle time and number of late tasks.
+fn edf_timetable(tasks: [Task]) -> [str] {
+    let order = edf_dispatch(&tasks)
+    let out: [str] = []
+    let time = 0
+    let idle = 0
+    let late = 0
+    for k in order {
+        if tasks[k].release > time {
+            out = arr_push(out, "idle:" + to_str(time) + "-" + to_str(tasks[k].release))
+            idle = idle + tasks[k].release - time
+            time = tasks[k].release
+        }
+        let finish = time + tasks[k].duration
+        let label = tasks[k].name + ":" + to_str(time) + "-" + to_str(finish)
+        if finish > tasks[k].deadline {
+            label = label + " late+" + to_str(finish - tasks[k].deadline)
+            late = late + 1
+        } else if finish == tasks[k].deadline {
+            label = label + " tight"
+        }
+        out = arr_push(out, label)
+        time = finish
+    }
+    arr_push(out, "end:" + to_str(time) + " idle:" + to_str(idle) + " late:" + to_str(late))
+}
+
+// Largest tardiness when tasks run in the given order (by name), honouring
+// release times. Returns -1 when the order is not a permutation of the tasks.
+fn max_tardiness(tasks: [Task], order: [str]) -> i64 {
+    let n = len(tasks)
+    if len(order) != n {
+        return -1
+    }
+    let used = arr_repeat(false, n)
+    let time = 0
+    let worst = 0
+    let valid = true
+    for name in order {
+        let k = task_index(&tasks, name)
+        if k < 0 {
+            valid = false
+        } else if used[k] {
+            valid = false
+        } else {
+            used[k] = true
+            if tasks[k].release > time {
+                time = tasks[k].release
+            }
+            time = time + tasks[k].duration
+            if time - tasks[k].deadline > worst {
+                worst = time - tasks[k].deadline
+            }
+        }
+    }
+    if valid {
+        worst
+    } else {
+        -1
+    }
+}
+
+// Minimum number of late tasks when every task is available at time zero
+// (Moore-Hodgson): scan by deadline and drop the longest kept task whenever
+// the running finish time overshoots.
+fn min_late_count(tasks: [Task]) -> i64 {
+    let n = len(tasks)
+    let idx = arr_range(0, n)
+    let order = arr_sort_by(idx, |a, b| tasks[a].deadline - tasks[b].deadline)
+    let kept: [i64] = []
+    let time = 0
+    let late = 0
+    for k in order {
+        kept = arr_push(kept, k)
+        time = time + tasks[k].duration
+        if time > tasks[k].deadline {
+            let worst = 0
+            let j = 1
+            while j < len(kept) {
+                if tasks[kept[j]].duration > tasks[kept[worst]].duration {
+                    worst = j
+                }
+                j = j + 1
+            }
+            time = time - tasks[kept[worst]].duration
+            let rest: [i64] = []
+            let m = 0
+            while m < len(kept) {
+                if m != worst {
+                    rest = arr_push(rest, kept[m])
+                }
+                m = m + 1
+            }
+            kept = rest
+            late = late + 1
+        }
+    }
+    late
+}
+
+fn iv(s: i64, f: i64, w: i64) -> Interval {
+    Interval { start: s, finish: f, weight: w }
+}
+
+fn tk(name: str, r: i64, p: i64, d: i64) -> Task {
+    Task { name: name, release: r, duration: p, deadline: d }
+}
+
+@[test]
+fn test_best_weight_mixed() {
+    let jobs = [iv(1, 4, 5), iv(3, 5, 1), iv(0, 6, 8), iv(4, 7, 4), iv(3, 9, 6), iv(5, 9, 3), iv(6, 10, 2), iv(8, 11, 4)]
+    assert_eq(best_schedule_weight(jobs), 13)
+}
+
+@[test]
+fn test_best_weight_chain_of_touching() {
+    assert_eq(best_schedule_weight([iv(4, 6, 4), iv(0, 2, 4), iv(2, 4, 4)]), 12)
+}
+
+@[test]
+fn test_best_weight_skips_nonpositive() {
+    assert_eq(best_schedule_weight([iv(0, 5, -2), iv(1, 2, 0), iv(2, 3, 6)]), 6)
+}
+
+@[test]
+fn test_best_weight_empty() {
+    assert_eq(best_schedule_weight([]), 0)
+}
+
+@[test]
+fn test_chosen_mixed() {
+    let jobs = [iv(1, 4, 5), iv(3, 5, 1), iv(0, 6, 8), iv(4, 7, 4), iv(3, 9, 6), iv(5, 9, 3), iv(6, 10, 2), iv(8, 11, 4)]
+    assert(chosen_intervals(jobs) == [0, 3, 7])
+}
+
+@[test]
+fn test_chosen_small_beats_long() {
+    assert(chosen_intervals([iv(0, 10, 9), iv(2, 4, 3), iv(5, 8, 4), iv(1, 3, 2), iv(8, 9, 3)]) == [1, 2, 4])
+}
+
+@[test]
+fn test_chosen_ignores_zero_weight() {
+    assert(chosen_intervals([iv(0, 5, -2), iv(1, 2, 0), iv(2, 3, 6)]) == [2])
+}
+
+@[test]
+fn test_dispatch_with_idle() {
+    let tasks = [tk("A", 0, 3, 10), tk("B", 1, 2, 4), tk("C", 2, 1, 5), tk("D", 8, 2, 12)]
+    assert(edf_dispatch(&tasks) == [0, 1, 2, 3])
+}
+
+@[test]
+fn test_dispatch_waits_for_release() {
+    let tasks = [tk("x", 5, 2, 9), tk("y", 0, 4, 6), tk("z", 0, 3, 5)]
+    assert(edf_dispatch(&tasks) == [2, 1, 0])
+}
+
+@[test]
+fn test_dispatch_all_released() {
+    let tasks = [tk("p", 0, 4, 4), tk("q", 0, 2, 3), tk("r", 0, 3, 6), tk("s", 0, 1, 2)]
+    assert(edf_dispatch(&tasks) == [3, 1, 0, 2])
+}
+
+@[test]
+fn test_timetable_idle_gap() {
+    let tasks = [tk("A", 0, 3, 10), tk("B", 1, 2, 4), tk("C", 2, 1, 5), tk("D", 8, 2, 12)]
+    assert(edf_timetable(tasks) == ["A:0-3", "B:3-5 late+1", "C:5-6 late+1", "idle:6-8", "D:8-10", "end:10 idle:2 late:2"])
+}
+
+@[test]
+fn test_timetable_tight_finish() {
+    let tasks = [tk("x", 5, 2, 9), tk("y", 0, 4, 6), tk("z", 0, 3, 5)]
+    assert(edf_timetable(tasks) == ["z:0-3", "y:3-7 late+1", "x:7-9 tight", "end:9 idle:0 late:1"])
+}
+
+@[test]
+fn test_timetable_all_released() {
+    let tasks = [tk("p", 0, 4, 4), tk("q", 0, 2, 3), tk("r", 0, 3, 6), tk("s", 0, 1, 2)]
+    assert(edf_timetable(tasks) == ["s:0-1", "q:1-3 tight", "p:3-7 late+3", "r:7-10 late+4", "end:10 idle:0 late:2"])
+}
+
+@[test]
+fn test_tardiness_input_order() {
+    let tasks = [tk("A", 0, 3, 10), tk("B", 1, 2, 4), tk("C", 2, 1, 5), tk("D", 8, 2, 12)]
+    assert_eq(max_tardiness(tasks, ["A", "B", "C", "D"]), 1)
+}
+
+@[test]
+fn test_tardiness_rejects_repeat() {
+    let tasks = [tk("A", 0, 3, 10), tk("B", 1, 2, 4), tk("C", 2, 1, 5), tk("D", 8, 2, 12)]
+    assert_eq(max_tardiness(tasks, ["A", "B", "B", "D"]), -1)
+}
+
+@[test]
+fn test_tardiness_worst_task() {
+    let tasks = [tk("p", 0, 4, 4), tk("q", 0, 2, 3), tk("r", 0, 3, 6), tk("s", 0, 1, 2)]
+    assert_eq(max_tardiness(tasks, ["s", "q", "p", "r"]), 4)
+}
+
+@[test]
+fn test_late_count_one() {
+    assert_eq(min_late_count([tk("x", 5, 2, 9), tk("y", 0, 4, 6), tk("z", 0, 3, 5)]), 1)
+}
+
+@[test]
+fn test_late_count_drops_long() {
+    assert_eq(min_late_count([tk("p", 0, 4, 4), tk("q", 0, 2, 3), tk("r", 0, 3, 6), tk("s", 0, 1, 2)]), 1)
+}
+
+@[test]
+fn test_late_count_crowded() {
+    assert_eq(min_late_count([tk("a", 0, 5, 5), tk("b", 0, 5, 5), tk("c", 0, 5, 5), tk("d", 0, 1, 20)]), 2)
+}

@@ -1,0 +1,266 @@
+// Split shared expenses among a group and work out who pays whom.
+// Amounts are integer cents. A positive balance means the person is owed money.
+
+type Expense = {
+    payer: str,
+    amount: i64,
+    shared_by: [str]
+}
+
+fn net_balances(people: [str], expenses: [Expense]) -> [i64] {
+    let bal = arr_repeat(0, len(people))
+    for e in expenses {
+        let payer_idx = -1
+        for i in 0..len(people) {
+            if people[i] == e.payer {
+                payer_idx = i
+            }
+        }
+        let n = len(e.shared_by)
+        if payer_idx >= 0 && n > 0 && e.amount > 0 {
+            bal[payer_idx] = bal[payer_idx] + e.amount
+            let base = e.amount / n
+            let extra = e.amount % n
+            for k in 0..n {
+                let share = if k < extra { base + 1 } else { base }
+                let found = false
+                for i in 0..len(people) {
+                    if people[i] == e.shared_by[k] {
+                        bal[i] = bal[i] - share
+                        found = true
+                    }
+                }
+                if !found {
+                    bal[payer_idx] = bal[payer_idx] - share
+                }
+            }
+        }
+    }
+    bal
+}
+
+fn settle_plan(people: [str], balances: [i64]) -> [str] {
+    let n = len(balances)
+    let bal: [i64] = []
+    for b in balances {
+        bal = arr_push(bal, b)
+    }
+    let out: [str] = []
+    if n == 0 || len(people) != n {
+        return out
+    }
+    for i in 0..n {
+        let j = 0
+        while bal[i] < 0 && j < n {
+            if bal[j] == 0 - bal[i] {
+                out = arr_push(out, people[i] + " pays " + people[j] + " " + to_str(bal[j]))
+                bal[j] = 0
+                bal[i] = 0
+            }
+            j = j + 1
+        }
+    }
+    let active = true
+    while active {
+        let d = arr_argmin_i64(bal)
+        let c = arr_argmax_i64(bal)
+        if bal[d] >= 0 || bal[c] <= 0 {
+            active = false
+        } else {
+            let amt = min_i64(0 - bal[d], bal[c])
+            out = arr_push(out, people[d] + " pays " + people[c] + " " + to_str(amt))
+            bal[d] = bal[d] + amt
+            bal[c] = bal[c] - amt
+        }
+    }
+    out
+}
+
+fn min_transfers(balances: [i64]) -> i64 {
+    let nz: [i64] = []
+    let total = 0
+    for b in balances {
+        total = total + b
+        if b != 0 {
+            nz = arr_push(nz, b)
+        }
+    }
+    let k = len(nz)
+    if total != 0 {
+        return -1
+    }
+    if k == 0 {
+        return 0
+    }
+    if k > 16 {
+        return k - 1
+    }
+    let full = shl(1, k)
+    let sums = arr_repeat(0, full)
+    let groups = arr_repeat(0, full)
+    for mask in 1..full {
+        let best = 0
+        for i in 0..k {
+            let bit = shl(1, i)
+            if bit_and(mask, bit) != 0 {
+                sums[mask] = sums[mask - bit] + nz[i]
+                best = max_i64(best, groups[mask - bit])
+            }
+        }
+        groups[mask] = if sums[mask] == 0 { best + 1 } else { best }
+    }
+    k - groups[full - 1]
+}
+
+fn plan_settles(people: [str], balances: [i64], payers: [str], payees: [str], amounts: [i64]) -> bool {
+    let n = len(amounts)
+    if len(payers) != n || len(payees) != n || len(people) != len(balances) {
+        return false
+    }
+    let bal: [i64] = []
+    for b in balances {
+        bal = arr_push(bal, b)
+    }
+    let ok = true
+    for t in 0..n {
+        let from = -1
+        let to = -1
+        for i in 0..len(people) {
+            if people[i] == payers[t] {
+                from = i
+            }
+            if people[i] == payees[t] {
+                to = i
+            }
+        }
+        if from < 0 || to < 0 || from == to || amounts[t] <= 0 {
+            ok = false
+        } else {
+            bal[from] = bal[from] + amounts[t]
+            bal[to] = bal[to] - amounts[t]
+        }
+    }
+    ok && arr_all(bal, |b| b == 0)
+}
+
+fn balance_table(people: [str], balances: [i64]) -> str {
+    let width = 0
+    for p in people {
+        width = max_i64(width, len(p))
+    }
+    let lines: [str] = []
+    let total = 0
+    for i in 0..len(people) {
+        let v = if i < len(balances) { balances[i] } else { 0 }
+        total = total + v
+        let sign = if v > 0 { "+" } else if v < 0 { "-" } else { " " }
+        let a = abs_i64(v)
+        let cents = str_pad_start(to_str(a % 100), 2, "0")
+        let amount = sign + to_str(a / 100) + "." + cents
+        lines = arr_push(lines, str_pad_end(people[i], width + 2, " ") + str_pad_start(amount, 9, " "))
+    }
+    if total != 0 {
+        let a = abs_i64(total)
+        let sign = if total > 0 { "+" } else { "-" }
+        let amount = sign + to_str(a / 100) + "." + str_pad_start(to_str(a % 100), 2, "0")
+        lines = arr_push(lines, str_pad_end("unbalanced", width + 2, " ") + str_pad_start(amount, 9, " "))
+    }
+    str_join(lines, "\n")
+}
+
+@[test]
+fn test_net_balances_even_split() {
+    let people = ["ann", "bob", "cy"]
+    let expenses = [Expense { payer: "ann", amount: 3000, shared_by: ["ann", "bob", "cy"] }]
+    assert(net_balances(people, expenses) == [2000, -1000, -1000])
+}
+
+@[test]
+fn test_net_balances_remainder_cents() {
+    let people = ["ann", "bob", "cy"]
+    let expenses = [
+        Expense { payer: "bob", amount: 1000, shared_by: ["ann", "bob", "cy"] },
+        Expense { payer: "cy", amount: 500, shared_by: ["ann", "bob"] }
+    ]
+    assert(net_balances(people, expenses) == [-584, 417, 167])
+}
+
+@[test]
+fn test_net_balances_unknown_sharer_falls_to_payer() {
+    let people = ["ann", "bob"]
+    let expenses = [Expense { payer: "ann", amount: 900, shared_by: ["bob", "zed", "ann"] }]
+    assert(net_balances(people, expenses) == [300, -300])
+}
+
+@[test]
+fn test_settle_plan_exact_pairs_first() {
+    let plan = settle_plan(["ann", "bob", "cy", "dee"], [500, -300, -500, 300])
+    assert(plan == ["bob pays dee 300", "cy pays ann 500"])
+}
+
+@[test]
+fn test_settle_plan_greedy() {
+    let plan = settle_plan(["ann", "bob", "cy"], [2000, -1200, -800])
+    assert(plan == ["bob pays ann 1200", "cy pays ann 800"])
+}
+
+@[test]
+fn test_settle_plan_chain() {
+    let plan = settle_plan(["ann", "bob", "cy"], [700, -1000, 300])
+    assert(plan == ["bob pays ann 700", "bob pays cy 300"])
+    assert(settle_plan(["ann"], [0]) == [])
+}
+
+@[test]
+fn test_min_transfers_pairs() {
+    assert_eq(min_transfers([500, -300, -500, 300]), 2)
+}
+
+@[test]
+fn test_min_transfers_group_of_four() {
+    assert_eq(min_transfers([400, -100, -200, -100]), 3)
+    assert_eq(min_transfers([0, 0]), 0)
+}
+
+@[test]
+fn test_min_transfers_unbalanced() {
+    assert_eq(min_transfers([100, -50]), -1)
+    assert_eq(min_transfers([100, 200, -150, -150]), 3)
+}
+
+@[test]
+fn test_plan_settles_valid() {
+    assert(plan_settles(["ann", "bob", "cy"], [2000, -1200, -800], ["bob", "cy"], ["ann", "ann"], [1200, 800]))
+}
+
+@[test]
+fn test_plan_settles_wrong_amount() {
+    assert(!plan_settles(["ann", "bob"], [500, -500], ["bob"], ["ann"], [400]))
+    assert(plan_settles(["ann", "bob"], [500, -500], ["bob", "bob"], ["ann", "ann"], [400, 100]))
+}
+
+@[test]
+fn test_plan_settles_rejects_bad_names() {
+    assert(!plan_settles(["ann", "bob"], [500, -500], ["bob"], ["zed"], [500]))
+    assert(!plan_settles(["ann", "bob"], [0, 0], ["bob"], ["bob"], [5]))
+    assert(plan_settles(["ann", "bob"], [0, 0], [], [], []))
+}
+
+@[test]
+fn test_balance_table_basic() {
+    let table = balance_table(["ann", "bobby"], [1250, -1250])
+    assert_eq_str(table, "ann       +12.50\nbobby     -12.50")
+}
+
+@[test]
+fn test_balance_table_small_and_zero() {
+    let table = balance_table(["al", "bo"], [5, -5])
+    assert_eq_str(table, "al      +0.05\nbo      -0.05")
+    assert_eq_str(balance_table(["x"], [0]), "x       0.00")
+}
+
+@[test]
+fn test_balance_table_unbalanced_footer() {
+    let table = balance_table(["ann", "bo"], [300, -100])
+    assert_eq_str(table, "ann      +3.00\nbo       -1.00\nunbalanced    +2.00")
+}

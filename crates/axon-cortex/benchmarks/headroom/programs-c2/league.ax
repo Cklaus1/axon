@@ -1,0 +1,319 @@
+// League table from match results written as "Home Team 2-1 Away Team".
+// Three points for a win, one for a draw. Ties are broken by goal difference,
+// goals scored, head-to-head points and finally by name.
+
+type Row = { name: str, played: i64, won: i64, drawn: i64, lost: i64, gf: i64, ga: i64, pts: i64 }
+
+fn parse_line(line: str) -> [str] {
+    let words = arr_filter(str_split(str_trim(line), " "), |w| str_len(w) > 0)
+    let idx = -1
+    let repeated = false
+    let i = 0
+    while i < len(words) {
+        let w = words[i]
+        let dash = str_index_of(w, "-")
+        if dash > 0 && dash < str_len(w) - 1 {
+            let a = str_slice(w, 0, dash)
+            let b = str_slice(w, dash + 1, str_len(w))
+            if str_eq(str_digits_only(a), a) && str_eq(str_digits_only(b), b) {
+                if idx >= 0 {
+                    repeated = true
+                }
+                idx = i
+            }
+        }
+        i = i + 1
+    }
+    let out: [str] = []
+    if repeated || idx <= 0 || idx >= len(words) - 1 {
+        return out
+    }
+    let home = str_join(arr_take(words, idx), " ")
+    let away = str_join(arr_drop(words, idx + 1), " ")
+    if str_eq(str_to_lower(home), str_to_lower(away)) {
+        return out
+    }
+    let score = words[idx]
+    let dash = str_index_of(score, "-")
+    out = [home, away, str_slice(score, 0, dash), str_slice(score, dash + 1, str_len(score))]
+    out
+}
+
+fn find_row(rows: [Row], name: str) -> i64 {
+    let i = 0
+    while i < len(rows) {
+        if str_eq(rows[i].name, name) {
+            return i
+        }
+        i = i + 1
+    }
+    -1
+}
+
+fn credit(row: Row, scored: i64, conceded: i64) -> Row {
+    let out = row
+    out.played = out.played + 1
+    out.gf = out.gf + scored
+    out.ga = out.ga + conceded
+    if scored > conceded {
+        out.won = out.won + 1
+        out.pts = out.pts + 3
+    } else if scored == conceded {
+        out.drawn = out.drawn + 1
+        out.pts = out.pts + 1
+    } else {
+        out.lost = out.lost + 1
+    }
+    out
+}
+
+fn tally(results: [str]) -> [Row] {
+    let rows: [Row] = []
+    for line in results {
+        let p = parse_line(line)
+        if len(p) == 4 {
+            let hg = parse_int_or(p[2], 0)
+            let ag = parse_int_or(p[3], 0)
+            for side in [0, 1] {
+                let name = p[side]
+                let k = find_row(rows, name)
+                if k < 0 {
+                    rows = arr_push(rows, Row { name: name, played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, pts: 0 })
+                    k = len(rows) - 1
+                }
+                let scored = if side == 0 { hg } else { ag }
+                rows[k] = credit(rows[k], scored, hg + ag - scored)
+            }
+        }
+    }
+    rows
+}
+
+fn head_to_head(results: [str], a: str, b: str) -> i64 {
+    if str_eq(a, b) {
+        return 0
+    }
+    let pts_a = 0
+    let pts_b = 0
+    for line in results {
+        let p = parse_line(line)
+        if len(p) == 4 {
+            let a_home = str_eq(p[0], a) && str_eq(p[1], b)
+            let a_away = str_eq(p[0], b) && str_eq(p[1], a)
+            if a_home || a_away {
+                let hg = parse_int_or(p[2], 0)
+                let ag = parse_int_or(p[3], 0)
+                let goals_a = if a_home { hg } else { ag }
+                let goals_b = if a_home { ag } else { hg }
+                if goals_a > goals_b {
+                    pts_a = pts_a + 3
+                } else if goals_b > goals_a {
+                    pts_b = pts_b + 3
+                } else {
+                    pts_a = pts_a + 1
+                    pts_b = pts_b + 1
+                }
+            }
+        }
+    }
+    pts_a - pts_b
+}
+
+fn standings(results: [str]) -> [str] {
+    let rows = tally(results)
+    let i = 1
+    while i < len(rows) {
+        let j = i
+        let moving = true
+        while j > 0 && moving {
+            let x = rows[j]
+            let y = rows[j - 1]
+            let gd_x = x.gf - x.ga
+            let gd_y = y.gf - y.ga
+            let ahead = false
+            if x.pts != y.pts {
+                ahead = x.pts > y.pts
+            } else if gd_x != gd_y {
+                ahead = gd_x > gd_y
+            } else if x.gf != y.gf {
+                ahead = x.gf > y.gf
+            } else {
+                let h2h = head_to_head(results, x.name, y.name)
+                ahead = h2h > 0 || (h2h == 0 && str_cmp(x.name, y.name) < 0)
+            }
+            if ahead {
+                rows[j] = y
+                rows[j - 1] = x
+                j = j - 1
+            } else {
+                moving = false
+            }
+        }
+        i = i + 1
+    }
+    let names: [str] = []
+    for row in rows {
+        names = arr_push(names, row.name)
+    }
+    names
+}
+
+fn table_rows(results: [str]) -> [str] {
+    let rows = tally(results)
+    let order = standings(results)
+    let lines: [str] = []
+    let pos = 0
+    let shown = 0
+    let prev = -1
+    for name in order {
+        pos = pos + 1
+        let row = rows[find_row(rows, name)]
+        let gd = row.gf - row.ga
+        let level = false
+        if prev >= 0 {
+            let p = rows[prev]
+            level = p.pts == row.pts && p.gf - p.ga == gd && p.gf == row.gf
+            level = level && head_to_head(results, p.name, row.name) == 0
+        }
+        if !level {
+            shown = pos
+        }
+        prev = find_row(rows, name)
+        let gd_text = if gd > 0 { "+" + to_str(gd) } else { to_str(gd) }
+        let counts = "P" + to_str(row.played) + " W" + to_str(row.won) + " D" + to_str(row.drawn) + " L" + to_str(row.lost)
+        let goals = "F" + to_str(row.gf) + " A" + to_str(row.ga) + " GD" + gd_text
+        lines = arr_push(lines, to_str(shown) + ". " + name + " " + counts + " " + goals + " Pts" + to_str(row.pts))
+    }
+    lines
+}
+
+fn form(results: [str], team: str, n: i64) -> str {
+    if n <= 0 {
+        return ""
+    }
+    let letters: [str] = []
+    for line in results {
+        let p = parse_line(line)
+        if len(p) == 4 {
+            let home = str_eq(p[0], team)
+            let away = str_eq(p[1], team)
+            if home || away {
+                let hg = parse_int_or(p[2], 0)
+                let ag = parse_int_or(p[3], 0)
+                let mine = if home { hg } else { ag }
+                let theirs = if home { ag } else { hg }
+                if mine > theirs {
+                    letters = arr_push(letters, "W")
+                } else if mine < theirs {
+                    letters = arr_push(letters, "L")
+                } else {
+                    letters = arr_push(letters, "D")
+                }
+            }
+        }
+    }
+    let start = max_i64(0, len(letters) - n)
+    str_join(arr_drop(letters, start), "")
+}
+
+@[test]
+fn test_parse_line_multiword_names() {
+    assert(parse_line("Real Madrid 2-1 Atletico Madrid") == ["Real Madrid", "Atletico Madrid", "2", "1"])
+}
+
+@[test]
+fn test_parse_line_extra_spaces() {
+    assert(parse_line("  Lions   10-0  Tigers ") == ["Lions", "Tigers", "10", "0"])
+}
+
+@[test]
+fn test_parse_line_hyphenated_team() {
+    assert(parse_line("Saint-Etienne 0-3 Lyon") == ["Saint-Etienne", "Lyon", "0", "3"])
+}
+
+@[test]
+fn test_parse_line_malformed() {
+    assert_eq(len(parse_line("Lions 2-1")), 0)
+    assert_eq(len(parse_line("Lions vs Tigers")), 0)
+    assert_eq(len(parse_line("Lions 1-1 lions")), 0)
+    assert_eq(len(parse_line("A 1-2 B 3-4 C")), 0)
+}
+
+@[test]
+fn test_head_to_head_single_match() {
+    let results = ["Lions 2-1 Tigers", "Bears 0-0 Wolves", "Wolves 1-2 Lions"]
+    assert_eq(head_to_head(results, "Lions", "Tigers"), 3)
+    assert_eq(head_to_head(results, "Wolves", "Lions"), -3)
+}
+
+@[test]
+fn test_head_to_head_three_meetings() {
+    let results = ["Lions 2-2 Tigers", "Tigers 0-1 Lions", "Lions 1-0 Tigers"]
+    assert_eq(head_to_head(results, "Lions", "Tigers"), 6)
+}
+
+@[test]
+fn test_head_to_head_ignores_other_games() {
+    let results = ["Lions 0-1 Tigers", "Bears 5-0 Lions", "Tigers 2-2 Lions", "bad line"]
+    assert_eq(head_to_head(results, "Tigers", "Lions"), 3)
+}
+
+@[test]
+fn test_standings_points_order() {
+    let results = ["Lions 2-1 Tigers", "Bears 0-0 Wolves", "Tigers 3-3 Bears", "Wolves 1-2 Lions", "Lions 0-1 Bears", "Tigers 2-0 Wolves"]
+    assert(standings(results) == ["Lions", "Bears", "Tigers", "Wolves"])
+}
+
+@[test]
+fn test_standings_head_to_head_breaks_tie() {
+    let results = ["Zenit 2-1 Benfica", "Zenit 0-1 Celtic", "Benfica 1-0 Celtic"]
+    assert(standings(results) == ["Zenit", "Benfica", "Celtic"])
+}
+
+@[test]
+fn test_standings_goal_difference_then_name() {
+    assert(standings(["Porto 1-1 Ajax"]) == ["Ajax", "Porto"])
+    assert(standings(["Ajax 1-0 Benfica", "Benfica 2-0 Celtic", "Celtic 1-0 Ajax"]) == ["Benfica", "Ajax", "Celtic"])
+}
+
+@[test]
+fn test_table_rows_full() {
+    let results = ["Lions 2-1 Tigers", "Bears 0-0 Wolves", "Tigers 3-3 Bears", "Wolves 1-2 Lions", "Lions 0-1 Bears", "Tigers 2-0 Wolves"]
+    let expected = [
+        "1. Lions P3 W2 D0 L1 F4 A3 GD+1 Pts6",
+        "2. Bears P3 W1 D2 L0 F4 A3 GD+1 Pts5",
+        "3. Tigers P3 W1 D1 L1 F6 A5 GD+1 Pts4",
+        "4. Wolves P3 W0 D1 L2 F1 A4 GD-3 Pts1",
+    ]
+    assert(table_rows(results) == expected)
+}
+
+@[test]
+fn test_table_rows_shared_position() {
+    assert(table_rows(["Porto 1-1 Ajax"]) == ["1. Ajax P1 W0 D1 L0 F1 A1 GD0 Pts1", "1. Porto P1 W0 D1 L0 F1 A1 GD0 Pts1"])
+}
+
+@[test]
+fn test_table_rows_skips_malformed() {
+    let results = ["Lions 2-1 Tigers", "nonsense", "Lions 3-0"]
+    assert(table_rows(results) == ["1. Lions P1 W1 D0 L0 F2 A1 GD+1 Pts3", "2. Tigers P1 W0 D0 L1 F1 A2 GD-1 Pts0"])
+}
+
+@[test]
+fn test_form_all_matches() {
+    let results = ["Lions 2-1 Tigers", "Bears 0-0 Wolves", "Tigers 3-3 Bears", "Wolves 1-2 Lions", "Lions 0-1 Bears", "Tigers 2-0 Wolves"]
+    assert_eq_str(form(results, "Lions", 5), "WWL")
+}
+
+@[test]
+fn test_form_last_two() {
+    let results = ["Lions 2-1 Tigers", "Bears 0-0 Wolves", "Tigers 3-3 Bears", "Wolves 1-2 Lions", "Lions 0-1 Bears", "Tigers 2-0 Wolves"]
+    assert_eq_str(form(results, "Tigers", 2), "DW")
+}
+
+@[test]
+fn test_form_away_losses() {
+    let results = ["Lions 2-1 Tigers", "Bears 0-0 Wolves", "Tigers 3-3 Bears", "Wolves 1-2 Lions", "Lions 0-1 Bears", "Tigers 2-0 Wolves"]
+    assert_eq_str(form(results, "Wolves", 3), "DLL")
+    assert_eq_str(form(results, "Eagles", 3), "")
+}

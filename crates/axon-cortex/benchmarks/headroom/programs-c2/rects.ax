@@ -1,0 +1,268 @@
+type Rect = { x1: i64, y1: i64, x2: i64, y2: i64 }
+
+type Seg = { ax: i64, ay: i64, bx: i64, by: i64 }
+
+fn orient(ax: i64, ay: i64, bx: i64, by: i64, cx: i64, cy: i64) -> i64 {
+    sign_i64((bx - ax) * (cy - ay) - (by - ay) * (cx - ax))
+}
+
+fn within_box(ax: i64, ay: i64, bx: i64, by: i64, px: i64, py: i64) -> bool {
+    px >= min_i64(ax, bx) && px <= max_i64(ax, bx) && py >= min_i64(ay, by) && py <= max_i64(ay, by)
+}
+
+fn overlap_kind(a: Rect, b: Rect) -> str {
+    let ax1 = min_i64(a.x1, a.x2)
+    let ax2 = max_i64(a.x1, a.x2)
+    let ay1 = min_i64(a.y1, a.y2)
+    let ay2 = max_i64(a.y1, a.y2)
+    let bx1 = min_i64(b.x1, b.x2)
+    let bx2 = max_i64(b.x1, b.x2)
+    let by1 = min_i64(b.y1, b.y2)
+    let by2 = max_i64(b.y1, b.y2)
+    let ix = min_i64(ax2, bx2) - max_i64(ax1, bx1)
+    let iy = min_i64(ay2, by2) - max_i64(ay1, by1)
+    if ix < 0 || iy < 0 {
+        return "disjoint"
+    }
+    if ix == 0 || iy == 0 {
+        return "touching"
+    }
+    let same = ax1 == bx1 && ax2 == bx2 && ay1 == by1 && ay2 == by2
+    let a_in_b = ax1 >= bx1 && ax2 <= bx2 && ay1 >= by1 && ay2 <= by2
+    let b_in_a = bx1 >= ax1 && bx2 <= ax2 && by1 >= ay1 && by2 <= ay2
+    if same {
+        "equal"
+    } else if a_in_b {
+        "inside"
+    } else if b_in_a {
+        "contains"
+    } else {
+        "overlap"
+    }
+}
+
+fn merged_length(starts: [i64], ends: [i64]) -> i64 {
+    let n = min_i64(len(starts), len(ends))
+    let lo: [i64] = []
+    let hi: [i64] = []
+    for i in 0..n {
+        if ends[i] > starts[i] {
+            let pos = len(lo)
+            while pos > 0 && lo[pos - 1] > starts[i] {
+                pos = pos - 1
+            }
+            lo = arr_concat(arr_push(arr_take(lo, pos), starts[i]), arr_drop(lo, pos))
+            hi = arr_concat(arr_push(arr_take(hi, pos), ends[i]), arr_drop(hi, pos))
+        }
+    }
+    if len(lo) == 0 {
+        return 0
+    }
+    let total = 0
+    let cur_lo = lo[0]
+    let cur_hi = hi[0]
+    for i in 1..len(lo) {
+        if lo[i] <= cur_hi {
+            cur_hi = max_i64(cur_hi, hi[i])
+        } else {
+            total = total + cur_hi - cur_lo
+            cur_lo = lo[i]
+            cur_hi = hi[i]
+        }
+    }
+    total + cur_hi - cur_lo
+}
+
+fn union_area(rs: [Rect]) -> i64 {
+    let xs: [i64] = []
+    for i in 0..len(rs) {
+        xs = arr_push(xs, rs[i].x1)
+        xs = arr_push(xs, rs[i].x2)
+    }
+    let cuts = arr_unique(arr_sort_by(xs, |a, b| a - b))
+    if len(cuts) < 2 {
+        return 0
+    }
+    let area = 0
+    for k in 0..(len(cuts) - 1) {
+        let left = cuts[k]
+        let right = cuts[k + 1]
+        let starts: [i64] = []
+        let ends: [i64] = []
+        for i in 0..len(rs) {
+            let r = rs[i]
+            let lx = min_i64(r.x1, r.x2)
+            let rx = max_i64(r.x1, r.x2)
+            if lx <= left && rx >= right {
+                starts = arr_push(starts, min_i64(r.y1, r.y2))
+                ends = arr_push(ends, max_i64(r.y1, r.y2))
+            }
+        }
+        if len(starts) > 0 {
+            area = area + (right - left) * merged_length(starts, ends)
+        }
+    }
+    area
+}
+
+fn classify_segments(s: Seg, t: Seg) -> str {
+    let d1 = orient(t.ax, t.ay, t.bx, t.by, s.ax, s.ay)
+    let d2 = orient(t.ax, t.ay, t.bx, t.by, s.bx, s.by)
+    let d3 = orient(s.ax, s.ay, s.bx, s.by, t.ax, t.ay)
+    let d4 = orient(s.ax, s.ay, s.bx, s.by, t.bx, t.by)
+    if d1 == 0 && d2 == 0 && d3 == 0 && d4 == 0 {
+        let use_x = s.ax != s.bx || t.ax != t.bx
+        let s0 = if use_x { s.ax } else { s.ay }
+        let s1 = if use_x { s.bx } else { s.by }
+        let t0 = if use_x { t.ax } else { t.ay }
+        let t1 = if use_x { t.bx } else { t.by }
+        let lo = max_i64(min_i64(s0, s1), min_i64(t0, t1))
+        let hi = min_i64(max_i64(s0, s1), max_i64(t0, t1))
+        if lo < hi {
+            return "overlapping"
+        }
+        if lo == hi {
+            return "touching"
+        }
+        return "disjoint"
+    }
+    if d1 * d2 < 0 && d3 * d4 < 0 {
+        return "crossing"
+    }
+    let touch_s = (d1 == 0 && within_box(t.ax, t.ay, t.bx, t.by, s.ax, s.ay)) || (d2 == 0 && within_box(t.ax, t.ay, t.bx, t.by, s.bx, s.by))
+    let touch_t = (d3 == 0 && within_box(s.ax, s.ay, s.bx, s.by, t.ax, t.ay)) || (d4 == 0 && within_box(s.ax, s.ay, s.bx, s.by, t.bx, t.by))
+    if touch_s || touch_t {
+        "touching"
+    } else {
+        "disjoint"
+    }
+}
+
+fn segment_hits_rect(s: Seg, r: Rect) -> bool {
+    let xmin = i64_to_f64(min_i64(r.x1, r.x2))
+    let xmax = i64_to_f64(max_i64(r.x1, r.x2))
+    let ymin = i64_to_f64(min_i64(r.y1, r.y2))
+    let ymax = i64_to_f64(max_i64(r.y1, r.y2))
+    let x0 = i64_to_f64(s.ax)
+    let y0 = i64_to_f64(s.ay)
+    let dx = i64_to_f64(s.bx - s.ax)
+    let dy = i64_to_f64(s.by - s.ay)
+    let p = [0.0 - dx, dx, 0.0 - dy, dy]
+    let q = [x0 - xmin, xmax - x0, y0 - ymin, ymax - y0]
+    let t_enter = 0.0
+    let t_leave = 1.0
+    let ok = true
+    for i in 0..4 {
+        if p[i] == 0.0 {
+            if q[i] < 0.0 {
+                ok = false
+            }
+        } else {
+            let t = q[i] / p[i]
+            if p[i] < 0.0 {
+                t_enter = max_f64(t_enter, t)
+            } else {
+                t_leave = min_f64(t_leave, t)
+            }
+        }
+    }
+    ok && t_enter <= t_leave
+}
+
+@[test]
+fn test_overlap_partial() {
+    assert_eq_str(overlap_kind(Rect { x1: 0, y1: 0, x2: 4, y2: 4 }, Rect { x1: 2, y1: 2, x2: 6, y2: 6 }), "overlap")
+}
+
+@[test]
+fn test_overlap_shared_edge_is_touching() {
+    assert_eq_str(overlap_kind(Rect { x1: 0, y1: 0, x2: 2, y2: 2 }, Rect { x1: 2, y1: 0, x2: 5, y2: 1 }), "touching")
+}
+
+@[test]
+fn test_overlap_containment_with_unordered_corners() {
+    assert_eq_str(overlap_kind(Rect { x1: 1, y1: 1, x2: 2, y2: 2 }, Rect { x1: 5, y1: 5, x2: 0, y2: 0 }), "inside")
+    assert_eq_str(overlap_kind(Rect { x1: 5, y1: 0, x2: 0, y2: 5 }, Rect { x1: 1, y1: 1, x2: 2, y2: 2 }), "contains")
+}
+
+@[test]
+fn test_overlap_disjoint_and_equal() {
+    assert_eq_str(overlap_kind(Rect { x1: 0, y1: 0, x2: 1, y2: 1 }, Rect { x1: 3, y1: 0, x2: 4, y2: 1 }), "disjoint")
+    assert_eq_str(overlap_kind(Rect { x1: 0, y1: 0, x2: 3, y2: 2 }, Rect { x1: 3, y1: 2, x2: 0, y2: 0 }), "equal")
+}
+
+@[test]
+fn test_merged_length_overlapping_unsorted() {
+    assert_eq(merged_length([5, 0, 2], [8, 3, 4]), 7)
+}
+
+@[test]
+fn test_merged_length_nested_and_adjacent() {
+    assert_eq(merged_length([0, 1, 10, 12], [10, 3, 12, 15]), 15)
+}
+
+@[test]
+fn test_merged_length_skips_empty_intervals() {
+    assert_eq(merged_length([4, 6, 1], [4, 2, 3]), 2)
+}
+
+@[test]
+fn test_union_area_two_overlapping() {
+    let rs = [Rect { x1: 0, y1: 0, x2: 4, y2: 4 }, Rect { x1: 2, y1: 2, x2: 6, y2: 6 }]
+    assert_eq(union_area(rs), 28)
+}
+
+@[test]
+fn test_union_area_cross_shape() {
+    let rs = [Rect { x1: 0, y1: 2, x2: 6, y2: 4 }, Rect { x1: 2, y1: 0, x2: 4, y2: 6 }, Rect { x1: 3, y1: 3, x2: 2, y2: 2 }]
+    assert_eq(union_area(rs), 20)
+}
+
+@[test]
+fn test_union_area_disjoint_and_nested() {
+    let rs = [Rect { x1: 0, y1: 0, x2: 3, y2: 3 }, Rect { x1: 1, y1: 1, x2: 2, y2: 2 }, Rect { x1: 10, y1: 10, x2: 12, y2: 11 }]
+    assert_eq(union_area(rs), 11)
+}
+
+@[test]
+fn test_classify_crossing() {
+    assert_eq_str(classify_segments(Seg { ax: 0, ay: 0, bx: 4, by: 4 }, Seg { ax: 0, ay: 4, bx: 4, by: 0 }), "crossing")
+}
+
+@[test]
+fn test_classify_t_junction_touching() {
+    assert_eq_str(classify_segments(Seg { ax: 0, ay: 0, bx: 4, by: 0 }, Seg { ax: 2, ay: 0, bx: 2, by: 3 }), "touching")
+}
+
+@[test]
+fn test_classify_collinear_cases() {
+    assert_eq_str(classify_segments(Seg { ax: 0, ay: 0, bx: 3, by: 3 }, Seg { ax: 5, ay: 5, bx: 2, by: 2 }), "overlapping")
+    assert_eq_str(classify_segments(Seg { ax: 0, ay: 0, bx: 0, by: 2 }, Seg { ax: 0, ay: 2, bx: 0, by: 7 }), "touching")
+    assert_eq_str(classify_segments(Seg { ax: 0, ay: 0, bx: 1, by: 0 }, Seg { ax: 2, ay: 0, bx: 3, by: 0 }), "disjoint")
+}
+
+@[test]
+fn test_classify_parallel_disjoint() {
+    assert_eq_str(classify_segments(Seg { ax: 0, ay: 0, bx: 4, by: 0 }, Seg { ax: 0, ay: 1, bx: 4, by: 1 }), "disjoint")
+}
+
+@[test]
+fn test_hits_rect_passing_through() {
+    assert(segment_hits_rect(Seg { ax: -2, ay: 1, bx: 6, by: 3 }, Rect { x1: 0, y1: 0, x2: 4, y2: 4 }))
+}
+
+@[test]
+fn test_hits_rect_endpoint_inside() {
+    assert(segment_hits_rect(Seg { ax: 1, ay: 1, bx: 9, by: 9 }, Rect { x1: 3, y1: 3, x2: 0, y2: 0 }))
+}
+
+@[test]
+fn test_hits_rect_corner_graze() {
+    assert(segment_hits_rect(Seg { ax: 0, ay: 4, bx: 4, by: 0 }, Rect { x1: 2, y1: 2, x2: 5, y2: 5 }))
+}
+
+@[test]
+fn test_hits_rect_misses() {
+    assert(!segment_hits_rect(Seg { ax: 0, ay: 5, bx: 5, by: 10 }, Rect { x1: 0, y1: 0, x2: 4, y2: 4 }))
+    assert(!segment_hits_rect(Seg { ax: 6, ay: 0, bx: 6, by: 9 }, Rect { x1: 0, y1: 0, x2: 4, y2: 4 }))
+}

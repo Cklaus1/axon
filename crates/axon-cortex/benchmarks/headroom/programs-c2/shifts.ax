@@ -1,0 +1,327 @@
+type Shift = { staff: str, role: str, day: i64, start: i64, end: i64 }
+
+fn span_hours(start: i64, end: i64) -> i64 {
+    if start < 0 || start > 23 || end < 0 || end > 24 || start == end {
+        return 0
+    }
+    if end > start {
+        end - start
+    } else {
+        end + 24 - start
+    }
+}
+
+fn covers(first: i64, last: i64, at: i64) -> bool {
+    (at >= first && at < last) || (at + 168 >= first && at + 168 < last)
+}
+
+fn coverage_for_day(shifts: [Shift], day: i64) -> [i64] {
+    let counts = arr_repeat(0, 24)
+    if day < 0 || day > 6 {
+        return counts
+    }
+    let seen = []
+    for s in shifts {
+        let length = span_hours(s.start, s.end)
+        if length == 0 || s.day < 0 || s.day > 6 {
+            continue
+        }
+        let first = s.day * 24 + s.start
+        let last = first + length
+        let h = 0
+        while h < 24 {
+            if covers(first, last, day * 24 + h) {
+                let key = s.staff + "@" + to_str(h)
+                if !arr_contains(seen, key) {
+                    seen = arr_push(seen, key)
+                    counts[h] = counts[h] + 1
+                }
+            }
+            h = h + 1
+        }
+    }
+    counts
+}
+
+fn find_gaps(coverage: [i64], required: [i64], min_len: i64) -> [i64] {
+    let out = []
+    let n = len(coverage)
+    let r = len(required)
+    if r == 0 {
+        return out
+    }
+    let open = -1
+    let h = 0
+    while h <= n {
+        let short = false
+        if h < n {
+            let need = if r == 1 { required[0] } else if h < r { required[h] } else { 0 }
+            short = coverage[h] < need
+        }
+        if short && open < 0 {
+            open = h
+        } else if !short && open >= 0 {
+            if h - open >= min_len {
+                out = arr_push(out, open)
+                out = arr_push(out, h)
+            }
+            open = -1
+        }
+        h = h + 1
+    }
+    out
+}
+
+fn count_overtime(shifts: [Shift], max_shift: i64, weekly_cap: i64) -> i64 {
+    let ordered = arr_sort_by(shifts, |a, b| (a.day * 24 + a.start) - (b.day * 24 + b.start))
+    let names = []
+    let totals = []
+    let count = 0
+    for s in ordered {
+        let length = span_hours(s.start, s.end)
+        if length == 0 {
+            continue
+        }
+        let idx = -1
+        let i = 0
+        while i < len(names) {
+            if names[i] == s.staff {
+                idx = i
+            }
+            i = i + 1
+        }
+        if idx < 0 {
+            names = arr_push(names, s.staff)
+            totals = arr_push(totals, 0)
+            idx = len(names) - 1
+        }
+        let before = totals[idx]
+        totals[idx] = before + length
+        if length > max_shift || before + length > weekly_cap {
+            count = count + 1
+        }
+    }
+    count
+}
+
+fn rest_violations(shifts: [Shift], min_rest: i64) -> i64 {
+    let ordered = arr_sort_by(shifts, |a, b| (a.day * 24 + a.start) - (b.day * 24 + b.start))
+    let names = []
+    let firsts = []
+    let last_end = []
+    let count = 0
+    for s in ordered {
+        let length = span_hours(s.start, s.end)
+        if length == 0 {
+            continue
+        }
+        let first = s.day * 24 + s.start
+        let idx = -1
+        let i = 0
+        while i < len(names) {
+            if names[i] == s.staff {
+                idx = i
+            }
+            i = i + 1
+        }
+        if idx < 0 {
+            names = arr_push(names, s.staff)
+            firsts = arr_push(firsts, first)
+            last_end = arr_push(last_end, first + length)
+        } else {
+            if first - last_end[idx] < min_rest {
+                count = count + 1
+            }
+            last_end[idx] = max_i64(last_end[idx], first + length)
+        }
+    }
+    let j = 0
+    while j < len(names) {
+        if firsts[j] + 168 - last_end[j] < min_rest {
+            count = count + 1
+        }
+        j = j + 1
+    }
+    count
+}
+
+fn on_duty(shifts: [Shift], day: i64, hour: i64, role: str) -> [str] {
+    let names = []
+    if day < 0 || day > 6 || hour < 0 || hour > 23 {
+        return names
+    }
+    let at = day * 24 + hour
+    for s in shifts {
+        let length = span_hours(s.start, s.end)
+        if length == 0 {
+            continue
+        }
+        if len(role) > 0 && s.role != role {
+            continue
+        }
+        let first = s.day * 24 + s.start
+        if covers(first, first + length, at) && !arr_contains(names, s.staff) {
+            names = arr_push(names, s.staff)
+        }
+    }
+    arr_sort_by(names, |a, b| str_cmp(a, b))
+}
+
+fn two_digits(n: i64) -> str {
+    str_pad_start(to_str(n), 2, "0")
+}
+
+fn staffing_summary(shifts: [Shift], day: i64, minimum: i64) -> str {
+    let counts = coverage_for_day(shifts, day)
+    let staffed = 0
+    let peak = 0
+    let peak_hour = 0
+    let h = 0
+    while h < 24 {
+        if counts[h] >= minimum {
+            staffed = staffed + 1
+        }
+        if counts[h] > peak {
+            peak = counts[h]
+            peak_hour = h
+        }
+        h = h + 1
+    }
+    let gaps = find_gaps(counts, [minimum], 1)
+    let parts = []
+    let i = 0
+    while i + 1 < len(gaps) {
+        parts = arr_push(parts, two_digits(gaps[i]) + "-" + two_digits(gaps[i + 1]))
+        i = i + 2
+    }
+    let gap_text = "none"
+    if len(parts) > 0 {
+        gap_text = str_join(parts, " ")
+    }
+    "day " + to_str(day) + ": " + to_str(staffed) + "/24 hours staffed, peak " + to_str(peak) + " at " + two_digits(peak_hour) + ", gaps " + gap_text
+}
+
+fn sample_roster() -> [Shift] {
+    [
+        Shift { staff: "Ana", role: "nurse", day: 0, start: 6, end: 14 },
+        Shift { staff: "Ben", role: "nurse", day: 0, start: 14, end: 22 },
+        Shift { staff: "Cy", role: "nurse", day: 0, start: 22, end: 6 },
+        Shift { staff: "Ana", role: "nurse", day: 0, start: 10, end: 12 },
+        Shift { staff: "Ana", role: "nurse", day: 1, start: 6, end: 14 },
+        Shift { staff: "Dee", role: "doctor", day: 1, start: 8, end: 20 },
+        Shift { staff: "Ben", role: "nurse", day: 1, start: 14, end: 22 },
+        Shift { staff: "Cy", role: "nurse", day: 6, start: 20, end: 8 },
+    ]
+}
+
+@[test]
+fn test_coverage_first_day_with_week_wrap() {
+    let expected = [1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    assert(coverage_for_day(sample_roster(), 0) == expected)
+}
+
+@[test]
+fn test_coverage_second_day_overnight() {
+    let expected = [1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 0, 0]
+    assert(coverage_for_day(sample_roster(), 1) == expected)
+}
+
+@[test]
+fn test_coverage_empty_day_and_bad_shift() {
+    let roster = [
+        Shift { staff: "Eve", role: "nurse", day: 3, start: 9, end: 9 },
+        Shift { staff: "Fay", role: "nurse", day: 3, start: 23, end: 1 },
+    ]
+    let counts = coverage_for_day(roster, 3)
+    assert_eq(len(counts), 24)
+    assert_eq(counts[9], 0)
+    assert_eq(counts[23], 1)
+}
+
+@[test]
+fn test_find_gaps_uniform_requirement() {
+    let day0 = [1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    assert(find_gaps(day0, [2], 1) == [0, 6, 8, 24])
+}
+
+@[test]
+fn test_find_gaps_minimum_length() {
+    let day0 = [1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    assert(find_gaps(day0, [2], 7) == [8, 24])
+}
+
+@[test]
+fn test_find_gaps_per_hour_requirement() {
+    assert(find_gaps([3, 1, 0, 2], [2, 2, 1, 1], 1) == [1, 3])
+    assert(find_gaps([2, 0, 2, 0], [1, 1], 1) == [1, 2])
+    assert_eq(len(find_gaps([0, 0], [], 1)), 0)
+}
+
+@[test]
+fn test_count_overtime_weekly_cap() {
+    assert_eq(count_overtime(sample_roster(), 10, 16), 3)
+}
+
+@[test]
+fn test_count_overtime_long_shifts_only() {
+    assert_eq(count_overtime(sample_roster(), 8, 100), 2)
+    assert_eq(count_overtime(sample_roster(), 12, 40), 0)
+}
+
+@[test]
+fn test_count_overtime_unsorted_input() {
+    let roster = [
+        Shift { staff: "Gus", role: "porter", day: 4, start: 8, end: 16 },
+        Shift { staff: "Gus", role: "porter", day: 2, start: 8, end: 18 },
+        Shift { staff: "Gus", role: "porter", day: 3, start: 8, end: 16 },
+    ]
+    assert_eq(count_overtime(roster, 12, 20), 1)
+}
+
+@[test]
+fn test_rest_violations_overlap() {
+    assert_eq(rest_violations(sample_roster(), 10), 1)
+}
+
+@[test]
+fn test_rest_violations_week_wrap() {
+    assert_eq(rest_violations(sample_roster(), 16), 2)
+}
+
+@[test]
+fn test_rest_violations_strict_rule() {
+    assert_eq(rest_violations(sample_roster(), 17), 4)
+}
+
+@[test]
+fn test_on_duty_overnight_handover() {
+    assert(on_duty(sample_roster(), 0, 7, "") == ["Ana", "Cy"])
+}
+
+@[test]
+fn test_on_duty_role_filter() {
+    assert(on_duty(sample_roster(), 1, 9, "doctor") == ["Dee"])
+    assert(on_duty(sample_roster(), 1, 9, "nurse") == ["Ana"])
+}
+
+@[test]
+fn test_on_duty_deduplicates_staff() {
+    assert(on_duty(sample_roster(), 0, 11, "") == ["Ana"])
+    assert_eq(len(on_duty(sample_roster(), 1, 23, "")), 0)
+}
+
+@[test]
+fn test_staffing_summary_evening_gap() {
+    assert_eq_str(staffing_summary(sample_roster(), 1, 1), "day 1: 22/24 hours staffed, peak 2 at 08, gaps 22-24")
+}
+
+@[test]
+fn test_staffing_summary_double_cover() {
+    assert_eq_str(staffing_summary(sample_roster(), 0, 2), "day 0: 2/24 hours staffed, peak 2 at 06, gaps 00-06 08-24")
+}
+
+@[test]
+fn test_staffing_summary_full_and_empty() {
+    assert_eq_str(staffing_summary(sample_roster(), 0, 1), "day 0: 24/24 hours staffed, peak 2 at 06, gaps none")
+    assert_eq_str(staffing_summary(sample_roster(), 3, 1), "day 3: 0/24 hours staffed, peak 0 at 00, gaps 00-24")
+}

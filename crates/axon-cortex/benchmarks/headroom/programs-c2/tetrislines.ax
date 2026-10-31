@@ -1,0 +1,326 @@
+// A falling-block well. The well is a flat array stored row by row with row 0
+// at the top. Cell codes: 0 empty, 1..7 for the pieces I O T S Z J L and
+// 8 for pre-filled garbage blocks.
+
+fn piece_code(kind: str) -> i64 {
+    str_index_of("IOTSZJL", kind) + 1
+}
+
+fn parse_well(text: str) -> [i64] {
+    let cells: [i64] = []
+    for ch in str_chars(str_replace(text, "/", "")) {
+        if ch == "#" {
+            cells = arr_push(cells, 8)
+        } else if ch == "." {
+            cells = arr_push(cells, 0)
+        } else {
+            cells = arr_push(cells, piece_code(ch))
+        }
+    }
+    cells
+}
+
+fn well_text(well: [i64], width: i64) -> str {
+    let rows: [str] = []
+    let line = ""
+    for i in 0..len(well) {
+        let v = well[i]
+        if v == 0 {
+            line = line + "."
+        } else {
+            line = line + str_char_at("IOTSZJL#", v - 1)
+        }
+        if (i + 1) % width == 0 {
+            rows = arr_push(rows, line)
+            line = ""
+        }
+    }
+    str_join(rows, "/")
+}
+
+fn fits(well: [i64], width: i64, cells: [i64], top: i64, left: i64) -> bool {
+    let height = len(well) / width
+    let ok = true
+    for k in 0..len(cells) / 2 {
+        let r = top + cells[2 * k]
+        let c = left + cells[2 * k + 1]
+        if r < 0 || r >= height || c < 0 || c >= width {
+            ok = false
+        } else if well[r * width + c] != 0 {
+            ok = false
+        }
+    }
+    ok
+}
+
+fn piece_cells(kind: str, rot: i64) -> [i64] {
+    let base: [i64] = []
+    if kind == "I" {
+        base = [0, 0, 0, 1, 0, 2, 0, 3]
+    } else if kind == "O" {
+        base = [0, 0, 0, 1, 1, 0, 1, 1]
+    } else if kind == "T" {
+        base = [0, 0, 0, 1, 0, 2, 1, 1]
+    } else if kind == "S" {
+        base = [0, 1, 0, 2, 1, 0, 1, 1]
+    } else if kind == "Z" {
+        base = [0, 0, 0, 1, 1, 1, 1, 2]
+    } else if kind == "J" {
+        base = [0, 0, 1, 0, 1, 1, 1, 2]
+    } else if kind == "L" {
+        base = [0, 2, 1, 0, 1, 1, 1, 2]
+    }
+    let out: [i64] = []
+    if len(base) == 8 {
+        let rs = [base[0], base[2], base[4], base[6]]
+        let cs = [base[1], base[3], base[5], base[7]]
+        let turns = (rot % 4 + 4) % 4
+        while turns > 0 {
+            for k in 0..4 {
+                let r = rs[k]
+                rs[k] = cs[k]
+                cs[k] = 0 - r
+            }
+            turns = turns - 1
+        }
+        let min_r = arr_min_i64(rs)
+        let min_c = arr_min_i64(cs)
+        let keys: [i64] = []
+        for k in 0..4 {
+            keys = arr_push(keys, (rs[k] - min_r) * 16 + cs[k] - min_c)
+        }
+        for key in arr_sort_by(keys, |a, b| a - b) {
+            out = arr_push(arr_push(out, key / 16), key % 16)
+        }
+    }
+    out
+}
+
+fn drop_piece(well: [i64], width: i64, kind: str, rot: i64, col: i64) -> [i64] {
+    let empty: [i64] = []
+    let cells = piece_cells(kind, rot)
+    if width <= 0 || len(cells) == 0 || len(well) % width != 0 {
+        return empty
+    }
+    let span = 0
+    for k in 0..len(cells) / 2 {
+        span = max_i64(span, cells[2 * k + 1] + 1)
+    }
+    if col < 0 || col + span > width {
+        return empty
+    }
+    if !fits(well, width, cells, 0, col) {
+        return empty
+    }
+    let top = 0
+    while fits(well, width, cells, top + 1, col) {
+        top = top + 1
+    }
+    let out = arr_take(well, len(well))
+    let code = piece_code(kind)
+    for k in 0..len(cells) / 2 {
+        let r = top + cells[2 * k]
+        let c = col + cells[2 * k + 1]
+        out[r * width + c] = code
+    }
+    out
+}
+
+fn clear_lines(well: [i64], width: i64) -> [i64] {
+    let empty: [i64] = []
+    if width <= 0 || len(well) % width != 0 {
+        return empty
+    }
+    let height = len(well) / width
+    let kept: [i64] = []
+    for r in 0..height {
+        let full = true
+        for c in 0..width {
+            if well[r * width + c] == 0 {
+                full = false
+            }
+        }
+        if !full {
+            kept = arr_push(kept, r)
+        }
+    }
+    let out = arr_repeat(0, len(well))
+    let missing = height - len(kept)
+    for i in 0..len(kept) {
+        let src = kept[i]
+        for c in 0..width {
+            out[(missing + i) * width + c] = well[src * width + c]
+        }
+    }
+    out
+}
+
+fn play_sequence(width: i64, height: i64, moves: [str]) -> i64 {
+    let well = arr_repeat(0, width * height)
+    let table = [0, 40, 100, 300, 1200]
+    let score = 0
+    let lines = 0
+    let alive = true
+    for mv in moves {
+        let at = str_index_of(mv, "@")
+        if alive && at == 2 {
+            let col = 0
+            for i in at + 1..str_len(mv) {
+                col = col * 10 + char_at(mv, i) - 48
+            }
+            let next = drop_piece(well, width, str_slice(mv, 0, 1), char_at(mv, 1) - 48, col)
+            if len(next) == 0 {
+                alive = false
+            } else {
+                let cleared = 0
+                for r in 0..height {
+                    let filled = 0
+                    for c in 0..width {
+                        if next[r * width + c] != 0 {
+                            filled = filled + 1
+                        }
+                    }
+                    if filled == width {
+                        cleared = cleared + 1
+                    }
+                }
+                score = score + table[min_i64(cleared, 4)] * (lines / 10 + 1)
+                lines = lines + cleared
+                well = clear_lines(next, width)
+            }
+        }
+    }
+    score
+}
+
+fn well_stats(well: [i64], width: i64) -> str {
+    if width <= 0 || len(well) % width != 0 {
+        return "invalid"
+    }
+    let height = len(well) / width
+    let heights = arr_repeat(0, width)
+    let holes = 0
+    for c in 0..width {
+        let seen = false
+        for r in 0..height {
+            let filled = well[r * width + c] != 0
+            if filled && !seen {
+                seen = true
+                heights[c] = height - r
+            } else if !filled && seen {
+                holes = holes + 1
+            }
+        }
+    }
+    let bumpiness = 0
+    let tallest = 0
+    for c in 0..width {
+        tallest = max_i64(tallest, heights[c])
+        if c + 1 < width {
+            bumpiness = bumpiness + abs_i64(heights[c] - heights[c + 1])
+        }
+    }
+    "height=" + to_str(tallest) + " holes=" + to_str(holes) + " bumpiness=" + to_str(bumpiness)
+}
+
+@[test]
+fn test_piece_cells_t_spawn() {
+    assert(piece_cells("T", 0) == [0, 0, 0, 1, 0, 2, 1, 1])
+}
+
+@[test]
+fn test_piece_cells_t_clockwise() {
+    assert(piece_cells("T", 1) == [0, 1, 1, 0, 1, 1, 2, 1])
+}
+
+@[test]
+fn test_piece_cells_i_wraps_rotation() {
+    assert(piece_cells("I", 5) == [0, 0, 1, 0, 2, 0, 3, 0])
+}
+
+@[test]
+fn test_piece_cells_l_counter_clockwise() {
+    assert(piece_cells("L", -1) == [0, 0, 0, 1, 1, 1, 2, 1])
+}
+
+@[test]
+fn test_drop_piece_o_on_floor() {
+    let after = drop_piece(arr_repeat(0, 16), 4, "O", 0, 1)
+    assert_eq_str(well_text(after, 4), "..../..../.OO./.OO.")
+}
+
+@[test]
+fn test_drop_piece_i_rests_on_blocks() {
+    let after = drop_piece(parse_well("..../..../..../#..#"), 4, "I", 0, 0)
+    assert_eq_str(well_text(after, 4), "..../..../IIII/#..#")
+}
+
+@[test]
+fn test_drop_piece_t_fills_slot() {
+    let after = drop_piece(parse_well("..../..../..../#.##"), 4, "T", 0, 0)
+    assert_eq_str(well_text(after, 4), "..../..../TTT./#T##")
+}
+
+@[test]
+fn test_drop_piece_outside_well() {
+    assert_eq(len(drop_piece(arr_repeat(0, 16), 4, "O", 0, 3)), 0)
+}
+
+@[test]
+fn test_clear_lines_single() {
+    let after = clear_lines(parse_well("..../#.../####/.##."), 4)
+    assert_eq_str(well_text(after, 4), "..../..../#.../.##.")
+}
+
+@[test]
+fn test_clear_lines_double() {
+    let after = clear_lines(parse_well("#.../####/####/.#.."), 4)
+    assert_eq_str(well_text(after, 4), "..../..../#.../.#..")
+}
+
+@[test]
+fn test_clear_lines_nothing_full() {
+    let after = clear_lines(parse_well("..../..#./.##./#.#."), 4)
+    assert_eq_str(well_text(after, 4), "..../..#./.##./#.#.")
+}
+
+@[test]
+fn test_play_sequence_single_line() {
+    assert_eq(play_sequence(4, 4, ["I0@0"]), 40)
+}
+
+@[test]
+fn test_play_sequence_double_line() {
+    assert_eq(play_sequence(4, 4, ["O0@0", "O0@2"]), 100)
+}
+
+@[test]
+fn test_play_sequence_stops_when_topped_out() {
+    assert_eq(play_sequence(4, 4, ["I0@0", "I1@0", "I1@0", "I0@0", "I1@1"]), 40)
+}
+
+@[test]
+fn test_play_sequence_level_multiplier() {
+    let moves = ["O0@0", "O0@0", "O0@0", "O0@0", "O0@0", "O0@0"]
+    assert_eq(play_sequence(2, 4, moves), 700)
+}
+
+@[test]
+fn test_well_stats_mixed() {
+    assert_eq_str(well_stats(parse_well("..../.#../...#/##.#"), 4), "height=3 holes=1 bumpiness=7")
+}
+
+@[test]
+fn test_well_stats_empty() {
+    assert_eq_str(well_stats(arr_repeat(0, 8), 4), "height=0 holes=0 bumpiness=0")
+}
+
+@[test]
+fn test_well_stats_overhang() {
+    assert_eq_str(well_stats(parse_well("#.../..../...."), 4), "height=3 holes=2 bumpiness=3")
+}
+
+@[test]
+fn test_well_stats_covered_gaps() {
+    assert_eq_str(well_stats(parse_well("####/#..#"), 4), "height=2 holes=2 bumpiness=0")
+}

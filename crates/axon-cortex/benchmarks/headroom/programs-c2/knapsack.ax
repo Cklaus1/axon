@@ -1,0 +1,265 @@
+// 0/1 knapsack. Item i has weights[i] and values[i]; every item can be taken
+// at most once. Items with a negative weight or a non-positive value are
+// never worth taking and are skipped.
+
+// Best total value within the capacity, using a one-row table. Items of zero
+// weight are always taken. Returns -1 for mismatched inputs.
+fn best_value(weights: [i64], values: [i64], cap: i64) -> i64 {
+    if len(weights) != len(values) || cap < 0 {
+        return -1
+    }
+    let dp = arr_repeat(0, cap + 1)
+    let free = 0
+    for i in 0..len(weights) {
+        let w = weights[i]
+        let v = values[i]
+        if v <= 0 || w < 0 || w > cap {
+            continue
+        }
+        if w == 0 {
+            free = free + v
+            continue
+        }
+        let c = cap
+        while c >= w {
+            let cand = dp[c - w] + v
+            if cand > dp[c] {
+                dp[c] = cand
+            }
+            c = c - 1
+        }
+    }
+    dp[cap] + free
+}
+
+// Indices of an optimal selection, in ascending order. When several
+// selections tie, items earlier in the list are preferred.
+fn chosen_items(weights: [i64], values: [i64], cap: i64) -> [i64] {
+    let picked: [i64] = []
+    let n = len(weights)
+    if n != len(values) || cap < 0 {
+        return picked
+    }
+    let table = arr_repeat(arr_repeat(0, cap + 1), n + 1)
+    for i in 1..(n + 1) {
+        let w = weights[i - 1]
+        let v = values[i - 1]
+        for c in 0..(cap + 1) {
+            let skip = table[i - 1][c]
+            table[i][c] = skip
+            if w >= 0 && v > 0 && w <= c && table[i - 1][c - w] + v > skip {
+                table[i][c] = table[i - 1][c - w] + v
+            }
+        }
+    }
+    let c = cap
+    let i = n
+    while i > 0 {
+        if table[i][c] != table[i - 1][c] {
+            picked = arr_push(picked, i - 1)
+            c = c - weights[i - 1]
+        }
+        i = i - 1
+    }
+    arr_reverse(picked)
+}
+
+// Upper bound from the fractional relaxation: take items by value density,
+// splitting the first one that no longer fits.
+fn fractional_bound(weights: [i64], values: [i64], cap: i64) -> f64 {
+    if len(weights) != len(values) || cap < 0 {
+        return 0.0
+    }
+    let order: [i64] = []
+    for i in 0..len(weights) {
+        if weights[i] < 0 || values[i] <= 0 {
+            continue
+        }
+        order = arr_push(order, i)
+        let j = len(order) - 1
+        while j > 0 && values[order[j]] * weights[order[j - 1]] > values[order[j - 1]] * weights[order[j]] {
+            let tmp = order[j - 1]
+            order[j - 1] = order[j]
+            order[j] = tmp
+            j = j - 1
+        }
+    }
+    let room = cap
+    let total = 0.0
+    for i in order {
+        let w = weights[i]
+        if w <= room {
+            total = total + i64_to_f64(values[i])
+            room = room - w
+        } else if room > 0 {
+            total = total + i64_to_f64(values[i]) * i64_to_f64(room) / i64_to_f64(w)
+            room = 0
+        }
+    }
+    total
+}
+
+// Number of distinct item subsets that fit and reach the optimal value.
+// Items of zero or negative weight are ignored.
+fn count_optimal_subsets(weights: [i64], values: [i64], cap: i64) -> i64 {
+    if len(weights) != len(values) || cap < 0 {
+        return 0
+    }
+    let val = arr_repeat(-1, cap + 1)
+    let cnt = arr_repeat(0, cap + 1)
+    val[0] = 0
+    cnt[0] = 1
+    for i in 0..len(weights) {
+        let w = weights[i]
+        let v = values[i]
+        if w <= 0 || w > cap || v < 0 {
+            continue
+        }
+        let c = cap
+        while c >= w {
+            if val[c - w] >= 0 {
+                let cand = val[c - w] + v
+                if cand > val[c] {
+                    val[c] = cand
+                    cnt[c] = cnt[c - w]
+                } else if cand == val[c] {
+                    cnt[c] = cnt[c] + cnt[c - w]
+                }
+            }
+            c = c - 1
+        }
+    }
+    let best = arr_max_i64(val)
+    let total = 0
+    for c in 0..(cap + 1) {
+        if val[c] == best {
+            total = total + cnt[c]
+        }
+    }
+    total
+}
+
+// Smallest total weight of a selection worth at least `target`, or -1 when
+// even taking everything falls short.
+fn min_weight_for_value(weights: [i64], values: [i64], target: i64) -> i64 {
+    if len(weights) != len(values) {
+        return -1
+    }
+    if target <= 0 {
+        return 0
+    }
+    let unreachable = 1000000000000
+    let dp = arr_repeat(unreachable, target + 1)
+    dp[0] = 0
+    for i in 0..len(weights) {
+        let w = weights[i]
+        let v = values[i]
+        if w < 0 || v <= 0 {
+            continue
+        }
+        let t = target
+        while t >= 0 {
+            if dp[t] < unreachable {
+                let dest = min_i64(target, t + v)
+                if dp[t] + w < dp[dest] {
+                    dp[dest] = dp[t] + w
+                }
+            }
+            t = t - 1
+        }
+    }
+    if dp[target] >= unreachable {
+        return -1
+    }
+    dp[target]
+}
+
+@[test]
+fn test_best_value_classic() {
+    assert_eq(best_value([10, 20, 30], [60, 100, 120], 50), 220)
+}
+
+@[test]
+fn test_best_value_density_trap() {
+    assert_eq(best_value([5, 4, 6, 3], [10, 40, 30, 50], 10), 90)
+}
+
+@[test]
+fn test_best_value_free_and_oversized_items() {
+    assert_eq(best_value([0, 15, 4], [7, 100, 9], 10), 16)
+}
+
+@[test]
+fn test_best_value_mismatched_inputs() {
+    assert_eq(best_value([1, 2], [3], 5), -1)
+}
+
+@[test]
+fn test_chosen_items_classic() {
+    assert(chosen_items([10, 20, 30], [60, 100, 120], 50) == [1, 2])
+}
+
+@[test]
+fn test_chosen_items_mixed() {
+    assert(chosen_items([5, 4, 6, 3], [10, 40, 30, 50], 10) == [1, 3])
+}
+
+@[test]
+fn test_chosen_items_tie_prefers_earlier() {
+    assert(chosen_items([1, 1], [5, 5], 1) == [0])
+}
+
+@[test]
+fn test_fractional_bound_splits_last_item() {
+    assert_eq_f64(fractional_bound([10, 20, 30], [60, 100, 120], 50), 240.0)
+}
+
+@[test]
+fn test_fractional_bound_everything_fits() {
+    assert_eq_f64(fractional_bound([1, 2], [3, 4], 10), 7.0)
+}
+
+@[test]
+fn test_fractional_bound_zero_weight_first() {
+    assert_eq_f64(fractional_bound([4, 0, 6], [8, 5, 6], 3), 11.0)
+}
+
+@[test]
+fn test_count_optimal_two_ways() {
+    assert_eq(count_optimal_subsets([1, 2, 3], [1, 2, 3], 3), 2)
+}
+
+@[test]
+fn test_count_optimal_unique() {
+    assert_eq(count_optimal_subsets([2, 3, 4], [3, 4, 5], 5), 1)
+}
+
+@[test]
+fn test_count_optimal_identical_items() {
+    assert_eq(count_optimal_subsets([1, 1, 1], [5, 5, 5], 2), 3)
+}
+
+@[test]
+fn test_count_optimal_zero_value_item() {
+    assert_eq(count_optimal_subsets([1, 1], [4, 0], 2), 2)
+}
+
+@[test]
+fn test_min_weight_two_items() {
+    assert_eq(min_weight_for_value([10, 20, 30], [60, 100, 120], 160), 30)
+}
+
+@[test]
+fn test_min_weight_overshoot_allowed() {
+    assert_eq(min_weight_for_value([10, 20, 30], [60, 100, 120], 61), 20)
+}
+
+@[test]
+fn test_min_weight_unreachable() {
+    assert_eq(min_weight_for_value([10, 20, 30], [60, 100, 120], 300), -1)
+}
+
+@[test]
+fn test_min_weight_heaviest_pair() {
+    assert_eq(min_weight_for_value([10, 20, 30], [60, 100, 120], 220), 50)
+}
