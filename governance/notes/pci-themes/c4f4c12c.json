@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "axon-intent authorize-repair mints one operator-signed repair envelope from a judged cortex preview and exports the runner verify key and an empty private spent store, granting nothing by itself."}

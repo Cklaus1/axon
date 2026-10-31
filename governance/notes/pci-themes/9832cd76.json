@@ -1,0 +1,1 @@
+{"theme": "r6-ledger-spec", "text": "axon-intent audit-runs verifies the run ledger chain, seals and head against the spent store and supplied envelopes and reports each C1 finding, read-only, and every run-ledger refusal site has its own mutation row."}

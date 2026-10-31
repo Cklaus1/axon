@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "The cl22 canonical writer and strict JSON parser moved into a new leaf crate axon-canonical shared by axon-os, axon-cortex and axon-loop-contracts with byte-identical known answers, and the owner-private store check moved from axon-fabric into axon-os."}
