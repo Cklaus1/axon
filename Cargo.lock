@@ -200,6 +200,7 @@ dependencies = [
  "axon-ai",
  "axon-canonical",
  "axon-jobctl",
+ "axon-os",
  "axon-workspace-recipe",
  "hex",
  "libc",
