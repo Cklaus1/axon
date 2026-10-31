@@ -269,7 +269,11 @@ fn spent(s: &Setup, o: &Out, e: &RepairEnvelope) {
         "an admitted run was refused: {}{}",
         o.stdout, o.stderr
     );
-    assert_eq!(records(s), vec![format!("{}.used", e.envelope_id)]);
+    assert_eq!(
+        records(s),
+        vec![format!("{}.used", e.envelope_id)],
+        "ATTACK: NH-R1 S5 an admitted run did not spend its envelope"
+    );
 }
 
 #[test]
@@ -609,9 +613,11 @@ fn s13_a_checker_that_rewrites_the_entry_file_during_the_witness_run_refuses() {
         "ATTACK: NH-R1 S13 a file changed during the witness run was graded\n{}{}",
         o.stdout, o.stderr
     );
+    // The entry file's own check, not only the import closure's (whose
+    // digest also moves when the entry file does).
     assert!(
-        o.stderr.contains("changed after verification"),
-        "{}",
+        o.stderr.contains("broken.ax changed after verification"),
+        "ATTACK: NH-R1 S13 a file changed during the witness run was graded\n{}",
         o.stderr
     );
     let _ = std::fs::remove_dir_all(&s.root);

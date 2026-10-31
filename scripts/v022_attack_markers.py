@@ -3544,7 +3544,7 @@ ATTACK_MARKERS.update({
 # NH-R1 A3 (ids M4210-M4215): cortex repair --unattended phase A/B.
 ATTACK_MARKERS.update({
     'M4210': r'ATTACK: NH-R1 S13 a file changed during the witness run was graded',
-    'M4211': r'ATTACK: NH-R1 S5 a spent envelope was used twice',
+    'M4211': r'ATTACK: NH-R1 S5 an admitted run did not spend its envelope',
     'M4212': r'ATTACK: NH-R1 S6 the env selector',
     'M4213': r'ATTACK: NH-R1 S6 an envelope with another',
     'M4214': r'ATTACK: NH-R1 S6 an envelope with another',
