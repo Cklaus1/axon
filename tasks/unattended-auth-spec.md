@@ -88,6 +88,7 @@ false assurance. So this spec gates unattended runs on **enforcement**, not only
 | `schema` | `"axon-approval/4"` |
 | `envelope_id` | 32 lowercase hex, OS RNG at mint; **run identity**, single-use (§5.5) |
 | `spent_store_id` | the id of the runner's spent store (§5.5) `[REVISED: F7]` |
+| `run_ledger_id` | the `ledger-id` of the runner's R6 run ledger (`tasks/r6-ledger-spec.md` §4), 32 lowercase hex `[REVISED: build 2026-10-31 (NhrCrates, R6 L1): added as R6 §4 announced; the axon-approval/4 KATs were recomputed independently in Python]` |
 | `issued_by` | operator label (recorded, not trusted) |
 | `issued_unix`, `expires_unix` | validity window; `expires − issued ≤ MAX_TTL_S` (86 400, an engineering default `[REVISED: D-C, was Q2]`) |
 | `task.workspace` | canonical absolute path |

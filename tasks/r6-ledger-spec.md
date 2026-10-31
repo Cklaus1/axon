@@ -64,6 +64,12 @@ Schema `cortex-run-record/1`. Records are JSONL, two per run `[REVISED: R-F4 —
 - The directory is checked like the spent store: owner = euid, `mode & 0o077 == 0`, not a symlink, disjoint from the
   canonical workspace and prefixes.
 - Its `ledger-id` is bound in the envelope as `run_ledger_id` (an NH-R1 schema field added when R6 is built).
+- `[REVISED: build 2026-10-31 (NhrCrates, R6 L1): built in `axon-os::run_ledger`. The operator side is
+  `axon-intent authorize-repair --init-run-ledger DIR` (writes `ledger-id`), `--export-run-record-key PATH` (the
+  subkey, private, written once) and `--run-ledger DIR` on mint (binds `run_ledger_id`). Seals are
+  `"axrun1:" + hex HMAC-SHA256(subkey, cl22 canonical bytes without seal)`; a record and a head carry distinct schemas
+  (`cortex-run-record/1`, `cortex-run-ledger-head/1`) so neither reads as the other. A failed `started` append leaves
+  `<id>.unrecorded` beside the `.used` record, so C1 names it instead of reporting truncation.]`
 
 **Rejected alternative:** axon-loop `intake episode`. Its events belong to an experiment plan (`IssuedTrial`,
 `crates/axon-loop/src/plan.rs:465-475`); an operational run is not a trial. C2 may intake selected records through its
@@ -94,8 +100,13 @@ against the spent store. Each finding has a distinct name:
 | `head-beyond-ledger` | |
 | `accepted-mismatch` | `accepted.sha256` ≠ the last `after_sha256` of the target path (visible copies excluded) |
 | `unattributed-change` | the pinned-tree diff is not explained by `writes` |
+| `terminal-no-started` | a terminal record with no started record for its envelope `[REVISED: build 2026-10-31 (NhrCrates): added; the inverse of `started-no-terminal`]` |
+| `envelope-mismatch` | a record's `envelope_digest` differs from the supplied envelope with that id `[REVISED: build 2026-10-31 (NhrCrates): added; names the "verifies envelope_digest against the supplied envelopes" check]` |
 
 Exit codes: 0 clean, 1 findings, 2 usage. Exit 1 is added to axon-intent's USAGE (`crates/axon-intent/src/cli.rs:24-25`).
+`[REVISED: build 2026-10-31 (NhrCrates, L3): every file in `--envelopes` must be a regular `axon-approval/4` envelope
+(or an `axon-intent-mint/1` mint record, skipped) that verifies under the operator's verify key; anything else exits 2,
+never skipped. The run-record key is derived from `AXON_APPROVAL_KEY`, so the audit is an operator action.]`
 
 ## 6. Tests (when built)
 
