@@ -8523,13 +8523,14 @@ fn specialize<'p>(c: &Ctor, arity: usize, p: &'p Pattern) -> Option<Vec<&'p Patt
         (_, Pattern::Some(q) | Pattern::Ok(q) | Pattern::Err(q)) => vec![&**q],
         (_, Pattern::Tuple(ps)) => ps.iter().collect(),
         (Ctor::Variant(_, _, names) | Ctor::Struct(_, names), Pattern::Struct { fields, .. }) => {
-            names
-                .iter()
-                .map(|n| match fields.iter().find(|(f, _)| f == n) {
+            let mut subs = Vec::with_capacity(names.len());
+            for n in names {
+                subs.push(match fields.iter().find(|(f, _)| f == n) {
                     Some((_, q)) => q,
                     None => &WILD,
-                })
-                .collect()
+                });
+            }
+            subs
         }
         _ => Vec::new(),
     })
