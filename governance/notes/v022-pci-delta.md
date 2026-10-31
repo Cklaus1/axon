@@ -16,14 +16,14 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 7e4a148974740f639eaf44526b9bbc5cbd47f940
+generated-at: 54f2fb92059af3b840dbef7d214cb17dd6e0bb31
 
-`git diff --numstat 31413ca7..7e4a1489 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..54f2fb92 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
 | `crates/axon-core/src/ai_routing.rs` | 3 | 3 |
-| `crates/axon-core/src/ast.rs` | 334 | 81 |
+| `crates/axon-core/src/ast.rs` | 340 | 81 |
 | `crates/axon-core/src/bin/axon-run.rs` | 19 | 0 |
 | `crates/axon-core/src/borrow.rs` | 67 | 11 |
 | `crates/axon-core/src/builtins.rs` | 110 | 44 |
@@ -84,23 +84,24 @@ generated-at: 7e4a148974740f639eaf44526b9bbc5cbd47f940
 | `crates/axon-core/src/interp/vm/tests.rs` | 2688 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
-| `crates/axon-core/src/lib.rs` | 304 | 77 |
+| `crates/axon-core/src/lib.rs` | 330 | 81 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 188 | 59 |
-| `crates/axon-core/src/main.rs` | 1595 | 369 |
+| `crates/axon-core/src/main.rs` | 1611 | 376 |
 | `crates/axon-core/src/mono.rs` | 71 | 17 |
 | `crates/axon-core/src/mut_borrow.rs` | 944 | 0 |
-| `crates/axon-core/src/parser.rs` | 460 | 32 |
+| `crates/axon-core/src/parse_help.rs` | 136 | 0 |
+| `crates/axon-core/src/parser.rs` | 518 | 34 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
-| `crates/axon-core/src/resolver.rs` | 954 | 122 |
+| `crates/axon-core/src/resolver.rs` | 961 | 122 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/span.rs` | 98 | 3 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 62129 | 8684 |
+| total | 62378 | 8697 |
 
-`git log --reverse 31413ca7..7e4a1489 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..54f2fb92 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -459,7 +460,8 @@ generated-at: 7e4a148974740f639eaf44526b9bbc5cbd47f940
 | f2674c73 | native parity | NATIVE: a match with no matching arm now panics with the interpreter's `no match arm matched` and exit 101, where native used to return a zero at exit 0 or run on past a statement match |
 | 8eb9dd93 | np/a merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 7e4a1489 | np/c merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 355 commits | | |
+| ee5f4eef | checker-soundness-3 lane C | PARSER + DIAGNOSTICS: a bare `self` in an impl method is parsed as the impl's type (programs refused E0308 now run, as the interpreter already did); a string literal glued to a following name/number/string is a parse error instead of a silently truncated string; module-load errors (E0901/E0902) carry the `use` line; parse-tier help for refused forms and a `loop` hint. No interpreter or runtime path changes. |
+| 356 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -618,7 +620,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 587 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M4120-M4136
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 593 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3982-M3984, M3987-M3989, M4120-M4136
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
