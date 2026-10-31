@@ -123,6 +123,9 @@ Rules the checker enforces:
   `i64` are integer division and remainder. `+` concatenates two `str`; build text with `to_str(..)` or
   interpolation.
 - Strings are immutable UTF-8. `str_slice(s, a, b)` takes BYTE indices; use `str_char_slice` for characters.
+- There are NO character literals: `'a'` does not parse. `char_at(s, i)` returns the BYTE VALUE as `i64` (compare
+  `char_at(s, i) == 32` for a space); for a one-character `str` use `str_slice(s, i, i + 1)` and compare with
+  `== " "`. The `char_is_*` builtins take that one-character `str`.
 - `len(x)`: the table below lists `len(s: str) -> i64`, but the checker also accepts an array (`[T]` or `&[T]`):
   on a `str` it is the BYTE count, on an array the element count.
 - `mut` is not a keyword (it is ignored); `&mut` is.
