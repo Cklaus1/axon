@@ -3449,6 +3449,15 @@ ATTACK_MARKERS.update({
     'M3986': r'ATTACK: the missing-variant fix-it is not valid Axon \[fx_unit\]',
 })
 
+# checker-soundness-3 CS3-2 (ids M3978-M3980)
+ATTACK_MARKERS.update({
+    'M3978': r'ATTACK: [^\n]*\[h24\]',
+    # w05 fails first: with depth ignored, its first call `f(y)` derives `str`
+    # (the `else` call `h(y)` is not the body's first, so no `Conflicted`).
+    'M3979': r'ATTACK: [^\n]*\[(w05|w05b|w14)\]',
+    'M3980': r'ATTACK: [^\n]*\[w02\]',
+})
+
 # asi-replay (ids M4150-M4169)
 ATTACK_MARKERS.update({
     'M4154': r'ATTACK: an ASI demo exited with a different code under mock \[llm_cache\]',

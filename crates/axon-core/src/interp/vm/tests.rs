@@ -2686,3 +2686,65 @@ fn handler_completion_finishes_its_own_with_on_both_engines() {
         }
     }
 }
+
+/// One `vm_bool_panics_without_check` case: tag, `main` body, panic text, and
+/// `f`'s `vm: pure` counts (`None`: not asserted).
+type BoolPanicCase = (&'static str, &'static str, &'static str, Option<(usize, usize)>);
+
+/// CS3-2: the VM panics of three untyped-lambda programs, below the checker.
+/// `axon check` refuses each of them now (E0102: `g` passes `x`/`j` on to `f`,
+/// whose body makes them `bool`/`i64`), so `axon run` never reaches the VM;
+/// they were `vm_pure_bool_ops`' `pure_bool_if` / `pure_bool_while` and
+/// `vm_superop_write_panics`' `bool_index` in cli_run. Built and run without
+/// a check, eager (so `f`'s body compiles on its first call, as the cli `vm`
+/// leg runs it), on the VM and on the tree: the same panic text. For the
+/// `if`/`while` cases, `f`'s compiled body has no tree node and keeps its
+/// `Pure` condition (the trace's `vm: pure` counts).
+#[test]
+fn vm_bool_panics_without_check() {
+    let cases: [BoolPanicCase; 3] = [
+        (
+            "pure_bool_if",
+            "    let f = |a, b| {\n        if a + b * a { 1 } else { 2 }\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))",
+            "if condition must be bool, got i64",
+            Some((1, 0)),
+        ),
+        (
+            "pure_bool_while",
+            "    let f = |a, b| {\n        let n = 0\n        while a + b * a {\n            n = n + 1\n        }\n        n\n    }\n    let g = |x, y| f(x, y)\n    println(to_str(g(2, 3)))",
+            "while condition must be bool, got i64",
+            Some((1, 1)),
+        ),
+        (
+            "bool_index",
+            "    let a = [1, 2]\n    let f = |v, k| {\n        v[k] = 1\n        v\n    }\n    let g = |w, j| f(w, j)\n    println(to_str(g(a, true)[0]))",
+            "expected i64, got bool",
+            None,
+        ),
+    ];
+    for (tag, body, panic, pure) in cases {
+        let src = format!("fn main() -> i64 {{\n{body}\n    0\n}}\n");
+        let prog = crate::parse_source(&src).expect("parses");
+        for engine in [Engine::Vm, Engine::Tree] {
+            let mut interp = Interp::build_with(&prog, &[], engine);
+            interp.vm_eager = true;
+            interp.vm_trace = false;
+            interp.init_globals().expect("no globals");
+            let r = interp.call_fn(interp.fns["main"], vec![]);
+            assert!(
+                matches!(&r, Err(Flow::Panic(m)) if &**m == panic),
+                "[{tag} {engine:?}] {r:?}"
+            );
+            let Some(want) = pure.filter(|_| engine == Engine::Vm) else {
+                continue;
+            };
+            let f = interp.res.lambda_codes().next().expect("`f` is a lambda");
+            let compiled = f.compiled.as_ref().and_then(|lb| lb.compiled());
+            let Some(f_body) = compiled else {
+                panic!("[{tag}] `f`'s body was not compiled");
+            };
+            assert_eq!(f_body.tree_nodes(), 0, "[{tag}] {:?}", kinds(f_body));
+            assert_eq!(f_body.pure_ops(), want, "[{tag}]");
+        }
+    }
+}

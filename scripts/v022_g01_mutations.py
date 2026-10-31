@@ -12358,8 +12358,8 @@ MUTATIONS += [
 # against the fn value's type; a local/param callee is typed by its binding.
 MUTATIONS += [
     ('M3919', 'CS2-6: infer no longer checks the argument kinds of a call through a fn value (a local lambda called with the wrong kinds checks clean)', 'crates/axon-core/src/infer.rs',
-     'if kinds_conflict(param, &arg) {',
-     'if false && kinds_conflict(param, &arg) {',
+     'if kinds_conflict(&param, &arg) {',
+     'if false && kinds_conflict(&param, &arg) {',
      'axon-core', '--no-default-features --test cli_run', 'a_call_through_a_non_name_callee_checks_its_signature'),
     ('M3920', 'CS2-6: `fn_value_type` no longer types an element of an array of fns (`ops[0](..)` loses its E0305/E0306)', 'crates/axon-core/src/checker.rs',
      'Type::Slice(elem) if matches!(*elem, Type::Fn(..)) => Some(*elem),',
@@ -12542,6 +12542,23 @@ MUTATIONS += [
      '_ => format!("add arm: {enum_name}::{variant} => {{ /* handle */ }}"),',
      '_ => format!("add arm: {enum_name}::{variant} {{ .. }} => {{ /* handle */ }}"),',
      'axon-core', '--no-default-features --test cli_run', 'diagnostics_for_refused_forms_checker'),
+]
+
+# checker-soundness-3 CS3-2 (ids M3978-M3980): a param an untyped lambda always passes on to a callee
+# takes that callee's param kind (h24); a call that may not run derives nothing; the derivation is a fixpoint.
+MUTATIONS += [
+    ('M3978', 'CS3-2: an always-run call no longer records the derived kind of the lambda param it is passed (h24 checks clean)', 'crates/axon-core/src/infer.rs',
+     '                        derived.insert(v, Derived::Kind(kind));\n                        changed = true;',
+     '                        let _ = kind;',
+     'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_param_kind_is_checked'),
+    ('M3979', 'CS3-2: a call nested in `if`/`match`/`&&`/`||` derives a kind too (depth ignored: w05/w14 refused)', 'crates/axon-core/src/infer.rs',
+     'derives_for: if self.cond_depth == 0\n',
+     'derives_for: if true\n',
+     'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_controls_stay_legal'),
+    ('M3980', 'CS3-2: the kind derivation runs one pass, not to a fixpoint (w02 chain checks clean)', 'crates/axon-core/src/infer.rs',
+     '        if !changed {\n            break;\n        }',
+     '        if true {\n            break;\n        }',
+     'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_param_kind_is_checked'),
 ]
 
 # asi-replay (ids M4150-M4169): every ASI demo's exit code under mock is pinned (RP-2); the six
