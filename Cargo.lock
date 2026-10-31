@@ -335,8 +335,10 @@ version = "0.1.0"
 dependencies = [
  "axon-attest",
  "axon-audit",
+ "axon-canonical",
  "axon-jobctl",
  "libc",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

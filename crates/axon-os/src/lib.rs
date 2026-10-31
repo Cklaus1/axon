@@ -23,6 +23,7 @@ pub mod monitor;
 pub mod private_path;
 pub mod profile;
 pub mod record;
+pub mod repair_envelope;
 pub mod replay;
 pub mod runtime;
 pub mod supervisor;
@@ -30,7 +31,7 @@ pub mod verdict;
 
 pub use approval::{
     canonical_grant, verify_approval, ApprovalKey, TokenFields, VerifiedToken, APPROVAL_KEY_ENV,
-    EMPTY_IMPORTS_DIGEST, TOKEN_SCHEMA,
+    EMPTY_IMPORTS_DIGEST, RECORD_DOMAIN, TOKEN_DOMAIN, TOKEN_SCHEMA,
 };
 pub use gate::{admit, Admission, DeclaredEffects};
 pub use grant::{Budget, EffectSet, ExecPolicy, Grant, Label};
@@ -39,6 +40,7 @@ pub use record::{
     build as build_record, verify as verify_record, verify_job as verify_record_job, AuditEvent,
     RawEvent, RunRecord, Sealing, VerifyMismatch,
 };
+pub use repair_envelope::{ENVELOPE_SCHEMA, ENVELOPE_SEED_DOMAIN, ENVELOPE_SIG_DOMAIN};
 pub use runtime::{
     Isolation, IsolationRequirement, PrincipalHandle, ProgramSource, RunOutcome, Runtime,
 };

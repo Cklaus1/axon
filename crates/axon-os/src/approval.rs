@@ -41,8 +41,8 @@ pub const APPROVAL_KEY_ENV: &str = "AXON_APPROVAL_KEY";
 
 /// The two subkeys derived from the operator approval key, one per use, so a
 /// MAC made for a token is never valid as a record seal or vice versa:
-/// `HMAC-SHA256(op_key, "axon-approval token v1")` and
-/// `HMAC-SHA256(op_key, "axon-os record v1")`. `Debug` is redacted.
+/// `HMAC-SHA256(op_key, TOKEN_DOMAIN)` and `HMAC-SHA256(op_key, RECORD_DOMAIN)`.
+/// `Debug` is redacted.
 #[derive(Clone)]
 pub struct ApprovalKey {
     token: [u8; 32],
@@ -55,6 +55,12 @@ impl std::fmt::Debug for ApprovalKey {
     }
 }
 
+/// The G5 derivation label of the approval-token subkey.
+pub const TOKEN_DOMAIN: &str = "axon-approval token v1";
+
+/// The G5 derivation label of the run-record seal subkey.
+pub const RECORD_DOMAIN: &str = "axon-os record v1";
+
 impl ApprovalKey {
     /// Derive both subkeys from operator key bytes (>= 16 bytes).
     pub fn derive(operator_key: &[u8]) -> Result<ApprovalKey, String> {
@@ -64,8 +70,8 @@ impl ApprovalKey {
             ));
         }
         Ok(ApprovalKey {
-            token: axon_attest::hmac_sha256(operator_key, b"axon-approval token v1"),
-            record: axon_attest::hmac_sha256(operator_key, b"axon-os record v1"),
+            token: axon_attest::hmac_sha256(operator_key, TOKEN_DOMAIN.as_bytes()),
+            record: axon_attest::hmac_sha256(operator_key, RECORD_DOMAIN.as_bytes()),
         })
     }
 
@@ -276,6 +282,20 @@ pub fn verify_approval(
     grant: &Grant,
     key: Option<&ApprovalKey>,
 ) -> Result<VerifiedToken, String> {
+    // NH-R1 §4: a repair envelope is an authority for an unattended run, never
+    // a program approval; it is refused by name before its shape is read.
+    #[derive(Deserialize)]
+    struct SchemaOnly {
+        schema: String,
+    }
+    if serde_json::from_str::<SchemaOnly>(token_json)
+        .is_ok_and(|s| s.schema == crate::repair_envelope::ENVELOPE_SCHEMA)
+    {
+        return Err(format!(
+            "an {} repair envelope is not a program approval",
+            crate::repair_envelope::ENVELOPE_SCHEMA
+        ));
+    }
     let t: TokenView =
         serde_json::from_str(token_json).map_err(|e| format!("malformed approval token: {e}"))?;
     if !KNOWN_TOKEN_SCHEMAS.contains(&t.schema.as_str()) {
@@ -555,6 +575,29 @@ mod tests {
         assert!(
             verify_approval(&no_schema, SRC, &grant(), None).is_err(),
             "a token with no schema at all must be refused"
+        );
+    }
+
+    // NH-R1 §4 / S7: an `axon-approval/4` repair envelope is an AUTHORITY for
+    // an unattended run, never a program approval, whatever its shape.
+    #[test]
+    fn a_repair_envelope_is_not_a_program_approval() {
+        let want = "an axon-approval/4 repair envelope is not a program approval";
+        let envelope = r#"{"schema":"axon-approval/4","envelope_id":"00","decision":"authorize-operate","sig":"axenv1:00"}"#;
+        let e = verify_approval(envelope, SRC, &grant(), None)
+            .expect_err("ATTACK: a repair envelope verified as a program approval");
+        assert_eq!(
+            e, want,
+            "ATTACK: a repair envelope was read as a program approval token"
+        );
+        // A /3 token relabelled /4 carries every token field: still refused, by name.
+        let tok = token_for(SRC, &grant(), LIB_IMPORTS, None)
+            .replace("axon-approval/3", "axon-approval/4");
+        let e = verify_approval(&tok, SRC, &grant(), None)
+            .expect_err("ATTACK: a token relabelled as a repair envelope was verified");
+        assert_eq!(
+            e, want,
+            "ATTACK: a repair envelope was read as a program approval token"
         );
     }
 

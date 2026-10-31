@@ -3392,3 +3392,27 @@ ATTACK_MARKERS.update({
     'M3940': r'ATTACK: a dict holding a value of another type checked clean \[d_generic_put\]',
     'M3941': r'ATTACK: a generic method call or generic struct argument checked clean \[g_lambda_param_unbound\]',
 })
+
+# NH-R1 A1 (ids M4060-M4079)
+ATTACK_MARKERS.update({
+    'M4060': r'ATTACK: verified under another key',
+    'M4061': r'signing KAT repair-envelope signature',
+    'M4062': r'signing KAT repair-envelope verify key',
+    'M4063': r'ATTACK: an envelope verified at its expiry',
+    'M4064': r'ATTACK: an envelope verified before it was issued',
+    'M4065': r'ATTACK: a run outliving its envelope was admitted',
+    'M4066': r'ATTACK: a TTL above the max was minted',
+    'M4067': r'ATTACK: a fresh store was not refused by its id',
+    'M4068': r'ATTACK: a spent record was replaced',
+    'M4069': r'ATTACK: a key inside the workspace loaded',
+    'M4070': r'ATTACK: --\S+ widened the envelope',
+    'M4071': r'ATTACK: write prefix .* widened the envelope',
+    'M4072': r'ATTACK: another generator was admitted',
+    'M4073': r'ATTACK: a program token was read as an envelope',
+    'M4074': r'ATTACK: a repair envelope was read as a program approval token',
+    'M4075': r'ATTACK: a signed envelope with an invalid decision verified',
+    'M4076': r'ATTACK: a signed envelope with an invalid generator kind verified',
+    'M4077': r'ATTACK: a signed envelope with an invalid net star verified',
+    'M4078': r'ATTACK: a signed envelope with an invalid fs_write over the file verified',
+    'M4079': r'ATTACK: an issued envelope was issued again',
+})
