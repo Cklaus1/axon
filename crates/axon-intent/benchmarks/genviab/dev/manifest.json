@@ -3,8 +3,8 @@
  "set": "dev",
  "built": "2026-10-31",
  "corpus_sha256": "a01001217581c573bdb872beafa28d58b44e8f106adaffb784cba1e1bc720270",
- "axon_sha256": "fc4b0a3f41af8a8365f0c4a4a386ce74a9ac0d71935575a05d3ed47f1c689669",
- "axon_intent_sha256": "2ceeadef77465af906848c30f20e0bf022ffd8d17b41d4fefbfbec130a327ade",
+ "axon_sha256": "5697af4dd30a25b726aeb4b750a466e670670858806a39ba14657ebddfa2710e",
+ "axon_intent_sha256": "7644e29ab0d4838bfbbefdd4a805e411ac8b546e6eb8c041dcd3c3273f715575",
  "card_sha256": "1469cc4e9300ab1edc85df642dd900b798033d42ac7cb666ce458c8c7a73f98f",
  "counts": {
   "transform": 9,
@@ -31,6 +31,7 @@
    "task_sha256": "2c65d1750709cb88e52eb54437f74ebbfd7fad49037deae5ffc0b4acb475b44f",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -57,6 +58,7 @@
    "task_sha256": "5ebf40394a711a0787b96acd095bb261a1d755721786d5b857caf90fda823051",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -83,6 +85,7 @@
    "task_sha256": "6ef928baacff98e3b177bb379a77ad3d8d6ac6488f0b7d3249c55b540146bc63",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -109,6 +112,7 @@
    "task_sha256": "05aeac745661a8c2e1ce0715be433cae7cefe3e5d5d304575c18396e7778c19d",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -135,6 +139,7 @@
    "task_sha256": "0d1a255e23ca01e7037aa8e59ba13f498ad6317139b13c1a6302376c997783c3",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -161,6 +166,7 @@
    "task_sha256": "5531b2368cd5ec68f94c02c1f39431b98974bec797b5310021a0b772e6147455",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -187,6 +193,7 @@
    "task_sha256": "2d164fd59cb3b98f56ec9e1ff386a85f74125d56eb85e2c90e44f0b222155c68",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -213,6 +220,7 @@
    "task_sha256": "b7feed17c9fc3f5ffb42be37c504687f084fcabfc32acf39812996081fc29523",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -239,6 +247,7 @@
    "task_sha256": "5a770272d5f58ba1c36e6614568b218dfc199b950b897419ffc2fbda2f74d738",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -265,6 +274,7 @@
    "task_sha256": "070186f12b1cdcabc8bbe5ab4cc037dddeaf39d269528fbbe7ff79703d468e21",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -291,6 +301,7 @@
    "task_sha256": "c20b83c9812a6047b8189bc38c0fc9b71ea97d6c4ec4a4d91f196e2b747c5cfa",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -317,6 +328,7 @@
    "task_sha256": "b55667131293bab9c9125eddb6ef6a592f9368b0e143ab9c111579c887108bc8",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -343,6 +355,7 @@
    "task_sha256": "f1634c95de5ba4f191acf5ed04ba60465fa64619451e4f17e76f1adabcc03106",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -369,6 +382,7 @@
    "task_sha256": "57e4fd5df6a7767957f3263d10bc8e7332108e063edd39c8550c3217a7454143",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",
@@ -395,6 +409,7 @@
    "task_sha256": "34ccb78a6830f40551c3a9012cc8da057c8b41af749f53cb07c26f752e93e1de",
    "checks": {
     "schema": "ok",
+    "once": "ok",
     "intent-text": "ok",
     "hidden": "ok",
     "human-value": "ok",

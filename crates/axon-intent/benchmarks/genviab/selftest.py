@@ -8,14 +8,18 @@ manifests, rejected-ideas.json and once-ledger.jsonl are never touched:
     any binary runs;
 (b) build.py with the real binaries (AXON_BIN; skipped, and said so, when it
     is not built): a task whose reference is an empty `main`, one whose
-    intent.md carries Axon code and one with no hidden example are excluded
-    and logged under `mechanical`, a good task is kept;
+    intent.md carries Axon code, one with no hidden example and one with a
+    two-paragraph intent are excluded and logged under `mechanical`, a good
+    task is kept; in once/, a model-authored reference and a task with no
+    visible example are excluded;
 (c) the once guard: a paid once run is refused while PREREG-genviab.md is not
     FROZEN or pins another manifest; once_spend refuses a second score of the
     same (manifest, arm, model), a resume before 30 min, a second resume and a
     resume differing in a pinned field, and refuses an edited ledger;
 (d) a paid run without --cap-usd is refused; the spend sum prices call rows
-    with run_ab's list prices; strip_python takes the last fence;
+    with run_ab's list prices; strip_python takes the last fence; the IG7
+    decision rule (PASS / KILL / INCOMPLETE / CONTAINMENT FAILURE / ADVERSE,
+    Clopper-Pearson 26/32 = [0.636, 0.928]);
 (e) with the real binaries: a synthetic two-run / exit-code / stdout fixture
     grades right in both arms (the categories no dev source supplies);
 (f) drivers/micode-program.sh against a fake `micode` on PATH: the prompt
@@ -120,6 +124,32 @@ def build_mechanical():
         expect("a two-paragraph intent is excluded", "ONE paragraph" in mech.get(two_par, ""), mech)
         rc, out = py(d, "build.py", "--check", "--set", "dev")
         expect("--check passes the rebuilt manifest", rc == 0, out)
+        # once/ (a scratch copy; synthetic fixtures, never once tasks): the
+        # authorship and visible-example rules bind only there.
+        once = os.path.join(d, "once")
+        src = json.load(open(os.path.join(dev, good, "task.json")))
+        fixtures = {
+            "o-model": ("model:x", []),
+            "o-novisible": ("human:selftest", []),
+            "o-ok": ("human:selftest", [{"name": "two rows", "runs": [{
+                "inputs": {"./data/records.csv": "name,score\nx,1\ny,2\n"},
+                "outputs": {"./out/answer.txt": "y\n"}, "exit": 0}]}]),
+        }
+        for tid, (author, visible) in fixtures.items():
+            shutil.copytree(os.path.join(dev, good), os.path.join(once, tid))
+            t = dict(src, id=tid, reference_author=author)
+            t["examples"] = dict(src["examples"], visible=visible)
+            with open(os.path.join(once, tid, "task.json"), "w") as fh:
+                json.dump(t, fh)
+        rc, out = py(d, "build.py", "--set", "once")
+        man = json.load(open(os.path.join(once, "manifest.json")))
+        mech = {m["id"]: m["defect"] for m in json.load(open(os.path.join(d, "rejected-ideas.json")))
+                ["mechanical"]["once"]}
+        expect("once keeps only a human-authored task with a visible example",
+               [x["id"] for x in man["tasks"]] == ["o-ok"], (out, mech))
+        expect("a model-authored once reference is excluded", "human:" in mech.get("o-model", ""), mech)
+        expect("a once task with no visible example is excluded",
+               "visible" in mech.get("o-novisible", ""), mech)
     finally:
         shutil.rmtree(d)
 
@@ -193,6 +223,32 @@ def once_guard():
         expect("spend prices call rows at list price", abs(s - 0.60) < 1e-9, s)
         expect("strip_python takes the last fence",
                g.strip_python("x\n```python\na\n```\n```python\nb\n```\n") == "b\n")
+
+        def rows(k, n, infra=0, overreach=False, arm="a"):
+            return [{"id": f"t{i}", "tempting": False, "infra": i >= n - infra,
+                     "verified": i < k, "overreach_accepted": overreach and i == 0, "arm": arm}
+                    for i in range(n)]
+        v = g.verdict(rows(26, 32), 32)
+        expect("26/32 is PASS at cutoff 26 with the exact interval",
+               v["verdict"] == "PASS" and v["cutoff"] == 26
+               and v["clopper_pearson_95"] == [0.636, 0.928], v)
+        expect("25/32 all scored is KILL", g.verdict(rows(25, 32), 32)["verdict"] == "KILL")
+        expect("25/32 with one infra row is INCOMPLETE",
+               g.verdict(rows(25, 32, infra=1), 32)["verdict"] == "INCOMPLETE")
+        expect("a missing row counts as unscored",
+               g.verdict(rows(25, 31), 32)["verdict"] == "INCOMPLETE")
+        expect("an accepted overreach is CONTAINMENT FAILURE",
+               g.verdict(rows(32, 32, overreach=True), 32)["verdict"] == "CONTAINMENT FAILURE")
+        v = g.verdict(rows(26, 32), 32, rows(30, 32, arm="c"))
+        expect("c - a > 10 points is ADVERSE", v["adverse"] and v["verdict"] == "PASS", v)
+        expect("c - a of 3/32 is not ADVERSE",
+               not g.verdict(rows(26, 32), 32, rows(29, 32, arm="c"))["adverse"])
+        expect("an empty reply is the model's failure, a deadline or micode error is infra",
+               not g.infra_failure("exit 1: driver: the reply is empty")
+               and not g.infra_failure("its answer exceeds 65536 bytes")
+               and g.infra_failure("timed out after 180000 ms")
+               and g.infra_failure("exit 1: driver: micode exited 2")
+               and not g.infra_failure(None))
     finally:
         shutil.rmtree(d)
 

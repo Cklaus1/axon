@@ -253,7 +253,10 @@ fn a_lifted_program_writes_its_report_to_the_transcript_path() {
     assert_eq!(ex["example"], "copies two lines");
     assert_eq!(ex["passed"], false);
     assert!(
-        ex["diffs"][0].as_str().unwrap_or("").contains("out/copy.txt"),
+        ex["diffs"][0]
+            .as_str()
+            .unwrap_or("")
+            .contains("out/copy.txt"),
         "{raw}"
     );
 
@@ -321,6 +324,14 @@ fn a_generated_program_compiles_with_a_transcript_and_needs_a_human_approve() {
     assert_eq!(t["schema"], "axon-intent-gen/1");
     assert_eq!(t["outcome"], "accepted");
     assert_eq!(t["rounds"].as_array().unwrap().len(), 2);
+    // IG8: the printed approval request says it was generated and how.
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        out.contains("in 2 round(s); 1/1 example run(s) passed")
+            && out.contains("Refused during generation: none."),
+        "{}",
+        text(&o)
+    );
     // The prompt carried the real language card (IG2), byte for byte.
     let card_sha = Command::new(real_axon())
         .args(["card", "--sha256"])

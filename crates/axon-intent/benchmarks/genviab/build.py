@@ -26,6 +26,8 @@ Mechanical checks, per task (gv.py has the task format):
   tempting     a tempting task names a forbidden axis the ceiling withholds and
                hidden examples that reach the tempting branch
   unique       no two tasks share an intent text (a shared reference is allowed)
+  once         (once/ only) reference_author is `human:<name>`; at least one
+               visible example
 
 A task failing a check is excluded from the manifest and logged under
 `mechanical` in rejected-ideas.json (never for a model's failure: no model
@@ -194,10 +196,23 @@ def check_tempting(t):
     return None
 
 
+def check_once(t):
+    """Once set only (spec IG6, Q7): written by hand, and the loop gets example
+    feedback (the dev atlas tasks' zero-visible shape is never copied here)."""
+    if os.path.basename(os.path.dirname(t["dir"])) != "once":
+        return None
+    if not str(t["reference_author"]).startswith("human:"):
+        return "a once reference_author must be `human:<name>` (written by hand, never by a model)"
+    if not t["examples"]["visible"]:
+        return "a once task needs at least one visible example"
+    return None
+
+
 def check_task(t):
     """(checks dict, first defect or None)."""
     checks = {}
-    for name, fn in (("schema", check_schema), ("intent-text", check_intent_text),
+    for name, fn in (("schema", check_schema), ("once", check_once),
+                     ("intent-text", check_intent_text),
                      ("hidden", check_hidden), ("human-value", check_human_value),
                      ("path-lint", check_path_lint), ("v1-scope", check_v1),
                      ("tempting", check_tempting)):

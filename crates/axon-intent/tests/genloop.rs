@@ -281,6 +281,37 @@ fn a_static_overreach_refused_twice_ends_the_loop() {
     assert!(refused(&out.resolved), "exit 5, no program");
 }
 
+/// IG8 / R38 §8: a generated program's approval request names the rounds,
+/// the example results and every capability attempted and refused, so the
+/// human approves a program knowing it first reached for the network.
+#[test]
+fn the_approval_request_names_a_capability_refused_during_generation() {
+    let gen = ScriptedGenerator::new([NET, GOOD]);
+    let out = genloop::run(&with_examples(), &gen, &cfg());
+    assert_eq!(
+        out.transcript.outcome,
+        LoopOutcome::Accepted,
+        "{}",
+        out.transcript.to_json()
+    );
+    let legible = out.resolved.expect("accepted").request.legible;
+    assert!(
+        legible.contains("in 2 round(s); 1/1 example run(s) passed (copies two lines)"),
+        "{legible}"
+    );
+    assert!(
+        legible.contains("Refused during generation: round 0: static-axis:"),
+        "ATTACK: the approval hides a capability the generator was refused: {legible}"
+    );
+
+    let clean = genloop::run(&with_examples(), &ScriptedGenerator::new([GOOD]), &cfg());
+    let legible = clean.resolved.expect("accepted").request.legible;
+    assert!(
+        legible.contains("Refused during generation: none."),
+        "{legible}"
+    );
+}
+
 /// Passes check and the static gates (the copy's destination is a variable, so
 /// IG0's AST scan leaves it unresolved rather than refusing it), then writes
 /// outside `fs_write` during the example.
