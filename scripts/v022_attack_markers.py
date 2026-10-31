@@ -3437,6 +3437,8 @@ ATTACK_MARKERS.update({
 # checker-soundness-3 CS3-2 (ids M3978-M3980)
 ATTACK_MARKERS.update({
     'M3978': r'ATTACK: [^\n]*\[h24\]',
-    'M3979': r'ATTACK: [^\n]*\[w14\]',
+    # w05 fails first: with depth ignored, its first call `f(y)` derives `str`
+    # (the `else` call `h(y)` is not the body's first, so no `Conflicted`).
+    'M3979': r'ATTACK: [^\n]*\[(w05|w05b|w14)\]',
     'M3980': r'ATTACK: [^\n]*\[w02\]',
 })

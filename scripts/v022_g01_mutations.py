@@ -12502,7 +12502,7 @@ MUTATIONS += [
      '                        derived.insert(v, Derived::Kind(kind));\n                        changed = true;',
      '                        let _ = kind;',
      'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_param_kind_is_checked'),
-    ('M3979', 'CS3-2: a call nested in `if`/`match`/`&&`/`||` derives a kind too (depth ignored: w14 refused)', 'crates/axon-core/src/infer.rs',
+    ('M3979', 'CS3-2: a call nested in `if`/`match`/`&&`/`||` derives a kind too (depth ignored: w05/w14 refused)', 'crates/axon-core/src/infer.rs',
      'derives_for: if self.cond_depth == 0\n',
      'derives_for: if true\n',
      'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_controls_stay_legal'),
