@@ -3677,6 +3677,25 @@ ATTACK_MARKERS.update({
     'M4435': r'ATTACK: NH-R1 security build AXON_AI_REPLAY in the real environment ran unattended',
 })
 
+# NH-R1 security re-review fixes, cortex side (ids M4520-M4539)
+ATTACK_MARKERS.update({
+    'M4520': r'ATTACK: NH-R1 security N1 HTTP_PROXY ',
+    'M4521': r'ATTACK: NH-R1 security N1 HTTPS_PROXY ',
+    'M4522': r'ATTACK: NH-R1 security N1 ALL_PROXY ',
+    'M4523': r'ATTACK: NH-R1 security N2 an opt-in in a parent owned by another uid was admitted',
+    'M4524': r'ATTACK: NH-R1 security N2 an opt-in in a parent other users can write was admitted',
+    'M4525': r'ATTACK: NH-R1 security N2 an opt-in in a sticky parent other users can create in was admitted',
+    'M4526': r'ATTACK: NH-R1 security N2 an opt-in in a parent reached through a symlink was admitted',
+    'M4527': r'ATTACK: NH-R1 security F1 a host with an opt-in in an /etc/axon other users can write ran unattended',
+    'M4528': r'ATTACK: NH-R1 security N4 a symlink to the run ledger under the write pin ran',
+    'M4529': r'ATTACK: NH-R1 security N4 a \-\-read\-prefix pin with a symlink under it was previewed',
+    'M4530': r'ATTACK: NH-R1 security N4 a symlink to the run ledger under the write pin ran',
+    'M4531': r'ATTACK: NH-R1 security F6 an fs_write pin over a directory under the run ledger ran',
+    'M4532': r'ATTACK: NH-R1 security N3 a write on a filesystem without RENAME_EXCHANGE was not refused clearly',
+    'M4533': r'ATTACK: NH-R1 security N3 a write on a filesystem without RENAME_EXCHANGE was not refused clearly',
+    'M4534': r'ATTACK: NH-R1 security N3 a create-by-write on a filesystem without RENAME_EXCHANGE was not refused clearly',
+})
+
 # NH-R1 security review fixes, crates side (ids M4450-M4461)
 _SEC_F6 = r'ATTACK: an envelope was minted with '
 ATTACK_MARKERS.update({

@@ -75,11 +75,7 @@ pub fn envelope_preview(
     }
     // Security F4: a relative pin would skip the walk below; refused first.
     un::absolute_fs_pins(&r.pins.fs_read, &r.pins.fs_write)?;
-    for p in r.pins.fs_read.iter().chain(&r.pins.fs_write) {
-        if let Ok(rel) = Path::new(p).strip_prefix(&workspace) {
-            un::no_symlink_at_or_under(&workspace, &rel.to_string_lossy())?;
-        }
-    }
+    un::no_symlink_in_fs_pins(&r.pins.fs_read, &r.pins.fs_write)?;
     let (imports_digest, modules) = auth::imports_closure(axon, &workspace, &file, wall)?;
     auth::fs_write_disjoint(&r.pins.fs_write, &workspace, &file, &modules)?;
     let canonical_file = workspace.join(&file);

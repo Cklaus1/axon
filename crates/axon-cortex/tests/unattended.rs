@@ -253,21 +253,25 @@ struct Out {
 }
 
 /// How the host opt-in file (security review F1) looks for one run: its
-/// content file (`None`: no opt-in file), mode and owner.
+/// content file (`None`: no opt-in file), mode and owner, and the tmpfs
+/// options of its directory `/etc/axon` (security re-review N2).
 struct OptIn<'a> {
     src: Option<&'a Path>,
     mode: &'a str,
     owner: &'a str,
+    dir: &'a str,
 }
 
 impl Setup {
     /// The opt-in a host that agreed has: owned by the running uid (root
-    /// here), mode 0600, naming the decision record.
+    /// here), mode 0600, naming the decision record, in a root-owned 0755
+    /// directory.
     fn opted_in(&self) -> OptIn<'_> {
         OptIn {
             src: Some(&self.opt_in),
             mode: "0600",
             owner: "0",
+            dir: "mode=0755",
         }
     }
 }
@@ -299,14 +303,14 @@ fn run_full(
     let mut c = std::process::Command::new("unshare");
     c.args(["-m", "--propagation", "private", "sh", "-c"])
         .arg(
-            "set -e; mount -t tmpfs -o mode=0755 tmpfs /etc/axon; o=/etc/axon/unattended-repair; \
+            "set -e; mount -t tmpfs -o \"$4\" tmpfs /etc/axon; o=/etc/axon/unattended-repair; \
              if [ -d \"$1\" ]; then mkdir -m 0700 \"$o\"; \
              elif [ -e \"$1\" ]; then cp \"$1\" \"$o\"; chown \"$3\" \"$o\"; chmod \"$2\" \"$o\"; fi; \
-             shift 3; exec \"$@\"",
+             shift 4; exec \"$@\"",
         )
         .arg("sh")
         .arg(opt.src.unwrap_or(&none))
-        .args([opt.mode, opt.owner])
+        .args([opt.mode, opt.owner, opt.dir])
         .arg(env!("CARGO_BIN_EXE_cortex"));
     c.env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
@@ -922,6 +926,83 @@ fn s6_a_real_env_model_override_is_refused() {
     }
 }
 
+/// Security re-review N1: a proxy variable in the real environment is
+/// refused. The envelope pins the generator's endpoint HOST; with
+/// `AXON_AI_BASE_URL` on that host and a proxy set, the model call - with the
+/// API key - went to whoever runs the proxy, which could answer with any
+/// patch. Here the proxy is a local listener that records what reaches it
+/// and the key is a dummy one.
+#[test]
+fn s6_a_proxy_variable_is_refused() {
+    use std::io::{Read as _, Write as _};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    let cases = [
+        ("HTTP_PROXY", "http"),
+        ("http_proxy", "http"),
+        ("ALL_PROXY", "http"),
+        ("all_proxy", "http"),
+        ("HTTPS_PROXY", "https"),
+        ("https_proxy", "https"),
+    ];
+    for (var, scheme) in cases {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let got: Arc<Mutex<Vec<String>>> = Arc::default();
+        let stop = Arc::new(AtomicBool::new(false));
+        let (got2, stop2) = (Arc::clone(&got), Arc::clone(&stop));
+        let t = std::thread::spawn(move || {
+            while !stop2.load(Ordering::SeqCst) {
+                let Ok((mut c, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(20));
+                    continue;
+                };
+                c.set_nonblocking(false).unwrap();
+                c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut buf = vec![0u8; 8192];
+                let n = c.read(&mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let line = head.lines().next().unwrap_or("").to_string();
+                let keyed = head.to_ascii_lowercase().contains("x-api-key");
+                got2.lock()
+                    .unwrap()
+                    .push(format!("{line} (x-api-key: {keyed})"));
+                let _ = c.write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n");
+            }
+        });
+        let s = setup(&format!("s6_proxy_{var}"));
+        let mut e = envelope_for(&s);
+        e.generator.endpoint_host = "api.anthropic.com".into();
+        mint(&s, &e);
+        let base = format!("{scheme}://api.anthropic.com");
+        let o = run_with(
+            &s,
+            &s.axon,
+            &[],
+            &[("AXON_AI_BASE_URL", &base), (var, &proxy)],
+        );
+        stop.store(true, Ordering::SeqCst);
+        t.join().unwrap();
+        let got = got.lock().unwrap().clone();
+        assert!(
+            got.is_empty(),
+            "ATTACK: NH-R1 security N1 {var} sent an unattended run's model call to a proxy the \
+             envelope never pinned: {got:?}\n{}{}",
+            o.stdout,
+            o.stderr
+        );
+        refused(
+            &s,
+            &o,
+            &e,
+            var,
+            &format!("ATTACK: NH-R1 security N1 {var} in the real environment ran unattended"),
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
 /// Security review F4: a relative `fs_read` / `fs_write` pin is refused. The
 /// check child's cwd is the workspace, so `out` resolves to `ws/out` - here a
 /// symlink to the operator's key directory - and a relative pin passed the
@@ -980,7 +1061,7 @@ fn s6_a_pin_over_the_store_or_a_key_is_refused() {
         fn(&Setup) -> PathBuf,
         &'static str,
     );
-    let cases: [Case; 5] = [
+    let cases: [Case; 6] = [
         (
             "fs_write",
             "the spent store",
@@ -1010,6 +1091,12 @@ fn s6_a_pin_over_the_store_or_a_key_is_refused() {
             "the operator directory above both keys",
             |s| s.root.join("ops"),
             "the spent store",
+        ),
+        (
+            "fs_write",
+            "a directory under the run ledger",
+            |s| s.ledger.join("sub"),
+            "the run ledger",
         ),
     ];
     for (i, (kind, what, pin, why)) in cases.into_iter().enumerate() {
@@ -1046,6 +1133,72 @@ fn s6_a_pin_over_the_store_or_a_key_is_refused() {
             &e,
             &format!("{why} "),
             &format!("ATTACK: NH-R1 security F6 an {kind} pin over {what} ran"),
+            &pristine,
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
+/// Security re-review N4: a pin outside the workspace that reaches the run
+/// ledger or the spent store through a symlink - one under the pin, or the
+/// pin itself - is refused. The interpreter matches a pin as a path prefix
+/// and the OS follows the link, so a symlink made after minting under a
+/// write pin handed the check child the ledger (forge or drop records) or
+/// the store (rename `.used` back to `.issued`); phase A compared the
+/// canonical ledger and store with the pin strings and walked only the pins
+/// inside the workspace for symlinks.
+#[test]
+fn s6_a_pin_reaching_the_ledger_or_store_through_a_symlink_is_refused() {
+    type Case = (&'static str, fn(&Setup, &Path) -> PathBuf);
+    let cases: [Case; 3] = [
+        (
+            "a symlink to the run ledger under the write pin",
+            |s, scratch| {
+                std::os::unix::fs::symlink(&s.ledger, scratch.join("l")).unwrap();
+                scratch.to_path_buf()
+            },
+        ),
+        (
+            "a symlink to the spent store under the write pin",
+            |s, scratch| {
+                std::os::unix::fs::symlink(&s.store, scratch.join("s")).unwrap();
+                scratch.to_path_buf()
+            },
+        ),
+        (
+            "a write pin that is a symlink to the operator directory",
+            |s, scratch| {
+                let alias = scratch.join("alias");
+                std::os::unix::fs::symlink(s.root.join("ops"), &alias).unwrap();
+                alias
+            },
+        ),
+    ];
+    for (i, (what, make)) in cases.into_iter().enumerate() {
+        let s = setup(&format!("s6_n4_{i}"));
+        let pristine = use_fs(&s);
+        let scratch = s.root.join("scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let scratch = std::fs::canonicalize(scratch).unwrap();
+        let read = s.root.join("read");
+        std::fs::create_dir_all(&read).unwrap();
+        let read = std::fs::canonicalize(read).unwrap();
+        let e = envelope_pinned(
+            &s,
+            ScopePins {
+                fs_read: vec![read.to_string_lossy().into_owned()],
+                fs_write: vec![make(&s, &scratch).to_string_lossy().into_owned()],
+                net: vec![],
+            },
+        );
+        mint(&s, &e);
+        let o = run(&s, &[]);
+        refused_over(
+            &s,
+            &o,
+            &e,
+            "is a symlink",
+            &format!("ATTACK: NH-R1 security N4 {what} ran"),
             &pristine,
         );
         let _ = std::fs::remove_dir_all(&s.root);
@@ -1108,8 +1261,9 @@ fn s6_a_bare_axon_runs_the_binary_that_was_hashed() {
 
 /// Security review F1 / §10 Q3: a host runs unattended only after it opted
 /// in. Without `/etc/axon/unattended-repair` - or with one another uid owns,
-/// one group/other can read or write, a directory in its place, or one
-/// naming no decision record - phase A refuses (exit 29) and nothing is
+/// one group/other can read or write, a directory in its place, one naming
+/// no decision record, or one in an `/etc/axon` another user owns or can
+/// write (security re-review N2) - phase A refuses (exit 29) and nothing is
 /// spent. A feature build copied to another host does not run.
 #[test]
 fn s14_a_host_that_did_not_opt_in_refuses() {
@@ -1129,39 +1283,36 @@ fn s14_a_host_that_did_not_opt_in_refuses() {
             src: Some(src),
             mode: "0600",
             owner: "0",
+            dir: "mode=0755",
         }
     }
-    let cases: [(&str, OptIn); 7] = [
+    let cases: [(&str, OptIn); 9] = [
         (
             "no opt-in file",
             OptIn {
                 src: None,
-                mode: "0600",
-                owner: "0",
+                ..file(&s.opt_in)
             },
         ),
         (
             "an opt-in of mode 0640",
             OptIn {
-                src: Some(&s.opt_in),
                 mode: "0640",
-                owner: "0",
+                ..file(&s.opt_in)
             },
         ),
         (
             "an opt-in owned by uid 1",
             OptIn {
-                src: Some(&s.opt_in),
-                mode: "0600",
                 owner: "1",
+                ..file(&s.opt_in)
             },
         ),
         (
             "a directory as its opt-in",
             OptIn {
-                src: Some(&dir),
                 mode: "0700",
-                owner: "0",
+                ..file(&dir)
             },
         ),
         ("an opt-in naming no decision record", file(&no_decision)),
@@ -1170,6 +1321,20 @@ fn s14_a_host_that_did_not_opt_in_refuses() {
             file(&other_line),
         ),
         ("an opt-in naming two decision records", file(&two)),
+        (
+            "an opt-in in an /etc/axon other users can write",
+            OptIn {
+                dir: "mode=0777",
+                ..file(&s.opt_in)
+            },
+        ),
+        (
+            "an opt-in in an /etc/axon uid 1 owns",
+            OptIn {
+                dir: "mode=0755,uid=1",
+                ..file(&s.opt_in)
+            },
+        ),
     ];
     for (what, opt) in cases {
         let e = envelope_for(&s);

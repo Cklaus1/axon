@@ -336,6 +336,53 @@ fn a_relative_fs_pin_produces_no_preview() {
     }
 }
 
+/// Security re-review N4: an absolute pin OUTSIDE the workspace is walked for
+/// symlinks too - at it and under it - so the preview never signs a pin
+/// whose subtree links to the run ledger, the spent store or a key.
+#[test]
+fn a_symlink_under_an_outside_pin_produces_no_preview() {
+    for flag in ["--read-prefix", "--fs-write-scope"] {
+        let ws = workspace(&format!("outpin{flag}"));
+        std::fs::write(
+            ws.join("src/broken.ax"),
+            "fn touch() -> i64 {\n    let _ = write_file(\"/x\", \"y\")\n    match read_file(\"/x\") {\n        \
+             Ok(_) => 1,\n        Err(_) => 0,\n    }\n}\n\n\
+             fn double(n: i64) -> i64 {\n    n + 2\n}\n\n\
+             @[test]\nfn hidden_completion() {\n    assert_eq(double(7), 14)\n}\n",
+        )
+        .unwrap();
+        let pin = ws.with_extension("pin");
+        let _ = std::fs::remove_dir_all(&pin);
+        std::fs::create_dir_all(&pin).unwrap();
+        std::os::unix::fs::symlink("/etc", pin.join("l")).unwrap();
+        let pin = std::fs::canonicalize(&pin).unwrap();
+        let other = if flag == "--read-prefix" {
+            "--fs-write-scope"
+        } else {
+            "--read-prefix"
+        };
+        let (code, out, err) = preview(
+            &ws,
+            &[
+                "--generator",
+                "ai:m",
+                flag,
+                pin.to_str().unwrap(),
+                other,
+                "/var/empty-axon-scope",
+            ],
+        );
+        assert_eq!(
+            code, 2,
+            "ATTACK: NH-R1 security N4 a {flag} pin with a symlink under it was previewed: {out}"
+        );
+        assert!(out.is_empty(), "{out}");
+        assert!(err.contains("is a symlink"), "{err}");
+        let _ = std::fs::remove_dir_all(&ws);
+        let _ = std::fs::remove_dir_all(&pin);
+    }
+}
+
 /// Security review F7: a bare `--axon axon` is a PATH lookup for every child
 /// the preview runs, so the checker sha256 it pins is that file's - not the
 /// bytes of an `axon` that happens to sit in the current directory.

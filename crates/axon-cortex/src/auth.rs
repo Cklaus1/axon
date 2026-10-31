@@ -225,23 +225,21 @@ pub const OPT_IN_PATH: &str = "/etc/axon/unattended-repair";
 /// The decision record the host opt-in file at `path` names: a regular file
 /// (never followed through a symlink, never a FIFO), owned by `euid`, that
 /// group and other can neither read nor write (`mode & 0o077 == 0`), whose
-/// one non-comment line is `decision: <the decision record>`.
+/// one non-comment line is `decision: <the decision record>`, in directories
+/// only root controls ([`open_root_held`], security re-review N2).
 pub fn host_opt_in(path: &Path, euid: u32) -> Result<String, String> {
     use std::io::Read as _;
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::unix::fs::MetadataExt;
     let refuse = |why: String| {
         format!(
             "this host has not opted in to unattended repair: {why}. After a human records \
              the enabling decision (§10 Q3), the host's owner writes {} - a regular file \
-             owned by uid {euid}, mode 0600, holding one line `decision: <the decision record>`",
+             owned by uid {euid}, mode 0600, holding one line `decision: <the decision record>`, \
+             in root-owned directories no other user can write",
             path.display()
         )
     };
-    let mut f = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)
-        .map_err(|e| refuse(format!("{}: {e}", path.display())))?;
+    let mut f = open_root_held(path).map_err(refuse)?;
     let m = f
         .metadata()
         .map_err(|e| refuse(format!("{}: {e}", path.display())))?;
@@ -290,6 +288,82 @@ pub fn host_opt_in(path: &Path, euid: u32) -> Result<String, String> {
         }
     }
     decision.ok_or_else(|| refuse(format!("{} names no decision record", path.display())))
+}
+
+/// Security re-review N2: open `path` from `/` one component at a time with
+/// `O_NOFOLLOW` on EVERY component (`open(2)`'s flag covers only the last),
+/// refusing an ancestor that is not root-owned or that group or other can
+/// write: whoever can write a directory on the path can put an opt-in there,
+/// so "owned by euid" alone let the gated uid opt itself in. A root-owned
+/// sticky directory (`/tmp`) is accepted above the parent - its other users
+/// cannot rename the root-owned entry below it - but never as the parent,
+/// where any user could create the file.
+fn open_root_held(path: &Path) -> Result<std::fs::File, String> {
+    use std::ffi::{CString, OsStr};
+    use std::os::fd::{AsRawFd as _, FromRawFd as _};
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::MetadataExt as _;
+    let mut parts = Vec::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::RootDir => {}
+            std::path::Component::Normal(p) => parts.push(p),
+            _ => return Err(format!("{} is not a plain absolute path", path.display())),
+        }
+    }
+    let Some((last, dirs)) = parts.split_last().filter(|_| path.is_absolute()) else {
+        return Err(format!("{} is not a plain absolute path", path.display()));
+    };
+    let open_at = |dir: Option<&std::fs::File>, name: &OsStr, flags: i32, at: &Path| {
+        let c = CString::new(name.as_bytes()).map_err(|_| format!("{}: NUL", at.display()))?;
+        let dirfd = dir.map_or(libc::AT_FDCWD, |d| d.as_raw_fd());
+        // SAFETY: `c` is NUL-terminated and `dirfd` is AT_FDCWD or an open fd.
+        let fd = unsafe { libc::openat(dirfd, c.as_ptr(), flags | libc::O_CLOEXEC) };
+        if fd < 0 {
+            return Err(format!(
+                "{}: {}",
+                at.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        // SAFETY: `fd` was just opened and nothing else owns it.
+        Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+    };
+    let held = |d: &std::fs::File, at: &Path, parent: bool| -> Result<(), String> {
+        let m = d.metadata().map_err(|e| format!("{}: {e}", at.display()))?;
+        if m.uid() != 0 {
+            return Err(format!(
+                "{} is owned by uid {}, not root: that user can replace what it holds",
+                at.display(),
+                m.uid()
+            ));
+        }
+        let others_write = m.mode() & 0o022 != 0;
+        let sticky = m.mode() & 0o1000 != 0;
+        if others_write && (parent || !sticky) {
+            return Err(format!(
+                "{} has mode {:04o}: a user other than root can put a file there",
+                at.display(),
+                m.mode() & 0o7777
+            ));
+        }
+        Ok(())
+    };
+    let dir_flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW;
+    let mut at = PathBuf::from("/");
+    let mut dir = open_at(None, OsStr::new("/"), dir_flags, &at)?;
+    held(&dir, &at, dirs.is_empty())?;
+    for (i, name) in dirs.iter().enumerate() {
+        at.push(name);
+        dir = open_at(Some(&dir), name, dir_flags, &at)?;
+        held(&dir, &at, i + 1 == dirs.len())?;
+    }
+    open_at(
+        Some(&dir),
+        last,
+        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        path,
+    )
 }
 
 /// Phase A (§5.3 steps 1-8). `axon` is the resolved `--axon` path; nothing
@@ -382,11 +456,8 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
     for p in &effective.write_prefixes {
         un::no_symlink_at_or_under(&workspace, p)?;
     }
-    for p in e.scopes.fs_read.iter().chain(&e.scopes.fs_write) {
-        if let Ok(rel) = Path::new(p).strip_prefix(&workspace) {
-            un::no_symlink_at_or_under(&workspace, &rel.to_string_lossy())?;
-        }
-    }
+    // Security re-review N4: every pin, inside the workspace or not.
+    un::no_symlink_in_fs_pins(&e.scopes.fs_read, &e.scopes.fs_write)?;
     if store.starts_with(&workspace) {
         return Err(format!(
             "the spent store {} lies inside the workspace: the repaired code could reach it",
@@ -394,18 +465,15 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
         ));
     }
     // R6 §4: the run ledger is checked like the spent store, disjoint from
-    // the workspace and every write scope, and is the one the envelope names.
-    if ledger.starts_with(&workspace)
-        || e.scopes.fs_write.iter().any(|p| {
-            let p = Path::new(p);
-            ledger.starts_with(p) || p.starts_with(&ledger)
-        })
-    {
+    // the workspace and every write scope (canonical path, `outside_fs_pins`
+    // as for the store and keys), and is the one the envelope names.
+    if ledger.starts_with(&workspace) {
         return Err(format!(
-            "the run ledger {} is not disjoint from the workspace and the write scopes",
+            "the run ledger {} lies inside the workspace: the repaired code could reach it",
             ledger.display()
         ));
     }
+    un::outside_fs_pins("the run ledger", &ledger, &[], &e.scopes.fs_write)?;
     let ledger_id = rl::ledger_id(&ledger, euid)?;
     if ledger_id != e.run_ledger_id {
         return Err(format!(
@@ -958,6 +1026,64 @@ mod tests {
                 "ATTACK: NH-R1 security F5 an fs_write pin over an imported module was admitted: \
                  {} {got:?}",
                 p.display()
+            );
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Security re-review N2: the opt-in file's directories are part of the
+    /// gate. A directory another user can write (or does own), or one
+    /// reached through a symlink, lets that user put an opt-in there, so each
+    /// refuses; a root-owned 0755 directory admits. The path is injected
+    /// here; `phase_a` only ever passes [`OPT_IN_PATH`].
+    #[test]
+    fn an_opt_in_in_a_directory_another_user_controls_refuses() {
+        use std::os::unix::fs::PermissionsExt as _;
+        // SAFETY: geteuid has no preconditions.
+        let euid = unsafe { libc::geteuid() };
+        let d = std::env::temp_dir().join(format!("cortex-auth-n2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let mode = |p: &Path, m: u32| {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap()
+        };
+        let opt_in = |dir: &Path| {
+            std::fs::create_dir_all(dir).unwrap();
+            mode(dir, 0o755);
+            let f = dir.join("unattended-repair");
+            std::fs::write(&f, "decision: governance/decisions/x.md\n").unwrap();
+            mode(&f, 0o600);
+            f
+        };
+        std::fs::create_dir_all(&d).unwrap();
+        mode(&d, 0o755);
+        let good = opt_in(&d.join("good"));
+        assert_eq!(
+            host_opt_in(&good, euid).as_deref(),
+            Ok("governance/decisions/x.md")
+        );
+        let open = opt_in(&d.join("open"));
+        mode(&d.join("open"), 0o777);
+        let sticky = opt_in(&d.join("sticky"));
+        mode(&d.join("sticky"), 0o1777);
+        let owned = opt_in(&d.join("owned"));
+        std::os::unix::fs::chown(d.join("owned"), Some(1), None).unwrap();
+        let deep = opt_in(&d.join("upper/inner"));
+        mode(&d.join("upper"), 0o777);
+        opt_in(&d.join("real"));
+        std::os::unix::fs::symlink(d.join("real"), d.join("link")).unwrap();
+        let linked = d.join("link/unattended-repair");
+        for (what, p) in [
+            ("a parent other users can write", &open),
+            ("a sticky parent other users can create in", &sticky),
+            ("a parent owned by another uid", &owned),
+            ("an ancestor other users can write", &deep),
+            ("a parent reached through a symlink", &linked),
+        ] {
+            let got = host_opt_in(p, euid);
+            assert!(
+                got.as_ref()
+                    .is_err_and(|why| why.contains("has not opted in")),
+                "ATTACK: NH-R1 security N2 an opt-in in {what} was admitted: {got:?}"
             );
         }
         let _ = std::fs::remove_dir_all(&d);

@@ -3022,5 +3022,20 @@ by design or not yet done:
 - F2 build: `AXON_AI_PROVIDER`, `AXON_AI_BASE_URL`, `ANTHROPIC_BASE_URL`, the API keys and `AXON_AI_MODEL_*` are not
   refused under `--unattended` (the endpoint must already match the envelope's; the generator passes the pinned
   model). Reasons are in the spec's `[REVISED: security build]` note.
-- The security re-review of the fixes is pending, and NhrSecurity's review ran no probes: F2, F3 and F4 are covered
-  by S-tests/unit tests, not by an independent end-to-end probe. Both are §9 evidence before any enabling decision.
+- The security re-review (NhrSecurity2, code only, no probes) found N1-N6. N1 (proxy variables), N2 (opt-in
+  directories), N3 (EINVAL reported clearly) and N4 (pins reaching the ledger/store through a symlink) are fixed on
+  nhr/fix-c with fail-first tests and g01 M4520-M4534; the re-review's "commands still to run" were run there (lane
+  report). Still open:
+  - N3 portability: `cas.rs` calls `libc::renameat2` and `RENAME_EXCHANGE` unconditionally, so axon-cortex (default
+    build included) presumably no longer compiles on non-Linux targets [INFERENCE: no such target is installed
+    here]. Gating it with a non-Linux refusal was not done.
+  - N3 attended regression: on a filesystem whose `renameat2` answers EINVAL (ntfs3 probed; NFS reported) every
+    attended write now blocks (exit 22, file unchanged) where the base build (`d7690e63`) repaired the file (exit 0).
+    By design (no plain-rename fallback), but a behaviour change for attended users on such filesystems.
+  - N5 (info): the run lock is per spent store and file, so two envelopes for the same file minted into two
+    different stores run at once; the CAS still reports the overlap (exit 22) [INFERENCE].
+  - N6 (info): `renameat2` resolves the full path again at write time, so a `setsid` child that survived the
+    process-group kill could swap a parent directory for a symlink between E5 steps 2 and 3 [INFERENCE; reachable
+    only if the envelope grants `exec`].
+  - Every finding is covered by S-tests/unit tests and the N1 local-listener probe; there is still no independent
+    end-to-end probe of F2-F4. That is §9 evidence to collect before any enabling decision.

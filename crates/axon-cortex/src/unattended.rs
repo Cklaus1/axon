@@ -38,7 +38,11 @@ pub const ALLOWED_FLAGS: &[&str] = &[
 /// §5.2: environment selectors that steer a run outside the envelope; set,
 /// they refuse. `AXON_AI_MOCK` and `AXON_AI_REPLAY` (security build) would
 /// answer the generator from a stub or a cache instead of the pinned
-/// endpoint.
+/// endpoint. The proxy variables (security re-review N1) would send the
+/// model call, API key included, through a proxy the envelope never pinned,
+/// which could answer with any patch; they are refused rather than ignored
+/// (`no_proxy`) so a host that needs a proxy is told why, never run on a
+/// route nobody signed.
 pub const REFUSED_ENV: &[&str] = &[
     crate::rank::RANKER_ENV,
     crate::audit::AUDIT_ENV,
@@ -47,6 +51,12 @@ pub const REFUSED_ENV: &[&str] = &[
     "AXON_CORTEX_GENERATOR_TIMEOUT_MS",
     "AXON_AI_MOCK",
     "AXON_AI_REPLAY",
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
 ];
 
 /// One enforcement-gate row (§5.6 `enforcement`).
@@ -299,6 +309,22 @@ pub fn absolute_fs_pins(fs_read: &[String], fs_write: &[String]) -> Result<(), S
                  resolves against the check child's cwd and escapes the symlink walk and policy check)"
             ));
         }
+    }
+    Ok(())
+}
+
+/// E1s over every `fs_read` / `fs_write` pin (security re-review N4): no
+/// symlink on a pin's path from `/`, nor anywhere under it. The interpreter
+/// matches a pin as a path prefix and the OS follows links, so a symlink at
+/// or under a pin OUTSIDE the workspace (only the pins inside it were
+/// walked) reached whatever it names - the run ledger, the spent store - past
+/// every check on canonical paths. Call after [`absolute_fs_pins`].
+pub fn no_symlink_in_fs_pins(fs_read: &[String], fs_write: &[String]) -> Result<(), String> {
+    for p in fs_read.iter().chain(fs_write) {
+        let rel = p
+            .strip_prefix('/')
+            .ok_or_else(|| format!("scopes entry {p:?} is relative"))?;
+        no_symlink_at_or_under(Path::new("/"), rel)?;
     }
     Ok(())
 }

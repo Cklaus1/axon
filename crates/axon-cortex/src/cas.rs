@@ -301,10 +301,46 @@ fn digest_now(path: &Path) -> Result<Option<String>, CasError> {
     }
 }
 
+// A test's filesystem without `renameat2` flags: every `rename2` fails with
+// this errno (security re-review N3; ntfs3 answers EINVAL for real).
+#[cfg(test)]
+thread_local! {
+    static RENAME2_ERRNO: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
+}
+
 /// `renameat2(from, to, flags)` (`RENAME_EXCHANGE` / `RENAME_NOREPLACE`; a
-/// filesystem without them refuses, so the write fails closed).
+/// filesystem without them refuses, so the write fails closed). EINVAL - the
+/// answer of a filesystem without the flag (ntfs3; security re-review N3) -
+/// is reported as that, never retried as a plain rename: a plain rename is
+/// exactly the unchecked overwrite E5 removed.
 fn rename2(from: &Path, to: &Path, flags: libc::c_uint) -> std::io::Result<()> {
+    let e = match renameat2(from, to, flags) {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    if e.raw_os_error() != Some(libc::EINVAL) {
+        return Err(e);
+    }
+    let flag = if flags == libc::RENAME_EXCHANGE {
+        "RENAME_EXCHANGE"
+    } else {
+        "RENAME_NOREPLACE"
+    };
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!(
+            "{e}: the filesystem does not support renameat2({flag}); the compare-and-swap \
+             write is refused and no plain rename replaces it"
+        ),
+    ))
+}
+
+fn renameat2(from: &Path, to: &Path, flags: libc::c_uint) -> std::io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(test)]
+    if let Some(errno) = RENAME2_ERRNO.with(|e| e.get()) {
+        return Err(std::io::Error::from_raw_os_error(errno));
+    }
     let a = std::ffi::CString::new(from.as_os_str().as_bytes())?;
     let b = std::ffi::CString::new(to.as_os_str().as_bytes())?;
     // SAFETY: both are valid NUL-terminated paths; AT_FDCWD resolves them as given.
@@ -853,6 +889,64 @@ mod tests {
             "ATTACK: E5 a file created between the re-hash and the rename was clobbered: {got:?}"
         );
         assert!(others(&d, &p).is_empty(), "the temp file is removed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Security re-review N3: on a filesystem without `RENAME_EXCHANGE` /
+    /// `RENAME_NOREPLACE` (`renameat2` answers EINVAL - ntfs3 does) a write
+    /// and a delete refuse with a reason that names the missing support; no
+    /// plain-rename fallback runs, the target keeps its bytes and no temp
+    /// file is left.
+    #[test]
+    fn a_filesystem_without_exchange_refuses_clearly() {
+        let d = dir("einval");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"one").unwrap();
+        // `absent.ax` is known absent: this run deleted it (before the fault).
+        let q = d.join("absent.ax");
+        std::fs::write(&q, b"old").unwrap();
+        let mut l = Ledger::default();
+        l.observe(&p, b"one");
+        l.observe(&q, b"old");
+        l.remove(Site::Sweep, &q).unwrap();
+        RENAME2_ERRNO.with(|e| e.set(Some(libc::EINVAL)));
+        // Each refusal names the flag the filesystem lacks.
+        let got = [
+            (
+                "write",
+                "RENAME_EXCHANGE",
+                l.write(Site::Apply, &p, b"mine"),
+            ),
+            (
+                "create-by-write",
+                "RENAME_NOREPLACE",
+                l.write(Site::Apply, &q, b"new"),
+            ),
+            ("delete", "RENAME_NOREPLACE", l.remove(Site::Sweep, &p)),
+        ];
+        RENAME2_ERRNO.with(|e| e.set(None));
+        for (what, flag, got) in got {
+            let shown = got
+                .as_ref()
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert!(
+                matches!(got, Err(CasError::Io(_)))
+                    && shown.contains(&format!("does not support renameat2({flag})"))
+                    && shown.contains("no plain rename"),
+                "ATTACK: NH-R1 security N3 a {what} on a filesystem without RENAME_EXCHANGE \
+                 was not refused clearly: {got:?}"
+            );
+        }
+        assert_eq!(std::fs::read(&p).unwrap(), b"one");
+        assert!(!q.exists());
+        assert!(others(&d, &p).is_empty(), "no temp file is left");
+        assert_eq!(
+            l.journal().len(),
+            1,
+            "nothing after the fault is journalled"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 

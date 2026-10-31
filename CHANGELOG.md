@@ -18,8 +18,14 @@
   - **Interpreter path (F7):** `--axon` is resolved once, and the hashed file is the one that runs.
   - **Watchdog (F8):** the watchdog is armed right after phase B. Earlier static children are bounded by the time left, and the watchdog kills before it locks and exits on its own timer.
   - **g01:** rows M4400-M4435.
+- **Security re-review fixes, unattended run side (N1-N4):**
+  - **Proxy (N1):** `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` (either case) set refuses an unattended run (exit 29). The model client read them, so the call and its API key went to a proxy the envelope never pinned.
+  - **Opt-in directories (N2):** the opt-in file is opened one component at a time with `O_NOFOLLOW`. Every directory above it must be root-owned and not writable by group or other. A root-owned sticky directory is accepted above the parent but never as the parent. Otherwise the run refuses with `this host has not opted in ...`.
+  - **No exchange support (N3):** on a filesystem whose `renameat2` answers EINVAL (ntfs3), every compare-and-swap write and delete refuses with `the filesystem does not support renameat2(...)`. There is no plain-rename fallback. **Attended runs regress there:** the base build repaired `broken.ax` on ntfs3 (exit 0), and this build blocks (exit 22, file unchanged).
+  - **Pins through symlinks (N4):** every `fs_read`/`fs_write` pin is walked for symlinks from `/`, at it and under it, inside the workspace or not, and so is the preview. The run ledger is compared with the write pins like the spent store.
+  - **g01:** rows M4520-M4534.
 - **Security review fixes, envelope and minter side (F4, F6, F10, F12):** an envelope whose `scopes.fs_read`/`fs_write` pin is relative is refused at mint and at verify (`... is relative: a pin must be absolute ...`). `authorize-repair` now requires `--verify-key` and `--run-record-key`. It refuses (exit 2) a pin that overlaps the spent store, the verify-key or run-record-key file (read or write pins) or the run ledger (write pins), compared through symlinks. The cortex preview child no longer inherits `AXON_APPROVAL_KEY`. The C1 audit reports a `.used` record it cannot read as the new finding `used-unreadable` instead of skipping it. The signed test fixture's pins are absolute now, so the envelope known answers changed (recomputed independently). g01 M4450-M4461.
-- **Mechanisms:** g01 rows M4060-M4119, M4200-M4461 with attack markers; refusal-coverage exemptions for the new sites that no row mutates (`scripts/v022_refusal_coverage.py`).
+- **Mechanisms:** g01 rows M4060-M4119, M4200-M4461, M4520-M4534 with attack markers; refusal-coverage exemptions for the new sites that no row mutates (`scripts/v022_refusal_coverage.py`).
 
 ## Check-then-panic holes closed in the checker (checker-soundness-2 CS2-1 to CS2-8)
 

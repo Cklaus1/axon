@@ -1,6 +1,6 @@
 # Unattended repair authorization (NH-R1) — DRAFT spec (after Step 1 review)
 
-**Status: PARTIAL 2026-10-31 on nhr/int: security fixes merged; re-review pending (F1-F12 fixed in 91114bcc..dcd60815 and be47b23e; A0-A4 and the §7 S-tests: 1093c268, 9a825ace, c4f4c12c, 219e1360, 9ed0ad16, 60651b37). Unattended execution is NOT authorized or enabled: `--unattended` refuses by default (exit 29); enabling needs the §9 evidence and a separate human decision.**
+**Status: PARTIAL 2026-10-31 on nhr/int: security fixes merged (F1-F12 fixed in 91114bcc..dcd60815 and be47b23e; A0-A4 and the §7 S-tests: 1093c268, 9a825ace, c4f4c12c, 219e1360, 9ed0ad16, 60651b37). The security re-review (N1-N6) is answered on nhr/fix-c: N1-N4 fixed (`[REVISED: security re-review N#]` markers), N5/N6 and the N3 attended regression recorded in O-NHR-06. Unattended execution is NOT authorized or enabled: `--unattended` refuses by default (exit 29); enabling needs the §9 evidence and a separate human decision.**
 - `[DECIDED by human 2026-10-31: build go-ahead.]` Building it (A0-A4, E1-E7, §7 S-tests) is authorized.
 - Enabling it after the build (§9) still needs the §9 evidence (S-tests and full gate green, a read-only adversarial
   security review, R6 L1-L3 built with a clean C1 audit) and then a second, separate human decision made on that evidence.
@@ -178,7 +178,7 @@ Any other flag → exit 29.
 | Input | Rule |
 |---|---|
 | `--symbol` | required |
-| `CORTEX_RANKER`, `CORTEX_AUDIT`, `CORTEX_LABEL_LOG`, `CORTEX_MODEL`, `AXON_CORTEX_GENERATOR_TIMEOUT_MS`, `AXON_AI_MOCK`, `AXON_AI_REPLAY` | refused if set (`rank.rs:42`, `audit.rs:47`, `label.rs:23`); never read afterwards. `[REVISED: security F2]` no `.env` is loaded: phase A consumes `axon-ai`'s dotenv once first (`axon_ai::forbid_dotenv`; `Err` if a lookup already ran -> exit 29), so neither `./.env` nor `$AXON_DOTENV` can set a variable the refusal never saw (S6 `s6_a_dotenv_steers_nothing`). `[REVISED: security build]` `AXON_AI_MOCK` and `AXON_AI_REPLAY` in the REAL environment refuse too (`unattended::REFUSED_ENV`): E6 scrubs only the check child's env, and the `ai:` generator runs in cortex's own process, where `AXON_AI_MOCK` answered it from the mock stub instead of the pinned endpoint (S6 `s6_a_real_env_model_override_is_refused`). `AXON_AI_REPLAY` is read only by the interpreter's `ai_complete`; no cortex child that executes code inherits the env (the check child and the static verbs `env_clear`; `axon check` inherits it but only type-checks), so it steered nothing observed. It is refused anyway, since an answer cache is not the pinned endpoint. Not refused: `AXON_AI_PROVIDER` / `AXON_AI_BASE_URL` / `ANTHROPIC_BASE_URL` (they resolve the endpoint, which must equal the envelope's, row "generator"), the API keys, and `AXON_AI_MODEL_*` (tier defaults; the generator always passes the pinned model explicitly, `ai.rs:85`) |
+| `CORTEX_RANKER`, `CORTEX_AUDIT`, `CORTEX_LABEL_LOG`, `CORTEX_MODEL`, `AXON_CORTEX_GENERATOR_TIMEOUT_MS`, `AXON_AI_MOCK`, `AXON_AI_REPLAY`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (either case) | refused if set (`rank.rs:42`, `audit.rs:47`, `label.rs:23`); never read afterwards. `[REVISED: security F2]` no `.env` is loaded: phase A consumes `axon-ai`'s dotenv once first (`axon_ai::forbid_dotenv`; `Err` if a lookup already ran -> exit 29), so neither `./.env` nor `$AXON_DOTENV` can set a variable the refusal never saw (S6 `s6_a_dotenv_steers_nothing`). `[REVISED: security build]` `AXON_AI_MOCK` and `AXON_AI_REPLAY` in the REAL environment refuse too (`unattended::REFUSED_ENV`): E6 scrubs only the check child's env, and the `ai:` generator runs in cortex's own process, where `AXON_AI_MOCK` answered it from the mock stub instead of the pinned endpoint (S6 `s6_a_real_env_model_override_is_refused`). `AXON_AI_REPLAY` is read only by the interpreter's `ai_complete`; no cortex child that executes code inherits the env (the check child and the static verbs `env_clear`; `axon check` inherits it but only type-checks), so it steered nothing observed. It is refused anyway, since an answer cache is not the pinned endpoint. `[REVISED: security re-review N1]` the proxy variables refuse too: `axon-ai`'s `reqwest` client reads them from the process env, so with the envelope's endpoint host pinned, `HTTP_PROXY` sent the model call - API key included - to a proxy nobody signed, which could answer with any patch (S6 `s6_a_proxy_variable_is_refused`; probed with a local listener and a dummy key: it received `POST http://api.anthropic.com/v1/messages` with `x-api-key`). Refused rather than ignored with `no_proxy()`: ignoring would change the attended client (gateway deployments behind a proxy) and run a route the operator did not ask for; refusing tells a host that needs a proxy why it never runs unattended. Not refused: `AXON_AI_PROVIDER` / `AXON_AI_BASE_URL` / `ANTHROPIC_BASE_URL` (they resolve the endpoint, which must equal the envelope's, row "generator"), the API keys, and `AXON_AI_MODEL_*` (tier defaults; the generator always passes the pinned model explicitly, `ai.rs:85`) |
 | `principal` | `envelope:<envelope_id>` |
 | `write_prefixes` | CLI ⊆ envelope (component-wise, after normalization) |
 | `max_proposals`, `deadline_ms`, `check_timeout_ms`, `candidates`, `--budget` | CLI ≤ envelope; an absent CLI value takes the envelope's |
@@ -201,6 +201,7 @@ Any other flag → exit 29.
 | 8 | task: canonical workspace and file, symlink walk (F2), read the entry file ONCE → sha = `pristine_sha256` |
 | 8a | `[REVISED: security F4]` every `scopes.fs_read` / `scopes.fs_write` pin is absolute (`unattended::absolute_fs_pins`; the preview refuses one too): a relative pin resolves against the check child's cwd (the workspace) and skipped the symlink walk and the policy check |
 | 8b | `[REVISED: security F6]` the canonical spent store, verify-key file and seal-key file are disjoint from every `fs_read` / `fs_write` pin, at, above or below (`unattended::outside_fs_pins`); the minter's counterpart is axon-intent's |
+| 8c | `[REVISED: security re-review N4]` every `fs_read` / `fs_write` pin - inside the workspace or not - is walked for symlinks from `/`, at it and under it (`unattended::no_symlink_in_fs_pins`; the preview walks the same): only pins inside the workspace were walked, so a symlink under an outside write pin, made after minting, reached the run ledger or the spent store past 8b's canonical-path comparison (S6 `s6_a_pin_reaching_the_ledger_or_store_through_a_symlink_is_refused`, preview `a_symlink_under_an_outside_pin_produces_no_preview`). The run ledger is compared with `outside_fs_pins` like the store (canonical path, write pins) |
 
 **Phase B** runs after `derive_fence` (the only child before it is the pinned interpreter's static `axon caps`) and
 before `fence_conflicts` (:738):
@@ -360,6 +361,15 @@ anything but a regular file.
 
 A step-2 mismatch writes nothing; any mismatch stops the walk and exits 22 with the reason.
 
+`[REVISED: security re-review N3]` steps 3 and the delete's rename need `renameat2` flags. A filesystem without them
+answers EINVAL (ntfs3 does; ext2, vfat and tmpfs on this kernel support both): the write or delete is refused with
+`the filesystem does not support renameat2(RENAME_EXCHANGE); the compare-and-swap write is refused and no plain rename
+replaces it`, the target keeps its bytes and no temp file is left (`cas::tests::a_filesystem_without_exchange_refuses_clearly`).
+There is no plain-rename fallback: it is exactly the unchecked overwrite E5 removed. This applies to ATTENDED runs
+too (every write of `cortex repair` goes through the helper): on ntfs3 the base build (`d7690e63`) repaired
+`broken.ax` (exit 0) and this build blocks (exit 22, file unchanged) - a known attended regression on such
+filesystems, recorded in O-NHR-06.
+
 Supporting rules:
 - An exclusive `flock` on a store-side lock keyed by the canonical file path means a second unattended run on the same
   file → exit 29.
@@ -390,7 +400,7 @@ Each test is fail-first where it guards a behaviour.
 | S11 | Attended mode unchanged: existing suites; `cortex-repair/1` byte-identical on a pinned task |
 | S12 | Acceptance ≠ approval (§5.7) |
 | S13 | TOCTOU: a pristine test rewrites the entry file or an imported module during the witness run → exit 29 |
-| S14 | Host opt-in (§10 Q3) `[REVISED: security F1]`: no `/etc/axon/unattended-repair`, a wrong owner or mode, a non-regular file, or one not naming exactly one decision record → exit 29, nothing spent |
+| S14 | Host opt-in (§10 Q3) `[REVISED: security F1, re-review N2]`: no `/etc/axon/unattended-repair`, a wrong owner or mode, a non-regular file, one not naming exactly one decision record, or one under a directory that is not root-owned or that another user can write → exit 29, nothing spent |
 
 g01 rows cover:
 - the signature compare;
@@ -463,6 +473,14 @@ design questions only. Building NH-R1 still needs a separate human go-ahead, and
   what to write. The decision record named there is reported in the run's `authorization.host_opt_in`. S14
   (`s14_a_host_that_did_not_opt_in_refuses`) covers: no file, mode 0640, another owner, a directory, no decision,
   a line that is not the decision, two decisions. The file is not in the workspace, so the repo cannot write it.
+  `[REVISED: security re-review N2]`: "owned by euid" alone let the gated uid opt itself in wherever it could write
+  a directory on the path. The file is opened from `/` one component at a time with `O_NOFOLLOW` on every component
+  (`auth::open_root_held`); every ancestor must be root-owned and not group/other-writable (a root-owned sticky
+  directory is accepted above the parent, never as the parent). The path is a constant: tests reach it through a
+  private mount namespace (a tmpfs on `/etc/axon`) or by calling `host_opt_in(path, euid)` directly, never through an
+  environment variable. S14 adds an `/etc/axon` other users can write and one uid 1 owns; the unit test
+  `an_opt_in_in_a_directory_another_user_controls_refuses` covers a non-root parent, a writable parent, a sticky
+  parent and a symlinked ancestor.
 - **Q4 → accept the residual window with E5 step 5's post-rename check; `HARD_GRACE` from S10's measured tail under
   real load, not a fixed 2 s.** The follow-up run's receipt flipped FAIL → PASS on wall time between two load levels,
   so a bound measured on an idle machine is not evidence.
