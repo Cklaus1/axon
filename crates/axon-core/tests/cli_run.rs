@@ -43291,3 +43291,36 @@ fn diagnostics_for_refused_forms_infer() {
         "[g06b] want the `? inner type` E0102 with the Option help: {cmsg}"
     );
 }
+
+/// CS3-2 ruling (ImplAuditCS3 F1): a wrong-kind call of a wrapper lambda in a
+/// branch that never runs is E0102, as its direct-call twin already was on
+/// the base. A dead branch does not exempt a type error. Each pair agrees:
+/// c01 (`g(1)` under `if n > 0`) with c02 (`f(1)` there), c03 (`g(1)` in the
+/// untaken arm of an `if` value) with c04 (`f(1)` there). The wrapper forms
+/// checked rc 0 and printed before CS3-2. NH-13 (w14) is a different shape:
+/// its conditional call is inside the wrapper's body.
+#[test]
+fn wrapper_and_direct_calls_in_a_dead_branch_agree() {
+    let f = "fn main() { let f = |x| str_len(x)\n";
+    let pairs = [
+        (
+            ("c01", format!("{f}let g = |y| f(y)\nlet n = 0\nif n > 0 {{ println(to_str(g(1))) }}\nprintln(\"ok\") }}\n")),
+            ("c02", format!("{f}let n = 0\nif n > 0 {{ println(to_str(f(1))) }}\nprintln(\"ok\") }}\n")),
+        ),
+        (
+            ("c03", format!("{f}let g = |y| f(y)\nlet n = 0\nlet r = if n > 0 {{ g(1) }} else {{ g(\"ab\") }}\nprintln(to_str(r)) }}\n")),
+            ("c04", format!("{f}let n = 0\nlet r = if n > 0 {{ f(1) }} else {{ f(\"ab\") }}\nprintln(to_str(r)) }}\n")),
+        ),
+    ];
+    for ((wtag, wsrc), (dtag, dsrc)) in pairs {
+        for (tag, src) in [(wtag, &wsrc), (dtag, &dsrc)] {
+            let (crc, cmsg, _, _, _) = sf6_check_and_run(&format!("cs3dead_{tag}"), src);
+            assert!(
+                crc == Some(2)
+                    && cmsg.contains("E0102")
+                    && cmsg.contains("(expected str), found i64"),
+                "[{tag}] (pair {wtag}/{dtag}) want check rc 2 E0102 `expected str, found i64`, got rc {crc:?}: {cmsg}"
+            );
+        }
+    }
+}
