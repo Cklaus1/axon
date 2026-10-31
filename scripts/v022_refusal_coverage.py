@@ -2063,9 +2063,6 @@ EXEMPT += [
      _CTX + "; unreachable: `p` is a &str, so every component of it is UTF-8"),
     (_UNA, 'Err(e) => return Err(format!("E1s: `{}` cannot be examined: {e}", at.display())),',
      _CTX + "; E1s: an lstat that fails for another reason than NotFound is an OS error; refused, never admitted"),
-    (_UNA, '.ok_or_else(|| format!("scopes entry {p:?} is relative"))?;',
-     _CTX + "; security re-review N4: unreachable after absolute_fs_pins (row-covered, F4), which "
-     "every caller runs first; a relative pin is refused, never walked"),
     (_UNA, "pub const ALLOWED_FLAGS: &[&str] = &[",
      _CTX + "; §5.2's allowlist, read only by check_flag, whose guard is M4101"),
     ('crates/axon-cortex/src/fence.rs', "pub const SCOPE_VARS: &[(&str, &str)] = &[",

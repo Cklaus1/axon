@@ -318,13 +318,14 @@ pub fn absolute_fs_pins(fs_read: &[String], fs_write: &[String]) -> Result<(), S
 /// matches a pin as a path prefix and the OS follows links, so a symlink at
 /// or under a pin OUTSIDE the workspace (only the pins inside it were
 /// walked) reached whatever it names - the run ledger, the spent store - past
-/// every check on canonical paths. Call after [`absolute_fs_pins`].
+/// every check on canonical paths. Call after [`absolute_fs_pins`]: a
+/// relative pin is that check's refusal (one site, so each guard's g01 row
+/// is killed by its own attack), and is not walked here.
 pub fn no_symlink_in_fs_pins(fs_read: &[String], fs_write: &[String]) -> Result<(), String> {
     for p in fs_read.iter().chain(fs_write) {
-        let rel = p
-            .strip_prefix('/')
-            .ok_or_else(|| format!("scopes entry {p:?} is relative"))?;
-        no_symlink_at_or_under(Path::new("/"), rel)?;
+        if let Some(rel) = p.strip_prefix('/') {
+            no_symlink_at_or_under(Path::new("/"), rel)?;
+        }
     }
     Ok(())
 }
