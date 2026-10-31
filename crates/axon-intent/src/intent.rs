@@ -1043,7 +1043,10 @@ b
             ("./out/x", "fs_read prefix"),
         ] {
             let src = with_examples(&format!("\n## Examples\n### e\n- input {path}: \"x\"\n"));
-            let r = malformed_reason(&src);
+            let r = match parse(&src) {
+                Err(Refusal::Malformed { reason }) => reason,
+                other => format!("{other:?}"),
+            };
             assert!(
                 r.contains(why) && r.contains("line "),
                 "ATTACK: an example path escaping the ceiling parsed clean: `{path}` → {r}"
@@ -1114,7 +1117,10 @@ b
         let src = with_examples(&format!(
             "\n## Examples\n### e\n- input ./data/a:\n```fixture\n{big}```\n"
         ));
-        let r = malformed_reason(&src);
+        let r = match parse(&src) {
+            Err(Refusal::Malformed { reason }) => reason,
+            other => format!("{other:?}"),
+        };
         assert!(
             r.contains("fixture cap"),
             "ATTACK: a fixture over the cap parsed clean: {r}"
