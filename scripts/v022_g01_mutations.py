@@ -13353,14 +13353,13 @@ MUTATIONS += [
 _NSR = 's6_a_relative_fs_pin_is_refused'
 _NSK = 's6_a_pin_over_the_store_or_a_key_is_refused'
 MUTATIONS += [
+    # Retargeted at the preview at integration (nhr/int): after nhr/fix-b's axon-os validate refuses a
+    # relative pin at verify with the same text, phase A never reaches this check for an envelope, so
+    # only the preview (envelope_preview.rs) still exercises it.
     ('M4414', 'NH-R1 security F4: a relative fs pin is admitted', _NHU,
      "        if let Some(p) = pins.iter().find(|p| !p.starts_with('/')) {",
      '        if let Some(p) = pins.iter().find(|_| false) {',
-     'axon-cortex', _NHT, _NSR),
-    ('M4415', 'NH-R1 security F4: phase A does not check that fs pins are absolute', _NHA,
-     '    un::absolute_fs_pins(&e.scopes.fs_read, &e.scopes.fs_write)?;',
-     '    let _ = "relative pins allowed";',
-     'axon-cortex', _NHT, _NSR),
+     'axon-cortex', '--features unattended --test envelope_preview', 'a_relative_fs_pin_produces_no_preview'),
     ('M4416', 'NH-R1 security F4: the envelope preview passes a relative fs pin', 'crates/axon-cortex/src/envelope_preview.rs',
      '    un::absolute_fs_pins(&r.pins.fs_read, &r.pins.fs_write)?;',
      '    let _ = "relative pins allowed";',

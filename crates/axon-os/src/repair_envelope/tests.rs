@@ -284,7 +284,6 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
             "fs_write under the file",
             json!({"scopes": {"fs_write": ["/srv/ws/src/main.axon/x"]}}),
         ),
-        ("fs_write star", json!({"scopes": {"fs_write": ["/srv/*"]}})),
         ("net star", json!({"scopes": {"net": ["*"]}})),
         ("zero budget", json!({"budget": {"max_proposals": 0}})),
         (
@@ -337,6 +336,14 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
         e.contains("task.workspace"),
         "ATTACK: a `..` workspace was admitted as a workspace: {e}"
     );
+    // After the `..` workspace: an absolute pin's normalization (`/srv/*`) is
+    // the same `normalized_abs` the workspace uses, so checked first it would
+    // take that guard's attack (g01 M4288 vs M4269).
+    let mut v: Value = serde_json::from_str(&signed()).unwrap();
+    merge(&mut v, &json!({"scopes": {"fs_write": ["/srv/*"]}}));
+    let e = verify(&sign_raw(v), &key, NOW)
+        .expect_err("ATTACK: a signed envelope with an invalid fs_write star verified");
+    assert!(!e.contains("signature"), "fs_write star: {e}");
 }
 
 /// Security F4: a relative `fs_read`/`fs_write` pin resolves against the
