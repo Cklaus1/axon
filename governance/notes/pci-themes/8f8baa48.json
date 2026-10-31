@@ -1,0 +1,4 @@
+{
+  "theme": "integration int/31 wasm RUNNABLE label",
+  "text": "CLI MESSAGE: `axon target build --engine codegen` for wasm reads the linked module's import section and prints `linked, RUNNABLE` with a `wasmtime --invoke main` command only when every import is WASI; a module importing `env.axon_host_write` (browser println) now says it needs that host import and is not runnable standalone. Only the stderr label changes: the emitted files, the link, and the exit code are unchanged. No interpreter, checker or runtime path changes."
+}

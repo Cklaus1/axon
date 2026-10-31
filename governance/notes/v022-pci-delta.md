@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 7004888d3f90ef2d0ff4bd7be095e83f24b291fc
+generated-at: 8f8baa486300b928c2b9aeb5c49fd4a56219c182
 
-`git diff --numstat 31413ca7..7004888d -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..8f8baa48 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -88,7 +88,7 @@ generated-at: 7004888d3f90ef2d0ff4bd7be095e83f24b291fc
 | `crates/axon-core/src/lib.rs` | 333 | 81 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 188 | 59 |
-| `crates/axon-core/src/main.rs` | 1666 | 477 |
+| `crates/axon-core/src/main.rs` | 1765 | 473 |
 | `crates/axon-core/src/mono.rs` | 71 | 17 |
 | `crates/axon-core/src/mut_borrow.rs` | 944 | 0 |
 | `crates/axon-core/src/parse_help.rs` | 136 | 0 |
@@ -100,9 +100,9 @@ generated-at: 7004888d3f90ef2d0ff4bd7be095e83f24b291fc
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 64224 | 8942 |
+| total | 64323 | 8938 |
 
-`git log --reverse 31413ca7..7004888d -- crates/axon-core/src`:
+`git log --reverse 31413ca7..8f8baa48 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -481,7 +481,8 @@ generated-at: 7004888d3f90ef2d0ff4bd7be095e83f24b291fc
 | 2332564f | checker-soundness-3 lane C | PARSER: a keyword or bool token, a `!` (not `!=`) or a `(` glued to a closing string quote is now the CS3-6 parse error, as a glued name already was: `"flag is "true" now"` no longer checks clean and prints a truncated string, and `"a"(1)` no longer checks clean and panics. A glued `{` stays legal. No interpreter or runtime path changes. |
 | d1012964 | cs3/c merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 7004888d | integration int/31 fmt | FORMAT ONLY: `cargo fmt` of the checker-soundness-3 lane B code (infer.rs, vm tests) merged unformatted; whitespace and line breaks only, no token changes, so no pass/fail change. |
-| 375 commits | | |
+| 8f8baa48 | integration int/31 wasm RUNNABLE label | CLI MESSAGE: `axon target build --engine codegen` for wasm reads the linked module's import section and prints `linked, RUNNABLE` with a `wasmtime --invoke main` command only when every import is WASI; a module importing `env.axon_host_write` (browser println) now says it needs that host import and is not runnable standalone. Only the stderr label changes: the emitted files, the link, and the exit code are unchanged. No interpreter, checker or runtime path changes. |
+| 376 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -640,7 +641,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 624 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4018, M4027, M4120-M4136, M4152, M4155-M4158
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 625 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4018, M4027, M4120-M4136, M4152, M4155-M4158, M4517
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
