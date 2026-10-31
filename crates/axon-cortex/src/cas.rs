@@ -514,7 +514,10 @@ impl Ledger {
             });
         }
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-            return Err(CasError::Io(format!("{} names no file to delete", path.display())));
+            return Err(CasError::Io(format!(
+                "{} names no file to delete",
+                path.display()
+            )));
         };
         let tmp = dir.join(format!(
             ".cortex-cas-rm-{}-{}",
@@ -807,7 +810,10 @@ mod tests {
         close_window();
         let shown = format!(
             "{got:?} {}",
-            got.as_ref().err().map(|e| e.to_string()).unwrap_or_default()
+            got.as_ref()
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
         );
         let kept = others(&d, &p);
         assert!(
@@ -843,8 +849,7 @@ mod tests {
         let got = l.write(Site::Apply, &p, b"mine");
         close_window();
         assert!(
-            matches!(got, Err(CasError::Foreign { .. }))
-                && std::fs::read(&p).unwrap() == b"theirs",
+            matches!(got, Err(CasError::Foreign { .. })) && std::fs::read(&p).unwrap() == b"theirs",
             "ATTACK: E5 a file created between the re-hash and the rename was clobbered: {got:?}"
         );
         assert!(others(&d, &p).is_empty(), "the temp file is removed");
@@ -865,7 +870,10 @@ mod tests {
         close_window();
         let shown = format!(
             "{got:?} {}",
-            got.as_ref().err().map(|e| e.to_string()).unwrap_or_default()
+            got.as_ref()
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
         );
         assert!(
             std::fs::read(&p).ok().as_deref() == Some(b"theirs".as_slice())

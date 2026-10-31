@@ -310,9 +310,22 @@ fn a_relative_fs_pin_produces_no_preview() {
         )
         .unwrap();
         std::os::unix::fs::symlink("/etc", ws.join("out")).unwrap();
-        let other = if flag == "--read-prefix" { "--fs-write-scope" } else { "--read-prefix" };
-        let (code, out, err) =
-            preview(&ws, &["--generator", "ai:m", flag, "out", other, "/var/empty-axon-scope"]);
+        let other = if flag == "--read-prefix" {
+            "--fs-write-scope"
+        } else {
+            "--read-prefix"
+        };
+        let (code, out, err) = preview(
+            &ws,
+            &[
+                "--generator",
+                "ai:m",
+                flag,
+                "out",
+                other,
+                "/var/empty-axon-scope",
+            ],
+        );
         assert_eq!(
             code, 2,
             "ATTACK: NH-R1 security F4 a relative {flag} pin was previewed: {out}"
@@ -337,7 +350,11 @@ fn a_bare_axon_pins_the_binary_path_runs() {
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::write(cwd.join("axon"), b"a decoy that never runs\n").unwrap();
     std::os::unix::fs::symlink(axon_bin(), bin.join("axon")).unwrap();
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
     let out = common::cortex()
         .args(["grant", "--envelope-preview", "--workspace"])
         .arg(&ws)
@@ -349,7 +366,12 @@ fn a_bare_axon_pins_the_binary_path_runs() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: Value = serde_json::from_str(stdout.trim()).unwrap();
     let genuine = axon_cortex::label::sha256_hex(&std::fs::read(axon_bin()).unwrap());
     assert_eq!(

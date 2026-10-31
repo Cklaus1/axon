@@ -249,7 +249,11 @@ pub fn host_opt_in(path: &Path, euid: u32) -> Result<String, String> {
         return Err(refuse(format!("{} is not a regular file", path.display())));
     }
     if m.uid() != euid {
-        return Err(refuse(format!("{} is owned by uid {}", path.display(), m.uid())));
+        return Err(refuse(format!(
+            "{} is owned by uid {}",
+            path.display(),
+            m.uid()
+        )));
     }
     if m.mode() & 0o077 != 0 {
         return Err(refuse(format!(
@@ -586,9 +590,8 @@ pub fn fs_write_disjoint(
         // The module paths are canonical; the pin is compared as given and
         // resolved (a symlinked pin directory reaches the same files).
         let resolved = std::fs::canonicalize(p).ok();
-        let covers = |m: &PathBuf| {
-            m.starts_with(p) || resolved.as_ref().is_some_and(|r| m.starts_with(r))
-        };
+        let covers =
+            |m: &PathBuf| m.starts_with(p) || resolved.as_ref().is_some_and(|r| m.starts_with(r));
         if let Some(m) = imports.iter().find(|m| covers(m)) {
             return Err(format!(
                 "the check's fs_write pin {pin} covers the imported module {}",
@@ -652,8 +655,7 @@ impl DispatchGuard {
             .map_err(|e| format!("{}: {e}", self.file))?;
         let (start, end) = self.body;
         let (head, tail) = (&self.pristine[..start], &self.pristine[end..]);
-        if now.len() < head.len() + tail.len() || !now.starts_with(head) || !now.ends_with(tail)
-        {
+        if now.len() < head.len() + tail.len() || !now.starts_with(head) || !now.ends_with(tail) {
             return Err(format!(
                 "{} changed outside `{}` before a check dispatch (sha256 {} -> {})",
                 self.file,
@@ -936,7 +938,11 @@ mod tests {
         let d = std::env::temp_dir().join(format!("cortex-auth-f5-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("lib")).unwrap();
-        std::fs::write(d.join("lib/helpers.ax"), "fn inc(n: i64) -> i64 { n + 1 }\n").unwrap();
+        std::fs::write(
+            d.join("lib/helpers.ax"),
+            "fn inc(n: i64) -> i64 { n + 1 }\n",
+        )
+        .unwrap();
         std::os::unix::fs::symlink(d.join("lib"), d.join("alias")).unwrap();
         let d = std::fs::canonicalize(&d).unwrap();
         let module = d.join("lib/helpers.ax");
@@ -947,7 +953,8 @@ mod tests {
         for p in [d.join("lib"), d.clone(), module.clone(), d.join("alias")] {
             let got = fs_write_disjoint(&pin(&p), w, "f.ax", modules);
             assert!(
-                got.as_ref().is_err_and(|why| why.contains("covers the imported module")),
+                got.as_ref()
+                    .is_err_and(|why| why.contains("covers the imported module")),
                 "ATTACK: NH-R1 security F5 an fs_write pin over an imported module was admitted: \
                  {} {got:?}",
                 p.display()

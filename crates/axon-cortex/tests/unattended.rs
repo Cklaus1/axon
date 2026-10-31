@@ -118,7 +118,11 @@ fn setup(name: &str) -> Setup {
     let sk = rl::SealKey::derive(OP_KEY).unwrap().to_hex();
     private_write(&seal, format!("{sk}\n").as_bytes());
     let opt_in = ops.join("opt-in");
-    std::fs::write(&opt_in, "decision: governance/decisions/nh-r1-test-enable.md\n").unwrap();
+    std::fs::write(
+        &opt_in,
+        "decision: governance/decisions/nh-r1-test-enable.md\n",
+    )
+    .unwrap();
     Setup {
         envelope: ops.join("envelope.json"),
         root,
@@ -146,7 +150,11 @@ fn envelope_pinned(s: &Setup, pins: ScopePins) -> RepairEnvelope {
     let (rows, pinned) = auth::gate_rows(&fence, &caps, &pins, "ai");
     assert!(rows.iter().all(|r| r.admit), "{rows:?}");
     let fence_sha = pinned.unwrap().sha256();
-    let ScopePins { fs_read, fs_write, net } = pins;
+    let ScopePins {
+        fs_read,
+        fs_write,
+        net,
+    } = pins;
     let imports = auth::imports_digest(&s.axon, &s.ws, "broken.ax", WALL).unwrap();
     let checker = sha(&std::fs::read(&s.axon).unwrap());
     let issued = now();
@@ -621,7 +629,10 @@ fn s13_an_import_changed_by_a_check_stops_the_next_dispatch() {
     };
     let scratch = s.root.join("scratch");
     std::fs::create_dir_all(&scratch).unwrap();
-    let scratch = std::fs::canonicalize(&scratch).unwrap().to_string_lossy().into_owned();
+    let scratch = std::fs::canonicalize(&scratch)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     let e = envelope_pinned(
         &s,
         ScopePins {
@@ -641,7 +652,8 @@ fn s13_an_import_changed_by_a_check_stops_the_next_dispatch() {
         o.stderr
     );
     assert!(
-        o.stderr.contains("the import closure changed before a check dispatch"),
+        o.stderr
+            .contains("the import closure changed before a check dispatch"),
         "{}",
         o.stderr
     );
@@ -821,7 +833,12 @@ fn s6_a_dotenv_steers_nothing() {
             std::fs::write(s.ws.join(".env"), &dotenv).unwrap();
             run_full(&s, &s.axon, &[], &[], &s.opted_in(), Some(&s.ws))
         } else {
-            run_with(&s, &s.axon, &[], &[("AXON_DOTENV", named.to_str().unwrap())])
+            run_with(
+                &s,
+                &s.axon,
+                &[],
+                &[("AXON_DOTENV", named.to_str().unwrap())],
+            )
         };
         assert!(
             !log.exists(),
@@ -845,13 +862,23 @@ fn s6_a_relative_fs_pin_is_refused() {
         std::os::unix::fs::symlink(s.root.join("ops"), s.ws.join("out")).unwrap();
         let scratch = s.root.join("scratch");
         std::fs::create_dir_all(&scratch).unwrap();
-        let scratch = std::fs::canonicalize(scratch).unwrap().to_string_lossy().into_owned();
+        let scratch = std::fs::canonicalize(scratch)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         let (fs_read, fs_write) = if kind == "fs_read" {
             (vec!["out".to_string()], vec![scratch])
         } else {
             (vec![scratch], vec!["out".to_string()])
         };
-        let e = envelope_pinned(&s, ScopePins { fs_read, fs_write, net: vec![] });
+        let e = envelope_pinned(
+            &s,
+            ScopePins {
+                fs_read,
+                fs_write,
+                net: vec![],
+            },
+        );
         mint(&s, &e);
         let o = run(&s, &[]);
         refused_over(
@@ -859,7 +886,9 @@ fn s6_a_relative_fs_pin_is_refused() {
             &o,
             &e,
             &format!("scopes.{kind} entry \"out\" is relative"),
-            &format!("ATTACK: NH-R1 security F4 a relative {kind} pin through a workspace symlink ran"),
+            &format!(
+                "ATTACK: NH-R1 security F4 a relative {kind} pin through a workspace symlink ran"
+            ),
             &pristine,
         );
         let _ = std::fs::remove_dir_all(&s.root);
@@ -872,13 +901,43 @@ fn s6_a_relative_fs_pin_is_refused() {
 /// overwrite it (self-mint); over the seal key, read it (forge records).
 #[test]
 fn s6_a_pin_over_the_store_or_a_key_is_refused() {
-    type Case = (&'static str, &'static str, fn(&Setup) -> PathBuf, &'static str);
+    type Case = (
+        &'static str,
+        &'static str,
+        fn(&Setup) -> PathBuf,
+        &'static str,
+    );
     let cases: [Case; 5] = [
-        ("fs_write", "the spent store", |s| s.store.clone(), "the spent store"),
-        ("fs_write", "a directory under the spent store", |s| s.store.join("sub"), "the spent store"),
-        ("fs_write", "the verify key", |s| s.key.clone(), "the verify key"),
-        ("fs_read", "the run-record seal key", |s| s.seal.clone(), "the run-record seal key"),
-        ("fs_read", "the operator directory above both keys", |s| s.root.join("ops"), "the spent store"),
+        (
+            "fs_write",
+            "the spent store",
+            |s| s.store.clone(),
+            "the spent store",
+        ),
+        (
+            "fs_write",
+            "a directory under the spent store",
+            |s| s.store.join("sub"),
+            "the spent store",
+        ),
+        (
+            "fs_write",
+            "the verify key",
+            |s| s.key.clone(),
+            "the verify key",
+        ),
+        (
+            "fs_read",
+            "the run-record seal key",
+            |s| s.seal.clone(),
+            "the run-record seal key",
+        ),
+        (
+            "fs_read",
+            "the operator directory above both keys",
+            |s| s.root.join("ops"),
+            "the spent store",
+        ),
     ];
     for (i, (kind, what, pin, why)) in cases.into_iter().enumerate() {
         let s = setup(&format!("s6_keypin_{i}"));
@@ -887,7 +946,10 @@ fn s6_a_pin_over_the_store_or_a_key_is_refused() {
         std::fs::create_dir_all(&scratch).unwrap();
         let canon = |p: PathBuf| {
             let parent = std::fs::canonicalize(p.parent().unwrap()).unwrap();
-            parent.join(p.file_name().unwrap()).to_string_lossy().into_owned()
+            parent
+                .join(p.file_name().unwrap())
+                .to_string_lossy()
+                .into_owned()
         };
         let (pin, scratch) = (canon(pin(&s)), canon(scratch));
         let (fs_read, fs_write) = if kind == "fs_read" {
@@ -895,7 +957,14 @@ fn s6_a_pin_over_the_store_or_a_key_is_refused() {
         } else {
             (vec![scratch], vec![pin])
         };
-        let e = envelope_pinned(&s, ScopePins { fs_read, fs_write, net: vec![] });
+        let e = envelope_pinned(
+            &s,
+            ScopePins {
+                fs_read,
+                fs_write,
+                net: vec![],
+            },
+        );
         mint(&s, &e);
         let o = run(&s, &[]);
         refused_over(
@@ -928,11 +997,26 @@ fn s6_a_bare_axon_runs_the_binary_that_was_hashed() {
     let mark = s.root.join("ops/path-axon-ran");
     common::write_executable(
         &bin.join("axon"),
-        format!("#!/bin/sh\ntouch '{}'\nexec '{}' \"$@\"\n", mark.display(), s.axon.display()),
+        format!(
+            "#!/bin/sh\ntouch '{}'\nexec '{}' \"$@\"\n",
+            mark.display(),
+            s.axon.display()
+        ),
         0o755,
     );
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
-    let o = run_full(&s, Path::new("axon"), &[], &[("PATH", &path)], &s.opted_in(), Some(&cwd));
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let o = run_full(
+        &s,
+        Path::new("axon"),
+        &[],
+        &[("PATH", &path)],
+        &s.opted_in(),
+        Some(&cwd),
+    );
     assert!(
         !mark.exists(),
         "ATTACK: NH-R1 security F7 a PATH interpreter other than the hashed one ran\n{}{}",
@@ -968,15 +1052,50 @@ fn s14_a_host_that_did_not_opt_in_refuses() {
     let dir = s.root.join("ops/opt-in-dir");
     std::fs::create_dir_all(&dir).unwrap();
     fn file(src: &Path) -> OptIn<'_> {
-        OptIn { src: Some(src), mode: "0600", owner: "0" }
+        OptIn {
+            src: Some(src),
+            mode: "0600",
+            owner: "0",
+        }
     }
     let cases: [(&str, OptIn); 7] = [
-        ("no opt-in file", OptIn { src: None, mode: "0600", owner: "0" }),
-        ("an opt-in of mode 0640", OptIn { src: Some(&s.opt_in), mode: "0640", owner: "0" }),
-        ("an opt-in owned by uid 1", OptIn { src: Some(&s.opt_in), mode: "0600", owner: "1" }),
-        ("a directory as its opt-in", OptIn { src: Some(&dir), mode: "0700", owner: "0" }),
+        (
+            "no opt-in file",
+            OptIn {
+                src: None,
+                mode: "0600",
+                owner: "0",
+            },
+        ),
+        (
+            "an opt-in of mode 0640",
+            OptIn {
+                src: Some(&s.opt_in),
+                mode: "0640",
+                owner: "0",
+            },
+        ),
+        (
+            "an opt-in owned by uid 1",
+            OptIn {
+                src: Some(&s.opt_in),
+                mode: "0600",
+                owner: "1",
+            },
+        ),
+        (
+            "a directory as its opt-in",
+            OptIn {
+                src: Some(&dir),
+                mode: "0700",
+                owner: "0",
+            },
+        ),
         ("an opt-in naming no decision record", file(&no_decision)),
-        ("an opt-in holding a line that is not its decision", file(&other_line)),
+        (
+            "an opt-in holding a line that is not its decision",
+            file(&other_line),
+        ),
         ("an opt-in naming two decision records", file(&two)),
     ];
     for (what, opt) in cases {
@@ -1139,7 +1258,8 @@ fn s10_a_witness_run_stalled_past_the_deadline_is_stopped_by_the_grace() {
     let took = t0.elapsed();
     // Process start-up (the namespace wrapper, phase A/B's static children)
     // comes before the deadline's clock and on top of it.
-    let bound = Duration::from_millis(4_000) + axon_cortex::watchdog::HARD_GRACE
+    let bound = Duration::from_millis(4_000)
+        + axon_cortex::watchdog::HARD_GRACE
         + Duration::from_millis(1_500);
     assert!(
         o.code == axon_cortex::watchdog::EXIT_DEADLINE && took <= bound,
@@ -1187,7 +1307,8 @@ fn s10_a_static_child_stalled_before_phase_b_is_bounded_by_the_deadline() {
     let t0 = std::time::Instant::now();
     let o = run_with(&s, &wrapper, &[], &[]);
     let took = t0.elapsed();
-    let bound = Duration::from_millis(4_000) + axon_cortex::watchdog::HARD_GRACE
+    let bound = Duration::from_millis(4_000)
+        + axon_cortex::watchdog::HARD_GRACE
         + Duration::from_millis(1_500);
     assert!(
         took <= bound,

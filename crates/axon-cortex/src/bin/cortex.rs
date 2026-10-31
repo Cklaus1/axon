@@ -875,7 +875,13 @@ fn main() {
     // not a fallback to spectrum that a reader would take for a choice.
     // NH-R1 security F2: an unattended run never reads the selector
     // variables (phase A refused them set; this keeps them unread).
-    let selector_env = |k: &str| if unattended { None } else { std::env::var(k).ok() };
+    let selector_env = |k: &str| {
+        if unattended {
+            None
+        } else {
+            std::env::var(k).ok()
+        }
+    };
     let ranker_spec = axon_cortex::rank::select(
         ranker_flag.as_deref(),
         selector_env(axon_cortex::rank::RANKER_ENV).as_deref(),
