@@ -5,11 +5,11 @@
 
 # Axon Reference
 
-The complete surface of this build — 27 CLI verbs, 344 builtins, 24 attributes, 152 diagnostic codes (139 live, 13 reserved), 67 environment variables.
+The complete surface of this build — 28 CLI verbs, 344 builtins, 24 attributes, 152 diagnostic codes (139 live, 13 reserved), 67 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
-## CLI verbs (27)
+## CLI verbs (28)
 
 | Verb | Purpose |
 |---|---|
@@ -18,6 +18,7 @@ Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap
 | `axon build` | Compile one or more .ax files to a native binary |
 | `axon cache` | Manage the incremental compilation cache |
 | `axon caps` | Report the capabilities and effects a program, or one fn, can exercise |
+| `axon card` | IG2 - print the language card a model reads before writing Axon: curated syntax, the program rules, and every builtin's signature from the same table `axon reference` prints (core groups add the first doc sentence). Deterministic: the same binary prints the same bytes |
 | `axon check` | Type-check a .ax file and report errors |
 | `axon complexity` | Report the description-length (MDL) complexity of a .ax file |
 | `axon deploy` | Run a .ax program through the full safety-gate pipeline, then deploy |

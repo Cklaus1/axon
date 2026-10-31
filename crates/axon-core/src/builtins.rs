@@ -21,6 +21,20 @@ pub struct BuiltinFn {
     pub doc: &'static str,
 }
 
+impl BuiltinFn {
+    /// The source-level signature, `name(p: T, q: U) -> R` - the ONE rendering
+    /// `axon reference` and `axon card` both print, so the two cannot disagree
+    /// about a builtin.
+    pub fn signature(&self) -> String {
+        let params: Vec<String> = self
+            .params
+            .iter()
+            .map(|(n, t)| format!("{n}: {t}"))
+            .collect();
+        format!("{}({}) -> {}", self.name, params.join(", "), self.ret)
+    }
+}
+
 // ── Built-in table ───────────────────────────────────────────────────────────
 
 /// Every built-in function available in an Axon program.
