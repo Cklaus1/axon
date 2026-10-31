@@ -1,0 +1,281 @@
+// String distances over Unicode characters: Levenshtein, restricted
+// Damerau-Levenshtein (optimal string alignment), shared prefixes and
+// suffixes, and nearest-word lookup against a word list.
+
+fn prefix_len(x: [str], y: [str]) -> i64 {
+    let k = 0
+    while k < len(x) && k < len(y) && str_eq(x[k], y[k]) {
+        k = k + 1
+    }
+    k
+}
+
+fn levenshtein(a: str, b: str) -> i64 {
+    let x = str_chars(a)
+    let y = str_chars(b)
+    let n = len(x)
+    let m = len(y)
+    if n == 0 {
+        return m
+    }
+    if m == 0 {
+        return n
+    }
+    let prev = arr_range(0, m + 1)
+    let cur = arr_repeat(0, m + 1)
+    let i = 1
+    while i <= n {
+        cur[0] = i
+        let j = 1
+        while j <= m {
+            let cost = if str_eq(x[i - 1], y[j - 1]) { 0 } else { 1 }
+            let best = prev[j - 1] + cost
+            if prev[j] + 1 < best {
+                best = prev[j] + 1
+            }
+            if cur[j - 1] + 1 < best {
+                best = cur[j - 1] + 1
+            }
+            cur[j] = best
+            j = j + 1
+        }
+        for k in 0..(m + 1) {
+            prev[k] = cur[k]
+        }
+        i = i + 1
+    }
+    prev[m]
+}
+
+fn damerau(a: str, b: str) -> i64 {
+    let x = str_chars(a)
+    let y = str_chars(b)
+    let n = len(x)
+    let m = len(y)
+    let w = m + 1
+    let d = arr_repeat(0, (n + 1) * w)
+    for i in 0..(n + 1) {
+        d[i * w] = i
+    }
+    for j in 0..w {
+        d[j] = j
+    }
+    let i = 1
+    while i <= n {
+        let j = 1
+        while j <= m {
+            let cost = if str_eq(x[i - 1], y[j - 1]) { 0 } else { 1 }
+            let best = d[(i - 1) * w + j - 1] + cost
+            let del = d[(i - 1) * w + j] + 1
+            let ins = d[i * w + j - 1] + 1
+            if del < best {
+                best = del
+            }
+            if ins < best {
+                best = ins
+            }
+            if i > 1 && j > 1 && str_eq(x[i - 1], y[j - 2]) && str_eq(x[i - 2], y[j - 1]) {
+                let swap = d[(i - 2) * w + j - 2] + 1
+                if swap < best {
+                    best = swap
+                }
+            }
+            d[i * w + j] = best
+            j = j + 1
+        }
+        i = i + 1
+    }
+    d[n * w + m]
+}
+
+fn shared_affix(words: [str], from_end: bool) -> str {
+    let n = len(words)
+    if n == 0 {
+        return ""
+    }
+    let base = str_chars(words[0])
+    let size = len(base)
+    let keep = size
+    let w = 1
+    while w < n && keep > 0 {
+        let cs = str_chars(words[w])
+        let other = len(cs)
+        let limit = min_i64(keep, other)
+        let k = 0
+        let matching = true
+        while k < limit && matching {
+            let p = if from_end { size - 1 - k } else { k }
+            let q = if from_end { other - 1 - k } else { k }
+            if str_eq(base[p], cs[q]) {
+                k = k + 1
+            } else {
+                matching = false
+            }
+        }
+        keep = k
+        w = w + 1
+    }
+    if from_end {
+        str_join(arr_drop(base, size - keep), "")
+    } else {
+        str_join(arr_take(base, keep), "")
+    }
+}
+
+fn closest_word(word: str, candidates: [str], max_dist: i64) -> str {
+    let target = str_to_lower(word)
+    let tc = str_chars(target)
+    let best = ""
+    let best_d = max_dist + 1
+    let best_pre = -1
+    let found_exact = false
+    let i = 0
+    while i < len(candidates) && !found_exact {
+        let lc = str_to_lower(candidates[i])
+        let cc = str_chars(lc)
+        let d = damerau(target, lc)
+        if d == 0 {
+            best = candidates[i]
+            found_exact = true
+        } else if d <= max_dist {
+            let pre = prefix_len(tc, cc)
+            if d < best_d || (d == best_d && pre > best_pre) {
+                best = candidates[i]
+                best_d = d
+                best_pre = pre
+            }
+        }
+        i = i + 1
+    }
+    best
+}
+
+fn ranked_matches(word: str, candidates: [str], k: i64) -> [str] {
+    let limit = max_i64(1, str_len_chars(word) / 2)
+    let names: [str] = []
+    let dists: [i64] = []
+    for i in 0..len(candidates) {
+        let d = levenshtein(word, candidates[i])
+        if d <= limit && !arr_contains(names, candidates[i]) {
+            names = arr_push(names, candidates[i])
+            dists = arr_push(dists, d)
+        }
+    }
+    let n = len(names)
+    let i = 1
+    while i < n {
+        let j = i
+        while j > 0 && (dists[j - 1] > dists[j] || (dists[j - 1] == dists[j] && str_cmp(names[j - 1], names[j]) > 0)) {
+            let td = dists[j - 1]
+            dists[j - 1] = dists[j]
+            dists[j] = td
+            let tn = names[j - 1]
+            names[j - 1] = names[j]
+            names[j] = tn
+            j = j - 1
+        }
+        i = i + 1
+    }
+    arr_take(names, k)
+}
+
+@[test]
+fn test_levenshtein_classic() {
+    assert_eq(levenshtein("kitten", "sitting"), 3)
+    assert_eq(levenshtein("flaw", "lawn"), 2)
+}
+
+@[test]
+fn test_levenshtein_empty_sides() {
+    assert_eq(levenshtein("", "abc"), 3)
+    assert_eq(levenshtein("abcd", ""), 4)
+    assert_eq(levenshtein("", ""), 0)
+}
+
+@[test]
+fn test_levenshtein_transposition_costs_two() {
+    assert_eq(levenshtein("abcd", "acbd"), 2)
+}
+
+@[test]
+fn test_levenshtein_unicode() {
+    assert_eq(levenshtein("café", "cafe"), 1)
+    assert_eq(levenshtein("naïve", "naive"), 1)
+}
+
+@[test]
+fn test_damerau_transposition() {
+    assert_eq(damerau("abcd", "acbd"), 1)
+    assert_eq(damerau("teh", "the"), 1)
+}
+
+@[test]
+fn test_damerau_restricted_alignment() {
+    assert_eq(damerau("ca", "abc"), 3)
+}
+
+@[test]
+fn test_damerau_general() {
+    assert_eq(damerau("kitten", "sitting"), 3)
+    assert_eq(damerau("", "xy"), 2)
+    assert_eq(damerau("same", "same"), 0)
+}
+
+@[test]
+fn test_shared_affix_prefix() {
+    assert_eq_str(shared_affix(["interview", "internet", "interval"], false), "inter")
+}
+
+@[test]
+fn test_shared_affix_suffix() {
+    assert_eq_str(shared_affix(["running", "jumping", "sing"], true), "ing")
+}
+
+@[test]
+fn test_shared_affix_none_shared() {
+    assert_eq_str(shared_affix(["apple", "banana"], false), "")
+    assert_eq_str(shared_affix([], true), "")
+}
+
+@[test]
+fn test_shared_affix_single_and_unicode() {
+    assert_eq_str(shared_affix(["solo"], false), "solo")
+    assert_eq_str(shared_affix(["déjà", "voilà"], true), "à")
+}
+
+@[test]
+fn test_closest_word_typo() {
+    assert_eq_str(closest_word("recieve", ["receive", "relieve", "recipe"], 2), "receive")
+}
+
+@[test]
+fn test_closest_word_case_and_exact() {
+    assert_eq_str(closest_word("Apple", ["apply", "APPLE", "ample"], 2), "APPLE")
+}
+
+@[test]
+fn test_closest_word_prefix_tiebreak() {
+    assert_eq_str(closest_word("cart", ["dart", "card"], 1), "card")
+}
+
+@[test]
+fn test_closest_word_too_far() {
+    assert_eq_str(closest_word("zebra", ["apple", "mango"], 2), "")
+    assert_eq_str(closest_word("mangoes", ["apple", "mango"], 2), "mango")
+}
+
+@[test]
+fn test_ranked_matches_order() {
+    assert(ranked_matches("hello", ["help", "hello", "yellow", "hollow", "world"], 3) == ["hello", "help", "hollow"])
+}
+
+@[test]
+fn test_ranked_matches_dedup_and_limit() {
+    assert(ranked_matches("cat", ["bat", "cut", "bat", "dog"], 5) == ["bat", "cut"])
+}
+
+@[test]
+fn test_ranked_matches_none() {
+    assert(ranked_matches("cat", ["elephant", "giraffe"], 3) == [])
+    assert(ranked_matches("ab", ["ba", "abc", "xy"], 1) == ["abc"])
+}

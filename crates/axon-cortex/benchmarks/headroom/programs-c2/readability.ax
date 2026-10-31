@@ -1,0 +1,256 @@
+// Syllable, word and sentence counting with Flesch and Gunning fog scores.
+
+fn count_syllables(word: str) -> i64 {
+    let w = ""
+    for ch in str_chars(str_to_lower(word)) {
+        if char_is_alpha(ch) {
+            w = w + ch
+        }
+    }
+    let n = str_len(w)
+    if n == 0 {
+        return 0
+    }
+    if n <= 3 {
+        return 1
+    }
+    let vowels = "aeiouy"
+    let count = 0
+    let prev_vowel = false
+    let i = 0
+    while i < n {
+        let vowel = str_contains(vowels, str_slice(w, i, i + 1))
+        if vowel && !prev_vowel {
+            count = count + 1
+        }
+        prev_vowel = vowel
+        i = i + 1
+    }
+    let last2 = str_slice(w, n - 2, n - 1)
+    let last3 = str_slice(w, n - 3, n - 2)
+    if str_ends_with(w, "e") {
+        let syllabic_le = last2 == "l" && !str_contains(vowels, last3)
+        if !syllabic_le && !str_contains(vowels, last2) {
+            count = count - 1
+        }
+    } else if str_ends_with(w, "ed") && !str_contains("aeiouytd", last3) {
+        count = count - 1
+    } else if str_ends_with(w, "es") && !str_contains("aeiouysxzcgh", last3) {
+        count = count - 1
+    }
+    max_i64(count, 1)
+}
+
+fn count_sentences(text: str) -> i64 {
+    let flat = str_replace(str_replace(text, "\n", " "), "\t", " ")
+    let count = 0
+    let pending = false
+    for raw in str_split(flat, " ") {
+        let core = str_trim(raw)
+        if str_len(core) == 0 {
+            continue
+        }
+        pending = true
+        while str_ends_with(core, "\"") || str_ends_with(core, ")") || str_ends_with(core, "'") {
+            core = str_slice(core, 0, str_len(core) - 1)
+        }
+        let lower = str_to_lower(core)
+        let terminal = str_ends_with(core, ".") || str_ends_with(core, "!") || str_ends_with(core, "?")
+        let titles = ["mr.", "mrs.", "ms.", "dr.", "prof.", "st.", "vs.", "e.g.", "i.e."]
+        let initial = str_len(core) == 2 && char_is_alpha(str_slice(core, 0, 1)) && str_ends_with(core, ".")
+        if terminal && !initial && !arr_contains(titles, lower) {
+            count = count + 1
+            pending = false
+        }
+    }
+    if pending {
+        count = count + 1
+    }
+    count
+}
+
+fn split_words(text: str) -> [str] {
+    let words: [str] = []
+    let current = ""
+    let chars = str_chars(text + " ")
+    let n = len(chars)
+    let i = 0
+    while i < n {
+        let ch = chars[i]
+        let joint = ch == "'" || ch == "-"
+        let next_alpha = i + 1 < n && char_is_alpha(chars[i + 1])
+        if char_is_alpha(ch) || char_is_digit(ch) {
+            current = current + str_to_lower(ch)
+        } else if joint && next_alpha && str_len(current) > 0 {
+            current = current + ch
+        } else if str_len(current) > 0 {
+            if str_ends_with(current, "'s") {
+                words = arr_push(words, str_slice(current, 0, str_len(current) - 2))
+            } else {
+                words = arr_push(words, current)
+            }
+            current = ""
+        }
+        i = i + 1
+    }
+    words
+}
+
+fn gunning_fog(text: str) -> f64 {
+    let words = split_words(text)
+    let total = len(words)
+    if total == 0 {
+        return 0.0
+    }
+    let sentences = max_i64(count_sentences(text), 1)
+    let complex = 0
+    for w in words {
+        if str_contains(w, "-") {
+            continue
+        }
+        let cut = 0
+        if str_ends_with(w, "ing") {
+            cut = 3
+        } else if str_ends_with(w, "ed") || str_ends_with(w, "es") {
+            cut = 2
+        }
+        let stem = if str_len(w) - cut >= 3 { str_slice(w, 0, str_len(w) - cut) } else { str_trim(w) }
+        if count_syllables(stem) >= 3 {
+            complex = complex + 1
+        }
+    }
+    let avg = i64_to_f64(total) / i64_to_f64(sentences)
+    let pct = 100.0 * i64_to_f64(complex) / i64_to_f64(total)
+    let score = 0.4 * (avg + pct)
+    round_f64(score * 100.0) / 100.0
+}
+
+fn score_report(text: str) -> str {
+    let words = split_words(text)
+    let total = len(words)
+    if total == 0 {
+        return "empty"
+    }
+    let sentences = max_i64(count_sentences(text), 1)
+    let syllables = 0
+    for w in words {
+        syllables = syllables + count_syllables(w)
+    }
+    let wps = i64_to_f64(total) / i64_to_f64(sentences)
+    let spw = i64_to_f64(syllables) / i64_to_f64(total)
+    let ease = round_f64((206.835 - 1.015 * wps - 84.6 * spw) * 10.0) / 10.0
+    let grade = max_f64(round_f64((0.39 * wps + 11.8 * spw - 15.59) * 10.0) / 10.0, 0.0)
+    let label = "very difficult"
+    if ease >= 90.0 {
+        label = "very easy"
+    } else if ease >= 80.0 {
+        label = "easy"
+    } else if ease >= 70.0 {
+        label = "fairly easy"
+    } else if ease >= 60.0 {
+        label = "standard"
+    } else if ease >= 50.0 {
+        label = "fairly difficult"
+    } else if ease >= 30.0 {
+        label = "difficult"
+    }
+    let counts = "words=" + to_str(total) + " sentences=" + to_str(sentences) + " syllables=" + to_str(syllables)
+    counts + " ease=" + to_str_f64(ease) + " grade=" + to_str_f64(grade) + " level=" + label
+}
+
+@[test]
+fn test_count_syllables_vowel_groups() {
+    assert_eq(count_syllables("readability"), 5)
+    assert_eq(count_syllables("beautiful"), 3)
+    assert_eq(count_syllables("queue"), 1)
+}
+
+@[test]
+fn test_count_syllables_silent_endings() {
+    assert_eq(count_syllables("make"), 1)
+    assert_eq(count_syllables("whale"), 1)
+    assert_eq(count_syllables("jumped"), 1)
+    assert_eq(count_syllables("times"), 1)
+}
+
+@[test]
+fn test_count_syllables_syllabic_endings() {
+    assert_eq(count_syllables("syllable"), 3)
+    assert_eq(count_syllables("wanted"), 2)
+    assert_eq(count_syllables("boxes"), 2)
+    assert_eq(count_syllables("free"), 1)
+}
+
+@[test]
+fn test_count_syllables_strips_punctuation() {
+    assert_eq(count_syllables("Hello!"), 2)
+    assert_eq(count_syllables("cat"), 1)
+    assert_eq(count_syllables("--"), 0)
+}
+
+@[test]
+fn test_count_sentences_basic_terminators() {
+    assert_eq(count_sentences("It rained. We stayed in! Did you go out?"), 3)
+}
+
+@[test]
+fn test_count_sentences_titles_and_initials() {
+    assert_eq(count_sentences("Dr. Smith met J. Doe at 3.30 today. They talked."), 2)
+}
+
+@[test]
+fn test_count_sentences_unterminated_tail_and_quotes() {
+    assert_eq(count_sentences("She said \"stop.\" Then silence\nand more"), 2)
+}
+
+@[test]
+fn test_split_words_lowercases_and_drops_punctuation() {
+    let w = split_words("The cat, the HAT; and 42 dogs!")
+    assert_eq_str(str_join(w, "|"), "the|cat|the|hat|and|42|dogs")
+}
+
+@[test]
+fn test_split_words_keeps_inner_joints() {
+    let w = split_words("Don't over-think -- it's well-known.")
+    assert_eq_str(str_join(w, "|"), "don't|over-think|it|well-known")
+}
+
+@[test]
+fn test_split_words_strips_possessive() {
+    let w = split_words("Ada's notes' margin")
+    assert_eq(len(w), 3)
+    assert_eq_str(w[0], "ada")
+    assert_eq_str(w[1], "notes")
+}
+
+@[test]
+fn test_gunning_fog_simple_text() {
+    assert_eq_f64(gunning_fog("The cat sat on the mat. The dog ran."), 1.8)
+}
+
+@[test]
+fn test_gunning_fog_complex_words() {
+    assert_eq_f64(gunning_fog("Universities encourage interdisciplinary research."), 31.6)
+}
+
+@[test]
+fn test_gunning_fog_ignores_suffix_and_hyphen() {
+    assert_eq_f64(gunning_fog("Cats jumped over well-organized boxes."), 2.0)
+}
+
+@[test]
+fn test_score_report_easy_text() {
+    let got = score_report("The cat sat on the mat. The dog ran.")
+    assert_eq_str(got, "words=9 sentences=2 syllables=9 ease=117.7 grade=0 level=very easy")
+}
+
+@[test]
+fn test_score_report_hard_text() {
+    let got = score_report("Universities encourage interdisciplinary research.")
+    assert_eq_str(got, "words=4 sentences=1 syllables=17 ease=-156.8 grade=36.1 level=very difficult")
+}
+
+@[test]
+fn test_score_report_empty_text() {
+    assert_eq_str(score_report("  ...  "), "empty")
+}

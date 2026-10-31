@@ -1,0 +1,305 @@
+// Currency conversion with quoted spreads, transaction fees and rounding to
+// each currency's minor unit. Rates are expressed in millionths (micro units).
+
+fn minor_exponent(code: str) -> i64 {
+    if code == "JPY" || code == "KRW" || code == "ISK" {
+        0
+    } else if code == "KWD" || code == "BHD" || code == "OMR" {
+        3
+    } else if code == "USD" || code == "EUR" || code == "GBP" || code == "CHF" || code == "CAD" {
+        2
+    } else {
+        -1
+    }
+}
+
+// Parses a non-negative amount such as "1,234.56" into minor units of the
+// currency. Returns -1 for malformed text or too many decimal places.
+fn parse_amount_minor(text: str, code: str) -> i64 {
+    let places = minor_exponent(code)
+    let s = str_trim(text)
+    if places < 0 || str_len(s) == 0 {
+        return -1
+    }
+    let whole = 0
+    let frac = 0
+    let frac_digits = 0
+    let seen_point = false
+    let seen_digit = false
+    let prev_comma = false
+    for ch in str_chars(s) {
+        if char_is_digit(ch) {
+            let d = parse_int_or(ch, 0)
+            if seen_point {
+                frac_digits = frac_digits + 1
+                if frac_digits > places {
+                    return -1
+                }
+                frac = frac * 10 + d
+            } else {
+                whole = whole * 10 + d
+            }
+            seen_digit = true
+            prev_comma = false
+        } else if ch == "," {
+            if seen_point || !seen_digit || prev_comma {
+                return -1
+            }
+            prev_comma = true
+        } else if ch == "." {
+            if seen_point || prev_comma || places == 0 {
+                return -1
+            }
+            seen_point = true
+        } else {
+            return -1
+        }
+    }
+    if !seen_digit || prev_comma {
+        return -1
+    }
+    while frac_digits < places {
+        frac = frac * 10
+        frac_digits = frac_digits + 1
+    }
+    whole * pow_i64(10, places) + frac
+}
+
+// Rounds a value in micro units of the major currency to minor units.
+// Modes: "half_even", "half_up", "up", "down", "ceiling", "floor".
+fn round_minor(value_micro: i64, exponent: i64, mode: str) -> i64 {
+    let e = clamp_i64(exponent, 0, 6)
+    let divisor = pow_i64(10, 6 - e)
+    let negative = value_micro < 0
+    let mag = abs_i64(value_micro)
+    let q = mag / divisor
+    let r = mag % divisor
+    if r > 0 {
+        if mode == "up" {
+            q = q + 1
+        } else if mode == "half_up" {
+            if r * 2 >= divisor {
+                q = q + 1
+            }
+        } else if mode == "half_even" {
+            if r * 2 > divisor || (r * 2 == divisor && q % 2 == 1) {
+                q = q + 1
+            }
+        } else if mode == "ceiling" {
+            if !negative {
+                q = q + 1
+            }
+        } else if mode == "floor" {
+            if negative {
+                q = q + 1
+            }
+        }
+    }
+    if negative {
+        0 - q
+    } else {
+        q
+    }
+}
+
+// Converts amount_minor of `from` into minor units of `to`. The mid rate is
+// units of `to` per one `from`, unless inverse is set, in which case it is
+// quoted as units of `from` per one `to`. Half the spread is taken from the
+// customer's rate. Returns -1 for unknown currencies or unusable quotes.
+fn convert_minor(amount_minor: i64, from: str, to: str, mid_rate_micro: i64, inverse: bool, spread_bps: i64) -> i64 {
+    let ef = minor_exponent(from)
+    let et = minor_exponent(to)
+    if ef < 0 || et < 0 || amount_minor < 0 {
+        return -1
+    }
+    if from == to {
+        return amount_minor
+    }
+    if mid_rate_micro <= 0 || spread_bps < 0 || spread_bps > 2000 {
+        return -1
+    }
+    let mid = mid_rate_micro
+    if inverse {
+        mid = (1000000000000 + mid_rate_micro / 2) / mid_rate_micro
+    }
+    let rate = mid * (20000 - spread_bps) / 20000
+    if rate <= 0 {
+        return -1
+    }
+    let major_micro = amount_minor * pow_i64(10, 6 - ef)
+    let whole = major_micro / 1000000
+    let frac = major_micro % 1000000
+    let to_micro = whole * rate + frac * rate / 1000000
+    round_minor(to_micro, et, "half_even")
+}
+
+// Percentage fee in basis points: the full rate applies to the first 1,000
+// major units and half the rate above that. The result is rounded up to a
+// whole minor unit, then bounded by the minimum, the cap (0 for none) and
+// the amount itself. Amounts at or above waiver_minor (when positive) are free.
+fn fee_minor(amount_minor: i64, code: str, pct_bps: i64, min_fee: i64, max_fee: i64, waiver_minor: i64) -> i64 {
+    let places = minor_exponent(code)
+    if places < 0 || amount_minor < 0 || pct_bps < 0 {
+        return -1
+    }
+    if amount_minor == 0 {
+        return 0
+    }
+    if waiver_minor > 0 && amount_minor >= waiver_minor {
+        return 0
+    }
+    let band = 1000 * pow_i64(10, places)
+    let first = min_i64(amount_minor, band)
+    let rest = amount_minor - first
+    let scaled = first * pct_bps * 2 + rest * pct_bps
+    let fee = scaled / 20000
+    if scaled % 20000 != 0 {
+        fee = fee + 1
+    }
+    if fee < min_fee {
+        fee = min_fee
+    }
+    if max_fee > 0 && fee > max_fee {
+        fee = max_fee
+    }
+    if fee > amount_minor {
+        fee = amount_minor
+    }
+    fee
+}
+
+fn format_amount(amount_minor: i64, code: str) -> str {
+    let places = minor_exponent(code)
+    if places < 0 {
+        return "?"
+    }
+    let negative = amount_minor < 0
+    let mag = abs_i64(amount_minor)
+    let unit = pow_i64(10, places)
+    let digits = to_str(mag / unit)
+    let grouped = ""
+    let count = 0
+    let i = str_len(digits) - 1
+    while i >= 0 {
+        if count > 0 && count % 3 == 0 {
+            grouped = "," + grouped
+        }
+        grouped = str_slice(digits, i, i + 1) + grouped
+        count = count + 1
+        i = i - 1
+    }
+    let body = grouped
+    if places > 0 {
+        body = body + "." + str_pad_start(to_str(mag % unit), places, "0")
+    }
+    let sign = ""
+    if negative {
+        sign = "-"
+    }
+    sign + code + " " + body
+}
+
+@[test]
+fn test_parse_amount_with_grouping() {
+    assert_eq(parse_amount_minor("1,234.56", "USD"), 123456)
+    assert_eq(parse_amount_minor("  0.07 ", "GBP"), 7)
+}
+
+@[test]
+fn test_parse_amount_pads_fraction() {
+    assert_eq(parse_amount_minor("1234.5", "KWD"), 1234500)
+    assert_eq(parse_amount_minor("12", "EUR"), 1200)
+    assert_eq(parse_amount_minor("980", "JPY"), 980)
+}
+
+@[test]
+fn test_parse_amount_rejects_malformed() {
+    assert_eq(parse_amount_minor("12.5", "JPY"), -1)
+    assert_eq(parse_amount_minor("1.234", "EUR"), -1)
+    assert_eq(parse_amount_minor("1,,000", "USD"), -1)
+    assert_eq(parse_amount_minor("-5.00", "USD"), -1)
+    assert_eq(parse_amount_minor("10.00", "XYZ"), -1)
+}
+
+@[test]
+fn test_round_minor_half_even_ties() {
+    assert_eq(round_minor(1235000, 2, "half_even"), 124)
+    assert_eq(round_minor(1225000, 2, "half_even"), 122)
+    assert_eq(round_minor(1225001, 2, "half_even"), 123)
+}
+
+@[test]
+fn test_round_minor_half_up_signed() {
+    assert_eq(round_minor(1225000, 2, "half_up"), 123)
+    assert_eq(round_minor(-1225000, 2, "half_up"), -123)
+    assert_eq(round_minor(-1224999, 2, "half_up"), -122)
+}
+
+@[test]
+fn test_round_minor_directed_modes() {
+    assert_eq(round_minor(1000001, 0, "up"), 2)
+    assert_eq(round_minor(9999999, 3, "down"), 9999)
+    assert_eq(round_minor(-1220001, 2, "floor"), -123)
+    assert_eq(round_minor(-1220001, 2, "ceiling"), -122)
+}
+
+@[test]
+fn test_convert_usd_to_eur_with_spread() {
+    assert_eq(convert_minor(10000, "USD", "EUR", 920000, false, 50), 9177)
+}
+
+@[test]
+fn test_convert_usd_to_jpy_rounds_to_yen() {
+    assert_eq(convert_minor(12345, "USD", "JPY", 151234000, false, 100), 18576)
+}
+
+@[test]
+fn test_convert_inverse_quote() {
+    assert_eq(convert_minor(1000000, "JPY", "USD", 151234000, true, 0), 661200)
+    assert_eq(convert_minor(5000, "GBP", "KWD", 3250000, true, 0), 15385)
+}
+
+@[test]
+fn test_convert_same_and_invalid() {
+    assert_eq(convert_minor(4321, "EUR", "EUR", 1000000, false, 80), 4321)
+    assert_eq(convert_minor(4321, "EUR", "ABC", 1000000, false, 80), -1)
+    assert_eq(convert_minor(4321, "EUR", "USD", 0, false, 80), -1)
+}
+
+@[test]
+fn test_fee_percentage_bands() {
+    assert_eq(fee_minor(50000, "USD", 150, 200, 0, 0), 750)
+    assert_eq(fee_minor(250000, "USD", 150, 200, 0, 0), 2625)
+}
+
+@[test]
+fn test_fee_minimum_cap_and_amount_bound() {
+    assert_eq(fee_minor(1000, "USD", 150, 200, 0, 0), 200)
+    assert_eq(fee_minor(250000, "USD", 150, 200, 2000, 0), 2000)
+    assert_eq(fee_minor(100, "USD", 150, 200, 0, 0), 100)
+}
+
+@[test]
+fn test_fee_rounds_up_in_yen() {
+    assert_eq(fee_minor(12345, "JPY", 99, 0, 0, 0), 67)
+    assert_eq(fee_minor(500000, "USD", 150, 200, 0, 400000), 0)
+}
+
+@[test]
+fn test_format_amount_two_decimals() {
+    assert_eq_str(format_amount(123456, "USD"), "USD 1,234.56")
+    assert_eq_str(format_amount(-5, "EUR"), "-EUR 0.05")
+}
+
+@[test]
+fn test_format_amount_zero_and_three_decimals() {
+    assert_eq_str(format_amount(1234567, "JPY"), "JPY 1,234,567")
+    assert_eq_str(format_amount(1234500, "KWD"), "KWD 1,234.500")
+    assert_eq_str(format_amount(100, "JPY"), "JPY 100")
+}
+
+@[test]
+fn test_format_amount_unknown_currency() {
+    assert_eq_str(format_amount(100, "XYZ"), "?")
+    assert_eq_str(format_amount(100000000, "GBP"), "GBP 1,000,000.00")
+}

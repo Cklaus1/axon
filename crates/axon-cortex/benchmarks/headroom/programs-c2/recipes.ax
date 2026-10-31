@@ -1,0 +1,313 @@
+// Recipe scaling with exact fractions and kitchen unit conversion.
+
+fn gcd(a: i64, b: i64) -> i64 {
+    let x = abs_i64(a)
+    let y = abs_i64(b)
+    while y != 0 {
+        let t = x % y
+        x = y
+        y = t
+    }
+    x
+}
+
+// 1 for volume units, 2 for weight units, 0 when the unit is unknown.
+fn unit_kind(unit: str) -> i64 {
+    let volume = ["tsp", "tbsp", "floz", "cup", "pint", "quart", "gallon", "ml", "l"]
+    let weight = ["g", "kg", "oz", "lb"]
+    if arr_contains(volume, unit) {
+        1
+    } else if arr_contains(weight, unit) {
+        2
+    } else {
+        0
+    }
+}
+
+// Size of one unit in millilitres (volume) or grams (weight), kitchen approximations.
+fn unit_base(unit: str) -> i64 {
+    let names = ["tsp", "tbsp", "floz", "cup", "pint", "quart", "gallon", "ml", "l", "g", "kg", "oz", "lb"]
+    let sizes = [5, 15, 30, 240, 480, 960, 3840, 1, 1000, 1, 1000, 28, 454]
+    for i in 0..len(names) {
+        if names[i] == unit {
+            return sizes[i]
+        }
+    }
+    0
+}
+
+// Parses "2", "3/4" or "1 1/2" into a reduced [numerator, denominator].
+// Malformed input yields [0, 0].
+fn parse_quantity(text: str) -> [i64] {
+    let parts = arr_filter(str_split(str_trim(text), " "), |p| p != "")
+    let whole = 0
+    let frac = ""
+    if len(parts) == 1 {
+        if str_contains(parts[0], "/") {
+            frac = parts[0]
+        } else {
+            whole = parse_int_or(parts[0], -1)
+        }
+    } else if len(parts) == 2 {
+        whole = parse_int_or(parts[0], -1)
+        frac = parts[1]
+    } else {
+        return [0, 0]
+    }
+    if whole < 0 {
+        return [0, 0]
+    }
+    let num = 0
+    let den = 1
+    if frac != "" {
+        let pieces = str_split(frac, "/")
+        if len(pieces) != 2 {
+            return [0, 0]
+        }
+        num = parse_int_or(pieces[0], -1)
+        den = parse_int_or(pieces[1], 0)
+        if num < 0 || den <= 0 {
+            return [0, 0]
+        }
+    }
+    let total = whole * den + num
+    let g = gcd(total, den)
+    [total / g, den / g]
+}
+
+// Renders a fraction as a mixed number such as "1 1/2" or "-3/4".
+fn format_mixed(num: i64, den: i64) -> str {
+    if den == 0 {
+        return ""
+    }
+    let n = num
+    let d = den
+    if d < 0 {
+        n = 0 - n
+        d = 0 - d
+    }
+    let sign = ""
+    if n < 0 {
+        sign = "-"
+        n = 0 - n
+    }
+    let g = gcd(n, d)
+    if g > 1 {
+        n = n / g
+        d = d / g
+    }
+    let whole = n / d
+    let rest = n % d
+    if rest == 0 {
+        return sign + to_str(whole)
+    }
+    let frac = to_str(rest) + "/" + to_str(d)
+    if whole == 0 {
+        return sign + frac
+    }
+    sign + to_str(whole) + " " + frac
+}
+
+// Rounds an amount to the nearest measure a cook can portion:
+// halves, thirds, quarters or eighths.
+fn round_to_kitchen(num: i64, den: i64) -> str {
+    if den <= 0 || num < 0 {
+        return ""
+    }
+    if num == 0 {
+        return "0"
+    }
+    let whole = num / den
+    let rem = num % den
+    let best_k = 0
+    let best_d = 1
+    let best_err = rem
+    for d in [1, 2, 3, 4, 8] {
+        let k = (rem * d * 2 + den) / (den * 2)
+        let err = abs_i64(rem * d - k * den)
+        if err * best_d < best_err * d {
+            best_k = k
+            best_d = d
+            best_err = err
+        }
+    }
+    if best_k == best_d {
+        whole = whole + 1
+        best_k = 0
+    }
+    if best_k == 0 {
+        if whole == 0 {
+            return "pinch"
+        }
+        return to_str(whole)
+    }
+    let g = gcd(best_k, best_d)
+    let frac = to_str(best_k / g) + "/" + to_str(best_d / g)
+    if whole == 0 {
+        return frac
+    }
+    to_str(whole) + " " + frac
+}
+
+// Scales the leading quantity of an ingredient line such as "1 1/2 cup flour".
+// Lines without a quantity are returned with normalised spacing.
+fn scale_recipe_line(line: str, factor_num: i64, factor_den: i64) -> str {
+    let tokens = arr_filter(str_split(str_trim(line), " "), |t| t != "")
+    if len(tokens) == 0 {
+        return ""
+    }
+    if factor_den <= 0 || factor_num < 0 {
+        return str_join(tokens, " ")
+    }
+    let used = 0
+    let qty_text = ""
+    if char_is_digit(str_slice(tokens[0], 0, 1)) {
+        qty_text = tokens[0]
+        used = 1
+        if len(tokens) > 1 && !str_contains(tokens[0], "/") && str_contains(tokens[1], "/") {
+            qty_text = qty_text + " " + tokens[1]
+            used = 2
+        }
+    }
+    if used == 0 {
+        return str_join(tokens, " ")
+    }
+    let q = parse_quantity(qty_text)
+    if q[1] == 0 {
+        return str_join(tokens, " ")
+    }
+    let amount = format_mixed(q[0] * factor_num, q[1] * factor_den)
+    let rest = arr_drop(tokens, used)
+    if len(rest) == 0 {
+        return amount
+    }
+    amount + " " + str_join(rest, " ")
+}
+
+// Converts num/den of one unit into another. Metric targets are given as
+// whole millilitres or grams, or tenths of a litre or kilogram; customary
+// targets are rounded to a kitchen fraction.
+fn convert_measure(num: i64, den: i64, from: str, to: str) -> str {
+    if den <= 0 || num < 0 {
+        return "invalid amount"
+    }
+    let kind_from = unit_kind(from)
+    let kind_to = unit_kind(to)
+    if kind_from == 0 || kind_to == 0 {
+        return "unknown unit"
+    }
+    if kind_from != kind_to {
+        return "incompatible units"
+    }
+    let n = num * unit_base(from)
+    let d = den * unit_base(to)
+    if to == "ml" || to == "g" {
+        return to_str((n * 2 + d) / (d * 2)) + " " + to
+    }
+    if to == "l" || to == "kg" {
+        let tenths = (n * 20 + d) / (d * 2)
+        let w = tenths / 10
+        let f = tenths % 10
+        if f == 0 {
+            return to_str(w) + " " + to
+        }
+        return to_str(w) + "." + to_str(f) + " " + to
+    }
+    let rounded = round_to_kitchen(n, d)
+    if rounded == "pinch" {
+        return "a pinch"
+    }
+    rounded + " " + to
+}
+
+@[test]
+fn test_parse_quantity_mixed() {
+    assert(parse_quantity("1 1/2") == [3, 2])
+}
+
+@[test]
+fn test_parse_quantity_simple_forms() {
+    assert(parse_quantity("3/4") == [3, 4])
+    assert(parse_quantity(" 2 ") == [2, 1])
+    assert(parse_quantity("4/8") == [1, 2])
+}
+
+@[test]
+fn test_parse_quantity_rejects_malformed() {
+    assert(parse_quantity("a/b") == [0, 0])
+    assert(parse_quantity("1/0") == [0, 0])
+    assert(parse_quantity("1 2 3") == [0, 0])
+}
+
+@[test]
+fn test_format_mixed_reduces() {
+    assert_eq_str(format_mixed(6, 4), "1 1/2")
+    assert_eq_str(format_mixed(8, 4), "2")
+}
+
+@[test]
+fn test_format_mixed_signs() {
+    assert_eq_str(format_mixed(-3, 4), "-3/4")
+    assert_eq_str(format_mixed(1, -2), "-1/2")
+    assert_eq_str(format_mixed(-7, 2), "-3 1/2")
+}
+
+@[test]
+fn test_format_mixed_zero_denominator() {
+    assert_eq_str(format_mixed(5, 0), "")
+    assert_eq_str(format_mixed(0, 3), "0")
+}
+
+@[test]
+fn test_round_to_kitchen_thirds() {
+    assert_eq_str(round_to_kitchen(5, 16), "1/3")
+}
+
+@[test]
+fn test_round_to_kitchen_eighths_and_wholes() {
+    assert_eq_str(round_to_kitchen(23, 8), "2 7/8")
+    assert_eq_str(round_to_kitchen(199, 100), "2")
+}
+
+@[test]
+fn test_round_to_kitchen_tiny_amount() {
+    assert_eq_str(round_to_kitchen(1, 100), "pinch")
+    assert_eq_str(round_to_kitchen(0, 4), "0")
+}
+
+@[test]
+fn test_scale_recipe_line_doubles() {
+    assert_eq_str(scale_recipe_line("1 1/2 cup flour", 2, 1), "3 cup flour")
+}
+
+@[test]
+fn test_scale_recipe_line_halves() {
+    assert_eq_str(scale_recipe_line("3/4  tsp   baking soda", 1, 2), "3/8 tsp baking soda")
+    assert_eq_str(scale_recipe_line("3 eggs", 2, 3), "2 eggs")
+}
+
+@[test]
+fn test_scale_recipe_line_without_quantity() {
+    assert_eq_str(scale_recipe_line(" salt  to taste", 3, 1), "salt to taste")
+    assert_eq_str(scale_recipe_line("5", 3, 2), "7 1/2")
+}
+
+@[test]
+fn test_convert_measure_customary() {
+    assert_eq_str(convert_measure(1, 1, "cup", "tbsp"), "16 tbsp")
+    assert_eq_str(convert_measure(1, 2, "l", "cup"), "2 1/8 cup")
+}
+
+@[test]
+fn test_convert_measure_metric() {
+    assert_eq_str(convert_measure(3, 1, "tbsp", "ml"), "45 ml")
+    assert_eq_str(convert_measure(2, 1, "lb", "kg"), "0.9 kg")
+    assert_eq_str(convert_measure(3, 1, "cup", "l"), "0.7 l")
+}
+
+@[test]
+fn test_convert_measure_errors() {
+    assert_eq_str(convert_measure(1, 1, "cup", "g"), "incompatible units")
+    assert_eq_str(convert_measure(1, 1, "cup", "bowl"), "unknown unit")
+    assert_eq_str(convert_measure(1, 0, "cup", "ml"), "invalid amount")
+}

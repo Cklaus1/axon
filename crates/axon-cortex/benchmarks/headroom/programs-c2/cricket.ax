@@ -1,0 +1,270 @@
+// Cricket innings summary from a ball-by-ball list.
+// A ball is a run count off the bat (0 to 7) or "." for a dot ball,
+// "W" for a wicket, "WD" or "WDn" for wides (n total wide runs),
+// "NB" or "NBn" for a no-ball with n runs off the bat,
+// "Bn" for byes and "LBn" for leg byes.
+
+// Returns [total runs, bat runs, extras, legal ball (0 or 1), wicket (0 or 1)],
+// or an empty array for an unrecognised ball.
+fn parse_ball(ball: str) -> [i64] {
+    let s = str_to_upper(str_trim(ball))
+    if s == "." {
+        return [0, 0, 0, 1, 0]
+    }
+    if s == "W" {
+        return [0, 0, 0, 1, 1]
+    }
+    let kind = ""
+    let digits = s
+    if str_starts_with(s, "WD") || str_starts_with(s, "NB") || str_starts_with(s, "LB") {
+        kind = str_slice(s, 0, 2)
+        digits = str_slice(s, 2, str_len(s))
+    } else if str_starts_with(s, "B") {
+        kind = "B"
+        digits = str_slice(s, 1, str_len(s))
+    }
+    let n = 0
+    if str_len(digits) > 0 {
+        if str_len(str_digits_only(digits)) != str_len(digits) {
+            return []
+        }
+        n = parse_int_or(digits, -1)
+    } else if kind != "WD" && kind != "NB" {
+        return []
+    }
+    if n < 0 || n > 7 {
+        return []
+    }
+    if kind == "WD" {
+        let wide_runs = max_i64(n, 1)
+        return [wide_runs, 0, wide_runs, 0, 0]
+    }
+    if kind == "NB" {
+        return [n + 1, n, 1, 0, 0]
+    }
+    if kind == "B" || kind == "LB" {
+        return [n, 0, n, 1, 0]
+    }
+    [n, n, 0, 1, 0]
+}
+
+fn innings_scorecard(balls: [str], max_overs: i64) -> str {
+    let runs = 0
+    let wickets = 0
+    let legal = 0
+    let extras = 0
+    let pos = 0
+    for b in balls {
+        pos = pos + 1
+        let finished = wickets >= 10 || (max_overs > 0 && legal >= max_overs * 6)
+        if !finished {
+            let p = parse_ball(b)
+            if len(p) == 0 {
+                return "invalid ball at position " + to_str(pos)
+            }
+            runs = runs + p[0]
+            extras = extras + p[2]
+            legal = legal + p[3]
+            wickets = wickets + p[4]
+        }
+    }
+    let overs = to_str(legal / 6) + "." + to_str(legal % 6)
+    let score = to_str(runs) + "/" + to_str(wickets)
+    if wickets >= 10 {
+        score = to_str(runs) + " all out"
+    }
+    score + " (" + overs + " ov), extras " + to_str(extras)
+}
+
+// Runs per over needed to reach `target`; 0.0 once reached and -1.0 when
+// the chase can no longer continue.
+fn required_run_rate(target: i64, balls: [str], max_overs: i64) -> f64 {
+    if max_overs <= 0 {
+        return -1.0
+    }
+    let runs = 0
+    let wickets = 0
+    let legal = 0
+    for b in balls {
+        let p = parse_ball(b)
+        if len(p) > 0 && wickets < 10 && runs < target {
+            runs = runs + p[0]
+            wickets = wickets + p[4]
+            legal = legal + p[3]
+        }
+    }
+    if runs >= target {
+        return 0.0
+    }
+    let left = max_overs * 6 - legal
+    if wickets >= 10 || left <= 0 {
+        return -1.0
+    }
+    let needed = target - runs
+    let rate = i64_to_f64(needed) * 6.0 / i64_to_f64(left)
+    round_f64(rate * 100.0) / 100.0
+}
+
+fn over_runs(balls: [str]) -> [i64] {
+    let out = []
+    let current = 0
+    let legal = 0
+    let started = false
+    for b in balls {
+        let p = parse_ball(b)
+        if len(p) > 0 {
+            current = current + p[0]
+            started = true
+            if p[3] == 1 {
+                legal = legal + 1
+                if legal == 6 {
+                    out = arr_push(out, current)
+                    current = 0
+                    legal = 0
+                    started = false
+                }
+            }
+        }
+    }
+    if started {
+        out = arr_push(out, current)
+    }
+    out
+}
+
+// Runs scored by each batter in order of appearance. Batters cross on an
+// odd number of runs and change ends at the end of each over.
+fn batter_runs(balls: [str]) -> [i64] {
+    let scores = [0, 0]
+    let striker = 0
+    let other = 1
+    let legal = 0
+    let wickets = 0
+    for b in balls {
+        let p = parse_ball(b)
+        if len(p) > 0 && wickets < 10 {
+            scores[striker] = scores[striker] + p[1]
+            let ran = p[0] - 1 + p[3]
+            let flips = 0
+            if p[4] == 1 {
+                wickets = wickets + 1
+                if wickets < 10 {
+                    scores = arr_push(scores, 0)
+                    striker = len(scores) - 1
+                }
+            } else if ran % 2 == 1 {
+                flips = 1
+            }
+            if p[3] == 1 {
+                legal = legal + 1
+                if legal % 6 == 0 {
+                    flips = flips + 1
+                }
+            }
+            if flips == 1 {
+                let t = striker
+                striker = other
+                other = t
+            }
+        }
+    }
+    scores
+}
+
+@[test]
+fn test_parse_ball_runs_and_wicket() {
+    assert(parse_ball("4") == [4, 4, 0, 1, 0])
+    assert(parse_ball(".") == [0, 0, 0, 1, 0])
+    assert(parse_ball("W") == [0, 0, 0, 1, 1])
+}
+
+@[test]
+fn test_parse_ball_extras() {
+    assert(parse_ball("WD") == [1, 0, 1, 0, 0])
+    assert(parse_ball("wd5") == [5, 0, 5, 0, 0])
+    assert(parse_ball("NB4") == [5, 4, 1, 0, 0])
+    assert(parse_ball("LB2") == [2, 0, 2, 1, 0])
+    assert(parse_ball("B1") == [1, 0, 1, 1, 0])
+}
+
+@[test]
+fn test_parse_ball_rejects_unknown() {
+    assert(parse_ball("X") == [])
+    assert(parse_ball("9") == [])
+    assert(parse_ball("B") == [])
+    assert(parse_ball("W1") == [])
+}
+
+@[test]
+fn test_scorecard_with_extras() {
+    let balls = ["1", "4", ".", "WD", "6", "2", "LB1"]
+    assert_eq_str(innings_scorecard(balls, 20), "15/0 (1.0 ov), extras 2")
+    assert_eq_str(innings_scorecard(["NB", "W", "3"], 20), "4/1 (0.2 ov), extras 1")
+}
+
+@[test]
+fn test_scorecard_all_out_and_overs_limit() {
+    assert_eq_str(innings_scorecard(arr_repeat("W", 12), 20), "0 all out (1.4 ov), extras 0")
+    assert_eq_str(innings_scorecard(arr_repeat("1", 10), 1), "6/0 (1.0 ov), extras 0")
+}
+
+@[test]
+fn test_scorecard_invalid_ball() {
+    assert_eq_str(innings_scorecard(["1", "Z"], 20), "invalid ball at position 2")
+    assert_eq_str(innings_scorecard([], 20), "0/0 (0.0 ov), extras 0")
+}
+
+@[test]
+fn test_required_rate_mid_chase() {
+    assert_eq_f64(required_run_rate(150, arr_repeat("1", 60), 20), 9.0)
+    assert_eq_f64(required_run_rate(100, ["WD", "1", "4"], 1), 141.0)
+    assert_eq_f64(required_run_rate(100, arr_repeat("1", 7), 20), 4.94)
+}
+
+@[test]
+fn test_required_rate_target_reached() {
+    assert_eq_f64(required_run_rate(10, ["4", "6", "W"], 20), 0.0)
+    assert_eq_f64(required_run_rate(50, arr_repeat("2", 10), 5), 9.0)
+}
+
+@[test]
+fn test_required_rate_chase_over() {
+    assert_eq_f64(required_run_rate(200, arr_repeat("W", 10), 20), -1.0)
+    assert_eq_f64(required_run_rate(20, arr_repeat("1", 6), 1), -1.0)
+    assert_eq_f64(required_run_rate(20, [], 0), -1.0)
+}
+
+@[test]
+fn test_over_runs_complete_overs() {
+    let balls = [".", ".", ".", ".", ".", ".", "1", "1", "1", "1", "1", "1"]
+    assert(over_runs(balls) == [0, 6])
+}
+
+@[test]
+fn test_over_runs_extras_extend_over() {
+    assert(over_runs(["4", "WD", "6", "1", "1", "1", "1", "2"]) == [15, 2])
+    assert(over_runs(["NB4", "6"]) == [11])
+}
+
+@[test]
+fn test_over_runs_ignores_bad_entries() {
+    assert(over_runs(["1", "?", "2", "W", "3"]) == [6])
+    assert(over_runs([]) == [])
+}
+
+@[test]
+fn test_batter_runs_strike_rotation() {
+    assert(batter_runs(["1", "4", "2", "1", "0", "4"]) == [5, 7])
+    assert(batter_runs(["0", "0", "0", "0", "0", "1", "4"]) == [5, 0])
+}
+
+@[test]
+fn test_batter_runs_new_batters() {
+    assert(batter_runs(["W", "4", "1", "W", "2"]) == [0, 0, 5, 2])
+}
+
+@[test]
+fn test_batter_runs_extras_not_credited() {
+    assert(batter_runs(["WD", "B1", "NB2", "4"]) == [0, 6])
+    assert(batter_runs(["WD2", "1"]) == [0, 1])
+}

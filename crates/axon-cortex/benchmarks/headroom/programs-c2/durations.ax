@@ -1,0 +1,282 @@
+fn unit_rank(c: str) -> i64 {
+    if c == "d" {
+        4
+    } else if c == "h" {
+        3
+    } else if c == "m" {
+        2
+    } else if c == "s" {
+        1
+    } else {
+        0
+    }
+}
+
+fn rank_seconds(rank: i64) -> i64 {
+    if rank == 4 {
+        86400
+    } else if rank == 3 {
+        3600
+    } else if rank == 2 {
+        60
+    } else {
+        1
+    }
+}
+
+fn parse_duration(text: str) -> i64 {
+    let s = str_to_lower(str_trim(text))
+    let n = len(s)
+    if n == 0 {
+        return -1
+    }
+    let total = 0
+    let value = 0
+    let digits = 0
+    let last_rank = 5
+    let i = 0
+    while i < n {
+        let c = str_char_at(s, i)
+        if char_is_digit(c) {
+            value = value * 10 + (char_at(s, i) - 48)
+            digits = digits + 1
+        } else if c == " " {
+            if digits > 0 {
+                return -1
+            }
+        } else {
+            let rank = unit_rank(c)
+            if rank == 0 || digits == 0 || rank >= last_rank {
+                return -1
+            }
+            total = total + value * rank_seconds(rank)
+            last_rank = rank
+            value = 0
+            digits = 0
+        }
+        i = i + 1
+    }
+    if digits > 0 || last_rank == 5 {
+        return -1
+    }
+    total
+}
+
+fn format_duration(total: i64, max_parts: i64) -> str {
+    if total == 0 {
+        return "0s"
+    }
+    let out = ""
+    let rest = total
+    if rest < 0 {
+        out = "-"
+        rest = 0 - rest
+    }
+    let labels = ["d", "h", "m", "s"]
+    let sizes = [86400, 3600, 60, 1]
+    let shown = 0
+    let started = false
+    let i = 0
+    while i < 4 {
+        let amount = rest / sizes[i]
+        rest = rest % sizes[i]
+        if amount > 0 && (max_parts <= 0 || shown < max_parts) {
+            out = out + to_str(amount) + labels[i]
+            shown = shown + 1
+            started = true
+        } else if started && max_parts > 0 && shown >= max_parts {
+            i = 4
+        }
+        i = i + 1
+    }
+    if shown == 0 {
+        out = out + "0s"
+    }
+    out
+}
+
+fn add_durations(items: [str]) -> str {
+    let total = 0
+    let counted = 0
+    for raw in items {
+        let item = str_trim(raw)
+        if len(item) == 0 {
+            continue
+        }
+        let sign = 1
+        let body = item
+        if str_starts_with(item, "-") {
+            sign = -1
+            body = str_slice(item, 1, len(item))
+        } else if str_starts_with(item, "+") {
+            body = str_slice(item, 1, len(item))
+        }
+        let secs = parse_duration(body)
+        if secs < 0 {
+            return "invalid: " + item
+        }
+        total = total + sign * secs
+        counted = counted + 1
+    }
+    if counted == 0 {
+        return "0s"
+    }
+    format_duration(total, 0)
+}
+
+fn round_duration(total: i64, step_text: str, mode: str) -> i64 {
+    let step = parse_duration(step_text)
+    if step <= 0 {
+        return total
+    }
+    let negative = total < 0
+    let mag = abs_i64(total)
+    let below = mag / step * step
+    let rem = mag - below
+    let result = below
+    if rem == 0 {
+        result = mag
+    } else if mode == "up" {
+        result = below + step
+    } else if mode == "down" {
+        result = below
+    } else if mode == "even" {
+        let twice = rem * 2
+        if twice > step || (twice == step && (below / step) % 2 == 1) {
+            result = below + step
+        }
+    } else {
+        if rem * 2 >= step {
+            result = below + step
+        }
+    }
+    if negative {
+        0 - result
+    } else {
+        result
+    }
+}
+
+fn parse_clock(text: str) -> i64 {
+    let parts = str_split(str_trim(text), ":")
+    let count = len(parts)
+    if count < 2 || count > 3 {
+        return -1
+    }
+    let values = [0, 0, 0]
+    let i = 0
+    while i < count {
+        let part = parts[i]
+        if len(part) == 0 || len(str_digits_only(part)) != len(part) {
+            return -1
+        }
+        if i > 0 && len(part) != 2 {
+            return -1
+        }
+        let v = parse_int_or(part, -1)
+        if i > 0 && v >= 60 {
+            return -1
+        }
+        values[3 - count + i] = v
+        i = i + 1
+    }
+    values[0] * 3600 + values[1] * 60 + values[2]
+}
+
+@[test]
+fn test_parse_duration_full() {
+    assert_eq(parse_duration("1h20m5s"), 4805)
+}
+
+@[test]
+fn test_parse_duration_days_and_spaces() {
+    assert_eq(parse_duration(" 2d 3h "), 183600)
+    assert_eq(parse_duration("90M"), 5400)
+}
+
+@[test]
+fn test_parse_duration_rejects_bad_input() {
+    assert_eq(parse_duration("5m1h"), -1)
+    assert_eq(parse_duration("12"), -1)
+    assert_eq(parse_duration("3x"), -1)
+    assert_eq(parse_duration("1h1h"), -1)
+    assert_eq(parse_duration(""), -1)
+}
+
+@[test]
+fn test_parse_duration_zero_component() {
+    assert_eq(parse_duration("0h45s"), 45)
+}
+
+@[test]
+fn test_format_duration_all_parts() {
+    assert_eq_str(format_duration(4805, 0), "1h20m5s")
+    assert_eq_str(format_duration(0, 0), "0s")
+}
+
+@[test]
+fn test_format_duration_limited_parts() {
+    assert_eq_str(format_duration(93784, 2), "1d2h")
+    assert_eq_str(format_duration(3605, 1), "1h")
+}
+
+@[test]
+fn test_format_duration_negative() {
+    assert_eq_str(format_duration(-125, 0), "-2m5s")
+}
+
+@[test]
+fn test_add_durations_sum() {
+    assert_eq_str(add_durations(["1h20m5s", "40m", "55s"]), "2h1m")
+}
+
+@[test]
+fn test_add_durations_with_subtraction() {
+    assert_eq_str(add_durations(["1h", "-15m", " ", "+30s"]), "45m30s")
+    assert_eq_str(add_durations(["10m", "-1h"]), "-50m")
+}
+
+@[test]
+fn test_add_durations_invalid_item() {
+    assert_eq_str(add_durations(["1h", "2q"]), "invalid: 2q")
+    assert_eq_str(add_durations([]), "0s")
+}
+
+@[test]
+fn test_round_duration_nearest() {
+    assert_eq(round_duration(4805, "15m", "nearest"), 4500)
+    assert_eq(round_duration(450, "15m", "nearest"), 900)
+}
+
+@[test]
+fn test_round_duration_up_down() {
+    assert_eq(round_duration(4805, "1h", "up"), 7200)
+    assert_eq(round_duration(4805, "1h", "down"), 3600)
+    assert_eq(round_duration(-4805, "1h", "down"), -3600)
+}
+
+@[test]
+fn test_round_duration_half_even() {
+    assert_eq(round_duration(90, "1m", "even"), 120)
+    assert_eq(round_duration(150, "1m", "even"), 120)
+    assert_eq(round_duration(95, "bad", "even"), 95)
+}
+
+@[test]
+fn test_parse_clock_three_parts() {
+    assert_eq(parse_clock("1:02:03"), 3723)
+    assert_eq(parse_clock("26:00:00"), 93600)
+}
+
+@[test]
+fn test_parse_clock_two_parts() {
+    assert_eq(parse_clock("45:09"), 2709)
+}
+
+@[test]
+fn test_parse_clock_invalid() {
+    assert_eq(parse_clock("1:60:00"), -1)
+    assert_eq(parse_clock("1:2:03"), -1)
+    assert_eq(parse_clock("12"), -1)
+    assert_eq(parse_clock("a:00"), -1)
+}

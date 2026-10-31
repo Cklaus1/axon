@@ -1,0 +1,316 @@
+// Arbitrary-size non-negative integers stored as decimal digit arrays,
+// most significant digit first.
+
+// Returns -1, 0 or 1 as a is less than, equal to or greater than b.
+// Leading zeros are ignored and an empty array counts as zero.
+fn big_compare(a: [i64], b: [i64]) -> i64 {
+    let ia = 0
+    while ia < len(a) - 1 && a[ia] == 0 {
+        ia = ia + 1
+    }
+    let ib = 0
+    while ib < len(b) - 1 && b[ib] == 0 {
+        ib = ib + 1
+    }
+    let la = len(a) - ia
+    let lb = len(b) - ib
+    if la == 1 && a[ia] == 0 {
+        la = 0
+    }
+    if lb == 1 && b[ib] == 0 {
+        lb = 0
+    }
+    if la < lb {
+        return -1
+    }
+    if la > lb {
+        return 1
+    }
+    for k in 0..la {
+        let da = a[ia + k]
+        let db = b[ib + k]
+        if da < db {
+            return -1
+        }
+        if da > db {
+            return 1
+        }
+    }
+    0
+}
+
+fn big_add(a: [i64], b: [i64]) -> [i64] {
+    let i = len(a) - 1
+    let j = len(b) - 1
+    let carry = 0
+    let rev: [i64] = []
+    while i >= 0 || j >= 0 || carry > 0 {
+        let s = carry
+        if i >= 0 {
+            s = s + a[i]
+            i = i - 1
+        }
+        if j >= 0 {
+            s = s + b[j]
+            j = j - 1
+        }
+        rev = arr_push(rev, s % 10)
+        carry = s / 10
+    }
+    let n = len(rev)
+    while n > 1 && rev[n - 1] == 0 {
+        n = n - 1
+    }
+    if n == 0 {
+        return [0]
+    }
+    let out: [i64] = []
+    let k = n - 1
+    while k >= 0 {
+        out = arr_push(out, rev[k])
+        k = k - 1
+    }
+    out
+}
+
+// Computes a - b. The result would be negative when a < b, which this
+// unsigned representation cannot hold, so an empty array is returned.
+fn big_sub(a: [i64], b: [i64]) -> [i64] {
+    if big_compare(a, b) < 0 {
+        return []
+    }
+    let i = len(a) - 1
+    let j = len(b) - 1
+    let borrow = 0
+    let rev: [i64] = []
+    while i >= 0 {
+        let d = a[i] - borrow
+        if j >= 0 {
+            d = d - b[j]
+            j = j - 1
+        }
+        if d < 0 {
+            d = d + 10
+            borrow = 1
+        } else {
+            borrow = 0
+        }
+        rev = arr_push(rev, d)
+        i = i - 1
+    }
+    let n = len(rev)
+    while n > 1 && rev[n - 1] == 0 {
+        n = n - 1
+    }
+    let out: [i64] = []
+    let k = n - 1
+    while k >= 0 {
+        out = arr_push(out, rev[k])
+        k = k - 1
+    }
+    if len(out) == 0 {
+        return [0]
+    }
+    out
+}
+
+fn big_mul(a: [i64], b: [i64]) -> [i64] {
+    let la = len(a)
+    let lb = len(b)
+    if la == 0 || lb == 0 {
+        return [0]
+    }
+    let acc = arr_repeat(0, la + lb)
+    for x in 0..la {
+        let da = a[la - 1 - x]
+        if da != 0 {
+            for y in 0..lb {
+                acc[x + y] = acc[x + y] + da * b[lb - 1 - y]
+            }
+        }
+    }
+    let carry = 0
+    for k in 0..(la + lb) {
+        let v = acc[k] + carry
+        acc[k] = v % 10
+        carry = v / 10
+    }
+    let n = la + lb
+    while n > 1 && acc[n - 1] == 0 {
+        n = n - 1
+    }
+    let out: [i64] = []
+    let k = n - 1
+    while k >= 0 {
+        out = arr_push(out, acc[k])
+        k = k - 1
+    }
+    out
+}
+
+// Reads a decimal number, allowing "," or "_" between digits.
+// Any other character makes the whole input invalid and yields [].
+fn big_parse(text: str) -> [i64] {
+    let chars = str_chars(str_trim(text))
+    let digits: [i64] = []
+    let last_was_sep = true
+    for c in chars {
+        if char_is_digit(c) {
+            let v = parse_int_or(c, 0)
+            if len(digits) == 1 && digits[0] == 0 {
+                digits = [v]
+            } else {
+                digits = arr_push(digits, v)
+            }
+            last_was_sep = false
+        } else if c == "," || c == "_" {
+            if last_was_sep {
+                return []
+            }
+            last_was_sep = true
+        } else {
+            return []
+        }
+    }
+    if last_was_sep && len(digits) > 0 {
+        return []
+    }
+    digits
+}
+
+// Renders digits with a comma between each group of three.
+// Returns "" when any element is not a single decimal digit.
+fn big_to_str(d: [i64]) -> str {
+    let start = 0
+    while start < len(d) - 1 && d[start] == 0 {
+        start = start + 1
+    }
+    let n = len(d) - start
+    if n <= 0 {
+        return "0"
+    }
+    let out = ""
+    for k in 0..n {
+        let v = d[start + k]
+        if v < 0 || v > 9 {
+            return ""
+        }
+        let remaining = n - k
+        if k > 0 && remaining % 3 == 0 {
+            out = out + ","
+        }
+        out = out + to_str(v)
+    }
+    out
+}
+
+@[test]
+fn test_big_compare_orders() {
+    assert_eq(big_compare([1, 2, 3], [1, 2, 4]), -1)
+    assert_eq(big_compare([2, 0], [1, 9, 9]), -1)
+    assert_eq(big_compare([5, 0, 0], [4, 9, 9]), 1)
+}
+
+@[test]
+fn test_big_compare_leading_zeros() {
+    assert_eq(big_compare([0, 0, 7, 1], [7, 1]), 0)
+    assert_eq(big_compare([0, 0, 8], [7]), 1)
+}
+
+@[test]
+fn test_big_compare_zero_forms() {
+    assert_eq(big_compare([], [0, 0]), 0)
+    assert_eq(big_compare([0], [1]), -1)
+    assert_eq(big_compare([3], []), 1)
+}
+
+@[test]
+fn test_big_add_carries() {
+    assert(big_add([9, 9, 9], [1]) == [1, 0, 0, 0])
+}
+
+@[test]
+fn test_big_add_mixed_lengths() {
+    assert(big_add([0, 0, 1, 2], [3]) == [1, 5])
+    assert(big_add([4, 5, 6], [7, 8, 9, 0]) == [8, 3, 4, 6])
+}
+
+@[test]
+fn test_big_add_empty_inputs() {
+    assert(big_add([], []) == [0])
+    assert(big_add([], [4, 2]) == [4, 2])
+}
+
+@[test]
+fn test_big_sub_borrows() {
+    assert(big_sub([1, 0, 0, 0], [1]) == [9, 9, 9])
+    assert(big_sub([5, 0, 3], [4, 9, 8]) == [5])
+}
+
+@[test]
+fn test_big_sub_equal_values() {
+    assert(big_sub([5, 0], [0, 5, 0]) == [0])
+    assert(big_sub([7, 2, 1], [2, 1]) == [7, 0, 0])
+}
+
+@[test]
+fn test_big_sub_underflow() {
+    assert(big_sub([1], [2]) == [])
+    assert(big_sub([9, 9], [1, 0, 0]) == [])
+}
+
+@[test]
+fn test_big_mul_small() {
+    assert(big_mul([1, 2], [1, 2]) == [1, 4, 4])
+    assert(big_mul([9, 9], [9, 9]) == [9, 8, 0, 1])
+}
+
+@[test]
+fn test_big_mul_long() {
+    assert(big_mul([1, 2, 3, 4, 5, 6, 7, 9], [9]) == [1, 1, 1, 1, 1, 1, 1, 1, 1])
+    assert(big_mul([1, 0, 0, 0, 0, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]) == [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+}
+
+@[test]
+fn test_big_mul_zero() {
+    assert(big_mul([0], [1, 2, 3]) == [0])
+    assert(big_mul([], [5]) == [0])
+}
+
+@[test]
+fn test_big_parse_separators() {
+    assert(big_parse("1,234,567") == [1, 2, 3, 4, 5, 6, 7])
+    assert(big_parse(" 9_000 ") == [9, 0, 0, 0])
+}
+
+@[test]
+fn test_big_parse_leading_zeros() {
+    assert(big_parse("000") == [0])
+    assert(big_parse("0042") == [4, 2])
+}
+
+@[test]
+fn test_big_parse_invalid() {
+    assert(big_parse("12a") == [])
+    assert(big_parse("1,,2") == [])
+    assert(big_parse("12,") == [])
+}
+
+@[test]
+fn test_big_to_str_groups() {
+    assert_eq_str(big_to_str([1, 2, 3, 4, 5, 6, 7]), "1,234,567")
+    assert_eq_str(big_to_str([1, 0, 0, 0]), "1,000")
+}
+
+@[test]
+fn test_big_to_str_leading_zeros() {
+    assert_eq_str(big_to_str([0, 0, 4, 2]), "42")
+    assert_eq_str(big_to_str([0, 0, 0]), "0")
+}
+
+@[test]
+fn test_big_to_str_edge_cases() {
+    assert_eq_str(big_to_str([]), "0")
+    assert_eq_str(big_to_str([1, 12]), "")
+    assert_eq_str(big_to_str([9, 8, 7, 6, 5, 4]), "987,654")
+}

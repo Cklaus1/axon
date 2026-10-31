@@ -1,0 +1,275 @@
+// Snake on a w x h grid. A cell is encoded as y * w + x; the snake body is
+// stored head first. Directions: 0 up, 1 right, 2 down, 3 left.
+
+fn direction_code(c: str) -> i64 {
+    if c == "U" {
+        0
+    } else if c == "R" {
+        1
+    } else if c == "D" {
+        2
+    } else if c == "L" {
+        3
+    } else {
+        -1
+    }
+}
+
+// Expands a move string such as "3R2UL" into direction codes. A move that
+// reverses the previous direction is ignored, as the snake cannot turn back
+// into its own neck. Unknown characters are skipped.
+fn parse_moves(s: str) -> [i64] {
+    let out: [i64] = []
+    let count = 0
+    let last = -1
+    for c in str_chars(str_to_upper(s)) {
+        if char_is_digit(c) {
+            count = count * 10 + (char_at(c, 0) - 48)
+        } else {
+            let d = direction_code(c)
+            if d >= 0 {
+                let reps = count
+                if reps == 0 {
+                    reps = 1
+                }
+                let reverses = last >= 0 && (d + 2) % 4 == last
+                if !reverses {
+                    let i = 0
+                    while i < reps {
+                        out = arr_push(out, d)
+                        i = i + 1
+                    }
+                    last = d
+                }
+            }
+            count = 0
+        }
+    }
+    out
+}
+
+// Moves the snake one cell. Returns the new body, [-1] when the head leaves
+// the grid, or [-2] when the head runs into the body. The tail cell is free
+// to enter unless the snake grows on this step.
+fn advance(w: i64, h: i64, body: [i64], dir: i64, food: i64) -> [i64] {
+    let head = body[0]
+    let x = head % w
+    let y = head / w
+    if dir == 0 {
+        y = y - 1
+    } else if dir == 1 {
+        x = x + 1
+    } else if dir == 2 {
+        y = y + 1
+    } else {
+        x = x - 1
+    }
+    if x < 0 || x >= w || y < 0 || y >= h {
+        return [-1]
+    }
+    let next = y * w + x
+    let keep = len(body) - 1
+    if next == food {
+        keep = len(body)
+    }
+    let i = 0
+    while i < keep {
+        if body[i] == next {
+            return [-2]
+        }
+        i = i + 1
+    }
+    let out = [next]
+    i = 0
+    while i < keep {
+        out = arr_push(out, body[i])
+        i = i + 1
+    }
+    out
+}
+
+// Runs a whole game. Food items appear one at a time in the given order; an
+// item that would appear under the snake is skipped. Returns a summary such
+// as "alive len=4 eaten=1" or "wall step=3 len=2 eaten=0".
+fn play(w: i64, h: i64, start: [i64], moves: str, food: [i64]) -> str {
+    let body = arr_concat(start, [])
+    let fi = 0
+    let eaten = 0
+    let step = 0
+    for d in parse_moves(moves) {
+        while fi < len(food) && arr_contains(body, food[fi]) {
+            fi = fi + 1
+        }
+        let target = -1
+        if fi < len(food) {
+            target = food[fi]
+        }
+        step = step + 1
+        let next = advance(w, h, body, d, target)
+        if next[0] < 0 {
+            let cause = "self"
+            if next[0] == -1 {
+                cause = "wall"
+            }
+            return cause + " step=" + to_str(step) + " len=" + to_str(len(body)) + " eaten=" + to_str(eaten)
+        }
+        if len(next) > len(body) {
+            eaten = eaten + 1
+            fi = fi + 1
+        }
+        body = next
+    }
+    "alive len=" + to_str(len(body)) + " eaten=" + to_str(eaten)
+}
+
+// Draws the grid row by row, rows separated by "/". The head is "H", the
+// rest of the body "o", the food "*" and empty cells ".".
+fn render(w: i64, h: i64, body: [i64], food: i64) -> str {
+    let rows: [str] = []
+    let y = 0
+    while y < h {
+        let row = ""
+        let x = 0
+        while x < w {
+            let cell = y * w + x
+            let mark = "."
+            if len(body) > 0 && body[0] == cell {
+                mark = "H"
+            } else if arr_contains(body, cell) {
+                mark = "o"
+            } else if cell == food {
+                mark = "*"
+            }
+            row = row + mark
+            x = x + 1
+        }
+        rows = arr_push(rows, row)
+        y = y + 1
+    }
+    str_join(rows, "/")
+}
+
+// Counts the empty cells the head can still reach, a measure of how much
+// room the snake has left before it boxes itself in.
+fn free_space(w: i64, h: i64, body: [i64]) -> i64 {
+    let blocked = arr_repeat(false, w * h)
+    for c in body {
+        blocked[c] = true
+    }
+    let seen = arr_repeat(false, w * h)
+    let start = body[0]
+    seen[start] = true
+    let queue = [start]
+    let qi = 0
+    let count = 0
+    while qi < len(queue) {
+        let c = queue[qi]
+        qi = qi + 1
+        let x = c % w
+        let y = c / w
+        let nbrs: [i64] = []
+        if x > 0 {
+            nbrs = arr_push(nbrs, c - 1)
+        }
+        if x < w - 1 {
+            nbrs = arr_push(nbrs, c + 1)
+        }
+        if y > 0 {
+            nbrs = arr_push(nbrs, c - w)
+        }
+        if y < h - 1 {
+            nbrs = arr_push(nbrs, c + w)
+        }
+        for n in nbrs {
+            if !seen[n] && !blocked[n] {
+                seen[n] = true
+                count = count + 1
+                queue = arr_push(queue, n)
+            }
+        }
+    }
+    count
+}
+
+@[test]
+fn test_parse_moves_counts() {
+    assert(parse_moves("3R2D") == [1, 1, 1, 2, 2])
+}
+
+@[test]
+fn test_parse_moves_ignores_reversal() {
+    assert(parse_moves("rlUd") == [1, 0])
+}
+
+@[test]
+fn test_parse_moves_skips_unknown() {
+    assert(parse_moves("U x 12L") == [0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3])
+}
+
+@[test]
+fn test_advance_plain_move() {
+    assert(advance(5, 5, [12, 11, 10], 1, -1) == [13, 12, 11])
+}
+
+@[test]
+fn test_advance_grows_on_food() {
+    assert(advance(5, 5, [12, 11], 2, 17) == [17, 12, 11])
+}
+
+@[test]
+fn test_advance_wall() {
+    assert(advance(5, 5, [4, 3], 1, -1) == [-1])
+    assert(advance(5, 5, [2, 7], 0, -1) == [-1])
+}
+
+@[test]
+fn test_advance_self_and_tail() {
+    assert(advance(4, 4, [5, 6, 10, 9, 8], 2, -1) == [-2])
+    assert(advance(4, 4, [5, 6, 10, 9], 2, -1) == [9, 5, 6, 10])
+}
+
+@[test]
+fn test_play_survives_and_eats() {
+    assert_eq_str(play(6, 6, [8, 7], "RRD", [10, 16]), "alive len=4 eaten=2")
+}
+
+@[test]
+fn test_play_hits_wall() {
+    assert_eq_str(play(4, 4, [1, 0], "RRR", [2]), "wall step=3 len=3 eaten=1")
+}
+
+@[test]
+fn test_play_hits_self() {
+    assert_eq_str(play(5, 5, [7, 6, 5], "DLU", [12, 11]), "self step=3 len=5 eaten=2")
+}
+
+@[test]
+fn test_render_basic() {
+    assert_eq_str(render(3, 2, [1, 0], 5), "oH./..*")
+}
+
+@[test]
+fn test_render_no_food() {
+    assert_eq_str(render(2, 2, [3, 1], -1), ".o/.H")
+}
+
+@[test]
+fn test_render_food_under_body() {
+    assert_eq_str(render(2, 1, [0, 1], 1), "Ho")
+}
+
+@[test]
+fn test_free_space_open_grid() {
+    assert_eq(free_space(3, 3, [4]), 8)
+}
+
+@[test]
+fn test_free_space_walled_corner() {
+    assert_eq(free_space(4, 4, [0, 1, 5, 4]), 0)
+    assert_eq(free_space(4, 4, [0, 1, 5, 8]), 1)
+}
+
+@[test]
+fn test_free_space_split_board() {
+    assert_eq(free_space(5, 3, [13, 12, 7, 2]), 5)
+}

@@ -1,0 +1,309 @@
+// A robot on a rectangular grid with obstacles.
+//
+// The grid is written as rows separated by "/", where "." is open floor
+// and "#" is an obstacle; row 0 is the top row. Commands are the compass
+// letters N, E, S, W, each optionally followed by a repeat count
+// (for example "N2E3W"). A move into an obstacle or off the grid is
+// blocked: the robot stays where it is and the move is counted as blocked.
+
+fn dir_dr(d: str) -> i64 {
+    if d == "N" {
+        -1
+    } else if d == "S" {
+        1
+    } else {
+        0
+    }
+}
+
+fn dir_dc(d: str) -> i64 {
+    if d == "E" {
+        1
+    } else if d == "W" {
+        -1
+    } else {
+        0
+    }
+}
+
+fn in_bounds(rows: [str], r: i64, c: i64) -> bool {
+    r >= 0 && r < len(rows) && c >= 0 && c < str_len(rows[r])
+}
+
+fn is_open(rows: [str], r: i64, c: i64) -> bool {
+    in_bounds(rows, r, c) && str_char_at(rows[r], c) != "#"
+}
+
+fn expand_moves(cmds: str) -> str {
+    let text = str_to_upper(cmds)
+    let out = ""
+    let current = ""
+    let digits = ""
+    let i = 0
+    while i <= str_len(text) {
+        let ch = str_char_at(text, i)
+        if char_is_digit(ch) {
+            if current == "" {
+                return ""
+            }
+            digits = digits + ch
+        } else if ch == "" || ch == " " || str_contains("NESW", ch) {
+            if current != "" {
+                let times = 1
+                if digits != "" {
+                    times = parse_int_or(digits, 0)
+                }
+                out = out + str_repeat(current, times)
+            }
+            current = ""
+            digits = ""
+            if ch != " " {
+                current = ch
+            }
+        } else {
+            return ""
+        }
+        i = i + 1
+    }
+    out
+}
+
+fn run_robot(layout: str, start_r: i64, start_c: i64, cmds: str) -> [i64] {
+    let rows = str_split(layout, "/")
+    if !is_open(rows, start_r, start_c) {
+        return []
+    }
+    let moves = expand_moves(cmds)
+    let r = start_r
+    let c = start_c
+    let made = 0
+    let edge_hits = 0
+    let obstacle_hits = 0
+    let i = 0
+    while i < str_len(moves) {
+        let d = str_char_at(moves, i)
+        let nr = r + dir_dr(d)
+        let nc = c + dir_dc(d)
+        if !in_bounds(rows, nr, nc) {
+            edge_hits = edge_hits + 1
+        } else if !is_open(rows, nr, nc) {
+            obstacle_hits = obstacle_hits + 1
+        } else {
+            r = nr
+            c = nc
+            made = made + 1
+        }
+        i = i + 1
+    }
+    [r, c, made, edge_hits, obstacle_hits]
+}
+
+fn trail_map(layout: str, start_r: i64, start_c: i64, cmds: str) -> str {
+    let rows = str_split(layout, "/")
+    if !is_open(rows, start_r, start_c) {
+        return ""
+    }
+    let width = str_len(rows[0])
+    let seen = arr_repeat(false, len(rows) * width)
+    let moves = expand_moves(cmds)
+    let r = start_r
+    let c = start_c
+    seen[r * width + c] = true
+    let i = 0
+    while i < str_len(moves) {
+        let d = str_char_at(moves, i)
+        if is_open(rows, r + dir_dr(d), c + dir_dc(d)) {
+            r = r + dir_dr(d)
+            c = c + dir_dc(d)
+            seen[r * width + c] = true
+        }
+        i = i + 1
+    }
+    let lines: [str] = []
+    let y = 0
+    while y < len(rows) {
+        let line = ""
+        let x = 0
+        while x < str_len(rows[y]) {
+            if y == r && x == c {
+                line = line + "R"
+            } else if seen[y * width + x] {
+                line = line + "*"
+            } else {
+                line = line + str_char_at(rows[y], x)
+            }
+            x = x + 1
+        }
+        lines = arr_push(lines, line)
+        y = y + 1
+    }
+    str_join(lines, "/")
+}
+
+fn shortest_path_len(layout: str, r0: i64, c0: i64, r1: i64, c1: i64) -> i64 {
+    let rows = str_split(layout, "/")
+    if !is_open(rows, r0, c0) || !is_open(rows, r1, c1) {
+        return -1
+    }
+    let width = str_len(rows[0])
+    let dist = arr_repeat(-1, len(rows) * width)
+    let queue = [r0 * width + c0]
+    dist[r0 * width + c0] = 0
+    let dirs = ["N", "E", "S", "W"]
+    let head = 0
+    while head < len(queue) {
+        let cell = queue[head]
+        head = head + 1
+        let r = cell / width
+        let c = cell % width
+        if r == r1 && c == c1 {
+            return dist[cell]
+        }
+        for d in dirs {
+            let nr = r + dir_dr(d)
+            let nc = c + dir_dc(d)
+            if is_open(rows, nr, nc) && dist[nr * width + nc] < 0 {
+                dist[nr * width + nc] = dist[cell] + 1
+                queue = arr_push(queue, nr * width + nc)
+            }
+        }
+    }
+    -1
+}
+
+fn plan_route(layout: str, r0: i64, c0: i64, r1: i64, c1: i64) -> str {
+    let rows = str_split(layout, "/")
+    if !is_open(rows, r0, c0) || !is_open(rows, r1, c1) {
+        return ""
+    }
+    let width = str_len(rows[0])
+    let came_from = arr_repeat("", len(rows) * width)
+    let start = r0 * width + c0
+    let goal = r1 * width + c1
+    came_from[start] = "start"
+    let queue = [start]
+    let head = 0
+    while head < len(queue) && came_from[goal] == "" {
+        let cell = queue[head]
+        head = head + 1
+        for d in ["N", "E", "S", "W"] {
+            let nr = cell / width + dir_dr(d)
+            let nc = cell % width + dir_dc(d)
+            if is_open(rows, nr, nc) && came_from[nr * width + nc] == "" {
+                came_from[nr * width + nc] = d
+                queue = arr_push(queue, nr * width + nc)
+            }
+        }
+    }
+    if came_from[goal] == "" {
+        return ""
+    }
+    let steps: [str] = []
+    let cell = goal
+    while cell != start {
+        let d = came_from[cell]
+        steps = arr_push(steps, d)
+        cell = (cell / width - dir_dr(d)) * width + (cell % width - dir_dc(d))
+    }
+    let route = ""
+    let i = len(steps) - 1
+    while i >= 0 {
+        let run = 1
+        while i - run >= 0 && steps[i - run] == steps[i] {
+            run = run + 1
+        }
+        route = route + steps[i]
+        if run > 1 {
+            route = route + to_str(run)
+        }
+        i = i - run
+    }
+    route
+}
+
+@[test]
+fn test_expand_counts() {
+    assert_eq_str(expand_moves("N2E3W"), "NNEEEW")
+}
+
+@[test]
+fn test_expand_lowercase_and_spaces() {
+    assert_eq_str(expand_moves("s e2"), "SEE")
+}
+
+@[test]
+fn test_expand_multi_digit_count() {
+    assert_eq_str(expand_moves("E12"), "EEEEEEEEEEEE")
+}
+
+@[test]
+fn test_expand_rejects_bad_input() {
+    assert_eq_str(expand_moves("2N"), "")
+    assert_eq_str(expand_moves("NX"), "")
+}
+
+@[test]
+fn test_run_clear_path() {
+    assert(run_robot("....#/.##../...#./#....", 0, 0, "E3S") == [1, 3, 4, 0, 0])
+}
+
+@[test]
+fn test_run_edge_and_obstacle() {
+    assert(run_robot("....#/.##../...#./#....", 0, 0, "N2E4") == [0, 3, 3, 2, 1])
+}
+
+@[test]
+fn test_run_obstacles_only() {
+    assert(run_robot("....#/.##../...#./#....", 2, 0, "S E2 N") == [2, 2, 2, 0, 2])
+}
+
+@[test]
+fn test_run_start_on_obstacle() {
+    assert_eq(len(run_robot("....#/.##../...#./#....", 0, 4, "S")), 0)
+}
+
+@[test]
+fn test_trail_blocked_at_wall() {
+    assert_eq_str(trail_map("....#/.##../...#./#....", 0, 0, "E2S2"), "**R.#/.##../...#./#....")
+}
+
+@[test]
+fn test_trail_turning_corner() {
+    assert_eq_str(trail_map("....#/.##../...#./#....", 3, 4, "W3N"), "....#/.##../.R.#./#****")
+}
+
+@[test]
+fn test_trail_without_moves() {
+    assert_eq_str(trail_map("....#/.##../...#./#....", 1, 0, ""), "....#/R##../...#./#....")
+}
+
+@[test]
+fn test_shortest_across_grid() {
+    assert_eq(shortest_path_len("....#/.##../...#./#....", 0, 0, 3, 4), 7)
+}
+
+@[test]
+fn test_shortest_detour() {
+    assert_eq(shortest_path_len("....#/.##../...#./#....", 2, 2, 1, 4), 5)
+}
+
+@[test]
+fn test_shortest_unreachable() {
+    assert_eq(shortest_path_len(".#./##./...", 2, 2, 0, 0), -1)
+    assert_eq(shortest_path_len("....#/.##../...#./#....", 0, 0, 0, 4), -1)
+}
+
+@[test]
+fn test_plan_long_route() {
+    assert_eq_str(plan_route("....#/.##../...#./#....", 0, 0, 3, 4), "E3SES2")
+}
+
+@[test]
+fn test_plan_detour_route() {
+    assert_eq_str(plan_route("....#/.##../...#./#....", 2, 2, 1, 4), "SE2N2")
+}
+
+@[test]
+fn test_plan_short_route() {
+    assert_eq_str(plan_route("....#/.##../...#./#....", 1, 0, 2, 1), "SE")
+}

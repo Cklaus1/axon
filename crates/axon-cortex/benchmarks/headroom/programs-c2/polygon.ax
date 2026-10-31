@@ -1,0 +1,298 @@
+type Pt = { x: i64, y: i64 }
+
+fn cross(o: Pt, a: Pt, b: Pt) -> i64 {
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+}
+
+fn gcd(a: i64, b: i64) -> i64 {
+    let p = abs_i64(a)
+    let q = abs_i64(b)
+    while q != 0 {
+        let t = p % q
+        p = q
+        q = t
+    }
+    p
+}
+
+fn vertex_count(ps: [Pt]) -> i64 {
+    let n = len(ps)
+    if n > 1 && ps[0].x == ps[n - 1].x && ps[0].y == ps[n - 1].y {
+        n - 1
+    } else {
+        n
+    }
+}
+
+fn shoelace_area(ps: [Pt]) -> f64 {
+    let xs: [i64] = []
+    let ys: [i64] = []
+    for i in 0..len(ps) {
+        let p = ps[i]
+        let k = len(xs)
+        let dup = k > 0 && xs[k - 1] == p.x && ys[k - 1] == p.y
+        if !dup {
+            xs = arr_push(xs, p.x)
+            ys = arr_push(ys, p.y)
+        }
+    }
+    let m = len(xs)
+    if m > 1 && xs[0] == xs[m - 1] && ys[0] == ys[m - 1] {
+        m = m - 1
+    }
+    if m < 3 {
+        return 0.0
+    }
+    let ox = xs[0]
+    let oy = ys[0]
+    let sum = 0
+    for i in 1..(m - 1) {
+        let ax = xs[i] - ox
+        let ay = ys[i] - oy
+        let bx = xs[i + 1] - ox
+        let by = ys[i + 1] - oy
+        sum = sum + ax * by - bx * ay
+    }
+    i64_to_f64(abs_i64(sum)) / 2.0
+}
+
+fn perimeter(ps: [Pt]) -> f64 {
+    let m = vertex_count(ps)
+    if m < 2 {
+        return 0.0
+    }
+    let irrational = 0.0
+    let exact = 0
+    let i = 0
+    while i < m {
+        let j = (i + 1) % m
+        let dx = abs_i64(ps[j].x - ps[i].x)
+        let dy = abs_i64(ps[j].y - ps[i].y)
+        if dx == 0 || dy == 0 {
+            exact = exact + dx + dy
+        } else {
+            let d2 = dx * dx + dy * dy
+            let r = sqrt_f64(i64_to_f64(d2))
+            let ri = f64_to_i64(round_f64(r))
+            if ri * ri == d2 {
+                exact = exact + ri
+            } else {
+                irrational = irrational + r
+            }
+        }
+        i = i + 1
+    }
+    i64_to_f64(exact) + irrational
+}
+
+fn is_convex(ps: [Pt]) -> bool {
+    let n = vertex_count(ps)
+    if n < 3 {
+        return false
+    }
+    let sign = 0
+    let turns = 0
+    let ok = true
+    let flips = 0
+    let first_dx = 0
+    let prev_dx = 0
+    for i in 0..n {
+        let z = cross(ps[i], ps[(i + 1) % n], ps[(i + 2) % n])
+        if z != 0 {
+            let s = if z > 0 { 1 } else { -1 }
+            if sign == 0 {
+                sign = s
+            } else if s != sign {
+                ok = false
+            }
+            turns = turns + 1
+        }
+        let dx = sign_i64(ps[(i + 1) % n].x - ps[i].x)
+        if dx != 0 {
+            if prev_dx != 0 && dx != prev_dx {
+                flips = flips + 1
+            }
+            if first_dx == 0 {
+                first_dx = dx
+            }
+            prev_dx = dx
+        }
+    }
+    if prev_dx != 0 && prev_dx != first_dx {
+        flips = flips + 1
+    }
+    ok && turns > 0 && flips <= 2
+}
+
+fn locate_point(ps: [Pt], q: Pt) -> str {
+    let n = vertex_count(ps)
+    if n < 3 {
+        return "outside"
+    }
+    let inside = false
+    let on_edge = false
+    for i in 0..n {
+        let a = ps[i]
+        let b = ps[(i + 1) % n]
+        let c = (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x)
+        let in_x = q.x >= min_i64(a.x, b.x) && q.x <= max_i64(a.x, b.x)
+        let in_y = q.y >= min_i64(a.y, b.y) && q.y <= max_i64(a.y, b.y)
+        if c == 0 && in_x && in_y {
+            on_edge = true
+        }
+        if (a.y > q.y) != (b.y > q.y) {
+            let dy = b.y - a.y
+            if (c > 0 && dy > 0) || (c < 0 && dy < 0) {
+                inside = !inside
+            }
+        }
+    }
+    if on_edge {
+        "boundary"
+    } else if inside {
+        "inside"
+    } else {
+        "outside"
+    }
+}
+
+fn lattice_counts(ps: [Pt]) -> [i64] {
+    let n = vertex_count(ps)
+    if n < 3 {
+        return [0, 0]
+    }
+    let twice = 0
+    let boundary = 0
+    for i in 0..n {
+        let a = ps[i]
+        let b = ps[(i + 1) % n]
+        twice = twice + a.x * b.y - b.x * a.y
+        let g = gcd(b.x - a.x, b.y - a.y)
+        boundary = boundary + g
+    }
+    twice = abs_i64(twice)
+    if twice == 0 {
+        return [boundary, 0]
+    }
+    let interior = (twice - boundary + 2) / 2
+    if interior < 0 {
+        interior = 0
+    }
+    [boundary, interior]
+}
+
+@[test]
+fn test_area_unit_square() {
+    let sq = [Pt { x: 0, y: 0 }, Pt { x: 1, y: 0 }, Pt { x: 1, y: 1 }, Pt { x: 0, y: 1 }]
+    assert_eq_f64(shoelace_area(sq), 1.0)
+}
+
+@[test]
+fn test_area_triangle_clockwise_closed() {
+    let tri = [Pt { x: 0, y: 0 }, Pt { x: 0, y: 3 }, Pt { x: 5, y: 0 }, Pt { x: 0, y: 0 }]
+    assert_eq_f64(shoelace_area(tri), 7.5)
+}
+
+@[test]
+fn test_area_repeated_vertices_l_shape() {
+    let l = [Pt { x: 0, y: 0 }, Pt { x: 4, y: 0 }, Pt { x: 4, y: 0 }, Pt { x: 4, y: 1 }, Pt { x: 1, y: 1 }, Pt { x: 1, y: 3 }, Pt { x: 0, y: 3 }]
+    assert_eq_f64(shoelace_area(l), 6.0)
+}
+
+@[test]
+fn test_area_degenerate() {
+    let line = [Pt { x: 0, y: 0 }, Pt { x: 2, y: 2 }, Pt { x: 2, y: 2 }]
+    assert_eq_f64(shoelace_area(line), 0.0)
+}
+
+@[test]
+fn test_perimeter_rectangle() {
+    let r = [Pt { x: 1, y: 1 }, Pt { x: 4, y: 1 }, Pt { x: 4, y: 3 }, Pt { x: 1, y: 3 }]
+    assert_eq_f64(perimeter(r), 10.0)
+}
+
+@[test]
+fn test_perimeter_pythagorean_triangle() {
+    let t = [Pt { x: 0, y: 0 }, Pt { x: 3, y: 0 }, Pt { x: 3, y: 4 }, Pt { x: 0, y: 0 }]
+    assert_eq_f64(perimeter(t), 12.0)
+}
+
+@[test]
+fn test_perimeter_diamond() {
+    let d = [Pt { x: 1, y: 0 }, Pt { x: 2, y: 1 }, Pt { x: 1, y: 2 }, Pt { x: 0, y: 1 }]
+    assert(abs_f64(perimeter(d) - 5.656854249) < 0.000001)
+}
+
+@[test]
+fn test_convex_square_with_collinear_point() {
+    let sq = [Pt { x: 0, y: 0 }, Pt { x: 2, y: 0 }, Pt { x: 4, y: 0 }, Pt { x: 4, y: 4 }, Pt { x: 0, y: 4 }]
+    assert(is_convex(sq))
+}
+
+@[test]
+fn test_convex_rejects_arrow() {
+    let arrow = [Pt { x: 0, y: 0 }, Pt { x: 4, y: 2 }, Pt { x: 0, y: 4 }, Pt { x: 1, y: 2 }]
+    assert(!is_convex(arrow))
+}
+
+@[test]
+fn test_convex_rejects_pentagram() {
+    let star = [Pt { x: 0, y: 10 }, Pt { x: 6, y: -8 }, Pt { x: -10, y: 3 }, Pt { x: 10, y: 3 }, Pt { x: -6, y: -8 }]
+    assert(!is_convex(star))
+}
+
+@[test]
+fn test_convex_clockwise_triangle() {
+    let tri = [Pt { x: 0, y: 0 }, Pt { x: 0, y: 5 }, Pt { x: 5, y: 0 }]
+    assert(is_convex(tri))
+}
+
+@[test]
+fn test_locate_inside_concave() {
+    let u = [Pt { x: 0, y: 0 }, Pt { x: 6, y: 0 }, Pt { x: 6, y: 6 }, Pt { x: 4, y: 6 }, Pt { x: 4, y: 2 }, Pt { x: 2, y: 2 }, Pt { x: 2, y: 6 }, Pt { x: 0, y: 6 }]
+    assert_eq_str(locate_point(u, Pt { x: 1, y: 5 }), "inside")
+}
+
+@[test]
+fn test_locate_outside_in_notch() {
+    let u = [Pt { x: 0, y: 0 }, Pt { x: 6, y: 0 }, Pt { x: 6, y: 6 }, Pt { x: 4, y: 6 }, Pt { x: 4, y: 2 }, Pt { x: 2, y: 2 }, Pt { x: 2, y: 6 }, Pt { x: 0, y: 6 }]
+    assert_eq_str(locate_point(u, Pt { x: 3, y: 4 }), "outside")
+}
+
+@[test]
+fn test_locate_on_boundary_and_vertex() {
+    let tri = [Pt { x: 0, y: 0 }, Pt { x: 4, y: 0 }, Pt { x: 0, y: 4 }]
+    assert_eq_str(locate_point(tri, Pt { x: 2, y: 2 }), "boundary")
+    assert_eq_str(locate_point(tri, Pt { x: 4, y: 0 }), "boundary")
+}
+
+@[test]
+fn test_locate_ray_through_vertex() {
+    let diamond = [Pt { x: 2, y: 0 }, Pt { x: 4, y: 2 }, Pt { x: 2, y: 4 }, Pt { x: 0, y: 2 }]
+    assert_eq_str(locate_point(diamond, Pt { x: 1, y: 2 }), "inside")
+    assert_eq_str(locate_point(diamond, Pt { x: -1, y: 2 }), "outside")
+}
+
+@[test]
+fn test_lattice_square() {
+    let sq = [Pt { x: 0, y: 0 }, Pt { x: 3, y: 0 }, Pt { x: 3, y: 3 }, Pt { x: 0, y: 3 }]
+    assert(lattice_counts(sq) == [12, 4])
+}
+
+@[test]
+fn test_lattice_triangle() {
+    let tri = [Pt { x: 0, y: 0 }, Pt { x: 4, y: 0 }, Pt { x: 0, y: 4 }]
+    assert(lattice_counts(tri) == [12, 3])
+}
+
+@[test]
+fn test_lattice_slanted_triangle() {
+    let tri = [Pt { x: 0, y: 0 }, Pt { x: 5, y: 2 }, Pt { x: 1, y: 4 }, Pt { x: 0, y: 0 }]
+    assert(lattice_counts(tri) == [4, 8])
+}
+
+@[test]
+fn test_convex_hexagon_closed() {
+    let hex = [Pt { x: 2, y: 0 }, Pt { x: 4, y: 0 }, Pt { x: 6, y: 2 }, Pt { x: 4, y: 4 }, Pt { x: 2, y: 4 }, Pt { x: 0, y: 2 }, Pt { x: 2, y: 0 }]
+    assert(is_convex(hex))
+}

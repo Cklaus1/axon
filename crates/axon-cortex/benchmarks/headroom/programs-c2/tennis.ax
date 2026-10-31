@@ -1,0 +1,278 @@
+// Tennis scoring from a list of point winners.
+// Each point is 1 (player A won it) or 2 (player B won it).
+
+fn game_call(points: [i64]) -> str {
+    let names = ["love", "15", "30", "40"]
+    let a = 0
+    let b = 0
+    let i = 0
+    let done = false
+    while i < len(points) && !done {
+        let p = points[i]
+        if p == 1 {
+            a = a + 1
+        } else if p == 2 {
+            b = b + 1
+        } else {
+            return "invalid"
+        }
+        if (a >= 4 || b >= 4) && abs_i64(a - b) >= 2 {
+            done = true
+        }
+        i = i + 1
+    }
+    if done {
+        if a > b {
+            return "game A"
+        }
+        return "game B"
+    }
+    if a >= 3 && b >= 3 {
+        if a == b {
+            return "deuce"
+        }
+        if a > b {
+            return "advantage A"
+        }
+        return "advantage B"
+    }
+    if a == b {
+        return names[a] + "-all"
+    }
+    names[a] + "-" + names[b]
+}
+
+// Returns [points A, points B, winner (0 if unfinished), next server (0 if finished)].
+fn tiebreak_summary(points: [i64], target: i64, first_server: i64) -> [i64] {
+    let a = 0
+    let b = 0
+    let winner = 0
+    let played = 0
+    for p in points {
+        if winner == 0 {
+            if p == 1 {
+                a = a + 1
+            } else {
+                b = b + 1
+            }
+            played = played + 1
+            if a >= target && a - b >= 2 {
+                winner = 1
+            } else if b >= target && b - a >= 2 {
+                winner = 2
+            }
+        }
+    }
+    let next_server = first_server
+    if winner != 0 {
+        next_server = 0
+    } else if ((played + 1) / 2) % 2 == 1 {
+        next_server = 3 - first_server
+    }
+    [a, b, winner, next_server]
+}
+
+// Returns [games A, games B, points used, tie-break played, set complete].
+fn set_games(points: [i64]) -> [i64] {
+    let ga = 0
+    let gb = 0
+    let pa = 0
+    let pb = 0
+    let used = 0
+    let tiebreak = 0
+    let complete = 0
+    while used < len(points) && complete == 0 {
+        if points[used] == 1 {
+            pa = pa + 1
+        } else {
+            pb = pb + 1
+        }
+        used = used + 1
+        let need = 4
+        if ga == 6 && gb == 6 {
+            need = 7
+            tiebreak = 1
+        }
+        if pa >= need && pa - pb >= 2 {
+            ga = ga + 1
+            pa = 0
+            pb = 0
+        } else if pb >= need && pb - pa >= 2 {
+            gb = gb + 1
+            pa = 0
+            pb = 0
+        }
+        if (ga >= 6 || gb >= 6) && abs_i64(ga - gb) >= 2 {
+            complete = 1
+        } else if ga == 7 || gb == 7 {
+            complete = 1
+        }
+    }
+    [ga, gb, used, tiebreak, complete]
+}
+
+fn match_score(points: [i64], best_of: i64) -> str {
+    let need = best_of / 2 + 1
+    let sets_a = 0
+    let sets_b = 0
+    let parts = []
+    let rest = points
+    while len(rest) > 0 && sets_a < need && sets_b < need {
+        let s = set_games(rest)
+        let label = to_str(s[0]) + "-" + to_str(s[1])
+        if s[3] == 1 && s[4] == 1 {
+            label = label + " tb"
+        }
+        parts = arr_push(parts, label)
+        if s[4] == 1 {
+            if s[0] > s[1] {
+                sets_a = sets_a + 1
+            } else {
+                sets_b = sets_b + 1
+            }
+        }
+        rest = arr_drop(rest, s[2])
+    }
+    if len(parts) == 0 {
+        return "not started"
+    }
+    let summary = str_join(parts, ", ")
+    if sets_a == need {
+        return "A wins " + summary
+    }
+    if sets_b == need {
+        return "B wins " + summary
+    }
+    "in progress " + summary
+}
+
+// Returns [holds A, times A broken, holds B, times B broken, break points].
+fn service_record(points: [i64], first_server: i64) -> [i64] {
+    let rec = [0, 0, 0, 0, 0]
+    let server = first_server
+    let ps = 0
+    let pr = 0
+    for p in points {
+        if pr >= 3 && pr > ps {
+            rec[4] = rec[4] + 1
+        }
+        if p == server {
+            ps = ps + 1
+        } else {
+            pr = pr + 1
+        }
+        let slot = -1
+        if ps >= 4 && ps - pr >= 2 {
+            slot = (server - 1) * 2
+        } else if pr >= 4 && pr - ps >= 2 {
+            slot = (server - 1) * 2 + 1
+        }
+        if slot >= 0 {
+            rec[slot] = rec[slot] + 1
+            ps = 0
+            pr = 0
+            server = 3 - server
+        }
+    }
+    rec
+}
+
+@[test]
+fn test_game_call_running_score() {
+    assert_eq_str(game_call([1, 1, 2]), "30-15")
+    assert_eq_str(game_call([2, 2]), "love-30")
+    assert_eq_str(game_call([]), "love-all")
+}
+
+@[test]
+fn test_game_call_deuce_and_advantage() {
+    assert_eq_str(game_call([1, 2, 1, 2, 1, 2]), "deuce")
+    assert_eq_str(game_call([1, 2, 1, 2, 1, 2, 2]), "advantage B")
+    assert_eq_str(game_call([1, 2, 1, 2, 1, 2, 2, 1, 1]), "advantage A")
+}
+
+@[test]
+fn test_game_call_finished_game() {
+    assert_eq_str(game_call([1, 1, 1, 1]), "game A")
+    assert_eq_str(game_call([1, 2, 1, 2, 1, 2, 2, 2, 1, 1]), "game B")
+    assert_eq_str(game_call([1, 3]), "invalid")
+}
+
+@[test]
+fn test_tiebreak_straight_win() {
+    assert(tiebreak_summary([1, 1, 1, 1, 1, 1, 1], 7, 1) == [7, 0, 1, 0])
+    assert(tiebreak_summary([1, 1, 1, 1, 1, 1, 1, 2, 2], 7, 1) == [7, 0, 1, 0])
+}
+
+@[test]
+fn test_tiebreak_server_rotation() {
+    assert(tiebreak_summary([], 7, 1) == [0, 0, 0, 1])
+    assert(tiebreak_summary([1, 2], 7, 1) == [1, 1, 0, 2])
+    assert(tiebreak_summary([1, 2, 1], 7, 2) == [2, 1, 0, 2])
+    assert(tiebreak_summary([1, 2, 1, 2, 2], 7, 1) == [2, 3, 0, 2])
+}
+
+@[test]
+fn test_tiebreak_needs_two_clear() {
+    let pts = [1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 2, 2]
+    assert(tiebreak_summary(pts, 10, 1) == [9, 11, 2, 0])
+    assert(tiebreak_summary(arr_take(pts, 19), 10, 1) == [9, 10, 0, 1])
+}
+
+@[test]
+fn test_set_games_bagel() {
+    assert(set_games(arr_repeat(1, 24)) == [6, 0, 24, 0, 1])
+    assert(set_games([1, 1]) == [0, 0, 2, 0, 0])
+}
+
+@[test]
+fn test_set_games_seven_five() {
+    let pts = arr_concat(arr_repeat(1, 20), arr_concat(arr_repeat(2, 20), arr_repeat(1, 8)))
+    assert(set_games(pts) == [7, 5, 48, 0, 1])
+    assert(set_games(arr_take(pts, 44)) == [6, 5, 44, 0, 0])
+}
+
+@[test]
+fn test_set_games_tiebreak() {
+    let six_all = arr_concat(arr_concat(arr_repeat(1, 20), arr_repeat(2, 20)), [1, 1, 1, 1, 2, 2, 2, 2])
+    assert(set_games(arr_concat(six_all, arr_repeat(1, 7))) == [7, 6, 55, 1, 1])
+    assert(set_games(arr_concat(six_all, [2, 2, 1])) == [6, 6, 51, 1, 0])
+}
+
+@[test]
+fn test_match_score_straight_sets() {
+    assert_eq_str(match_score(arr_repeat(1, 60), 3), "A wins 6-0, 6-0")
+    assert_eq_str(match_score(arr_repeat(2, 72), 5), "B wins 0-6, 0-6, 0-6")
+}
+
+@[test]
+fn test_match_score_in_progress() {
+    assert_eq_str(match_score([], 3), "not started")
+    assert_eq_str(match_score(arr_concat(arr_repeat(1, 24), arr_repeat(2, 9)), 3), "in progress 6-0, 0-2")
+}
+
+@[test]
+fn test_match_score_tiebreak_set() {
+    let six_all = arr_concat(arr_concat(arr_repeat(1, 20), arr_repeat(2, 20)), [1, 1, 1, 1, 2, 2, 2, 2])
+    let first = arr_concat(six_all, arr_repeat(2, 7))
+    let pts = arr_concat(first, arr_concat(arr_repeat(2, 24), arr_repeat(1, 4)))
+    assert_eq_str(match_score(pts, 3), "B wins 6-7 tb, 0-6")
+}
+
+@[test]
+fn test_service_record_hold_and_break() {
+    assert(service_record([1, 1, 1, 1, 1, 1, 1, 1], 1) == [1, 0, 0, 1, 1])
+    assert(service_record([2, 2, 2, 2, 2, 2, 2, 2], 2) == [0, 1, 1, 0, 1])
+}
+
+@[test]
+fn test_service_record_saved_break_points() {
+    assert(service_record([2, 2, 2, 1, 1, 1, 1, 1], 1) == [1, 0, 0, 0, 3])
+    assert(service_record([2, 2, 2, 1, 1, 1, 1], 1) == [0, 0, 0, 0, 3])
+}
+
+@[test]
+fn test_service_record_alternates_server() {
+    let pts = [1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1]
+    assert(service_record(pts, 1) == [2, 0, 1, 0, 0])
+}

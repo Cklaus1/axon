@@ -1,0 +1,265 @@
+fn validate_timing(timing: [i64]) -> str {
+    if len(timing) != 4 {
+        return "expected 4 values"
+    }
+    let min_green = timing[0]
+    let max_green = timing[1]
+    let yellow = timing[2]
+    let all_red = timing[3]
+    if min_green < 1 {
+        return "min green must be positive"
+    }
+    if max_green < min_green {
+        return "max green below min green"
+    }
+    if yellow < 2 || yellow > 6 {
+        return "yellow out of range"
+    }
+    if all_red < 1 || all_red > 3 {
+        return "all red out of range"
+    }
+    let cycle = 2 * (max_green + yellow + all_red)
+    if cycle > 180 {
+        return "cycle too long: " + to_str(cycle)
+    }
+    "ok"
+}
+
+fn step_controller(state: [i64], sensors: i64, timing: [i64]) -> [i64] {
+    let phase = state[0]
+    let elapsed = state[1] + 1
+    let ns_present = bit_and(sensors, 1) != 0
+    let ew_present = bit_and(sensors, 2) != 0
+    let ns_call = state[2] == 1 || ns_present
+    let ew_call = state[3] == 1 || ew_present
+    if phase == 0 {
+        ns_call = false
+    } else if phase == 3 {
+        ew_call = false
+    }
+    let next = phase
+    if phase == 0 || phase == 3 {
+        let own_present = if phase == 0 { ns_present } else { ew_present }
+        let cross = if phase == 0 { ew_call } else { ns_call }
+        if elapsed >= timing[0] && cross && (!own_present || elapsed >= timing[1]) {
+            next = phase + 1
+        }
+    } else if phase == 1 || phase == 4 {
+        if elapsed >= timing[2] {
+            next = phase + 1
+        }
+    } else if elapsed >= timing[3] {
+        next = (phase + 1) % 6
+    }
+    if next != phase {
+        elapsed = 0
+    }
+    [next, elapsed, if ns_call { 1 } else { 0 }, if ew_call { 1 } else { 0 }]
+}
+
+fn simulate(sensors: [i64], timing: [i64]) -> [i64] {
+    let phases = []
+    if validate_timing(timing) != "ok" {
+        return phases
+    }
+    let state = [0, 0, 0, 0]
+    for s in sensors {
+        phases = arr_push(phases, state[0])
+        state = step_controller(state, s, timing)
+    }
+    phases
+}
+
+fn max_wait(sensors: [i64], timing: [i64]) -> [i64] {
+    let phases = simulate(sensors, timing)
+    let n = len(phases)
+    let starts = [-1, -1]
+    let worst = [0, 0]
+    let greens = [0, 3]
+    let bits = [1, 2]
+    let t = 0
+    while t < n {
+        let d = 0
+        while d < 2 {
+            if phases[t] == greens[d] {
+                if starts[d] >= 0 {
+                    worst[d] = max_i64(worst[d], t - starts[d])
+                }
+                starts[d] = -1
+            } else if bit_and(sensors[t], bits[d]) != 0 && starts[d] < 0 {
+                starts[d] = t
+            }
+            d = d + 1
+        }
+        t = t + 1
+    }
+    let k = 0
+    while k < 2 {
+        if starts[k] >= 0 {
+            worst[k] = max_i64(worst[k], n - starts[k])
+        }
+        k = k + 1
+    }
+    worst
+}
+
+fn queue_lengths(arrivals_ns: [i64], arrivals_ew: [i64], timing: [i64]) -> [i64] {
+    let ticks = min_i64(len(arrivals_ns), len(arrivals_ew))
+    let ns_queue = 0
+    let ew_queue = 0
+    let served = 0
+    let longest = 0
+    let state = [0, 0, 0, 0]
+    let t = 0
+    while t < ticks {
+        ns_queue = ns_queue + arrivals_ns[t]
+        ew_queue = ew_queue + arrivals_ew[t]
+        longest = max_i64(longest, max_i64(ns_queue, ew_queue))
+        let sensors = 0
+        if ns_queue > 0 {
+            sensors = sensors + 1
+        }
+        if ew_queue > 0 {
+            sensors = sensors + 2
+        }
+        if state[0] == 0 && ns_queue > 0 {
+            ns_queue = ns_queue - 1
+            served = served + 1
+        } else if state[0] == 3 && ew_queue > 0 {
+            ew_queue = ew_queue - 1
+            served = served + 1
+        }
+        state = step_controller(state, sensors, timing)
+        t = t + 1
+    }
+    [ns_queue, ew_queue, served, longest]
+}
+
+fn render_timeline(phases: [i64]) -> str {
+    let codes = ["NS-G", "NS-Y", "RED", "EW-G", "EW-Y", "RED"]
+    let parts = []
+    let cycles = 0
+    let n = len(phases)
+    let i = 0
+    while i < n {
+        let p = phases[i]
+        let run = 1
+        while i + run < n && phases[i + run] == p {
+            run = run + 1
+        }
+        let code = "?"
+        if p >= 0 && p < 6 {
+            code = codes[p]
+        }
+        parts = arr_push(parts, code + ":" + to_str(run))
+        if p == 5 && i + run < n && phases[i + run] == 0 {
+            cycles = cycles + 1
+        }
+        i = i + run
+    }
+    if n == 0 {
+        return "idle"
+    }
+    str_join(parts, " ") + " cycles=" + to_str(cycles)
+}
+
+@[test]
+fn test_validate_timing_accepts_standard_plan() {
+    assert_eq_str(validate_timing([3, 6, 2, 1]), "ok")
+    assert_eq_str(validate_timing([10, 45, 4, 2]), "ok")
+}
+
+@[test]
+fn test_validate_timing_green_bounds() {
+    assert_eq_str(validate_timing([0, 6, 2, 1]), "min green must be positive")
+    assert_eq_str(validate_timing([8, 6, 2, 1]), "max green below min green")
+    assert_eq_str(validate_timing([3, 6, 2]), "expected 4 values")
+}
+
+@[test]
+fn test_validate_timing_clearance_and_cycle() {
+    assert_eq_str(validate_timing([3, 6, 9, 1]), "yellow out of range")
+    assert_eq_str(validate_timing([3, 6, 3, 0]), "all red out of range")
+    assert_eq_str(validate_timing([10, 90, 4, 2]), "cycle too long: 192")
+}
+
+@[test]
+fn test_step_controller_holds_green_for_own_traffic() {
+    assert(step_controller([0, 2, 0, 1], 1, [3, 6, 2, 1]) == [0, 3, 0, 1])
+    assert(step_controller([0, 9, 0, 0], 1, [3, 6, 2, 1]) == [0, 10, 0, 0])
+}
+
+@[test]
+fn test_step_controller_gap_out_and_max_out() {
+    assert(step_controller([0, 2, 0, 1], 0, [3, 6, 2, 1]) == [1, 0, 0, 1])
+    assert(step_controller([0, 5, 0, 1], 1, [3, 6, 2, 1]) == [1, 0, 0, 1])
+}
+
+@[test]
+fn test_step_controller_clearance_and_latched_call() {
+    assert(step_controller([1, 1, 0, 1], 0, [3, 6, 2, 1]) == [2, 0, 0, 1])
+    assert(step_controller([5, 0, 1, 0], 0, [3, 6, 2, 1]) == [0, 0, 1, 0])
+    assert(step_controller([3, 0, 0, 0], 1, [3, 6, 2, 1]) == [3, 1, 1, 0])
+}
+
+@[test]
+fn test_simulate_side_street_call() {
+    let sensors = [0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    assert(simulate(sensors, [3, 6, 2, 1]) == [0, 0, 0, 1, 1, 2, 3, 3, 3, 3, 3, 3])
+    assert_eq(len(simulate(sensors, [3, 6, 9, 1])), 0)
+}
+
+@[test]
+fn test_max_wait_single_call() {
+    assert(max_wait([0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [3, 6, 2, 1]) == [0, 5])
+}
+
+@[test]
+fn test_max_wait_saturated_demand() {
+    let sensors = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+    assert(max_wait(sensors, [3, 6, 2, 1]) == [10, 9])
+}
+
+@[test]
+fn test_max_wait_both_directions_served() {
+    let sensors = [1, 0, 1, 0, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+    assert(max_wait(sensors, [3, 6, 2, 1]) == [4, 4])
+    assert(max_wait(sensors, [3, 6, 2, 9]) == [0, 0])
+}
+
+@[test]
+fn test_queue_lengths_clears_both_queues() {
+    let ns = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    let ew = [0, 3, 0, 0, 0, 0, 0, 0, 0, 0]
+    assert(queue_lengths(ns, ew, [3, 6, 2, 1]) == [0, 0, 5, 3])
+}
+
+@[test]
+fn test_queue_lengths_heavy_main_road() {
+    let ns = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    let ew = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]
+    assert(queue_lengths(ns, ew, [3, 6, 2, 1]) == [6, 3, 9, 6])
+}
+
+@[test]
+fn test_queue_lengths_uneven_inputs() {
+    assert(queue_lengths([3, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0], [3, 6, 2, 1]) == [0, 0, 3, 3])
+    assert(queue_lengths([4, 0], [0, 0], [3, 6, 2, 1]) == [2, 0, 2, 4])
+}
+
+@[test]
+fn test_render_timeline_full_cycle() {
+    let phases = [0, 0, 0, 0, 0, 0, 1, 1, 2, 3, 3, 3, 3, 3, 3, 4, 4, 5, 0, 0, 0]
+    assert_eq_str(render_timeline(phases), "NS-G:6 NS-Y:2 RED:1 EW-G:6 EW-Y:2 RED:1 NS-G:3 cycles=1")
+}
+
+@[test]
+fn test_render_timeline_partial() {
+    assert_eq_str(render_timeline([0, 0, 0, 1, 1, 2, 3, 3]), "NS-G:3 NS-Y:2 RED:1 EW-G:2 cycles=0")
+    assert_eq_str(render_timeline([]), "idle")
+}
+
+@[test]
+fn test_render_timeline_unknown_phase() {
+    assert_eq_str(render_timeline([5, 0, 7, 7]), "RED:1 NS-G:1 ?:2 cycles=1")
+}

@@ -1,0 +1,268 @@
+fn hex_digit(n: i64) -> str {
+    str_slice("0123456789abcdef", n, n + 1)
+}
+
+fn hex_value(c: i64) -> i64 {
+    if c >= 48 && c <= 57 {
+        c - 48
+    } else if c >= 97 && c <= 102 {
+        c - 87
+    } else if c >= 65 && c <= 70 {
+        c - 55
+    } else {
+        -1
+    }
+}
+
+fn rgb_to_hex(r: i64, g: i64, b: i64, alpha: i64, short: bool) -> str {
+    let chans = [clamp_i64(r, 0, 255), clamp_i64(g, 0, 255), clamp_i64(b, 0, 255)]
+    if alpha >= 0 && alpha < 255 {
+        chans = arr_push(chans, alpha)
+    }
+    let count = len(chans)
+    let can_shorten = true
+    for i in 0..count {
+        let c = chans[i]
+        if c / 16 != c % 16 {
+            can_shorten = false
+        }
+    }
+    let out = "#"
+    if short && can_shorten {
+        for i in 0..count {
+            out = out + hex_digit(chans[i] % 16)
+        }
+    } else {
+        for i in 0..count {
+            let c = chans[i]
+            out = out + hex_digit(c / 16) + hex_digit(c % 16)
+        }
+    }
+    out
+}
+
+fn hex_to_rgb(text: str) -> [i64] {
+    let s = str_trim(text)
+    let start = if str_starts_with(s, "#") { 1 } else { 0 }
+    let n = str_len(s) - start
+    if n != 3 && n != 6 {
+        return []
+    }
+    let digits: [i64] = []
+    for i in start..str_len(s) {
+        let d = hex_value(char_at(s, i))
+        if d < 0 {
+            return []
+        }
+        digits = arr_push(digits, d)
+    }
+    let out: [i64] = []
+    for k in 0..3 {
+        if n == 3 {
+            out = arr_push(out, digits[k] * 17)
+        } else {
+            out = arr_push(out, digits[2 * k] * 16 + digits[2 * k + 1])
+        }
+    }
+    out
+}
+
+fn rgb_to_hsl(r: i64, g: i64, b: i64) -> [i64] {
+    let rf = i64_to_f64(clamp_i64(r, 0, 255)) / 255.0
+    let gf = i64_to_f64(clamp_i64(g, 0, 255)) / 255.0
+    let bf = i64_to_f64(clamp_i64(b, 0, 255)) / 255.0
+    let mx = max_f64(rf, max_f64(gf, bf))
+    let mn = min_f64(rf, min_f64(gf, bf))
+    let l = (mx + mn) / 2.0
+    let h = 0.0
+    let s = 0.0
+    if mx > mn {
+        let d = mx - mn
+        s = if l > 0.5 { d / (2.0 - mx - mn) } else { d / (mx + mn) }
+        if mx == rf {
+            h = (gf - bf) / d
+            if gf < bf {
+                h = h + 6.0
+            }
+        } else if mx == gf {
+            h = (bf - rf) / d + 2.0
+        } else {
+            h = (rf - gf) / d + 4.0
+        }
+        h = h * 60.0
+    }
+    let hi = f64_to_i64(round_f64(h))
+    if hi >= 360 {
+        hi = hi - 360
+    }
+    [hi, f64_to_i64(round_f64(s * 100.0)), f64_to_i64(round_f64(l * 100.0))]
+}
+
+fn hsl_to_rgb(h: i64, s: i64, l: i64) -> [i64] {
+    let hn = h % 360
+    if hn < 0 {
+        hn = hn + 360
+    }
+    let sf = i64_to_f64(clamp_i64(s, 0, 100)) / 100.0
+    let lf = i64_to_f64(clamp_i64(l, 0, 100)) / 100.0
+    let c = (1.0 - abs_f64(2.0 * lf - 1.0)) * sf
+    let hp = i64_to_f64(hn) / 60.0
+    let hmod = hp - 2.0 * floor_f64(hp / 2.0)
+    let x = c * (1.0 - abs_f64(hmod - 1.0))
+    let m = lf - c / 2.0
+    let sector = f64_to_i64(floor_f64(hp))
+    let r1 = 0.0
+    let g1 = 0.0
+    let b1 = 0.0
+    if sector == 0 {
+        r1 = c
+        g1 = x
+    } else if sector == 1 {
+        r1 = x
+        g1 = c
+    } else if sector == 2 {
+        g1 = c
+        b1 = x
+    } else if sector == 3 {
+        g1 = x
+        b1 = c
+    } else if sector == 4 {
+        r1 = x
+        b1 = c
+    } else {
+        r1 = c
+        b1 = x
+    }
+    [f64_to_i64(round_f64((r1 + m) * 255.0)), f64_to_i64(round_f64((g1 + m) * 255.0)), f64_to_i64(round_f64((b1 + m) * 255.0))]
+}
+
+fn blend(base: str, top: str, weight: f64, mode: str) -> str {
+    let ca: [i64] = hex_to_rgb(base)
+    let cb: [i64] = hex_to_rgb(top)
+    if len(ca) != 3 || len(cb) != 3 {
+        return ""
+    }
+    let w = clamp_f64(weight, 0.0, 1.0)
+    let out: [i64] = []
+    for i in 0..3 {
+        let a = i64_to_f64(ca[i])
+        let b = i64_to_f64(cb[i])
+        let mixed = if str_eq(mode, "mix") {
+            b
+        } else if str_eq(mode, "multiply") {
+            a * b / 255.0
+        } else if str_eq(mode, "screen") {
+            255.0 - (255.0 - a) * (255.0 - b) / 255.0
+        } else if str_eq(mode, "overlay") {
+            if a < 128.0 { 2.0 * a * b / 255.0 } else { 255.0 - 2.0 * (255.0 - a) * (255.0 - b) / 255.0 }
+        } else {
+            -1.0
+        }
+        if mixed < 0.0 {
+            return ""
+        }
+        out = arr_push(out, f64_to_i64(round_f64(a * (1.0 - w) + mixed * w)))
+    }
+    rgb_to_hex(out[0], out[1], out[2], 255, false)
+}
+
+@[test]
+fn test_rgb_to_hex_basic() {
+    assert_eq_str(rgb_to_hex(255, 99, 71, 255, false), "#ff6347")
+}
+
+@[test]
+fn test_rgb_to_hex_clamps_channels() {
+    assert_eq_str(rgb_to_hex(300, -4, 16, -1, false), "#ff0010")
+}
+
+@[test]
+fn test_rgb_to_hex_short_form() {
+    assert_eq_str(rgb_to_hex(255, 255, 0, 255, true), "#ff0")
+    assert_eq_str(rgb_to_hex(18, 52, 86, 255, true), "#123456")
+}
+
+@[test]
+fn test_rgb_to_hex_with_alpha() {
+    assert_eq_str(rgb_to_hex(0, 128, 255, 64, false), "#0080ff40")
+    assert_eq_str(rgb_to_hex(34, 0, 255, 136, true), "#20f8")
+}
+
+@[test]
+fn test_hex_to_rgb_upper_case() {
+    assert(hex_to_rgb("#FF6347") == [255, 99, 71])
+}
+
+@[test]
+fn test_hex_to_rgb_short_without_hash() {
+    assert(hex_to_rgb("  0af ") == [0, 170, 255])
+}
+
+@[test]
+fn test_hex_to_rgb_lower_case() {
+    assert(hex_to_rgb("#1e90ff") == [30, 144, 255])
+}
+
+@[test]
+fn test_hex_to_rgb_rejects_malformed() {
+    assert(len(hex_to_rgb("#12345g")) == 0)
+    assert(len(hex_to_rgb("#1234")) == 0)
+}
+
+@[test]
+fn test_rgb_to_hsl_primary_and_gray() {
+    assert(rgb_to_hsl(255, 0, 0) == [0, 100, 50])
+    assert(rgb_to_hsl(128, 128, 128) == [0, 0, 50])
+}
+
+@[test]
+fn test_rgb_to_hsl_blue_dominant() {
+    assert(rgb_to_hsl(30, 144, 255) == [210, 100, 56])
+}
+
+@[test]
+fn test_rgb_to_hsl_red_dominant() {
+    assert(rgb_to_hsl(255, 99, 71) == [9, 100, 64])
+}
+
+@[test]
+fn test_hsl_to_rgb_pure_red() {
+    assert(hsl_to_rgb(0, 100, 50) == [255, 0, 0])
+}
+
+@[test]
+fn test_hsl_to_rgb_sky_blue() {
+    assert(hsl_to_rgb(210, 100, 56) == [31, 143, 255])
+}
+
+@[test]
+fn test_hsl_to_rgb_wraps_hue() {
+    assert(hsl_to_rgb(-120, 50, 25) == [32, 32, 96])
+    assert(hsl_to_rgb(480, 0, 100) == [255, 255, 255])
+}
+
+@[test]
+fn test_blend_mix_halfway() {
+    assert_eq_str(blend("#000000", "#ffffff", 0.5, "mix"), "#808080")
+}
+
+@[test]
+fn test_blend_multiply() {
+    assert_eq_str(blend("#ff8040", "#808080", 1.0, "multiply"), "#804020")
+}
+
+@[test]
+fn test_blend_screen_half_opacity() {
+    assert_eq_str(blend("#336699", "#336699", 0.5, "screen"), "#4785b8")
+}
+
+@[test]
+fn test_blend_overlay_with_white() {
+    assert_eq_str(blend("#40c0ff", "#fff", 1.0, "overlay"), "#80ffff")
+}
+
+@[test]
+fn test_blend_rejects_bad_input() {
+    assert_eq_str(blend("#zzz", "#fff", 0.5, "mix"), "")
+    assert_eq_str(blend("#000", "#fff", 0.5, "dodge"), "")
+}

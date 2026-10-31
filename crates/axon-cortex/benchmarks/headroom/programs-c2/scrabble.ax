@@ -1,0 +1,301 @@
+// Scrabble helpers. Tiles are uppercase letters; "?" on a rack is a blank,
+// and a lowercase letter in a played word marks a blank standing for it.
+
+fn letter_value(c: str) -> i64 {
+    match c {
+        "A" | "E" | "I" | "O" | "U" | "L" | "N" | "S" | "T" | "R" => 1
+        "D" | "G" => 2
+        "B" | "C" | "M" | "P" => 3
+        "F" | "H" | "V" | "W" | "Y" => 4
+        "K" => 5
+        "J" | "X" => 8
+        "Q" | "Z" => 10
+        _ => 0
+    }
+}
+
+// Scores a played word. Each square is "." plain, "d" double letter, "t"
+// triple letter, "D" double word, "T" triple word, or "-" for a tile that was
+// already on the board (face value, no premium, not counted as placed).
+// Placing all seven rack tiles earns a 50 point bonus.
+fn word_score(word: str, squares: str) -> i64 {
+    if len(word) != len(squares) || len(word) == 0 {
+        return 0
+    }
+    let total = 0
+    let word_mult = 1
+    let placed = 0
+    let i = 0
+    while i < len(word) {
+        let c = str_slice(word, i, i + 1)
+        let sq = str_slice(squares, i, i + 1)
+        let v = letter_value(c)
+        if sq == "-" {
+            total = total + v
+        } else {
+            placed = placed + 1
+            if sq == "d" {
+                v = v * 2
+            } else if sq == "t" {
+                v = v * 3
+            } else if sq == "D" {
+                word_mult = word_mult * 2
+            } else if sq == "T" {
+                word_mult = word_mult * 3
+            }
+            total = total + v
+        }
+        i = i + 1
+    }
+    let score = total * word_mult
+    if placed == 7 {
+        score = score + 50
+    }
+    score
+}
+
+// Two phrases are anagrams when they use the same letters the same number of
+// times, ignoring case, spaces and punctuation. A phrase is not an anagram
+// of itself.
+fn is_anagram(a: str, b: str) -> bool {
+    let counts = arr_repeat(0, 26)
+    let letters_a = ""
+    let letters_b = ""
+    for c in str_chars(str_to_lower(a)) {
+        let k = char_at(c, 0) - 97
+        if k >= 0 && k < 26 {
+            counts[k] = counts[k] + 1
+            letters_a = letters_a + c
+        }
+    }
+    for c in str_chars(str_to_lower(b)) {
+        let k = char_at(c, 0) - 97
+        if k >= 0 && k < 26 {
+            counts[k] = counts[k] - 1
+            letters_b = letters_b + c
+        }
+    }
+    if len(letters_a) == 0 || letters_a == letters_b {
+        return false
+    }
+    let j = 0
+    while j < 26 {
+        if counts[j] != 0 {
+            return false
+        }
+        j = j + 1
+    }
+    true
+}
+
+// Whether the word can be formed from the rack, spending blanks only on
+// letters the rack lacks.
+fn can_make(rack: str, word: str) -> bool {
+    let counts = arr_repeat(0, 26)
+    let blanks = 0
+    for t in str_chars(str_to_upper(rack)) {
+        if t == "?" {
+            blanks = blanks + 1
+        } else {
+            let k = char_at(t, 0) - 65
+            if k >= 0 && k < 26 {
+                counts[k] = counts[k] + 1
+            }
+        }
+    }
+    let w = str_to_upper(word)
+    if len(w) == 0 {
+        return false
+    }
+    for c in str_chars(w) {
+        let k = char_at(c, 0) - 65
+        if k < 0 || k >= 26 {
+            return false
+        }
+        if counts[k] > 0 {
+            counts[k] = counts[k] - 1
+        } else if blanks > 0 {
+            blanks = blanks - 1
+        } else {
+            return false
+        }
+    }
+    true
+}
+
+// The highest scoring word (face values, blanks worth nothing) that the rack
+// can form. Ties go to the longer word, then the alphabetically first.
+// Returns "" when no word can be formed.
+fn best_word(rack: str, words: [str]) -> str {
+    let counts = arr_repeat(0, 26)
+    let blanks = 0
+    for t in str_chars(str_to_upper(rack)) {
+        let k = char_at(t, 0) - 65
+        if t == "?" {
+            blanks = blanks + 1
+        } else if k >= 0 && k < 26 {
+            counts[k] = counts[k] + 1
+        }
+    }
+    let best = ""
+    let best_score = -1
+    for raw in words {
+        let w = str_to_upper(raw)
+        let left = arr_concat(counts, [])
+        let need_blanks = 0
+        let score = 0
+        let valid = len(w) > 0
+        for c in str_chars(w) {
+            let k = char_at(c, 0) - 65
+            if k < 0 || k >= 26 {
+                valid = false
+            } else if left[k] > 0 {
+                left[k] = left[k] - 1
+                score = score + letter_value(c)
+            } else {
+                need_blanks = need_blanks + 1
+            }
+        }
+        if valid && need_blanks <= blanks {
+            let better = score > best_score
+            if score == best_score && (len(w) > len(best) || (len(w) == len(best) && str_cmp(w, best) < 0)) {
+                better = true
+            }
+            if better {
+                best = w
+                best_score = score
+            }
+        }
+    }
+    best
+}
+
+// Places a word on one board row ("." is an empty square) starting at the
+// given column. Returns the new row, or "" when the word runs off the row,
+// clashes with a tile, abuts a tile at either end, places nothing new, or
+// fails to use an existing tile on a row that already has some.
+fn place_on_row(row: str, word: str, start: i64) -> str {
+    let n = len(row)
+    let m = len(word)
+    if m == 0 || start < 0 || start + m > n {
+        return ""
+    }
+    if start > 0 && str_slice(row, start - 1, start) != "." {
+        return ""
+    }
+    if start + m < n && str_slice(row, start + m, start + m + 1) != "." {
+        return ""
+    }
+    let out = str_slice(row, 0, start)
+    let placed = 0
+    let touches = false
+    let i = 0
+    while i < m {
+        let cell = str_slice(row, start + i, start + i + 1)
+        let letter = str_slice(word, i, i + 1)
+        if cell == "." {
+            placed = placed + 1
+        } else if cell == letter {
+            touches = true
+        } else {
+            return ""
+        }
+        out = out + letter
+        i = i + 1
+    }
+    let row_empty = str_count(row, ".") == n
+    if placed == 0 || (!touches && !row_empty) {
+        return ""
+    }
+    out + str_slice(row, start + m, n)
+}
+
+@[test]
+fn test_word_score_plain_and_premiums() {
+    assert_eq(word_score("CAT", "..."), 5)
+    assert_eq(word_score("QUIZ", "dD.."), 64)
+}
+
+@[test]
+fn test_word_score_blanks() {
+    assert_eq(word_score("zEbRa", "T...."), 6)
+    assert_eq(word_score("CAT", ".."), 0)
+}
+
+@[test]
+fn test_word_score_bingo() {
+    assert_eq(word_score("RETAINS", "......."), 57)
+    assert_eq(word_score("RETAINS", "-.....D"), 14)
+}
+
+@[test]
+fn test_is_anagram_simple() {
+    assert(is_anagram("listen", "Silent"))
+    assert(!is_anagram("abc", "abd"))
+}
+
+@[test]
+fn test_is_anagram_phrases() {
+    assert(is_anagram("Dormitory", "dirty room"))
+    assert(is_anagram("a gentleman", "Elegant man!"))
+}
+
+@[test]
+fn test_is_anagram_same_word() {
+    assert(!is_anagram("stop", "Stop"))
+    assert(is_anagram("stop", "pots"))
+}
+
+@[test]
+fn test_can_make_plain() {
+    assert(can_make("RETAINS", "stain"))
+    assert(!can_make("CAT", "TACT"))
+}
+
+@[test]
+fn test_can_make_blank() {
+    assert(can_make("AEIRST?", "STAIRED"))
+    assert(can_make("??", "QI"))
+}
+
+@[test]
+fn test_can_make_rejects() {
+    assert(!can_make("ABC", ""))
+    assert(can_make("ABC", "cab"))
+}
+
+@[test]
+fn test_best_word_uses_blank() {
+    assert_eq_str(best_word("AEIRST?", ["TEAR", "STAIRED", "ZEST"]), "STAIRED")
+}
+
+@[test]
+fn test_best_word_skips_unplayable() {
+    assert_eq_str(best_word("QUIZ", ["ZIT", "QI", "QUIZ"]), "QUIZ")
+    assert_eq_str(best_word("AB", ["XYZ"]), "")
+}
+
+@[test]
+fn test_best_word_tie_break() {
+    assert_eq_str(best_word("ABD?", ["DAB", "BAD", "BAA"]), "BAD")
+}
+
+@[test]
+fn test_place_on_row_empty_row() {
+    assert_eq_str(place_on_row(".......", "CAT", 2), "..CAT..")
+    assert_eq_str(place_on_row("....", "CAT", 2), "")
+}
+
+@[test]
+fn test_place_on_row_uses_tile() {
+    assert_eq_str(place_on_row("....T..", "CAT", 2), "..CAT..")
+    assert_eq_str(place_on_row("..CAT..", "SCAT", 1), ".SCAT..")
+}
+
+@[test]
+fn test_place_on_row_rejections() {
+    assert_eq_str(place_on_row("..D....", "CAT", 2), "")
+    assert_eq_str(place_on_row(".X.....", "CAT", 2), "")
+    assert_eq_str(place_on_row("A......", "CAT", 2), "")
+    assert_eq_str(place_on_row("..C....", "CAT", 2), "..CAT..")
+}

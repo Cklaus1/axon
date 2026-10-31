@@ -1,0 +1,293 @@
+// Minesweeper board logic. A board is a list of rows where "*" marks a mine
+// and any other character is a safe cell. Cells are addressed by flat index
+// row * width + col.
+
+fn board_width(rows: [str]) -> i64 {
+    if len(rows) == 0 {
+        return 0
+    }
+    str_len(rows[0])
+}
+
+fn is_mine(rows: [str], r: i64, c: i64) -> bool {
+    if r < 0 || r >= len(rows) || c < 0 || c >= board_width(rows) {
+        return false
+    }
+    str_char_at(rows[r], c) == "*"
+}
+
+fn neighbour_counts(rows: [str]) -> [i64] {
+    let h = len(rows)
+    let w = board_width(rows)
+    let counts = arr_repeat(0, h * w)
+    for r in arr_range(0, h) {
+        for c in arr_range(0, w) {
+            if is_mine(rows, r, c) {
+                counts[r * w + c] = -1
+                continue
+            }
+            let n = 0
+            for dr in [-1, 0, 1] {
+                for dc in [-1, 0, 1] {
+                    if dr == 0 && dc == 0 {
+                        continue
+                    }
+                    if is_mine(rows, r + dr, c + dc) {
+                        n = n + 1
+                    }
+                }
+            }
+            counts[r * w + c] = n
+        }
+    }
+    counts
+}
+
+fn reveal_from(rows: [str], row: i64, col: i64) -> [bool] {
+    let h = len(rows)
+    let w = board_width(rows)
+    let shown = arr_repeat(false, h * w)
+    if row < 0 || row >= h || col < 0 || col >= w {
+        return shown
+    }
+    let counts = neighbour_counts(rows)
+    let start = row * w + col
+    shown[start] = true
+    if counts[start] != 0 {
+        return shown
+    }
+    let stack = [start]
+    while len(stack) > 0 {
+        let cur = stack[len(stack) - 1]
+        stack = arr_take(stack, len(stack) - 1)
+        let r = cur / w
+        let c = cur % w
+        for dr in [-1, 0, 1] {
+            for dc in [-1, 0, 1] {
+                let nr = r + dr
+                let nc = c + dc
+                if nr < 0 || nr >= h || nc < 0 || nc >= w {
+                    continue
+                }
+                let n = nr * w + nc
+                if !shown[n] && counts[n] >= 0 {
+                    shown[n] = true
+                    if counts[n] == 0 {
+                        stack = arr_push(stack, n)
+                    }
+                }
+            }
+        }
+    }
+    shown
+}
+
+fn render_view(rows: [str], clicks: [i64]) -> [str] {
+    let h = len(rows)
+    let w = board_width(rows)
+    let counts = neighbour_counts(rows)
+    let shown = arr_repeat(false, h * w)
+    for click in clicks {
+        if click < 0 || click >= h * w || shown[click] {
+            continue
+        }
+        let mask = reveal_from(rows, click / w, click % w)
+        for i in arr_range(0, h * w) {
+            if mask[i] {
+                shown[i] = true
+            }
+        }
+    }
+    let out: [str] = []
+    for r in arr_range(0, h) {
+        let line = ""
+        for c in arr_range(0, w) {
+            let i = r * w + c
+            if !shown[i] {
+                line = line + "#"
+            } else if counts[i] < 0 {
+                line = line + "*"
+            } else if counts[i] == 0 {
+                line = line + "."
+            } else {
+                line = line + to_str(counts[i])
+            }
+        }
+        out = arr_push(out, line)
+    }
+    out
+}
+
+fn game_status(rows: [str], clicks: [i64]) -> str {
+    let h = len(rows)
+    let w = board_width(rows)
+    let shown = arr_repeat(false, h * w)
+    let safe_total = 0
+    for r in arr_range(0, h) {
+        for c in arr_range(0, w) {
+            if !is_mine(rows, r, c) {
+                safe_total = safe_total + 1
+            }
+        }
+    }
+    let revealed = 0
+    for click in clicks {
+        if click < 0 || click >= h * w || shown[click] {
+            continue
+        }
+        if is_mine(rows, click / w, click % w) {
+            return "lost"
+        }
+        let mask = reveal_from(rows, click / w, click % w)
+        for i in arr_range(0, h * w) {
+            if mask[i] && !shown[i] {
+                shown[i] = true
+                revealed = revealed + 1
+            }
+        }
+        if revealed == safe_total {
+            return "won"
+        }
+    }
+    "playing"
+}
+
+fn deduce_mines(view: [str]) -> [i64] {
+    let h = len(view)
+    let w = board_width(view)
+    let certain = arr_repeat(false, h * w)
+    for r in arr_range(0, h) {
+        for c in arr_range(0, w) {
+            let code = char_at(view[r], c)
+            if code < 49 || code > 56 {
+                continue
+            }
+            let hidden: [i64] = []
+            for dr in [-1, 0, 1] {
+                for dc in [-1, 0, 1] {
+                    let nr = r + dr
+                    let nc = c + dc
+                    if nr < 0 || nr >= h || nc < 0 || nc >= w {
+                        continue
+                    }
+                    let ch = str_char_at(view[nr], nc)
+                    if ch == "#" || ch == "F" {
+                        hidden = arr_push(hidden, nr * w + nc)
+                    }
+                }
+            }
+            if len(hidden) == code - 48 {
+                for n in hidden {
+                    certain[n] = true
+                }
+            }
+        }
+    }
+    let out: [i64] = []
+    for i in arr_range(0, h * w) {
+        if certain[i] {
+            out = arr_push(out, i)
+        }
+    }
+    out
+}
+
+@[test]
+fn test_neighbour_counts_center_mine() {
+    let counts = neighbour_counts(["...", ".*.", "..."])
+    assert(counts == [1, 1, 1, 1, -1, 1, 1, 1, 1])
+}
+
+@[test]
+fn test_neighbour_counts_corner_mines() {
+    let counts = neighbour_counts(["*..", "...", "..*"])
+    assert(counts == [-1, 1, 0, 1, 2, 1, 0, 1, -1])
+}
+
+@[test]
+fn test_neighbour_counts_dense() {
+    let counts = neighbour_counts(["**", "*."])
+    assert(counts == [-1, -1, -1, 3])
+}
+
+@[test]
+fn test_reveal_from_cascade() {
+    let shown = reveal_from(["...", "...", "..*"], 0, 0)
+    assert(shown == [true, true, true, true, true, true, true, true, false])
+}
+
+@[test]
+fn test_reveal_from_number_only() {
+    let shown = reveal_from(["*..", "...", "..."], 1, 1)
+    assert(shown == [false, false, false, false, true, false, false, false, false])
+}
+
+@[test]
+fn test_reveal_from_mine() {
+    let shown = reveal_from(["*.", ".."], 0, 0)
+    assert(shown == [true, false, false, false])
+}
+
+@[test]
+fn test_reveal_from_blocked_by_wall() {
+    let shown = reveal_from(["..*.", "..*.", "..*."], 0, 0)
+    assert(shown == [true, true, false, false, true, true, false, false, true, true, false, false])
+}
+
+@[test]
+fn test_render_view_after_cascade() {
+    let view = render_view(["....", "....", "...*"], [0])
+    assert(view == ["....", "..11", "..1#"])
+}
+
+@[test]
+fn test_render_view_two_clicks() {
+    let view = render_view(["*..", "...", "..."], [8, 0])
+    assert(view == ["*1.", "11.", "..."])
+}
+
+@[test]
+fn test_render_view_untouched() {
+    let view = render_view([".*", ".."], [99, -3])
+    assert(view == ["##", "##"])
+}
+
+@[test]
+fn test_game_status_won() {
+    assert_eq_str(game_status(["...", "...", "..*"], [0]), "won")
+}
+
+@[test]
+fn test_game_status_lost() {
+    assert_eq_str(game_status(["*..", "...", "..."], [4, 0]), "lost")
+}
+
+@[test]
+fn test_game_status_playing() {
+    assert_eq_str(game_status(["*.*", "...", "..."], [4]), "playing")
+}
+
+@[test]
+fn test_game_status_won_ignores_later_mine() {
+    assert_eq_str(game_status([".*"], [0, 1]), "won")
+}
+
+@[test]
+fn test_deduce_mines_corner() {
+    assert(deduce_mines(["1#", "11"]) == [1])
+}
+
+@[test]
+fn test_deduce_mines_row() {
+    assert(deduce_mines(["#2#", "121"]) == [0, 2])
+}
+
+@[test]
+fn test_deduce_mines_flag_counts_as_hidden() {
+    assert(deduce_mines(["F#.", "2..", "..."]) == [0, 1])
+}
+
+@[test]
+fn test_deduce_mines_ambiguous() {
+    assert(deduce_mines(["##", "1."]) == [])
+}

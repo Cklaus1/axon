@@ -1,0 +1,264 @@
+// Descriptive statistics over integer samples.
+
+// Median by in-place selection (Hoare's FIND), without sorting the whole
+// sample. For an even count it is the mean of the two middle values.
+fn median(xs: [i64]) -> f64 {
+    let n = len(xs)
+    if n == 0 {
+        return 0.0
+    }
+    let a = arr_take(xs, n)
+    let k = n / 2
+    let lo = 0
+    let hi = n - 1
+    while lo < hi {
+        let pivot = a[k]
+        let i = lo
+        let j = hi
+        while i <= j {
+            while a[i] < pivot {
+                i = i + 1
+            }
+            while pivot < a[j] {
+                j = j - 1
+            }
+            if i <= j {
+                let t = a[i]
+                a[i] = a[j]
+                a[j] = t
+                i = i + 1
+                j = j - 1
+            }
+        }
+        if j < k {
+            lo = i
+        }
+        if k < i {
+            hi = j
+        }
+    }
+    let upper = a[k]
+    if n % 2 == 1 {
+        return i64_to_f64(upper)
+    }
+    let lower = a[0]
+    for t in 1..k {
+        if a[t] > lower {
+            lower = a[t]
+        }
+    }
+    (i64_to_f64(lower) + i64_to_f64(upper)) / 2.0
+}
+
+// Every value that occurs most often, ascending. A sample in which all
+// distinct values occur equally often has no mode and yields [].
+fn modes(xs: [i64]) -> [i64] {
+    let n = len(xs)
+    if n == 0 {
+        return []
+    }
+    let s = arr_sort_by(xs, |a, b| a - b)
+    let best = 0
+    let distinct = 0
+    let i = 0
+    while i < n {
+        let j = i
+        while j < n && s[j] == s[i] {
+            j = j + 1
+        }
+        if j - i > best {
+            best = j - i
+        }
+        distinct = distinct + 1
+        i = j
+    }
+    if distinct > 1 && best * distinct == n {
+        return []
+    }
+    let out: [i64] = []
+    i = 0
+    while i < n {
+        let j = i
+        while j < n && s[j] == s[i] {
+            j = j + 1
+        }
+        if j - i == best {
+            out = arr_push(out, s[i])
+        }
+        i = j
+    }
+    out
+}
+
+// The p-th percentile (0 to 100) with a choice of interpolation between the
+// two closest ranks: "linear", "lower", "higher", "midpoint" or "nearest".
+// Ties in "nearest" go to the even rank. Invalid input yields 0.0.
+fn percentile(xs: [i64], p: f64, method: str) -> f64 {
+    let n = len(xs)
+    if n == 0 || p < 0.0 || p > 100.0 {
+        return 0.0
+    }
+    let s = arr_sort_by(xs, |a, b| a - b)
+    let rank = p / 100.0 * i64_to_f64(n - 1)
+    let lo = f64_to_i64(floor_f64(rank))
+    let hi = f64_to_i64(ceil_f64(rank))
+    let frac = rank - i64_to_f64(lo)
+    let a = i64_to_f64(s[lo])
+    let b = i64_to_f64(s[hi])
+    if method == "linear" {
+        a + (b - a) * frac
+    } else if method == "lower" {
+        a
+    } else if method == "higher" {
+        b
+    } else if method == "midpoint" {
+        (a + b) / 2.0
+    } else if method == "nearest" {
+        if frac < 0.5 {
+            a
+        } else if frac > 0.5 {
+            b
+        } else if lo % 2 == 0 {
+            a
+        } else {
+            b
+        }
+    } else {
+        0.0
+    }
+}
+
+// Variance multiplied by scale and rounded half up to an integer, computed
+// in exact integer arithmetic. Values are shifted by the first sample to
+// keep the sums small. sample selects the n - 1 denominator.
+fn scaled_variance(xs: [i64], scale: i64, sample: bool) -> i64 {
+    let n = len(xs)
+    if scale <= 0 || n == 0 {
+        return 0
+    }
+    if sample && n < 2 {
+        return 0
+    }
+    let shift = xs[0]
+    let s1 = 0
+    let s2 = 0
+    for x in xs {
+        let d = x - shift
+        s1 = s1 + d
+        s2 = s2 + d * d
+    }
+    let num = n * s2 - s1 * s1
+    let den = n * n
+    if sample {
+        den = n * (n - 1)
+    }
+    let scaled = num * scale
+    let q = scaled / den
+    let r = scaled % den
+    if r * 2 >= den {
+        q = q + 1
+    }
+    q
+}
+
+// Values outside the Tukey fences, Q1 - 1.5 IQR and Q3 + 1.5 IQR, in input order.
+fn iqr_outliers(xs: [i64]) -> [i64] {
+    if len(xs) < 4 {
+        return []
+    }
+    let q1 = percentile(xs, 25.0, "linear")
+    let q3 = percentile(xs, 75.0, "linear")
+    let reach = 1.5 * (q3 - q1)
+    arr_filter(xs, |x| i64_to_f64(x) < q1 - reach || i64_to_f64(x) > q3 + reach)
+}
+
+@[test]
+fn test_median_odd() {
+    assert_eq_f64(median([7, 1, 9, 3, 5]), 5.0)
+    assert_eq_f64(median([4]), 4.0)
+}
+
+@[test]
+fn test_median_even() {
+    assert_eq_f64(median([10, 2, 8, 4]), 6.0)
+    assert_eq_f64(median([1, 2]), 1.5)
+}
+
+@[test]
+fn test_median_duplicates_and_negatives() {
+    assert_eq_f64(median([3, 3, 3, 1, 3, 9]), 3.0)
+    assert_eq_f64(median([-5, -1, -3, 20, 0, -2]), -1.5)
+    assert_eq_f64(median([]), 0.0)
+}
+
+@[test]
+fn test_modes_single() {
+    assert(modes([4, 1, 4, 2, 4, 3]) == [4])
+}
+
+@[test]
+fn test_modes_multiple() {
+    assert(modes([3, 1, 2, 3, 2, 5]) == [2, 3])
+    assert(modes([7, 7]) == [7])
+}
+
+@[test]
+fn test_modes_uniform() {
+    assert(modes([1, 2, 3]) == [])
+    assert(modes([5, 6, 5, 6]) == [])
+    assert(modes([-1, -1, 0, 2, 2, 9]) == [-1, 2])
+}
+
+@[test]
+fn test_percentile_linear() {
+    let xs = [50, 15, 40, 20, 35]
+    assert_eq_f64(percentile(xs, 25.0, "linear"), 20.0)
+    assert_eq_f64(percentile([15, 20, 35, 40, 50], 37.5, "linear"), 27.5)
+    assert_eq_f64(percentile([15, 20, 35, 40, 50], 100.0, "linear"), 50.0)
+}
+
+@[test]
+fn test_percentile_methods() {
+    let xs = [1, 2, 3, 4]
+    assert_eq_f64(percentile(xs, 50.0, "lower"), 2.0)
+    assert_eq_f64(percentile([1, 2, 3, 4], 50.0, "higher"), 3.0)
+    assert_eq_f64(percentile([1, 2, 3, 4], 50.0, "midpoint"), 2.5)
+}
+
+@[test]
+fn test_percentile_nearest_and_invalid() {
+    assert_eq_f64(percentile([10, 20, 30, 40, 50], 37.5, "nearest"), 30.0)
+    assert_eq_f64(percentile([10, 20, 30, 40], 50.0, "nearest"), 30.0)
+    assert_eq_f64(percentile([10, 20], 120.0, "linear"), 0.0)
+    assert_eq_f64(percentile([10, 20], 50.0, "cubic"), 0.0)
+}
+
+@[test]
+fn test_scaled_variance_population() {
+    assert_eq(scaled_variance([2, 4, 4, 4, 5, 5, 7, 9], 100, false), 400)
+    assert_eq(scaled_variance([1, 2, 3, 4], 1000, false), 1250)
+}
+
+@[test]
+fn test_scaled_variance_sample() {
+    assert_eq(scaled_variance([2, 4, 4, 4, 5, 5, 7, 9], 100, true), 457)
+    assert_eq(scaled_variance([5], 100, true), 0)
+}
+
+@[test]
+fn test_scaled_variance_rounding_and_shift() {
+    assert_eq(scaled_variance([1, 2], 2, false), 1)
+    assert_eq(scaled_variance([1, 2, 3, 4], 1, false), 1)
+    assert_eq(scaled_variance([1000000001, 1000000003], 10, false), 10)
+}
+
+@[test]
+fn test_iqr_outliers_flags_extremes() {
+    assert(iqr_outliers([10, 12, 11, 13, 12, 95, 11, -40]) == [95, -40])
+}
+
+@[test]
+fn test_iqr_outliers_none() {
+    assert(iqr_outliers([1, 2, 3, 4, 5]) == [])
+    assert(iqr_outliers([1, 100]) == [])
+}

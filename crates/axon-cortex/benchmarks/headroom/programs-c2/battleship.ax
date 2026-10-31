@@ -1,0 +1,384 @@
+// Battleship on a square grid. Columns are letters starting at A and rows are
+// numbers starting at 1, so "C4" is column 2, row 3 (zero based).
+// Cells are indexed row * size + col.
+
+type Ship = { row: i64, col: i64, length: i64, horizontal: bool }
+
+fn ship_cells(ship: Ship, size: i64) -> [i64] {
+    let cells: [i64] = []
+    for k in 0..ship.length {
+        let r = ship.row
+        let c = ship.col
+        if ship.horizontal {
+            c = c + k
+        } else {
+            r = r + k
+        }
+        if r < 0 || c < 0 || r >= size || c >= size {
+            cells = arr_push(cells, -1)
+        } else {
+            cells = arr_push(cells, r * size + c)
+        }
+    }
+    cells
+}
+
+fn occupancy(ships: [Ship], size: i64) -> [i64] {
+    let grid = arr_repeat(0, size * size)
+    let id = 0
+    for ship in ships {
+        id = id + 1
+        for cell in ship_cells(ship, size) {
+            if cell >= 0 {
+                grid[cell] = id
+            }
+        }
+    }
+    grid
+}
+
+fn parse_coord(text: str, size: i64) -> i64 {
+    let t = str_to_upper(str_trim(text))
+    let n = str_len(t)
+    if n < 2 {
+        return -1
+    }
+    let col = char_at(t, 0) - 65
+    let row = 0
+    for i in 1..n {
+        let d = char_at(t, i) - 48
+        if d < 0 || d > 9 || row > size {
+            return -1
+        }
+        row = row * 10 + d
+    }
+    if col < 0 || col >= size || row < 1 || row > size {
+        return -1
+    }
+    (row - 1) * size + col
+}
+
+fn format_coord(cell: i64, size: i64) -> str {
+    chr(65 + cell % size) + to_str(cell / size + 1)
+}
+
+fn validate_fleet(ships: [Ship], size: i64) -> str {
+    if len(ships) == 0 || size < 1 {
+        return "empty fleet"
+    }
+    let grid = arr_repeat(0, size * size)
+    let problem = ""
+    let id = 0
+    for ship in ships {
+        id = id + 1
+        if problem == "" {
+            if ship.length < 1 || ship.length > 5 {
+                problem = "bad length"
+            } else {
+                for cell in ship_cells(ship, size) {
+                    if cell < 0 {
+                        problem = "out of bounds"
+                    } else if problem == "" && grid[cell] != 0 {
+                        problem = "overlap"
+                    } else if problem == "" {
+                        grid[cell] = id
+                    }
+                }
+            }
+        }
+    }
+    for cell in 0..size * size {
+        let here = grid[cell]
+        if here != 0 && problem == "" {
+            for dr in [-1, 0, 1] {
+                for dc in [-1, 0, 1] {
+                    let r = cell / size + dr
+                    let c = cell % size + dc
+                    if r >= 0 && c >= 0 && r < size && c < size {
+                        let other = grid[r * size + c]
+                        if other != 0 && other != here {
+                            problem = "touching"
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if problem == "" {
+        "ok"
+    } else {
+        problem
+    }
+}
+
+fn shot_reports(ships: [Ship], size: i64, shots: [str]) -> [str] {
+    let owners = occupancy(ships, size)
+    let lengths: [i64] = []
+    for ship in ships {
+        lengths = arr_push(lengths, ship.length)
+    }
+    let remaining = arr_take(lengths, len(lengths))
+    let afloat = len(lengths)
+    let fired = arr_repeat(false, size * size)
+    let reports: [str] = []
+    for shot in shots {
+        let cell = parse_coord(shot, size)
+        if afloat == 0 {
+            reports = arr_push(reports, "ignored")
+        } else if cell < 0 {
+            reports = arr_push(reports, "invalid")
+        } else if fired[cell] {
+            reports = arr_push(reports, "repeat")
+        } else {
+            fired[cell] = true
+            let id = owners[cell]
+            if id == 0 {
+                reports = arr_push(reports, "miss")
+            } else {
+                remaining[id - 1] = remaining[id - 1] - 1
+                if remaining[id - 1] > 0 {
+                    reports = arr_push(reports, "hit")
+                } else {
+                    afloat = afloat - 1
+                    let sunk = "sunk " + to_str(lengths[id - 1])
+                    if afloat == 0 {
+                        sunk = sunk + ", game over"
+                    }
+                    reports = arr_push(reports, sunk)
+                }
+            }
+        }
+    }
+    reports
+}
+
+fn fleet_status(ships: [Ship], size: i64, shots: [str]) -> [i64] {
+    let owners = occupancy(ships, size)
+    let remaining: [i64] = []
+    for ship in ships {
+        let inside = 0
+        for cell in ship_cells(ship, size) {
+            if cell >= 0 {
+                inside = inside + 1
+            }
+        }
+        remaining = arr_push(remaining, inside)
+    }
+    let fired = arr_repeat(false, size * size)
+    for shot in shots {
+        let cell = parse_coord(shot, size)
+        if cell >= 0 {
+            if !fired[cell] {
+                fired[cell] = true
+                let id = owners[cell]
+                if id > 0 && remaining[id - 1] > 0 {
+                    remaining[id - 1] = remaining[id - 1] - 1
+                }
+            }
+        }
+    }
+    remaining
+}
+
+fn render_view(ships: [Ship], size: i64, shots: [str]) -> str {
+    let owners = occupancy(ships, size)
+    let fired = arr_repeat(false, size * size)
+    let hits = arr_repeat(0, len(ships) + 1)
+    let lengths = arr_repeat(0, len(ships) + 1)
+    let id = 0
+    for ship in ships {
+        id = id + 1
+        lengths[id] = ship.length
+    }
+    for shot in shots {
+        let cell = parse_coord(shot, size)
+        if cell >= 0 && !fired[cell] {
+            fired[cell] = true
+            hits[owners[cell]] = hits[owners[cell]] + 1
+        }
+    }
+    let rows: [str] = []
+    for r in 0..size {
+        let line = ""
+        for c in 0..size {
+            let cell = r * size + c
+            let owner = owners[cell]
+            if !fired[cell] {
+                line = line + "."
+            } else if owner == 0 {
+                line = line + "o"
+            } else if hits[owner] >= lengths[owner] {
+                line = line + "#"
+            } else {
+                line = line + "x"
+            }
+        }
+        rows = arr_push(rows, line)
+    }
+    str_join(rows, "/")
+}
+
+fn next_target(size: i64, shots: [str], reports: [str]) -> str {
+    let fired = arr_repeat(false, size * size)
+    let last_hit = -1
+    let n = min_i64(len(shots), len(reports))
+    for i in 0..n {
+        let cell = parse_coord(shots[i], size)
+        if cell >= 0 {
+            fired[cell] = true
+            if reports[i] == "hit" {
+                last_hit = cell
+            } else if str_starts_with(reports[i], "sunk") {
+                last_hit = -1
+            }
+        }
+    }
+    if last_hit >= 0 {
+        let drs = [-1, 0, 1, 0]
+        let dcs = [0, 1, 0, -1]
+        for d in 0..4 {
+            let nr = last_hit / size + drs[d]
+            let nc = last_hit % size + dcs[d]
+            if nr >= 0 && nc >= 0 && nr < size && nc < size && !fired[nr * size + nc] {
+                return format_coord(nr * size + nc, size)
+            }
+        }
+    }
+    let fallback = -1
+    for cell in 0..size * size {
+        if !fired[cell] {
+            if (cell / size + cell % size) % 2 == 0 {
+                return format_coord(cell, size)
+            }
+            if fallback < 0 {
+                fallback = cell
+            }
+        }
+    }
+    if fallback < 0 {
+        ""
+    } else {
+        format_coord(fallback, size)
+    }
+}
+
+fn sample_fleet() -> [Ship] {
+    [
+        Ship { row: 0, col: 0, length: 3, horizontal: true },
+        Ship { row: 2, col: 4, length: 2, horizontal: false },
+        Ship { row: 5, col: 1, length: 1, horizontal: true },
+    ]
+}
+
+@[test]
+fn test_validate_fleet_accepts_spread_fleet() {
+    assert_eq_str(validate_fleet(sample_fleet(), 6), "ok")
+}
+
+@[test]
+fn test_validate_fleet_overlap() {
+    let ships = [
+        Ship { row: 0, col: 0, length: 3, horizontal: true },
+        Ship { row: 0, col: 1, length: 2, horizontal: false },
+    ]
+    assert_eq_str(validate_fleet(ships, 6), "overlap")
+}
+
+@[test]
+fn test_validate_fleet_out_of_bounds() {
+    let ships = [Ship { row: 0, col: 4, length: 3, horizontal: true }]
+    assert_eq_str(validate_fleet(ships, 6), "out of bounds")
+}
+
+@[test]
+fn test_validate_fleet_diagonal_touch() {
+    let ships = [
+        Ship { row: 0, col: 0, length: 2, horizontal: true },
+        Ship { row: 1, col: 2, length: 2, horizontal: true },
+    ]
+    assert_eq_str(validate_fleet(ships, 6), "touching")
+}
+
+@[test]
+fn test_validate_fleet_bad_length() {
+    let ships = [Ship { row: 0, col: 0, length: 0, horizontal: true }]
+    assert_eq_str(validate_fleet(ships, 6), "bad length")
+}
+
+@[test]
+fn test_shot_reports_hits_and_sink() {
+    let reports = shot_reports(sample_fleet(), 6, ["A1", "A2", "B1", "C1"])
+    assert(reports == ["hit", "miss", "hit", "sunk 3"])
+}
+
+@[test]
+fn test_shot_reports_repeat_and_invalid() {
+    let reports = shot_reports(sample_fleet(), 6, ["E3", "E3", "K1", "E4"])
+    assert(reports == ["hit", "repeat", "invalid", "sunk 2"])
+}
+
+@[test]
+fn test_shot_reports_game_over() {
+    let ships = [Ship { row: 1, col: 1, length: 2, horizontal: false }]
+    let reports = shot_reports(ships, 4, ["B2", "B3", "A1"])
+    assert(reports == ["hit", "sunk 2, game over", "ignored"])
+}
+
+@[test]
+fn test_fleet_status_untouched() {
+    assert(fleet_status(sample_fleet(), 6, []) == [3, 2, 1])
+}
+
+@[test]
+fn test_fleet_status_after_volley() {
+    assert(fleet_status(sample_fleet(), 6, ["A1", "B1", "E3", "B6"]) == [1, 1, 0])
+}
+
+@[test]
+fn test_fleet_status_ignores_repeats() {
+    assert(fleet_status(sample_fleet(), 6, ["A1", "A1", "a1"]) == [2, 2, 1])
+}
+
+@[test]
+fn test_render_view_hit_and_miss() {
+    let ships = [
+        Ship { row: 0, col: 0, length: 2, horizontal: true },
+        Ship { row: 2, col: 3, length: 2, horizontal: false },
+    ]
+    assert_eq_str(render_view(ships, 4, ["A1", "C1"]), "x.o./..../..../....")
+}
+
+@[test]
+fn test_render_view_sunk_ship() {
+    let ships = [
+        Ship { row: 0, col: 0, length: 2, horizontal: true },
+        Ship { row: 2, col: 3, length: 2, horizontal: false },
+    ]
+    assert_eq_str(render_view(ships, 4, ["A1", "B1", "D4"]), "##../..../..../...x")
+}
+
+@[test]
+fn test_render_view_no_shots() {
+    let ships = [Ship { row: 0, col: 0, length: 2, horizontal: true }]
+    assert_eq_str(render_view(ships, 3, []), ".../.../...")
+}
+
+@[test]
+fn test_next_target_opening() {
+    assert_eq_str(next_target(4, [], []), "A1")
+}
+
+@[test]
+fn test_next_target_follows_hit() {
+    assert_eq_str(next_target(4, ["B2"], ["hit"]), "B1")
+}
+
+@[test]
+fn test_next_target_skips_fired_neighbor() {
+    assert_eq_str(next_target(4, ["B2", "B1"], ["hit", "miss"]), "C2")
+}
+
+@[test]
+fn test_next_target_parity_hunt() {
+    assert_eq_str(next_target(4, ["A1"], ["miss"]), "C1")
+}

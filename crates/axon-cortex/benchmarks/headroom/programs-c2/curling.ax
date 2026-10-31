@@ -1,0 +1,294 @@
+// Curling scoring. Stone positions are given as the distance in millimetres
+// from the centre of the button to the nearest edge of the stone; a negative
+// distance marks a stone that was removed from play. End scores are signed:
+// a positive value is scored by team A (1), a negative value by team B (2),
+// and 0 is a blank end.
+
+fn house_radius_mm() -> i64 {
+    1829
+}
+
+fn in_house(d: i64) -> bool {
+    d >= 0 && d <= house_radius_mm()
+}
+
+fn next_hammer(hammer: i64, score: i64) -> i64 {
+    if score > 0 {
+        2
+    } else if score < 0 {
+        1
+    } else {
+        hammer
+    }
+}
+
+fn team_letter(team: i64) -> str {
+    if team == 1 {
+        "A"
+    } else {
+        "B"
+    }
+}
+
+fn score_end(a: [i64], b: [i64]) -> i64 {
+    let best_a = -1
+    for i in 0..len(a) {
+        if in_house(a[i]) && (best_a < 0 || a[i] < best_a) {
+            best_a = a[i]
+        }
+    }
+    let best_b = -1
+    for i in 0..len(b) {
+        if in_house(b[i]) && (best_b < 0 || b[i] < best_b) {
+            best_b = b[i]
+        }
+    }
+    if best_a == best_b {
+        return 0
+    }
+    let a_scores = best_b < 0 || (best_a >= 0 && best_a < best_b)
+    let count = 0
+    if a_scores {
+        for i in 0..len(a) {
+            if in_house(a[i]) && (best_b < 0 || a[i] < best_b) {
+                count = count + 1
+            }
+        }
+        count
+    } else {
+        for i in 0..len(b) {
+            if in_house(b[i]) && (best_a < 0 || b[i] < best_a) {
+                count = count + 1
+            }
+        }
+        0 - count
+    }
+}
+
+fn measure_order(a: [i64], b: [i64]) -> str {
+    let dists: [i64] = []
+    let teams: [str] = []
+    for i in 0..len(a) {
+        if in_house(a[i]) {
+            dists = arr_push(dists, a[i])
+            teams = arr_push(teams, "A")
+        }
+    }
+    for i in 0..len(b) {
+        if in_house(b[i]) {
+            dists = arr_push(dists, b[i])
+            teams = arr_push(teams, "B")
+        }
+    }
+    let n = len(dists)
+    let i = 1
+    while i < n {
+        let j = i
+        while j > 0 && dists[j - 1] > dists[j] {
+            let td = dists[j - 1]
+            dists[j - 1] = dists[j]
+            dists[j] = td
+            let tt = teams[j - 1]
+            teams[j - 1] = teams[j]
+            teams[j] = tt
+            j = j - 1
+        }
+        i = i + 1
+    }
+    let out = ""
+    for k in 0..n {
+        if k > 0 && dists[k] == dists[k - 1] {
+            out = out + "="
+        }
+        out = out + teams[k]
+    }
+    out
+}
+
+fn hammer_summary(ends: [i64], first: i64, team: i64) -> [i64] {
+    if (first != 1 && first != 2) || (team != 1 && team != 2) {
+        return []
+    }
+    let hammer = first
+    let with_hammer = 0
+    let hammer_points = 0
+    let blanks = 0
+    let steals_for = 0
+    let steals_against = 0
+    for i in 0..len(ends) {
+        let s = ends[i]
+        let pts = if team == 1 { s } else { 0 - s }
+        if hammer == team {
+            with_hammer = with_hammer + 1
+            if pts > 0 {
+                hammer_points = hammer_points + pts
+            } else if pts == 0 {
+                blanks = blanks + 1
+            } else {
+                steals_against = steals_against - pts
+            }
+        } else if pts > 0 {
+            steals_for = steals_for + pts
+        }
+        hammer = next_hammer(hammer, s)
+    }
+    [with_hammer, hammer_points, blanks, steals_for, steals_against]
+}
+
+fn club_board(ends: [i64], team: i64) -> str {
+    let slots: [str] = []
+    let blanks: [str] = []
+    for i in 0..len(ends) {
+        let s = ends[i]
+        let pts = if team == 1 { s } else { 0 - s }
+        if pts > 0 {
+            let k = 1
+            while k < pts {
+                slots = arr_push(slots, "-")
+                k = k + 1
+            }
+            slots = arr_push(slots, to_str(i + 1))
+        } else if s == 0 {
+            blanks = arr_push(blanks, to_str(i + 1))
+        }
+    }
+    let out = str_join(slots, " ")
+    if len(blanks) > 0 {
+        if len(out) > 0 {
+            out = out + " "
+        }
+        out = out + "blank " + str_join(blanks, ",")
+    }
+    if len(out) == 0 {
+        out = "no score"
+    }
+    out
+}
+
+fn game_result(ends: [i64], scheduled: i64, first: i64) -> str {
+    let a = 0
+    let b = 0
+    let hammer = first
+    let played = 0
+    let decided = false
+    while played < len(ends) && !decided {
+        let s = ends[played]
+        if s > 0 {
+            a = a + s
+        } else {
+            b = b - s
+        }
+        hammer = next_hammer(hammer, s)
+        played = played + 1
+        if played >= scheduled && a != b {
+            decided = true
+        }
+    }
+    let score = to_str(a) + "-" + to_str(b)
+    if decided {
+        let winner = if a > b { "A" } else { "B" }
+        let extra = played - scheduled
+        if extra > 0 {
+            return winner + " wins " + score + " after " + to_str(extra) + " extra end(s)"
+        }
+        return winner + " wins " + score
+    }
+    let side = team_letter(hammer)
+    if played >= scheduled {
+        return "tied " + score + ", extra end, hammer " + side
+    }
+    "after " + to_str(played) + " of " + to_str(scheduled) + " ends " + score + ", hammer " + side
+}
+
+@[test]
+fn test_score_end_single_shot() {
+    assert_eq(score_end([300, 1500, 2500], [900, 1200]), 1)
+}
+
+@[test]
+fn test_score_end_team_b_three() {
+    assert_eq(score_end([1000, 1700], [100, 400, 800, 1600]), 0 - 3)
+}
+
+@[test]
+fn test_score_end_only_one_team_in_house() {
+    assert_eq(score_end([2000, -1, 50, 1829], [1900, 3000]), 2)
+}
+
+@[test]
+fn test_score_end_blank_and_tie() {
+    assert_eq(score_end([1900, -1], [2400]), 0)
+    assert_eq(score_end([600, 700], [600, 650]), 0)
+}
+
+@[test]
+fn test_measure_order_mixed() {
+    assert_eq_str(measure_order([300, 2000, 900], [100, 1200]), "BAAB")
+}
+
+@[test]
+fn test_measure_order_tie_marker() {
+    assert_eq_str(measure_order([500, 800], [500]), "A=BA")
+}
+
+@[test]
+fn test_measure_order_empty_house() {
+    assert_eq_str(measure_order([1900], [-1, 2500]), "")
+    assert_eq_str(measure_order([10], [-1]), "A")
+}
+
+@[test]
+fn test_hammer_summary_team_a() {
+    assert(hammer_summary([0, 2, 1, -1, -1, 3], 1, 1) == [4, 5, 1, 1, 1])
+}
+
+@[test]
+fn test_hammer_summary_team_b() {
+    assert(hammer_summary([0, 2, 1, -1, -1, 3], 1, 2) == [2, 1, 0, 1, 1])
+}
+
+@[test]
+fn test_hammer_summary_bad_team() {
+    assert(hammer_summary([1, -1], 3, 1) == [])
+    assert(hammer_summary([], 2, 2) == [0, 0, 0, 0, 0])
+}
+
+@[test]
+fn test_club_board_team_a() {
+    assert_eq_str(club_board([2, 0, -1, 1, 3], 1), "- 1 4 - - 5 blank 2")
+}
+
+@[test]
+fn test_club_board_team_b() {
+    assert_eq_str(club_board([2, 0, -1, -2], 2), "3 - 4 blank 2")
+}
+
+@[test]
+fn test_club_board_no_score() {
+    assert_eq_str(club_board([-1, -2], 1), "no score")
+}
+
+@[test]
+fn test_game_result_regulation_win() {
+    assert_eq_str(game_result([1, 0, -2, 3, -1, 2, 0, -1], 8, 2), "A wins 6-4")
+}
+
+@[test]
+fn test_game_result_extra_end() {
+    assert_eq_str(game_result([1, -1, 2, -2, 0, -1], 4, 1), "B wins 3-4 after 2 extra end(s)")
+}
+
+@[test]
+fn test_game_result_tied() {
+    assert_eq_str(game_result([2, -1, 0, -1], 4, 1), "tied 2-2, extra end, hammer A")
+}
+
+@[test]
+fn test_game_result_in_progress() {
+    assert_eq_str(game_result([0, -2, 1], 8, 1), "after 3 of 8 ends 1-2, hammer B")
+}
+
+@[test]
+fn test_game_result_ignores_ends_after_finish() {
+    assert_eq_str(game_result([1, 1, -2, 2, -5], 3, 1), "A wins 4-2 after 1 extra end(s)")
+}

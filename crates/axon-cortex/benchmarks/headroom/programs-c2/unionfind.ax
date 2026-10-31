@@ -1,0 +1,310 @@
+// Network connectivity with a disjoint-set forest. Nodes are numbered
+// 0 .. n - 1; links naming a node outside that range are ignored.
+
+type Link = { a: i64, b: i64 }
+
+fn find_root(parent: &mut [i64], x: i64) -> i64 {
+    let root = x
+    while parent[root] != root {
+        root = parent[root]
+    }
+    let cur = x
+    while parent[cur] != root {
+        let next = parent[cur]
+        parent[cur] = root
+        cur = next
+    }
+    root
+}
+
+fn in_range(n: i64, link: Link) -> bool {
+    link.a >= 0 && link.a < n && link.b >= 0 && link.b < n
+}
+
+// Number of connected components, isolated nodes included.
+fn component_count(n: i64, links: [Link]) -> i64 {
+    if n <= 0 {
+        return 0
+    }
+    let parent = arr_range(0, n)
+    let size = arr_repeat(1, n)
+    let count = n
+    for link in links {
+        if in_range(n, link) {
+            let ra = find_root(&mut parent, link.a)
+            let rb = find_root(&mut parent, link.b)
+            if ra != rb {
+                if size[ra] < size[rb] {
+                    parent[ra] = rb
+                    size[rb] = size[rb] + size[ra]
+                } else {
+                    parent[rb] = ra
+                    size[ra] = size[ra] + size[rb]
+                }
+                count = count - 1
+            }
+        }
+    }
+    count
+}
+
+// Sizes of all components, largest first.
+fn component_sizes(n: i64, links: [Link]) -> [i64] {
+    if n <= 0 {
+        return []
+    }
+    let parent = arr_range(0, n)
+    let size = arr_repeat(1, n)
+    for link in links {
+        if in_range(n, link) {
+            let ra = find_root(&mut parent, link.a)
+            let rb = find_root(&mut parent, link.b)
+            if ra != rb && size[ra] < size[rb] {
+                parent[ra] = rb
+                size[rb] = size[rb] + size[ra]
+            } else if ra != rb {
+                parent[rb] = ra
+                size[ra] = size[ra] + size[rb]
+            }
+        }
+    }
+    let tally = arr_repeat(0, n)
+    for v in arr_range(0, n) {
+        let r = find_root(&mut parent, v)
+        tally[r] = tally[r] + 1
+    }
+    let sizes: [i64] = []
+    for t in tally {
+        if t > 0 {
+            sizes = arr_push(sizes, t)
+        }
+    }
+    arr_sort_by(sizes, |x, y| y - x)
+}
+
+// Indices of links that join two nodes already connected by earlier links,
+// self-links included, in input order.
+fn redundant_links(n: i64, links: [Link]) -> [i64] {
+    if n <= 0 {
+        return []
+    }
+    let parent = arr_range(0, n)
+    let size = arr_repeat(1, n)
+    let extra: [i64] = []
+    let idx = 0
+    for link in links {
+        if in_range(n, link) {
+            let ra = find_root(&mut parent, link.a)
+            let rb = find_root(&mut parent, link.b)
+            if ra == rb {
+                extra = arr_push(extra, idx)
+            } else if size[ra] < size[rb] {
+                parent[ra] = rb
+                size[rb] = size[rb] + size[ra]
+            } else {
+                parent[rb] = ra
+                size[ra] = size[ra] + size[rb]
+            }
+        }
+        idx = idx + 1
+    }
+    extra
+}
+
+// For each query pair, whether the two nodes end up in the same component.
+// A query naming an unknown node is answered false.
+fn connected_queries(n: i64, links: [Link], queries: [Link]) -> [bool] {
+    let parent = arr_range(0, max_i64(n, 0))
+    let size = arr_repeat(1, max_i64(n, 0))
+    for link in links {
+        if in_range(n, link) {
+            let ra = find_root(&mut parent, link.a)
+            let rb = find_root(&mut parent, link.b)
+            if ra != rb && size[ra] >= size[rb] {
+                parent[rb] = ra
+                size[ra] = size[ra] + size[rb]
+            } else if ra != rb {
+                parent[ra] = rb
+                size[rb] = size[rb] + size[ra]
+            }
+        }
+    }
+    let answers: [bool] = []
+    for q in queries {
+        if in_range(n, q) {
+            let ra = find_root(&mut parent, q.a)
+            let rb = find_root(&mut parent, q.b)
+            answers = arr_push(answers, ra == rb)
+        } else {
+            answers = arr_push(answers, false)
+        }
+    }
+    answers
+}
+
+// How many links, taken in order, are needed before every node is connected:
+// 0 for a network of at most one node, -1 when the links never connect it.
+fn links_until_connected(n: i64, links: [Link]) -> i64 {
+    if n <= 1 {
+        return 0
+    }
+    let parent = arr_range(0, n)
+    let size = arr_repeat(1, n)
+    let count = n
+    let used = 0
+    let result = -1
+    for link in links {
+        used = used + 1
+        if result < 0 && in_range(n, link) {
+            let ra = find_root(&mut parent, link.a)
+            let rb = find_root(&mut parent, link.b)
+            if ra != rb {
+                if size[ra] < size[rb] {
+                    parent[ra] = rb
+                    size[rb] = size[rb] + size[ra]
+                } else {
+                    parent[rb] = ra
+                    size[ra] = size[ra] + size[rb]
+                }
+                count = count - 1
+                if count == 1 {
+                    result = used
+                }
+            }
+        }
+    }
+    result
+}
+
+// Minimum number of existing links that must be moved so that the whole
+// network becomes connected, or -1 when there are too few valid links to do it.
+fn rewires_needed(n: i64, links: [Link]) -> i64 {
+    if n <= 1 {
+        return 0
+    }
+    let parent = arr_range(0, n)
+    let size = arr_repeat(1, n)
+    let components = n
+    let valid = 0
+    for link in links {
+        if in_range(n, link) {
+            valid = valid + 1
+            let ra = find_root(&mut parent, link.a)
+            let rb = find_root(&mut parent, link.b)
+            if ra != rb {
+                if size[ra] < size[rb] {
+                    parent[ra] = rb
+                    size[rb] = size[rb] + size[ra]
+                } else {
+                    parent[rb] = ra
+                    size[ra] = size[ra] + size[rb]
+                }
+                components = components - 1
+            }
+        }
+    }
+    if valid < n - 1 {
+        -1
+    } else {
+        components - 1
+    }
+}
+
+fn lk(a: i64, b: i64) -> Link {
+    Link { a: a, b: b }
+}
+
+fn sample_links() -> [Link] {
+    [lk(0, 1), lk(1, 2), lk(2, 0), lk(3, 4), lk(5, 5), lk(4, 3), lk(1, 9)]
+}
+
+@[test]
+fn test_count_sample() {
+    assert_eq(component_count(7, sample_links()), 4)
+}
+
+@[test]
+fn test_count_no_links() {
+    assert_eq(component_count(3, []), 3)
+}
+
+@[test]
+fn test_count_single_component() {
+    assert_eq(component_count(4, [lk(0, 1), lk(2, 3), lk(1, 3)]), 1)
+}
+
+@[test]
+fn test_sizes_sample() {
+    assert(component_sizes(7, sample_links()) == [3, 2, 1, 1])
+}
+
+@[test]
+fn test_sizes_merged_chains() {
+    assert(component_sizes(6, [lk(0, 1), lk(2, 3), lk(1, 3), lk(4, 5)]) == [4, 2])
+}
+
+@[test]
+fn test_sizes_isolated() {
+    assert(component_sizes(3, [lk(0, 7)]) == [1, 1, 1])
+}
+
+@[test]
+fn test_redundant_sample() {
+    assert(redundant_links(7, sample_links()) == [2, 4, 5])
+}
+
+@[test]
+fn test_redundant_square() {
+    assert(redundant_links(4, [lk(0, 1), lk(1, 2), lk(2, 3), lk(3, 0), lk(0, 2)]) == [3, 4])
+}
+
+@[test]
+fn test_redundant_duplicate_link() {
+    assert(redundant_links(3, [lk(0, 1), lk(1, 0), lk(1, 2)]) == [1])
+}
+
+@[test]
+fn test_queries_sample() {
+    let qs = [lk(0, 2), lk(3, 4), lk(0, 3), lk(6, 6), lk(1, 9)]
+    assert(connected_queries(7, sample_links(), qs) == [true, true, false, true, false])
+}
+
+@[test]
+fn test_queries_bridge() {
+    assert(connected_queries(4, [lk(0, 1), lk(2, 3), lk(1, 2)], [lk(0, 3), lk(3, 1)]) == [true, true])
+}
+
+@[test]
+fn test_queries_without_links() {
+    assert(connected_queries(3, [], [lk(0, 1), lk(2, 2)]) == [false, true])
+}
+
+@[test]
+fn test_until_connected_late() {
+    assert_eq(links_until_connected(4, [lk(0, 1), lk(2, 3), lk(0, 1), lk(1, 2), lk(3, 0)]), 4)
+}
+
+@[test]
+fn test_until_connected_chain() {
+    assert_eq(links_until_connected(3, [lk(0, 1), lk(1, 2)]), 2)
+}
+
+@[test]
+fn test_until_connected_never() {
+    assert_eq(links_until_connected(3, [lk(0, 1), lk(1, 0)]), -1)
+}
+
+@[test]
+fn test_rewires_sample() {
+    assert_eq(rewires_needed(7, sample_links()), 3)
+}
+
+@[test]
+fn test_rewires_one_spare() {
+    assert_eq(rewires_needed(4, [lk(0, 1), lk(0, 2), lk(1, 2)]), 1)
+}
+
+@[test]
+fn test_rewires_too_few() {
+    assert_eq(rewires_needed(6, [lk(0, 1), lk(1, 2), lk(3, 4)]), -1)
+}
