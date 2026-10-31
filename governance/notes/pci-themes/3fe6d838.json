@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "An unattended run now refuses proxy variables, an opt-in file in a directory a non-root user controls, and a pin with a symlink at or under it anywhere; a filesystem without RENAME_EXCHANGE refuses every write clearly. New tests failed before each fix and pass after."}
