@@ -1,0 +1,1 @@
+{"theme": "checker soundness", "text": "checker.rs: CS3-1's specialize builds an enum variant's field list with a loop instead of a map closure so its g01 rows can mutate one line; no behaviour change."}
