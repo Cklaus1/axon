@@ -171,6 +171,8 @@ pub struct RepairEnvelope {
     pub envelope_id: String,
     /// The id of the runner's spent store this envelope was issued into.
     pub spent_store_id: String,
+    /// The `ledger-id` of the run ledger the run records into (R6 §4 sink).
+    pub run_ledger_id: String,
     /// Operator label: recorded, not trusted.
     pub issued_by: String,
     pub issued_unix: u64,
@@ -236,34 +238,43 @@ impl VerifyKey {
     /// (the canonical workspace and every canonical prefix; compared after
     /// resolving the key file's directory).
     pub fn load(path: &Path, euid: u32, outside: &[PathBuf]) -> Result<VerifyKey, String> {
-        check_private(path, euid, &VERIFY_KEY)?;
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        let name = path.file_name().ok_or_else(|| {
-            format!(
-                "repair-envelope verify key {} names no file",
-                path.display()
-            )
-        })?;
-        let real = std::fs::canonicalize(parent)
-            .map_err(|e| format!("repair-envelope verify key {}: {e}", path.display()))?
-            .join(name);
-        for root in outside {
-            if real.starts_with(root) {
-                return Err(format!(
-                    "repair-envelope verify key {} lies inside {}: a key the repaired code can \
-                     reach is not the operator's",
-                    real.display(),
-                    root.display()
-                ));
-            }
-        }
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| format!("repair-envelope verify key {}: {e}", path.display()))?;
+        let text = read_key_file(path, euid, &VERIFY_KEY, outside)?;
         VerifyKey::from_hex(text.trim_end_matches('\n'))
     }
+}
+
+/// Read a runner key file (§4.2; the verify key and R6's run-record key):
+/// private to `euid` ([`check_private`]) and outside every path in `outside`,
+/// compared after resolving the key file's directory.
+pub(crate) fn read_key_file(
+    path: &Path,
+    euid: u32,
+    p: &Private,
+    outside: &[PathBuf],
+) -> Result<String, String> {
+    check_private(path, euid, p)?;
+    let what = p.what;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("{what} {} names no file", path.display()))?;
+    let real = std::fs::canonicalize(parent)
+        .map_err(|e| format!("{what} {}: {e}", path.display()))?
+        .join(name);
+    for root in outside {
+        if real.starts_with(root) {
+            return Err(format!(
+                "{what} {} lies inside {}: a key the repaired code can reach is not the \
+                 operator's",
+                real.display(),
+                root.display()
+            ));
+        }
+    }
+    std::fs::read_to_string(path).map_err(|e| format!("{what} {}: {e}", path.display()))
 }
 
 /// The operator's minting key, derived from `AXON_APPROVAL_KEY`. `Debug` is redacted.
@@ -293,15 +304,7 @@ impl MintKey {
     /// The key from `AXON_APPROVAL_KEY` (hex). Unset or blank is an error:
     /// an envelope cannot be minted without the operator key.
     pub fn from_env() -> Result<MintKey, String> {
-        let env = crate::approval::APPROVAL_KEY_ENV;
-        let v =
-            std::env::var(env).map_err(|_| format!("{env} is not set: only the operator mints"))?;
-        let v = v.trim();
-        if v.is_empty() {
-            return Err(format!("{env} is not set: only the operator mints"));
-        }
-        let bytes = decode_hex(v).ok_or_else(|| format!("{env} is not valid hex"))?;
-        MintKey::derive(&bytes)
+        MintKey::derive(&operator_key()?)
     }
 
     /// The public half, for `--export-verify-key`.
@@ -334,6 +337,19 @@ impl MintKey {
             axon_canonical::canonical_bytes(&v).map_err(|e| format!("repair envelope: {e}"))?;
         String::from_utf8(bytes).map_err(|e| format!("repair envelope: {e}"))
     }
+}
+
+/// The operator key from `AXON_APPROVAL_KEY` (hex): the input to every
+/// operator-side derivation here (the envelope seed, R6's run-record subkey).
+/// Unset or blank is an error.
+pub fn operator_key() -> Result<Vec<u8>, String> {
+    let env = crate::approval::APPROVAL_KEY_ENV;
+    let v = std::env::var(env).map_err(|_| format!("{env} is not set: only the operator mints"))?;
+    let v = v.trim();
+    if v.is_empty() {
+        return Err(format!("{env} is not set: only the operator mints"));
+    }
+    decode_hex(v).ok_or_else(|| format!("{env} is not valid hex"))
 }
 
 /// A fresh 32-lowercase-hex identifier from the OS RNG (envelope and store ids).
@@ -562,6 +578,9 @@ pub fn validate(e: &RepairEnvelope) -> Result<(), String> {
     }
     if !is_lower_hex(&e.spent_store_id, 32) {
         return Err("spent_store_id is not 32 lowercase hex characters".into());
+    }
+    if !is_lower_hex(&e.run_ledger_id, 32) {
+        return Err("run_ledger_id is not 32 lowercase hex characters".into());
     }
     if e.issued_by.trim().is_empty() {
         return Err("issued_by is empty".into());
@@ -838,7 +857,7 @@ fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-fn write_new(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_new(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut f = std::fs::OpenOptions::new()
         .write(true)
@@ -857,15 +876,15 @@ fn sync_dir(dir: &Path) -> Result<(), String> {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-fn is_lower_hex(s: &str, n: usize) -> bool {
+pub(crate) fn is_lower_hex(s: &str, n: usize) -> bool {
     s.len() == n && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-fn hex(b: &[u8]) -> String {
+pub(crate) fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-fn decode_hex(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_hex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
     }

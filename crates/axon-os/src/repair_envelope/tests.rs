@@ -18,6 +18,7 @@ fn sample() -> RepairEnvelope {
         schema: ENVELOPE_SCHEMA.into(),
         envelope_id: "0123456789abcdef0123456789abcdef".into(),
         spent_store_id: "fedcba9876543210fedcba9876543210".into(),
+        run_ledger_id: "00112233445566778899aabbccddeeff".into(),
         issued_by: "operator".into(),
         issued_unix: NOW - 10,
         expires_unix: NOW + 3_600,
@@ -134,8 +135,8 @@ fn s1_seed_public_key_and_signature_known_answers() {
 // separators=(',', ':'), ensure_ascii=False)`) from the same fixture.
 const KAT_SEED: &str = "b73c9e09b4c8941b5d5a34cc772396ee467235a588b81bf6556c72e153edbbcd";
 const KAT_PUBLIC: &str = "7817267170d04cbb2259f5a63ee290e1d6d494a28a0c9bf75f0e7f270aec4aed";
-const KAT_SIG: &str = "axenv1:e0a5dedcc02785dcc5a9f1e322d7cf6814732b499b36f062bdbd7cd3f1b82d66be3f3590c9ae9f2f204510abf0fa81b7fd98b05800c41e13a06e85916def3a01";
-const KAT_DIGEST: &str = "cl22:2790d16f8799f5fec81d80cf0c9ced00748fa28fd525ce04cd0d2aef27362338";
+const KAT_SIG: &str = "axenv1:52cb920b4ae476cb12b33595665aae7a6fb833ad49571434f41f87d3e224154b7ca0859bb90b11a7dd6b20f61013cd68e394231726d58992ec71368fc3c8bb0a";
+const KAT_DIGEST: &str = "cl22:4d9b41552dc58f2fce3bd8efc3b9851712c6db2cc8467545a816343985540832";
 
 #[test]
 fn s1_the_envelope_is_written_in_its_canonical_form() {

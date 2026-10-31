@@ -5,12 +5,17 @@
 //!   written once, owner-only. The operator key never leaves this process.
 //! * `authorize-repair --init-spent-store DIR`: an empty private spent store
 //!   and its `store-id`.
+//! * `authorize-repair --init-run-ledger DIR`: an empty private R6 run ledger
+//!   and its `ledger-id` (`tasks/r6-ledger-spec.md` §4).
+//! * `authorize-repair --export-run-record-key PATH`: the runner's R6
+//!   run-record subkey (it seals records; it derives nothing else), written
+//!   once, owner-only.
 //! * `authorize-repair … --by OP --ttl-s T --out PATH`: mint one envelope.
 //!   1. exec `cortex grant --envelope-preview` (the bindings are computed by
 //!      cortex, with the functions its runner verifies with);
 //!   2. refuse unless every gate row is exactly `admit` (and there is one);
 //!   3. record the sha256 of the cortex binary it invoked (`<out>.mint`);
-//!   4. write `<store>/<envelope_id>.issued`;
+//!   4. write `<store>/<envelope_id>.issued`, binding `--run-ledger`'s id;
 //!   5. write the envelope with `create_new`.
 //!
 //! The preview is JUDGED, not trusted: strict JSON (duplicate keys, floats,
@@ -22,6 +27,7 @@
 use axon_os::repair_envelope::{
     self, Budget, Capabilities, Check, Generator, MintKey, RepairEnvelope, Scopes, Task,
 };
+use axon_os::run_ledger;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -170,6 +176,7 @@ pub fn build_envelope(
     req: &MintRequest,
     envelope_id: String,
     spent_store_id: String,
+    run_ledger_id: String,
     now_unix: u64,
 ) -> Result<RepairEnvelope, Refused> {
     check_consistent(p).map_err(Refused::Bad)?;
@@ -193,6 +200,7 @@ pub fn build_envelope(
         schema: repair_envelope::ENVELOPE_SCHEMA.into(),
         envelope_id,
         spent_store_id,
+        run_ledger_id,
         issued_by: req.issued_by.clone(),
         issued_unix: now_unix,
         expires_unix: now_unix.saturating_add(req.ttl_s),
@@ -227,9 +235,11 @@ pub fn build_envelope(
 pub const HELP: &str = "authorize-repair — mint one axon-approval/4 repair envelope (NH-R1 §5.1)
     authorize-repair --export-verify-key PATH
     authorize-repair --init-spent-store DIR
+    authorize-repair --init-run-ledger DIR
+    authorize-repair --export-run-record-key PATH
     authorize-repair --cortex BIN --workspace W --file F --symbol S --check C
         --write-prefix P... [--read-prefix R...] [--fs-write-scope X...] [--net-host H...]
-        --axon A --generator ai:MODEL --spent-store DIR --by OP --ttl-s T
+        --axon A --generator ai:MODEL --spent-store DIR --run-ledger DIR --by OP --ttl-s T
         --max-proposals N --deadline-ms N --check-timeout-ms N --candidates N --max-steps N
         --out PATH
   Needs AXON_APPROVAL_KEY (hex) to export or mint. Exit 0 minted, 2 refused or
@@ -274,6 +284,8 @@ pub fn run(rest: &[&str]) -> ExitCode {
         }
         ["--export-verify-key", path] => export_verify_key(Path::new(path)),
         ["--init-spent-store", dir] => init_spent_store(Path::new(dir)),
+        ["--init-run-ledger", dir] => init_run_ledger(Path::new(dir)),
+        ["--export-run-record-key", path] => export_run_record_key(Path::new(path)),
         _ => match parse_args(rest) {
             Ok(a) => mint(&a),
             Err(e) => fail(2, &e),
@@ -294,20 +306,45 @@ fn export_verify_key(path: &Path) -> ExitCode {
     ExitCode::from(0)
 }
 
-fn init_spent_store(dir: &Path) -> ExitCode {
+fn export_run_record_key(path: &Path) -> ExitCode {
+    let key = match run_ledger::SealKey::from_env() {
+        Ok(k) => k,
+        Err(e) => return fail(2, &e),
+    };
+    if let Err(e) = write_new(path, format!("{}\n", key.to_hex()).as_bytes()) {
+        return fail(2, &format!("cannot write {}: {e}", path.display()));
+    }
+    println!("run-record key\n  Wrote {}", path.display());
+    ExitCode::from(0)
+}
+
+/// Create `dir` owner-only if absent (an existing one is then checked by `init`).
+fn init_private_dir(
+    dir: &Path,
+    init: fn(&Path, u32) -> Result<String, String>,
+    what: &str,
+) -> ExitCode {
     use std::os::unix::fs::DirBuilderExt;
     if let Err(e) = std::fs::DirBuilder::new().mode(0o700).create(dir) {
         if e.kind() != std::io::ErrorKind::AlreadyExists {
             return fail(2, &format!("cannot create {}: {e}", dir.display()));
         }
     }
-    match repair_envelope::init_store(dir, euid()) {
+    match init(dir, euid()) {
         Ok(id) => {
-            println!("spent store {} id {id}", dir.display());
+            println!("{what} {} id {id}", dir.display());
             ExitCode::from(0)
         }
         Err(e) => fail(2, &e),
     }
+}
+
+fn init_spent_store(dir: &Path) -> ExitCode {
+    init_private_dir(dir, repair_envelope::init_store, "spent store")
+}
+
+fn init_run_ledger(dir: &Path) -> ExitCode {
+    init_private_dir(dir, run_ledger::init_ledger, "run ledger")
 }
 
 /// The parsed mint command line.
@@ -319,6 +356,7 @@ struct Args {
     symbol: Option<String>,
     check: Option<String>,
     spent_store: Option<PathBuf>,
+    run_ledger: Option<PathBuf>,
     by: Option<String>,
     ttl_s: Option<u64>,
     budget: [Option<u64>; 5],
@@ -352,6 +390,7 @@ fn parse_args(rest: &[&str]) -> Result<Args, String> {
             "--symbol" => a.symbol = Some(val.to_string()),
             "--check" => a.check = Some(val.to_string()),
             "--spent-store" => a.spent_store = Some(PathBuf::from(val)),
+            "--run-ledger" => a.run_ledger = Some(PathBuf::from(val)),
             "--by" => a.by = Some(val.to_string()),
             "--ttl-s" => a.ttl_s = Some(num()?),
             "--out" => a.out = Some(PathBuf::from(val)),
@@ -383,6 +422,7 @@ fn parse_args(rest: &[&str]) -> Result<Args, String> {
         ("--symbol", a.symbol.is_none()),
         ("--check", a.check.is_none()),
         ("--spent-store", a.spent_store.is_none()),
+        ("--run-ledger", a.run_ledger.is_none()),
         ("--by", a.by.is_none()),
         ("--ttl-s", a.ttl_s.is_none()),
         ("--out", a.out.is_none()),
@@ -405,8 +445,10 @@ fn mint(a: &Args) -> ExitCode {
         Ok(k) => k,
         Err(e) => return fail(2, &e),
     };
-    let (Some(cortex), Some(store), Some(out)) = (&a.cortex, &a.spent_store, &a.out) else {
-        return fail(2, "missing --cortex, --spent-store or --out");
+    let (Some(cortex), Some(store), Some(ledger), Some(out)) =
+        (&a.cortex, &a.spent_store, &a.run_ledger, &a.out)
+    else {
+        return fail(2, "missing --cortex, --spent-store, --run-ledger or --out");
     };
     let mint_path = PathBuf::from(format!("{}.mint", out.display()));
     for p in [out, &mint_path] {
@@ -419,6 +461,10 @@ fn mint(a: &Args) -> ExitCode {
     }
     let me = euid();
     let store_id = match repair_envelope::store_id(store, me) {
+        Ok(id) => id,
+        Err(e) => return fail(2, &e),
+    };
+    let ledger_id = match run_ledger::ledger_id(ledger, me) {
         Ok(id) => id,
         Err(e) => return fail(2, &e),
     };
@@ -495,7 +541,14 @@ fn mint(a: &Args) -> ExitCode {
     };
     let now = now_unix();
     // Step 2 (and the preview's own consistency) inside build_envelope.
-    let env = match build_envelope(&preview, &req, envelope_id, store_id.clone(), now) {
+    let env = match build_envelope(
+        &preview,
+        &req,
+        envelope_id,
+        store_id.clone(),
+        ledger_id,
+        now,
+    ) {
         Ok(e) => e,
         Err(Refused::Gate(e)) => return fail(8, &e),
         Err(Refused::Bad(e)) => return fail(2, &e),

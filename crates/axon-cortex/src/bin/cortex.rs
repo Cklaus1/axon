@@ -2021,11 +2021,24 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
 /// under — the file's runtime fence and the named target's static grant —
 /// derived exactly as `cortex repair` derives it, with nothing of the
 /// workspace run.
+///
+/// `cortex grant --envelope-preview --workspace W --file F --symbol S
+/// --check C --write-prefix P… [--read-prefix R…] [--fs-write-scope X…]
+/// [--net-host H…] --axon A --generator ai:M` (NH-R1 §5.1): the values an
+/// `axon-approval/4` repair envelope pins, from the functions the
+/// unattended runner verifies them with (`axon_cortex::envelope_preview`).
 fn grant_only(mut args: impl Iterator<Item = String>) {
     let mut workspace = std::path::PathBuf::from(".");
     let (mut file, mut symbol) = (String::new(), String::new());
     let mut axon_bin = std::path::PathBuf::from("axon");
     let mut check_registry: Option<std::path::PathBuf> = None;
+    // NH-R1 §5.1: the preview's inputs, refused without `--envelope-preview`.
+    let mut preview = false;
+    let mut preview_only: Vec<&'static str> = Vec::new();
+    let mut check = String::new();
+    let mut generator = String::new();
+    let mut write_prefixes: Vec<String> = Vec::new();
+    let (mut fs_read, mut fs_write, mut net) = (Vec::new(), Vec::new(), Vec::new());
     while let Some(a) = args.next() {
         let mut val = |flag: &str| -> String {
             args.next()
@@ -2041,13 +2054,80 @@ fn grant_only(mut args: impl Iterator<Item = String>) {
             }
             // The only output form; accepted so the spelling matches repair's.
             "--json" => {}
+            "--envelope-preview" => preview = true,
+            "--check" => {
+                check = val("--check");
+                preview_only.push("--check");
+            }
+            "--generator" => {
+                generator = val("--generator");
+                preview_only.push("--generator");
+            }
+            "--write-prefix" => {
+                write_prefixes.push(val("--write-prefix"));
+                preview_only.push("--write-prefix");
+            }
+            "--read-prefix" => {
+                fs_read.push(val("--read-prefix"));
+                preview_only.push("--read-prefix");
+            }
+            "--fs-write-scope" => {
+                fs_write.push(val("--fs-write-scope"));
+                preview_only.push("--fs-write-scope");
+            }
+            "--net-host" => {
+                net.push(val("--net-host"));
+                preview_only.push("--net-host");
+            }
             other => usage(&format!("unknown argument `{other}`")),
         }
     }
     if file.is_empty() {
         usage("--file is required");
     }
+    if !preview {
+        if let Some(flag) = preview_only.first() {
+            usage(&format!("{flag} is only accepted with --envelope-preview"));
+        }
+    }
     let (workspace, axon_bin) = resolve_paths(workspace, axon_bin);
+    if preview {
+        // E7: an unattended run checks on the local interpreter only, so
+        // the preview pins that executor and nothing else.
+        if check_registry.is_some() {
+            usage("--check-registry is not accepted with --envelope-preview (E7)");
+        }
+        #[cfg(not(feature = "unattended"))]
+        {
+            let _ = (check, generator, write_prefixes, fs_read, fs_write, net);
+            unauthorized("this cortex was built without unattended support (feature `unattended`)");
+        }
+        #[cfg(feature = "unattended")]
+        {
+            let req = axon_cortex::envelope_preview::Request {
+                workspace,
+                file,
+                symbol,
+                check,
+                write_prefixes,
+                pins: axon_cortex::fence::ScopePins {
+                    fs_read,
+                    fs_write,
+                    net,
+                },
+                generator,
+            };
+            let wall = std::time::Duration::from_millis(DEFAULT_CHECK_TIMEOUT_MS);
+            match axon_cortex::envelope_preview::envelope_preview(&axon_bin, &req, wall) {
+                Ok(v) => println!("{v}"),
+                Err(why) => {
+                    eprintln!("grant --envelope-preview: {why}");
+                    std::process::exit(2);
+                }
+            }
+            return;
+        }
+    }
     let wall = std::time::Duration::from_millis(DEFAULT_CHECK_TIMEOUT_MS);
     let (exe, _) = resolve_checker(&axon_bin, check_registry.as_deref());
     let fence = derive_fence(&exe, &workspace, &file, wall);

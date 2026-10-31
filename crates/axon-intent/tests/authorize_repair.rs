@@ -9,6 +9,8 @@
 //! it. The operator key is a TEST key derived from a fixed, public string.
 
 mod common;
+#[path = "../../axon-core/tests/script_spawn/mod.rs"]
+mod script_spawn;
 
 use axon_os::repair_envelope::{self, MintKey, VerifyKey};
 use serde_json::{json, Value};
@@ -121,6 +123,7 @@ struct Setup {
     dir: PathBuf,
     ws: PathBuf,
     store: PathBuf,
+    ledger: PathBuf,
     out: PathBuf,
     cortex: PathBuf,
 }
@@ -132,6 +135,9 @@ fn setup(name: &str, doc: Option<String>, code: i32) -> Setup {
     let store = dir.join("spent");
     let o = intent(&["--init-spent-store", store.to_str().unwrap()], false);
     assert_eq!(o.code, 0, "init: {}", o.stderr);
+    let ledger = dir.join("runs");
+    let o = intent(&["--init-run-ledger", ledger.to_str().unwrap()], false);
+    assert_eq!(o.code, 0, "init: {}", o.stderr);
     let doc = doc.unwrap_or_else(|| preview(&ws).to_string());
     let cortex = fake_cortex(&dir, &doc, code);
     Setup {
@@ -139,6 +145,7 @@ fn setup(name: &str, doc: Option<String>, code: i32) -> Setup {
         dir,
         ws,
         store,
+        ledger,
         cortex,
     }
 }
@@ -170,6 +177,8 @@ fn mint_check(s: &Setup, ttl: &str, symbol: &str, check: &str) -> Out {
             "ai:m-1",
             "--spent-store",
             s.store.to_str().unwrap(),
+            "--run-ledger",
+            s.ledger.to_str().unwrap(),
             "--by",
             "operator-a",
             "--ttl-s",
@@ -279,6 +288,74 @@ fn init_spent_store_creates_a_private_store_once() {
     );
 }
 
+// ── R6: --init-run-ledger, --export-run-record-key, --run-ledger ─────────────
+
+#[test]
+fn init_run_ledger_creates_a_private_ledger_once() {
+    let d = tmp("initl");
+    let ledger = d.join("runs");
+    let o = intent(&["--init-run-ledger", ledger.to_str().unwrap()], false);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let euid = unsafe { libc::geteuid() };
+    let id = axon_os::run_ledger::ledger_id(&ledger, euid).unwrap();
+    assert!(o.stdout.contains(&id), "{}", o.stdout);
+    let mode = std::fs::metadata(&ledger).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+    let again = intent(&["--init-run-ledger", ledger.to_str().unwrap()], false);
+    assert_ne!(
+        again.code, 0,
+        "ATTACK: an initialised run ledger was initialised again"
+    );
+    assert_eq!(axon_os::run_ledger::ledger_id(&ledger, euid).unwrap(), id);
+}
+
+#[test]
+fn export_run_record_key_writes_the_subkey_private_and_once() {
+    let d = tmp("rrk");
+    let p = d.join("run-record.key");
+    let o = intent(&["--export-run-record-key", p.to_str().unwrap()], true);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let want = axon_os::run_ledger::SealKey::derive(OP_KEY)
+        .unwrap()
+        .to_hex();
+    assert_eq!(std::fs::read_to_string(&p).unwrap(), format!("{want}\n"));
+    assert!(
+        !o.stdout.contains(&want),
+        "ATTACK: the run-record key was printed"
+    );
+    let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        mode, 0o600,
+        "ATTACK: the run-record key was exported readable by others"
+    );
+    let again = intent(&["--export-run-record-key", p.to_str().unwrap()], true);
+    assert_ne!(
+        again.code, 0,
+        "ATTACK: an existing run-record key file was overwritten"
+    );
+    let q = d.join("nokey.key");
+    let o = intent(&["--export-run-record-key", q.to_str().unwrap()], false);
+    assert_eq!(o.code, 2);
+    assert!(
+        !q.exists(),
+        "ATTACK: a run-record key was exported without the operator key"
+    );
+}
+
+#[test]
+fn a_mint_into_an_uninitialised_run_ledger_mints_nothing() {
+    let s = setup("noledger", None, 0);
+    std::fs::remove_dir_all(&s.ledger).unwrap();
+    let o = mint(&s, "3600", "parse");
+    refused_mints_nothing(
+        &s,
+        &o,
+        2,
+        "run ledger",
+        "ATTACK: an envelope was minted for a run ledger that does not exist",
+    );
+}
+
 // ── authorize-repair ─────────────────────────────────────────────────────────
 
 #[test]
@@ -330,6 +407,11 @@ fn authorize_repair_mints_a_verifiable_issued_envelope_from_the_preview() {
     assert_eq!(
         e.spent_store_id,
         repair_envelope::store_id(&s.store, euid).unwrap()
+    );
+    assert_eq!(
+        e.run_ledger_id,
+        axon_os::run_ledger::ledger_id(&s.ledger, euid).unwrap(),
+        "ATTACK: the envelope does not bind the run ledger it records into"
     );
     assert_eq!(
         store_records(&s),
@@ -573,6 +655,7 @@ fn minting_without_the_operator_key_mints_nothing() {
         ("--axon", "axon".into()),
         ("--generator", "ai:m-1".into()),
         ("--spent-store", s.store.display().to_string()),
+        ("--run-ledger", s.ledger.display().to_string()),
         ("--by", "operator-a".into()),
         ("--ttl-s", "60".into()),
         ("--max-proposals", "1".into()),
@@ -598,4 +681,109 @@ fn minting_without_the_operator_key_mints_nothing() {
         !s.dir.join("argv.txt").exists(),
         "the preview ran before the key was checked"
     );
+}
+
+// -- the real preview ----------------------------------------------------------
+
+/// The minter against the REAL `cortex grant --envelope-preview` (built from
+/// this tree with feature `unattended`) and the real interpreter: the
+/// preview passes the strict parse, every gate row admits a pure file, and
+/// the minted envelope verifies and pins the preview's values.
+#[test]
+fn the_real_cortex_preview_mints_a_verifiable_envelope() {
+    let axon = script_spawn::workspace_bin(
+        "AXON_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-core",
+            "--no-default-features",
+            "--bin",
+            "axon",
+        ],
+        "axon",
+    );
+    let cortex = script_spawn::workspace_bin(
+        "CORTEX_UNATTENDED_BIN",
+        &[
+            "build",
+            "-p",
+            "axon-cortex",
+            "--features",
+            "unattended",
+            "--bin",
+            "cortex",
+        ],
+        "cortex",
+    );
+    let dir = tmp("real");
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(ws.join("src")).unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../axon-cortex/fixtures/broken.ax");
+    std::fs::copy(&fixture, ws.join("src/broken.ax")).unwrap();
+    let ws = std::fs::canonicalize(&ws).unwrap();
+    let store = dir.join("spent");
+    let o = intent(&["--init-spent-store", store.to_str().unwrap()], false);
+    assert_eq!(o.code, 0, "init: {}", o.stderr);
+    let ledger = dir.join("runs");
+    let o = intent(&["--init-run-ledger", ledger.to_str().unwrap()], false);
+    assert_eq!(o.code, 0, "init: {}", o.stderr);
+    let out = dir.join("repair.envelope");
+    let o = intent(
+        &[
+            "--cortex",
+            cortex.to_str().unwrap(),
+            "--workspace",
+            ws.to_str().unwrap(),
+            "--file",
+            "src/broken.ax",
+            "--symbol",
+            "double",
+            "--check",
+            "hidden_completion",
+            "--write-prefix",
+            "src",
+            "--axon",
+            axon.to_str().unwrap(),
+            "--generator",
+            "ai:m-1",
+            "--spent-store",
+            store.to_str().unwrap(),
+            "--run-ledger",
+            ledger.to_str().unwrap(),
+            "--by",
+            "operator-a",
+            "--ttl-s",
+            "600",
+            "--max-proposals",
+            "3",
+            "--deadline-ms",
+            "60000",
+            "--check-timeout-ms",
+            "5000",
+            "--candidates",
+            "2",
+            "--max-steps",
+            "100000",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+        true,
+    );
+    assert_eq!(
+        o.code, 0,
+        "ATTACK: the real cortex preview did not mint: {}",
+        o.stderr
+    );
+    let json = std::fs::read_to_string(&out).unwrap();
+    let vk = MintKey::derive(OP_KEY).unwrap().verify_key();
+    let v = repair_envelope::verify(&json, &vk, now()).expect("the minted envelope verifies");
+    let e = &v.envelope;
+    let pristine = std::fs::read(ws.join("src/broken.ax")).unwrap();
+    assert_eq!(e.task.pristine_sha256, sha256_hex(&pristine));
+    assert_eq!(e.task.symbol, "double");
+    assert_eq!(e.check.name, "hidden_completion");
+    assert!(e.task.imports_digest.starts_with("axsha256:"), "{json}");
+    assert_eq!(e.capabilities.target_grant["symbol"], "double", "{json}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

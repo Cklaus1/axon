@@ -32,6 +32,8 @@ pub mod audit;
 pub mod auth;
 pub mod cas;
 pub mod earlystop;
+#[cfg(feature = "unattended")]
+pub mod envelope_preview;
 pub mod episode;
 pub mod feedback;
 pub mod fence;
