@@ -1098,14 +1098,20 @@ impl Runtime for AxonCoreRuntime {
 /// did not compile from one that returned 2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SandboxOutcome {
-    /// The program did not compile; nothing ran.
+    /// The program did not compile; nothing ran. Read only from a run that
+    /// exited 2 with empty stdout and a stderr made solely of the
+    /// interpreter's `axon-diag/1` lines, at least one an error.
     CompileFailed { diagnostic: String },
-    /// `main` returned: the wrapper's completion marker printed and `code` is
-    /// the program's exit status (0 for a nullary `fn main()`).
+    /// The process exited with `code`: `main` returned (the wrapper's
+    /// completion marker printed; 0 for a nullary `fn main()`), or the program
+    /// stopped itself with `exit(code)` (no marker, and no interpreter fault
+    /// line).
     Exited { code: i32 },
-    /// The run stopped short of the wrapper's tail: a sandbox refusal
-    /// (`verdict` = `Denied { axis: "sandbox" }`), a budget, a refinement, a
-    /// panic, a direct `exit()` call. `code` is the raw process status.
+    /// The interpreter stopped the run: its final stderr line is its own
+    /// `axon: <fault>:` line and the status is that fault's carved exit code -
+    /// a sandbox refusal (`verdict` = `Denied { axis: "sandbox" }`), a goal
+    /// budget, a refinement, a failed `@[verify]`, a halt, an AI-policy refusal,
+    /// a panic; or a signal ended it. `code` is the raw process status.
     Faulted { code: Option<i32>, verdict: Verdict },
     /// The wall deadline killed the run's process group.
     TimedOut { after_ms: u64 },
@@ -1155,23 +1161,65 @@ impl AxonCoreRuntime {
                 }
             }
         };
-        let outcome = match self.classify(&proc, &nonce) {
-            Verdict::Completed { value } => SandboxOutcome::Exited { code: value as i32 },
-            Verdict::Malformed { reason } => SandboxOutcome::CompileFailed { diagnostic: reason },
-            _ if proc.timed_out => SandboxOutcome::TimedOut {
-                after_ms: self.timeout.as_millis() as u64,
-            },
-            verdict => SandboxOutcome::Faulted {
-                code: proc.code,
-                verdict,
-            },
-        };
+        let outcome = self.classify_capture(&proc, &nonce);
         CapturedRun {
             outcome,
             stdout: strip_done_marker(&proc.stdout, &nonce),
             stderr: proc.stderr,
             stdout_omitted: proc.stdout_omitted,
         }
+    }
+
+    /// How a capture run ended (implementation audit P1/P2). Decided in this
+    /// order, and never from words the program wrote to stderr:
+    /// 1. the deadline or a signal ended it;
+    /// 2. the wrapper's completion marker printed: `main` returned;
+    /// 3. exit 2, empty stdout and a stderr of only `axon-diag/1` lines with
+    ///    an error among them: it did not compile;
+    /// 4. the final stderr line is the interpreter's own fault line for the
+    ///    exit code it carved for that fault (`axon: sandbox violation: ` with
+    ///    8, ...): a fault;
+    /// 5. otherwise the program stopped itself with `exit(code)`.
+    fn classify_capture(&self, proc: &ProcOutcome, nonce: &str) -> SandboxOutcome {
+        if proc.timed_out {
+            return SandboxOutcome::TimedOut {
+                after_ms: self.timeout.as_millis() as u64,
+            };
+        }
+        if let Some(sig) = proc.killed_by_signal {
+            return SandboxOutcome::Faulted {
+                code: proc.code,
+                verdict: Verdict::Halted {
+                    reason: format!("the run was killed by {}", signal_name(sig)),
+                },
+            };
+        }
+        if ran_to_completion(&proc.stdout, nonce) {
+            return SandboxOutcome::Exited {
+                code: proc.code.unwrap_or(0),
+            };
+        }
+        let Some(code) = proc.code else {
+            return SandboxOutcome::Faulted {
+                code: None,
+                verdict: Verdict::Denied {
+                    reason: "the run ended without an exit status".into(),
+                    axis: "runtime".into(),
+                },
+            };
+        };
+        if code == 2 && proc.stdout.is_empty() {
+            if let Some(diagnostic) = compile_failure(&proc.stderr) {
+                return SandboxOutcome::CompileFailed { diagnostic };
+            }
+        }
+        if let Some(verdict) = interpreter_fault(code, &proc.stderr) {
+            return SandboxOutcome::Faulted {
+                code: Some(code),
+                verdict,
+            };
+        }
+        SandboxOutcome::Exited { code }
     }
 
     /// Stage the wrapper and run it: `Ok((outcome, nonce))`, or the verdict
@@ -1420,6 +1468,81 @@ fn verdict_reason(v: &Verdict) -> String {
         | Verdict::RefineViolation { reason } => reason.clone(),
         other => format!("{other:?}"),
     }
+}
+
+/// The first error of a stderr made solely of the interpreter's `axon-diag/1`
+/// lines (what `axon run` prints for a program it refuses to start), or `None`
+/// when any line is something else or no line is an error.
+fn compile_failure(stderr: &str) -> Option<String> {
+    let mut first_error: Option<String> = None;
+    for line in stderr.lines().filter(|l| !l.trim().is_empty()) {
+        let d: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+        if d.get("schema").and_then(|s| s.as_str()) != Some("axon-diag/1") {
+            return None;
+        }
+        if first_error.is_none() && d.get("severity").and_then(|s| s.as_str()) == Some("error") {
+            let field = |k: &str| {
+                d.get(k)
+                    .map(|v| v.to_string().trim_matches('"').to_string())
+            };
+            first_error = Some(format!(
+                "{} at line {}:{}: {}",
+                field("code").unwrap_or_default(),
+                field("line").unwrap_or_default(),
+                field("col").unwrap_or_default(),
+                d.get("message").and_then(|m| m.as_str()).unwrap_or(""),
+            ));
+        }
+    }
+    first_error
+}
+
+/// The interpreter's fault lines (`axon_core::interp::run_program_inner`), each
+/// with the exit code it carves for that fault.
+const INTERPRETER_FAULTS: &[(i32, &str)] = &[
+    (3, "axon: verify failed"),
+    (4, "axon: halted"),
+    (5, "axon: ai policy: "),
+    (6, "axon: refinement violated: "),
+    (7, "axon: goal budget exhausted: "),
+    (8, "axon: sandbox violation: "),
+    (101, "axon: panic"),
+    (101, "axon: multi-shot resume not supported here: "),
+];
+
+/// The fault the interpreter reported, read from its own line: the LAST
+/// non-empty stderr line (the interpreter prints it and exits) must be the
+/// fault line for exactly this exit code. Anything else - a program's own
+/// `eprintln`, whatever words it holds - is not a fault.
+fn interpreter_fault(code: i32, stderr: &str) -> Option<Verdict> {
+    let line = stderr.lines().rev().find(|l| !l.trim().is_empty())?.trim();
+    let (_, prefix) = INTERPRETER_FAULTS
+        .iter()
+        .find(|(c, p)| *c == code && line.starts_with(p))?;
+    let reason = line.to_string();
+    Some(match *prefix {
+        "axon: verify failed" => Verdict::Denied {
+            reason,
+            axis: "verify".into(),
+        },
+        "axon: halted" => Verdict::Halted { reason },
+        "axon: ai policy: " => Verdict::Denied {
+            reason,
+            axis: "ai-policy".into(),
+        },
+        "axon: refinement violated: " => Verdict::RefineViolation { reason },
+        "axon: goal budget exhausted: " => Verdict::BudgetExhausted {
+            axis: "budget".into(),
+        },
+        "axon: sandbox violation: " => Verdict::Denied {
+            reason,
+            axis: "sandbox".into(),
+        },
+        _ => Verdict::Denied {
+            reason,
+            axis: "runtime".into(),
+        },
+    })
 }
 
 /// `stdout` without THIS run's completion marker and the newline the
