@@ -8,6 +8,10 @@ advances.]
 [REVISED: HX3-0 class C 2026-10-29: §0.7 (0824f16a) and §0.8 (3c8ba568)
 preceded the class C pilot, which **advances** (c = 15, 0 false successes,
 no overrun, §6.4). HX3-1 needs a human go-ahead (§0.3).]
+[REVISED: build 2026-10-31: authorized (human, "do it all") for HX3-1,
+HX3-2 and HX3-3 for class C. §1/§2 (node N3) are committed alone, after
+the HX3-1 builder (967b6329) and before the N4 pool and any calibration
+row; HX3-4 is not authorized.]
 §1/§2 are never written unless a class advances.
 Design: `tasks/hx3-spec.md` on `hx3/spec` (10ed553f) HX3-0, HX3-A, HX3-B,
 HX3-2, including every [REVISED] marker. Authorization (2026-10-29): HX3-0
@@ -298,6 +302,71 @@ only the wall half of the §0.3 overrun rule; the spend half is unchanged.
   start and end loads are recorded in §6.
 - **If C's wall exceeds 1257.0 s:** recorded as an overrun and C stops; no
   re-pilot. The §0.3 decision on c and false successes is unchanged.
+
+## 1. Pool, split, freeze (node N3; class C only)
+
+Committed alone, before the N4 pool is built and before any calibration
+row. Rows marked "N4" are filled in by the N4 addendum (§1.1), committed
+alone before the first calibration row.
+
+| field | value |
+|---|---|
+| builder | `build.py` at 967b6329 (HX3-1): classes refine, caps, caller, subtle, multi, erase-long (in that order); HX-1 caller pin; no masked, excerpt, bundles, hx2 erase or sparse; calibrate keyed on `cluster(t)` (874925f8) |
+| builder binaries | axon `819e04609b49c2b329edb2f79bd5a7653d5ee59ed8ddf5809a29c3247924ddda`, cortex `e052ea815762ad13a6417e94efa5d3f5c08854c483c320da1fddeab6087a433a` (`/var/tmp/r51-tmp/hx-bin/`; the FU-1, hx2 and HX3-0 builder pins) |
+| builder-input digest (`build.py --inputs-digest --programs-dir programs --programs-dir programs-c`) | `ab816165db7dd5e120023b7e948cd223bf4325243733721bb56d5032f13aca5e` |
+| mutation seed (`--seed`) | 1 |
+| split | inherited, `--prior-split /var/tmp/r51-tmp/hx3c-scratch/hx-pool.json` (sha256 `e5b49c68871900c5dc78f36aef2631f127c1f69219799138a0337350cf0ce830`; chain FU-1 → hx2-scratch → hx3-scratch → hx3c-scratch). It records all 57 FU-1 programs (18 dev / 39 test) and the 12 `programs-c/` programs as dev (dealt by construction, §0.7). Split seed 1 for any program new to the split (none expected) |
+| N5a test-side programs | split seed 3 (`--split-seed 3`, no `--deal-dev`), only at N5a |
+| per-cell-program (`--per-cell-program`) | 2 (the pilot recipe). 4 is the N5a option; if used, it is recorded here before the N4 rebuild that uses it |
+| strata | `--stratum all --programs-dir programs --programs-dir programs-c` (stratum D, `programs/`, `programs-c/` in one pool) |
+| cross-fit fold seed / cap draw seed (`calibrate.py --seed` / `--cap-seed`) | 1 / 1; test cap 8 per cluster |
+| pool sha256, tasks per stratum, erase-long dev / test tasks and programs | N4 |
+
+N4 commands (scratch dir `/var/tmp/r51-tmp/hx3-n4/`; the pool is not
+committed):
+
+```
+cd crates/axon-cortex/benchmarks/headroom && \
+python3 -B build.py --axon /var/tmp/r51-tmp/hx-bin/axon --cortex /var/tmp/r51-tmp/hx-bin/cortex \
+  --stratum all --programs-dir programs --programs-dir programs-c \
+  --prior-split /var/tmp/r51-tmp/hx3c-scratch/hx-pool.json --seed 1 --split-seed 1 \
+  --per-cell-program 2 --jobs 16 \
+  --out /var/tmp/r51-tmp/hx3-n4/hx-pool.json --report /var/tmp/r51-tmp/hx3-n4/report.json
+python3 -B build.py --check /var/tmp/r51-tmp/hx3-n4/hx-pool.json \
+  --axon /var/tmp/r51-tmp/hx-bin/axon --cortex /var/tmp/r51-tmp/hx-bin/cortex
+```
+
+No `bundle.py --check`: bundles belong to class B, which was rejected
+(HX3-1 "if B passed"), so N4 has no bundles.
+
+Rules 1-4 of `PREREG.md` §1 hold unchanged (split by program, ≤ 8 test tasks
+per cluster by a seeded draw, extensions by seeded split, freeze by
+`PROTECTED_SETS`).
+
+## 2. Calibration on dev (node N5; HX3-3, NH-1)
+
+| field | value |
+|---|---|
+| calibrated class | erase-long only (the one class that passed HX3-0); cell (erase-long, `>=24`) |
+| h55 rows | `claude-haiku-5-5` over micode, k = 3 (`--trials 3`), on every dev erase-long task of the N4 pool |
+| h45 rows | `claude-haiku-4-5-20251001` over micode, k = 1, on the dev tasks of the kept cells only; not run if no cell is kept |
+| incumbent (E7) | arm B, `/var/tmp/r51-tmp/hx3-inc-bin/cortex` sha256 `1b2f8edb101d3fbae1cb…` (main 43e895d0), `AXON_BIN` `/var/tmp/r51-tmp/hx3-inc-bin/axon` `f15fad70807e5f51…`, grading axon the same (§0.6), `probe_grade_axon` on; ranker `openrouter:anthropic/claude-haiku-5.5`; `--parallel 1` |
+| spend | one fresh root `crates/axon-cortex/benchmarks/headroom/hx3-cal-2026-10-31/` (h55 and h45 rows of a pass share it), `--cap-usd 5.00 --reserve-usd 0.10` per pass; at most one N5a re-pass, in its own fresh root, ≤ $10 cumulative |
+| overrun | expected cost and wall at the N4 task count (§1.1); any run above 2× either stops for review before the next paid run |
+| false successes | any false success in a calibration row removes the erase-long cell before power is computed (hx2 HXD#16), so hx-test is not frozen |
+| calibration | `python3 -B calibrate.py --pool <N4 pool> --rows hx3-cal-2026-10-31/DEV-H55.jsonl --rows-h45 hx3-cal-2026-10-31/DEV-H45.jsonl --seed 1 --cap-seed 1 --cap 8 --report hx3-cal-2026-10-31/calibration.json`, then `--write-sets .` only if the report's acceptance is `ok` |
+| thresholds (unchanged, `calibrate.py:50-54`) | kept cell: shrunk rate in [0.3, 0.7]; eligible cell: ≥ 12 dev tasks from ≥ 3 clusters; test set: ≥ 150 tasks from ≥ 20 clusters; predicted test rate in [0.2, 0.8]; h45 kept-cell rate in [0.1, 0.9] |
+
+Decision after the pass:
+- **Cell not kept, predicted rate out of band, h45 uninformative, or any
+  false success:** stop; hx-test is not frozen; the reason is recorded in
+  §2.2 and the spec status. N5a cannot change these (they are dev
+  outcomes), so it is not run.
+- **Only the test-set size is short** (< 150 tasks or < 20 clusters): N5a
+  once (spec §6): author test-side programs under FU-1b rules, split seed
+  3, then back to N4 (rebuild, `--check`) and recalibrate offline on the
+  same dev rows; a paid re-pass only if N5a changes the dev tasks.
+- **Acceptance ok:** N6 (power, §3, freeze).
 
 ## 6. HX3-0 pilot rows and verdict (2026-10-29)
 
