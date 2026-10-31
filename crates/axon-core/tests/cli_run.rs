@@ -35097,7 +35097,7 @@ fn a_wasm_link_failure_reports_the_linkers_own_error() {
 fn a_wasm_runnable_label_is_only_printed_for_a_module_that_runs() {
     let dir = std::env::temp_dir().join(format!("axon_wasm_label_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
-    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repo = script_spawn::repo_root();
     let has = |tool: &str| {
         Command::new(tool)
             .arg("--version")
@@ -35139,11 +35139,14 @@ fn a_wasm_runnable_label_is_only_printed_for_a_module_that_runs() {
                 ));
             }
             if has("node") && err.contains("node scripts/wasm_browser_host.js") {
-                let r = Command::new("node")
-                    .arg(repo.join("scripts/wasm_browser_host.js"))
-                    .arg(&linked)
-                    .output()
-                    .unwrap();
+                let r = script_spawn::script(
+                    "node",
+                    repo.join("scripts/wasm_browser_host.js"),
+                    Bins::NoWorkspaceBinary,
+                )
+                .arg(&linked)
+                .output()
+                .unwrap();
                 let got = String::from_utf8_lossy(&r.stdout);
                 if !r.status.success() || got.trim() != want {
                     fails.push(format!(
