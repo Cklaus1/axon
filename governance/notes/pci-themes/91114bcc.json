@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "An unattended run now needs a per-host opt-in file owned by the running user, unreadable to others and naming the enabling decision; without it phase A refuses with exit 29, shown by a new S-test that failed before."}
