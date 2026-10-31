@@ -1,0 +1,35 @@
+{
+ "id": "a11-append-readback",
+ "category": "multi-step",
+ "source": {
+  "kind": "atlas tasks_hard",
+  "file": "atlas/spikes/rlm-engine/src/tasks_hard.rs (TASKS, MIT, separate git tree)",
+  "index": 11,
+  "desc": "the full contents, read back from disk, of a file in the current directory named app.txt to which you must first write \"one\" and then, in a separate append operation, append \"two\"",
+  "expected": "onetwo",
+  "atlas_category": "file-io"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "atlas data point",
+    "runs": [
+     {
+      "inputs": {},
+      "outputs": {
+       "./out/app.txt": "onetwo",
+       "./out/answer.txt": "onetwo\n"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/answer.txt",
+  "value": "onetwo"
+ }
+}

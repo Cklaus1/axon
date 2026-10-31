@@ -165,9 +165,24 @@ fn produce(
     let resolved = if lift {
         let source = intent.fenced_axon.as_deref().unwrap_or_default();
         let cfg = LoopConfig::new(bin, String::new());
-        match genloop::evaluate_lifted(intent, source, &cfg) {
-            (_, Some(r)) => r,
-            (rep, None) => return Err(Produce::Refused(rep.refusal())),
+        let (rep, resolved) = genloop::evaluate_lifted(intent, source, &cfg);
+        // No generation ran, so there is no `axon-intent-gen/1` transcript:
+        // the lifted program's own report (check, gates, every example run)
+        // is written instead. The genviab benchmark grades hidden examples
+        // with it.
+        if let Some(path) = &flags.transcript {
+            let doc = serde_json::json!({ "schema": genloop::LIFT_REPORT_SCHEMA, "report": &rep });
+            let text = serde_json::to_string_pretty(&doc).expect("the lift report serialises");
+            if let Err(e) = std::fs::write(path, text) {
+                return Err(Produce::Usage(format!(
+                    "cannot write the transcript {}: {e}",
+                    path.display()
+                )));
+            }
+        }
+        match resolved {
+            Some(r) => r,
+            None => return Err(Produce::Refused(rep.refusal())),
         }
     } else {
         let Some(spec) = flags.generator.as_deref() else {

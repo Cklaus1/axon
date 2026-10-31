@@ -229,6 +229,50 @@ fn a_lifted_program_failing_its_example_is_refused() {
     assert!(!d.path().join("o/job.ax").exists(), "no triple");
 }
 
+/// genviab grades hidden examples by lifting a candidate: `--transcript` on
+/// the lift path writes the program's own report (it was silently ignored).
+#[test]
+fn a_lifted_program_writes_its_report_to_the_transcript_path() {
+    let d = Dir::new("lift-rep");
+    let intent = d.write_intent(&with_program(WRONG_OUTPUT));
+    let o = d.intent_cli(&[
+        "compile",
+        intent.to_str().unwrap(),
+        "--out",
+        "o",
+        "--transcript",
+        "lift.json",
+    ]);
+    assert_eq!(o.status.code(), Some(5), "{}", text(&o));
+    let raw = std::fs::read_to_string(d.path().join("lift.json"))
+        .unwrap_or_else(|e| panic!("no lift report: {e}\n{}", text(&o)));
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["schema"], "axon-intent-lift/1");
+    assert_eq!(v["report"]["stage"], "examples");
+    let ex = &v["report"]["examples"][0];
+    assert_eq!(ex["example"], "copies two lines");
+    assert_eq!(ex["passed"], false);
+    assert!(
+        ex["diffs"][0].as_str().unwrap_or("").contains("out/copy.txt"),
+        "{raw}"
+    );
+
+    let ok = d.write_intent(&with_program(GOOD));
+    let o = d.intent_cli(&[
+        "compile",
+        ok.to_str().unwrap(),
+        "--out",
+        "o",
+        "--transcript",
+        "lift-ok.json",
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(d.path().join("lift-ok.json")).unwrap())
+            .unwrap();
+    assert_eq!(v["report"]["stage"], "accepted");
+}
+
 #[test]
 fn a_lifted_program_writing_an_unasked_output_is_refused_by_confidence() {
     let d = Dir::new("lift-conf");

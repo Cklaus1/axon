@@ -1,0 +1,34 @@
+fn answer(text: str) -> str {
+    let lines = str_split(str_trim(text), "\n")
+    let best = ""
+    let best_score = -1
+    for i in 1..len(lines) {
+        let parts = str_split(lines[i], ",")
+        if len(parts) == 2 {
+            let score = parse_int_or(parts[1], -1)
+            if score > best_score {
+                best_score = score
+                best = str_trim(parts[0])
+            }
+        }
+    }
+    best
+}
+
+fn main() -> i64 {
+    match read_file("./data/records.csv") {
+        Ok(text) => {
+            match write_file("./out/answer.txt", answer(text) + "\n") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            2
+        }
+    }
+}

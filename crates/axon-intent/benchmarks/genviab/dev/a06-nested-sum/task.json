@@ -1,0 +1,36 @@
+{
+ "id": "a06-nested-sum",
+ "category": "transform",
+ "source": {
+  "kind": "atlas tasks_hard",
+  "file": "atlas/spikes/rlm-engine/src/tasks_hard.rs (TASKS, MIT, separate git tree)",
+  "index": 6,
+  "desc": "the sum of every integer anywhere inside the nested list [1, [2, [3, [4, [5]]]]]",
+  "expected": "15",
+  "atlas_category": "structured"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "atlas data point",
+    "runs": [
+     {
+      "inputs": {
+       "./data/nested.txt": "[1, [2, [3, [4, [5]]]]]\n"
+      },
+      "outputs": {
+       "./out/answer.txt": "15\n"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/answer.txt",
+  "value": "15"
+ }
+}

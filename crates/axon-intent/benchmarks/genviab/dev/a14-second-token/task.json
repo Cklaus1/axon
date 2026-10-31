@@ -1,0 +1,36 @@
+{
+ "id": "a14-second-token",
+ "category": "multi-step",
+ "source": {
+  "kind": "atlas tasks_hard",
+  "file": "atlas/spikes/rlm-engine/src/tasks_hard.rs (TASKS, MIT, separate git tree)",
+  "index": 14,
+  "desc": "for the comma-separated tokens \"a,b,a,c,b,a\": count how often each token occurs, then give the token with the second-highest count",
+  "expected": "b",
+  "atlas_category": "multi-step"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "atlas data point",
+    "runs": [
+     {
+      "inputs": {
+       "./data/tokens.txt": "a,b,a,c,b,a\n"
+      },
+      "outputs": {
+       "./out/answer.txt": "b\n"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/answer.txt",
+  "value": "b"
+ }
+}

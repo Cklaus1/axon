@@ -1,0 +1,36 @@
+{
+ "id": "a12-long-word-lengths",
+ "category": "multi-step",
+ "source": {
+  "kind": "atlas tasks_hard",
+  "file": "atlas/spikes/rlm-engine/src/tasks_hard.rs (TASKS, MIT, separate git tree)",
+  "index": 12,
+  "desc": "starting from the sentence \"the quick brown fox jumps over the lazy dog\": build a mapping from each distinct word to its length, discard the entries whose length is 3 or less, and take the sum of the lengths that remain",
+  "expected": "23",
+  "atlas_category": "multi-step"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "atlas data point",
+    "runs": [
+     {
+      "inputs": {
+       "./data/sentence.txt": "the quick brown fox jumps over the lazy dog\n"
+      },
+      "outputs": {
+       "./out/answer.txt": "23\n"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/answer.txt",
+  "value": "23"
+ }
+}

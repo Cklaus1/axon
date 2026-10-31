@@ -1,0 +1,18 @@
+fn main() -> i64 {
+    match read_file("./data/report.txt") {
+        Ok(text) => {
+            let n = len(text)
+            match write_file("./out/summary.txt", "report length: {to_str(n)} bytes") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            2
+        }
+    }
+}

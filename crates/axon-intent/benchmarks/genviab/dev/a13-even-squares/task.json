@@ -1,0 +1,36 @@
+{
+ "id": "a13-even-squares",
+ "category": "multi-step",
+ "source": {
+  "kind": "atlas tasks_hard",
+  "file": "atlas/spikes/rlm-engine/src/tasks_hard.rs (TASKS, MIT, separate git tree)",
+  "index": 13,
+  "desc": "starting from the integers 1 to 30: keep those divisible by 3, square each of them, and take the sum of the squares that are even",
+  "expected": "1980",
+  "atlas_category": "multi-step"
+ },
+ "reference_author": "model:IgBench (dev only)",
+ "examples": {
+  "visible": [],
+  "hidden": [
+   {
+    "name": "atlas data point",
+    "runs": [
+     {
+      "inputs": {
+       "./data/numbers.txt": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n"
+      },
+      "outputs": {
+       "./out/answer.txt": "1980\n"
+      },
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ },
+ "human_expected": {
+  "path": "./out/answer.txt",
+  "value": "1980"
+ }
+}

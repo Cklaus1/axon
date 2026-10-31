@@ -1,0 +1,31 @@
+fn main() -> i64 {
+    match write_file("./out/app.txt", "one") {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln("cannot write: {e}")
+            return 1
+        }
+    }
+    match append_file("./out/app.txt", "two") {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln("cannot append: {e}")
+            return 1
+        }
+    }
+    match read_file("./out/app.txt") {
+        Ok(text) => {
+            match write_file("./out/answer.txt", text + "\n") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            2
+        }
+    }
+}

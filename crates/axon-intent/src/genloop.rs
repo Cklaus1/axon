@@ -44,6 +44,9 @@ use std::time::{Duration, Instant};
 
 /// The transcript's schema tag.
 pub const TRANSCRIPT_SCHEMA: &str = "axon-intent-gen/1";
+/// What `compile --transcript` writes for a lifted (author-written) program:
+/// `{"schema": LIFT_REPORT_SCHEMA, "report": CandidateReport}`.
+pub const LIFT_REPORT_SCHEMA: &str = "axon-intent-lift/1";
 /// Repair rounds after round 0 (so at most 1 + 3 generation calls).
 pub const MAX_REPAIR_ROUNDS: u32 = 3;
 /// The most diagnostic (or example-diff) text fed back per round (PREREG-gencontext).
