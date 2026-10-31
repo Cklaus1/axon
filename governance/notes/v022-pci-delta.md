@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 8f8baa486300b928c2b9aeb5c49fd4a56219c182
+generated-at: 3206802038031dcb9af9b9e3b0d7cb278fc96262
 
-`git diff --numstat 31413ca7..8f8baa48 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..32068020 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -57,7 +57,7 @@ generated-at: 8f8baa486300b928c2b9aeb5c49fd4a56219c182
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 2044 | 280 |
 | `crates/axon-core/src/interp.rs` | 7787 | 2882 |
-| `crates/axon-core/src/interp/builtins.rs` | 901 | 641 |
+| `crates/axon-core/src/interp/builtins.rs` | 905 | 641 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
@@ -100,9 +100,9 @@ generated-at: 8f8baa486300b928c2b9aeb5c49fd4a56219c182
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 64323 | 8938 |
+| total | 64327 | 8938 |
 
-`git log --reverse 31413ca7..8f8baa48 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..32068020 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -482,7 +482,8 @@ generated-at: 8f8baa486300b928c2b9aeb5c49fd4a56219c182
 | d1012964 | cs3/c merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 7004888d | integration int/31 fmt | FORMAT ONLY: `cargo fmt` of the checker-soundness-3 lane B code (infer.rs, vm tests) merged unformatted; whitespace and line breaks only, no token changes, so no pass/fail change. |
 | 8f8baa48 | integration int/31 wasm RUNNABLE label | CLI MESSAGE: `axon target build --engine codegen` for wasm reads the linked module's import section and prints `linked, RUNNABLE` with a `wasmtime --invoke main` command only when every import is WASI; a module importing `env.axon_host_write` (browser println) now says it needs that host import and is not runnable standalone. Only the stderr label changes: the emitted files, the link, and the exit code are unchanged. No interpreter, checker or runtime path changes. |
-| 376 commits | | |
+| b67d0904 | intent-gen IG0 | INTERPRETER: the env_var-behind-fs_read refusal applies to program-created sandboxes only, so the ambient AXON_ALLOWED_FS_READ= deny-all (cortex's runtime fence) no longer refuses an environment read. |
+| 377 commits | | |
 <!-- END MECHANICAL -->
 
 
