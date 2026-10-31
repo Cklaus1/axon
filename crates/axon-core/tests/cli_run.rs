@@ -10827,8 +10827,9 @@ fn build_aborts_on_codegen_unsupported_builtin_e0910() {
     // E0907/feature-required message too.)
     let f = std::env::temp_dir().join(format!("axon_e0910_{}.ax", std::process::id()));
     // arr_group_by is a known builtin that is NOT yet codegen-lowered (the
-    // nested-slice ops flatten/chunk now are; group_by/partition are not).
-    std::fs::write(&f, "fn main() -> i64 { let a = [1, 2, 3, 4]\n let b = arr_group_by(&a, |x| x % 2)\n len(b) }\n").unwrap();
+    // nested-slice ops flatten/chunk now are; group_by/partition are not). The
+    // key fn returns `str` and the result is a Dict, so the program checks clean.
+    std::fs::write(&f, "fn main() -> i64 { let a = [1, 2, 3, 4]\n let b = arr_group_by(&a, |x| to_str(x % 2))\n dict_len(b) }\n").unwrap();
     let out = axon()
         .args(["build", f.to_str().unwrap(), "-o"])
         .arg(std::env::temp_dir().join(format!("axon_e0910_{}.bin", std::process::id())))
@@ -30005,7 +30006,7 @@ fn native_closures_capture_any_enclosing_scope_like_the_interpreter() {
         ),
         (
             "ax19_snapshot",
-            "fn main() -> i64 {\n let k = 1\n let f = |x: i64| x + k\n k = 5\n println(to_str(f(0)))\n let xs = [1, 2, 3]\n let s = |x: i64| arr_sum_i64(&xs) + x\n xs[0] = 100\n println(to_str(s(0)))\n let ys = [5, 5]\n let g = |i: i64| {\n  ys[i] = ys[i] + 1\n  ys[i]\n }\n println(to_str(g(0)))\n println(to_str(g(0)))\n println(to_str(ys[0]))\n let counter = 0\n let inc = |d: i64| {\n  counter = counter + d\n  counter\n }\n println(to_str(inc(2)))\n println(to_str(inc(3)))\n println(to_str(counter))\n 0\n}\n",
+            "fn main() -> i64 {\n let k = 1\n let f = |x: i64| x + k\n k = 5\n println(to_str(f(0)))\n let xs = [1, 2, 3]\n let s = |x: i64| arr_sum_i64(&xs) + x\n xs[0] = 100\n println(to_str(s(0)))\n let ys = [5, 5]\n let g = |i: i64| {\n  ys[i] = ys[i] + 1\n  ys[i]\n }\n println(to_str(g(0)))\n println(to_str(g(0)))\n let counter = 0\n let inc = |d: i64| {\n  counter = counter + d\n  counter\n }\n println(to_str(inc(2)))\n println(to_str(inc(3)))\n 0\n}\n",
         ),
     ];
     for (tag, src) in progs {
@@ -30019,6 +30020,25 @@ fn native_closures_capture_any_enclosing_scope_like_the_interpreter() {
             "[{tag}] native != interpreter"
         );
     }
+    // The old ax19_snapshot read `ys`/`counter` after a closure wrote them;
+    // CS2-1 refuses that shape (E0607: the write is not visible outside).
+    let f = std::env::temp_dir().join(format!("axon_ax19_e0607_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n let counter = 0\n let inc = |d: i64| {\n  counter = counter + d\n  counter\n }\n println(to_str(inc(2)))\n println(to_str(counter))\n 0\n}\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg =
+        String::from_utf8_lossy(&out.stderr).to_string() + &String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.code() == Some(2) && msg.contains("E0607"),
+        "[ax19_snapshot_old] a read of `counter` after the closure wrote it must be E0607: {msg}"
+    );
 }
 
 /// AX-13: native refused (E0910) array `+`, `arr_concat` on non-`i64`
