@@ -3402,4 +3402,8 @@ ATTACK_MARKERS.update({
     'M4029': r'ATTACK: a fixture file outside the intent directory was read',
     'M4030': r'ATTACK: a fixture over the cap parsed clean',
     'M4031': r'ATTACK: the no-examples deduction is not recorded',
+    'M4032': r"ATTACK: the capture loses the program's exit status or its output",
+    'M4033': r'ATTACK: a program that does not compile reads as an exit status',
+    'M4034': r'ATTACK: a run killed at its deadline reads as a fault or an exit',
+    'M4035': r"ATTACK: the wrapper's completion marker leaks into captured stdout",
 })

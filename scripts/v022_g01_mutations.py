@@ -12436,5 +12436,26 @@ MUTATIONS += [
      'axon-intent', '--lib', 'confidence::tests::no_examples_is_a_named_deduction_that_never_refuses'),
 ]
 
+# intent-gen IgIntent IG4 prerequisite: `run_sandboxed_capture` tells a compile failure, an
+# exit status, a timeout and a sandbox fault apart and strips the completion marker.
+MUTATIONS += [
+    ('M4032', 'IG4 capture: every completed run reads as exit 0', 'crates/axon-os/src/runtime.rs',
+     'Verdict::Completed { value } => SandboxOutcome::Exited { code: value as i32 },',
+     'Verdict::Completed { .. } => SandboxOutcome::Exited { code: 0 },',
+     'axon-os', '--test sandbox_capture', 'exit_status_and_output_are_captured'),
+    ('M4033', 'IG4 capture: a compile failure reads as an exit status', 'crates/axon-os/src/runtime.rs',
+     'Verdict::Malformed { reason } => SandboxOutcome::CompileFailed { diagnostic: reason },',
+     'Verdict::Malformed { reason } => SandboxOutcome::Exited { code: reason.len() as i32 },',
+     'axon-os', '--test sandbox_capture', 'a_compile_failure_is_not_an_exit_status'),
+    ('M4034', 'IG4 capture: a timeout reads as a fault', 'crates/axon-os/src/runtime.rs',
+     '_ if proc.timed_out => SandboxOutcome::TimedOut {',
+     '_ if false && proc.timed_out => SandboxOutcome::TimedOut {',
+     'axon-os', '--test sandbox_capture', 'a_timeout_is_its_own_outcome'),
+    ('M4035', "IG4 capture: the wrapper's completion marker stays in stdout", 'crates/axon-os/src/runtime.rs',
+     'stdout: strip_done_marker(&proc.stdout, &nonce),',
+     'stdout: proc.stdout.clone(),',
+     'axon-os', '--test sandbox_capture', 'a_nullary_main_exits_zero_and_unterminated_output_is_kept'),
+]
+
 if __name__ == "__main__":
     main()

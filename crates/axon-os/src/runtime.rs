@@ -383,6 +383,8 @@ struct ProcOutcome {
     /// the exit code instead of by matching prose in stderr.
     stdout: String,
     stderr: String,
+    /// Bytes of stdout read but not retained (the capture bound).
+    stdout_omitted: u64,
     timed_out: bool,
     /// R27/R29: true if the process was killed because the kill file latch was
     /// tripped (by `axon-os kill` for R27, or by the R29 ComplianceMonitor).
@@ -402,14 +404,19 @@ fn signal_name(sig: i32) -> String {
 }
 
 /// Drain one child pipe on its own thread (T25), bounded (B259) and stoppable.
-fn spawn_drain<R>(pipe: Option<R>, max_capture: usize, stop: Arc<AtomicBool>) -> JoinHandle<String>
+/// Returns the capture and the count of bytes read but not retained.
+fn spawn_drain<R>(
+    pipe: Option<R>,
+    max_capture: usize,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<(String, u64)>
 where
     R: std::io::Read + AsRawFd + Send + 'static,
 {
     std::thread::spawn(move || {
         pipe.map(|p| {
             let fd = p.as_raw_fd();
-            read_bounded(p, max_capture, || wait_readable(fd, &stop)).0
+            read_bounded(p, max_capture, || wait_readable(fd, &stop))
         })
         .unwrap_or_default()
     })
@@ -418,10 +425,10 @@ where
 /// Join both drains, waiting at most [`DRAIN_GRACE`] for their EOF, then stop
 /// them: each returns what it read within one poll interval.
 fn join_drains(
-    out_h: JoinHandle<String>,
-    err_h: JoinHandle<String>,
+    out_h: JoinHandle<(String, u64)>,
+    err_h: JoinHandle<(String, u64)>,
     stop: &AtomicBool,
-) -> (String, String) {
+) -> ((String, u64), (String, u64)) {
     let mut joined = join_within(DRAIN_GRACE, vec![out_h, err_h], stop)
         .into_iter()
         .map(Option::unwrap_or_default);
@@ -447,15 +454,18 @@ fn run_bounded(
     timeout: Duration,
     kill_file: Option<&std::path::Path>,
 ) -> std::io::Result<ProcOutcome> {
-    run_bounded_capped(cmd, timeout, kill_file, DEFAULT_MAX_CAPTURE_BYTES)
+    run_bounded_capped(cmd, timeout, kill_file, DEFAULT_MAX_CAPTURE_BYTES, None)
 }
 
-/// [`run_bounded`] with an explicit per-stream capture bound (B259).
+/// [`run_bounded`] with an explicit per-stream capture bound (B259) and,
+/// when `stdin` is `Some`, those bytes fed to the child's stdin (then closed)
+/// from a detached writer thread; `None` is `/dev/null`.
 fn run_bounded_capped(
     cmd: &mut Command,
     timeout: Duration,
     kill_file: Option<&std::path::Path>,
     max_capture: usize,
+    stdin: Option<Vec<u8>>,
 ) -> std::io::Result<ProcOutcome> {
     /// What ended the job's watch.
     enum End {
@@ -479,13 +489,25 @@ fn run_bounded_capped(
     // monitor (R29) terminate through this path — so neither stopped a job that
     // had spawned a subprocess.
     let cmd = cmd
-        .stdin(Stdio::null())
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut job = Job::spawn(cmd)?;
 
     let stdout_pipe = job.child_mut().stdout.take();
     let stderr_pipe = job.child_mut().stderr.take();
+    // The writer is never joined: a child that never reads its stdin blocks
+    // it only until the group dies (then the write fails with EPIPE).
+    if let (Some(bytes), Some(mut pipe)) = (stdin, job.child_mut().stdin.take()) {
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = pipe.write_all(&bytes);
+        });
+    }
 
     // AUDIT T25 (finding OSK-P4-H3 / O019). These handles were taken here but
     // not READ until after the try_wait/timeout loop below, so a child emitting
@@ -539,7 +561,7 @@ fn run_bounded_capped(
 
     // Frees the job's registry slot, THEN reaps (axon_jobctl::Job::reap).
     let reaped = job.reap();
-    let (stdout, stderr) = join_drains(out_h, err_h, &stop);
+    let ((stdout, stdout_omitted), (stderr, _)) = join_drains(out_h, err_h, &stop);
     let end = watched?;
     let status = reaped?;
 
@@ -559,9 +581,51 @@ fn run_bounded_capped(
         code,
         stdout,
         stderr,
+        stdout_omitted,
         timed_out: matches!(end, End::TimedOut),
         killed_by_latch: matches!(end, End::Latch),
         killed_by_signal,
+    })
+}
+
+/// What a bounded child run ended with ([`run_bounded_job`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundedRun {
+    /// The exit status; `None` when the run was killed (its deadline, or a
+    /// termination signal to this process).
+    pub code: Option<i32>,
+    /// Captured stdout (head and tail within the capture bound).
+    pub stdout: String,
+    /// Captured stderr (head and tail within the capture bound).
+    pub stderr: String,
+    /// Bytes of stdout read but not retained: non-zero means `stdout` is not
+    /// the whole stream.
+    pub stdout_omitted: u64,
+    /// The deadline killed the job's process group.
+    pub timed_out: bool,
+    /// The termination signal this process received, if that ended the run.
+    pub killed_by_signal: Option<i32>,
+}
+
+/// Run `cmd` as a process-group job ([`axon_jobctl::Job`]) under a wall-clock
+/// `timeout`, feeding `stdin` (`None`: `/dev/null`) and capturing at most
+/// `max_capture` bytes per stream. At the deadline the whole group is
+/// SIGKILLed and reaped. The single bounded runner shared with the axon-intent
+/// generator seam; environment, arguments and cwd are the caller's.
+pub fn run_bounded_job(
+    cmd: &mut Command,
+    timeout: Duration,
+    stdin: Option<Vec<u8>>,
+    max_capture: usize,
+) -> std::io::Result<BoundedRun> {
+    let p = run_bounded_capped(cmd, timeout, None, max_capture, stdin)?;
+    Ok(BoundedRun {
+        code: p.code,
+        stdout: p.stdout,
+        stderr: p.stderr,
+        stdout_omitted: p.stdout_omitted,
+        timed_out: p.timed_out,
+        killed_by_signal: p.killed_by_signal,
     })
 }
 
@@ -917,7 +981,7 @@ pub fn query_imports_digest(
     let program = absolutize(program.to_path_buf());
     let mut cmd = job_child_command(axon_bin, &program, grant);
     cmd.arg("imports").arg(&program).arg("--json");
-    let out = run_bounded_capped(&mut cmd, timeout, None, DEFAULT_MAX_CAPTURE_BYTES)
+    let out = run_bounded_capped(&mut cmd, timeout, None, DEFAULT_MAX_CAPTURE_BYTES, None)
         .map_err(|e| format!("cannot run `{} imports`: {e}", axon_bin.display()))?;
     if out.timed_out || out.code != Some(0) {
         let why = out
@@ -996,6 +1060,119 @@ impl Runtime for AxonCoreRuntime {
         required_imports: Option<&str>,
     ) -> RunOutcome {
         let ceiling = grant.effect_set();
+        let verdict = match self.launch(program, grant, budget, seed, required_imports, true) {
+            Ok((proc, nonce)) => self.classify(&proc, &nonce),
+            Err(verdict) => {
+                return RunOutcome {
+                    events: vec![],
+                    verdict,
+                }
+            }
+        };
+        // A single audit event recording the bounded run under the ceiling.
+        let events = vec![RE::new(
+            "run",
+            &program.path.display().to_string(),
+            ceiling,
+            "internal",
+        )];
+        RunOutcome { events, verdict }
+    }
+}
+
+/// How a captured sandbox run ended ([`AxonCoreRuntime::run_sandboxed_capture`]).
+/// Every arm is distinct, so a caller never reads prose to tell a program that
+/// did not compile from one that returned 2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SandboxOutcome {
+    /// The program did not compile; nothing ran.
+    CompileFailed { diagnostic: String },
+    /// `main` returned: the wrapper's completion marker printed and `code` is
+    /// the program's exit status (0 for a nullary `fn main()`).
+    Exited { code: i32 },
+    /// The run stopped short of the wrapper's tail: a sandbox refusal
+    /// (`verdict` = `Denied { axis: "sandbox" }`), a budget, a refinement, a
+    /// panic, a direct `exit()` call. `code` is the raw process status.
+    Faulted { code: Option<i32>, verdict: Verdict },
+    /// The wall deadline killed the run's process group.
+    TimedOut { after_ms: u64 },
+    /// The run never started (staging or spawn failed): an infrastructure
+    /// failure, not a property of the program.
+    NotRun { reason: String },
+}
+
+/// A sandbox run with its output ([`AxonCoreRuntime::run_sandboxed_capture`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedRun {
+    pub outcome: SandboxOutcome,
+    /// The program's stdout without the wrapper's completion marker; head and
+    /// tail within the runtime's capture bound.
+    pub stdout: String,
+    /// The interpreter's stderr (diagnostics and the program's `eprintln`),
+    /// head and tail within the capture bound.
+    pub stderr: String,
+    /// Bytes of stdout read but not retained (non-zero: `stdout` is partial).
+    pub stdout_omitted: u64,
+}
+
+impl AxonCoreRuntime {
+    /// Run `program` in the sandbox [`Runtime::run_sandboxed`] uses (the
+    /// wrapper, `grant`'s allowlists, the wall deadline, the process-group
+    /// kill) and return how it ended with its captured output. For the
+    /// intent-generation loop's examples (IG4): no import binding, no audit
+    /// event, the kill file is not polled. The child's cwd is the program's
+    /// directory.
+    pub fn run_sandboxed_capture(
+        &self,
+        program: &ProgramSource,
+        grant: &Grant,
+        budget: &Budget,
+        seed: u64,
+    ) -> CapturedRun {
+        let (proc, nonce) = match self.launch(program, grant, budget, seed, None, false) {
+            Ok(p) => p,
+            Err(v) => {
+                return CapturedRun {
+                    outcome: SandboxOutcome::NotRun {
+                        reason: verdict_reason(&v),
+                    },
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    stdout_omitted: 0,
+                }
+            }
+        };
+        let outcome = match self.classify(&proc, &nonce) {
+            Verdict::Completed { value } => SandboxOutcome::Exited { code: value as i32 },
+            Verdict::Malformed { reason } => SandboxOutcome::CompileFailed { diagnostic: reason },
+            _ if proc.timed_out => SandboxOutcome::TimedOut {
+                after_ms: self.timeout.as_millis() as u64,
+            },
+            verdict => SandboxOutcome::Faulted {
+                code: proc.code,
+                verdict,
+            },
+        };
+        CapturedRun {
+            outcome,
+            stdout: strip_done_marker(&proc.stdout, &nonce),
+            stderr: proc.stderr,
+            stdout_omitted: proc.stdout_omitted,
+        }
+    }
+
+    /// Stage the wrapper and run it: `Ok((outcome, nonce))`, or the verdict
+    /// for a run that could not start. `poll_kill_file`: honour
+    /// `AXON_KILL_FILE` (R27/R29).
+    fn launch(
+        &self,
+        program: &ProgramSource,
+        grant: &Grant,
+        budget: &Budget,
+        seed: u64,
+        required_imports: Option<&str>,
+        poll_kill_file: bool,
+    ) -> Result<(ProcOutcome, String), Verdict> {
         // RUNTIME ENFORCEMENT (the sound fence). Rather than running the program
         // raw, wrap it: mint a principal + `sandbox_run` it inside an effect
         // ceiling. The interpreter then refuses ANY builtin whose effect row
@@ -1020,31 +1197,16 @@ impl Runtime for AxonCoreRuntime {
                     .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
             })
             .unwrap_or("job");
-        let staging = match StagingDir::create(&self.staging_root) {
-            Ok(d) => d,
-            Err(e) => {
-                return RunOutcome {
-                    events: vec![],
-                    verdict: Verdict::Denied {
-                        reason: format!("cannot create private staging dir: {e}"),
-                        axis: "io".into(),
-                    },
-                }
-            }
-        };
-        let wrapper_path =
-            match staging.write_new(&format!("{stem}.wrap.ax"), wrapper_src.as_bytes()) {
-                Ok(p) => p,
-                Err(_) => {
-                    return RunOutcome {
-                        events: vec![],
-                        verdict: Verdict::Denied {
-                            reason: "cannot stage sandbox wrapper".into(),
-                            axis: "io".into(),
-                        },
-                    };
-                }
-            };
+        let staging = StagingDir::create(&self.staging_root).map_err(|e| Verdict::Denied {
+            reason: format!("cannot create private staging dir: {e}"),
+            axis: "io".into(),
+        })?;
+        let wrapper_path = staging
+            .write_new(&format!("{stem}.wrap.ax"), wrapper_src.as_bytes())
+            .map_err(|_| Verdict::Denied {
+                reason: "cannot stage sandbox wrapper".into(),
+                axis: "io".into(),
+            })?;
         debug_assert!(wrapper_path.starts_with(staging.path()));
 
         let mut cmd = job_child_command(&self.axon_bin, program.path, grant);
@@ -1062,30 +1224,28 @@ impl Runtime for AxonCoreRuntime {
         // R27/R29: if AXON_KILL_FILE is set, poll it during run_bounded.
         // R27 uses this for operator kill (`axon-os kill`); R29 uses it for the
         // compliance monitor. Both write `{"latch":"tripped"}` to stop the job.
-        let kill_file_env = std::env::var_os("AXON_KILL_FILE").map(std::path::PathBuf::from);
+        let kill_file_env = std::env::var_os("AXON_KILL_FILE")
+            .filter(|_| poll_kill_file)
+            .map(std::path::PathBuf::from);
         let kill_file = kill_file_env.as_deref();
-        let proc_res = run_bounded_capped(&mut cmd, self.timeout, kill_file, self.max_capture);
+        let proc_res =
+            run_bounded_capped(&mut cmd, self.timeout, kill_file, self.max_capture, None);
         drop(staging); // removes the private dir and the wrapper in it
-        let proc = match proc_res {
-            Ok(p) => p,
-            Err(e) => {
-                return RunOutcome {
-                    events: vec![],
-                    verdict: Verdict::Denied {
-                        reason: format!("could not launch interpreter: {e}"),
-                        axis: "exec".into(),
-                    },
-                }
-            }
-        };
+        let proc = proc_res.map_err(|e| Verdict::Denied {
+            reason: format!("could not launch interpreter: {e}"),
+            axis: "exec".into(),
+        })?;
+        Ok((proc, nonce))
+    }
 
-        // Map the run to a verdict. Faults are detected by the interpreter's
-        // STDERR diagnostics, NOT by the raw exit code — because `axon run`
-        // propagates `main`'s integer return value as the exit code, which would
-        // otherwise collide with the carved fault codes (a program returning 7
-        // is NOT budget exhaustion). A clean run ⇒ Completed{value = exit code}.
+    /// Map a run to a verdict. Faults are detected by the interpreter's
+    /// STDERR diagnostics, NOT by the raw exit code — because `axon run`
+    /// propagates `main`'s integer return value as the exit code, which would
+    /// otherwise collide with the carved fault codes (a program returning 7
+    /// is NOT budget exhaustion). A clean run ⇒ Completed{value = exit code}.
+    fn classify(&self, proc: &ProcOutcome, nonce: &str) -> Verdict {
         let err = &proc.stderr;
-        let verdict = if let Some(sig) = proc.killed_by_signal {
+        if let Some(sig) = proc.killed_by_signal {
             // G2d: the supervisor was told to stop and took the job with it.
             // `axon-os run` writes this record and then exits 128+signal.
             Verdict::Halted {
@@ -1106,7 +1266,7 @@ impl Runtime for AxonCoreRuntime {
                 reason: format!("timed out after {} ms", self.timeout.as_millis()),
                 axis: "time".into(),
             }
-        } else if let Some(line) = imports_refusal(err, proc.code, &proc.stdout, &nonce) {
+        } else if let Some(line) = imports_refusal(err, proc.code, &proc.stdout, nonce) {
             // G1e: the loader refused the closure before executing anything —
             // a module changed since approval. An approval failure, not a
             // sandbox one.
@@ -1178,7 +1338,7 @@ impl Runtime for AxonCoreRuntime {
             // (see `wrap_in_sandbox`) — the collision that forced the stderr
             // heuristic in the first place is gone. stderr is still read, but
             // only to phrase the human-readable `reason`.
-            if ran_to_completion(&proc.stdout, &nonce) {
+            if ran_to_completion(&proc.stdout, nonce) {
                 // The wrapper's tail ran, so the job returned normally and the
                 // exit code IS its return value — including values that collide
                 // with carved fault codes, which is exactly what the old stderr
@@ -1234,16 +1394,33 @@ impl Runtime for AxonCoreRuntime {
                     },
                 }
             }
-        };
+        }
+    }
+}
 
-        // A single audit event recording the bounded run under the ceiling.
-        let events = vec![RE::new(
-            "run",
-            &program.path.display().to_string(),
-            ceiling,
-            "internal",
-        )];
-        RunOutcome { events, verdict }
+/// The human-facing reason a verdict carries (for a run that never started).
+fn verdict_reason(v: &Verdict) -> String {
+    match v {
+        Verdict::Denied { reason, .. }
+        | Verdict::Halted { reason }
+        | Verdict::Malformed { reason }
+        | Verdict::RefineViolation { reason } => reason.clone(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// `stdout` without THIS run's completion marker and the newline the
+/// wrapper's `println` ended it with. The marker ends a line: a job whose last
+/// output had no newline keeps that output.
+fn strip_done_marker(stdout: &str, nonce: &str) -> String {
+    let marker = format!("{DONE_SENTINEL}{nonce}");
+    match stdout.rfind(&marker) {
+        Some(at) => {
+            let rest = &stdout[at + marker.len()..];
+            let rest = rest.strip_prefix('\n').unwrap_or(rest);
+            format!("{}{}", &stdout[..at], rest)
+        }
+        None => stdout.to_string(),
     }
 }
 
@@ -1511,7 +1688,7 @@ mod runtime_tests {
         let mut cmd = Command::new("sh");
         cmd.arg("-c")
             .arg("head -c 8388608 /dev/zero | tr '\\0' x; echo; echo LAST");
-        let out = run_bounded_capped(&mut cmd, Duration::from_secs(20), None, 4096).unwrap();
+        let out = run_bounded_capped(&mut cmd, Duration::from_secs(20), None, 4096, None).unwrap();
         assert_eq!(out.code, Some(0));
         assert!(out.stdout.len() < 4096 + 200, "{}", out.stdout.len());
         assert!(out.stdout.trim_end().ends_with("LAST"));
