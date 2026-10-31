@@ -511,6 +511,9 @@ fn foreign_keyword_help(name: &str) -> Option<String> {
         "or" => ("Python/Ruby", "`||`"),
         "true_" | "True" => ("Python", "`true`"),
         "False" => ("Python", "`false`"),
+        // CS3-5 row 9: `loop { … }` parses as the name `loop` followed by a
+        // block, so it used to be answered "introduce `loop` with `let loop`".
+        "loop" => ("Rust", "`while true { … }` — `break` leaves it"),
         // Deliberately NOT listed: `print`, `len` and friends are real Axon
         // builtins. A row here for a name that resolves would be unreachable;
         // a row for one that does not would tell the reader something false.
@@ -3407,6 +3410,7 @@ fn collect_pattern_bindings(
 mod tests {
     use super::*;
     use crate::ast::*;
+    use crate::span::Span;
 
     // ── suggest_composed: the invented-derived-name class ─────────────────
     //
@@ -4122,6 +4126,7 @@ mod tests {
         let prog = program(vec![Item::UseDecl(UseDecl {
             path: vec!["nonexistent_mod".to_string()],
             items: vec!["Foo".to_string()],
+            span: Span::dummy(),
         })]);
         let result = resolve_program(&prog, "test.ax");
         let e0003s = errors_with_code(&result, E0003);
@@ -4134,10 +4139,12 @@ mod tests {
         let prog = program(vec![
             Item::ModDecl(ModDecl {
                 name: "server".to_string(),
+                span: Span::dummy(),
             }),
             Item::UseDecl(UseDecl {
                 path: vec!["server".to_string()],
                 items: vec!["listen".to_string()],
+                span: Span::dummy(),
             }),
         ]);
         let result = resolve_program(&prog, "test.ax");

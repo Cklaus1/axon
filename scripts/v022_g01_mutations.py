@@ -891,7 +891,7 @@ MUTATIONS = [
     ('M247', 'PSV-3 (c4): a key-holding axon test drops Exec from a granted ceiling', 'crates/axon-core/src/main.rs', '.filter(|e| !e.is_empty() && e != "Exec")', '.filter(|e| !e.is_empty())', 'axon-core', '--no-default-features --test psv_test_selection', 'holding_a_completion_key_spawns_nothing'),
     ('M248', 'PSV-3 (c4): a key-holding axon test with no ceiling still gets none with Exec', 'crates/axon-core/src/main.rs', '.filter(|e| **e != "Exec")', '.filter(|_| true)', 'axon-core', '--no-default-features --test psv_test_selection', 'holding_a_completion_key_spawns_nothing'),
     ('M249', 'PSV-3 (c4): the runner gives the key-holding process no Exec', 'crates/axon-psv/src/runner.rs', '.filter(|e| !e.is_empty() && *e != "Exec")', '.filter(|e| !e.is_empty())', 'axon-psv', '--test runner', 'the_process_holding_k_is_given_no_exec'),
-    ('M250', 'PSV-1 (c5): an unreadable module never falls through to a later search dir', 'crates/axon-core/src/lib.rs', '            Err(e) => {\n                errors.push(MergeError {\n                    code: error::E0901,\n                    message: format!(\n                        "module `{path_str}` at {} exists but cannot be read ({e}); the search \\\n                         does not fall through to a later directory",\n                        candidate.display()\n                    ),\n                    file: candidate.display().to_string(),\n                });\n                found = true;\n                break;\n            }', '            Err(_) => {}', 'axon-core', '--no-default-features --test psv_test_selection', 'an_unreadable_suite_module_never_falls_through_to_the_candidate'),
+    ('M250', 'PSV-1 (c5): an unreadable module never falls through to a later search dir', 'crates/axon-core/src/lib.rs', '            Err(e) => {\n                errors.push(MergeError {\n                    code: error::E0901,\n                    message: format!(\n                        "module `{path_str}` at {} exists but cannot be read ({e}); the search \\\n                         does not fall through to a later directory",\n                        candidate.display()\n                    ),\n                    file: candidate.display().to_string(),\n                    span: None,\n                });\n                found = true;\n                break;\n            }', '            Err(_) => {}', 'axon-core', '--no-default-features --test psv_test_selection', 'an_unreadable_suite_module_never_falls_through_to_the_candidate'),
     ('M251', "PSV-1 (r2): a sealed module never supplies an operator module's name", 'crates/axon-core/src/lib.rs', '            if !matches!(op.try_exists(), Ok(false)) {', '            if false && !matches!(op.try_exists(), Ok(false)) {', 'axon-core', '--no-default-features --test psv_test_selection', 'a_sealed_module_never_supplies_an_operator_modules_name'),
     ('M252', "PSV-6 (r1): the observation's epoch joins the trial's", 'crates/axon-loop-contracts/src/protected_evidence.rs', '    if o.epoch != epoch {', '    if false && o.epoch != epoch {', 'axon-loop', '--test intake', 'each_protected_join_is_verified_over_the_documents'),
     ('M253', 'PSV-6 (r1): an epoch that moved during observation refuses the launch', 'crates/axon-fabric/src/submit.rs', 'Ok(now) if now == cfg.expected_epoch => Ok((launch, Some(v))),', '_ => Ok((launch, Some(v))),', 'axon-fabric', '--test psv_dispatch', 'an_epoch_that_moves_while_the_observer_runs_refuses_the_launch'),
@@ -12559,6 +12559,36 @@ MUTATIONS += [
      '        if !changed {\n            break;\n        }',
      '        if true {\n            break;\n        }',
      'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_param_kind_is_checked'),
+]
+
+# checker-soundness-3 lane C (ids M3982-M3984, M3987-M3989): CS3-4 bare `self` in an impl is the
+# impl type; CS3-5 `loop` and `impl T {` help; CS3-6 a token glued to a closing quote is refused;
+# CS3-7 a module-load error names the `use` line.
+MUTATIONS += [
+    ('M3982', 'CS3-4: a bare `self` in an impl method stays `Self` (E0308 unknown type)', 'crates/axon-core/src/parser.rs',
+     '                    p.ty = for_type.clone();',
+     '                    let _ = &for_type;',
+     'axon-core', '--no-default-features --test cli_run', 'bare_self_in_impl_method_is_the_impl_type'),
+    ('M3983', 'CS3-5: the `loop` row of foreign_keyword_help is gone (help says `let loop = ...`)', 'crates/axon-core/src/resolver.rs',
+     '"loop" => ("Rust",',
+     '"loop_" => ("Rust",',
+     'axon-core', '--no-default-features --test cli_run', 'diagnostics_for_refused_forms_resolver'),
+    ('M3984', 'CS3-5: the inherent `impl T {` parse error carries no help again', 'crates/axon-core/src/parse_help.rs',
+     'if msg.contains("unexpected token: LBrace, expected For") && tw.first() == Some(&"impl") {',
+     'if msg.contains("unexpected token: LBrace, expected For") && tw.first() == Some(&"impl_") {',
+     'axon-core', '--no-default-features --test parse_help_probe', 'refused_forms_point_at_the_axon_spelling'),
+    ('M3987', 'CS3-6: a token glued to a closing quote is accepted again (y02 prints `say `)', 'crates/axon-core/src/parser.rs',
+     '        if !zero_gap {\n            return Ok(());\n        }',
+     '        if !zero_gap || lit.end > lit.start {\n            return Ok(());\n        }',
+     'axon-core', '--no-default-features --test cli_run', 'adjacent_string_literal_is_refused'),
+    ('M3988', 'CS3-6: any later token counts as glued (a newline after a string is refused)', 'crates/axon-core/src/parser.rs',
+     '        let zero_gap = self.current_span().start == lit.end;',
+     '        let zero_gap = self.current_span().start >= lit.end;',
+     'axon-core', '--no-default-features --test cli_run', 'adjacent_string_literal_is_refused'),
+    ('M3989', 'CS3-7: a module-load error ignores its `use` span (no line again)', 'crates/axon-core/src/main.rs',
+     '        let (line, col, dfile) = match &e.span {',
+     '        let (line, col, dfile) = match &e.span.filter(|_| false) {',
+     'axon-core', '--no-default-features --test cli_run', 'module_not_found_names_the_use_line'),
 ]
 
 # asi-replay (ids M4150-M4169): every ASI demo's exit code under mock is pinned (RP-2); the six

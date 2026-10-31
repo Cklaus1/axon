@@ -1815,6 +1815,15 @@ impl Parser {
             let mut m = self.parse_fn(public, attrs)?;
             m.contained = contained_spec;
             m.verify = verify_spec;
+            // CS3-4: a bare `self` param is typed `Self` by `parse_params`;
+            // inside an impl that IS the impl's type. Rewrite it here so the
+            // checker, infer, interpreter and codegen all see the AST that
+            // `self: Dog` produces (the checker binds `Self` only in a trait).
+            for p in &mut m.params {
+                if p.name == "self" && matches!(&p.ty, AxonType::Named(n) if n == "Self") {
+                    p.ty = for_type.clone();
+                }
+            }
             methods.push(m);
         }
         self.expect(&Token::RBrace)?;
@@ -1830,12 +1839,18 @@ impl Parser {
     }
 
     fn parse_mod(&mut self) -> Result<ModDecl> {
+        let start = self.current_span().start;
         self.expect(&Token::Mod)?;
         let name = self.expect_ident()?;
-        Ok(ModDecl { name })
+        let end = self.spans.get(self.pos - 1).map_or(start, |s| s.end);
+        Ok(ModDecl {
+            name,
+            span: self.sp(start, end),
+        })
     }
 
     fn parse_use(&mut self) -> Result<UseDecl> {
+        let start = self.current_span().start;
         self.expect(&Token::Use)?;
         let mut path = vec![self.expect_ident()?];
         while self.eat(&Token::Dot) || self.eat(&Token::ColonColon) {
@@ -1852,7 +1867,12 @@ impl Parser {
             }
             self.expect(&Token::RBrace)?;
         }
-        Ok(UseDecl { path, items })
+        let end = self.spans.get(self.pos - 1).map_or(start, |s| s.end);
+        Ok(UseDecl {
+            path,
+            items,
+            span: self.sp(start, end),
+        })
     }
 
     // ── Blocks & Statements ──────────────────────────────────────────────────
@@ -3268,6 +3288,38 @@ impl Parser {
         self.too_deep()
     }
 
+    /// CS3-6: refuse a string literal (just consumed, its span `lit`) that is
+    /// followed with NO gap by an identifier, another string or a number.
+    ///
+    /// The lexer ends a string at the next `"`, so `r"say "hi" now"` lexes as
+    /// `r"say "`, `hi`, `" now"`, and statement juxtaposition then runs the
+    /// tail as separate statements: check 0 and a silently wrong value. A
+    /// zero-gap `{` is NOT refused: `if s == "bob"{ … }` is a valid head.
+    /// Spaced adjacency (`r"{" a "}"`) is legal juxtaposition and stays legal.
+    fn refuse_adjacent_after_string(&self, lit: Span) -> Result<()> {
+        // A zero-width literal span means the stream carries no real spans
+        // (`Parser::new`), so adjacency cannot be decided: accept.
+        if lit.end <= lit.start {
+            return Ok(());
+        }
+        let Some(next) = self.tokens.get(self.pos) else {
+            return Ok(());
+        };
+        let zero_gap = self.current_span().start == lit.end;
+        if !zero_gap {
+            return Ok(());
+        }
+        let shown = match next {
+            Token::Ident(_) | Token::Int(_) | Token::Float(_) | Token::Str(_) => next.to_string(),
+            Token::RawStr(s) => format!("r\"{s}\""),
+            _ => return Ok(()),
+        };
+        Err(ParseError::Other(format!(
+            "this string ends at the `\"` before `{shown}` — write a `\"` inside a string \
+             as `\\\"`; a raw string `r\"...\"` cannot contain `\"`"
+        )))
+    }
+
     fn parse_primary_inner(&mut self) -> Result<Expr> {
         match self.peek() {
             Some(Token::Asm) => self.parse_inline_asm(),
@@ -3331,7 +3383,9 @@ impl Parser {
                 }
             }
             Some(Token::Str(_)) => {
+                let lit = self.current_span();
                 if let Token::Str(s) = self.advance()?.clone() {
+                    self.refuse_adjacent_after_string(lit)?;
                     parse_fmt_str_raw(&s, self.expr_depth, &mut self.too_deep, &mut self.tall)
                 } else {
                     unreachable!()
@@ -3340,7 +3394,9 @@ impl Parser {
             // Raw strings skip interpolation entirely — the body lands as a
             // plain string literal. `{` / `}` / `\` pass through untouched.
             Some(Token::RawStr(_)) => {
+                let lit = self.current_span();
                 if let Token::RawStr(s) = self.advance()?.clone() {
+                    self.refuse_adjacent_after_string(lit)?;
                     Ok(Expr::Literal(Literal::Str(s)))
                 } else {
                     unreachable!()

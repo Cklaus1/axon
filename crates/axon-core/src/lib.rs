@@ -350,6 +350,11 @@ pub struct MergeError {
     pub code: &'static str,
     pub message: String,
     pub file: String,
+    /// CS3-7: the `use` line that named the module, for the errors a `use`
+    /// causes (not found, circular). `None` for a file-level error. When the
+    /// `use` sits in an imported module, `file` is that module's path and the
+    /// span carries its source id.
+    pub span: Option<span::Span>,
 }
 
 /// Merge multiple parsed programs into a single global namespace.
@@ -379,6 +384,7 @@ pub fn merge_programs(
                             "'{name}' already defined (first: {first_file}; redefined: {file})"
                         ),
                         file: file.clone(),
+                        span: None,
                     });
                     // Drop the duplicate; keep the first definition.
                 } else {
@@ -657,13 +663,13 @@ pub fn load_use_decls_recorded(
     program: &mut ast::Program,
     search_dirs: &[std::path::PathBuf],
 ) -> (Vec<MergeError>, ImportClosure) {
-    let use_paths: Vec<Vec<String>> = program
+    let use_paths: Vec<(Vec<String>, span::Span)> = program
         .items
         .iter()
         .filter_map(|item| {
             if let ast::Item::UseDecl(u) = item {
                 if !u.path.is_empty() {
-                    return Some(u.path.clone());
+                    return Some((u.path.clone(), u.span));
                 }
             }
             None
@@ -679,8 +685,8 @@ pub fn load_use_decls_recorded(
         // but it is recorded, so a digest cannot pass this off as "no imports".
         closure.unsearched = use_paths
             .iter()
-            .filter(|p| p.first().map(String::as_str) != Some("native"))
-            .map(|p| p.join("::"))
+            .filter(|(p, _)| p.first().map(String::as_str) != Some("native"))
+            .map(|(p, _)| p.join("::"))
             .collect();
         return (Vec::new(), closure);
     }
@@ -691,10 +697,12 @@ pub fn load_use_decls_recorded(
     let mut already_loaded: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut loading_stack: Vec<String> = Vec::new();
 
-    for use_path in &use_paths {
+    for (use_path, use_span) in &use_paths {
         let before = closure.modules.len();
         load_module_recursive(
             use_path,
+            *use_span,
+            "",
             search_dirs,
             false,
             &mut already_loaded,
@@ -713,6 +721,7 @@ pub fn load_use_decls_recorded(
     for m in &mut closure.modules {
         let direct = use_paths
             .iter()
+            .map(|(p, _)| p)
             .find(|p| m.name.split("::").eq(p.iter().map(String::as_str)));
         if let Some(direct) = direct {
             m.via = direct.clone();
@@ -897,6 +906,10 @@ pub fn resolve_use_files_transitive(
 #[allow(clippy::too_many_arguments)]
 fn load_module_recursive(
     use_path: &[String],
+    // CS3-7: where the `use` is, and the path of the module holding it (""
+    // for the entry file), so a not-found or circular error can name the line.
+    use_span: span::Span,
+    importer: &str,
     search_dirs: &[std::path::PathBuf],
     // The `use` comes from a SEALED module (the candidate under test).
     from_sealed: bool,
@@ -934,7 +947,8 @@ fn load_module_recursive(
         errors.push(MergeError {
             code: error::E0902,
             message: format!("circular import detected: {cycle_str}"),
-            file: String::new(),
+            file: importer.to_string(),
+            span: Some(use_span),
         });
         return;
     }
@@ -979,6 +993,7 @@ fn load_module_recursive(
                         op.display()
                     ),
                     file: op.display().to_string(),
+                    span: None,
                 });
                 return;
             }
@@ -1010,6 +1025,7 @@ fn load_module_recursive(
                         candidate.display()
                     ),
                     file: candidate.display().to_string(),
+                    span: None,
                 });
                 found = true;
                 break;
@@ -1031,22 +1047,25 @@ fn load_module_recursive(
 
                         // Collect transitive `use` declarations from this module
                         // and load them first (depth-first).
-                        let nested_uses: Vec<Vec<String>> = mod_prog
+                        let nested_uses: Vec<(Vec<String>, span::Span)> = mod_prog
                             .items
                             .iter()
                             .filter_map(|item| {
                                 if let ast::Item::UseDecl(u) = item {
                                     if !u.path.is_empty() {
-                                        return Some(u.path.clone());
+                                        return Some((u.path.clone(), u.span));
                                     }
                                 }
                                 None
                             })
                             .collect();
 
-                        for nested in nested_uses {
+                        let importer_path = candidate.display().to_string();
+                        for (nested, nested_span) in nested_uses {
                             load_module_recursive(
                                 &nested,
+                                nested_span,
+                                &importer_path,
                                 search_dirs,
                                 in_sealed(&candidate),
                                 already_loaded,
@@ -1078,6 +1097,7 @@ fn load_module_recursive(
                             code: error::E0901,
                             message: format!("module `{path_str}` at {}: {e}", candidate.display()),
                             file: candidate.display().to_string(),
+                            span: None,
                         });
                         found = true; // file found but broken — don't also report not-found
                         break;
@@ -1093,6 +1113,7 @@ fn load_module_recursive(
                         candidate.display()
                     ),
                     file: candidate.display().to_string(),
+                    span: None,
                 });
                 found = true;
                 break;
@@ -1149,7 +1170,8 @@ fn load_module_recursive(
         errors.push(MergeError {
             code: error::E0901,
             message: format!("module `{path_str}` not found\n  searched:\n{detail}{hint}"),
-            file: String::new(),
+            file: importer.to_string(),
+            span: Some(use_span),
         });
     }
 }

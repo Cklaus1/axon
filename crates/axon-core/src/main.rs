@@ -7375,7 +7375,8 @@ fn run_check_pipeline_inner(
     let _ = &file;
 
     // Step 0: load modules referenced by `use` declarations (AXON_PATH search).
-    // MergeErrors carry no span (they're file-level), so line/col stay 0.
+    // CS3-7: a `use` that fails (not found, circular) carries its span; other
+    // MergeErrors are file-level, so their line/col stay 0.
     let load_errors = if load_modules {
         let (errors, loaded) = load_program_modules(program);
         *closure = loaded;
@@ -7385,17 +7386,25 @@ fn run_check_pipeline_inner(
     };
     let n_load = load_errors.len();
     for e in load_errors {
-        // A MergeError is about the ENTRY file's `use` line (the module it
-        // names could not be found or is circular), so the entry file is the
-        // right label here — unlike everything below, which is about a span.
+        // A spanless MergeError is about the ENTRY file's `use` lines, so the
+        // entry file is its label. A spanned one names the `use` line: in the
+        // entry file, or in the imported module holding it (its span carries
+        // that module's source id, and `e.file` its path).
+        let (line, col, dfile) = match &e.span {
+            Some(sp) => {
+                let (l, c, f) = loc(sp);
+                (l, c, if e.file.is_empty() { f } else { e.file.clone() })
+            }
+            None => (0, 0, file.clone()),
+        };
         push(
             &mut diags,
-            file.clone(),
+            dfile,
             e.code.to_string(),
             e.message.clone(),
             "error",
-            0,
-            0,
+            line,
+            col,
         );
     }
     laps.lap("modules");

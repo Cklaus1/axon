@@ -3458,6 +3458,16 @@ ATTACK_MARKERS.update({
     'M3980': r'ATTACK: [^\n]*\[w02\]',
 })
 
+# checker-soundness-3 lane C (ids M3982-M3984, M3987-M3989)
+ATTACK_MARKERS.update({
+    'M3982': r'ATTACK: a bare-self impl method was refused',
+    'M3983': r'ATTACK: `loop` was told to bind a variable named loop',
+    'M3984': r"ATTACK: a refused form's parse error named no Axon spelling \[impl_inherent\]",
+    'M3987': r'ATTACK: a string split by an inner quote checked clean',
+    'M3988': r'ATTACK: a valid string program was refused \[y05\]',
+    'M3989': r'ATTACK: a module-load error named no `use` line',
+})
+
 # asi-replay (ids M4150-M4169)
 ATTACK_MARKERS.update({
     'M4154': r'ATTACK: an ASI demo exited with a different code under mock \[llm_cache\]',

@@ -84,6 +84,138 @@ fn words(line: &str) -> Vec<&str> {
         .collect()
 }
 
+/// The source before `offset`, trailing whitespace trimmed. Clamped to a char
+/// boundary like [`line_at`].
+fn text_before(src: &str, offset: usize) -> &str {
+    let mut offset = offset.min(src.len());
+    while offset > 0 && !src.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    src[..offset].trim_end()
+}
+
+/// The line holding the last non-blank character before `offset`, trimmed.
+///
+/// When the parser CONSUMED the unexpected token (`expect`), `offset` is the
+/// token after it, which may sit on the next line: `impl V {` reports at the
+/// `fn` below it. The token the message names ends the text before `offset`.
+fn token_line(src: &str, offset: usize) -> &str {
+    let before = text_before(src, offset);
+    if before.is_empty() {
+        return line_at(src, offset);
+    }
+    line_at(src, before.len() - 1)
+}
+
+/// Whether `offset` sits inside the braces of an `enum X { … }` item.
+fn inside_enum_braces(src: &str, offset: usize) -> bool {
+    let before = text_before(src, offset);
+    let Some(at) = before.rfind("enum ") else {
+        return false;
+    };
+    if !before[..at].ends_with(|c: char| c.is_whitespace()) && at != 0 {
+        return false;
+    }
+    let body = &before[at..];
+    let open = body.matches('{').count();
+    open > 0 && open > body.matches('}').count()
+}
+
+/// Whether the text before `offset` ends with `Path::Variant(` — a tuple
+/// variant written in a pattern (the parser consumed the `(`).
+fn after_variant_paren(src: &str, offset: usize) -> bool {
+    let Some(before) = text_before(src, offset).strip_suffix('(') else {
+        return false;
+    };
+    let before = before.trim_end();
+    let ident = before
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .map_or(before, |i| &before[i + 1..]);
+    !ident.is_empty() && before[..before.len() - ident.len()].ends_with("::")
+}
+
+/// CS3-5: forms Axon refuses on purpose, whose parse error named a token and
+/// not the Axon spelling. Each row keys on the observed parser message plus
+/// the line (see `tests/parse_help_probe.rs::refused_forms_point_at_the_axon_spelling`).
+fn refused_form_help(msg: &str, src: &str, offset: usize) -> Option<&'static str> {
+    let tline = token_line(src, offset);
+    let tw = words(tline);
+    let before = text_before(src, offset);
+
+    // `Ok(())`, `let u = ()`, `return ()`: the `)` is peeked right after `(`.
+    if msg.contains("unexpected token: RParen, expected expression") && before.ends_with('(') {
+        return Some(
+            "Axon has no `()` value — the unit value is an empty block: `Ok({})`, \
+             `return {}`, `let u: () = {}`",
+        );
+    }
+    // `if let Some(v) = o` / `else if let`.
+    if msg.contains("unexpected token: Let, expected expression")
+        && before.split_whitespace().last() == Some("if")
+    {
+        return Some(
+            "Axon has no `if let` — write `match o { Some(v) => …, None => … }` \
+             (`while let` exists)",
+        );
+    }
+    // `for (a, b) in pairs` (the three-clause `for` has a `;` and its own row).
+    if msg.contains("unexpected token: LParen, expected identifier")
+        && tw.first() == Some(&"for")
+        && !tline.contains(';')
+    {
+        return Some("`for` binds one name — write `for p in xs { let (a, b) = p … }`");
+    }
+    // `impl T { … }`: the parser wanted `for` after the type name.
+    if msg.contains("unexpected token: LBrace, expected For") && tw.first() == Some(&"impl") {
+        return Some(
+            "Axon has no inherent `impl T { … }` — write a free fn `fn name(t: T) -> …`, \
+             or a `trait` plus `impl Trait for T`",
+        );
+    }
+    // A trait method with a default body: the trait wanted the next `fn`.
+    if msg.contains("unexpected token: LBrace, expected Fn") && tw.first() == Some(&"fn") {
+        return Some(
+            "a trait declares signatures only — put the body in each \
+             `impl Trait for T`, or in a free fn",
+        );
+    }
+    // `E::B { .. }` in a pattern, or `P { x: 9, ..base }` struct update.
+    if msg.contains("unexpected token: DotDot, expected identifier") {
+        return Some(if tline.contains("=>") {
+            "patterns have no `..` — omitted fields are ignored (`E::A { b }`), and a \
+             unit variant has no braces (`E::B`)"
+        } else {
+            "Axon has no struct update `..base` — list every field: \
+             `P { x: 9, y: base.y }`"
+        });
+    }
+    // Tuple variants: `type S = Circle(f64) | …`, `enum S { Circle(f64) }`,
+    // or `S::Circle(r)` in a pattern.
+    if msg.contains("unexpected token: LParen")
+        && ((tw.first() == Some(&"type") && tline.contains('=') && tline.contains('|'))
+            || inside_enum_braces(src, offset)
+            || after_variant_paren(src, offset))
+    {
+        return Some(
+            "variants carry NAMED fields: `Circle { r: f64 }`, built \
+             `Shape::Circle { r: 1.0 }`, matched `Shape::Circle { r }`",
+        );
+    }
+    // `r#"…"#`: `r` lexes as a name and the `#` right after it is unexpected.
+    // Ahead of the `#` comment rule, which would otherwise answer it.
+    if msg.contains("unexpected token: Hash, expected expression")
+        && offset > 0
+        && src.as_bytes().get(offset) == Some(&b'#')
+        && src.as_bytes().get(offset - 1) == Some(&b'r')
+    {
+        return Some(
+            "Axon has no `r#\"...\"#` — a raw string is `r\"...\"` and cannot contain \
+             `\"`; escape it in a normal string (`\"{{\\\"a\\\": 1}}\"`)",
+        );
+    }
+    None
+}
+
 /// Fix hint for a parse error, or `None`.
 ///
 /// `msg` is the parser's message (`unexpected token: Ident("c"), expected Eq`),
@@ -92,6 +224,10 @@ fn words(line: &str) -> Vec<&str> {
 pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
     let line = line_at(src, offset);
     let w = words(line);
+
+    if let Some(h) = refused_form_help(msg, src, offset) {
+        return Some(h.to_string());
+    }
 
     // `let mut c = 0` → the parser read `mut` as the binding name, then wanted
     // `=` and found `c`. Measured as the single most common model failure.

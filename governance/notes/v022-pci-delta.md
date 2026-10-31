@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 8e2c6d5ab9ba879d22a48962dc2d3034b59e55d1
+generated-at: f3b10586e586f4ae8dfc7c066ebc9eccd95b4f26
 
-`git diff --numstat 31413ca7..8e2c6d5a -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..f3b10586 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -29,7 +29,7 @@ generated-at: 8e2c6d5ab9ba879d22a48962dc2d3034b59e55d1
 | `crates/axon-core/src/builtins.rs` | 110 | 44 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 985 | 340 |
-| `crates/axon-core/src/checker.rs` | 2629 | 651 |
+| `crates/axon-core/src/checker.rs` | 2885 | 776 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
 | `crates/axon-core/src/codegen/asi.rs` | 237 | 49 |
@@ -54,7 +54,7 @@ generated-at: 8e2c6d5ab9ba879d22a48962dc2d3034b59e55d1
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 1802 | 277 |
+| `crates/axon-core/src/infer.rs` | 2045 | 280 |
 | `crates/axon-core/src/interp.rs` | 7787 | 2882 |
 | `crates/axon-core/src/interp/builtins.rs` | 887 | 641 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
@@ -81,7 +81,7 @@ generated-at: 8e2c6d5ab9ba879d22a48962dc2d3034b59e55d1
 | `crates/axon-core/src/interp/vm/mod.rs` | 3587 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 1840 | 0 |
 | `crates/axon-core/src/interp/vm/purefn.rs` | 860 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 2688 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 2750 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
 | `crates/axon-core/src/lib.rs` | 304 | 77 |
@@ -98,9 +98,9 @@ generated-at: 8e2c6d5ab9ba879d22a48962dc2d3034b59e55d1
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 62142 | 8691 |
+| total | 62703 | 8819 |
 
-`git log --reverse 31413ca7..8e2c6d5a -- crates/axon-core/src`:
+`git log --reverse 31413ca7..f3b10586 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -461,7 +461,12 @@ generated-at: 8e2c6d5ab9ba879d22a48962dc2d3034b59e55d1
 | 8eb9dd93 | np/a merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 7e4a1489 | np/c merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 8e2c6d5a | rp/a merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 357 commits | | |
+| ec3d744d | checker soundness | a call through a wrapper lambda (`let g = |y| f(y)`; g(5)) is now E0102 when the callee's param kind conflicts, where it checked clean and panicked at run; a call that may not run (branch, arm, &&/||, loop, handler, after an early exit, after another call) derives nothing. `?` on an Option in a Result fn gains a help line |
+| c3644975 | checker soundness | checker.rs exhaustiveness is one usefulness walk (CS3-1): a literal inside a payload covers only that value (`Some(0)`, `E::A { s: "x" }`, an untyped lambda subject), each such hole now E0304 at check where it panicked `no match arm matched` at run; `(Some(true), _)` + `(Some(false), _)` + `(None, _)` and its Result/enum/nested twins check clean again (CS2-4 regression). E1209 carries the refinement's line (CS3-3); `==`/`!=` on an Option/Result says the comparison is the problem, and the missing-variant fix-it is valid Axon (CS3-5). No evaluator change. |
+| b7bc1942 | checker soundness | checker.rs: CS3-1's specialize builds an enum variant's field list with a loop instead of a map closure so its g01 rows can mutate one line; no behaviour change. |
+| b5eaf891 | cs3/a merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| f3b10586 | cs3/b merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 362 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -620,7 +625,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 592 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M4120-M4136, M4152, M4155-M4158
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 612 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3989, M4120-M4136, M4152, M4155-M4158
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
