@@ -1,0 +1,4 @@
+{
+  "theme": "integration int/31 fmt",
+  "text": "FORMAT ONLY: `cargo fmt` of the checker-soundness-3 lane B code (infer.rs, vm tests) merged unformatted; whitespace and line breaks only, no token changes, so no pass/fail change."
+}

@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: d101296491f2579dc1c7e9a45735f23f811026e8
+generated-at: 7004888d3f90ef2d0ff4bd7be095e83f24b291fc
 
-`git diff --numstat 31413ca7..d1012964 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..7004888d -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -55,7 +55,7 @@ generated-at: d101296491f2579dc1c7e9a45735f23f811026e8
 | `crates/axon-core/src/fmt.rs` | 5 | 0 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 2045 | 280 |
+| `crates/axon-core/src/infer.rs` | 2044 | 280 |
 | `crates/axon-core/src/interp.rs` | 7787 | 2882 |
 | `crates/axon-core/src/interp/builtins.rs` | 901 | 641 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
@@ -82,7 +82,7 @@ generated-at: d101296491f2579dc1c7e9a45735f23f811026e8
 | `crates/axon-core/src/interp/vm/mod.rs` | 3587 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 1840 | 0 |
 | `crates/axon-core/src/interp/vm/purefn.rs` | 860 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 2750 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 2755 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 163 | 0 |
 | `crates/axon-core/src/lib.rs` | 333 | 81 |
@@ -100,9 +100,9 @@ generated-at: d101296491f2579dc1c7e9a45735f23f811026e8
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 64220 | 8942 |
+| total | 64224 | 8942 |
 
-`git log --reverse 31413ca7..d1012964 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..7004888d -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -480,7 +480,8 @@ generated-at: d101296491f2579dc1c7e9a45735f23f811026e8
 | 721ab7a8 | ig/bench merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 2332564f | checker-soundness-3 lane C | PARSER: a keyword or bool token, a `!` (not `!=`) or a `(` glued to a closing string quote is now the CS3-6 parse error, as a glued name already was: `"flag is "true" now"` no longer checks clean and prints a truncated string, and `"a"(1)` no longer checks clean and panics. A glued `{` stays legal. No interpreter or runtime path changes. |
 | d1012964 | cs3/c merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 374 commits | | |
+| 7004888d | integration int/31 fmt | FORMAT ONLY: `cargo fmt` of the checker-soundness-3 lane B code (infer.rs, vm tests) merged unformatted; whitespace and line breaks only, no token changes, so no pass/fail change. |
+| 375 commits | | |
 <!-- END MECHANICAL -->
 
 
