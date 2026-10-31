@@ -758,7 +758,8 @@ fn s6_a_relative_fs_pin_is_refused() {
 /// overwrite it (self-mint); over the seal key, read it (forge records).
 #[test]
 fn s6_a_pin_over_the_store_or_a_key_is_refused() {
-    let cases: [(&str, &str, fn(&Setup) -> PathBuf, &str); 5] = [
+    type Case = (&'static str, &'static str, fn(&Setup) -> PathBuf, &'static str);
+    let cases: [Case; 5] = [
         ("fs_write", "the spent store", |s| s.store.clone(), "the spent store"),
         ("fs_write", "a directory under the spent store", |s| s.store.join("sub"), "the spent store"),
         ("fs_write", "the verify key", |s| s.key.clone(), "the verify key"),
@@ -979,5 +980,101 @@ fn s13_a_checker_that_rewrites_the_entry_file_during_the_witness_run_refuses() {
         "ATTACK: NH-R1 S13 a file changed during the witness run was graded\n{}",
         o.stderr
     );
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
+/// Security review F8: the hard deadline covers every child after phase B.
+/// The witness run (and the fence-conflict run before it) executes
+/// workspace code; armed only after them, a check that stalls there ran for
+/// the whole `check_timeout`, far past `deadline + HARD_GRACE`. Here the
+/// witness check sleeps 20 s under a 4 s deadline: the run must exit 20
+/// (budget exhausted) by the deadline plus the grace, the file as found.
+#[test]
+fn s10_a_witness_run_stalled_past_the_deadline_is_stopped_by_the_grace() {
+    let s = setup("s10_witness");
+    let wrapper = s.root.join("ops/axon-sleeper");
+    common::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = test ]; then sleep 20; fi\nexec '{a}' \"$@\"\n",
+            a = s.axon.display()
+        ),
+        0o755,
+    );
+    let s = Setup {
+        axon: wrapper.clone(),
+        ..setup_clone(&s)
+    };
+    let mut e = envelope_for(&s);
+    e.budget.deadline_ms = 4_000;
+    mint(&s, &e);
+    let t0 = std::time::Instant::now();
+    let o = run_with(&s, &wrapper, &[], &[]);
+    let took = t0.elapsed();
+    // Process start-up (the namespace wrapper, phase A/B's static children)
+    // comes before the deadline's clock and on top of it.
+    let bound = Duration::from_millis(4_000) + axon_cortex::watchdog::HARD_GRACE
+        + Duration::from_millis(1_500);
+    assert!(
+        o.code == axon_cortex::watchdog::EXIT_DEADLINE && took <= bound,
+        "ATTACK: NH-R1 security F8 a check stalled before the watchdog was armed outlived the \
+         deadline (exit {}, {took:?} > {bound:?})\n{}{}",
+        o.code,
+        o.stdout,
+        o.stderr
+    );
+    assert_eq!(
+        std::fs::read(s.ws.join("broken.ax")).unwrap(),
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax")).unwrap(),
+        "the stopped run left the file changed"
+    );
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
+/// Security review F8: before the watchdog is armed, an unattended run's
+/// static children (`axon caps`, `axon imports`) are each bounded by the
+/// time left before the deadline, not by `check_timeout` alone. Here every
+/// `caps` after the mint sleeps 20 s under a 4 s deadline: the run must end
+/// by the deadline plus the grace, refused before consume (envelope unspent).
+#[test]
+fn s10_a_static_child_stalled_before_phase_b_is_bounded_by_the_deadline() {
+    let s = setup("s10_static");
+    let wrapper = s.root.join("ops/axon-caps-sleeper");
+    let mark = s.root.join("ops/minted");
+    common::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = caps ] && [ -e '{m}' ]; then sleep 20; fi\nexec '{a}' \"$@\"\n",
+            m = mark.display(),
+            a = s.axon.display()
+        ),
+        0o755,
+    );
+    let s = Setup {
+        axon: wrapper.clone(),
+        ..setup_clone(&s)
+    };
+    let mut e = envelope_for(&s);
+    e.budget.deadline_ms = 4_000;
+    mint(&s, &e);
+    std::fs::write(&mark, b"").unwrap();
+    let t0 = std::time::Instant::now();
+    let o = run_with(&s, &wrapper, &[], &[]);
+    let took = t0.elapsed();
+    let bound = Duration::from_millis(4_000) + axon_cortex::watchdog::HARD_GRACE
+        + Duration::from_millis(1_500);
+    assert!(
+        took <= bound,
+        "ATTACK: NH-R1 security F8 a static child outlived the deadline before the watchdog was \
+         armed (exit {}, {took:?} > {bound:?})\n{}{}",
+        o.code,
+        o.stdout,
+        o.stderr
+    );
+    // `derive_fence`'s own `axon caps` is the child cut: blocked (22),
+    // before consume.
+    assert_eq!(o.code, 22, "{}{}", o.stdout, o.stderr);
+    assert!(o.stderr.contains("wall-clock limit"), "{}", o.stderr);
+    assert_eq!(records(&s), vec![format!("{}.issued", e.envelope_id)]);
     let _ = std::fs::remove_dir_all(&s.root);
 }

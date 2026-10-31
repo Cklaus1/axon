@@ -3666,4 +3666,8 @@ ATTACK_MARKERS.update({
     'M4422': r'ATTACK: NH-R1 security F6 an fs_write pin over the spent store ran',
     'M4423': r'ATTACK: NH-R1 security F7 a PATH interpreter other than the hashed one got past phase A',
     'M4425': r'ATTACK: NH-R1 security F11 a dstore file was admitted',
+    'M4426': r'ATTACK: NH-R1 security F8 a run holding its write lock outlived its deadline',
+    'M4427': r'ATTACK: NH-R1 security F8 a watchdog armed after its deadline skipped the restore',
+    'M4428': r'ATTACK: NH-R1 security F8 a check stalled before the watchdog was armed outlived the deadline',
+    'M4429': r'ATTACK: NH-R1 security F8 a static child outlived the deadline before the watchdog was armed',
 })

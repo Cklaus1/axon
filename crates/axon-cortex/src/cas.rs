@@ -253,9 +253,10 @@ fn sha(bytes: &[u8]) -> String {
 // A test's writer inside the residual window (between the re-hash and the
 // rename of a write; between the re-hash and the unlink of a delete).
 #[cfg(test)]
+type WindowHook = Box<dyn FnMut(&Path)>;
+#[cfg(test)]
 thread_local! {
-    static IN_WINDOW: std::cell::RefCell<Option<Box<dyn FnMut(&Path)>>> =
-        std::cell::RefCell::new(None);
+    static IN_WINDOW: std::cell::RefCell<Option<WindowHook>> = std::cell::RefCell::new(None);
 }
 #[cfg(test)]
 fn in_window(path: &Path) {

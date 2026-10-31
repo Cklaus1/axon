@@ -291,6 +291,17 @@ Rules for the gate as a whole:
   set from S10's measured tail (p99 of lock wait + restore + report over the stall cases, run under the host's real
   load, not on an idle machine) plus a stated margin; the measured value and its load are recorded with S10.]`
 - Every child (checks, per-proposal `axon caps`) is also bounded by `min(configured, remaining)`.
+- `[REVISED: security F8 - built]` The watchdog is armed right after phase B (`bin/cortex.rs`, before the
+  fence-conflict and witness runs, which execute workspace code); every static child before it (`derive_fence`'s and
+  phase B's `axon caps`, `axon imports`) is bounded by `min(check_timeout, remaining)`, asked per child; every child
+  after it is killed at the deadline. It kills before it waits for the lock. A second, lock-free timer at
+  `max(deadline, firing) + 3/4 HARD_GRACE` kills, prints the "not restored" report (no terminal record: the journal
+  is behind the lock) and calls `_exit(20)`, so a write lock that is never released (a stalled CAS read) cannot
+  stretch the bound, and a restore that never ran is never claimed. A run that wrote nothing reports "was not
+  written" instead of a restore. S10 cases: `s10_e3_a_held_write_lock_still_exits_by_the_grace`,
+  `s10_e3_a_watchdog_armed_late_still_restores`, `s10_a_witness_run_stalled_past_the_deadline_is_stopped_by_the_grace`,
+  `s10_a_static_child_stalled_before_phase_b_is_bounded_by_the_deadline`. CAS reads open `O_NOFOLLOW|O_NONBLOCK`
+  and require a regular file (commit 947de502).
 
 ### E5 write helper `[REVISED: F10, D10]`
 

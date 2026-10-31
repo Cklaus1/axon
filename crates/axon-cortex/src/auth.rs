@@ -431,13 +431,14 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
 /// Phase B (§5.3 steps 9-11): after the pinned interpreter's static `axon
 /// caps`, before any child that executes workspace code. `fence` is the
 /// pristine fence `derive_fence` built; `caps` the whole-file answer it was
-/// built from.
+/// built from. `wall` is asked once per child for its bound (E3, security
+/// review F8: min(check_timeout, the time left)).
 pub fn phase_b(
     a: &PhaseA,
     axon: &Path,
     fence: &crate::fence::Fence,
     caps: &crate::fence::Caps,
-    wall: std::time::Duration,
+    wall: &dyn Fn() -> std::time::Duration,
 ) -> Result<PhaseB, String> {
     let e = &a.verified.envelope;
     let pins = crate::fence::ScopePins {
@@ -458,14 +459,14 @@ pub fn phase_b(
             e.capabilities.fence_sha256
         ));
     }
-    let grant = target_grant(axon, &a.workspace, &a.file, &e.task.symbol, wall)?;
+    let grant = target_grant(axon, &a.workspace, &a.file, &e.task.symbol, wall())?;
     if grant != e.capabilities.target_grant {
         return Err(format!(
             "the static grant of `{}` ({grant}) is not the envelope's ({})",
             e.task.symbol, e.capabilities.target_grant
         ));
     }
-    let imports = imports_digest(axon, &a.workspace, &a.file, wall)?;
+    let imports = imports_digest(axon, &a.workspace, &a.file, wall())?;
     if imports != e.task.imports_digest {
         return Err(format!(
             "the import closure ({imports}) is not the envelope's ({})",
