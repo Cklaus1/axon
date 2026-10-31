@@ -3399,3 +3399,9 @@ ATTACK_MARKERS.update({
     'M4127': r'ATTACK: [^\n]*\[g02\]',
     'M4128': r'ATTACK: a call to an unresolved fn was dropped silently natively \[ghost\]',
 })
+
+# native-parity lane B: NP-4 (M4129-M4130)
+ATTACK_MARKERS.update({
+    'M4129': r'ATTACK: [^\n]*\[b02\]',
+    'M4130': r'ATTACK: [^\n]*\[b01\]',
+})

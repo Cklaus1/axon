@@ -2957,3 +2957,62 @@ fn a_generic_fn_used_at_two_types_runs_every_call_natively() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(fails.is_empty(), "{}", fails.join("\n"));
 }
+
+/// native-parity NP-4: a `break`/`continue` that reaches a frame edge (a
+/// callee with no loop of its own, an impl method, a closure) panics natively
+/// with the interpreter's text, naming the source fn or "a closure", exit 101.
+/// Native used to emit nothing for it (the code after it ran on), and a
+/// closure defined inside a loop branched to a block of the enclosing fn.
+#[cfg(feature = "codegen")]
+#[test]
+fn loop_control_never_leaves_its_frame_natively() {
+    let dir = std::env::temp_dir().join(format!("axon_np4_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let attack = "loop control left its frame natively";
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/r51_s0b");
+    let mut probes: Vec<(&str, String)> = [
+        "escape_fast_local_int",
+        "escape_closure",
+        "escape_fast_inline",
+    ]
+    .iter()
+    .map(|name| {
+        (
+            *name,
+            std::fs::read_to_string(fixtures.join(format!("{name}.ax"))).unwrap(),
+        )
+    })
+    .collect();
+    probes.push((
+        "b01",
+        "fn main() {\n    for i in 0..4 {\n        let g = |n: i64| {\n            if n > 1 { break }\n            n\n        }\n        \
+         println(to_str(g(i)))\n    }\n    println(\"after\")\n}\n"
+            .to_string(),
+    ));
+    probes.push((
+        "b02",
+        "fn stop(n: i64) -> i64 {\n    if n > 1 { continue }\n    n\n}\nfn main() {\n    let i = 0\n    while i < 4 {\n        \
+         i = i + 1\n        println(to_str(stop(i)))\n    }\n    println(\"after\")\n}\n"
+            .to_string(),
+    ));
+    probes.push((
+        "bm",
+        "type S = { k: i64 }\ntrait G {\n  fn go(self) -> i64\n}\nimpl G for S {\n  fn go(self: S) -> i64 {\n    \
+         if self.k > 1 { break }\n    self.k\n  }\n}\nfn main() -> i64 {\n  let i = 0\n  while i < 4 {\n    \
+         let s = S { k: i }\n    println(to_str(s.go()))\n    i = i + 1\n  }\n  0\n}\n"
+            .to_string(),
+    ));
+    let mut fails = Vec::new();
+    for (tag, src) in &probes {
+        npb_compare(
+            attack,
+            tag,
+            101,
+            true,
+            npb_run_and_build(&dir, tag, src, None),
+            &mut fails,
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}

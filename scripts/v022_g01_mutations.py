@@ -12415,5 +12415,18 @@ MUTATIONS += [
      'axon-core', '--lib', 'codegen::expr::tests::an_unresolved_user_callee_is_refused_e0910'),
 ]
 
+# native-parity lane B: NP-4 (M4129-M4130) -- a `break`/`continue` reaching a frame edge panics
+# natively like the interpreter; a lambda body does not see the enclosing fn's loops.
+MUTATIONS += [
+    ('M4129', 'NP-4: a `break`/`continue` with no loop of its frame open emits no panic again', 'crates/axon-core/src/codegen/expr.rs',
+     '        self.emit_msg_panic(&format!("`break`/`continue` outside a loop in {edge}"));',
+     '        let _ = edge;',
+     'axon-core', '--test integration_fixtures', 'loop_control_never_leaves_its_frame_natively'),
+    ('M4130', "NP-4: `emit_lambda` keeps the enclosing fn's `loop_stack`", 'crates/axon-core/src/codegen/expr.rs',
+     '        let saved_loop_stack = std::mem::take(&mut self.loop_stack);',
+     '        let saved_loop_stack = self.loop_stack.clone();',
+     'axon-core', '--test integration_fixtures', 'loop_control_never_leaves_its_frame_natively'),
+]
+
 if __name__ == "__main__":
     main()

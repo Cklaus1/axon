@@ -733,15 +733,22 @@ impl<'ctx> super::Codegen<'ctx> {
             } => self.emit_for_in(var, start, end, body, *inclusive, fn_val),
 
             // ── Break / Continue ──────────────────────────────────────────────
+            // native-parity NP-4: with no loop of this frame open, the
+            // interpreter panics at the frame edge (`FrameEdge::
+            // loop_control_escape`); native used to emit nothing and run on.
             ast::Expr::Break => {
                 if let Some(&(_cont, exit)) = self.loop_stack.last() {
                     build_wrappers::w_br(&self.ir.builder, exit);
+                } else {
+                    self.emit_loop_control_escape(fn_val);
                 }
                 None
             }
             ast::Expr::Continue => {
                 if let Some(&(cont, _exit)) = self.loop_stack.last() {
                     build_wrappers::w_br(&self.ir.builder, cont);
+                } else {
+                    self.emit_loop_control_escape(fn_val);
                 }
                 None
             }
@@ -3627,6 +3634,19 @@ impl<'ctx> super::Codegen<'ctx> {
         out
     }
 
+    /// native-parity NP-4: a `break`/`continue` with no loop of its frame open
+    /// panics with the interpreter's frame-edge text: "a closure" in a lambda
+    /// body, else the source fn (`current_src_fn`: an impl method's unmangled
+    /// name; a mono-instantiated generic keeps its mangled symbol).
+    fn emit_loop_control_escape(&mut self, fn_val: FunctionValue<'ctx>) {
+        let edge = if fn_val.get_name().to_bytes().starts_with(b"__lambda_") {
+            "a closure".to_string()
+        } else {
+            format!("`{}`", self.current_src_fn)
+        };
+        self.emit_msg_panic(&format!("`break`/`continue` outside a loop in {edge}"));
+    }
+
     pub(super) fn emit_lambda(
         &mut self,
         params: &[ast::LambdaParam],
@@ -3745,6 +3765,10 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
         let saved_lambda_env = self.current_lambda_env.take();
+        // native-parity NP-4: the body is its own frame. An enclosing loop's
+        // blocks belong to another LLVM fn, so a `break` in the body must not
+        // see them (it branched there and failed IR verification).
+        let saved_loop_stack = std::mem::take(&mut self.loop_stack);
 
         self.ir.builder.position_at_end(entry_bb);
 
@@ -3916,6 +3940,7 @@ impl<'ctx> super::Codegen<'ctx> {
         self.local_types = saved_local_types;
         self.poisoned = saved_poisoned;
         self.current_lambda_env = saved_lambda_env;
+        self.loop_stack = saved_loop_stack;
         if let Some(b) = saved_ip {
             self.ir.builder.position_at_end(b);
         }
