@@ -1,6 +1,6 @@
 # Unattended repair authorization (NH-R1) — DRAFT spec (after Step 1 review)
 
-**Status: PARTIAL 2026-10-31 on nhr/int: security fixes F1-F12 pending (A0-A4 and the §7 S-tests: 1093c268, 9a825ace, c4f4c12c, 219e1360, 9ed0ad16, 60651b37). Unattended execution is NOT authorized or enabled: `--unattended` refuses by default (exit 29); enabling needs the §9 evidence and a separate human decision.**
+**Status: PARTIAL 2026-10-31 on nhr/int: security fixes merged; re-review pending (F1-F12 fixed in 91114bcc..dcd60815 and be47b23e; A0-A4 and the §7 S-tests: 1093c268, 9a825ace, c4f4c12c, 219e1360, 9ed0ad16, 60651b37). Unattended execution is NOT authorized or enabled: `--unattended` refuses by default (exit 29); enabling needs the §9 evidence and a separate human decision.**
 - `[DECIDED by human 2026-10-31: build go-ahead.]` Building it (A0-A4, E1-E7, §7 S-tests) is authorized.
 - Enabling it after the build (§9) still needs the §9 evidence (S-tests and full gate green, a read-only adversarial
   security review, R6 L1-L3 built with a clean C1 audit) and then a second, separate human decision made on that evidence.

@@ -3003,9 +3003,24 @@ Reported by IgIntent: `scripts/v022_refusal_coverage.py` does not include `crate
 `authorize-repair` and `audit-runs` refusal sites (and the older ones) have g01 rows only by the lanes' own
 discipline, not by a mechanism. Fix direction: add the crate to the scanned set and give each refusal a row or an
 exemption.
+Sized by NhrFixCrates on the merged security fixes (be47b23e): adding `axon-intent` to `ROOT_CRATES` in a
+throwaway copy yields 172 uncovered sites (50 `authorize.rs`, 16 `audit_runs.rs`, the rest in synth / intent /
+confidence / policy and more) and pulls axon-cortex and axon-loop-contracts sites into scope, which widens the
+protected-path rule rather than adding one include. Still open after the security fixes.
 
 ### O-NHR-05 - [low] R6 L2 terminal-record choices made in the lane, not in the spec
 Terminal `accepted_refusal` is always null (an R5 refusal turns the exit into 22, outside {0,27}); an early exit's
 `outcome` is the exit's kind (`usage`, `no_target`, `unauthorized`, `blocked`, `check_already_passes`); pinned
 tree roots are the effective write prefixes plus the envelope's fs_write scopes. Confirm or revise these in
 `tasks/r6-ledger-spec.md` before enabling.
+
+### O-NHR-06 - [low] Residuals the security fixes (F1-F12) state and do not close
+All twelve NhrSecurity findings (F1-F12) were fixed on nhr/fix-a and nhr/fix-b and merged into nhr/int. What remains,
+by design or not yet done:
+- E5 (F3): a writer holding an fd on the old inode that writes after the exchange is not caught; only path-based
+  writers are (module doc and spec E5 residual window).
+- F2 build: `AXON_AI_PROVIDER`, `AXON_AI_BASE_URL`, `ANTHROPIC_BASE_URL`, the API keys and `AXON_AI_MODEL_*` are not
+  refused under `--unattended` (the endpoint must already match the envelope's; the generator passes the pinned
+  model). Reasons are in the spec's `[REVISED: security build]` note.
+- The security re-review of the fixes is pending, and NhrSecurity's review ran no probes: F2, F3 and F4 are covered
+  by S-tests/unit tests, not by an independent end-to-end probe. Both are §9 evidence before any enabling decision.
