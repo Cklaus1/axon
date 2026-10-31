@@ -1,6 +1,6 @@
 # R6 — record-only repair run ledger — DRAFT spec (designed against NH-R1; after Step 1 review)
 
-**Status: AUTHORIZED for build 2026-10-31 (human: "do it all"), after NH-R1 A0-A4.**
+**Status: BUILT 2026-10-31 on nhr/int (L1 6ce5994e, L2 f0b6d520, L3 9832cd76). Records only; unattended execution is not enabled.**
 - It depends on `tasks/unattended-auth-spec.md` (NH-R1) A0–A4.
 - R6 writes records only. It grants nothing, gates nothing and changes no exit code.
 

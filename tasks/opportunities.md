@@ -2583,12 +2583,14 @@ cadence and both rules are in `tasks/build-loop-r51.md` (Mutation feedback loop;
 
 ### O-S1-01 — [medium] R6 record-only trial ledger in axon-loop (deferred by Step 1 review #20)
 The ledger would be self-signed by the harness, nothing reads it yet, and reusing `promote.py`'s `Evidence.trial` would change `ws_out` (`promote.py:399`). Revisit together with NH-R1 (an envelope token gives an independent signer) and when a learner exists. `[DECIDED by human 2026-10-18: deferred until the NH-R1 authorization is specified; R6 gets its own specification designed against it]`
+`[BUILT 2026-10-31 on nhr/int 6ce5994e/f0b6d520/9832cd76: R6 L1 (axon_os::run_ledger), L2 (cortex --unattended started + terminal records), L3 (axon-intent audit-runs, the C1 audit). Not enabled: unattended execution still needs the §9 evidence and a separate human decision.]`
 
 ### O-S1-02 — [high] A held-out set with headroom (R7b deferred, review #24/#25)
 Every existing set is saturated at f83c6f86 (gencontext heldout 47/47, once 30/30); only 16 unused example files remain. Until a harder set exists, no arm can show whether R4's structured feedback helps.
 
 ### O-S1-03 — [medium] `--effect-ceiling` and path-level narrowing
 S1 only stops NEW capability kinds. Narrowing a kind the file already holds (write only under the workspace, net only to one host) needs its own design: narrowing below the pristine set denies every candidate (review #3). `[DECIDED by human 2026-10-18: an independent design problem, not part of a correctness batch]`
+`[BUILT 2026-10-31 on nhr/int 219e1360 + 9ed0ad16: the NH-R1 E1 pins (path-level narrowing for unattended runs) as an enforcement prerequisite. Not enabled: unattended execution still needs the §9 evidence and a separate human decision.]`
 
 ### O-S1-04 — [low] Relative `cortex repair --workspace` fails every check (pre-existing, review #27)
 `run_checks` sets `current_dir(ws)` and also passes `ws.join(rel)`. Canonicalize in the CLI; keep `current_dir` (M71).
@@ -2596,12 +2598,14 @@ S1 only stops NEW capability kinds. Narrowing a kind the file already holds (wri
 
 ### O-S1-05 — [low] Fabric executor: no fence, empty `messages`
 The fence is reported `applied:false` there and fence conflicts cannot be detected; the typed feedback (R4) has no data on that path. `[DECIDED by human 2026-10-18: an independent design problem, not part of a correctness batch]`
+`[BUILT 2026-10-31 on nhr/int 219e1360 + 9ed0ad16: the NH-R1 E2 check as an enforcement prerequisite. Not enabled: unattended execution still needs the §9 evidence and a separate human decision.]`
 
 ### O-S1-06 — [low] dstore files hit `fence_conflict`
 A file using the durable store gets exit 22, because the fence's empty FS_READ denies its store reads. The dstore → fs-scope mapping needs a design. `[DECIDED by human 2026-10-18: an independent design problem, not part of a correctness batch]`
 
 ### O-S1-07 — [low] An `ai:` generator call in flight cannot be cancelled at the deadline
 It is an in-process blocking HTTP call; S1 only refuses to start one with less than its 30 s timeout left.
+`[BUILT 2026-10-31 on nhr/int 219e1360 + 9ed0ad16: the NH-R1 E3 hard-deadline watchdog (HARD_GRACE 2000 ms, S10). Not enabled: unattended execution still needs the §9 evidence and a separate human decision.]`
 
 ### O-S1-08 — [low] Spliced bodies lose their line structure
 `cortex repair` writes `fn double(n: i64) -> i64 {    n * 2}` when the generator returns a body without a leading newline (pre-existing at f83c6f86, seen with micode/haiku). Correct, but the accepted artifact is not formatted; run the formatter on the spliced region or normalise newlines.
@@ -2610,6 +2614,7 @@ It is an in-process blocking HTTP call; S1 only refuses to start one with less t
 Narrowing between two program-created sandboxes compares effects, not scopes (pre-existing); `@[contained]` does not follow closures stored in module-level `let`s while `caps` does; a non-UTF-8 `AXON_ALLOWED_EFFECTS` reads as unset in the interpreter; the guest/VM path cannot carry the scope variables; runtime cache writes other than provenance and the durable store (AI replay cache, goal state) are not checked against the write scope; native-module calls skip the scope check (pre-existing).
 `[DECIDED by human 2026-10-18: split. The invalid-UTF-8 AXON_ALLOWED_EFFECTS case joins the follow-up batch (tasks/followup-spec.md): it must deny every capability, never drop the restriction. The native-module scope, cache writes, guest/VM carriage and sandbox narrowing are enforcement prerequisites of NH-R1 unattended runs (tasks/unattended-auth-spec.md), not this batch]`
 **[RESOLVED fu/int FU-5 (the invalid-UTF-8 part only), 7c5d2136/c9ef67e7]** A non-UTF-8 value denies every effect in `axon run` and in keyed `axon test`, with one warning per process (M3765–M3767). The other leftovers remain NH-R1 prerequisites.
+`[BUILT 2026-10-31 on nhr/int 219e1360 + 9ed0ad16: the NH-R1 E9 check for the remaining LaneCaps leftovers as an enforcement prerequisite. Not enabled: unattended execution still needs the §9 evidence and a separate human decision.]`
 
 ### O-S1-10 — [low] `run_ab.py` R5 integrity abort has no automated test
 Exercised only by reading and by the real-binary smoke; a fake verdict fixture test would pin it.
@@ -2629,6 +2634,7 @@ Exercised only by reading and by the real-binary smoke; a fake verdict fixture t
 `crates/axon-cortex/src/bin/cortex.rs` (the `accepted_artifact` error arm in `main`): when the file on disk no longer hashes to the graded digest, the run writes the original bytes back (`let _ = std::fs::write(.., &original)`). The mismatch means someone else changed the file after acceptance, so the restore destroys that change, and the write's own error is dropped. Leave the file as found (or restore only when it still holds a patch this run wrote) and report a failed write.
 `[DECIDED by human 2026-10-18: in the follow-up batch: restore only when the file still holds bytes this run wrote; preserve a concurrent edit; report a failed restore]`
 **[RESOLVED fu/int FU-4, 098786e7]** `restore_found` writes the original only over bytes this run wrote (a `patch_applied` digest or the adjudicated bytes), leaves a concurrent edit or an unreadable file with a reason, and reports a failed write (M3752–M3754). Residual sites: O-FU-03/04.
+`[BUILT 2026-10-31 on nhr/int 219e1360: NH-R1 E5 compare-and-swap helper at all nine repair write sites.]`
 
 ### O-S1-14 — [medium] The whole-program capability walkers do not walk `@[verify]` or refinement predicates
 S1 taught `reachable_capabilities` (the `@[contained]` / `axon caps` walker) to follow the user code the interpreter runs implicitly. `collect_caps_expr`, `program_capabilities` and `program_effect_rows` (`crates/axon-core/src/capabilities.rs`) still walk only fn bodies, impl-method bodies and module `let` values. A capability reached only from a refinement `where`, a struct `where` or a `@[verify]` predicate is invisible to G2's capability diff, the import-edge E1203 demand set and `--emit-manifest`'s `effect_union`. Route them through the same implicit-invocation list.
@@ -2696,10 +2702,12 @@ Found by LaneCortex (FU-3). A leftover that writes every 50 ms is idle when the 
 ### O-FU-03 — [medium] runner.rs between-attempt restores lack the we-wrote check
 The broke-build revert (~runner.rs:1793) and `restore_base` (~2768) still write base bytes unconditionally. Adopting FU-4's `restore_found` means moving it into the lib and turning cases (c)/(d) into a blocked episode, which changes the walk. A writer that edits the file during a check run can be overwritten. Also an NH-R1 E5 prerequisite (`tasks/unattended-auth-spec.md` §6).
 `[TRIAGED 2026-10-19: covered by tasks/unattended-auth-spec.md §6 E5 — the compile revert (runner.rs:1790) and restore (runner.rs:2767) are two of its nine CAS-helper sites. No separate spec. The attended-run hazard stays until NH-R1's A4 is built, which needs a human go-ahead.]`
+`[BUILT 2026-10-31 on nhr/int 219e1360: NH-R1 A4 E5; the compile revert and between-attempt restore go through the CAS helper (attended runs included).]`
 
 ### O-FU-04 — [low] Exit-27 adjudicated put-back writes without checking disk
 `bin/cortex.rs` `(27, Some(Ok(bytes))) => std::fs::write(...)` is not a restore of the original, so it is outside FU-4's table; it overwrites whatever is on disk. NH-R1 E5 lists it among the nine CAS sites.
 `[TRIAGED 2026-10-19: covered by NH-R1 §6 E5 (exit-27 put-back, bin/cortex.rs:1168). No separate spec; same caveat as O-FU-03.]`
+`[BUILT 2026-10-31 on nhr/int 219e1360: NH-R1 A4 E5; the exit-27 put-back goes through the CAS helper and never overwrites a foreign edit.]`
 
 ### O-FU-05 — [low] Two capability expression walkers remain (FU-2 consolidation rule)
 FU-2 fixed the predicate gap with one shared `program_roots` list and did not merge the walkers: `collect_caps_stmts` + `collect_caps_expr` (145 lines, `capabilities.rs` ~1257–1404) and S1's `visit_expr` (246 lines, ~1514–1759). Not merged because the fix needed only the roots list (it removed the duplicate roots list rather than adding one) and the two walkers differ in reach semantics (S1 tracks the reach set and per-fn hooks). A future merge must keep the agreement fixtures in `tests/predicate_capability_routes.rs` and M3760–M3764 green.
@@ -2971,3 +2979,33 @@ inside another lambda.
 ### O-CS2-03 - [low] E1209 diagnostics carry no line or column
 A refinement predicate's E1209 names only the file, both for a direct impure builtin (pre-batch) and for CS2-8's
 reach through a helper. Fix direction: carry the predicate's span (or the reached call's) into the diagnostic.
+
+## NH-R1 / R6 integration, 2026-10-31 (findings the build lanes reported, not fixed)
+
+### O-NHR-01 - [medium] The `.unrecorded` / exit-29 path has no test
+When the R6 started record cannot be appended after the envelope is spent, `cortex repair --unattended` marks the
+envelope `<id>.unrecorded` and exits 29 (R6 L2). No test drives it: the lane tests run as root, so a
+permission-based append failure cannot be induced. Fix direction: an injectable sink failure (or a non-root test
+run) that asserts the marker, exit 29 and no workspace write.
+
+### O-NHR-02 - [medium] The terminal record on the E3 watchdog path has no test
+The watchdog exit (exit 20, outcome `budget_exhausted`) writes a terminal run record, but no test stalls a run to
+the hard deadline and reads the record back (a stall test adds wall time). Fix direction: a short-deadline stall
+fixture asserting the terminal record and its write journal.
+
+### O-NHR-03 - [low] S12's axon-os `require_approval` half is untested
+S12 is asserted inside cortex's `s8_an_admitted_run_spends_once_and_reports_its_authorization` (no axon-approval/3
+token, no `.approved` file). That an `axon-approval/4` envelope is not accepted by the axon-os `require_approval`
+job path is not tested in either lane.
+
+### O-NHR-04 - [medium] Refusal coverage does not scan `crates/axon-intent`
+Reported by IgIntent: `scripts/v022_refusal_coverage.py` does not include `crates/axon-intent`, so the new
+`authorize-repair` and `audit-runs` refusal sites (and the older ones) have g01 rows only by the lanes' own
+discipline, not by a mechanism. Fix direction: add the crate to the scanned set and give each refusal a row or an
+exemption.
+
+### O-NHR-05 - [low] R6 L2 terminal-record choices made in the lane, not in the spec
+Terminal `accepted_refusal` is always null (an R5 refusal turns the exit into 22, outside {0,27}); an early exit's
+`outcome` is the exit's kind (`usage`, `no_target`, `unauthorized`, `blocked`, `check_already_passes`); pinned
+tree roots are the effective write prefixes plus the envelope's fs_write scopes. Confirm or revise these in
+`tasks/r6-ledger-spec.md` before enabling.
