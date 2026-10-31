@@ -110,7 +110,7 @@ crates/**/*.bin
 /p
 /run.axjob
 /run.json
-docs/*.zip
+docs/**/*.zip
 
 # python bytecode from the Cortex experiment runners — generated, not source
 __pycache__/
