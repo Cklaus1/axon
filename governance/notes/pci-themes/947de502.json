@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "The E5 write helper now exchanges the temp file with the target and re-hashes what it moved out, deletes re-hash before they unlink, and CAS reads refuse FIFOs and symlinks, so an edit in the residual window is kept and reported, never lost silently; each change has a test that failed before it."}
