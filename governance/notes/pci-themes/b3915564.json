@@ -1,0 +1,1 @@
+{"theme": "intent-gen", "text": "IG1's path and fixture-cap tests now fail with their ATTACK line when an attack parses clean, so their g01 rows are killed by their own attack."}

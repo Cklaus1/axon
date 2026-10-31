@@ -1,0 +1,1 @@
+{"theme": "intent-gen", "text": "IG1: the intent format gains an optional `## Examples` section (multi-run examples with input fixtures, exact expected outputs, exit status and stdout; fixtures confined to the ceiling and the intent directory, capped at 64 KB), and an intent without examples ships with the named confidence deduction no-examples."}
