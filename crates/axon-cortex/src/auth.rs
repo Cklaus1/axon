@@ -302,6 +302,17 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
     e.fits_before_expiry(now, effective.deadline_ms, hard_grace_ms)?;
     let (provider, host) = resolved_generator();
     e.check_generator("ai", model, &provider, &host)?;
+    // Security F4 / F6: every fs pin is absolute, and none reaches the spent
+    // store or a key file (the ledger is checked with the workspace below).
+    un::absolute_fs_pins(&e.scopes.fs_read, &e.scopes.fs_write)?;
+    for (what, p) in [
+        ("the spent store", &store),
+        ("the verify key", &key_path),
+        ("the run-record seal key", &seal_path),
+    ] {
+        let p = std::fs::canonicalize(p).map_err(|err| format!("{what} {}: {err}", p.display()))?;
+        un::outside_fs_pins(what, &p, &e.scopes.fs_read, &e.scopes.fs_write)?;
+    }
     // 8. the task: canonical workspace and file, the symlink walk, one read.
     let file = un::normalize_rel(&cli.file)?;
     if workspace.to_string_lossy() != e.task.workspace {

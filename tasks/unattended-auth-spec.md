@@ -186,6 +186,8 @@ Any other flag → exit 29.
 | 6 | §5.2 limit comparisons |
 | 7 | `resolve_checker`'s sha256 of `--axon` = `checker_exe_sha256` **before** any spawn of it |
 | 8 | task: canonical workspace and file, symlink walk (F2), read the entry file ONCE → sha = `pristine_sha256` |
+| 8a | `[REVISED: security F4]` every `scopes.fs_read` / `scopes.fs_write` pin is absolute (`unattended::absolute_fs_pins`; the preview refuses one too): a relative pin resolves against the check child's cwd (the workspace) and skipped the symlink walk and the policy check |
+| 8b | `[REVISED: security F6]` the canonical spent store, verify-key file and seal-key file are disjoint from every `fs_read` / `fs_write` pin, at, above or below (`unattended::outside_fs_pins`); the minter's counterpart is axon-intent's |
 
 **Phase B** runs after `derive_fence` (the only child before it is the pinned interpreter's static `axon caps`) and
 before `fence_conflicts` (:738):

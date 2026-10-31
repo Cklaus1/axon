@@ -135,13 +135,18 @@ fn setup(name: &str) -> Setup {
 /// The envelope the minter would issue for `s` (the same functions the
 /// runner calls), before any test's change.
 fn envelope_for(s: &Setup) -> RepairEnvelope {
+    envelope_pinned(s, ScopePins::default())
+}
+
+/// [`envelope_for`] with the scope `pins` signed in (E1).
+fn envelope_pinned(s: &Setup, pins: ScopePins) -> RepairEnvelope {
     let file = s.ws.join("broken.ax");
     let caps = caps_of_file(&s.axon, &file, None, WALL).unwrap();
     let fence = Fence::from_pristine(&caps);
-    let pins = ScopePins::default();
     let (rows, pinned) = auth::gate_rows(&fence, &caps, &pins, "ai");
     assert!(rows.iter().all(|r| r.admit), "{rows:?}");
     let fence_sha = pinned.unwrap().sha256();
+    let ScopePins { fs_read, fs_write, net } = pins;
     let imports = auth::imports_digest(&s.axon, &s.ws, "broken.ax", WALL).unwrap();
     let checker = sha(&std::fs::read(&s.axon).unwrap());
     let issued = now();
@@ -162,9 +167,9 @@ fn envelope_for(s: &Setup) -> RepairEnvelope {
         },
         write_prefixes: vec!["broken.ax".into()],
         scopes: Scopes {
-            fs_read: vec![],
-            fs_write: vec![],
-            net: vec![],
+            fs_read,
+            fs_write,
+            net,
         },
         capabilities: Capabilities {
             fence_sha256: fence_sha.clone(),
@@ -330,6 +335,12 @@ fn records(s: &Setup) -> Vec<String> {
 /// A refused run: exit 29, the reason on stderr, the file untouched, the
 /// envelope still `.issued` (never spent by a refusal).
 fn refused(s: &Setup, o: &Out, e: &RepairEnvelope, why: &str, attack: &str) {
+    let fixture = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax"));
+    refused_over(s, o, e, why, attack, &fixture.unwrap());
+}
+
+/// [`refused`] for a run whose `broken.ax` held `pristine` (not the fixture).
+fn refused_over(s: &Setup, o: &Out, e: &RepairEnvelope, why: &str, attack: &str, pristine: &[u8]) {
     assert_eq!(o.code, 29, "{attack}: {}{}", o.stdout, o.stderr);
     assert!(
         o.stderr.contains(why),
@@ -337,13 +348,26 @@ fn refused(s: &Setup, o: &Out, e: &RepairEnvelope, why: &str, attack: &str) {
         o.stderr
     );
     let found = std::fs::read(s.ws.join("broken.ax")).unwrap();
-    let fixture = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax"));
-    assert_eq!(found, fixture.unwrap(), "{attack}: the file changed");
+    assert_eq!(found, pristine, "{attack}: the file changed");
     assert_eq!(
         records(s),
         vec![format!("{}.issued", e.envelope_id)],
         "{attack}: a refused envelope was spent"
     );
+}
+
+/// `broken.ax` with one `read_file` and one `write_file`, so `fs_read` and
+/// `fs_write` pins are used kinds (E1 refuses a pin on an unused kind).
+/// Returns the new pristine bytes.
+fn use_fs(s: &Setup) -> Vec<u8> {
+    let p = s.ws.join("broken.ax");
+    let mut src = std::fs::read_to_string(&p).unwrap();
+    src.push_str(
+        "\nfn touch() -> i64 {\n    let _ = write_file(\"/x\", \"y\")\n    match read_file(\"/x\") {\n        \
+         Ok(_) => 1,\n        Err(_) => 0,\n    }\n}\n",
+    );
+    std::fs::write(&p, &src).unwrap();
+    src.into_bytes()
 }
 
 /// A run that got past consume: never 29, and the envelope is `.used`.
@@ -690,6 +714,82 @@ fn s6_a_dotenv_steers_nothing() {
             "ATTACK: NH-R1 security F2 a .env ({how}) steered an unattended run's label log\n{}{}",
             o.stdout,
             o.stderr
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
+/// Security review F4: a relative `fs_read` / `fs_write` pin is refused. The
+/// check child's cwd is the workspace, so `out` resolves to `ws/out` - here a
+/// symlink to the operator's key directory - and a relative pin passed the
+/// symlink walk and the policy check, which only saw absolute pins.
+#[test]
+fn s6_a_relative_fs_pin_is_refused() {
+    for kind in ["fs_read", "fs_write"] {
+        let s = setup(&format!("s6_relpin_{kind}"));
+        let pristine = use_fs(&s);
+        std::os::unix::fs::symlink(s.root.join("ops"), s.ws.join("out")).unwrap();
+        let scratch = s.root.join("scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let scratch = std::fs::canonicalize(scratch).unwrap().to_string_lossy().into_owned();
+        let (fs_read, fs_write) = if kind == "fs_read" {
+            (vec!["out".to_string()], vec![scratch])
+        } else {
+            (vec![scratch], vec!["out".to_string()])
+        };
+        let e = envelope_pinned(&s, ScopePins { fs_read, fs_write, net: vec![] });
+        mint(&s, &e);
+        let o = run(&s, &[]);
+        refused_over(
+            &s,
+            &o,
+            &e,
+            &format!("scopes.{kind} entry \"out\" is relative"),
+            &format!("ATTACK: NH-R1 security F4 a relative {kind} pin through a workspace symlink ran"),
+            &pristine,
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
+/// Security review F6: no `fs_read` / `fs_write` pin reaches the spent store
+/// or a key file - at, above or below it. Over the store the check child
+/// could rename `.used` back to `.issued` (replay); over the verify key,
+/// overwrite it (self-mint); over the seal key, read it (forge records).
+#[test]
+fn s6_a_pin_over_the_store_or_a_key_is_refused() {
+    let cases: [(&str, &str, fn(&Setup) -> PathBuf, &str); 5] = [
+        ("fs_write", "the spent store", |s| s.store.clone(), "the spent store"),
+        ("fs_write", "a directory under the spent store", |s| s.store.join("sub"), "the spent store"),
+        ("fs_write", "the verify key", |s| s.key.clone(), "the verify key"),
+        ("fs_read", "the run-record seal key", |s| s.seal.clone(), "the run-record seal key"),
+        ("fs_read", "the operator directory above both keys", |s| s.root.join("ops"), "the spent store"),
+    ];
+    for (i, (kind, what, pin, why)) in cases.into_iter().enumerate() {
+        let s = setup(&format!("s6_keypin_{i}"));
+        let pristine = use_fs(&s);
+        let scratch = s.root.join("scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let canon = |p: PathBuf| {
+            let parent = std::fs::canonicalize(p.parent().unwrap()).unwrap();
+            parent.join(p.file_name().unwrap()).to_string_lossy().into_owned()
+        };
+        let (pin, scratch) = (canon(pin(&s)), canon(scratch));
+        let (fs_read, fs_write) = if kind == "fs_read" {
+            (vec![pin], vec![scratch])
+        } else {
+            (vec![scratch], vec![pin])
+        };
+        let e = envelope_pinned(&s, ScopePins { fs_read, fs_write, net: vec![] });
+        mint(&s, &e);
+        let o = run(&s, &[]);
+        refused_over(
+            &s,
+            &o,
+            &e,
+            &format!("{why} "),
+            &format!("ATTACK: NH-R1 security F6 an {kind} pin over {what} ran"),
+            &pristine,
         );
         let _ = std::fs::remove_dir_all(&s.root);
     }

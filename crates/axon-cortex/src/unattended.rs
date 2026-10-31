@@ -271,6 +271,49 @@ pub fn pin_row(
     }
 }
 
+/// Security review F4: every `fs_read` / `fs_write` pin is an absolute path.
+/// The interpreter matches a pin as a plain path prefix and the check child's
+/// cwd is the workspace, so a relative pin resolves inside it - and the
+/// symlink walk and the policy check only see pins under the absolute
+/// workspace, so a relative one (`out -> /home/op/keys`) passed both.
+pub fn absolute_fs_pins(fs_read: &[String], fs_write: &[String]) -> Result<(), String> {
+    for (kind, pins) in [("fs_read", fs_read), ("fs_write", fs_write)] {
+        if let Some(p) = pins.iter().find(|p| !p.starts_with('/')) {
+            return Err(format!(
+                "scopes.{kind} entry {p:?} is relative: a pin must be absolute (a relative pin \
+                 resolves against the check child's cwd and escapes the symlink walk and policy check)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Security review F6: `path` (the canonical spent store or a key file) and
+/// every `fs_read` / `fs_write` pin are disjoint - neither lies at or under
+/// the other. A pin over the store lets the check child rename `.used` back
+/// to `.issued` (a replay); over the verify key, overwrite it (self-mint);
+/// over the seal key, read it (forge run records).
+pub fn outside_fs_pins(
+    what: &str,
+    path: &Path,
+    fs_read: &[String],
+    fs_write: &[String],
+) -> Result<(), String> {
+    for (kind, pins) in [("fs_read", fs_read), ("fs_write", fs_write)] {
+        let overlaps = |p: &&String| {
+            let p = Path::new(p.as_str());
+            path.starts_with(p) || p.starts_with(path)
+        };
+        if let Some(p) = pins.iter().find(overlaps) {
+            return Err(format!(
+                "{what} {} overlaps the scopes.{kind} pin {p}: the check child could reach it",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// E5 / §6: the exclusive run lock, keyed by the canonical file path, held
 /// in the spent store for the life of the process. A second unattended run
 /// on the same file is refused (exit 29), never queued.

@@ -13350,6 +13350,46 @@ MUTATIONS += [
      '    if true {',
      'axon-ai', '--lib', 'tests::forbid_dotenv_after_the_once_ran_refuses'),
 ]
+_NSR = 's6_a_relative_fs_pin_is_refused'
+_NSK = 's6_a_pin_over_the_store_or_a_key_is_refused'
+MUTATIONS += [
+    ('M4414', 'NH-R1 security F4: a relative fs pin is admitted', _NHU,
+     "        if let Some(p) = pins.iter().find(|p| !p.starts_with('/')) {",
+     '        if let Some(p) = pins.iter().find(|_| false) {',
+     'axon-cortex', _NHT, _NSR),
+    ('M4415', 'NH-R1 security F4: phase A does not check that fs pins are absolute', _NHA,
+     '    un::absolute_fs_pins(&e.scopes.fs_read, &e.scopes.fs_write)?;',
+     '    let _ = "relative pins allowed";',
+     'axon-cortex', _NHT, _NSR),
+    ('M4416', 'NH-R1 security F4: the envelope preview passes a relative fs pin', 'crates/axon-cortex/src/envelope_preview.rs',
+     '    un::absolute_fs_pins(&r.pins.fs_read, &r.pins.fs_write)?;',
+     '    let _ = "relative pins allowed";',
+     'axon-cortex', '--features unattended --test envelope_preview', 'a_relative_fs_pin_produces_no_preview'),
+    ('M4417', 'NH-R1 security F6: a pin above the store or a key is admitted', _NHU,
+     '            path.starts_with(p) || p.starts_with(path)',
+     '            p.starts_with(path)',
+     'axon-cortex', _NHT, _NSK),
+    ('M4418', 'NH-R1 security F6: a pin below the store is admitted', _NHU,
+     '            path.starts_with(p) || p.starts_with(path)',
+     '            path.starts_with(p)',
+     'axon-cortex', _NHT, _NSK),
+    ('M4419', 'NH-R1 security F6: phase A does not compare the store and keys with the pins', _NHA,
+     '        un::outside_fs_pins(what, &p, &e.scopes.fs_read, &e.scopes.fs_write)?;',
+     '        let _ = (what, &p);',
+     'axon-cortex', _NHT, _NSK),
+    ('M4420', 'NH-R1 security F6: the verify key is not compared with the pins', _NHA,
+     '        ("the verify key", &key_path),\n',
+     '',
+     'axon-cortex', _NHT, _NSK),
+    ('M4421', 'NH-R1 security F6: the seal key is not compared with the pins', _NHA,
+     '        ("the run-record seal key", &seal_path),\n',
+     '',
+     'axon-cortex', _NHT, _NSK),
+    ('M4422', 'NH-R1 security F6: an overlapping pin is found and admitted', _NHU,
+     '        if let Some(p) = pins.iter().find(overlaps) {',
+     '        if let Some(p) = pins.iter().find(overlaps).filter(|_| false) {',
+     'axon-cortex', _NHT, _NSK),
+]
 
 if __name__ == "__main__":
     main()

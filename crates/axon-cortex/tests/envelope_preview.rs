@@ -294,6 +294,35 @@ fn an_fs_write_pin_over_the_task_file_produces_no_preview() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+/// Security review F4: a relative `--read-prefix` / `--fs-write-scope` pin
+/// produces no preview. It would resolve against the check child's cwd (the
+/// workspace) and skip the symlink walk: here `out` links to `/etc`.
+#[test]
+fn a_relative_fs_pin_produces_no_preview() {
+    for flag in ["--read-prefix", "--fs-write-scope"] {
+        let ws = workspace(&format!("relpin{flag}"));
+        std::fs::write(
+            ws.join("src/broken.ax"),
+            "fn touch() -> i64 {\n    let _ = write_file(\"/x\", \"y\")\n    match read_file(\"/x\") {\n        \
+             Ok(_) => 1,\n        Err(_) => 0,\n    }\n}\n\n\
+             fn double(n: i64) -> i64 {\n    n + 2\n}\n\n\
+             @[test]\nfn hidden_completion() {\n    assert_eq(double(7), 14)\n}\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("/etc", ws.join("out")).unwrap();
+        let other = if flag == "--read-prefix" { "--fs-write-scope" } else { "--read-prefix" };
+        let (code, out, err) =
+            preview(&ws, &["--generator", "ai:m", flag, "out", other, "/var/empty-axon-scope"]);
+        assert_eq!(
+            code, 2,
+            "ATTACK: NH-R1 security F4 a relative {flag} pin was previewed: {out}"
+        );
+        assert!(out.is_empty(), "{out}");
+        assert!(err.contains("is relative: a pin must be absolute"), "{err}");
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+}
+
 /// E7: the preview pins the local interpreter only; a check registry is a
 /// usage error. The preview's inputs are refused without the preview flag,
 /// so plain `cortex grant` keeps its exact surface.

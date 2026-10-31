@@ -69,6 +69,8 @@ pub fn envelope_preview(
     for p in &write_prefixes {
         un::no_symlink_at_or_under(&workspace, p)?;
     }
+    // Security F4: a relative pin would skip the walk below; refused first.
+    un::absolute_fs_pins(&r.pins.fs_read, &r.pins.fs_write)?;
     for p in r.pins.fs_read.iter().chain(&r.pins.fs_write) {
         if let Ok(rel) = Path::new(p).strip_prefix(&workspace) {
             un::no_symlink_at_or_under(&workspace, &rel.to_string_lossy())?;

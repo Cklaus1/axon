@@ -3655,4 +3655,13 @@ ATTACK_MARKERS.update({
     'M4411': r'ATTACK: NH-R1 security F1 a host with an opt-in naming two decision records ran unattended',
     'M4412': r"ATTACK: NH-R1 security F2 a \.env \(cwd\) steered an unattended run's label log",
     'M4413': r'ATTACK: NH-R1 security F2 a \.env lookup that already ran was reported as forbidden',
+    'M4414': r'ATTACK: NH-R1 security F4 a relative fs_read pin through a workspace symlink ran',
+    'M4415': r'ATTACK: NH-R1 security F4 a relative fs_read pin through a workspace symlink ran',
+    'M4416': r'ATTACK: NH-R1 security F4 a relative \-\-read\-prefix pin was previewed',
+    'M4417': r'ATTACK: NH-R1 security F6 an fs_read pin over the operator directory above both keys ran',
+    'M4418': r'ATTACK: NH-R1 security F6 an fs_write pin over a directory under the spent store ran',
+    'M4419': r'ATTACK: NH-R1 security F6 an fs_write pin over the spent store ran',
+    'M4420': r'ATTACK: NH-R1 security F6 an fs_write pin over the verify key ran',
+    'M4421': r'ATTACK: NH-R1 security F6 an fs_read pin over the run-record seal key ran',
+    'M4422': r'ATTACK: NH-R1 security F6 an fs_write pin over the spent store ran',
 })
