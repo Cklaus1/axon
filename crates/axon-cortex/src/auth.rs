@@ -66,7 +66,10 @@ pub struct PhaseA {
     pub ledger: PathBuf,
     /// The run-record seal key (R6 §4): it seals records, nothing else.
     pub seal: rl::SealKey,
-    /// sha256 of the `--axon` bytes, taken before any spawn of it.
+    /// `--axon` resolved ONCE (`runner::resolve_executable`: a bare name is
+    /// a PATH lookup), and the sha256 of that file's bytes, taken before any
+    /// spawn of it. The registry pins exactly this pair (security F7).
+    pub checker_exe: PathBuf,
     pub checker_exe_sha256: String,
     /// The run lock (E5), held for the life of the process.
     pub lock: std::fs::File,
@@ -387,8 +390,12 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
             e.task.pristine_sha256
         ));
     }
-    // 7. the check digest over the `--axon` bytes, before any spawn of it.
-    let checker_exe_sha256 = sha256_file(axon)?;
+    // 7. the check digest over the `--axon` bytes, before any spawn of it:
+    // the file `--axon` resolves to (a bare name through PATH, as the spawn
+    // would), so the bytes hashed are the bytes that run (security F7).
+    let checker_exe = crate::runner::resolve_executable(axon)
+        .map_err(|why| format!("--axon {}: {why}", axon.display()))?;
+    let checker_exe_sha256 = sha256_file(&checker_exe)?;
     let want = check_digest(
         &e.check.name,
         &checker_exe_sha256,
@@ -413,6 +420,7 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
         store,
         ledger,
         seal,
+        checker_exe,
         checker_exe_sha256,
         lock,
         euid,

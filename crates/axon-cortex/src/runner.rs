@@ -3127,8 +3127,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// Resolve `exe` the way `Command::new` would (a bare name searches PATH),
-/// then canonicalize. Done ONCE, at registration.
-fn resolve_executable(exe: &Path) -> Result<PathBuf, CheckRefusal> {
+/// then canonicalize. Done ONCE, at registration - and by the unattended
+/// phase A, which hashes the file this names (security review F7).
+pub fn resolve_executable(exe: &Path) -> Result<PathBuf, CheckRefusal> {
     let unresolvable = |reason: String| CheckRefusal::Unresolvable {
         path: exe.to_path_buf(),
         reason,

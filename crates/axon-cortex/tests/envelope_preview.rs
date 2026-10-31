@@ -323,6 +323,45 @@ fn a_relative_fs_pin_produces_no_preview() {
     }
 }
 
+/// Security review F7: a bare `--axon axon` is a PATH lookup for every child
+/// the preview runs, so the checker sha256 it pins is that file's - not the
+/// bytes of an `axon` that happens to sit in the current directory.
+#[test]
+fn a_bare_axon_pins_the_binary_path_runs() {
+    let ws = workspace("bare_axon");
+    let cwd = ws.with_extension("cwd");
+    let bin = ws.with_extension("bin");
+    let _ = std::fs::remove_dir_all(&cwd);
+    let _ = std::fs::remove_dir_all(&bin);
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(cwd.join("axon"), b"a decoy that never runs\n").unwrap();
+    std::os::unix::fs::symlink(axon_bin(), bin.join("axon")).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+    let out = common::cortex()
+        .args(["grant", "--envelope-preview", "--workspace"])
+        .arg(&ws)
+        .args(["--file", "src/broken.ax", "--symbol", "double"])
+        .args(["--check", "hidden_completion", "--write-prefix", "src"])
+        .args(["--axon", "axon", "--generator", "ai:m"])
+        .env("PATH", &path)
+        .current_dir(&cwd)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+    let v: Value = serde_json::from_str(stdout.trim()).unwrap();
+    let genuine = axon_cortex::label::sha256_hex(&std::fs::read(axon_bin()).unwrap());
+    assert_eq!(
+        v["check_digest_input"]["checker_exe_sha256"].as_str(),
+        Some(genuine.as_str()),
+        "ATTACK: NH-R1 security F7 the preview pinned an interpreter other than the one PATH runs"
+    );
+    for d in [&ws, &cwd, &bin] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}
+
 /// E7: the preview pins the local interpreter only; a check registry is a
 /// usage error. The preview's inputs are refused without the preview flag,
 /// so plain `cortex grant` keeps its exact surface.

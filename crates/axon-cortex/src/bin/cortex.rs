@@ -413,17 +413,23 @@ const CHECK_MAX_OUTPUT: usize = 1 << 20;
 
 /// The pinned `axon` executable and its local executor, as the registry (or
 /// `--axon`, pinned now) names them. Exit 22 if neither can be resolved.
+/// `expected`: the file and sha256 the unattended phase A hashed; the
+/// registry pins exactly that file and refuses other bytes (security F7).
 fn resolve_checker(
     axon_bin: &std::path::Path,
     check_registry: Option<&std::path::Path>,
+    expected: Option<(&std::path::Path, &str)>,
 ) -> (std::path::PathBuf, LocalInterpreterExecutor) {
     let reg = match check_registry {
         Some(file) => CheckRegistry::load(file),
         None => {
             let mut r = CheckRegistry::new();
-            r.register_pinned(LOCAL_AXON_TEST_ID, axon_bin)
-                .map(|()| r)
-                .map_err(|e| e.to_string())
+            match expected {
+                Some((exe, sha)) => r.register_expected(LOCAL_AXON_TEST_ID, exe, sha),
+                None => r.register_pinned(LOCAL_AXON_TEST_ID, axon_bin),
+            }
+            .map(|()| r)
+            .map_err(|e| e.to_string())
         }
     };
     let exec = reg.and_then(|r| {
@@ -895,7 +901,15 @@ fn main() {
 
     let fabric = fabric_executor(&fabric_args, check_registry.as_deref());
     let check_timeout = std::time::Duration::from_millis(check_timeout_ms);
-    let checker = resolve_checker(&axon_bin, check_registry.as_deref());
+    // Security F7: an unattended run registers the file phase A hashed, with
+    // that sha256, so the bytes the check digest bound are the bytes run.
+    #[cfg(feature = "unattended")]
+    let expected = phase_a
+        .as_ref()
+        .map(|a| (a.checker_exe.as_path(), a.checker_exe_sha256.as_str()));
+    #[cfg(not(feature = "unattended"))]
+    let expected = None;
+    let checker = resolve_checker(&axon_bin, check_registry.as_deref(), expected);
     let checker_exe = checker.0.clone();
     // R1a: the runtime fence, from the PRISTINE file, before anything of the
     // workspace runs. The Fabric executor does not take it: recorded as not
@@ -2043,7 +2057,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
     // writes nothing — there is no candidate whose authority could exceed
     // the original's.
     let runner = registered_runner(
-        resolve_checker(&axon_bin, check_registry.as_deref()),
+        resolve_checker(&axon_bin, check_registry.as_deref(), None),
         &workspace,
         fabric.as_ref(),
         std::time::Duration::from_millis(check_timeout_ms),
@@ -2201,7 +2215,7 @@ fn grant_only(mut args: impl Iterator<Item = String>) {
         }
     }
     let wall = std::time::Duration::from_millis(DEFAULT_CHECK_TIMEOUT_MS);
-    let (exe, _) = resolve_checker(&axon_bin, check_registry.as_deref());
+    let (exe, _) = resolve_checker(&axon_bin, check_registry.as_deref(), None);
     let fence = derive_fence(&exe, &workspace, &file, wall);
     let targets: Vec<String> = if symbol.is_empty() {
         Vec::new()

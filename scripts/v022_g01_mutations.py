@@ -13389,6 +13389,10 @@ MUTATIONS += [
      '        if let Some(p) = pins.iter().find(overlaps) {',
      '        if let Some(p) = pins.iter().find(overlaps).filter(|_| false) {',
      'axon-cortex', _NHT, _NSK),
+    ('M4423', 'NH-R1 security F7: phase A hashes --axon without resolving it as the spawn does', _NHA,
+     '    let checker_exe = crate::runner::resolve_executable(axon)',
+     '    let checker_exe = Ok::<_, crate::runner::CheckRefusal>(axon.to_path_buf())',
+     'axon-cortex', _NHT, 's6_a_bare_axon_runs_the_binary_that_was_hashed'),
 ]
 
 if __name__ == "__main__":

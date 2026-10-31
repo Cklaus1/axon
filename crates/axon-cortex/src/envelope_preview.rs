@@ -52,6 +52,10 @@ pub fn envelope_preview(
     if r.write_prefixes.is_empty() {
         return Err("at least one --write-prefix is required with --envelope-preview".into());
     }
+    // Security F7: `--axon` resolved once, as phase A does; every child
+    // below and the checker digest use that one file.
+    let axon = &crate::runner::resolve_executable(axon)
+        .map_err(|why| format!("--axon {}: {why}", axon.display()))?;
     let workspace = std::fs::canonicalize(&r.workspace)
         .map_err(|e| format!("--workspace {}: {e}", r.workspace.display()))?;
     let ws = workspace

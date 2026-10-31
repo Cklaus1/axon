@@ -795,6 +795,45 @@ fn s6_a_pin_over_the_store_or_a_key_is_refused() {
     }
 }
 
+/// Security review F7: the interpreter the check digest binds is the one
+/// that runs. A bare `--axon axon` was hashed from the cwd (here the genuine
+/// interpreter) and then resolved through `PATH` (here another one) for
+/// `axon caps` and every check. Resolved once, the PATH binary's sha256 is
+/// not the envelope's: refused before it runs.
+#[test]
+fn s6_a_bare_axon_runs_the_binary_that_was_hashed() {
+    let s = setup("s6_bare_axon");
+    let e = envelope_for(&s);
+    mint(&s, &e);
+    let cwd = s.root.join("cwd");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::os::unix::fs::symlink(&s.axon, cwd.join("axon")).unwrap();
+    let bin = s.root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let mark = s.root.join("ops/path-axon-ran");
+    common::write_executable(
+        &bin.join("axon"),
+        format!("#!/bin/sh\ntouch '{}'\nexec '{}' \"$@\"\n", mark.display(), s.axon.display()),
+        0o755,
+    );
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+    let o = run_full(&s, Path::new("axon"), &[], &[("PATH", &path)], &s.opted_in(), Some(&cwd));
+    assert!(
+        !mark.exists(),
+        "ATTACK: NH-R1 security F7 a PATH interpreter other than the hashed one ran\n{}{}",
+        o.stdout,
+        o.stderr
+    );
+    refused(
+        &s,
+        &o,
+        &e,
+        "is not the envelope's",
+        "ATTACK: NH-R1 security F7 a PATH interpreter other than the hashed one got past phase A",
+    );
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
 /// Security review F1 / §10 Q3: a host runs unattended only after it opted
 /// in. Without `/etc/axon/unattended-repair` - or with one another uid owns,
 /// one group/other can read or write, a directory in its place, or one
