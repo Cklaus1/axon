@@ -13284,5 +13284,34 @@ MUTATIONS += [
      'axon-intent', '--test audit_runs', 'a_supplied_envelope_the_records_do_not_name_is_a_finding'),
 ]
 
+# NH-R1 security review fixes, cortex lane (agent NhrSecurity F1-F11; ids M4400-M4449).
+_NSC = 'crates/axon-cortex/src/cas.rs'
+MUTATIONS += [
+    ('M4400', 'NH-R1 security F3: the inode displaced by the exchange is not compared', _NSC,
+     '            if displaced != found {',
+     '            if false {',
+     'axon-cortex', '--lib', 'cas::tests::a_writer_between_the_rehash_and_the_rename_is_kept_and_reported'),
+    ('M4401', 'NH-R1 security F3: a write renames over the target instead of exchanging', _NSC,
+     '            libc::RENAME_EXCHANGE',
+     '            0',
+     'axon-cortex', '--lib', 'cas::tests::a_writer_between_the_rehash_and_the_rename_is_kept_and_reported'),
+    ('M4402', 'NH-R1 security F9: a delete unlinks what it moved without re-hashing it', _NSC,
+     '        if moved != found {',
+     '        if false {',
+     'axon-cortex', '--lib', 'cas::tests::a_writer_between_the_rehash_and_the_unlink_is_not_deleted'),
+    ('M4403', 'NH-R1 security F8: a CAS read blocks on a FIFO', _NSC,
+     '        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)',
+     '        .custom_flags(libc::O_NOFOLLOW)',
+     'axon-cortex', '--lib', 'cas::tests::a_fifo_in_the_targets_place_never_stalls_a_read'),
+    ('M4404', 'NH-R1 security F8: a CAS read accepts a file that is not regular', _NSC,
+     '    if !m.file_type().is_file() {',
+     '    if false {',
+     'axon-cortex', '--lib', 'cas::tests::a_fifo_in_the_targets_place_never_stalls_a_read'),
+    ('M4405', 'NH-R1 security F3: a write expected absent clobbers a file created in the window', _NSC,
+     '            libc::RENAME_NOREPLACE\n        };',
+     '            0\n        };',
+     'axon-cortex', '--lib', 'cas::tests::a_file_created_in_the_window_is_not_clobbered'),
+]
+
 if __name__ == "__main__":
     main()

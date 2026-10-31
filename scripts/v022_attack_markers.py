@@ -3638,3 +3638,13 @@ ATTACK_MARKERS.update({
     'M4390': r'ATTACK: an unverifiable file in \-\-envelopes was skipped',
     'M4391': r'ATTACK: records naming a different envelope digest audited clean',
 })
+
+# NH-R1 security review fixes, cortex lane (ids M4400-M4449)
+ATTACK_MARKERS.update({
+    'M4400': r'ATTACK: E5 an edit between the re\-hash and the rename was overwritten silently',
+    'M4401': r'ATTACK: E5 an edit between the re\-hash and the rename was overwritten silently',
+    'M4402': r'ATTACK: E5 a delete removed an edit made between its re\-hash and its unlink',
+    'M4403': r"ATTACK: E3 a FIFO in the target's place stalled a CAS read",
+    'M4404': r"ATTACK: E3 a FIFO in the target's place stalled a CAS read",
+    'M4405': r'ATTACK: E5 a file created between the re\-hash and the rename was clobbered',
+})

@@ -305,14 +305,22 @@ All workspace writes and deletes go through one helper:
 | settle | `bin/cortex.rs:1591` |
 | sweep deletes | `runner.rs:1148-1150` |
 
-The helper:
+The helper `[REVISED: security F3, F9, F8 - a plain rename lost an edit made between step 2 and step 3 silently (step 5
+re-hashed this run's own inode); a delete unlinked an edit made after its re-hash; a FIFO or a symlink in the target's
+place stalled the re-hash under the write lock]`:
 1. writes a temp file in the same directory;
 2. re-hashes the target against the last digest cortex wrote or read;
-3. renames;
-4. checks `(dev, ino)` afterwards;
-5. re-hashes the renamed file and compares it with the bytes it wrote. `[DECIDED by human 2026-10-19 (§10 Q4)]` A
-   mismatch means a writer got in during the residual window: the run reports it (exit 22, both digests named) instead
-   of claiming the write. A lost foreign edit is then visible, never silent.
+3. exchanges the temp file and the target atomically (`renameat2(RENAME_EXCHANGE)`; `RENAME_NOREPLACE` when the target
+   is expected absent), so the old inode moves to the temp name instead of being unlinked;
+4. re-hashes that displaced inode against step 2's digest. A mismatch means a writer got in between steps 2 and 3:
+   the displaced file is **kept** beside the target (`.cortex-cas-displaced-*`) and the write is reported (exit 22,
+   both digests and the kept path named). The foreign edit is never lost and never silent.
+5. checks `(dev, ino)` and re-hashes the placed file against the bytes it wrote: a write after the exchange is reported
+   (exit 22, both digests named), never claimed.
+
+A delete renames the target to a temp name, re-hashes what it moved, and unlinks only on a match; otherwise it renames
+it back (or keeps it and names the kept path) and reports. Every read opens with `O_NOFOLLOW|O_NONBLOCK` and refuses
+anything but a regular file.
 
 A step-2 mismatch writes nothing; any mismatch stops the walk and exits 22 with the reason.
 
@@ -320,8 +328,12 @@ Supporting rules:
 - An exclusive `flock` on a store-side lock keyed by the canonical file path means a second unattended run on the same
   file → exit 29.
 - The visible copy goes to a private temp directory.
-- **Residual window:** a non-cooperating writer between re-hash and rename. `[DECIDED by human 2026-10-19 (§10 Q4):
-  accepted, on condition of step 5's post-rename check; POSIX has no atomic compare-and-rename.]`
+- **Residual window** `[DECIDED by human 2026-10-19 (§10 Q4): accepted, on condition that it is never silent]`
+  `[REVISED: security F3]`: what is guaranteed is that no foreign edit made through the target's path before the
+  exchange is overwritten or deleted without a report and a kept copy. What is NOT guaranteed: that the target's path
+  holds the foreign edit afterwards (it holds this run's bytes; the edit is in the kept file); and a writer that keeps
+  an fd open on the old inode and writes through it AFTER step 4's re-hash writes into an inode no longer linked
+  anywhere (step 4 matched, so it was unlinked): that write is lost unreported. Only a path-based writer is covered.
 
 ## 7. Security and correctness tests (all must pass before §9)
 

@@ -2025,8 +2025,23 @@ _CASR = (_CTX + "; cas.rs, the E5 write helper: an OS error here writes and clai
          "(the caller reports the run Blocked / exit 22); the deciding comparisons are "
          "rows M4090-M4095")
 EXEMPT += [
-    (_CAS, "        Err(e) => Err(CasError::Io(e.to_string())),\n    }",
-     _CASR + "; digest_now: a target that cannot be read cannot be compared, so nothing is written"),
+    (_CAS, '        Err(e) => Err(CasError::Io(format!("{}: {e}", path.display()))),\n    }',
+     _CASR + "; digest_now: a target that cannot be read (or is not a regular file, F8) cannot be "
+     "compared, so nothing is written"),
+    (_CAS, "        libc::renameat2(\n",
+     _CASR + "; rename2's syscall: a filesystem without renameat2 refuses, so the write fails closed"),
+    (_CAS, "        Err(std::io::Error::last_os_error())\n    }\n}",
+     _CASR + "; rename2 returns the OS error of a refused renameat2: nothing was exchanged"),
+    (_CAS, '            return Err(CasError::Io(format!("{} names no file to delete", path.display())));',
+     _CASR + "; remove: a path with no parent or file name has no temp name beside it"),
+    (_CAS, "        rename2(path, &tmp, libc::RENAME_NOREPLACE)\n",
+     _CASR + "; remove's rename to the temp name failed: nothing was moved or deleted"),
+    (_CAS, "                let kept = match rename2(&tmp, &kept, libc::RENAME_NOREPLACE) {",
+     _CASR + "; security F3: moving the displaced file to a fresh name is best-effort; either way "
+     "it is kept and the Displaced report names where (the comparison is row M4400)"),
+    (_CAS, "                    Err(_) => tmp,\n",
+     _CASR + "; security F3: the displaced file could not be moved to a fresh name, so it stays "
+     "kept under the temp name, which the Displaced report names (the comparison is row M4400)"),
     (_CAS, 'return Err(CasError::Io(format!("{} names no file", path.display())));',
      _CASR + "; a path with no parent or file name has no temp file beside it"),
     (_CAS, "                .create_new(true)\n                .open(&tmp)?;",
@@ -2036,8 +2051,8 @@ EXEMPT += [
      _CASR + "; the temp file could not be written: nothing is renamed"),
     (_CAS, "            Err(e) => {\n                let _ = std::fs::remove_file(&tmp);\n                return Err(e);",
      _CASR + "; step 2 could not read the target: nothing is renamed"),
-    (_CAS, "        if let Err(e) = std::fs::rename(&tmp, path) {",
-     _CASR + "; the rename failed: the target keeps its bytes"),
+    (_CAS, "        if let Err(e) = rename2(&tmp, path, flags) {",
+     _CASR + "; the exchange failed: the target keeps its bytes"),
     (_CAS, "            Err(e) => return Err(CasError::Io(e.to_string())),\n        };",
      _CASR + "; the exclusive create failed for another reason than an existing file: nothing was created"),
     (_UNA, "    pub(crate) fn refuse(id: &'static str, basis: impl Into<String>) -> Row {",
