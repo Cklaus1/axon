@@ -13340,6 +13340,16 @@ MUTATIONS += [
      '        if decision.replace(d.to_string()).is_some() && false {',
      'axon-cortex', _NHT, _NS14),
 ]
+MUTATIONS += [
+    ('M4412', 'NH-R1 security F2: an unattended run loads a .env its env refusal never saw', _NHA,
+     "    axon_ai::forbid_dotenv().map_err(|why| format!(\"--unattended runs without a .env: {why}\"))?;",
+     '    let _ = "dotenv allowed";',
+     'axon-cortex', _NHT, 's6_a_dotenv_steers_nothing'),
+    ('M4413', 'NH-R1 security F2: forbid_dotenv claims a .env lookup that already ran was forbidden', 'crates/axon-ai/src/lib.rs',
+     '    if forbidden {',
+     '    if true {',
+     'axon-ai', '--lib', 'tests::forbid_dotenv_after_the_once_ran_refuses'),
+]
 
 if __name__ == "__main__":
     main()

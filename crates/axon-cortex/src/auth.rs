@@ -261,7 +261,11 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
     // SAFETY: geteuid has no preconditions.
     let euid = unsafe { libc::geteuid() };
     let decision = host_opt_in(Path::new(OPT_IN_PATH), euid)?;
-    // 1. flag allowlist, env selectors, generator kind (E9).
+    // 1. flag allowlist, env selectors, generator kind (E9). The selectors
+    // are refused in the real environment, and no `.env` is ever loaded
+    // (security F2): one in the workspace or named by `AXON_DOTENV` would
+    // set what this check never saw.
+    axon_ai::forbid_dotenv().map_err(|why| format!("--unattended runs without a .env: {why}"))?;
     for f in &cli.flags {
         un::check_flag(f)?;
     }

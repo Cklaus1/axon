@@ -3653,4 +3653,6 @@ ATTACK_MARKERS.update({
     'M4409': r'ATTACK: NH-R1 security F1 a host with an opt-in naming no decision record ran unattended',
     'M4410': r'ATTACK: NH-R1 security F1 a host with an opt-in holding a line that is not its decision ran unattended',
     'M4411': r'ATTACK: NH-R1 security F1 a host with an opt-in naming two decision records ran unattended',
+    'M4412': r"ATTACK: NH-R1 security F2 a \.env \(cwd\) steered an unattended run's label log",
+    'M4413': r'ATTACK: NH-R1 security F2 a \.env lookup that already ran was reported as forbidden',
 })

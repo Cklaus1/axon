@@ -664,6 +664,37 @@ fn s6_a_cortex_env_selector_is_refused() {
     }
 }
 
+/// Security review F2: a `.env` cortex would load (in its working directory,
+/// or named by `AXON_DOTENV`) steers nothing. It sets `CORTEX_LABEL_LOG` -
+/// a §5.2 selector `check_env` refuses when it is in the real environment -
+/// and the run must not append a label row (a write outside the pins, the
+/// E5 helper and the journal) there.
+#[test]
+fn s6_a_dotenv_steers_nothing() {
+    for how in ["cwd", "AXON_DOTENV"] {
+        let s = setup(&format!("s6_dotenv_{how}"));
+        let e = envelope_for(&s);
+        mint(&s, &e);
+        let log = s.root.join("label.log");
+        let dotenv = format!("CORTEX_LABEL_LOG={}\n", log.display());
+        let named = s.root.join("ops/steer.env");
+        std::fs::write(&named, &dotenv).unwrap();
+        let o = if how == "cwd" {
+            std::fs::write(s.ws.join(".env"), &dotenv).unwrap();
+            run_full(&s, &s.axon, &[], &[], &s.opted_in(), Some(&s.ws))
+        } else {
+            run_with(&s, &s.axon, &[], &[("AXON_DOTENV", named.to_str().unwrap())])
+        };
+        assert!(
+            !log.exists(),
+            "ATTACK: NH-R1 security F2 a .env ({how}) steered an unattended run's label log\n{}{}",
+            o.stdout,
+            o.stderr
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
 /// Security review F1 / §10 Q3: a host runs unattended only after it opted
 /// in. Without `/etc/axon/unattended-repair` - or with one another uid owns,
 /// one group/other can read or write, a directory in its place, or one

@@ -867,21 +867,24 @@ fn main() {
         };
     // Also before anything runs: a mistyped ranker is a command-line error,
     // not a fallback to spectrum that a reader would take for a choice.
+    // NH-R1 security F2: an unattended run never reads the selector
+    // variables (phase A refused them set; this keeps them unread).
+    let selector_env = |k: &str| if unattended { None } else { std::env::var(k).ok() };
     let ranker_spec = axon_cortex::rank::select(
         ranker_flag.as_deref(),
-        std::env::var(axon_cortex::rank::RANKER_ENV).ok().as_deref(),
+        selector_env(axon_cortex::rank::RANKER_ENV).as_deref(),
     )
     .unwrap_or_else(|e| usage(&e));
     let mut ranker_report: Option<axon_cortex::rank::RankReport> = None;
     let mut escalation: Option<axon_cortex::rank::Escalation> = None;
     let audit_spec = axon_cortex::audit::select(
         audit_flag.as_deref(),
-        std::env::var(axon_cortex::audit::AUDIT_ENV).ok().as_deref(),
+        selector_env(axon_cortex::audit::AUDIT_ENV).as_deref(),
     )
     .unwrap_or_else(|e| usage(&e));
     let label_log = axon_cortex::label::select(
         label_log_flag.as_deref(),
-        std::env::var(axon_cortex::label::LABEL_ENV).ok().as_deref(),
+        selector_env(axon_cortex::label::LABEL_ENV).as_deref(),
     )
     .unwrap_or_else(|e| usage(&e));
     if label_source && label_log.is_none() {

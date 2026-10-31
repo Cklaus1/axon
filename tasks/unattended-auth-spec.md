@@ -165,7 +165,7 @@ Any other flag → exit 29.
 | Input | Rule |
 |---|---|
 | `--symbol` | required |
-| `CORTEX_RANKER`, `CORTEX_AUDIT`, `CORTEX_LABEL_LOG`, `CORTEX_MODEL`, `AXON_CORTEX_GENERATOR_TIMEOUT_MS` | refused if set (`rank.rs:42`, `audit.rs:47`, `label.rs:23`) |
+| `CORTEX_RANKER`, `CORTEX_AUDIT`, `CORTEX_LABEL_LOG`, `CORTEX_MODEL`, `AXON_CORTEX_GENERATOR_TIMEOUT_MS` | refused if set (`rank.rs:42`, `audit.rs:47`, `label.rs:23`); never read afterwards. `[REVISED: security F2]` no `.env` is loaded: phase A consumes `axon-ai`'s dotenv once first (`axon_ai::forbid_dotenv`; `Err` if a lookup already ran -> exit 29), so neither `./.env` nor `$AXON_DOTENV` can set a variable the refusal never saw (S6 `s6_a_dotenv_steers_nothing`) |
 | `principal` | `envelope:<envelope_id>` |
 | `write_prefixes` | CLI ⊆ envelope (component-wise, after normalization) |
 | `max_proposals`, `deadline_ms`, `check_timeout_ms`, `candidates`, `--budget` | CLI ≤ envelope; an absent CLI value takes the envelope's |
