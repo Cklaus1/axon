@@ -12527,7 +12527,7 @@ MUTATIONS += [
     ('M4200', 'NH-R1 E3: the main thread keeps writing after the watchdog fired', _NHC,
      '    FROZEN.store(true, Ordering::SeqCst);',
      '    FROZEN.store(false, Ordering::SeqCst);',
-     'axon-cortex', '--test watchdog', 's10_e3_a_stalled_run_is_stopped_restored_and_reported_by_the_grace'),
+     'axon-cortex', '--test watchdog', 's10_e3_a_relocking_main_thread_cannot_starve_the_restore'),
     ('M4201', 'NH-R1 E5 create: an existing file is not reported as a foreign edit', _NHC,
      '            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {',
      '            Err(e) if false => {',

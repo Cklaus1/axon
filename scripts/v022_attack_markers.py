@@ -3425,7 +3425,7 @@ ATTACK_MARKERS.update({
     'M4117': r'ATTACK: a second unattended run took the lock of a file in use',
     'M4118': r'ATTACK: E6 a check child that inherits the launcher env was admitted',
     'M4119': r'ATTACK: E3 the running check \d+ survived the deadline',
-    'M4200': r'ATTACK: E3 a writing-stalled run (exited \d+ ms after its deadline|left the patched bytes in place)',
+    'M4200': r'ATTACK: E3 the main thread re-took the write lock after the watchdog fired',
 })
 ATTACK_MARKERS.update({
     'M4201': r'ATTACK: E5 a visible copy clobbered an existing file',

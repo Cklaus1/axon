@@ -110,6 +110,14 @@ fn e3_child() {
             std::thread::sleep(Duration::from_millis(300));
             drop(held);
         }
+        // The main thread re-takes the write lock in a loop, holding it
+        // 100 ms each time and letting go for an instant: an unfair mutex
+        // would hand it back to the main thread every time, so only the
+        // freeze (no `lock` after the watchdog fired) lets the restore in.
+        "relock" => loop {
+            let _l = cas::lock();
+            std::thread::sleep(Duration::from_millis(100));
+        },
         other => panic!("unknown case {other}"),
     }
     // Reaching here means nothing stopped the run.
@@ -297,6 +305,21 @@ fn s10_e3_a_watchdog_armed_late_still_restores() {
     assert!(
         e.stdout.contains("\"restore\":\"restored\"") && e.file == FOUND,
         "ATTACK: NH-R1 security F8 a watchdog armed after its deadline skipped the restore: {:?}",
+        e.stdout
+    );
+}
+
+/// E3: once the watchdog fired, the main thread never takes the write lock
+/// again. A main thread that re-takes it in a loop would otherwise starve
+/// the restore until the lock-free timer exits with nothing restored.
+#[test]
+fn s10_e3_a_relocking_main_thread_cannot_starve_the_restore() {
+    let e = run_case("relock", 0);
+    assert_eq!(e.code, Some(watchdog::EXIT_DEADLINE), "{:?}", e.stdout);
+    assert!(
+        e.stdout.contains("\"restore\":\"restored\"") && e.file == FOUND,
+        "ATTACK: E3 the main thread re-took the write lock after the watchdog fired \
+         and starved the restore: {:?}",
         e.stdout
     );
 }
