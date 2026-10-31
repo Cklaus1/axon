@@ -3407,4 +3407,10 @@ ATTACK_MARKERS.update({
     'M4034': r'ATTACK: a run killed at its deadline reads as a fault or an exit',
     'M4035': r"ATTACK: the wrapper's completion marker leaks into captured stdout",
     'M4036': r'ATTACK: a hanging generator outlives its deadline',
+    'M4037': r'ATTACK: a candidate that failed an example was accepted',
+    'M4038': r'ATTACK: a candidate with an error diagnostic was accepted',
+    'M4039': r'ATTACK: a program needing the network passed the admission gates',
+    'M4040': r'ATTACK: an expected output was visible to the program',
+    'M4041': r'ATTACK: a second capability refusal did not end the loop',
+    'M4042': r'ATTACK: the loop asked for a candidate past its last repair round',
 })

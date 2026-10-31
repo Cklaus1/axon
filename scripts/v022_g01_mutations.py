@@ -12465,5 +12465,38 @@ MUTATIONS += [
      'axon-intent', '--lib', 'generator::tests::a_hanging_cmd_generator_is_killed_with_its_group_at_the_deadline'),
 ]
 
+# intent-gen IgIntent IG4: the check->repair loop accepts only a candidate that passed check, gates and examples.
+MUTATIONS += [
+    ('M4037', 'IG4: a candidate that failed an example is accepted', 'crates/axon-intent/src/genloop.rs',
+     '    if failed {',
+     '    if false && failed {',
+     'axon-intent', '--test genloop', 'a_failed_example_fed_back_and_fixed_is_accepted'),
+    ('M4038', 'IG4: a candidate with an error diagnostic is accepted', 'crates/axon-intent/src/genloop.rs',
+     '    if !check.ok {',
+     '    if false && !check.ok {',
+     'axon-intent', '--test genloop', 'a_candidate_with_an_error_diagnostic_is_never_accepted'),
+    ('M4039', 'IG4: the pipeline gates (step 3) are skipped', 'crates/axon-intent/src/genloop.rs',
+     '    let resolved = match pipeline::resolve_draft(intent, draft, None) {\n        Ok(r) => r,\n',
+     '    let resolved = match pipeline::resolve_draft(intent, draft.clone(), None) {\n        Ok(r) => r,\n'
+     '        Err(_) if true => {\n'
+     '            let c = crate::confidence::Confidence::Ship { score: 100, deductions: vec![] };\n'
+     '            let g = ceiling_grant(intent);\n'
+     '            Resolved { request: crate::approval::render_request(&draft, &g, intent, &c, None), draft, grant: g, confidence: c }\n'
+     '        }\n',
+     'axon-intent', '--test genloop', 'a_static_overreach_refused_twice_ends_the_loop'),
+    ('M4040', 'IG4: an expected output is staged next to the program', 'crates/axon-intent/src/genloop.rs',
+     '        for f in &run.inputs {',
+     '        for f in run.inputs.iter().chain(&run.outputs) {',
+     'axon-intent', '--test genloop', 'expected_outputs_are_never_present_in_the_sandbox'),
+    ('M4041', 'IG4: a second capability refusal does not end the loop', 'crates/axon-intent/src/genloop.rs',
+     '        if classes.len() >= 2 {',
+     '        if classes.len() >= 3 {',
+     'axon-intent', '--test genloop', 'a_static_overreach_refused_twice_ends_the_loop'),
+    ('M4042', 'IG4: the loop runs a round past its last repair round', 'crates/axon-intent/src/genloop.rs',
+     '    for round in 0..=repairs {',
+     '    for round in 0..=repairs + 1 {',
+     'axon-intent', '--test genloop', 'four_bad_candidates_exhaust_the_loop_with_a_transcript_and_no_program'),
+]
+
 if __name__ == "__main__":
     main()

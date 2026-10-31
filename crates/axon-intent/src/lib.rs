@@ -16,6 +16,7 @@ pub mod cli;
 pub mod confidence;
 pub mod emit;
 pub mod generator;
+pub mod genloop;
 pub mod grant_infer;
 pub mod intent;
 pub mod pipeline;

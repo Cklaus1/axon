@@ -107,10 +107,18 @@ pub fn resolve(
     mode: GenMode,
     risk_floor: Option<Risk>,
 ) -> Result<Resolved, Refusal> {
-    // 1. compile (synthesis seam).
-    let draft = compile(intent, synth, mode)?;
+    resolve_draft(intent, compile(intent, synth, mode)?, risk_floor)
+}
 
-    // 2. confidence gate FIRST — refuse a low-quality draft before inferring a
+/// The gates every candidate passes, however it was produced (R22 §4, IG4
+/// step 3): confidence → least-privilege grant → admissibility → the legible
+/// request. The check→repair loop runs this on every type-checked candidate.
+pub fn resolve_draft(
+    intent: &Intent,
+    draft: ProgramDraft,
+    risk_floor: Option<Risk>,
+) -> Result<Resolved, Refusal> {
+    // 1. confidence gate FIRST — refuse a low-quality draft before inferring a
     //    grant for it (fail closed; cheap rejection).
     let confidence = score(&draft, intent);
     if let Confidence::Refuse { reason } = &confidence {
@@ -121,13 +129,13 @@ pub fn resolve(
         });
     }
 
-    // 3. least-privilege grant inference (may refuse: GrantExceedsCeiling).
+    // 2. least-privilege grant inference (may refuse: GrantExceedsCeiling).
     let grant = infer(&draft.meta.declared, &intent.cap_ceiling, &intent.budget)?;
 
-    // 4. admissibility proof (must hold by construction; refuse on any skew).
+    // 3. admissibility proof (must hold by construction; refuse on any skew).
     prove_admissible(&draft.meta.declared, &grant)?;
 
-    // 5. render the legible request.
+    // 4. render the legible request.
     let request = render_request(&draft, &grant, intent, &confidence, risk_floor);
 
     Ok(Resolved {
