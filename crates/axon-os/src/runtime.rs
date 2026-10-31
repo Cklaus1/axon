@@ -588,10 +588,12 @@ fn is_kill_file_tripped(path: &std::path::Path) -> bool {
 /// `env_clear` without `AXON_RECORD`, so there is no run-id line to skip.)
 /// Did the sandbox wrapper run to completion? (AUDIT T44.) True only if stdout
 /// carries the exact marker for THIS run — the nonce makes it unforgeable by the
-/// job, which never sees the generated wrapper.
+/// job, which never sees the generated wrapper. The marker ENDS a line rather
+/// than being one: a job whose last output is `print` without a newline leaves
+/// the wrapper's `println` on that same line, and that job did finish.
 fn ran_to_completion(stdout: &str, nonce: &str) -> bool {
     let expect = format!("{DONE_SENTINEL}{nonce}");
-    stdout.lines().any(|l| l.trim() == expect)
+    stdout.lines().any(|l| l.trim_end().ends_with(&expect))
 }
 
 fn first_axon_line(stderr: &str, default: &str) -> String {
@@ -743,13 +745,20 @@ fn done_nonce() -> String {
 
 fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> String {
     let ceiling = grant.effect_set();
-    let mut tags: Vec<&str> = Vec::new();
+    // `IO` is ALWAYS in the set: it is console output and `exit`, not a
+    // capability admission grants. It used to be emitted only when
+    // fs_read/fs_write/exec was granted, so a print-only job was admitted
+    // under an empty grant and refused here. What else `IO` covers stays
+    // narrowed by the interpreter: the filesystem by the allowlists below (an
+    // empty list is deny-all), process spawn by its own `Exec` tag, and
+    // `env_var` by the fs_read allowlist (deny-all when empty), the axis
+    // admission projects an environment read onto. `Time`/`Random` stay out
+    // (examples/jobs/evasion: the runtime fence for effects admission cannot
+    // represent).
+    let mut tags: Vec<&str> = vec!["IO"];
     if ceiling.net {
         tags.push("Net");
         tags.push("AI");
-    }
-    if ceiling.fs_read || ceiling.fs_write || ceiling.exec {
-        tags.push("IO");
     }
     if ceiling.exec {
         tags.push("Exec");

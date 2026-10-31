@@ -257,6 +257,20 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
             let allow = match kind {
                 caps::IoKind::FsRead => sb.scope.fs_read.as_deref().map(|l| ("read path", l)),
                 caps::IoKind::FsWrite => sb.scope.fs_write.as_deref().map(|l| ("write path", l)),
+                // An environment read is an ambient secret channel. Under a
+                // scoped sandbox whose read allowlist is EXPLICITLY empty
+                // (deny-all) it is refused: `IO` (console output) must not
+                // imply it. axon-os grants `IO` to every job and projects
+                // `env_var` onto the fs_read axis at admission, so a job is
+                // given the environment exactly when it is given a read
+                // prefix. A non-empty or unrestricted read scope leaves it
+                // as before.
+                caps::IoKind::Env => sb
+                    .scope
+                    .fs_read
+                    .as_deref()
+                    .filter(|l| l.is_empty())
+                    .map(|l| ("read the environment variable", l)),
                 _ => None,
             };
             let Some((what, allow)) = allow else { continue };

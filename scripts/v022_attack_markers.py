@@ -3392,3 +3392,10 @@ ATTACK_MARKERS.update({
     'M3940': r'ATTACK: a dict holding a value of another type checked clean \[d_generic_put\]',
     'M3941': r'ATTACK: a generic method call or generic struct argument checked clean \[g_lambda_param_unbound\]',
 })
+
+# intent-gen IgIntent (ids M4025-M4059)
+ATTACK_MARKERS.update({
+    'M4025': r'ATTACK: println-only job refused under an empty grant',
+    'M4026': r'ATTACK: completion marker lost after an unterminated print',
+    'M4027': r'ATTACK: env_var readable without an fs_read grant',
+})

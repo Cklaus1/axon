@@ -12398,5 +12398,22 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'generic_param_method_and_generic_struct_args_are_checked'),
 ]
 
+# intent-gen IgIntent (ids M4025-M4059): the axon-os sandbox wrapper grants console `IO` to every
+# job; `env_var` stays behind the fs_read allowlist; an unterminated `print` keeps the marker.
+MUTATIONS += [
+    ('M4025', 'IG sandbox: `IO` is again emitted only when fs/exec is granted (println refused)', 'crates/axon-os/src/runtime.rs',
+     'let mut tags: Vec<&str> = vec!["IO"];',
+     'let mut tags: Vec<&str> = if ceiling.fs_read || ceiling.fs_write || ceiling.exec { vec!["IO"] } else { Vec::new() };',
+     'axon-os', '--test sandbox_console', 'console_output_runs_under_an_empty_grant'),
+    ('M4026', 'IG sandbox: the completion marker must again be a whole line', 'crates/axon-os/src/runtime.rs',
+     'l.trim_end().ends_with(&expect)',
+     'l.trim() == expect',
+     'axon-os', '--test sandbox_console', 'a_job_whose_last_output_has_no_newline_still_completes'),
+    ('M4027', 'IG sandbox: an empty fs_read allowlist no longer denies `env_var`', 'crates/axon-core/src/interp/builtins.rs',
+     '.filter(|l| l.is_empty())',
+     '.filter(|l| l.is_empty() && false)',
+     'axon-os', '--test sandbox_console', 'an_environment_read_needs_the_fs_read_grant'),
+]
+
 if __name__ == "__main__":
     main()
