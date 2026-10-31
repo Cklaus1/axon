@@ -25,6 +25,7 @@ pub mod profile;
 pub mod record;
 pub mod repair_envelope;
 pub mod replay;
+pub mod run_ledger;
 pub mod runtime;
 pub mod supervisor;
 pub mod verdict;

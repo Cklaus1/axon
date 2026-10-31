@@ -33,6 +33,7 @@ use axon_os::repair_envelope::{
     self as envelope, MintKey, RepairEnvelope, VerifyKey, ENVELOPE_SCHEMA, ENVELOPE_SEED_DOMAIN,
     ENVELOPE_SIG_DOMAIN,
 };
+use axon_os::run_ledger::{self, SealKey, HEAD_SCHEMA, RECORD_SCHEMA as RUN_RECORD_SCHEMA};
 use axon_os::{RECORD_DOMAIN, TOKEN_DOMAIN};
 use axon_psv::*;
 use ring::signature::{Ed25519KeyPair, KeyPair};
@@ -147,6 +148,18 @@ fn domains() -> Vec<(&'static str, &'static str, &'static str)> {
         ),
         ("TOKEN_DOMAIN", TOKEN_DOMAIN, "axon-approval token v1"),
         ("RECORD_DOMAIN", RECORD_DOMAIN, "axon-os record v1"),
+        // R6 (§4 seal): the run-record subkey label and the two sealed schemas
+        (
+            "RUN_RECORD_DOMAIN",
+            run_ledger::RUN_RECORD_DOMAIN,
+            "axon-approval repair-run-record v1",
+        ),
+        (
+            "RUN_RECORD_SCHEMA",
+            RUN_RECORD_SCHEMA,
+            "cortex-run-record/1",
+        ),
+        ("HEAD_SCHEMA", HEAD_SCHEMA, "cortex-run-ledger-head/1"),
     ]
 }
 
@@ -172,6 +185,7 @@ fn envelope_sample() -> RepairEnvelope {
         "schema": ENVELOPE_SCHEMA,
         "envelope_id": "0123456789abcdef0123456789abcdef",
         "spent_store_id": "fedcba9876543210fedcba9876543210",
+        "run_ledger_id": "00112233445566778899aabbccddeeff",
         "issued_by": "operator",
         "issued_unix": ENVELOPE_NOW - 10,
         "expires_unix": ENVELOPE_NOW + 3_600,
@@ -260,6 +274,27 @@ fn known_answer_repair_envelope() {
         "repair-envelope signature (pins ENVELOPE_SIG_DOMAIN)",
         signed["sig"].as_str().unwrap(),
         KAT_ENVELOPE_SIG,
+    );
+}
+
+#[test]
+fn known_answer_run_record_seal() {
+    let key = SealKey::derive(ENVELOPE_OP_KEY).expect("test key");
+    kat(
+        "run-record subkey (pins RUN_RECORD_DOMAIN)",
+        &key.to_hex(),
+        KAT_RUN_RECORD_SUBKEY,
+    );
+    let head = json!({
+        "schema": HEAD_SCHEMA,
+        "ledger_id": "00112233445566778899aabbccddeeff",
+        "seq": 0,
+        "record_digest": format!("cl22:{}", "e".repeat(64)),
+    });
+    kat(
+        "run-ledger head seal (pins the axrun1 seal over cl22 canonical bytes)",
+        &key.seal(&head).unwrap(),
+        KAT_RUN_HEAD_SEAL,
     );
 }
 
@@ -538,4 +573,9 @@ const KAT_LEDGER_MAC: &str = "bdda876a50e9d7514e92b4e6cf0f5108a69092bb68f855e0aa
 // NH-R1: computed independently (Python `hmac` + `cryptography` Ed25519 + sorted compact JSON)
 const KAT_ENVELOPE_PUBLIC: &str =
     "7817267170d04cbb2259f5a63ee290e1d6d494a28a0c9bf75f0e7f270aec4aed";
-const KAT_ENVELOPE_SIG: &str = "axenv1:e0a5dedcc02785dcc5a9f1e322d7cf6814732b499b36f062bdbd7cd3f1b82d66be3f3590c9ae9f2f204510abf0fa81b7fd98b05800c41e13a06e85916def3a01";
+const KAT_ENVELOPE_SIG: &str = "axenv1:52cb920b4ae476cb12b33595665aae7a6fb833ad49571434f41f87d3e224154b7ca0859bb90b11a7dd6b20f61013cd68e394231726d58992ec71368fc3c8bb0a";
+// R6: computed independently (Python `hmac` + sorted-key compact `json.dumps`).
+const KAT_RUN_RECORD_SUBKEY: &str =
+    "a21dd6a4cf2e986bb2ac1f9b84475e7647d007b1494b7ddfd795643dcff13e7e";
+const KAT_RUN_HEAD_SEAL: &str =
+    "axrun1:cd701a3e6a66b7891a7e0ab15b1cd2c117e27292d70562d6c15f2ff7ada00697";
