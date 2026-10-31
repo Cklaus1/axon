@@ -31,5 +31,10 @@ axon-attest = { path = "../axon-attest" }
 # G2: the job runs as a process-group job (killed whole on its timeout, its
 # latch and a termination signal to `axon-os run`), with time-bounded drains.
 axon-jobctl = { path = "../axon-jobctl" }
+# NH-R1 §4: the repair envelope. Its canonical form is the cl22 leaf crate's
+# (one definition, no crate cycle); its signature is Ed25519 (ring, already in
+# the workspace lockfile through axon-loop-contracts and axon-fabric).
+axon-canonical = { path = "../axon-canonical" }
+ring = "0.17"
 
 [dev-dependencies]

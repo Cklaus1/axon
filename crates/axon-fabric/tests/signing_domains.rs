@@ -29,6 +29,11 @@ use axon_loop_contracts::operator_trust::{
     evidence_signing_message, TrustAuthority, EVIDENCE_SIGNATURE_SCHEMA,
 };
 use axon_loop_contracts::{ComputeRequest, ExecutionReceipt, OpaqueRef};
+use axon_os::repair_envelope::{
+    self as envelope, MintKey, RepairEnvelope, VerifyKey, ENVELOPE_SCHEMA, ENVELOPE_SEED_DOMAIN,
+    ENVELOPE_SIG_DOMAIN,
+};
+use axon_os::{RECORD_DOMAIN, TOKEN_DOMAIN};
 use axon_psv::*;
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::{json, Value};
@@ -128,7 +133,134 @@ fn domains() -> Vec<(&'static str, &'static str, &'static str)> {
             COMPLETION_SCHEME,
             "axon-guest-completion/1",
         ),
+        // NH-R1 (§4 domains): the repair envelope and the G5 subkey labels
+        ("ENVELOPE_SCHEMA", ENVELOPE_SCHEMA, "axon-approval/4"),
+        (
+            "ENVELOPE_SEED_DOMAIN",
+            ENVELOPE_SEED_DOMAIN,
+            "axon-approval repair-envelope v1",
+        ),
+        (
+            "ENVELOPE_SIG_DOMAIN",
+            ENVELOPE_SIG_DOMAIN,
+            "axon-approval/4 repair-envelope signature",
+        ),
+        ("TOKEN_DOMAIN", TOKEN_DOMAIN, "axon-approval token v1"),
+        ("RECORD_DOMAIN", RECORD_DOMAIN, "axon-os record v1"),
     ]
+}
+
+/// A fixed TEST operator key (public, never a real secret).
+const ENVELOPE_OP_KEY: &[u8] = b"nh-r1 test operator key, not a secret";
+const ENVELOPE_NOW: u64 = 1_800_000_000;
+
+/// The PKCS#8 form of the envelope minter's Ed25519 key, so the document
+/// signer can sign with the SAME key: only the domains then separate them.
+fn envelope_pkcs8() -> Vec<u8> {
+    let k = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, ENVELOPE_OP_KEY);
+    let seed = ring::hmac::sign(&k, ENVELOPE_SEED_DOMAIN.as_bytes());
+    let kp = Ed25519KeyPair::from_seed_unchecked(seed.as_ref()).expect("seed");
+    let mut v = hex_decode("3053020101300506032b657004220420");
+    v.extend_from_slice(seed.as_ref());
+    v.extend_from_slice(&[0xa1, 0x23, 0x03, 0x21, 0x00]);
+    v.extend_from_slice(kp.public_key().as_ref());
+    v
+}
+
+fn envelope_sample() -> RepairEnvelope {
+    serde_json::from_value(json!({
+        "schema": ENVELOPE_SCHEMA,
+        "envelope_id": "0123456789abcdef0123456789abcdef",
+        "spent_store_id": "fedcba9876543210fedcba9876543210",
+        "issued_by": "operator",
+        "issued_unix": ENVELOPE_NOW - 10,
+        "expires_unix": ENVELOPE_NOW + 3_600,
+        "task": {"workspace": "/srv/ws", "file": "src/main.axon", "symbol": "parse",
+                 "pristine_sha256": "a".repeat(64),
+                 "imports_digest": format!("axsha256:{}", "b".repeat(64))},
+        "write_prefixes": ["src"],
+        "scopes": {"fs_read": ["data"], "fs_write": ["out"], "net": ["api.example.com"]},
+        "capabilities": {"fence_sha256": "c".repeat(64),
+                         "target_grant": {"symbol": "parse", "effects": ["fs_read"]}},
+        "check": {"name": "test_parse", "digest": "d".repeat(64)},
+        "budget": {"max_proposals": 4, "deadline_ms": 60_000, "check_timeout_ms": 10_000,
+                   "candidates": 3, "max_steps": 8},
+        "generator": {"kind": "ai", "model": "claude-x", "provider": "anthropic",
+                      "endpoint_host": "api.anthropic.com"},
+        "decision": "authorize-operate",
+        "sig": "",
+    }))
+    .expect("envelope fixture")
+}
+
+/// NH-R1 §4: an envelope signature never verifies as a document signature of
+/// any registered domain, and no document signature or receipt attestation
+/// verifies as an envelope - with ONE key behind all of them.
+#[test]
+fn an_envelope_signature_never_verifies_as_another_protocol_and_the_reverse() {
+    let mint = MintKey::derive(ENVELOPE_OP_KEY).expect("test key");
+    let pkcs8 = envelope_pkcs8();
+    let pk = public_hex(&pkcs8);
+    assert_eq!(
+        pk,
+        mint.verify_key().to_hex(),
+        "setup: the document key is the envelope key"
+    );
+    let vk = VerifyKey::from_hex(&pk).expect("verify key");
+    let signed = mint.sign(&envelope_sample()).expect("sign");
+    envelope::verify(&signed, &vk, ENVELOPE_NOW).expect("control: the envelope verifies");
+    let mut unsigned: Value = serde_json::from_str(&signed).expect("json");
+    let sig = unsigned
+        .as_object_mut()
+        .and_then(|o| o.remove("sig"))
+        .and_then(|s| s.as_str().map(str::to_string))
+        .expect("sig");
+    let sig_hex = sig.strip_prefix("axenv1:").expect("prefix").to_string();
+    let as_envelope = |doc_sig_hex: &str| {
+        let mut v = unsigned.clone();
+        v["sig"] = json!(format!("axenv1:{doc_sig_hex}"));
+        String::from_utf8(axon_loop_contracts::canonical_bytes(&v).unwrap()).unwrap()
+    };
+    for (dn, dv, _) in domains() {
+        // the envelope's signature, presented as a document signature of the envelope
+        let mut forged = sign_document(&pkcs8, dv, &issuer(), &unsigned).expect("sign");
+        verify_document(&forged, dv, &issuer(), &unsigned, &pk).expect("control");
+        forged["signature"] = json!(sig_hex);
+        assert!(
+            verify_document(&forged, dv, &issuer(), &unsigned, &pk).is_err(),
+            "ATTACK: cross-protocol replay: a repair-envelope signature verified as a {dn} document signature"
+        );
+        // a document signature over the envelope, presented as the envelope's `sig`
+        let doc_sig = sign_document(&pkcs8, dv, &issuer(), &unsigned).expect("sign");
+        let replay = as_envelope(doc_sig["signature"].as_str().expect("signature"));
+        assert!(
+            envelope::verify(&replay, &vk, ENVELOPE_NOW).is_err(),
+            "ATTACK: cross-protocol replay: a {dn} document signature verified as a repair envelope"
+        );
+    }
+    // a receipt attestation's signature is not an envelope signature either
+    let att = sign(&pkcs8, &issuer(), &req(), &rc(), 1_000).expect("attest");
+    let replay = as_envelope(att["signature"].as_str().expect("signature"));
+    assert!(
+        envelope::verify(&replay, &vk, ENVELOPE_NOW).is_err(),
+        "ATTACK: cross-protocol replay: a receipt attestation verified as a repair envelope"
+    );
+}
+
+#[test]
+fn known_answer_repair_envelope() {
+    let mint = MintKey::derive(ENVELOPE_OP_KEY).expect("test key");
+    kat(
+        "repair-envelope verify key (pins ENVELOPE_SEED_DOMAIN)",
+        &mint.verify_key().to_hex(),
+        KAT_ENVELOPE_PUBLIC,
+    );
+    let signed: Value = serde_json::from_str(&mint.sign(&envelope_sample()).unwrap()).unwrap();
+    kat(
+        "repair-envelope signature (pins ENVELOPE_SIG_DOMAIN)",
+        signed["sig"].as_str().unwrap(),
+        KAT_ENVELOPE_SIG,
+    );
 }
 
 #[test]
@@ -403,3 +535,7 @@ const KAT_COMPLETION_KEY: &str = "9560211e3d5b588d490e073f28fbba5a3dfe0d9f40b0e0
 const KAT_PASS_TOKEN: &str = "a875b3413a17359d72e634a6f4fe07f2de3e20de9d4d2359b370ac51c0cb9f54";
 const KAT_FAIL_TOKEN: &str = "c9ed37e39e339072d5c5984526379387efc65131001b8da55dd17dd69a67f5bd";
 const KAT_LEDGER_MAC: &str = "bdda876a50e9d7514e92b4e6cf0f5108a69092bb68f855e0aa3185206f9660c5";
+// NH-R1: computed independently (Python `hmac` + `cryptography` Ed25519 + sorted compact JSON)
+const KAT_ENVELOPE_PUBLIC: &str =
+    "7817267170d04cbb2259f5a63ee290e1d6d494a28a0c9bf75f0e7f270aec4aed";
+const KAT_ENVELOPE_SIG: &str = "axenv1:e0a5dedcc02785dcc5a9f1e322d7cf6814732b499b36f062bdbd7cd3f1b82d66be3f3590c9ae9f2f204510abf0fa81b7fd98b05800c41e13a06e85916def3a01";

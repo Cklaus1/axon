@@ -1,5 +1,10 @@
 //! Strict ingest and the `cl22:` canonical digest.
 //!
+//! The writer and the untyped strict parser live in the leaf crate
+//! `axon-canonical` (NH-R1 §4: `axon-os` needs them, and this crate depends on
+//! `axon-cortex`, so they could not stay here without a cycle); this module
+//! re-exports them in this crate's [`Refusal`] and keeps the typed [`parse`].
+//!
 //! # The `cl22:` rule
 //!
 //! `"cl22:" + lowercase-hex(SHA-256(canonical bytes))`, where the canonical
@@ -24,7 +29,7 @@
 //! the same bytes, and nothing about who produced either.
 
 use crate::error::{shape, Refusal};
-use crate::{Contract, MAX_BYTES, MAX_DEPTH, MAX_INTEGER};
+use crate::{Contract, MAX_BYTES};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -64,146 +69,22 @@ pub fn parse_bytes<T: Contract>(bytes: &[u8]) -> Result<T, Refusal> {
     parse(text)
 }
 
-/// Strict untyped ingest: every rule of [`parse`] except the typed shape.
+/// Strict untyped ingest: every rule of [`parse`] except the typed shape
+/// (`axon_canonical::parse_value`, in this crate's [`Refusal`]).
 pub fn parse_value(json: &str) -> Result<Value, Refusal> {
-    if json.len() > MAX_BYTES {
-        return Err(Refusal::TooLarge(json.len()));
-    }
-    bounded_depth(json)?;
-    let normalized = negative_zero_to_zero(json);
-    let value: Value = axon_cortex::parse_strict(normalized.as_deref().unwrap_or(json))
-        .map_err(Refusal::Strict)?;
-    json_tree(&value, 0)?;
-    Ok(value)
-}
-
-/// `-0` is a JSON INTEGER token and the reference reads it as integer `0`:
-/// `tools/closed_loop_reference.py` `strict_json` passes every integer token
-/// through `bounded_int` (L114-120: `value = int(text)`, and `int('-0') == 0`),
-/// so `strict_json('-0')` is `0` and it canonicalises as `0`. serde_json
-/// instead parses `-0` as the float `-0.0`, which the float rule would refuse
-/// (red-team D4). The token is rewritten to `0` LEXICALLY, before parsing, so
-/// `-0.0`, `-0e0` and friends still reach the parser as floats and are refused.
-/// Returns `None` when the text contains no such token (the common case).
-fn negative_zero_to_zero(text: &str) -> Option<String> {
-    let b = text.as_bytes();
-    let (mut quoted, mut escaped) = (false, false);
-    let mut hits = Vec::new();
-    for i in 0..b.len() {
-        let c = b[i];
-        if quoted {
-            if escaped {
-                escaped = false;
-            } else if c == b'\\' {
-                escaped = true;
-            } else if c == b'"' {
-                quoted = false;
-            }
-        } else if c == b'"' {
-            quoted = true;
-        } else if c == b'-'
-            && b.get(i + 1) == Some(&b'0')
-            && !matches!(b.get(i + 2), Some(b'0'..=b'9' | b'.' | b'e' | b'E'))
-        {
-            hits.push(i);
-        }
-    }
-    if hits.is_empty() {
-        return None;
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut last = 0;
-    for i in hits {
-        out.push_str(&text[last..i]);
-        last = i + 1; // drop the '-' only
-    }
-    out.push_str(&text[last..]);
-    Some(out)
-}
-
-/// The text pre-scan: count `[`/`{` outside strings, refuse past MAX_DEPTH.
-/// Mirrors the reference's `_bounded_depth`; the parser still validates
-/// balance and quoting.
-fn bounded_depth(text: &str) -> Result<(), Refusal> {
-    let (mut depth, mut quoted, mut escaped) = (0usize, false, false);
-    for b in text.bytes() {
-        if quoted {
-            if escaped {
-                escaped = false;
-            } else if b == b'\\' {
-                escaped = true;
-            } else if b == b'"' {
-                quoted = false;
-            }
-        } else if b == b'"' {
-            quoted = true;
-        } else if b == b'[' || b == b'{' {
-            depth += 1;
-            if depth > MAX_DEPTH {
-                return Err(Refusal::TooDeep);
-            }
-        } else if b == b']' || b == b'}' {
-            depth = depth.saturating_sub(1);
-        }
-    }
-    Ok(())
-}
-
-/// The value walk: mirrors the reference's `_json_tree` (keys count as one
-/// level below their object, like values).
-fn json_tree(v: &Value, depth: usize) -> Result<(), Refusal> {
-    if depth > MAX_DEPTH {
-        return Err(Refusal::TooDeep);
-    }
-    match v {
-        Value::Null | Value::Bool(_) | Value::String(_) => Ok(()),
-        Value::Number(n) => check_number(n),
-        Value::Array(a) => a.iter().try_for_each(|x| json_tree(x, depth + 1)),
-        Value::Object(o) => {
-            if !o.is_empty() && depth + 1 > MAX_DEPTH {
-                return Err(Refusal::TooDeep);
-            }
-            o.values().try_for_each(|x| json_tree(x, depth + 1))
-        }
-    }
-}
-
-fn check_number(n: &serde_json::Number) -> Result<(), Refusal> {
-    if let Some(i) = n.as_i64() {
-        if i.unsigned_abs() > MAX_INTEGER {
-            return Err(Refusal::UnsafeInteger(n.to_string()));
-        }
-        Ok(())
-    } else if let Some(u) = n.as_u64() {
-        if u > MAX_INTEGER {
-            return Err(Refusal::UnsafeInteger(n.to_string()));
-        }
-        Ok(())
-    } else {
-        // A fraction, an exponent, or an integer literal wider than u64 (which
-        // serde_json without `arbitrary_precision` represents as f64). All are
-        // outside the profile.
-        Err(Refusal::Float)
-    }
+    Ok(axon_canonical::parse_value(json)?)
 }
 
 /// Canonical bytes of a JSON value under the `cl22` rule (see module docs).
 /// Refuses what the reference refuses: floats, unsafe integers, excess depth,
 /// and output over [`MAX_BYTES`].
 pub fn canonical_bytes(v: &Value) -> Result<Vec<u8>, Refusal> {
-    json_tree(v, 0)?;
-    let mut out = Vec::new();
-    write_canonical(v, &mut out);
-    if out.len() > MAX_BYTES {
-        return Err(Refusal::TooLarge(out.len()));
-    }
-    Ok(out)
+    Ok(axon_canonical::canonical_bytes(v)?)
 }
 
 /// Canonical bytes of any serializable contract value.
 pub fn canonical_json<T: Serialize>(v: &T) -> Result<Vec<u8>, Refusal> {
-    let value = serde_json::to_value(v).map_err(|e| shape(e.to_string()))?;
-    canonical_bytes(&value)
+    Ok(axon_canonical::canonical_json(v)?)
 }
 
 /// `cl22:` digest of a contract value.
@@ -217,75 +98,7 @@ pub fn digest_value(v: &Value) -> Result<crate::Ref, Refusal> {
 }
 
 fn cl22(bytes: &[u8]) -> crate::Ref {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(bytes);
-    crate::Ref::new(format!("cl22:{:x}", h.finalize())).expect("sha256 hex is a valid cl22 ref")
-}
-
-fn write_canonical(v: &Value, out: &mut Vec<u8>) {
-    match v {
-        Value::Null => out.extend_from_slice(b"null"),
-        Value::Bool(true) => out.extend_from_slice(b"true"),
-        Value::Bool(false) => out.extend_from_slice(b"false"),
-        // Only integers reach here (json_tree ran first); Number's Display of
-        // an integer is plain decimal.
-        Value::Number(n) => out.extend_from_slice(n.to_string().as_bytes()),
-        Value::String(s) => write_string(s, out),
-        Value::Array(a) => {
-            out.push(b'[');
-            for (i, x) in a.iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                write_canonical(x, out);
-            }
-            out.push(b']');
-        }
-        Value::Object(o) => {
-            // Sort explicitly rather than rely on serde_json's map type, which
-            // becomes insertion-ordered if any crate in the build enables
-            // `preserve_order`. `str` Ord is UTF-8 byte order == code point
-            // order, which is Python's `sort_keys` order.
-            let mut keys: Vec<&String> = o.keys().collect();
-            keys.sort();
-            out.push(b'{');
-            for (i, k) in keys.into_iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                write_string(k, out);
-                out.push(b':');
-                write_canonical(&o[k], out);
-            }
-            out.push(b'}');
-        }
-    }
-}
-
-fn write_string(s: &str, out: &mut Vec<u8>) {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    out.push(b'"');
-    for &b in s.as_bytes() {
-        match b {
-            b'"' => out.extend_from_slice(b"\\\""),
-            b'\\' => out.extend_from_slice(b"\\\\"),
-            b'\n' => out.extend_from_slice(b"\\n"),
-            b'\r' => out.extend_from_slice(b"\\r"),
-            b'\t' => out.extend_from_slice(b"\\t"),
-            0x08 => out.extend_from_slice(b"\\b"),
-            0x0c => out.extend_from_slice(b"\\f"),
-            0x00..=0x1f => {
-                out.extend_from_slice(b"\\u00");
-                out.push(HEX[(b >> 4) as usize]);
-                out.push(HEX[(b & 0xf) as usize]);
-            }
-            // Every other byte, including all UTF-8 continuation bytes, is
-            // copied: ensure_ascii=False emits non-ASCII raw.
-            _ => out.push(b),
-        }
-    }
-    out.push(b'"');
+    crate::Ref::new(axon_canonical::cl22(bytes)).expect("sha256 hex is a valid cl22 ref")
 }
 
 #[cfg(test)]

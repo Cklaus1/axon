@@ -17,6 +17,9 @@ libc = "0.2"
 # The `cmd:` generator runs as a process-group job, killed whole at its deadline
 # (KG2), and `cortex` forwards termination signals to it (KG3).
 axon-jobctl = { path = "../axon-jobctl" }
+# The strict JSON decode (`parse_strict`'s duplicate-key visitor) lives in the
+# cl22 leaf crate, one definition for every crate that reads protocol JSON.
+axon-canonical = { path = "../axon-canonical" }
 axon-ai = { path = "../axon-ai", optional = true }
 
 [features]

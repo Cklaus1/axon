@@ -216,44 +216,22 @@ impl std::error::Error for ContractError {}
 /// neither is caught by `deny_unknown_fields`, so they are checked here — on
 /// the raw text, before typed parsing, since by then the ambiguity is gone.
 pub fn parse_strict<T: for<'de> Deserialize<'de>>(json: &str) -> Result<T, ContractError> {
-    // DUPLICATE KEYS ARE DETECTED BY THE PARSER, not by scanning the text.
-    //
-    // A hand-rolled scanner compared keys as they were WRITTEN while
-    // `serde_json` compares them as they DECODE, and the gap between those two
-    // is an attack:
-    //
-    //   {"principal":"intruder","princip\u0061l":"agent", …}
-    //
-    // The scanner saw `principal` and `princip\u0061l`, found no repeat, and
-    // passed it through; `serde_json` saw one key twice and took the last.
-    // Measured against the shipped adapter, that returned
-    // `"basis":"granted: the principal … were all checked"` while a reviewer
-    // reading the request sees `intruder`. It defeated this exact guard one
-    // commit after the guard was put in front of it.
-    //
-    // Reusing the real parser removes the class rather than the instance:
-    // escapes, surrogate pairs and any future spelling of the same key are
-    // decoded once, by the code that decides what the key IS.
-    let strict: StrictValue = serde_json::from_str(json).map_err(|e| {
-        let m = e.to_string();
-        if let Some(k) = m.strip_prefix("duplicate key: ") {
-            ContractError::DuplicateKey(k.split(" at line").next().unwrap_or(k).to_string())
-        } else if m.contains("number out of range") {
-            // A LITERAL THAT WOULD BE INFINITE — `1e400`. This is the reachable
-            // form of the non-finite refusal, and keeping the variant pointed
-            // at it is what stops it from becoming an error nothing can
-            // construct.
-            //
-            // A bare `NaN` or `Infinity` token is NOT this: it is not a number
-            // at all, and serde rejects it as an unexpected value. Reporting
-            // that as a non-finite NUMBER would describe the document
-            // incorrectly.
-            ContractError::NonFiniteNumber(m)
-        } else if m.contains("unknown field") || m.contains("unknown variant") {
-            ContractError::UnknownVariantOrField(m)
-        } else {
-            ContractError::Malformed(m)
-        }
+    // DUPLICATE KEYS ARE DETECTED BY THE PARSER, not by scanning the text: the
+    // decode is `axon_canonical::strict_value` (its docs carry the attack that
+    // made it so), one definition shared with the cl22 profile.
+    let strict = axon_canonical::strict_value(json).map_err(|r| match r {
+        axon_canonical::CanonError::DuplicateKey(k) => ContractError::DuplicateKey(k),
+        // A LITERAL THAT WOULD BE INFINITE — `1e400`. This is the reachable
+        // form of the non-finite refusal, and keeping the variant pointed at
+        // it is what stops it from becoming an error nothing can construct.
+        //
+        // A bare `NaN` or `Infinity` token is NOT this: it is not a number at
+        // all, and serde rejects it as an unexpected value (Malformed).
+        // Reporting that as a non-finite NUMBER would describe the document
+        // incorrectly.
+        axon_canonical::CanonError::NonFiniteNumber(m) => ContractError::NonFiniteNumber(m),
+        axon_canonical::CanonError::Malformed(m) => ContractError::Malformed(m),
+        other => ContractError::Malformed(other.to_string()),
     })?;
     // Non-finite numbers are handled above, by the parser. The check that used
     // to live here scanned the RAW TEXT for "NaN", "Infinity" and "-Infinity",
@@ -264,7 +242,7 @@ pub fn parse_strict<T: for<'de> Deserialize<'de>>(json: &str) -> Result<T, Contr
     // valid input gets disabled, and then it protects nothing — this crate
     // makes that argument about its duplicate-key checker and did not apply it
     // here.
-    serde_json::from_value(strict.0).map_err(|e| {
+    serde_json::from_value(strict).map_err(|e| {
         let m = e.to_string();
         if m.contains("unknown field") || m.contains("unknown variant") {
             ContractError::UnknownVariantOrField(m)
@@ -272,71 +250,6 @@ pub fn parse_strict<T: for<'de> Deserialize<'de>>(json: &str) -> Result<T, Contr
             ContractError::Malformed(m)
         }
     })
-}
-
-/// A `serde_json::Value` that refuses an object containing the same key twice.
-///
-/// The duplicate check lives in the visitor so it runs on DECODED keys, inside
-/// the parser that decides what a key is.
-struct StrictValue(serde_json::Value);
-
-impl<'de> Deserialize<'de> for StrictValue {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct V;
-        impl<'de> serde::de::Visitor<'de> for V {
-            type Value = serde_json::Value;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("any JSON value, with no repeated object key")
-            }
-            fn visit_unit<E>(self) -> Result<Self::Value, E> {
-                Ok(serde_json::Value::Null)
-            }
-            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
-                Ok(v.into())
-            }
-            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
-                Ok(v.into())
-            }
-            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
-                Ok(v.into())
-            }
-            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
-                Ok(serde_json::Number::from_f64(v)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or(serde_json::Value::Null))
-            }
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
-                Ok(v.into())
-            }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut a: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut out = Vec::new();
-                while let Some(StrictValue(v)) = a.next_element()? {
-                    out.push(v);
-                }
-                Ok(serde_json::Value::Array(out))
-            }
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                mut a: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut out = serde_json::Map::new();
-                while let Some(k) = a.next_key::<String>()? {
-                    let StrictValue(v) = a.next_value()?;
-                    // The key as DECODED. Two spellings of one key are one
-                    // key, which is the whole point.
-                    if out.contains_key(&k) {
-                        return Err(serde::de::Error::custom(format!("duplicate key: {k}")));
-                    }
-                    out.insert(k, v);
-                }
-                Ok(serde_json::Value::Object(out))
-            }
-        }
-        d.deserialize_any(V).map(StrictValue)
-    }
 }
 
 /// Canonical serialization: the bytes a digest is taken over.

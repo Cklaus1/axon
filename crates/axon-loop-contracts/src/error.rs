@@ -39,6 +39,25 @@ impl std::fmt::Display for Refusal {
 
 impl std::error::Error for Refusal {}
 
+/// The cl22 leaf crate's refusals, in this crate's vocabulary: the strict
+/// decode's three stay `Strict` (the variants `axon_cortex::parse_strict`
+/// reports for the same input), the profile's keep their names.
+impl From<axon_canonical::CanonError> for Refusal {
+    fn from(r: axon_canonical::CanonError) -> Refusal {
+        use axon_canonical::CanonError as C;
+        match r {
+            C::DuplicateKey(k) => Refusal::Strict(ContractError::DuplicateKey(k)),
+            C::NonFiniteNumber(m) => Refusal::Strict(ContractError::NonFiniteNumber(m)),
+            C::Malformed(m) => Refusal::Strict(ContractError::Malformed(m)),
+            C::TooLarge(n) => Refusal::TooLarge(n),
+            C::TooDeep => Refusal::TooDeep,
+            C::Float => Refusal::Float,
+            C::UnsafeInteger(n) => Refusal::UnsafeInteger(n),
+            C::NotJson(m) => Refusal::Shape(m),
+        }
+    }
+}
+
 pub(crate) fn shape(msg: impl Into<String>) -> Refusal {
     Refusal::Shape(msg.into())
 }

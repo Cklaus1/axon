@@ -1,0 +1,16 @@
+[package]
+name = "axon-canonical"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "The cl22 canonical JSON form and its strict parser: a leaf crate (no workspace dependencies), so axon-os, axon-cortex and axon-loop-contracts share one definition without a crate cycle"
+
+[lib]
+name = "axon_canonical"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"

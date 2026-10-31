@@ -2267,13 +2267,10 @@ EXEMPT += [
      "verify_document) refuse a None (exempt there: the registered key is not a key, nothing to verify "
      "under); bytes it decoded wrongly are a key the signature must verify under (M02/M951), so a "
      "mis-decode only fails closed"),
-    (CT, "fn negative_zero_to_zero(text: &str) -> Option<String> {",
+    ("crates/axon-canonical/src/lib.rs", "fn negative_zero_to_zero(text: &str) -> Option<String> {",
      "SELECTS NOTHING: None means there is no `-0` to rewrite, and its one caller (parse_value) then "
      "parses the text as given (`normalized.as_deref().unwrap_or(json)`); it refuses nothing, and what "
      "it returns is parsed strictly and checked by json_tree like any input"),
-    (CT, "    let value = serde_json::to_value(v).map_err(|e| shape(e.to_string()))?;",
-     "NOTHING TO ADMIT: the contract value does not serialize, so there are no canonical bytes to "
-     "digest"),
     (CI, '                    shape(format!(concat!(stringify!($name), " {:?}: {}"), s, why))',
      "NAMED ROW: M1228 discards this map_err's Err and its `?` (`let _ = $check(&s)...`, the lines "
      "around it), the same removal: every validated string is then admitted unchecked"),
@@ -3769,8 +3766,6 @@ EXEMPT += [
      _A95['const_tag']),
     ('crates/axon-attest/src/lib.rs', '    const CANONICAL: [&str; 4] = ["kernel", "axon-os", "axon-audit", "monitor"];',
      _A95['const_table']),
-    ('crates/axon-certcheck/src/synth.rs', 'const MAX_DEPTH: usize = 64;',
-     _A95['const_bound']),
     ('crates/axon-core/src/interp/conform.rs', 'const UNDET: &str = "?undetermined";',
      _A95['const_tag']),
     ('crates/axon-core/src/interp/conform.rs', 'const HANDLE: &str = "handle:";',
@@ -4202,7 +4197,7 @@ VALUE_EXEMPT += [
     ('crates/axon-fabric/src/bin/axon-fabric.rs', 'submit', 1, 'None', 'REMAINDER', 'REMAINDER (amendment 103, no mutation exists): a test fault-injection hook (`Option<fn>`); None is the only value the CLI can name and any other is a function pointer no edit of a literal can supply; not mutated'),
     ('crates/axon-fabric/src/bin/axon-fabric.rs', 'submit', 2, 'None', 'REMAINDER', 'REMAINDER (amendment 103, no mutation exists): a test fault-injection hook (`Option<fn>`); None is the only value the CLI can name and any other is a function pointer no edit of a literal can supply; not mutated'),
     ('crates/axon-fabric/src/bin/axon-protected-launcher.rs', 'main', 1, 'true', 'NOTROUTE', 'NOT ON THE PROTECTED ROUTE (checkable): the `--test-config` arm, guarded by `axon_fabric::backend::TEST_TRUST_BUILD` (a compile-time constant false in a production build: the arm is not taken, and its guard has rows)'),
-    ('crates/axon-fabric/src/custodian.rs', 'check_store', 1, '0o077', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o077 -> 0o0) fails the test(s) <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test custodian, <binary> -p axon-fabric --test observer_service; no row of its own'),
+    ('crates/axon-os/src/private_path.rs', 'check_private', 1, '0o077', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103; NH-R1 A0: check_store moved from axon-fabric custodian.rs into axon-os check_private): editing this value (0o077 -> 0o0) fails the test(s) <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test custodian, <binary> -p axon-fabric --test observer_service; no row of its own'),
     ('crates/axon-fabric/src/git_data.rs', 'entries', 1, '0o40000', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o40000 -> 0o40001) fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
     ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 12, '"-c"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-c" -> "-cx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
     ('crates/axon-fabric/src/git_data.rs', 'git_cmd', 16, '"-c"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("-c" -> "-cx") fails the test(s) <binary> -p axon-fabric --bin axon-provenance, <binary> -p axon-fabric --lib, <binary> -p axon-fabric --test guest_provenance; no row of its own'),
