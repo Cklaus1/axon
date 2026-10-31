@@ -613,10 +613,12 @@ fn s13_a_checker_that_rewrites_the_entry_file_during_the_witness_run_refuses() {
         "ATTACK: NH-R1 S13 a file changed during the witness run was graded\n{}{}",
         o.stdout, o.stderr
     );
-    // The entry file's own check, not only the import closure's (whose
-    // digest also moves when the entry file does).
+    // The check right after the witness run (it names both digests), not
+    // only the later walk-start compare: no child runs between them on
+    // bytes nobody verified.
     assert!(
-        o.stderr.contains("broken.ax changed after verification"),
+        o.stderr
+            .contains("broken.ax changed after verification (sha256 "),
         "ATTACK: NH-R1 S13 a file changed during the witness run was graded\n{}",
         o.stderr
     );
