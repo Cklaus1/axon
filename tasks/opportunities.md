@@ -2684,6 +2684,7 @@ Same origin, reproduced: `@[verify(value >= lo && value <= hi)] fn clampv(x: i64
 Reported by AuthorC, not yet reproduced: a user type named `Unit` is silently `()` (E0306 "expected (), found Unit"); `len(ts)` on an array bound from a match pattern/expression → E0102 "expected str"; `None => return Err(..)` inside a `let` match → E0102 "expected i64, found ()"; a parameter used in two match arms → E0601 "use of moved value" (if/else accepted); `let out = cfg` of a `&[T]` param then `f(&cfg)` → moved. Reproduce each before acting.
 `[TRIAGED 2026-10-19: partly reproduced at 7f110693 while drafting — the match/`?`-bound `len` (checker-soundness CS-5), `return` inside a match arm (CS-11), `type Unit` aliasing a builtin type (CS-12) and `let out = cfg` moving a `&[T]` param (CS-7, needs-human NH-3) are specced in tasks/checker-soundness-spec.md; the param-in-two-match-arms item stays logged until reproduced.]`
 `[BUILT 2026-10-27 on main 49b576fa: checker-soundness CS-5, CS-7, CS-11, CS-12. Re-verified 2026-10-29: `type Unit` is E0005; the param-in-two-match-arms item does not reproduce (check rc 0, run prints 3), so it is WITHDRAWN.]`
+`[REOPENED 2026-10-31 (item 4, the param in two match arms): it reproduces in a narrower form, a `let t = name` inside one block arm plus a move in another arm (E0601; the if/else twin passes). QuirkRepro probes q4e/q4f/q4h, `/var/tmp/r51-tmp/QuirkRepro/REPORT.md` §4. Filed as O-HX3-02; not fixed in this batch.]`
 
 ### O-FU-01 — [medium] Generator drain: a slow leftover writer is "idle" at the stop instant
 Found by LaneCortex (FU-3). A leftover that writes every 50 ms is idle when the drain stops, so its bytes are taken as the whole answer (exit 0, junk body accepted, before and after FU-3). "Pending" should mean "writer still open / not at EOF", not "readable right now"; needs a per-pipe EOF/close signal rather than a poll at stop. Interacts with NH1/KG2 (idle stop after exit keeps its bytes) — the fix must keep `kg2_a_leftover_holding_the_generators_pipes_does_not_stall_the_loop` green.
@@ -2726,6 +2727,7 @@ FU-1 calibration (2026-10-18, `B/headroom/PREREG.md` §2 and §6, evidence in `B
 - FU-10 (O-S1-18) stays undecided until such a set exists; its T2 arm is ready on `fu/r4-ablation`.
 `[SPECCED 2026-10-19: tasks/hx2-spec.md — (a) HX-1, (b) HX-2 deferred (needs-human), harder classes HX-0 pilots then HX-3; FU-11/FU-10 as HX-6.]`
 `[2026-10-28: (a) the HX-1 hidden direct pin admitted 0 false successes on a 20-task caller pilot (was 28 of 114 caller trials in FU-1); not merged (hx2/proto e83e89d5). Harder single-function classes (erase, sparse) saturate at haiku-5.5 k = 1 (19/20, 20/20), so held-out headroom still needs multi-function or non-test-visible defects. See PREREG-hx2 §6.]`
+`[2026-10-31: hx3 (class C erase-long) STOPPED at HX3-3 N5, 539a3f40 (merged on int/31): erase-long's shrunk h55 dev rate 0.790 on 133 tasks / 38 clusters is above the kept band [0.3, 0.7] after pass 2, so hx-test is not frozen (PREREG-hx3 §2.4); $1.5929 of $10, 0 false successes. Not closed; a new construction is a human NH decision.]`
 
 ## Spec drafting, 2026-10-19 (new findings while drafting the five DRAFT specs)
 
@@ -2911,6 +2913,7 @@ For" and `loop` -> "introduce `loop` with `let loop = …`" send repair loops th
 so JSON literals need `{{ }}`. `mod util` does not search the importing file's directory (needs `AXON_PATH`;
 reproduced E0901 with a sibling `mathutil.ax`).
 `[PARTLY: docs-truth DT-1 gotcha 10 documents AXON_PATH; the language forms stay open]`
+`[BUILT 2026-10-31 on int/31 63dcb967 (class (b) only): checker-soundness-3 CS3-5 help texts, CS3-6 glued string tail refused, CS3-7 E0901/E0902 name the `use` line. Class (c) language additions are tasks/checker-soundness-3-spec.md §8 NH-1..NH-12, NOT authorized.]`
 
 ### O-GAP-09 - [medium] LLM-facing docs disagree with the binary
 - `spec/axon-for-llms.md:241-245`: the `@[goal("maximize score")] @[adaptive] fn tune(threshold: i64)` snippet is
@@ -2971,10 +2974,12 @@ direction: add the probes to the codegen parity fixtures first (fail-first), the
   `E::A { s: "x" }` arms check clean and panic `no match arm matched` (h31, h32). CS2-4 left enum payloads unchanged.
 Fix direction: CS2-4's domain walk extended to payload literals; for the wrapper, type a lambda param from its uses
 inside another lambda.
+`[BUILT 2026-10-31 on int/31 63dcb967: checker-soundness-3 CS3-1 (h31/h32 E0304 by a usefulness walk) and CS3-2 (h24 E0102). Residual: O-CS3-05.]`
 
 ### O-CS2-03 - [low] E1209 diagnostics carry no line or column
 A refinement predicate's E1209 names only the file, both for a direct impure builtin (pre-batch) and for CS2-8's
 reach through a helper. Fix direction: carry the predicate's span (or the reached call's) into the diagnostic.
+`[BUILT 2026-10-31 on int/31 63dcb967: checker-soundness-3 CS3-3 (the refinement item's line); M3981.]`
 
 ## native-parity, 2026-10-31 (out of scope of tasks/native-parity-spec.md, and found while building it)
 
@@ -3022,3 +3027,68 @@ against `ai_complete`'s records); the live path stores tokens `0`. An audit gap,
 Default state files `/tmp/axon_persistent_*.txt` (`persistent_bandit.ax:33-36`, `persistent_learner.ax:32-35`);
 `persistent_bandit`'s stdout changes between back-to-back runs (exit code stays 0). RP-2 points both state variables
 at a temp dir in the test only.
+
+## checker-soundness-3, 2026-10-31 (out of scope of tasks/checker-soundness-3-spec.md, and found while building or integrating it)
+
+### O-CS3-01 - [medium] Bare variant names in patterns bind instead of comparing
+`match c { Green => 2, Red => 1, Blue => 3 }` with `C::Red` prints `2` (check 0 with W0004 only; native `2` too): a silent wrong
+answer. The enum branch counts `Pattern::Ident(name)` as covering the variant of that name. Fix direction: make W0004 an error when the
+name is a variant of the subject's enum (spec §0 out of scope, `D/bv/bv01_order.ax`).
+
+### O-CS3-02 - [low] Spaced string adjacency still runs as separate statements
+`let j = r"{" a "}"` checks 0 and prints `{` (three statements on one line, the rule that makes `let x = 1 let y = 2` legal). CS3-6
+refuses only the zero-gap case (`D/y/y03_raw_spaced.ax`).
+
+### O-CS3-03 - [low] E0001 cascade after E0901
+When a module fails to load, every name its `use` imports also gets E0001 "introduce `square` with `let square = ...`"
+(`D/g/38_modules_main.ax`, `AXON_PATH` unset). CS3-7 fixed only the location.
+
+### O-CS3-04 - [medium] Native build of a nested `Some(Some(x))` argument fails IR verification
+Found integrating CS3 (c18 in `native_shapes_parity.sh`): `fn f(o: Option<Option<i64>>) -> i64 { match o { .. } }` called as
+`f(Some(Some(4)))` runs (`axon run` prints `5`) but `axon build` fails "IR verification failed: Call parameter type does not match
+function signature" (the call passes `{ i1, { i1, { i1, i64 } } }` where `f` takes `{ i1, { i1, i64 } }`). Same on main77 (77cf51fc),
+so it predates CS3; CS3-1 only made the tuple form (c18) reachable. A native false refusal (O-NP-01 family). c18 is left out of the parity
+script until it is fixed.
+
+### O-CS3-05 - [medium] A wrapper lambda's non-first call still checks clean and panics (lane B residual)
+CS3-2 derives a kind only from the calls a wrapper body always runs as its value: `let g = |y| println(f(y))` (w17), where `f(y)` is an
+argument of another call, still checks 0 and panics on the wrong kind.
+
+### O-CS3-06 - [low] LSP module-load errors still carry a dummy span (lane C residual)
+CS3-7 gives E0901/E0902 the `use` line on the CLI; the LSP path still reports the load error at a dummy span.
+
+## intent-gen, 2026-10-31 (residuals of tasks/intent-gen-spec.md at integration)
+
+### O-IG-01 - [medium] The sandbox classifier can still be fooled by a program's own stderr
+A program whose last stderr line imitates the interpreter's fault line and whose exit code matches, or that prints only `axon-diag/1`
+JSON and then exits 2, is classed as a fault / compile failure rather than as its own exit (IgIntent audit residual after M4420-M4425).
+
+### O-IG-02 - [medium] The once-ledger guard relies on `git log --all`
+An unpushed ledger commit is invisible to a fresh clone, so the once chain can restart there (ImplAuditIG). Fix direction: an origin-side
+check or a pushed ledger ref before a once run.
+
+### O-IG-03 - [medium] The genviab dev set has no headroom
+Haiku solves 14/14 dev tasks, so dev runs cannot show a generator or prompt change helping. The once set is still unauthored (spec IG6:
+once references by hand, never model-drafted) and the gated run awaits it and the PREREG freeze.
+
+## hx3 author quirks, 2026-10-31 (QuirkRepro triage of the hx3 N5a authors' notes, `/var/tmp/r51-tmp/QuirkRepro/REPORT.md`; fixes NOT in this batch)
+
+### O-HX3-02 - [high] False refusal: a move inside one block match arm plus a move in another arm is E0601
+A `let t = name` inside one block arm plus a move of `name` in another arm gives E0601 "use of moved value": the arms are checked as if
+sequential. The if/else twin passes. Probes `q4e_param_two_block_arms.ax`, `q4f_struct_two_block_arms.ax`, `q4h_let_arm_plus_plain_arm.ax`,
+twin `q4e_twin_ifelse.ax` (REPORT §4). Reopens O-S1-24 item 4.
+
+### O-HX3-03 - [high] False refusal: `return p` inside a match arm / `return xs` inside `for x in xs` marks the value moved
+`return p` inside a match arm marks `p` moved for code after the match (E0601); `return xs` inside `for x in xs` gives E0602. The `if` and
+index-loop twins run. Probes `q8g2_return_in_match_arm_stmt.ax`, `q8g5_let_match_return_param.ax`, `q8g6_return_in_block_arm_str.ax`,
+`q8g7_return_in_match_arm_int_subject.ax`, `q8f_return_iter_in_for.ax`, `q8f2_return_iter_in_for_str.ax`, twins `q8g2_twin_if.ax`,
+`q8f_twin_index_loop.ax` (REPORT §8). Probably the same cause as O-HX3-02 [INFERENCE].
+
+### O-HX3-04 - [medium] False refusal against grammar.ebnf §6.12: a string literal inside an interpolation slot
+`"hi {name + "!"}"` gives E0000 "unclosed `{`". The escaped form (`q6d_interp_escaped_quote.ax`) works but is not documented. Probes
+`q6a_interp_strlit.ax`, `q6b_interp_strlit_simple.ax`, twin `q6c_twin_concat.ax` (REPORT §6).
+
+### O-HX3-05 - [low] Docs: reserved `Unit`, builtin-named user fns, stale gotcha 1
+`Unit` is reserved (E0005, `q7a_type_unit.ax`) and a user fn sharing a builtin's name loses to the builtin (`ln`, `a11_user_fn_ln.ax`);
+neither rule is in `spec/axon-for-llms.md` or the language tour. `axon-for-llms.md` gotcha 1 (a bare `[T]` param is E0601) is stale:
+both binaries accept it (`x1_bare_arr_param_reuse.ax`). REPORT §7, A11, X1.

@@ -1,7 +1,7 @@
 # checker-soundness-3 - DRAFT spec
 
-**Status: AUTHORIZED for build 2026-10-31 (after Step 1 review; human: "do it all" on the integrator's recommendations) for CS3-1..CS3-7
-only. The §8 language additions (NH-1..NH-12) are NOT authorized: they wait for a human decision. NH-13: declined (w14 stays legal).**
+**Status: BUILT 2026-10-31 on int/31 63dcb967 (CS3-1..CS3-7, lanes A/B/C merged; integrator duties §6 done: parity cases, CHANGELOG, opportunities stamps and O-CS3-01..06). The §8 language additions (NH-1..NH-12) are NOT authorized and NOT built: they wait for a human decision. NH-13: declined (w14 stays legal). Was: AUTHORIZED for build 2026-10-31 (after Step 1 review; human: "do it all" on the integrator's recommendations) for CS3-1..CS3-7 only.**
+`[REVISED: integration 2026-10-31] c18 is not in native_shapes_parity.sh: its native build fails IR verification on Some(Some(x)), a pre-existing native bug (O-CS3-04).`
 
 ### Step 1 review
 
@@ -196,6 +196,9 @@ is no conflict and nothing is recorded. Then `g(5)` compares `Var(y)` against `i
 
 **The named consequence** `[REVISED: Audit-4]`. None for the default build. Refusing w14 (`let g = |y, c| if c { f(y) } else { 0 }; g(5, false)`,
 which runs today and prints `0`, while the direct twin w12 is E0102) would be a new refusal of a running program. It is NH-13 (§8).
+`[REVISED: implementation audit 2026-10-31]` "None for the default build" is wrong: CS3-2 refuses (E0102) a wrapper called with a
+wrong-kind argument even in a branch that never runs (c01, c03, c05, w16). The direct-call rule already gave E0102 on those shapes at
+base, so this is ruled correct: the programs are ill-typed. It is a consumer-visible newly refused shape (CHANGELOG).
 
 **Resolving the CS2-6 `[REVISED: build]` conflict** (`checker-soundness-2-spec.md:436`). Three cli_run VM tests reach a lambda through
 `let g = |x, y| f(x, y)` precisely so that check passes and the VM panic path runs: `vm_pure_bool_ops` cases `pure_bool_if` and

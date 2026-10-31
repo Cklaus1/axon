@@ -1,9 +1,10 @@
 # DRAFT — Intent → checked program: the generation loop and its viability benchmark (IG)
 
-**Status: REVIEWED 2026-10-18 (Step 1, ReviewIGAdversarial: 1 blocker, 7 major, 9 minor; ReviewIGDevloop: 7 major,
+**Status: PARTIAL 2026-10-31 on int/31 658eec0e: IG0-IG8 built, dev harness validated (dry run separation, Haiku dev runs); the once set and the gated run stay open: they await a human-authored once set and the PREREG freeze (spec IG6: once references by hand, never model-drafted). Residuals O-IG-01..03.**
+Was: REVIEWED 2026-10-18 (Step 1, ReviewIGAdversarial: 1 blocker, 7 major, 9 minor; ReviewIGDevloop: 7 major,
 3 minor); Step 2 resolved below; the needs-human questions Q1–Q3, Q7 and the refusal policy were answered by the
 owner on 2026-10-18 (see "Owner decisions"). IG0–IG5 and dev work are authorised; the once run is gated on the
-"Before the once run" list.**
+"Before the once run" list.
 The as-written draft is commit 320d1c64; every change since carries a `[REVISED]` marker.
 
 Base: `main` f83c6f86 (2026-10-18). Sources: VISION.md north star ("written by stating what you want and approving
