@@ -532,6 +532,10 @@ pub struct CheckCtx {
     /// should have written, and a hint that says `{ field: … }` when it could say
     /// `{ r: … }` leaves the reader a second lookup.
     pub enum_variant_fields: HashMap<String, Vec<String>>,
+    /// Field TYPES of each enum variant, keyed `"Enum::Variant"`, in the order
+    /// of `enum_variant_fields` (CS3-1: the exhaustiveness walk reads a payload
+    /// `bool` or nested enum through them).
+    enum_variant_field_types: HashMap<String, Vec<Type>>,
     /// Generic type parameters in scope for the current item (R08 suppression),
     /// each with the traits it is bounded by (CS2-5: a method call on a
     /// receiver of type `T` is looked up in these traits). A type's, enum's or
@@ -675,6 +679,7 @@ impl CheckCtx {
             known_enums: Vec::new(),
             enum_variants: HashMap::new(),
             enum_variant_fields: HashMap::new(),
+            enum_variant_field_types: HashMap::new(),
             known_modules: std::collections::HashSet::new(),
             current_generic_params: HashMap::new(),
             trait_defs: HashMap::new(),
@@ -887,10 +892,13 @@ impl CheckCtx {
                     let variants = e.variants.iter().map(|v| v.name.clone()).collect();
                     self.enum_variants.insert(e.name.clone(), variants);
                     for v in &e.variants {
-                        self.enum_variant_fields.insert(
-                            format!("{}::{}", e.name, v.name),
-                            v.fields.iter().map(|f| f.name.clone()).collect(),
+                        let key = format!("{}::{}", e.name, v.name);
+                        self.enum_variant_field_types.insert(
+                            key.clone(),
+                            v.fields.iter().map(|f| axon_type_to_type(&f.ty)).collect(),
                         );
+                        self.enum_variant_fields
+                            .insert(key, v.fields.iter().map(|f| f.name.clone()).collect());
                     }
                 }
                 Item::TraitDef(t) => {
@@ -1009,14 +1017,14 @@ impl CheckCtx {
                 // must be pure. An impure builtin in it (now_ms/random_i64/IO/AI…)
                 // makes the "type" non-deterministic and meaningless. Reject it.
                 if let Some(w) = &refine_walker {
-                    self.reject_impure_refinement(&r.predicate, &r.name, w);
+                    self.reject_impure_refinement(&r.predicate, &r.name, w, r.span);
                 }
             }
             // Whole-struct refinement predicates must be pure for the same reason.
             if let Item::TypeDef(td) = item {
                 if let Some(pred) = &td.refinement {
                     if let Some(w) = &refine_walker {
-                        self.reject_impure_refinement(pred, &td.name, w);
+                        self.reject_impure_refinement(pred, &td.name, w, td.span);
                     }
                 }
             }
@@ -3049,6 +3057,7 @@ impl CheckCtx {
         pred: &'p Expr,
         refine_name: &str,
         walker: &crate::capabilities::RefinementWalker<'p>,
+        span: crate::span::Span,
     ) {
         let mut violations: Vec<(String, &'static str)> = Vec::new();
         Self::collect_purity_violations(pred, &HashSet::new(), &mut violations);
@@ -3067,7 +3076,7 @@ impl CheckCtx {
                         ),
                     )
                     .at(&file, 0, 0)
-                    .with_span(self.current_span)
+                    .with_span(span)
                     .fix(format!(
                         "remove `{callee}` from the predicate; a refinement must depend only on \
                          the value `_` and pure computation"
@@ -3125,7 +3134,7 @@ impl CheckCtx {
                 ),
             )
             .at(&file, 0, 0)
-            .with_span(self.current_span)
+            .with_span(span)
             .fix(format!(
                 "make the predicate of `{refine_name}` depend only on the value `_` and pure \
                  computation: move the effect out of {through}"
@@ -5370,13 +5379,23 @@ impl CheckCtx {
         } else {
             Option::None
         };
-        // R01: arithmetic operands must not be bare Option<T>.
+        // R01: operands must not be a bare Option<T>/Result<T, E>. For
+        // `==`/`!=` the comparison itself is the problem (CS3-5 row 8).
         let lty = self.resolve_expr_type(left, lpath, scope);
         let rty = self.resolve_expr_type(right, rpath, scope);
-        self.check_not_option_used_as_value(&lty, lpath);
-        self.check_not_option_used_as_value(&rty, rpath);
-        self.check_not_result_used_as_value(&lty, lpath);
-        self.check_not_result_used_as_value(&rty, rpath);
+        let cmp = match op {
+            crate::ast::BinOp::Eq => Some("=="),
+            crate::ast::BinOp::NotEq => Some("!="),
+            _ => Option::None,
+        };
+        if let Some(cmp) = cmp {
+            self.check_wrapper_not_compared([(&lty, lpath), (&rty, rpath)], cmp);
+        } else {
+            self.check_not_option_used_as_value(&lty, lpath);
+            self.check_not_option_used_as_value(&rty, rpath);
+            self.check_not_result_used_as_value(&lty, lpath);
+            self.check_not_result_used_as_value(&rty, rpath);
+        }
         // `char_at(s, i) == "a"` — comparing a BYTE VALUE with a string.
         //
         // `char_at` returns the byte as an `i64`, and the reader who
@@ -5701,6 +5720,49 @@ impl CheckCtx {
     // ─────────────────────────────────────────────────────────────────────────
     // R01 — Option<T> used directly as a value
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// CS3-5 row 8: `o == Some(1)`, `o != None`, `r == Ok(1)`. Axon's `==` does
+    /// not compare `Option`/`Result` values, and the operand-as-value text
+    /// ("cannot be used directly ... (expected i64)") pointed at a type the
+    /// reader never wrote. Say that the comparison is the problem and show it
+    /// as a match: once per comparison, naming the better-resolved wrapped
+    /// operand (`found != None` is one mistake, not two).
+    fn check_wrapper_not_compared(&mut self, operands: [(&Type, &NodePath); 2], op: &str) {
+        let wrapped =
+            |ty: &Type| !ty.is_deferred() && (ty.is_option() || matches!(ty, Type::Result(_, _)));
+        let Some((ty, node_path)) = operands
+            .iter()
+            .filter(|(t, _)| wrapped(t))
+            .min_by_key(|(t, _)| t.display().contains("<unknown>"))
+        else {
+            return;
+        };
+        let (kind, example) = if ty.is_option() {
+            ("Option", "match o { Some(1) => true, _ => false }")
+        } else {
+            ("Result", "match r { Ok(1) => true, _ => false }")
+        };
+        let shown = ty.display();
+        let operand = if shown.contains("<unknown>") {
+            String::new()
+        } else {
+            format!(" (the operand is `{shown}`)")
+        };
+        let file = self.file.clone();
+        let span = self.current_span;
+        self.errors.push(
+            CheckError::new(
+                E0301,
+                format!("`{op}` does not compare `{kind}` values{operand} — match it: `{example}`"),
+            )
+            .node(*node_path)
+            .at(&file, 0, 0)
+            .with_span(span)
+            .fix(format!(
+                "match it: `{example}` — one arm per case you test, `_ => false` for the rest"
+            )),
+        );
+    }
 
     /// The `Result` counterpart of `check_not_option_used_as_value`.
     ///
@@ -6639,159 +6701,149 @@ impl CheckCtx {
         let unguarded = |a: &&MatchArm| a.guard.is_none();
 
         let file = self.file.clone();
+        // The enum a subject's constructors come from (a sum type may reach
+        // here as a `Struct`).
+        let enum_name = match subject_ty {
+            Type::Enum(n) => Some(n.as_str()),
+            Type::Struct(n) if self.enum_variants.contains_key(n) => Some(n.as_str()),
+            _ => None,
+        };
+        if let Type::Enum(enum_name) = subject_ty {
+            // Each arm's destructured FIELD names must exist on the variant it
+            // matches. Nothing else looked at them, so
+            //
+            //     type S = A { v: i64 } | B { w: i64 }
+            //     match s { S::A { zz } => …  S::B { w } => … }
+            //
+            // passed `check` and then panicked "no match arm matched" —
+            // which reads as a missing arm when the arm is right there and
+            // only the field name is wrong. A struct LITERAL with a bad field
+            // is E0101 and a struct PATTERN is a parse error; enum-variant
+            // patterns were the one shape with no check.
+            for arm in arms {
+                let Pattern::Struct { name, fields } = &arm.pattern else {
+                    continue;
+                };
+                let key = if name.contains("::") {
+                    name.clone()
+                } else {
+                    format!("{enum_name}::{name}")
+                };
+                let Some(known) = self.enum_variant_fields.get(&key) else {
+                    continue;
+                };
+                for (fname, _) in fields {
+                    if !known.iter().any(|k| k == fname) {
+                        let file = self.file.clone();
+                        let span = self.current_span;
+                        let listed = if known.is_empty() {
+                            "it has none".to_string()
+                        } else {
+                            format!("`{}`", known.join("`, `"))
+                        };
+                        self.errors.push(
+                            CheckError::new(
+                                E0401,
+                                format!("variant `{key}` has no field `{fname}`"),
+                            )
+                            .node(node_path)
+                            .at(&file, 0, 0)
+                            .with_span(span)
+                            .fix(format!("`{key}` fields: {listed}")),
+                        );
+                    }
+                }
+            }
+        }
+
+        // A top-level constructor that no unguarded arm names keeps its own
+        // message and fix-it: `missing Some(_) arm`, `missing variant 'B'`.
+        let names_head = |want: &dyn Fn(&Pattern) -> bool| {
+            arms.iter().filter(unguarded).any(|a| want(&a.pattern))
+        };
+        let mut missing: Vec<(String, String)> = Vec::new();
         match subject_ty {
             Type::Option(_) => {
-                let has_some = arms
-                    .iter()
-                    .filter(unguarded)
-                    .any(|a| matches!(a.pattern, Pattern::Some(_)));
-                let has_none = arms
-                    .iter()
-                    .filter(unguarded)
-                    .any(|a| matches!(a.pattern, Pattern::None));
-                if !has_some {
-                    self.errors.push(
-                        CheckError::new(E0304, "non-exhaustive match — missing Some(_) arm")
-                            .node(node_path)
-                            .at(&file, 0, 0)
-                            .with_span(self.current_span)
-                            .fix("add arm: Some(v) => { /* handle value */ }"),
-                    );
+                if !names_head(&|p| matches!(p, Pattern::Some(_))) {
+                    missing.push((
+                        "non-exhaustive match — missing Some(_) arm".to_string(),
+                        "add arm: Some(v) => { /* handle value */ }".to_string(),
+                    ));
                 }
-                if !has_none {
-                    self.errors.push(
-                        CheckError::new(E0304, "non-exhaustive match — missing None arm")
-                            .node(node_path)
-                            .at(&file, 0, 0)
-                            .with_span(self.current_span)
-                            .fix("add arm: None => { /* handle missing */ }"),
-                    );
+                if !names_head(&|p| matches!(p, Pattern::None)) {
+                    missing.push((
+                        "non-exhaustive match — missing None arm".to_string(),
+                        "add arm: None => { /* handle missing */ }".to_string(),
+                    ));
                 }
             }
             Type::Result(_, _) => {
-                let has_ok = arms
-                    .iter()
-                    .filter(unguarded)
-                    .any(|a| matches!(a.pattern, Pattern::Ok(_)));
-                let has_err = arms
-                    .iter()
-                    .filter(unguarded)
-                    .any(|a| matches!(a.pattern, Pattern::Err(_)));
-                if !has_ok {
-                    self.errors.push(
-                        CheckError::new(E0304, "non-exhaustive match — missing Ok(_) arm")
-                            .node(node_path)
-                            .at(&file, 0, 0)
-                            .with_span(self.current_span)
-                            .fix("add arm: Ok(v) => { /* handle success */ }"),
-                    );
+                if !names_head(&|p| matches!(p, Pattern::Ok(_))) {
+                    missing.push((
+                        "non-exhaustive match — missing Ok(_) arm".to_string(),
+                        "add arm: Ok(v) => { /* handle success */ }".to_string(),
+                    ));
                 }
-                if !has_err {
-                    self.errors.push(
-                        CheckError::new(E0304, "non-exhaustive match — missing Err(_) arm")
-                            .node(node_path)
-                            .at(&file, 0, 0)
-                            .with_span(self.current_span)
-                            .fix("add arm: Err(e) => { /* handle error */ }"),
-                    );
+                if !names_head(&|p| matches!(p, Pattern::Err(_))) {
+                    missing.push((
+                        "non-exhaustive match — missing Err(_) arm".to_string(),
+                        "add arm: Err(e) => { /* handle error */ }".to_string(),
+                    ));
                 }
             }
-            // Fix #10: exhaustiveness for user-defined enums.
-            Type::Enum(enum_name) => {
-                // Look up the variant list for this enum.
-                let variants = self.enum_variants.get(enum_name.as_str()).cloned();
-                if let Some(variants) = variants {
-                    // Collect which variant names appear in StructLit patterns.
-                    // Enum variant patterns appear as Pattern::Struct { name: "EnumName::VariantName", .. }
-                    // or as a plain Pattern::Ident if the user writes the variant name as-is.
-                    // Each arm's destructured FIELD names must exist on the
-                    // variant it matches. The exhaustiveness check below reads
-                    // variant NAMES and ignores their fields, and nothing else
-                    // looked at them, so
-                    //
-                    //     type S = A { v: i64 } | B { w: i64 }
-                    //     match s { S::A { zz } => …  S::B { w } => … }
-                    //
-                    // passed `check` and then panicked "no match arm matched" —
-                    // which reads as a missing arm when the arm is right there
-                    // and only the field name is wrong. A struct LITERAL with a
-                    // bad field is E0101 and a struct PATTERN is a parse error;
-                    // enum-variant patterns were the one shape with no check.
-                    for arm in arms {
-                        let Pattern::Struct { name, fields } = &arm.pattern else {
-                            continue;
-                        };
-                        let key = if name.contains("::") {
-                            name.clone()
-                        } else {
-                            format!("{enum_name}::{name}")
-                        };
-                        let Some(known) = self.enum_variant_fields.get(&key) else {
-                            continue;
-                        };
-                        for (fname, _) in fields {
-                            if !known.iter().any(|k| k == fname) {
-                                let file = self.file.clone();
-                                let span = self.current_span;
-                                let listed = if known.is_empty() {
-                                    "it has none".to_string()
-                                } else {
-                                    format!("`{}`", known.join("`, `"))
-                                };
-                                self.errors.push(
-                                    CheckError::new(
-                                        E0401,
-                                        format!("variant `{key}` has no field `{fname}`"),
-                                    )
-                                    .node(node_path)
-                                    .at(&file, 0, 0)
-                                    .with_span(span)
-                                    .fix(format!("`{key}` fields: {listed}")),
-                                );
-                            }
-                        }
+            _ => {
+                let enum_name = enum_name.unwrap_or_default();
+                for variant in self.enum_variants.get(enum_name).into_iter().flatten() {
+                    let named = names_head(&|p| {
+                        matches!(p, Pattern::Struct { name, .. }
+                            if name.rsplit("::").next() == Some(variant.as_str()))
+                    });
+                    if named {
+                        continue;
                     }
-                    let covered: std::collections::HashSet<String> = arms
-                        .iter()
-                        .filter(unguarded)
-                        .filter_map(|arm| match &arm.pattern {
-                            Pattern::Struct { name, .. } => {
-                                // "EnumName::VariantName" → extract variant name
-                                if let Some((_, variant)) = name.split_once("::") {
-                                    Some(variant.to_string())
-                                } else {
-                                    Some(name.clone())
-                                }
-                            }
-                            Pattern::Ident(name) => Some(name.clone()),
-                            _ => None,
-                        })
-                        .collect();
+                    // CS3-5 (6): the fix-it is an arm that parses as written.
+                    let fix = match self
+                        .enum_variant_fields
+                        .get(&format!("{enum_name}::{variant}"))
+                    {
+                        Some(fs) if !fs.is_empty() => format!(
+                            "add arm: {enum_name}::{variant} {{ {} }} => {{ /* handle */ }}",
+                            fs.iter()
+                                .map(|f| format!("{f}: _"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        _ => format!("add arm: {enum_name}::{variant} => {{ /* handle */ }}"),
+                    };
+                    missing.push((
+                        format!(
+                            "non-exhaustive match on enum '{enum_name}' — \
+                             missing variant '{variant}'"
+                        ),
+                        fix,
+                    ));
+                }
+            }
+        }
+        if !missing.is_empty() {
+            for (message, fix) in missing {
+                self.errors.push(
+                    CheckError::new(E0304, message)
+                        .node(node_path)
+                        .at(&file, 0, 0)
+                        .with_span(self.current_span)
+                        .fix(fix),
+                );
+            }
+            return;
+        }
 
-                    for variant in &variants {
-                        if !covered.contains(variant) {
-                            self.errors.push(
-                                CheckError::new(
-                                    E0304,
-                                    format!(
-                                        "non-exhaustive match on enum '{enum_name}' — \
-                                         missing variant '{variant}'"
-                                    ),
-                                )
-                                .node(node_path)
-                                .at(&file, 0, 0)
-                                .with_span(self.current_span)
-                                .fix(format!(
-                                    "add arm: {enum_name}::{variant} {{ .. }} => {{ /* handle */ }}"
-                                )),
-                            );
-                        }
-                    }
-                }
-            }
-            // CS2-4: scalar and tuple scrutinees. int/str/float/decimal need a
-            // catch-all, bool needs `true` + `false`, and a tuple is the product
-            // of its flattened components' domains.
+        // CS3-1: is a value left that no unguarded arm matches? One usefulness
+        // walk (Maranget 2007) over every subject whose constructors are known
+        // or can be read off the patterns. The 256-combination cap refuses
+        // only a tuple or scalar subject, as CS2-4 did (an irrefutable arm
+        // exempts it); a walk over budget accepts.
+        let capped = match subject_ty {
             Type::I8
             | Type::I16
             | Type::I32
@@ -6805,104 +6857,50 @@ impl CheckCtx {
             | Type::Decimal
             | Type::Str
             | Type::Bool
-            | Type::Tuple(_) => {
-                self.check_value_exhaustiveness(subject_ty, arms, node_path);
-            }
-            _ => {}
-        }
-    }
-
-    /// CS2-4: exhaustiveness for a scalar or tuple scrutinee. The subject is
-    /// flattened into components (nested tuples included); each component has
-    /// a domain (bool -> {true, false}; enum/`Option`/`Result` -> its
-    /// constructors; anything else -> {*}). The match is exhaustive iff every
-    /// combination of the product is covered by one unguarded arm. Above 256
-    /// combinations an irrefutable arm is required. A component whose type is
-    /// not known here and cannot be read off the patterns skips the check.
-    fn check_value_exhaustiveness(
-        &mut self,
-        subject_ty: &Type,
-        arms: &[MatchArm],
-        node_path: &NodePath,
-    ) {
-        let rows: Vec<CoverCell> = arms
-            .iter()
-            .filter(|a| a.guard.is_none())
-            .map(|a| CoverCell::Pat(&a.pattern))
-            .collect();
-        let n_arms = rows.len();
-        let mut domains: Vec<CoverDomain> = Vec::new();
-        let mut cols: Vec<Vec<CoverCell>> = Vec::new();
-        if !self.flatten_cover(subject_ty, rows, &mut domains, &mut cols) {
-            return;
-        }
-        let total = domains.iter().try_fold(1usize, |acc, d| {
-            acc.checked_mul(d.len()).filter(|t| *t <= 256)
-        });
-        let subject = subject_ty.display();
-        let message = match total {
-            Some(_) => {
-                let mut combo = vec![0usize; domains.len()];
-                let mut missing = None;
-                'combos: loop {
-                    if domains.iter().any(|d| d.len() == 0) {
-                        break;
-                    }
-                    let covered = (0..n_arms).any(|a| {
-                        cols.iter()
-                            .enumerate()
-                            .all(|(k, c)| self.cell_covers(c[a], &domains[k], combo[k]))
-                    });
-                    if !covered {
-                        missing = Some(combo.clone());
-                        break;
-                    }
-                    for k in (0..combo.len()).rev() {
-                        combo[k] += 1;
-                        if combo[k] < domains[k].len() {
-                            continue 'combos;
-                        }
-                        combo[k] = 0;
-                    }
-                    break;
-                }
-                let Some(missing) = missing else { return };
-                let all_any = domains.iter().all(|d| matches!(d, CoverDomain::Any));
-                if all_any {
-                    format!("non-exhaustive match on `{subject}` — add a `_ =>` arm")
-                } else {
-                    let parts: Vec<String> = missing
-                        .iter()
-                        .zip(&domains)
-                        .map(|(v, d)| d.render(*v))
-                        .collect();
-                    let shown = if matches!(subject_ty, Type::Tuple(_)) {
-                        format!("({})", parts.join(", "))
-                    } else {
-                        parts.join(", ")
-                    };
-                    format!(
-                        "non-exhaustive match on `{subject}` — no arm covers `{shown}`; add that arm or a `_ =>` arm"
-                    )
-                }
-            }
-            None => {
-                let irrefutable_arm = (0..n_arms).any(|a| {
-                    cols.iter().all(|c| match c[a] {
-                        CoverCell::Wild => true,
-                        CoverCell::Never => false,
-                        CoverCell::Pat(p) => self.pattern_irrefutable(p),
-                    })
-                });
-                if irrefutable_arm {
-                    return;
-                }
-                format!(
-                    "non-exhaustive match on `{subject}` — more than 256 combinations to cover; add a `_ =>` arm"
-                )
+            | Type::Tuple(_) => true,
+            Type::Option(_)
+            | Type::Result(_, _)
+            | Type::Var(_)
+            | Type::Unknown
+            | Type::TypeParam(_) => false,
+            _ if enum_name.is_some() => false,
+            _ => return,
+        };
+        let shown = if capped
+            && self.cover_product(subject_ty).is_none()
+            && !arms
+                .iter()
+                .filter(unguarded)
+                .any(|a| self.pattern_irrefutable(&a.pattern))
+        {
+            None
+        } else {
+            let rows: Vec<Vec<&Pattern>> = arms
+                .iter()
+                .filter(unguarded)
+                .map(|a| vec![&a.pattern])
+                .collect();
+            let mut leaves = 0usize;
+            match self.usefulness(&rows, std::slice::from_ref(subject_ty), &mut leaves) {
+                Walk::Covered | Walk::Undecided | Walk::OverBudget => return,
+                Walk::Missing(w) => Some(w.concat()),
             }
         };
-        let file = self.file.clone();
+        let on = match subject_ty {
+            Type::Var(_) | Type::Unknown => String::new(),
+            _ => format!(" on `{}`", subject_ty.display()),
+        };
+        let message = match shown {
+            None => format!(
+                "non-exhaustive match{on} — more than 256 combinations to cover; add a `_ =>` arm"
+            ),
+            Some(w) if w.chars().all(|c| "_(), ".contains(c)) => {
+                format!("non-exhaustive match{on} — add a `_ =>` arm")
+            }
+            Some(w) => format!(
+                "non-exhaustive match{on} — no arm covers `{w}`; add that arm or a `_ =>` arm"
+            ),
+        };
         self.errors.push(
             CheckError::new(E0304, message)
                 .node(node_path)
@@ -6912,149 +6910,200 @@ impl CheckCtx {
         );
     }
 
-    /// Flatten `ty` into exhaustiveness components (CS2-4). `rows` holds one
-    /// cell per unguarded arm. Returns false when a component's domain cannot be
-    /// decided, which skips the check (no refusal on an unknown type).
-    fn flatten_cover<'a>(
-        &self,
-        ty: &Type,
-        rows: Vec<CoverCell<'a>>,
-        domains: &mut Vec<CoverDomain>,
-        cols: &mut Vec<Vec<CoverCell<'a>>>,
-    ) -> bool {
-        let unknown = matches!(
-            ty,
-            Type::Unknown | Type::Var(_) | Type::Deferred(_) | Type::TypeParam(_)
-        );
-        let tuple: Option<Vec<Type>> = match ty {
-            Type::Tuple(ts) => Some(ts.clone()),
-            _ if unknown => {
-                let mut arity = None;
-                for c in &rows {
-                    if let CoverCell::Pat(Pattern::Tuple(ps)) = c {
-                        if arity.is_some_and(|n| n != ps.len()) {
-                            return false;
-                        }
-                        arity = Some(ps.len());
-                    }
-                }
-                arity.map(|n| vec![Type::Unknown; n])
+    /// CS3-1: is the all-wildcard row useful against `rows` (Maranget,
+    /// "Warnings for pattern matching", 2007)? `rows` holds one pattern per
+    /// column of `tys`, one row per unguarded arm. `Missing` carries a value
+    /// no row matches, one rendered pattern per column. A column whose
+    /// constructors neither its type nor its patterns decide is `Undecided`
+    /// (accept); more than [`WALK_BUDGET`] leaf checks is `OverBudget`.
+    fn usefulness(&self, rows: &[Vec<&Pattern>], tys: &[Type], leaves: &mut usize) -> Walk {
+        if rows.is_empty() || tys.is_empty() {
+            *leaves += 1;
+            if *leaves > WALK_BUDGET {
+                return Walk::OverBudget;
             }
-            _ => None,
-        };
-        if let Some(ts) = tuple {
-            for (i, t) in ts.iter().enumerate() {
-                let sub: Vec<CoverCell<'a>> = rows
-                    .iter()
-                    .map(|c| match *c {
-                        CoverCell::Wild => CoverCell::Wild,
-                        CoverCell::Never => CoverCell::Never,
-                        CoverCell::Pat(Pattern::Wildcard | Pattern::Ident(_)) => CoverCell::Wild,
-                        CoverCell::Pat(Pattern::Tuple(ps)) if ps.len() == ts.len() => {
-                            CoverCell::Pat(&ps[i])
-                        }
-                        CoverCell::Pat(_) => CoverCell::Never,
-                    })
-                    .collect();
-                if !self.flatten_cover(t, sub, domains, cols) {
-                    return false;
-                }
-            }
-            return true;
+            return if rows.is_empty() {
+                Walk::Missing(vec!["_".to_string(); tys.len()])
+            } else {
+                Walk::Covered
+            };
         }
-        let variants =
-            |names: &[&str]| CoverDomain::Variants(names.iter().map(|s| s.to_string()).collect());
-        let dom = match ty {
-            Type::Bool => CoverDomain::Bool,
-            Type::Option(_) => variants(&["Some", "None"]),
-            Type::Result(_, _) => variants(&["Ok", "Err"]),
-            Type::Enum(n) => match self.enum_variants.get(n) {
-                Some(vs) => CoverDomain::Variants(vs.clone()),
-                None => return false,
-            },
-            Type::Struct(n) if self.enum_variants.contains_key(n) => {
-                CoverDomain::Variants(self.enum_variants[n].clone())
+        let heads: Vec<&Pattern> = rows.iter().map(|r| r[0]).filter(|p| !is_wild(p)).collect();
+        let ctors = if heads.is_empty() {
+            Vec::new()
+        } else {
+            let sig = self
+                .walk_sig(&tys[0])
+                .filter(|s| sig_fits(s, &heads))
+                .or_else(|| self.walk_sig_from_patterns(&heads));
+            match sig {
+                Some(Sig::Finite(ctors)) => ctors,
+                Some(Sig::Infinite) => Vec::new(),
+                None => return Walk::Undecided,
             }
-            _ if unknown => match self.domain_from_patterns(&rows) {
-                Some(d) => d,
-                None => return false,
-            },
-            _ => CoverDomain::Any,
         };
-        domains.push(dom);
-        cols.push(rows);
-        true
+        // An incomplete signature (an infinite domain, or a constructor no
+        // head names): only the rows whose head is a wildcard cover the rest.
+        let absent = ctors
+            .iter()
+            .find(|(c, _)| !heads.iter().any(|h| ctor_matches(c, h)));
+        if ctors.is_empty() || absent.is_some() {
+            let default: Vec<Vec<&Pattern>> = rows
+                .iter()
+                .filter(|r| is_wild(r[0]))
+                .map(|r| r[1..].to_vec())
+                .collect();
+            return match self.usefulness(&default, &tys[1..], leaves) {
+                Walk::Missing(mut w) => {
+                    let head = match absent {
+                        Some((c, sub)) => render_ctor(c, &vec!["_".to_string(); sub.len()]),
+                        None => "_".to_string(),
+                    };
+                    w.insert(0, head);
+                    Walk::Missing(w)
+                }
+                other => other,
+            };
+        }
+        // A complete signature: specialize per constructor. A wildcard head
+        // expands to the constructor's arity of wildcards; a row whose head
+        // is another constructor is dropped.
+        for (c, sub) in &ctors {
+            let spec: Vec<Vec<&Pattern>> = rows
+                .iter()
+                .filter_map(|r| {
+                    let mut row = specialize(c, sub.len(), r[0])?;
+                    row.extend_from_slice(&r[1..]);
+                    Some(row)
+                })
+                .collect();
+            let mut sub_tys = sub.clone();
+            sub_tys.extend_from_slice(&tys[1..]);
+            match self.usefulness(&spec, &sub_tys, leaves) {
+                Walk::Covered => {}
+                Walk::Missing(mut w) => {
+                    let rest = w.split_off(sub.len());
+                    let mut out = vec![render_ctor(c, &w)];
+                    out.extend(rest);
+                    return Walk::Missing(out);
+                }
+                other => return other,
+            }
+        }
+        Walk::Covered
     }
 
-    /// The domain of a component whose type the checker does not know, read
-    /// off the arms' patterns; `None` when they do not decide it.
-    fn domain_from_patterns(&self, rows: &[CoverCell]) -> Option<CoverDomain> {
-        let variants =
-            |names: &[&str]| CoverDomain::Variants(names.iter().map(|s| s.to_string()).collect());
-        let mut dom: Option<CoverDomain> = None;
-        for c in rows {
-            let CoverCell::Pat(p) = c else { continue };
-            let this = match p {
-                Pattern::Wildcard | Pattern::Ident(_) => continue,
-                Pattern::Some(_) | Pattern::None => variants(&["Some", "None"]),
-                Pattern::Ok(_) | Pattern::Err(_) => variants(&["Ok", "Err"]),
-                Pattern::Literal(crate::ast::Literal::Bool(_)) => CoverDomain::Bool,
-                Pattern::Literal(_) => CoverDomain::Any,
-                Pattern::Struct { name, .. } => {
-                    if let Some((enum_name, _)) = name.split_once("::") {
-                        CoverDomain::Variants(self.enum_variants.get(enum_name)?.clone())
-                    } else if self.struct_fields.contains_key(name) {
-                        CoverDomain::Any
-                    } else {
-                        let mut owners = self.enum_variants.values().filter(|vs| vs.contains(name));
-                        let vs = owners.next()?;
+    /// The constructors of `ty` with their field types (CS3-1); `None` when
+    /// the type does not say (an unknown type, or an enum not declared here).
+    fn walk_sig(&self, ty: &Type) -> Option<Sig> {
+        Some(match ty {
+            Type::Bool => Sig::Finite(vec![
+                (Ctor::Bool(true), vec![]),
+                (Ctor::Bool(false), vec![]),
+            ]),
+            Type::Option(t) => Sig::Finite(vec![
+                (Ctor::Some, vec![(**t).clone()]),
+                (Ctor::None, vec![]),
+            ]),
+            Type::Result(t, e) => Sig::Finite(vec![
+                (Ctor::Ok, vec![(**t).clone()]),
+                (Ctor::Err, vec![(**e).clone()]),
+            ]),
+            Type::Tuple(ts) => Sig::Finite(vec![(Ctor::Tuple(ts.len()), ts.clone())]),
+            Type::Enum(n) | Type::Struct(n) if self.enum_variants.contains_key(n) => Sig::Finite(
+                self.enum_variants[n]
+                    .iter()
+                    .map(|v| {
+                        let key = format!("{n}::{v}");
+                        let names = self
+                            .enum_variant_fields
+                            .get(&key)
+                            .cloned()
+                            .unwrap_or_default();
+                        let tys = self.enum_variant_field_types.get(&key);
+                        let field_tys = (0..names.len())
+                            .map(|i| tys.and_then(|t| t.get(i)).cloned().unwrap_or(Type::Unknown))
+                            .collect();
+                        (Ctor::Variant(n.clone(), v.clone(), names), field_tys)
+                    })
+                    .collect(),
+            ),
+            Type::Struct(n) if self.struct_fields.contains_key(n) => {
+                let (names, tys): (Vec<String>, Vec<Type>) =
+                    self.struct_fields[n].iter().cloned().unzip();
+                Sig::Finite(vec![(Ctor::Struct(n.clone(), names), tys)])
+            }
+            Type::Enum(_)
+            | Type::Struct(_)
+            | Type::Var(_)
+            | Type::Unknown
+            | Type::Deferred(_)
+            | Type::TypeParam(_) => return None,
+            _ => Sig::Infinite,
+        })
+    }
+
+    /// The constructors of a column whose type does not decide them, read off
+    /// its head patterns (CS3-1); `None` when the patterns do not decide them
+    /// either (they disagree, or name an enum not declared here).
+    fn walk_sig_from_patterns(&self, heads: &[&Pattern]) -> Option<Sig> {
+        let sig = match heads.first()? {
+            Pattern::Literal(crate::ast::Literal::Bool(_)) => self.walk_sig(&Type::Bool)?,
+            Pattern::Literal(_) => Sig::Infinite,
+            Pattern::Some(_) | Pattern::None => {
+                self.walk_sig(&Type::Option(Box::new(Type::Unknown)))?
+            }
+            Pattern::Ok(_) | Pattern::Err(_) => self.walk_sig(&Type::Result(
+                Box::new(Type::Unknown),
+                Box::new(Type::Unknown),
+            ))?,
+            Pattern::Tuple(ps) => self.walk_sig(&Type::Tuple(vec![Type::Unknown; ps.len()]))?,
+            Pattern::Struct { name, .. }
+                if !name.contains("::") && self.struct_fields.contains_key(name) =>
+            {
+                self.walk_sig(&Type::Struct(name.clone()))?
+            }
+            Pattern::Struct { name, .. } => {
+                let owner = match name.rsplit_once("::") {
+                    Some((enum_name, _)) => enum_name,
+                    None => {
+                        let mut owners = self
+                            .enum_variants
+                            .iter()
+                            .filter(|(_, vs)| vs.contains(name))
+                            .map(|(e, _)| e.as_str());
+                        let owner = owners.next()?;
                         if owners.next().is_some() {
                             return None;
                         }
-                        CoverDomain::Variants(vs.clone())
+                        owner
                     }
+                };
+                if !self.enum_variants.contains_key(owner) {
+                    return None;
                 }
-                Pattern::Tuple(_) => return None,
-            };
-            match &dom {
-                None => dom = Some(this),
-                Some(d) if *d == this => {}
-                Some(_) => return None,
+                self.walk_sig(&Type::Enum(owner.to_string()))?
             }
-        }
-        Some(dom.unwrap_or(CoverDomain::Any))
+            Pattern::Wildcard | Pattern::Ident(_) => return None,
+        };
+        sig_fits(&sig, heads).then_some(sig)
     }
 
-    /// Does `cell` cover value `v` of `dom` (CS2-4)?
-    fn cell_covers(&self, cell: CoverCell, dom: &CoverDomain, v: usize) -> bool {
-        let p = match cell {
-            CoverCell::Wild => return true,
-            CoverCell::Never => return false,
-            CoverCell::Pat(p) => p,
-        };
-        if matches!(p, Pattern::Wildcard | Pattern::Ident(_)) {
-            return true;
-        }
-        match dom {
-            CoverDomain::Bool => {
-                matches!(p, Pattern::Literal(crate::ast::Literal::Bool(b)) if *b == (v == 0))
+    /// The CS2-4 combination count of a tuple or scalar subject: the product
+    /// of its flattened components' constructor counts (bool 2, `Option` and
+    /// `Result` 2, an enum its variants, anything else 1); `None` above 256.
+    fn cover_product(&self, ty: &Type) -> Option<usize> {
+        Some(match ty {
+            Type::Tuple(ts) => {
+                return ts.iter().try_fold(1usize, |acc, t| {
+                    acc.checked_mul(self.cover_product(t)?)
+                        .filter(|n| *n <= 256)
+                })
             }
-            CoverDomain::Variants(names) => {
-                let want = names[v].as_str();
-                match p {
-                    Pattern::Some(inner) => want == "Some" && self.pattern_irrefutable(inner),
-                    Pattern::None => want == "None",
-                    Pattern::Ok(inner) => want == "Ok" && self.pattern_irrefutable(inner),
-                    Pattern::Err(inner) => want == "Err" && self.pattern_irrefutable(inner),
-                    Pattern::Struct { name, fields } => {
-                        name.rsplit("::").next() == Some(want)
-                            && fields.iter().all(|(_, f)| self.pattern_irrefutable(f))
-                    }
-                    _ => false,
-                }
-            }
-            CoverDomain::Any => self.pattern_irrefutable(p),
-        }
+            Type::Bool | Type::Option(_) | Type::Result(_, _) => 2,
+            Type::Enum(n) | Type::Struct(n) => self.enum_variants.get(n).map_or(1, Vec::len),
+            _ => 1,
+        })
     }
 
     /// A pattern that matches every value of its type: a binding, `_`, a tuple
@@ -8390,44 +8439,125 @@ fn conclusive_pattern_key(p: &Pattern) -> Option<String> {
     }
 }
 
-/// One arm's pattern at one flattened scrutinee component (CS2-4
-/// exhaustiveness): `Wild` covers everything (a binding or `_` above a nested
-/// tuple), `Never` nothing (a pattern of another shape).
-#[derive(Clone, Copy)]
-enum CoverCell<'a> {
-    Wild,
-    Pat(&'a Pattern),
-    Never,
+/// Leaf checks a CS3-1 usefulness walk may spend before it accepts.
+const WALK_BUDGET: usize = 256;
+
+/// The sub-pattern a binding head or an omitted field expands to.
+static WILD: Pattern = Pattern::Wildcard;
+
+/// The answer of a CS3-1 usefulness walk.
+enum Walk {
+    /// Every value is matched by an unguarded arm.
+    Covered,
+    /// A value no arm matches, one rendered pattern per column.
+    Missing(Vec<String>),
+    /// A column's constructors are not known: accept.
+    Undecided,
+    /// More than [`WALK_BUDGET`] leaf checks: accept.
+    OverBudget,
 }
 
-/// The values one flattened scrutinee component can take, for exhaustiveness:
-/// bool, a constructor list (enum variants, `Some`/`None`, `Ok`/`Err`), or one
-/// opaque value `{*}` that only a binding or `_` covers.
-#[derive(PartialEq)]
-enum CoverDomain {
-    Bool,
-    Variants(Vec<String>),
-    Any,
+/// A constructor of a pattern column (CS3-1). An enum variant and a struct
+/// carry their field names in declaration order.
+enum Ctor {
+    Bool(bool),
+    Some,
+    None,
+    Ok,
+    Err,
+    Tuple(usize),
+    Variant(String, String, Vec<String>),
+    Struct(String, Vec<String>),
 }
 
-impl CoverDomain {
-    fn len(&self) -> usize {
-        match self {
-            CoverDomain::Bool => 2,
-            CoverDomain::Variants(v) => v.len(),
-            CoverDomain::Any => 1,
-        }
+/// The constructors of a column's type, each with its field types; an
+/// infinite domain (int, str, float, ...) has none to enumerate.
+enum Sig {
+    Finite(Vec<(Ctor, Vec<Type>)>),
+    Infinite,
+}
+
+fn is_wild(p: &Pattern) -> bool {
+    matches!(p, Pattern::Wildcard | Pattern::Ident(_))
+}
+
+/// Is `p`'s head the constructor `c`?
+fn ctor_matches(c: &Ctor, p: &Pattern) -> bool {
+    match (c, p) {
+        (Ctor::Bool(b), Pattern::Literal(crate::ast::Literal::Bool(x))) => b == x,
+        (Ctor::Some, Pattern::Some(_))
+        | (Ctor::None, Pattern::None)
+        | (Ctor::Ok, Pattern::Ok(_))
+        | (Ctor::Err, Pattern::Err(_)) => true,
+        (Ctor::Tuple(n), Pattern::Tuple(ps)) => ps.len() == *n,
+        (Ctor::Variant(e, v, _), Pattern::Struct { name, .. }) => match name.rsplit_once("::") {
+            Some((pe, pv)) => pe == e && pv == v,
+            None => name == v,
+        },
+        (Ctor::Struct(n, _), Pattern::Struct { name, .. }) => name == n,
+        _ => false,
     }
+}
 
-    fn render(&self, v: usize) -> String {
-        match self {
-            CoverDomain::Bool => (v == 0).to_string(),
-            CoverDomain::Variants(names) => match names[v].as_str() {
-                "Some" | "Ok" | "Err" => format!("{}(_)", names[v]),
-                other => other.to_string(),
-            },
-            CoverDomain::Any => "_".to_string(),
+/// Does every head pattern of a column belong to `sig`?
+fn sig_fits(sig: &Sig, heads: &[&Pattern]) -> bool {
+    match sig {
+        Sig::Finite(ctors) => heads
+            .iter()
+            .all(|h| ctors.iter().any(|(c, _)| ctor_matches(c, h))),
+        Sig::Infinite => heads.iter().all(|h| matches!(h, Pattern::Literal(_))),
+    }
+}
+
+/// The sub-patterns of `p` under constructor `c` of `arity` fields: a binding
+/// head expands to wildcards, an omitted struct field is a wildcard, and a
+/// head of another constructor drops the row (`None`).
+fn specialize<'p>(c: &Ctor, arity: usize, p: &'p Pattern) -> Option<Vec<&'p Pattern>> {
+    if is_wild(p) {
+        return Some(vec![&WILD; arity]);
+    }
+    if !ctor_matches(c, p) {
+        return None;
+    }
+    Some(match (c, p) {
+        (_, Pattern::Some(q) | Pattern::Ok(q) | Pattern::Err(q)) => vec![&**q],
+        (_, Pattern::Tuple(ps)) => ps.iter().collect(),
+        (Ctor::Variant(_, _, names) | Ctor::Struct(_, names), Pattern::Struct { fields, .. }) => {
+            names
+                .iter()
+                .map(|n| match fields.iter().find(|(f, _)| f == n) {
+                    Some((_, q)) => q,
+                    None => &WILD,
+                })
+                .collect()
         }
+        _ => Vec::new(),
+    })
+}
+
+/// Constructor `c` applied to the rendered sub-patterns `subs`, as Axon
+/// pattern syntax (a witness of a non-exhaustive match).
+fn render_ctor(c: &Ctor, subs: &[String]) -> String {
+    let braced = |head: String, names: &[String]| {
+        if names.is_empty() {
+            return head;
+        }
+        let fields: Vec<String> = names
+            .iter()
+            .zip(subs)
+            .map(|(n, s)| format!("{n}: {s}"))
+            .collect();
+        format!("{head} {{ {} }}", fields.join(", "))
+    };
+    match c {
+        Ctor::Bool(b) => b.to_string(),
+        Ctor::Some => format!("Some({})", subs[0]),
+        Ctor::None => "None".to_string(),
+        Ctor::Ok => format!("Ok({})", subs[0]),
+        Ctor::Err => format!("Err({})", subs[0]),
+        Ctor::Tuple(_) => format!("({})", subs.join(", ")),
+        Ctor::Variant(e, v, names) => braced(format!("{e}::{v}"), names),
+        Ctor::Struct(n, names) => braced(n.clone(), names),
     }
 }
 

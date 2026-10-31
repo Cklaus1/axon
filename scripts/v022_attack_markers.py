@@ -3433,3 +3433,18 @@ ATTACK_MARKERS.update({
     'M4134': r'ATTACK: [^\n]*\[min_i32\]',
     'M4135': r'ATTACK: [^\n]*\[max_i32\]',
 })
+
+# checker-soundness-3 lane A (ids M3970-M3977, M3981, M3985, M3986)
+ATTACK_MARKERS.update({
+    'M3970': r'ATTACK: a payload-literal hole checked clean \[h31\]',
+    'M3971': r'ATTACK: a covering payload match was refused \[x_wild\]',
+    'M3972': r'ATTACK: a covering payload match was refused \[c02\]',
+    'M3973': r'ATTACK: a covering payload match was refused \[q02\]',
+    'M3974': r'ATTACK: a payload-literal hole checked clean \[h31\]',
+    'M3975': r'ATTACK: a covering payload match was refused \[c05\]',
+    'M3976': r'ATTACK: a payload-literal hole checked clean \[h31g\]',
+    'M3977': r'ATTACK: a covering payload match was refused \[c21\]',
+    'M3981': r"ATTACK: E1209 lost the refinement's line \[e_helper\]",
+    'M3985': r'ATTACK: `==` on an Option/Result got the arithmetic E0301 text \[g62\]',
+    'M3986': r'ATTACK: the missing-variant fix-it is not valid Axon \[fx_unit\]',
+})

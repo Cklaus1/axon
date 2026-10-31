@@ -43122,3 +43122,425 @@ fn min_max_i32_truncate_their_arguments_like_abs_i32() {
     let _ = std::fs::remove_file(&m03);
     assert!(fails.is_empty(), "{}", fails.join("\n"));
 }
+
+// ── checker-soundness-3 lane A (CS3-1, CS3-3, CS3-5 rows 6 and 8) ──────────
+
+/// CS3-1 (O-CS2-02): a literal pattern inside a payload covers only that
+/// value. `Some(0)` used to cover all of `Some`, and `E::A { s: "x" }` all of
+/// `A`, so each of these checked clean and then panicked `no match arm
+/// matched` (exit 101). Exhaustiveness is now one usefulness walk over the
+/// unguarded arms, so each is E0304 at check.
+#[test]
+fn payload_literal_holes_are_refused() {
+    let attack = "ATTACK: a payload-literal hole checked clean";
+    let mut fails: Vec<String> = Vec::new();
+    for (tag, src) in [
+        (
+            "h31",
+            "fn f(o: Option<i64>) -> i64 {\n  match o {\n    Some(0) => 0,\n    None => 1,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(Some(5))))\n  0\n}\n",
+        ),
+        (
+            "h31b",
+            r#"fn f(r: Result<str, str>) -> i64 { match r { Ok("x") => 0, Err(_) => 1 } }
+fn main() { println(to_str(f(Ok("y")))) }
+"#,
+        ),
+        (
+            "h31c",
+            "fn f(o: Option<Option<i64>>) -> i64 { match o { Some(Some(0)) => 0, Some(None) => 2, None => 1 } }\nfn main() { println(to_str(f(Some(Some(3))))) }\n",
+        ),
+        (
+            "h31d",
+            "fn f(o: Option<i64>, n: i64) -> i64 { match (o, n) { (Some(0), _) => 0, (None, _) => 1 } }\nfn main() { println(to_str(f(Some(3), 1))) }\n",
+        ),
+        (
+            "h31e",
+            "enum E { A { b: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { b: true } => 1, E::B => 3 } }\nfn main() { println(to_str(f(E::A { b: false }))) }\n",
+        ),
+        (
+            "h31f",
+            "fn f(o: Option<bool>) -> i64 { match o { Some(true) => 1, None => 3 } }\nfn main() { println(to_str(f(Some(false)))) }\n",
+        ),
+        (
+            "h31g",
+            "fn main() {\n  let g = |o| match o { Some(0) => 0, None => 1 }\n  println(to_str(g(Some(4))))\n}\n",
+        ),
+        (
+            "h31h",
+            "type C = Red | Green\ntype S = Paint { c: C } | Blank\nfn f(s: S) -> i64 { match s { S::Paint { c: C::Red } => 1, S::Blank => 3 } }\nfn main() { println(to_str(f(S::Paint { c: C::Green }))) }\n",
+        ),
+        (
+            "h31i",
+            "enum E { A { b: bool, c: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { b: true, c: true } => 1, E::A { b: false, c: _ } => 3, E::B => 4 } }\nfn main() { println(to_str(f(E::A { b: true, c: false }))) }\n",
+        ),
+        (
+            "h31j",
+            r#"fn f(o: Option<str>) -> i64 { match o { Some("a") => 1, None => 0 } }
+fn main() { println(to_str(f(Some("b")))) }
+"#,
+        ),
+        (
+            "h32",
+            r#"enum E { A { s: str }, B }
+fn f(e: E) -> i64 {
+  match e {
+    E::A { s: "x" } => 0,
+    E::B => 1,
+  }
+}
+fn main() -> i64 {
+  println(to_str(f(E::A { s: "y" })))
+  0
+}
+"#,
+        ),
+        (
+            "b2",
+            r#"fn main() {
+  let f = |s| match s { "a" => 1, "b" => 2 }
+  println(to_str(f("a")))
+}
+"#,
+        ),
+        (
+            "b3",
+            "fn main() {\n  let f = |o| match o { Some(0) => 0, None => 1 }\n  println(to_str(f(Some(0)) + f(None)))\n}\n",
+        ),
+        (
+            "guard",
+            "fn f(o: Option<i64>) -> i64 { match o { Some(n) if n > 0 => n, None => 0 } }\nfn main() { println(to_str(f(Some(0)))) }\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, _rout, rerr) = sf6_check_and_run(&format!("cs3h_{tag}"), src);
+        if crc != Some(2) || !cmsg.contains("E0304") || rrc != Some(2) {
+            fails.push(format!(
+                "{attack} [{tag}]: check rc {crc:?} {cmsg}; run rc {rrc:?} {rerr}"
+            ));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// CS3-1: matches whose arms cover every value stay legal with their output,
+/// including the tuple shapes CS2-4 refused (c05, c16, c17, c18, c20: a
+/// payload covered by two refutable arms together), an omitted enum field
+/// (q02), and wide all-binding arms (e9, t9).
+#[test]
+fn payload_matches_that_cover_stay_legal() {
+    let attack = "ATTACK: a covering payload match was refused";
+    let mut fails: Vec<String> = Vec::new();
+    for (tag, src, out) in [
+        (
+            "c01",
+            "fn f(o: Option<i64>) -> i64 { match o { Some(0) => 0, Some(_) => 2, None => 1 } }\nfn main() { println(to_str(f(Some(5)) + f(Some(0)) + f(None))) }\n",
+            "3\n",
+        ),
+        (
+            "c02",
+            "fn f(o: Option<bool>) -> i64 { match o { Some(true) => 1, Some(false) => 2, None => 3 } }\nfn main() { println(to_str(f(Some(true)) + f(Some(false)) + f(None))) }\n",
+            "6\n",
+        ),
+        (
+            "c03",
+            "fn f(o: Option<Option<i64>>) -> i64 { match o { Some(Some(x)) => x, Some(None) => 0, None => 1 } }\nfn main() { println(to_str(f(Some(Some(5))) + f(Some(None)) + f(None))) }\n",
+            "6\n",
+        ),
+        (
+            "c04",
+            r#"fn f(r: Result<i64, str>) -> i64 { match r { Ok(0) => 0, Ok(n) => n, Err(_) => 1 } }
+fn main() { println(to_str(f(Ok(0)) + f(Ok(7)) + f(Err("e")))) }
+"#,
+            "8\n",
+        ),
+        (
+            "c05",
+            "fn f(o: Option<bool>, n: i64) -> i64 { match (o, n) { (Some(true), _) => 1, (Some(false), _) => 2, (None, _) => 3 } }\nfn main() { println(to_str(f(Some(true), 1) + f(Some(false), 1) + f(None, 1))) }\n",
+            "6\n",
+        ),
+        (
+            "c06",
+            r#"enum E { A { s: str }, B }
+fn f(e: E) -> i64 { match e { E::A { s: "x" } => 0, E::A { s } => len(s), E::B => 1 } }
+fn main() { println(to_str(f(E::A { s: "x" }) + f(E::A { s: "yy" }) + f(E::B))) }
+"#,
+            "3\n",
+        ),
+        (
+            "c07",
+            "enum E { A { b: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { b: true } => 1, E::A { b: false } => 2, E::B => 3 } }\nfn main() { println(to_str(f(E::A { b: true }) + f(E::A { b: false }) + f(E::B))) }\n",
+            "6\n",
+        ),
+        (
+            "c08",
+            r#"fn f(r: Result<Option<i64>, str>) -> i64 { match r { Ok(Some(n)) => n, Ok(None) => 0, Err(_) => 1 } }
+fn main() { println(to_str(f(Ok(Some(4))) + f(Ok(None)) + f(Err("e")))) }
+"#,
+            "5\n",
+        ),
+        (
+            "c09",
+            "fn f(o: Option<(i64, bool)>) -> i64 { match o { Some((n, true)) => n, Some((_, false)) => 0, None => 1 } }\nfn main() { println(to_str(f(Some((4, true))) + f(Some((4, false))) + f(None))) }\n",
+            "5\n",
+        ),
+        (
+            "c11",
+            "type C = Red | Green\ntype S = Paint { c: C } | Blank\nfn f(s: S) -> i64 { match s { S::Paint { c: C::Red } => 1, S::Paint { c: C::Green } => 2, S::Blank => 3 } }\nfn main() { println(to_str(f(S::Paint { c: C::Red }) + f(S::Paint { c: C::Green }) + f(S::Blank))) }\n",
+            "6\n",
+        ),
+        (
+            "c12",
+            "fn f(o: Option<i64>) -> i64 { match o { Some(n) if n > 0 => n, Some(0) => 0, Some(_) => 9, None => 1 } }\nfn main() { println(to_str(f(Some(5)) + f(Some(0)) + f(Some(-1)) + f(None))) }\n",
+            "15\n",
+        ),
+        (
+            "c13",
+            "fn f<T>(o: Option<T>) -> i64 { match o { Some(_) => 1, None => 0 } }\nfn main() { println(to_str(f(Some(1)) + f(None))) }\n",
+            "1\n",
+        ),
+        (
+            "c14",
+            "enum E { A { b: bool }, B { b: bool }, C { b: bool }, D { b: bool }, F { b: bool }, G { b: bool }, H { b: bool }, I { b: bool }, J { b: bool } }
+fn f(e: E) -> i64 { match e {
+  E::A { b: true } => 1, E::A { b: false } => 2, E::B { b: true } => 1, E::B { b: false } => 2,
+  E::C { b: true } => 1, E::C { b: false } => 2, E::D { b: true } => 1, E::D { b: false } => 2,
+  E::F { b: true } => 1, E::F { b: false } => 2, E::G { b: true } => 1, E::G { b: false } => 2,
+  E::H { b: true } => 1, E::H { b: false } => 2, E::I { b: true } => 1, E::I { b: false } => 2,
+  E::J { b: true } => 1, E::J { b: false } => 2 } }
+fn main() { println(to_str(f(E::A { b: true }) + f(E::J { b: false }))) }
+",
+            "3\n",
+        ),
+        (
+            "c15",
+            "fn main() {\n  let xs = [Some(1), None, Some(0)]\n  let n = arr_fold(xs, 0, |acc, o| acc + match o { Some(0) => 10, Some(k) => k, None => 100 })\n  println(to_str(n))\n}\n",
+            "111\n",
+        ),
+        (
+            "c16",
+            r#"fn f(r: Result<bool, str>, n: i64) -> i64 { match (r, n) { (Ok(true), _) => 1, (Ok(false), _) => 2, (Err(_), _) => 3 } }
+fn main() { println(to_str(f(Ok(true), 1) + f(Ok(false), 1) + f(Err("e"), 1))) }
+"#,
+            "6\n",
+        ),
+        (
+            "c17",
+            "enum E { A { b: bool }, B }\nfn f(e: E, n: i64) -> i64 { match (e, n) { (E::A { b: true }, _) => 1, (E::A { b: false }, _) => 2, (E::B, _) => 3 } }\nfn main() { println(to_str(f(E::A { b: true }, 1) + f(E::A { b: false }, 1) + f(E::B, 1))) }\n",
+            "6\n",
+        ),
+        (
+            "c18",
+            "fn f(o: Option<Option<i64>>, b: bool) -> i64 { match (o, b) { (Some(Some(x)), _) => x, (Some(None), _) => 0, (None, _) => 1 } }\nfn main() { println(to_str(f(Some(Some(4)), true) + f(Some(None), true) + f(None, false))) }\n",
+            "5\n",
+        ),
+        (
+            "c19",
+            "fn f(o: Option<(bool, i64)>) -> i64 { match o { Some((true, n)) => n, Some((false, _)) => 0, None => 1 } }\nfn main() { println(to_str(f(Some((true, 4))) + f(Some((false, 1))) + f(None))) }\n",
+            "5\n",
+        ),
+        (
+            "c20",
+            "fn f(o: Option<(bool, i64)>, k: i64) -> i64 { match (o, k) { (Some((true, n)), _) => n, (Some((false, _)), _) => 0, (None, _) => 1 } }\nfn main() { println(to_str(f(Some((true, 4)), 0) + f(Some((false, 1)), 0) + f(None, 0))) }\n",
+            "5\n",
+        ),
+        (
+            "c21",
+            "enum E { A { b: bool, c: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { b: true, c } => if c { 1 } else { 2 }, E::A { b: false, c: _ } => 3, E::B => 4 } }\nfn main() { println(to_str(f(E::A { b: true, c: false }) + f(E::A { b: false, c: true }) + f(E::B))) }\n",
+            "9\n",
+        ),
+        (
+            "q02",
+            "enum E { A { b: bool, c: i64 }, B }\nfn f(e: E) -> i64 {\n    match e {\n        E::A { b: true } => 1,\n        E::A { c } => c,\n        E::B => 3,\n    }\n}\nfn main() { println(to_str(f(E::A { b: true, c: 5 }) + f(E::A { b: false, c: 5 }) + f(E::B))) }\n",
+            "9\n",
+        ),
+        (
+            "e9",
+            "enum E { A { a: bool, b: bool, c: bool, d: bool, e: bool, f: bool, g: bool, h: bool, i: bool }, B }\nfn f(x: E) -> i64 { match x { E::A { a, b, c, d, e, f, g, h, i } => if a { 1 } else { 2 }, E::B => 0 } }\nfn main() { println(to_str(f(E::A { a: true, b: true, c: true, d: true, e: true, f: true, g: true, h: true, i: true }) + f(E::B))) }\n",
+            "1\n",
+        ),
+        (
+            "t9",
+            "fn f(t: (bool, bool, bool, bool, bool, bool, bool, bool, bool)) -> i64 { match t { (a, b, c, d, e, f, g, h, i) => 1 } }\nfn main() { println(to_str(f((true, true, true, true, true, true, true, true, true)))) }\n",
+            "1\n",
+        ),
+        (
+            "a3",
+            "enum E { A { b: bool, n: i64 }, B }\nfn f(e: E) -> i64 { match e { E::A => 1, E::B => 2 } }\nfn main() { println(to_str(f(E::A { b: true, n: 1 }) + f(E::B))) }\n",
+            "3\n",
+        ),
+        (
+            "a4",
+            "enum E { A { b: bool }, B }\nfn f(e: E) -> i64 { match e { E::A { b: true } => 1, E::A { b: false } => 2, E::B => 3 } }\nfn g(o: Option<bool>) -> i64 { match o { Some(true) => 1, Some(false) => 2, None => 3 } }\nfn main() { println(to_str(f(E::A { b: true }) + f(E::B) + g(Some(false)))) }\n",
+            "6\n",
+        ),
+        (
+            "a5",
+            r#"fn main() {
+    let h = |o| match o { Some(n) => n, None => 0 }
+    let k = |p| match p { (true, x) => x, (false, _) => 0 }
+    let s = |v| match v { "a" => 1, x => 2 }
+    println(to_str(h(Some(3)) + k((true, 2)) + s("a")))
+}
+"#,
+            "6\n",
+        ),
+        (
+            // A `_` head beside `true`/`false` heads stands for both.
+            "x_wild",
+            "fn f(a: bool, b: bool) -> i64 { match (a, b) { (true, _) => 1, (false, true) => 2, (_, false) => 3 } }\nfn main() { println(to_str(f(true, false) + f(false, true) + f(false, false))) }\n",
+            "6\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs3c_{tag}"), src);
+        if crc != Some(0) || rrc != Some(0) || rout != out {
+            fails.push(format!(
+                "{attack} [{tag}]: check rc {crc:?} {cmsg}; run rc {rrc:?} out {rout:?} {rerr}"
+            ));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// `axon check --json` for `src`: the stderr lines (one diagnostic each)
+/// whose code is `code`.
+fn cs3_json_diags(tag: &str, src: &str, code: &str) -> (Option<i32>, Vec<String>) {
+    let f = std::env::temp_dir().join(format!("axon_cs3a_{tag}_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon()
+        .args(["check", "--json", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let want = format!("\"code\":\"{code}\"");
+    let lines = String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter(|l| l.contains(&want))
+        .map(str::to_string)
+        .collect();
+    (out.status.code(), lines)
+}
+
+/// CS3-3 (O-CS2-03): E1209 (an impure refinement predicate) is reported at
+/// the refinement's item, not at line 0: the JSON used to carry no `line`.
+#[test]
+fn e1209_carries_the_refinement_line() {
+    let attack = "ATTACK: E1209 lost the refinement's line";
+    let mut fails: Vec<String> = Vec::new();
+    for (tag, src, line) in [
+        (
+            "e_direct",
+            "type P = i64 where str_len(read_file(\"/x\")) > 0\nfn f(x: P) -> i64 { x }\nfn main() -> i64 {\n  println(to_str(f(2)))\n  0\n}\n",
+            1,
+        ),
+        (
+            "x04",
+            "fn helper(x: i64) -> i64 { x }\n\ntype P = i64 where\n    str_len(read_file(\"/x\")) > 0\nfn f(x: P) -> i64 { x }\nfn main() { println(to_str(f(2))) }\n",
+            3,
+        ),
+        (
+            "e_helper",
+            "fn leak(v: i64) -> bool {\n    let _ = append_file(\"/nonexistent-axon-cs3/leak.txt\", \"x\")\n    true\n}\ntype W = i64 where leak(_)\nfn f(w: W) -> i64 { w }\nfn main() { println(to_str(f(1))) }\n",
+            5,
+        ),
+        (
+            "e_inline",
+            "fn f(x: i64 where now_ms() > 0) -> i64 { x }\n\nfn main() { println(to_str(f(1))) }\n",
+            1,
+        ),
+        (
+            "e_struct",
+            "fn leak(v: i64) -> bool {\n    let _ = append_file(\"/nonexistent-axon-cs3/leak.txt\", \"x\")\n    true\n}\n\ntype S = { a: i64 } where leak(_.a)\nfn main() { let s = S { a: 1 } println(to_str(s.a)) }\n",
+            6,
+        ),
+    ] {
+        let (rc, diags) = cs3_json_diags(tag, src, "E1209");
+        let want = format!("\"line\":{line},");
+        if rc != Some(2) || diags.is_empty() || !diags.iter().all(|d| d.contains(&want)) {
+            fails.push(format!("{attack} [{tag}]: rc {rc:?}, want {want}: {diags:?}"));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// CS3-5 rows 6 and 8 (lane A, the checker's diagnostics for refused forms).
+/// Row 8: `==`/`!=` on an `Option`/`Result` says that the comparison is the
+/// problem and how to write it as a match, with no "(expected T)"; arithmetic
+/// keeps the old text. Row 6: the E0304 fix-it for a missing enum variant is
+/// valid Axon, so pasting it as an arm checks clean (it was `E::B { .. }`, a
+/// parse error).
+#[test]
+fn diagnostics_for_refused_forms_checker() {
+    let mut fails: Vec<String> = Vec::new();
+    let attack = "ATTACK: `==` on an Option/Result got the arithmetic E0301 text";
+    for (tag, src, want) in [
+        (
+            "g62",
+            "fn main() {\n    let o = Some(1)\n    let same = o == Some(1)\n    println(to_str(same))\n}\n",
+            "`==` does not compare `Option` values",
+        ),
+        (
+            "g07b",
+            "fn main() {\n    let o = Some(1)\n    if o != None { println(\"some\") }\n}\n",
+            "`!=` does not compare `Option` values",
+        ),
+        (
+            "g07e",
+            "fn main() {\n    let o: Option<i64> = None\n    if o == None { println(\"none\") }\n}\n",
+            "`==` does not compare `Option` values",
+        ),
+        (
+            "g07c",
+            "fn main() {\n    let r: Result<i64, str> = Ok(1)\n    println(to_str(r == Ok(1)))\n}\n",
+            "`==` does not compare `Result` values",
+        ),
+    ] {
+        let (rc, diags) = cs3_json_diags(tag, src, "E0301");
+        if rc != Some(2)
+            || diags.is_empty()
+            || !diags
+                .iter()
+                .all(|d| d.contains(want) && d.contains("match it: `match") && !d.contains("(expected"))
+        {
+            fails.push(format!("{attack} [{tag}]: rc {rc:?}, want {want:?}: {diags:?}"));
+        }
+    }
+    let attack = "ATTACK: arithmetic on an Option lost its E0301 text";
+    let (rc, diags) = cs3_json_diags(
+        "arith",
+        "fn main() {\n    let o = Some(1)\n    println(to_str(o + 1))\n}\n",
+        "E0301",
+    );
+    if rc != Some(2) || !diags.iter().any(|d| d.contains("cannot be used directly")) {
+        fails.push(format!("{attack} [arith]: rc {rc:?}: {diags:?}"));
+    }
+    let attack = "ATTACK: the missing-variant fix-it is not valid Axon";
+    for (tag, head, tail) in [
+        (
+            "fx_unit",
+            "enum E { A { b: bool }, B }\nfn f(e: E) {\n    match e {\n        E::A { b } => println(to_str(b)),\n",
+            "    }\n}\nfn main() { f(E::A { b: true }) f(E::B) }\n",
+        ),
+        (
+            "fx_fields",
+            "enum E { A { b: bool, c: i64 }, B }\nfn f(e: E) {\n    match e {\n        E::B => println(\"b\"),\n",
+            "    }\n}\nfn main() { f(E::A { b: true, c: 1 }) f(E::B) }\n",
+        ),
+    ] {
+        let (rc, diags) = cs3_json_diags(tag, &format!("{head}{tail}"), "E0304");
+        let fix = diags.first().and_then(|d| {
+            let at = d.find("\"help\":\"add arm: ")? + "\"help\":\"add arm: ".len();
+            Some(d[at..d[at..].find('"')? + at].to_string())
+        });
+        let Some(fix) = fix.filter(|_| rc == Some(2)) else {
+            fails.push(format!("{attack} [{tag}]: no fix-it: rc {rc:?}: {diags:?}"));
+            continue;
+        };
+        let pasted = format!("{head}        {fix}\n{tail}");
+        let (crc, cmsg, rrc, _rout, rerr) = sf6_check_and_run(&format!("cs3fx_{tag}"), &pasted);
+        if crc != Some(0) || rrc != Some(0) {
+            fails.push(format!(
+                "{attack} [{tag}]: pasted `{fix}`: check rc {crc:?} {cmsg}; run rc {rrc:?} {rerr}"
+            ));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
