@@ -1095,8 +1095,10 @@ fn child_state(drop: bool) -> Option<String> {
          out.append('Pdeathsig: %d\\\\n' % v.value)\nopen('{}','w').write(''.join(out))\"\n",
         rec.display()
     );
-    std::fs::write(&fx.cfg.axon, script).unwrap();
-    std::fs::set_permissions(&fx.cfg.axon, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Through a child `cp` (tests/common): an in-process write left a write fd
+    // that a sibling test's forked runner child held until its exec, and this
+    // run's exec of the stand-in was refused "Text file busy (os error 26)".
+    write_executable(&fx.cfg.axon, script, 0o755);
     // The out dir must be writable by the dropped uid for the record.
     std::fs::set_permissions(&fx.cfg.out, std::fs::Permissions::from_mode(0o777)).unwrap();
     let _ = run(&fx.cfg);
@@ -1164,12 +1166,12 @@ fn recorded(script: &str, rec_name: &str) -> (String, u64) {
     use std::os::unix::fs::PermissionsExt;
     let fx = fixture("t_ok", false);
     let rec = fx.cfg.out.join(rec_name);
-    std::fs::write(
+    // A child `cp` writes it, as in `child_state` (ETXTBSY otherwise).
+    write_executable(
         &fx.cfg.axon,
         script.replace("@REC@", &rec.display().to_string()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&fx.cfg.axon, std::fs::Permissions::from_mode(0o755)).unwrap();
+        0o755,
+    );
     std::fs::set_permissions(&fx.cfg.out, std::fs::Permissions::from_mode(0o777)).unwrap();
     let peak = || -> u64 {
         std::fs::read_to_string("/proc/self/status")
