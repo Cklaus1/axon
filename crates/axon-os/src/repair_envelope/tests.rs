@@ -260,6 +260,10 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
         ("envelope id", json!({"envelope_id": "ABC"})),
         ("store id", json!({"spent_store_id": "x"})),
         ("relative workspace", json!({"task": {"workspace": "ws"}})),
+        (
+            "dotdot workspace",
+            json!({"task": {"workspace": "/srv/../etc"}}),
+        ),
         ("dotdot file", json!({"task": {"file": "../etc/passwd"}})),
         ("absolute file", json!({"task": {"file": "/etc/passwd"}})),
         ("empty symbol", json!({"task": {"symbol": ""}})),
@@ -274,6 +278,10 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
             "fs_write absolute over the file",
             json!({"scopes": {"fs_write": ["/srv/ws/src/main.axon"]}}),
         ),
+        (
+            "fs_write under the file",
+            json!({"scopes": {"fs_write": ["src/main.axon/x"]}}),
+        ),
         ("fs_write star", json!({"scopes": {"fs_write": ["*"]}})),
         ("net star", json!({"scopes": {"net": ["*"]}})),
         ("zero budget", json!({"budget": {"max_proposals": 0}})),
@@ -286,6 +294,24 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
             "bad imports digest",
             json!({"task": {"imports_digest": "b".repeat(64)}}),
         ),
+        ("empty issuer", json!({"issued_by": " "})),
+        (
+            "pristine digest",
+            json!({"task": {"pristine_sha256": "A".repeat(64)}}),
+        ),
+        (
+            "fence digest",
+            json!({"capabilities": {"fence_sha256": "f"}}),
+        ),
+        (
+            "target grant",
+            json!({"capabilities": {"target_grant": []}}),
+        ),
+        ("check name", json!({"check": {"name": ""}})),
+        ("check digest", json!({"check": {"digest": "d"}})),
+        ("generator model", json!({"generator": {"model": ""}})),
+        ("net empty", json!({"scopes": {"net": [""]}})),
+        ("fs_read dotdot", json!({"scopes": {"fs_read": ["../x"]}})),
     ];
     for (what, patch) in cases {
         let mut v: Value = serde_json::from_str(&signed()).unwrap();
@@ -295,6 +321,15 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
         ));
         assert!(!e.contains("signature"), "{what}: {e}");
     }
+    // A `..` workspace is refused as a workspace, not only later by the
+    // fs_write overlap guard that a non-normalized path also trips.
+    let mut v: Value = serde_json::from_str(&signed()).unwrap();
+    merge(&mut v, &json!({"task": {"workspace": "/srv/../etc"}}));
+    let e = verify(&sign_raw(v), &key, NOW).unwrap_err();
+    assert!(
+        e.contains("task.workspace"),
+        "ATTACK: a `..` workspace was admitted as a workspace: {e}"
+    );
 }
 
 fn merge(v: &mut Value, patch: &Value) {
@@ -320,6 +355,93 @@ fn s2_the_minter_refuses_an_invalid_envelope() {
     mint()
         .sign(&e)
         .expect_err("ATTACK: the minter signed an invalid envelope");
+}
+
+#[test]
+fn s2_a_malformed_sig_or_schema_is_refused() {
+    let key = mint().verify_key();
+    let good: Value = serde_json::from_str(&signed()).unwrap();
+    let sig = good["sig"].as_str().unwrap().to_string();
+    let hexpart = sig.strip_prefix(SIG_PREFIX).unwrap().to_string();
+    let cases: Vec<(&str, Option<Value>, &str)> = vec![
+        ("a numeric sig", Some(json!(7)), "is not a string"),
+        ("no sig", None, "has no `sig`"),
+        (
+            "an unprefixed sig",
+            Some(json!(hexpart)),
+            "does not start with",
+        ),
+        (
+            "a short sig",
+            Some(json!(&sig[..sig.len() - 2])),
+            "128 lowercase hex",
+        ),
+        (
+            "an uppercase sig",
+            Some(json!(format!("{SIG_PREFIX}{}", hexpart.to_uppercase()))),
+            "128 lowercase hex",
+        ),
+    ];
+    for (what, s, want) in cases {
+        let mut v = good.clone();
+        match s {
+            Some(s) => v["sig"] = s,
+            None => {
+                v.as_object_mut().unwrap().remove("sig");
+            }
+        }
+        let e = verify(&v.to_string(), &key, NOW)
+            .expect_err(&format!("ATTACK: an envelope with {what} verified"));
+        assert!(
+            e.contains(want),
+            "ATTACK: {what} was refused only by a later check: {e}"
+        );
+    }
+    let mut v = good.clone();
+    v["schema"] = json!("axon-envelope/4");
+    let e = verify(&v.to_string(), &key, NOW).expect_err("ATTACK: another schema verified");
+    assert!(
+        e.contains("not axon-approval/4"),
+        "ATTACK: another schema was refused only by a later check: {e}"
+    );
+    // The minter judges the schema itself (verify judged it before validate).
+    let mut e = sample();
+    e.schema = "axon-approval/3".into();
+    let r = mint()
+        .sign(&e)
+        .expect_err("ATTACK: the minter signed another schema");
+    assert!(r.contains("schema"), "{r}");
+}
+
+#[test]
+fn the_envelope_constants_are_the_documented_ones() {
+    // Literal pins (NH-R1 §4, §5.5): a consistent edit of a constant is
+    // invisible to every test that reads it through the const.
+    assert_eq!(
+        ENVELOPE_SCHEMA, "axon-approval/4",
+        "ATTACK: ENVELOPE_SCHEMA changed"
+    );
+    assert_eq!(SIG_PREFIX, "axenv1:", "ATTACK: SIG_PREFIX changed");
+    assert_eq!(MAX_TTL_S, 86_400, "ATTACK: MAX_TTL_S changed");
+    assert_eq!(ISSUED_SKEW_S, 60, "ATTACK: ISSUED_SKEW_S changed");
+    assert_eq!(DECISION, "authorize-operate", "ATTACK: DECISION changed");
+    assert_eq!(GENERATOR_KIND, "ai", "ATTACK: GENERATOR_KIND changed");
+    assert_eq!(STORE_ID_FILE, "store-id", "ATTACK: STORE_ID_FILE changed");
+    // MintKey::from_env reads the operator key under this exact name.
+    assert_eq!(
+        crate::approval::APPROVAL_KEY_ENV,
+        "AXON_APPROVAL_KEY",
+        "ATTACK: APPROVAL_KEY_ENV changed"
+    );
+    assert!(
+        !VERIFY_KEY.dir && SPENT_STORE.dir,
+        "ATTACK: the verify key is not a file or the spent store not a directory"
+    );
+    assert_eq!(
+        (VERIFY_KEY.what, SPENT_STORE.what),
+        ("repair-envelope verify key", "repair-envelope spent store"),
+        "ATTACK: a private-path label changed"
+    );
 }
 
 // ── S3: keys ─────────────────────────────────────────────────────────────────
@@ -348,8 +470,10 @@ fn s3_the_runner_key_is_a_public_key_only() {
     let k = mint().verify_key();
     assert_eq!(k.to_hex().len(), 64);
     assert_eq!(VerifyKey::from_hex(&k.to_hex()).unwrap(), k);
-    VerifyKey::from_hex(&"A".repeat(64)).expect_err("uppercase hex is not the key form");
-    VerifyKey::from_hex("00").expect_err("a short key is refused");
+    VerifyKey::from_hex(&"A".repeat(64)).expect_err("ATTACK: an uppercase-hex verify key loaded");
+    VerifyKey::from_hex("00").expect_err("ATTACK: a short verify key loaded");
+    VerifyKey::from_hex(&"g".repeat(64)).expect_err("ATTACK: a non-hex verify key loaded");
+    MintKey::derive(&[7u8; 15]).expect_err("ATTACK: a 15-byte operator key minted");
 }
 
 // ── S4: time ─────────────────────────────────────────────────────────────────
@@ -458,6 +582,20 @@ fn s9_the_spent_store_must_be_private_and_real() {
     let e = store_id(&link, me()).expect_err("ATTACK: a symlinked spent store was used");
     assert!(e.contains("symlink is never followed"), "{e}");
     std::fs::remove_file(&link).unwrap();
+    // store-id: a regular file holding 32 lowercase hex, mode 0600
+    let sid = d.join(STORE_ID_FILE);
+    assert_eq!(
+        std::fs::metadata(&sid).unwrap().permissions().mode() & 0o777,
+        0o600,
+        "ATTACK: the store id was written readable by others"
+    );
+    std::fs::write(&sid, "XYZ\n").unwrap();
+    let e = store_id(&d, me()).expect_err("ATTACK: a malformed store id was read");
+    assert!(e.contains("32 lowercase hex"), "{e}");
+    std::fs::remove_file(&sid).unwrap();
+    std::fs::create_dir(&sid).unwrap();
+    let e = store_id(&d, me()).expect_err("ATTACK: a directory store id was read");
+    assert!(e.contains("not a regular file"), "{e}");
     std::fs::remove_dir_all(&d).unwrap();
 }
 
@@ -558,6 +696,30 @@ fn s5_consume_never_replaces_an_existing_used_record() {
     let e =
         consume(&d, me(), &verified(&env), NOW).expect_err("ATTACK: a spent record was replaced");
     assert!(e.contains("already used"), "{e}");
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+#[test]
+fn s5_issue_and_consume_refuse_malformed_records() {
+    let mut env = sample();
+    let d = issued_store(&mut env);
+    let issued = d.join(format!("{}.issued", env.envelope_id));
+    assert_eq!(
+        std::fs::metadata(&issued).unwrap().permissions().mode() & 0o777,
+        0o600,
+        "ATTACK: an issued record was written readable by others"
+    );
+    let e = issue(&d, me(), &env.spent_store_id, "../x", NOW)
+        .expect_err("ATTACK: a path-shaped envelope id was issued");
+    assert!(e.contains("32 lowercase hex"), "{e}");
+    let e = issue(&d, me(), &new_id().unwrap(), &new_id().unwrap(), NOW)
+        .expect_err("ATTACK: an envelope was issued into a store of another id");
+    assert!(e.contains("has id"), "{e}");
+    std::fs::remove_file(&issued).unwrap();
+    std::fs::create_dir(&issued).unwrap();
+    let e = consume(&d, me(), &verified(&env), NOW)
+        .expect_err("ATTACK: a directory .issued record was spent");
+    assert!(e.contains("not a regular file"), "{e}");
     std::fs::remove_dir_all(&d).unwrap();
 }
 

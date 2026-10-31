@@ -316,16 +316,20 @@ impl MintKey {
     /// that fails the intrinsic checks. Returns the envelope's canonical JSON.
     pub fn sign(&self, env: &RepairEnvelope) -> Result<String, String> {
         validate(env)?;
-        let mut v = serde_json::to_value(env).map_err(|e| format!("repair envelope: {e}"))?;
-        let obj = v
-            .as_object_mut()
-            .ok_or("repair envelope is not an object")?;
+        // A struct serializes to an object: the map is taken by value, so the
+        // `sig` slot is replaced without a second (unreachable) kind check.
+        let Value::Object(mut obj) =
+            serde_json::to_value(env).map_err(|e| format!("repair envelope: {e}"))?
+        else {
+            return Err("repair envelope is not an object".into());
+        };
         obj.remove("sig");
+        let mut v = Value::Object(obj);
         let msg = signed_message(&v)?;
         let sig = format!("{SIG_PREFIX}{}", hex(self.0.sign(&msg).as_ref()));
-        v.as_object_mut()
-            .ok_or("repair envelope is not an object")?
-            .insert("sig".into(), Value::String(sig));
+        if let Value::Object(o) = &mut v {
+            o.insert("sig".into(), Value::String(sig));
+        }
         let bytes =
             axon_canonical::canonical_bytes(&v).map_err(|e| format!("repair envelope: {e}"))?;
         String::from_utf8(bytes).map_err(|e| format!("repair envelope: {e}"))
@@ -393,9 +397,11 @@ pub fn verify(json: &str, key: &VerifyKey, now_unix: u64) -> Result<VerifiedEnve
             "repair envelope signature does not verify under the runner's key".to_string()
         })?;
     // 5. typed parse, only now
-    v.as_object_mut()
-        .ok_or("repair envelope is not an object")?
-        .insert("sig".into(), Value::String(sig));
+    // `v` is an object (step 1 read its `schema`); were it not, the typed
+    // parse below would refuse it.
+    if let Some(o) = v.as_object_mut() {
+        o.insert("sig".into(), Value::String(sig));
+    }
     let envelope: RepairEnvelope =
         serde_json::from_value(v).map_err(|e| format!("repair envelope: {e}"))?;
     validate(&envelope)?;

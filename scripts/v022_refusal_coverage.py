@@ -759,6 +759,32 @@ EXEMPT += [
     ('crates/axon-os/src/supervisor.rs', '                Verdict::Denied {\n                    reason,\n                    axis: "approval".to_string(),\n                },\n                ApprovalStatus::Denied.as_str(),\n                None,', _OAK),
     ('crates/axon-os/src/supervisor.rs', '                ApprovalStatus::Denied.as_str(),\n                None,', _OAK),
 ]
+# NH-R1 A1: the repair envelope's sites with no row of their own. MintKey::from_env reads the same
+# AXON_APPROVAL_KEY as ApprovalKey::from_env (_OAK); the `not an object` refusals and decode_hex are
+# dominated, stated per entry (decode_hex surveyed 2026-10-31: removing its odd-length check left the
+# axon-os repair_envelope and approval tests green).
+RE = "crates/axon-os/src/repair_envelope.rs"
+EXEMPT += [
+    (RE, '        if v.is_empty() {\n            return Err(format!("{env} is not set: only the operator mints"));', _OAK),
+    (RE, 'let bytes = decode_hex(v).ok_or_else(|| format!("{env} is not valid hex"))?;', _OAK),
+    (RE, '            return Err("repair envelope is not an object".into());',
+     "UNREACHABLE (checkable): `serde_json::to_value` of the RepairEnvelope struct (a derived Serialize "
+     "with named fields) is a JSON object, so the let-else's other arm never runs; the refusal converts an "
+     "impossible non-object into an error"),
+    (RE, 'let b = decode_hex(s).ok_or("repair-envelope verify key is not hex")?;',
+     "DOMINATED (checkable): the `is_lower_hex(s, 64)` refusal directly above (rowed: M4081) admits only "
+     "64 characters from 0-9a-f, which always decode"),
+    (RE, 'decode_hex(sig_hex).ok_or("repair envelope `sig` is not hex")?;',
+     "DOMINATED (checkable): the `is_lower_hex(sig_hex, 128)` refusal directly above (rowed: M4086) admits "
+     "only 128 characters from 0-9a-f, which always decode"),
+    (RE, 'libc::renameat2(',
+     "OS ERROR (checkable): the syscall's decisions are its RENAME_NOREPLACE flag (rowed: M4068) and the "
+     "`rc == 0` check below it (rowed: M4284); a failure is returned as an io::Error and the spend fails closed"),
+    (RE, 'fn decode_hex(s: &str) -> Option<Vec<u8>> {',
+     "DOMINATED (checkable): every caller judges its input first: VerifyKey::from_hex and verify call "
+     "is_lower_hex(s, 64/128) (rowed: M4081, M4086), and MintKey::from_env's operator hex (_OAK) of odd "
+     "length yields None anyway, because `s.get(i..i + 2)` is None for the last odd character"),
+]
 ST = "crates/axon-loop/src/store.rs"
 EXEMPT += [
     (ST, "        if operator_key.len() < 16 {",
