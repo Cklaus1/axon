@@ -12457,5 +12457,13 @@ MUTATIONS += [
      'axon-os', '--test sandbox_capture', 'a_nullary_main_exits_zero_and_unterminated_output_is_kept'),
 ]
 
+# intent-gen IgIntent IG3: a `cmd:` generator past its deadline is a timeout, its group killed.
+MUTATIONS += [
+    ('M4036', 'IG3: a hanging `cmd:` generator is not reported as timed out', 'crates/axon-intent/src/generator.rs',
+     'if run.timed_out {',
+     'if false && run.timed_out {',
+     'axon-intent', '--lib', 'generator::tests::a_hanging_cmd_generator_is_killed_with_its_group_at_the_deadline'),
+]
+
 if __name__ == "__main__":
     main()

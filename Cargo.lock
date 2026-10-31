@@ -262,6 +262,7 @@ version = "0.1.0"
 name = "axon-intent"
 version = "0.1.0"
 dependencies = [
+ "axon-ai",
  "axon-jobctl",
  "axon-os",
  "libc",

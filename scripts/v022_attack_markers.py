@@ -3406,4 +3406,5 @@ ATTACK_MARKERS.update({
     'M4033': r'ATTACK: a program that does not compile reads as an exit status',
     'M4034': r'ATTACK: a run killed at its deadline reads as a fault or an exit',
     'M4035': r"ATTACK: the wrapper's completion marker leaks into captured stdout",
+    'M4036': r'ATTACK: a hanging generator outlives its deadline',
 })
