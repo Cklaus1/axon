@@ -276,6 +276,19 @@ unchanged.
 
 v1 excludes tasks whose program would call `ai_complete` or `http_*` (F10) — logged as an opportunity.
 
+- `[REVISED: build 2026-10-31, IgBench]` Built: `crates/axon-intent/benchmarks/genviab/` (`gv.py`, `build.py
+  [--check]`, `dev/`, `once/`, `rejected-ideas.json`). Dev = 15 tasks: the 12 portable atlas tasks (a04-a15),
+  `intents/summarize`, `intents/overbroad`, `jobs/overreach` (tempting). Not ported, with reasons in
+  `rejected-ideas.json`: `intents/vague` (states no output), `jobs/evasion` (no observable output),
+  `jobs/summarize` (same task as `intents/summarize`). Deviations: (a) the atlas tasks carry one human data
+  point each, used as the hidden example; they have NO visible example (inventing one is forbidden), so dev
+  numbers measure check+gates-only acceptance; (b) dev references are model-written (labelled
+  `reference_author: model:IgBench (dev only)`, integrator decision) and must reproduce the source's human
+  value (`human-value` check); (c) no dev task is `stateful` or `errors` (no source has one); the grader's
+  two-run/exit/stdout paths are covered by `selftest.py`; (d) extra checks: `# Intent` is one paragraph
+  (the loop shows only `Intent::goal`), and in `once/` `reference_author` must be `human:<name>` with ≥ 1
+  visible example. The once set is an empty scaffold; its tasks are written by a human after the PREREG.
+
 ### IG7 — The harness, the drivers and the pre-registered run `[REVISED: ReviewIGDevloop 1, 2, 4, 5, 6, 8, 9; ReviewIGAdversarial MAJOR 6, 7]`
 
 `genviab.py` drives `axon-intent compile --generate --generator cmd:<driver>` per task and grades with the hidden
@@ -340,6 +353,15 @@ the not-yet-built `axon-embed` tool schema. It is the precursor measurement and 
 R38 §4(c), recorded there before the PREREG. Results are labelled "precursor, axon-intent loop, not R38 §9"; a later
 R38-compliant measurement follows R38's protocol or a formally amended version of it.
 
+- `[REVISED: build 2026-10-31, IgBench]` Built: `genviab.py` (arms a/b/c, `report`, `verdict`, `spent`),
+  `drivers/micode-program.sh` + `micode_program_log.py` (its test is `selftest.py` against a fake `micode`, not a
+  Rust test), `drivers/oracle.sh`, `once-ledger.jsonl` guard (hash-chained, written before the first call; a
+  second score of (manifest, arm, model) is refused, one resume after 30 min), `PREREG-genviab.md` **DRAFT**.
+  Grading lifts the candidate through `axon-intent compile --transcript` (the lift path now writes an
+  `axon-intent-lift/1` report). Infrastructure rows: no transcript, `infrastructure-failed`, a generator failure
+  other than an empty or oversized reply, a served model other than the requested one. Zero-cost dry run:
+  oracle 14/14, empty 0/14 (arms a, b, c). Haiku 5.5 dev runs: see the bench README.
+
 ### IG8 — CLI, approval card and docs `[REVISED: minor 8 — approval card]`
 
 `axon-intent compile|emit <intent.md> [--generate] [--generator cmd:PATH|ai:MODEL] [--max-rounds N≤3]
@@ -349,6 +371,12 @@ points at `axon card`; R38 §9 note; CHANGELOG; completeness rows; env registry;
 
 Not in scope, logged as an opportunity: axon-web reads `ax_content` (`html.rs:266`) that `axon intent compile --json`
 never emits (`main.rs:8297-8303`).
+
+- `[REVISED: build 2026-10-31, IgBench]` Done: `spec/axon-for-llms.md` points at `axon card`; R38 §4(c)
+  deviation and §9 dated note; CHANGELOG; the approval request of a generated program names its rounds, example
+  results and every capability refused during generation (`genloop::generation_note`). Env registry and
+  completeness rows already carried `AXON_INTENT_TIMEOUT_MS` (IG3); `AXON_REFERENCE.md` is unchanged by IG (the
+  regenerated file is byte-identical).
 
 ## Step 2 — open questions resolved
 

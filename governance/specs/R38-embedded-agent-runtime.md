@@ -238,6 +238,13 @@ history as signal, not as noise to be repaired away**:
 - (c) **Repair a type error; do not repair a capability denial.** Repeated capability refusals are a
   policy-configurable **hard stop**, not a free retry. Default: capability-class refusals (E1001/E1004/
   E1310/embed-registry) do not consume a repair round — they end the loop.
+  **[Deviation, 2026-10-31 — IG4/Q4, owner decision 2026-10-18; applies to the `axon-intent` precursor
+  measurement only]** `axon-intent`'s loop gives ONE refusal-feedback round: a candidate refused for a
+  capability (the gates' static axis, or the sandbox's runtime path/host scope) is fed back once, and
+  that round counts against the task's ≤ 3 repair rounds and its token budget; a second capability
+  refusal ends the task. The ceiling never expands and a refused operation never executes. Refused
+  attempts per task are a reported column (rule (d)). An R38-compliant measurement uses rule (c) as
+  written or a formal amendment of it (`tasks/intent-gen-spec.md` Step 2, Q4).
 - (d) Round-by-round refusal statistics are a **pre-registered measured output** of the §9 Slice-0
   harness. Collection is free and it is the cheapest early indicator of a generator optimizing against
   the gate rather than fumbling toward it.
@@ -428,6 +435,10 @@ claim, not TODOs; they belong next to the invariants so nobody reads §7 as a co
       regenerate, round-capped): it did not exist on 2026-07-31 — `axon intent compile` was single-shot
       (§3/§4) — so its cost is counted here, before the measurement is scheduled. **[IG4, 2026-10-31]**
       Built as `axon-intent`'s `genloop` (≤ 3 repair rounds); the single-shot path is removed (IG5).
+      **[IG7, 2026-10-31]** The precursor benchmark is built: `crates/axon-intent/benchmarks/genviab/`
+      (arms a loop / b round 0 / c Python under bwrap, `PREREG-genviab.md` DRAFT). Dev-set runs only
+      (tuning data, not a measurement); the gated once run is not done. Its result will be labelled
+      "precursor, axon-intent loop, not R38 §9" and does not discharge this row.
       **Pre-registered kill threshold: < 80% of tasks reaching checking-clean + behaviorally-correct kills
       the wedge** (record the number either way; do not move the goalposts after seeing it). **The
       correctness oracle must be pre-registered alongside the threshold, before any measurement run:**
