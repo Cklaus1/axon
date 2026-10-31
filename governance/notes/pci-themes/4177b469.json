@@ -1,0 +1,1 @@
+{"theme": "intent-gen", "text": "axon-os gains run_sandboxed_capture, which tells a compile failure, a runtime exit status, a timeout and a sandbox refusal apart and returns the program's stdout (completion marker stripped) and stderr, plus run_bounded_job for a bounded process-group child with stdin."}
