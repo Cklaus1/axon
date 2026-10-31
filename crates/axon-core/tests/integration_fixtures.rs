@@ -2925,7 +2925,8 @@ fn tuple_patterns_test_every_component_natively() {
 /// natively (exit 0, the phi's zero, or the next statement); the interpreter
 /// panics `no match arm matched` (exit 101). Both engines must give the same
 /// exit code, stdout and stderr. A probe the checker refuses (checker-
-/// soundness-3) must be refused by both `axon run` and `axon build` (exit 2);
+/// soundness-3) must be refused with E0304 by both `axon run` (exit 2) and
+/// `axon build` (exit 1, as for every check refusal: "build aborted");
 /// the codegen unit test `codegen::match_pat::tests::a_match_miss_edge_panics`
 /// then stays the killer.
 #[cfg(feature = "codegen")]
@@ -2964,11 +2965,18 @@ fn a_match_with_no_matching_arm_panics_natively_like_the_interpreter() {
                 .arg("--no-cache")
                 .output()
                 .unwrap();
+            let refused =
+                |o: &std::process::Output| String::from_utf8_lossy(&o.stderr).contains("E0304");
             assert!(
-                run.status.code() == Some(2) && build.status.code() == Some(2),
-                "[{tag}] refused at check, but run exit {:?} / build exit {:?}",
+                run.status.code() == Some(2)
+                    && build.status.code() == Some(1)
+                    && refused(&run)
+                    && refused(&build),
+                "[{tag}] refused at check, but run exit {:?} / build exit {:?}: {} / {}",
                 run.status.code(),
-                build.status.code()
+                build.status.code(),
+                String::from_utf8_lossy(&run.stderr),
+                String::from_utf8_lossy(&build.stderr)
             );
             continue;
         }
