@@ -3392,3 +3392,11 @@ ATTACK_MARKERS.update({
     'M3940': r'ATTACK: a dict holding a value of another type checked clean \[d_generic_put\]',
     'M3941': r'ATTACK: a generic method call or generic struct argument checked clean \[g_lambda_param_unbound\]',
 })
+
+# native-parity NP-1 (ids M4120-M4122, M4136): shared killer, one ATTACK line per diverging probe
+ATTACK_MARKERS.update({
+    'M4120': r'ATTACK: [^\n]*\[v22\]',
+    'M4121': r'ATTACK: [^\n]*\[t21\]',
+    'M4122': r'ATTACK: [^\n]*\[a1\]',
+    'M4136': r'ATTACK: [^\n]*\[a4\]',
+})

@@ -154,6 +154,15 @@ u06 (`Some(0)` literal in an `Option` payload, no tuple) `100|4`, ImplAudit v26,
    the interpreter (a1, a2, a4 -> `2`). `bool` is `i1` on both sides and is untouched. A narrower subject with `sem` = `None` records E0910 and
    returns `false`: that shape fails IR verification at build today, so this adds no refusal.
 3. `Pattern::Struct` keeps its current fallback (§0).
+4. [REVISED: build lane A] `pattern_is_irrefutable` also answers `true` for a tuple whose components are all irrefutable (nested
+   `((a, b), c)`), so such a tuple keeps `true` on any subject and `emit_test_when` skips it; the old non-recursive form would have refused
+   E0910 on a binding-only nested tuple over a subject with no layout, which matched before. The `Ok`/`Err` tests read the `[N x i8]`
+   payload at the `Result`'s `Ok`/`Err` sem type (`extract_result_payload`, as the bindings do) before testing the inner pattern: without
+   it `Ok(0)` compared an array with an int and fell to the literal arm's `_ => true` (probe `okl`: `Ok(0) => 0, Ok(n) => n, Err(_) => 1`
+   on `Ok(5)`: interp `5`, 77cf51fc native `0`; added to the NP-1 killer; x03 needs it too). That fallback,
+   a literal pattern on a value native cannot compare, now records E0910 and returns `false` instead of `true`. S608 after the change: no
+   native row differs from `base-77cf51fc.txt` (two interpreter-only hash changes, `persistent_bandit.ax`, `mobile/lifecycle.ax`, both
+   BUILDFAIL in the baseline and nondeterministic interpreter output).
 
 **Fail-first test.** `integration_fixtures`: `tuple_patterns_test_every_component_natively` (`#[cfg(feature = "codegen")]`, built on the
 `both` helper of `refinements_on_variant_fields_and_lambda_params_are_enforced_natively`, `tests/integration_fixtures.rs:2687-2715`, with the §4

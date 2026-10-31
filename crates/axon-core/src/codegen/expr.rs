@@ -3041,7 +3041,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 return Some(self.ir.context.i64_type().const_zero().into());
             }
         };
-        let matches = self.emit_pattern_test(pattern, subject);
+        let matches =
+            self.emit_pattern_test(pattern, subject, self.infer_expr_sem_type(expr).as_ref());
         let cond_int = match matches {
             BasicValueEnum::IntValue(i) => i,
             _ => self.ir.context.bool_type().const_int(1, false),

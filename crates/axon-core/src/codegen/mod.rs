@@ -690,7 +690,10 @@ impl<'ctx> Codegen<'ctx> {
     /// `builtins.rs`), which prints `axon: panic: {msg}` and exits 101 — the
     /// interpreter's exact stderr line and exit code. Freestanding (no axon-rt,
     /// no stderr): call the synthesized `__axon_msg_trap` (marker `P`).
-    #[expect(dead_code, reason = "called by native-parity NP-2 (lane A) and NP-4 (lane B)")]
+    #[expect(
+        dead_code,
+        reason = "called by native-parity NP-2 (lane A) and NP-4 (lane B)"
+    )]
     pub(super) fn emit_msg_panic(&mut self, msg: &str) {
         if self.freestanding {
             let trap = match self.ir.module.get_function("__axon_msg_trap") {
@@ -708,15 +711,19 @@ impl<'ctx> Codegen<'ctx> {
             build_wrappers::w_call(&self.ir.builder, trap, &[], "");
         } else {
             let i64_ty = self.ir.context.i64_type();
-            let panic_fn = self.ir.module.get_function("__axon_msg_panic").unwrap_or_else(|| {
-                let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-                let mp_ty = self
-                    .ir
-                    .context
-                    .void_type()
-                    .fn_type(&[i8_ptr.into(), i64_ty.into()], false);
-                self.ir.module.add_function("__axon_msg_panic", mp_ty, None)
-            });
+            let panic_fn = self
+                .ir
+                .module
+                .get_function("__axon_msg_panic")
+                .unwrap_or_else(|| {
+                    let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                    let mp_ty = self
+                        .ir
+                        .context
+                        .void_type()
+                        .fn_type(&[i8_ptr.into(), i64_ty.into()], false);
+                    self.ir.module.add_function("__axon_msg_panic", mp_ty, None)
+                });
             let g = build_wrappers::w_global_string_ptr(&self.ir.builder, msg, "panic_msg");
             let len = i64_ty.const_int(msg.len() as u64, false);
             build_wrappers::w_call(&self.ir.builder, panic_fn, &[g.into(), len.into()], "");

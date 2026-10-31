@@ -67,7 +67,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(test_bb);
 
             // Emit pattern test.
-            let matches = match self.emit_pattern_test(&arm.pattern, subject) {
+            let matches = match self.emit_pattern_test(&arm.pattern, subject, subject_sem_ty) {
                 BasicValueEnum::IntValue(i) => i,
                 _ => self.ir.context.bool_type().const_int(1, false),
             };
@@ -173,11 +173,16 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
-    /// Emit a boolean test for whether `subject` matches `pattern`.
+    /// Emit a boolean test for whether `subject` matches `pattern`. `sem` is
+    /// the SEMANTIC type of `subject` when codegen knows it (narrowed as the
+    /// walk descends, as in `emit_pattern_bindings`): an int literal needs the
+    /// subject's signedness to widen it, a `Result` payload its `Ok`/`Err`
+    /// type to be read, a tuple component its element type.
     pub(super) fn emit_pattern_test(
         &mut self,
         pattern: &ast::Pattern,
         subject: BasicValueEnum<'ctx>,
+        sem: Option<&Type>,
     ) -> BasicValueEnum<'ctx> {
         let true_val = self.ir.context.bool_type().const_int(1, false);
         let false_val = self.ir.context.bool_type().const_int(0, false);
@@ -188,12 +193,9 @@ impl<'ctx> super::Codegen<'ctx> {
             ast::Pattern::Literal(lit) => {
                 let lit_val = self.emit_literal(lit);
                 match (subject, lit_val) {
-                    (BasicValueEnum::IntValue(s), BasicValueEnum::IntValue(l)) => self
-                        .ir
-                        .builder
-                        .build_int_compare(IntPredicate::EQ, s, l, "patlit")
-                        .unwrap()
-                        .into(),
+                    (BasicValueEnum::IntValue(s), BasicValueEnum::IntValue(l)) => {
+                        self.emit_int_literal_test(s, l, sem).into()
+                    }
                     (BasicValueEnum::FloatValue(s), BasicValueEnum::FloatValue(l)) => self
                         .ir
                         .builder
@@ -248,7 +250,18 @@ impl<'ctx> super::Codegen<'ctx> {
                             .unwrap()
                             .into()
                     }
-                    _ => true_val.into(),
+                    // A subject whose value native cannot compare with the
+                    // literal (no layout for it here). This used to answer
+                    // `true`, taking the arm whatever the value was.
+                    _ => {
+                        self.record_error(
+                            "codegen error [E0910]: native codegen cannot test this literal \
+                             pattern (the matched value has no native layout here). The \
+                             interpreter supports it; run under `axon run`."
+                                .to_string(),
+                        );
+                        false_val.into()
+                    }
                 }
             }
 
@@ -298,9 +311,13 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_extract_value(sv, 1, "optval")
                             .unwrap();
+                        let inner_sem = match sem {
+                            Some(Type::Option(t)) => Some(&**t),
+                            _ => None,
+                        };
                         return self
                             .emit_test_when(is_some, inner_pat, |s| {
-                                s.emit_pattern_test(inner_pat, inner_val)
+                                s.emit_pattern_test(inner_pat, inner_val, inner_sem)
                             })
                             .into();
                     }
@@ -328,9 +345,18 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_extract_value(sv, 1, "resval")
                             .unwrap();
+                        // The payload is an `[N x i8]` array: read it at the
+                        // `Ok` type before testing it (as the bindings do).
+                        let ok_sem = match sem {
+                            Some(Type::Result(ok, _)) => Some(&**ok),
+                            _ => None,
+                        };
                         return self
                             .emit_test_when(is_ok, inner_pat, |s| {
-                                s.emit_pattern_test(inner_pat, inner)
+                                let inner = ok_sem
+                                    .and_then(|t| s.extract_result_payload(inner, t))
+                                    .unwrap_or(inner);
+                                s.emit_pattern_test(inner_pat, inner, ok_sem)
                             })
                             .into();
                     }
@@ -358,9 +384,16 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_extract_value(sv, 1, "resval")
                             .unwrap();
+                        let err_sem = match sem {
+                            Some(Type::Result(_, e)) => Some(&**e),
+                            _ => None,
+                        };
                         return self
                             .emit_test_when(is_err, inner_pat, |s| {
-                                s.emit_pattern_test(inner_pat, inner)
+                                let inner = err_sem
+                                    .and_then(|t| s.extract_result_payload(inner, t))
+                                    .unwrap_or(inner);
+                                s.emit_pattern_test(inner_pat, inner, err_sem)
                             })
                             .into();
                     }
@@ -416,14 +449,101 @@ impl<'ctx> super::Codegen<'ctx> {
                 false_val.into()
             }
 
-            // Plain struct / tuple patterns: phase 1 — always match (wildcard semantics).
-            ast::Pattern::Struct { .. } | ast::Pattern::Tuple(_) => true_val.into(),
+            // Tuple pattern: test every component, left to right, each only
+            // once the ones before it matched. This used to answer `true`
+            // without looking at the components, so the first tuple arm always
+            // won (and `while let (true, m) = ..` never exited).
+            ast::Pattern::Tuple(pats) => {
+                if pats.iter().all(Self::pattern_is_irrefutable) {
+                    return true_val.into();
+                }
+                let BasicValueEnum::StructValue(sv) = subject else {
+                    self.record_error(
+                        "codegen error [E0910]: native codegen cannot test this tuple pattern \
+                         (the matched tuple has no native layout here). The interpreter \
+                         supports it; run under `axon run`."
+                            .to_string(),
+                    );
+                    return false_val.into();
+                };
+                let elt_sem: Option<&Vec<Type>> = match sem {
+                    Some(Type::Tuple(elts)) => Some(elts),
+                    _ => None,
+                };
+                let mut acc = true_val;
+                for (i, pat) in pats.iter().enumerate() {
+                    let elem =
+                        build_wrappers::w_extract_value(&self.ir.builder, sv, i as u32, "telem");
+                    let ety = elt_sem.and_then(|v| v.get(i));
+                    acc = self.emit_test_when(acc, pat, |s| s.emit_pattern_test(pat, elem, ety));
+                }
+                acc.into()
+            }
+
+            // Plain struct patterns do not parse (only `Enum::Variant { .. }`
+            // does, above): phase 1 — always match (wildcard semantics).
+            ast::Pattern::Struct { .. } => true_val.into(),
         }
     }
 
-    /// A sub-pattern that matches every value of its type.
+    /// A sub-pattern that matches every value of its type: a wildcard, a
+    /// binding, or a tuple of those.
     fn pattern_is_irrefutable(pattern: &ast::Pattern) -> bool {
-        matches!(pattern, ast::Pattern::Wildcard | ast::Pattern::Ident(_))
+        match pattern {
+            ast::Pattern::Wildcard | ast::Pattern::Ident(_) => true,
+            ast::Pattern::Tuple(pats) => pats.iter().all(Self::pattern_is_irrefutable),
+            _ => false,
+        }
+    }
+
+    /// `s == l` for an int literal pattern. The literal is never truncated: a
+    /// subject narrower than the literal is widened to its width by the
+    /// subject's semantic signedness (`zext` for `u8`/`u16`/`u32`, `sext` for
+    /// `i8`/`i16`/`i32`), so a literal outside the subject's range never
+    /// matches, as in the interpreter (`x: u8` never equals `256` or `-1`). A
+    /// narrower subject of unknown signedness is refused (E0910): comparing
+    /// mismatched widths fails IR verification, so that is no new refusal.
+    fn emit_int_literal_test(
+        &mut self,
+        s: IntValue<'ctx>,
+        l: IntValue<'ctx>,
+        sem: Option<&Type>,
+    ) -> IntValue<'ctx> {
+        let sw = s.get_type().get_bit_width();
+        let lw = l.get_type().get_bit_width();
+        if sw == lw {
+            return self
+                .ir
+                .builder
+                .build_int_compare(IntPredicate::EQ, s, l, "patlit")
+                .unwrap();
+        }
+        let unsigned = matches!(sem, Some(Type::U8 | Type::U16 | Type::U32));
+        let signed = matches!(sem, Some(Type::I8 | Type::I16 | Type::I32));
+        if sw < lw && (unsigned || signed) {
+            let wide = if unsigned {
+                self.ir
+                    .builder
+                    .build_int_z_extend(s, l.get_type(), "patzext")
+                    .unwrap()
+            } else {
+                self.ir
+                    .builder
+                    .build_int_s_extend(s, l.get_type(), "patsext")
+                    .unwrap()
+            };
+            return self
+                .ir
+                .builder
+                .build_int_compare(IntPredicate::EQ, wide, l, "patlitw")
+                .unwrap();
+        }
+        self.record_error(format!(
+            "codegen error [E0910]: native codegen cannot compare an i{sw} value of unknown \
+             signedness with an int literal pattern. The interpreter supports it; run under \
+             `axon run`."
+        ));
+        self.ir.context.bool_type().const_zero()
     }
 
     /// `cond && test(self)`, where the code `test` emits runs only once `cond`
@@ -475,15 +595,15 @@ impl<'ctx> super::Codegen<'ctx> {
         };
         let mut all = bool_ty.const_int(1, false);
         for (fname, pat) in fields {
-            let field_val = layout
-                .iter()
-                .find(|f| &f.name == fname)
-                .and_then(|slot| self.load_enum_field(pay_ptr, slot));
+            let slot = layout.iter().find(|f| &f.name == fname);
+            let field_val = slot.and_then(|slot| self.load_enum_field(pay_ptr, slot));
             let Some(field_val) = field_val else {
                 self.refuse_unlowered(&format!("the pattern for field `{fname}` of `{enum_name}`"));
                 continue;
             };
-            if let BasicValueEnum::IntValue(ok) = self.emit_pattern_test(pat, field_val) {
+            let field_sem = slot.map(|slot| &slot.ty);
+            if let BasicValueEnum::IntValue(ok) = self.emit_pattern_test(pat, field_val, field_sem)
+            {
                 all = build_wrappers::w_and(&self.ir.builder, all, ok, "fieldsok");
             }
         }
