@@ -1,0 +1,4 @@
+{
+  "theme": "native parity",
+  "text": "NATIVE (no behaviour change yet): adds the emit_msg_panic codegen helper (hosted __axon_msg_panic, freestanding trap) and the current_src_fn field for the match-miss and loop-escape panics, and the strict gate now runs every codegen lib unit test"
+}
