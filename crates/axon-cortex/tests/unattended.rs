@@ -818,7 +818,10 @@ fn s6_a_cortex_env_selector_is_refused() {
 /// or named by `AXON_DOTENV`) steers nothing. It sets `CORTEX_LABEL_LOG` -
 /// a §5.2 selector `check_env` refuses when it is in the real environment -
 /// and the run must not append a label row (a write outside the pins, the
-/// E5 helper and the journal) there.
+/// E5 helper and the journal) there. It also sets `AXON_AI_MOCK`, which no
+/// later guard reads: loaded, the generator would be answered by the mock
+/// stub instead of the endpoint the envelope pins (here a closed port, so
+/// every call must fail as unavailable).
 #[test]
 fn s6_a_dotenv_steers_nothing() {
     for how in ["cwd", "AXON_DOTENV"] {
@@ -826,7 +829,7 @@ fn s6_a_dotenv_steers_nothing() {
         let e = envelope_for(&s);
         mint(&s, &e);
         let log = s.root.join("label.log");
-        let dotenv = format!("CORTEX_LABEL_LOG={}\n", log.display());
+        let dotenv = format!("CORTEX_LABEL_LOG={}\nAXON_AI_MOCK=1\n", log.display());
         let named = s.root.join("ops/steer.env");
         std::fs::write(&named, &dotenv).unwrap();
         let o = if how == "cwd" {
@@ -843,6 +846,13 @@ fn s6_a_dotenv_steers_nothing() {
         assert!(
             !log.exists(),
             "ATTACK: NH-R1 security F2 a .env ({how}) steered an unattended run's label log\n{}{}",
+            o.stdout,
+            o.stderr
+        );
+        assert!(
+            !o.stdout.contains("\"kind\":\"proposed\""),
+            "ATTACK: NH-R1 security F2 a .env ({how}) answered an unattended run's generator \
+             (AXON_AI_MOCK) instead of the pinned endpoint\n{}{}",
             o.stdout,
             o.stderr
         );

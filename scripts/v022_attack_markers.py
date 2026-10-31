@@ -3425,7 +3425,7 @@ ATTACK_MARKERS.update({
     'M4117': r'ATTACK: a second unattended run took the lock of a file in use',
     'M4118': r'ATTACK: E6 a check child that inherits the launcher env was admitted',
     'M4119': r'ATTACK: E3 the running check \d+ survived the deadline',
-    'M4200': r'ATTACK: E3 a writing-stalled run exited \d+ ms after its deadline',
+    'M4200': r'ATTACK: E3 a writing-stalled run (exited \d+ ms after its deadline|left the patched bytes in place)',
 })
 ATTACK_MARKERS.update({
     'M4201': r'ATTACK: E5 a visible copy clobbered an existing file',
@@ -3653,7 +3653,7 @@ ATTACK_MARKERS.update({
     'M4409': r'ATTACK: NH-R1 security F1 a host with an opt-in naming no decision record ran unattended',
     'M4410': r'ATTACK: NH-R1 security F1 a host with an opt-in holding a line that is not its decision ran unattended',
     'M4411': r'ATTACK: NH-R1 security F1 a host with an opt-in naming two decision records ran unattended',
-    'M4412': r"ATTACK: NH-R1 security F2 a \.env \(cwd\) steered an unattended run's label log",
+    'M4412': r"ATTACK: NH-R1 security F2 a \.env \(cwd\) answered an unattended run's generator \(AXON_AI_MOCK\)",
     'M4413': r'ATTACK: NH-R1 security F2 a \.env lookup that already ran was reported as forbidden',
     'M4414': r'ATTACK: NH-R1 security F4 a relative fs_read pin through a workspace symlink ran',
     'M4415': r'ATTACK: NH-R1 security F4 a relative fs_read pin through a workspace symlink ran',
