@@ -3612,7 +3612,7 @@ ATTACK_MARKERS.update({
     'M4368': r'ATTACK: a path\-shaped ledger id was read',
     'M4369': r'ATTACK: an append onto a ledger behind its head was accepted',
     'M4370': r'ATTACK: a run was recorded into a ledger its envelope does not name',
-    'M4371': r'ATTACK: an append after a torn record was accepted',
+    'M4371': r'ATTACK: (an append after a torn record was accepted|a torn record was refused only by a later check)',
     'M4372': r'ATTACK: an append under a head copied from another ledger was accepted',
     'M4373': r'ATTACK: a path\-shaped envelope id was marked unrecorded',
     'M4374': r'ATTACK: a failed started append read as truncation',

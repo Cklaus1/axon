@@ -390,7 +390,10 @@ fn a_torn_last_line_refuses_the_next_append() {
     let e = fx
         .append(&v, started(Tree::new()))
         .expect_err("ATTACK: an append after a torn record was accepted");
-    assert!(e.contains("torn"), "{e}");
+    assert!(
+        e.contains("torn"),
+        "ATTACK: a torn record was refused only by a later check: {e}"
+    );
 }
 
 #[test]
