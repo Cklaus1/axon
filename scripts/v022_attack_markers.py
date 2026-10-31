@@ -3548,4 +3548,12 @@ ATTACK_MARKERS.update({
     'M4505': r'ATTACK: the tokens a cmd generator reported on stderr were not counted',
     'M4506': r'ATTACK: a compile failure named a warning instead of its first error',
     'M4507': r'ATTACK: a failed verify was not classed on the verify axis',
+    'M4509': r'ATTACK: an interpreter fault line was not its own verdict \[halted\]',
+    'M4510': r'ATTACK: an interpreter fault line was not its own verdict \[ai_policy\]',
+    'M4511': r'ATTACK: an interpreter fault line was not its own verdict \[refine\]',
+    'M4512': r'ATTACK: an interpreter fault line was not its own verdict \[budget\]',
+    'M4513': r'ATTACK: a write outside the allowlist was not a sandbox fault',
+    'M4514': r'ATTACK: an interpreter panic was not a runtime fault',
+    'M4515': r'ATTACK: an interpreter panic was not a runtime fault',
+    'M4516': r'ATTACK: a compile failure named a warning instead of its first error',
 })

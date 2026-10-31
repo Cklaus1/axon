@@ -43,6 +43,10 @@ fn grant() -> Grant {
 }
 
 fn capture(tag: &str, src: &str, timeout: Duration) -> CapturedRun {
+    capture_with(tag, src, timeout, grant())
+}
+
+fn capture_with(tag: &str, src: &str, timeout: Duration, g: Grant) -> CapturedRun {
     let dir = std::env::temp_dir().join(format!("axon-os-capture-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("out")).unwrap();
@@ -50,7 +54,6 @@ fn capture(tag: &str, src: &str, timeout: Duration) -> CapturedRun {
     std::fs::write(dir.join("data/in.txt"), "abc").unwrap();
     let path = dir.join("p.ax");
     std::fs::write(&path, src).unwrap();
-    let g = grant();
     let rt = AxonCoreRuntime::with_bin_and_timeout(axon_bin(), timeout);
     let out = rt.run_sandboxed_capture(
         &ProgramSource {
@@ -141,7 +144,7 @@ fn a_write_outside_the_allowlist_is_a_sandbox_fault() {
             &r.outcome,
             SandboxOutcome::Faulted { verdict: Verdict::Denied { axis, .. }, .. } if axis == "sandbox"
         ),
-        "{r:?}"
+        "ATTACK: a write outside the allowlist was not a sandbox fault: {r:?}"
     );
 }
 
@@ -248,7 +251,7 @@ fn an_interpreter_panic_is_still_a_fault() {
             &r.outcome,
             SandboxOutcome::Faulted { code: Some(101), verdict: Verdict::Denied { axis, .. } } if axis == "runtime"
         ),
-        "{r:?}"
+        "ATTACK: an interpreter panic was not a runtime fault: {r:?}"
     );
 }
 
@@ -281,4 +284,54 @@ fn a_failed_verify_is_a_verify_denial() {
         ),
         "ATTACK: a failed verify was not classed on the verify axis: {r:?}"
     );
+}
+
+/// Each interpreter fault line maps to its own verdict (`interpreter_fault`):
+/// a halt is `Halted`, an AI-policy stop is denied on the `ai-policy` axis, a
+/// refinement breach is `RefineViolation`, an exhausted goal budget is
+/// `BudgetExhausted`. The AI case is granted net (which admits `AI`) and has
+/// no model reachable, so `ai_complete` stops with E1300.
+#[test]
+fn each_interpreter_fault_line_is_its_own_verdict() {
+    let cases: [(&str, &str, i32, fn(&Verdict) -> bool); 4] = [
+        (
+            "halted",
+            "@[corrigible]\nfn f() -> i64 { 1 }\nfn main() -> i64 {\n    corrigible_halt()\n    f()\n}\n",
+            4,
+            |v| matches!(v, Verdict::Halted { .. }),
+        ),
+        (
+            "ai_policy",
+            "fn main() -> i64 {\n    match ai_complete(\"hi\") {\n        Ok(s) => println(s),\n        Err(e) => println(e),\n    }\n    0\n}\n",
+            5,
+            |v| matches!(v, Verdict::Denied { axis, .. } if axis == "ai-policy"),
+        ),
+        (
+            "refine",
+            "fn divide(n: i64, d: i64 where _ != 0) -> i64 { n / d }\nfn main() -> i64 {\n    let z = 0\n    divide(10, z)\n}\n",
+            6,
+            |v| matches!(v, Verdict::RefineViolation { .. }),
+        ),
+        (
+            "budget",
+            "fn metric(x: f64) -> f64 {\n    x\n}\nfn main() -> i64 {\n    let r = principal_root(\"r\", true, false, false, 3)\n    let g = kernel_goal_create(r, \"metric\", 0.0)\n    let _ = kernel_goal_run(g, 100)\n    0\n}\n",
+            7,
+            |v| matches!(v, Verdict::BudgetExhausted { .. }),
+        ),
+    ];
+    let mut fails = Vec::new();
+    for (tag, src, code, want) in cases {
+        let mut g = grant();
+        if tag == "ai_policy" {
+            g.net = vec!["*".into()];
+        }
+        let r = capture_with(&format!("fault-{tag}"), src, Duration::from_secs(60), g);
+        let ok = matches!(&r.outcome, SandboxOutcome::Faulted { code: Some(c), verdict } if *c == code && want(verdict));
+        if !ok {
+            fails.push(format!(
+                "ATTACK: an interpreter fault line was not its own verdict [{tag}]: {r:?}"
+            ));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
 }

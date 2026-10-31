@@ -3522,6 +3522,21 @@ EXEMPT += [
     ("crates/axon-os/src/runtime.rs", "match std::fs::DirBuilder::new().mode(0o700)", _ACR),
     ("crates/axon-os/src/runtime.rs", "            .mode(0o600)", _ACR),
 ]
+# intent-gen IG4 (`run_sandboxed_capture`, integration int/31): how a captured run ended. Its
+# fault-line arms, the fault table and the compile-failure line have rows (M4500-M4516); the
+# two ends below are the job ending with no exit status of its own.
+EXEMPT += [
+    ("crates/axon-os/src/runtime.rs",
+     '        if let Some(sig) = proc.killed_by_signal {\n            return SandboxOutcome::Faulted {',
+     _ACR + "; killed_by_signal is Some only after End::Signal or a forwarded termination signal "
+     "(run_bounded_capped), and the only process that installs that handler and keeps running is "
+     "`axon-os run` (cli.rs cmd_run, OnSignal::Continue: `grep -rn forward_termination_signals "
+     "crates/*/src`); a capture test cannot send it without killing the test process"),
+    ("crates/axon-os/src/runtime.rs", '        let Some(code) = proc.code else {',
+     "UNREACHABLE (checkable): run_bounded_capped sets `code` to None only for End::TimedOut and "
+     "End::Signal; a timed-out run returns TimedOut and a signalled one (killed_by_signal Some) "
+     "returns Faulted/Halted above this `let ... else`, before it is reached"),
+]
 
 # G2d/G2c (gap closure, lane gaps-cancel), moved by KG1 (gaps2) into crates/axon-jobctl: a
 # supervisor's child runs as a process-group job (Job::spawn/kill/reap), SIGINT/SIGTERM/SIGHUP
