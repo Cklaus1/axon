@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "A check's write pins must now stay clear of the task's imported modules, and every check dispatch first re-verifies the code around the target and the import closure; new S-tests showed a pin over an imported module ran and a check ran on a changed closure before."}
