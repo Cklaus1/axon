@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "The unattended hard deadline now covers every child that runs workspace code: the watchdog is armed right after phase B, children before it get only the time left, and a lock-free timer ends the run even when the write lock is never released; new S10 tests showed each overrun before."}
