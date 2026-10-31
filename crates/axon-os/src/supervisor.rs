@@ -166,6 +166,24 @@ pub fn run_requiring(
     // always `unknown` is exactly the absent-vs-verified collapse this field
     // exists to close.
     if let Admission::Deny { reason, axis } = admit(&declared, &eff) {
+        // IG0: a program that does not parse declares every effect (deny by
+        // default), so it is denied here — but the true reason is that it does
+        // not compile, and the record says so (the verdict a run reaching the
+        // interpreter gives it, T44), not "may perform fs_read".
+        if let Err(e) = crate::runtime::try_scan_effects(&program_text) {
+            let denial = RawEvent::new("denied", "io", EffectSet::default(), "");
+            return build(
+                run_id,
+                manifest,
+                manifest.seed,
+                std::slice::from_ref(&denial),
+                Verdict::Malformed {
+                    reason: format!("program failed to compile: {e}"),
+                },
+                approval.status.as_str(),
+                key,
+            );
+        }
         let denial = RawEvent::new("denied", &axis, EffectSet::default(), "");
         return build(
             run_id,
@@ -327,6 +345,47 @@ mod tests {
         assert_eq!(rec.approval, "not_required");
         assert_eq!((rt.mint_calls.get(), rt.run_calls.get()), (0, 0));
         assert!(verify(&rec).is_ok());
+    }
+
+    /// IG0: a statically denied program is recorded by WHY it was denied. One
+    /// that does not parse (the scan declares it every effect) is
+    /// `Malformed`, the verdict a run reaching the interpreter gives it; one
+    /// that parses keeps `Denied` on the withheld axis. Neither runs.
+    #[test]
+    fn an_unparseable_program_is_malformed_a_parsed_one_is_denied() {
+        let outcome = || RunOutcome {
+            events: vec![],
+            verdict: Verdict::Completed { value: 0 },
+        };
+        let mut rt = MockRuntime::new(declares(true), outcome());
+        rt.source = Ok("fn main( {".into());
+        let rec = run(
+            &manifest(false),
+            no_approval_path(),
+            &grant(false),
+            "bad",
+            &rt,
+        );
+        assert!(
+            matches!(&rec.verdict, Verdict::Malformed { reason } if reason.starts_with("program failed to compile: ")),
+            "ATTACK: a program that does not compile was recorded as an axis denial: {:?}",
+            rec.verdict
+        );
+        let mut rt = MockRuntime::new(declares(true), outcome());
+        rt.source = Ok("fn main() -> i64 { 0 }\n".into());
+        let rec = run(
+            &manifest(false),
+            no_approval_path(),
+            &grant(false),
+            "net",
+            &rt,
+        );
+        assert!(
+            matches!(&rec.verdict, Verdict::Denied { axis, .. } if axis == "net"),
+            "ATTACK: a parsed program denied on an axis was not recorded as Denied: {:?}",
+            rec.verdict
+        );
+        assert_eq!((rt.mint_calls.get(), rt.run_calls.get()), (0, 0));
     }
 
     #[test]

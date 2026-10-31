@@ -461,7 +461,10 @@ fn an_approval_token_admits_only_what_it_approved() {
 /// (`a_keyless_legacy_token_is_admitted_for_an_import_free_program`).
 #[test]
 fn fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce() {
-    let gated = format!("require_approval = true\n{GRANT_FS}");
+    // Every axis granted: a `use` this single-file workspace cannot load
+    // scans as every effect (IG0), and the refusal under test is the
+    // approval's, not the effect gate's.
+    let gated = format!("require_approval = true\n{GRANT_OPEN}");
     let lib = "axsha256:1111111111111111111111111111111111111111111111111111111111111111";
     type Case = (
         &'static str,
@@ -492,8 +495,6 @@ fn fabric_refuses_an_approval_whose_import_binding_it_cannot_enforce() {
         let f = env.ws.join("f.ax");
         if why != "imports nothing" {
             let src = std::fs::read_to_string(&f).unwrap();
-            // `use` alone: a `mod` line is already refused by the effect scan
-            // (an unread module could do anything), `use` is not.
             std::fs::write(&f, format!("use lib\n{src}")).unwrap();
         }
         let src = std::fs::read_to_string(&f).unwrap();

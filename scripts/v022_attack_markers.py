@@ -3392,3 +3392,22 @@ ATTACK_MARKERS.update({
     'M3940': r'ATTACK: a dict holding a value of another type checked clean \[d_generic_put\]',
     'M3941': r'ATTACK: a generic method call or generic struct argument checked clean \[g_lambda_param_unbound\]',
 })
+
+# intent-gen IG0 (ids M4000-M4014, IgCore)
+ATTACK_MARKERS.update({
+    'M4000': r'ATTACK: append_file is not an fs_write in the admission table',
+    'M4001': r'ATTACK: `[^`]*` was denied under the grant',
+    'M4002': r'ATTACK: a comment or string widened the axes',
+    'M4003': r'ATTACK: a program importing a pure module was given every axis',
+    'M4004': r'ATTACK: ast review reported admission axes the table does not give',
+    'M4005': r'ATTACK: a correct program was refused',
+    'M4006': r'ATTACK: a non-literal write target resolved to a string literal',
+    'M4007': r'ATTACK: a complete program with a TODO comment was read as a stub',
+    'M4008': r'ATTACK: an append_file program scanned without fs_write',
+    'M4009': r'ATTACK: an append_file program was admitted without fs_write',
+    'M4010': r'ATTACK: a comment or string widened the scan',
+    'M4011': r'ATTACK: a plain call write_file\( was not seen by the effects scan',
+    'M4012': r'ATTACK: an indented `use` import \(effects in a file the scan cannot read\) was declared effect-free',
+    'M4013': r'ATTACK: a program that does not compile was recorded as an axis denial',
+    'M4014': r'ATTACK: a parsed program denied on an axis was not recorded as Denied',
+})

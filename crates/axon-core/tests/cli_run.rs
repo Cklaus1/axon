@@ -4134,6 +4134,49 @@ fn ast_review_names_the_module_each_imported_fn_came_from() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// IG0: `axon ast review --json` reports the admission axes from the one
+/// table admission reads — per fn and for the whole program, comments and
+/// strings never counting.
+#[test]
+fn ast_review_reports_the_admission_axes_from_the_one_table() {
+    let dir = std::env::temp_dir().join(format!("axon-ig0-review-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(
+        dir.join("p.ax"),
+        "// total mod 10\nfn log(s: str) -> i64 {\n    match append_file(\"./out/log.txt\", s) { Ok(_) => 0, Err(_) => 1 }\n}\nfn main() -> i64 {\n    println(\"exec(x)\")\n    log(\"x\")\n}\n",
+    )
+    .unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_axon"))
+        .current_dir(&dir)
+        .args(["ast", "review", "p.ax", "--json"])
+        .output()
+        .unwrap();
+    let o = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{o}");
+    let v: serde_json::Value = serde_json::from_str(&o).unwrap();
+    assert_eq!(
+        v["axes"],
+        serde_json::json!(["fs_write"]),
+        "ATTACK: ast review reported admission axes the table does not give: {o}"
+    );
+    let fn_axes = |name: &str| {
+        v["fns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == name)
+            .unwrap_or_else(|| panic!("no fn {name}: {o}"))["axes"]
+            .clone()
+    };
+    assert_eq!(fn_axes("log"), serde_json::json!(["fs_write"]));
+    assert_eq!(
+        fn_axes("main"),
+        serde_json::json!(["fs_write"]),
+        "main reaches log"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn imports_closure_agrees_with_transitive_resolution_on_every_example() {
     // G1a extra gate: for every example with a `use`, the closure the LOADER

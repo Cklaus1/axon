@@ -12,6 +12,9 @@
 //! against `MockSynth`.
 
 use crate::intent::Intent;
+use axon_core::ast::{walk_expr, Expr, Item, Literal, Program};
+use axon_core::builtins::{builtin_write_path_args, AdmissionAxes};
+use axon_core::capabilities::program_admission_axes;
 use axon_os::gate::DeclaredEffects;
 
 /// The synthesizer's output: the candidate program + the confidence inputs.
@@ -31,6 +34,11 @@ pub struct ProgramDraft {
 pub struct SynthMeta {
     pub typechecks: bool,
     pub declared: DeclaredEffects,
+    /// Every admission axis the program uses, from the compiler's one table
+    /// (`axon_core::builtins::builtin_admission_axes`); every axis when the
+    /// source does not parse. `declared` is its projection onto the grant's
+    /// four axes (`env` rides on `fs_read`).
+    pub axes: AdmissionAxes,
     pub has_entry: bool,
     /// outputs the program actually writes (cross-checked vs the intent).
     pub resolved_outputs: Vec<String>,
@@ -76,74 +84,124 @@ pub fn strip_fences(src: &str) -> (String, bool) {
     (src.to_string(), false)
 }
 
-/// Over-approximate a program's declared effects.
-///
-/// AUDIT T54 (finding P4-OS-03). This was a SECOND, independent copy of
-/// `axon_os::runtime::scan_effects` — and it had drifted badly. It still read
-/// `source.contains("exec(")`, the exact substring test T4 replaced in the
-/// axon-os copy because `exec (name, args)` — one space — parses identically and
-/// evades it. It also omitted `env_var` from `fs_read` and the entire
-/// `goal_run*` family from `net`, and had no handling for `mod` imports, so a
-/// program whose effects lived in an imported module scanned as "no effects".
-///
-/// That matters here because this result is load-bearing: `pipeline.rs` infers
-/// the GRANT from it and then `prove_admissible` checks the program against that
-/// grant. An under-approximating scan yields an admissibility proof for a
-/// program that performs effects the proof says it does not — the runtime would
-/// still refuse it, but the gateway would have told the operator it was fine.
-///
-/// `axon-intent` already depends on `axon-os`, so the duplication bought
-/// nothing. Now there is one implementation and one place to fix.
-pub use axon_os::runtime::scan_effects;
+/// The axon-os scanner, re-exported: `pipeline.rs` infers the GRANT from its
+/// result and `prove_admissible` checks the program against that grant, so
+/// there is one scanner, in one place (AUDIT T54 removed a drifted second
+/// copy from this crate). [`meta_from_source`] calls the same projection on
+/// its own parse.
+pub use axon_os::runtime::{scan_effects, try_scan_effects};
 
-/// The concrete file paths a program writes — the first string literal argument
-/// of each `write_file(...)` call. Used to cross-check against the intent's
-/// declared outputs (scope-expansion guard).
+/// Every root of code in a parsed program: fn and method bodies, module
+/// `let` initializers, refinement predicates.
+fn code_roots(program: &Program) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    for item in &program.items {
+        match item {
+            Item::FnDef(f) => roots.push(&f.body),
+            Item::ImplBlock(b) => roots.extend(b.methods.iter().map(|m| &m.body)),
+            Item::LetDef { value, .. } => roots.push(&**value),
+            Item::RefineDef(r) => roots.push(&*r.predicate),
+            _ => {}
+        }
+    }
+    roots
+}
+
+/// The concrete files a program writes: each string-literal path argument a
+/// builtin WRITES (the per-argument table,
+/// `axon_core::builtins::builtin_write_path_args`) and leaves behind as a
+/// file — so not `dir_create`'s directory, and not `file_rename`'s source,
+/// which the rename removes. Used to cross-check against the intent's declared
+/// outputs (scope-expansion guard).
+///
+/// IG0 (F12 c). This took the next string literal after the text
+/// `write_file(`, so `write_file(out, "report: " + t)` resolved to the
+/// "output" `report: ` and was refused as outputs-mismatch. On the AST, a
+/// target that is not a literal is UNRESOLVED — not listed here, and not a
+/// refusal: the examples check where it lands. A source that does not parse
+/// resolves nothing (the type check refuses it).
 pub fn resolved_write_targets(source: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = source;
-    while let Some(idx) = rest.find("write_file(") {
-        rest = &rest[idx + "write_file(".len()..];
-        // the first string literal argument
-        if let Some(open) = rest.find('"') {
-            let after = &rest[open + 1..];
-            if let Some(close) = after.find('"') {
-                let path = after[..close].to_string();
-                if !path.is_empty() && !out.contains(&path) {
-                    out.push(path);
+    let Ok(program) = axon_core::parse_source(source) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for root in code_roots(&program) {
+        walk_expr(root, &mut |e| {
+            let Expr::Call { callee, args, .. } = e else {
+                return;
+            };
+            let Expr::Ident(name) = &**callee else {
+                return;
+            };
+            if name == "dir_create" {
+                return;
+            }
+            for i in builtin_write_path_args(name) {
+                if name == "file_rename" && i == 0 {
+                    continue;
+                }
+                if let Some(Expr::Literal(Literal::Str(path))) = args.get(i) {
+                    if !path.is_empty() && !out.contains(path) {
+                        out.push(path.clone());
+                    }
                 }
             }
-        }
+        });
     }
     out
 }
 
-/// Does the source declare an entry point (`fn main`)?
+/// Does the source declare an entry point (an `fn main` item)?
 pub fn has_entry(source: &str) -> bool {
-    source.contains("fn main")
+    axon_core::parse_source(source).is_ok_and(|p| {
+        p.items
+            .iter()
+            .any(|i| matches!(i, Item::FnDef(f) if f.name == "main"))
+    })
 }
 
-/// Is the body empty or a bare stub (no real statements / a `TODO`)?
+/// Is the program empty, or a stub — no fn or method with a statement in its
+/// body?
+///
+/// IG0 (F12 d). This was a substring test for `TODO` / `todo!` /
+/// `unimplemented`, so a complete program with the comment `// TODO: handle a
+/// missing report more gracefully` was refused as empty-or-stub-body. On the
+/// AST a comment is never a stub. A source that does not parse is not a stub:
+/// the type check refuses it, with the reason that is actually true.
 pub fn is_stub_body(source: &str) -> bool {
-    let s = source.trim();
-    if s.is_empty() {
+    if source.trim().is_empty() {
         return true;
     }
-    if s.contains("TODO") || s.contains("todo!") || s.contains("unimplemented") {
-        return true;
-    }
-    // A `fn main` whose body is empty `{}` or just `{ 0 }` with no work and no
-    // other functions is a stub.
-    false
+    let Ok(program) = axon_core::parse_source(source) else {
+        return false;
+    };
+    let bodies = program.items.iter().flat_map(|i| match i {
+        Item::FnDef(f) => vec![&f.body],
+        Item::ImplBlock(b) => b.methods.iter().map(|m| &m.body).collect(),
+        _ => Vec::new(),
+    });
+    !bodies
+        .into_iter()
+        .any(|b| !matches!(b, Expr::Block(stmts) if stmts.is_empty()))
 }
 
 /// Structurally derive `SynthMeta` from a source WITHOUT a subprocess (the mock
 /// path + the real path's fallback). `typechecks` is supplied by the caller (the
-/// real path runs `axon check`; the mock asserts a balanced-brace heuristic).
+/// real path runs `axon check`; the mock asserts a balanced-brace heuristic);
+/// a source that does not parse never type-checks.
 pub fn meta_from_source(source: &str, typechecks: bool, notes: Vec<String>) -> SynthMeta {
+    let parsed = axon_core::parse_source(source).ok();
+    let axes = parsed
+        .as_ref()
+        .map(program_admission_axes)
+        .unwrap_or(AdmissionAxes::ALL);
     SynthMeta {
-        typechecks,
-        declared: scan_effects(source),
+        typechecks: typechecks && parsed.is_some(),
+        declared: match parsed {
+            Some(_) => axon_os::runtime::declared_from_axes(axes),
+            None => DeclaredEffects::unknown(),
+        },
+        axes,
         has_entry: has_entry(source),
         resolved_outputs: resolved_write_targets(source),
         uncertainty_notes: notes,
@@ -325,8 +383,16 @@ impl Synthesizer for RealSynthesizer {
 
     fn typecheck(&self, source: &str) -> SynthMeta {
         // Write the candidate to a temp `.ax` and run `axon check`.
+        //
+        // IG0: this also ran `axon ast review --json` and widened the effect
+        // set to every axis when any fn DECLARED an effect row the text scan
+        // had not matched — a second effect source standing in for the scan's
+        // blind spots. The scan is now the compiler's own reach walk over the
+        // one admission table (`meta_from_source`), so the cross-check had
+        // nothing left to catch and only refused console-only programs that
+        // annotate `| {IO}`.
         let tmp = std::env::temp_dir().join(format!("axon-intent-check-{}.ax", std::process::id()));
-        let (typechecks, review_effects) = if std::fs::write(&tmp, source).is_ok() {
+        let typechecks = if std::fs::write(&tmp, source).is_ok() {
             let mut cmd = Command::new(&self.axon_bin);
             cmd.arg("check").arg(&tmp);
             cmd.env_clear();
@@ -336,40 +402,12 @@ impl Synthesizer for RealSynthesizer {
             let ok = run_bounded(&mut cmd, self.timeout)
                 .map(|p| !p.timed_out && p.code == Some(0))
                 .unwrap_or(false);
-            // Cross-check the substring scan against the COMPILER's own effect
-            // analysis (`axon ast review --json` reports per-fn `effects:bool`).
-            let mut rev = Command::new(&self.axon_bin);
-            rev.arg("ast").arg("review").arg(&tmp).arg("--json");
-            rev.env_clear();
-            if let Some(p) = std::env::var_os("PATH") {
-                rev.env("PATH", p);
-            }
-            let effects = run_bounded(&mut rev, self.timeout)
-                .map(|p| p.stdout.contains("\"effects\":true"))
-                .unwrap_or(true); // can't tell ⇒ assume effects (conservative)
             let _ = std::fs::remove_file(&tmp);
-            (ok, effects)
+            ok
         } else {
-            (false, true)
+            false
         };
-        let mut meta = meta_from_source(source, typechecks, Vec::new());
-        // CONSERVATIVE CROSS-CHECK (ASI review): if the compiler says the program
-        // HAS effects but the substring scan categorized NONE, the scan missed an
-        // effect it can't pattern-match — widen to the full set (deny-by-default)
-        // rather than silently under-grant. (An under-grant would also fail closed
-        // at the R21 runtime sandbox, but catching it here surfaces it to the human
-        // at approval time instead of as a late runtime denial.)
-        let r = meta.declared.row;
-        let scan_empty = !(r.fs_read || r.fs_write || r.net || r.exec);
-        if review_effects && scan_empty {
-            meta.declared = DeclaredEffects::unknown();
-            meta.uncertainty_notes.push(
-                "compiler reports effects the source scan could not categorize — \
-                 widened to full effect set (deny-by-default)"
-                    .to_string(),
-            );
-        }
-        meta
+        meta_from_source(source, typechecks, Vec::new())
     }
 }
 
@@ -444,7 +482,7 @@ impl MockSynth {
 pub fn mock_program(intent: &Intent) -> String {
     if intent.outputs.is_empty() {
         return format!(
-            "// synthesized by axon-intent (mock, seed={}) — UNDER-SPECIFIED INTENT\nfn main() -> i64 {{\n    // TODO: the intent did not state what to produce; nothing to synthesize\n    0\n}}\n",
+            "// synthesized by axon-intent (mock, seed={}) — UNDER-SPECIFIED INTENT\nfn main() -> i64 {{\n    // the intent did not state what to produce; nothing to synthesize\n}}\n",
             intent.seed,
         );
     }
@@ -566,7 +604,7 @@ Summarize ./data/report.txt into ./out/summary.txt.
 
     #[test]
     fn scan_effects_finds_fs_axes() {
-        let d = scan_effects("read_file(x); write_file(y)");
+        let d = scan_effects("fn f(x: str, y: str) { read_file(x)\n write_file(y, x) }");
         assert!(d.row.fs_read && d.row.fs_write && !d.row.net && !d.row.exec);
     }
 
@@ -590,7 +628,7 @@ Summarize ./data/report.txt into ./out/summary.txt.
             scan_effects("fn f() { goal_run(\"m\", 0, 10) }").row.net,
             "goal_run re-calls @[adaptive] metrics, which may ai_complete"
         );
-        let imported = scan_effects("mod helper\nfn f() -> i64 { helper::go() }");
+        let imported = scan_effects("mod helper\nuse helper.{go}\nfn f() -> i64 { go() }");
         assert!(
             imported.row.exec && imported.row.net && imported.row.fs_write,
             "a mod import puts the effects in a file we did not read — the honest \
@@ -601,11 +639,68 @@ Summarize ./data/report.txt into ./out/summary.txt.
     #[test]
     fn resolved_write_targets_extracts_literal_paths() {
         let t = resolved_write_targets(
-            "write_file(\"./out/a.txt\", x); write_file(\"./out/b.txt\", y)",
+            "fn f(x: str, y: str) {\n write_file(\"./out/a.txt\", x)\n append_file(\"./out/b.txt\", y)\n file_copy(\"./in.txt\", \"./out/c.txt\")\n file_rename(\"./out/tmp\", \"./out/d.txt\")\n dir_create(\"./out/\")\n}",
         );
         assert_eq!(
             t,
-            vec!["./out/a.txt".to_string(), "./out/b.txt".to_string()]
+            vec![
+                "./out/a.txt".to_string(),
+                "./out/b.txt".to_string(),
+                "./out/c.txt".to_string(),
+                "./out/d.txt".to_string()
+            ],
+            "every written file, not a copy's source, a rename's source or a directory"
+        );
+    }
+
+    /// IG0 F12 (c): a write target that is not a literal is UNRESOLVED, never
+    /// the next string literal the text happens to hold.
+    #[test]
+    fn a_non_literal_write_target_is_unresolved_not_the_next_literal() {
+        let src = "fn main() -> i64 {\n    let out = \"./out/summary.txt\"\n    match write_file(out, \"report: \" + \"x\") { Ok(_) => 0, Err(_) => 1 }\n}\n";
+        assert!(
+            resolved_write_targets(src).is_empty(),
+            "ATTACK: a non-literal write target resolved to a string literal: {:?}",
+            resolved_write_targets(src)
+        );
+        // In a comment or a string, `write_file(` is no call at all.
+        let quoted = "// write_file(\"./etc/x\", y)\nfn main() -> i64 {\n    println(\"write_file(\\\"./etc/y\\\", z)\")\n    0\n}\n";
+        assert!(resolved_write_targets(quoted).is_empty());
+    }
+
+    /// IG0 F12 (d): a comment is never a stub; an empty body still is.
+    #[test]
+    fn a_todo_comment_is_not_a_stub_but_an_empty_body_is() {
+        let src = "// TODO: handle a missing report more gracefully\nfn main() -> i64 {\n    println(\"unimplemented todo!\")\n    0\n}\n";
+        assert!(
+            !is_stub_body(src),
+            "ATTACK: a complete program with a TODO comment was read as a stub"
+        );
+        assert!(is_stub_body(""));
+        assert!(is_stub_body("fn main() {}\n"));
+        assert!(has_entry(src));
+        assert!(!has_entry("// fn main\nfn helper() -> i64 { 1 }\n"));
+    }
+
+    /// IG0 F12 (a): the meta's effect set comes from the one table, so an
+    /// `append_file` program declares the `fs_write` it needs.
+    #[test]
+    fn meta_declares_append_file_as_a_write() {
+        let m = meta_from_source(
+            "fn main() -> i64 {\n    match append_file(\"./out/log.txt\", \"x\") { Ok(_) => 0, Err(_) => 1 }\n}\n",
+            true,
+            vec![],
+        );
+        assert!(
+            m.declared.row.fs_write && m.axes.fs_write,
+            "ATTACK: an append_file program was admitted without fs_write: {m:?}"
+        );
+        assert!(!m.declared.row.net && !m.declared.row.exec && !m.declared.row.fs_read);
+        assert_eq!(m.resolved_outputs, vec!["./out/log.txt".to_string()]);
+        let bad = meta_from_source("fn main( {", true, vec![]);
+        assert!(
+            !bad.typechecks,
+            "a source that does not parse never type-checks"
         );
     }
 

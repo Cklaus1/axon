@@ -137,7 +137,7 @@ fn a_program_above_the_grants_confidentiality_ceiling_is_denied() {
     );
 }
 
-/// scan_effects / calls_name: the declared row is what a static scan sees, and
+/// scan_effects (on the parsed program): the declared row is what a static scan sees, and
 /// the scan must not be evaded by spacing or by an import it cannot read.
 /// Every program writes a file under a grant that holds no fs_write.
 #[test]
@@ -160,9 +160,11 @@ fn the_effects_scan_is_not_evaded_by_spacing_or_an_import() {
             "a call split over a newline write_file\\n( evaded the effects scan",
         ),
         (
+            // IG0: a bare `mod` line loads nothing (the loader acts on `use`
+            // only), so it is no import; a `use` the run cannot load is.
             "import",
-            "  mod helper\n@[test]\nfn t_x() { let _ = 1 }\n",
-            "an indented `mod` import (effects in a file the scan cannot read) was declared effect-free",
+            "  use helper\n@[test]\nfn t_x() { let _ = 1 }\n",
+            "an indented `use` import (effects in a file the scan cannot read) was declared effect-free",
         ),
     ];
     for (name, src, attack) in cases {

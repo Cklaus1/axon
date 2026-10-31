@@ -204,7 +204,8 @@ Summarize ./data/report.txt into ./out/summary.txt.
     #[test]
     fn low_confidence_short_circuits_no_resolve() {
         // A stub program → LowConfidence; resolve returns before inferring/admit.
-        let stub = MockSynth::with_source("fn main() -> i64 { TODO }");
+        // An empty body is a stub (IG0: a `TODO` comment is not).
+        let stub = MockSynth::with_source("fn main() -> i64 {}");
         let r = resolve(&it(), &stub, GenMode::Auto, None);
         assert!(matches!(r, Err(Refusal::LowConfidence { .. })));
         assert_eq!(r.unwrap_err().exit_code(), 5);

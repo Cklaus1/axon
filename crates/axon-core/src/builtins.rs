@@ -2791,6 +2791,162 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
     }
 }
 
+/// IG0: the capability axes a run must be GRANTED for a program to call a
+/// builtin — the axes admission works in (`fs_read`, `fs_write`, `net`,
+/// `exec`, `env`). [`builtin_admission_axes`] is the one table every
+/// admission consumer reads: `axon_os::runtime::scan_effects` (and through it
+/// `axon-intent`'s grant inference and approval text), and `axon ast review
+/// --json`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct AdmissionAxes {
+    pub fs_read: bool,
+    pub fs_write: bool,
+    pub net: bool,
+    pub exec: bool,
+    pub env: bool,
+}
+
+impl AdmissionAxes {
+    /// No axis: a pure builtin, or one whose I/O no grant governs (console).
+    pub const NONE: AdmissionAxes = AdmissionAxes {
+        fs_read: false,
+        fs_write: false,
+        net: false,
+        exec: false,
+        env: false,
+    };
+    /// Every axis: the deny-by-default answer for what cannot be classified.
+    pub const ALL: AdmissionAxes = AdmissionAxes {
+        fs_read: true,
+        fs_write: true,
+        net: true,
+        exec: true,
+        env: true,
+    };
+
+    pub fn union(self, o: AdmissionAxes) -> AdmissionAxes {
+        AdmissionAxes {
+            fs_read: self.fs_read || o.fs_read,
+            fs_write: self.fs_write || o.fs_write,
+            net: self.net || o.net,
+            exec: self.exec || o.exec,
+            env: self.env || o.env,
+        }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self == AdmissionAxes::NONE
+    }
+
+    /// The set axes by name, in the fixed order `fs_read, fs_write, net,
+    /// exec, env`.
+    pub fn names(self) -> Vec<&'static str> {
+        [
+            (self.fs_read, "fs_read"),
+            (self.fs_write, "fs_write"),
+            (self.net, "net"),
+            (self.exec, "exec"),
+            (self.env, "env"),
+        ]
+        .into_iter()
+        .filter_map(|(on, n)| on.then_some(n))
+        .collect()
+    }
+}
+
+/// What admission does with a builtin whose effect row holds `IO` but which
+/// the per-argument capability table (`capabilities::classify_call_paths`,
+/// the table the runtime sandbox enforces) does not classify. Listed here so
+/// that every such builtin is a decision, not a default
+/// (`every_io_builtin_has_an_admission_decision`).
+fn unclassified_io_axes(name: &str) -> Option<AdmissionAxes> {
+    match name {
+        // The console and process exit: no grant governs them (a grant has no
+        // console axis), so they need no admission axis.
+        "println" | "print" | "eprintln" | "eprint" | "read_line" | "exit" => {
+            Some(AdmissionAxes::NONE)
+        }
+        // The optimizer's process-global state and its provenance log (the
+        // runtime's own path-fixed writes, `EXEMPT_IO`). The fn a `goal_run*`
+        // / `sandbox_run` names is followed by the reach walk, and the
+        // `goal_run*` model calls are `net` through their `Net` row.
+        "goal_run"
+        | "goal_run_constrained"
+        | "goal_run_categorical"
+        | "goal_run_random"
+        | "goal_run_multistart"
+        | "goal_continue"
+        | "goal_eval"
+        | "goal_best_input"
+        | "goal_best_inputs"
+        | "goal_best_inputs_f64"
+        | "goal_best_score"
+        | "goal_history"
+        | "goal_clear"
+        | "goal_count"
+        | "sandbox_run" => Some(AdmissionAxes::NONE),
+        // Suspend-to-host: the HOST performs whatever I/O it likes on the
+        // program's behalf, so no axis can be ruled out.
+        "host_await" | "host_await_opt" | "host_await_val" | "host_await_val_opt" => {
+            Some(AdmissionAxes::ALL)
+        }
+        _ => None,
+    }
+}
+
+/// IG0: the admission axes a call to builtin `name` needs; `None` when `name`
+/// is not a builtin (a user fn, a native module fn).
+///
+/// Derived, not listed: the file / exec / env / net kinds come from
+/// `capabilities::classify_call_paths` — the per-argument table the runtime
+/// sandbox and `@[contained]` enforce, so admission cannot disagree with
+/// enforcement about what `append_file` is — plus `net` for every `AI` /
+/// `Net` row of [`builtin_effect_row`]. The durable store is a file under the
+/// cache dir that `dstore_*` read and write: both fs axes. An `IO` builtin
+/// neither source classifies takes its [`unclassified_io_axes`] decision, or
+/// EVERY axis when it has none (deny by default).
+pub fn builtin_admission_axes(name: &str) -> Option<AdmissionAxes> {
+    use crate::capabilities::IoKind;
+    let row_name = crate::effects::effect_row_name(name);
+    if !is_builtin(row_name) {
+        return None;
+    }
+    let mut a = AdmissionAxes::NONE;
+    let pairs = crate::capabilities::classify_call_paths(name);
+    for (kind, _) in pairs.iter().flatten() {
+        match kind {
+            IoKind::FsRead => a.fs_read = true,
+            IoKind::FsWrite => a.fs_write = true,
+            IoKind::DurableStore => {
+                a.fs_read = true;
+                a.fs_write = true;
+            }
+            IoKind::Net => a.net = true,
+            IoKind::Exec => a.exec = true,
+            IoKind::Env => a.env = true,
+        }
+    }
+    let row = builtin_effect_row(row_name);
+    if row.iter().any(|e| matches!(*e, "AI" | "Net")) {
+        a.net = true;
+    }
+    if row.contains(&"IO") && pairs.is_none() {
+        a = a.union(unclassified_io_axes(name).unwrap_or(AdmissionAxes::ALL));
+    }
+    Some(a)
+}
+
+/// IG0: the argument positions of builtin `name` that name a path it WRITES
+/// (`fs_write` in the per-argument table), e.g. `[1]` for `file_copy`.
+pub fn builtin_write_path_args(name: &str) -> Vec<usize> {
+    crate::capabilities::classify_call_paths(name)
+        .into_iter()
+        .flatten()
+        .filter(|(k, _)| *k == crate::capabilities::IoKind::FsWrite)
+        .map(|(_, i)| i)
+        .collect()
+}
+
 /// Every entry in [`BUILTINS`] is included.  Callers in `infer.rs` should
 /// merge this map into their global signature table at startup.
 pub fn builtin_sigs() -> HashMap<String, BuiltinSig> {
@@ -3158,6 +3314,58 @@ mod tests {
             !set.contains("verify"),
             "`verify` should no longer be deferred"
         );
+    }
+
+    /// IG0: every `BUILTINS` entry has a row in the admission-axes table.
+    #[test]
+    fn every_builtin_has_an_admission_row() {
+        for b in BUILTINS {
+            assert!(
+                builtin_admission_axes(b.name).is_some(),
+                "`{}` has no admission row",
+                b.name
+            );
+        }
+        assert_eq!(builtin_admission_axes("my_helper"), None);
+    }
+
+    /// IG0: an `IO` builtin the per-argument table does not classify takes an
+    /// explicit decision — none falls through to the every-axis default.
+    #[test]
+    fn every_io_builtin_has_an_admission_decision() {
+        let undecided: Vec<&str> = BUILTINS
+            .iter()
+            .map(|b| b.name)
+            .filter(|n| {
+                builtin_effect_row(n).contains(&"IO")
+                    && crate::capabilities::classify_call_paths(n).is_none()
+                    && unclassified_io_axes(n).is_none()
+            })
+            .collect();
+        assert!(undecided.is_empty(), "undecided IO builtins: {undecided:?}");
+    }
+
+    /// IG0 F12 (a), (f): the table splits file reads from file writes, and
+    /// names exec, env and net on their own axes.
+    #[test]
+    fn admission_axes_split_reads_writes_exec_env_net() {
+        let ax = |n: &str| builtin_admission_axes(n).unwrap().names();
+        assert_eq!(
+            ax("append_file"),
+            vec!["fs_write"],
+            "ATTACK: append_file is not an fs_write in the admission table"
+        );
+        assert_eq!(ax("write_file"), vec!["fs_write"]);
+        assert_eq!(ax("read_file"), vec!["fs_read"]);
+        assert_eq!(ax("file_copy"), vec!["fs_read", "fs_write"]);
+        assert_eq!(ax("env_var"), vec!["env"]);
+        assert_eq!(ax("exec"), vec!["exec"]);
+        assert_eq!(ax("http_get"), vec!["net"]);
+        assert_eq!(ax("ai_complete"), vec!["net"]);
+        assert!(ax("println").is_empty());
+        assert!(ax("len").is_empty());
+        assert_eq!(builtin_write_path_args("file_copy"), vec![1]);
+        assert!(builtin_write_path_args("read_file").is_empty());
     }
 
     #[test]
