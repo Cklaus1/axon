@@ -89,6 +89,11 @@ Examples are the loop's visible acceptance check.
   rubric records "no examples" as a named deduction. `[REVISED: "top band" had no referent; confidence.rs has
   weights 40/20/20/20 and a floor of 60]`
 - Tests: parse round-trip including a two-run example; each refused path form; a fixture over the cap.
+- `[REVISED: build 2026-10-31, IgIntent]` Built as written, plus two run-line forms besides the ```` ```fixture ````
+  fence: `- input PATH: "text"` (short inline) and `- input PATH from FILE` (resolved under the intent directory).
+  A run is `#### run N` under the example's `###` header; a single-run example needs no run header. Input paths
+  must sit under an `fs_read` prefix and outputs under an `fs_write` prefix (refused otherwise, line named).
+  Parsing with files is `intent::parse_with_base`; `parse` alone refuses a `from` fixture.
 
 ### IG2 — A language card generated from the compiler `[REVISED: ReviewIGDevloop 7, ReviewIGAdversarial minor 2]`
 
@@ -120,6 +125,10 @@ already registered, becomes that deadline instead of dying with `RealSynthesizer
 timeout var reuse from MAJOR 4]`
 
 - Test: a `cmd:` script that hangs is killed with its group at the deadline (KG2 fixture shape).
+- `[REVISED: build 2026-10-31, IgIntent]` `generate` returns `Generation { text, tokens }` (tokens when the backend
+  reports them, for the transcript); failures are `GenFailure::{TimedOut, Failed, Unavailable}`. `ai:<model>` is
+  behind a cargo feature `ai` (default builds have no network path); `cmd:` runs through axon-os
+  `run_bounded_job` (process group, deadline, threaded pipe drains, candidate capped).
 
 ### IG4 — The check→repair loop (critical path)
 
@@ -153,6 +162,19 @@ generator id, rounds, refusal classes, wall time, tokens when reported).
   `fs_write` during an example refused; 4 bad candidates → exit 5 with transcript and no program; expected outputs
   are never present in the sandbox (asserted by a candidate that lists its directory).
 - Mutation rows: accepting on a failed example; accepting with an error diagnostic; skipping step 3.
+- `[REVISED: build 2026-10-31, IgIntent]` Built in `crates/axon-intent/src/genloop.rs`. Deviations: (a) the
+  scratch directory gets each `fs_write` prefix's directory created empty before the examples run, because
+  `write_file` creates no parents (expected output *files* are never staged; asserted); (b) a sandbox `Faulted`
+  outcome whose reason is a sandbox refusal is the runtime-scope class; (c) every non-accepted end (exhausted,
+  refused twice, generator failure, infrastructure failure) is `Refusal::LowConfidence` → exit 5 with the transcript
+  and no program; (d) the lifted (fenced, author-written) program goes through the same steps 2–4
+  (`evaluate_lifted`), so an author program failing its examples is refused too; (e) the round-0/repair prompts
+  embed the card from `axon card` (IG2), whose sha256 the transcript records. The F12-shaped acceptance test
+  depends on IG0 (lane admission) and is added on the merge of `ig/core`.
+- `[REVISED: build 2026-10-31, integrator decision]` The sandbox wrapper emitted the `IO` tag only when
+  fs_read/fs_write/exec was granted, so a println-only program was admitted with an empty grant and refused at run
+  time (rc 8). Fixed in axon-os `wrap_in_sandbox`: console output and `exit` run under every grant; `env_var`
+  stays behind the fs_read axis; the filesystem stays allowlist-scoped; exec keeps its own tag (78f33d81).
 
 ### IG5 — Remove the dead paths and update every caller `[REVISED: MAJOR 4 — caller list completed]`
 
@@ -167,6 +189,10 @@ generator id, rounds, refusal classes, wall time, tokens when reported).
   `env_registry.rs:53`, `AXON_REFERENCE.md:105`, `CLAUDE.md:282,507`, `AXON-COMPLETENESS.json`,
   `scripts/build_outcome_regression.sh:169`, specs R9b/R17/R22/R33/R34/R38, ROADMAP F13 (`:566`).
 - `MockSynth` stays for the existing acceptance tests; its brace heuristic is documented as a mock-only check.
+- `[REVISED: build 2026-10-31, IgIntent]` Done (6e6d522d). Anchors at d7690e63: `CLAUDE.md:293,536`. The
+  `axon-intent-compile/1` JSON loses its `generated` field (no consumer in the tree; `stubs` stays). `--generator`
+  and `AXON_AI_MOCK` are exclusive (exit 2). `governance/cortex-v015/ENV_CONTROL_AUDIT.md` is an archived session
+  transcript and keeps the old name, like CHANGELOG history.
 
 ### IG6 — The benchmark corpus `[REVISED: ReviewIGDevloop 3 + 10 — dev/once split]`
 
