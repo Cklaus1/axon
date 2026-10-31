@@ -79,12 +79,9 @@ pub use receipt::{
 /// development-only. (axon-fabric's `drift` test ties this to its profile ids.)
 pub const PROTECTED_PROFILES: &[&str] = &["linux-microvm-protected"];
 
-/// 2^53 − 1: the largest integer every JSON implementation represents exactly.
-pub const MAX_INTEGER: u64 = 9_007_199_254_740_991;
-/// Input (and canonical output) byte limit: 1 MiB.
-pub const MAX_BYTES: usize = 1_048_576;
-/// Container nesting limit.
-pub const MAX_DEPTH: usize = 32;
+/// The profile limits (2^53 − 1 integers, 1 MiB, nesting 32) are the cl22
+/// leaf crate's: one definition for every reader of the profile.
+pub use axon_canonical::{MAX_BYTES, MAX_DEPTH, MAX_INTEGER};
 
 /// A top-level closed-loop contract: deserializable, and carrying the
 /// schema-level conditionals and intrinsic semantic rules serde cannot express.

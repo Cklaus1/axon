@@ -20,6 +20,7 @@ pub mod latch;
 pub mod ledger;
 pub mod manifest;
 pub mod monitor;
+pub mod private_path;
 pub mod profile;
 pub mod record;
 pub mod replay;

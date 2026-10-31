@@ -177,38 +177,10 @@ fn is_hex(s: &str, n: usize) -> bool {
     s.len() == n && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// The custodian's store must be ITS OWN: a real directory owned by the uid
-/// the custodian runs as, with no group or other access. Another owner, or a
-/// group Fabric is in, could plant `<nonce>.issued` records (a nonce the
-/// custodian never issued) or erase `.used` ones (a spent nonce spends again).
-pub fn check_store(dir: &Path, euid: u32) -> Result<(), String> {
-    use std::os::unix::fs::MetadataExt;
-    let m = std::fs::symlink_metadata(dir)
-        .map_err(|e| format!("nonce store {}: {e} (it must exist)", dir.display()))?;
-    if m.file_type().is_symlink() || !m.is_dir() {
-        return Err(format!(
-            "nonce store {} is not a directory (a symlink is never followed)",
-            dir.display()
-        ));
-    }
-    if m.uid() != euid {
-        return Err(format!(
-            "nonce store {} is owned by uid {}, not the custodian's ({euid}): its owner could \
-             write nonce records",
-            dir.display(),
-            m.uid()
-        ));
-    }
-    if m.mode() & 0o077 != 0 {
-        return Err(format!(
-            "nonce store {} is accessible to group or other (mode {:o}; must be 0700): another \
-             uid could plant or erase nonce records",
-            dir.display(),
-            m.mode() & 0o7777
-        ));
-    }
-    Ok(())
-}
+/// The custodian's store must be ITS OWN (owner = the custodian's euid, no
+/// group/other access, never a symlink). The rule moved to axon-os (NH-R1
+/// §4.2, D13), which checks the repair envelope's store and key by it too.
+pub use axon_os::private_path::check_store;
 
 /// Read the custodian's operator config at `path` (walked from the authority's
 /// base, operator-owned; [`crate::privileged_launcher::read_operator_file`]).
