@@ -286,6 +286,9 @@ fn a_failed_verify_is_a_verify_denial() {
     );
 }
 
+/// (tag, program, expected exit code, verdict predicate)
+type FaultCase = (&'static str, &'static str, i32, fn(&Verdict) -> bool);
+
 /// Each interpreter fault line maps to its own verdict (`interpreter_fault`):
 /// a halt is `Halted`, an AI-policy stop is denied on the `ai-policy` axis, a
 /// refinement breach is `RefineViolation`, an exhausted goal budget is
@@ -293,7 +296,7 @@ fn a_failed_verify_is_a_verify_denial() {
 /// no model reachable, so `ai_complete` stops with E1300.
 #[test]
 fn each_interpreter_fault_line_is_its_own_verdict() {
-    let cases: [(&str, &str, i32, fn(&Verdict) -> bool); 4] = [
+    let cases: [FaultCase; 4] = [
         (
             "halted",
             "@[corrigible]\nfn f() -> i64 { 1 }\nfn main() -> i64 {\n    corrigible_halt()\n    f()\n}\n",
