@@ -2032,7 +2032,7 @@ EXEMPT += [
      _CASR + "; rename2's syscall: a filesystem without renameat2 refuses, so the write fails closed"),
     (_CAS, "        Err(std::io::Error::last_os_error())\n    }\n}",
      _CASR + "; rename2 returns the OS error of a refused renameat2: nothing was exchanged"),
-    (_CAS, '            return Err(CasError::Io(format!("{} names no file to delete", path.display())));',
+    (_CAS, '            return Err(CasError::Io(format!(\n                "{} names no file to delete",',
      _CASR + "; remove: a path with no parent or file name has no temp name beside it"),
     (_CAS, "        rename2(path, &tmp, libc::RENAME_NOREPLACE)\n",
      _CASR + "; remove's rename to the temp name failed: nothing was moved or deleted"),
