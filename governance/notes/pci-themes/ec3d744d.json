@@ -1,0 +1,4 @@
+{
+  "theme": "checker soundness",
+  "text": "a call through a wrapper lambda (`let g = |y| f(y)`; g(5)) is now E0102 when the callee's param kind conflicts, where it checked clean and panicked at run; a call that may not run (branch, arm, &&/||, loop, handler, after an early exit, after another call) derives nothing. `?` on an Option in a Result fn gains a help line"
+}
