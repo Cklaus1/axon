@@ -236,7 +236,7 @@ fn usage(msg: &str) -> ! {
     // Exit 2 with NO outcome. A malformed command line means no episode ran,
     // and printing an outcome here would report a typo as a repair verdict.
     eprintln!("{msg}\n\n{USAGE}");
-    std::process::exit(2)
+    exit_run(2, "usage")
 }
 
 /// FU-6 (O-S1-04): `--workspace`, and an `--axon` given as a relative path,
@@ -270,14 +270,34 @@ fn resolve_paths(
 /// it as either would send an operator to fix the wrong thing.
 fn no_target(reason: &str) -> ! {
     eprintln!("could not localize a repair target: {reason}");
-    std::process::exit(25)
+    exit_run(25, "no_target")
 }
 
 /// NH-R1 §5.3: an unattended run refused - exit 29 `unauthorized`, with the
 /// reason. Nothing was written and no workspace code ran.
 fn unauthorized(reason: &str) -> ! {
     eprintln!("unauthorized: {reason}");
-    std::process::exit(29)
+    exit_run(29, "unauthorized")
+}
+
+/// Exit `code`. An unattended run that wrote its R6 started record writes
+/// its terminal record first (over the E5 journal so far); every other run
+/// just exits.
+fn exit_run(exit_code: i32, outcome: &str) -> ! {
+    #[cfg(feature = "unattended")]
+    axon_cortex::auth::record_terminal(
+        axon_cortex::auth::Ending {
+            exit_code,
+            outcome: outcome.to_string(),
+            stopped_by: None,
+            accepted: None,
+            episode_digest: None,
+        },
+        &axon_cortex::cas::journal(),
+    );
+    #[cfg(not(feature = "unattended"))]
+    let _ = outcome;
+    std::process::exit(exit_code)
 }
 
 /// Build the Runner with its check executor REGISTERED before any check runs
@@ -366,7 +386,7 @@ fn fabric_executor(
         Ok(x) => Some(std::sync::Arc::new(x)),
         Err(e) => {
             eprintln!("the checks could not be run: {e}");
-            std::process::exit(22);
+            exit_run(22, "blocked");
         }
     }
 }
@@ -420,7 +440,7 @@ fn resolve_checker(
         Ok(v) => v,
         Err(e) => {
             eprintln!("the checks could not be run: {e}");
-            std::process::exit(22);
+            exit_run(22, "blocked");
         }
     }
 }
@@ -455,7 +475,7 @@ fn registered_runner(
             );
             if let Err(why) = env_is_the_fence(&x, fence_env) {
                 eprintln!("{why}");
-                std::process::exit(22);
+                exit_run(22, "blocked");
             }
             Runner::with_check_executor(exe, workspace, Box::new(x))
         }
@@ -487,7 +507,7 @@ fn env_is_the_fence(
 /// candidate runs without a grant derived for it.
 fn grant_underivable(what: &str, e: axon_cortex::fence::CapsError) -> ! {
     eprintln!("the capability grant for {what} could not be derived: {e}");
-    std::process::exit(22);
+    exit_run(22, "blocked");
 }
 
 /// R1a: the runtime fence of `file`, from `axon caps` on the whole PRISTINE
@@ -603,6 +623,9 @@ fn main() {
     let mut envelope_path: Option<std::path::PathBuf> = None;
     let mut verify_key: Option<std::path::PathBuf> = None;
     let mut spent_store: Option<std::path::PathBuf> = None;
+    // R6 §4: the run ledger and its seal key (unattended only).
+    let mut run_ledger: Option<std::path::PathBuf> = None;
+    let mut run_record_key: Option<std::path::PathBuf> = None;
     let mut cli_check_timeout: Option<u64> = None;
     let mut cli_candidates: Option<usize> = None;
     let mut cli_budget: Option<usize> = None;
@@ -667,6 +690,8 @@ fn main() {
             "--envelope" => envelope_path = Some(val("--envelope").into()),
             "--verify-key" => verify_key = Some(val("--verify-key").into()),
             "--spent-store" => spent_store = Some(val("--spent-store").into()),
+            "--run-ledger" => run_ledger = Some(val("--run-ledger").into()),
+            "--run-record-key" => run_record_key = Some(val("--run-record-key").into()),
             "--candidates" => {
                 let raw = val("--candidates");
                 candidates = raw.parse().unwrap_or_else(|_| {
@@ -729,8 +754,17 @@ fn main() {
         }
     }
     let (workspace, axon_bin) = resolve_paths(workspace, axon_bin);
-    if !unattended && (envelope_path.is_some() || verify_key.is_some() || spent_store.is_some()) {
-        usage("--envelope, --verify-key and --spent-store are only accepted with --unattended");
+    if !unattended
+        && (envelope_path.is_some()
+            || verify_key.is_some()
+            || spent_store.is_some()
+            || run_ledger.is_some()
+            || run_record_key.is_some())
+    {
+        usage(
+            "--envelope, --verify-key, --spent-store, --run-ledger and --run-record-key \
+             are only accepted with --unattended",
+        );
     }
     #[cfg(not(feature = "unattended"))]
     if unattended {
@@ -751,6 +785,8 @@ fn main() {
             envelope: envelope_path.clone(),
             verify_key: verify_key.clone(),
             spent_store: spent_store.clone(),
+            run_ledger: run_ledger.clone(),
+            run_record_key: run_record_key.clone(),
             workspace: workspace.clone(),
             file: file.clone(),
             symbol: symbol.clone(),
@@ -882,6 +918,9 @@ fn main() {
             .unwrap_or_else(|why| unauthorized(&format!("`axon caps` on {file}: {why}")));
             let b = axon_cortex::auth::phase_b(a, &checker.0, &fence, &caps, check_timeout)
                 .unwrap_or_else(|why| unauthorized(&why));
+            // R6 §3: the started record, after consume and before any
+            // untrusted code runs; a failed append refuses the run.
+            axon_cortex::auth::record_started(a, &b).unwrap_or_else(|why| unauthorized(&why));
             let auth = axon_cortex::auth::authorization_json(a, &b);
             (b.fence, Some(auth))
         }
@@ -903,7 +942,7 @@ fn main() {
         match runner.fence_conflicts(&file) {
             Err(e) => {
                 eprintln!("the checks could not be run: {e}");
-                std::process::exit(22);
+                exit_run(22, "blocked");
             }
             Ok(conflicts) if !conflicts.is_empty() => {
                 for (test, kind, msg) in &conflicts {
@@ -912,7 +951,7 @@ fn main() {
                          derived from {file} denies: {msg}"
                     );
                 }
-                std::process::exit(22);
+                exit_run(22, "blocked");
             }
             Ok(_) => {}
         }
@@ -946,7 +985,7 @@ fn main() {
     match runner.run_hidden_check(&file, &check) {
         Err(e) => {
             eprintln!("the adjudicating check could not be run: {e}");
-            std::process::exit(22);
+            exit_run(22, "blocked");
         }
         // It ran and PASSED. It would accept this file unchanged, so it cannot
         // witness a repair of it.
@@ -956,7 +995,7 @@ fn main() {
                  repair: it would accept this file unchanged. Name a check \
                  that currently FAILS, or there is nothing here to prove."
             );
-            std::process::exit(26);
+            exit_run(26, "check_already_passes");
         }
         // NO TEST BY THAT NAME RAN. Distinct from "it failed", and treating
         // the two alike is what let a `--check` naming an ordinary function
@@ -1019,7 +1058,7 @@ fn main() {
                 // HEALTHY file looks like.
                 Err(e) => {
                     eprintln!("the checks could not be run: {e}");
-                    std::process::exit(22);
+                    exit_run(22, "blocked");
                 }
             };
             if failing.is_empty() {
@@ -1152,17 +1191,29 @@ fn main() {
             let shown = file.clone();
             let deadline =
                 started + std::time::Duration::from_millis(deadline_ms.unwrap_or_default());
-            Some(axon_cortex::watchdog::arm(
-                deadline,
-                move |ledger| match ledger.write(Site::Restore, &path, &found) {
+            Some(axon_cortex::watchdog::arm(deadline, move |ledger| {
+                let report = match ledger.write(Site::Restore, &path, &found) {
                     Ok(()) => format!(
                         "budget exhausted: the hard deadline passed; {shown} restored as found"
                     ),
                     Err(e) => format!(
                         "budget exhausted: the hard deadline passed; {shown} not restored: {e}"
                     ),
-                },
-            ))
+                };
+                // R6 §3: the terminal record of the E3 path, over the
+                // journal this lock guards (restore included).
+                axon_cortex::auth::record_terminal(
+                    axon_cortex::auth::Ending {
+                        exit_code: axon_cortex::watchdog::EXIT_DEADLINE,
+                        outcome: "budget_exhausted".into(),
+                        stopped_by: None,
+                        accepted: None,
+                        episode_digest: None,
+                    },
+                    ledger.journal(),
+                );
+                report
+            }))
         }
     };
     // R1a: each target's static grant, from the same pristine bytes, before
@@ -1724,6 +1775,24 @@ fn main() {
             );
         }
     }
+    #[cfg(feature = "unattended")]
+    axon_cortex::auth::record_terminal(
+        axon_cortex::auth::Ending {
+            exit_code: std::convert::identity(code),
+            outcome: kind.to_string(),
+            stopped_by: stopped_by
+                .as_ref()
+                .map(|o| verdict(o, &check).1.to_string()),
+            accepted: accepted.as_ref().and_then(|a| {
+                Some((
+                    a["path"].as_str()?.to_string(),
+                    a["sha256"].as_str()?.to_string(),
+                ))
+            }),
+            episode_digest: runner.episode.digest().ok(),
+        },
+        &axon_cortex::cas::journal(),
+    );
     std::process::exit(code);
 }
 

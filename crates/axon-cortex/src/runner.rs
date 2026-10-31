@@ -3918,17 +3918,7 @@ pub fn run_axon_caps(
     if let Some(f) = fn_name {
         cmd.arg("--fn").arg(f);
     }
-    cmd.env_clear();
-    let limits = ExecLimits {
-        wall: Some(wall),
-        max_output: Some(CHECKER_MAX_OUTPUT),
-        ..ExecLimits::default()
-    };
-    let (text, code, truncated) = run_limited(&mut cmd, &limits, None)?;
-    if truncated {
-        return Err(BoundExceeded::output(CHECKER_MAX_OUTPUT));
-    }
-    Ok((text, code))
+    run_static(&mut cmd, wall)
 }
 
 /// `axon imports <file> --json` as a bounded job (NH-R1 §5.3 step 9, §5.4):
@@ -3942,13 +3932,22 @@ pub fn run_axon_imports(
 ) -> std::io::Result<(String, Option<i32>)> {
     let mut cmd = std::process::Command::new(axon);
     cmd.arg("imports").arg(file).arg("--json");
+    run_static(&mut cmd, wall)
+}
+
+/// A static interpreter verb (`caps`, `imports`): executes no workspace code,
+/// runs from an EMPTY environment, bounded in wall time and output.
+fn run_static(
+    cmd: &mut std::process::Command,
+    wall: std::time::Duration,
+) -> std::io::Result<(String, Option<i32>)> {
     cmd.env_clear();
     let limits = ExecLimits {
         wall: Some(wall),
         max_output: Some(CHECKER_MAX_OUTPUT),
         ..ExecLimits::default()
     };
-    let (text, code, truncated) = run_limited(&mut cmd, &limits, None)?;
+    let (text, code, truncated) = run_limited(cmd, &limits, None)?;
     if truncated {
         return Err(BoundExceeded::output(CHECKER_MAX_OUTPUT));
     }

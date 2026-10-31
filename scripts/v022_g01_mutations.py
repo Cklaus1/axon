@@ -12566,6 +12566,55 @@ MUTATIONS += [
      'axon-cortex', '--lib', 'unattended::tests::e4_e11_rows'),
 ]
 
+# NH-R1 A3 (tasks/unattended-auth-spec.md §5.2-§5.6, S5/S6/S13, ids M4210-M4215):
+# `cortex repair --unattended` phase A/B in auth.rs.
+_NHA = 'crates/axon-cortex/src/auth.rs'
+_NHT = '--features unattended --test unattended'
+MUTATIONS += [
+    ('M4210', 'NH-R1 §5.4: an entry file changed during the witness run is graded', _NHA,
+     '    if now != a.pristine {',
+     '    if false {',
+     'axon-cortex', _NHT, 's13_a_checker_that_rewrites_the_entry_file_during_the_witness_run_refuses'),
+    ('M4211', 'NH-R1 §5.5: phase B never spends the envelope', _NHA,
+     '    env::consume(&a.store, a.euid, &a.verified, now_unix())?;',
+     '    let _ = now_unix();',
+     'axon-cortex', _NHT, 's5_a_second_use_is_refused'),
+    ('M4212', 'NH-R1 §5.2: a CORTEX_* env selector is not checked unattended', _NHA,
+     '    un::check_env(|k: &str| std::env::var_os(k))?;\n',
+     '',
+     'axon-cortex', _NHT, 's6_a_cortex_env_selector_is_refused'),
+    ('M4213', 'NH-R1 §5.3: --symbol is not compared with the envelope', _NHA,
+     '    if cli.symbol != e.task.symbol {',
+     '    if false {',
+     'axon-cortex', _NHT, 's6_an_envelope_for_anything_else_is_refused'),
+    ('M4214', 'NH-R1 §5.2: the resolved generator is not compared with the envelope', _NHA,
+     '    e.check_generator("ai", model, &provider, &host)?;\n',
+     '    let _ = (model, &provider, &host);\n',
+     'axon-cortex', _NHT, 's6_an_envelope_for_anything_else_is_refused'),
+    ('M4215', 'NH-R1 §5.3: the target static grant is not compared with the envelope', _NHA,
+     '    if grant != e.capabilities.target_grant {',
+     '    if false {',
+     'axon-cortex', _NHT, 's6_an_envelope_for_anything_else_is_refused'),
+]
+
+# R6 L2 (tasks/r6-ledger-spec.md §3, §7, ids M4216-M4218): started + terminal
+# run records over the E5 journal (auth.rs recorder, bin/cortex.rs calls).
+_NHC = 'crates/axon-cortex/src/bin/cortex.rs'
+MUTATIONS += [
+    ('M4216', 'R6 L2: an admitted run writes no started record', _NHC,
+     '            axon_cortex::auth::record_started(a, &b).unwrap_or_else(|why| unauthorized(&why));',
+     '            let _ = axon_cortex::auth::record_started;',
+     'axon-cortex', _NHT, 's8_an_admitted_run_spends_once_and_reports_its_authorization'),
+    ('M4217', 'R6 L2: the terminal record is never written', _NHA,
+     '    let Some(r) = taken else {',
+     '    let Some(r) = taken.filter(|_| false) else {',
+     'axon-cortex', _NHT, 's8_an_admitted_run_spends_once_and_reports_its_authorization'),
+    ('M4218', 'R6 L2: the terminal record names another exit code', _NHA,
+     '            exit_code: i64::from(end.exit_code),',
+     '            exit_code: i64::from(end.exit_code) + 1,',
+     'axon-cortex', _NHT, 's8_an_admitted_run_spends_once_and_reports_its_authorization'),
+]
+
 # NH-R1 A1 (ids M4060-M4079): the axon-approval/4 repair envelope (axon-os::repair_envelope):
 # signature, domains, time, spent store, no-widen, schema separation, intrinsic checks.
 MUTATIONS += [

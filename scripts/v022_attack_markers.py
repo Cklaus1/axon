@@ -3541,6 +3541,23 @@ ATTACK_MARKERS.update({
     'M4322': r'ATTACK: the envelope was not issued into the store it names',
 })
 
+# NH-R1 A3 (ids M4210-M4215): cortex repair --unattended phase A/B.
+ATTACK_MARKERS.update({
+    'M4210': r'ATTACK: NH-R1 S13 a file changed during the witness run was graded',
+    'M4211': r'ATTACK: NH-R1 S5 an admitted run did not spend its envelope',
+    'M4212': r'ATTACK: NH-R1 S6 the env selector',
+    'M4213': r'ATTACK: NH-R1 S6 an envelope with another',
+    'M4214': r'ATTACK: NH-R1 S6 an envelope with another',
+    'M4215': r'ATTACK: NH-R1 S6 an envelope with another',
+})
+
+# R6 L2 run records (ids M4216-M4218)
+ATTACK_MARKERS.update({
+    'M4216': r'ATTACK: R6 L2 an admitted run did not write its started and terminal records',
+    'M4217': r'ATTACK: R6 L2 an admitted run did not write its started and terminal records',
+    'M4218': r'ATTACK: R6 L2 the terminal record names another exit code',
+})
+
 # NH-R1 A2 cortex preview (ids M4323-M4331)
 ATTACK_MARKERS.update({
     'M4323': r"ATTACK: the preview's fence is not the runner's pinned fence",

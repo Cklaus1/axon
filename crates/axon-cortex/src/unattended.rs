@@ -30,6 +30,9 @@ pub const ALLOWED_FLAGS: &[&str] = &[
     "--envelope",
     "--verify-key",
     "--spent-store",
+    // R6 §4: the run ledger sink and the run-record seal key.
+    "--run-ledger",
+    "--run-record-key",
 ];
 
 /// §5.2: environment selectors that steer a run outside the envelope; set,

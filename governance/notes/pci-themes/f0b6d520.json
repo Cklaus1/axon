@@ -1,0 +1,1 @@
+{"theme": "r6-ledger-spec", "text": "cortex repair --unattended appends a sealed started record after consume and a terminal record (exit code, outcome, E5 write journal, pinned tree) at every later exit including the E3 watchdog path."}
