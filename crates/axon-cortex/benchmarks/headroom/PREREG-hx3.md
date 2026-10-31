@@ -12,6 +12,10 @@ no overrun, §6.4). HX3-1 needs a human go-ahead (§0.3).]
 HX3-2 and HX3-3 for class C. §1/§2 (node N3) are committed alone, after
 the HX3-1 builder (967b6329) and before the N4 pool and any calibration
 row; HX3-4 is not authorized.]
+[REVISED: build 2026-10-31: **stopped at N5, hx-test NOT frozen** (§2.4):
+on 133 dev erase-long tasks (pass 1 + the N5a pass 2) the cell's shrunk
+h55 rate is 0.790, above the kept band [0.3, 0.7], so no cell is kept.
+§3 is not written. Calibration spend $1.5929 of $10.]
 §1/§2 are never written unless a class advances.
 Design: `tasks/hx3-spec.md` on `hx3/spec` (10ed553f) HX3-0, HX3-A, HX3-B,
 HX3-2, including every [REVISED] marker. Authorization (2026-10-29): HX3-0
@@ -510,6 +514,47 @@ hx3-cal-2026-10-31/DEV-H55.jsonl hx3-cal-2026-10-31-n5a/DEV-H55.jsonl
 --seed 1 --cap-seed 1 --cap 8 --report hx3-cal-2026-10-31-n5a/calibration.json`;
 the §2 decision table, with "test-set size short" now a stop (no second
 N5a).
+
+### 2.4 Pass 2 (2026-10-31): rows and decision — stop, hx-test not frozen
+
+Rows: `hx3-cal-2026-10-31-n5a/DEV-H55.jsonl` (327 rows = 109 ids × 3), with
+the §2.3 command (`/var/tmp/r51-tmp/hx3-cal-pass2.sh h55`; pool, ids, axon
+and cortex sha256 and the empty spend root checked first). Every row carries
+commit `f476fc85`, cortex `1b2f8edb101d3fba`, axon and grading axon
+`f15fad70807e5f51`, driver `0a56dfa6da6428b0`. No row was rate-limited; the
+run hit neither the cap nor the reserve; no row has tampered tests, widened
+caps or a special-case suspect.
+
+| run | rows | clean | false successes | spend (cost + ranker) | expected / overrun limit | wall (run) | expected / overrun limit |
+|---|---|---|---|---|---|---|---|
+| h55 `claude-haiku-5-5`, k = 3 | 327 | 264 (0.807) | 0 | $0.8768 ($0.8768 + $0; `spent()` on the root $0.876845) | $1.118 / $2.236 | 6,259 s (rows 6,066.9 s) | 8,698 s / 17,396 s |
+| h45 | not run (§2.3: only if the cell is still kept) | | | $0 | | | |
+| **cumulative (pass 1 + pass 2)** | 423 | | 0 | **$1.5929** ($0.716022 + $0.876845) | cap $10.00 | | |
+
+Outcomes: 264 `verified_done`, 58 `budget_exhausted`, 4
+`adjudicated_not_clean`, 1 `out_of_scope_suspected`. Per task (h55
+successes of 3), pass-2 ids: 83 tasks 3/3, 5 tasks 2/3, 5 tasks 1/3, 16
+tasks 0/3. Clean rate by source over both passes: `programs-c/` 69/96
+(0.719), `programs-c2/` 242/300 (0.807), `programs/` 3/3.
+
+`calibrate.py` (the §2.3 command without the absent pass-2 h45 file;
+`hx3-cal-2026-10-31-n5a/calibration.json`): prior mean 0.790; cell
+(erase-long, `>=24`) 133 dev tasks over 38 clusters, raw rate 0.787,
+shrunk 0.790: **eligible, not kept** (above 0.7). Kept cells: none; both
+cross-fit folds keep nothing; test set 0 tasks / 0 clusters; predicted
+test rate undefined; h45 n = 0 (uninformative). Acceptance: "test set has
+0 programs, below 20", "0 tasks, below 150", "predicted test rate None is
+outside [0.2, 0.8]".
+
+**Decision (§2 table, first row): cell not kept → stop. hx-test is not
+frozen, `--write-sets` is not run, §3 (power, design) is not written, and
+`PROTECTED_SETS["hx-test"]` stays `None`.** No further N5a (§2.2). Pass 1's
+0.690 on 24 tasks / 13 clusters was inside the band; the 109 added dev
+tasks moved the shrunk rate to 0.790. [INFERENCE] At the incumbent, an
+erased ≥ 24-line body of these authored programs is re-synthesised too
+often for erase-long to give the headroom the band requires. Getting a
+kept cell needs a harder construction (e.g. a longer-span knob), which is a
+new design decision (NH), not a recalibration.
 
 ## 6. HX3-0 pilot rows and verdict (2026-10-29)
 
