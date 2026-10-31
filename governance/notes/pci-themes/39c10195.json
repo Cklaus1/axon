@@ -1,0 +1,1 @@
+{"theme": "native parity", "text": "AXON_MAX_DEPTH docs state that native binaries have no recursion-depth counter and recurse until the OS stack overflows."}
