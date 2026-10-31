@@ -21,6 +21,7 @@ USAGE:
     axon-intent review  <name.axjob> [--program <name.ax>]
     axon-intent approve <name.axjob> --by OP [--accept|--reject] [--approvers N]
     axon-intent emit    <intent.md> --by OP [--out DIR] [--yes]
+    axon-intent authorize-repair ...   (NH-R1 repair envelope; see authorize-repair --help)
 
 Every subcommand accepts --help. Exit codes: 0 ok, 2 usage/malformed,
 3 rejected, 5 low-confidence refusal, 8 not-admissible/grant-exceeds-ceiling.
@@ -50,6 +51,7 @@ pub fn run(args: Vec<String>) -> ExitCode {
         ["review", rest @ ..] => cmd_review(rest),
         ["approve", rest @ ..] => cmd_approve(rest),
         ["emit", rest @ ..] => cmd_emit(rest),
+        ["authorize-repair", rest @ ..] => crate::authorize::run(rest),
         _ => {
             eprintln!("axon-intent: unrecognized invocation\n\n{USAGE}");
             ExitCode::from(2)

@@ -289,7 +289,12 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
             "ttl above max",
             json!({"expires_unix": NOW - 10 + MAX_TTL_S + 1}),
         ),
-        ("expires before issued", json!({"expires_unix": NOW - 11})),
+        // Inside the clock window (issued within ISSUED_SKEW_S, not yet
+        // expired), so only the order check can refuse it.
+        (
+            "expires before issued",
+            json!({"issued_unix": NOW + 30, "expires_unix": NOW + 20}),
+        ),
         (
             "bad imports digest",
             json!({"task": {"imports_digest": "b".repeat(64)}}),
@@ -433,8 +438,9 @@ fn the_envelope_constants_are_the_documented_ones() {
         "AXON_APPROVAL_KEY",
         "ATTACK: APPROVAL_KEY_ENV changed"
     );
-    assert!(
-        !VERIFY_KEY.dir && SPENT_STORE.dir,
+    assert_eq!(
+        (VERIFY_KEY.dir, SPENT_STORE.dir),
+        (false, true),
         "ATTACK: the verify key is not a file or the spent store not a directory"
     );
     assert_eq!(
@@ -593,6 +599,46 @@ fn s9_the_spent_store_must_be_private_and_real() {
     let e = store_id(&d, me()).expect_err("ATTACK: a malformed store id was read");
     assert!(e.contains("32 lowercase hex"), "{e}");
     std::fs::remove_file(&sid).unwrap();
+    // A FIFO: a read would take whatever another process writes into it (a
+    // directory is refused by the read itself; a FIFO only by the file check).
+    {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::OpenOptionsExt;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let c = std::ffi::CString::new(sid.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c` is a valid NUL-terminated path.
+        assert_eq!(
+            unsafe { libc::mkfifo(c.as_ptr(), 0o600) },
+            0,
+            "setup: mkfifo"
+        );
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let (p, s) = (sid.clone(), stop.clone());
+        // A writer that answers a reader (if one ever opens the FIFO) with a
+        // well-formed id, then closes; it gives up once the call returned.
+        let writer = std::thread::spawn(move || {
+            while !s.load(Ordering::SeqCst) {
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(&p)
+                {
+                    Ok(mut f) => {
+                        use std::io::Write;
+                        let _ = f.write_all(b"0123456789abcdef0123456789abcdef\n");
+                        return;
+                    }
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
+                }
+            }
+        });
+        let got = store_id(&d, me());
+        stop.store(true, Ordering::SeqCst);
+        writer.join().unwrap();
+        let e = got.expect_err("ATTACK: a FIFO store id was read");
+        assert!(e.contains("not a regular file"), "{e}");
+    }
+    std::fs::remove_file(&sid).unwrap();
     std::fs::create_dir(&sid).unwrap();
     let e = store_id(&d, me()).expect_err("ATTACK: a directory store id was read");
     assert!(e.contains("not a regular file"), "{e}");
@@ -629,7 +675,12 @@ fn s5_an_envelope_spends_once() {
     assert_eq!(rec["envelope_digest"], json!(v.digest));
     assert_eq!(rec["spent_unix"], json!(NOW));
     let e = consume(&d, me(), &v, NOW).expect_err("ATTACK: an envelope spent twice");
-    assert!(e.contains("already used"), "{e}");
+    // The replay is NAMED as one (the run's report and the R6 ledger show a
+    // second use), never reported as an envelope that was not issued.
+    assert!(
+        e.contains("already used"),
+        "ATTACK: a replayed envelope was reported as never issued: {e}"
+    );
     issue(&d, me(), &env.spent_store_id, &env.envelope_id, NOW)
         .expect_err("ATTACK: a used envelope was re-issued");
     std::fs::remove_dir_all(&d).unwrap();
@@ -719,6 +770,12 @@ fn s5_issue_and_consume_refuse_malformed_records() {
     std::fs::create_dir(&issued).unwrap();
     let e = consume(&d, me(), &verified(&env), NOW)
         .expect_err("ATTACK: a directory .issued record was spent");
+    // Refused BEFORE the spend: the directory was not renamed to `.used`
+    // (a later write failure would leave it spent and the refusal late).
+    assert!(
+        issued.is_dir() && !d.join(format!("{}.used", env.envelope_id)).exists(),
+        "ATTACK: a directory .issued record was spent ({e})"
+    );
     assert!(e.contains("not a regular file"), "{e}");
     std::fs::remove_dir_all(&d).unwrap();
 }
