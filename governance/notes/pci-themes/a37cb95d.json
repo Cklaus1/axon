@@ -1,0 +1,4 @@
+{
+  "theme": "intent-gen IG0",
+  "text": "ADMISSION: one admission-axes table in axon-core (builtin_admission_axes, read on the parsed AST) replaces axon-os's text scanner and axon-intent's string heuristics, so append_file is a write, comments and a bare `mod` widen nothing, non-literal write targets stay unresolved, a TODO comment is not a stub, path spellings ./out/x and out/x meet, and an unparseable program is recorded Malformed."
+}
