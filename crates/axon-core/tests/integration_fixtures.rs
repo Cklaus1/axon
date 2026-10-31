@@ -2920,3 +2920,81 @@ fn tuple_patterns_test_every_component_natively() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(attacks.is_empty(), "{}", attacks.join("\n"));
 }
+
+/// native-parity NP-2: a match with no matching arm used to fall through
+/// natively (exit 0, the phi's zero, or the next statement); the interpreter
+/// panics `no match arm matched` (exit 101). Both engines must give the same
+/// exit code, stdout and stderr. A probe the checker refuses (checker-
+/// soundness-3) must be refused by both `axon run` and `axon build` (exit 2);
+/// the codegen unit test `codegen::match_pat::tests::a_match_miss_edge_panics`
+/// then stays the killer.
+#[cfg(feature = "codegen")]
+#[test]
+fn a_match_with_no_matching_arm_panics_natively_like_the_interpreter() {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_np2_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cases: &[(&str, &str, &str)] = &[
+        ("h31", "fn f(o: Option<i64>) -> i64 {\n  match o {\n    Some(0) => 0,\n    None => 1,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(Some(5))))\n  0\n}\n", ""),
+        ("h32", "enum E { A { s: str }, B }\nfn f(e: E) -> i64 {\n  match e {\n    E::A { s: \"x\" } => 0,\n    E::B => 1,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(E::A { s: \"y\" })))\n  0\n}\n", ""),
+        ("x03", "fn f(r: Result<i64, str>) -> i64 {\n  match r {\n    Ok(0) => 0,\n    Err(_) => 1,\n  }\n}\nfn main() -> i64 {\n  println(to_str(f(Ok(5))))\n  0\n}\n", ""),
+        ("u02", "fn f(o: Option<i64>) {\n  match o {\n    Some(0) => println(\"zero\"),\n    None => println(\"none\"),\n  }\n}\nfn main() -> i64 {\n  f(Some(5))\n  println(\"after\")\n  0\n}\n", ""),
+    ];
+    let mut attacks: Vec<String> = Vec::new();
+    for (tag, src, want_stdout) in cases {
+        let file = dir.join(format!("{tag}.ax"));
+        std::fs::write(&file, src).unwrap();
+        let check = Command::new(axon_bin)
+            .arg("check")
+            .arg(&file)
+            .output()
+            .unwrap();
+        if !check.status.success() {
+            let run = Command::new(axon_bin)
+                .arg("run")
+                .arg(&file)
+                .output()
+                .unwrap();
+            let build = Command::new(axon_bin)
+                .arg("build")
+                .arg(&file)
+                .arg("-o")
+                .arg(dir.join(format!("{tag}_bin")))
+                .arg("--no-cache")
+                .output()
+                .unwrap();
+            assert!(
+                run.status.code() == Some(2) && build.status.code() == Some(2),
+                "[{tag}] refused at check, but run exit {:?} / build exit {:?}",
+                run.status.code(),
+                build.status.code()
+            );
+            continue;
+        }
+        let (interp, native) = np_engines(&dir, tag, src, std::time::Duration::from_secs(10));
+        assert!(
+            interp.code == Some(101)
+                && interp.stdout == *want_stdout
+                && interp.stderr.contains("axon: panic: no match arm matched"),
+            "[{tag}] interpreter (the reference) changed: exit {:?}, stdout {:?}, stderr {:?}",
+            interp.code,
+            interp.stdout,
+            interp.stderr
+        );
+        match native {
+            Err(build) => attacks.push(format!(
+                "ATTACK: a match with no matching arm ran on natively [{tag}] (build: {build})"
+            )),
+            Ok(n) if n.code != interp.code || n.stdout != interp.stdout || n.stderr != interp.stderr => {
+                attacks.push(format!(
+                    "ATTACK: a match with no matching arm ran on natively [{tag}] interp exit {:?} stdout {:?} stderr {:?}; native exit {:?} stdout {:?} stderr {:?}",
+                    interp.code, interp.stdout, interp.stderr, n.code, n.stdout, n.stderr
+                ))
+            }
+            Ok(_) => {}
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(attacks.is_empty(), "{}", attacks.join("\n"));
+}

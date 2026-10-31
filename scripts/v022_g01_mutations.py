@@ -12419,5 +12419,22 @@ MUTATIONS += [
      'axon-core', '--test integration_fixtures', 'tuple_patterns_test_every_component_natively'),
 ]
 
+# native-parity NP-2 (ids M4123-M4125): a match with no matching arm panics natively like the
+# interpreter (`no match arm matched`, exit 101) instead of falling through to the merge block.
+MUTATIONS += [
+    ('M4123', 'NP-2: the last arm\'s false edge branches to the match merge block again', 'crates/axon-core/src/codegen/match_pat.rs',
+     'miss_bb.unwrap_or(merge_bb)',
+     'merge_bb',
+     'axon-core', '--lib', 'codegen::match_pat::tests::a_match_miss_edge_panics'),
+    ('M4124', 'NP-2: the match_miss block is built but emit_msg_panic is not called (unreachable only)', 'crates/axon-core/src/codegen/match_pat.rs',
+     'self.emit_msg_panic("no match arm matched");',
+     'build_wrappers::w_unreachable(&self.ir.builder);',
+     'axon-core', '--lib', 'codegen::match_pat::tests::a_match_miss_edge_panics'),
+    ('M4125', 'NP-2: emit_msg_panic\'s hosted branch omits the __axon_msg_panic call', 'crates/axon-core/src/codegen/mod.rs',
+     'build_wrappers::w_call(&self.ir.builder, panic_fn, &[g.into(), len.into()], "");',
+     'let _ = (panic_fn, g, len);',
+     'axon-core', '--test integration_fixtures', 'a_match_with_no_matching_arm_panics_natively_like_the_interpreter'),
+]
+
 if __name__ == "__main__":
     main()

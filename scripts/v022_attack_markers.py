@@ -3400,3 +3400,10 @@ ATTACK_MARKERS.update({
     'M4122': r'ATTACK: [^\n]*\[a1\]',
     'M4136': r'ATTACK: [^\n]*\[a4\]',
 })
+
+# native-parity NP-2 (ids M4123-M4125)
+ATTACK_MARKERS.update({
+    'M4123': r'ATTACK: a match miss fell through natively \(the last arm',
+    'M4124': r'ATTACK: a match miss reached no panic call natively',
+    'M4125': r'ATTACK: a match with no matching arm ran on natively \[h31\]',
+})

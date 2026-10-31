@@ -232,6 +232,9 @@ later checker change misses; the native fix is defence in depth, so its killing 
 - `integration_fixtures`: `a_match_with_no_matching_arm_panics_natively_like_the_interpreter`: h31, h32, x03, u02 -> both engines exit 101
   with the same stderr. Fails today (native exit 0). If a probe stops passing `axon check` (checker-soundness-3), the case asserts both
   `axon run` and `axon build` exit 2 instead, and the IR test above stays the killer.
+- [REVISED: build lane A] The IR test parses h31's `f` with `main` reduced to `f(Some(5))`: a bare `Codegen` (no builtin registry) records
+  E0910 for `println`. Its sibling `an_irrefutable_last_arm_emits_no_match_miss` covers the acceptance line below (`_` last arm: no
+  `match_miss`, module verifies); that unguarded irrefutable last arm now branches straight to its body.
 
 **g01 rows.**
 

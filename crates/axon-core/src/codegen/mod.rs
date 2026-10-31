@@ -690,10 +690,6 @@ impl<'ctx> Codegen<'ctx> {
     /// `builtins.rs`), which prints `axon: panic: {msg}` and exits 101 — the
     /// interpreter's exact stderr line and exit code. Freestanding (no axon-rt,
     /// no stderr): call the synthesized `__axon_msg_trap` (marker `P`).
-    #[expect(
-        dead_code,
-        reason = "called by native-parity NP-2 (lane A) and NP-4 (lane B)"
-    )]
     pub(super) fn emit_msg_panic(&mut self, msg: &str) {
         if self.freestanding {
             let trap = match self.ir.module.get_function("__axon_msg_trap") {

@@ -41,9 +41,18 @@ impl<'ctx> super::Codegen<'ctx> {
         let merge_bb = self.ir.context.append_basic_block(fn_val, "match_merge");
         let mut arm_results: Vec<(BasicValueEnum<'ctx>, inkwell::basic_block::BasicBlock<'ctx>)> =
             Vec::new();
-        // Blocks whose "no arm matched" edge flows into merge_bb (the last
-        // arm's test, and its guard if it has one): each needs a phi incoming.
-        let mut miss_preds: Vec<inkwell::basic_block::BasicBlock<'ctx>> = Vec::new();
+        // The "no arm matched" edge (the last arm's failed test, and its
+        // failed guard if it has one) panics like the interpreter: `no match
+        // arm matched`, exit 101. It used to branch to merge_bb, where the phi
+        // took a zero for it (a fabricated result at exit 0) and a statement
+        // `match` simply ran on. A last arm that is unguarded and irrefutable
+        // cannot fail, so it gets no miss block.
+        let last = &arms[arms.len() - 1];
+        let miss_bb = if last.guard.is_none() && Self::pattern_is_irrefutable(&last.pattern) {
+            None
+        } else {
+            Some(self.ir.context.append_basic_block(fn_val, "match_miss"))
+        };
 
         for (i, arm) in arms.iter().enumerate() {
             let test_bb = self
@@ -59,7 +68,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     .context
                     .append_basic_block(fn_val, &format!("arm{i}_next"))
             } else {
-                merge_bb
+                miss_bb.unwrap_or(merge_bb)
             };
             let is_last = i + 1 == arms.len();
 
@@ -71,9 +80,6 @@ impl<'ctx> super::Codegen<'ctx> {
                 BasicValueEnum::IntValue(i) => i,
                 _ => self.ir.context.bool_type().const_int(1, false),
             };
-            if is_last {
-                miss_preds.push(self.ir.builder.get_insert_block().unwrap());
-            }
 
             // The arm's bindings are scoped to the arm (see `end_pattern_scope`).
             let scope = self.begin_pattern_scope(&arm.pattern);
@@ -97,13 +103,15 @@ impl<'ctx> super::Codegen<'ctx> {
                         self.ir.context.bool_type().const_int(1, false)
                     }
                 };
-                if is_last {
-                    miss_preds.push(self.ir.builder.get_insert_block().unwrap());
-                }
                 build_wrappers::w_cond_br(&self.ir.builder, guard, body_bb, next_bb);
                 self.ir.builder.position_at_end(body_bb);
             } else {
-                build_wrappers::w_cond_br(&self.ir.builder, matches, body_bb, next_bb);
+                if is_last && miss_bb.is_none() {
+                    // Irrefutable and unguarded: nothing to test.
+                    build_wrappers::w_br(&self.ir.builder, body_bb);
+                } else {
+                    build_wrappers::w_cond_br(&self.ir.builder, matches, body_bb, next_bb);
+                }
                 self.ir.builder.position_at_end(body_bb);
                 self.emit_pattern_bindings(&arm.pattern, subject, subject_sem_ty);
             }
@@ -125,11 +133,15 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
 
+        if let Some(miss_bb) = miss_bb {
+            self.ir.builder.position_at_end(miss_bb);
+            self.emit_msg_panic("no match arm matched");
+        }
+
         self.ir.builder.position_at_end(merge_bb);
 
-        // Build phi if all arms produce a value of the same type.
-        // Note: the last arm's test_bb false-branch also goes to merge_bb, so
-        // we must add an `undef` incoming for that predecessor to keep the phi valid.
+        // Build phi if all arms produce a value of the same type. Every
+        // predecessor of merge_bb is an arm body: a miss never reaches it.
         if arm_results.len() == arms.len() && !arm_results.is_empty() {
             let val_ty = arm_results[0].0.get_type();
             // A phi's operands must all have the RESULT type. This built the
@@ -160,12 +172,6 @@ impl<'ctx> super::Codegen<'ctx> {
             let phi = build_wrappers::w_phi(&self.ir.builder, val_ty, "match_val");
             for (v, bb) in &arm_results {
                 phi.add_incoming(&[(v, *bb)]);
-            }
-            // Every "no arm matched" edge also flows to merge_bb. LLVM
-            // requires an incoming per predecessor; the value is never used.
-            let zero = val_ty.const_zero();
-            for bb in &miss_preds {
-                phi.add_incoming(&[(&zero, *bb)]);
             }
             Some(phi.as_basic_value())
         } else {
@@ -953,5 +959,87 @@ fn collect_pattern_names(pattern: &ast::Pattern, out: &mut Vec<String>) {
             }
         }
         ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::codegen::Codegen;
+    use inkwell::context::Context;
+
+    /// ImplAudit h31's match (`Some(5)` matches neither arm), without the
+    /// `println` a bare `Codegen` has no builtin for. The checker is bypassed,
+    /// so this holds whatever the checker later refuses.
+    const H31: &str = "fn f(o: Option<i64>) -> i64 {\n  match o {\n    Some(0) => 0,\n    None => 1,\n  }\n}\nfn main() -> i64 {\n  f(Some(5))\n}\n";
+
+    /// The IR text of `define ... @f(` up to its closing brace.
+    fn fn_f_ir(cg: &Codegen) -> String {
+        let module = cg.emit_llvm_ir();
+        let body = module
+            .split("\ndefine ")
+            .find(|d| d.lines().next().is_some_and(|l| l.contains(" @f(")))
+            .expect("fn f defined");
+        body[..body.find("\n}").expect("fn f closes")].to_string()
+    }
+
+    /// native-parity NP-2: the last arm's "no arm matched" edge must reach a
+    /// `match_miss` block that panics like the interpreter (`no match arm
+    /// matched`, exit 101). It used to branch to the merge block, where the
+    /// phi took a zero for it: `f(Some(5))` returned 0 at exit 0.
+    #[test]
+    fn a_match_miss_edge_panics() {
+        let program = crate::parse_source(H31).expect("h31 parses");
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx, "np2_match_miss");
+        cg.emit_program(&program);
+        assert!(
+            cg.codegen_errors().is_empty(),
+            "h31 failed to lower: {:?}",
+            cg.codegen_errors()
+        );
+        let ir = fn_f_ir(&cg);
+        assert!(
+            ir.contains("label %arm1_body, label %match_miss"),
+            "ATTACK: a match miss fell through natively (the last arm's false edge does not branch to %match_miss):\n{ir}"
+        );
+        let miss_block: String = ir
+            .split("\n\n")
+            .find(|b| b.starts_with("match_miss:"))
+            .unwrap_or("")
+            .to_string();
+        assert!(
+            miss_block.contains("call void @__axon_msg_panic("),
+            "ATTACK: a match miss reached no panic call natively (match_miss block: {miss_block:?}):\n{ir}"
+        );
+        for phi in ir.lines().filter(|l| l.contains("%match_val = phi")) {
+            assert!(
+                !phi.contains("%match_miss") && !phi.contains("%arm1_test"),
+                "ATTACK: a match miss fell through natively (a match_val phi takes a value from the miss edge): {phi}"
+            );
+        }
+        cg.ir
+            .module
+            .verify()
+            .unwrap_or_else(|e| panic!("IR verification failed: {}\n{ir}", e.to_string()));
+    }
+
+    /// A match whose last arm is unguarded and irrefutable cannot miss: no
+    /// `match_miss` block is emitted.
+    #[test]
+    fn an_irrefutable_last_arm_emits_no_match_miss() {
+        let src = "fn f(o: Option<i64>) -> i64 {\n  match o {\n    Some(0) => 0,\n    _ => 1,\n  }\n}\nfn main() -> i64 {\n  f(Some(5))\n}\n";
+        let program = crate::parse_source(src).expect("parses");
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx, "np2_no_miss");
+        cg.emit_program(&program);
+        let ir = fn_f_ir(&cg);
+        assert!(
+            !ir.contains("match_miss"),
+            "unexpected match_miss block:\n{ir}"
+        );
+        cg.ir
+            .module
+            .verify()
+            .unwrap_or_else(|e| panic!("IR verification failed: {}\n{ir}", e.to_string()));
     }
 }
