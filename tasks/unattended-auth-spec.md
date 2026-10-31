@@ -1,8 +1,9 @@
 # Unattended repair authorization (NH-R1) — DRAFT spec (after Step 1 review)
 
-**Status: DRAFT. Unattended execution is NOT authorized by this document.**
-- Building it needs a human go-ahead.
-- Enabling it after the build (§9) needs a second, separate human decision.
+**Status: AUTHORIZED for build 2026-10-31 (human: "do it all"). Unattended execution is NOT authorized by this document.**
+- `[DECIDED by human 2026-10-31: build go-ahead.]` Building it (A0-A4, E1-E7, §7 S-tests) is authorized.
+- Enabling it after the build (§9) still needs the §9 evidence (S-tests and full gate green, a read-only adversarial
+  security review, R6 L1-L3 built with a clean C1 audit) and then a second, separate human decision made on that evidence.
 
 **Source decisions:**
 - `tasks/repair-spec.md:211-222` — NH-R1: `[DECIDED by human 2026-10-18: A — build a new axon-approval schema, specified separately before unattended repair is enabled]`.

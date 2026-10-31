@@ -1,6 +1,6 @@
 # R6 — record-only repair run ledger — DRAFT spec (designed against NH-R1; after Step 1 review)
 
-**Status: DRAFT. Not authorized for build.**
+**Status: AUTHORIZED for build 2026-10-31 (human: "do it all"), after NH-R1 A0-A4.**
 - It depends on `tasks/unattended-auth-spec.md` (NH-R1) A0–A4.
 - R6 writes records only. It grants nothing, gates nothing and changes no exit code.
 
@@ -130,4 +130,4 @@ L2 touches `axon-cortex/src/*`, so it shares NH-R1's receipt regress when landed
 | Q1 | Confirm C1 (the accountability audit feeding the NH-R1 enabling decision) as R6's consumer | yes. If declined, R6 stays deferred and NH-R1 §9 drops its R6 clause. |
 
 `[DECIDED by human 2026-10-19: Q1 yes — C1 is R6's consumer. NH-R1 §9 keeps its R6 clause, and NH-R1 Q1 was decided
-Ed25519-from-G5, so objection (a) in §2 stays answered.]` R6 is still not authorized for build.
+Ed25519-from-G5, so objection (a) in §2 stays answered.]` [REVISED 2026-10-31: build authorized, see the status line.]
