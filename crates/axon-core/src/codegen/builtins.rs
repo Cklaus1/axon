@@ -3609,6 +3609,17 @@ impl<'ctx> super::Codegen<'ctx> {
                 .ir
                 .module
                 .add_function("__axon_msg_panic_i64", mpi_ty, None);
+            // native-parity NP-5: __axon_alloc_array_panic(name, len, count, kind)
+            // prints the interpreter's `alloc_array_err` line for an
+            // arr_range/arr_repeat whose storage cannot be allocated.
+            let aap_ty = void_ty.fn_type(
+                &[i8_ptr.into(), i64_ty.into(), i64_ty.into(), i64_ty.into()],
+                false,
+            );
+            let _ = self
+                .ir
+                .module
+                .add_function("__axon_alloc_array_panic", aap_ty, None);
             // assert_eq panic helpers — print the interpreter's exact stderr line
             // (`assertion failed: <a> != <b>`) with the actual values, exit 101.
             let f64_ty = self.ir.context.f64_type();

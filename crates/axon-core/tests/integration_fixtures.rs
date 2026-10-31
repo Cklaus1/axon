@@ -3016,3 +3016,46 @@ fn loop_control_never_leaves_its_frame_natively() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(fails.is_empty(), "{}", fails.join("\n"));
 }
+
+/// native-parity NP-5 (O-CS2-01 h11): an `arr_range`/`arr_repeat` whose
+/// storage cannot be allocated panics natively with the interpreter's
+/// `alloc_array_err` line, exit 101. Native returned `[]` for a span above
+/// i64::MAX (the wrapped difference tested `> 0`), and a refused allocation
+/// died in the SIGSEGV handler saying "stack overflow". Both runs under
+/// `ulimit -v 16000000`, so the 8 TiB case is refused on any host.
+#[cfg(all(feature = "codegen", target_os = "linux"))]
+#[test]
+fn huge_arrays_panic_natively_like_the_interpreter() {
+    let dir = std::env::temp_dir().join(format!("axon_np5_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let attack = "a huge array allocation diverged natively";
+    let probe = |call: &str| {
+        format!("fn main() -> i64 {{\n  let xs = {call}\n  println(to_str(len(xs)))\n  0\n}}\n")
+    };
+    let probes = [
+        (
+            "h11",
+            "arr_range(-9223372036854775807, 9223372036854775807)",
+            101,
+        ),
+        ("r01", "arr_range(0, 9223372036854775807)", 101),
+        ("r02", "arr_range(0, 4611686018427387904)", 101),
+        ("r03", "arr_repeat(1, 9223372036854775807)", 101),
+        ("r05", "arr_range(0, 1099511627776)", 101),
+        ("r06", "arr_repeat(true, 9223372036854775807)", 101),
+        ("r04", "arr_range(-3, 3)", 0),
+    ];
+    let mut fails = Vec::new();
+    for (tag, call, code) in probes {
+        npb_compare(
+            attack,
+            tag,
+            code,
+            true,
+            npb_run_and_build(&dir, tag, &probe(call), Some(16_000_000)),
+            &mut fails,
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}

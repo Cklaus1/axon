@@ -12428,5 +12428,22 @@ MUTATIONS += [
      'axon-core', '--test integration_fixtures', 'loop_control_never_leaves_its_frame_natively'),
 ]
 
+# native-parity lane B: NP-5 (M4131-M4133) -- an `arr_range` span above i64::MAX and a refused
+# array allocation panic natively with the interpreter's `alloc_array_err` line.
+MUTATIONS += [
+    ('M4131', 'NP-5: `arr_range` tests the wrapped difference `> 0` again (a huge span returns `[]`)', 'crates/axon-core/src/codegen/expr.rs',
+     '            end,\n            start,\n            "rg_pos",',
+     '            raw,\n            i64_ty.const_zero(),\n            "rg_pos",',
+     'axon-core', '--test integration_fixtures', 'huge_arrays_panic_natively_like_the_interpreter'),
+    ('M4132', 'NP-5: the array byte-size capacity guard is removed (the size multiply wraps)', 'crates/axon-core/src/codegen/expr.rs',
+     '        self.emit_alloc_array_panic_if(too_big, builtin, count, 0, fn_val);',
+     '        let _ = too_big;',
+     'axon-core', '--test integration_fixtures', 'huge_arrays_panic_natively_like_the_interpreter'),
+    ('M4133', 'NP-5: a null `malloc` for an array is not checked (dies as "stack overflow")', 'crates/axon-core/src/codegen/expr.rs',
+     '        self.emit_alloc_array_panic_if(refused, builtin, count, 1, fn_val);',
+     '        let _ = refused;',
+     'axon-core', '--test integration_fixtures', 'huge_arrays_panic_natively_like_the_interpreter'),
+]
+
 if __name__ == "__main__":
     main()

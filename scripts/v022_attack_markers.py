@@ -3405,3 +3405,10 @@ ATTACK_MARKERS.update({
     'M4129': r'ATTACK: [^\n]*\[b02\]',
     'M4130': r'ATTACK: [^\n]*\[b01\]',
 })
+
+# native-parity lane B: NP-5 (M4131-M4133)
+ATTACK_MARKERS.update({
+    'M4131': r'ATTACK: [^\n]*\[h11\]',
+    'M4132': r'ATTACK: [^\n]*\[r01\]',
+    'M4133': r'ATTACK: [^\n]*\[r05\]',
+})
