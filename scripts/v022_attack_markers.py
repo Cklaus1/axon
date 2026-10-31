@@ -3402,3 +3402,10 @@ ATTACK_MARKERS.update({
     'M4153': r'ATTACK: a model-backed ASI demo no longer reaches its deploy gate on its replay fixture \[summarize\]',
     'M4158': r'ATTACK: a model-backed ASI demo no longer reaches its deploy gate on its replay fixture \[optimize\]',
 })
+
+# asi-replay RP-3 (ids M4155-M4157)
+ATTACK_MARKERS.update({
+    'M4155': r'ATTACK: an ai_extract_uncertain_\* replay entry lost to the mock \[i64\]',
+    'M4156': r'ATTACK: a mock ai_extract_uncertain_\* answer was not recorded to AXON_AI_REPLAY \[i64\]',
+    'M4157': r'ATTACK: a mock ai_extract_uncertain_\* answer was not recorded to AXON_AI_REPLAY \[f64\]',
+})

@@ -37,7 +37,7 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     // ── Record / replay ──────────────────────────────────────────────────
     ("AXON_RECORD", "path to write a host journal: every call through the AxonHost seam, performed for real and appended with its outcome. As sensitive as the run it records"),
     ("AXON_REPLAY", "serve a run from a host journal instead of the world; nothing is performed, and any miss is a divergence (exit 11). Mutually exclusive with AXON_RECORD"),
-    ("AXON_AI_REPLAY", "path to an LLM-call replay cache; memoizes `ai_complete` by (prompt, model) so an AI run reproduces with no live call"),
+    ("AXON_AI_REPLAY", "path to an LLM-call replay cache; memoizes `ai_complete` and `ai_extract_uncertain_*` by (prompt, model / builtin name) so an AI run reproduces with no live call"),
     // ── AI routing & policy ──────────────────────────────────────────────
     ("AXON_AI_MOCK", "use deterministic stub AI responses instead of live calls (the real per-token cost is still metered)"),
     ("AXON_CORTEX_GENERATOR_TIMEOUT_MS", "how long `cortex repair --generator cmd:PATH` waits for the operator's program to answer (default 120s). Exists so the deadline can be TESTED: a suite cannot wait two minutes, and an untested deadline is the kind of check that turns out never to fire. A malformed or zero value is ignored in favour of the default rather than disabling every generator"),

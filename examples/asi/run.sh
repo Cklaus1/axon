@@ -97,21 +97,24 @@ case "$cmd" in
         ;;
     replay)
         # F2 (LANDED): deterministic re-execution via the LLM-call replay cache.
-        # AXON_AI_REPLAY memoizes every ai_complete by (prompt, model). We RECORD
-        # one run, then REPLAY from the cache ALONE — no model, no mock, no key —
+        # AXON_AI_REPLAY memoizes every ai_complete and ai_extract_uncertain_* by
+        # (prompt, model / builtin name), mock answers included. We RECORD one
+        # run, then REPLAY from the cache ALONE — no model, no mock, no key —
         # and verify the second run reproduces the first byte-for-byte. AXON_SEED
         # pins any other RNG so the whole run is deterministic, not just the LLM.
+        # (The replay leg inherits the caller's environment: an AXON_AI_MOCK the
+        # caller exported stays set there.)
         bin="$(axon_bin)"
         cache="$(mktemp)"
         seed="${AXON_SEED:-42}"
-        echo "# 1. RECORD — run once, memoizing every ai_complete into the replay cache"
+        echo "# 1. RECORD — run once, memoizing every AI call into the replay cache"
         rec="$(AXON_SEED="$seed" AXON_AI_MOCK="${AXON_AI_MOCK:-1}" AXON_AI_REPLAY="$cache" "$bin" run "$DEMO" 2>&1)" || true
         echo "# 2. REPLAY — re-run from the cache ALONE (no AXON_AI_MOCK, no key, no model)"
         rep="$(AXON_SEED="$seed" AXON_AI_REPLAY="$cache" "$bin" run "$DEMO" 2>&1)" || true
         rm -f "$cache"
         if [[ "$rec" == "$rep" ]]; then
             echo "✓ reproducible — the replayed run matches the recorded run byte-for-byte"
-            echo "  (every ai_complete answered from the cache; the model was never called)"
+            echo "  (every AI call answered from the cache; the model was never called)"
         else
             echo "✗ replay diverged:" >&2
             diff <(printf '%s' "$rec") <(printf '%s' "$rep") | head -20 >&2

@@ -12428,5 +12428,22 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'asi_model_demos_reach_their_deploy_gate_on_replay_fixtures'),
 ]
 
+# asi-replay (ids M4150-M4169), RP-3: ai_extract_uncertain_i64/_f64 consult AXON_AI_REPLAY before
+# AXON_AI_MOCK and record the mock answer.
+MUTATIONS += [
+    ('M4155', 'RP-3: an ai_extract_uncertain_i64 replay hit is ignored under mock (the old precedence)', 'crates/axon-core/src/interp/builtins.rs',
+     '                    ok!(replay_uncertain(&cached, name, false));',
+     '                    if !ai_mock_enabled() { ok!(replay_uncertain(&cached, name, false)); }',
+     'axon-core', '--no-default-features --test cli_run', 'ai_extract_replay_hit_wins_over_mock_and_a_mock_answer_is_recorded'),
+    ('M4156', 'RP-3: the ai_extract_uncertain_i64 mock answer is no longer recorded to AXON_AI_REPLAY', 'crates/axon-core/src/interp/builtins.rs',
+     '                    ai_replay_store(as_str(&args[0])?, name, "1|0.9", 0);\n                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Int(1), 0.9))));',
+     '                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Int(1), 0.9))));',
+     'axon-core', '--no-default-features --test cli_run', 'ai_extract_replay_hit_wins_over_mock_and_a_mock_answer_is_recorded'),
+    ('M4157', 'RP-3: the ai_extract_uncertain_f64 mock answer is no longer recorded to AXON_AI_REPLAY', 'crates/axon-core/src/interp/builtins.rs',
+     '                    ai_replay_store(as_str(&args[0])?, name, "1|0.9", 0);\n                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Float(1.0), 0.9))));',
+     '                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Float(1.0), 0.9))));',
+     'axon-core', '--no-default-features --test cli_run', 'ai_extract_replay_hit_wins_over_mock_and_a_mock_answer_is_recorded'),
+]
+
 if __name__ == "__main__":
     main()

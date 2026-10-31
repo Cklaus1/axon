@@ -35159,6 +35159,174 @@ fn ai_extract_uncertain_is_stamped_ai_sourced_on_mock_and_replay_paths() {
     );
 }
 
+#[test]
+fn ai_extract_replay_hit_wins_over_mock_and_a_mock_answer_is_recorded() {
+    // asi-replay RP-3. `ai_complete` consults AXON_AI_REPLAY BEFORE the mock
+    // and records a mock answer; the `ai_extract_uncertain_*` arms did the
+    // opposite (mock first, never stored). So under AXON_AI_MOCK=1 plus a
+    // cache an extract silently served the stub instead of the recording, and
+    // a mock run recorded nothing, so the later no-mock replay panicked (rc
+    // 101) and `run.sh replay` diverged for every extract demo. Each leg is
+    // asserted separately so the i64 and f64 arms are pinned on their own.
+    let src = "fn main() -> i64 {\n  \
+               match ai_extract_uncertain_i64(\"how many? 3\") {\n    \
+                 Ok(u) => println(\"{to_str(u.value)} {to_str(u.confidence)}\")\n    \
+                 Err(e) => println(e)\n  }\n  \
+               match ai_extract_uncertain_f64(\"how warm? 2.5\") {\n    \
+                 Ok(u) => println(\"{to_str(u.value)} {to_str(u.confidence)}\")\n    \
+                 Err(e) => println(e)\n  }\n  0\n}\n";
+    let f = tmp_ax("ai_extract_replay_mock", src);
+    let tmp = std::env::temp_dir().join(format!("axon_rp3_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let key = |model: &str, prompt: &str| {
+        use sha2::{Digest, Sha256};
+        let d = Sha256::digest(format!("{model}\u{0}{prompt}").as_bytes());
+        d.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let k_i64 = key("ai_extract_uncertain_i64", "how many? 3");
+    let k_f64 = key("ai_extract_uncertain_f64", "how warm? 2.5");
+    let run = |cache: &std::path::Path, mock: bool| {
+        let mut c = axon();
+        c.arg("run")
+            .arg(&f)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &tmp)
+            .env("XDG_CACHE_HOME", tmp.join("xdg"))
+            .env("AXON_SEED", "42")
+            .env("AXON_AI_REPLAY", cache)
+            .current_dir(&tmp);
+        if mock {
+            c.env("AXON_AI_MOCK", "1");
+        }
+        let o = c.output().expect("spawn");
+        let lines: Vec<String> = String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        (
+            lines,
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    };
+    let mut failures = Vec::new();
+
+    // (a) A recorded answer wins over the mock.
+    let cache = tmp.join("hit.replay");
+    std::fs::write(
+        &cache,
+        format!("{k_i64} 0 {}\n{k_f64} 0 {}\n", hex("3|0.8"), hex("2.5|0.7")),
+    )
+    .unwrap();
+    let (got, rc, err) = run(&cache, true);
+    for (i, (leg, want)) in [("i64", "3 0.8"), ("f64", "2.5 0.7")].iter().enumerate() {
+        if got.get(i).map(String::as_str) != Some(*want) {
+            failures.push(format!(
+                "ATTACK: an ai_extract_uncertain_* replay entry lost to the mock [{leg}]: \
+                 want {want:?}, got {:?} (rc {rc:?}; stderr: {err})",
+                got.get(i)
+            ));
+        }
+    }
+
+    // (b) A mock answer is recorded, keyed by the builtin name, and a later
+    // replay WITHOUT the mock reproduces it.
+    let cache = tmp.join("rec.replay");
+    std::fs::write(&cache, "").unwrap();
+    let (mocked, _, _) = run(&cache, true);
+    let body = std::fs::read_to_string(&cache).unwrap_or_default();
+    let (replayed, rc, err) = run(&cache, false);
+    let stub = hex("1|0.9");
+    for (i, (leg, k)) in [("i64", &k_i64), ("f64", &k_f64)].iter().enumerate() {
+        let stored = body.lines().any(|l| {
+            let mut p = l.split(' ');
+            p.next() == Some(k.as_str()) && p.nth(1) == Some(stub.as_str())
+        });
+        let reproduced = replayed.get(i).map(String::as_str) == Some("1 0.9")
+            && mocked.get(i).map(String::as_str) == Some("1 0.9");
+        if !stored || !reproduced {
+            failures.push(format!(
+                "ATTACK: a mock ai_extract_uncertain_* answer was not recorded to \
+                 AXON_AI_REPLAY [{leg}]: stored={stored}; mock run {:?}, no-mock replay {:?} \
+                 (rc {rc:?}; stderr: {err}); cache:\n{body}",
+                mocked.get(i),
+                replayed.get(i)
+            ));
+        }
+    }
+    if body.lines().count() != 2 {
+        failures.push(format!(
+            "the mock run must record exactly 2 lines, one per extract; cache:\n{body}"
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_file(&f);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn asi_run_sh_replay_reproduces_the_extract_demos() {
+    // asi-replay RP-3: `run.sh replay` records a mock run into a temp
+    // AXON_AI_REPLAY cache, then replays it with no mock. Before RP-3 the
+    // extract builtins never recorded a mock answer, so every demo that calls
+    // `ai_extract_uncertain_*` diverged ("replay diverged", rc 1). optimize
+    // (ai_complete only) is covered by
+    // asi_demo_replay_and_audit_commands_work_end_to_end.
+    //
+    // AXON_AI_MOCK is deliberately NOT exported: run.sh's record leg defaults
+    // it to 1 itself (`${AXON_AI_MOCK:-1}`), and its replay leg inherits the
+    // caller's environment, so an exported AXON_AI_MOCK=1 would mock the
+    // replay leg too and this test could not see a missing recording
+    // (observed: with it exported the test passed before the RP-3 fix).
+    let script = format!("{}/../../examples/asi/run.sh", env!("CARGO_MANIFEST_DIR"));
+    let asi = format!("{}/../../examples/asi", env!("CARGO_MANIFEST_DIR"));
+    let stdlib = format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR"));
+    let tmp = std::env::temp_dir().join(format!("axon_rp3sh_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut failures = Vec::new();
+    for d in [
+        "classify",
+        "summarize",
+        "code_review",
+        "search_rank",
+        "pricing",
+    ] {
+        let rep = harness(&script)
+            .arg("replay")
+            .env_clear()
+            .env("AXON", env!("CARGO_BIN_EXE_axon"))
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &tmp)
+            .env("XDG_CACHE_HOME", tmp.join(d).join("cache"))
+            .env("AXON_PATH", format!("{asi}:{stdlib}"))
+            .env("AXON_SEED", "42")
+            .env("AXON_BANDIT_STATE", tmp.join("bandit.txt"))
+            .env("AXON_LEARNER_STATE", tmp.join("learner.txt"))
+            .env("DEMO", format!("{d}.ax"))
+            .current_dir(&tmp)
+            .output()
+            .expect("run run.sh replay");
+        let r = format!(
+            "{}{}",
+            String::from_utf8_lossy(&rep.stdout),
+            String::from_utf8_lossy(&rep.stderr)
+        );
+        if !(rep.status.success() && r.contains("reproducible")) {
+            failures.push(format!(
+                "ATTACK: a mock ai_extract_uncertain_* answer was not recorded to \
+                 AXON_AI_REPLAY [i64 via run.sh {d}]: rc {:?}\n{r}",
+                rep.status.code()
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 /// C9 round 4c, PSV-1 (amendment 72), defence in depth for B2: a method call
 /// on `()` (a call of a fn with no declared return type) needs an impl for
 /// `()`; it is refused at check time, not dispatched at runtime on whatever
