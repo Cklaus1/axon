@@ -3674,4 +3674,6 @@ ATTACK_MARKERS.update({
     'M4431': r'ATTACK: NH-R1 security F5 a check ran on an import closure changed by an earlier check',
     'M4432': r'ATTACK: NH-R1 security F5 a check ran on an import closure changed by an earlier check',
     'M4433': r'ATTACK: NH-R1 S13 a file changed during the witness run was graded \(outside\)',
+    'M4434': r'ATTACK: NH-R1 security build AXON_AI_MOCK in the real environment answered',
+    'M4435': r'ATTACK: NH-R1 security build AXON_AI_REPLAY in the real environment ran unattended',
 })

@@ -13429,6 +13429,14 @@ MUTATIONS += [
      '        if now.len() < head.len() + tail.len() || !now.starts_with(head) || !now.ends_with(tail)',
      '        if false',
      'axon-cortex', _NHT, 's13_a_checker_that_rewrites_the_entry_file_during_the_witness_run_refuses'),
+    ('M4434', 'NH-R1 security build: AXON_AI_MOCK in the real environment is admitted', _NHU,
+     '    "AXON_AI_MOCK",\n    "AXON_AI_REPLAY",\n];',
+     '    "AXON_AI_REPLAY",\n];',
+     'axon-cortex', _NHT, 's6_a_real_env_model_override_is_refused'),
+    ('M4435', 'NH-R1 security build: AXON_AI_REPLAY in the real environment is admitted', _NHU,
+     '    "AXON_AI_REPLAY",\n];',
+     '];',
+     'axon-cortex', _NHT, 's6_a_real_env_model_override_is_refused'),
 ]
 
 if __name__ == "__main__":

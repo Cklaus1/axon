@@ -2065,8 +2065,6 @@ EXEMPT += [
      _CTX + "; E1s: an lstat that fails for another reason than NotFound is an OS error; refused, never admitted"),
     (_UNA, "pub const ALLOWED_FLAGS: &[&str] = &[",
      _CTX + "; §5.2's allowlist, read only by check_flag, whose guard is M4101"),
-    (_UNA, "pub const REFUSED_ENV: &[&str] = &[",
-     _CTX + "; §5.2's refused env selectors, read only by check_env, whose guard is M4102"),
     ('crates/axon-cortex/src/fence.rs', "pub const SCOPE_VARS: &[(&str, &str)] = &[",
      _FEN + "; the three scope kinds and their variables, read by from_pristine (R1c) and "
      "with_scope_pins (E1, rows M4096-M4100)"),

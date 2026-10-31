@@ -36,13 +36,17 @@ pub const ALLOWED_FLAGS: &[&str] = &[
 ];
 
 /// §5.2: environment selectors that steer a run outside the envelope; set,
-/// they refuse.
+/// they refuse. `AXON_AI_MOCK` and `AXON_AI_REPLAY` (security build) would
+/// answer the generator from a stub or a cache instead of the pinned
+/// endpoint.
 pub const REFUSED_ENV: &[&str] = &[
     crate::rank::RANKER_ENV,
     crate::audit::AUDIT_ENV,
     crate::label::LABEL_ENV,
     "CORTEX_MODEL",
     "AXON_CORTEX_GENERATOR_TIMEOUT_MS",
+    "AXON_AI_MOCK",
+    "AXON_AI_REPLAY",
 ];
 
 /// One enforcement-gate row (§5.6 `enforcement`).

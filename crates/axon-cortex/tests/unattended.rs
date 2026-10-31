@@ -860,6 +860,43 @@ fn s6_a_dotenv_steers_nothing() {
     }
 }
 
+/// Security build: a model-steering variable in the REAL environment is
+/// refused like the §5.2 selectors. `AXON_AI_MOCK` would have the in-process
+/// generator answered by the mock stub instead of the endpoint the envelope
+/// pins (here a closed port, so every call must fail as unavailable);
+/// `AXON_AI_REPLAY` would serve `ai_complete` answers from a cache file.
+#[test]
+fn s6_a_real_env_model_override_is_refused() {
+    for var in ["AXON_AI_MOCK", "AXON_AI_REPLAY"] {
+        let s = setup(&format!("s6_aienv_{var}"));
+        let e = envelope_for(&s);
+        mint(&s, &e);
+        let cache = s.root.join("ops/replay.jsonl");
+        std::fs::write(&cache, "").unwrap();
+        let value = if var == "AXON_AI_MOCK" {
+            "1"
+        } else {
+            cache.to_str().unwrap()
+        };
+        let o = run_with(&s, &s.axon, &[], &[(var, value)]);
+        assert!(
+            !o.stdout.contains("\"kind\":\"proposed\""),
+            "ATTACK: NH-R1 security build {var} in the real environment answered an \
+             unattended run's generator instead of the pinned endpoint\n{}{}",
+            o.stdout,
+            o.stderr
+        );
+        refused(
+            &s,
+            &o,
+            &e,
+            var,
+            &format!("ATTACK: NH-R1 security build {var} in the real environment ran unattended"),
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
 /// Security review F4: a relative `fs_read` / `fs_write` pin is refused. The
 /// check child's cwd is the workspace, so `out` resolves to `ws/out` - here a
 /// symlink to the operator's key directory - and a relative pin passed the
