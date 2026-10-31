@@ -12440,16 +12440,16 @@ MUTATIONS += [
 # exit status, a timeout and a sandbox fault apart and strips the completion marker.
 MUTATIONS += [
     ('M4032', 'IG4 capture: every completed run reads as exit 0', 'crates/axon-os/src/runtime.rs',
-     'Verdict::Completed { value } => SandboxOutcome::Exited { code: value as i32 },',
-     'Verdict::Completed { .. } => SandboxOutcome::Exited { code: 0 },',
+     'code: proc.code.unwrap_or(0),',
+     'code: 0,',
      'axon-os', '--test sandbox_capture', 'exit_status_and_output_are_captured'),
     ('M4033', 'IG4 capture: a compile failure reads as an exit status', 'crates/axon-os/src/runtime.rs',
-     'Verdict::Malformed { reason } => SandboxOutcome::CompileFailed { diagnostic: reason },',
-     'Verdict::Malformed { reason } => SandboxOutcome::Exited { code: reason.len() as i32 },',
+     'return SandboxOutcome::CompileFailed { diagnostic };',
+     'return SandboxOutcome::Exited { code: diagnostic.len() as i32 };',
      'axon-os', '--test sandbox_capture', 'a_compile_failure_is_not_an_exit_status'),
     ('M4034', 'IG4 capture: a timeout reads as a fault', 'crates/axon-os/src/runtime.rs',
-     '_ if proc.timed_out => SandboxOutcome::TimedOut {',
-     '_ if false && proc.timed_out => SandboxOutcome::TimedOut {',
+     '        if proc.timed_out {\n            return SandboxOutcome::TimedOut {',
+     '        if false && proc.timed_out {\n            return SandboxOutcome::TimedOut {',
      'axon-os', '--test sandbox_capture', 'a_timeout_is_its_own_outcome'),
     ('M4035', "IG4 capture: the wrapper's completion marker stays in stdout", 'crates/axon-os/src/runtime.rs',
      'stdout: strip_done_marker(&proc.stdout, &nonce),',
@@ -12505,8 +12505,8 @@ MUTATIONS += [
      '    if false && resolved.draft.generated {\n        // A generated program is approved by a human',
      'axon-intent', '--test cli_generate', 'a_generated_program_compiles_with_a_transcript_and_needs_a_human_approve'),
     ('M4045', 'IG5: a lifted program failing its examples falls back to the static pipeline', 'crates/axon-intent/src/cli.rs',
-     '(rep, None) => return Err(Produce::Refused(rep.refusal())),',
-     '(_, None) => return pipeline::resolve(intent, &MockSynth::new(), GenMode::Auto, risk_floor).map_err(Produce::Refused),',
+     'None => return Err(Produce::Refused(rep.refusal())),',
+     'None => return pipeline::resolve(intent, &MockSynth::new(), GenMode::Auto, risk_floor).map_err(Produce::Refused),',
      'axon-intent', '--test cli_generate', 'a_lifted_program_failing_its_example_is_refused'),
     ('M4046', 'IG5: compile without a program source does not name --generator', 'crates/axon-intent/src/cli.rs',
      '"the intent has no fenced ```axon program: pass --generator cmd:PATH|ai:MODEL \\',
@@ -12611,6 +12611,36 @@ _IG0_STALE = {
 }
 STALE_REFACTORED.update(_IG0_STALE)
 RETIRED |= set(_IG0_STALE)
+
+# intent-gen implementation audit P1/P2a/P2b (ids M4420-M4439, IgIntent): how a captured
+# sandbox run ended is decided by deadline, signal, completion marker, then the interpreter's
+# own final fault line - never stderr words; a repair round counts against the token budget.
+MUTATIONS += [
+    ('M4420', 'audit P1: a completed run is classed by its stderr before its completion marker', 'crates/axon-os/src/runtime.rs',
+     '        if ran_to_completion(&proc.stdout, nonce) {\n            return SandboxOutcome::Exited {',
+     '        if false && ran_to_completion(&proc.stdout, nonce) {\n            return SandboxOutcome::Exited {',
+     'axon-os', '--test sandbox_capture', 'a_completed_run_returning_a_fault_code_is_an_exit_status'),
+    ('M4421', 'audit P1: fault words anywhere in stderr, not the final line, make a fault', 'crates/axon-os/src/runtime.rs',
+     '.find(|(c, p)| *c == code && line.starts_with(p))?;',
+     '.find(|(c, p)| *c == code && stderr.contains(p))?;',
+     'axon-os', '--test sandbox_capture', 'fault_words_before_a_direct_exit_are_not_a_fault'),
+    ('M4422', 'audit P2a: exit(2) without an axon-diag/1 error reads as a compile failure', 'crates/axon-os/src/runtime.rs',
+     '    first_error\n}\n',
+     '    first_error.or(Some(String::new()))\n}\n',
+     'axon-os', '--test sandbox_capture', 'a_silent_exit_2_is_not_a_compile_failure'),
+    ('M4423', 'audit P2b: a repair round runs past the intent token budget', 'crates/axon-intent/src/genloop.rs',
+     'if round < repairs && tokens_reported > token_budget {',
+     'if false && round < repairs && tokens_reported > token_budget {',
+     'axon-intent', '--test genloop', 'repair_rounds_stop_once_reported_tokens_pass_the_intent_budget'),
+    ('M4424', 'audit P2b: an intent naming no tokens is not held to DEFAULT_TOKEN_BUDGET', 'crates/axon-intent/src/genloop.rs',
+     'Ok(n) if n > 0 => n,',
+     'Ok(n) => n,',
+     'axon-intent', '--test genloop', 'an_intent_naming_no_tokens_is_held_to_the_default_budget'),
+    ('M4425', 'audit P2b: the tokens a cmd generator reports are dropped', 'crates/axon-intent/src/generator.rs',
+     'tokens: reported_tokens(&run.stderr),',
+     'tokens: None,',
+     'axon-intent', '--test genloop', 'a_cmd_generator_s_reported_tokens_count_against_the_budget'),
+]
 
 if __name__ == "__main__":
     main()

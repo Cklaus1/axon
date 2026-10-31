@@ -54,6 +54,14 @@ re-run).
   this draft proposes arm c with Opus too, ≈ 1 call per task].
 - **Effort:** micode's default (no `--effort`); recorded as `null` in meta. [OPEN: name one or keep default.]
 - **Rounds:** round 0 + ≤ 3 repair rounds (`genloop::MAX_REPAIR_ROUNDS`, arm c the same).
+- **Per-task token cap (Q4):** a repair round counts against the task's token budget: the intent's
+  `## Budget` `tokens` (every dev task: 50000), else `genloop::DEFAULT_TOKEN_BUDGET` = 100000. The
+  driver reports each call's input + output + cache tokens (`axon-intent-tokens: <n>` on stderr); no
+  repair round starts once the reported sum is past the cap (loop outcome `token-budget-exhausted`,
+  scored as not verified; arm c the same rule, `token_budget_exhausted` in its row). [OPEN for the human:
+  dev calls used ≈ 15.5-18 k tokens each (input ≈ 15.5 k), so 50000 allows round 0 + 2 repairs on
+  most tasks, not 3; raise the once tasks' `tokens` (e.g. 80000) or keep 50000 and record that the
+  token cap, not the round cap, binds.]
 - **Per-call deadline:** 180 s (`AXON_INTENT_TIMEOUT_MS=180000`, `genviab.CALL_TIMEOUT_MS`).
 - **Max output tokens:** micode's default for the model; the driver sets none. Candidate cap 256 KiB
   (`generator::MAX_CANDIDATE_BYTES`). Feedback cap 2048 bytes. `axon check` 60 s, each example 20 s.
@@ -114,7 +122,8 @@ call no task is removed, re-written or re-graded for any reason, including a ref
 **Infrastructure (unscored) rows.** No transcript; loop outcome `infrastructure-failed`; grading stage
 `infrastructure`; a generator failure that is not the model's - deadline, micode exit/session error, no
 turn end, rate limit, driver could not start. **Scored as not verified:** an empty reply and an oversized
-answer (`genviab.MODEL_FAILURES`), and every loop outcome `exhausted` / `refused-twice`. Rate-limit:
+answer (`genviab.MODEL_FAILURES`), and every loop outcome `exhausted` / `refused-twice` /
+`token-budget-exhausted`. Rate-limit:
 `run_ab.RATE_LIMIT_STOP` consecutive rate-limited tasks stop the run (rows unscored).
 
 ## 6. Decision rule (IG7, Q3; `genviab.py verdict`)
@@ -157,8 +166,11 @@ VISION.md and README in the result commit, pending a separate decision; it choos
   `--reserve-usd` per task [FILL AT FREEZE: proposal 0.5 for Opus]. Billed spend is "OAuth, not billed per
   call". A cap-interrupted run is INCOMPLETE. Expected ≈ $8-9 Opus arm a (48 tasks × ≤ 4 calls), ≈ $1 Opus
   arm c, ≈ $0.4 per Haiku arm [INFERENCE: spec cost table scaled to 48 tasks].
-- `once-ledger.jsonl`: one hash-chained row per (manifest, arm, model) written before the first call; a
-  second score is refused; one resume after 30 min. `--only` is refused on the once set.
+- `once-ledger.jsonl`: one hash-chained row per (manifest, arm, model) written before the first call and
+  committed by the run (`git commit -- once-ledger.jsonl`) before any model call; a run is refused while
+  the ledger differs from its committed copy (uncommitted, edited or deleted rows), so a fresh worktree of
+  a commit carrying the ledger cannot restart the chain; a second score is refused; one resume after 30
+  min. `--only` is refused on the once set.
 - Commands (after freeze; `AXON_BIN` = the pinned build):
   `python3 -B build.py --check --set once`, then for each (arm, model) in section 3
   `python3 -B genviab.py run --set once --arm <a|c> --generator micode --model <m> --out results/once/<arm>-<m> --cap-usd 25 --reserve-usd <r>`,

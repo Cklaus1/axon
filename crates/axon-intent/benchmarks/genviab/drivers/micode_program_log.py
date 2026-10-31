@@ -2,7 +2,9 @@
 """micode-program.sh's second half: micode's jsonl events on stdin -> the
 reply text on stdout, one accounting row appended to $GENVIAB_MODEL_LOG.
 
-Exit 0 with the reply; exit 1 (row logged, `error` set) when micode failed,
+Exit 0 with the reply (and `axon-intent-tokens: <n>` on stderr, the call's
+input + output + cache tokens, which axon-intent holds against the intent's
+token budget before each repair round); exit 1 (row logged, `error` set) when micode failed,
 reported a session error, produced no turn or an empty reply; exit 4 when the
 shell half refused the prompt (GENVIAB_REFUSED). A failed call still spent
 tokens, so its row is written before the exit.
@@ -77,6 +79,9 @@ def main():
         sys.stderr.write("driver: " + why + "\n")
         return code
     sys.stdout.write(text)
+    # axon-intent's token budget (genloop, Q4): every token the call used.
+    total = sum(row[k] for k in ("input_tokens", "output_tokens", "cache_read", "cache_create"))
+    sys.stderr.write(f"axon-intent-tokens: {total}\n")
     return 0
 
 

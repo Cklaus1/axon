@@ -31,10 +31,13 @@ run_ab.RATE_LIMIT_STOP consecutive rate-limited tasks.
 
 Once set (`--set once`): refused with a model unless PREREG-genviab.md is
 FROZEN and pins once/manifest.json's sha256; the run appends a row to
-once-ledger.jsonl BEFORE the first model call, and a second score of the same
-(manifest, arm, model) is refused. One resume (`--resume-of ROW`, >= 30 min
-after the row, same identity) is allowed for an interrupted run (IG7
-INCOMPLETE rule). Oracle/empty runs spend nothing and are not ledgered.
+once-ledger.jsonl BEFORE the first model call and commits it (`git commit --
+once-ledger.jsonl`; a run is refused while the ledger differs from its committed
+copy, so a fresh worktree or a deleted file cannot restart the chain), and a
+second score of the same (manifest, arm, model) is refused. One resume
+(`--resume-of ROW`, >= 30 min after the row, same identity) is allowed for an
+interrupted run (IG7 INCOMPLETE rule). Oracle/empty runs spend nothing and are
+not ledgered.
 """
 import argparse
 import concurrent.futures as cf
@@ -71,6 +74,7 @@ ONCE_LEDGER = os.path.join(HERE, "once-ledger.jsonl")
 DEFAULT_MODEL = "claude-haiku-5-5"
 CALL_TIMEOUT_MS = 180_000          # one model call (AXON_INTENT_TIMEOUT_MS)
 MAX_REPAIR_ROUNDS = 3              # genloop::MAX_REPAIR_ROUNDS
+DEFAULT_TOKEN_BUDGET = 100_000     # genloop::DEFAULT_TOKEN_BUDGET (intent names no `tokens`)
 FEEDBACK_CAP = 2048                # genloop::FEEDBACK_CAP_BYTES
 EMPTY_PY = "import sys\nsys.exit(0)\n"
 RESUME_AFTER_S = 30 * 60
@@ -227,6 +231,54 @@ def once_spend(ident, resume_of=None, ledger=ONCE_LEDGER, now=None):
             fh.flush()
             os.fsync(fh.fileno())
         return row_sha({k: row[k] for k in LEDGER_FIELDS})
+
+
+def ledger_uncommitted(ledger):
+    """Why the ledger's rows are not all in git history, or None. A ledger that
+    lives only in one checkout guards only that checkout: a fresh worktree or a
+    deleted file would start an empty chain and score the once set again."""
+    d, name = os.path.split(os.path.abspath(ledger))
+    git = ["git", "-C", d]
+    if subprocess.run(git + ["ls-files", "--error-unmatch", "--", name],
+                      capture_output=True).returncode != 0:
+        return f"{ledger} is not committed (git ls-files --error-unmatch)"
+    if subprocess.run(git + ["diff", "--quiet", "HEAD", "--", name],
+                      capture_output=True).returncode != 0:
+        return f"{ledger} differs from its committed copy (a row is uncommitted, edited or deleted)"
+    return None
+
+
+def once_ledger_precheck(ledger):
+    """Before a once run's row: a ledger that exists (or ever was committed)
+    must be exactly its committed copy. Only a never-committed, absent ledger -
+    the first once run of the repository - starts a new chain."""
+    d, name = os.path.split(os.path.abspath(ledger))
+    tracked = subprocess.run(["git", "-C", d, "ls-files", "--error-unmatch", "--", name],
+                             capture_output=True).returncode == 0
+    history = subprocess.run(["git", "-C", d, "log", "--all", "--format=%h", "-1", "--", name],
+                             capture_output=True, text=True).stdout.strip()
+    if history and not tracked:
+        raise Refused(f"{ledger} was committed ({history}) and is no longer tracked: a deleted "
+                      "ledger would start an empty chain; restore it before a once run")
+    if os.path.exists(ledger) or tracked:
+        why = ledger_uncommitted(ledger)
+        if why:
+            raise Refused(f"{why}: commit it (git commit -- {name}) before a once run")
+
+
+def once_commit(ledger, row):
+    """Commit the ledger's new row, and refuse unless every row is then in git
+    history - before any model call of the once run."""
+    d, name = os.path.split(os.path.abspath(ledger))
+    r = subprocess.run(["git", "-C", d, "add", "--", name], capture_output=True, text=True)
+    if r.returncode == 0:
+        r = subprocess.run(["git", "-C", d, "commit", "-q", "-m", f"genviab: once-ledger row {row}",
+                            "--", name], capture_output=True, text=True)
+    why = ledger_uncommitted(ledger)
+    if why:
+        raise Refused(f"the once-ledger row {row} could not be committed ({r.stderr.strip()}); "
+                      f"{why}: commit it before any model call")
+
 
 
 def once_gate(a, man_sha, n_tasks):
@@ -388,6 +440,19 @@ def py_feedback(res):
     return "The program did not do what the examples expect:\n" + out
 
 
+def task_token_budget(task):
+    """The intent's `## Budget` `tokens`, else genloop::DEFAULT_TOKEN_BUDGET."""
+    m = re.search(r"^\s*-\s*tokens\s*:\s*(\d+)\s*$", gv.section(task["intent_md"], "budget"), re.M)
+    return int(m.group(1)) if m and int(m.group(1)) > 0 else DEFAULT_TOKEN_BUDGET
+
+
+def reported_tokens(stderr):
+    """The driver's last `axon-intent-tokens: <n>` line (generator::TOKENS_LINE_PREFIX), else 0."""
+    hits = re.findall(r"^axon-intent-tokens: (\d+)\s*$", stderr, re.M)
+    return int(hits[-1]) if hits else 0
+
+
+
 def run_arm_c(a, task, out):
     calls_log = os.path.join(out, "calls", f"{task['id']}.jsonl")
     env = driver_env(a, task, "c", calls_log)
@@ -395,7 +460,13 @@ def run_arm_c(a, task, out):
     prompt, rounds, src, accepted, gen_failed = base, [], None, False, None
     t0 = time.time()
     repairs = MAX_REPAIR_ROUNDS if a.max_rounds is None else a.max_rounds
+    budget, used, budget_stop = task_token_budget(task), 0, None
     for rnd in range(repairs + 1):
+        if rnd > 0 and used > budget:
+            # genloop's Q4 rule, the same for both arms: no repair round once the
+            # reported tokens are past the task's budget.
+            budget_stop = {"used": used, "budget": budget}
+            break
         if a.generator == "empty":
             text = EMPTY_PY
         elif a.generator == "micode":
@@ -406,6 +477,7 @@ def run_arm_c(a, task, out):
                 rounds.append({"round": rnd, "generator_failure": gen_failed})
                 break
             text = r.stdout
+            used += reported_tokens(r.stderr)
         else:
             raise Refused("arm c has no oracle: there are no Python reference programs")
         src = strip_python(text)
@@ -425,14 +497,15 @@ def run_arm_c(a, task, out):
     wall = round(time.time() - t0, 1)
     with open(os.path.join(out, "transcripts", f"{task['id']}.c.json"), "w") as fh:
         json.dump({"schema": "genviab-python/1", "rounds": rounds,
-                   "accepted": accepted}, fh, indent=1)
+                   "accepted": accepted, "token_budget_exhausted": budget_stop}, fh, indent=1)
     g = gv.grade_python(task, src) if accepted else None
     row = {"accepted": accepted, "wall_s": wall, "rounds": len(rounds),
            "round_stages": [x.get("stage") or "generator-failed" for x in rounds],
            "verified": bool(accepted and g["passed"]),
            "grade": {k: v for k, v in (g or {}).items() if k != "examples"} or None,
            "infra": infra_failure(gen_failed),
-           "python_scope_denied": any(x.get("scope_denied") for x in rounds) or bool(g and g["scope_denied"])}
+           "python_scope_denied": any(x.get("scope_denied") for x in rounds) or bool(g and g["scope_denied"]),
+           "token_budget_exhausted": budget_stop is not None}
     row["false_acceptance"] = bool(accepted and not row["verified"])
     return row
 
@@ -460,6 +533,7 @@ def cmd_run(a):
         raise Refused("a once run resumes only with --resume-of ROW_SHA (once-ledger.jsonl)")
     if a.set == "once" and paid:
         prereg_sha = once_gate(a, man_sha, len(tasks))
+        once_ledger_precheck(ONCE_LEDGER)
     for sub in ("calls", "transcripts"):
         os.makedirs(os.path.join(out, sub), exist_ok=True)
     driver = MICODE_DRIVER if paid else ORACLE_DRIVER
@@ -485,6 +559,7 @@ def cmd_run(a):
              "axon_sha256": meta["axon_sha256"], "axon_intent_sha256": meta["axon_intent_sha256"],
              "card_sha256": meta["card_sha256"], "out": os.path.relpath(out, gv.ROOT),
              "git_head": meta["git_head"]}, resume_of=a.resume_of)
+        once_commit(ONCE_LEDGER, meta["once_ledger_row"])
     with open(os.path.join(out, f"meta-{int(time.time())}.json"), "w") as fh:
         json.dump(meta, fh, indent=1)
     done = {json.loads(l)["id"] for l in open(rows_path) if l.strip()} if os.path.exists(rows_path) else set()

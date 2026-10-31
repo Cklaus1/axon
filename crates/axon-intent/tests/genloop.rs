@@ -459,6 +459,142 @@ fn a_cmd_generator_replaying_candidates_drives_the_loop() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A `cmd:` generator answering round N with candidate N and reporting
+/// `tokens` per call on stderr; returns (generator, its directory).
+fn token_reporting_generator(
+    tag: &str,
+    candidates: &[&str],
+    tokens: u64,
+) -> (CmdGenerator, PathBuf) {
+    let dir =
+        std::env::temp_dir().join(format!("axon-intent-genloop-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (i, c) in candidates.iter().enumerate() {
+        std::fs::write(dir.join(format!("c{i}.ax")), c).unwrap();
+    }
+    let script = dir.join("gen.sh");
+    common::write_executable(
+        &script,
+        format!(
+            "#!/bin/sh\ncat > /dev/null\nd={}\nn=$(cat $d/n 2>/dev/null || echo 0)\necho $((n + 1)) > $d/n\necho 'axon-intent-tokens: {tokens}' >&2\ncat $d/c$n.ax\n",
+            dir.display()
+        ),
+        0o755,
+    );
+    (CmdGenerator::new(script, Duration::from_secs(20)), dir)
+}
+
+#[test]
+fn repair_rounds_stop_once_reported_tokens_pass_the_intent_budget() {
+    // The intent's budget is 50000 tokens. At 30000 per call, round 0 leaves
+    // the budget unspent, round 1 passes it, so round 2 (which would have
+    // been accepted) is never asked for.
+    let gen = ScriptedGenerator::new([TYPE_ERROR, TYPE_ERROR, GOOD]).with_tokens(30_000);
+    let out = genloop::run(&with_examples(), &gen, &cfg());
+    let json: serde_json::Value = serde_json::from_str(&out.transcript.to_json()).unwrap();
+    assert_eq!(
+        (
+            json["outcome"].as_str(),
+            json["rounds"].as_array().map(Vec::len)
+        ),
+        (Some("token-budget-exhausted"), Some(2)),
+        "ATTACK: a repair round ran past the intent's token budget: {json}"
+    );
+    assert_eq!(gen.prompts().len(), 2);
+    assert_eq!(json["tokens"], 60000);
+    assert_eq!(json["token_budget"], 50000);
+    assert!(refused(&out.resolved));
+    let reason = format!("{:?}", out.resolved.err());
+    assert!(reason.contains("token budget of 50000"), "{reason}");
+
+    // Under the budget the same answers repair to acceptance.
+    let gen = ScriptedGenerator::new([TYPE_ERROR, TYPE_ERROR, GOOD]).with_tokens(10_000);
+    let out = genloop::run(&with_examples(), &gen, &cfg());
+    assert_eq!(out.transcript.outcome, LoopOutcome::Accepted);
+    assert_eq!(out.transcript.tokens, Some(30000));
+}
+
+#[test]
+fn a_cmd_generator_s_reported_tokens_count_against_the_budget() {
+    let (gen, dir) = token_reporting_generator("tok", &[TYPE_ERROR, TYPE_ERROR, GOOD], 30000);
+    let out = genloop::run(&with_examples(), &gen, &cfg());
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        (out.transcript.outcome, out.transcript.tokens),
+        (LoopOutcome::TokenBudgetExhausted, Some(60000)),
+        "ATTACK: the tokens a cmd generator reported on stderr were not counted: {}",
+        out.transcript.to_json()
+    );
+}
+
+#[test]
+fn an_intent_naming_no_tokens_is_held_to_the_default_budget() {
+    let no_tokens = intent::parse(&format!(
+        "{}{EXAMPLES}",
+        HEAD.replace("- tokens: 50000\n", "")
+    ))
+    .unwrap();
+    assert_eq!(no_tokens.budget.tokens, 0, "the fixture names no tokens");
+    let gen = ScriptedGenerator::new([TYPE_ERROR, TYPE_ERROR, GOOD]).with_tokens(60_000);
+    let out = genloop::run(&no_tokens, &gen, &cfg());
+    assert_eq!(
+        (
+            out.transcript.outcome,
+            out.transcript.token_budget,
+            gen.prompts().len()
+        ),
+        (
+            LoopOutcome::TokenBudgetExhausted,
+            genloop::DEFAULT_TOKEN_BUDGET,
+            2
+        ),
+        "ATTACK: an intent naming no tokens was not held to DEFAULT_TOKEN_BUDGET: {}",
+        out.transcript.to_json()
+    );
+}
+
+#[test]
+fn a_program_s_own_stderr_and_exit_status_do_not_fail_its_example() {
+    // Writes the right file, says alarming-looking words on stderr and stops
+    // with `exit(2)` - which is exactly what its example states.
+    let it = intent::parse(&format!(
+        "{HEAD}{}",
+        EXAMPLES.replace("- exit: 0", "- exit: 2")
+    ))
+    .unwrap();
+    let src = r#"fn main() -> i64 {
+    eprintln("capability check ok")
+    eprintln("note: no parse error in input")
+    eprintln("line budget not exceeded")
+    let wrote = match read_file("./data/in.txt") {
+        Ok(text) => {
+            match write_file("./out/copy.txt", text) {
+                Ok(_) => true
+                Err(_) => false
+            }
+        }
+        Err(_) => false
+    }
+    if wrote {
+        exit(2)
+    }
+    1
+}
+"#;
+    let gen = ScriptedGenerator::new([src]);
+    let out = genloop::run(&it, &gen, &cfg());
+    assert_eq!(
+        (
+            out.transcript.outcome,
+            out.transcript.refusal_classes.clone()
+        ),
+        (LoopOutcome::Accepted, vec![]),
+        "ATTACK: a program's stderr words or its exit(2) decided its example: {}",
+        out.transcript.to_json()
+    );
+}
+
 #[test]
 fn a_generator_failure_is_a_refusal_not_a_program() {
     let gen = ScriptedGenerator::new(Vec::<String>::new());

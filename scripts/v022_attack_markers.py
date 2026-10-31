@@ -3444,3 +3444,12 @@ ATTACK_MARKERS.update({
     'M4017': r'ATTACK: a full stop inside backticks cut a card doc sentence',
     'M4018': r'ATTACK: `axon card --sha256` is not the sha256 of the card text',
 })
+# intent-gen implementation audit P1/P2 (ids M4420-M4439, IgIntent)
+ATTACK_MARKERS.update({
+    'M4420': r'ATTACK: a completed run was classed by its stderr before its completion marker',
+    'M4421': r'ATTACK: fault words that are not the interpreter.s final line made a fault',
+    'M4422': r'ATTACK: a silent exit',
+    'M4423': r'ATTACK: a repair round ran past the intent.s token budget',
+    'M4424': r'ATTACK: an intent naming no tokens was not held to DEFAULT_TOKEN_BUDGET',
+    'M4425': r'ATTACK: the tokens a cmd generator reported on stderr were not counted',
+})

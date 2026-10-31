@@ -49,6 +49,10 @@ pub const TRANSCRIPT_SCHEMA: &str = "axon-intent-gen/1";
 pub const LIFT_REPORT_SCHEMA: &str = "axon-intent-lift/1";
 /// Repair rounds after round 0 (so at most 1 + 3 generation calls).
 pub const MAX_REPAIR_ROUNDS: u32 = 3;
+/// The per-task generation token budget when the intent's `## Budget` names
+/// no `tokens` (Q4): round 0 + 3 repairs at about 16 k tokens per call
+/// (card + intent + candidate + feedback) fit with room for longer answers.
+pub const DEFAULT_TOKEN_BUDGET: u64 = 100_000;
 /// The most diagnostic (or example-diff) text fed back per round (PREREG-gencontext).
 pub const FEEDBACK_CAP_BYTES: usize = 2048;
 /// Deadline of one `axon check`.
@@ -198,6 +202,10 @@ pub enum LoopOutcome {
     GeneratorFailed,
     /// The checker or the sandbox could not run.
     InfrastructureFailed,
+    /// Before a repair round, the tokens the generator reported so far had
+    /// passed the intent's `## Budget` `tokens` (Q4: a repair round counts
+    /// against the per-task token budget).
+    TokenBudgetExhausted,
 }
 
 /// The `axon-intent-gen/1` transcript: everything the loop saw and decided.
@@ -214,6 +222,12 @@ pub struct Transcript {
     pub wall_ms: u64,
     /// Sum of reported tokens; `None` unless every call reported them.
     pub tokens: Option<u64>,
+    /// The sum of the tokens the calls DID report (a lower bound when some
+    /// call reported none): what the token budget is enforced on.
+    pub tokens_reported: u64,
+    /// The intent's `## Budget` `tokens` (else [`DEFAULT_TOKEN_BUDGET`]): no
+    /// repair round starts once `tokens_reported` is past it.
+    pub token_budget: u64,
 }
 
 impl Transcript {
@@ -236,6 +250,11 @@ pub fn run(intent: &Intent, generator: &dyn Generator, cfg: &LoopConfig) -> Loop
     let mut rounds: Vec<RoundRecord> = Vec::new();
     let mut classes: Vec<RefusalClass> = Vec::new();
     let mut tokens: Option<u64> = Some(0);
+    let mut tokens_reported: u64 = 0;
+    let token_budget = match u64::try_from(intent.budget.tokens) {
+        Ok(n) if n > 0 => n,
+        _ => DEFAULT_TOKEN_BUDGET,
+    };
     let mut previous: Option<(String, String)> = None; // (source, feedback)
     let mut outcome = LoopOutcome::Exhausted;
     let mut accepted: Option<Resolved> = None;
@@ -271,6 +290,7 @@ pub fn run(intent: &Intent, generator: &dyn Generator, cfg: &LoopConfig) -> Loop
             (Some(a), Some(b)) => Some(a + b),
             _ => None,
         };
+        tokens_reported = tokens_reported.saturating_add(generation.tokens.unwrap_or(0));
         rec.tokens = generation.tokens;
         let (report, resolved) = evaluate_candidate(intent, &generation.text, cfg);
         rec.candidate = Some(generation.text);
@@ -300,6 +320,14 @@ pub fn run(intent: &Intent, generator: &dyn Generator, cfg: &LoopConfig) -> Loop
             break;
         }
         previous = Some((source, feedback.unwrap_or_default()));
+        // Q4: the next round is a repair, and it is paid from the per-task
+        // token budget. Reported tokens already past it end the loop here; a
+        // generator that reports none cannot be held to it (`tokens_reported`
+        // stays a lower bound and the transcript shows `tokens: null`).
+        if round < repairs && tokens_reported > token_budget {
+            outcome = LoopOutcome::TokenBudgetExhausted;
+            break;
+        }
     }
 
     let transcript = Transcript {
@@ -313,6 +341,8 @@ pub fn run(intent: &Intent, generator: &dyn Generator, cfg: &LoopConfig) -> Loop
         outcome,
         wall_ms: ms(start.elapsed()),
         tokens,
+        tokens_reported,
+        token_budget,
     };
     let resolved = match accepted {
         Some(mut r) if outcome == LoopOutcome::Accepted => {
@@ -349,6 +379,13 @@ fn refusal_reason(t: &Transcript) -> String {
         LoopOutcome::RefusedTwice => "a second capability refusal ended generation",
         LoopOutcome::GeneratorFailed => "the generator produced no candidate",
         LoopOutcome::InfrastructureFailed => "the checker or the sandbox could not run",
+        LoopOutcome::TokenBudgetExhausted => {
+            return format!(
+                "generation refused after {n} round(s): the generator reported {} tokens, \
+                 past the intent's token budget of {}, before a repair round; last: {first_line}",
+                t.tokens_reported, t.token_budget
+            )
+        }
     };
     format!("generation refused after {n} round(s): {what}; last: {first_line}")
 }

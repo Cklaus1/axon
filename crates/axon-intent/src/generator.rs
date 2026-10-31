@@ -22,6 +22,20 @@ pub const TIMEOUT_ENV: &str = "AXON_INTENT_TIMEOUT_MS";
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 /// The most candidate text a `cmd:` generator may print (bytes).
 pub const MAX_CANDIDATE_BYTES: usize = 256 * 1024;
+/// A `cmd:` generator reports the tokens a call used with a stderr line
+/// `axon-intent-tokens: <n>` (the last such line counts). Without it the call
+/// reported none, and the per-task token budget cannot be held against it.
+pub const TOKENS_LINE_PREFIX: &str = "axon-intent-tokens: ";
+
+/// The tokens a `cmd:` generator reported on stderr (see
+/// [`TOKENS_LINE_PREFIX`]).
+fn reported_tokens(stderr: &str) -> Option<u64> {
+    stderr
+        .lines()
+        .rev()
+        .find_map(|l| l.trim().strip_prefix(TOKENS_LINE_PREFIX))
+        .and_then(|n| n.trim().parse::<u64>().ok())
+}
 
 /// One generator answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,7 +171,7 @@ impl Generator for CmdGenerator {
             }),
             Some(0) => Ok(Generation {
                 text: run.stdout,
-                tokens: None,
+                tokens: reported_tokens(&run.stderr),
             }),
             Some(code) => Err(GenFailure::Failed {
                 reason: format!("exit {code}: {tail}"),
@@ -208,6 +222,7 @@ impl Generator for AiGenerator {
 #[derive(Default)]
 pub struct ScriptedGenerator {
     candidates: Vec<String>,
+    tokens_per_call: Option<u64>,
     next: std::cell::Cell<usize>,
     prompts: std::cell::RefCell<Vec<String>>,
 }
@@ -218,6 +233,12 @@ impl ScriptedGenerator {
             candidates: candidates.into_iter().map(Into::into).collect(),
             ..Default::default()
         }
+    }
+
+    /// Report `n` tokens for every call (as a model generator would).
+    pub fn with_tokens(mut self, n: u64) -> Self {
+        self.tokens_per_call = Some(n);
+        self
     }
 
     /// Every prompt received, in order.
@@ -239,7 +260,7 @@ impl Generator for ScriptedGenerator {
             .get(i)
             .map(|c| Generation {
                 text: c.clone(),
-                tokens: None,
+                tokens: self.tokens_per_call,
             })
             .ok_or_else(|| GenFailure::Failed {
                 reason: format!("the script has {} candidates", self.candidates.len()),

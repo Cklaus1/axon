@@ -201,7 +201,7 @@ def check_once(t):
     feedback (the dev atlas tasks' zero-visible shape is never copied here)."""
     if os.path.basename(os.path.dirname(t["dir"])) != "once":
         return None
-    if not str(t["reference_author"]).startswith("human:"):
+    if not re.fullmatch(r"human:\S.*", str(t["reference_author"])):
         return "a once reference_author must be `human:<name>` (written by hand, never by a model)"
     if not t["examples"]["visible"]:
         return "a once task needs at least one visible example"

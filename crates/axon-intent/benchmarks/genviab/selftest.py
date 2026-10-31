@@ -128,17 +128,20 @@ def build_mechanical():
         # authorship and visible-example rules bind only there.
         once = os.path.join(d, "once")
         src = json.load(open(os.path.join(dev, good, "task.json")))
+        visible = [{"name": "two rows", "runs": [{
+            "inputs": {"./data/records.csv": "name,score\nx,1\ny,2\n"},
+            "outputs": {"./out/answer.txt": "y\n"}, "exit": 0}]}]
         fixtures = {
             "o-model": ("model:x", []),
             "o-novisible": ("human:selftest", []),
-            "o-ok": ("human:selftest", [{"name": "two rows", "runs": [{
-                "inputs": {"./data/records.csv": "name,score\nx,1\ny,2\n"},
-                "outputs": {"./out/answer.txt": "y\n"}, "exit": 0}]}]),
+            "o-noname": ("human:", visible),
+            "o-blankname": ("human: ", visible),
+            "o-ok": ("human:selftest", visible),
         }
-        for tid, (author, visible) in fixtures.items():
+        for tid, (author, vis) in fixtures.items():
             shutil.copytree(os.path.join(dev, good), os.path.join(once, tid))
             t = dict(src, id=tid, reference_author=author)
-            t["examples"] = dict(src["examples"], visible=visible)
+            t["examples"] = dict(src["examples"], visible=vis)
             with open(os.path.join(once, tid, "task.json"), "w") as fh:
                 json.dump(t, fh)
         rc, out = py(d, "build.py", "--set", "once")
@@ -148,6 +151,9 @@ def build_mechanical():
         expect("once keeps only a human-authored task with a visible example",
                [x["id"] for x in man["tasks"]] == ["o-ok"], (out, mech))
         expect("a model-authored once reference is excluded", "human:" in mech.get("o-model", ""), mech)
+        for tid in ("o-noname", "o-blankname"):
+            expect(f"a once reference_author with no name is excluded ({tid})",
+                   "human:<name>" in mech.get(tid, ""), mech)
         expect("a once task with no visible example is excluded",
                "visible" in mech.get("o-novisible", ""), mech)
     finally:
@@ -213,6 +219,63 @@ def once_guard():
         with open(ledger, "w") as fh:
             fh.write(lines[0].replace('"a"', '"b"', 1) + "\n" + "\n".join(lines[1:]) + "\n")
         refused("an edited ledger is refused", lambda: g.read_ledger(ledger), "chain is broken")
+
+        # The ledger must be in git history (a fresh worktree or a deleted
+        # file would otherwise start an empty chain). A throwaway repository,
+        # outside this one.
+        repo = tempfile.mkdtemp(prefix="genviab-ledger-")
+        try:
+            def git(*args):
+                return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+            git("init", "-q")
+            git("config", "user.email", "selftest@genviab")
+            git("config", "user.name", "selftest")
+            git("commit", "-q", "--allow-empty", "-m", "base")
+            led = os.path.join(repo, "once-ledger.jsonl")
+            expect("the first once run of a repository may start the chain",
+                   g.once_ledger_precheck(led) is None)
+            row = g.once_spend(dict(ident), ledger=led, now=t0)
+            refused("an uncommitted ledger row refuses the next once run",
+                    lambda: g.once_ledger_precheck(led), "not committed")
+            g.once_commit(led, row)
+            expect("once_commit leaves every row in git history",
+                   g.ledger_uncommitted(led) is None and g.once_ledger_precheck(led) is None,
+                   git("status", "--short").stdout)
+            os.remove(led)
+            refused("a deleted committed ledger refuses a once run",
+                    lambda: g.once_ledger_precheck(led), "differs from its committed copy")
+            git("checkout", "--", "once-ledger.jsonl")
+            g.once_spend(dict(ident, arm="c"), ledger=led, now=t0)
+            refused("a row appended but not committed refuses a once run",
+                    lambda: g.once_ledger_precheck(led), "differs from its committed copy")
+            git("checkout", "--", "once-ledger.jsonl")
+            git("rm", "-q", "--", "once-ledger.jsonl")
+            git("commit", "-q", "-m", "drop the ledger")
+            refused("a ledger whose deletion was committed refuses a once run",
+                    lambda: g.once_ledger_precheck(led), "no longer tracked")
+            git("revert", "--no-edit", "HEAD")
+            git("checkout", "--", "once-ledger.jsonl")
+            hooks = os.path.join(repo, "hooks")
+            os.makedirs(hooks)
+            with open(os.path.join(hooks, "pre-commit"), "w") as fh:
+                fh.write("#!/bin/sh\nexit 1\n")
+            os.chmod(os.path.join(hooks, "pre-commit"), 0o755)
+            git("config", "core.hooksPath", hooks)
+            g.once_spend(dict(ident, arm="c"), ledger=led, now=t0)
+            refused("a ledger row that cannot be committed refuses the model calls",
+                    lambda: g.once_commit(led, "r"), "could not be committed")
+        finally:
+            shutil.rmtree(repo)
+
+        budget_md = "# Intent\nx\n\n## Budget\n- calls: 1\n- tokens: 50000\n\n## Seed\n1\n"
+        expect("arm c reads the task's token budget",
+               g.task_token_budget({"intent_md": budget_md}) == 50000)
+        expect("arm c defaults the token budget like genloop",
+               g.task_token_budget({"intent_md": budget_md.replace("- tokens: 50000\n", "")})
+               == g.DEFAULT_TOKEN_BUDGET == 100_000)
+        expect("arm c reads the driver's last token line",
+               g.reported_tokens("x\naxon-intent-tokens: 5\naxon-intent-tokens: 1020\n") == 1020
+               and g.reported_tokens("no line") == 0)
 
         calls = os.path.join(d, "results", "x", "calls")
         os.makedirs(calls)
@@ -395,6 +458,8 @@ def driver():
                len(rows) == 1 and rows[0]["input_tokens"] == 1000 and rows[0]["output_tokens"] == 20
                and rows[0]["task"] == "t1" and rows[0]["model"] == ["claude-haiku-5-5"]
                and rows[0]["error"] is None, rows)
+        expect("driver: reports the call's tokens to axon-intent's token budget",
+               r.stderr.splitlines()[-1:] == ["axon-intent-tokens: 1020"], r.stderr)
         r = subprocess.run([sh], input=prompt, env=dict(env, FAKE_RC="3"), capture_output=True,
                            text=True, cwd=d)
         rows = [json.loads(l) for l in open(log)]
