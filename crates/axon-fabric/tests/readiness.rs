@@ -1050,12 +1050,15 @@ fn production_verifiers() -> &'static (std::path::PathBuf, std::path::PathBuf) {
         }
         let _ = std::fs::remove_dir_all(&src);
         std::fs::create_dir_all(&src).unwrap();
+        // `examples/proofs`: axon-fabric -> axon-os -> axon-core (IG0: the
+        // effect scan reads the compiler's admission table), and axon-core
+        // embeds the pinned mint certificates from there (`cert_gate`).
         let ws = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let st = Command::new("sh")
             .args([
                 "-c",
                 "git -C \"$1\" ls-files -z -- Cargo.toml Cargo.lock rust-toolchain.toml .cargo \
-                 crates | tar -C \"$1\" --null -T - -cf - | tar -xpf - -C \"$2\"",
+                 crates examples/proofs | tar -C \"$1\" --null -T - -cf - | tar -xpf - -C \"$2\"",
                 "sh",
             ])
             .arg(&ws)
