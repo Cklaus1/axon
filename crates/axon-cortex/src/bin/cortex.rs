@@ -32,6 +32,7 @@
 //! to it.
 
 use axon_cortex::action::SymbolRef;
+use axon_cortex::cas::Site;
 use axon_cortex::runner::{
     CheckRegistry, EditGrant, EpisodeOutcome, FabricDispatch, FabricSubmitExecutor,
     LocalInterpreterExecutor, Runner, LOCAL_AXON_TEST_ID,
@@ -443,11 +444,34 @@ fn registered_runner(
                     .with_clean_env(),
                 |x, (k, v)| x.with_env(k, v),
             );
+            if let Err(why) = env_is_the_fence(&x, fence_env) {
+                eprintln!("{why}");
+                std::process::exit(22);
+            }
             Runner::with_check_executor(exe, workspace, Box::new(x))
         }
     };
     runner.set_checker_timeout(check_timeout);
     runner
+}
+
+/// NH-R1 E6: the local check process's environment is EXACTLY the fence
+/// env (the completion key goes to stdin). No `HOME`, no `XDG_*`, nothing
+/// inherited, so no cache writer in the interpreter finds a root to write
+/// under outside the signed scopes.
+fn env_is_the_fence(
+    x: &LocalInterpreterExecutor,
+    fence_env: &std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    match x.child_env() {
+        Some(env) if env == *fence_env => Ok(()),
+        Some(env) => Err(format!(
+            "E6: the check process would get {:?}, not exactly the fence env {:?}",
+            env.keys().collect::<Vec<_>>(),
+            fence_env.keys().collect::<Vec<_>>()
+        )),
+        None => Err("E6: the check process would inherit this environment".into()),
+    }
 }
 
 /// A grant `axon caps` cannot answer for stops the run (exit 22): no
@@ -1070,7 +1094,12 @@ fn main() {
                     &file,
                     adjudicated.as_ref().and_then(|(_, b)| b.as_deref().ok()),
                 );
-                if let Err(e) = restore_found(&workspace.join(&file), original.as_bytes(), &ours) {
+                if let Err(e) = restore_found(
+                    Site::BetweenAttempts,
+                    &workspace.join(&file),
+                    original.as_bytes(),
+                    &ours,
+                ) {
                     eprintln!("cannot restore {file} between attempts: {e}");
                     outcome = EpisodeOutcome::Blocked {
                         steps: progress[p].steps(),
@@ -1196,7 +1225,12 @@ fn main() {
         adjudicated_bytes.as_ref().and_then(|b| b.as_deref().ok()),
     );
     if code != 0 && code != 27 {
-        if let Err(e) = restore_found(&workspace.join(&file), original.as_bytes(), &ours) {
+        if let Err(e) = restore_found(
+            Site::ExitRestore,
+            &workspace.join(&file),
+            original.as_bytes(),
+            &ours,
+        ) {
             eprintln!("cortex repair: {file} {e}");
         }
     }
@@ -1204,9 +1238,7 @@ fn main() {
     // have undone on its way: its graded bytes are put back. Failing that,
     // the run fails closed below (R5), never reporting a state it lost.
     let kept_adjudicated = match (code, adjudicated_bytes) {
-        (27, Some(Ok(bytes))) => std::fs::write(workspace.join(&file), bytes).map_err(|e| {
-            format!("the adjudicated state of {file} could not be put back at exit: {e}")
-        }),
+        (27, Some(Ok(bytes))) => put_back_adjudicated(&workspace.join(&file), &file, &bytes),
         (27, Some(Err(why))) => Err(why),
         (27, None) => Err(format!("the adjudicated state of {file} was not kept")),
         _ => Ok(()),
@@ -1631,11 +1663,13 @@ fn settle_artifact(
     ours: &[String],
 ) -> Result<Option<serde_json::Value>, String> {
     let settled = kept.and_then(|()| accepted_artifact(file, code, episode, std::fs::read(path)));
-    settled.map_err(|why| match restore_found(path, original, ours) {
-        Ok(true) => format!("{why}; {file} restored as found"),
-        Ok(false) => why,
-        Err(e) => format!("{why}; {file} {e}"),
-    })
+    settled.map_err(
+        |why| match restore_found(Site::Settle, path, original, ours) {
+            Ok(true) => format!("{why}; {file} restored as found"),
+            Ok(false) => why,
+            Err(e) => format!("{why}; {file} {e}"),
+        },
+    )
 }
 
 /// FU-4 (O-S1-13): the digests ([`axon_cortex::content_digest`], `axc1:`)
@@ -1675,12 +1709,22 @@ fn written_by_run(
 ///
 /// Writing `original` back unconditionally overwrote another actor's edit
 /// made after acceptance, and a failed write was dropped.
-fn restore_found(path: &std::path::Path, original: &[u8], ours: &[String]) -> Result<bool, String> {
-    restore_read(path, std::fs::read(path), original, ours)
+///
+/// NH-R1 E5: the write goes through [`axon_cortex::cas`], so a writer that
+/// gets in after the read above is not overwritten either (`site` names the
+/// call site in the journal).
+fn restore_found(
+    site: Site,
+    path: &std::path::Path,
+    original: &[u8],
+    ours: &[String],
+) -> Result<bool, String> {
+    restore_read(site, path, std::fs::read(path), original, ours)
 }
 
 /// [`restore_found`] over the file's bytes as read (`now`).
 fn restore_read(
+    site: Site,
     path: &std::path::Path,
     now: std::io::Result<Vec<u8>>,
     original: &[u8],
@@ -1693,9 +1737,19 @@ fn restore_read(
     if !ours.contains(&axon_cortex::content_digest(&now)) {
         return Err("changed by another writer; not restored".into());
     }
-    std::fs::write(path, original)
+    let mut ledger = axon_cortex::cas::lock();
+    ledger.observe(path, &now);
+    ledger
+        .write(site, path, original)
         .map(|()| true)
         .map_err(|e| format!("could not be put back as found: {e}"))
+}
+
+/// An exit 27's adjudicated bytes put back at `path` (NH-R1 E5: only over
+/// the bytes this run last wrote or read there).
+fn put_back_adjudicated(path: &std::path::Path, file: &str, bytes: &[u8]) -> Result<(), String> {
+    axon_cortex::cas::write(Site::ExitPutBack, path, bytes)
+        .map_err(|e| format!("the adjudicated state of {file} could not be put back at exit: {e}"))
 }
 
 /// `cortex locate --file F --check C [--json]`
@@ -1957,6 +2011,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
+    /// ATTACK: E5 exit-27 put-back - adjudicated bytes are never put back over a foreign edit.
+    #[test]
+    fn the_exit_27_put_back_never_overwrites_a_foreign_edit() {
+        let path = scratch("putback");
+        std::fs::write(&path, FOUND).unwrap();
+        axon_cortex::cas::observe(&path, FOUND);
+        axon_cortex::cas::write(axon_cortex::cas::Site::Apply, &path, ACCEPTED).unwrap();
+        std::fs::write(&path, EXTERNAL).unwrap();
+        let got = put_back_adjudicated(&path, "f.ax", ACCEPTED);
+        assert_eq!(std::fs::read(&path).unwrap(), EXTERNAL);
+        assert!(got.is_err(), "{got:?}");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
     /// FU-4 (c): bytes changed after acceptance by another writer are left in
     /// place, and the reason says the file was not restored.
     #[test]
@@ -1976,7 +2044,10 @@ mod tests {
         );
         // (b): bytes that already are the found ones are left alone, with
         // nothing added to the reason.
-        assert_eq!(restore_found(&path, EXTERNAL, &ours), Ok(false));
+        assert_eq!(
+            restore_found(Site::Settle, &path, EXTERNAL, &ours),
+            Ok(false)
+        );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -1990,7 +2061,7 @@ mod tests {
         let (_, ours) = wrote_accepted();
         std::fs::write(&path, ACCEPTED).unwrap();
         let unreadable = Err(std::io::Error::other("injected read failure"));
-        let got = restore_read(&path, unreadable, FOUND, &ours);
+        let got = restore_read(Site::Settle, &path, unreadable, FOUND, &ours);
         assert_eq!(
             std::fs::read(&path).unwrap(),
             ACCEPTED,
@@ -2013,11 +2084,42 @@ mod tests {
         std::fs::create_dir(&path).unwrap();
         let (_, ours) = wrote_accepted();
         let io = std::fs::write(&path, FOUND).unwrap_err().to_string();
-        let got = restore_read(&path, Ok(ACCEPTED.to_vec()), FOUND, &ours);
+        let got = restore_read(Site::Settle, &path, Ok(ACCEPTED.to_vec()), FOUND, &ours);
         assert!(
             matches!(&got, Err(why) if why.contains(&io)),
             "ATTACK: a failed restore was not reported: {got:?}"
         );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// NH-R1 E6: the check child's env is exactly the fence env; one extra
+    /// variable (a cache root) or an inherited env refuses.
+    #[test]
+    fn e6_the_check_env_is_exactly_the_fence_env() {
+        let fence: std::collections::BTreeMap<String, String> = [
+            ("AXON_ALLOWED_EFFECTS", "IO,Pure"),
+            ("AXON_ALLOWED_FS_READ", ""),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let base = || LocalInterpreterExecutor::pin_on_first_use("axon".into());
+        let exact = fence
+            .iter()
+            .fold(base().with_clean_env(), |x, (k, v)| x.with_env(k, v));
+        assert_eq!(env_is_the_fence(&exact, &fence), Ok(()));
+        let home = fence
+            .iter()
+            .fold(base().with_clean_env(), |x, (k, v)| x.with_env(k, v))
+            .with_env("HOME", "/tmp/cache-root");
+        assert!(
+            env_is_the_fence(&home, &fence).is_err(),
+            "ATTACK: E6 a check child with a HOME beside the fence env was admitted"
+        );
+        let inherits = fence.iter().fold(base(), |x, (k, v)| x.with_env(k, v));
+        assert!(
+            env_is_the_fence(&inherits, &fence).is_err(),
+            "ATTACK: E6 a check child that inherits the launcher env was admitted"
+        );
     }
 }

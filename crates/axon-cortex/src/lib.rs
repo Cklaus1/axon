@@ -28,6 +28,7 @@ pub mod action;
 #[cfg(feature = "ai")]
 pub mod ai;
 pub mod audit;
+pub mod cas;
 pub mod earlystop;
 pub mod episode;
 pub mod feedback;
@@ -39,6 +40,8 @@ pub mod openrouter;
 pub mod rank;
 pub mod runner;
 pub mod select;
+pub mod unattended;
+pub mod watchdog;
 
 /// `axc1:`-tagged SHA-256 over canonical bytes.
 ///

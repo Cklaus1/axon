@@ -222,6 +222,49 @@ impl Fence {
         self
     }
 
+    /// NH-R1 E1 (O-S1-03): this fence with the envelope's signed scopes as
+    /// the pins for every kind the pristine file USES. Without them a used
+    /// kind is left UNSET, which the interpreter reads as unrestricted.
+    /// Unused kinds stay EMPTY (deny all). Refused — `Err` with the reason —
+    /// when the basis is not `axon caps`, the fence is not applied, a used
+    /// kind has no pin, or an unused kind carries one (a pin there would
+    /// widen a deny-all). Pins are taken as given; the caller normalizes
+    /// them ([`crate::unattended::normalize_rel`] / `normalize_host`).
+    pub fn with_scope_pins(mut self, pins: &ScopePins) -> Result<Fence, String> {
+        if self.basis != Basis::AxonCaps {
+            return Err("E1: the fence has no `axon caps` basis, so no scope can be pinned".into());
+        }
+        if !self.applied {
+            return Err("E1: the fence is not applied, so no scope pin would hold".into());
+        }
+        for ((label, var), pinned) in SCOPE_VARS.iter().zip(pins.by_kind()) {
+            let used = self.capabilities.iter().any(|c| c == label);
+            match (used, pinned.is_empty()) {
+                (true, true) => {
+                    return Err(format!(
+                        "E1: the pristine file uses `{label}` and the envelope pins no scope for it"
+                    ))
+                }
+                (false, false) => {
+                    return Err(format!(
+                        "E1: the envelope pins `{label}`, which the pristine file does not use"
+                    ))
+                }
+                (true, false) => {
+                    if let Some(bad) = pinned
+                        .iter()
+                        .find(|p| p.is_empty() || p.contains(',') || p.trim() == "*")
+                    {
+                        return Err(format!("E1: `{label}` pin `{bad}` is not a single scope"));
+                    }
+                    self.env.insert((*var).to_string(), pinned.join(","));
+                }
+                (false, true) => {}
+            }
+        }
+        Ok(self)
+    }
+
     /// sha256 of the sorted `NAME=value\n` lines of [`Fence::env`].
     pub fn sha256(&self) -> String {
         let lines: String = self.env.iter().map(|(k, v)| format!("{k}={v}\n")).collect();
@@ -262,6 +305,21 @@ impl Fence {
                 })
                 .collect(),
         }
+    }
+}
+
+/// The envelope's signed scopes (NH-R1 §4 `scopes`): the check child's pins.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScopePins {
+    pub fs_read: Vec<String>,
+    pub fs_write: Vec<String>,
+    pub net: Vec<String>,
+}
+
+impl ScopePins {
+    /// In [`SCOPE_VARS`] order.
+    fn by_kind(&self) -> [&Vec<String>; 3] {
+        [&self.fs_read, &self.fs_write, &self.net]
     }
 }
 
