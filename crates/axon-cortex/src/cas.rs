@@ -39,10 +39,10 @@
 //! (exit 22), naming the flag. An ATTENDED run ([`allow_rename_fallback`])
 //! takes the human-approved §10 Q4 procedure instead: step 2's re-hash
 //! against the last digest, then a plain `rename(2)` over an existing target
-//! - or, where the target is expected absent, an exclusive `link(2)` plus
-//! unlink of the temp name, which refuses a file created meanwhile
-//! atomically (security re-review 2 N8; a filesystem without hard links
-//! refuses the write) - then step 5's re-hash of the placed file against
+//! (where the target is expected absent: an exclusive `link(2)` plus unlink
+//! of the temp name, which refuses a file created meanwhile atomically;
+//! security re-review 2 N8; a filesystem without hard links refuses the
+//! write), then step 5's re-hash of the placed file against
 //! the bytes written: a mismatch is reported with both digests, never
 //! claimed as written. A delete renames, re-hashes and unlinks the same way,
 //! and its rename-back is exclusive too.
@@ -1150,12 +1150,34 @@ mod tests {
             "ATTACK: NH-R1 security N3 an attended write on a filesystem without \
              RENAME_EXCHANGE was refused: {got:?}"
         );
+        assert!(others(&d, &p).is_empty(), "no temp file is left");
+        assert_eq!(l.journal().len(), 4, "every write and delete is journalled");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Security re-review 2 N8: the fallback's exclusive placement of an
+    /// absent target links the file there and unlinks the temp name, so a
+    /// create leaves only the target.
+    #[test]
+    fn a_q4_create_leaves_no_temp_file() {
+        let d = dir("q4create");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"old").unwrap();
+        let mut l = attended();
+        l.observe(&p, b"old");
+        l.remove(Site::Sweep, &p).unwrap();
+        RENAME2_ERRNO.with(|e| e.set(Some(libc::EINVAL)));
+        let got = l.write(Site::Apply, &p, b"new");
+        RENAME2_ERRNO.with(|e| e.set(None));
+        assert!(
+            got.is_ok() && std::fs::read(&p).unwrap() == b"new",
+            "{got:?}"
+        );
         assert!(
             others(&d, &p).is_empty(),
             "ATTACK: NH-R1 security N8 the Q4 placement left a temp file: {:?}",
             others(&d, &p)
         );
-        assert_eq!(l.journal().len(), 4, "every write and delete is journalled");
         let _ = std::fs::remove_dir_all(&d);
     }
 
