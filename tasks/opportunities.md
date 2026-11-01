@@ -3229,7 +3229,8 @@ by design or not yet done:
 ## WIP snapshot salvage, 2026-11-01 (triage of four `worktree-agent-*` branches against main 03d60cfc)
 
 Ported: one fix from `worktree-agent-a1c311233a7dfb625` (998c1ba4): model calls audit as `AI`, not `Net` (92c9e639,
-g01 M4570). Everything else in the four snapshots was superseded by main or obsolete; the branches were deleted.
+g01 M4570). Everything else in the four snapshots was superseded by main or obsolete. The four local branches are
+left in place for the human to delete.
 
 ### O-SLV-01 - [high] `ai_extract::<T>(...)` passes `axon check` and panics in `axon run`
 `match ai_extract::<i64>("the answer is 42") { Ok(v) => println(to_str(v)) Err(e) => println(e) }` gives check rc 0,
