@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "Test-only follow-up: a new test checks that an attended create on a filesystem without renameat2 flags leaves no temporary file behind; one code comment reworded. No behaviour change."}
