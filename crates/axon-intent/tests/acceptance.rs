@@ -835,7 +835,8 @@ fn stage_importing_job(
         let bin = d.join("inst/bin");
         std::fs::create_dir_all(&bin).unwrap();
         let copy = bin.join("axon");
-        std::fs::copy(axon, &copy).unwrap();
+        // A child `cp` writes the copy (tests/common): ETXTBSY otherwise.
+        common::copy_executable(axon, &copy, 0o755);
         (copy, d.join("inst/lib/axon"), vec![])
     } else {
         let m = d.join("mods");
