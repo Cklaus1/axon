@@ -3884,6 +3884,8 @@ ATTACK_MARKERS.update({
     'M4548': r'ATTACK: NH-R1 security N8 a write without hard links was not refused clearly',
     'M4549': r'ATTACK: NH-R1 security N8 the Q4 placement left a temp file',
     'M4550': r'ATTACK: NH-R1 security N8 the attended fallback clobbered a file created at its exclusive rename',
+    'M4551': r'ATTACK: NH-R1 A3 the default build answered \["repair", "--unattended"',
+    'M4552': r'ATTACK: NH-R1 A3 the default build answered \["grant", "--envelope-preview"',
 })
 
 # NH-R1 security review fixes, crates side (ids M4450-M4461)

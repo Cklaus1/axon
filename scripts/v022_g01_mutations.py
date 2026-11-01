@@ -14137,6 +14137,17 @@ MUTATIONS += [
      '        .is_some_and(|s| s.eq_ignore_ascii_case("https://"))',
      '        .is_some()',
      'axon-cortex', _NHT, 's6_a_plain_http_endpoint_is_refused'),
+    # Implementation audit: the default build refuses before any parse.
+    ('M4551', 'NH-R1 A3 (implementation audit): a usage error answers --unattended in the default build',
+     'crates/axon-cortex/src/bin/cortex.rs',
+     '    #[cfg(not(feature = "unattended"))]\n    if unattended {\n        unauthorized(',
+     '    #[cfg(not(feature = "unattended"))]\n    if false && unattended {\n        unauthorized(',
+     'axon-cortex', '--test cli', 'a3_the_default_build_refuses_unattended_before_parsing'),
+    ('M4552', 'NH-R1 A3 (implementation audit): a usage error answers --envelope-preview in the default build',
+     'crates/axon-cortex/src/bin/cortex.rs',
+     '    if argv.iter().any(|a| a == "--envelope-preview") {',
+     '    if false && argv.iter().any(|a| a == "--envelope-preview") {',
+     'axon-cortex', '--test cli', 'a3_the_default_build_refuses_unattended_before_parsing'),
 ]
 
 # NH-R1 security review fixes, crates side (F4 validate, F6 mint, F10, F12; ids M4450-M4461)

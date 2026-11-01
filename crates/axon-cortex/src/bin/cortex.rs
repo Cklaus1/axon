@@ -637,6 +637,13 @@ fn main() {
     let mut cli_budget: Option<usize> = None;
     let argv: Vec<String> = args.collect();
     let unattended = argv.iter().any(|a| a == "--unattended");
+    // NH-R1 A3: a build without feature `unattended` refuses `--unattended`
+    // (exit 29) before any argument is parsed, so a usage error (exit 2)
+    // never answers it (implementation audit).
+    #[cfg(not(feature = "unattended"))]
+    if unattended {
+        unauthorized("this cortex was built without unattended support (feature `unattended`)");
+    }
     // Security re-review N3 ruling: an attended run on a filesystem (or a
     // platform) without `renameat2` flags takes the human-approved §10 Q4
     // rename (`cas` module doc); an unattended run's writes refuse (exit
@@ -780,15 +787,12 @@ fn main() {
         );
     }
     #[cfg(not(feature = "unattended"))]
-    if unattended {
-        let _ = (
-            &cli_check_timeout,
-            &cli_candidates,
-            &cli_budget,
-            &seen_flags,
-        );
-        unauthorized("this cortex was built without unattended support (feature `unattended`)");
-    }
+    let _ = (
+        &cli_check_timeout,
+        &cli_candidates,
+        &cli_budget,
+        &seen_flags,
+    );
     // NH-R1 §5.3 phase A: before the generator is built and before any
     // child is spawned. The envelope's limits replace every absent one.
     #[cfg(feature = "unattended")]
@@ -2196,7 +2200,16 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
 /// [--net-host H…] --axon A --generator ai:M` (NH-R1 §5.1): the values an
 /// `axon-approval/4` repair envelope pins, from the functions the
 /// unattended runner verifies them with (`axon_cortex::envelope_preview`).
-fn grant_only(mut args: impl Iterator<Item = String>) {
+fn grant_only(args: impl Iterator<Item = String>) {
+    let argv: Vec<String> = args.collect();
+    // NH-R1 A3: a build without feature `unattended` refuses
+    // `--envelope-preview` (exit 29) before any argument is parsed, so a
+    // usage error (exit 2) never answers it (implementation audit).
+    #[cfg(not(feature = "unattended"))]
+    if argv.iter().any(|a| a == "--envelope-preview") {
+        unauthorized("this cortex was built without unattended support (feature `unattended`)");
+    }
+    let mut args = argv.into_iter();
     let mut workspace = std::path::PathBuf::from(".");
     let (mut file, mut symbol) = (String::new(), String::new());
     let mut axon_bin = std::path::PathBuf::from("axon");
@@ -2266,11 +2279,10 @@ fn grant_only(mut args: impl Iterator<Item = String>) {
         if check_registry.is_some() {
             usage("--check-registry is not accepted with --envelope-preview (E7)");
         }
+        // A build without feature `unattended` refused the preview before
+        // parsing (above); `preview` is never set here.
         #[cfg(not(feature = "unattended"))]
-        {
-            let _ = (check, generator, write_prefixes, fs_read, fs_write, net);
-            unauthorized("this cortex was built without unattended support (feature `unattended`)");
-        }
+        let _ = (check, generator, write_prefixes, fs_read, fs_write, net);
         #[cfg(feature = "unattended")]
         {
             let req = axon_cortex::envelope_preview::Request {

@@ -221,6 +221,7 @@ A3 fixes the exit table at `bin/cortex.rs:20-28` to list 28 and 29.
 
 **Build without support** `[REVISED: D15]`. Feature `unattended = ["dep:axon-os", "dep:axon-canonical", "dep:ring"]`.
 In a build without it, `--unattended` exits 29 with "built without unattended support".
+`[REVISED: implementation audit]` That refusal (and `grant --envelope-preview`'s) comes before any argument is parsed, so no usage error (exit 2) answers it first; test `cli::a3_the_default_build_refuses_unattended_before_parsing`.
 
 ### 5.4 TOCTOU guards `[REVISED: F5]`
 
@@ -414,7 +415,7 @@ Each test is fail-first where it guards a behaviour.
 | S8 | No self-authority: a bad-signature envelope with `--axon` pointing at a canary script → the canary never runs; the child env dump equals the fence env exactly; envelope file byte-identical after the run; the spent dir gains exactly one rename `[REVISED: D3 — the cargo-metadata test was tautological]` |
 | S9 | Key and store perms or ownership wrong, or a symlinked store → refused |
 | S10 | Every E-row: refused case and admitted case. Specific cases: symlink under a write prefix / symlinked `task.file` / symlink to the key; E3 with a stalling fake `AXON_AI_BASE_URL` endpoint and a sleeping check (`deadline_ms ≤ 3 s`); the process exits by `deadline + HARD_GRACE` with found bytes restored; E5 with a concurrent writer and with two unattended runs on one file; E11 with an `exec`-using pristine file; E4 with a `native:gfx` file; E1 with read- and net-using files, admitted with pins and refused without |
-| S11 | Attended mode unchanged: existing suites; `cortex-repair/1` byte-identical on a pinned task |
+| S11 | Attended mode unchanged: existing suites; `cortex-repair/1` byte-identical on a pinned task `[REVISED: implementation audit]` `cli::s11_attended_json_is_byte_identical_to_the_pre_nh_r1_build`: the `--json` record (timing masked) equals a golden file from the pre-NH-R1 build d7690e63 |
 | S12 | Acceptance ≠ approval (§5.7) |
 | S13 | TOCTOU: a pristine test rewrites the entry file or an imported module during the witness run → exit 29 |
 | S14 | Host opt-in (§10 Q3) `[REVISED: security F1, re-review N2, re-review 2 N7]`: no `/etc/axon/unattended-repair`, a wrong owner or mode, a non-regular file, one not naming exactly one decision record, or one under a directory that is not root-owned or that another user can write → exit 29, nothing spent; a run inside a user namespace (`unshare --user --map-root-user`) → exit 29 before the opt-in is read |
