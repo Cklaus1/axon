@@ -1,0 +1,1 @@
+{"theme": "unattended-auth-spec", "text": "A cortex built without unattended support now refuses --unattended and --envelope-preview with exit 29 before reading any other argument, instead of a usage error answering first. Attended runs are unchanged; a new test pins an attended run's JSON output byte-for-byte to the output of the build before unattended repair existed."}
