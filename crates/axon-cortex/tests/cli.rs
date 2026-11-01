@@ -3933,14 +3933,26 @@ fn tree_bytes(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 /// answers `--unattended` and `--envelope-preview` with exit 29 before any
 /// argument is parsed. A usage error (missing `--file`, an unknown argument)
 /// used to win with exit 2. Attended usage errors still exit 2. Nothing is
-/// written to the workspace or the working directory.
+/// written to the workspace or the working directory. The binary is built
+/// here with default features: `target/debug/cortex` is whichever feature
+/// set cargo last uplifted, and a later `--features unattended` build
+/// leaves it there even when this default test binary is fresh.
 #[cfg(not(feature = "unattended"))]
 #[test]
 fn a3_the_default_build_refuses_unattended_before_parsing() {
     let ws = workspace("a3_order");
     let before = tree_bytes(&ws);
+    let bin = script_spawn::workspace_bin(
+        "CORTEX_DEFAULT_BIN",
+        &["build", "-p", "axon-cortex", "--bin", "cortex"],
+        "cortex",
+    );
     let run = |args: &[&str]| {
-        let o = common::cortex()
+        let o = Command::new(&bin)
+            .env_remove("OPENROUTER_API_KEY")
+            .env_remove("CORTEX_LABEL_LOG")
+            .env("CORTEX_RANKER", "spectrum")
+            .env("CORTEX_AUDIT", "off")
             .current_dir(&ws)
             .args(args)
             .output()
