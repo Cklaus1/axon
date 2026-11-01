@@ -3904,3 +3904,8 @@ ATTACK_MARKERS.update({
     'M4460': _SEC_F6 + r'fs_write pin \S+/spent reaching its spent store',
     'M4461': r'ATTACK: a garbled \.used record skipped the digest check with no finding',
 })
+
+# R28 audit ledger, model calls (id M4570)
+ATTACK_MARKERS.update({
+    'M4570': r'ATTACK: a model call audited outside the AI class: `ai_extract_uncertain_i64`',
+})

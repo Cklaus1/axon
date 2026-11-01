@@ -4562,6 +4562,66 @@ fn a_refused_capability_attempt_is_recorded_in_the_audit_ledger() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Every model call audits as `AI`, not only `ai_complete`.
+///
+/// `ai_extract_uncertain_{i64,f64}` audited as `Net`: the hook preferred the
+/// capability classifier, which calls a model call `net`. The R29 monitor
+/// matches the `effect` field against its allowlist, so `--monitor IO,Net`
+/// killed an `ai_complete` job and let the same job with
+/// `ai_extract_uncertain_i64` complete.
+#[test]
+fn every_model_call_audits_as_ai() {
+    let dir = std::env::temp_dir().join(format!("axon_auditai_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("p.ax");
+    std::fs::write(
+        &prog,
+        "fn main() {\n    let _ = ai_extract_uncertain_i64(\"q\")\n    \
+         let _ = ai_extract_uncertain_f64(\"q\")\n    \
+         let _ = http_get(\"http://localhost:0/x\", \"\")\n}\n",
+    )
+    .unwrap();
+    let ledger = dir.join("l.ndjson");
+    let out = axon()
+        .arg("run")
+        .arg(&prog)
+        .env("AXON_AUDIT_LEDGER", &ledger)
+        .env("AXON_AI_MOCK", "1")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "premise: the program must run: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body = std::fs::read_to_string(&ledger).unwrap_or_default();
+    let effect_of = |op: &str| {
+        let row = body
+            .lines()
+            .find(|l| l.contains(&format!("\"operation\":\"{op}\"")))
+            .unwrap_or_else(|| panic!("no audit row for `{op}`:\n{body}"));
+        row.split("\"effect\":\"")
+            .nth(1)
+            .and_then(|s| s.split('"').next())
+            .unwrap_or_else(|| panic!("row has no effect field: {row}"))
+            .to_string()
+    };
+    for op in ["ai_extract_uncertain_i64", "ai_extract_uncertain_f64"] {
+        assert_eq!(
+            effect_of(op),
+            "AI",
+            "ATTACK: a model call audited outside the AI class: `{op}`\n{body}"
+        );
+    }
+    // Control: a plain network call stays `Net`, so the fix is not "everything
+    // with a host is AI".
+    assert_eq!(effect_of("http_get"), "Net", "{body}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn contained_is_not_launderable_through_string_named_dispatch() {
     // SECURITY (audit T2, findings F153 / P7-SEC-02). Several builtins dispatch

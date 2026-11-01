@@ -14205,5 +14205,13 @@ MUTATIONS += [
      'axon-os', '--lib', 'run_ledger::tests::c1_an_unreadable_used_record_is_a_finding'),
 ]
 
+# R28 audit ledger: every model call audits as AI (salvage/audit; id M4570)
+MUTATIONS += [
+    ('M4570', 'R28: ai_extract_uncertain_* audits as Net, so an R29 monitor allowing IO,Net lets a model call through', 'crates/axon-core/src/interp/builtins.rs',
+     '    if crate::builtins::builtin_effect_row(name).contains(&"AI") {',
+     '    if false && crate::builtins::builtin_effect_row(name).contains(&"AI") {',
+     'axon-core', '--test cli_run', 'every_model_call_audits_as_ai'),
+]
+
 if __name__ == "__main__":
     main()

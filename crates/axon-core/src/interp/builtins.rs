@@ -328,7 +328,16 @@ pub(crate) fn cap_to_effect_row(cap: &str) -> &'static str {
 /// capability classifier doesn't cover (`println`, `random_i64`, `env_var`,
 /// `goal_run`, ...) fall back to `builtin_effect_row`, picking its first
 /// recognized tag.
+///
+/// A model call is `AI` before anything else. Its effect row is `[AI, Net]`
+/// and `capability_of_builtin` calls it `net` (the call does reach a host),
+/// so `ai_extract_uncertain_{i64,f64}` audited as `Net` while `ai_complete`
+/// audited as `AI`: an R29 monitor allowing `IO,Net` killed an `ai_complete`
+/// job and let the same job with `ai_extract_uncertain_i64` complete.
 fn audit_effect_kind(name: &str) -> Option<axon_audit::EffectKind> {
+    if crate::builtins::builtin_effect_row(name).contains(&"AI") {
+        return Some(axon_audit::EffectKind::AI);
+    }
     // Via the PER-ARGUMENT table: `capability_of_builtin` has no arm for
     // `file_copy`/`file_rename`, so those two audited as the coarse `IO` from
     // their effect row rather than as `FS`. A reviewer filtering the ledger
