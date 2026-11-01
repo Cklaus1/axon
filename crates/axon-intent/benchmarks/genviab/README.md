@@ -46,8 +46,9 @@ before the first call, and refuses a second score.
 
 ## The dev set (tuning data, never a measurement)
 
-15 tasks: the 12 portable atlas `tasks_hard` tasks (`a04`-`a15`), `examples/intents/summarize` and
-`overbroad`, `examples/jobs/overreach` (tempting). Not ported, with reasons: `rejected-ideas.json`.
+16 tasks: the 12 portable atlas `tasks_hard` tasks (`a04`-`a15`), `examples/intents/summarize` and
+`overbroad`, `examples/jobs/overreach` (tempting), and `e01-score-average` (errors; intent drafted by a
+model and adopted by the operator 2026-11-01, so dev-only). Not ported, with reasons: `rejected-ideas.json`.
 
 - **The atlas tasks carry NO visible example.** Each has one human-computed data point (atlas
   `expected`); it is the hidden example, and a visible one would be invented data. So on these tasks the
@@ -57,8 +58,9 @@ before the first call, and refuses a second score.
 - The references were written by a model (`reference_author: model:IgBench (dev only)`); `build.py`'s
   `human-value` check requires each to reproduce the source's human expected value. The once set's
   references are written by hand.
-- No dev task is `stateful` or `errors`: no IG6 source has a two-run task or a stated exit code. The
-  grader's two-run, exit-code and stdout paths are tested by `selftest.py` on a synthetic fixture.
+- No dev task is `stateful`, and `e01-score-average` is the only `errors` task (exit codes 3/4 and a stated
+  stdout line); no IG6 source has a two-run task. The grader's two-run path is tested by `selftest.py` on a
+  synthetic fixture.
 - **Ceiling effect:** on the current card and prompt Haiku 5.5 verifies 14/14 non-tempting dev tasks in
   arms a, b and c. The dev set has no headroom left to tune against.
 
@@ -72,8 +74,9 @@ before the first call, and refuses a second score.
 | `dev/haiku-*-2` | a0100121 | 14/14 | 14/14 | 14/14 | $0.0309 + $0.0042 |
 | `dev/haiku-*-3` (HEAD f654f8a6) | a0100121 | 14/14 | 13/14 | 13/14 (2 false acceptances: arm c has no accept gate) | $0.0334 + $0.0038 |
 | `dev/haiku-*-4` (HEAD 5c937873) | a0100121 | 14/14 | 14/14 | 14/14 | $0.0308 + $0.0036 |
+| `dev/e01-haiku-a-{1,2,3}`, `e01-haiku-c-1` (e01 only, HEAD a5310878) | 56d1dd57 | 3/3 runs, each round 0 | 3/3 | 1/1 | $0.0083 + $0.0005 |
 
-Total paid dev spend: $0.1501 nominal (`python3 -B genviab.py spent`). `verdict` on run 4 (dev, not a
+Total paid dev spend: $0.1589 nominal (`python3 -B genviab.py spent`). `verdict` on run 4 (dev, not a
 measurement): PASS, 14/14, Clopper-Pearson [0.768, 1.0], not ADVERSE.
 
 Run 1 found a corpus defect, not a model property: 14 intents had a second paragraph under `# Intent`

@@ -1,0 +1,42 @@
+// 0 when the line is a valid `name,score` with score in 0..=100, else -1.
+fn score_of(line: str) -> i64 {
+    let comma = str_index_of(line, ",")
+    if comma < 0 {
+        return -1
+    }
+    match parse_int(str_slice(line, comma + 1, len(line))) {
+        Ok(v) => if v >= 0 && v <= 100 { v } else { -1 }
+        Err(_) => -1
+    }
+}
+
+fn main() -> i64 {
+    match read_file("./data/scores.csv") {
+        Ok(text) => {
+            let lines = str_split(text, "\n")
+            let total = 0
+            let count = 0
+            for i in 0..len(lines) - 1 {
+                let s = score_of(lines[i])
+                if s < 0 {
+                    println("bad input: line {i + 1}")
+                    return 3
+                }
+                total = total + s
+                count = count + 1
+            }
+            let avg = if count == 0 { 0 } else { total / count }
+            match write_file("./out/avg.txt", to_str(avg) + "\n") {
+                Ok(_) => 0
+                Err(e) => {
+                    eprintln("cannot write: {e}")
+                    1
+                }
+            }
+        }
+        Err(_) => {
+            println("missing input")
+            4
+        }
+    }
+}

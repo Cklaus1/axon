@@ -1,0 +1,57 @@
+{
+ "id": "e01-score-average",
+ "category": "errors",
+ "source": {
+  "kind": "operator-adopted",
+  "note": "intent text drafted by the assistant on 2026-11-01 and adopted verbatim by the operator as a validation task; a model wrote it, so it is dev-only and never a once task (PREREG-genviab.md §4)"
+ },
+ "reference_author": "model:Main (dev only)",
+ "examples": {
+  "visible": [
+   {
+    "name": "basic",
+    "runs": [
+     {"inputs": {"./data/scores.csv": "ann,90\nbob,71\n"}, "outputs": {"./out/avg.txt": "80\n"}, "exit": 0}
+    ]
+   }
+  ],
+  "hidden": [
+   {
+    "name": "rounding",
+    "runs": [
+     {"inputs": {"./data/scores.csv": "a,1\nb,2\n"}, "outputs": {"./out/avg.txt": "1\n"}, "exit": 0}
+    ]
+   },
+   {
+    "name": "empty",
+    "runs": [
+     {"inputs": {"./data/scores.csv": ""}, "outputs": {"./out/avg.txt": "0\n"}, "exit": 0}
+    ]
+   },
+   {
+    "name": "bad score",
+    "runs": [
+     {"inputs": {"./data/scores.csv": "a,50\nb,x\nc,7\n"}, "outputs": {}, "stdout": "bad input: line 2\n", "exit": 3}
+    ]
+   },
+   {
+    "name": "out of range",
+    "runs": [
+     {"inputs": {"./data/scores.csv": "a,101\n"}, "outputs": {}, "stdout": "bad input: line 1\n", "exit": 3}
+    ]
+   },
+   {
+    "name": "no comma",
+    "runs": [
+     {"inputs": {"./data/scores.csv": "a,40\nbob 60\n"}, "outputs": {}, "stdout": "bad input: line 2\n", "exit": 3}
+    ]
+   },
+   {
+    "name": "no file",
+    "runs": [
+     {"inputs": {}, "outputs": {}, "stdout": "missing input\n", "exit": 4}
+    ]
+   }
+  ]
+ }
+}

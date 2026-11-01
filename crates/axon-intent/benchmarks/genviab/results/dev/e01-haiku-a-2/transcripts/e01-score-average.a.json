@@ -1,0 +1,45 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/asi-next/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Average the scores in ./data/scores.csv. Each line is `name,score` where score is an integer from 0 to 100, and every line ends with a newline. Write the average, rounded down, to ./out/avg.txt as one line ending in a newline. If the file is empty, the average is 0. If a line has no comma or its score is not an integer from 0 to 100, write no file, print `bad input: line N` (N counts from 1, the first bad line) and exit 3. If the file does not exist, write no file, print `missing input` and exit 4.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "7733da71be3524e596e0040dca7565247add3c3d2080680ef86dfca5d150bdd2",
+      "candidate": "fn bad_line(n: i64) -> i64 {\n    println(\"bad input: line {to_str(n)}\")\n    3\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/scores.csv\") {\n        Err(_) => {\n            println(\"missing input\")\n            4\n        }\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let n = len(lines)\n            let total = 0\n            let count = 0\n            for i in 0..n {\n                let line = lines[i]\n                let last_empty = i == n - 1 && line == \"\"\n                if !last_empty {\n                    let c = str_index_of(line, \",\")\n                    if c < 0 {\n                        return bad_line(i + 1)\n                    }\n                    let score_s = str_trim(str_slice(line, c + 1, len(line)))\n                    let digits_ok = str_len(score_s) > 0 && str_digits_only(score_s) == score_s\n                    if !digits_ok {\n                        return bad_line(i + 1)\n                    }\n                    let v = parse_int_or(score_s, -1)\n                    if v < 0 || v > 100 {\n                        return bad_line(i + 1)\n                    }\n                    total = total + v\n                    count = count + 1\n                }\n            }\n            let avg = 0\n            if count > 0 {\n                avg = total / count\n            }\n            match write_file(\"./out/avg.txt\", to_str(avg) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n    }\n}",
+      "tokens": 18502,
+      "generator_failure": null,
+      "wall_ms": 12312,
+      "report": {
+        "stage": "accepted",
+        "source": "fn bad_line(n: i64) -> i64 {\n    println(\"bad input: line {to_str(n)}\")\n    3\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/scores.csv\") {\n        Err(_) => {\n            println(\"missing input\")\n            4\n        }\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let n = len(lines)\n            let total = 0\n            let count = 0\n            for i in 0..n {\n                let line = lines[i]\n                let last_empty = i == n - 1 && line == \"\"\n                if !last_empty {\n                    let c = str_index_of(line, \",\")\n                    if c < 0 {\n                        return bad_line(i + 1)\n                    }\n                    let score_s = str_trim(str_slice(line, c + 1, len(line)))\n                    let digits_ok = str_len(score_s) > 0 && str_digits_only(score_s) == score_s\n                    if !digits_ok {\n                        return bad_line(i + 1)\n                    }\n                    let v = parse_int_or(score_s, -1)\n                    if v < 0 || v > 100 {\n                        return bad_line(i + 1)\n                    }\n                    total = total + v\n                    count = count + 1\n                }\n            }\n            let avg = 0\n            if count > 0 {\n                avg = total / count\n            }\n            match write_file(\"./out/avg.txt\", to_str(avg) + \"\\n\") {\n                Ok(_) => 0\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n    }\n}",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "basic",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 12312,
+  "tokens": 18502,
+  "tokens_reported": 18502,
+  "token_budget": 50000
+}
