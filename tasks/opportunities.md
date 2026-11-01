@@ -3085,12 +3085,61 @@ once references by hand, never model-drafted) and the gated run awaits it and th
 A `let t = name` inside one block arm plus a move of `name` in another arm gives E0601 "use of moved value": the arms are checked as if
 sequential. The if/else twin passes. Probes `q4e_param_two_block_arms.ax`, `q4f_struct_two_block_arms.ax`, `q4h_let_arm_plus_plain_arm.ax`,
 twin `q4e_twin_ifelse.ax` (REPORT §4). Reopens O-S1-24 item 4.
+`[REVISED: implementation audit 2026-10-31]` The probes live only under `/var/tmp`, so the minimal one is inlined here. It still gives E0601 at line 8 on the integrated tree (nhr/final d81faaad):
+```
+fn label(k: i64, name: str) -> str {
+    let r = match k {
+        0 => {
+            let t = name
+            t + "0"
+        }
+        1 => {
+            let t = name
+            t + "1"
+        }
+        _ => "other"
+    }
+    r
+}
+fn main() {
+    println(label(0, "a"))
+    println(label(1, "b"))
+}
+```
+The twin with the same arms written as `if k == 0 { ... } else if k == 1 { ... } else { "other" }` passes.
 
 ### O-HX3-03 - [high] False refusal: `return p` inside a match arm / `return xs` inside `for x in xs` marks the value moved
 `return p` inside a match arm marks `p` moved for code after the match (E0601); `return xs` inside `for x in xs` gives E0602. The `if` and
 index-loop twins run. Probes `q8g2_return_in_match_arm_stmt.ax`, `q8g5_let_match_return_param.ax`, `q8g6_return_in_block_arm_str.ax`,
 `q8g7_return_in_match_arm_int_subject.ax`, `q8f_return_iter_in_for.ax`, `q8f2_return_iter_in_for_str.ax`, twins `q8g2_twin_if.ax`,
 `q8f_twin_index_loop.ax` (REPORT §8). Probably the same cause as O-HX3-02 [INFERENCE].
+`[REVISED: implementation audit 2026-10-31]` Inlined here because the probes live only under `/var/tmp`. Both still fail on the integrated tree (nhr/final d81faaad). The first gives E0601 at line 8:
+```
+type P = { x: i64, y: i64 }
+fn b(p: P, o: Option<i64>) -> P {
+    match o {
+        None => return p
+        Some(_) => {}
+    }
+    P { x: p.x * 2, y: p.y }
+}
+fn main() {
+    println(to_str(b(P { x: 1, y: 2 }, None).x) + to_str(b(P { x: 1, y: 2 }, Some(1)).x))
+}
+```
+The second gives E0602 at line 3, while the twin `for i in 0..len(xs) { if xs[i] < 0 { return xs } }` passes:
+```
+fn first_neg(xs: [i64]) -> [i64] {
+    for x in xs {
+        if x < 0 { return xs }
+    }
+    []
+}
+fn main() {
+    println(to_str(len(first_neg([1, 0 - 2]))))
+    println(to_str(len(first_neg([1, 2]))))
+}
+```
 
 ### O-HX3-04 - [medium] False refusal against grammar.ebnf §6.12: a string literal inside an interpolation slot
 `"hi {name + "!"}"` gives E0000 "unclosed `{`". The escaped form (`q6d_interp_escaped_quote.ax`) works but is not documented. Probes
@@ -3100,6 +3149,14 @@ index-loop twins run. Probes `q8g2_return_in_match_arm_stmt.ax`, `q8g5_let_match
 `Unit` is reserved (E0005, `q7a_type_unit.ax`) and a user fn sharing a builtin's name loses to the builtin (`ln`, `a11_user_fn_ln.ax`);
 neither rule is in `spec/axon-for-llms.md` or the language tour. `axon-for-llms.md` gotcha 1 (a bare `[T]` param is E0601) is stale:
 both binaries accept it (`x1_bare_arr_param_reuse.ax`). REPORT §7, A11, X1.
+
+### O-HX3-06 - [low] The N5a pool's `build.py --check` "0 failures" did not reproduce
+An implementation-audit re-check of `/var/tmp/r51-tmp/hx3-n5a/hx-pool.json` (sha `7882eec4…`, as pre-registered) gave 7 failures out of 3,065 tasks, against the 0 recorded in PREREG-hx3 §2.3:
+- three deterministic `multi` tasks whose single edit does not type-check alone: `hx-multi-482c11de3b`, `-8b3c07d361`, `-9f522ab409`. `build.singles_fail` reproduces each; the edits list looks cumulative;
+- `hx-caller-958cefc1fe`: "the pre-cut test run did not complete";
+- three that were not captured.
+
+The pool was never frozen (the run stopped at N5), so nothing scored rests on it. Before any reuse, find how the singles rule admitted the three multi tasks at build time, then re-admit or drop the 7 tasks.
 
 ## NH-R1 / R6 integration, 2026-10-31 (findings the build lanes reported, not fixed)
 
