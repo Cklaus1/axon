@@ -9,6 +9,8 @@
 //! `/proc/<pid>/cmdline` (a zombie or a reused pid reads as gone); no `kill`
 //! binary (`process_control_guard.rs`).
 
+mod common;
+
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -110,9 +112,9 @@ fn kg5_sigterm_to_axon_intent_kills_the_synthesizers_job_and_it_dies_by_it() {
             ),
         ),
     ] {
-        std::fs::write(path, body).unwrap();
-        std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
+        // Through a child `cp` (tests/common): an in-process write can leave a
+        // write fd in a sibling test's forked child, and the exec is ETXTBSY.
+        common::write_executable(path, body, 0o755);
     }
 
     let mut intent = Command::new(env!("CARGO_BIN_EXE_axon-intent"))

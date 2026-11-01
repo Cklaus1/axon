@@ -279,12 +279,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("gen.sh");
-        // Write via a temp name and rename: no write fd to the final path
-        // stays open in this process while a sibling test forks (ETXTBSY).
-        let tmp = dir.join("gen.tmp");
-        std::fs::write(&tmp, body.replace("$DIR", &dir.display().to_string())).unwrap();
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::fs::rename(&tmp, &path).unwrap();
+        // The bytes reach `gen.sh` only through a child `cat`, so this process
+        // never holds a write fd on it. An in-process write (even to a temp
+        // name renamed into place: same inode) can be inherited by a sibling
+        // test thread's forked child until its exec, and the exec of
+        // `gen.sh` then fails ETXTBSY ("Text file busy").
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "cat > \"$0\""])
+            .arg(&path)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            use std::io::Write;
+            let mut stdin = child.stdin.take().unwrap();
+            stdin
+                .write_all(body.replace("$DIR", &dir.display().to_string()).as_bytes())
+                .unwrap();
+        }
+        assert!(child.wait().unwrap().success(), "write {}", path.display());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         (dir, path)
     }
 
