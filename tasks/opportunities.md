@@ -3225,3 +3225,24 @@ by design or not yet done:
     only if the envelope grants `exec`].
   - Every finding is covered by S-tests/unit tests and the N1 local-listener probe; there is still no independent
     end-to-end probe of F2-F4. That is §9 evidence to collect before any enabling decision.
+
+## WIP snapshot salvage, 2026-11-01 (triage of four `worktree-agent-*` branches against main 03d60cfc)
+
+Ported: one fix from `worktree-agent-a1c311233a7dfb625` (998c1ba4): model calls audit as `AI`, not `Net` (92c9e639,
+g01 M4570). Everything else in the four snapshots was superseded by main or obsolete; the branches were deleted.
+
+### O-SLV-01 - [high] `ai_extract::<T>(...)` passes `axon check` and panics in `axon run`
+`match ai_extract::<i64>("the answer is 42") { Ok(v) => println(to_str(v)) Err(e) => println(e) }` gives check rc 0,
+then `axon: panic: value of type ai_extract is not callable` (rc 101), with or without `AXON_AI_MOCK=1`. The checker
+types the turbofish (fixture `crates/axon-core/tests/fixtures/ai_extract_generic.ax`, check-only), capabilities and
+effects route it (`capabilities.rs:165-168`, `effects.rs:839`) and the native build has `__axon_ai_extract_*`
+bridges, but the interpreter (the reference semantics) has no arm: the callee reaches `interp.rs:2784`. Fix
+direction: dispatch `ai_extract::<T>` for the fixture's T set (i64, f64, bool, `Uncertain<i64>`, `Uncertain<f64>`)
+in the interpreter, and add a run test under `AXON_AI_MOCK`. Found by TriageAudit.
+
+### O-SLV-02 - [low] ROADMAP claims guest-kernel K5 files that main never had
+`ROADMAP.md:36` and `:755-758` mark "K5 Interpreter Injection" shipped, citing `cpio.rs` and `exec.rs` in
+`crates/axon-guest-kernel`. `git log main -- crates/axon-guest-kernel/src/cpio.rs crates/axon-guest-kernel/src/exec.rs`
+is empty: those files exist only in the unmerged WIP snapshots (4202ec58, 9c81018c), which never ran a `.ax` job.
+This is R36 S0 truth-reconciliation work (`governance/specs/R36-full-asi-os.md` §S0); correcting the status line is
+the founder's call. Found by TriageGuestKernel.
