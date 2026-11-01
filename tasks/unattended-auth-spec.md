@@ -1,6 +1,6 @@
 # Unattended repair authorization (NH-R1) — DRAFT spec (after Step 1 review)
 
-**Status: PARTIAL 2026-10-31 on nhr/int: security fixes merged (F1-F12 fixed in 91114bcc..dcd60815 and be47b23e; A0-A4 and the §7 S-tests: 1093c268, 9a825ace, c4f4c12c, 219e1360, 9ed0ad16, 60651b37). Re-review N1-N4 fixed (nhr/fix-c 5e453868, `[REVISED: security re-review N#]` markers; N3 per the human ruling: attended runs take the §10 Q4 rename, unattended runs refuse); N5/N6 and N3 portability are recorded in O-NHR-06. It stays PARTIAL until the N1-N4 fixes are verified. Enabling is not authorized: `--unattended` refuses by default (exit 29); enabling needs the §9 evidence and a separate human decision.**
+**Status: PARTIAL 2026-10-31 on nhr/int: security fixes merged (F1-F12 fixed in 91114bcc..dcd60815 and be47b23e; A0-A4 and the §7 S-tests: 1093c268, 9a825ace, c4f4c12c, 219e1360, 9ed0ad16, 60651b37). Re-review N1-N4 fixed (nhr/fix-c 5e453868, `[REVISED: security re-review N#]` markers; N3 per the human ruling: attended runs take the §10 Q4 rename, unattended runs refuse); N5/N6 and N3 portability are recorded in O-NHR-06. Re-review 2 fixed on nhr/fix-d (`[REVISED: security re-review 2 N#]` markers): N1 scheme pin (https only), N7 initial user namespace, N8 exclusive Q4 placement. It stays PARTIAL until the N1-N4 fixes are verified. Enabling is not authorized: `--unattended` refuses by default (exit 29); enabling needs the §9 evidence and a separate human decision.**
 - `[DECIDED by human 2026-10-31: build go-ahead.]` Building it (A0-A4, E1-E7, §7 S-tests) is authorized.
 - Enabling it after the build (§9) still needs the §9 evidence (S-tests and full gate green, a read-only adversarial
   security review, R6 L1-L3 built with a clean C1 audit) and then a second, separate human decision made on that evidence.
@@ -102,7 +102,7 @@ false assurance. So this spec gates unattended runs on **enforcement**, not only
 | `capabilities.target_grant` | the static grant of `task.symbol` (`StaticGrant`, `fence.rs:270`) |
 | `check.name`, `check.digest` | §4.1 |
 | `budget` | `{max_proposals ≥1, deadline_ms ≥1, check_timeout_ms, candidates, max_steps}` `[REVISED: F8, D14 — steps were unbound]` |
-| `generator` | `{kind:"ai", model, provider, endpoint_host}`; the last two are compared against what axon-ai resolves (`crates/axon-ai/src/lib.rs:69-95, 241-255`) `[REVISED: D14]` |
+| `generator` | `{kind:"ai", model, provider, endpoint_host}`; the last two are compared against what axon-ai resolves (`crates/axon-ai/src/lib.rs:69-95, 241-255`) `[REVISED: D14]`. `[REVISED: security re-review 2 N1]` only the host was compared, so `AXON_AI_BASE_URL` (or `ANTHROPIC_BASE_URL`) `http://<pinned host>` sent the request and its API key in plaintext; phase A now refuses (exit 29) an endpoint that is not `https://` (`axon_ai::endpoint_is_https`; S6 `s6_a_plain_http_endpoint_is_refused`: a plain-HTTP listener at the pinned host gets no connection) |
 | `decision` | `"authorize-operate"`, the only value |
 | `sig` | `"axenv1:" + hex Ed25519 signature over the canonical bytes without `sig`` |
 
@@ -375,6 +375,17 @@ other than Linux has no `renameat2` at all (the call is behind `cfg(target_os = 
   the rename is overwritten unreported - the residual window Q4 accepted. On an ntfs3 loop mount the attended repair
   of `broken.ax` exits 0 with the file repaired, as the base build (`d7690e63`) did
   (`cli::n3_an_attended_repair_on_ntfs3_repairs_the_file`); the fallback's own checks are the `cas::tests::*q4*` tests.
+  `[REVISED: security re-review 2 N8]`: "re-checked absent, then a plain rename" was not exclusive - a file created
+  between the check and the rename was overwritten, and step 5 saw only this run's inode, so nothing was reported.
+  The same held for the delete's rename-back. Where the target is expected absent (a create, the rename-back) the
+  file is now placed with `link(2)`, which refuses an existing target atomically (EEXIST, reported like any
+  exclusive-rename refusal, the other file kept), then the temp name is unlinked. A filesystem without hard links
+  (EPERM, EOPNOTSUPP, ENOSYS) refuses the write (exit 22, the reason names `renameat2(RENAME_NOREPLACE)` and hard
+  links; nothing placed, no temp file left); it never falls back to an overwriting rename. Tests
+  `a_file_created_at_the_q4_placement_is_not_clobbered`, `a_file_created_at_the_q4_rename_back_is_not_clobbered`
+  (both inject the file after any check and right before placement) and
+  `a_filesystem_without_hard_links_refuses_the_q4_placement`. Replacing an existing target still uses a plain
+  rename: that is the Q4 window above.
 
 Supporting rules:
 - An exclusive `flock` on a store-side lock keyed by the canonical file path means a second unattended run on the same
@@ -406,7 +417,7 @@ Each test is fail-first where it guards a behaviour.
 | S11 | Attended mode unchanged: existing suites; `cortex-repair/1` byte-identical on a pinned task |
 | S12 | Acceptance ≠ approval (§5.7) |
 | S13 | TOCTOU: a pristine test rewrites the entry file or an imported module during the witness run → exit 29 |
-| S14 | Host opt-in (§10 Q3) `[REVISED: security F1, re-review N2]`: no `/etc/axon/unattended-repair`, a wrong owner or mode, a non-regular file, one not naming exactly one decision record, or one under a directory that is not root-owned or that another user can write → exit 29, nothing spent |
+| S14 | Host opt-in (§10 Q3) `[REVISED: security F1, re-review N2, re-review 2 N7]`: no `/etc/axon/unattended-repair`, a wrong owner or mode, a non-regular file, one not naming exactly one decision record, or one under a directory that is not root-owned or that another user can write → exit 29, nothing spent; a run inside a user namespace (`unshare --user --map-root-user`) → exit 29 before the opt-in is read |
 
 g01 rows cover:
 - the signature compare;
@@ -487,6 +498,12 @@ design questions only. Building NH-R1 still needs a separate human go-ahead, and
   environment variable. S14 adds an `/etc/axon` other users can write and one uid 1 owns; the unit test
   `an_opt_in_in_a_directory_another_user_controls_refuses` covers a non-root parent, a writable parent, a sticky
   parent and a symlinked ancestor.
+  `[REVISED: security re-review 2 N7]`: ownership only means something in the initial user namespace; inside one
+  with a uid mapping (e.g. `bwrap --unshare-user --uid 0`) the runner's own files read as root-owned and its own
+  opt-in passed. Before the opt-in, phase A refuses (exit 29, nothing read or spent) unless `/proc/self/uid_map` and
+  `/proc/self/gid_map` each hold exactly one mapping `0 0 4294967295` (whitespace-normalized; an unreadable map
+  refuses) - `auth::initial_user_namespace`, unit test `only_the_initial_user_namespace_map_admits`, S14
+  `s14_a_run_in_a_user_namespace_refuses` (skips with a printed reason where user namespaces are unavailable).
 - **Q4 → accept the residual window with E5 step 5's post-rename check; `HARD_GRACE` from S10's measured tail under
   real load, not a fixed 2 s.** The follow-up run's receipt flipped FAIL → PASS on wall time between two load levels,
   so a bound measured on an idle machine is not evidence.

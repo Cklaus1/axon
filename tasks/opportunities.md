@@ -3142,7 +3142,14 @@ by design or not yet done:
   writers are (module doc and spec E5 residual window).
 - F2 build: `AXON_AI_PROVIDER`, `AXON_AI_BASE_URL`, `ANTHROPIC_BASE_URL`, the API keys and `AXON_AI_MODEL_*` are not
   refused under `--unattended` (the endpoint must already match the envelope's; the generator passes the pinned
-  model). Reasons are in the spec's `[REVISED: security build]` note.
+  model). Reasons are in the spec's `[REVISED: security build]` note. Since re-review 2 N1 a base URL that is not
+  `https://` IS refused (exit 29).
+- Security re-review 2 (NhrSecurity2 on nhr/final 7f0e49bf, code only) found N7 and N8 and the N1 scheme gap; all
+  three are fixed on nhr/fix-d with fail-first tests and g01 M4540-M4550: N1 an unattended run refuses a non-https
+  AI endpoint; N7 phase A refuses outside the initial user namespace (`/proc/self/{uid,gid}_map` must be
+  `0 0 4294967295`); N8 the attended Q4 fallback places an expected-absent target (and the delete's rename-back)
+  with `link(2)` + unlink, refusing where hard links are unsupported. Its probes 1-5 are still to be recorded as §9
+  evidence. N5 and N6 below stay open.
 - The security re-review (NhrSecurity2, code only, no probes) found N1-N6. N1 (proxy variables), N2 (opt-in
   directories), N3 (EINVAL reported clearly; attended runs take the §10 Q4 rename per the human ruling) and N4 (pins
   reaching the ledger/store through a symlink) are fixed on nhr/fix-c with fail-first tests and g01 M4520-M4539; the

@@ -14056,8 +14056,8 @@ MUTATIONS += [
      'axon-cortex', '--lib', 'cas::tests::a_filesystem_without_exchange_refuses_clearly'),
     ('M4536', 'NH-R1 security N3 ruling: the fallback rename clobbers a file created in the window',
      'crates/axon-cortex/src/cas.rs',
-     '        if how == Swap::NoReplace && std::fs::symlink_metadata(to).is_ok() {',
-     '        if false && how == Swap::NoReplace && std::fs::symlink_metadata(to).is_ok() {',
+     '        match hard_link(from, to) {',
+     '        match std::fs::rename(from, to) {',
      'axon-cortex', '--lib', 'cas::tests::a_file_created_before_the_q4_rename_is_not_clobbered'),
     ('M4537', 'NH-R1 security N3 ruling: step 4 re-hashes a displaced inode the fallback never made',
      'crates/axon-cortex/src/cas.rs',
@@ -14074,6 +14074,69 @@ MUTATIONS += [
      '            return Err(match self.rename(&tmp, path, Swap::NoReplace) {',
      '            return Err(match rename2(&tmp, path, Swap::NoReplace).map(|()| true) {',
      'axon-cortex', '--lib', 'cas::tests::a_writer_before_the_q4_delete_is_not_deleted'),
+]
+
+# NH-R1 security re-review 2 fixes (N1 scheme pin, N7 initial user
+# namespace, N8 exclusive Q4 placement; ids M4540-M4559)
+MUTATIONS += [
+    ('M4540', 'NH-R1 security re-review 2 N8: the Q4 placement clobbers a file created at it',
+     'crates/axon-cortex/src/cas.rs',
+     '        match hard_link(from, to) {',
+     '        match {\n            let _ = std::fs::remove_file(to);\n            hard_link(from, to)\n        } {',
+     'axon-cortex', '--lib', 'cas::tests::a_file_created_at_the_q4_placement_is_not_clobbered'),
+    ('M4541', 'NH-R1 security re-review 2 N8: the delete rename-back is a plain rename',
+     'crates/axon-cortex/src/cas.rs',
+     '            return Err(match self.rename(&tmp, path, Swap::NoReplace) {',
+     '            return Err(match self.rename(&tmp, path, Swap::Exchange) {',
+     'axon-cortex', '--lib', 'cas::tests::a_file_created_at_the_q4_rename_back_is_not_clobbered'),
+    ('M4542', 'NH-R1 security re-review 2 N8: a filesystem without hard links is not refused clearly',
+     'crates/axon-cortex/src/cas.rs',
+     '                    Some(libc::EPERM | libc::EOPNOTSUPP | libc::ENOSYS)',
+     '                    Some(libc::EOPNOTSUPP | libc::ENOSYS)',
+     'axon-cortex', '--lib', 'cas::tests::a_filesystem_without_hard_links_refuses_the_q4_placement'),
+    ('M4548', 'NH-R1 security re-review 2 N8: no hard links is reported as a bare OS error',
+     'crates/axon-cortex/src/cas.rs',
+     '                return Err(std::io::Error::new(\n'
+     '                    std::io::ErrorKind::Unsupported,\n'
+     '                    format!(\n'
+     '                        "{e}: the filesystem supports neither renameat2(RENAME_NOREPLACE) nor \\\n'
+     '                         hard links, so the §10 Q4 exclusive rename is refused and nothing \\\n'
+     '                         is placed"\n'
+     '                    ),\n'
+     '                ));\n',
+     '                return Err(e);\n',
+     'axon-cortex', '--lib', 'cas::tests::a_filesystem_without_hard_links_refuses_the_q4_placement'),
+    ('M4549', 'NH-R1 security re-review 2 N8: the Q4 placement leaves its temp name linked',
+     'crates/axon-cortex/src/cas.rs',
+     '            Ok(()) => {}\n',
+     '            Ok(()) => return Ok(false),\n',
+     'axon-cortex', '--lib', 'cas::tests::an_attended_run_without_exchange_takes_the_q4_rename'),
+    ('M4550', 'NH-R1 security re-review 2 N8: an existing target makes the placement rename over it',
+     'crates/axon-cortex/src/cas.rs',
+     '            Err(e) => return Err(e),\n',
+     '            Err(_) => std::fs::rename(from, to)?,\n',
+     'axon-cortex', '--lib', 'cas::tests::a_file_created_at_the_q4_placement_is_not_clobbered'),
+    ('M4543', 'NH-R1 security re-review 2 N7: phase A skips the initial user namespace check', _NHA,
+     '    initial_user_namespace()?;',
+     '    let _ = initial_user_namespace;',
+     'axon-cortex', _NHT, 's14_a_run_in_a_user_namespace_refuses'),
+    ('M4544', 'NH-R1 security re-review 2 N7: an id map with several lines is admitted', _NHA,
+     '    one == Some(true) && lines.next().is_none()',
+     '    one == Some(true)',
+     'axon-cortex', '--features unattended --lib', 'auth::tests::only_the_initial_user_namespace_map_admits'),
+    ('M4545', 'NH-R1 security re-review 2 N7: any three-field id map is admitted', _NHA,
+     '        .map(|l| l.split_whitespace().collect::<Vec<_>>() == ["0", "0", "4294967295"]);',
+     '        .map(|l| l.split_whitespace().count() == 3);',
+     'axon-cortex', '--features unattended --lib', 'auth::tests::only_the_initial_user_namespace_map_admits'),
+    ('M4546', 'NH-R1 security re-review 2 N1: phase A admits a plain-HTTP endpoint', _NHA,
+     '    if !axon_ai::endpoint_is_https(axon_ai::provider()) {',
+     '    if false && !axon_ai::endpoint_is_https(axon_ai::provider()) {',
+     'axon-cortex', _NHT, 's6_a_plain_http_endpoint_is_refused'),
+    ('M4547', 'NH-R1 security re-review 2 N1: any scheme counts as https',
+     'crates/axon-ai/src/lib.rs',
+     '        .is_some_and(|s| s.eq_ignore_ascii_case("https://"))',
+     '        .is_some()',
+     'axon-cortex', _NHT, 's6_a_plain_http_endpoint_is_refused'),
 ]
 
 # NH-R1 security review fixes, crates side (F4 validate, F6 mint, F10, F12; ids M4450-M4461)

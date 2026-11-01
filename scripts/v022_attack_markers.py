@@ -3871,6 +3871,21 @@ ATTACK_MARKERS.update({
     'M4539': r'ATTACK: NH-R1 security N3 the attended fallback deleted an edit made before its unlink',
 })
 
+# NH-R1 security re-review 2 fixes (ids M4540-M4559)
+ATTACK_MARKERS.update({
+    'M4540': r'ATTACK: NH-R1 security N8 the attended fallback clobbered a file created at its exclusive rename',
+    'M4541': r"ATTACK: NH-R1 security N8 the attended delete's rename-back clobbered a file created at the target",
+    'M4542': r'ATTACK: NH-R1 security N8 a write without hard links was not refused clearly',
+    'M4543': r'ATTACK: NH-R1 security N7 a run in a user namespace passed the host opt-in',
+    'M4544': r'ATTACK: NH-R1 security N7 the id map "0 0 4294967295\\n1 1 1\\n" was admitted',
+    'M4545': r'ATTACK: NH-R1 security N7 the id map "0 1000 1\\n" was admitted',
+    'M4546': r'ATTACK: NH-R1 security N1 AXON_AI_BASE_URL=http:// ',
+    'M4547': r'ATTACK: NH-R1 security N1 AXON_AI_BASE_URL=http:// ',
+    'M4548': r'ATTACK: NH-R1 security N8 a write without hard links was not refused clearly',
+    'M4549': r'ATTACK: NH-R1 security N8 the Q4 placement left a temp file',
+    'M4550': r'ATTACK: NH-R1 security N8 the attended fallback clobbered a file created at its exclusive rename',
+})
+
 # NH-R1 security review fixes, crates side (ids M4450-M4461)
 _SEC_F6 = r'ATTACK: an envelope was minted with '
 ATTACK_MARKERS.update({

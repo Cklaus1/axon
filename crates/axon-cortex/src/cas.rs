@@ -38,10 +38,14 @@
 //! platform other than Linux - an UNATTENDED run refuses the write or delete
 //! (exit 22), naming the flag. An ATTENDED run ([`allow_rename_fallback`])
 //! takes the human-approved §10 Q4 procedure instead: step 2's re-hash
-//! against the last digest (an exclusive rename re-checks the target absent),
-//! a plain `rename(2)`, then step 5's re-hash of the renamed file against
-//! the bytes written - a mismatch is reported with both digests, never
-//! claimed as written. A delete renames, re-hashes and unlinks the same way.
+//! against the last digest, then a plain `rename(2)` over an existing target
+//! - or, where the target is expected absent, an exclusive `link(2)` plus
+//! unlink of the temp name, which refuses a file created meanwhile
+//! atomically (security re-review 2 N8; a filesystem without hard links
+//! refuses the write) - then step 5's re-hash of the placed file against
+//! the bytes written: a mismatch is reported with both digests, never
+//! claimed as written. A delete renames, re-hashes and unlinks the same way,
+//! and its rename-back is exclusive too.
 //! What the fallback does NOT guarantee: there is no displaced inode to
 //! re-hash (step 4), so an edit made through the path between step 2 and
 //! the rename is overwritten unreported - the residual window §10 Q4
@@ -309,6 +313,24 @@ fn after_rename(path: &Path) {
 #[cfg(not(test))]
 fn after_rename(_path: &Path) {}
 
+// A test's writer at the §10 Q4 fallback's exclusive placement of `to`,
+// right before the file is put there (security re-review 2 N8: a check
+// followed by a plain rename clobbered a file created in between).
+#[cfg(test)]
+thread_local! {
+    static BEFORE_PLACE: std::cell::RefCell<Option<WindowHook>> = std::cell::RefCell::new(None);
+}
+#[cfg(test)]
+fn before_place(to: &Path) {
+    BEFORE_PLACE.with(|h| {
+        if let Some(f) = h.borrow_mut().as_mut() {
+            f(to)
+        }
+    })
+}
+#[cfg(not(test))]
+fn before_place(_to: &Path) {}
+
 /// The bytes of the regular file at `path`, read without following a
 /// symlink and without blocking on a FIFO (security review F8: the E3
 /// watchdog's restore reads under the run's write lock, and a FIFO or a
@@ -437,6 +459,21 @@ fn kept_name(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
     ))
 }
 
+// A test's filesystem without hard links: `hard_link` fails with this errno.
+#[cfg(test)]
+thread_local! {
+    static LINK_ERRNO: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
+}
+
+/// `link(2)`: refuses an existing `to` (EEXIST) atomically.
+fn hard_link(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if let Some(errno) = LINK_ERRNO.with(|e| e.get()) {
+        return Err(std::io::Error::from_raw_os_error(errno));
+    }
+    std::fs::hard_link(from, to)
+}
+
 #[cfg(unix)]
 fn file_id(m: &std::fs::Metadata) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt;
@@ -458,8 +495,9 @@ impl Ledger {
     /// Step 3's atomic rename, `Ok(true)`. Where the filesystem or platform
     /// has no `renameat2` flag, an attended run ([`allow_rename_fallback`])
     /// takes the §10 Q4 procedure: the caller re-hashed the target (step 2),
-    /// an exclusive rename re-checks `to` absent, a plain rename places the
-    /// file and the caller re-hashes what it placed (step 5); `Ok(false)`:
+    /// an existing `to` is replaced by a plain rename, an absent one is
+    /// placed exclusively (`link(2)`, then the temp name unlinked), and the
+    /// caller re-hashes what it placed (step 5); `Ok(false)`:
     /// no inode was displaced, so step 4 has nothing to re-hash. Otherwise
     /// the write or delete is refused, naming the flag.
     fn rename(&self, from: &Path, to: &Path, how: Swap) -> std::io::Result<bool> {
@@ -479,10 +517,36 @@ impl Ledger {
                 ),
             ));
         }
-        if how == Swap::NoReplace && std::fs::symlink_metadata(to).is_ok() {
-            return Err(std::io::Error::from_raw_os_error(libc::EEXIST));
+        if how == Swap::Exchange {
+            // The window §10 Q4 accepted: the caller re-hashes what it placed.
+            std::fs::rename(from, to)?;
+            return Ok(false);
         }
-        std::fs::rename(from, to)?;
+        // Exclusive placement (security re-review 2 N8): `link(2)` refuses an
+        // existing `to` atomically (EEXIST), where a check followed by a
+        // plain rename clobbered a file created in between. A filesystem
+        // without hard links refuses the write too, never falls back further.
+        before_place(to);
+        match hard_link(from, to) {
+            Ok(()) => {}
+            Err(e)
+                if matches!(
+                    e.raw_os_error(),
+                    Some(libc::EPERM | libc::EOPNOTSUPP | libc::ENOSYS)
+                ) =>
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    format!(
+                        "{e}: the filesystem supports neither renameat2(RENAME_NOREPLACE) nor \
+                         hard links, so the §10 Q4 exclusive rename is refused and nothing \
+                         is placed"
+                    ),
+                ));
+            }
+            Err(e) => return Err(e),
+        }
+        std::fs::remove_file(from)?;
         Ok(false)
     }
 
@@ -1086,7 +1150,11 @@ mod tests {
             "ATTACK: NH-R1 security N3 an attended write on a filesystem without \
              RENAME_EXCHANGE was refused: {got:?}"
         );
-        assert!(others(&d, &p).is_empty(), "no temp file is left");
+        assert!(
+            others(&d, &p).is_empty(),
+            "ATTACK: NH-R1 security N8 the Q4 placement left a temp file: {:?}",
+            others(&d, &p)
+        );
         assert_eq!(l.journal().len(), 4, "every write and delete is journalled");
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -1189,6 +1257,106 @@ mod tests {
         );
         assert!(l.journal().is_empty());
         assert!(others(&d, &p).is_empty(), "the temp name is renamed back");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Security re-review 2 N8: the fallback's exclusive placement is
+    /// atomic. A file created right before it - after any absence check - is
+    /// never clobbered: the write is reported, the file kept.
+    #[test]
+    fn a_file_created_at_the_q4_placement_is_not_clobbered() {
+        let d = dir("q4place");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"one").unwrap();
+        let mut l = attended();
+        l.observe(&p, b"one");
+        l.remove(Site::Sweep, &p).unwrap();
+        let target = p.clone();
+        BEFORE_PLACE.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move |to: &Path| {
+                if to == target {
+                    std::fs::write(to, b"theirs").unwrap()
+                }
+            }))
+        });
+        RENAME2_ERRNO.with(|e| e.set(Some(libc::EINVAL)));
+        let got = l.write(Site::Apply, &p, b"mine");
+        RENAME2_ERRNO.with(|e| e.set(None));
+        BEFORE_PLACE.with(|h| *h.borrow_mut() = None);
+        assert!(
+            matches!(got, Err(CasError::Foreign { .. })) && std::fs::read(&p).unwrap() == b"theirs",
+            "ATTACK: NH-R1 security N8 the attended fallback clobbered a file created at its \
+             exclusive rename: {got:?}, file {:?}",
+            String::from_utf8_lossy(&std::fs::read(&p).unwrap_or_default())
+        );
+        assert!(others(&d, &p).is_empty(), "the temp file is removed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Security re-review 2 N8, the delete's rename-back: a file created at
+    /// the target while the edited one is moved aside is not clobbered - the
+    /// moved file is kept under its temp name and reported.
+    #[test]
+    fn a_file_created_at_the_q4_rename_back_is_not_clobbered() {
+        let d = dir("q4back");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"one").unwrap();
+        let mut l = attended();
+        l.observe(&p, b"one");
+        rewrite_in_window(b"theirs");
+        let target = p.clone();
+        BEFORE_PLACE.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move |to: &Path| {
+                if to == target {
+                    std::fs::write(to, b"third").unwrap()
+                }
+            }))
+        });
+        RENAME2_ERRNO.with(|e| e.set(Some(libc::EINVAL)));
+        let got = l.remove(Site::Sweep, &p);
+        RENAME2_ERRNO.with(|e| e.set(None));
+        BEFORE_PLACE.with(|h| *h.borrow_mut() = None);
+        close_window();
+        let kept = others(&d, &p);
+        assert!(
+            std::fs::read(&p).unwrap() == b"third"
+                && matches!(&got, Err(CasError::Displaced { kept: k, .. }) if kept == vec![b"theirs".to_vec()] && k.exists()),
+            "ATTACK: NH-R1 security N8 the attended delete's rename-back clobbered a file created \
+             at the target: {got:?}, file {:?}, kept {kept:?}",
+            String::from_utf8_lossy(&std::fs::read(&p).unwrap_or_default())
+        );
+        assert!(l.journal().is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Security re-review 2 N8: a filesystem with neither `renameat2` flags
+    /// nor hard links refuses the attended write to an absent target with a
+    /// reason naming both, places nothing and leaves no temp file.
+    #[test]
+    fn a_filesystem_without_hard_links_refuses_the_q4_placement() {
+        let d = dir("nolink");
+        let p = d.join("f.ax");
+        std::fs::write(&p, b"one").unwrap();
+        let mut l = attended();
+        l.observe(&p, b"one");
+        l.remove(Site::Sweep, &p).unwrap();
+        RENAME2_ERRNO.with(|e| e.set(Some(libc::EINVAL)));
+        LINK_ERRNO.with(|e| e.set(Some(libc::EPERM)));
+        let got = l.write(Site::Apply, &p, b"mine");
+        LINK_ERRNO.with(|e| e.set(None));
+        RENAME2_ERRNO.with(|e| e.set(None));
+        let shown = got
+            .as_ref()
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(
+            matches!(got, Err(CasError::Io(_))) && shown.contains("nor hard links") && !p.exists(),
+            "ATTACK: NH-R1 security N8 a write without hard links was not refused clearly: \
+             {got:?}"
+        );
+        assert!(others(&d, &p).is_empty(), "no temp file is left");
+        assert_eq!(l.journal().len(), 1, "only the delete is journalled");
         let _ = std::fs::remove_dir_all(&d);
     }
 

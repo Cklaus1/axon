@@ -217,6 +217,40 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Whether an id map (`/proc/self/uid_map` / `gid_map` content) is the
+/// initial user namespace's: exactly one mapping, `0 0 4294967295`
+/// (whitespace-normalized).
+pub fn is_initial_id_map(map: &str) -> bool {
+    let mut lines = map.lines().filter(|l| !l.trim().is_empty());
+    let one = lines
+        .next()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>() == ["0", "0", "4294967295"]);
+    one == Some(true) && lines.next().is_none()
+}
+
+/// [`is_initial_id_map`] of the file at `path`; an unreadable one is not.
+fn id_map_file_is_initial(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|m| is_initial_id_map(&m))
+}
+
+/// Security re-review 2 N7: the host opt-in's ownership checks (root-owned,
+/// no group/other write) mean something only in the initial user
+/// namespace; inside one with a uid mapping any file can appear root-owned.
+/// Refuses unless both `/proc/self/uid_map` and `gid_map` are the initial
+/// namespace's identity map.
+pub fn initial_user_namespace() -> Result<(), String> {
+    for map in ["/proc/self/uid_map", "/proc/self/gid_map"] {
+        if !id_map_file_is_initial(Path::new(map)) {
+            return Err(format!(
+                "--unattended runs only in the initial user namespace: {map} is not the \
+                 identity map `0 0 4294967295` (or is unreadable), so the host opt-in's \
+                 ownership checks would prove nothing"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Security review F1 / §10 Q3: the host opt-in file. A human records the
 /// enabling decision; each host that agrees then holds this file. A build
 /// with feature `unattended` copied to a host without it does not run.
@@ -369,7 +403,9 @@ fn open_root_held(path: &Path) -> Result<std::fs::File, String> {
 /// Phase A (§5.3 steps 1-8). `axon` is the resolved `--axon` path; nothing
 /// is spawned here.
 pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, String> {
-    // 0. the host opted in (security F1), before anything else is read.
+    // 0. the run is in the initial user namespace (security re-review 2
+    // N7) and the host opted in (security F1), before anything else is read.
+    initial_user_namespace()?;
     // SAFETY: geteuid has no preconditions.
     let euid = unsafe { libc::geteuid() };
     let decision = host_opt_in(Path::new(OPT_IN_PATH), euid)?;
@@ -414,6 +450,15 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
     e.fits_before_expiry(now, effective.deadline_ms, hard_grace_ms)?;
     let (provider, host) = resolved_generator();
     e.check_generator("ai", model, &provider, &host)?;
+    // Security re-review 2 N1: the envelope pins the host, not the scheme;
+    // a plain-HTTP base URL on the pinned host sent the key in the clear.
+    if !axon_ai::endpoint_is_https(axon_ai::provider()) {
+        return Err(
+            "the AI endpoint (AXON_AI_BASE_URL / ANTHROPIC_BASE_URL) is not https://: a \
+             plaintext call would carry the request and its API key in the clear"
+                .into(),
+        );
+    }
     // Security F4 / F6: every fs pin is absolute, and none reaches the spent
     // store or a key file (the ledger is checked with the workspace below).
     un::absolute_fs_pins(&e.scopes.fs_read, &e.scopes.fs_write)?;
@@ -1029,6 +1074,34 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Security re-review 2 N7: only the initial user namespace's identity
+    /// map admits; a namespace's map, several lines, an empty or an
+    /// unreadable map refuse.
+    #[test]
+    fn only_the_initial_user_namespace_map_admits() {
+        assert!(is_initial_id_map("         0          0 4294967295\n"));
+        assert!(is_initial_id_map("0 0 4294967295"));
+        for bad in [
+            "0 1000 1\n",
+            "0 0 1\n",
+            "0 0 4294967295\n1 1 1\n",
+            "0 0 4294967295\n0 0 4294967295\n",
+            "",
+            "\n",
+            "0 0 4294967295 7\n",
+        ] {
+            assert!(
+                !is_initial_id_map(bad),
+                "ATTACK: NH-R1 security N7 the id map {bad:?} was admitted as the initial user \
+                 namespace's"
+            );
+        }
+        assert!(
+            !id_map_file_is_initial(Path::new("/nonexistent/cortex-n7/uid_map")),
+            "ATTACK: NH-R1 security N7 an unreadable id map was admitted"
+        );
     }
 
     /// Security re-review N2: the opt-in file's directories are part of the

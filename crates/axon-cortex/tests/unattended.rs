@@ -294,6 +294,21 @@ fn run_full(
     opt: &OptIn,
     cwd: Option<&Path>,
 ) -> Out {
+    run_unshared(s, axon, extra, envs, opt, cwd, None)
+}
+
+/// [`run_full`]; with `userns` set, inside a user namespace (`unshare --user
+/// --map-root-user`) running the cortex binary copied to `userns` (the
+/// namespace's root cannot reach a build directory under a 0750 home).
+fn run_unshared(
+    s: &Setup,
+    axon: &Path,
+    extra: &[&str],
+    envs: &[(&str, &str)],
+    opt: &OptIn,
+    cwd: Option<&Path>,
+    userns: Option<&Path>,
+) -> Out {
     assert!(
         euid() == 0 && Path::new("/etc/axon").is_dir(),
         "setup: the unattended tests need root and an /etc/axon mount point (a private mount \
@@ -301,6 +316,9 @@ fn run_full(
     );
     let none = s.root.join("no-opt-in");
     let mut c = std::process::Command::new("unshare");
+    if userns.is_some() {
+        c.args(["--user", "--map-root-user"]);
+    }
     c.args(["-m", "--propagation", "private", "sh", "-c"])
         .arg(
             "set -e; mount -t tmpfs -o \"$4\" tmpfs /etc/axon; o=/etc/axon/unattended-repair; \
@@ -311,11 +329,13 @@ fn run_full(
         .arg("sh")
         .arg(opt.src.unwrap_or(&none))
         .args([opt.mode, opt.owner, opt.dir])
-        .arg(env!("CARGO_BIN_EXE_cortex"));
+        .arg(userns.unwrap_or(Path::new(env!("CARGO_BIN_EXE_cortex"))));
     c.env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("AXON_AI_PROVIDER", "anthropic")
-        .env("AXON_AI_BASE_URL", "http://127.0.0.1:9")
+        // https (security re-review 2 N1); nothing listens on port 9, so an
+        // admitted run fails at its first proposal, never reaching a model.
+        .env("AXON_AI_BASE_URL", "https://127.0.0.1:9")
         .env("AXON_AI_API_KEY", "test-not-a-key")
         .args(["repair", "--unattended", "--workspace"])
         .arg(&s.ws)
@@ -926,33 +946,27 @@ fn s6_a_real_env_model_override_is_refused() {
     }
 }
 
-/// Security re-review N1: a proxy variable in the real environment is
-/// refused. The envelope pins the generator's endpoint HOST; with
-/// `AXON_AI_BASE_URL` on that host and a proxy set, the model call - with the
-/// API key - went to whoever runs the proxy, which could answer with any
-/// patch. Here the proxy is a local listener that records what reaches it
-/// and the key is a dummy one.
-#[test]
-fn s6_a_proxy_variable_is_refused() {
-    use std::io::{Read as _, Write as _};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
-    let cases = [
-        ("HTTP_PROXY", "http"),
-        ("http_proxy", "http"),
-        ("ALL_PROXY", "http"),
-        ("all_proxy", "http"),
-        ("HTTPS_PROXY", "https"),
-        ("https_proxy", "https"),
-    ];
-    for (var, scheme) in cases {
+/// A local listener that records the first line of every request reaching
+/// it, and whether it carried an `x-api-key` header, answering 502.
+struct Recorder {
+    addr: std::net::SocketAddr,
+    got: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl Recorder {
+    fn start() -> Recorder {
+        use std::io::{Read as _, Write as _};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
-        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let addr = listener.local_addr().unwrap();
         let got: Arc<Mutex<Vec<String>>> = Arc::default();
         let stop = Arc::new(AtomicBool::new(false));
         let (got2, stop2) = (Arc::clone(&got), Arc::clone(&stop));
-        let t = std::thread::spawn(move || {
+        let thread = std::thread::spawn(move || {
             while !stop2.load(Ordering::SeqCst) {
                 let Ok((mut c, _)) = listener.accept() else {
                     std::thread::sleep(Duration::from_millis(20));
@@ -971,6 +985,42 @@ fn s6_a_proxy_variable_is_refused() {
                 let _ = c.write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n");
             }
         });
+        Recorder {
+            addr,
+            got,
+            stop,
+            thread,
+        }
+    }
+
+    /// Stop the listener; what reached it.
+    fn finish(self) -> Vec<String> {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.thread.join().unwrap();
+        let got = self.got.lock().unwrap().clone();
+        got
+    }
+}
+
+/// Security re-review N1: a proxy variable in the real environment is
+/// refused. The envelope pins the generator's endpoint HOST; with
+/// `AXON_AI_BASE_URL` on that host and a proxy set, the model call - with the
+/// API key - went to whoever runs the proxy, which could answer with any
+/// patch. Here the proxy is a local listener that records what reaches it
+/// and the key is a dummy one.
+#[test]
+fn s6_a_proxy_variable_is_refused() {
+    let cases = [
+        ("HTTP_PROXY", "http"),
+        ("http_proxy", "http"),
+        ("ALL_PROXY", "http"),
+        ("all_proxy", "http"),
+        ("HTTPS_PROXY", "https"),
+        ("https_proxy", "https"),
+    ];
+    for (var, scheme) in cases {
+        let rec = Recorder::start();
+        let proxy = format!("http://{}", rec.addr);
         let s = setup(&format!("s6_proxy_{var}"));
         let mut e = envelope_for(&s);
         e.generator.endpoint_host = "api.anthropic.com".into();
@@ -982,9 +1032,7 @@ fn s6_a_proxy_variable_is_refused() {
             &[],
             &[("AXON_AI_BASE_URL", &base), (var, &proxy)],
         );
-        stop.store(true, Ordering::SeqCst);
-        t.join().unwrap();
-        let got = got.lock().unwrap().clone();
+        let got = rec.finish();
         assert!(
             got.is_empty(),
             "ATTACK: NH-R1 security N1 {var} sent an unattended run's model call to a proxy the \
@@ -998,6 +1046,56 @@ fn s6_a_proxy_variable_is_refused() {
             &e,
             var,
             &format!("ATTACK: NH-R1 security N1 {var} in the real environment ran unattended"),
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
+/// Security re-review 2 N1: the envelope pins the endpoint HOST, not the
+/// scheme, so `AXON_AI_BASE_URL=http://<pinned host>` sent the model call
+/// and its API key in plaintext to anyone on the path. An unattended run
+/// refuses a base URL that is not `https://`. Here the pinned host is
+/// `127.0.0.1`, a plain-HTTP listener on it records what reaches it, and the
+/// key is a dummy one: the listener must get nothing.
+#[test]
+fn s6_a_plain_http_endpoint_is_refused() {
+    for var in ["AXON_AI_BASE_URL", "ANTHROPIC_BASE_URL"] {
+        let rec = Recorder::start();
+        let s = setup(&format!("s6_plainhttp_{var}"));
+        let e = envelope_for(&s);
+        assert_eq!(e.generator.endpoint_host, "127.0.0.1");
+        mint(&s, &e);
+        let base = format!("http://{}", rec.addr);
+        let o = run_with(
+            &s,
+            &s.axon,
+            &[],
+            &[
+                (
+                    "AXON_AI_BASE_URL",
+                    if var == "AXON_AI_BASE_URL" {
+                        base.as_str()
+                    } else {
+                        ""
+                    },
+                ),
+                ("ANTHROPIC_BASE_URL", base.as_str()),
+            ],
+        );
+        let got = rec.finish();
+        assert!(
+            got.is_empty(),
+            "ATTACK: NH-R1 security N1 {var}=http:// sent an unattended run's model call in \
+             plaintext: {got:?}\n{}{}",
+            o.stdout,
+            o.stderr
+        );
+        refused(
+            &s,
+            &o,
+            &e,
+            "https",
+            &format!("ATTACK: NH-R1 security N1 {var}=http:// ran unattended"),
         );
         let _ = std::fs::remove_dir_all(&s.root);
     }
@@ -1351,6 +1449,36 @@ fn s14_a_host_that_did_not_opt_in_refuses() {
             &format!("ATTACK: NH-R1 security F1 a host with {what} ran unattended"),
         );
     }
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
+/// Security re-review 2 N7: inside a user namespace with a uid mapping,
+/// files the caller owns can appear root-owned, so the host opt-in's
+/// ownership checks prove nothing there. A run under `unshare --user
+/// --map-root-user` - where the opt-in, owned by the namespace's uid 0,
+/// would otherwise pass - refuses with exit 29, writing nothing.
+#[test]
+fn s14_a_run_in_a_user_namespace_refuses() {
+    let probe = std::process::Command::new("unshare")
+        .args(["--user", "--map-root-user", "true"])
+        .status();
+    if !probe.is_ok_and(|st| st.success()) {
+        println!("SKIP s14_a_run_in_a_user_namespace_refuses: user namespaces are unavailable");
+        return;
+    }
+    let s = setup("s14_userns");
+    let e = envelope_for(&s);
+    mint(&s, &e);
+    let bin = s.root.join("ops/cortex-userns");
+    std::fs::copy(env!("CARGO_BIN_EXE_cortex"), &bin).unwrap();
+    let o = run_unshared(&s, &s.axon, &[], &[], &s.opted_in(), None, Some(&bin));
+    refused(
+        &s,
+        &o,
+        &e,
+        "only in the initial user namespace",
+        "ATTACK: NH-R1 security N7 a run in a user namespace passed the host opt-in",
+    );
     let _ = std::fs::remove_dir_all(&s.root);
 }
 

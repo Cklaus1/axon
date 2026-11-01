@@ -287,6 +287,16 @@ pub fn endpoint_host(p: Provider) -> String {
     host_of(&endpoint_url(p))
 }
 
+/// Whether every call for provider `p` goes over `https://`. NH-R1 refuses
+/// an unattended run otherwise (security re-review 2 N1): the envelope pins
+/// the endpoint's host, and a plain-HTTP base URL on that host would carry
+/// the request and its API key in the clear.
+pub fn endpoint_is_https(p: Provider) -> bool {
+    endpoint_url(p)
+        .get(..8)
+        .is_some_and(|s| s.eq_ignore_ascii_case("https://"))
+}
+
 /// The API key for the active provider. Neutral `AXON_AI_API_KEY` wins, then the
 /// legacy `ANTHROPIC_API_KEY`. Returns a provider-named error when neither is set.
 fn api_key(p: Provider) -> Result<String, String> {
