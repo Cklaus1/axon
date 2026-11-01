@@ -941,6 +941,23 @@
       "gap": "v0.22 CANDIDATE. Pure types, strict parsing (deny_unknown_fields, JSON-safe integers), the cl22 canonical digest and no-I/O semantic checks, consumed by axon-loop, axon-fabric and axon-reflex/src/shortlist.rs. production_proof=no: it is reached in the product only through those crates, none of which has a default production caller (see their rows). OPEN: (1) Usage v1 has NO token or resource breakdown (episode.rs:80-98 records the deviation: the closed package schema has no such fields; they need a negotiated /2), so an episode cannot say what a cost was made of. (2) Refs are UNAUTHENTICATED: a cl22 Ref is a content hash and OpaqueRef issuer/principal/grant labels authenticate nothing (ids.rs:141-174) \u2014 hash equality proves the bytes, not the issuer; any authority built on these types must bind identity elsewhere. (3) Direction smell (D_architecture): the 'pure' contracts crate depends on axon-cortex solely for parse_strict, so every consumer links axon-cortex. (4) D-C3 FIXED in Stage 2 (lane 2B): the one acf1 canonicaliser is axon_cortex::runner::acf1_canonical_bytes; axon-fabric delegates to it (tests: axon-cortex/tests/fabric_acf1.rs byte fixture). STAGE 5 (e946ed19): B256 closed-loop-profile/1 offer/accept negotiation implemented \u2014 Axon half only, pure and UNWIRED (no transport sends it; cortex-policy-adapter and axon-loop intake do not call it yet); MiCode half absent; Usage/2 has no type, only the permit gate. G16-r22-closed-wire / G16-r22-negotiation stay NOT_RUN."
     },
     {
+      "area": "cortex",
+      "subsystem": "crate axon-canonical",
+      "implementation": "complete",
+      "production_proof": "yes",
+      "mutation": "yes",
+      "docs": "partial",
+      "evidence": [
+        "crates/axon-canonical/src/lib.rs",
+        "crates/axon-cortex/src/lib.rs",
+        "crates/axon-cortex/src/openrouter.rs",
+        "crates/axon-os/src/repair_envelope/tests.rs",
+        "crates/axon-os/src/run_ledger.rs"
+      ],
+      "tests": "cargo test --locked -p axon-canonical @d7af503d: 3 passed, 0 failed (lib). g01 @d7af503d (scratch worktree, --scope=all): M1200, M1201, M1204, M1205, M1206, M1763, M2455, M2456, M2457 killed 9/9 by their own attack; M1202, M1203, M1207 are retired EQUIVALENT.",
+      "gap": "Leaf crate created by NH-R1 A0 (1093c268): strict ingest (byte, depth and JSON-safe-integer limits, no floats, duplicate keys refused on raw bytes) and the cl22 canonical digest, shared by axon-loop-contracts (canonical.rs wraps it), axon-cortex (parse_strict decodes through strict_value; auth.rs), axon-os (repair_envelope, run_ledger) and axon-intent (authorize-repair, audit-runs). production_proof=yes via the DEFAULT attended path: every OpenRouter reply in `cortex repair` is decoded by `crate::parse_strict` (openrouter.rs:144, compiled in every build, lib.rs:43), which decodes through `axon_canonical::strict_value` (lib.rs:222-237); the scorecard receipt run is a paid `cortex repair` run over that path. The NH-R1 consumers (envelope, run ledger, authorize-repair) are reached only by the `unattended` feature, which is off by default and not enabled. A digest is identity, not authenticity (lib.rs header)."
+    },
+    {
       "area": "protected-suite-verdict",
       "subsystem": "crate axon-workspace-recipe",
       "implementation": "complete",
