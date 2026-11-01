@@ -57,7 +57,7 @@
     {"id": "S19", "banner": "lockfile", "class": "always"},
     {"id": "S20", "banner": "required crate verification (manifest)", "class": "selectable", "split": "per-target",
      "split_cmd": "manifest",
-     "crates": ["axon-ai", "axon-attest", "axon-audit", "axon-certcheck", "axon-cortex", "axon-domain",
+     "crates": ["axon-ai", "axon-attest", "axon-audit", "axon-canonical", "axon-certcheck", "axon-cortex", "axon-domain",
                 "axon-fabric", "axon-guest-init", "axon-intent", "axon-jobctl", "axon-ledger",
                 "axon-loop", "axon-loop-contracts", "axon-os", "axon-psv", "axon-reflex", "axon-rt", "axon-rt-ai",
                 "axon-signal", "axon-surface", "axon-vm", "axon-wasm", "axon-web", "axon-workspace-recipe",

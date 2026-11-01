@@ -1000,7 +1000,7 @@ cargo clippy --locked -p axon-rt -p axon-rt-ai -p axon-ai -p axon-surface -p axo
   -p axon-domain -p axon-vm -p axon-attest -p axon-ledger -p axon-intent \
   -p axon-os -p axon-web -p axon-audit -p axon-certcheck -p axon-signal \
   -p axon-guest-init -p axon-wasm -p axon-cortex -p cortex-policy-adapter \
-  -p axon-reflex -p axon-loop-contracts \
+  -p axon-reflex -p axon-loop-contracts -p axon-canonical \
   -p axon-fabric -p axon-loop -p axon-psv -p axon-workspace-recipe -p axon-jobctl \
   --all-targets -- -D warnings \
   || fail "runtime-crate clippy"

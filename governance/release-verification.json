@@ -90,6 +90,19 @@
       "gate_compiles": true,
       "gate_tests": true
     },
+    "axon-canonical": {
+      "class": "A",
+      "why": "Strict ingest (byte, depth and JSON-safe-integer limits, no floats, duplicate keys refused) and the cl22 canonical digest, shared by axon-loop-contracts, axon-cortex (parse_strict: every model reply in `cortex repair`), axon-os (NH-R1 repair envelope, R6 run ledger) and axon-intent (authorize-repair, audit-runs). A decode that accepts a duplicate key or a digest that differs between producers lets a forged envelope or ledger record pass. A digest is identity, not authenticity.",
+      "surfaces": [
+        "strict JSON ingest",
+        "cl22 canonical digest"
+      ],
+      "required": [
+        "cargo test --locked -p axon-canonical"
+      ],
+      "gate_compiles": true,
+      "gate_tests": true
+    },
     "axon-certcheck": {
       "class": "A",
       "why": "Solver-free proof-certificate checker (R23). A checker that accepts an invalid certificate silently converts an unproven claim into a proven one.",
