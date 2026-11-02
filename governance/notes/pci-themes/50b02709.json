@@ -1,0 +1,1 @@
+{"theme": "GV-1 outcome reason", "text": "INTERPRETER (main.rs): the outcome record's compile reason is the first entry of the errors-only list; only the supervisor record's reason text changes. No program's output or exit code changes."}

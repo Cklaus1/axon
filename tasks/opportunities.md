@@ -3116,6 +3116,8 @@ CS3-7 gives E0901/E0902 the `use` line on the CLI; the LSP path still reports th
 ### O-IG-01 - [medium] The sandbox classifier can still be fooled by a program's own stderr
 A program whose last stderr line imitates the interpreter's fault line and whose exit code matches, or that prints only `axon-diag/1`
 JSON and then exits 2, is classed as a fault / compile failure rather than as its own exit (IgIntent audit residual after M4500-M4505).
+`[FIXED 2026-11-02: genviab GV-1 (5814a792, 50b02709): the interpreter writes an `axon-outcome/1` record with a per-run nonce on a
+supervisor-only fd; axon-os capture and job classify and genviab `gv.py` decide the run from it, never from stderr or the exit status.]`
 
 ### O-IG-02 - [medium] The once-ledger guard relies on `git log --all`
 [FIXED 2026-11-02 e9059891, genviab GV-2: the row is pushed to `main` of the pinned origin before any model call; a once run is refused off `origin/main`.]
@@ -3344,9 +3346,10 @@ LaneAFC.
 `match (1, 2, 3) { (a, b) => .. }` and `match 5 { (a, b) => .. }` check rc 0 and then panic `no match arm matched` (rc 101).
 `match (1, "s") { (a, b) => to_str(b + 1) }` checks rc 0 and panics `cannot apply Add to str / i64`: `infer.rs:2975-2978` binds
 tuple-pattern components with no subject type. `if let (a, b) = t` inherits this.
-`[PARTLY FIXED 2026-11-02: checker-soundness-4 CS4-3 (d4ea99f2): a tuple pattern on a subject of known type is type-checked (wrong
-length, non-tuple and component misuse are E0102). A tuple pattern on a still-unresolved subject (untyped lambda param, generic) stays
-unchecked, so l1-shaped programs keep running.]`
+`[PARTLY FIXED 2026-11-02: checker-soundness-4 CS4-3 (d4ea99f2, narrowed by 3c19c6de after ICS-1): a tuple pattern on a subject of
+known type is shape-checked (wrong length and non-tuple are E0102). Components stay untyped, so component misuse (`(a, b)` on
+`(i64, str)` with `b + 1`) still checks clean and panics at run: typing them refused running programs (a component used as `u8`/`f64`).
+A tuple pattern on a still-unresolved subject (untyped lambda param, generic) stays unchecked, so l1-shaped programs keep running.]`
 
 ### O-LF-02 - [low] Fewer names than tuple elements is accepted in `let` (and so in `for (a, b)`)
 `let (a, b) = p` with `p: (i64, i64, i64)` checks rc 0 and prints `3` (`parser.rs:2350-2387` emits one `.i` per name). LF-3 inherits

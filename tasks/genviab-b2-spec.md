@@ -1,6 +1,6 @@
 # genviab-b2 - spec (GV-1..GV-4)
 
-**Status: PARTIAL 2026-11-02 on b2/gvpy e9059891 (GV-2, GV-3 and GV-4 authoring built; GV-1 and the GV-4 measurement not yet: O-IG-01 open; O-IG-03 open).**
+**Status: PARTIAL 2026-11-02 on b2/int 5454b4fb (GV-1 built on b2/gvos 5814a792/50b02709; GV-2, GV-3 and GV-4 authoring built on b2/gvpy e9059891; the GV-4 measurement not yet: O-IG-03 open).**
 
 Subject: `crates/axon-intent/benchmarks/genviab/` (README.md, PREREG-genviab.md, build.py, gv.py, genviab.py, selftest.py,
 drivers/) and the sandbox classifier that grades its examples (`crates/axon-os/src/runtime.rs`). Base: `b2/int` b3a9c56e

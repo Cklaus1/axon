@@ -399,6 +399,12 @@ bind time:
   concrete type, or a tuple of another length, is the existing E0102 path ("type mismatch in tuple pattern (expected (?1, ?2)), found
   (i64, i64, i64)"), the same code and wording family as the `Some` precedent.
 - For any other subject (`None`, an unresolved var, a generic or unknown type), bind each sub-pattern with `None`, as today.
+- `[REVISED: ICS-1, build 2026-11-02, 3c19c6de]` The component binding above (`Some(&var_i)`) was built and then withdrawn: binding
+  each component to the element type refused programs that run today and are not in §8 (`ICS/p7/w4..w9`, `ICS/p9/v3`: a component
+  holding an int literal used as `u8`/`i32`/`f64`, base check 0 and runs). The subject is still constrained to `Tuple(fresh vars)`
+  (shape and arity), but every sub-pattern is bound with `None`, as on base. So t_comptype, t_nested_ty and t_iflet_ty go back to
+  check 0 and panic at run (logged under O-LF-01), and `c_int_as_f64` stays a run panic. The ICS-1 probes are controls in
+  `tuple_pattern_controls_stay_legal`.
 
 Why concrete only: `l1` is an untyped lambda whose subject is a fresh `Var`. Constraining it in arm 1 fixes `p` to a 2-tuple, and arm
 2 then becomes E0102, which refuses a program whose arms both run (CS4A-4). The Fix #8 path does exactly that today for `Some`/`Ok`
@@ -605,7 +611,7 @@ Ids are renumbered so each item's rows are contiguous.
 | M4711 | CS4-2 | `[REVISED: CS4A-2]` slot text written with `"` -> `\"` and `\` -> `\\` (mutant: written bare) | fmt.rs | `fmt::tests::fmt_slot_string_round_trips` (`--lib`, the `if "a" == s` case) | `ATTACK: fmt wrote a slot that does not re-parse` |
 | M4712 | CS4-2 | `[REVISED: CS4A-1]` the pattern parse refuses `SlotStr` (mutant: accept it like `Str`) | parser.rs | `slot_string_outside_an_expression_is_refused` (patswallow) | `ATTACK: a slot string outside an expression changed meaning silently` |
 | M4713 | CS4-3 | `constrain(st, Tuple(vars), "tuple pattern")` on a concrete subject (mutant: dropped) | infer.rs | `tuple_pattern_is_type_checked` | `ATTACK: a tuple pattern of the wrong shape checked clean` |
-| M4714 | CS4-3 | components bound with `Some(&var_i)` (mutant: `None`) | infer.rs | `tuple_pattern_is_type_checked` (t_comptype) | same |
+| M4714 | CS4-3 | `[REVISED: ICS-1]` components bound with `None` (mutant: the typed binding `Some(&var_i)` restored) | infer.rs | `tuple_pattern_controls_stay_legal` (`ics_w4`) | `ATTACK: a valid tuple match was refused` |
 | M4715 | CS4-3 | `[REVISED: CS4A-4]` concrete-subject guard (mutant: constrain any subject) | infer.rs | `tuple_pattern_controls_stay_legal` (l1) | `ATTACK: a valid tuple match was refused` |
 | M4716 | CS4-4 | `calls_before == pending_at_entry` (mutant: `calls_before == 0`) | infer.rs | `wrapper_lambda_nested_call_kind_is_checked` | `ATTACK: a wrong-kind argument through a nested wrapper call checked clean` |
 | M4717 | CS4-4 | `self.lambda_calls == calls_before + 1` (mutant: dropped) | infer.rs | `wrapper_lambda_controls_stay_legal` (the `rv/m4716.ax` shape, `f(y, println("x"))`, rc 0 `7` today) [INFERENCE: refused under the mutant by trace] | `ATTACK: a wrapper-lambda program that runs was refused` |
