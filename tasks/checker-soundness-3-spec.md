@@ -542,4 +542,8 @@ So there is **no corpus evidence beyond GapLang**. The ranking uses GapLang coun
 | NH-11 | `r#"..."#` | 1 | **Decline unless NH-1-level demand appears.** `r"..."` exists, and CS3-6 makes a stray `"` a refusal instead of a wrong answer |
 | NH-13 | not a form: refuse a wrapper lambda whose kind-conflicting call sits in a branch (w14 `let g = \|y, c\| if c { f(y) } else { 0 }`) | 0 (w14 is a probe of mine) | **Decline.** w14 runs today and prints `0`; refusing it is a check-time refusal of a program that never fails. The direct twin w12 is already E0102, so the asymmetry is documented, not closed |
 
+`[DECIDED by human 2026-11-01: the recommendations above. Build NH-1 (`()`), NH-2 (`if let`), NH-3 (`for (a, b) in`) and NH-12
+(sibling-directory `mod`, searched last) - specified in tasks/lang-forms-spec.md. NH-5 waits until native lowers composite equality.
+NH-4 is deferred. NH-6..NH-11 and NH-13 are declined.]`
+
 No item in §2 adds language surface, changes a builtin's behaviour or return type, or spends money.
