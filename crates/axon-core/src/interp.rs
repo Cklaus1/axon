@@ -2057,11 +2057,13 @@ pub struct Interp<'p> {
     /// per-call costs of a recursive user fn. A vector indexed by sym, so the
     /// lookup hashes nothing (AX-18).
     callees: RefCell<Vec<u32>>,
-    /// R3c: count of `ai_complete` calls made by the current fn activation, used
-    /// to enforce `@[ai(policy(budget: N))]`. Reset on entry to a fn that may
-    /// meter (`FnEntry::ai_metered`), restored on exit (so the budget is
-    /// per-activation, not global).
-    ai_calls_this_fn: Cell<u64>,
+    /// R3c as amended by ceilings CE-4 (NH-C4 A): one frame per live
+    /// activation of a fn with a valid `@[ai(policy(budget: N))]`, outermost
+    /// first. A budget bounds every `ai_complete` made while its activation is
+    /// on the stack, callees included; each call is checked against every
+    /// frame and, if none is exhausted, counted in every frame. Pushed on entry
+    /// (`FnEntry::ai_metered`), popped on exit by `AiBudgetGuard`.
+    ai_budget_stack: RefCell<Vec<AiBudgetFrame>>,
     /// AX-54: emptied argument vectors of finished user-fn calls, reused by
     /// `eval_call` so a call does not allocate one.
     arg_bufs: RefCell<Vec<Vec<Value>>>,
@@ -2101,8 +2103,8 @@ pub struct Interp<'p> {
     /// Tokens consumed so far by `ai_complete`, against [`Interp::token_budget`].
     ///
     /// Distinct from both sibling meters: `ai_cost_micro` is MONEY (per-token
-    /// µ$ at the tier's rate) and R3c's `ai_calls_this_fn` counts CALLS within
-    /// one fn. This is TOKENS across the whole run, because that is the unit an
+    /// µ$ at the tier's rate) and R3c's `ai_budget_stack` counts CALLS within
+    /// budgeted activations. This is TOKENS across the whole run, because that is the unit an
     /// ambient operator cap is denominated in.
     tokens_used: Cell<i64>,
     /// Ambient run-level token cap from `AXON_BUDGET_TOKENS`, or `None` for no
@@ -2951,16 +2953,22 @@ impl Drop for FnNameOptGuard<'_> {
     }
 }
 
-/// R3c: saves the caller's `ai_calls_this_fn` count and restores it on drop, so
-/// each fn activation meters its own `ai_complete` calls against its own
-/// `@[ai(policy(budget))]` (the budget is per-activation, not global).
+/// R3c / CE-4: one budgeted activation: its fn, its `budget: N`, and the
+/// `ai_complete` calls made so far while it is on the stack.
+struct AiBudgetFrame {
+    fn_name: String,
+    budget: u64,
+    used: u64,
+}
+
+/// R3c / CE-4: pops the activation's `AiBudgetFrame` on exit, however the
+/// activation ends.
 struct AiBudgetGuard<'a> {
-    cell: &'a Cell<u64>,
-    prev: u64,
+    stack: &'a RefCell<Vec<AiBudgetFrame>>,
 }
 impl Drop for AiBudgetGuard<'_> {
     fn drop(&mut self) {
-        self.cell.set(self.prev);
+        self.stack.borrow_mut().pop();
     }
 }
 
@@ -5221,7 +5229,7 @@ impl<'p> Interp<'p> {
             current_fn: Cell::new(None),
             current_call_tier: RefCell::new(None),
             callees: RefCell::new(Vec::new()),
-            ai_calls_this_fn: Cell::new(0),
+            ai_budget_stack: RefCell::new(Vec::new()),
             arg_bufs: RefCell::new(Vec::new()),
             env_pool: RefCell::new(Vec::new()),
             frame_spare: Cell::new(None),
@@ -6182,12 +6190,18 @@ impl<'p> Interp<'p> {
         } else {
             None
         };
-        // R3c: each fn activation meters its own ai_complete calls — reset to 0
-        // on entry, restore the caller's count on exit. Only a fn that may meter
-        // touches the counter, so for any other the reset/restore is inert.
-        let _ai_budget_guard = entry.ai_metered.then(|| AiBudgetGuard {
-            cell: &self.ai_calls_this_fn,
-            prev: self.ai_calls_this_fn.replace(0),
+        // R3c / CE-4: a fn with a valid `budget: N` (`FnEntry::ai_budget`)
+        // pushes a frame that bounds every model call made until it returns,
+        // its callees' included.
+        let _ai_budget_guard = entry.ai_budget.map(|budget| {
+            self.ai_budget_stack.borrow_mut().push(AiBudgetFrame {
+                fn_name: f.name.clone(),
+                budget,
+                used: 0,
+            });
+            AiBudgetGuard {
+                stack: &self.ai_budget_stack,
+            }
         });
 
         if f.params.len() != args.len() {

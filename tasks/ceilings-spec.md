@@ -424,6 +424,13 @@ The first two are RED at a5310878.
 **Cost.** ~80 lines: the stack replaces `ai_calls_this_fn` plus `AiBudgetGuard`. R3c spec amendment, CHANGELOG, pci theme,
 `spec/axon-for-llms.md` budget paragraph. Sequenced after AF-4 [pending asi-fixes-spec.md], so extracts are charged too.
 
+`[REVISED: build CE-4]` Built as A. `Interp::ai_budget_stack` replaces `ai_calls_this_fn`; the frame is pushed on entry
+to an `ai_metered` fn with a valid budget and popped by `AiBudgetGuard`. The gate is `ai_call_prologue`
+(`interp/builtins.rs`), which since AF-4 every extract also passes, so "every AI dispatch" counts `ai_extract::<T>` too
+(test `budget_counts_extracts`). Tests are in `ceiling.rs`; the three named ones plus that one and a control
+(`budget_within_extent_runs`). The flipped `cli_run.rs` test was rewritten as
+`ai_budget_covers_callees_through_unmetered_helpers` (outer budget 6). VM checked by hand on b01/b03/b05 (E1301, rc 5).
+
 ---
 
 ### CE-5 (P2, NH-C5) No step or wall-clock ceiling

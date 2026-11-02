@@ -496,3 +496,73 @@ fn ceiling_net_pins_the_ai_endpoint() {
         "ATTACK: a ceiling net scope left the AI endpoint unpinned: {t}"
     );
 }
+
+// -- CE-4: a budget bounds its callees (NH-C4 A) ------------------------------
+
+/// Run `src` under `AXON_AI_MOCK=1` and return (exit code, stdout+stderr).
+fn run_mock(tag: &str, src: &str) -> (Option<i32>, String) {
+    let d = tmp(tag);
+    let o = run(&d, src, &[("AXON_AI_MOCK", "1")]);
+    (o.status.code(), text(&o))
+}
+
+/// E1301 naming `fn_name` with exit 5, or panic with `attack`.
+fn assert_e1301(r: (Option<i32>, String), fn_name: &str, attack: &str) {
+    let (code, t) = r;
+    assert_eq!(code, Some(5), "{attack}: {t}");
+    assert!(
+        t.contains("E1301") && t.contains(&format!("`{fn_name}` exceeded its AI budget")),
+        "{attack}: {t}"
+    );
+}
+
+#[test]
+fn budget_covers_unbudgeted_helper() {
+    const SRC: &str = "fn helper() -> i64 {\n    let _x = ai_complete(\"hidden\")\n    1\n}\n\n@[ai(policy(budget: 1))]\nfn ask() -> i64 { helper() + helper() + helper() }\n\nfn main() { println(to_str(ask())) }\n";
+    assert_e1301(
+        run_mock("ce4_helper", SRC),
+        "ask",
+        "ATTACK: an unbudgeted helper laundered AI calls past the caller's budget",
+    );
+}
+
+#[test]
+fn nested_budget_bounded_by_outer() {
+    const SRC: &str = "@[ai(policy(budget: 5))]\nfn inner() -> i64 {\n    let _a = ai_complete(\"x\")\n    let _b = ai_complete(\"y\")\n    2\n}\n\n@[ai(policy(budget: 1))]\nfn outer() -> i64 { inner() + inner() + inner() }\n\nfn main() { println(to_str(outer())) }\n";
+    assert_e1301(
+        run_mock("ce4_nested", SRC),
+        "outer",
+        "ATTACK: a callee's larger budget widened the caller's budget",
+    );
+}
+
+#[test]
+fn lambda_budget_unchanged() {
+    const SRC: &str = "@[ai(policy(budget: 1))]\nfn ask() -> i64 {\n    let f = |p: str| match ai_complete(p) { Ok(s) => 1, Err(e) => 0 }\n    f(\"a\") + f(\"b\") + f(\"c\")\n}\n\nfn main() { println(to_str(ask())) }\n";
+    assert_e1301(
+        run_mock("ce4_lambda", SRC),
+        "ask",
+        "ATTACK: a lambda's AI calls escaped its fn's budget",
+    );
+}
+
+/// Extracts are model calls too (AF-4 routes them through the same prologue):
+/// they count against a budget like `ai_complete`.
+#[test]
+fn budget_counts_extracts() {
+    const SRC: &str = "@[ai(policy(budget: 1))]\nfn ask() -> i64 {\n    let a = match ai_extract::<i64>(\"one\") { Ok(n) => n, Err(e) => 0 }\n    let b = match ai_extract::<i64>(\"two\") { Ok(n) => n, Err(e) => 0 }\n    a + b\n}\n\nfn main() { println(to_str(ask())) }\n";
+    assert_e1301(
+        run_mock("ce4_extract", SRC),
+        "ask",
+        "ATTACK: an ai_extract call escaped the fn's AI budget",
+    );
+}
+
+/// The control: a budget that covers every call in its extent runs clean.
+#[test]
+fn budget_within_extent_runs() {
+    const SRC: &str = "fn helper() -> i64 {\n    let _x = ai_complete(\"hidden\")\n    1\n}\n\n@[ai(policy(budget: 3))]\nfn ask() -> i64 { helper() + helper() + helper() }\n\nfn main() { println(to_str(ask())) }\n";
+    let (code, t) = run_mock("ce4_ok", SRC);
+    assert_eq!(code, Some(0), "a budget of 3 covers 3 calls: {t}");
+    assert!(t.contains('3'), "{t}");
+}

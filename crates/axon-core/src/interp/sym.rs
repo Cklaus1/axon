@@ -406,10 +406,15 @@ pub(super) struct FnEntry<'p> {
     /// `@[agent]`: the enclosing agent for everything it calls (R4/I-13).
     pub(super) is_agent: bool,
     /// The fn the `current_fn` readers find under this name carries
-    /// `@[ai(...)]`, so an `ai_complete` in this activation may meter against
-    /// `Interp::ai_calls_this_fn` (R3c). Without it the counter is never read
-    /// or written while this fn is current, so its save/reset/restore is inert.
+    /// `@[ai(...)]`, so an AI call in this activation reads its policy through
+    /// `current_fn`; such a fn takes the general call path (`seal_general`,
+    /// the VM's `fast_call_blocker`). Its budget frame is `ai_budget`.
     pub(super) ai_metered: bool,
+    /// The same fn's valid `@[ai(policy(budget: N))]`, if any (R3c / CE-4):
+    /// each activation pushes an `AiBudgetFrame` of N onto
+    /// `Interp::ai_budget_stack`. A malformed budget is `None` (W1311 at the
+    /// call, unmetered), as in the codegen refusal (F141).
+    pub(super) ai_budget: Option<u64>,
     /// `@[corrigible]` (R9).
     pub(super) corrigible: bool,
     /// `@[adaptive]` (R4 zone).
@@ -491,6 +496,10 @@ impl<'p> FnEntry<'p> {
             ai_metered: fns
                 .get(&def.name)
                 .is_some_and(|f| f.attrs.iter().any(|a| a.name == "ai")),
+            ai_budget: fns
+                .get(&def.name)
+                .and_then(|f| crate::ai_routing::budget_from_attrs(&f.attrs))
+                .and_then(Result::ok),
             corrigible: has_attr("corrigible"),
             adaptive: has_attr("adaptive"),
             experiment: def

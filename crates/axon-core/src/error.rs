@@ -124,7 +124,7 @@ pub const E1211: &str = "E1211"; // a refinement predicate names an unbound name
 
 // AI-primitive errors (R3: ai_complete / @[ai(policy)])
 pub const E1300: &str = "E1300"; // ai_* call unreachable and no @[ai(policy(fallback))] in scope
-pub const E1301: &str = "E1301"; // ai_complete exceeded the fn's @[ai(policy(budget: N))] (R3c)
+pub const E1301: &str = "E1301"; // an AI call exceeded the @[ai(policy(budget: N))] of a fn on the stack (R3c, CE-4)
 pub const E1302: &str = "E1302"; // tier: resolves to a tier with no host-configured model
 pub const E1303: &str = "E1303"; // run exceeded AXON_BUDGET_TOKENS, the ambient run-level token cap
 pub const E1304: &str = "E1304"; // ai_extract::<T> with a T outside the supported set
@@ -528,7 +528,10 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E1210", "a `sql_query` template is not a string literal — user data must be a bound parameter, never concatenated SQL (injection)"),
     ("E1211", "a refinement predicate names a name not in scope there, is ill-typed or not `bool`, or contains a `return`/`break`/`continue` that would leave its frame"),
     ("E1300", "ai_* call unreachable and no @[ai(policy(fallback))] in scope"),
-    ("E1301", "ai_complete exceeded the fn's @[ai(policy(budget: N))] (R3c)"),
+    (
+        "E1301",
+        "an AI call (ai_complete or an extract) exceeded the @[ai(policy(budget: N))] of a fn still on the stack: a budget covers its callees (R3c, CE-4)",
+    ),
     ("E1302", "tier: resolves to a tier with no host-configured model"),
     ("E1303", "run exceeded AXON_BUDGET_TOKENS, the ambient run-level token cap"),
     ("E1304", "ai_extract::<T> with a T outside i64, f64, bool, Uncertain<i64>, Uncertain<f64>"),

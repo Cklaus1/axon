@@ -17970,12 +17970,14 @@ fn main() -> i64 { let _ = bad()  0 }
 }
 
 #[test]
-fn ai_budget_is_per_activation_through_unmetered_helpers() {
-    // R3c / AX-54: only a fn that can meter saves and resets the call count, so
-    // an unmetered helper between two metered fns must neither reset the
-    // caller's count nor let the callees' calls leak into it. `outer` makes 2
-    // calls around a helper whose callees each make 2: within every budget.
-    // A third `outer` call is then the (N+1)th of ITS activation: E1301.
+fn ai_budget_covers_callees_through_unmetered_helpers() {
+    // R3c as amended by ceilings CE-4 (NH-C4 A): a budget bounds every call
+    // made while its activation is on the stack, callees included, and each
+    // activation of a budgeted fn starts its own count. `outer` (budget 6)
+    // makes 2 calls around a helper whose 2 `inner` activations (budget 2
+    // each) make 2 calls apiece: 6 in `outer`'s extent, every budget met.
+    // `main`'s own `helper()` runs under no budget. A third `outer` call is
+    // then the 7th of ITS extent: E1301 naming `outer`.
     let two = r#"
 @[ai(policy(budget: 2))]
 fn inner() -> i64 {
@@ -17984,7 +17986,7 @@ fn inner() -> i64 {
     1
 }
 fn helper() -> i64 { inner() + inner() }
-@[ai(policy(budget: 2))]
+@[ai(policy(budget: 6))]
 fn outer() -> i64 {
     let _a = match ai_complete("o1") { Ok(s) => s  Err(_) => "" }
     let n = helper()

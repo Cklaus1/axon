@@ -14601,5 +14601,22 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test ceiling', 'ceiling_implies_require_contained'),
 ]
 
+# ceilings CE-4 (ids M4692-M4694, NH-C4 A): an @[ai(policy(budget: N))]
+# activation bounds every model call made while it is on the stack.
+MUTATIONS += [
+    ('M4692', 'CE-4: a call counts only in the innermost budget frame', 'crates/axon-core/src/interp/builtins.rs',
+     '            for fr in stack.iter_mut() {\n                fr.used += 1;',
+     '            for fr in stack.iter_mut().rev().take(1) {\n                fr.used += 1;',
+     'axon-core', '--no-default-features --test ceiling', 'nested_budget_bounded_by_outer'),
+    ('M4693', 'CE-4: extracts are not metered against the budget', 'crates/axon-core/src/interp/builtins.rs',
+     '        let _ = self.current_ai_budget();\n        {',
+     '        let _ = self.current_ai_budget();\n        if name == "ai_complete" {',
+     'axon-core', '--no-default-features --test ceiling', 'budget_counts_extracts'),
+    ('M4694', 'CE-4: a budget halts only calls made directly in its own fn', 'crates/axon-core/src/interp/builtins.rs',
+     '            if let Some(fr) = stack.iter().rev().find(|fr| fr.used >= fr.budget) {',
+     '            if let Some(fr) = stack.iter().rev().find(|fr| fr.used >= fr.budget && fr.fn_name == caller) {',
+     'axon-core', '--no-default-features --test ceiling', 'budget_covers_unbudgeted_helper'),
+]
+
 if __name__ == "__main__":
     main()

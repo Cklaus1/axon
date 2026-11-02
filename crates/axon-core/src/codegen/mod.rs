@@ -1306,12 +1306,11 @@ impl<'ctx> Codegen<'ctx> {
             // mirroring `__axon_verify_panic`), refuse rather than emit a binary
             // that silently ignores the ceiling.
             //
-            // The refusal condition mirrors the interpreter's ENFORCEMENT
-            // condition exactly: the meter keys on the fn that is *current* when
-            // the call happens (R3c §3 "per-fn-activation"), so only a DIRECT
-            // `ai_complete` in this fn's own body is metered. A call made from an
-            // un-budgeted helper is unmetered in the interpreter too, so refusing
-            // it would reject a program the two backends already agree on.
+            // Every fn with a valid budget is refused, whatever its body calls:
+            // since ceilings CE-4 the interpreter's budget bounds every AI call
+            // made while the fn's activation is on the stack, callees included,
+            // so a budgeted fn whose own body makes no AI call can still be the
+            // one that stops the run.
 
             // ── R3b/F062: the PER-CALL `tier:` (AUDIT T46). ──────────────────
             // The scan above resolves the tier from fn ATTRIBUTES only. R3b also

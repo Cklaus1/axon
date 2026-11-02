@@ -304,6 +304,12 @@ it returns the deterministic stub; with an API key it refuses with exit 2 (nativ
 `ai_call` audit record - run with `axon run`); with neither it acts like `axon run` with no model:
 `ai_complete` returns the fn's `fallback:`, otherwise the run stops with E1300 (exit 5).
 
+**AI call budgets.** `@[ai(policy(budget: N))]` on a fn allows at most N model calls
+(`ai_complete` and `ai_extract::<T>` alike) while that fn's activation is on the stack, its
+callees' calls included; the next call stops the run with E1301 (exit 5) naming the fn. Each
+activation starts a fresh count, and a callee's own budget can only narrow, never widen, its
+caller's. Native builds refuse a budgeted fn (E0910).
+
 **Capability sandboxing** — the compiler refuses any I/O a function didn't declare:
 
 ```axon

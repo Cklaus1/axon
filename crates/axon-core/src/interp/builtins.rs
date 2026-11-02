@@ -532,12 +532,13 @@ impl<'p> Interp<'p> {
     /// five `ai_extract_*` targets, AF-4): the call's context for its
     /// `ai_call` record, after the gates that may refuse it.
     ///
-    /// The gates — the R3c `@[ai(policy(budget: N))]` call count, the
+    /// The gates — the R3c `@[ai(policy(budget: N))]` call count (every model
+    /// call, extracts included, since Ceilings CE-4), the
     /// `AXON_BUDGET_TOKENS` run cap, the once-per-fn W1310 warning — and the
-    /// R28 hashed-prompt ledger row apply to `ai_complete` only. An extract's
-    /// ledger row is written by `pre_effect_gate` (which skips `ai_complete`),
-    /// and metering extracts against the two budgets is Ceilings CE-4/CE-6,
-    /// which hook this one gate.
+    /// R28 hashed-prompt ledger row. The run cap, W1310 and the ledger row
+    /// apply to `ai_complete` only here: an extract's ledger row is written by
+    /// `pre_effect_gate` (which skips `ai_complete`), and metering extracts
+    /// against the token cap is Ceilings CE-6.
     fn ai_call_prologue(
         &self,
         name: &str,
@@ -564,24 +565,32 @@ impl<'p> Interp<'p> {
         // gates below (an over-budget call dispatches nothing, so it must
         // not charge cost).
         let est_tokens = (prompt.len() as i64) / 4 + 1;
-        if name == "ai_complete" {
-            // R3c: meter this call against the fn's @[ai(policy(budget: N))].
-            // The (N+1)th call halts with E1301 BEFORE any model dispatch
-            // (mock/live/fallback) and before the W1310 warning — an
-            // over-budget call is a hard failure, not a stray response. A fn
-            // with no budget is unmetered (current_ai_budget → None).
-            if let Some(budget) = self.current_ai_budget() {
-                let used = self.ai_calls_this_fn.get();
-                if used >= budget {
-                    return ai_policy_err(format!(
-                        "[{}] `{}` exceeded its AI budget of {budget} call(s) — \
-                         raise the budget or reduce ai_complete calls",
-                        crate::error::E1301,
-                        who(),
-                    ));
-                }
-                self.ai_calls_this_fn.set(used + 1);
+        // R3c as amended by CE-4 (NH-C4 A): meter this call — `ai_complete`
+        // or an extract — against EVERY live budgeted activation
+        // (`ai_budget_stack`), so a budget covers the calls its callees make.
+        // The first exhausted frame, innermost first, halts the call with
+        // E1301 naming that fn, BEFORE any model dispatch (mock/live/fallback)
+        // and before the W1310 warning — an over-budget call is a hard
+        // failure, not a stray response. Otherwise the call counts in every
+        // frame. `current_ai_budget` still runs for its W1311 warning on a
+        // malformed budget.
+        let _ = self.current_ai_budget();
+        {
+            let mut stack = self.ai_budget_stack.borrow_mut();
+            if let Some(fr) = stack.iter().rev().find(|fr| fr.used >= fr.budget) {
+                return ai_policy_err(format!(
+                    "[{}] `{}` exceeded its AI budget of {} call(s) — \
+                     raise the budget or reduce ai_complete calls",
+                    crate::error::E1301,
+                    fr.fn_name,
+                    fr.budget,
+                ));
             }
+            for fr in stack.iter_mut() {
+                fr.used += 1;
+            }
+        }
+        if name == "ai_complete" {
             // The ambient RUN-level token cap (`AXON_BUDGET_TOKENS`), checked
             // in the same pre-dispatch window and for the same reason as the
             // R3c gate above: a call that would exceed the cap must not reach

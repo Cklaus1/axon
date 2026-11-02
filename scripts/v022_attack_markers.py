@@ -4011,7 +4011,7 @@ ATTACK_MARKERS.update({
     'M4622': r'ATTACK: live extract tokens stored as 0',
 })
 
-# ceilings CE-1, CE-7, CE-8, CE-2, CE-10 (ids M4680-M4691)
+# ceilings CE-1, CE-7, CE-8, CE-2, CE-10, CE-4 (ids M4680-M4694)
 ATTACK_MARKERS.update({
     'M4680': r'ATTACK: an operator net scope left the AI endpoint unpinned',
     'M4681': r'ATTACK: a declared host outside the operator net scope was pinned',
@@ -4025,4 +4025,7 @@ ATTACK_MARKERS.update({
     'M4689': r'ATTACK: the env var widened the ceiling.s effects',
     'M4690': r'ATTACK: a native binary ran past an operator ceiling',
     'M4691': r'ATTACK: a ceilinged run reached an ungranted capability without R45',
+    'M4692': r'ATTACK: a callee.s larger budget widened the caller.s budget',
+    'M4693': r'ATTACK: an ai_extract call escaped the fn.s AI budget',
+    'M4694': r'ATTACK: an unbudgeted helper laundered AI calls past the caller.s budget',
 })
