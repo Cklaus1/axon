@@ -3106,6 +3106,7 @@ A program whose last stderr line imitates the interpreter's fault line and whose
 JSON and then exits 2, is classed as a fault / compile failure rather than as its own exit (IgIntent audit residual after M4500-M4505).
 
 ### O-IG-02 - [medium] The once-ledger guard relies on `git log --all`
+[FIXED 2026-11-02 e9059891, genviab GV-2: the row is pushed to `main` of the pinned origin before any model call; a once run is refused off `origin/main`.]
 An unpushed ledger commit is invisible to a fresh clone, so the once chain can restart there (ImplAuditIG). Fix direction: an origin-side
 check or a pushed ledger ref before a once run.
 
