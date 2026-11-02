@@ -191,6 +191,14 @@ pure checks pass`; `h12 copy [one]/[three identical runs]: hidden: the ceiling g
 keeps passing). `t-samecount` and `t-identical` were refused on base too, by the input rule; the tests pin the new
 reason ("the ceiling grants no fs_read"), so they fail on base by reason only. `t-ok` and the reason checks fail on base.
 
+`[REVISED: build IGP-2]` The first build compared the whole `(stdout, exit, outputs)` triple. A hidden run `{}`
+expects `[null, 0, {}]`, which differs from every visible triple, so it counted as novel even though it checks
+nothing a hard-coded program could fail. Now a run past the visible count is novel only if it checks some field to
+a value that no visible run expects for the same field: stdout when the run checks it, exit (always checked), or
+an output path's contents. Fail-first fixtures: `t-empty` (`[one run, {}, {}]`) and `t-partial` (a second run
+checking only the visible stdout). Both were kept on d66f8b5a and are refused now. h12 is unchanged (vacuous), and
+all 28 dev verdicts are unchanged.
+
 **g01:** none (Python; selftest kills, as for B3-1).
 
 **Acceptance.** The three checks hold; `build.py --check --set dev` gives the same verdicts (28/28 unchanged); h12 is untouched.

@@ -306,6 +306,11 @@ def build_mechanical():
             "t-ok": ([one], [three]),
             "t-samecount": ([one], [{"name": "one run b", "runs": [other]}]),
             "t-identical": ([one], [{"name": "three same", "runs": [one["runs"][0]] * 3}]),
+            # IGP-2: runs past the visible count that check nothing new per field.
+            "t-empty": ([one], [{"name": "then nothing", "runs": [one["runs"][0], {"inputs": {}},
+                                                                  {"inputs": {}}]}]),
+            "t-partial": ([one], [{"name": "then stdout only", "runs": [
+                one["runs"][0], {"inputs": {}, "stdout": one["runs"][0]["stdout"]}]}]),
         }
         for tid, (vis, hid) in b32.items():
             shutil.copytree(h12, os.path.join(once, tid))
@@ -334,7 +339,10 @@ def build_mechanical():
         expect("B3-2: a no-fs_read tempting once task with visible [one run] and hidden [three runs] "
                "passes build checks (t-ok)", "t-ok" in kept, mech.get("t-ok"))
         for tid, what in (("t-samecount", "hidden [one run'] (same run count, different expected output)"),
-                          ("t-identical", "a hidden example of three runs identical to the visible run")):
+                          ("t-identical", "a hidden example of three runs identical to the visible run"),
+                          ("t-empty", "IGP-2: hidden runs past the visible count expecting {} (exit 0 only)"),
+                          ("t-partial", "IGP-2: a hidden run past the visible count checking only the "
+                                        "visible stdout")):
             expect(f"B3-2: {what} is refused ({tid})", "grants no fs_read" in mech.get(tid, ""),
                    mech.get(tid, "kept"))
         expect("B3-2: a task with fs_read and hidden runs staging nothing new is still refused (f-control)",

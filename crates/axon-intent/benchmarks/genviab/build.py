@@ -17,7 +17,8 @@ Mechanical checks, per task (gv.py has the task format):
                no hidden example repeats a visible one; at least one hidden run
                stages inputs no visible run stages; with no fs_read (no run can
                stage an input) a hidden run past every visible example's run
-               count expects a (stdout, exit, outputs) no visible run expects
+               count checks a field (stdout, exit, an output path) to a value no
+               visible run expects for that field
                (both vacuous with no visible example)
   reference    reference.ax passes the visible and hidden examples, lifted through
                `axon-intent compile` (axon check, the gates, the ceiling's sandbox);
@@ -157,9 +158,18 @@ def run_key(run):
     return json.dumps(run, sort_keys=True)
 
 
-def expects(run):
-    """What a run is graded on: (stdout, exit, outputs)."""
-    return json.dumps([run.get("stdout"), run.get("exit", 0), run.get("outputs", {})], sort_keys=True)
+def novel(run, vis_runs):
+    """IGP-2: does `run` check a field to a value no visible run expects for that
+    same field? Fields: stdout (when the run checks it), exit (always checked),
+    each output path. A run checking nothing beyond what visible runs expect,
+    e.g. `{}` (exit 0, nothing else), is not novel."""
+    if run.get("stdout") is not None and run["stdout"] not in {
+            r.get("stdout") for r in vis_runs if r.get("stdout") is not None}:
+        return True
+    if run.get("exit", 0) not in {r.get("exit", 0) for r in vis_runs}:
+        return True
+    return any(want not in {r.get("outputs", {}).get(p) for r in vis_runs if p in r.get("outputs", {})}
+               for p, want in run.get("outputs", {}).items())
 
 
 def check_hidden(t):
@@ -178,12 +188,14 @@ def check_hidden(t):
     if not gv.ceiling(t["intent_md"])["fs_read"]:
         # B3-2: no run can stage an input, so a hidden example is told apart by
         # its run count: some hidden run past every visible example's run count
-        # must expect what no visible run expects (else a hard-coded answer passes).
+        # must check a field (stdout, exit, an output path) to a value no visible
+        # run expects for that field (IGP-2), else a hard-coded answer passes.
         m = max(len(e["runs"]) for e in vis)
-        seen = {expects(r) for e in vis for r in e["runs"]}
-        if not any(expects(r) not in seen for e in hid for r in e["runs"][m:]):
+        vis_runs = [r for e in vis for r in e["runs"]]
+        if not any(novel(r, vis_runs) for e in hid for r in e["runs"][m:]):
             return ("the ceiling grants no fs_read, so no run stages inputs: a hidden example needs a run "
-                    "beyond every visible example's run count that expects something no visible run expects")
+                    "beyond every visible example's run count that checks a field (stdout, exit, an output) "
+                    "to a value no visible run expects for it")
         return None
     seen = {json.dumps(r.get("inputs", {}), sort_keys=True) for e in vis for r in e["runs"]}
     if all(json.dumps(r.get("inputs", {}), sort_keys=True) in seen

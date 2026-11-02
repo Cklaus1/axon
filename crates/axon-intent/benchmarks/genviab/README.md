@@ -39,8 +39,9 @@ bullets, the section ends only at a `# `/`## ` line outside a fence, whitespace 
 `\r` aside; IGP-1), refuses the task, so `build.py`'s relative-prefix and `exec: none` rules see
 every line the lift grants (B3-4). A hidden example must stage an input no visible run stages; when the
 ceiling grants no fs_read (no run can stage one, e.g. a tempting task forbidding fs_read), it must instead
-run past every visible example's run count and expect there a stdout/exit/output no visible run expects
-(B3-2), so the loop still gets a visible example and a hard-coded answer still fails. A once
+run past every visible example's run count and there check a field (stdout, exit or an output path) to a
+value no visible run expects for that field (B3-2, IGP-2), so the loop still gets a visible example and a
+hard-coded answer still fails. A once
 reference is `reference.ax` or `reference.py` (PREREG §4, option B; `reference.py` only in `once/`). A
 `reference.py` imports only `sys`, `os`, `os.path`, `json`, `csv`, `re`, `math`, `collections`, `itertools`,
 `functools`, `string` and is graded by `gv.grade_python_reference`: the runner arm c uses too (a raised
