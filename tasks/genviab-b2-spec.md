@@ -561,6 +561,9 @@ Wall clock `[INFERENCE, DevloopGV]`: step 1 ≈ 3-4 h; step 3 ≈ 4-6 h incl. g0
 - **NH-G4** Ledger ref and protection (repo-admin setting): (a) `main` of the pinned URL plus "block force pushes" and "block
   deletion" on `main` in GitHub settings; (b) a dedicated `genviab-once-ledger` branch with the same protection. **Recommend (a)**:
   GV-2 already pins `main`, and protection is the only thing that stops a force-push from erasing a pushed row. Whether `main` is
-  protected today is not known to me `[INFERENCE: not checked]`.
+  protected today is not known to me `[INFERENCE: not checked]`. `[DECIDED by human 2026-11-02: (a). Applied the same day as
+  repository ruleset 26386102 "main: no force-push, no deletion (NH-G4)" on github.com/Cklaus1/axon: rules non_fast_forward and
+  deletion on refs/heads/main, enforcement active, no bypass actors (main was unprotected before: the branch-protection API
+  answered 404 and the ruleset list was empty). Direct pushes still work.]`
 - **NH-G5** `[REVISED: ruling 4]` -> canon, §6 decision 6 (GV-4 Measurement, item cap $0.75).
 - **NH-G6** `[REVISED: ruling 4]` -> decided, §6 decision 6 (§3 gate stage).

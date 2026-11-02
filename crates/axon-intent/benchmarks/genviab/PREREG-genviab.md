@@ -46,13 +46,15 @@ re-run).
 
 - **Gating:** arm a, `claude-opus-5-5` as passed to `micode exec --config provider.model=…`. The served
   model each call reports is recorded per call (`calls/*.jsonl` `model`); a served model other than the
-  requested id makes the task's row infrastructure (`model_substituted`, unscored). [OPEN: or INVALID for
-  the whole run - human. Unverified: whether micode reports Opus under exactly `claude-opus-5-5`; Haiku
-  reports `claude-haiku-5-5`. Check with one dev call before freezing.]
-- **Diagnostic (not gating):** arms a and c, `claude-haiku-5-5`. Arm c is also run with Opus for ADVERSE
-  [OPEN: the spec's cost table names Haiku a + c only; ADVERSE compares arm c with the gating arm a, so
-  this draft proposes arm c with Opus too, ≈ 1 call per task].
-- **Effort:** micode's default (no `--effort`); recorded as `null` in meta. [OPEN: name one or keep default.]
+  requested id makes the task's row infrastructure (`model_substituted`, unscored; `genviab.py` sets it).
+  `[DECIDED by human 2026-11-02: per task, as drafted - a substituted row is infrastructure and unscored;
+  the run is not INVALID for it.]` Still to check before freezing: whether micode reports Opus under
+  exactly `claude-opus-5-5` (Haiku reports `claude-haiku-5-5`); one dev call.
+- **Diagnostic (not gating):** arms a and c, `claude-haiku-5-5`. Arm c is also run with Opus for ADVERSE,
+  ≈ 1 call per task. `[DECIDED by human 2026-11-02: arm c with Opus too, so ADVERSE compares like with
+  like; section 7's run order already names results/once/c-claude-opus-5-5.]`
+- **Effort:** micode's default (no `--effort`); recorded as `null` in meta. `[DECIDED by human 2026-11-02:
+  keep the default.]`
 - **Rounds:** round 0 + ≤ 3 repair rounds (`genloop::MAX_REPAIR_ROUNDS`, arm c the same).
 - **Per-task token cap (Q4):** a repair round counts against the task's token budget: the intent's
   `## Budget` `tokens` (every dev task: 50000), else `genloop::DEFAULT_TOKEN_BUDGET` = 100000. The

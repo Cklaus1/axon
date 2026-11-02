@@ -1,6 +1,6 @@
 # guest-fs - DRAFT spec (CE-9 / NH-C8 = C)
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: DRAFT (after Step 1 review). Authorized for build by the human 2026-11-02 (NH-F4 A, NH-F5 A; §9).**
 
 Verdict: C is FEASIBLE on the Linux-microvm profile, and I observed it end to end in a real Firecracker guest. C cannot be
 shown on the bare-metal `axon-guest-kernel` backend, because that kernel does not run programs at all (FG-041).
@@ -668,6 +668,10 @@ Order: GF-1 → GF-2 → GF-3 → GF-4 → GF-5.
 |---|---|---|---|
 | NH-F4 | Kernel-level path scoping (D) on the Linux profile? | **A** none: the interpreter path scope + substrate EACCES (this spec). **B** Landlock (kernel config overlay, rebuild, new `kernel.pin`, B263 re-qualification) for programs with scoped `fs:*`, so they too could run without broad file access. **C** `SECCOMP_RET_USER_NOTIF` supervisor (a round-trip per open, TOCTOU on path memory) | **A**; revisit B if a non-Axon workload ever runs in the guest, or if programs with `fs:*` need a guest bound |
 | NH-F5 | [REVISED: ruling 3] The shared repo config `/home/cklaus/projects/axon/.git/config` sets `blame.ignorerevsfile`, so the Linux image build refuses (§0) and every KVM row in this spec is a non-result here. Remove the key? | **A** remove the key from the shared `.git/config` (git blame stops ignoring the listed revs locally; `--ignore-revs-file` still works per command). **B** build the image on another host. **C** leave it (GF-2/GF-3 KVM rows stay non-results on this host) | **A** (host config; not a code change) |
+
+`[DECIDED by human 2026-11-02: NH-F4 A (no kernel-level path scoping; revisit B if a non-Axon workload runs in the guest or
+programs with fs:* need a guest bound). NH-F5 A: the key was removed from the shared .git/config on 2026-11-02 (backup
+/var/tmp/r51-tmp/git-config.bak-2026-11-02); git config --local --get blame.ignorerevsfile now exits 1. Build authorized.]`
 
 NH-F1..F3 are decided: §8.7, §8.8, §8.9.
 
