@@ -518,10 +518,13 @@ failure predates this build; the other five move by <= 0.1 % instructions.
 `[REVISED: build ICE]` After the implementation audit (ImplAuditCE, findings ICE-1..3): (1) a lambda-body entry is a
 step too. `call_closure_frame` (`interp.rs`, both engines call closures through it) calls `Interp::step`, and the VM's
 `fold_leaf` tier declines under a ceiling, so `arr_map`/`arr_fold` callbacks count and `wall_ms` cannot be bypassed by
-callback-only work. (2) The run-wide meters (`steps`, `wall_ms` start, `ai_calls`, run tokens) are process statics
-(`RUN_*` in `interp.rs`), so `axon test`'s per-test interpreters and child interpreters spend from one budget. R45
+callback-only work. (2) The run-wide meters (`steps`, `wall_ms` start, `ai_calls`, run tokens) belong to the run: one
+`RunMeters` (`interp.rs`) per CLI invocation, installed by `main` with `with_run_meters` and carried onto the
+interpreter's own threads, so `axon test`'s per-test interpreters and child interpreters spend from one budget; an
+interpreter built outside a scope (library use) gets fresh meters (first built as process statics; changed on integrator
+review: statics leaked across runs in one process and their load+store raced). R45
 stays `main`-only (`capabilities.rs`); documented. (3) `--ceiling` vs `AXON_CEILING` compare canonicalized paths.
-g01: M4750-M4754. `vm_parity.sh` (release) PASS incl. a new `ce5_steps/lambda.ax`. `vm_perf_gate.sh --allow-busy`: every
+g01: M4750-M4756. `vm_parity.sh` (release) PASS incl. a new `ce5_steps/lambda.ax`. `vm_perf_gate.sh --allow-busy`: every
 program within budget; arr-sum (an `arr_fold` callback per element) moves 4,315,003,970 -> 4,415,019,207 instructions
 (+2.3 %, still -11.3 % vs ref) for the uncapped step branch per closure call; mandelbrot OVER as before (pre-existing).
 

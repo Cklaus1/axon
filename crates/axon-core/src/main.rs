@@ -986,7 +986,12 @@ fn main() {
     // bounds recursion via RECURSION_LIMIT for runaway cases.)
     std::thread::Builder::new()
         .stack_size(1024 * 1024 * 1024)
-        .spawn(move || dispatch(cli.command))
+        // ceilings ICE-2: one set of run meters per CLI invocation, shared by
+        // every interpreter it builds (per-test, candidates, sessions).
+        .spawn(move || {
+            let meters = axon_core::interp::RunMeters::new();
+            axon_core::interp::with_run_meters(&meters, || dispatch(cli.command))
+        })
         .expect("spawn worker thread")
         .join()
         .expect("worker thread panicked");

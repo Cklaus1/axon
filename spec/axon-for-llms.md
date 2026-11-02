@@ -336,7 +336,7 @@ fn worker() -> i64 { /* may only write under ./out/ and reach that host */ 0 }
 `AXON_BUDGET_TOKENS` / `AXON_MAX_DEPTH` / `AXON_MAX_STEPS` / `AXON_WALL_MS` variable and nothing
 in the program can widen it; `ai_calls` caps the run's model calls (E1303, exit 5). `steps`
 counts loop-body, fn-body and lambda-body entries and `wall_ms` the run's milliseconds; past either
-the run stops with E1006 (exit 9). These run-wide bounds count per process: under `axon test` every
+the run stops with E1006 (exit 9). These run-wide bounds count per run (one CLI invocation): under `axon test` every
 test spends from one budget. A ceiling also turns `--require-contained` on, so `main` needs a
 `@[contained]` grant for the I/O it reaches (E1005; `@[test]` fns are not checked). A bad file is
 E1007 (exit 2). Without a
