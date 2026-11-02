@@ -1,6 +1,6 @@
-# lang-forms - DRAFT spec
+# lang-forms - spec (built)
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: BUILT 2026-11-01 on asi/next a048e302 (LF-1, LF-2, LF-3, LF-3b, LF-4; lanes lf/ab 095e16f5 and lf/c 6c38a23f). Unit `()`, `if let`, `for (a, b) in` and sibling-directory `mod` ship; nothing else in §8 of checker-soundness-3 is authorized.**
 
 Four language additions the human decided on 2026-11-01 (`tasks/checker-soundness-3-spec.md:545-547`, the `[DECIDED ...]` line after
 the §8 table): NH-1 `()` unit value, NH-2 `if let`, NH-3 `for (a, b) in`, NH-12 module search in the entry file's directory, searched
