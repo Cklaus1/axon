@@ -4137,3 +4137,35 @@ ATTACK_MARKERS.update({
     'M4766': r'ATTACK: i386 syscall \d+ got through the arch check',
     'M4767': r'ATTACK: fs none left the write path scope open',
 })
+
+# genviab-b3 B3-7 runtime (ids M4776-M4777, b3 block M4770-M4789)
+ATTACK_MARKERS.update({
+    'M4776': r'ATTACK: a module-level let read outside the grant',
+    'M4777': r'ATTACK: a module-level let used an effect the grant withholds',
+})
+
+# genviab-b3 B3-3 (ids M4770-M4775, b3 block M4770-M4789)
+ATTACK_MARKERS.update({
+    'M4770': r'ATTACK: the program read the outcome nonce from /proc/self/environ',
+    'M4771': r'ATTACK: a malformed nonce installed an outcome channel',
+    'M4772': r"ATTACK: a spawned process opened the interpreter's /proc files",
+    'M4773': r"ATTACK: a job's own exit inside its sandbox was sealed as completed",
+    'M4774': r'ATTACK: an exit before main was sealed as completed',
+    'M4775': r'ATTACK: a job that stopped itself was sealed as completed',
+})
+
+# genviab-b3 B3-6 (id M4778, b3 block M4770-M4789)
+ATTACK_MARKERS.update({
+    'M4778': r'ATTACK: the signal was named twice',
+})
+
+# genviab-b3 B3-7 static (ids M4779, M4781, b3 block M4770-M4789)
+ATTACK_MARKERS.update({
+    'M4779': r"ATTACK: a contained main.s module-level let reached an ungranted capability",
+    'M4781': r'ATTACK: a contained main called a module-level lambda that reached an ungranted capability',
+})
+
+# genviab-b3 B3-5 (id M4780, b3 block M4770-M4789)
+ATTACK_MARKERS.update({
+    'M4780': r'ATTACK: a missing ceiling was reported as two ceilings',
+})

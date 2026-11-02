@@ -47430,39 +47430,47 @@ fn gv_dir(tag: &str) -> std::path::PathBuf {
     d
 }
 
-/// Run `cmd` with a pipe on fd 3 named by `AXON_OUTCOME_FD` (and
-/// [`GV_NONCE`]), as axon-os does: its output, and every byte written to the
-/// pipe.
+/// Run `cmd` with a pipe on fd 3 named by `AXON_OUTCOME_FD` and
+/// [`GV_NONCE`] on a second pipe on fd 4 named by `AXON_OUTCOME_NONCE_FD`, as
+/// axon-os does: its output, and every byte written to the outcome pipe.
 #[cfg(target_os = "linux")]
 fn with_outcome_pipe(cmd: &mut Command) -> (std::process::Output, String) {
-    use std::io::Read;
+    with_outcome_pipe_nonce(cmd, format!("{GV_NONCE}\n").as_bytes())
+}
+
+/// [`with_outcome_pipe`] with `nonce` as the exact bytes on the nonce fd.
+#[cfg(target_os = "linux")]
+fn with_outcome_pipe_nonce(cmd: &mut Command, nonce: &[u8]) -> (std::process::Output, String) {
+    use std::io::{Read, Write};
     use std::os::fd::AsRawFd;
     use std::os::unix::process::CommandExt;
     let (mut reader, writer) = std::io::pipe().unwrap();
+    let (nonce_reader, mut nonce_writer) = std::io::pipe().unwrap();
+    nonce_writer.write_all(nonce).unwrap();
+    drop(nonce_writer);
     let wfd = writer.as_raw_fd();
+    let nfd = nonce_reader.as_raw_fd();
     cmd.env("AXON_OUTCOME_FD", "3")
-        .env("AXON_OUTCOME_NONCE", GV_NONCE)
+        .env("AXON_OUTCOME_NONCE_FD", "4")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    // SAFETY: only async-signal-safe `dup2`/`fcntl` between fork and exec.
+    // SAFETY: only async-signal-safe `fcntl`/`dup2` between fork and exec.
+    // Both ends are first copied to fds >= 10 (close-on-exec), so neither
+    // `dup2` can close the other's source.
     unsafe {
         cmd.pre_exec(move || {
-            let ok = if wfd == 3 {
-                let f = libc::fcntl(3, libc::F_GETFD);
-                f != -1 && libc::fcntl(3, libc::F_SETFD, f & !libc::FD_CLOEXEC) != -1
-            } else {
-                libc::dup2(wfd, 3) != -1
-            };
-            if ok {
-                Ok(())
-            } else {
-                Err(std::io::Error::last_os_error())
+            let w = libc::fcntl(wfd, libc::F_DUPFD_CLOEXEC, 10);
+            let n = libc::fcntl(nfd, libc::F_DUPFD_CLOEXEC, 10);
+            if w == -1 || n == -1 || libc::dup2(w, 3) == -1 || libc::dup2(n, 4) == -1 {
+                return Err(std::io::Error::last_os_error());
             }
+            Ok(())
         });
     }
     let child = cmd.spawn().unwrap();
     drop(writer);
+    drop(nonce_reader);
     let out = child.wait_with_output().unwrap();
     let mut record = String::new();
     reader.read_to_string(&mut record).unwrap();
@@ -47663,7 +47671,8 @@ fn run_without_the_outcome_fd_is_byte_identical() {
         cmd.current_dir(&d)
             .args(["run", &format!("{tag}.ax")])
             .env_remove("AXON_OUTCOME_FD")
-            .env_remove("AXON_OUTCOME_NONCE");
+            .env_remove("AXON_OUTCOME_NONCE")
+            .env_remove("AXON_OUTCOME_NONCE_FD");
         for (k, v) in *env {
             cmd.env(k, v);
         }
@@ -47718,7 +47727,7 @@ fn a_closed_outcome_fd_is_refused() {
         .arg("run")
         .arg(&f)
         .env("AXON_OUTCOME_FD", "9")
-        .env("AXON_OUTCOME_NONCE", GV_NONCE)
+        .env("AXON_OUTCOME_NONCE_FD", "8")
         .output()
         .unwrap();
     let _ = std::fs::remove_dir_all(&d);
@@ -47973,4 +47982,213 @@ fn run_source_fd_provenance_hashes_fd_bytes() {
         start.contains(&format!("\"src\":\"{}\"", label.display())),
         "run_start must store the FILE label: {start}"
     );
+}
+
+// ---- genviab-b3 B3-3: the outcome nonce travels on fd 4, never in env -----
+
+/// The nonce is read from `AXON_OUTCOME_NONCE_FD` (fd 4) and echoed in the
+/// record; the environment carries fd numbers only.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_outcome_nonce_is_read_from_the_nonce_fd() {
+    let d = gv_dir("b3-noncefd");
+    let f = d.join("p.ax");
+    std::fs::write(&f, "fn main() -> i64 { 0 }\n").unwrap();
+    let mut cmd = axon();
+    cmd.current_dir(&d).arg("run").arg(&f);
+    let (out, record) = with_outcome_pipe(&mut cmd);
+    let _ = std::fs::remove_dir_all(&d);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(
+        record.starts_with(&format!(
+            "{{\"schema\":\"axon-outcome/1\",\"nonce\":\"{GV_NONCE}\",\"kind\":\"exit\""
+        )),
+        "ATTACK: the record did not carry the nonce from the nonce fd: {record:?} {out:?}"
+    );
+}
+
+/// A short, long, upper-case, non-hex or empty read on the nonce fd is
+/// refused (exit 2, no record), like a malformed nonce variable was.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_malformed_nonce_on_the_nonce_fd_is_refused() {
+    let d = gv_dir("b3-badnonce");
+    let f = d.join("p.ax");
+    std::fs::write(&f, "fn main() -> i64 { 0 }\n").unwrap();
+    let long = format!("{}\n", "a".repeat(129));
+    let mut fails = Vec::new();
+    for (tag, nonce) in [
+        ("short", "0123456789abcde\n"),
+        ("upper", "0123456789ABCDEF0123456789ABCDEF\n"),
+        ("nonhex", "0123456789abcdeg0123456789abcdef\n"),
+        ("quote", "0123456789abcdef\",\"x\n"),
+        ("empty", ""),
+        ("long", long.as_str()),
+        ("two-lines", "0123456789abcdef\n0123456789abcdef\n"),
+    ] {
+        let mut cmd = axon();
+        cmd.current_dir(&d).arg("run").arg(&f);
+        let (out, record) = with_outcome_pipe_nonce(&mut cmd, nonce.as_bytes());
+        let err = String::from_utf8_lossy(&out.stderr);
+        if out.status.code() != Some(2)
+            || !record.is_empty()
+            || !err.contains("AXON_OUTCOME_NONCE_FD")
+        {
+            fails.push(format!(
+                "[{tag}] {:?} record {record:?} stderr {err:?}",
+                out.status.code()
+            ));
+        }
+    }
+    // Control: a well-formed nonce on the same path is installed.
+    let mut cmd = axon();
+    cmd.current_dir(&d).arg("run").arg(&f);
+    let (out, record) = with_outcome_pipe(&mut cmd);
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(
+        out.status.code() == Some(0) && record.contains(GV_NONCE),
+        "premise: a valid nonce on fd 4 installs the channel: {out:?} {record:?}"
+    );
+    assert!(
+        fails.is_empty(),
+        "ATTACK: a malformed nonce installed an outcome channel:\n{}",
+        fails.join("\n")
+    );
+}
+
+/// `AXON_OUTCOME_NONCE` is gone: a supervisor still setting it would leave
+/// the nonce in the kernel's environment block, so it is refused.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_old_nonce_variable_is_refused() {
+    let d = gv_dir("b3-oldnonce");
+    let f = d.join("p.ax");
+    std::fs::write(&f, "fn main() -> i64 { 0 }\n").unwrap();
+    let mut cmd = axon();
+    cmd.current_dir(&d).arg("run").arg(&f);
+    let (out, record) = with_outcome_pipe(cmd.env("AXON_OUTCOME_NONCE", GV_NONCE));
+    let _ = std::fs::remove_dir_all(&d);
+    assert_eq!(
+        (out.status.code(), record.as_str()),
+        (Some(2), ""),
+        "ATTACK: the old nonce variable was accepted: {out:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("AXON_OUTCOME_NONCE is replaced by AXON_OUTCOME_NONCE_FD"),
+        "{out:?}"
+    );
+}
+
+/// With a channel installed the interpreter is not dumpable, so a process
+/// it spawns (same uid) cannot open `/proc/<interp>/environ` or `fd/`. Run
+/// as uid 65534 when the test runs as root, so the answer does not depend on
+/// who runs the test.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_spawned_process_cannot_open_the_interpreters_proc_files() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    let d = gv_dir("b3-dumpable");
+    std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let f = d.join("p.ax");
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n    match exec(\"sh\", [\"-c\", \"cat /proc/$PPID/environ >/dev/null 2>&1 && echo env-readable || echo env-denied; ls /proc/$PPID/fd/ >/dev/null 2>&1 && echo fds-readable || echo fds-denied\"]) {\n        Ok(o) => {\n            println(o)\n            0\n        }\n        Err(e) => {\n            println(e)\n            1\n        }\n    }\n}\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+    // SAFETY: `geteuid` has no preconditions.
+    let as_root = unsafe { libc::geteuid() } == 0;
+    // Root bypasses the dumpable check, so as root the interpreter runs as
+    // 65534, from a copy in the world-readable scratch dir (the build tree
+    // may sit under a home directory 65534 cannot traverse).
+    let mut cmd = if as_root {
+        let bin = d.join("axon");
+        std::fs::copy(env!("CARGO_BIN_EXE_axon"), &bin).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut c = Command::new(bin);
+        c.uid(65534).gid(65534);
+        c
+    } else {
+        axon()
+    };
+    cmd.current_dir(&d).arg("run").arg(&f).env("HOME", &d);
+    let (out, record) = with_outcome_pipe(&mut cmd);
+    let _ = std::fs::remove_dir_all(&d);
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        out.status.code() == Some(0)
+            && record.contains("\"kind\":\"exit\"")
+            && stdout.contains("env-")
+            && stdout.contains("fds-"),
+        "premise: exec ran under the outcome channel: {out:?} {record:?}"
+    );
+    assert!(
+        stdout.contains("env-denied") && stdout.contains("fds-denied"),
+        "ATTACK: a spawned process opened the interpreter's /proc files: {stdout:?}"
+    );
+}
+
+// ---- genviab-b3 B3-7: module-level `let` initialisers run before `main` ----
+
+/// An initialiser that reads outside the (empty) grant, through a helper.
+const B3_EARLY: &str = "fn early() -> i64 {\n    match read_file(\"/etc/hostname\") {\n        Ok(s) => println(\"LEAK \" + s),\n        Err(e) => println(\"refused: \" + e),\n    }\n    0\n}\nlet X = early()\n";
+
+/// B3-7: a non-lambda module-level `let` initialiser runs before `main`, so a
+/// `@[contained]` main is checked over it too (E1001, naming the `let`).
+#[test]
+fn a_contained_main_covers_module_level_lets() {
+    let src =
+        format!("{B3_EARLY}@[contained(fs: [], exec: none)]\nfn main() -> i64 {{\n    0\n}}\n");
+    let (rc, err) = check_rc(&src, false, None);
+    assert!(
+        rc != 0 && err.contains("E1001") && err.contains("module-level `let X`"),
+        "ATTACK: a contained main's module-level let reached an ungranted capability: rc={rc} {err}"
+    );
+}
+
+/// B3-7: `--require-contained` covers what `main`'s module-level `let`s run:
+/// E1005, exit 2, and the read never happens.
+#[test]
+fn require_contained_covers_module_level_lets() {
+    let d = std::env::temp_dir().join(format!("axon-b3-ml-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("ml.ax");
+    std::fs::write(&f, format!("{B3_EARLY}fn main() -> i64 {{\n    0\n}}\n")).unwrap();
+    let out = axon()
+        .current_dir(&d)
+        .args(["run", "--require-contained"])
+        .arg(&f)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(2) && stderr.contains("E1005") && !stdout.contains("LEAK"),
+        "ATTACK: a module-level let ran outside --require-contained: {out:?}"
+    );
+}
+
+/// B3-7 (B3A-5): a contained main calling a module-level lambda runs the
+/// lambda's body, so the walk follows the name to it.
+#[test]
+fn a_contained_main_calling_a_module_lambda_is_checked() {
+    let src = "let g = |p: str| match read_file(p) {\n    Ok(s) => s,\n    Err(e) => e,\n}\n@[contained(fs: [], exec: none)]\nfn main() -> i64 {\n    println(g(\"/etc/hostname\"))\n    0\n}\n";
+    let (rc, err) = check_rc(src, false, None);
+    assert!(
+        rc != 0 && err.contains("E1001"),
+        "ATTACK: a contained main called a module-level lambda that reached an ungranted capability: rc={rc} {err}"
+    );
+}
+
+/// B3-7 (B3A-5) control: a module-level lambda nothing calls only builds a
+/// closure; it is not a capability of `main` (R45's unused-code rule).
+#[test]
+fn an_unused_module_lambda_is_not_a_capability_of_main() {
+    let src = "let g = |p: str| match read_file(p) {\n    Ok(s) => s,\n    Err(e) => e,\n}\n@[contained(fs: [], exec: none)]\nfn main() -> i64 {\n    println(\"hi\")\n    0\n}\n";
+    let (rc, err) = check_rc(src, false, None);
+    assert_eq!(rc, 0, "an unused module-level lambda was refused: {err}");
 }

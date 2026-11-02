@@ -432,9 +432,17 @@ pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
             _ => {}
         }
     }
+    let module_lets = ModuleLets::of(program);
     for item in &program.items {
         match item {
-            Item::FnDef(fndef) => check_fn(fndef, &fn_map, &method_map, &hooks, &mut errors),
+            Item::FnDef(fndef) => check_fn(
+                fndef,
+                &fn_map,
+                &method_map,
+                &hooks,
+                &module_lets,
+                &mut errors,
+            ),
             // An impl method with its OWN @[contained] must be enforced too —
             // otherwise `impl T for X { @[contained(net:[])] fn m(self){ http_get(..) } }`
             // would silently escape its declared sandbox (the method's body was
@@ -442,7 +450,7 @@ pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
             // no-ops in check_fn, matching free-fn behavior.
             Item::ImplBlock(b) => {
                 for m in &b.methods {
-                    check_fn(m, &fn_map, &method_map, &hooks, &mut errors);
+                    check_fn(m, &fn_map, &method_map, &hooks, &module_lets, &mut errors);
                 }
             }
             _ => {}
@@ -456,6 +464,7 @@ fn check_fn<'a>(
     fn_map: &'a std::collections::HashMap<&'a str, &'a FnDef>,
     method_map: &'a std::collections::HashMap<&'a str, Vec<&'a FnDef>>,
     hooks: &'a TypeHooks<'a>,
+    module_lets: &'a ModuleLets<'a>,
     errors: &mut Vec<CapabilityError>,
 ) {
     // R45: the default applies to `main` ONLY, and the existing transitive walk
@@ -497,7 +506,9 @@ fn check_fn<'a>(
         site: fndef.span,
         errors,
         reach: None,
-        module_lets: None,
+        // genviab-b3 B3-7: every walk follows a module-level `let` its code
+        // names (a call through a module lambda runs the lambda's body).
+        module_lets: Some(&module_lets.by_name),
         visited_lets: std::collections::HashSet::new(),
     };
     let before = ctx.errors.len();
@@ -506,7 +517,26 @@ fn check_fn<'a>(
     // `@[verify]` predicate and its `@[goal]` metric.
     let mut work = vec![Walk::Expr(&fndef.body)];
     push_fn_hooks(fndef, &ctx, &mut work);
+    // genviab-b3 B3-7: every module-level `let` initialiser that is not a
+    // lambda runs before `main` (`Interp::init_globals`), so `main`'s walk
+    // roots them, each reported at its own `let`. A lambda initialiser only
+    // builds a closure: its body counts when the walk reaches its name.
+    let roots: &[(&str, &Expr, Span)] = if fndef.name == "main" {
+        &module_lets.roots
+    } else {
+        &[]
+    };
+    for (name, _, _) in roots {
+        ctx.visited_lets.insert(name);
+    }
     drain_walk(work, &mut ctx);
+    let mut from_lets: Vec<(usize, usize, &str)> = Vec::new();
+    for &(name, init, span) in roots {
+        let start = ctx.errors.len();
+        ctx.site = span;
+        drain_walk(vec![Walk::Expr(init)], &mut ctx);
+        from_lets.push((start, ctx.errors.len(), name));
+    }
 
     // R45 §3 — relabel violations of a SYNTHESIZED spec.
     //
@@ -544,6 +574,43 @@ fn check_fn<'a>(
                 ),
             };
         }
+    }
+    // genviab-b3 B3-7: a violation an initialiser reached says so, after the
+    // relabel (which rebuilds the first line).
+    for (start, end, name) in from_lets {
+        for e in ctx.errors[start..end].iter_mut() {
+            let note = format!(" (module-level `let {name}`, evaluated before `main`)");
+            match e.message.find("\n  help: ") {
+                Some(at) => e.message.insert_str(at, &note),
+                None => e.message.push_str(&note),
+            }
+        }
+    }
+}
+
+/// genviab-b3 B3-7: the module-level `let`s a `@[contained]` walk knows about:
+/// every initialiser by name (followed when the walk names it: a call through
+/// a module lambda runs its body, a closure a call built runs the builder's),
+/// and the non-lambda ones `main` roots, with their spans, because
+/// `Interp::init_globals` evaluates them before `main` runs.
+struct ModuleLets<'a> {
+    by_name: std::collections::HashMap<&'a str, &'a Expr>,
+    roots: Vec<(&'a str, &'a Expr, Span)>,
+}
+
+impl<'a> ModuleLets<'a> {
+    fn of(program: &'a Program) -> Self {
+        let mut by_name = std::collections::HashMap::new();
+        let mut roots = Vec::new();
+        for item in &program.items {
+            if let Item::LetDef { name, value, span } = item {
+                by_name.insert(name.as_str(), &**value);
+                if !matches!(**value, Expr::Lambda { .. }) {
+                    roots.push((name.as_str(), &**value, *span));
+                }
+            }
+        }
+        ModuleLets { by_name, roots }
     }
 }
 

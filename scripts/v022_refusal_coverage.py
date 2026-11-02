@@ -3714,7 +3714,7 @@ EXEMPT += [
     ("crates/axon-os/src/runtime.rs", '        return refuse("malformed");\n    };\n    if kind == RecordKind::Fault', _GV1R),
     ("crates/axon-os/src/runtime.rs", '        return refuse("unknown fault class");', _GV1R),
     ("crates/axon-os/src/runtime.rs", '        return refuse("the interpreter died by a signal after writing it");',
-     _GV1R + _GV1T + "[sigkill]"),
+     _GV1R + "; observed by sandbox_capture `a_sigkilled_run_names_the_signal_once` (genviab-b3 B3-6)"),
     ("crates/axon-os/src/runtime.rs", '''        return refuse(&format!("its code {code} is not the exit status"));''',
      _GV1R + _GV1T + "[mismatch]"),
     ("crates/axon-os/src/runtime.rs", "const FAULT_CLASSES: &[&str] = &[",
@@ -3722,19 +3722,18 @@ EXEMPT += [
     ("crates/axon-os/src/runtime.rs", "pub const OUTCOME_RECORD_MAX: usize = 4096;",
      _GV1R + "; a longer record is refused, and the drain keeps 2x this bound"),
     ("crates/axon-os/src/runtime.rs", "pub const OUTCOME_FD: i32 = 3;", _ACR),
-    ("crates/axon-os/src/runtime.rs", 'pub const OUTCOME_FD_ENV: &str = "AXON_OUTCOME_FD";', _ACR),
-    ("crates/axon-os/src/runtime.rs", 'pub const OUTCOME_NONCE_ENV: &str = "AXON_OUTCOME_NONCE";', _ACR),
-    # give_child_outcome_fd: the child's copy of the pipe's write end. A failed dup2/fcntl fails
-    # the spawn (no run), and a missing or wrong fd leaves no record, which fails closed above.
+    ("crates/axon-os/src/runtime.rs", "pub const OUTCOME_NONCE_FD: i32 = 4;", _ACR),
+    # give_child_outcome_fd / place_outcome_fds (genviab-b3 B3-3, B3A-4): the child's copies of
+    # the outcome pipe's write end and the nonce pipe's read end. A failed fcntl/dup2 fails the
+    # spawn (no run), and a missing or wrong fd leaves no record, which fails closed above.
     ("crates/axon-os/src/runtime.rs", "    cmd.env(OUTCOME_FD_ENV, OUTCOME_FD.to_string());", _GV1R),
-    ("crates/axon-os/src/runtime.rs", "    cmd.env(OUTCOME_NONCE_ENV, nonce);", _GV1R),
-    ("crates/axon-os/src/runtime.rs", "        cmd.pre_exec(move || {\n            if wfd == OUTCOME_FD {", _GV1R),
-    ("crates/axon-os/src/runtime.rs", "                let flags = libc::fcntl(wfd, libc::F_GETFD);", _GV1R),
+    ("crates/axon-os/src/runtime.rs", "    cmd.env(OUTCOME_NONCE_FD_ENV, OUTCOME_NONCE_FD.to_string());", _GV1R),
+    ("crates/axon-os/src/runtime.rs", "        cmd.pre_exec(move || place_outcome_fds(wfd, nfd));", _GV1R),
+    ("crates/axon-os/src/runtime.rs", "        let w = libc::fcntl(wfd, libc::F_DUPFD_CLOEXEC, 10);", _GV1R),
+    ("crates/axon-os/src/runtime.rs", "        if w == -1 {\n            return Err(", _GV1R),
+    ("crates/axon-os/src/runtime.rs", "        if n == -1 {\n            return Err(", _GV1R),
     ("crates/axon-os/src/runtime.rs",
-     "                if flags == -1 || libc::fcntl(wfd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) == -1 {",
-     _GV1R),
-    ("crates/axon-os/src/runtime.rs",
-     "            } else if libc::dup2(wfd, OUTCOME_FD) == -1 {\n                return Err(", _GV1R),
+     "        if libc::dup2(w, OUTCOME_FD) == -1 || libc::dup2(n, OUTCOME_NONCE_FD) == -1 {", _GV1R),
 ]
 
 # G2d/G2c (gap closure, lane gaps-cancel), moved by KG1 (gaps2) into crates/axon-jobctl: a
@@ -4446,7 +4445,9 @@ VALUE_EXEMPT += [
     ('crates/axon-os/src/runtime.rs', 'run_bounded_outcome', 2, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103, re-run after GV-1): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) <binary> -p axon-os --lib, <binary> -p axon-os --test acceptance, <binary> -p axon-os --test sandbox_capture; no row of its own'),
     ('crates/axon-os/src/runtime.rs', 'run_bounded_outcome', 3, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103, re-run after GV-1): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) a_program_printing_only_diag_json_and_exiting_2_is_its_own_exit, exit_status_and_output_are_captured, the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory; no row of its own'),
     ('crates/axon-os/src/runtime.rs', '~flow', 1, '3', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 107, GV-1): editing this value (OUTCOME_FD 3 -> 4) fails the test(s) a_bad_ceilings_file_is_a_compile_outcome, a_run_without_an_outcome_record_is_a_sandbox_fault, a_valid_stub_record_decides_the_outcome; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', '~flow', 2, '4', 'OBSERVED', 'OBSERVED-NOT-ROWED (genviab-b3 B3-3; edited by hand): editing this value (OUTCOME_NONCE_FD 4 -> 5) fails the test(s) a_bad_ceilings_file_is_a_compile_outcome, a_run_without_an_outcome_record_is_a_sandbox_fault, a_valid_stub_record_decides_the_outcome, step_exhaustion_is_a_fault_not_the_programs_exit_9 (the stubs read the nonce from fd 4); no row of its own'),
     ('crates/axon-os/src/runtime.rs', 'give_child_outcome_fd', 1, 'OUTCOME_FD.to_string()', 'OBSERVED', 'OBSERVED-NOT-ROWED (GV-1; the survey has no rule for this value, edited by hand): editing this value (OUTCOME_FD.to_string() -> "4".to_string()) fails the test(s) exit_status_and_output_are_captured, a_timeout_is_its_own_outcome, the_supervisor_hands_the_interpreter_an_outcome_pipe (the interpreter refuses an AXON_OUTCOME_FD that is not open); no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'give_child_outcome_fd', 2, 'OUTCOME_NONCE_FD.to_string()', 'OBSERVED', 'OBSERVED-NOT-ROWED (genviab-b3 B3-3; edited by hand): editing this value (OUTCOME_NONCE_FD.to_string() -> "5".to_string()) fails the test(s) a_timeout_is_its_own_outcome, a_nullary_main_exits_zero_and_unterminated_output_is_kept, the_kernels_environ_copy_holds_no_outcome_nonce (the interpreter refuses an AXON_OUTCOME_NONCE_FD that is not open); no row of its own'),
     ('crates/axon-os/src/runtime.rs', 'launch', 1, '"run"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("run" -> "runx") fails the test(s) a_kill_armed_before_its_run_starts_stops_the_run, a_narrow_allowlist_denies_because_the_monitor_can_see_the_ledger, acc_a1_smoke_kill_journey; no row of its own'),
     ('crates/axon-os/src/runtime.rs', 'write_new', 1, '0o600', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o600 -> 0o777) fails the test(s) runtime::runtime_tests::staging_dir_is_private_fresh_and_removed, the_wrapper_is_staged_privately_and_removed; no row of its own'),
     ('crates/axon-psv/src/lib.rs', 'mode_is_normalised', 1, '0o755', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o755 -> 0o777) fails the test(s) inputs_carrying_an_extended_attribute_are_refused, inputs_holding_what_the_digest_cannot_see_are_refused; no row of its own'),
