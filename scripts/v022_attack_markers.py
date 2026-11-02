@@ -3984,11 +3984,13 @@ ATTACK_MARKERS.update({
     'M4673': r'ATTACK: if let diverged natively',
 })
 
-# asi-fixes AF-3: bare variant name in a pattern, E0409 (ids M4617-M4619, M4626, M4627)
+# asi-fixes AF-3: bare variant name in a pattern, E0409 (ids M4617-M4619, M4626-M4629)
 ATTACK_MARKERS.update({
     'M4617': r'ATTACK: bare variant name bound as catch-all \[v1\]',
     'M4618': r'ATTACK: Some\(Green\) bound instead of compared \[v5\]',
     'M4619': r'ATTACK: legal binding refused \[v4\]',
     'M4626': r'ATTACK: \(Green, n\) bound instead of compared \[v9\]',
     'M4627': r'ATTACK: legal binding refused \[sh\]',
+    'M4628': r'ATTACK: the if-let catch-all refused as a variant \[iflet_synthetic\]',
+    'M4629': r'ATTACK: Some\(Green\) bound instead of compared \[v10\]',
 })

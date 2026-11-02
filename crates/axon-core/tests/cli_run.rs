@@ -46354,3 +46354,60 @@ fn bare_name_of_other_enum_or_non_enum_subject_is_not_e0409() {
     }
     assert!(fails.is_empty(), "{}", fails.join("\n"));
 }
+
+/// LF-2's `if let P = e` is `match e { P => .., __iflet_N => .. }`, so the
+/// Match check covers it: `if let Green = c` is E0409 like `match`, the
+/// qualified form checks clean, and the parser's `__iflet_N` catch-all is
+/// never taken for a variant, even when the enum declares one of that name.
+#[test]
+fn bare_variant_in_if_let_is_e0409() {
+    let catch_all = "ATTACK: bare variant name bound as catch-all";
+    let mut fails = Vec::new();
+    for (name, src) in [
+        ("iflet", "enum C { Red, Green, Blue }\nfn score(c: C) -> i64 {\n    if let Green = c { 2 } else { 1 }\n}\nfn main() { println(to_str(score(C::Red))) }\n"),
+        ("iflet_some", "enum C { Red, Green }\nfn f(o: Option<C>) -> i64 {\n    if let Some(Green) = o { 2 } else { 1 }\n}\nfn main() { println(to_str(f(Some(C::Red)))) }\n"),
+    ] {
+        let (rc, err) = af3_check(name, src);
+        let ok = rc == Some(2)
+            && err.lines().any(|l| {
+                l.contains("\"code\":\"E0409\"")
+                    && l.contains("\"line\":3,")
+                    && l.contains("write `C::Green`")
+            });
+        if !ok {
+            fails.push(format!("{catch_all} [{name}]: rc={rc:?} {err}"));
+        }
+    }
+    let qualified = "enum C { Red, Green, Blue }\nfn score(c: C) -> i64 {\n    if let C::Green = c { 2 } else { 1 }\n}\nfn main() { println(to_str(score(C::Red))) }\n";
+    // The `if` sits within the first 40 tokens, so one of these variants is
+    // the desugar's own `__iflet_N` name.
+    let mut synthetic = String::from(
+        "fn score(e: E) -> i64 {\n    if let E::A = e { 2 } else { 1 }\n}\nfn main() { println(to_str(score(E::A))) }\nenum E { A",
+    );
+    for i in 0..=40 {
+        synthetic.push_str(&format!(", __iflet_{i}"));
+    }
+    synthetic.push_str(" }\n");
+    for (name, src, want) in [
+        ("iflet_qualified", qualified, "1"),
+        ("iflet_synthetic", synthetic.as_str(), "2"),
+    ] {
+        let attack = "ATTACK: the if-let catch-all refused as a variant";
+        let (rc, err) = af3_check(name, src);
+        if rc != Some(0) || err.contains("E0409") {
+            fails.push(format!("{attack} [{name}]: rc={rc:?} {err}"));
+            continue;
+        }
+        let f = tmp_ax(&format!("af3_{name}_run"), src);
+        let out = axon().arg("run").arg(&f).output().expect("spawn axon run");
+        let _ = std::fs::remove_file(&f);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if out.status.code() != Some(0) || stdout.trim() != want {
+            fails.push(format!(
+                "{attack} [{name} run]: rc={:?} {stdout}",
+                out.status.code()
+            ));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}

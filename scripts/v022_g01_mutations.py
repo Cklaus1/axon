@@ -14450,7 +14450,7 @@ MUTATIONS += [
 ]
 
 # asi-fixes AF-3: a bare variant name in a pattern binds a catch-all, E0409
-# (tasks/asi-fixes-spec.md AF-3 and g01; ids M4617-M4619, plus M4626/M4627)
+# (tasks/asi-fixes-spec.md AF-3 and g01; ids M4617-M4619, plus M4626-M4629)
 _AF3 = 'crates/axon-core/src/checker.rs'
 MUTATIONS += [
     ('M4617', 'AF-3: a bare variant name in a pattern is never reported (E0409 not pushed)', _AF3,
@@ -14473,6 +14473,14 @@ MUTATIONS += [
      '.filter(|(fname, fpat)| !matches!(fpat, Pattern::Ident(b) if b == fname))',
      '.filter(|(_fname, _fpat)| true)',
      'axon-core', '--no-default-features --test cli_run', 'bare_name_of_other_enum_or_non_enum_subject_is_not_e0409'),
+    ('M4628', 'AF-3: the parser\'s `__iflet_N` catch-all is checked as a bare variant name', _AF3,
+     '                if n.starts_with("__") {\n                    return;\n                }\n                let enum_name = match ty {',
+     '                if false && n.starts_with("__") {\n                    return;\n                }\n                let enum_name = match ty {',
+     'axon-core', '--no-default-features --test cli_run', 'bare_variant_in_if_let_is_e0409'),
+    ('M4629', 'AF-3: the `while let` pattern is not walked for bare variant names', _AF3,
+     '                self.check_bare_variant_patterns(pattern, &expr_ty, node_path);',
+     '                let _ = (pattern, &expr_ty);',
+     'axon-core', '--no-default-features --test cli_run', 'bare_variant_in_pattern_is_e0409'),
 ]
 
 if __name__ == "__main__":
