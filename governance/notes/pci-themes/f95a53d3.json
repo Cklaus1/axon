@@ -1,0 +1,1 @@
+{"theme": "merge b2/ce (ICE-3 + GV-1)", "text": "INTERPRETER CLI (main.rs): the merge keeps both sides of apply_ceiling: --ceiling and AXON_CEILING naming one file in two spellings is one ceiling (ICE-3), and a real two-ceiling refusal is E1007 exit 2 that also writes the GV-1 outcome record under a supervisor. No other behaviour changes."}

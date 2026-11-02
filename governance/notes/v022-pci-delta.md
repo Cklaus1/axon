@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 5454b4fb42968357e0d59a706abd4d0dc259064e
+generated-at: f95a53d38b9e27479e315324a7cfa17f1f630b3d
 
-`git diff --numstat 31413ca7..5454b4fb -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..f95a53d3 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -58,8 +58,8 @@ generated-at: 5454b4fb42968357e0d59a706abd4d0dc259064e
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 2381 | 487 |
-| `crates/axon-core/src/interp.rs` | 8220 | 2901 |
-| `crates/axon-core/src/interp/builtins.rs` | 1306 | 851 |
+| `crates/axon-core/src/interp.rs` | 8340 | 2871 |
+| `crates/axon-core/src/interp/builtins.rs` | 1307 | 851 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
@@ -83,7 +83,7 @@ generated-at: 5454b4fb42968357e0d59a706abd4d0dc259064e
 | `crates/axon-core/src/interp/value.rs` | 577 | 530 |
 | `crates/axon-core/src/interp/vm/compile.rs` | 1801 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3596 | 0 |
-| `crates/axon-core/src/interp/vm/pure.rs` | 1840 | 0 |
+| `crates/axon-core/src/interp/vm/pure.rs` | 1842 | 0 |
 | `crates/axon-core/src/interp/vm/purefn.rs` | 871 | 0 |
 | `crates/axon-core/src/interp/vm/tests.rs` | 2756 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
@@ -91,7 +91,7 @@ generated-at: 5454b4fb42968357e0d59a706abd4d0dc259064e
 | `crates/axon-core/src/lib.rs` | 447 | 102 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 215 | 60 |
-| `crates/axon-core/src/main.rs` | 2040 | 518 |
+| `crates/axon-core/src/main.rs` | 2053 | 517 |
 | `crates/axon-core/src/mono.rs` | 71 | 17 |
 | `crates/axon-core/src/mut_borrow.rs` | 944 | 0 |
 | `crates/axon-core/src/outcome.rs` | 232 | 0 |
@@ -104,9 +104,9 @@ generated-at: 5454b4fb42968357e0d59a706abd4d0dc259064e
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 68464 | 9601 |
+| total | 68600 | 9570 |
 
-`git log --reverse 31413ca7..5454b4fb -- crates/axon-core/src`:
+`git log --reverse 31413ca7..f95a53d3 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -520,10 +520,13 @@ generated-at: 5454b4fb42968357e0d59a706abd4d0dc259064e
 | 9e9671bb | b2/s4b merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | d4286fe5 | b2/ce merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 3c19c6de | CS4-3 narrowed (ICS-1) | CHECKER (infer.rs, all engines): a tuple pattern's components are bound untyped again, as before CS4-3; only the shape check (wrong length, non-tuple subject = E0102) stays. Programs that use a component holding an int literal as u8/i32/f64 check clean again, as they did at base. The 714 tracked .ax files check with the same exit codes and diagnostics as the reference binary. |
+| 762bc44b | ceilings ICE-1..3 audit fixes | INTERPRETER (tree and VM): under AXON_MAX_STEPS / AXON_WALL_MS (or a ceiling's steps / wall_ms) a lambda-body entry is now one step on both engines, so callback-only work (arr_map, arr_fold) stops with E1006, exit 9; the VM's fold-leaf tier declines under either bound. The run-wide meters (steps, the wall-clock start, ai_calls, the AXON_BUDGET_TOKENS / ai_tokens charge) are per process, so axon test spends one budget across its tests instead of restarting it per test. --ceiling and AXON_CEILING naming one file in two spellings are one ceiling (canonical paths compared); two different files stay E1007. Runs with no ceiling are unchanged. |
+| e05862d9 | ceilings ICE-2 run meters per run | INTERPRETER (tree and VM): the run-wide meters behind AXON_MAX_STEPS / AXON_WALL_MS / AXON_BUDGET_TOKENS and a ceiling's steps / wall_ms / ai_tokens / ai_calls are one RunMeters per CLI invocation, installed by axon's main and shared by every interpreter that invocation builds (per-test interpreters under axon test, interpreter threads), instead of process statics. CLI behaviour is unchanged from 762bc44b; an interpreter built by a library caller outside a with_run_meters scope now gets fresh meters instead of counters left over from earlier runs in the same process, and step / ai_calls / token updates are atomic. Runs with no bound set are unchanged. |
 | 5814a792 | GV-1 run outcome channel | INTERPRETER + AXON-OS: under a supervisor (AXON_OUTCOME_FD / AXON_OUTCOME_NONCE set), axon run writes one axon-outcome/1 record (kind, code, class, nonce) on a supervisor-only fd, removes both variables from its environment and marks the fd close-on-exec; other verbs refuse the variables (exit 2). axon-os capture and job classify decide a run from that record, never from stderr or the exit status; a missing, malformed, wrong-nonce or duplicate record is a sandbox refusal. Without the variables, axon run output and exit codes are byte-identical (714 tracked .ax files, check and run). |
 | 50b02709 | GV-1 outcome reason | INTERPRETER (main.rs): the outcome record's compile reason is the first entry of the errors-only list; only the supervisor record's reason text changes. No program's output or exit code changes. |
 | 5454b4fb | b2/gvos merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 413 commits | | |
+| f95a53d3 | merge b2/ce (ICE-3 + GV-1) | INTERPRETER CLI (main.rs): the merge keeps both sides of apply_ceiling: --ceiling and AXON_CEILING naming one file in two spellings is one ceiling (ICE-3), and a real two-ceiling refusal is E1007 exit 2 that also writes the GV-1 outcome record under a supervisor. No other behaviour changes. |
+| 416 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -682,7 +685,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 747 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4723-M4727, M4730, M4732, M4740-M4749
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 754 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4723-M4727, M4730, M4732, M4740-M4756
 
 | delta | rows (named in the amendment's own text) |
 |---|---|

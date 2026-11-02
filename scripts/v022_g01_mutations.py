@@ -14759,8 +14759,8 @@ MUTATIONS += [
      '                .saturating_add(0);',
      'axon-core', '--no-default-features --test ceiling', 'token_cap_reserves_max_tokens'),
     ('M4696', 'CE-6: an answered call is never charged to the run cap', 'crates/axon-core/src/interp/builtins.rs',
-     '            .set(self.tokens_used.get().saturating_add(tokens.max(0)));',
-     '            .set(self.tokens_used.get().saturating_add(0 * tokens.max(0)));',
+     '            self.run.charge_tokens(tokens);',
+     '            self.run.charge_tokens(0 * tokens);',
      'axon-core', '--no-default-features --test ceiling', 'token_cap_charges_reply'),
     ('M4697', 'CE-6: extracts skip the run token cap', 'crates/axon-core/src/interp/builtins.rs',
      '        if let Some(cap) = self.token_budget {',
@@ -14780,8 +14780,8 @@ MUTATIONS += [
 # model-call cap stops the call past it with E1303 before dispatch.
 MUTATIONS += [
     ('M4740', 'CE-6: a ceiling ai_calls cap is never enforced', 'crates/axon-core/src/interp/builtins.rs',
-     '            if used >= cap {',
-     '            if false && used >= cap {',
+     '            if !self.run.take_ai_call(cap) {',
+     '            if false && !self.run.take_ai_call(cap) {',
      'axon-core', '--no-default-features --test ceiling', 'ceiling_ai_calls_caps_the_run'),
 ]
 
