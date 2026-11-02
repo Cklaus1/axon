@@ -458,6 +458,21 @@ pub struct MatchArm {
     pub body: Expr,
 }
 
+/// LF-2: the name prefix of the catch-all arm `if let` desugars to:
+/// `if let P = e { A } else B` is `match e { P => { A }, __iflet_N => B }`.
+pub const IF_LET_CATCH_ALL: &str = "__iflet_";
+
+/// The arms of a `match` that is an `if let` desugar: exactly two, the second
+/// an unguarded `__iflet_N` binding (no user can write that name by accident;
+/// a user's `match .. _ =>` stays a `match`).
+pub fn is_if_let_desugar(arms: &[MatchArm]) -> bool {
+    matches!(
+        arms,
+        [_, MatchArm { pattern: Pattern::Ident(n), guard: None, .. }]
+            if n.starts_with(IF_LET_CATCH_ALL)
+    )
+}
+
 /// Phase 6: the handler in a `with <handler> { … }` expression — either a named
 /// reference (`with retry_on_net { … }`) or an inline structural handler
 /// (`with handler { on Net(r) => … }`). This surface slice captures the syntax;

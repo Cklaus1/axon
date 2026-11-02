@@ -45793,6 +45793,471 @@ fn contained_import_edge_checks_a_sibling_module() {
     );
 }
 
+// lang-forms LF-1: `()` is the unit value (the same node as `{}`), and a `()`
+// pattern matches it. Every program here was refused at parse (`Ok(())`) or
+// passed check and panicked at run (`no match arm matched`) before.
+
+/// Check and run `src` (both must exit 0) and return run's stdout.
+fn lf_runs(attack: &str, tag: &str, src: &str) -> String {
+    let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+    assert_eq!(crc, Some(0), "{attack} [{tag}]: check: {cmsg}");
+    assert_eq!(rrc, Some(0), "{attack} [{tag}]: run: {rerr}");
+    rout
+}
+
+#[test]
+fn unit_value_paren_is_the_empty_block() {
+    let attack = "ATTACK: Ok(()) was refused at parse";
+    for (tag, src, out) in [
+        (
+            "lf1_u01",
+            "fn run() -> Result<(), str> {\n    println(\"hi\")\n    Ok(())\n}\nfn main() { match run() { Ok(_) => println(\"ok\"), Err(e) => println(e) } }\n",
+            "hi\nok\n",
+        ),
+        (
+            "lf1_u02",
+            "fn main() {\n    let u = ()\n    println(if u == {} { \"same\" } else { \"diff\" })\n}\n",
+            "same\n",
+        ),
+        (
+            "lf1_u03",
+            "fn f(n: i64) -> Result<(), str> {\n    if n > 0 {\n        return Ok(())\n    }\n    Err(\"neg\")\n}\nfn main() { match f(1) { Ok(_) => println(\"ok\"), Err(e) => println(e) } }\n",
+            "ok\n",
+        ),
+        (
+            "lf1_u04",
+            "fn main() {\n    let r: Result<(), str> = Ok(())\n    match r { Ok(_) => println(\"ok\"), Err(e) => println(e) }\n}\n",
+            "ok\n",
+        ),
+        // Moved from parse_help_probe `refused_forms_point_at_the_axon_spelling`
+        // (`unit_ok`, `unit_let`): the CS3-5 row that refused them is gone.
+        (
+            "lf1_unit_ok",
+            "fn f() -> Result<(), str> {\n    Ok(())\n}\nfn main() { match f() { Ok(_) => println(\"ok\") Err(e) => println(e) } }\n",
+            "ok\n",
+        ),
+        (
+            "lf1_unit_let",
+            "fn main() {\n    let u = ()\n    println(\"x\")\n}\n",
+            "x\n",
+        ),
+    ] {
+        assert_eq!(lf_runs(attack, tag, src), out, "{attack} [{tag}]");
+    }
+}
+
+#[test]
+fn unit_pattern_matches_the_unit_value() {
+    let attack = "ATTACK: a () pattern passed check and panicked";
+    for (tag, src, out) in [
+        (
+            "lf1_u06",
+            "fn f() -> Result<(), str> { Ok({}) }\nfn main() {\n    match f() { Ok(()) => println(\"unit\"), Err(e) => println(e) }\n}\n",
+            "unit\n",
+        ),
+        (
+            "lf1_u11",
+            "fn k() -> () { {} }\nfn main() {\n    let u: () = k()\n    match u { () => println(\"unit\") }\n}\n",
+            "unit\n",
+        ),
+        (
+            "lf1_p17",
+            "fn main() {\n    let u: () = {}\n    match u { () => println(\"unit\") }\n}\n",
+            "unit\n",
+        ),
+        // A `()` arm beside a fallback arm: the fallback ran before (`other\nb`).
+        (
+            "lf1_u20",
+            "fn f() -> Result<(), str> { Ok({}) }\nfn main() {\n    match f() { Ok(()) => println(\"unit\"), _ => println(\"other\") }\n    let u: () = {}\n    match u { () => println(\"a\"), _ => println(\"b\") }\n}\n",
+            "unit\na\n",
+        ),
+    ] {
+        assert_eq!(lf_runs(attack, tag, src), out, "{attack} [{tag}]");
+    }
+}
+
+#[test]
+fn paren_lambda_with_no_params_stays_a_lambda() {
+    let attack = "ATTACK: () => was parsed as unit";
+    let src = "fn main() {\n    let f = () => 7\n    println(to_str(f()))\n    let g = ()\n    match g { () => println(\"g\") }\n}\n";
+    assert_eq!(lf_runs(attack, "lf1_p18", src), "7\ng\n", "{attack}");
+}
+
+// lang-forms LF-3 / LF-3b: `for (a, b) in xs` destructures each element with
+// field-access lets (typed like `let (a, b) = p`), and every generated
+// statement of a collection-`for` carries the `for` keyword's span.
+
+/// Check `src` (the diagnostics JSON) without running it.
+fn lf_check(tag: &str, src: &str) -> (Option<i32>, String) {
+    let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+    (crc, cmsg)
+}
+
+/// The diagnostic line carrying `code`, or a panic naming `attack`.
+fn lf_diag_line<'a>(attack: &str, out: &'a str, code: &str) -> &'a str {
+    let key = format!("\"code\":\"{code}\"");
+    out.lines()
+        .find(|l| l.contains(&key))
+        .unwrap_or_else(|| panic!("{attack}: no {code} in: {out}"))
+}
+
+#[test]
+fn for_tuple_pattern_runs() {
+    let attack = "ATTACK: for (a, b) in was refused at parse";
+    for (tag, src, out) in [
+        (
+            "lf3_f01",
+            "fn main() {\n    let pairs = [(1, \"a\"), (2, \"b\")]\n    for (n, s) in pairs {\n        println(\"{to_str(n)}={s}\")\n    }\n}\n",
+            "1=a\n2=b\n",
+        ),
+        (
+            "lf3_f02",
+            "fn main() {\n    for (i, s) in arr_enumerate([\"x\", \"y\"]) {\n        println(\"{to_str(i)}{s}\")\n    }\n}\n",
+            "0x\n1y\n",
+        ),
+        // Moved from parse_help_probe `refused_forms_point_at_the_axon_spelling`
+        // (`for_tuple`): the CS3-5 row that refused it is gone.
+        (
+            "lf3_for_tuple",
+            "fn main() {\n    let pairs = [(1, \"a\"), (2, \"b\")]\n    for (n, s) in pairs { println(\"{to_str(n)}={s}\") }\n}\n",
+            "1=a\n2=b\n",
+        ),
+        (
+            "lf3_wild",
+            "fn main() {\n    let pairs = [(1, \"a\"), (2, \"b\")]\n    for (_, s) in pairs {\n        println(s)\n    }\n}\n",
+            "a\nb\n",
+        ),
+    ] {
+        assert_eq!(lf_runs(attack, tag, src), out, "{attack} [{tag}]");
+    }
+    let attack = "ATTACK: a nested for pattern bound nothing";
+    let src = "fn main() {\n    let t = 0\n    for (i, (a, b)) in arr_enumerate(arr_zip([1, 2], [10, 20])) {\n        t = t + i + a * b\n    }\n    println(to_str(t))\n}\n";
+    assert_eq!(lf_runs(attack, "lf3_nested", src), "51\n", "{attack}");
+}
+
+#[test]
+fn for_tuple_pattern_is_typed() {
+    let attack = "ATTACK: a for-tuple binding was untyped";
+    let src =
+        "fn main() {\n    for (a, b) in [(1, \"s\")] {\n        println(to_str(b + 1))\n    }\n}\n";
+    let (crc, cmsg, rrc, _, rerr) = sf6_check_and_run("lf3_typed", src);
+    assert_eq!(crc, Some(2), "{attack}: check: {cmsg}");
+    assert!(
+        cmsg.contains("\"severity\":\"error\""),
+        "{attack}: check: {cmsg}"
+    );
+    assert_ne!(rrc, Some(101), "{attack}: run panicked: {rerr}");
+}
+
+#[test]
+fn for_tuple_arity_error_points_at_the_for() {
+    let attack = "ATTACK: a destructure error landed on line 1";
+    let src = "fn main() {\n    for (a, b, c) in [(1, 2)] {\n        println(to_str(a + b + c))\n    }\n}\n";
+    let (crc, out) = lf_check("lf3_arity", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0401");
+    assert!(
+        d.contains("tuple index 2 out of bounds (length 2)") && d.contains("\"line\":2,"),
+        "{attack}: {d}"
+    );
+    // Each generated `let` carries the `for` span itself (a dummy one keeps
+    // the E0401 above on the loop line through the enclosing statement, but
+    // the unused-name warning is raised on the let and lost its location).
+    let unused = "fn main() {\n    let z = 1\n    for (a, b) in [(1, \"s\")] {\n        println(b)\n    }\n    println(to_str(z))\n}\n";
+    let (crc, out) = lf_check("lf3_unused", unused);
+    assert_eq!(crc, Some(0), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "W0006");
+    assert!(
+        d.contains("`a`") && d.contains("\"line\":3,\"col\":5"),
+        "{attack}: {d}"
+    );
+}
+
+#[test]
+fn let_tuple_error_points_at_the_let() {
+    let attack = "ATTACK: a destructure error landed on line 1";
+    let q06 = "fn main() {\n    let (a, b, c) = (1, 2)\n    println(to_str(a + b + c))\n}\n";
+    let (crc, out) = lf_check("lf3_q06", q06);
+    assert_eq!(crc, Some(2), "{attack} [q06]: {out}");
+    let d = lf_diag_line(attack, &out, "E0401");
+    assert!(
+        d.contains("tuple index 2 out of bounds") && d.contains("\"line\":2,\"col\":5"),
+        "{attack} [q06]: {d}"
+    );
+    let p22 = "fn main() {\n    let s = 0\n    for p in [1, 2] {\n        let (a, b) = p\n        s = s + a + b\n    }\n    println(to_str(s))\n}\n";
+    let (crc, out) = lf_check("lf3_p22", p22);
+    assert_eq!(crc, Some(2), "{attack} [p22]: {out}");
+    let d = lf_diag_line(attack, &out, "E0401");
+    assert!(d.contains("\"line\":4,\"col\":9"), "{attack} [p22]: {d}");
+    // The field lets carry the `let` span themselves: the unused-name warning
+    // is raised on one (it had no location at all before).
+    let unused =
+        "fn main() {\n    let z = 1\n    let (a, b) = (1, 2)\n    println(to_str(b + z))\n}\n";
+    let (crc, out) = lf_check("lf3_let_unused", unused);
+    assert_eq!(crc, Some(0), "{attack} [unused]: {out}");
+    let d = lf_diag_line(attack, &out, "W0006");
+    assert!(
+        d.contains("`a`") && d.contains("\"line\":3,\"col\":5"),
+        "{attack} [unused]: {d}"
+    );
+}
+
+#[test]
+fn for_tuple_over_range_is_refused() {
+    let attack = "ATTACK: for (a, b) over a range was accepted";
+    let src = "fn main() {\n    for (a, b) in 0..3 {\n        println(to_str(a))\n    }\n}\n";
+    let (crc, out) = lf_check("lf3_range", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0000");
+    assert!(
+        d.contains("a `for` over a range binds one integer name") && d.contains("\"line\":2,"),
+        "{attack}: {d}"
+    );
+    // `for (a) in xs`: one name needs no parentheses.
+    let src = "fn main() {\n    for (a) in [1] {\n        println(to_str(a))\n    }\n}\n";
+    let (crc, out) = lf_check("lf3_one", src);
+    assert_eq!(crc, Some(2), "{out}");
+    assert!(
+        lf_diag_line(attack, &out, "E0000").contains("a one-name pattern needs no parentheses"),
+        "{out}"
+    );
+}
+
+#[test]
+fn three_clause_for_keeps_its_help() {
+    let attack = "ATTACK: the three-clause for lost its help";
+    let src = "fn main() {\n    for (i = 0; i < 2; i = i + 1) { println(\"x\") }\n}\n";
+    let (crc, out) = lf_check("lf3_c3", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0000");
+    assert!(
+        d.contains("\"line\":2,") && d.contains("Axon has no three-clause `for`"),
+        "{attack}: {d}"
+    );
+}
+
+#[test]
+fn for_over_dict_names_dict_to_pairs() {
+    let attack = "ATTACK: for over a dict blamed len";
+    let src = "fn main() {\n    let d = dict_new()\n    dict_set(d, \"a\", 1)\n    for p in d {\n        let (k, v) = p\n        println(k)\n    }\n    println(\"x\")\n}\n";
+    let (crc, out) = lf_check("lf3_p23", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0402");
+    assert!(
+        d.contains("\"line\":4,")
+            && d.contains("a Dict is not one")
+            && d.contains("dict_to_pairs(d)"),
+        "{attack}: {d}"
+    );
+    assert!(
+        !out.contains("arg 0 of `len`"),
+        "{attack}: the desugaring's `len` was blamed: {out}"
+    );
+}
+
+// lang-forms LF-2: `if let PAT = EXPR { A } else { B }` desugars to
+// `match EXPR { PAT => { A }, __iflet_N => { B } }`; `else if` / `else if let`
+// links chain through the catch-all arm.
+
+#[test]
+fn if_let_runs() {
+    let attack = "ATTACK: if let was refused at parse";
+    for (tag, src, out) in [
+        (
+            "lf2_i01",
+            "fn main() {\n    let o = Some(3)\n    if let Some(v) = o { println(to_str(v)) }\n}\n",
+            "3\n",
+        ),
+        (
+            "lf2_i02",
+            "fn get(o: Option<i64>) -> i64 { if let Some(v) = o { v } else { 0 } }\nfn main() {\n    println(to_str(get(Some(4))))\n    println(to_str(get(None)))\n}\n",
+            "4\n0\n",
+        ),
+        (
+            "lf2_i03",
+            "fn main() {\n    let o = Some(3)\n    if false { println(\"a\") } else if let Some(v) = o { println(to_str(v)) }\n}\n",
+            "3\n",
+        ),
+        (
+            "lf2_chain",
+            "fn pick(a: Option<i64>, r: Result<i64, str>, c: bool) -> str {\n    if let Some(v) = a {\n        \"some \" + to_str(v)\n    } else if let Ok(w) = r {\n        \"ok \" + to_str(w)\n    } else if c {\n        \"c\"\n    } else {\n        \"none\"\n    }\n}\nfn main() {\n    println(pick(Some(1), Ok(2), true))\n    println(pick(None, Ok(2), true))\n    println(pick(None, Err(\"e\"), true))\n    println(pick(None, Err(\"e\"), false))\n}\n",
+            "some 1\nok 2\nc\nnone\n",
+        ),
+        (
+            "lf2_value",
+            "fn main() {\n    let o: Option<str> = None\n    let n = if let Some(s) = o { len(s) } else { 0 - 1 }\n    println(to_str(n))\n}\n",
+            "-1\n",
+        ),
+    ] {
+        assert_eq!(lf_runs(attack, tag, src), out, "{attack} [{tag}]");
+    }
+}
+
+#[test]
+fn if_let_binding_is_scoped_to_the_then_block() {
+    let attack = "ATTACK: an if let binding leaked out of its block";
+    let src = "fn main() {\n    let o = Some(3)\n    if let Some(v) = o { println(\"in\") }\n    println(to_str(v))\n}\n";
+    let (crc, out) = lf_check("lf2_scope", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0001");
+    assert!(d.contains("cannot find name `v`"), "{attack}: {d}");
+}
+
+#[test]
+fn if_let_without_else_must_be_unit() {
+    let attack = "ATTACK: if let without else named a match arm";
+    let src =
+        "fn main() {\n    let o = Some(3)\n    if let Some(v) = o { v }\n    println(\"x\")\n}\n";
+    let (crc, out) = lf_check("lf2_unit", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0102");
+    assert!(
+        d.contains("`if let` without `else`") && d.contains("\"line\":3"),
+        "{attack}: {d}"
+    );
+    assert!(!d.contains("match arm"), "{attack}: {d}");
+}
+
+#[test]
+fn irrefutable_if_let_warns() {
+    let attack = "ATTACK: an irrefutable if let named a match arm";
+    for (tag, src, out) in [
+        (
+            "lf2_irr_bind",
+            "fn main() {\n    if let x = 5 { println(to_str(x)) } else { println(\"no\") }\n}\n",
+            "5\n",
+        ),
+        (
+            "lf2_irr_tuple",
+            "fn main() {\n    let t = (1, 2)\n    if let (a, b) = t { println(to_str(a + b)) } else { println(\"no\") }\n}\n",
+            "3\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!((rrc, rout.as_str()), (Some(0), out), "{attack} [{tag}]: {rerr}");
+        let d = lf_diag_line(attack, &cmsg, "W0004");
+        assert!(
+            d.contains("irrefutable `if let`: the pattern always matches"),
+            "{attack} [{tag}]: {d}"
+        );
+    }
+}
+
+#[test]
+fn if_let_value_and_statement_forms_match_their_match_twins() {
+    let attack = "ATTACK: an if let diverged from its match twin";
+    for (tag, sugar, twin) in [
+        (
+            "lf2_t_stmt",
+            "fn main() {\n    let s = Some(\"abc\")\n    if let Some(t) = s { println(t) }\n    if let Some(t) = s { println(t) } else { println(\"-\") }\n}\n",
+            "fn main() {\n    let s = Some(\"abc\")\n    match s { Some(t) => { println(t) }, _ => {} }\n    match s { Some(t) => { println(t) }, _ => { println(\"-\") } }\n}\n",
+        ),
+        (
+            "lf2_t_value",
+            "fn f(r: Result<i64, str>) -> i64 { if let Ok(n) = r { n * 2 } else { 0 - 1 } }\nfn main() {\n    println(to_str(f(Ok(21)) + f(Err(\"x\"))))\n}\n",
+            "fn f(r: Result<i64, str>) -> i64 { match r { Ok(n) => n * 2, _ => 0 - 1 } }\nfn main() {\n    println(to_str(f(Ok(21)) + f(Err(\"x\"))))\n}\n",
+        ),
+        (
+            "lf2_t_lit",
+            "fn main() {\n    let n = 4\n    if let 4 = n { println(\"four\") } else { println(\"other\") }\n}\n",
+            "fn main() {\n    let n = 4\n    match n { 4 => { println(\"four\") }, _ => { println(\"other\") } }\n}\n",
+        ),
+    ] {
+        let a = lf_runs(attack, tag, sugar);
+        let b = lf_runs(attack, &format!("{tag}_twin"), twin);
+        assert_eq!(a, b, "{attack} [{tag}]");
+        assert!(!a.is_empty(), "{attack} [{tag}]");
+    }
+}
+
+/// `else_if_chain`'s twin with `else if let {i} = n` links.
+fn else_if_let_chain(links: usize, pick: usize) -> String {
+    let mut src =
+        format!("fn main() -> i64 {{\n    let n = {pick}\n    let x = if let 0 = n {{ 0 }}");
+    for i in 1..=links {
+        src.push_str(&format!(" else if let {i} = n {{ {i} }}"));
+    }
+    src.push_str(" else { 7777 }\n    println(to_str(x))\n    0\n}\n");
+    src
+}
+
+#[test]
+fn else_if_let_chain_is_bounded() {
+    // Each `else if let` link goes through the same nesting charge as an
+    // `else if` link (AX-60/AX-67): a long chain runs, a too-long one is the
+    // nesting refusal on every front end, never a stack overflow.
+    let attack = "ATTACK: an else-if-let chain overflowed the stack";
+    let dir = std::env::temp_dir().join(format!("axon_elif_let_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = |name: &str, src: String| {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        f
+    };
+    for (pick, want) in [(0, "0"), (1500, "1500"), (3000, "3000"), (99_999, "7777")] {
+        let f = file("ok", else_if_let_chain(3000, pick));
+        for runner in [
+            Command::new(env!("CARGO_BIN_EXE_axon"))
+                .arg("run")
+                .arg(&f)
+                .output()
+                .unwrap(),
+            Command::new(env!("CARGO_BIN_EXE_axon-run"))
+                .arg(&f)
+                .output()
+                .unwrap(),
+        ] {
+            assert_eq!(
+                runner.status.code(),
+                Some(0),
+                "{attack}: pick {pick}: {}",
+                String::from_utf8_lossy(&runner.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&runner.stdout),
+                format!("{want}\n"),
+                "{attack}: pick {pick}"
+            );
+        }
+    }
+    for links in [5_000, 30_000] {
+        let f = file("deep", else_if_let_chain(links, 0));
+        for (what, out) in [
+            (
+                "axon run",
+                axon().args(["run", f.to_str().unwrap()]).output().unwrap(),
+            ),
+            (
+                "axon check",
+                axon()
+                    .args(["check", f.to_str().unwrap()])
+                    .output()
+                    .unwrap(),
+            ),
+            (
+                "axon-run",
+                Command::new(env!("CARGO_BIN_EXE_axon-run"))
+                    .arg(&f)
+                    .output()
+                    .unwrap(),
+            ),
+        ] {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{attack}: {what}, {links} links: {stderr}"
+            );
+            assert!(
+                stderr.contains("expression nesting too deep (limit 4000)"),
+                "{attack}: {what}, {links} links: {stderr}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ── asi-fixes AF-1 / AF-4: `ai_extract::<T>` runs, and every extract is recorded ──
 
 /// `axon <args>` in `dir`, with every AI / engine variable the suite might

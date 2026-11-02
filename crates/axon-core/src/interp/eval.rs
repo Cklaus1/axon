@@ -2983,6 +2983,10 @@ impl<'p> Interp<'p> {
                 Ok(true)
             }
             Pattern::Tuple(pats) => {
+                // LF-1: the `()` pattern matches the unit value (`{}` / `()`).
+                if pats.is_empty() && matches!(val, Value::Unit) {
+                    return Ok(true);
+                }
                 let Value::Tuple(items) = val else {
                     return Ok(false);
                 };

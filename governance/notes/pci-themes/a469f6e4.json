@@ -1,0 +1,1 @@
+{"theme": "lang-forms LF-2 if let", "text": "TEST ONLY (fmt.rs unit test): fmt_if_let_round_trips asserts the printed `else if let` chain shape before format idempotence, so a mutant is reported under its own marker. No change to what any program computes, accepts or refuses."}

@@ -606,7 +606,33 @@ impl<'ctx> super::Codegen<'ctx> {
             // ── Match ─────────────────────────────────────────────────────────
             ast::Expr::Match { subject, arms } => {
                 let subj_sem_ty = self.infer_expr_sem_type(subject);
-                let subj_val = self.emit_expr(subject, fn_val)?;
+                let errors_before = self.errors_reported;
+                // `()` and `_` test true without reading the subject and bind nothing.
+                let reads_no_subject = |p: &ast::Pattern| {
+                    matches!(p, ast::Pattern::Wildcard)
+                        || matches!(p, ast::Pattern::Tuple(ps) if ps.is_empty())
+                };
+                let subj_val = match self.emit_expr(subject, fn_val) {
+                    Some(v) => v,
+                    // The subject's lowering refused: already reported.
+                    None if self.errors_reported != errors_before => return None,
+                    // LF-1: a value-less (unit) subject whose arms never read it:
+                    // a placeholder stands in for it, the first arm whose guard
+                    // holds runs (as in the interpreter), never a skipped `match`.
+                    None if arms.iter().all(|a| reads_no_subject(&a.pattern)) => {
+                        self.ir.context.i8_type().const_zero().into()
+                    }
+                    // Any other pattern would bind or test the placeholder.
+                    None => {
+                        self.record_error(
+                            "codegen error [E0910]: native codegen cannot match on a value-less \
+                             (unit) subject with this pattern. The interpreter supports it; run \
+                             under `axon run`."
+                                .to_string(),
+                        );
+                        return None;
+                    }
+                };
                 // Temporarily override current_result_types when matching a Result,
                 // so pattern binding can extract typed payloads from the union.
                 let saved_result_types = self.current_result_types.clone();

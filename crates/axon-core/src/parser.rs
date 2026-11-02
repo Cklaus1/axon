@@ -45,6 +45,48 @@ fn push_stmt_or_splice_destructure(stmts: &mut Vec<Stmt>, expr: Expr, span: Span
     stmts.push(Stmt { expr, span });
 }
 
+/// LF-3: one element of a `for (a, (b, _)) in xs` pattern.
+enum ForPat {
+    Name(String),
+    Wild,
+    Tuple(Vec<ForPat>),
+}
+
+/// The synthetic name of a tuple level of a `for` pattern: `<stem>_n<arity>`.
+/// The arity is part of the name because `_` binds no `let`, so without it
+/// fmt could not print a trailing `_` slot back (`for (a, _) in xs`).
+fn for_pat_name(stem: &str, arity: usize) -> String {
+    format!("{stem}_n{arity}")
+}
+
+/// One `let` per name of the tuple level bound to `base`: `let a = base.0`;
+/// a nested tuple at slot k binds `base_k_n<arity>` first, then its names
+/// (field access, not `.1.0`, which would lex as a float). `_` binds nothing.
+/// Every statement carries `span`, the `for` keyword's.
+fn for_pat_lets(base: &str, elems: &[ForPat], span: Span, out: &mut Vec<Stmt>) {
+    for (k, elem) in elems.iter().enumerate() {
+        let name = match elem {
+            ForPat::Wild => continue,
+            ForPat::Name(n) => n.clone(),
+            ForPat::Tuple(sub) => for_pat_name(&format!("{base}_{k}"), sub.len()),
+        };
+        out.push(Stmt {
+            expr: Expr::Let {
+                name: name.clone(),
+                ty: None,
+                value: Box::new(Expr::FieldAccess {
+                    receiver: Box::new(Expr::Ident(base.to_string())),
+                    field: k.to_string(),
+                }),
+            },
+            span,
+        });
+        if let ForPat::Tuple(sub) = elem {
+            for_pat_lets(&name, sub, span, out);
+        }
+    }
+}
+
 thread_local! {
     /// Byte offsets where a foreign `mut` was accepted and skipped (M5).
     ///
@@ -2055,6 +2097,10 @@ impl Parser {
     /// `for <ident> in <start>..=<end> { body }` (inclusive range).
     fn parse_for(&mut self) -> Result<Expr> {
         let uid = self.pos; // unique per for-loop in this parse (for desugar names)
+                            // Every generated statement of the desugaring carries the `for`
+                            // keyword's span (user text), so a diagnostic raised on one points at
+                            // the loop, not at the token after its closing `}` (LF-3, LF-3b).
+        let span = self.current_span();
         self.expect(&Token::For)?;
         // Phase 8 surface: `for!<Strategy> maximize|minimize "metric" to <target>
         // in <budget>` — "search as control flow", the irreducible Axon move
@@ -2064,9 +2110,26 @@ impl Parser {
         if self.eat(&Token::Bang) {
             return self.parse_for_search();
         }
-        let var = self.expect_ident()?;
+        // LF-3: `for (a, (b, _)) in xs` - a tuple pattern of names and `_`,
+        // desugared below to the collection loop over `__forpat_N_nK` (K is
+        // the tuple's arity, which fmt needs to print trailing `_` slots back)
+        // plus one field-access `let` per bound name.
+        let pat = if self.at(&Token::LParen) {
+            Some(self.parse_for_pat_tuple()?)
+        } else {
+            None
+        };
+        let var = match &pat {
+            Some(elems) => for_pat_name(&format!("__forpat_{uid}"), elems.len()),
+            None => self.expect_ident()?,
+        };
         self.expect(&Token::In)?;
         let first = self.parse_logical()?;
+        if pat.is_some() && (self.at(&Token::DotDotEq) || self.at(&Token::DotDot)) {
+            return Err(ParseError::Other(
+                "a `for` over a range binds one integer name - write `for i in a..b`".to_string(),
+            ));
+        }
 
         // Range form: `for i in a..b` / `a..=b`.
         let range = if self.eat(&Token::DotDotEq) {
@@ -2098,7 +2161,11 @@ impl Parser {
         let arr_name = format!("__forarr_{uid}");
         let idx_name = format!("__fori_{uid}");
         let mut body = self.parse_for_body()?;
-        let span = self.current_span();
+        if let Some(elems) = &pat {
+            let mut lets = Vec::new();
+            for_pat_lets(&var, elems, span, &mut lets);
+            body.splice(0..0, lets);
+        }
         body.insert(
             0,
             Stmt {
@@ -2142,6 +2209,57 @@ impl Parser {
                 span,
             },
         ]))
+    }
+
+    /// LF-3: parse a `for` tuple pattern, `(` already current:
+    /// `'(' elem (',' elem)+ ','? ')'`, `elem ::= IDENT | '_' | <tuple>`.
+    /// Every error names "in a `for` pattern", which the three-clause-`for`
+    /// help (`parse_help.rs`) keys on as it did on "expected identifier".
+    fn parse_for_pat_tuple(&mut self) -> Result<Vec<ForPat>> {
+        self.expect(&Token::LParen)?;
+        let mut elems = Vec::new();
+        loop {
+            let elem = match self.peek() {
+                Some(Token::Ident(s)) if s == "_" => {
+                    self.advance()?;
+                    ForPat::Wild
+                }
+                Some(Token::Ident(s)) => {
+                    let name = s.clone();
+                    self.advance()?;
+                    ForPat::Name(name)
+                }
+                Some(Token::LParen) => ForPat::Tuple(self.nested(Self::parse_for_pat_tuple)?),
+                Some(tok) => {
+                    return Err(ParseError::Other(format!(
+                        "unexpected token: {tok:?} in a `for` pattern, expected a name, `_` or `(`"
+                    )))
+                }
+                None => return Err(ParseError::Eof),
+            };
+            elems.push(elem);
+            if self.eat(&Token::Comma) {
+                if self.eat(&Token::RParen) {
+                    break;
+                }
+            } else if self.eat(&Token::RParen) {
+                break;
+            } else {
+                return Err(match self.peek() {
+                    Some(tok) => ParseError::Other(format!(
+                        "unexpected token: {tok:?} in a `for` pattern, expected `,` or `)`"
+                    )),
+                    None => ParseError::Eof,
+                });
+            }
+        }
+        if elems.len() < 2 {
+            return Err(ParseError::Other(
+                "a one-name pattern needs no parentheses in a `for` pattern - write `for a in xs`"
+                    .to_string(),
+            ));
+        }
+        Ok(elems)
     }
 
     /// Phase 8 surface: parse the `for!` search form (the `for` + `!` already
@@ -2346,6 +2464,9 @@ impl Parser {
     }
 
     fn parse_let(&mut self) -> Result<Expr> {
+        // The `let` keyword's span: every statement of the tuple desugar
+        // carries it, so a destructure error points at the `let` (LF-3).
+        let span = self.current_span();
         self.expect(&Token::Let)?;
         // Tuple destructuring: `let (a, b, ...) = expr` desugars to
         // `{ let __tup_N = expr   let a = __tup_N.0   let b = __tup_N.1   ... }`.
@@ -2369,7 +2490,7 @@ impl Parser {
                     ty: None,
                     value: Box::new(value),
                 },
-                span: Span::dummy(),
+                span,
             });
             for (i, n) in names.into_iter().enumerate() {
                 stmts.push(Stmt {
@@ -2381,7 +2502,7 @@ impl Parser {
                             field: i.to_string(),
                         }),
                     },
-                    span: Span::dummy(),
+                    span,
                 });
             }
             return Ok(Expr::Block(stmts));
@@ -2516,8 +2637,24 @@ impl Parser {
     }
 
     fn parse_if(&mut self) -> Result<Expr> {
+        let uid = self.pos; // unique per `if` in this parse (the `if let` catch-all name)
         self.expect(&Token::If)?;
-        let cond = self.parse_logical()?;
+        // LF-2: `if let PAT = EXPR { A } else B` desugars to
+        // `match EXPR { PAT => { A }, __iflet_N => B }` (B is `{}` without an
+        // `else`). The catch-all binds a name, not `_`, so fmt can tell an
+        // `if let` from a user's `match ... _ =>`; the leading `_` keeps
+        // W0006 quiet. EXPR is `parse_logical`, as for `while let`.
+        enum Head {
+            Cond(Expr),
+            Let(Pattern, Expr),
+        }
+        let head = if self.eat(&Token::Let) {
+            let pattern = self.parse_pattern()?;
+            self.expect(&Token::Eq)?;
+            Head::Let(pattern, self.parse_logical()?)
+        } else {
+            Head::Cond(self.parse_logical()?)
+        };
         let then = self.parse_block()?;
         let else_ = if self.eat(&Token::Else) {
             Some(Box::new(if self.at(&Token::If) {
@@ -2533,10 +2670,27 @@ impl Parser {
         } else {
             None
         };
-        Ok(Expr::If {
-            cond: Box::new(cond),
-            then: Box::new(then),
-            else_,
+        Ok(match head {
+            Head::Cond(cond) => Expr::If {
+                cond: Box::new(cond),
+                then: Box::new(then),
+                else_,
+            },
+            Head::Let(pattern, subject) => Expr::Match {
+                subject: Box::new(subject),
+                arms: vec![
+                    MatchArm {
+                        pattern,
+                        guard: None,
+                        body: then,
+                    },
+                    MatchArm {
+                        pattern: Pattern::Ident(format!("{IF_LET_CATCH_ALL}{uid}")),
+                        guard: None,
+                        body: else_.map_or_else(|| Expr::Block(Vec::new()), |e| *e),
+                    },
+                ],
+            },
         })
     }
 
@@ -3341,6 +3495,12 @@ impl Parser {
             Some(Token::LParen) => {
                 if self.is_paren_lambda() {
                     self.parse_paren_lambda()
+                } else if matches!(self.tokens.get(self.pos + 1), Some(Token::RParen)) {
+                    // LF-1: `()` is the unit value, the same node `{}` builds
+                    // (checked after the lambda test, so `() => 7` stays a lambda).
+                    self.advance()?;
+                    self.advance()?;
+                    Ok(Expr::Block(Vec::new()))
                 } else {
                     self.advance()?;
                     self.paren_depth += 1;
