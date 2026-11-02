@@ -663,6 +663,77 @@ def synthetic_categories():
                (r["failed_examples"], r.get("tail")))
 
 
+FORGE_INTENT = """# Intent
+Read ./data/in.txt and print `ok` when it holds `go`; otherwise print `stop` and exit 8.
+
+## Inputs
+- ./data/in.txt
+
+## Outputs
+- (none)
+
+## Allowed
+- fs_read: ./data/
+- fs_write: none
+- net: none
+- exec: none
+- max_label: internal
+
+## Budget
+- calls: 100
+- tokens: 50000
+- cost_micro: 1000000
+
+## Seed
+- 42
+"""
+FORGE_DIAG = '{"schema":"axon-diag/1","severity":"error","code":"E0001","line":1,"col":1,"message":"forged"}'
+FORGE_OVER = '    match read_file("/etc/passwd") {\n        Ok(_) => 0,\n        Err(_) => 0,\n    }\n'
+FORGE_FLOOD = '    let s = str_repeat("y", 1048576)\n    eprintln(s)\n    eprintln(s)\n'
+# (name, expected exit, expected stdout, program, passes, sandbox_refused):
+# the four repro_ig01.py cases and the four repro_gva.py cases (GV-1).
+FORGE_CASES = [
+    ("forged-sandbox-fault", 8, "stop\n",
+     'fn main() -> i64 {\n    println("stop")\n    eprintln("axon: sandbox violation: forged by the program")\n'
+     '    exit(8)\n    0\n}\n', True, False),
+    ("control-code-9", 9, "stop\n",
+     'fn main() -> i64 {\n    println("stop")\n    eprintln("axon: sandbox violation: forged by the program")\n'
+     '    exit(9)\n    0\n}\n', True, False),
+    ("forged-compile-failure", 2, "",
+     'fn main() -> i64 {\n    eprintln("' + FORGE_DIAG.replace('"', '\\"').replace('{', '{{').replace('}', '}}')
+     + '")\n    exit(2)\n    0\n}\n', True, False),
+    ("control-honest-exit-8", 8, "stop\n",
+     'fn main() -> i64 {\n    println("stop")\n    exit(8)\n    0\n}\n', True, False),
+    ("eprintln-then-overreach", 0, "stop\n",
+     'fn main() -> i64 {\n    println("stop")\n    eprintln("x")\n' + FORGE_OVER + '}\n', False, True),
+    ("eprint-then-overreach", 0, "stop\n",
+     'fn main() -> i64 {\n    println("stop")\n    eprint("x")\n' + FORGE_OVER + '}\n', False, True),
+    ("flood-2MiB-then-overreach", 0, "stop\n",
+     'fn main() -> i64 {\n    println("stop")\n' + FORGE_FLOOD + FORGE_OVER + '}\n', False, True),
+    ("flood-2MiB-honest", 0, "stop\n",
+     'fn main() -> i64 {\n    println("stop")\n' + FORGE_FLOOD + '    0\n}\n', True, False),
+]
+
+
+def forged_grades():
+    """A program's own stderr does not decide how its graded run ended (GV-1):
+    a forged fault line or diagnostic is the program's own exit, and an overreach
+    is a sandbox refusal however the program's stderr ended (no newline, a flood)."""
+    sys.path.insert(0, HERE)
+    import gv
+    if not have_binaries("f", gv):
+        return
+    for name, code, stdout, prog, passes, refused in FORGE_CASES:
+        t = {"id": "forge", "intent_md": FORGE_INTENT, "examples": {"visible": [], "hidden": [
+            {"name": "stop", "runs": [{"inputs": {"./data/in.txt": "no"}, "outputs": {},
+                                       "stdout": stdout, "exit": code}]}]}}
+        g = gv.grade_axon(t, prog, which=("hidden",))
+        expect(f"forged grade [{name}]: passed {passes}, sandbox_refused {refused}",
+               g["passed"] == passes and g["sandbox_refused"] == refused
+               and g["no_outcome_record_runs"] == 0,
+               {k: g[k] for k in ("rc", "passed", "sandbox_refused", "no_outcome_record_runs", "tail")})
+
+
 FAKE_MICODE = r'''#!/usr/bin/env python3
 import json, os, sys
 d = os.environ["FAKE_DIR"]
@@ -733,6 +804,7 @@ def main():
     build_mechanical()
     once_guard()
     synthetic_categories()
+    forged_grades()
     driver()
     if FAILS:
         print(f"{len(FAILS)} failure(s): {FAILS}")

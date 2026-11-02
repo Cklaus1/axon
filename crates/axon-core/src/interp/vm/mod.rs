@@ -188,7 +188,7 @@ pub(super) fn engine_at_build(sealed: bool) -> Result<Engine, EngineRefusal> {
     match engine_for(sealed, SEAL_RUNTIME_COMPLETE, override_, env.as_deref()) {
         Err(EngineRefusal::Invalid(msg)) if !sealed => {
             eprintln!("{msg}");
-            std::process::exit(2)
+            crate::outcome::exit_with_outcome(crate::outcome::Kind::Compile, "engine", 2, &msg)
         }
         selected => selected,
     }

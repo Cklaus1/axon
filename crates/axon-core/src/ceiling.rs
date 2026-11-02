@@ -438,11 +438,17 @@ pub fn active() -> Option<&'static Ceiling> {
         match load(Path::new(&raw)) {
             Ok(c) => Some(c),
             Err(why) => {
-                eprintln!(
+                let line = format!(
                     "error[E1007]: ceiling {}: {why}; refusing to run",
                     Path::new(&raw).display()
                 );
-                std::process::exit(2);
+                eprintln!("{line}");
+                crate::outcome::exit_with_outcome(
+                    crate::outcome::Kind::Compile,
+                    "ceilings",
+                    2,
+                    &line,
+                );
             }
         }
     });

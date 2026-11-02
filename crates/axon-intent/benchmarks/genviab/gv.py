@@ -54,6 +54,8 @@ AXES = ("fs_read", "fs_write", "net", "exec")
 EMPTY_PROGRAM = "fn main() -> i64 {\n    0\n}\n"
 LIFT_SCHEMA = "axon-intent-lift/1"
 SANDBOX_REFUSAL = "refused by the sandbox"
+# axon-os `read_outcome_record`'s fail-closed reason, behind genloop's prefix (GV-1).
+NO_OUTCOME_RECORD = SANDBOX_REFUSAL + ": no outcome record: "
 LIFT_TIMEOUT = 300
 
 
@@ -231,9 +233,21 @@ def lift(intent_text, name="task"):
 
 
 def sandbox_refused(report):
-    """Did any example run end in a sandbox refusal (a runtime scope violation)?"""
+    """Did any example run end in a sandbox refusal? `ended` is the supervisor's
+    classification (axon-os `run_sandboxed_capture`), decided from the
+    interpreter's outcome record on its own pipe, never from the program's
+    stderr (GV-1). A run that ended without one valid record is a sandbox
+    refusal too (fail closed), counted apart by `no_outcome_record_runs`."""
     return any(e.get("ended", "").startswith(SANDBOX_REFUSAL)
                for e in (report or {}).get("examples", []))
+
+
+def no_outcome_record_runs(report):
+    """Example runs that ended without one valid outcome record (GV-1 step 6):
+    a sandbox refusal by rule, split out so a report tells them from real scope
+    violations."""
+    return sum(1 for e in (report or {}).get("examples", [])
+               if e.get("ended", "").startswith(NO_OUTCOME_RECORD))
 
 
 def failed_examples(report):
@@ -250,6 +264,7 @@ def grade_axon(task, program, which=("visible", "hidden")):
         "stage": (rep or {}).get("stage"),
         "failed_examples": failed_examples(rep),
         "sandbox_refused": sandbox_refused(rep),
+        "no_outcome_record_runs": no_outcome_record_runs(rep),
         "gate_refusal": (rep or {}).get("gate_refusal"),
         "tail": "" if rc == 0 else tail[-600:],
     }

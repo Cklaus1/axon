@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Instant;
 
+use axon_core::outcome;
 use axon_core::parse_source;
 use clap::{Parser, Subcommand};
 
@@ -1009,13 +1010,14 @@ fn apply_ceiling(flag: Option<PathBuf>, require_contained: bool) {
     if let Some(path) = flag {
         if let Some(env) = std::env::var_os("AXON_CEILING") {
             if std::path::Path::new(&env) != path {
-                eprintln!(
+                let line = format!(
                     "error[E1007]: --ceiling {} and AXON_CEILING={} name two different \
                      ceilings; refusing to run. Pass one.",
                     path.display(),
                     PathBuf::from(env).display()
                 );
-                process::exit(2);
+                eprintln!("{line}");
+                outcome::exit_with_outcome(outcome::Kind::Compile, "ceilings", 2, &line);
             }
         }
         std::env::set_var("AXON_CEILING", &path);
@@ -1105,15 +1107,102 @@ fn imports_digest_mismatch(closure: &axon_core::ImportClosure) -> Option<String>
 /// session ends through its normal end path (AR5).
 fn enforce_required_imports_digest(closure: &axon_core::ImportClosure) {
     if let Some(why) = imports_digest_mismatch(closure) {
-        match why.split_once('\n') {
-            Some((head, rest)) => eprintln!("error: {head}; refusing to run\n{rest}"),
-            None => eprintln!("error: {why}; refusing to run"),
-        }
-        process::exit(8);
+        let head = match why.split_once('\n') {
+            Some((head, rest)) => {
+                eprintln!("error: {head}; refusing to run\n{rest}");
+                format!("error: {head}; refusing to run")
+            }
+            None => {
+                eprintln!("error: {why}; refusing to run");
+                format!("error: {why}; refusing to run")
+            }
+        };
+        outcome::exit_with_outcome(outcome::Kind::Compile, "imports-digest", 8, &head);
     }
 }
 
+/// GV-1: read `AXON_OUTCOME_FD` / `AXON_OUTCOME_NONCE` once, before any verb
+/// runs, remove both from the environment, and install the outcome channel
+/// ([`axon_core::outcome`]).
+///
+/// Removed so the program cannot read them (`env_var` reads this process's
+/// environment), exactly as [`take_required_imports_digest`] does. The fd is
+/// made close-on-exec so no process the program spawns inherits it. Only
+/// `axon run` writes an outcome record; every other verb refuses rather than
+/// ignore a channel its caller is waiting on.
+fn take_outcome_channel(command: &Command) {
+    let fd_raw = std::env::var_os(outcome::OUTCOME_FD_ENV);
+    let nonce_raw = std::env::var_os(outcome::OUTCOME_NONCE_ENV);
+    if fd_raw.is_none() && nonce_raw.is_none() {
+        return;
+    }
+    std::env::remove_var(outcome::OUTCOME_FD_ENV);
+    std::env::remove_var(outcome::OUTCOME_NONCE_ENV);
+    let refuse = |why: String| -> ! {
+        eprintln!("error: {why}");
+        process::exit(2)
+    };
+    if !matches!(command, Command::Run { .. }) {
+        refuse(format!(
+            "`{}` / `{}` are set, but only `axon run` writes an outcome record. Refusing \
+             rather than ignore them; unset them for this command.",
+            outcome::OUTCOME_FD_ENV,
+            outcome::OUTCOME_NONCE_ENV
+        ));
+    }
+    let (Some(fd_raw), Some(nonce_raw)) = (fd_raw, nonce_raw) else {
+        refuse(format!(
+            "`{}` and `{}` must be set together",
+            outcome::OUTCOME_FD_ENV,
+            outcome::OUTCOME_NONCE_ENV
+        ));
+    };
+    let fd = match fd_raw.to_str().and_then(|s| s.parse::<i32>().ok()) {
+        Some(fd) if fd > 2 => fd,
+        _ => refuse(format!(
+            "`{}` must be a file descriptor number above 2",
+            outcome::OUTCOME_FD_ENV
+        )),
+    };
+    let nonce = match nonce_raw.to_str() {
+        Some(n) if outcome::valid_nonce(n) => n.to_string(),
+        _ => refuse(format!(
+            "`{}` must be 16 to 128 lowercase hex digits",
+            outcome::OUTCOME_NONCE_ENV
+        )),
+    };
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: fcntl on an integer fd only queries or sets its flags.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags == -1 {
+            refuse(format!(
+                "`{}` names no open fd ({fd})",
+                outcome::OUTCOME_FD_ENV
+            ));
+        }
+        // SAFETY: as above.
+        if unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } == -1 {
+            refuse(format!(
+                "cannot make `{}` ({fd}) close-on-exec",
+                outcome::OUTCOME_FD_ENV
+            ));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (fd, nonce);
+        refuse(format!(
+            "`{}` is supported on Linux only",
+            outcome::OUTCOME_FD_ENV
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    outcome::install(fd, nonce);
+}
+
 fn dispatch(command: Command) {
+    take_outcome_channel(&command);
     take_required_imports_digest(&command);
     // R28: if AXON_AUDIT_LEDGER is set, open (or create) the ledger before any
     // command executes, so capability-bearing actions are recorded. flush_ledger()
@@ -2059,7 +2148,7 @@ fn report_lock_errors(errors: &[String], use_json: bool) {
     for e in errors {
         emit_error(e, use_json);
     }
-    process::exit(2);
+    outcome::exit_with_outcome(outcome::Kind::Compile, "lock", 2, &errors[0]);
 }
 
 // ── improve (R10 self-improving compiler) ────────────────────────────────────────
@@ -6380,7 +6469,12 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
         Err(diag) => {
             emit_pipeline_diag(&diag);
             // Fix 8: exit 2 for compile errors.
-            process::exit(2);
+            outcome::exit_with_outcome(
+                outcome::Kind::Compile,
+                "parse",
+                2,
+                &diag_outcome_reason(std::slice::from_ref(&*diag)),
+            );
         }
     };
 
@@ -6412,7 +6506,12 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
         for err in &errors {
             emit_pipeline_diag(err);
         }
-        process::exit(2);
+        outcome::exit_with_outcome(
+            outcome::Kind::Compile,
+            "check",
+            2,
+            &diag_outcome_reason(&errors),
+        );
     }
 
     if !args.is_empty() {
@@ -6446,8 +6545,9 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
     let replay_mode = match axon_core::replay::install_from_env() {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("error: {e}");
-            process::exit(2);
+            let line = format!("error: {e}");
+            eprintln!("{line}");
+            outcome::exit_with_outcome(outcome::Kind::Compile, "replay-install", 2, &line);
         }
     };
 
@@ -6508,10 +6608,16 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
     // guard — an auditor must never be handed a transcript of a run that did
     // not happen, with a clean exit to vouch for it.
     if let Some(d) = axon_core::replay::finish() {
+        let line = format!("axon: replay divergence: {}", d.report);
         if !d.already_reported {
-            eprintln!("axon: replay divergence: {}", d.report);
+            eprintln!("{line}");
         }
-        process::exit(axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE);
+        outcome::exit_with_outcome(
+            outcome::Kind::Fault,
+            "replay-divergence",
+            axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE,
+            &line,
+        );
     }
     if replay_mode == axon_core::replay::Mode::Recording {
         eprintln!(
@@ -6519,7 +6625,20 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
             std::env::var(axon_core::replay::RECORD_ENV_VAR).unwrap_or_default()
         );
     }
-    process::exit(code);
+    // GV-1: the record states what the interpreter's run entry recorded; a
+    // run that recorded nothing (a Rust panic) writes none.
+    outcome::exit_with_run_outcome(code);
+}
+
+/// The `reason` of a compile outcome record: the first diagnostic of the
+/// refusing list, as `<code> at line <l>:<c>: <msg>`. That list holds errors
+/// only (warnings are printed as they arise and never refuse a run), so its
+/// first entry is the first error.
+fn diag_outcome_reason(diags: &[axon_core::PipelineDiagnostic]) -> String {
+    diags
+        .first()
+        .map(|d| format!("{} at line {}:{}: {}", d.code, d.line, d.col, d.message))
+        .unwrap_or_default()
 }
 
 /// Phase 5 §4: assemble the refinement predicate map and ask the SMT backend to
@@ -6538,14 +6657,16 @@ fn compute_discharged(program: &axon_core::ast::Program) -> axon_core::verify::D
     // is not discharged, before running any program. For the in-tree minter this
     // always passes; it bites only if the minter (and its proof model) is weakened.
     if let Err((code, msg)) = axon_core::smt::check_mint_tcb_obligation() {
-        eprintln!("{code}: {msg}");
-        process::exit(2);
+        let line = format!("{code}: {msg}");
+        eprintln!("{line}");
+        outcome::exit_with_outcome(outcome::Kind::Compile, "tcb", 2, &line);
     }
     // R20 Slice 3: boot-time TCB attestation — the proven obligation set + its
     // verdict must match the pinned manifest, else fail closed (E1611, I-12).
     if let Err((code, msg)) = axon_core::smt::check_tcb_attestation() {
-        eprintln!("{code}: {msg}");
-        process::exit(2);
+        let line = format!("{code}: {msg}");
+        eprintln!("{line}");
+        outcome::exit_with_outcome(outcome::Kind::Compile, "tcb", 2, &line);
     }
     // R23 cert gate now runs in EVERY build (see `cert_gate::enforce_or_exit`
     // in the run/build paths), not just under `smt` — so it is not repeated here.
@@ -8375,9 +8496,10 @@ fn build_ir_and_link(
 
 fn read_source(file: &PathBuf) -> String {
     std::fs::read_to_string(file).unwrap_or_else(|e| {
-        eprintln!("error reading {}: {e}", file.display());
+        let line = format!("error reading {}: {e}", file.display());
+        eprintln!("{line}");
         // Fix 8: exit 1 for I/O errors.
-        process::exit(1);
+        outcome::exit_with_outcome(outcome::Kind::Compile, "source", 1, &line);
     })
 }
 
@@ -8588,8 +8710,9 @@ fn validate_ax_extension(file: &Path) {
     let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext != "ax" {
         let filename = file.display();
-        eprintln!("error: Axon source files must have a .ax extension (got '{filename}')");
-        process::exit(1);
+        let line = format!("error: Axon source files must have a .ax extension (got '{filename}')");
+        eprintln!("{line}");
+        outcome::exit_with_outcome(outcome::Kind::Compile, "source", 1, &line);
     }
 }
 

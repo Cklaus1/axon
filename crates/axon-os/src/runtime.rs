@@ -262,7 +262,7 @@ impl StagingDir {
             let path = root.join(format!(
                 "axon-os-run-{}-{}-{n}-{attempt}",
                 std::process::id(),
-                done_nonce()
+                run_nonce()?
             ));
             match std::fs::DirBuilder::new().mode(0o700).create(&path) {
                 Ok(()) => return Ok(StagingDir { path }),
@@ -392,6 +392,58 @@ struct ProcOutcome {
     /// G2d: the termination signal the supervisor received, if that is what
     /// ended the job (see [`axon_jobctl::forward_termination_signals`]).
     killed_by_signal: Option<i32>,
+    /// GV-1: the signal that ended the child, when one did (the deadline
+    /// kill, the latch kill, or a signal nobody here sent).
+    exit_signal: Option<i32>,
+    /// GV-1: what the child wrote to its outcome pipe (at most
+    /// `2 * OUTCOME_RECORD_MAX` bytes kept; anything over one record's bound
+    /// is malformed), `None` when the run had no outcome pipe.
+    outcome: Option<String>,
+}
+
+/// GV-1: the fd the child finds its outcome pipe on (`AXON_OUTCOME_FD`).
+pub const OUTCOME_FD: i32 = 3;
+/// GV-1: `axon-core`'s outcome variables (`env_registry`).
+pub const OUTCOME_FD_ENV: &str = "AXON_OUTCOME_FD";
+pub const OUTCOME_NONCE_ENV: &str = "AXON_OUTCOME_NONCE";
+/// GV-1: one record line's bound, newline included (`PIPE_BUF`).
+pub const OUTCOME_RECORD_MAX: usize = 4096;
+
+/// GV-1: the outcome pipe of one run: the read end the supervisor drains and
+/// the write end the child gets on [`OUTCOME_FD`]. Both are close-on-exec
+/// here; only the child's `dup2` copy is not.
+struct OutcomePipe {
+    reader: std::io::PipeReader,
+    writer: std::io::PipeWriter,
+}
+
+/// GV-1: arrange for `cmd`'s child to find `writer` on [`OUTCOME_FD`], and
+/// tell its interpreter so (`AXON_OUTCOME_FD`, `AXON_OUTCOME_NONCE`). The
+/// interpreter removes both variables before the program runs and makes the
+/// fd close-on-exec, so neither the program nor what it spawns can reach them.
+fn give_child_outcome_fd(cmd: &mut Command, writer: &std::io::PipeWriter, nonce: &str) {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+    let wfd = writer.as_raw_fd();
+    cmd.env(OUTCOME_FD_ENV, OUTCOME_FD.to_string());
+    cmd.env(OUTCOME_NONCE_ENV, nonce);
+    // SAFETY: runs in the forked child before exec and calls only `dup2` and
+    // `fcntl`, both async-signal-safe. `dup2` leaves the copy without
+    // close-on-exec; when the write end already IS fd 3, `dup2` is a no-op
+    // and the flag is cleared by hand.
+    unsafe {
+        cmd.pre_exec(move || {
+            if wfd == OUTCOME_FD {
+                let flags = libc::fcntl(wfd, libc::F_GETFD);
+                if flags == -1 || libc::fcntl(wfd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            } else if libc::dup2(wfd, OUTCOME_FD) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
 }
 
 fn signal_name(sig: i32) -> String {
@@ -422,20 +474,14 @@ where
     })
 }
 
-/// Join both drains, waiting at most [`DRAIN_GRACE`] for their EOF, then stop
-/// them: each returns what it read within one poll interval.
-fn join_drains(
-    out_h: JoinHandle<(String, u64)>,
-    err_h: JoinHandle<(String, u64)>,
-    stop: &AtomicBool,
-) -> ((String, u64), (String, u64)) {
-    let mut joined = join_within(DRAIN_GRACE, vec![out_h, err_h], stop)
+/// Join the drains, waiting at most [`DRAIN_GRACE`] for their EOF, then stop
+/// them: each returns what it read within one poll interval. In the order
+/// given.
+fn join_drains(handles: Vec<JoinHandle<(String, u64)>>, stop: &AtomicBool) -> Vec<(String, u64)> {
+    join_within(DRAIN_GRACE, handles, stop)
         .into_iter()
-        .map(Option::unwrap_or_default);
-    (
-        joined.next().unwrap_or_default(),
-        joined.next().unwrap_or_default(),
-    )
+        .map(Option::unwrap_or_default)
+        .collect()
 }
 
 /// Run a command with a hard wall-clock timeout. On expiry the child is killed
@@ -467,6 +513,23 @@ fn run_bounded_capped(
     max_capture: usize,
     stdin: Option<Vec<u8>>,
 ) -> std::io::Result<ProcOutcome> {
+    run_bounded_outcome(cmd, timeout, kill_file, max_capture, stdin, None)
+}
+
+/// [`run_bounded_capped`] with, when `outcome` is `Some`, the run's outcome
+/// pipe (GV-1): the caller has already arranged for the child to receive the
+/// write end on [`OUTCOME_FD`] (see [`AxonCoreRuntime::launch`]). This
+/// process's copy of the write end is dropped right after the spawn, so the
+/// read end reaches EOF when the child (and anything it handed the fd to)
+/// is gone; the read end is drained like stdout.
+fn run_bounded_outcome(
+    cmd: &mut Command,
+    timeout: Duration,
+    kill_file: Option<&std::path::Path>,
+    max_capture: usize,
+    stdin: Option<Vec<u8>>,
+    outcome: Option<OutcomePipe>,
+) -> std::io::Result<ProcOutcome> {
     /// What ended the job's watch.
     enum End {
         Exited,
@@ -497,6 +560,12 @@ fn run_bounded_capped(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut job = Job::spawn(cmd)?;
+    // GV-1: this process's write end goes now, so the read end's EOF means
+    // every holder of the child's copy is gone.
+    let outcome_reader = outcome.map(|OutcomePipe { reader, writer }| {
+        drop(writer);
+        reader
+    });
 
     let stdout_pipe = job.child_mut().stdout.take();
     let stderr_pipe = job.child_mut().stderr.take();
@@ -528,6 +597,10 @@ fn run_bounded_capped(
     let stop = Arc::new(AtomicBool::new(false));
     let out_h = spawn_drain(stdout_pipe, max_capture, Arc::clone(&stop));
     let err_h = spawn_drain(stderr_pipe, max_capture, Arc::clone(&stop));
+    // Twice one record's bound kept: more than one record's bound is
+    // malformed whatever it holds, and the classifier sees that it was more.
+    let has_outcome = outcome_reader.is_some();
+    let outcome_h = spawn_drain(outcome_reader, 2 * OUTCOME_RECORD_MAX, Arc::clone(&stop));
 
     let start = Instant::now();
     let watched = loop {
@@ -561,9 +634,19 @@ fn run_bounded_capped(
 
     // Frees the job's registry slot, THEN reaps (axon_jobctl::Job::reap).
     let reaped = job.reap();
-    let ((stdout, stdout_omitted), (stderr, _)) = join_drains(out_h, err_h, &stop);
+    let mut drained = join_drains(vec![out_h, err_h, outcome_h], &stop).into_iter();
+    let (stdout, stdout_omitted) = drained.next().unwrap_or_default();
+    let (stderr, _) = drained.next().unwrap_or_default();
+    let outcome = drained
+        .next()
+        .filter(|_| has_outcome)
+        .map(|(record, _)| record);
     let end = watched?;
     let status = reaped?;
+    let exit_signal = {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    };
 
     let killed_by_signal = match end {
         End::Signal(sig) => Some(sig),
@@ -585,6 +668,8 @@ fn run_bounded_capped(
         timed_out: matches!(end, End::TimedOut),
         killed_by_latch: matches!(end, End::Latch),
         killed_by_signal,
+        exit_signal,
+        outcome,
     })
 }
 
@@ -645,11 +730,6 @@ fn is_kill_file_tripped(path: &std::path::Path) -> bool {
     }
 }
 
-/// Extract the first `axon:` FAULT line from stderr (the human-facing reason),
-/// skipping informational lines (SMT discharge summaries, the mint
-/// certificate-checked notice) that aren't faults; fall back to `default`.
-/// (`axon run` no longer prints its run-id by default, and the job runs under
-/// `env_clear` without `AXON_RECORD`, so there is no run-id line to skip.)
 /// Did the sandbox wrapper run to completion? (AUDIT T44.) True only if stdout
 /// carries the exact marker for THIS run — the nonce makes it unforgeable by the
 /// job, which never sees the generated wrapper. The marker ENDS a line rather
@@ -658,15 +738,6 @@ fn is_kill_file_tripped(path: &std::path::Path) -> bool {
 fn ran_to_completion(stdout: &str, nonce: &str) -> bool {
     let expect = format!("{DONE_SENTINEL}{nonce}");
     stdout.lines().any(|l| l.trim_end().ends_with(&expect))
-}
-
-fn first_axon_line(stderr: &str, default: &str) -> String {
-    let is_info = |l: &str| l.starts_with("axon: SMT") || l.starts_with("axon: mint");
-    stderr
-        .lines()
-        .find(|l| l.starts_with("axon:") && !is_info(l))
-        .map(|l| l.trim_start_matches("axon:").trim().to_string())
-        .unwrap_or_else(|| default.to_string())
 }
 
 /// A program's declared effects for admission, from the parsed program and
@@ -791,15 +862,16 @@ fn job_module_dir_sets(axon_bin: &Path, program: &Path) -> Vec<Vec<PathBuf>> {
 /// the generated wrapper, which is staged outside any granted fs_read prefix.
 const DONE_SENTINEL: &str = "__axon_os_done:";
 
-/// A per-run nonce for the completion marker. Not derived from the job's seed —
-/// the job can read `AXON_SEED` from its own environment, so a seed-derived
-/// marker would be forgeable by the very code whose completion it attests.
-fn done_nonce() -> String {
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("{:x}{:x}", t, std::process::id())
+/// A per-run nonce: 16 bytes from the OS RNG, hex. It marks the completion
+/// line and every outcome record of the run (GV-1). Not derived from the job's
+/// seed or the clock - the job can read `AXON_SEED` from its own environment,
+/// and a guessable nonce is forgeable by the very code whose completion it
+/// attests. `Err` when the RNG cannot be read (the run is then not started).
+fn run_nonce() -> std::io::Result<String> {
+    use std::io::Read;
+    let mut b = [0u8; 16];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut b)?;
+    Ok(b.iter().map(|x| format!("{x:02x}")).collect())
 }
 
 fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> String {
@@ -1010,20 +1082,6 @@ pub fn query_imports_digest(
     }
 }
 
-/// The interpreter's G1d refusal line, when the run stopped on it: exit 8, the
-/// wrapper never completed, and stderr carries
-/// `error: AXON_REQUIRE_IMPORTS_DIGEST: …`.
-fn imports_refusal(stderr: &str, code: Option<i32>, stdout: &str, nonce: &str) -> Option<String> {
-    if code != Some(8) || ran_to_completion(stdout, nonce) {
-        return None;
-    }
-    let prefix = format!("error: {REQUIRE_IMPORTS_DIGEST_ENV}:");
-    stderr
-        .lines()
-        .find(|l| l.starts_with(&prefix))
-        .map(|l| l.trim().to_string())
-}
-
 impl Runtime for AxonCoreRuntime {
     /// Stated explicitly, not inherited from the default, so a change to the
     /// trait default cannot silently relabel the legacy adapter.
@@ -1098,20 +1156,21 @@ impl Runtime for AxonCoreRuntime {
 /// did not compile from one that returned 2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SandboxOutcome {
-    /// The program did not compile; nothing ran. Read only from a run that
-    /// exited 2 with empty stdout and a stderr made solely of the
-    /// interpreter's `axon-diag/1` lines, at least one an error.
+    /// The program did not compile, or `axon run` refused it before it
+    /// started; nothing ran. Read only from the interpreter's outcome record
+    /// (kind `compile`); `diagnostic` is its reason (the first error).
     CompileFailed { diagnostic: String },
-    /// The process exited with `code`: `main` returned (the wrapper's
-    /// completion marker printed; 0 for a nullary `fn main()`), or the program
-    /// stopped itself with `exit(code)` (no marker, and no interpreter fault
-    /// line).
+    /// The process exited with `code` and the outcome record says the
+    /// program ended itself: `main` returned (0 for a nullary `fn main()`),
+    /// or it called `exit(code)`.
     Exited { code: i32 },
-    /// The interpreter stopped the run: its final stderr line is its own
-    /// `axon: <fault>:` line and the status is that fault's carved exit code -
-    /// a sandbox refusal (`verdict` = `Denied { axis: "sandbox" }`), a goal
-    /// budget, a refinement, a failed `@[verify]`, a halt, an AI-policy refusal,
-    /// a panic; or a signal ended it. `code` is the raw process status.
+    /// The interpreter stopped the run (record kind `fault`): a sandbox
+    /// refusal (`verdict` = `Denied { axis: "sandbox" }`), a goal budget, a
+    /// refinement, a failed `@[verify]`, a halt, an AI-policy refusal, a
+    /// resource ceiling, a panic. Also every run without one valid outcome
+    /// record of its own (`Denied { axis: "sandbox" }`, reason `no outcome
+    /// record: ...`: fail closed), and a run ended by a termination signal
+    /// this process received. `code` is the raw process status.
     Faulted { code: Option<i32>, verdict: Verdict },
     /// The wall deadline killed the run's process group.
     TimedOut { after_ms: u64 },
@@ -1170,16 +1229,16 @@ impl AxonCoreRuntime {
         }
     }
 
-    /// How a capture run ended (implementation audit P1/P2). Decided in this
-    /// order, and never from words the program wrote to stderr:
-    /// 1. the deadline or a signal ended it;
-    /// 2. the wrapper's completion marker printed: `main` returned;
-    /// 3. exit 2, empty stdout and a stderr of only `axon-diag/1` lines with
-    ///    an error among them: it did not compile;
-    /// 4. the final stderr line is the interpreter's own fault line for the
-    ///    exit code it carved for that fault (`axon: sandbox violation: ` with
-    ///    8, ...): a fault;
-    /// 5. otherwise the program stopped itself with `exit(code)`.
+    /// How a capture run ended (GV-1). Decided in this order, and never from
+    /// anything the program wrote to stdout or stderr:
+    /// 1. the supervisor's own kill: the deadline (`TimedOut`) or a
+    ///    termination signal this process received;
+    /// 2. the interpreter's `axon-outcome/1` record on the outcome pipe
+    ///    ([`read_outcome_record`]): `exit` is the program's own exit status,
+    ///    `fault` the interpreter stopping it, `compile` nothing ran;
+    /// 3. anything else - no record, two, a malformed one, another run's
+    ///    nonce, a code that is not the exit status, death by a signal nobody
+    ///    here sent - fails closed as a sandbox refusal.
     fn classify_capture(&self, proc: &ProcOutcome, nonce: &str) -> SandboxOutcome {
         if proc.timed_out {
             return SandboxOutcome::TimedOut {
@@ -1194,37 +1253,31 @@ impl AxonCoreRuntime {
                 },
             };
         }
-        if ran_to_completion(&proc.stdout, nonce) {
-            return SandboxOutcome::Exited {
-                code: proc.code.unwrap_or(0),
-            };
-        }
-        let Some(code) = proc.code else {
-            return SandboxOutcome::Faulted {
-                code: None,
-                verdict: Verdict::Denied {
-                    reason: "the run ended without an exit status".into(),
-                    axis: "runtime".into(),
+        match read_outcome_record(proc, nonce) {
+            Ok(r) => match r.kind {
+                RecordKind::Exit => SandboxOutcome::Exited { code: r.code },
+                RecordKind::Fault => SandboxOutcome::Faulted {
+                    code: Some(r.code),
+                    verdict: fault_verdict(&r.class, r.reason),
                 },
-            };
-        };
-        if code == 2 && proc.stdout.is_empty() {
-            if let Some(diagnostic) = compile_failure(&proc.stderr) {
-                return SandboxOutcome::CompileFailed { diagnostic };
-            }
+                RecordKind::Compile => SandboxOutcome::CompileFailed {
+                    diagnostic: r.reason,
+                },
+            },
+            Err(no_record) => SandboxOutcome::Faulted {
+                code: proc.code,
+                verdict: Verdict::Denied {
+                    reason: no_record,
+                    axis: "sandbox".into(),
+                },
+            },
         }
-        if let Some(verdict) = interpreter_fault(code, &proc.stderr) {
-            return SandboxOutcome::Faulted {
-                code: Some(code),
-                verdict,
-            };
-        }
-        SandboxOutcome::Exited { code }
     }
 
     /// Stage the wrapper and run it: `Ok((outcome, nonce))`, or the verdict
     /// for a run that could not start. `poll_kill_file`: honour
-    /// `AXON_KILL_FILE` (R27/R29).
+    /// `AXON_KILL_FILE` (R27/R29). Every run gets an outcome pipe (GV-1) and
+    /// is classified by the record the interpreter writes to it.
     fn launch(
         &self,
         program: &ProgramSource,
@@ -1244,7 +1297,10 @@ impl AxonCoreRuntime {
         //
         // AR1: the text staged is the text the approval verified and the static
         // scan judged; the entry file is not read again.
-        let nonce = done_nonce();
+        let nonce = run_nonce().map_err(|e| Verdict::Denied {
+            reason: format!("cannot read the OS random source for the run nonce: {e}"),
+            axis: "io".into(),
+        })?;
         let wrapper_src = wrap_in_sandbox(program.text, grant, budget, &nonce);
         // B259: a PRIVATE per-run 0700 directory, removed on every exit path
         // when `staging` drops. The wrapper name inside it is fixed; its
@@ -1281,6 +1337,15 @@ impl AxonCoreRuntime {
         if let Some(digest) = required_imports {
             cmd.env(REQUIRE_IMPORTS_DIGEST_ENV, digest);
         }
+        // GV-1: the outcome pipe. The interpreter writes one `axon-outcome/1`
+        // record with this run's nonce to fd 3 before it exits; the program
+        // owns stdout and stderr, so how the run ended is read from here.
+        let (reader, writer) = std::io::pipe().map_err(|e| Verdict::Denied {
+            reason: format!("cannot create the outcome pipe: {e}"),
+            axis: "io".into(),
+        })?;
+        give_child_outcome_fd(&mut cmd, &writer, &nonce);
+        let pipe = Some(OutcomePipe { reader, writer });
 
         // R27/R29: if AXON_KILL_FILE is set, poll it during run_bounded.
         // R27 uses this for operator kill (`axon-os kill`); R29 uses it for the
@@ -1289,8 +1354,14 @@ impl AxonCoreRuntime {
             .filter(|_| poll_kill_file)
             .map(std::path::PathBuf::from);
         let kill_file = kill_file_env.as_deref();
-        let proc_res =
-            run_bounded_capped(&mut cmd, self.timeout, kill_file, self.max_capture, None);
+        let proc_res = run_bounded_outcome(
+            &mut cmd,
+            self.timeout,
+            kill_file,
+            self.max_capture,
+            None,
+            pipe,
+        );
         drop(staging); // removes the private dir and the wrapper in it
         let proc = proc_res.map_err(|e| Verdict::Denied {
             reason: format!("could not launch interpreter: {e}"),
@@ -1299,162 +1370,80 @@ impl AxonCoreRuntime {
         Ok((proc, nonce))
     }
 
-    /// Map a run to a verdict. Faults are detected by the interpreter's
-    /// STDERR diagnostics, NOT by the raw exit code — because `axon run`
-    /// propagates `main`'s integer return value as the exit code, which would
-    /// otherwise collide with the carved fault codes (a program returning 7
-    /// is NOT budget exhaustion). A clean run ⇒ Completed{value = exit code}.
+    /// Map a job run to a verdict (GV-1b). The supervisor's own kills decide
+    /// first (a termination signal it received, the kill-file latch, the
+    /// deadline); then the interpreter's `axon-outcome/1` record on the
+    /// outcome pipe ([`read_outcome_record`]). Never stderr: the job owns it,
+    /// and a completed job whose stderr merely NAMED a violation was sealed
+    /// as a sandbox denial in the hash-chained record (O-GV-01).
+    ///
+    /// `exit` is a completion only when the wrapper's completion marker
+    /// printed (the job returned and the wrapper propagated its value); a job
+    /// that called `exit(n)` itself stopped before the wrapper finished, which
+    /// is not a completion. No valid record is `Denied` on the `runtime` axis.
     fn classify(&self, proc: &ProcOutcome, nonce: &str) -> Verdict {
-        let err = &proc.stderr;
         if let Some(sig) = proc.killed_by_signal {
             // G2d: the supervisor was told to stop and took the job with it.
             // `axon-os run` writes this record and then exits 128+signal.
-            Verdict::Halted {
+            return Verdict::Halted {
                 reason: format!(
                     "the supervisor received {} and killed the job's process group",
                     signal_name(sig)
                 ),
-            }
-        } else if proc.killed_by_latch {
+            };
+        }
+        if proc.killed_by_latch {
             // Kill file tripped: R27 operator kill → Halted (exit 4).
             // R29 monitor kill → cmd_run overrides the final exit code to 12
             // via the `containment_violation` flag (checked after supervisor::run).
-            Verdict::Halted {
+            return Verdict::Halted {
                 reason: "kill-switch tripped by supervisor".into(),
-            }
-        } else if proc.timed_out {
-            Verdict::Denied {
+            };
+        }
+        if proc.timed_out {
+            return Verdict::Denied {
                 reason: format!("timed out after {} ms", self.timeout.as_millis()),
                 axis: "time".into(),
+            };
+        }
+        let r = match read_outcome_record(proc, nonce) {
+            Ok(r) => r,
+            Err(no_record) => {
+                return Verdict::Denied {
+                    reason: no_record,
+                    axis: "runtime".into(),
+                }
             }
-        } else if let Some(line) = imports_refusal(err, proc.code, &proc.stdout, nonce) {
-            // G1e: the loader refused the closure before executing anything —
+        };
+        // The record's reason is the interpreter's own line; a job verdict
+        // has always carried it without the `axon:` prefix.
+        let reason = r
+            .reason
+            .strip_prefix("axon:")
+            .map(str::trim)
+            .unwrap_or(&r.reason)
+            .to_string();
+        match r.kind {
+            RecordKind::Exit if ran_to_completion(&proc.stdout, nonce) => Verdict::Completed {
+                value: r.code as i64,
+            },
+            RecordKind::Exit => Verdict::Denied {
+                reason: format!(
+                    "the job stopped itself with exit({}) before the sandbox wrapper finished",
+                    r.code
+                ),
+                axis: "runtime".into(),
+            },
+            RecordKind::Fault => fault_verdict(&r.class, reason),
+            // G1e: the loader refused the closure before executing anything -
             // a module changed since approval. An approval failure, not a
             // sandbox one.
-            Verdict::Denied {
-                reason: format!("imports changed since approval: {line}"),
+            RecordKind::Compile if r.class == "imports-digest" => Verdict::Denied {
+                reason: format!("imports changed since approval: {reason}"),
                 axis: "approval".into(),
-            }
-        } else if err.contains("sandbox violation")
-            || err.contains("SandboxViolation")
-            || err.contains("not permitted by @[contained]")
-            || err.contains("capability")
-        {
-            Verdict::Denied {
-                reason: first_axon_line(err, "runtime capability/sandbox violation"),
-                axis: "sandbox".into(),
-            }
-        } else if err.contains("budget") && (err.contains("exhaust") || err.contains("exceeded")) {
-            Verdict::BudgetExhausted {
-                axis: "budget".into(),
-            }
-        } else if err.contains("refinement violated") || err.contains("REFINE") {
-            Verdict::RefineViolation {
-                reason: first_axon_line(err, "refinement contract violated"),
-            }
-        } else if err.contains("axon: panic") {
-            Verdict::Denied {
-                reason: first_axon_line(err, "interpreter panic"),
-                axis: "runtime".into(),
-            }
-        } else if err.contains("ai policy") || err.contains("E1300") {
-            // AUDIT T24 (O016/O018): observed sealing as Completed{value:5}.
-            // Exit 5 is AI_POLICY_EXIT_CODE — a CARVED fault code — so the
-            // record stored a fault code in the `value` field of a SUCCESS
-            // verdict, and a reader could not tell "returned 5" from "refused
-            // by AI policy".
-            Verdict::Denied {
-                reason: first_axon_line(err, "AI policy refused the call"),
-                axis: "ai-policy".into(),
-            }
-        } else if err.contains("parse error") || err.contains("type error") {
-            // AUDIT T24 (O016): a program that does not compile executes ZERO
-            // statements, yet sealed as `✓ completed (value=2)` because the
-            // interpreter reports it as `error: parse error: ...` — no `axon:`
-            // fault line, so none of the arms above matched and it fell through
-            // to Completed. The tamper-evident record then attested success for
-            // a job that never ran.
-            Verdict::Malformed {
-                reason: first_axon_line(err, "program failed to compile"),
-            }
-        } else {
-            // AUDIT T44 (OSK-P4-H2 / P4-OS-21). This arm used to be
-            // `Completed { value: exit_code }` unconditionally, so ANY fault
-            // whose wording the chain above did not match sealed as a success.
-            // That is not hypothetical drift — it was live. T24 added the
-            // `parse error`/`type error` arm above, but `axon run` reports TYPE
-            // errors as JSON diagnostics (`{"schema":"axon-diag/1",…}`) and only
-            // SYNTAX errors as prose, so:
-            //
-            //   syntax error in a job -> "⚠ DENIED: program failed to compile", exit 8
-            //   type   error in a job -> "✓ completed (value=2)",                exit 0
-            //
-            // Same class of job, opposite records, and the wrong one is the
-            // silent one. A record that attests success for a job which executed
-            // zero statements is an attestation-integrity failure — the record
-            // lies, and it is hash-chained, so it lies durably.
-            //
-            // The exit code now decides. It is unambiguous because the wrapper
-            // returns 0 and reports the job's value via RESULT_SENTINEL
-            // (see `wrap_in_sandbox`) — the collision that forced the stderr
-            // heuristic in the first place is gone. stderr is still read, but
-            // only to phrase the human-readable `reason`.
-            if ran_to_completion(&proc.stdout, nonce) {
-                // The wrapper's tail ran, so the job returned normally and the
-                // exit code IS its return value — including values that collide
-                // with carved fault codes, which is exactly what the old stderr
-                // heuristic could not express.
-                Verdict::Completed {
-                    value: proc.code.unwrap_or(0) as i64,
-                }
-            } else {
-                match proc.code.unwrap_or(-1) {
-                    // Exit 0 with no completion marker means the wrapper's own tail
-                    // never ran. Something stopped the job short. Refusing to seal
-                    // that as a success is the whole point of this arm.
-                    0 => Verdict::Denied {
-                        reason: first_axon_line(
-                            err,
-                            "run produced no completion marker — the sandbox wrapper did not \
-                         finish, so the job's outcome is unknown",
-                        ),
-                        axis: "runtime".into(),
-                    },
-                    2 => Verdict::Malformed {
-                        reason: first_axon_line(err, "program failed to compile"),
-                    },
-                    3 => Verdict::Denied {
-                        reason: first_axon_line(err, "@[verify] postcondition failed"),
-                        axis: "verify".into(),
-                    },
-                    4 => Verdict::Halted {
-                        reason: first_axon_line(err, "corrigibility kill-switch tripped"),
-                    },
-                    5 => Verdict::Denied {
-                        reason: first_axon_line(err, "AI policy refused the call"),
-                        axis: "ai-policy".into(),
-                    },
-                    6 => Verdict::RefineViolation {
-                        reason: first_axon_line(err, "refinement contract violated"),
-                    },
-                    7 => Verdict::BudgetExhausted {
-                        axis: "budget".into(),
-                    },
-                    8 => Verdict::Denied {
-                        reason: first_axon_line(err, "runtime capability/sandbox violation"),
-                        axis: "sandbox".into(),
-                    },
-                    // Any other non-zero exit is a fault we have no name for. It is
-                    // NOT a completion. Naming it honestly beats sealing a lie.
-                    other => Verdict::Denied {
-                        reason: first_axon_line(
-                            err,
-                            &format!("interpreter exited {other} with no recognised diagnostic"),
-                        ),
-                        axis: "runtime".into(),
-                    },
-                }
-            }
+            },
+            // AUDIT T24/T44: a job that did not compile executed nothing.
+            RecordKind::Compile => Verdict::Malformed { reason },
         }
     }
 }
@@ -1470,79 +1459,132 @@ fn verdict_reason(v: &Verdict) -> String {
     }
 }
 
-/// The first error of a stderr made solely of the interpreter's `axon-diag/1`
-/// lines (what `axon run` prints for a program it refuses to start), or `None`
-/// when any line is something else or no line is an error.
-fn compile_failure(stderr: &str) -> Option<String> {
-    let mut first_error: Option<String> = None;
-    for line in stderr.lines().filter(|l| !l.trim().is_empty()) {
-        let d: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
-        if d.get("schema").and_then(|s| s.as_str()) != Some("axon-diag/1") {
-            return None;
-        }
-        if first_error.is_none() && d.get("severity").and_then(|s| s.as_str()) == Some("error") {
-            let field = |k: &str| {
-                d.get(k)
-                    .map(|v| v.to_string().trim_matches('"').to_string())
-            };
-            first_error = Some(format!(
-                "{} at line {}:{}: {}",
-                field("code").unwrap_or_default(),
-                field("line").unwrap_or_default(),
-                field("col").unwrap_or_default(),
-                d.get("message").and_then(|m| m.as_str()).unwrap_or(""),
-            ));
-        }
-    }
-    first_error
+/// The `kind` of an `axon-outcome/1` record (`axon_core::outcome::Kind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordKind {
+    Exit,
+    Fault,
+    Compile,
 }
 
-/// The interpreter's fault lines (`axon_core::interp::run_program_inner`), each
-/// with the exit code it carves for that fault.
-const INTERPRETER_FAULTS: &[(i32, &str)] = &[
-    (3, "axon: verify failed"),
-    (4, "axon: halted"),
-    (5, "axon: ai policy: "),
-    (6, "axon: refinement violated: "),
-    (7, "axon: goal budget exhausted: "),
-    (8, "axon: sandbox violation: "),
-    (101, "axon: panic"),
-    (101, "axon: multi-shot resume not supported here: "),
+/// One valid `axon-outcome/1` record of this run.
+#[derive(Debug)]
+struct OutcomeRecord {
+    kind: RecordKind,
+    code: i32,
+    class: String,
+    reason: String,
+}
+
+/// The fault classes the interpreter states (`interp::run_program_inner`,
+/// and `replay-divergence` from `axon run`'s end).
+const FAULT_CLASSES: &[&str] = &[
+    "verify",
+    "halted",
+    "ai-policy",
+    "refine",
+    "goal-budget",
+    "sandbox",
+    "panic",
+    "multishot",
+    "steps",
+    "wall",
+    "replay-divergence",
 ];
 
-/// The fault the interpreter reported, read from its own line: the LAST
-/// non-empty stderr line (the interpreter prints it and exits) must be the
-/// fault line for exactly this exit code. Anything else - a program's own
-/// `eprintln`, whatever words it holds - is not a fault.
-fn interpreter_fault(code: i32, stderr: &str) -> Option<Verdict> {
-    let line = stderr.lines().rev().find(|l| !l.trim().is_empty())?.trim();
-    let (_, prefix) = INTERPRETER_FAULTS
-        .iter()
-        .find(|(c, p)| *c == code && line.starts_with(p))?;
-    let reason = line.to_string();
-    Some(match *prefix {
-        "axon: verify failed" => Verdict::Denied {
-            reason,
-            axis: "verify".into(),
-        },
-        "axon: halted" => Verdict::Halted { reason },
-        "axon: ai policy: " => Verdict::Denied {
-            reason,
-            axis: "ai-policy".into(),
-        },
-        "axon: refinement violated: " => Verdict::RefineViolation { reason },
-        "axon: goal budget exhausted: " => Verdict::BudgetExhausted {
+/// GV-1: the one record the interpreter wrote to this run's outcome pipe, or
+/// why there is none (`Err` is the whole reason, `no outcome record: <which>
+/// (exit <n>|signal <s>)`). Valid only as exactly one newline-terminated
+/// `axon-outcome/1` JSON line within [`OUTCOME_RECORD_MAX`], carrying THIS
+/// run's nonce, a known kind and class, and a `code` equal to the process
+/// exit status. Death by a signal is never a valid end: the supervisor's own
+/// kills are decided before this is asked.
+fn read_outcome_record(proc: &ProcOutcome, nonce: &str) -> Result<OutcomeRecord, String> {
+    let ended = match (proc.exit_signal, proc.code) {
+        (Some(sig), _) => format!("signal {}", signal_name(sig)),
+        (None, Some(c)) => format!("exit {c}"),
+        (None, None) => "no exit status".to_string(),
+    };
+    let refuse = |which: &str| Err(format!("no outcome record: {which} ({ended})"));
+    let Some(raw) = proc.outcome.as_deref() else {
+        return refuse("the run had no outcome pipe");
+    };
+    if raw.is_empty() {
+        return refuse("none written");
+    }
+    if raw.len() > OUTCOME_RECORD_MAX {
+        return refuse("more than one record's bound written");
+    }
+    let Some(line) = raw.strip_suffix('\n') else {
+        return refuse("truncated (no newline)");
+    };
+    if line.contains('\n') {
+        return refuse("more than one record");
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+        return refuse("malformed");
+    };
+    if v.get("schema").and_then(|s| s.as_str()) != Some("axon-outcome/1") {
+        return refuse("not axon-outcome/1");
+    }
+    if v.get("nonce").and_then(|s| s.as_str()) != Some(nonce) {
+        return refuse("wrong nonce");
+    }
+    let kind = match v.get("kind").and_then(|s| s.as_str()) {
+        Some("exit") => RecordKind::Exit,
+        Some("fault") => RecordKind::Fault,
+        Some("compile") => RecordKind::Compile,
+        _ => return refuse("unknown kind"),
+    };
+    let Some(code) = v
+        .get("code")
+        .and_then(|c| c.as_i64())
+        .and_then(|c| i32::try_from(c).ok())
+    else {
+        return refuse("malformed code");
+    };
+    let (Some(class), Some(reason)) = (
+        v.get("class").and_then(|s| s.as_str()),
+        v.get("reason").and_then(|s| s.as_str()),
+    ) else {
+        return refuse("malformed");
+    };
+    if kind == RecordKind::Fault && !FAULT_CLASSES.contains(&class) {
+        return refuse("unknown fault class");
+    }
+    if proc.exit_signal.is_some() {
+        return refuse("the interpreter died by a signal after writing it");
+    }
+    if proc.code != Some(code) {
+        return refuse(&format!("its code {code} is not the exit status"));
+    }
+    Ok(OutcomeRecord {
+        kind,
+        code,
+        class: class.to_string(),
+        reason: reason.to_string(),
+    })
+}
+
+/// The verdict for an interpreter fault of `class` (an [`OutcomeRecord`] of
+/// kind `fault`), carrying `reason`.
+fn fault_verdict(class: &str, reason: String) -> Verdict {
+    match class {
+        "halted" => Verdict::Halted { reason },
+        "refine" => Verdict::RefineViolation { reason },
+        "goal-budget" => Verdict::BudgetExhausted {
             axis: "budget".into(),
         },
-        "axon: sandbox violation: " => Verdict::Denied {
+        "replay-divergence" => Verdict::VerifyMismatch { detail: reason },
+        "verify" | "ai-policy" | "sandbox" | "steps" | "wall" => Verdict::Denied {
             reason,
-            axis: "sandbox".into(),
+            axis: class.into(),
         },
         _ => Verdict::Denied {
             reason,
             axis: "runtime".into(),
         },
-    })
+    }
 }
 
 /// `stdout` without THIS run's completion marker and the newline the

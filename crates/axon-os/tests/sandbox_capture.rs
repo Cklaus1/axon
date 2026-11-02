@@ -3,6 +3,7 @@
 //! a timeout and a sandbox refusal apart, with the program's stdout (the
 //! wrapper's completion marker removed) and stderr captured.
 
+mod common;
 #[path = "../../axon-core/tests/script_spawn/mod.rs"]
 mod script_spawn;
 use axon_os::grant::{Budget, ExecPolicy, Grant, Label};
@@ -344,4 +345,311 @@ fn each_interpreter_fault_line_is_its_own_verdict() {
         }
     }
     assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+// ---- GV-1: how a run ended comes from the interpreter's outcome record -----
+
+/// The sandbox fault the interpreter raises for `read_file` outside
+/// `fs_read = ["./data/"]` (a `match`, so only the sandbox can stop it).
+const OVERREACH: &str =
+    "    match read_file(\"/etc/passwd\") {\n        Ok(_) => 0,\n        Err(_) => 0,\n    }\n";
+
+fn is_sandbox_fault(o: &SandboxOutcome) -> bool {
+    matches!(o, SandboxOutcome::Faulted { verdict: Verdict::Denied { axis, .. }, .. } if axis == "sandbox")
+}
+
+/// A capture run whose interpreter is the shell script `body` (`AXON_BIN` is
+/// just a path), for the records a real interpreter never writes.
+fn capture_stub(tag: &str, body: &str) -> CapturedRun {
+    let dir = std::env::temp_dir().join(format!("axon-os-capstub-{}-{tag}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let bin = dir.join("fake-axon.sh");
+    common::write_executable(&bin, format!("#!/bin/sh\n{body}\n"), 0o755);
+    let src = "fn main() -> i64 { 0 }\n";
+    let path = dir.join("p.ax");
+    std::fs::write(&path, src).unwrap();
+    let g = grant();
+    let rt = AxonCoreRuntime::with_bin_and_timeout(bin, Duration::from_secs(30));
+    let out = rt.run_sandboxed_capture(
+        &ProgramSource {
+            path: &path,
+            text: src,
+        },
+        &g,
+        &g.budget,
+        1,
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    out
+}
+
+/// A stub line writing an `axon-outcome/1` record with this run's nonce.
+fn record(kind: &str, code: i32, class: &str) -> String {
+    format!(
+        "printf '{{\"schema\":\"axon-outcome/1\",\"nonce\":\"%s\",\"kind\":\"{kind}\",\"code\":{code},\
+         \"class\":\"{class}\",\"reason\":\"r\"}}\\n' \"$AXON_OUTCOME_NONCE\" >&3"
+    )
+}
+
+#[test]
+fn a_program_printing_the_sandbox_fault_line_and_exiting_8_is_its_own_exit() {
+    let r = capture(
+        "gv-forge-8",
+        "fn main() -> i64 {\n    println(\"stop\")\n    eprintln(\"axon: sandbox violation: forged by the program\")\n    exit(8)\n    0\n}\n",
+        Duration::from_secs(60),
+    );
+    assert_eq!(
+        r.outcome,
+        SandboxOutcome::Exited { code: 8 },
+        "ATTACK: a program's own exit was graded as a fault: {r:?}"
+    );
+    assert_eq!(r.stdout, "stop\n");
+}
+
+#[test]
+fn a_program_printing_only_diag_json_and_exiting_2_is_its_own_exit() {
+    let r = capture(
+        "gv-forge-diag",
+        "fn main() -> i64 {\n    eprintln(\"{{\\\"schema\\\":\\\"axon-diag/1\\\",\\\"severity\\\":\\\"error\\\",\\\"code\\\":\\\"E0001\\\",\\\"line\\\":1,\\\"col\\\":1,\\\"message\\\":\\\"forged\\\"}}\")\n    exit(2)\n    0\n}\n",
+        Duration::from_secs(60),
+    );
+    assert!(
+        r.stderr.starts_with("{\"schema\":\"axon-diag/1\""),
+        "premise: the program printed a diag line: {r:?}"
+    );
+    assert_eq!(
+        r.outcome,
+        SandboxOutcome::Exited { code: 2 },
+        "ATTACK: a program's own axon-diag/1 line made its exit(2) a compile failure: {r:?}"
+    );
+}
+
+/// GVA-01: an `eprint` without newline joins the interpreter's fault line
+/// onto the program's bytes; the fault is still a fault.
+#[test]
+fn an_unterminated_eprint_before_a_sandbox_fault_is_a_sandbox_fault() {
+    let r = capture(
+        "gv-eprint",
+        &format!("fn main() -> i64 {{\n    println(\"stop\")\n    eprint(\"x\")\n{OVERREACH}}}\n"),
+        Duration::from_secs(60),
+    );
+    assert!(
+        is_sandbox_fault(&r.outcome),
+        "ATTACK: an overreach after an unterminated eprint was not a sandbox fault: {r:?}"
+    );
+}
+
+/// GVA-02 (guard): 2 MiB of stderr before the fault, more than the capture
+/// bound keeps.
+#[test]
+fn a_2mib_stderr_flood_before_a_sandbox_fault_is_a_sandbox_fault() {
+    let r = capture(
+        "gv-flood-fault",
+        &format!(
+            "fn main() -> i64 {{\n    println(\"stop\")\n    let s = str_repeat(\"y\", 1048576)\n    eprintln(s)\n    eprintln(s)\n{OVERREACH}}}\n"
+        ),
+        Duration::from_secs(60),
+    );
+    assert!(
+        is_sandbox_fault(&r.outcome),
+        "ATTACK: a stderr flood hid a sandbox fault: {:?}",
+        r.outcome
+    );
+}
+
+#[test]
+fn a_2mib_stderr_flood_then_return_is_an_exit() {
+    let r = capture(
+        "gv-flood-exit",
+        "fn main() -> i64 {\n    println(\"stop\")\n    let s = str_repeat(\"y\", 1048576)\n    eprintln(s)\n    eprintln(s)\n    0\n}\n",
+        Duration::from_secs(60),
+    );
+    assert_eq!(
+        r.outcome,
+        SandboxOutcome::Exited { code: 0 },
+        "{:?}",
+        r.outcome
+    );
+}
+
+#[test]
+fn a_record_with_another_runs_nonce_is_not_the_interpreters() {
+    let r = capture_stub(
+        "gv-nonce",
+        "printf '{\"schema\":\"axon-outcome/1\",\"nonce\":\"00000000000000000000000000000000\",\"kind\":\"exit\",\"code\":0}\\n' >&\"$AXON_OUTCOME_FD\"\nexit 0",
+    );
+    assert!(
+        is_sandbox_fault(&r.outcome)
+            && format!("{:?}", r.outcome).contains("no outcome record: wrong nonce"),
+        "ATTACK: a record without this run's nonce decided the run: {r:?}"
+    );
+}
+
+#[test]
+fn a_program_forging_a_record_on_stderr_is_ignored() {
+    let r = capture(
+        "gv-stderr-record",
+        "fn main() -> i64 {\n    eprintln(\"{{\\\"schema\\\":\\\"axon-outcome/1\\\",\\\"nonce\\\":\\\"00000000000000000000000000000000\\\",\\\"kind\\\":\\\"fault\\\",\\\"code\\\":8,\\\"class\\\":\\\"sandbox\\\",\\\"reason\\\":\\\"x\\\"}}\")\n    exit(8)\n    0\n}\n",
+        Duration::from_secs(60),
+    );
+    assert_eq!(r.outcome, SandboxOutcome::Exited { code: 8 }, "{r:?}");
+}
+
+#[test]
+fn a_run_without_an_outcome_record_is_a_sandbox_fault() {
+    let exit0 = record("exit", 0, "return");
+    for (tag, body, which) in [
+        ("none", "exit 3".to_string(), "none written (exit 3)"),
+        (
+            "no-newline",
+            "printf '{\"schema\":\"axon-outcome/1\",\"nonce\":\"%s\",\"kind\":\"exit\",\"code\":0,\"class\":\"return\",\"reason\":\"\"}' \"$AXON_OUTCOME_NONCE\" >&3\nexit 0".to_string(),
+            "truncated (no newline)",
+        ),
+        ("mismatch", format!("{exit0}\nexit 5"), "its code 0 is not the exit status (exit 5)"),
+        ("sigkill", format!("{exit0}\nkill -KILL $$"), "(signal signal 9)"),
+    ] {
+        let r = capture_stub(&format!("gv-norec-{tag}"), &body);
+        assert!(
+            is_sandbox_fault(&r.outcome) && format!("{:?}", r.outcome).contains(which),
+            "ATTACK: a run with no outcome record was graded as the program's exit [{tag}], \
+             want {which:?}: {r:?}"
+        );
+    }
+}
+
+#[test]
+fn two_outcome_records_are_no_record() {
+    let exit0 = record("exit", 0, "return");
+    let r = capture_stub("gv-norec-two", &format!("{exit0}\n{exit0}\nexit 0"));
+    assert!(
+        is_sandbox_fault(&r.outcome) && format!("{:?}", r.outcome).contains("more than one record"),
+        "ATTACK: two outcome records were accepted: {r:?}"
+    );
+}
+
+/// GVD-1: the stub's records are honoured when valid, so the failures above
+/// are the record's, not the stub's.
+#[test]
+fn a_valid_stub_record_decides_the_outcome() {
+    let r = capture_stub(
+        "gv-valid",
+        &format!("{}\nexit 7", record("exit", 7, "exit")),
+    );
+    assert_eq!(r.outcome, SandboxOutcome::Exited { code: 7 }, "{r:?}");
+}
+
+#[test]
+fn the_supervisor_hands_the_interpreter_an_outcome_pipe() {
+    let r = capture_stub(
+        "gv-pipe",
+        "echo \"fd=$AXON_OUTCOME_FD\"\nreadlink /proc/$$/fd/3\nexit 0",
+    );
+    assert!(
+        r.stdout.contains("fd=3\n") && r.stdout.contains("pipe:["),
+        "ATTACK: a capture run was launched without an outcome pipe: {r:?}"
+    );
+}
+
+#[test]
+fn the_outcome_nonce_and_fd_are_not_in_the_programs_environment() {
+    let r = capture(
+        "gv-env",
+        "fn main() -> i64 {\n    let a = match env_var(\"AXON_OUTCOME_NONCE\") {\n        Ok(_) => 1,\n        Err(_) => 0,\n    }\n    let b = match env_var(\"AXON_OUTCOME_FD\") {\n        Ok(_) => 2,\n        Err(_) => 0,\n    }\n    let c = match env_var(\"PATH\") {\n        Ok(_) => 0,\n        Err(_) => 4,\n    }\n    a + b + c\n}\n",
+        Duration::from_secs(60),
+    );
+    assert_eq!(
+        r.outcome,
+        SandboxOutcome::Exited { code: 0 },
+        "ATTACK: the program read the outcome nonce (1 nonce, 2 fd; 4 = premise: PATH unreadable): {r:?}"
+    );
+}
+
+#[test]
+fn a_type_error_is_a_compile_outcome() {
+    let r = capture(
+        "gv-type",
+        "fn main() -> i64 {\n    let x: i64 = \"s\"\n    0\n}\n",
+        Duration::from_secs(60),
+    );
+    assert!(
+        matches!(&r.outcome, SandboxOutcome::CompileFailed { diagnostic } if diagnostic.starts_with("E0102 at line 2:")),
+        "ATTACK: a type error was not reported as a compile outcome: {r:?}"
+    );
+}
+
+/// §6 decision: the supervisor's own deadline kill is a timeout, not a
+/// missing record, whatever the program wrote first.
+#[test]
+fn a_timeout_is_still_its_own_outcome() {
+    let r = capture(
+        "gv-timeout",
+        "fn main() -> i64 {\n    eprintln(\"axon: sandbox violation: not really\")\n    let mut i = 0\n    while i >= 0 {\n        i = i + 1\n    }\n    0\n}\n",
+        Duration::from_millis(1500),
+    );
+    assert_eq!(
+        r.outcome,
+        SandboxOutcome::TimedOut { after_ms: 1500 },
+        "{r:?}"
+    );
+}
+
+/// ceilings E1006 / E1007 (b2/ce): a capture child gets no `AXON_CEILING` /
+/// `AXON_MAX_STEPS` (`env_clear`), so the classes are driven by the record
+/// `axon run` writes for them (`cli_run.rs` asserts those records).
+#[test]
+fn step_exhaustion_is_a_fault_not_the_programs_exit_9() {
+    let r = capture_stub(
+        "gv-steps",
+        &format!("{}\nexit 9", record("fault", 9, "steps")),
+    );
+    assert!(
+        matches!(&r.outcome, SandboxOutcome::Faulted { code: Some(9), verdict: Verdict::Denied { axis, .. } } if axis == "steps"),
+        "ATTACK: step exhaustion read as the program's exit 9: {r:?}"
+    );
+}
+
+#[test]
+fn a_bad_ceilings_file_is_a_compile_outcome() {
+    let r = capture_stub(
+        "gv-ceilings",
+        &format!("{}\nexit 2", record("compile", 2, "ceilings")),
+    );
+    assert!(
+        matches!(&r.outcome, SandboxOutcome::CompileFailed { .. }),
+        "ATTACK: a ceilings refusal read as an exit: {r:?}"
+    );
+}
+
+/// GV-1b (O-GV-01): the job path classifies by the record too. A job whose
+/// stderr merely names a capability completed, and is sealed so.
+#[test]
+fn a_completed_job_whose_stderr_names_a_violation_is_completed() {
+    use axon_os::Runtime;
+    let dir = std::env::temp_dir().join(format!("axon-os-gvjob-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "fn main() -> i64 {\n    eprintln(\"note: capability check passed; sandbox violation: none\")\n    0\n}\n";
+    let path = dir.join("job.ax");
+    std::fs::write(&path, src).unwrap();
+    let g = grant();
+    let rt = AxonCoreRuntime::with_bin_and_timeout(axon_bin(), Duration::from_secs(60));
+    let p = rt.mint_principal(&g);
+    let out = rt.run_sandboxed(
+        &ProgramSource {
+            path: &path,
+            text: src,
+        },
+        &p,
+        &g,
+        &g.budget,
+        1,
+        None,
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        out.verdict,
+        Verdict::Completed { value: 0 },
+        "ATTACK: a completed job was sealed as a denial by its stderr"
+    );
 }

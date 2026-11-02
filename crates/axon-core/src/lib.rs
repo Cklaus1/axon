@@ -38,6 +38,8 @@ pub mod mobile;
 /// R13 native FFI: the curated native-module registry (single source of truth
 /// shared by resolver/infer/checker/borrow/effects/codegen/interp).
 pub mod native;
+/// GV-1: the `axon-outcome/1` record `axon run` writes to a supervisor's pipe.
+pub mod outcome;
 pub mod parse_help;
 pub mod parser;
 pub mod preflight;

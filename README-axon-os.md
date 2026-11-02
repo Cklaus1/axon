@@ -70,6 +70,30 @@ rewritten since approval. A legacy `axon-approval/1` token is refused under a
 key and, keyless, accepted only for a program that imports nothing; otherwise
 re-approve. An unknown token schema is refused.
 
+## How a run's end is decided
+
+The program owns its stdout and stderr, and every code the interpreter uses for
+a fault (2-9, 101) is also a legal `exit(n)`, so neither can say how a run
+ended. Every interpreter run `axon-os` starts (`axon-os run` jobs and the
+`run_sandboxed_capture` the genviab harness grades through) gets a pipe on fd 3
+and a per-run nonce from the OS random source (`AXON_OUTCOME_FD`,
+`AXON_OUTCOME_NONCE`). `axon run` removes both from its environment, makes the
+fd close-on-exec, and before it exits writes exactly one `axon-outcome/1` JSON
+line there: `kind` `exit` (the program returned or called `exit(n)`), `fault`
+(the interpreter stopped it: sandbox, verify, halted, ai-policy, refine,
+goal-budget, panic, steps, wall, replay-divergence) or `compile` (nothing ran),
+with the code, a class and the reason. The supervisor decides from its own
+kills first (the deadline is `TimedOut`; a termination signal it received,
+the kill-file latch), then from that record. No record, two, a malformed one,
+another run's nonce, a code that is not the exit status, or death by a signal
+nobody here sent is a sandbox refusal (fail closed). A program printing
+`axon: sandbox violation: ...` and exiting 8 is graded as its own exit 8.
+
+Limit: when a grant allows `exec`, a process the program spawns runs as the
+same uid and could open `/proc/<interpreter>/fd/3` and read its environment,
+so it could forge a record. genviab therefore refuses a once task whose
+ceiling grants `exec`.
+
 ## Exit codes
 
 `0` ok · `2` usage/malformed · `6` refinement · `7` budget · `8`
