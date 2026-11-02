@@ -278,7 +278,8 @@ def build_mechanical():
         # the section ends only at `# `/`## `), and refuses any other line.
         b34 = {"c-star-proc": "* fs_read: /proc/\n", "c-star-exec": "* exec: any\n",
                "c-tabhash": "#\tnote\n- fs_read: /proc/\n", "c-nonbullet": "fs_read: ./data/\n",
-               "c-star-ok": "* fs_read: ./out/\n", "c-us-exec": "- exec: any\n\x1f- exec: none\n"}
+               "c-star-ok": "* fs_read: ./out/\n", "c-us-exec": "- exec: any\n\x1f- exec: none\n",
+               "c-dotdot": "- fs_write: ./out/../log/\n"}
         for tid, extra in b34.items():
             gv3_task(once, tid, f"Fixture {tid}: upper-case ./data/in.txt into ./out/up.txt and print "
                      "a line.", {"reference.py": PY_UPPER}, vis_up, hid_up, extra=extra)
@@ -373,7 +374,8 @@ def build_mechanical():
                 ("c-tabhash", "control character", "a '#\\t' line before '- fs_read: /proc/' in ## Allowed is refused"),
                 ("c-nonbullet", "not a bullet", "a non-bullet line in ## Allowed is refused"),
                 ("c-us-exec", "control character",
-                 "IGP-1: '- exec: any' then '\\x1f- exec: none' (exec any to axon-intent) is refused")):
+                 "IGP-1: '- exec: any' then '\\x1f- exec: none' (exec any to axon-intent) is refused"),
+                ("c-dotdot", "`..` component", "IGP-4: '- fs_write: ./out/../log/' is refused, as axon-intent does")):
             expect(f"B3-4: {what} ({tid})", needle in mech.get(tid, ""), mech.get(tid, "kept"))
         expect("B3-4: a '* fs_read: ./out/' bullet is a ceiling line like '- ' (c-star-ok kept)",
                "c-star-ok" in kept, mech.get("c-star-ok"))
@@ -496,11 +498,14 @@ def ceiling_agreement():
     intents = {os.path.basename(d): open(os.path.join(d, "intent.md")).read()
                for d in gv.task_dirs(os.path.join(HERE, "dev"))}
     # (extra `## Allowed` lines, gv.ceiling must refuse): \x1f is whitespace to
-    # Python's strip() and not to Rust's trim() (IGP-1).
+    # Python's strip() and not to Rust's trim() (IGP-1); axon-intent refuses a
+    # `..` fs component (IGP-4).
     fixtures = {"star-proc": ("* fs_read: /proc/\n", False), "star-exec": ("* exec: any\n", False),
                 "star-repeat": ("* fs_write: ./log/\n- fs_read: none\n", False),
                 "us-exec-any": ("\x1f- exec: any\n", True),
-                "us-exec-none": ("- exec: any\n\x1f- exec: none\n", True)}
+                "us-exec-none": ("- exec: any\n\x1f- exec: none\n", True),
+                "dotdot": ("- fs_read: ./a/../b/\n", True),
+                "dotdot-backslash": ("- fs_write: ./a\\..\\b/\n", True)}
     for tid, (extra, _) in fixtures.items():
         intents["fixture " + tid] = gv3_intent(f"Fixture {tid}: upper-case ./data/in.txt.", extra=extra)
     with cf.ThreadPoolExecutor(max_workers=8) as ex:

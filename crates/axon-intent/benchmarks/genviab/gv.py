@@ -119,7 +119,9 @@ def ceiling(intent_md):
     repeated keys extend, the last `exec` wins. Stricter than intent.rs, so it
     fails closed (B3-4): a line holding a control character (a trailing `\\r`
     aside, IGP-1), a non-blank line that is not a bullet, a bullet without `:`,
-    an unknown key or a bad `exec`/`max_label` value raises ValueError."""
+    an unknown key, a bad `exec`/`max_label` value or an fs prefix with a `..`
+    component (split on `/` and `\\`, as `validate_prefixes`; IGP-4) raises
+    ValueError."""
     out = {"fs_read": [], "fs_write": [], "net": [], "exec": "none"}
     for line in section(intent_md, "allowed").split("\n"):
         if any(unicodedata.category(c) == "Cc" for c in line):
@@ -135,7 +137,11 @@ def ceiling(intent_md):
         k, v = (s.strip(RUST_WS) for s in b.split(":", 1))
         if k in ("fs_read", "fs_write", "net"):
             if v and v.lower() != "none":
-                out[k] += [x.strip(RUST_WS) for x in v.split(",") if x.strip(RUST_WS)]
+                items = [x.strip(RUST_WS) for x in v.split(",") if x.strip(RUST_WS)]
+                for x in items:
+                    if k != "net" and ".." in re.split(r"[/\\]", x):
+                        raise ValueError(f"## Allowed: {k} path {x!r} contains a `..` component")
+                out[k] += items
         elif k == "exec":
             if v not in ("none", "any"):
                 raise ValueError(f'## Allowed: exec must be "none" or "any", got {v!r}')

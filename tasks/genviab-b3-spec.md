@@ -444,6 +444,13 @@ refused. `c-tabhash` is now refused for the control character, before the not-a-
 lane: for `- fs_read: ./data/\x1f`, `axon-intent compile` writes a `t.axjob` that is not valid TOML (raw `\x1f` in
 a basic string).
 
+`[REVISED: build IGP-4]` `gv.ceiling` now refuses an `fs_read`/`fs_write` item that has a `..` component (split on
+`/` and `\`, as `validate_prefixes` does; net is not checked, as in intent.rs), so it fails closed where
+`axon-intent` refuses. Two agreement fixtures were added, `dotdot` and `dotdot-backslash`; both fail on a306bc11,
+where `gv.ceiling` read `./a/../b/`. Observed: `build.py` did not admit such a task before this fix either. Its
+schema check (`gv.norm_path` returns None for `..` and `\`) already refused `./out/../log/` as "not a relative
+directory prefix", so the once fixture `c-dotdot` fails on base by reason only.
+
 **Docs.** genviab `README.md` (once rules); PREREG §4 schema line: "an `## Allowed` line that is not a `- `/`* ` bullet is refused".
 
 ### B3-5 (P2) A missing ceiling in two spellings reports "two different ceilings" (O-CE-01)
