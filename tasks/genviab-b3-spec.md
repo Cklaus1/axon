@@ -118,6 +118,10 @@ otherwise inflate arm c.
 - §2 pins: none of them are filled yet. The freeze recomputes the `genviab.py` sha256 (and `gv.py` via the corpus/harness digests it
   records) from the post-fix tree.
 
+`[REVISED: build 2026-11-02 (b3/gvpy)]` The §2 bwrap pin row (`PREREG-genviab.md:34`, not a `[FILL AT FREEZE]` field)
+stated arm c's `-I -B`, which B3-1 makes false; it now names `-B -s -P /gv/run.py` (`gv.PY_RUNNER`, `gv.PY_ENV`). No
+filled pin changed. The selftest also checks that a run over arm c's 64 KiB bound fails and names it (step 2).
+
 **Fail-first tests** (`selftest.py`, a new block beside the GV-3 reference checks at `selftest.py:231-260`; it needs bwrap, which is
 already a hard dependency of `forged_grades`):
 - `arm c: raise ValueError on an example expecting exit 1 FAILS ("raised an exception")`. It fails today, because it passes.
@@ -182,6 +186,10 @@ pure checks pass`; `h12 copy [one]/[three identical runs]: hidden: the ceiling g
   from being one the visible example already teaches.
 - `[REVISED: B3A-2]` `a hidden example of three runs identical to the visible run is refused` (a hard-coded answer would pass it).
 - `a task with fs_read and hidden runs staging nothing new is still refused` (control on today's rule).
+
+`[REVISED: build 2026-11-02 (b3/gvpy)]` With no visible example the rule is vacuous, as the input rule is (dev h12
+keeps passing). `t-samecount` and `t-identical` were refused on base too, by the input rule; the tests pin the new
+reason ("the ceiling grants no fs_read"), so they fail on base by reason only. `t-ok` and the reason checks fail on base.
 
 **g01:** none (Python; selftest kills, as for B3-1).
 
@@ -397,6 +405,14 @@ The first three pass the build checks today.
 **Acceptance.** The three checks hold; dev `build.py --check` verdicts are unchanged; `gv.ceiling` and `intent.rs` agree on every dev
 intent (selftest compares `gv.ceiling` against the lift report's ceiling for each dev task if the report carries it, else against
 `axon-intent compile`'s refusal [INFERENCE: whether `axon-intent-lift/1` exposes the ceiling was not checked]).
+`[REVISED: build 2026-11-02 (b3/gvpy)]` The lift report does not carry the ceiling (`CandidateReport` has no
+ceiling field). The selftest therefore compiles one probe program per axis, with a non-literal argument, against
+each intent (`axon-intent compile`, no example runs). The inferred `[grant]` then gives the ceiling's whole axis,
+and an exit 8 "needs `<axis>` authority" means the axis is empty. It does this for all 28 dev intents plus 3 `* `
+fixtures. Fence lines never reach `gv.ceiling`: `gv.section` drops fence and fenced lines, as `split_sections`
+does, and `build.py`'s intent-text check refuses any fence. `gv.ceiling` also refuses a bullet with no `:`, an
+`exec` other than `none`/`any`, and a `max_label` other than `public`/`internal`/`secret`, which `parse_allowed`
+refuses too. `load_task` calls `gv.ceiling`, so a malformed `## Allowed` is a `load:` defect.
 
 **Docs.** genviab `README.md` (once rules); PREREG §4 schema line: "an `## Allowed` line that is not a `- `/`* ` bullet is refused".
 
