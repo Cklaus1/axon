@@ -3160,6 +3160,11 @@ a `/proc/self/environ` case beside M4723's test, which checks only `env_var`.
 merge f95a53d3) because `canonicalize` fails on both. Exit 2, E1007 and the outcome record are right; only the reason is wrong.
 Fix: when either path fails to resolve, report the loader's "cannot read" error. Found by ImplAuditCE2.
 
+### O-GV-07 - [low] A SIGKILL'd sandbox run reports "(signal signal 9)"
+`signal_name` already returns "signal 9" for signals it does not name, and the caller wraps it in "signal" again
+(`crates/axon-os/src/runtime.rs`, outcome-record refusal). A `sandbox_capture` test pins the doubled text. Fix the wording and
+the test together. Found by LaneGvOs.
+
 ## hx3 author quirks, 2026-10-31 (QuirkRepro triage of the hx3 N5a authors' notes, `/var/tmp/r51-tmp/QuirkRepro/REPORT.md`; fixes NOT in this batch)
 
 ### O-HX3-02 - [high] False refusal: a move inside one block match arm plus a move in another arm is E0601
