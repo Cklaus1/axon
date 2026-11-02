@@ -328,9 +328,10 @@ fn worker() -> i64 { /* may only write under ./out/ and reach that host */ 0 }
 **Operator ceilings.** Whoever runs your program may bound it with `--ceiling FILE` (or
 `AXON_CEILING=FILE`), a JSON `axon-ceiling/1` object with every key present (`null` = unbounded):
 `{"schema":"axon-ceiling/1","effects":["IO"],"fs_read":["/srv/in/"],"fs_write":["/srv/out/"],
-"net":["api.anthropic.com"],"ai_tokens":200000,"max_depth":6000}`. Each bound narrows the
-matching `AXON_ALLOWED_*` / `AXON_BUDGET_TOKENS` / `AXON_MAX_DEPTH` variable and nothing in the
-program can widen it; a ceiling also turns `--require-contained` on, so `main` needs a
+"net":["api.anthropic.com"],"ai_tokens":200000,"ai_calls":200,"max_depth":6000}`. Each bound
+narrows the matching `AXON_ALLOWED_*` / `AXON_BUDGET_TOKENS` / `AXON_MAX_DEPTH` variable and
+nothing in the program can widen it; `ai_calls` caps the run's model calls (E1303, exit 5). A
+ceiling also turns `--require-contained` on, so `main` needs a
 `@[contained]` grant for the I/O it reaches (E1005). A bad file is E1007 (exit 2). Without a
 ceiling a run is bounded only by what its source and those variables declare. Live AI calls are
 pinned to the program's `net` hosts (or `api.anthropic.com` if none) met with `AXON_ALLOWED_NET`

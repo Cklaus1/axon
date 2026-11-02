@@ -126,7 +126,7 @@ pub const E1211: &str = "E1211"; // a refinement predicate names an unbound name
 pub const E1300: &str = "E1300"; // ai_* call unreachable and no @[ai(policy(fallback))] in scope
 pub const E1301: &str = "E1301"; // an AI call exceeded the @[ai(policy(budget: N))] of a fn on the stack (R3c, CE-4)
 pub const E1302: &str = "E1302"; // tier: resolves to a tier with no host-configured model
-pub const E1303: &str = "E1303"; // run exceeded AXON_BUDGET_TOKENS, the ambient run-level token cap
+pub const E1303: &str = "E1303"; // run exceeded its AI token cap (AXON_BUDGET_TOKENS / ceiling ai_tokens) or its ceiling's ai_calls
 pub const E1304: &str = "E1304"; // ai_extract::<T> with a T outside the supported set
 
 // Phase 6 effect-row errors. The spec's nominal E1300-E1308 numbering collided
@@ -533,7 +533,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
         "an AI call (ai_complete or an extract) exceeded the @[ai(policy(budget: N))] of a fn still on the stack: a budget covers its callees (R3c, CE-4)",
     ),
     ("E1302", "tier: resolves to a tier with no host-configured model"),
-    ("E1303", "run exceeded AXON_BUDGET_TOKENS, the ambient run-level token cap"),
+    ("E1303", "run exceeded its operator AI cap: the token cap (AXON_BUDGET_TOKENS / a ceiling's `ai_tokens`; a call must fit prompt + 16 + a 1024-token reply before dispatch) or a ceiling's `ai_calls` call count"),
     ("E1304", "ai_extract::<T> with a T outside i64, f64, bool, Uncertain<i64>, Uncertain<f64>"),
     ("E1306", "raw effect-row syntax `| {…}` used in a `surface`-marked file"),
     ("E1310", "effect-row leak: call performs effect E ∉ the caller's declared row"),

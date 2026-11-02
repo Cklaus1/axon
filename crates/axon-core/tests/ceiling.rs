@@ -182,6 +182,7 @@ fn ceiling_json(over: &[(&str, Option<&str>)]) -> String {
         ("fs_write", "[]"),
         ("net", "null"),
         ("ai_tokens", "null"),
+        ("ai_calls", "null"),
         ("max_depth", "null"),
     ]
     .iter()
@@ -377,6 +378,70 @@ fn main() {
         t.contains("E1303"),
         "ATTACK: the ceiling's ai_tokens did not cap the run: {t}"
     );
+}
+
+/// A ceiling's `ai_calls` caps the run's model calls (CE-6): with
+/// `ai_calls: 2` the first two calls answer, extracts counted like
+/// `ai_complete`, and the third stops the run with E1303 before dispatch.
+#[test]
+fn ceiling_ai_calls_caps_the_run() {
+    let d = tmp("ce6_calls");
+    let c = write_ceiling(
+        &d,
+        &ceiling_json(&[
+            ("ai_calls", Some("2")),
+            ("net", Some("[\"api.anthropic.com\"]")),
+        ]),
+    );
+    let src = r#"
+@[contained(net: ["api.anthropic.com"])]
+fn main() {
+    match ai_complete("one") {
+        Ok(s) => println("first"),
+        Err(e) => println("err " + e),
+    }
+    match ai_extract::<i64>("two") {
+        Ok(n) => println("second"),
+        Err(e) => println("err " + e),
+    }
+    match ai_complete("three") {
+        Ok(s) => println("third"),
+        Err(e) => println("err " + e),
+    }
+}
+"#;
+    let o = run(
+        &d,
+        src,
+        &[("AXON_CEILING", c.to_str().unwrap()), ("AXON_AI_MOCK", "1")],
+    );
+    let t = text(&o);
+    assert!(
+        t.contains("first") && t.contains("second"),
+        "calls within the cap must answer: {t}"
+    );
+    assert_eq!(
+        o.status.code(),
+        Some(5),
+        "ATTACK: a ceiling's ai_calls did not cap the run's model calls: {t}"
+    );
+    assert!(
+        t.contains("E1303") && t.contains("AI call budget of 2") && !t.contains("third"),
+        "ATTACK: a ceiling's ai_calls did not cap the run's model calls: {t}"
+    );
+    // Unbounded (`null`) leaves the same program running to completion.
+    let c = write_ceiling(
+        &d,
+        &ceiling_json(&[("net", Some("[\"api.anthropic.com\"]"))]),
+    );
+    let o = run(
+        &d,
+        src,
+        &[("AXON_CEILING", c.to_str().unwrap()), ("AXON_AI_MOCK", "1")],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "null ai_calls must not cap: {t}");
+    assert!(t.contains("third"), "null ai_calls must not cap: {t}");
 }
 
 /// A `max_depth` ceiling lowers the recursion limit.

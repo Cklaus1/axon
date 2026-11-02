@@ -11,7 +11,7 @@
 //!   "effects": ["IO", "AI"],
 //!   "fs_read": ["/srv/job/in/"], "fs_write": ["/srv/job/out/"],
 //!   "net": ["api.anthropic.com"],
-//!   "ai_tokens": 200000, "max_depth": 6000 }
+//!   "ai_tokens": 200000, "ai_calls": 200, "max_depth": 6000 }
 //! ```
 //!
 //! Rules (spec §8.4), all failing closed with **E1007** / exit 2:
@@ -47,6 +47,7 @@ pub const KEYS: &[&str] = &[
     "fs_write",
     "net",
     "ai_tokens",
+    "ai_calls",
     "max_depth",
 ];
 
@@ -63,6 +64,8 @@ pub struct Ceiling {
     pub fs_write: Option<Vec<String>>,
     pub net: Option<Vec<String>>,
     pub ai_tokens: Option<i64>,
+    /// Run-wide cap on model calls (CE-6); no env-var counterpart.
+    pub ai_calls: Option<u64>,
     pub max_depth: Option<usize>,
 }
 
@@ -304,6 +307,7 @@ pub fn parse(bytes: &[u8], path: &Path, cwd: &Path) -> Result<Ceiling, String> {
         fs_write: None,
         net: None,
         ai_tokens: None,
+        ai_calls: None,
         max_depth: None,
     };
     for (k, v) in fields {
@@ -347,6 +351,7 @@ pub fn parse(bytes: &[u8], path: &Path, cwd: &Path) -> Result<Ceiling, String> {
                     None => None,
                 }
             }
+            "ai_calls" => c.ai_calls = whole("ai_calls", v)?,
             "max_depth" => {
                 c.max_depth = match whole("max_depth", v)? {
                     Some(0) => return Err("`max_depth` must be at least 1".into()),
@@ -464,7 +469,8 @@ mod tests {
     use super::*;
 
     const FULL: &str = r#"{ "schema": "axon-ceiling/1", "effects": ["IO"], "fs_read": null,
-        "fs_write": [], "net": ["api.anthropic.com"], "ai_tokens": 100, "max_depth": null }"#;
+        "fs_write": [], "net": ["api.anthropic.com"], "ai_tokens": 100, "ai_calls": 3,
+        "max_depth": null }"#;
 
     fn p(src: &str) -> Result<Ceiling, String> {
         parse(
@@ -480,6 +486,7 @@ mod tests {
         assert_eq!(c.effects, Some(vec!["IO".to_string()]));
         assert_eq!(c.fs_write, Some(vec![]));
         assert_eq!(c.ai_tokens, Some(100));
+        assert_eq!(c.ai_calls, Some(3));
         assert_eq!(c.max_depth, None);
         assert_eq!(c.sha256.len(), 64);
     }
@@ -490,6 +497,8 @@ mod tests {
             (r#""ai_tokens": 100"#, r#""ai_tokens": -1"#),
             (r#""ai_tokens": 100"#, r#""ai_tokens": 1.5"#),
             (r#""ai_tokens": 100"#, r#""ai_tokens": "100""#),
+            (r#""ai_calls": 3"#, r#""ai_calls": -3"#),
+            (r#""ai_calls": 3"#, r#""ai_calls": "3""#),
             (r#""effects": ["IO"]"#, r#""effects": ["IOO"]"#),
             (r#""effects": ["IO"]"#, r#""effects": [1]"#),
             (r#""max_depth": null"#, r#""max_depth": 0"#),

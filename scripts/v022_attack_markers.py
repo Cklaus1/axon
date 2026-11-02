@@ -4034,3 +4034,8 @@ ATTACK_MARKERS.update({
     'M4698': r'ATTACK: a billed unusable extract reply was not recorded or charged',
     'M4699': r'ATTACK: a billed unparsed reply dropped its tokens',
 })
+
+# ceilings CE-6 ai_calls (id M4740, overflow block)
+ATTACK_MARKERS.update({
+    'M4740': r'ATTACK: a ceiling.s ai_calls did not cap the run.s model calls',
+})

@@ -2100,7 +2100,7 @@ pub struct Interp<'p> {
     /// not repetitions. The text names only the fn, so every repeat after the
     /// first carries no information a reader did not already have.
     w1310_warned: RefCell<std::collections::HashSet<String>>,
-    /// Tokens consumed so far by `ai_complete`, against [`Interp::token_budget`].
+    /// Tokens consumed so far by model calls, against [`Interp::token_budget`].
     ///
     /// Distinct from both sibling meters: `ai_cost_micro` is MONEY (per-token
     /// µ$ at the tier's rate) and R3c's `ai_budget_stack` counts CALLS within
@@ -2116,6 +2116,13 @@ pub struct Interp<'p> {
     /// inert control surface that reads as a safety mechanism. Enforced
     /// pre-dispatch beside the R3c per-fn budget gate.
     token_budget: Option<i64>,
+    /// Model calls dispatched so far this run (`ai_complete` and every
+    /// extract), against [`Interp::ai_calls_cap`].
+    ai_calls_used: Cell<u64>,
+    /// Ceilings CE-6 (`ai_calls`): an operator ceiling's run-wide cap on model
+    /// calls, or `None` (no ceiling, or the ceiling said `null`). There is no
+    /// environment variable for it: the ceiling is its only source.
+    ai_calls_cap: Option<u64>,
     /// Phase 6: the stack of active effect-handler frames installed by enclosing
     /// `with handler { … } { body }` expressions. When a builtin carrying effect
     /// `E` is dispatched, the nearest frame with an `on E` arm intercepts it
@@ -5240,6 +5247,8 @@ impl<'p> Interp<'p> {
             w1310_warned: RefCell::new(std::collections::HashSet::new()),
             tokens_used: Cell::new(0),
             token_budget: parse_token_budget(),
+            ai_calls_used: Cell::new(0),
+            ai_calls_cap: crate::ceiling::active().and_then(|c| c.ai_calls),
             handlers: RefCell::new(Vec::new()),
             resume_replay: RefCell::new(None),
             resume_ctx: RefCell::new(Vec::new()),

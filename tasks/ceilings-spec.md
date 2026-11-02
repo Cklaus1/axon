@@ -560,6 +560,10 @@ became 1100/1200. O-AF-09 built in the same window: `axon_ai` typed/plain comple
 tokens }`, a billed 2xx reply that cannot be used keeps its tokens, and the interpreter records it (`ai_call`, reason
 `unusable reply`), costs it and settles it before returning `Err` (`billed_unusable_reply_is_recorded_and_charged`, a
 127.0.0.1 sink, `asi-runtime` only). The live-reservation bound (input tokens ≤ prompt bytes + 16) stays [INFERENCE].
+The `ai_calls` ceiling key (§CE-2 table, CED-7) shipped as its own commit after CE-6: a run-wide `Interp::ai_calls_cap`
+read from the ceiling only (no env var, as §CE-2 proposes), gated in `ai_call_prologue` after the token gate with E1303
+wording "AI call budget of N call(s)"; fail-first `ceiling_ai_calls_caps_the_run`, g01 M4740 (overflow block: M4680-M4699
+were spent by CE-1..CE-6).
 
 ---
 

@@ -644,6 +644,22 @@ impl<'p> Interp<'p> {
                 ));
             }
         }
+        // Ceilings CE-6 (`ai_calls`): the operator ceiling's run-wide CALL
+        // cap, in the same pre-dispatch window. A call that would be one too
+        // many stops with E1303 before it reaches a model; a call that passes
+        // every gate counts, whichever path (replay, mock, live) answers it.
+        if let Some(cap) = self.ai_calls_cap {
+            let used = self.ai_calls_used.get();
+            if used >= cap {
+                return ai_policy_err(format!(
+                    "[{}] `{}` exceeded the run's AI call budget of {cap} call(s) \
+                     (the ceiling's `ai_calls`) — raise it or reduce AI work",
+                    crate::error::E1303,
+                    who(),
+                ));
+            }
+            self.ai_calls_used.set(used + 1);
+        }
         if name == "ai_complete" {
             // W1310: a fn making an AI call with no @[ai(policy)] is allowed,
             // but its cost is unmetered and the call un-pinned — warn once so

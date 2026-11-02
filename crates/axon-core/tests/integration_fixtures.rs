@@ -3684,7 +3684,7 @@ fn native_refuses_under_ceiling() {
     std::fs::write(
         &ceiling,
         "{ \"schema\": \"axon-ceiling/1\", \"effects\": [], \"fs_read\": [], \"fs_write\": [], \
-         \"net\": [], \"ai_tokens\": 0, \"max_depth\": null }\n",
+         \"net\": [], \"ai_tokens\": 0, \"ai_calls\": 0, \"max_depth\": null }\n",
     )
     .unwrap();
     let bin = dir.join("hello_bin");

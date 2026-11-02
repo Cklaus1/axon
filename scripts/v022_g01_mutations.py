@@ -14645,5 +14645,14 @@ MUTATIONS += [
      'axon-ai', '--lib', 'tests::unusable_structured_reply_keeps_its_billed_tokens'),
 ]
 
+# ceilings CE-6 `ai_calls` (id M4740, overflow block): a ceiling's run-wide
+# model-call cap stops the call past it with E1303 before dispatch.
+MUTATIONS += [
+    ('M4740', 'CE-6: a ceiling ai_calls cap is never enforced', 'crates/axon-core/src/interp/builtins.rs',
+     '            if used >= cap {',
+     '            if false && used >= cap {',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_ai_calls_caps_the_run'),
+]
+
 if __name__ == "__main__":
     main()
