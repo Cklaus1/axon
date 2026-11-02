@@ -3113,64 +3113,33 @@ EXEMPT += [
      'fn host_matches(pat: &str, host: &str) -> bool {',
      _GRN),
     ('crates/axon-os/src/runtime.rs',
-     '            Verdict::Halted {\n                reason: "kill-switch tripped by supervisor".into(),',
+     '            return Verdict::Halted {\n                reason: "kill-switch tripped by supervisor".into(),',
      _ACR),
     ('crates/axon-os/src/runtime.rs',
-     '            Verdict::Denied {\n                reason: format!("timed out after {} ms", self.timeout.as_millis()),',
+     '            return Verdict::Denied {\n                reason: format!("timed out after {} ms", self.timeout.as_millis()),',
      _ACR),
+    # GV-1 (genviab-b2 GV-1b): `classify` reads the interpreter's outcome record, not stderr.
+    # The record checks have rows M4720-M4731; the arms below only name a verdict for a run
+    # that record (or its absence) already decided.
     ('crates/axon-os/src/runtime.rs',
-     '            Verdict::Denied {\n                reason: first_axon_line(err, "runtime capability/sandbox violation"),',
-     _ACR),
+     '            Err(no_record) => {\n                return Verdict::Denied {\n                    reason: no_record,\n                    axis: "runtime".into(),',
+     _ACR + "; GV-1b: a run with no valid outcome record is a runtime denial, never a completion"),
     ('crates/axon-os/src/runtime.rs',
-     '            Verdict::BudgetExhausted {',
-     _ACR),
+     '            RecordKind::Exit => Verdict::Denied {\n                reason: format!(\n'
+     '                    "the job stopped itself with exit({}) before the sandbox wrapper finished",',
+     _ACR + "; GV-1b: an `exit` record without the wrapper's completion marker is the job's own "
+     "exit(n), which was never a completion (AUDIT T44)"),
     ('crates/axon-os/src/runtime.rs',
-     '            Verdict::RefineViolation {',
-     _ACR),
+     '            RecordKind::Compile => Verdict::Malformed { reason },',
+     _ACR + "; GV-1b: a `compile` record means nothing executed (AUDIT T24/T44)"),
     ('crates/axon-os/src/runtime.rs',
-     '            Verdict::Denied {\n                reason: first_axon_line(err, "interpreter panic"),',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '            Verdict::Denied {\n                reason: first_axon_line(err, "AI policy refused the call"),',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '            Verdict::Malformed {\n                reason: first_axon_line(err, "program failed to compile"),',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '                    0 => Verdict::Denied {',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '                    2 => Verdict::Malformed {',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '                    3 => Verdict::Denied {',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '                    4 => Verdict::Halted {',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '                    5 => Verdict::Denied {',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '                    6 => Verdict::RefineViolation {',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '                    7 => Verdict::BudgetExhausted {',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '                    8 => Verdict::Denied {',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '                    other => Verdict::Denied {',
-     _ACR),
+     '        "replay-divergence" => Verdict::VerifyMismatch { detail: reason },',
+     _ACR + "; GV-1: the verdict of the fault class `axon run` records for a replay divergence (exit 11)"),
     ('crates/axon-os/src/runtime.rs',
      '    fn run_sandboxed(\n        &self,\n        _program: &ProgramSource,',
      _ACR),
     ('crates/axon-os/src/runtime.rs',
      '    fn run_sandboxed(\n        &self,\n        program: &ProgramSource,\n        _principal: &PrincipalHandle,',
-     _ACR),
-    ('crates/axon-os/src/runtime.rs',
-     '    fn classify(&self, proc: &ProcOutcome, nonce: &str) -> Verdict {',
      _ACR),
     ('crates/axon-fabric/src/journal.rs',
      '                v.state = OpState::Failed;',
@@ -3634,10 +3603,55 @@ EXEMPT += [
      "(run_bounded_capped), and the only process that installs that handler and keeps running is "
      "`axon-os run` (cli.rs cmd_run, OnSignal::Continue: `grep -rn forward_termination_signals "
      "crates/*/src`); a capture test cannot send it without killing the test process"),
-    ("crates/axon-os/src/runtime.rs", '        let Some(code) = proc.code else {',
-     "UNREACHABLE (checkable): run_bounded_capped sets `code` to None only for End::TimedOut and "
-     "End::Signal; a timed-out run returns TimedOut and a signalled one (killed_by_signal Some) "
-     "returns Faulted/Halted above this `let ... else`, before it is reached"),
+]
+# genviab-b2 GV-1: a capture run (GV-1a) and an `axon-os run` job (GV-1b) are classified by the
+# one `axon-outcome/1` record the interpreter writes to the supervisor's outcome pipe (fd 3,
+# per-run nonce). The nonce check, the one-record check and the class table have rows
+# (M4720-M4731); every refusal below fails CLOSED (no valid record => sandbox/runtime denial,
+# never a completion), so a wrong answer here can only refuse a run, and the code is
+# AxonCoreRuntime's.
+_GV1R = (_ACR + "; GV-1: a `no outcome record` refusal fails closed (the run is a sandbox fault "
+         "in capture and a runtime denial in `classify`, never the program's exit)")
+_GV1T = "; observed by sandbox_capture `a_run_without_an_outcome_record_is_a_sandbox_fault` "
+EXEMPT += [
+    ("crates/axon-os/src/runtime.rs",
+     '    let refuse = |which: &str| Err(format!("no outcome record: {which} ({ended})"));', _GV1R),
+    ("crates/axon-os/src/runtime.rs", '        return refuse("the run had no outcome pipe");',
+     _GV1R + "; unreachable from `launch`, which gives every run a pipe"),
+    ("crates/axon-os/src/runtime.rs", '        return refuse("none written");', _GV1R + _GV1T + "[none]"),
+    ("crates/axon-os/src/runtime.rs", '''        return refuse("more than one record's bound written");''', _GV1R),
+    ("crates/axon-os/src/runtime.rs", '        return refuse("truncated (no newline)");',
+     _GV1R + _GV1T + "[no-newline]"),
+    ("crates/axon-os/src/runtime.rs",
+     '    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {\n        return refuse("malformed");',
+     _GV1R),
+    ("crates/axon-os/src/runtime.rs", '        return refuse("not axon-outcome/1");', _GV1R),
+    ("crates/axon-os/src/runtime.rs", '        _ => return refuse("unknown kind"),', _GV1R),
+    ("crates/axon-os/src/runtime.rs", '        return refuse("malformed code");', _GV1R),
+    ("crates/axon-os/src/runtime.rs", '        return refuse("malformed");\n    };\n    if kind == RecordKind::Fault', _GV1R),
+    ("crates/axon-os/src/runtime.rs", '        return refuse("unknown fault class");', _GV1R),
+    ("crates/axon-os/src/runtime.rs", '        return refuse("the interpreter died by a signal after writing it");',
+     _GV1R + _GV1T + "[sigkill]"),
+    ("crates/axon-os/src/runtime.rs", '''        return refuse(&format!("its code {code} is not the exit status"));''',
+     _GV1R + _GV1T + "[mismatch]"),
+    ("crates/axon-os/src/runtime.rs", "const FAULT_CLASSES: &[&str] = &[",
+     _GV1R + "; an unknown class is refused"),
+    ("crates/axon-os/src/runtime.rs", "pub const OUTCOME_RECORD_MAX: usize = 4096;",
+     _GV1R + "; a longer record is refused, and the drain keeps 2x this bound"),
+    ("crates/axon-os/src/runtime.rs", "pub const OUTCOME_FD: i32 = 3;", _ACR),
+    ("crates/axon-os/src/runtime.rs", 'pub const OUTCOME_FD_ENV: &str = "AXON_OUTCOME_FD";', _ACR),
+    ("crates/axon-os/src/runtime.rs", 'pub const OUTCOME_NONCE_ENV: &str = "AXON_OUTCOME_NONCE";', _ACR),
+    # give_child_outcome_fd: the child's copy of the pipe's write end. A failed dup2/fcntl fails
+    # the spawn (no run), and a missing or wrong fd leaves no record, which fails closed above.
+    ("crates/axon-os/src/runtime.rs", "    cmd.env(OUTCOME_FD_ENV, OUTCOME_FD.to_string());", _GV1R),
+    ("crates/axon-os/src/runtime.rs", "    cmd.env(OUTCOME_NONCE_ENV, nonce);", _GV1R),
+    ("crates/axon-os/src/runtime.rs", "        cmd.pre_exec(move || {\n            if wfd == OUTCOME_FD {", _GV1R),
+    ("crates/axon-os/src/runtime.rs", "                let flags = libc::fcntl(wfd, libc::F_GETFD);", _GV1R),
+    ("crates/axon-os/src/runtime.rs",
+     "                if flags == -1 || libc::fcntl(wfd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) == -1 {",
+     _GV1R),
+    ("crates/axon-os/src/runtime.rs",
+     "            } else if libc::dup2(wfd, OUTCOME_FD) == -1 {\n                return Err(", _GV1R),
 ]
 
 # G2d/G2c (gap closure, lane gaps-cancel), moved by KG1 (gaps2) into crates/axon-jobctl: a
@@ -3678,7 +3692,7 @@ EXEMPT += [
     ("crates/axon-os/src/runtime.rs",
      "            Err(e) => {\n                job.kill();\n                break Err(e);", _ACR),
     ("crates/axon-os/src/runtime.rs",
-     "            Verdict::Halted {\n                reason: format!(\n"
+     "            return Verdict::Halted {\n                reason: format!(\n"
      "                    \"the supervisor received {} and killed the job's process group\",", _G2D),
 ]
 
@@ -4185,18 +4199,17 @@ _KEYB = ("DOMINATED BY M1769 (checkable): the token digest is recomputed under t
          "and without one an unkeyed `axtok3:` sha256, which no `axmac1:` string equals. This early refusal only "
          "names the reason (the_key_decides_which_token_digest_is_accepted asserts the message); removing it "
          "leaves the same token refused as a digest mismatch")
-_IMPV = ("DOMINATED (checkable): without this arm a child that the loader stopped (exit 8, no completion marker) "
-         "reaches the exit-code arm below (AUDIT T44), which seals exit 8 as Denied (axis sandbox); this arm only "
-         "names the reason and the `approval` axis. Nothing ran either way: the interpreter refuses before "
-         "executing (M3561)")
+_IMPV = ("DOMINATED (checkable): without this arm the loader's refusal (a `compile` outcome record of class "
+         "`imports-digest`, exit 8, main.rs enforce_required_imports_digest) reaches the next arm, which seals "
+         "it as Malformed; this arm only names the reason and the `approval` axis. Nothing ran either way: "
+         "the interpreter refuses before executing (M3561)")
 EXEMPT += [
     ('crates/axon-os/src/approval.rs', '        if key.is_some() && !keyed {', _KEYB),
     ('crates/axon-os/src/approval.rs', '        if key.is_none() && keyed {', _KEYB),
     ('crates/axon-os/src/runtime.rs', '    if out.timed_out || out.code != Some(0) {\n        let why = out', _IMPD),
     ('crates/axon-os/src/runtime.rs', '    if v["schema"] != "axon-imports/1" {', _IMPD),
     ('crates/axon-os/src/runtime.rs', '        _ => Err("`axon imports --json` printed no axsha256: imports_digest".into()),', _IMPD),
-    ('crates/axon-os/src/runtime.rs', 'fn imports_refusal(stderr: &str, code: Option<i32>, stdout: &str, nonce: &str) -> Option<String> {', _IMPV),
-    ('crates/axon-os/src/runtime.rs', '        } else if let Some(line) = imports_refusal(err, proc.code, &proc.stdout, nonce) {', _IMPV),
+    ('crates/axon-os/src/runtime.rs', '            RecordKind::Compile if r.class == "imports-digest" => Verdict::Denied {', _IMPV),
     ('crates/axon-os/src/runtime.rs', 'pub const DEFAULT_MAX_CAPTURE_BYTES: usize = 1 << 20;', _A95['const_bound']),
 ]
 VALUE_EXEMPT += [
@@ -4346,9 +4359,11 @@ VALUE_EXEMPT += [
     ('crates/axon-loop-contracts/src/operator_trust.rs', 'check_owned_chain', 1, '0o022', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o022 -> 0o0) fails the test(s) <binary> -p axon-fabric --test grant_registry_authority, <binary> -p axon-fabric --test protected_host, <binary> -p axon-fabric --test readiness; no row of its own'),
     ('crates/axon-loop/src/evo.rs', 'propose', 1, 'false', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (false -> true) fails the test(s) a6_forged_admission_record_is_refused, a6_journalled_forgery_does_not_rederive, a7b_hand_edited_pointer_is_corrupt; no row of its own'),
     ('crates/axon-os/src/runtime.rs', 'create', 1, '0o700', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o700 -> 0o777) fails the test(s) runtime::runtime_tests::staging_dir_is_private_fresh_and_removed, the_wrapper_is_staged_privately_and_removed; no row of its own'),
-    ('crates/axon-os/src/runtime.rs', 'run_bounded_capped', 1, 'Stdio::null()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::null() -> Stdio::inherit()) fails the test(s) the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory; no row of its own'),
-    ('crates/axon-os/src/runtime.rs', 'run_bounded_capped', 2, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) acc_a1_smoke_user_journey, acc_a2_example_agent_killed_and_overreach_denied, acc_a2_example_jobs_run_and_overreach_denied; no row of its own'),
-    ('crates/axon-os/src/runtime.rs', 'run_bounded_capped', 3, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) hermetic_ignores_the_ambient_environment_and_restricted_does_not, the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'run_bounded_outcome', 1, 'Stdio::null()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103; re-measured by hand after GV-1 moved run_bounded_capped\'s body into run_bounded_outcome): editing this value (Stdio::null() -> Stdio::inherit()) fails the test(s) the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'run_bounded_outcome', 2, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103, re-run after GV-1): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) <binary> -p axon-os --lib, <binary> -p axon-os --test acceptance, <binary> -p axon-os --test sandbox_capture; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'run_bounded_outcome', 3, 'Stdio::piped()', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103, re-run after GV-1): editing this value (Stdio::piped() -> Stdio::null()) fails the test(s) a_program_printing_only_diag_json_and_exiting_2_is_its_own_exit, exit_status_and_output_are_captured, the_interpreter_child_is_built_from_an_empty_environment_and_the_jobs_directory; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', '~flow', 1, '3', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 107, GV-1): editing this value (OUTCOME_FD 3 -> 4) fails the test(s) a_bad_ceilings_file_is_a_compile_outcome, a_run_without_an_outcome_record_is_a_sandbox_fault, a_valid_stub_record_decides_the_outcome; no row of its own'),
+    ('crates/axon-os/src/runtime.rs', 'give_child_outcome_fd', 1, 'OUTCOME_FD.to_string()', 'OBSERVED', 'OBSERVED-NOT-ROWED (GV-1; the survey has no rule for this value, edited by hand): editing this value (OUTCOME_FD.to_string() -> "4".to_string()) fails the test(s) exit_status_and_output_are_captured, a_timeout_is_its_own_outcome, the_supervisor_hands_the_interpreter_an_outcome_pipe (the interpreter refuses an AXON_OUTCOME_FD that is not open); no row of its own'),
     ('crates/axon-os/src/runtime.rs', 'launch', 1, '"run"', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value ("run" -> "runx") fails the test(s) a_kill_armed_before_its_run_starts_stops_the_run, a_narrow_allowlist_denies_because_the_monitor_can_see_the_ledger, acc_a1_smoke_kill_journey; no row of its own'),
     ('crates/axon-os/src/runtime.rs', 'write_new', 1, '0o600', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o600 -> 0o777) fails the test(s) runtime::runtime_tests::staging_dir_is_private_fresh_and_removed, the_wrapper_is_staged_privately_and_removed; no row of its own'),
     ('crates/axon-psv/src/lib.rs', 'mode_is_normalised', 1, '0o755', 'OBSERVED', 'OBSERVED-NOT-ROWED (survey, scripts/v022_value_survey.py, amendment 103): editing this value (0o755 -> 0o777) fails the test(s) inputs_carrying_an_extended_attribute_are_refused, inputs_holding_what_the_digest_cannot_see_are_refused; no row of its own'),
