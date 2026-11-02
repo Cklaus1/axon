@@ -3033,6 +3033,7 @@ a generic body (g09), g10, d15; recursive generic fns (`/var/tmp/r51-tmp/NPA/r6.
 `fixtures/ai_extract_generic.ax`: interpreter exit 101 "value of type ai_extract is not callable", native exit 0 with output (which
 side is right needs the AI-builtin owner). `fixtures/phase24_concurrency.ax`: interpreter 101 (eager `spawn`), native hangs (timeout
 124); the documented eager-spawn limitation.
+`[PARTLY FIXED 2026-11-01: asi-fixes AF-1 (dd6c6dd3): ai_extract_generic.ax now prints the same on tree, VM and native under AXON_AI_MOCK=1; the phase24_concurrency eager-spawn difference stays open]`
 
 ### O-NP-03 - [low] NP-4 panic names the mangled symbol inside a generic fn
 A `break`/`continue` escaping a monomorphised generic fn panics natively with `... outside a loop in `put__i64``; the interpreter
@@ -3061,6 +3062,7 @@ A replay miss falls through to the mock or a live call. A mode where a miss is a
 ### O-RP-03 - [low] Extracts leave no audit record
 `ai_extract_uncertain_*` writes no `ai_call` provenance record and no cost on any path (`interp/builtins.rs` extract arms,
 against `ai_complete`'s records); the live path stores tokens `0`. An audit gap, not a replay gap.
+`[FIXED 2026-11-01: asi-fixes AF-4 (dd6c6dd3): every extract on mock, replay and live paths appends one `ai_call` record and is added to `ai_cost_spent()`; live tokens come from `usage`]`
 
 ### O-RP-04 - [low] `persistent_bandit` / `persistent_learner` keep state across runs
 Default state files `/tmp/axon_persistent_*.txt` (`persistent_bandit.ax:33-36`, `persistent_learner.ax:32-35`);
@@ -3073,6 +3075,7 @@ at a temp dir in the test only.
 `match c { Green => 2, Red => 1, Blue => 3 }` with `C::Red` prints `2` (check 0 with W0004 only; native `2` too): a silent wrong
 answer. The enum branch counts `Pattern::Ident(name)` as covering the variant of that name. Fix direction: make W0004 an error when the
 name is a variant of the subject's enum (spec §0 out of scope, `D/bv/bv01_order.ax`).
+`[FIXED 2026-11-01: asi-fixes AF-3 (97824bec, 0947c0a0): a bare variant of the subject's enum in a pattern is E0409, in every arm position and in `if let`/`while let`]`
 
 ### O-CS3-02 - [low] Spaced string adjacency still runs as separate statements
 `let j = r"{" a "}"` checks 0 and prints `{` (three statements on one line, the rule that makes `let x = 1 let y = 2` legal). CS3-6
@@ -3138,6 +3141,7 @@ fn main() {
 }
 ```
 The twin with the same arms written as `if k == 0 { ... } else if k == 1 { ... } else { "other" }` passes.
+`[FIXED 2026-11-01: asi-fixes AF-2 (39984fe3): match arms are alternatives for moves; the block-arm twin checks rc 0]`
 
 ### O-HX3-03 - [high] False refusal: `return p` inside a match arm / `return xs` inside `for x in xs` marks the value moved
 `return p` inside a match arm marks `p` moved for code after the match (E0601); `return xs` inside `for x in xs` gives E0602. The `if` and
@@ -3171,6 +3175,7 @@ fn main() {
     println(to_str(len(first_neg([1, 2]))))
 }
 ```
+`[FIXED 2026-11-01: asi-fixes AF-2 (39984fe3): an arm or loop body that always returns no longer moves its values for the code after it]`
 
 ### O-HX3-04 - [medium] False refusal against grammar.ebnf §6.12: a string literal inside an interpolation slot
 `"hi {name + "!"}"` gives E0000 "unclosed `{`". The escaped form (`q6d_interp_escaped_quote.ax`) works but is not documented. Probes
@@ -3271,6 +3276,7 @@ effects route it (`capabilities.rs:165-168`, `effects.rs:839`) and the native bu
 bridges, but the interpreter (the reference semantics) has no arm: the callee reaches `interp.rs:2784`. Fix
 direction: dispatch `ai_extract::<T>` for the fixture's T set (i64, f64, bool, `Uncertain<i64>`, `Uncertain<f64>`)
 in the interpreter, and add a run test under `AXON_AI_MOCK`. Found by TriageAudit.
+`[FIXED 2026-11-01: asi-fixes AF-1 (dd6c6dd3): the interpreter dispatches `ai_extract::<T>` for the T set; an out-of-set T is E1304; no model and no mock is E1300 exit 5]`
 
 ### O-SLV-02 - [low] ROADMAP claims guest-kernel K5 files that main never had
 `ROADMAP.md:36` and `:755-758` mark "K5 Interpreter Injection" shipped, citing `cpio.rs` and `exec.rs` in
@@ -3278,3 +3284,56 @@ in the interpreter, and add a run test under `AXON_AI_MOCK`. Found by TriageAudi
 is empty: those files exist only in the unmerged WIP snapshots (4202ec58, 9c81018c), which never ran a `.ax` job.
 This is R36 S0 truth-reconciliation work (`governance/specs/R36-full-asi-os.md` §S0); correcting the status line is
 the founder's call. Found by TriageGuestKernel.
+
+## ASI next batch, 2026-11-01 (residuals named by `tasks/asi-fixes-spec.md` and `tasks/lang-forms-spec.md`, logged at integration)
+
+### O-AF-01 - [medium] Loop-carried moves are not detected
+`for x in xs { s = s + p.x; let t = p }` (`mv3/loopmove.ax`) and `mv3/hmcont_if.ax` both check rc 0 and run (`14`, `8`): `borrow.rs`
+walks a loop body once (`:452-487`). Closing it refuses programs that run today and print the right answer, so it was left open by
+asi-fixes decision §6.11.
+
+### O-AF-02 - [low] A move escapes a tail-diverging `if` branch through `break`
+`mv2/br1.ax` checks rc 0 and prints `7`. The CS-6 `If` rule (`borrow.rs:344-363`) uses only the syntactic `branch_diverges`. AF-2 did
+not copy the hole into `match`. Left open by asi-fixes decision §6.11.
+
+### O-AF-03 - [low] `return` inside `spawn { }` returns from the enclosing fn in the interpreter
+`let h = spawn { return 5 }; 9` (`mv2/sr.ax`) prints `5`. `spawn { return name }` followed by `name` (`mv/sp1.ax`) is E0601. The
+semantics of `return` in `spawn` are unspecified; AF-2 does not treat `Spawn` as diverging.
+
+### O-AF-04 - [low] A qualified pattern of a different enum is accepted and never matches
+`match c { D::Up => 2, _ => 1 }` with `c: C` (`bv/v2q.ax`) checks rc 0 and prints `1`. This is a pattern/subject type mismatch, outside
+AF-3's bare-name rule.
+
+### O-AF-05 - [low] `cli_run.rs` tests that return early with "skipping" are invisible to strict mode
+About 52 tests return early when a script or toolchain is missing (`cli_run.rs:298, :812, :849, :888, :924, :961, :998, :19321, :19365,
+:19444, :22183, :34914, :35001` and others; survey in `tasks/asi-fixes-spec.md` AF-5). Fix direction: route them through
+`note_harness_skip` so `gate.sh --strict` sees the skip.
+
+### O-AF-06 - [low] A pattern-bound closure named `exit`: the engines disagree
+`Some(exit) => { println("arm"); exit(3) }` (`AFA/ex2.ax`): the interpreter calls the closure and falls through (prints `arm`,
+`after`, rc 0); the native build calls the builtin `exit` (rc 3). This predates the batch. AF-2 follows the interpreter.
+
+### O-AF-07 - [medium] The `if` twin of a returning match arm is still a false refusal
+`rjif` (the `if`/`else` form of the AF-2 `rj` probe, a move in a branch that returns) is E0601 on base and after AF-2, because AF-2
+left the `If` rule unchanged (asi-fixes AF-2 step 5). The `match` form now checks rc 0. Found by LaneAFB.
+
+### O-AF-08 - [low] E0409 points at the statement holding the match, not the arm
+`MatchArm` carries no span, so AF-3's E0409 reports the line of the enclosing statement. Giving arms a span is an AST change. Found by
+LaneAFC.
+
+### O-LF-01 - [medium] Tuple patterns are unchecked in `match` (and so in `if let`)
+`match (1, 2, 3) { (a, b) => .. }` and `match 5 { (a, b) => .. }` check rc 0 and then panic `no match arm matched` (rc 101).
+`match (1, "s") { (a, b) => to_str(b + 1) }` checks rc 0 and panics `cannot apply Add to str / i64`: `infer.rs:2975-2978` binds
+tuple-pattern components with no subject type. `if let (a, b) = t` inherits this.
+
+### O-LF-02 - [low] Fewer names than tuple elements is accepted in `let` (and so in `for (a, b)`)
+`let (a, b) = p` with `p: (i64, i64, i64)` checks rc 0 and prints `3` (`parser.rs:2350-2387` emits one `.i` per name). LF-3 inherits
+this and documents it.
+
+### O-LF-03 - [low] axon-os jobs get no sibling-module search
+A job runs a wrapper `{stem}.wrap.ax` from a fresh 0700 `StagingDir` (`axon-os/src/runtime.rs:244-273`, `:1261-1271`), so its entry
+directory is the staging dir, not the program's. `job_module_dir_sets` (`:749-770`) is unchanged by LF-4.
+
+### O-LF-04 - [low] No module-not-found line for a missing `mod` under `AXON_PATH_EXCLUSIVE=1`
+`mod mathutil` + `use mathutil.{square}` with an empty search list gives only E0001 "cannot find name `square`" (rc 2). Without
+EXCLUSIVE the same file gives E0901 at the `mod` line.

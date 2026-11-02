@@ -1,6 +1,6 @@
-# asi-fixes - DRAFT spec (AF-1..AF-6)
+# asi-fixes - spec (AF-1..AF-6, built)
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: BUILT 2026-11-01 on asi/next 494d7009 (AF-1, AF-2, AF-3, AF-4, AF-5, AF-6; lanes af/a 494d7009, af/b 39984fe3, af/c 0947c0a0, af/d 9fcb4618). Residuals are logged as O-AF-01..O-AF-08 in tasks/opportunities.md.**
 
 ### Step 1 review
 
