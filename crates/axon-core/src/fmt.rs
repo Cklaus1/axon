@@ -513,11 +513,7 @@ impl Formatter {
             Expr::Block(stmts) => {
                 self.writeln("{");
                 self.push();
-                for stmt in stmts {
-                    self.ind();
-                    self.emit_expr(&stmt.expr);
-                    self.nl();
-                }
+                self.emit_stmts(stmts);
                 self.pop();
                 self.ind();
                 self.write("}");
@@ -538,14 +534,55 @@ impl Formatter {
         }
         self.writeln("{");
         self.push();
-        for stmt in stmts {
-            self.ind();
-            self.emit_expr(&stmt.expr);
-            self.nl();
-        }
+        self.emit_stmts(stmts);
         self.pop();
         self.ind();
         self.write("}");
+    }
+
+    /// One indented line per statement. A `let (a, b) = e` desugar (a
+    /// `__tup_N` let and its field lets, spliced into the block by the
+    /// parser) prints back as the tuple `let` (LF-3).
+    fn emit_stmts(&mut self, stmts: &[Stmt]) {
+        let mut i = 0;
+        while i < stmts.len() {
+            self.ind();
+            if let Some((names, value, used)) = as_desugared_let_tuple(&stmts[i..]) {
+                self.write("let (");
+                self.write(&names.join(", "));
+                self.write(") = ");
+                self.emit_value(value);
+                i += used;
+            } else {
+                self.emit_expr(&stmts[i].expr);
+                i += 1;
+            }
+            self.nl();
+        }
+    }
+
+    /// Emit an expression in value position (a binding's value, `return`, a
+    /// call or `Ok`/`Err`/`Some` argument): the empty block is the unit value
+    /// and prints as `()`, never the W0008-warned `{}` (LF-1). Body positions
+    /// keep `{}`.
+    fn emit_value(&mut self, expr: &Expr) {
+        if matches!(expr, Expr::Block(stmts) if stmts.is_empty()) {
+            self.write("()");
+        } else {
+            self.emit_expr(expr);
+        }
+    }
+
+    /// ` else ` and the branch of an `if` / `if let`: another `if` or `if
+    /// let` continues the chain (`else if ...`, `else if let ...`); anything
+    /// else is a block.
+    fn emit_else(&mut self, e: &Expr) {
+        self.write(" else ");
+        match e {
+            Expr::If { .. } => self.emit_expr(e),
+            Expr::Match { arms, .. } if crate::ast::is_if_let_desugar(arms) => self.emit_expr(e),
+            _ => self.emit_block_body(e),
+        }
     }
 
     // ── Expressions ───────────────────────────────────────────────────────────
@@ -607,31 +644,31 @@ impl Formatter {
                 self.write(name);
                 self.emit_opt_binding_type(ty);
                 self.write(" = ");
-                self.emit_expr(value);
+                self.emit_value(value);
             }
             Expr::Own { name, ty, value } => {
                 self.write("own ");
                 self.write(name);
                 self.emit_opt_binding_type(ty);
                 self.write(" = ");
-                self.emit_expr(value);
+                self.emit_value(value);
             }
             Expr::RefBind { name, ty, value } => {
                 self.write("ref ");
                 self.write(name);
                 self.emit_opt_binding_type(ty);
                 self.write(" = ");
-                self.emit_expr(value);
+                self.emit_value(value);
             }
             Expr::Assign { name, value } => {
                 self.write(name);
                 self.write(" = ");
-                self.emit_expr(value);
+                self.emit_value(value);
             }
             Expr::AssignTo { place, value } => {
                 self.emit_expr(place);
                 self.write(" = ");
-                self.emit_expr(value);
+                self.emit_value(value);
             }
 
             Expr::BinOp { op, left, right } => {
@@ -657,7 +694,7 @@ impl Formatter {
                     if i > 0 {
                         self.write(", ");
                     }
-                    self.emit_expr(a);
+                    self.emit_value(a);
                 }
                 self.write(")");
             }
@@ -674,7 +711,7 @@ impl Formatter {
                     if i > 0 {
                         self.write(", ");
                     }
-                    self.emit_expr(a);
+                    self.emit_value(a);
                 }
                 self.write(")");
             }
@@ -696,11 +733,7 @@ impl Formatter {
                 self.write(" ");
                 self.emit_block_body(then);
                 if let Some(e) = else_ {
-                    self.write(" else ");
-                    match e.as_ref() {
-                        Expr::If { .. } => self.emit_expr(e),
-                        _ => self.emit_block_body(e),
-                    }
+                    self.emit_else(e);
                 }
             }
             Expr::While { cond, body } => {
@@ -723,6 +756,19 @@ impl Formatter {
                 self.emit_block_body(&Expr::Block(body.clone()));
             }
 
+            // LF-2: the parser's `if let` desugar prints back as `if let`.
+            Expr::Match { subject, arms } if crate::ast::is_if_let_desugar(arms) => {
+                self.write("if let ");
+                self.emit_pattern(&arms[0].pattern);
+                self.write(" = ");
+                self.emit_expr(subject);
+                self.write(" ");
+                self.emit_block_body(&arms[0].body);
+                // `if let P = e { A } else {}` is the no-else form.
+                if !matches!(&arms[1].body, Expr::Block(b) if b.is_empty()) {
+                    self.emit_else(&arms[1].body);
+                }
+            }
             Expr::Match { subject, arms } => {
                 self.write("match ");
                 self.emit_expr(subject);
@@ -748,7 +794,7 @@ impl Formatter {
                 self.write("return");
                 if let Some(v) = val {
                     self.write(" ");
-                    self.emit_expr(v);
+                    self.emit_value(v);
                 }
             }
 
@@ -806,17 +852,17 @@ impl Formatter {
 
             Expr::Ok(inner) => {
                 self.write("Ok(");
-                self.emit_expr(inner);
+                self.emit_value(inner);
                 self.write(")");
             }
             Expr::Err(inner) => {
                 self.write("Err(");
-                self.emit_expr(inner);
+                self.emit_value(inner);
                 self.write(")");
             }
             Expr::Some(inner) => {
                 self.write("Some(");
-                self.emit_expr(inner);
+                self.emit_value(inner);
                 self.write(")");
             }
             Expr::None => self.write("None"),
@@ -1093,7 +1139,9 @@ fn binop_prec(op: &BinOp) -> u8 {
 /// surface form rather than leaking its internal names. The shape is:
 /// `{ ref __forarr_N = coll  for __fori_N in 0..len(__forarr_N) {
 ///      let x = __forarr_N[__fori_N]  <body…> } }`.
-/// Returns `(loop var, collection, body without the element binding)`.
+/// Returns `(loop var or pattern, collection, body without the bindings)`.
+/// A `for (a, b)` loop (LF-3) binds `__forpat_N_nK` and then one field let
+/// per name; those lets are folded back into the printed pattern.
 fn as_desugared_foreach(stmts: &[Stmt]) -> Option<(String, &Expr, Vec<Stmt>)> {
     if stmts.len() != 2 {
         return None;
@@ -1132,7 +1180,94 @@ fn as_desugared_foreach(stmts: &[Stmt]) -> Option<(String, &Expr, Vec<Stmt>)> {
     if rn != arr {
         return None;
     }
-    Some((uservar.clone(), coll.as_ref(), body[1..].to_vec()))
+    let rest = &body[1..];
+    if uservar.starts_with("__forpat_") {
+        let mut pos = 0;
+        let pat = resugar_for_pat(uservar, rest, &mut pos)?;
+        return Some((pat, coll.as_ref(), rest[pos..].to_vec()));
+    }
+    Some((uservar.clone(), coll.as_ref(), rest.to_vec()))
+}
+
+/// The `for` tuple pattern bound to `base` (`<stem>_n<arity>`), rebuilt from
+/// the field lets at `stmts[*pos..]` (`let a = base.0`; a nested level binds
+/// `base_k_n<m>` and then its own lets). Slots with no let are `_`.
+fn resugar_for_pat(base: &str, stmts: &[Stmt], pos: &mut usize) -> Option<String> {
+    let arity: usize = base.rsplit_once("_n")?.1.parse().ok()?;
+    let mut slots = vec![String::from("_"); arity];
+    let mut next = 0;
+    while let Some(Stmt {
+        expr: Expr::Let {
+            name,
+            ty: None,
+            value,
+        },
+        ..
+    }) = stmts.get(*pos)
+    {
+        let Expr::FieldAccess { receiver, field } = value.as_ref() else {
+            break;
+        };
+        if !matches!(receiver.as_ref(), Expr::Ident(r) if r == base) {
+            break;
+        }
+        let Some(k) = field
+            .parse::<usize>()
+            .ok()
+            .filter(|k| *k >= next && *k < arity)
+        else {
+            break;
+        };
+        *pos += 1;
+        let nested = format!("{base}_{k}_n");
+        slots[k] = match name.strip_prefix(&nested) {
+            Some(m) if !m.is_empty() && m.bytes().all(|b| b.is_ascii_digit()) => {
+                resugar_for_pat(name, stmts, pos)?
+            }
+            _ => name.clone(),
+        };
+        next = k + 1;
+    }
+    Some(format!("({})", slots.join(", ")))
+}
+
+/// Recognize `let (a, b) = e`'s desugar at the head of `stmts`:
+/// `let __tup_N = e` then `let a = __tup_N.0`, `let b = __tup_N.1`, ...
+/// Returns `(names, e, statements consumed)`.
+fn as_desugared_let_tuple(stmts: &[Stmt]) -> Option<(Vec<&str>, &Expr, usize)> {
+    let Expr::Let {
+        name: tmp,
+        ty: None,
+        value,
+    } = &stmts.first()?.expr
+    else {
+        return None;
+    };
+    if !tmp.starts_with("__tup_") {
+        return None;
+    }
+    let mut names = Vec::new();
+    for s in &stmts[1..] {
+        let Expr::Let {
+            name,
+            ty: None,
+            value: v,
+        } = &s.expr
+        else {
+            break;
+        };
+        let Expr::FieldAccess { receiver, field } = v.as_ref() else {
+            break;
+        };
+        if !matches!(receiver.as_ref(), Expr::Ident(r) if r == tmp)
+            || *field != names.len().to_string()
+        {
+            break;
+        }
+        names.push(name.as_str());
+    }
+    let used = names.len() + 1;
+    Some((names, value.as_ref(), used))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1429,5 +1564,100 @@ mod tests {
             !out1.contains("__forarr"),
             "must not leak internal names: {out1}"
         );
+    }
+
+    #[test]
+    fn fmt_unit_value_prints_parens() {
+        // LF-1: `()` and `{}` are the same node. In value position fmt prints
+        // `()` (never the W0008-warned `= {}`); in body position `{}`.
+        let attack = "ATTACK: fmt wrote a W0008 empty block";
+        let src = "fn f(c: bool) -> Result<(), str> {\n    let u: () = ()\n    let v: () = {}\n    if true {}\n    match u {\n        _ => {}\n    }\n    if c {\n        return Ok(())\n    }\n    Ok({})\n}\nfn g() -> () {\n    return ()\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        for want in [
+            "let u: () = ()",
+            "let v: () = ()",
+            "return Ok(())",
+            "    Ok(())\n",
+            "return ()",
+            "_ => {}",
+            "if true {",
+        ] {
+            assert!(out1.contains(want), "{attack}: want {want:?} in {out1}");
+        }
+        assert!(!out1.contains("= {}"), "{attack}: {out1}");
+    }
+
+    #[test]
+    fn fmt_for_tuple_round_trips() {
+        // LF-3: the `for (a, b) in xs` desugar (`__forpat_N` plus one field
+        // let per name) prints back as the pattern, nested and `_` included.
+        let attack = "ATTACK: fmt leaked __forpat_";
+        let src = "fn main() {\n    let t = 0\n    for (i, (a, _)) in arr_enumerate(arr_zip([1, 2], [10, 20])) {\n        t = t + i + a\n    }\n    for (k, v) in [(1, 2)] {\n        t = t + k + v\n    }\n    println(to_str(t))\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        assert!(
+            out1.contains("for (i, (a, _)) in arr_enumerate(arr_zip([1, 2], [10, 20])) {")
+                && out1.contains("for (k, v) in [(1, 2)] {"),
+            "{attack}: {out1}"
+        );
+        assert!(!out1.contains("__forpat"), "{attack}: {out1}");
+    }
+
+    #[test]
+    fn fmt_let_tuple_round_trips() {
+        // LF-3: `let (n, s) = p` printed as `let __tup_N = p` and one field
+        // let per name (fm02), which then passed `fmt --check`.
+        let attack = "ATTACK: fmt leaked __tup_";
+        let src = "fn main() {\n    let p = (1, \"a\")\n    let (n, s) = p\n    println(\"{to_str(n)}{s}\")\n    if true {\n        let (x, y) = (2, 3)\n        println(to_str(x + y))\n    }\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        assert!(
+            out1.contains("    let (n, s) = p\n") && out1.contains("let (x, y) = (2, 3)\n"),
+            "{attack}: {out1}"
+        );
+        assert!(!out1.contains("__tup_"), "{attack}: {out1}");
+    }
+
+    #[test]
+    fn fmt_if_let_round_trips() {
+        // LF-2: the `if let` desugar (`match e { P => A, __iflet_N => B }`)
+        // prints back as `if let`, every chain shape included.
+        let attack = "ATTACK: fmt rewrote if let as match";
+        let src = "fn f(o: Option<i64>, r: Result<i64, str>, c: bool) -> i64 {\n    if let Some(v) = o { println(to_str(v)) }\n    let a = if let Some(v) = o { v } else { 0 }\n    if let Some(v) = o { println(\"s\") } else if let Ok(w) = r { println(\"o\") } else { println(\"n\") }\n    if let Some(v) = o { println(\"s\") } else if c { println(\"c\") }\n    if c { println(\"c\") } else if let Some(v) = o { println(\"s\") } else { println(\"n\") }\n    a\n}\n";
+        let (out1, out2) = round_trip(src);
+        // The shape checks run before the idempotence check, so each mutant
+        // is reported under its own marker.
+        assert!(!out1.contains("__iflet_"), "{attack}: {out1}");
+        assert!(!out1.contains("match "), "{attack}: {out1}");
+        let chain = "ATTACK: fmt broke an else-if-let chain";
+        for want in [
+            "} else if let Ok(w) = r {\n",
+            "    } else if c {\n",
+            "    if c {\n        println(\"c\")\n    } else if let Some(v) = o {\n",
+        ] {
+            assert!(out1.contains(want), "{chain}: want {want:?} in {out1}");
+        }
+        assert!(!out1.contains("else {\n        if"), "{chain}: {out1}");
+        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        for want in [
+            "    if let Some(v) = o {\n        println(to_str(v))\n    }\n",
+            "    let a = if let Some(v) = o {\n",
+            "    } else {\n        0\n    }\n",
+        ] {
+            assert!(out1.contains(want), "{attack}: want {want:?} in {out1}");
+        }
+    }
+
+    #[test]
+    fn fmt_user_match_with_wildcard_is_not_resugared() {
+        // LF-2: only the parser's `__iflet_` catch-all is an `if let`; a
+        // two-arm `match` the user wrote stays a `match`.
+        let attack = "ATTACK: fmt rewrote a user match";
+        let src = "fn f(o: Option<i64>) -> i64 {\n    let a = match o {\n        Some(v) => v,\n        _ => 0,\n    }\n    let b = match o {\n        Some(v) => v,\n        other => 1,\n    }\n    a + b\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        assert!(!out1.contains("if let"), "{attack}: {out1}");
+        assert_eq!(out1.matches("match o {").count(), 2, "{attack}: {out1}");
     }
 }

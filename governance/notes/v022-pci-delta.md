@@ -16,16 +16,16 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: db854cdbe6ae9d9e5249439fdb90f9e722d71c32
+generated-at: 4b0c5b8f40a876648dcbf102a906e204f041bb36
 
-`git diff --numstat 31413ca7..db854cdb -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..4b0c5b8f -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
 | `crates/axon-core/src/ai_routing.rs` | 3 | 3 |
 | `crates/axon-core/src/ast.rs` | 340 | 81 |
 | `crates/axon-core/src/bin/axon-run.rs` | 19 | 0 |
-| `crates/axon-core/src/borrow.rs` | 67 | 11 |
+| `crates/axon-core/src/borrow.rs` | 233 | 43 |
 | `crates/axon-core/src/builtins.rs` | 332 | 44 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 1168 | 346 |
@@ -88,7 +88,7 @@ generated-at: db854cdbe6ae9d9e5249439fdb90f9e722d71c32
 | `crates/axon-core/src/lib.rs` | 434 | 86 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 215 | 60 |
-| `crates/axon-core/src/main.rs` | 1807 | 473 |
+| `crates/axon-core/src/main.rs` | 1814 | 475 |
 | `crates/axon-core/src/mono.rs` | 71 | 17 |
 | `crates/axon-core/src/mut_borrow.rs` | 944 | 0 |
 | `crates/axon-core/src/parse_help.rs` | 136 | 0 |
@@ -100,9 +100,9 @@ generated-at: db854cdbe6ae9d9e5249439fdb90f9e722d71c32
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 64508 | 8946 |
+| total | 64681 | 8980 |
 
-`git log --reverse 31413ca7..db854cdb -- crates/axon-core/src`:
+`git log --reverse 31413ca7..4b0c5b8f -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -484,8 +484,12 @@ generated-at: db854cdbe6ae9d9e5249439fdb90f9e722d71c32
 | 8f8baa48 | integration int/31 wasm RUNNABLE label | CLI MESSAGE: `axon target build --engine codegen` for wasm reads the linked module's import section and prints `linked, RUNNABLE` with a `wasmtime --invoke main` command only when every import is WASI; a module importing `env.axon_host_write` (browser println) now says it needs that host import and is not runnable standalone. Only the stderr label changes: the emitted files, the link, and the exit code are unchanged. No interpreter, checker or runtime path changes. |
 | b67d0904 | intent-gen IG0 | INTERPRETER: the env_var-behind-fs_read refusal applies to program-created sandboxes only, so the ambient AXON_ALLOWED_FS_READ= deny-all (cortex's runtime fence) no longer refuses an environment read. |
 | 92c9e639 | R28 audit ledger AI class | INTERPRETER (R28 audit ledger class only): ai_extract_uncertain_i64 and ai_extract_uncertain_f64 now write "effect":"AI" rows to the audit ledger instead of "Net", the class ai_complete already used. The R29 monitor matches that field, so a job whose allowlist excludes AI is now stopped when it calls either builtin, as it already was for ai_complete. http_get and the other network builtins stay Net; what a run computes is unchanged. |
+| 9fcb4618 | AF-6 docs truth | DOCS ONLY: `axon build --help` and spec/axon-for-llms.md now say what a native binary does with AI calls (built without the asi-runtime feature it refuses a live call with rc 2 rather than calling a model), and tasks/opportunities.md stamps O-HI-03 and 16 stale-open entries with the commits that fixed them. No engine, checker or runtime behaviour changes. |
+| 39984fe3 | AF-2 move checker: match arms are alternatives | CHECKER (move check, all engines): match arms are now checked as alternatives. A value moved in one arm is no longer treated as moved in the next arm, and after the match each name takes the join of the arms that fall through (moved if any of them moved it). An arm or loop body that always returns or exits, with no break/continue escaping it, no longer moves its values for the code after it, so `return p` in an arm and `return xs` inside `for x in xs` stop giving E0601/E0602 (O-HX3-02, O-HX3-03). A match guard's moves now count for every later arm, and a program that moves a value on one arm and uses it afterwards (it ran before only because the interpreter shares values) is now E0601. The 700 tracked .ax files check identically before and after. What a program computes is unchanged. |
 | db854cdb | lang-forms LF-4 sibling modules | MODULE RESOLUTION (lang-forms LF-4): `mod util` now also searches the entry file's own directory, LAST, after AXON_PATH, ~/.axon/lib and <bindir>/../lib/axon, so every module found before is still found first and only a program that failed with E0901 changes. The entry directory is never searched under AXON_PATH_EXCLUSIVE=1, while sealing, or when it is group- or world-writable, the system temp directory, or unreadable; E0901 names a skipped one with the reason. check, run, build (and its cache key), lock, the @[contained] import-edge check and the LSP all use the same list; session cells and axon-os jobs are unchanged. |
-| 379 commits | | |
+| e8425b0d | af/d merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 4b0c5b8f | lf/c merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 383 commits | | |
 <!-- END MECHANICAL -->
 
 
