@@ -48056,6 +48056,76 @@ fn a_malformed_nonce_on_the_nonce_fd_is_refused() {
     );
 }
 
+/// IRS-3: a supervisor writes the nonce and closes its end before the spawn,
+/// so a nonce fd that has not reached EOF is not one; `axon run` refuses it
+/// (exit 2) at once rather than wait on a writer that may never close.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_nonce_fd_whose_writer_is_still_open_is_refused_without_waiting() {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+    let d = gv_dir("b3-openwriter");
+    let f = d.join("p.ax");
+    std::fs::write(&f, "fn main() -> i64 { 0 }\n").unwrap();
+    let mut fails = Vec::new();
+    for (tag, bytes) in [
+        ("nothing", ""),
+        ("a-nonce", "0123456789abcdef0123456789abcdef\n"),
+    ] {
+        let (_reader, writer) = std::io::pipe().unwrap();
+        let (nonce_reader, mut nonce_writer) = std::io::pipe().unwrap();
+        nonce_writer.write_all(bytes.as_bytes()).unwrap();
+        let wfd = writer.as_raw_fd();
+        let nfd = nonce_reader.as_raw_fd();
+        let mut cmd = axon();
+        cmd.current_dir(&d)
+            .arg("run")
+            .arg(&f)
+            .env("AXON_OUTCOME_FD", "3")
+            .env("AXON_OUTCOME_NONCE_FD", "4")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        // SAFETY: only async-signal-safe `fcntl`/`dup2` between fork and exec.
+        unsafe {
+            cmd.pre_exec(move || {
+                let w = libc::fcntl(wfd, libc::F_DUPFD_CLOEXEC, 10);
+                let n = libc::fcntl(nfd, libc::F_DUPFD_CLOEXEC, 10);
+                if w == -1 || n == -1 || libc::dup2(w, 3) == -1 || libc::dup2(n, 4) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = cmd.spawn().unwrap();
+        let start = std::time::Instant::now();
+        let status = loop {
+            if let Some(s) = child.try_wait().unwrap() {
+                break Some(s);
+            }
+            if start.elapsed() > std::time::Duration::from_secs(10) {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        // The nonce writer stays open until here, past the child's end.
+        drop(nonce_writer);
+        match status {
+            Some(s) if s.code() == Some(2) => {}
+            other => fails.push(format!("[{tag}] {other:?}")),
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(
+        fails.is_empty(),
+        "ATTACK: a nonce fd with its writer still open was waited on or accepted:\n{}",
+        fails.join("\n")
+    );
+}
+
 /// `AXON_OUTCOME_NONCE` is gone: a supervisor still setting it would leave
 /// the nonce in the kernel's environment block, so it is refused.
 #[cfg(target_os = "linux")]
@@ -48191,4 +48261,69 @@ fn an_unused_module_lambda_is_not_a_capability_of_main() {
     let src = "let g = |p: str| match read_file(p) {\n    Ok(s) => s,\n    Err(e) => e,\n}\n@[contained(fs: [], exec: none)]\nfn main() -> i64 {\n    println(\"hi\")\n    0\n}\n";
     let (rc, err) = check_rc(src, false, None);
     assert_eq!(rc, 0, "an unused module-level lambda was refused: {err}");
+}
+
+/// B3-7 (IRS-1): a plain module-level `let` initialiser ran before `main`;
+/// a contained helper that reads its VALUE runs none of it, so the helper is
+/// not charged the initialiser's I/O. A closure the initialiser built is a
+/// different matter: calling it runs its body (the second case).
+#[test]
+fn a_contained_helper_reading_a_module_let_value_is_not_charged_its_initialiser() {
+    let plain = "let data = match read_file(\"cfg.txt\") {\n    Ok(s) => s,\n    Err(e) => \"\",\n}\n@[contained(fs: [], exec: none)]\nfn helper() -> i64 {\n    len(data)\n}\nfn main() {\n    println(to_str(helper()))\n}\n";
+    let (rc, err) = check_rc(plain, false, None);
+    assert_eq!(
+        rc, 0,
+        "a contained helper was charged a plain module let's initialiser: {err}"
+    );
+    let built = "fn mk() -> fn(str) -> str {\n    |p: str| match read_file(p) {\n        Ok(s) => s,\n        Err(e) => e,\n    }\n}\nlet f = mk()\n@[contained(fs: [], exec: none)]\nfn helper() -> i64 {\n    len(f(\"/etc/hostname\"))\n}\nfn main() {\n    println(to_str(helper()))\n}\n";
+    let (rc, err) = check_rc(built, false, None);
+    assert!(
+        rc != 0 && err.contains("E1001"),
+        "ATTACK: a contained helper called a closure a module let built and was not charged its body: rc={rc} {err}"
+    );
+    let loaded = "fn load() -> str {\n    match read_file(\"cfg.txt\") {\n        Ok(s) => s,\n        Err(e) => \"\",\n    }\n}\nlet data = load()\n@[contained(fs: [], exec: none)]\nfn helper() -> i64 {\n    len(data)\n}\nfn main() {\n    println(to_str(helper()))\n}\n";
+    let (rc, err) = check_rc(loaded, false, None);
+    assert_eq!(
+        rc, 0,
+        "a contained helper was charged the fn a module let's initialiser called: {err}"
+    );
+    let fn_value = "fn rd(p: str) -> str {\n    match read_file(p) {\n        Ok(s) => s,\n        Err(e) => e,\n    }\n}\nlet f = rd\n@[contained(fs: [], exec: none)]\nfn helper() -> i64 {\n    len(f(\"/etc/hostname\"))\n}\nfn main() {\n    println(to_str(helper()))\n}\n";
+    let (rc, err) = check_rc(fn_value, false, None);
+    assert!(
+        rc != 0 && err.contains("E1001"),
+        "ATTACK: a contained helper called a fn value a module let holds and was not charged its body: rc={rc} {err}"
+    );
+}
+
+/// B3-7 (IRS-2): a local, a parameter or a pattern binding of the same name
+/// shadows a module-level lambda, so the walk does not follow the name to it.
+/// A use outside the shadowing scope still reaches it (the last case).
+#[test]
+fn a_shadowed_module_lambda_is_not_followed() {
+    let lam = "let g = |p: str| match read_file(p) {\n    Ok(s) => s,\n    Err(e) => \"\",\n}\n";
+    let mut fails = Vec::new();
+    for (tag, body) in [
+        ("local", "@[contained(fs: [], exec: none)]\nfn main() {\n    let g = 5\n    println(to_str(g + 1))\n}\n"),
+        ("param", "@[contained(fs: [], exec: none)]\nfn helper(g: i64) -> i64 {\n    g + 1\n}\nfn main() {\n    println(to_str(helper(1)))\n    println(g(\"cfg.txt\"))\n}\n"),
+        ("match", "@[contained(fs: [], exec: none)]\nfn main() {\n    match Some(4) {\n        Some(g) => println(to_str(g)),\n        None => println(\"none\"),\n    }\n}\n"),
+        ("lambda-param", "@[contained(fs: [], exec: none)]\nfn main() {\n    let h = |g: i64| g + 1\n    println(to_str(h(2)))\n}\n"),
+    ] {
+        let (rc, err) = check_rc(&format!("{lam}{body}"), false, None);
+        if rc != 0 {
+            fails.push(format!("[{tag}] rc={rc} {err}"));
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "a shadowed module lambda was followed:\n{}",
+        fails.join("\n")
+    );
+    let escaped = format!(
+        "{lam}@[contained(fs: [], exec: none)]\nfn main() {{\n    if true {{\n        let g = 5\n        println(to_str(g))\n    }}\n    println(g(\"/etc/hostname\"))\n}}\n"
+    );
+    let (rc, err) = check_rc(&escaped, false, None);
+    assert!(
+        rc != 0 && err.contains("E1001"),
+        "ATTACK: a module lambda used after an inner shadow ended was not followed: rc={rc} {err}"
+    );
 }

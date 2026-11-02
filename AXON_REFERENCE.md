@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 28 CLI verbs, 344 builtins, 24 attributes, 156 diagnostic codes (143 live, 13 reserved), 71 environment variables.
+The complete surface of this build — 28 CLI verbs, 344 builtins, 24 attributes, 156 diagnostic codes (143 live, 13 reserved), 72 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -71,7 +71,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (71)
+## Environment variables (72)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -116,6 +116,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_REQUIRE_IMPORTS_DIGEST` | the `axsha256:` imports_digest (`axon imports --json`) a run must load: `axon run`/`test`/`goal`/`session`/`deploy` compare the import closure they loaded and exit 8 before executing anything when it differs. In `axon session` the first cell whose closure differs is refused with E2404 (its frame or human render is emitted; it does not execute or accumulate), no further input is read, and the session ends through its normal end path with exit 8 — so `use` the approved modules in the first cell. Read once and removed from the environment, so it binds that process only, not programs it spawns. Any other verb refuses it (exit 2); a built binary refuses it at start (exit 2). Interpreter-only |
 | `AXON_OUTCOME_FD` | set by a supervisor (axon-os capture and job runs): the fd number (above 2; axon-os passes 3, a pipe) to which `axon run` writes exactly one `axon-outcome/1` JSON line before it exits (`schema`, `nonce`, `kind` = exit, fault or compile, `code` = the exit status, `class` = for an exit return, exit, inner-exit or stray, `reason`), at most 4096 bytes. Class `exit` is an `exit(n)` from `main` itself outside every `sandbox_run`; `inner-exit` is one inside `sandbox_run` or in a module-level `let` before `main`. The supervisor classifies the run by that record, never by the program's stderr or stdout. Must be set together with AXON_OUTCOME_NONCE_FD. Read once and removed from the environment; the fd is made close-on-exec, so neither the program nor a process it spawns sees them. An fd that is not open is refused (exit 2); any verb other than `axon run` refuses it (exit 2). Linux, interpreter-only |
 | `AXON_OUTCOME_NONCE_FD` | set by a supervisor with AXON_OUTCOME_FD: the fd number (above 2; axon-os passes 4) of a pipe carrying the per-run nonce (16-128 lowercase hex digits and a newline) `axon run` repeats in its `axon-outcome/1` record, so a record without it is not this run's. The nonce is never in the environment (whose kernel copy /proc/self/environ a program granted /proc/ can read): `axon run` reads it once (at most 130 bytes), closes the fd, removes the variable and makes itself non-dumpable, so a spawned process cannot open its /proc files. A short, long or non-hex nonce, an fd that is not open, or any verb other than `axon run` is refused (exit 2). The retired AXON_OUTCOME_NONCE is refused (exit 2). Linux, interpreter-only |
+| `AXON_OUTCOME_NONCE` | retired (genviab-b3 B3-3): the outcome nonce once travelled in this variable, where a program granted /proc/ could read it from /proc/self/environ. It now travels on the AXON_OUTCOME_NONCE_FD pipe. `axon run` refuses a run that still sets it (exit 2, naming the replacement), so a stale supervisor fails loudly rather than grading by a readable nonce |
 | `AXON_REQUIRE_CERTS` | fail closed on the R23 solver-free kernel-mint certificate check instead of the default silent pass |
 | `AXON_ATTEST_KEY` | operator-provisioned attestation key (hex, >=16 bytes). When set, axon-vm signs AND verifies the attestation report under it, so a report signed by anyone else fails. Unset falls back to an ephemeral per-process key, where signer and verifier are the same process — real integrity over the measurement, but attesting nothing to a third party |
 | `AXON_APPROVAL_KEY` | operator approval key (hex, >=16 bytes), separate from AXON_ATTEST_KEY. When set, axon-os seals run records as `axrmac1:` (HMAC under a derived record subkey) and its verifier refuses unkeyed `axrec2:`/`axrec3:` records, so records archived before the key was set no longer verify or replay. Unset or blank = unkeyed (`axrec3:`, integrity only); malformed or short = refused, never a silent fall back. Symmetric: every holder can mint |

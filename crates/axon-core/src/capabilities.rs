@@ -10,7 +10,7 @@
 //! E1004 — call hits a `never:` clause (hard violation, even if allowlist would permit it)
 
 use crate::ast::{
-    AxonType, ContainedSpec, Expr, FnDef, Item, NeverClause, Program, RefineDef, TypeDef,
+    AxonType, ContainedSpec, Expr, FnDef, Item, NeverClause, Param, Program, RefineDef, TypeDef,
 };
 use crate::span::Span;
 
@@ -507,15 +507,21 @@ fn check_fn<'a>(
         errors,
         reach: None,
         // genviab-b3 B3-7: every walk follows a module-level `let` its code
-        // names (a call through a module lambda runs the lambda's body).
+        // names free (a call through a module lambda runs the lambda's body).
+        // An initialiser so followed ran before `main`: it is walked quietly
+        // (only the closures and fn values it built count), since the
+        // contained fn did not run it; `main` roots them loudly below.
         module_lets: Some(&module_lets.by_name),
         visited_lets: std::collections::HashSet::new(),
+        free_lets: std::collections::HashMap::new(),
+        quiet: false,
+        quiet_lets: true,
     };
     let before = ctx.errors.len();
     // The contained fn's own signature and attributes run code too (see
     // `reachable_capabilities`): its parameter/return refinements, its
     // `@[verify]` predicate and its `@[goal]` metric.
-    let mut work = vec![Walk::Expr(&fndef.body)];
+    let mut work = vec![Walk::Body(&fndef.body, &fndef.params)];
     push_fn_hooks(fndef, &ctx, &mut work);
     // genviab-b3 B3-7: every module-level `let` initialiser that is not a
     // lambda runs before `main` (`Interp::init_globals`), so `main`'s walk
@@ -534,7 +540,7 @@ fn check_fn<'a>(
     for &(name, init, span) in roots {
         let start = ctx.errors.len();
         ctx.site = span;
-        drain_walk(vec![Walk::Expr(init)], &mut ctx);
+        drain_walk(vec![Walk::Body(init, &[])], &mut ctx);
         from_lets.push((start, ctx.errors.len(), name));
     }
 
@@ -645,6 +651,9 @@ fn check_native_grants<'a>(
         reach: Some(&mut reach),
         module_lets: None,
         visited_lets: std::collections::HashSet::new(),
+        free_lets: std::collections::HashMap::new(),
+        quiet: false,
+        quiet_lets: false,
     };
     let mut work = vec![Walk::Expr(&fndef.body)];
     push_fn_hooks(fndef, &ctx, &mut work);
@@ -723,15 +732,29 @@ struct CapCtx<'a, 'e> {
     /// cannot disagree about what a body reaches.
     reach: Option<&'e mut Reach>,
     /// CAP-1: `Some` (the module-level `let`s by name) when the walk is a
-    /// `@[verify]` predicate's (`verify_predicate_reaches`). Such a walk
-    /// roots no initializer, so a predicate calling a closure bound by a
-    /// module `let` follows the name to it; and a call is resolved the way
-    /// the interpreter dispatches it (`builtins::call_prefers_builtin`), so a
-    /// user fn named like an effect-table entry is followed, not refused.
+    /// `@[verify]` predicate's (`verify_predicate_reaches`) or a
+    /// `@[contained]` check's (genviab-b3 B3-7). A body that names a module
+    /// `let` free follows the name to its initialiser (`Walk::Body`), so a
+    /// call through a closure the `let` bound is checked; and a call is
+    /// resolved the way the interpreter dispatches it
+    /// (`builtins::call_prefers_builtin`), so a user fn named like an
+    /// effect-table entry is followed, not refused.
     module_lets: Option<&'a std::collections::HashMap<&'a str, &'a Expr>>,
     /// Module `let`s already followed (cycle guard: a closure can name its
     /// own `let`).
     visited_lets: std::collections::HashSet<&'a str>,
+    /// genviab-b3 B3-7 (IRS-2): the module `let`s each walked body (keyed by
+    /// address) names free, computed once per body per walk.
+    free_lets: std::collections::HashMap<usize, Vec<&'a str>>,
+    /// genviab-b3 B3-7 (IRS-1): the walk is inside code that ran before
+    /// `main` (a module `let` initialiser a body named, and the helpers it
+    /// called): a builtin call there is not checked against the spec, since
+    /// the contained fn did not run it. A closure or fn value built there
+    /// can be called later, so its body is walked loudly again.
+    quiet: bool,
+    /// Walk an initialiser followed by name quietly (`check_fn`); a
+    /// collecting walk reaches the same set either way.
+    quiet_lets: bool,
 }
 
 /// R0a — everything a walk reached that can touch the host: the capability
@@ -938,8 +961,7 @@ pub fn verify_predicate_reaches(program: &Program) -> Vec<(&FnDef, Reach)> {
     });
     fns.filter_map(|(f, self_ty)| {
         let v = f.verify.as_ref()?;
-        let mut work: Vec<Walk<'_>> = Vec::new();
-        push_exprs(&mut work, std::iter::once(&*v.predicate));
+        let work: Vec<Walk<'_>> = vec![Walk::Body(&v.predicate, &f.params)];
         let mut reach = maps.reach(work, true);
         if maps.takes_a_fn_from_its_caller(f, self_ty, &v.predicate) {
             reach.unknown = true;
@@ -1045,6 +1067,9 @@ impl<'a> WalkMaps<'a> {
             reach: Some(&mut reach),
             module_lets: predicate.then_some(&self.lets),
             visited_lets: std::collections::HashSet::new(),
+            free_lets: std::collections::HashMap::new(),
+            quiet: false,
+            quiet_lets: false,
         };
         drain_walk(work, &mut ctx);
         reach
@@ -1666,6 +1691,14 @@ enum Walk<'a> {
     LeaveType(&'a str),
     /// A diagnostic raised between two walks of the dispatch loop.
     Report(CapabilityError),
+    /// Check a body that opens a fresh scope (a fn body with its params, a
+    /// predicate, a module `let` initialiser): the module `let`s it names
+    /// free (not bound by a local, a parameter or a pattern in scope) are
+    /// followed first (genviab-b3 B3-7, IRS-2), then the body is checked.
+    Body(&'a Expr, &'a [Param]),
+    /// Set `CapCtx::quiet` (entering, or restoring after, the part of a walk
+    /// that ran before `main`).
+    Quiet(bool),
 }
 
 /// Queue `exprs` so they are checked in iteration order.
@@ -1688,7 +1721,7 @@ fn drain_walk<'a>(mut work: Vec<Walk<'a>>, ctx: &mut CapCtx<'a, '_>) {
                     let outer = ctx.site;
                     ctx.site = helper.span;
                     work.push(Walk::LeaveHelper(name, outer));
-                    work.push(Walk::Expr(&helper.body));
+                    work.push(Walk::Body(&helper.body, &helper.params));
                     push_fn_hooks(helper, ctx, &mut work);
                 }
             }
@@ -1705,7 +1738,9 @@ fn drain_walk<'a>(mut work: Vec<Walk<'a>>, ctx: &mut CapCtx<'a, '_>) {
             Walk::Methods(method, impls) => {
                 if ctx.visited_methods.insert(method) {
                     work.push(Walk::LeaveMethods(method));
-                    push_exprs(&mut work, impls.iter().map(|m| &m.body));
+                    for m in impls.iter().rev() {
+                        work.push(Walk::Body(&m.body, &m.params));
+                    }
                     for m in impls.iter() {
                         push_fn_hooks(m, ctx, &mut work);
                     }
@@ -1721,12 +1756,12 @@ fn drain_walk<'a>(mut work: Vec<Walk<'a>>, ctx: &mut CapCtx<'a, '_>) {
                     work.push(Walk::LeaveType(name));
                     let hooks = ctx.hooks;
                     if let Some(r) = hooks.refines.get(name).copied() {
-                        work.push(Walk::Expr(&r.predicate));
+                        work.push(Walk::Body(&r.predicate, &[]));
                         push_type(&r.base, hooks, &mut work);
                     }
                     if let Some(t) = hooks.structs.get(name).copied() {
                         if let Some(p) = &t.refinement {
-                            work.push(Walk::Expr(p));
+                            work.push(Walk::Body(p, &[]));
                         }
                         for f in &t.fields {
                             push_type(&f.ty, hooks, &mut work);
@@ -1745,18 +1780,56 @@ fn drain_walk<'a>(mut work: Vec<Walk<'a>>, ctx: &mut CapCtx<'a, '_>) {
                 }
             }
             Walk::Report(err) => ctx.errors.push(err),
+            Walk::Body(body, params) => {
+                work.push(Walk::Expr(body));
+                follow_free_module_lets(body, params, ctx, &mut work);
+            }
+            Walk::Quiet(quiet) => ctx.quiet = quiet,
         }
     }
 }
 
-/// In a predicate walk, queue the initializer of the module `let` named
-/// `name` once: what the predicate calls through it (or passes on) is
-/// whatever that initializer built. A local of the same name over-follows,
-/// which is sound.
-fn follow_module_let<'a>(name: &'a str, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<'a>>) {
-    if let Some((canon, init)) = ctx.module_lets.and_then(|lets| lets.get_key_value(name)) {
-        if ctx.visited_lets.insert(canon) {
-            work.push(Walk::Expr(init));
+/// genviab-b3 B3-7: queue, once per walk, the initialiser of every module
+/// `let` that `body` names free: what `body` calls through such a name (or
+/// passes on) is whatever the initialiser built. Scoped like the interpreter
+/// resolves names (`resolver::collect_free_vars`, the closure-capture
+/// analysis): a local, parameter or pattern binding of the same name in
+/// scope shadows the `let` and is not followed (IRS-2). A walk with
+/// `quiet_lets` walks the initialiser quietly: it ran before `main`, so only
+/// the closures it built count (see `CapCtx::quiet`).
+fn follow_free_module_lets<'a>(
+    body: &'a Expr,
+    params: &'a [Param],
+    ctx: &mut CapCtx<'a, '_>,
+    work: &mut Vec<Walk<'a>>,
+) {
+    let Some(lets) = ctx.module_lets else {
+        return;
+    };
+    let key = body as *const Expr as usize;
+    let names = ctx.free_lets.entry(key).or_insert_with(|| {
+        let bound: std::collections::HashSet<String> =
+            params.iter().map(|p| p.name.clone()).collect();
+        let mut free = std::collections::HashSet::new();
+        crate::resolver::collect_free_vars(body, &bound, &mut free);
+        let mut names: Vec<&'a str> = free
+            .iter()
+            .filter_map(|n| lets.get_key_value(n.as_str()).map(|(k, _)| *k))
+            .collect();
+        names.sort_unstable();
+        names
+    });
+    for &name in names.iter().rev() {
+        if !ctx.visited_lets.insert(name) {
+            continue;
+        }
+        let init = lets[name];
+        if ctx.quiet_lets {
+            work.push(Walk::Quiet(ctx.quiet));
+            work.push(Walk::Body(init, &[]));
+            work.push(Walk::Quiet(true));
+        } else {
+            work.push(Walk::Body(init, &[]));
         }
     }
 }
@@ -1791,14 +1864,16 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
                         name,
                         crate::builtins::call_has_mut_arg(args),
                     );
-                // A builtin I/O call is checked against the spec directly.
-                check_call(name, args, ctx.spec, ctx.site, ctx.errors);
+                // A builtin I/O call is checked against the spec directly,
+                // unless it ran before `main` (`CapCtx::quiet`).
+                if !ctx.quiet {
+                    check_call(name, args, ctx.spec, ctx.site, ctx.errors);
+                }
                 if let Some(reach) = ctx.reach.as_deref_mut() {
                     if !runs_user_fn {
                         reach.note(name);
                     }
                 }
-                follow_module_let(name, ctx, &mut follow);
                 // AUDIT T2 (finding F153 / P7-SEC-02). Several builtins dispatch
                 // to a user fn NAMED BY A STRING — `sandbox_run(sb, "job", 0)`,
                 // `scheduler_spawn("worker", 0)`, the whole `goal_run` family.
@@ -1983,13 +2058,23 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
         ),
         // A lambda parameter's refinement is checked when the closure is
         // called (checker-soundness-2 CS2-7): followed from the lambda.
+        // genviab-b3 B3-7: a lambda built before `main` can be called after
+        // it, so its body (and its parameters' predicates) count even in a
+        // quiet walk.
         Expr::Lambda { params, body, .. } => {
+            let quiet = ctx.quiet;
+            if quiet {
+                work.push(Walk::Quiet(true));
+            }
             for p in params {
                 if let Some(ty) = &p.ty {
                     push_type(ty, ctx.hooks, work);
                 }
             }
-            work.push(Walk::Expr(body))
+            work.push(Walk::Expr(body));
+            if quiet {
+                work.push(Walk::Quiet(false));
+            }
         }
         Expr::Spawn(body) => work.push(Walk::Expr(body)),
         Expr::Select(arms) => push_exprs(
@@ -2003,7 +2088,6 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
         // (THREAT_MODEL.md §8); permitted only if the spec grants the category.
         Expr::Ident(name) => {
             check_builtin_value_ref(name, ctx.spec, ctx.errors);
-            follow_module_let(name, ctx, work);
             if let Some(reach) = ctx.reach.as_deref_mut() {
                 if crate::builtins::is_known_builtin(name) {
                     reach.note(name);
@@ -2013,9 +2097,17 @@ fn visit_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>, work: &mut Vec<Walk<
             // can be called through that value, so it inherits the caller's
             // containment exactly as a direct call does (the helper-follow in the
             // `Call` arm). Without this the value route launders the sandbox.
+            // A fn value built before `main` can be called after it, so the
+            // helper counts even in a quiet walk (genviab-b3 B3-7).
             if classify_call(name).is_none() {
                 if let Some(helper) = ctx.fn_map.get(name.as_str()) {
-                    work.push(Walk::Helper(name, helper));
+                    if ctx.quiet {
+                        work.push(Walk::Quiet(true));
+                        work.push(Walk::Helper(name, helper));
+                        work.push(Walk::Quiet(false));
+                    } else {
+                        work.push(Walk::Helper(name, helper));
+                    }
                 }
             }
         }

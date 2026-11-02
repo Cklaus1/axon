@@ -2019,6 +2019,20 @@
       "evidence": "crates/axon-core/src/outcome.rs",
       "note": "genviab-b3 B3-3 (replaces GV-1's AXON_OUTCOME_NONCE, which is now refused, exit 2). Set by axon-os to 4, the read end of a second pipe holding the per-run nonce (16-128 lowercase hex digits, from the OS random source) and a newline, which `axon run` repeats in its axon-outcome/1 record, so a record without it is not this run's. The nonce is never in the environment (whose kernel copy /proc/self/environ a grant on /proc/ reads). `axon run` reads it (at most 130 bytes), closes fd 4, removes the variable and makes itself non-dumpable, so a process it spawns cannot open its /proc files. A short, long or non-hex nonce, an fd that is not open, or any verb other than `axon run` is refused (exit 2). Limit: a root supervisor or root child can still read interpreter memory. Tests: axon-os sandbox_capture the_kernels_environ_copy_holds_no_outcome_nonce, the_outcome_nonce_and_fd_are_not_in_the_programs_environment, a_record_with_another_runs_nonce_is_not_the_interpreters; cli_run the_outcome_nonce_is_read_from_the_nonce_fd, a_malformed_nonce_on_the_nonce_fd_is_refused, the_old_nonce_variable_is_refused, a_spawned_process_cannot_open_the_interpreters_proc_files.",
       "open": "Native and wasm AOT binaries never read this variable (see AXON_OUTCOME_FD). GUEST: not-applicable for THIS row because the nonce travels on a pipe that only the axon-os launcher creates for `axon run`; axon-vm starts guests without one."
+    },
+    {
+      "name": "AXON_OUTCOME_NONCE",
+      "category": "launcher-side",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "silently-ignored",
+        "wasm": "silently-ignored",
+        "guest": "not-applicable"
+      },
+      "evidence": "crates/axon-core/src/main.rs",
+      "note": "Retired by genviab-b3 B3-3: GV-1's per-run nonce travelled in this variable, where a program granted /proc/ read it from /proc/self/environ and forged a record. It now travels on the AXON_OUTCOME_NONCE_FD pipe. `axon run` (`take_outcome_channel`) refuses a run that still sets it (exit 2, naming the replacement), so a stale supervisor fails loudly instead of grading by a readable nonce. Test: cli_run `the_old_nonce_variable_is_refused`.",
+      "open": "Native and wasm AOT binaries never read this variable (see AXON_OUTCOME_FD), so a built binary given it does not refuse it; it also writes no record. GUEST: not-applicable for THIS row because axon-vm starts guests without an outcome channel."
     }
   ],
   "false_greens": [
