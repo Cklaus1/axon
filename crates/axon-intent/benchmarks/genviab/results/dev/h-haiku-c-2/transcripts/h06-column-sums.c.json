@@ -1,0 +1,35 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport re\nimport sys\n\n\ndef main():\n    path = \"./data/table.csv\"\n    if not os.path.isfile(path):\n        print(\"missing input\")\n        return 5\n\n    with open(path, \"rb\") as f:\n        raw = f.read()\n    data = raw.decode(\"utf-8\", errors=\"surrogateescape\")\n\n    if data == \"\":\n        print(\"no header\")\n        return 2\n\n    lines = data.split(\"\\n\")\n    if lines and lines[-1] == \"\":\n        lines.pop()\n\n    header = lines[0].split(\",\")\n    ncol = len(header)\n    sums = [0] * ncol\n    int_pat = re.compile(r\"-?[0-9]+\\Z\")\n\n    for idx in range(1, len(lines)):\n        lineno = idx + 1\n        fields = lines[idx].split(\",\")\n        if len(fields) != ncol:\n            print(f\"line {lineno}: expected {ncol} fields, got {len(fields)}\")\n            return 3\n        for fl in fields:\n            if not int_pat.match(fl):\n                print(f'line {lineno}: bad number \"{fl}\"')\n                return 4\n        for c, fl in enumerate(fields):\n            sums[c] += int(fl)\n\n    out_dir = \"./out\"\n    os.makedirs(out_dir, exist_ok=True)\n    out_lines = \"\".join(f\"{header[c]}={sums[c]}\\n\" for c in range(ncol))\n    with open(\"./out/sums.txt\", \"wb\") as f:\n        f.write(out_lines.encode(\"utf-8\", errors=\"surrogateescape\"))\n\n    print(f\"rows: {len(lines) - 1}\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport re\nimport sys\n\n\ndef main():\n    path = \"./data/table.csv\"\n    if not os.path.isfile(path):\n        print(\"missing input\")\n        return 5\n\n    with open(path, \"rb\") as f:\n        raw = f.read()\n    data = raw.decode(\"utf-8\", errors=\"surrogateescape\")\n\n    if data == \"\":\n        print(\"no header\")\n        return 2\n\n    lines = data.split(\"\\n\")\n    if lines and lines[-1] == \"\":\n        lines.pop()\n\n    header = lines[0].split(\",\")\n    ncol = len(header)\n    sums = [0] * ncol\n    int_pat = re.compile(r\"-?[0-9]+\\Z\")\n\n    for idx in range(1, len(lines)):\n        lineno = idx + 1\n        fields = lines[idx].split(\",\")\n        if len(fields) != ncol:\n            print(f\"line {lineno}: expected {ncol} fields, got {len(fields)}\")\n            return 3\n        for fl in fields:\n            if not int_pat.match(fl):\n                print(f'line {lineno}: bad number \"{fl}\"')\n                return 4\n        for c, fl in enumerate(fields):\n            sums[c] += int(fl)\n\n    out_dir = \"./out\"\n    os.makedirs(out_dir, exist_ok=True)\n    out_lines = \"\".join(f\"{header[c]}={sums[c]}\\n\" for c in range(ncol))\n    with open(\"./out/sums.txt\", \"wb\") as f:\n        f.write(out_lines.encode(\"utf-8\", errors=\"surrogateescape\"))\n\n    print(f\"rows: {len(lines) - 1}\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "ok",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    },
+    {
+     "example": "ragged",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 3",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

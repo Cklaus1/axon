@@ -1,0 +1,16 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nfrom datetime import datetime, timedelta\n\nOUT_DIR = \"./out\"\nOUT_FILE = os.path.join(OUT_DIR, \"schedule.txt\")\n\nos.makedirs(OUT_DIR, exist_ok=True)\n\nstart = datetime(2000, 1, 1, 9, 0)\nlines = []\nfor k in range(1, 7):\n    t = start + timedelta(minutes=45 * (k - 1))\n    lines.append(f\"slot {k}: {t.hour:02d}:{t.minute:02d}\\n\")\nlines.append(\"---\\n\")\n\nwith open(OUT_FILE, \"a\", encoding=\"utf-8\") as f:\n    f.writelines(lines)\n\nprint(\"holidays not read\")\nraise SystemExit(0)\n```",
+   "source": "import os\nfrom datetime import datetime, timedelta\n\nOUT_DIR = \"./out\"\nOUT_FILE = os.path.join(OUT_DIR, \"schedule.txt\")\n\nos.makedirs(OUT_DIR, exist_ok=True)\n\nstart = datetime(2000, 1, 1, 9, 0)\nlines = []\nfor k in range(1, 7):\n    t = start + timedelta(minutes=45 * (k - 1))\n    lines.append(f\"slot {k}: {t.hour:02d}:{t.minute:02d}\\n\")\nlines.append(\"---\\n\")\n\nwith open(OUT_FILE, \"a\", encoding=\"utf-8\") as f:\n    f.writelines(lines)\n\nprint(\"holidays not read\")\nraise SystemExit(0)\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

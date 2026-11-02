@@ -1,0 +1,35 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport re\nimport sys\n\n\ndef main():\n    stock_path = os.path.join(\"data\", \"stock.txt\")\n    orders_path = os.path.join(\"data\", \"orders.txt\")\n\n    if not (os.path.isfile(stock_path) and os.path.isfile(orders_path)):\n        print(\"missing input\")\n        return 5\n\n    with open(stock_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        stock_text = f.read()\n    with open(orders_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        orders_text = f.read()\n\n    def split_lines(text):\n        if text == \"\":\n            return []\n        parts = text.split(\"\\n\")\n        if parts and parts[-1] == \"\":\n            parts.pop()\n        return parts\n\n    stock_lines = split_lines(stock_text)\n    order_lines = split_lines(orders_text)\n\n    # Parse stock, preserving order.\n    items = []  # list of [name, qty]\n    index = {}\n    for line in stock_lines:\n        fields = line.split(\" \")\n        name = fields[0]\n        qty = int(fields[1])\n        index[name] = len(items)\n        items.append([name, qty])\n\n    qty_re = re.compile(r\"[0-9]+\")\n\n    for n, line in enumerate(order_lines, start=1):\n        fields = line.split(\" \")\n        if len(fields) != 2 or fields[0] == \"\" or fields[1] == \"\":\n            print(f\"bad order: line {n}\")\n            return 2\n        name, qstr = fields\n        if not qty_re.fullmatch(qstr) or int(qstr) <= 0:\n            print(f\"bad order: line {n}\")\n            return 2\n        qty = int(qstr)\n        if name not in index:\n            print(f\"unknown item: {name} (line {n})\")\n            return 3\n        pos = index[name]\n        if qty > items[pos][1]:\n            print(f\"insufficient stock: {name} (line {n})\")\n            return 4\n        items[pos][1] -= qty\n\n    # All orders valid; apply already done in memory. Write output.\n    os.makedirs(\"out\", exist_ok=True)\n    out_path = os.path.join(\"out\", \"stock.txt\")\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        for name, qty in items:\n            f.write(f\"{name} {qty}\\n\")\n\n    print(f\"applied {len(order_lines)} orders\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport re\nimport sys\n\n\ndef main():\n    stock_path = os.path.join(\"data\", \"stock.txt\")\n    orders_path = os.path.join(\"data\", \"orders.txt\")\n\n    if not (os.path.isfile(stock_path) and os.path.isfile(orders_path)):\n        print(\"missing input\")\n        return 5\n\n    with open(stock_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        stock_text = f.read()\n    with open(orders_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        orders_text = f.read()\n\n    def split_lines(text):\n        if text == \"\":\n            return []\n        parts = text.split(\"\\n\")\n        if parts and parts[-1] == \"\":\n            parts.pop()\n        return parts\n\n    stock_lines = split_lines(stock_text)\n    order_lines = split_lines(orders_text)\n\n    # Parse stock, preserving order.\n    items = []  # list of [name, qty]\n    index = {}\n    for line in stock_lines:\n        fields = line.split(\" \")\n        name = fields[0]\n        qty = int(fields[1])\n        index[name] = len(items)\n        items.append([name, qty])\n\n    qty_re = re.compile(r\"[0-9]+\")\n\n    for n, line in enumerate(order_lines, start=1):\n        fields = line.split(\" \")\n        if len(fields) != 2 or fields[0] == \"\" or fields[1] == \"\":\n            print(f\"bad order: line {n}\")\n            return 2\n        name, qstr = fields\n        if not qty_re.fullmatch(qstr) or int(qstr) <= 0:\n            print(f\"bad order: line {n}\")\n            return 2\n        qty = int(qstr)\n        if name not in index:\n            print(f\"unknown item: {name} (line {n})\")\n            return 3\n        pos = index[name]\n        if qty > items[pos][1]:\n            print(f\"insufficient stock: {name} (line {n})\")\n            return 4\n        items[pos][1] -= qty\n\n    # All orders valid; apply already done in memory. Write output.\n    os.makedirs(\"out\", exist_ok=True)\n    out_path = os.path.join(\"out\", \"stock.txt\")\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        for name, qty in items:\n            f.write(f\"{name} {qty}\\n\")\n\n    print(f\"applied {len(order_lines)} orders\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "ok",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    },
+    {
+     "example": "unknown item",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 3",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

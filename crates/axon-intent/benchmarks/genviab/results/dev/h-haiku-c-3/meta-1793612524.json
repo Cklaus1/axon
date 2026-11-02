@@ -1,0 +1,51 @@
+{
+ "set": "dev",
+ "arm": "c",
+ "generator": "micode",
+ "model": "claude-haiku-5-5",
+ "effort": null,
+ "max_repair_rounds": 3,
+ "manifest_sha256": "27d6191878a59fafbe29f691339b8a46d3dd3b083e303772869b5de24544fad1",
+ "corpus_sha256": "4856068db7b4cc2ce827512449f7ce0b08da11640fd20e1a968777820c020511",
+ "git_head": "ec3ce598357bc68e055728733a79708b9ada0ed6",
+ "axon_sha256": "1ca223535855cd1467bbf646faa1c7229e51f3653074722e09f3c3103cac87d2",
+ "axon_intent_sha256": "cd1f507caa92e9f9105bd61de2af5f0dd2a66ae89161a6d2c39e810c0ba0c003",
+ "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+ "driver_sha256": "ddc2bbc01d1a120c773f6818de84447a21bab1573b78f651241e897a20bc70d7",
+ "micode_version": "micode 0.3.0+945 (b1b4beea)",
+ "cost_basis": "OpenRouter list prices recorded 2026-10-12; cache read 0.1x and cache write 1.25x input (assumed Anthropic convention); OAuth grant, not billed per call",
+ "bwrap": {
+  "version": "bubblewrap 0.11.1",
+  "base": [
+   "--ro-bind",
+   "/usr",
+   "/usr",
+   "--symlink",
+   "usr/lib",
+   "/lib",
+   "--symlink",
+   "usr/lib64",
+   "/lib64",
+   "--symlink",
+   "usr/bin",
+   "/bin",
+   "--proc",
+   "/proc",
+   "--dev",
+   "/dev",
+   "--dir",
+   "/w"
+  ],
+  "tail": [
+   "--chdir",
+   "/w",
+   "--unshare-all",
+   "--die-with-parent",
+   "--remount-ro",
+   "/"
+  ],
+  "python": "Python 3.14.4"
+ },
+ "ledger": null,
+ "started": "2026-11-02T09:42:04+00:00"
+}

@@ -1,0 +1,53 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Sum the columns of ./data/table.csv. Every line ends with a newline. The first line is a header of comma-separated column names; each later line is a row of comma-separated integers, possibly negative. If the file does not exist print `missing input` and exit 5; if it is empty print `no header` and exit 2. Otherwise rows are checked in order, so the first offending line decides, and within a line the field count is checked first: a row whose number of fields differs from the header's prints `line N: expected A fields, got B` (A the header's field count, B the row's) and exits 3; a field that is not an integer prints `line N: bad number \"FIELD\"` (the first such field in the row, between double quotes) and exits 4, where N counts lines from 1 with the header as line 1. On any error write no file. On success write ./out/sums.txt with one line `NAME=SUM` per column in header order, each ending in a newline, print `rows: R` where R is the number of rows after the header, and exit 0. Every printed line ends with a newline.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "2e484366aff4962a5c52e299d5b4111f5656cbae779bb561420ed47acb709cf3",
+      "candidate": "```axon\nfn run(text: str) -> i64 {\n    if text == \"\" {\n        println(\"no header\")\n        return 2\n    }\n    let parts = str_split(text, \"\\n\")\n    let np = len(parts)\n    let count = np\n    if parts[np - 1] == \"\" {\n        count = np - 1\n    }\n    let q = chr(34)\n    let hf = str_split(parts[0], \",\")\n    let a = len(hf)\n    let sums = arr_repeat(0, a)\n    let rows = count - 1\n    for k in 1..count {\n        let fields = str_split(parts[k], \",\")\n        let lineno = k + 1\n        if len(fields) != a {\n            println(\"line \" + to_str(lineno) + \": expected \" + to_str(a) + \" fields, got \" + to_str(len(fields)))\n            return 3\n        }\n        for j in 0..a {\n            match parse_int(fields[j]) {\n                Ok(v) => {\n                    sums[j] = sums[j] + v\n                }\n                Err(_) => {\n                    println(\"line \" + to_str(lineno) + \": bad number \" + q + fields[j] + q)\n                    return 4\n                }\n            }\n        }\n    }\n    let out = \"\"\n    for j in 0..a {\n        out = out + hf[j] + \"=\" + to_str(sums[j]) + \"\\n\"\n    }\n    match write_file(\"./out/sums.txt\", out) {\n        Ok(_) => {\n            println(\"rows: \" + to_str(rows))\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: \" + e)\n            1\n        }\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/table.csv\") {\n        Ok(text) => run(text)\n        Err(_) => {\n            println(\"missing input\")\n            5\n        }\n    }\n}\n```",
+      "tokens": 19614,
+      "generator_failure": null,
+      "wall_ms": 15515,
+      "report": {
+        "stage": "accepted",
+        "source": "fn run(text: str) -> i64 {\n    if text == \"\" {\n        println(\"no header\")\n        return 2\n    }\n    let parts = str_split(text, \"\\n\")\n    let np = len(parts)\n    let count = np\n    if parts[np - 1] == \"\" {\n        count = np - 1\n    }\n    let q = chr(34)\n    let hf = str_split(parts[0], \",\")\n    let a = len(hf)\n    let sums = arr_repeat(0, a)\n    let rows = count - 1\n    for k in 1..count {\n        let fields = str_split(parts[k], \",\")\n        let lineno = k + 1\n        if len(fields) != a {\n            println(\"line \" + to_str(lineno) + \": expected \" + to_str(a) + \" fields, got \" + to_str(len(fields)))\n            return 3\n        }\n        for j in 0..a {\n            match parse_int(fields[j]) {\n                Ok(v) => {\n                    sums[j] = sums[j] + v\n                }\n                Err(_) => {\n                    println(\"line \" + to_str(lineno) + \": bad number \" + q + fields[j] + q)\n                    return 4\n                }\n            }\n        }\n    }\n    let out = \"\"\n    for j in 0..a {\n        out = out + hf[j] + \"=\" + to_str(sums[j]) + \"\\n\"\n    }\n    match write_file(\"./out/sums.txt\", out) {\n        Ok(_) => {\n            println(\"rows: \" + to_str(rows))\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: \" + e)\n            1\n        }\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/table.csv\") {\n        Ok(text) => run(text)\n        Err(_) => {\n            println(\"missing input\")\n            5\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "ok",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          },
+          {
+            "example": "ragged",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 3",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 15515,
+  "tokens": 19614,
+  "tokens_reported": 19614,
+  "token_budget": 50000
+}

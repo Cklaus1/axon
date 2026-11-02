@@ -1,0 +1,35 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef read_state(path):\n    try:\n        with open(path, \"r\") as f:\n            parts = f.read().split()\n    except OSError:\n        return 0, 0, 0, 0\n    if len(parts) < 4:\n        return 0, 0, 0, 0\n    try:\n        c, s, lo, hi = (int(x) for x in parts[:4])\n    except ValueError:\n        return 0, 0, 0, 0\n    if c <= 0:\n        return 0, 0, 0, 0\n    return c, s, lo, hi\n\n\ndef read_readings(path):\n    values = []\n    try:\n        with open(path, \"r\") as f:\n            for line in f:\n                t = line.strip()\n                if not t:\n                    continue\n                values.append(int(t))\n    except OSError:\n        pass\n    return values\n\n\ndef main():\n    data_path = os.path.join(\"data\", \"readings.txt\")\n    out_dir = \"out\"\n    state_path = os.path.join(out_dir, \"stats.txt\")\n\n    c0, s0, l0, h0 = read_state(state_path)\n    vals = read_readings(data_path)\n\n    c = c0 + len(vals)\n    s = s0 + sum(vals)\n    if vals:\n        bl = min(vals)\n        bh = max(vals)\n        if c0 > 0:\n            lo = min(l0, bl)\n            hi = max(h0, bh)\n        else:\n            lo, hi = bl, bh\n    else:\n        lo, hi = (l0, h0) if c0 > 0 else (0, 0)\n\n    if c == 0:\n        lo, hi, s = 0, 0, 0\n\n    os.makedirs(out_dir, exist_ok=True)\n    with open(state_path, \"w\") as f:\n        f.write(f\"{c} {s} {lo} {hi}\\n\")\n\n    if c == 0:\n        sys.stdout.write(\"no readings\\n\")\n    else:\n        q = abs(s) // c\n        mean = q if s >= 0 else -q\n        sys.stdout.write(f\"count={c} sum={s} min={lo} max={hi} mean={mean}\\n\")\n    sys.exit(0)\n\n\nif __name__ == \"__main__\":\n    main()\n```",
+   "source": "import os\nimport sys\n\n\ndef read_state(path):\n    try:\n        with open(path, \"r\") as f:\n            parts = f.read().split()\n    except OSError:\n        return 0, 0, 0, 0\n    if len(parts) < 4:\n        return 0, 0, 0, 0\n    try:\n        c, s, lo, hi = (int(x) for x in parts[:4])\n    except ValueError:\n        return 0, 0, 0, 0\n    if c <= 0:\n        return 0, 0, 0, 0\n    return c, s, lo, hi\n\n\ndef read_readings(path):\n    values = []\n    try:\n        with open(path, \"r\") as f:\n            for line in f:\n                t = line.strip()\n                if not t:\n                    continue\n                values.append(int(t))\n    except OSError:\n        pass\n    return values\n\n\ndef main():\n    data_path = os.path.join(\"data\", \"readings.txt\")\n    out_dir = \"out\"\n    state_path = os.path.join(out_dir, \"stats.txt\")\n\n    c0, s0, l0, h0 = read_state(state_path)\n    vals = read_readings(data_path)\n\n    c = c0 + len(vals)\n    s = s0 + sum(vals)\n    if vals:\n        bl = min(vals)\n        bh = max(vals)\n        if c0 > 0:\n            lo = min(l0, bl)\n            hi = max(h0, bh)\n        else:\n            lo, hi = bl, bh\n    else:\n        lo, hi = (l0, h0) if c0 > 0 else (0, 0)\n\n    if c == 0:\n        lo, hi, s = 0, 0, 0\n\n    os.makedirs(out_dir, exist_ok=True)\n    with open(state_path, \"w\") as f:\n        f.write(f\"{c} {s} {lo} {hi}\\n\")\n\n    if c == 0:\n        sys.stdout.write(\"no readings\\n\")\n    else:\n        q = abs(s) // c\n        mean = q if s >= 0 else -q\n        sys.stdout.write(f\"count={c} sum={s} min={lo} max={hi} mean={mean}\\n\")\n    sys.exit(0)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "two runs",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    },
+    {
+     "example": "two runs",
+     "run": 2,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

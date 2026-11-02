@@ -1,0 +1,81 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Merge the address lists ./data/a.txt and ./data/b.txt. Each holds one email address per line, every line ending in a newline; normalize each line by removing surrounding spaces and lowercasing ASCII letters, and skip lines that are empty after that. Write ./out/merged.txt with every distinct normalized address from either file, one per line, each ending in a newline (an empty file when there are none), sorted by domain (the text after the last `@`) in ascending byte order and, for equal domains, by the whole address in ascending byte order. Print one line `a-only: X, both: Y, b-only: Z` followed by a newline, counting the distinct normalized addresses found only in a.txt, in both files, and only in b.txt, and exit 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "a338f076cc6e8c656ebe57bed02f4478b2392e7a9a1f93648bcc91e9e8be2829",
+      "candidate": "```axon\nfn domain_of(s: str) -> str {\n    let found = -1\n    for k in 0..len(s) {\n        if char_at(s, k) == 64 { found = k }\n    }\n    if found < 0 { s } else { str_slice(s, found + 1, len(s)) }\n}\n\nfn cmp_addr(a: str, b: str) -> i64 {\n    let c = str_cmp(domain_of(a), domain_of(b))\n    if c != 0 { c } else { str_cmp(a, b) }\n}\n\nfn add_lines(path: str, d: Dict<str>) -> Result<(), str> {\n    let text = read_file(path)?\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) {\n        let a = str_to_lower(str_trim(lines[i]))\n        if len(a) > 0 { dict_set(d, a, \"1\") }\n    }\n    Ok(())\n}\n\nfn run() -> Result<i64, str> {\n    let da = dict_new()\n    let db = dict_new()\n    add_lines(\"./data/a.txt\", da)?\n    add_lines(\"./data/b.txt\", db)?\n    let ak = dict_keys(da)\n    let bk = dict_keys(db)\n    let aonly = 0\n    let both = 0\n    let bonly = 0\n    for k in ak {\n        if dict_has(db, k) { both = both + 1 } else { aonly = aonly + 1 }\n    }\n    let all = ak\n    for k in bk {\n        if dict_has(da, k) == false {\n            bonly = bonly + 1\n            all = arr_push(all, k)\n        }\n    }\n    let sorted = arr_sort_by(all, |x, y| cmp_addr(x, y))\n    let out = \"\"\n    for i in 0..len(sorted) {\n        out = out + sorted[i] + \"\\n\"\n    }\n    dir_create(\"./out\")?\n    write_file(\"./out/merged.txt\", out)?\n    println(\"a-only: {to_str(aonly)}, both: {to_str(both)}, b-only: {to_str(bonly)}\")\n    Ok(0)\n}\n\nfn main() -> i64 {\n    match run() {\n        Ok(c) => c\n        Err(e) => {\n            eprintln(\"error: {e}\")\n            1\n        }\n    }\n}\n```",
+      "tokens": 18904,
+      "generator_failure": null,
+      "wall_ms": 13818,
+      "report": {
+        "stage": "examples",
+        "source": "fn domain_of(s: str) -> str {\n    let found = -1\n    for k in 0..len(s) {\n        if char_at(s, k) == 64 { found = k }\n    }\n    if found < 0 { s } else { str_slice(s, found + 1, len(s)) }\n}\n\nfn cmp_addr(a: str, b: str) -> i64 {\n    let c = str_cmp(domain_of(a), domain_of(b))\n    if c != 0 { c } else { str_cmp(a, b) }\n}\n\nfn add_lines(path: str, d: Dict<str>) -> Result<(), str> {\n    let text = read_file(path)?\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) {\n        let a = str_to_lower(str_trim(lines[i]))\n        if len(a) > 0 { dict_set(d, a, \"1\") }\n    }\n    Ok(())\n}\n\nfn run() -> Result<i64, str> {\n    let da = dict_new()\n    let db = dict_new()\n    add_lines(\"./data/a.txt\", da)?\n    add_lines(\"./data/b.txt\", db)?\n    let ak = dict_keys(da)\n    let bk = dict_keys(db)\n    let aonly = 0\n    let both = 0\n    let bonly = 0\n    for k in ak {\n        if dict_has(db, k) { both = both + 1 } else { aonly = aonly + 1 }\n    }\n    let all = ak\n    for k in bk {\n        if dict_has(da, k) == false {\n            bonly = bonly + 1\n            all = arr_push(all, k)\n        }\n    }\n    let sorted = arr_sort_by(all, |x, y| cmp_addr(x, y))\n    let out = \"\"\n    for i in 0..len(sorted) {\n        out = out + sorted[i] + \"\\n\"\n    }\n    dir_create(\"./out\")?\n    write_file(\"./out/merged.txt\", out)?\n    println(\"a-only: {to_str(aonly)}, both: {to_str(both)}, b-only: {to_str(bonly)}\")\n    Ok(0)\n}\n\nfn main() -> i64 {\n    match run() {\n        Ok(c) => c\n        Err(e) => {\n            eprintln(\"error: {e}\")\n            1\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "basic",
+            "run": 1,
+            "passed": false,
+            "ended": "refused by the sandbox: axon: sandbox violation: builtin `dir_create` is not permitted to write path `./out`: the active sandbox restricts it to [\"./out/\"] (principal handle -2586342012074457337)",
+            "diffs": [
+              "expected exit 0, the run stopped before `main` returned",
+              "output ./out/merged.txt: expected \"ann@x.org\\ncat@x.org\\nbob@y.com\\n\", the file does not exist",
+              "stdout: expected \"a-only: 1, both: 1, b-only: 1\\n\", got \"\""
+            ],
+            "stderr_tail": "axon: sandbox violation: builtin `dir_create` is not permitted to write path `./out`: the active sandbox restricts it to [\"./out/\"] (principal handle -2586342012074457337)"
+          }
+        ],
+        "refusal_class": "runtime-scope",
+        "feedback": "The program type-checks but did not do what the examples expect:\nexample `basic` run 1: refused by the sandbox: axon: sandbox violation: builtin `dir_create` is not permitted to write path `./out`: the active sandbox restricts it to [\"./out/\"] (principal handle -2586342012074457337)\n  expected exit 0, the run stopped before `main` returned\n  output ./out/merged.txt: expected \"ann@x.org\\ncat@x.org\\nbob@y.com\\n\", the file does not exist\n  stdout: expected \"a-only: 1, both: 1, b-only: 1\\n\", got \"\"\n  stderr: axon: sandbox violation: builtin `dir_create` is not permitted to write path `./out`: the active sandbox restricts it to [\"./out/\"] (principal handle -2586342012074457337)\n",
+        "infrastructure": null
+      }
+    },
+    {
+      "round": 1,
+      "prompt_sha256": "fbfbd09b84472de5ee077baaf571ecad8da99789231a7ff09f74073d174fbcdb",
+      "candidate": "```axon\nfn domain_of(s: str) -> str {\n    let found = -1\n    for k in 0..len(s) {\n        if char_at(s, k) == 64 { found = k }\n    }\n    if found < 0 { s } else { str_slice(s, found + 1, len(s)) }\n}\n\nfn cmp_addr(a: str, b: str) -> i64 {\n    let c = str_cmp(domain_of(a), domain_of(b))\n    if c != 0 { c } else { str_cmp(a, b) }\n}\n\nfn add_lines(path: str, d: Dict<str>) -> Result<(), str> {\n    let text = read_file(path)?\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) {\n        let a = str_to_lower(str_trim(lines[i]))\n        if len(a) > 0 { dict_set(d, a, \"1\") }\n    }\n    Ok(())\n}\n\nfn run() -> Result<i64, str> {\n    let da = dict_new()\n    let db = dict_new()\n    add_lines(\"./data/a.txt\", da)?\n    add_lines(\"./data/b.txt\", db)?\n    let ak = dict_keys(da)\n    let bk = dict_keys(db)\n    let aonly = 0\n    let both = 0\n    let bonly = 0\n    for k in ak {\n        if dict_has(db, k) { both = both + 1 } else { aonly = aonly + 1 }\n    }\n    let all = ak\n    for k in bk {\n        if dict_has(da, k) == false {\n            bonly = bonly + 1\n            all = arr_push(all, k)\n        }\n    }\n    let sorted = arr_sort_by(all, |x, y| cmp_addr(x, y))\n    let out = \"\"\n    for i in 0..len(sorted) {\n        out = out + sorted[i] + \"\\n\"\n    }\n    dir_create(\"./out/\")?\n    write_file(\"./out/merged.txt\", out)?\n    println(\"a-only: {to_str(aonly)}, both: {to_str(both)}, b-only: {to_str(bonly)}\")\n    Ok(0)\n}\n\nfn main() -> i64 {\n    match run() {\n        Ok(c) => c\n        Err(e) => {\n            eprintln(\"error: {e}\")\n            1\n        }\n    }\n}\n```",
+      "tokens": 18379,
+      "generator_failure": null,
+      "wall_ms": 6007,
+      "report": {
+        "stage": "accepted",
+        "source": "fn domain_of(s: str) -> str {\n    let found = -1\n    for k in 0..len(s) {\n        if char_at(s, k) == 64 { found = k }\n    }\n    if found < 0 { s } else { str_slice(s, found + 1, len(s)) }\n}\n\nfn cmp_addr(a: str, b: str) -> i64 {\n    let c = str_cmp(domain_of(a), domain_of(b))\n    if c != 0 { c } else { str_cmp(a, b) }\n}\n\nfn add_lines(path: str, d: Dict<str>) -> Result<(), str> {\n    let text = read_file(path)?\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) {\n        let a = str_to_lower(str_trim(lines[i]))\n        if len(a) > 0 { dict_set(d, a, \"1\") }\n    }\n    Ok(())\n}\n\nfn run() -> Result<i64, str> {\n    let da = dict_new()\n    let db = dict_new()\n    add_lines(\"./data/a.txt\", da)?\n    add_lines(\"./data/b.txt\", db)?\n    let ak = dict_keys(da)\n    let bk = dict_keys(db)\n    let aonly = 0\n    let both = 0\n    let bonly = 0\n    for k in ak {\n        if dict_has(db, k) { both = both + 1 } else { aonly = aonly + 1 }\n    }\n    let all = ak\n    for k in bk {\n        if dict_has(da, k) == false {\n            bonly = bonly + 1\n            all = arr_push(all, k)\n        }\n    }\n    let sorted = arr_sort_by(all, |x, y| cmp_addr(x, y))\n    let out = \"\"\n    for i in 0..len(sorted) {\n        out = out + sorted[i] + \"\\n\"\n    }\n    dir_create(\"./out/\")?\n    write_file(\"./out/merged.txt\", out)?\n    println(\"a-only: {to_str(aonly)}, both: {to_str(both)}, b-only: {to_str(bonly)}\")\n    Ok(0)\n}\n\nfn main() -> i64 {\n    match run() {\n        Ok(c) => c\n        Err(e) => {\n            eprintln(\"error: {e}\")\n            1\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "basic",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [
+    "runtime-scope"
+  ],
+  "outcome": "accepted",
+  "wall_ms": 19825,
+  "tokens": 37283,
+  "tokens_reported": 37283,
+  "token_budget": 50000
+}

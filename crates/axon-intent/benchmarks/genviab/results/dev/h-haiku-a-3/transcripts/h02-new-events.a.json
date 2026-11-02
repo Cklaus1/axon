@@ -1,0 +1,53 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Process ./data/events.txt incrementally across runs, remembering processed ids in ./out/seen.txt. Each line of events.txt is `id,payload` and ends with a newline; the id is the text before the first comma. ./out/seen.txt lists the ids processed by earlier runs, one per line, each line ending in a newline; if it does not exist no id has been processed. An event is new when its id is not in seen.txt and did not already appear on an earlier line of the same events.txt. Each run writes ./out/new.txt containing the new events' lines, unchanged and in input order, each ending in a newline (an empty file when there are none), appends each new event's id as a line to ./out/seen.txt in the same order (creating the file if needed, and leaving it unchanged when there are none), prints one line `new: X, skipped: Y` followed by a newline, where X is the number of new events and Y the number of other lines of events.txt, and exits 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "6a92fa24fba8675e20f15ef6b6c97b19fa66c6a93eaa9d21155ca62b8fb91f3e",
+      "candidate": "fn main() -> i64 {\n    let events = \"\"\n    match read_file(\"./data/events.txt\") {\n        Ok(t) => { events = t }\n        Err(e) => {\n            eprintln(\"cannot read events: {e}\")\n            return 2\n        }\n    }\n    let seen_text = \"\"\n    if file_exists(\"./out/seen.txt\") {\n        match read_file(\"./out/seen.txt\") {\n            Ok(t) => { seen_text = t }\n            Err(e) => {\n                eprintln(\"cannot read seen: {e}\")\n                return 1\n            }\n        }\n    }\n    let seen = dict_new()\n    let old = str_split(seen_text, \"\\n\")\n    for i in 0..len(old) {\n        if len(old[i]) > 0 { dict_set(seen, old[i], \"1\") }\n    }\n    let lines = str_split(events, \"\\n\")\n    let new_text = \"\"\n    let new_ids = \"\"\n    let nnew = 0\n    let nskip = 0\n    for i in 0..len(lines) {\n        let line = lines[i]\n        if len(line) > 0 {\n            let c = str_index_of(line, \",\")\n            let id = line\n            if c >= 0 { id = str_slice(line, 0, c) }\n            if dict_has(seen, id) {\n                nskip = nskip + 1\n            } else {\n                dict_set(seen, id, \"1\")\n                new_text = new_text + line + \"\\n\"\n                new_ids = new_ids + id + \"\\n\"\n                nnew = nnew + 1\n            }\n        }\n    }\n    match write_file(\"./out/new.txt\", new_text) {\n        Ok(_) => {}\n        Err(e) => {\n            eprintln(\"cannot write new: {e}\")\n            return 1\n        }\n    }\n    if nnew > 0 {\n        match append_file(\"./out/seen.txt\", new_ids) {\n            Ok(_) => {}\n            Err(e) => {\n                eprintln(\"cannot write seen: {e}\")\n                return 1\n            }\n        }\n    }\n    println(\"new: {to_str(nnew)}, skipped: {to_str(nskip)}\")\n    0\n}",
+      "tokens": 18957,
+      "generator_failure": null,
+      "wall_ms": 11611,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    let events = \"\"\n    match read_file(\"./data/events.txt\") {\n        Ok(t) => { events = t }\n        Err(e) => {\n            eprintln(\"cannot read events: {e}\")\n            return 2\n        }\n    }\n    let seen_text = \"\"\n    if file_exists(\"./out/seen.txt\") {\n        match read_file(\"./out/seen.txt\") {\n            Ok(t) => { seen_text = t }\n            Err(e) => {\n                eprintln(\"cannot read seen: {e}\")\n                return 1\n            }\n        }\n    }\n    let seen = dict_new()\n    let old = str_split(seen_text, \"\\n\")\n    for i in 0..len(old) {\n        if len(old[i]) > 0 { dict_set(seen, old[i], \"1\") }\n    }\n    let lines = str_split(events, \"\\n\")\n    let new_text = \"\"\n    let new_ids = \"\"\n    let nnew = 0\n    let nskip = 0\n    for i in 0..len(lines) {\n        let line = lines[i]\n        if len(line) > 0 {\n            let c = str_index_of(line, \",\")\n            let id = line\n            if c >= 0 { id = str_slice(line, 0, c) }\n            if dict_has(seen, id) {\n                nskip = nskip + 1\n            } else {\n                dict_set(seen, id, \"1\")\n                new_text = new_text + line + \"\\n\"\n                new_ids = new_ids + id + \"\\n\"\n                nnew = nnew + 1\n            }\n        }\n    }\n    match write_file(\"./out/new.txt\", new_text) {\n        Ok(_) => {}\n        Err(e) => {\n            eprintln(\"cannot write new: {e}\")\n            return 1\n        }\n    }\n    if nnew > 0 {\n        match append_file(\"./out/seen.txt\", new_ids) {\n            Ok(_) => {}\n            Err(e) => {\n                eprintln(\"cannot write seen: {e}\")\n                return 1\n            }\n        }\n    }\n    println(\"new: {to_str(nnew)}, skipped: {to_str(nskip)}\")\n    0\n}",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "two runs",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          },
+          {
+            "example": "two runs",
+            "run": 2,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 11611,
+  "tokens": 18957,
+  "tokens_reported": 18957,
+  "token_budget": 50000
+}

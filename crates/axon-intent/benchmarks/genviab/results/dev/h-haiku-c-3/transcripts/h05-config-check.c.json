@@ -1,0 +1,35 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport re\nimport sys\n\n\ndef main():\n    try:\n        with open(\"./data/app.conf\", \"r\", encoding=\"utf-8\", newline=\"\") as f:\n            data = f.read()\n    except OSError:\n        sys.stdout.write(\"\")\n        return 2\n\n    lines = data.split(\"\\n\")\n    if lines and lines[-1] == \"\":\n        lines.pop()\n\n    conf = {}\n    port_re = re.compile(r\"^[0-9]+$\")\n\n    for idx, raw in enumerate(lines, start=1):\n        if raw.strip() == \"\" or raw[:1] == \"#\":\n            continue\n\n        if \"=\" not in raw:\n            print(f\"syntax error: line {idx}\")\n            return 2\n\n        key, value = raw.split(\"=\", 1)\n        key = key.strip()\n        value = value.strip()\n\n        if key == \"\":\n            print(f\"syntax error: line {idx}\")\n            return 2\n\n        if key in conf:\n            print(f\"duplicate key: {key} (line {idx})\")\n            return 3\n\n        if key == \"port\":\n            ok = False\n            if port_re.match(value):\n                n = int(value)\n                if 1 <= n <= 65535:\n                    ok = True\n            if not ok:\n                print(f\"bad port: line {idx}\")\n                return 4\n\n        conf[key] = value\n\n    if \"name\" not in conf:\n        print(\"missing key: name\")\n        return 5\n    if \"port\" not in conf:\n        print(\"missing key: port\")\n        return 5\n\n    out_lines = []\n    for k in sorted(conf.keys()):\n        out_lines.append(f\"{k}={conf[k]}\\n\")\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(\"./out/app.conf\", \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(\"\".join(out_lines))\n\n    print(f\"ok: {len(conf)} keys\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport re\nimport sys\n\n\ndef main():\n    try:\n        with open(\"./data/app.conf\", \"r\", encoding=\"utf-8\", newline=\"\") as f:\n            data = f.read()\n    except OSError:\n        sys.stdout.write(\"\")\n        return 2\n\n    lines = data.split(\"\\n\")\n    if lines and lines[-1] == \"\":\n        lines.pop()\n\n    conf = {}\n    port_re = re.compile(r\"^[0-9]+$\")\n\n    for idx, raw in enumerate(lines, start=1):\n        if raw.strip() == \"\" or raw[:1] == \"#\":\n            continue\n\n        if \"=\" not in raw:\n            print(f\"syntax error: line {idx}\")\n            return 2\n\n        key, value = raw.split(\"=\", 1)\n        key = key.strip()\n        value = value.strip()\n\n        if key == \"\":\n            print(f\"syntax error: line {idx}\")\n            return 2\n\n        if key in conf:\n            print(f\"duplicate key: {key} (line {idx})\")\n            return 3\n\n        if key == \"port\":\n            ok = False\n            if port_re.match(value):\n                n = int(value)\n                if 1 <= n <= 65535:\n                    ok = True\n            if not ok:\n                print(f\"bad port: line {idx}\")\n                return 4\n\n        conf[key] = value\n\n    if \"name\" not in conf:\n        print(\"missing key: name\")\n        return 5\n    if \"port\" not in conf:\n        print(\"missing key: port\")\n        return 5\n\n    out_lines = []\n    for k in sorted(conf.keys()):\n        out_lines.append(f\"{k}={conf[k]}\\n\")\n\n    os.makedirs(\"./out\", exist_ok=True)\n    with open(\"./out/app.conf\", \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(\"\".join(out_lines))\n\n    print(f\"ok: {len(conf)} keys\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "ok",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    },
+    {
+     "example": "no name",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 5",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

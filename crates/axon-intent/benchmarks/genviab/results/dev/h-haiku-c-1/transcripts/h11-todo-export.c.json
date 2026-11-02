@@ -1,0 +1,26 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport sys\n\n\ndef main():\n    with open(\"./data/notes.txt\", \"r\", encoding=\"utf-8\", errors=\"replace\", newline=\"\") as f:\n        content = f.read()\n\n    lines = content.split(\"\\n\")\n    if lines and lines[-1] == \"\":\n        lines.pop()\n    L = len(lines)\n\n    todos = []\n    for line in lines:\n        if line.startswith(\"TODO:\"):\n            todos.append(line[len(\"TODO:\"):].strip(\" \"))\n    T = len(todos)\n\n    seen = set()\n    distinct = []\n    for t in todos:\n        if t not in seen:\n            seen.add(t)\n            distinct.append(t)\n\n    out = [f\"notes: {L} lines, {T} todos\"]\n    out.extend(distinct)\n    if T >= 1:\n        out.append(\"todo file not written\")\n\n    sys.stdout.write(\"\".join(s + \"\\n\" for s in out))\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import sys\n\n\ndef main():\n    with open(\"./data/notes.txt\", \"r\", encoding=\"utf-8\", errors=\"replace\", newline=\"\") as f:\n        content = f.read()\n\n    lines = content.split(\"\\n\")\n    if lines and lines[-1] == \"\":\n        lines.pop()\n    L = len(lines)\n\n    todos = []\n    for line in lines:\n        if line.startswith(\"TODO:\"):\n            todos.append(line[len(\"TODO:\"):].strip(\" \"))\n    T = len(todos)\n\n    seen = set()\n    distinct = []\n    for t in todos:\n        if t not in seen:\n            seen.add(t)\n            distinct.append(t)\n\n    out = [f\"notes: {L} lines, {T} todos\"]\n    out.extend(distinct)\n    if T >= 1:\n        out.append(\"todo file not written\")\n\n    sys.stdout.write(\"\".join(s + \"\\n\" for s in out))\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "one todo",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

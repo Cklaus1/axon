@@ -1,0 +1,16 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\n\nOUT_DIR = \"out\"\nOUT_FILE = os.path.join(OUT_DIR, \"schedule.txt\")\n\ndef main():\n    os.makedirs(OUT_DIR, exist_ok=True)\n    start = 9 * 60  # 09:00 in minutes\n    lines = []\n    for k in range(1, 7):\n        t = start + 45 * (k - 1)\n        hh, mm = divmod(t, 60)\n        lines.append(f\"slot {k}: {hh:02d}:{mm:02d}\\n\")\n    lines.append(\"---\\n\")\n    with open(OUT_FILE, \"a\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        f.writelines(lines)\n    print(\"holidays not read\")\n    return 0\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n```",
+   "source": "import os\n\nOUT_DIR = \"out\"\nOUT_FILE = os.path.join(OUT_DIR, \"schedule.txt\")\n\ndef main():\n    os.makedirs(OUT_DIR, exist_ok=True)\n    start = 9 * 60  # 09:00 in minutes\n    lines = []\n    for k in range(1, 7):\n        t = start + 45 * (k - 1)\n        hh, mm = divmod(t, 60)\n        lines.append(f\"slot {k}: {hh:02d}:{mm:02d}\\n\")\n    lines.append(\"---\\n\")\n    with open(OUT_FILE, \"a\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        f.writelines(lines)\n    print(\"holidays not read\")\n    return 0\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": []
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

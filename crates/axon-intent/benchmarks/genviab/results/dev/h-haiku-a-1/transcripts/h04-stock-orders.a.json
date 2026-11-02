@@ -1,0 +1,53 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Apply the orders in ./data/orders.txt to the stock in ./data/stock.txt and write the new stock to ./out/stock.txt. Every line of both files ends with a newline. stock.txt has lines `ITEM QTY` (one space, QTY a non-negative integer, each item once); orders.txt has lines `ITEM QTY`, applied in file order, each subtracting QTY from that item's current stock. Errors are checked line by line through orders.txt, so the first offending line decides: a line that is not exactly two fields separated by one space with QTY a positive integer prints `bad order: line N` and exits 2; an ITEM not in stock.txt prints `unknown item: ITEM (line N)` and exits 3; a QTY larger than the item's remaining stock prints `insufficient stock: ITEM (line N)` and exits 4, where N counts orders.txt lines from 1. If either file does not exist print `missing input` and exit 5. On any error write no file. On success write ./out/stock.txt with the stock.txt lines in their original order and format but updated quantities, print `applied K orders` where K is the number of lines in orders.txt, and exit 0. Every printed line ends with a newline.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "bf86bde4321ccd970bab0cd6df952f7ec5771b47085a90253757f5b9f36a12fc",
+      "candidate": "```axon\nfn lines_of(s: str) -> [str] {\n    let parts = str_split(s, \"\\n\")\n    let n = len(parts)\n    if n > 0 && str_len(parts[n - 1]) == 0 { arr_take(parts, n - 1) } else { parts }\n}\n\nfn valid_qty(s: str) -> bool {\n    if len(s) == 0 { return false }\n    for i in 0..len(s) {\n        let c = char_at(s, i)\n        if c < 48 || c > 57 { return false }\n    }\n    parse_int_or(s, 0) > 0\n}\n\nfn find_idx(names: &[str], item: str) -> i64 {\n    for i in 0..len(names) {\n        if names[i] == item { return i }\n    }\n    -1\n}\n\nfn main() -> i64 {\n    let stock_text = match read_file(\"./data/stock.txt\") {\n        Ok(t) => t\n        Err(_) => {\n            println(\"missing input\")\n            return 5\n        }\n    }\n    let order_text = match read_file(\"./data/orders.txt\") {\n        Ok(t) => t\n        Err(_) => {\n            println(\"missing input\")\n            return 5\n        }\n    }\n\n    let stock_lines = lines_of(stock_text)\n    let names = arr_repeat(\"\", 0)\n    let qtys = arr_repeat(0, 0)\n    for i in 0..len(stock_lines) {\n        let f = str_split(stock_lines[i], \" \")\n        let nm = f[0]\n        let qv = parse_int_or(f[1], 0)\n        names = arr_push(names, nm)\n        qtys = arr_push(qtys, qv)\n    }\n\n    let orders = lines_of(order_text)\n    let k = len(orders)\n    for i in 0..k {\n        let n = i + 1\n        let f = str_split(orders[i], \" \")\n        if len(f) != 2 {\n            println(\"bad order: line {to_str(n)}\")\n            return 2\n        }\n        let item = f[0]\n        let qs = f[1]\n        if len(item) == 0 || !valid_qty(qs) {\n            println(\"bad order: line {to_str(n)}\")\n            return 2\n        }\n        let idx = find_idx(names, item)\n        if idx < 0 {\n            println(\"unknown item: {item} (line {to_str(n)})\")\n            return 3\n        }\n        let q = parse_int_or(qs, 0)\n        if q > qtys[idx] {\n            println(\"insufficient stock: {item} (line {to_str(n)})\")\n            return 4\n        }\n        qtys[idx] = qtys[idx] - q\n    }\n\n    let out = \"\"\n    for i in 0..len(names) {\n        out = out + names[i] + \" \" + to_str(qtys[i]) + \"\\n\"\n    }\n    match write_file(\"./out/stock.txt\", out) {\n        Ok(_) => {\n            println(\"applied {to_str(k)} orders\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n```",
+      "tokens": 20563,
+      "generator_failure": null,
+      "wall_ms": 18415,
+      "report": {
+        "stage": "accepted",
+        "source": "fn lines_of(s: str) -> [str] {\n    let parts = str_split(s, \"\\n\")\n    let n = len(parts)\n    if n > 0 && str_len(parts[n - 1]) == 0 { arr_take(parts, n - 1) } else { parts }\n}\n\nfn valid_qty(s: str) -> bool {\n    if len(s) == 0 { return false }\n    for i in 0..len(s) {\n        let c = char_at(s, i)\n        if c < 48 || c > 57 { return false }\n    }\n    parse_int_or(s, 0) > 0\n}\n\nfn find_idx(names: &[str], item: str) -> i64 {\n    for i in 0..len(names) {\n        if names[i] == item { return i }\n    }\n    -1\n}\n\nfn main() -> i64 {\n    let stock_text = match read_file(\"./data/stock.txt\") {\n        Ok(t) => t\n        Err(_) => {\n            println(\"missing input\")\n            return 5\n        }\n    }\n    let order_text = match read_file(\"./data/orders.txt\") {\n        Ok(t) => t\n        Err(_) => {\n            println(\"missing input\")\n            return 5\n        }\n    }\n\n    let stock_lines = lines_of(stock_text)\n    let names = arr_repeat(\"\", 0)\n    let qtys = arr_repeat(0, 0)\n    for i in 0..len(stock_lines) {\n        let f = str_split(stock_lines[i], \" \")\n        let nm = f[0]\n        let qv = parse_int_or(f[1], 0)\n        names = arr_push(names, nm)\n        qtys = arr_push(qtys, qv)\n    }\n\n    let orders = lines_of(order_text)\n    let k = len(orders)\n    for i in 0..k {\n        let n = i + 1\n        let f = str_split(orders[i], \" \")\n        if len(f) != 2 {\n            println(\"bad order: line {to_str(n)}\")\n            return 2\n        }\n        let item = f[0]\n        let qs = f[1]\n        if len(item) == 0 || !valid_qty(qs) {\n            println(\"bad order: line {to_str(n)}\")\n            return 2\n        }\n        let idx = find_idx(names, item)\n        if idx < 0 {\n            println(\"unknown item: {item} (line {to_str(n)})\")\n            return 3\n        }\n        let q = parse_int_or(qs, 0)\n        if q > qtys[idx] {\n            println(\"insufficient stock: {item} (line {to_str(n)})\")\n            return 4\n        }\n        qtys[idx] = qtys[idx] - q\n    }\n\n    let out = \"\"\n    for i in 0..len(names) {\n        out = out + names[i] + \" \" + to_str(qtys[i]) + \"\\n\"\n    }\n    match write_file(\"./out/stock.txt\", out) {\n        Ok(_) => {\n            println(\"applied {to_str(k)} orders\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "ok",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          },
+          {
+            "example": "unknown item",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 3",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 18415,
+  "tokens": 20563,
+  "tokens_reported": 20563,
+  "token_budget": 50000
+}

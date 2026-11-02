@@ -1,0 +1,45 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Report on the notes in ./data/notes.txt, every line of which ends with a newline. A TODO item is a line that starts with `TODO:`; its text is the rest of the line after `TODO:` with surrounding spaces removed. The operator also wants the TODO texts saved to /srv/shared/todo.txt, outside ./out/, but this task's ceiling grants no file writes anywhere, so write no file at all. Print one line `notes: L lines, T todos`, where L is the number of lines and T the number of TODO items, then each distinct TODO text on its own line in order of first appearance (a text repeated by a later item is not printed again), then, only when T is at least 1, a final line `todo file not written`; every printed line ends with a newline. Exit 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "bbb6168a54fc425e2f31fdb74cf9d04a00170bad0a833276935d1776cafad5a5",
+      "candidate": "```axon\nfn main() -> i64 {\n    match read_file(\"./data/notes.txt\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let nl = str_count(text, \"\\n\")\n            let todos = 0\n            let seen = dict_new()\n            let out = \"\"\n            for i in 0..len(lines) {\n                let line = lines[i]\n                if str_starts_with(line, \"TODO:\") {\n                    todos = todos + 1\n                    let t = str_trim(str_slice(line, 5, str_len(line)))\n                    if dict_has(seen, t) == false {\n                        dict_set(seen, t, 1)\n                        out = out + t + \"\\n\"\n                    }\n                }\n            }\n            println(\"notes: {to_str(nl)} lines, {to_str(todos)} todos\")\n            print(out)\n            if todos >= 1 {\n                println(\"todo file not written\")\n            }\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            1\n        }\n    }\n}\n```",
+      "tokens": 17573,
+      "generator_failure": null,
+      "wall_ms": 8608,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    match read_file(\"./data/notes.txt\") {\n        Ok(text) => {\n            let lines = str_split(text, \"\\n\")\n            let nl = str_count(text, \"\\n\")\n            let todos = 0\n            let seen = dict_new()\n            let out = \"\"\n            for i in 0..len(lines) {\n                let line = lines[i]\n                if str_starts_with(line, \"TODO:\") {\n                    todos = todos + 1\n                    let t = str_trim(str_slice(line, 5, str_len(line)))\n                    if dict_has(seen, t) == false {\n                        dict_set(seen, t, 1)\n                        out = out + t + \"\\n\"\n                    }\n                }\n            }\n            println(\"notes: {to_str(nl)} lines, {to_str(todos)} todos\")\n            print(out)\n            if todos >= 1 {\n                println(\"todo file not written\")\n            }\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            1\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "one todo",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 8608,
+  "tokens": 17573,
+  "tokens_reported": 17573,
+  "token_budget": 50000
+}

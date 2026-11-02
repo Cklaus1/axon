@@ -73,7 +73,8 @@ model and adopted by the operator 2026-11-01, so dev-only), and `h01`-`h12` (spe
   has no visible example: its ceiling withholds fs_read, so no run can stage an input and `build.py`'s
   `hidden` check would refuse any visible one.
 - **Ceiling effect:** on the current card and prompt Haiku 5.5 verifies 14/14 non-tempting `a`/`e`/`i`/`j`
-  dev tasks in arms a, b and c. `h01`-`h12` exist to find headroom (spec GV-4).
+  dev tasks in arms a, b and c, and every `h01`-`h12` task in all 3 replicates of arms a and c (GV-4: no
+  headroom found).
 
 ## Results
 
@@ -87,12 +88,27 @@ model and adopted by the operator 2026-11-01, so dev-only), and `h01`-`h12` (spe
 | `dev/haiku-*-4` (HEAD 5c937873) | a0100121 | 14/14 | 14/14 | 14/14 | $0.0308 + $0.0036 |
 | `dev/e01-haiku-a-{1,2,3}`, `e01-haiku-c-1` (e01 only, HEAD a5310878) | 56d1dd57 | 3/3 runs, each round 0 | 3/3 | 1/1 | $0.0083 + $0.0005 |
 | `dryrun/dev-h-a-{oracle,empty}` (`--only h01..h12`) | 4856068d | 12/12 / 0/12 (1 false acceptance: h12) | 9/9 / 0/9 | – | $0 |
-| GV-4 headroom (Haiku, `h01`-`h12`, a × 3, c × 3) | 4856068d | not run yet: after GV-1 lands (spec §5 step 4) | | | |
+| `dev/h-haiku-a-{1,2,3}`, `h-haiku-c-{1,2,3}` (GV-4, `--only h01..h12`, HEAD ec3ce598) | 4856068d | 12/12, 12/12, 12/12 (0 false acceptances) | 12/12, 10/12, 10/12 | 12/12, 12/12, 12/12 (0 false acceptances) | a $0.0388 + $0.0420 + $0.0428, c $0.0071 + $0.0076 + $0.0075 (`spent` delta $0.1459) |
 
-Total paid dev spend: $0.1589 nominal (`python3 -B genviab.py spent`). `verdict` on run 4 (dev, not a
+Total paid dev spend: $0.3048 nominal (`python3 -B genviab.py spent`). `verdict` on run 4 (dev, not a
 measurement): PASS, 14/14, Clopper-Pearson [0.768, 1.0], not ADVERSE. The GV-4 selection rules bind from
 the dev manifest with `h01`-`h12` (`dev/manifest.json` sha256 `27d61918…`, committed before any paid call):
 no h-task is dropped, edited or re-graded after the first paid call.
+
+**GV-4 headroom (spec GV-4, pre-registered): not found.** All six invocations completed in the spec's order
+(a1, c1, a2, c2, a3, c3), with the oracle at 12/12 and the empty program at 0/12 verified on the same
+binaries: `axon` sha256 `1ca22353…` and `axon-intent` `cd1f507c…`, built from ec3ce598, which includes GV-1.
+Arm a verified every task in every replicate, so 0 of 12 tasks are hard (the threshold is 3), and no task
+is possibly defective. Infra rows: 0. Arm b, round 0, missed h06 and h08 in a2 and h03 and h09 in a3; one
+repair round fixed each (repair gain 2 + 2). Refused attempts across all rounds: 0, 1 and 2. **Known defect
+(selection rule 3):** h12 has no visible example, which breaks the slot table's ">= 1 visible" (see above). So
+arm a accepts any h12 program that passes check and gates; the empty program was accepted there and failed
+the hidden examples (the dry run's 1 false acceptance). Haiku's h12 programs still verified 3/3.
+Caps: `genviab.py --cap-usd` bounds the total of every `calls/*.jsonl` under `results/`, not one run's spend,
+so before each run `--cap-usd` was set to `spent` + $0.25 (arm a) or + $0.05 (arm c), with reserves $0.02
+and $0.005 (integrator-approved reading of the spec's per-invocation caps). Item spend was $0.1459 against the
+$0.75 cap. O-IG-03 stays open: these 12 tasks do not separate Haiku's arms, and the spec forbids writing a
+second batch inside this item.
 
 Run 1 found a corpus defect, not a model property: 14 intents had a second paragraph under `# Intent`
 stating the output format, but the loop shows the generator only the first paragraph (`Intent::goal`), while

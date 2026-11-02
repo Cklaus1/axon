@@ -1,0 +1,35 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\n\n\ndef read_lines(path):\n    \"\"\"Return the lines of a text file without their newline terminators.\"\"\"\n    with open(path, encoding=\"utf-8\", newline=\"\") as f:\n        content = f.read()\n    if content == \"\":\n        return []\n    parts = content.split(\"\\n\")\n    if content.endswith(\"\\n\"):\n        parts.pop()\n    return parts\n\n\ndef main():\n    os.makedirs(\"out\", exist_ok=True)\n\n    seen = set()\n    if os.path.exists(\"out/seen.txt\"):\n        for sid in read_lines(\"out/seen.txt\"):\n            seen.add(sid)\n\n    events = read_lines(\"data/events.txt\")\n\n    new_lines = []\n    new_ids = []\n    skipped = 0\n    for line in events:\n        eid = line.split(\",\", 1)[0]\n        if eid in seen:\n            skipped += 1\n            continue\n        seen.add(eid)\n        new_lines.append(line)\n        new_ids.append(eid)\n\n    with open(\"out/new.txt\", \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        for line in new_lines:\n            f.write(line + \"\\n\")\n\n    if new_ids:\n        with open(\"out/seen.txt\", \"a\", encoding=\"utf-8\", newline=\"\") as f:\n            for eid in new_ids:\n                f.write(eid + \"\\n\")\n\n    print(f\"new: {len(new_lines)}, skipped: {skipped}\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n```",
+   "source": "import os\n\n\ndef read_lines(path):\n    \"\"\"Return the lines of a text file without their newline terminators.\"\"\"\n    with open(path, encoding=\"utf-8\", newline=\"\") as f:\n        content = f.read()\n    if content == \"\":\n        return []\n    parts = content.split(\"\\n\")\n    if content.endswith(\"\\n\"):\n        parts.pop()\n    return parts\n\n\ndef main():\n    os.makedirs(\"out\", exist_ok=True)\n\n    seen = set()\n    if os.path.exists(\"out/seen.txt\"):\n        for sid in read_lines(\"out/seen.txt\"):\n            seen.add(sid)\n\n    events = read_lines(\"data/events.txt\")\n\n    new_lines = []\n    new_ids = []\n    skipped = 0\n    for line in events:\n        eid = line.split(\",\", 1)[0]\n        if eid in seen:\n            skipped += 1\n            continue\n        seen.add(eid)\n        new_lines.append(line)\n        new_ids.append(eid)\n\n    with open(\"out/new.txt\", \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        for line in new_lines:\n            f.write(line + \"\\n\")\n\n    if new_ids:\n        with open(\"out/seen.txt\", \"a\", encoding=\"utf-8\", newline=\"\") as f:\n            for eid in new_ids:\n                f.write(eid + \"\\n\")\n\n    print(f\"new: {len(new_lines)}, skipped: {skipped}\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "two runs",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    },
+    {
+     "example": "two runs",
+     "run": 2,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

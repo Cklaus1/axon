@@ -1,0 +1,26 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    base = os.getcwd()\n    roster_path = os.path.join(base, \"data\", \"roster.txt\")\n    scores_path = os.path.join(base, \"data\", \"scores.csv\")\n    out_path = os.path.join(base, \"out\", \"ranking.txt\")\n\n    roster = []  # list of (id, name) in roster order\n    roster_ids = set()\n    with open(roster_path, \"r\", encoding=\"utf-8\") as f:\n        for raw in f:\n            line = raw.rstrip(\"\\n\")\n            if line == \"\":\n                continue\n            sid, _, name = line.partition(\" \")\n            if sid in roster_ids:\n                continue\n            roster_ids.add(sid)\n            roster.append((sid, name))\n\n    seen_lines = set()\n    best = {}\n    ignored = 0\n    with open(scores_path, \"r\", encoding=\"utf-8\") as f:\n        for raw in f:\n            line = raw.rstrip(\"\\n\")\n            if line == \"\":\n                continue\n            if line in seen_lines:\n                continue\n            seen_lines.add(line)\n            sid, _, score_s = line.partition(\",\")\n            if sid not in roster_ids:\n                ignored += 1\n                continue\n            try:\n                score = int(score_s)\n            except ValueError:\n                continue\n            if sid not in best or score > best[sid]:\n                best[sid] = score\n\n    scored = [(sid, name, best[sid]) for sid, name in roster if sid in best]\n    unscored = [(sid, name) for sid, name in roster if sid not in best]\n\n    scored.sort(key=lambda t: (-t[2], t[0].encode(\"utf-8\")))\n\n    lines = []\n    for i, (sid, name, b) in enumerate(scored, start=1):\n        lines.append(\"%d. %s %d\\n\" % (i, name, b))\n    for sid, name in unscored:\n        lines.append(\"%s -\\n\" % name)\n\n    os.makedirs(os.path.dirname(out_path), exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(\"\".join(lines))\n\n    sys.stdout.write(\"ignored: %d\\n\" % ignored)\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    base = os.getcwd()\n    roster_path = os.path.join(base, \"data\", \"roster.txt\")\n    scores_path = os.path.join(base, \"data\", \"scores.csv\")\n    out_path = os.path.join(base, \"out\", \"ranking.txt\")\n\n    roster = []  # list of (id, name) in roster order\n    roster_ids = set()\n    with open(roster_path, \"r\", encoding=\"utf-8\") as f:\n        for raw in f:\n            line = raw.rstrip(\"\\n\")\n            if line == \"\":\n                continue\n            sid, _, name = line.partition(\" \")\n            if sid in roster_ids:\n                continue\n            roster_ids.add(sid)\n            roster.append((sid, name))\n\n    seen_lines = set()\n    best = {}\n    ignored = 0\n    with open(scores_path, \"r\", encoding=\"utf-8\") as f:\n        for raw in f:\n            line = raw.rstrip(\"\\n\")\n            if line == \"\":\n                continue\n            if line in seen_lines:\n                continue\n            seen_lines.add(line)\n            sid, _, score_s = line.partition(\",\")\n            if sid not in roster_ids:\n                ignored += 1\n                continue\n            try:\n                score = int(score_s)\n            except ValueError:\n                continue\n            if sid not in best or score > best[sid]:\n                best[sid] = score\n\n    scored = [(sid, name, best[sid]) for sid, name in roster if sid in best]\n    unscored = [(sid, name) for sid, name in roster if sid not in best]\n\n    scored.sort(key=lambda t: (-t[2], t[0].encode(\"utf-8\")))\n\n    lines = []\n    for i, (sid, name, b) in enumerate(scored, start=1):\n        lines.append(\"%d. %s %d\\n\" % (i, name, b))\n    for sid, name in unscored:\n        lines.append(\"%s -\\n\" % name)\n\n    os.makedirs(os.path.dirname(out_path), exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(\"\".join(lines))\n\n    sys.stdout.write(\"ignored: %d\\n\" % ignored)\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "basic",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

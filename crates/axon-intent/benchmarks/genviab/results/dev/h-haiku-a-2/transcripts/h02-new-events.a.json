@@ -1,0 +1,53 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Process ./data/events.txt incrementally across runs, remembering processed ids in ./out/seen.txt. Each line of events.txt is `id,payload` and ends with a newline; the id is the text before the first comma. ./out/seen.txt lists the ids processed by earlier runs, one per line, each line ending in a newline; if it does not exist no id has been processed. An event is new when its id is not in seen.txt and did not already appear on an earlier line of the same events.txt. Each run writes ./out/new.txt containing the new events' lines, unchanged and in input order, each ending in a newline (an empty file when there are none), appends each new event's id as a line to ./out/seen.txt in the same order (creating the file if needed, and leaving it unchanged when there are none), prints one line `new: X, skipped: Y` followed by a newline, where X is the number of new events and Y the number of other lines of events.txt, and exits 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "6a92fa24fba8675e20f15ef6b6c97b19fa66c6a93eaa9d21155ca62b8fb91f3e",
+      "candidate": "```axon\nfn main() -> i64 {\n    let seen = dict_new()\n\n    if file_exists(\"./out/seen.txt\") {\n        let seen_text = match read_file(\"./out/seen.txt\") {\n            Ok(t) => t\n            Err(e) => {\n                eprintln(\"cannot read seen: {e}\")\n                return 2\n            }\n        }\n        let old_ids = str_split(seen_text, \"\\n\")\n        for i in 0..len(old_ids) {\n            if len(old_ids[i]) > 0 {\n                dict_set(seen, old_ids[i], \"1\")\n            }\n        }\n    }\n\n    let text = match read_file(\"./data/events.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read events: {e}\")\n            return 2\n        }\n    }\n\n    let lines = str_split(text, \"\\n\")\n    let new_out = \"\"\n    let ids_out = \"\"\n    let nn = 0\n    let ny = 0\n\n    for i in 0..len(lines) {\n        let line = lines[i]\n        if len(line) > 0 {\n            let c = str_index_of(line, \",\")\n            let id = line\n            if c >= 0 {\n                id = str_slice(line, 0, c)\n            }\n            if dict_has(seen, id) {\n                ny = ny + 1\n            } else {\n                dict_set(seen, id, \"1\")\n                new_out = new_out + line + \"\\n\"\n                ids_out = ids_out + id + \"\\n\"\n                nn = nn + 1\n            }\n        }\n    }\n\n    let rc = match write_file(\"./out/new.txt\", new_out) {\n        Ok(_) => 0\n        Err(e) => {\n            eprintln(\"cannot write new: {e}\")\n            1\n        }\n    }\n    if rc != 0 {\n        return rc\n    }\n\n    if nn > 0 {\n        let rc2 = match append_file(\"./out/seen.txt\", ids_out) {\n            Ok(_) => 0\n            Err(e) => {\n                eprintln(\"cannot append seen: {e}\")\n                1\n            }\n        }\n        if rc2 != 0 {\n            return rc2\n        }\n    }\n\n    println(\"new: {to_str(nn)}, skipped: {to_str(ny)}\")\n    0\n}\n```",
+      "tokens": 18938,
+      "generator_failure": null,
+      "wall_ms": 11720,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    let seen = dict_new()\n\n    if file_exists(\"./out/seen.txt\") {\n        let seen_text = match read_file(\"./out/seen.txt\") {\n            Ok(t) => t\n            Err(e) => {\n                eprintln(\"cannot read seen: {e}\")\n                return 2\n            }\n        }\n        let old_ids = str_split(seen_text, \"\\n\")\n        for i in 0..len(old_ids) {\n            if len(old_ids[i]) > 0 {\n                dict_set(seen, old_ids[i], \"1\")\n            }\n        }\n    }\n\n    let text = match read_file(\"./data/events.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read events: {e}\")\n            return 2\n        }\n    }\n\n    let lines = str_split(text, \"\\n\")\n    let new_out = \"\"\n    let ids_out = \"\"\n    let nn = 0\n    let ny = 0\n\n    for i in 0..len(lines) {\n        let line = lines[i]\n        if len(line) > 0 {\n            let c = str_index_of(line, \",\")\n            let id = line\n            if c >= 0 {\n                id = str_slice(line, 0, c)\n            }\n            if dict_has(seen, id) {\n                ny = ny + 1\n            } else {\n                dict_set(seen, id, \"1\")\n                new_out = new_out + line + \"\\n\"\n                ids_out = ids_out + id + \"\\n\"\n                nn = nn + 1\n            }\n        }\n    }\n\n    let rc = match write_file(\"./out/new.txt\", new_out) {\n        Ok(_) => 0\n        Err(e) => {\n            eprintln(\"cannot write new: {e}\")\n            1\n        }\n    }\n    if rc != 0 {\n        return rc\n    }\n\n    if nn > 0 {\n        let rc2 = match append_file(\"./out/seen.txt\", ids_out) {\n            Ok(_) => 0\n            Err(e) => {\n                eprintln(\"cannot append seen: {e}\")\n                1\n            }\n        }\n        if rc2 != 0 {\n            return rc2\n        }\n    }\n\n    println(\"new: {to_str(nn)}, skipped: {to_str(ny)}\")\n    0\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "two runs",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          },
+          {
+            "example": "two runs",
+            "run": 2,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 11720,
+  "tokens": 18938,
+  "tokens_reported": 18938,
+  "token_budget": 50000
+}

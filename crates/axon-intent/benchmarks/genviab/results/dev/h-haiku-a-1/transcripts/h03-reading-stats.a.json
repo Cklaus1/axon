@@ -1,0 +1,53 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Maintain running statistics of integer readings across runs. Each run reads ./data/readings.txt, which holds zero or more lines, each an integer (possibly negative) followed by a newline. The state ./out/stats.txt left by the previous run is one line `C S L H` followed by a newline: the count, sum, minimum and maximum of all readings so far, separated by single spaces; if the file does not exist the state is `0 0 0 0` (whenever C is 0, L and H are 0 and do not count as readings). Each run adds its readings to the state, rewrites ./out/stats.txt in the same format, prints one line followed by a newline, which is `no readings` if the updated count is 0 and otherwise `count=C sum=S min=L max=H mean=M` where M is S divided by C with the fractional part discarded (rounded toward zero, so -7 over 2 is -3), and exits 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "65a5b79bf0b2db058633f94d79f297a227631fccce6a095f0c911af30cfb0813",
+      "candidate": "```axon\nfn main() -> i64 {\n    let state_text = match read_file(\"./out/stats.txt\") {\n        Ok(t) => t\n        Err(_) => \"0 0 0 0\"\n    }\n    let p = str_split(str_trim(state_text), \" \")\n    let c = 0\n    let s = 0\n    let lo = 0\n    let hi = 0\n    if len(p) == 4 {\n        c = parse_int_or(p[0], 0)\n        s = parse_int_or(p[1], 0)\n        lo = parse_int_or(p[2], 0)\n        hi = parse_int_or(p[3], 0)\n    }\n\n    let text = match read_file(\"./data/readings.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) {\n        let t = str_trim(lines[i])\n        if len(t) > 0 {\n            let r = match parse_int(t) {\n                Ok(v) => {\n                    if c == 0 {\n                        lo = v\n                        hi = v\n                    } else {\n                        if v < lo { lo = v }\n                        if v > hi { hi = v }\n                    }\n                    c = c + 1\n                    s = s + v\n                    0\n                }\n                Err(e) => {\n                    eprintln(\"bad reading: {e}\")\n                    1\n                }\n            }\n            if r != 0 {\n                return 1\n            }\n        }\n    }\n\n    let out = to_str(c) + \" \" + to_str(s) + \" \" + to_str(lo) + \" \" + to_str(hi) + \"\\n\"\n    match write_file(\"./out/stats.txt\", out) {\n        Ok(_) => 0\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            return 1\n        }\n    }\n\n    if c == 0 {\n        println(\"no readings\")\n    } else {\n        let m = s / c\n        println(\"count={to_str(c)} sum={to_str(s)} min={to_str(lo)} max={to_str(hi)} mean={to_str(m)}\")\n    }\n    0\n}\n```",
+      "tokens": 18852,
+      "generator_failure": null,
+      "wall_ms": 11611,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    let state_text = match read_file(\"./out/stats.txt\") {\n        Ok(t) => t\n        Err(_) => \"0 0 0 0\"\n    }\n    let p = str_split(str_trim(state_text), \" \")\n    let c = 0\n    let s = 0\n    let lo = 0\n    let hi = 0\n    if len(p) == 4 {\n        c = parse_int_or(p[0], 0)\n        s = parse_int_or(p[1], 0)\n        lo = parse_int_or(p[2], 0)\n        hi = parse_int_or(p[3], 0)\n    }\n\n    let text = match read_file(\"./data/readings.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) {\n        let t = str_trim(lines[i])\n        if len(t) > 0 {\n            let r = match parse_int(t) {\n                Ok(v) => {\n                    if c == 0 {\n                        lo = v\n                        hi = v\n                    } else {\n                        if v < lo { lo = v }\n                        if v > hi { hi = v }\n                    }\n                    c = c + 1\n                    s = s + v\n                    0\n                }\n                Err(e) => {\n                    eprintln(\"bad reading: {e}\")\n                    1\n                }\n            }\n            if r != 0 {\n                return 1\n            }\n        }\n    }\n\n    let out = to_str(c) + \" \" + to_str(s) + \" \" + to_str(lo) + \" \" + to_str(hi) + \"\\n\"\n    match write_file(\"./out/stats.txt\", out) {\n        Ok(_) => 0\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            return 1\n        }\n    }\n\n    if c == 0 {\n        println(\"no readings\")\n    } else {\n        let m = s / c\n        println(\"count={to_str(c)} sum={to_str(s)} min={to_str(lo)} max={to_str(hi)} mean={to_str(m)}\")\n    }\n    0\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "two runs",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          },
+          {
+            "example": "two runs",
+            "run": 2,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 11611,
+  "tokens": 18852,
+  "tokens_reported": 18852,
+  "token_budget": 50000
+}
