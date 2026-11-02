@@ -1,0 +1,10 @@
+// ceilings ICE-1 parity fixture (scripts/vm_parity.sh step leg): all the
+// work runs in callbacks, so every step past `main`'s entry is a
+// lambda-body entry (the VM's fold-leaf tier must decline under a cap);
+// both engines must stop at the same step.
+fn main() {
+    let xs = arr_range(0, 2000)
+    let ys = arr_map(xs, |x| x * 3)
+    let s = arr_fold(ys, 0, |a, y| a + arr_fold(arr_range(0, 3), y, |b, z| b + z))
+    println(to_str(s))
+}

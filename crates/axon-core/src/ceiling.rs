@@ -70,7 +70,7 @@ pub struct Ceiling {
     /// Run-wide cap on model calls (CE-6); no env-var counterpart.
     pub ai_calls: Option<u64>,
     pub max_depth: Option<usize>,
-    /// Run-wide step ceiling (CE-5): loop-body and fn-body entries.
+    /// Run-wide step ceiling (CE-5): loop-body, fn-body and lambda-body entries.
     pub steps: Option<u64>,
     /// Run-wide wall-clock ceiling in milliseconds (CE-5).
     pub wall_ms: Option<u64>,

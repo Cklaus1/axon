@@ -629,7 +629,7 @@ impl<'p> Interp<'p> {
         // after it answers (`ai_complete` and every extract alike), so a run
         // cannot exceed its cap and a long reply is no longer free.
         if let Some(cap) = self.token_budget {
-            let used = self.tokens_used.get();
+            let used = super::RUN_TOKENS_USED.load(std::sync::atomic::Ordering::Relaxed);
             let reserve = (prompt.len() as i64)
                 .saturating_add(AI_REQUEST_FRAMING_TOKENS)
                 .saturating_add(AI_MAX_REPLY_TOKENS);
@@ -649,7 +649,7 @@ impl<'p> Interp<'p> {
         // many stops with E1303 before it reaches a model; a call that passes
         // every gate counts, whichever path (replay, mock, live) answers it.
         if let Some(cap) = self.ai_calls_cap {
-            let used = self.ai_calls_used.get();
+            let used = super::RUN_AI_CALLS_USED.load(std::sync::atomic::Ordering::Relaxed);
             if used >= cap {
                 return ai_policy_err(format!(
                     "[{}] `{}` exceeded the run's AI call budget of {cap} call(s) \
@@ -658,7 +658,7 @@ impl<'p> Interp<'p> {
                     who(),
                 ));
             }
-            self.ai_calls_used.set(used + 1);
+            super::RUN_AI_CALLS_USED.store(used + 1, std::sync::atomic::Ordering::Relaxed);
         }
         if name == "ai_complete" {
             // W1310: a fn making an AI call with no @[ai(policy)] is allowed,
@@ -738,9 +738,16 @@ impl<'p> Interp<'p> {
 
     /// Ceilings CE-6: charge `tokens` a call used to the run token cap
     /// (`AXON_BUDGET_TOKENS`) after it answered; the prologue only reserved.
+    /// The charge is process-wide (ICE-2) and taken only under a cap.
     fn settle_run_tokens(&self, tokens: i64) {
-        self.tokens_used
-            .set(self.tokens_used.get().saturating_add(tokens.max(0)));
+        if self.token_budget.is_some() {
+            let c = &super::RUN_TOKENS_USED;
+            let used = c.load(std::sync::atomic::Ordering::Relaxed);
+            c.store(
+                used.saturating_add(tokens.max(0)),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
     }
 
     /// O-AF-09: a live call the provider billed (`e.tokens > 0`) whose reply

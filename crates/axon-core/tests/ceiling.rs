@@ -252,6 +252,48 @@ fn assert_e1007(o: &Output, what: &str, attack: &str) {
     assert!(!t.contains("hi\n"), "{attack}: program code ran: {t}");
 }
 
+/// ICE-3: `--ceiling` and `AXON_CEILING` naming one file in two spellings
+/// is one ceiling, so the run goes ahead.
+#[test]
+fn ceiling_same_file_two_spellings_is_accepted() {
+    let d = tmp("ice3_same");
+    write_ceiling(&d, &ceiling_json(&[]));
+    let o = run_with(
+        &d,
+        &["run", "--ceiling", "policy/ceiling.json"],
+        HELLO,
+        &[("AXON_CEILING", "./policy/ceiling.json")],
+    );
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "ATTACK: one ceiling in two spellings was refused: {}",
+        text(&o)
+    );
+    assert!(text(&o).contains("hi\n"), "{}", text(&o));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Guard: two different files are still refused (E1007, exit 2).
+#[test]
+fn ceiling_flag_and_env_differ_is_e1007() {
+    let d = tmp("ice3_differ");
+    let c = write_ceiling(&d, &ceiling_json(&[]));
+    std::fs::write(d.join("other.json"), ceiling_json(&[])).unwrap();
+    let o = run_with(
+        &d,
+        &["run", "--ceiling", c.to_str().unwrap()],
+        HELLO,
+        &[("AXON_CEILING", "other.json")],
+    );
+    assert_e1007(
+        &o,
+        "name two different ceilings",
+        "ATTACK: two different ceilings were both accepted",
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn ceiling_missing_key_is_e1007() {
     let d = tmp("ce2_missing");
@@ -471,6 +513,76 @@ fn main() {
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "null ai_calls must not cap: {t}");
     assert!(t.contains("third"), "null ai_calls must not cap: {t}");
+}
+
+/// ICE-2: `axon test` builds one interpreter per test; the ceiling's bounds
+/// are still the RUN's (the process's), so three tests that each make one
+/// model call under `ai_calls: 1` get one answer between them.
+#[test]
+fn ceiling_ai_calls_span_every_test() {
+    let d = tmp("ice2_calls");
+    let c = write_ceiling(&d, &ceiling_json(&[("ai_calls", Some("1"))]));
+    let src = r#"
+fn ask() -> i64 {
+    match ai_complete("hi") {
+        Ok(_) => 1,
+        Err(_) => 0,
+    }
+}
+
+@[test]
+fn t1() { assert(ask() == 1) }
+
+@[test]
+fn t2() { assert(ask() == 1) }
+
+@[test]
+fn t3() { assert(ask() == 1) }
+"#;
+    let o = run_with(
+        &d,
+        &["test", "--ceiling", c.to_str().unwrap()],
+        src,
+        &[("AXON_AI_MOCK", "1")],
+    );
+    let t = text(&o);
+    assert!(
+        t.contains("1 passed, 2 failed") && t.contains("E1303"),
+        "ATTACK: each test restarted the ceiling's ai_calls: {t}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// ICE-2: the step ceiling, likewise, spans every test of one `axon test`:
+/// each test below takes 42 steps (its body, `spin`'s body, 40 loop bodies), so under
+/// `steps: 100` the third one is stopped.
+#[test]
+fn ceiling_steps_span_every_test() {
+    let d = tmp("ice2_steps");
+    let c = write_ceiling(&d, &ceiling_json(&[("steps", Some("100"))]));
+    let src = r#"
+fn spin() -> i64 {
+    let i = 0
+    while i < 40 { i = i + 1 }
+    i
+}
+
+@[test]
+fn t1() { assert(spin() == 40) }
+
+@[test]
+fn t2() { assert(spin() == 40) }
+
+@[test]
+fn t3() { assert(spin() == 40) }
+"#;
+    let o = run_with(&d, &["test", "--ceiling", c.to_str().unwrap()], src, &[]);
+    let t = text(&o);
+    assert!(
+        t.contains("2 passed, 1 failed") && t.contains("E1006"),
+        "ATTACK: each test restarted the ceiling's steps: {t}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
 }
 
 /// A `max_depth` ceiling lowers the recursion limit.
@@ -965,6 +1077,77 @@ fn wall_ceiling_halts_exit9() {
         "the wall ceiling fired late: {:?}",
         t0.elapsed()
     );
+}
+
+// ── ICE-1: a lambda-body entry is a step ────────────────────────────────────
+
+/// All the work runs in callbacks: no loop body and no fn body but `main`.
+const LAMBDA_ONLY: &str = r#"
+fn main() {
+    let xs = arr_range(0, 3000)
+    let s = arr_fold(xs, 0, |a, x| a + arr_fold(xs, 0, |b, y| b + (x ^ y) % 7))
+    println(to_str(s))
+}
+"#;
+
+/// Callback-only work used to take no step, so neither ceiling ever fired.
+#[test]
+fn lambda_only_work_meets_wall_and_step_ceilings() {
+    let t0 = std::time::Instant::now();
+    bounded(
+        "ice1_wall",
+        LAMBDA_ONLY,
+        &[("AXON_WALL_MS", "100")],
+        "wall_ms",
+    );
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(60),
+        "the wall ceiling fired late: {:?}",
+        t0.elapsed()
+    );
+    let [tree, vm] = bounded(
+        "ice1_steps",
+        LAMBDA_ONLY,
+        &[("AXON_MAX_STEPS", "5000")],
+        "steps",
+    );
+    assert_eq!(tree, vm, "ATTACK: the engines stopped at different steps");
+}
+
+/// Each lambda-body entry is exactly one step on both engines: `main` (1)
+/// + 100 `arr_fold` callbacks + 100 `arr_map` callbacks = 201 steps.
+#[test]
+fn lambda_entry_is_one_step_on_both_engines() {
+    let src = r#"
+fn main() {
+    let xs = arr_range(0, 100)
+    let s = arr_fold(xs, 0, |a, x| a + x)
+    let ys = arr_map(xs, |x| x * 2)
+    println(to_str(s + len(ys)))
+}
+"#;
+    let d = tmp("ice1_exact");
+    for engine in ["tree", "vm"] {
+        let fits = run(
+            &d,
+            src,
+            &[("AXON_ENGINE", engine), ("AXON_MAX_STEPS", "201")],
+        );
+        assert_eq!(fits.status.code(), Some(0), "{engine}: {}", text(&fits));
+        assert_eq!(String::from_utf8_lossy(&fits.stdout), "5050\n");
+        let over = run(
+            &d,
+            src,
+            &[("AXON_ENGINE", engine), ("AXON_MAX_STEPS", "200")],
+        );
+        assert_eq!(
+            over.status.code(),
+            Some(9),
+            "ATTACK: lambda entries were not counted as steps ({engine}): {}",
+            text(&over)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&d);
 }
 
 const S03_COUNT: &str = r#"

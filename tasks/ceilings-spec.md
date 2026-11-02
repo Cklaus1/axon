@@ -515,6 +515,14 @@ absent). E1006 maps to a new `Flow::ResourceBound` and `RESOURCE_BOUND_EXIT_CODE
 program within budget; mandelbrot is OVER its +0.5 % ref check on BOTH binaries (base +2.69 %, CE-5 +2.79 %), so that
 failure predates this build; the other five move by <= 0.1 % instructions.
 
+`[REVISED: build ICE]` After the implementation audit (ImplAuditCE, findings ICE-1..3): (1) a lambda-body entry is a
+step too. `call_closure_frame` (`interp.rs`, both engines call closures through it) calls `Interp::step`, and the VM's
+`fold_leaf` tier declines under a ceiling, so `arr_map`/`arr_fold` callbacks count and `wall_ms` cannot be bypassed by
+callback-only work. (2) The run-wide meters (`steps`, `wall_ms` start, `ai_calls`, run tokens) are process statics
+(`RUN_*` in `interp.rs`), so `axon test`'s per-test interpreters and child interpreters spend from one budget. R45
+stays `main`-only (`capabilities.rs`); documented. (3) `--ceiling` vs `AXON_CEILING` compare canonicalized paths.
+g01: M4750-M4754.
+
 ---
 
 ### CE-6 (P2, NH-C6) The token cap charges a prompt-length estimate, never the reply

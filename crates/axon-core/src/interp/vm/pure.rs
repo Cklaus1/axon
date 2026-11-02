@@ -1670,7 +1670,9 @@ impl Interp<'_> {
         from: usize,
         acc: &mut Value,
     ) -> usize {
-        if !self.seal_pin_vm() {
+        // ceilings CE-5 / ICE-1: each element's call is a lambda-body entry,
+        // a step; under a step or wall ceiling every call takes the frame.
+        if !self.seal_pin_vm() || self.meter.on {
             return 0;
         }
         let Some(x0) = xs.get(from) else {

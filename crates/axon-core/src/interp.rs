@@ -2119,14 +2119,8 @@ pub struct Interp<'p> {
     /// not repetitions. The text names only the fn, so every repeat after the
     /// first carries no information a reader did not already have.
     w1310_warned: RefCell<std::collections::HashSet<String>>,
-    /// Tokens consumed so far by model calls, against [`Interp::token_budget`].
-    ///
-    /// Distinct from both sibling meters: `ai_cost_micro` is MONEY (per-token
-    /// µ$ at the tier's rate) and R3c's `ai_budget_stack` counts CALLS within
-    /// budgeted activations. This is TOKENS across the whole run, because that is the unit an
-    /// ambient operator cap is denominated in.
-    tokens_used: Cell<i64>,
-    /// Ambient run-level token cap from `AXON_BUDGET_TOKENS`, or `None` for no
+    /// Ambient run-level token cap from `AXON_BUDGET_TOKENS` (charged in
+    /// [`RUN_TOKENS_USED`]), or `None` for no
     /// cap (the default). `Some(0)` is meaningful — it means "no AI at all" —
     /// so this is deliberately not a sentinel `0`.
     ///
@@ -2135,10 +2129,8 @@ pub struct Interp<'p> {
     /// inert control surface that reads as a safety mechanism. Enforced
     /// pre-dispatch beside the R3c per-fn budget gate.
     token_budget: Option<i64>,
-    /// Model calls dispatched so far this run (`ai_complete` and every
-    /// extract), against [`Interp::ai_calls_cap`].
-    ai_calls_used: Cell<u64>,
-    /// Ceilings CE-6 (`ai_calls`): an operator ceiling's run-wide cap on model
+    /// Ceilings CE-6 (`ai_calls`, counted in [`RUN_AI_CALLS_USED`]): an
+    /// operator ceiling's run-wide cap on model
     /// calls, or `None` (no ceiling, or the ceiling said `null`). There is no
     /// environment variable for it: the ceiling is its only source.
     ai_calls_cap: Option<u64>,
@@ -5293,9 +5285,7 @@ impl<'p> Interp<'p> {
             pure_replay: Cell::new(false),
             ai_cost_micro: Cell::new(0),
             w1310_warned: RefCell::new(std::collections::HashSet::new()),
-            tokens_used: Cell::new(0),
             token_budget: parse_token_budget(),
-            ai_calls_used: Cell::new(0),
             ai_calls_cap: crate::ceiling::active().and_then(|c| c.ai_calls),
             handlers: RefCell::new(Vec::new()),
             resume_replay: RefCell::new(None),
@@ -6012,7 +6002,7 @@ impl<'p> Interp<'p> {
         Ok(guard)
     }
 
-    /// ceilings CE-5: one step (a loop-body or fn-body entry) against the
+    /// ceilings CE-5: one step (a loop-body, fn-body or lambda-body entry) against the
     /// run's step and wall-clock ceilings. Both engines call it at the same
     /// points, so a run stops at the same step in each.
     #[inline(always)]
@@ -6028,14 +6018,14 @@ impl<'p> Interp<'p> {
     /// and read the clock at the first step and every 4096th after it.
     #[inline(never)]
     fn step_metered(&self) -> Result<(), Flow> {
-        let n = self.meter.used.get() + 1;
+        let n = RUN_STEPS_USED.load(AtomicOrdering::Relaxed) + 1;
         let name = || self.current_fn.get().map_or("main", |f| f.name.as_str());
         if n > self.meter.cap {
             return Err(Flow::ResourceBound(
                 format!(
                     "[{}] `{}` passed the run's step ceiling (axis `steps`) of {} step(s) - a step \
-                     is one loop-body or fn-body entry; raise AXON_MAX_STEPS / the ceiling's \
-                     `steps`, or bound the loop",
+                     is one loop-body, fn-body or lambda-body entry; raise AXON_MAX_STEPS / the \
+                     ceiling's `steps`, or bound the loop",
                     crate::error::E1006,
                     name(),
                     self.meter.cap
@@ -6043,9 +6033,10 @@ impl<'p> Interp<'p> {
                 .into(),
             ));
         }
-        self.meter.used.set(n);
+        RUN_STEPS_USED.store(n, AtomicOrdering::Relaxed);
         if n & 4095 == 1 {
-            if let Some((start, ms)) = self.meter.wall {
+            if let Some(ms) = self.meter.wall_ms {
+                let start = *RUN_START.get_or_init(std::time::Instant::now);
                 if start.elapsed().as_millis() >= u128::from(ms) {
                     return Err(Flow::ResourceBound(
                         format!(
@@ -7183,6 +7174,14 @@ impl<'p> Interp<'p> {
             args.bind(|_, v| drop(v));
             return lambda_arity_mismatch(n, got);
         }
+        // ceilings CE-5 / ICE-1: one step per lambda-body entry, on both
+        // engines (both call closures through this frame), so a run whose
+        // work is all callbacks (`arr_map`, `arr_fold`, ..) still meets its
+        // step and wall-clock ceilings.
+        if let Err(e) = self.step() {
+            args.bind(|_, v| drop(v));
+            return Err(e);
+        }
         // Operator code does not run an operator closure the candidate picked
         // (amendment 102; veto interp.rs:4747-4751).
         if T {
@@ -7782,10 +7781,29 @@ struct StepMeter {
     on: bool,
     /// Steps allowed (`u64::MAX` when only a wall ceiling is set).
     cap: u64,
-    used: Cell<u64>,
-    /// The run's start and its wall-clock ceiling in milliseconds.
-    wall: Option<(std::time::Instant, u64)>,
+    /// The run's wall-clock ceiling in milliseconds, measured from
+    /// [`RUN_START`].
+    wall_ms: Option<u64>,
 }
+
+/// ceilings ICE-2: the run-wide meters belong to the PROCESS, not to one
+/// interpreter. `axon test` builds an interpreter per test and a run builds
+/// children (sandboxed candidates, sessions); with per-interpreter counters
+/// each of them restarted the operator's `steps`, `wall_ms`, `ai_calls` and
+/// token cap, so three tests made three model calls under `ai_calls: 1`.
+/// Counted only while the matching bound is set.
+static RUN_STEPS_USED: AtomicU64 = AtomicU64::new(0);
+/// Tokens charged to the run cap (`AXON_BUDGET_TOKENS`) so far this process.
+/// Distinct from both sibling meters: `ai_cost_micro` is MONEY (per-token µ$
+/// at the tier's rate) and R3c's `ai_budget_stack` counts CALLS within
+/// budgeted activations. This is TOKENS, the unit an ambient operator cap is
+/// denominated in.
+static RUN_TOKENS_USED: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+/// Model calls counted against a ceiling's `ai_calls` so far this process.
+static RUN_AI_CALLS_USED: AtomicU64 = AtomicU64::new(0);
+/// When the run's wall clock started: the first interpreter build under a
+/// wall ceiling.
+static RUN_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 /// One CE-5 env var (`raw` is its `var_os` read, spelled at the call site so
 /// the env-registry gate finds the literal): unset is `None`; a whole number
@@ -7825,11 +7843,13 @@ fn resolve_step_meter() -> StepMeter {
         parse_run_bound("AXON_WALL_MS", std::env::var_os("AXON_WALL_MS")),
         ceiling.and_then(|c| c.wall_ms),
     );
+    if wall_ms.is_some() {
+        RUN_START.get_or_init(std::time::Instant::now);
+    }
     StepMeter {
         on: steps.is_some() || wall_ms.is_some(),
         cap: steps.unwrap_or(u64::MAX),
-        used: Cell::new(0),
-        wall: wall_ms.map(|ms| (std::time::Instant::now(), ms)),
+        wall_ms,
     }
 }
 
