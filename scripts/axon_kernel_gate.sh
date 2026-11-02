@@ -1,16 +1,25 @@
 #!/usr/bin/env bash
-# K5: axon-guest-kernel enforcement gate.
+# K5: axon kernel enforcement gate.
 #
-# Verifies the three-layer containment model end-to-end by running the flagship
-# good/evil agent pair through axon-vm (Firecracker required) and checking exit
-# codes:
+# Layer 1 (compiler) and Layer 2 (manifest generation) need no VM. Layer 3 runs
+# the flagship good/evil pair in the LINUX microVM profile (guest-fs GF-4;
+# scripts/fc_linux_profile.sh, image dist/guest-linux), where the program
+# really runs:
 #
-#   good_agent.ax  — IO-only effects → must exit 0
-#   evil_agent.ax  — tries Net without declaration → must exit 8 (SandboxViolation)
+#   agent_task.ax       policy {"fs":"none", ["IO"]} (axon-vm-mmds/2) -> the
+#                       guest workload exits 0 and prints exactly what the host
+#                       interpreter prints
+#   agent_task_evil.ax  policy ["IO"] (axon-vm-mmds/1) -> the guest's `axon run`
+#                       refuses it at check, workload exit 2, nothing printed
 #
-# When Firecracker is not installed this script runs a dry-run that just
-# verifies the compiler-level rejection (axon check) and the BPF policy
-# generation — sufficient for CI without KVM access.
+# Layer 3b is the bare-metal axon-guest-kernel (dist/guest) run, kept only as a
+# labelled "gate installs" smoke check: that kernel does not run programs
+# (FG-041), so it asserts only that its LSTAR gate denies a syscall whose
+# effect is withheld (exit 8), never anything about the program.
+#
+# Exit: 0 all ran and passed; 1 any failure; 77 Layer 3 could not run (not
+# root, no /dev/kvm, no firecracker, no built dist/guest-linux image): a
+# NON-RESULT, never a pass. --dry-run skips Layer 3 on purpose and exits 0.
 #
 # Usage:
 #   ./scripts/axon_kernel_gate.sh [--dry-run]
@@ -93,78 +102,94 @@ if [[ -f "$GOOD" ]]; then
     fi
 fi
 
-# ── Layer 3: microVM enforcement (Firecracker required) ───────────────────────
+# ── Layer 3: the good/evil pair in the Linux microVM (guest-fs GF-4) ──────────
+#
+# The program really runs here: axon-guest-init loads it before its gate
+# (GF-2) and, under `"fs": "none"`, withholds the filesystem (GF-3). The
+# outcome is decided by the program, not by which effects the grant names.
 
-echo "[axon-kernel-gate] Layer 3: microVM enforcement"
+echo "[axon-kernel-gate] Layer 3: Linux microVM enforcement (good/evil pair)"
+
+LINUX_DIR="dist/guest-linux"
+L3_SKIP=""
+if [[ $DRY_RUN -eq 1 ]]; then
+    echo "  [dry-run] Skipping microVM runs (--dry-run)"
+elif [[ "$(id -u)" != 0 ]]; then
+    L3_SKIP="needs root (the launcher runs Firecracker under its jailer)"
+elif [[ ! -c /dev/kvm ]]; then
+    L3_SKIP="no /dev/kvm"
+elif ! command -v firecracker &>/dev/null; then
+    L3_SKIP="firecracker not in PATH"
+elif [[ ! -f "$LINUX_DIR/manifest.json" || ! -f "$LINUX_DIR/vmlinux" || ! -f "$LINUX_DIR/rootfs.sqfs" ]]; then
+    L3_SKIP="no built $LINUX_DIR image (AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh)"
+else
+    L3="$(mktemp -d "${TMPDIR:-/tmp}/axon-kernel-gate.XXXXXX")"
+    printf '{"schema":"axon-vm-mmds/2","allowed_effects":["IO"],"fs":"none"}' > "$L3/pol-good.json"
+    printf '{"schema":"axon-vm-mmds/1","allowed_effects":["IO"]}' > "$L3/pol-evil.json"
+
+    # good agent: fs:none, ["IO"] -> rc 0, and the guest prints exactly what
+    # the host interpreter (this tree's, --no-default-features as the image's)
+    # prints for it.
+    mkdir -p "$L3/host"
+    HOST_SHA="$(cd "$L3/host" && env -i PATH=/usr/bin:/bin HOME="$L3/host" XDG_CACHE_HOME="$L3/host/cache" \
+        "$AXON" run "$PWD/$GOOD" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+    RC=0
+    bash scripts/fc_linux_profile.sh --program "$PWD/$GOOD" --policy "$L3/pol-good.json" \
+        --out "$L3/good" --timeout-s 90 > "$L3/good.log" 2>&1 || RC=$?
+    GSHA="$(sha256sum < "$L3/good/out/stdout" 2>/dev/null | cut -d' ' -f1 || true)"
+    if [[ $RC == 0 && "$GSHA" == "$HOST_SHA" ]] && grep -q "^scores: " "$L3/good/out/stdout"; then
+        ok "agent_task.ax under fs:none, [\"IO\"]: rc 0 in the guest, stdout identical to the host run ($GSHA)"
+    else
+        fail "agent_task.ax under fs:none: launcher rc $RC (expected 0), guest stdout $GSHA vs host $HOST_SHA; $(tail -c 300 "$L3/good.log")"
+    fi
+
+    # evil agent: ["IO"] -> the guest's `axon run` refuses it at check (E1001,
+    # workload exit 2; launcher rc 10), the policy is bound, nothing printed.
+    RC=0
+    bash scripts/fc_linux_profile.sh --program "$PWD/$EVIL" --policy "$L3/pol-evil.json" \
+        --out "$L3/evil" --timeout-s 90 > "$L3/evil.log" 2>&1 || RC=$?
+    WEXIT="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("workload_exit"), d.get("policy",{}).get("bound"))' "$L3/evil/result.json" 2>/dev/null || echo "none none")"
+    if [[ $RC == 10 && "$WEXIT" == "2 True" && ! -s "$L3/evil/out/stdout" ]] \
+       && grep -q "E1001" "$L3/evil/out/stderr" 2>/dev/null; then
+        ok "agent_task_evil.ax under [\"IO\"]: refused at check in the guest (E1001, workload exit 2), nothing printed"
+    else
+        fail "agent_task_evil.ax under [\"IO\"]: launcher rc $RC (expected 10), workload_exit/bound '$WEXIT' (expected '2 True'); $(tail -c 300 "$L3/evil.log")"
+    fi
+    rm -rf "$L3"
+fi
+[[ -n "$L3_SKIP" ]] && echo "  [skip] $L3_SKIP — Layer 3 is a NON-RESULT (exit 77)"
+
+# ── Layer 3b: bare-metal K5 "gate installs" smoke check ───────────────────────
+#
+# axon-guest-kernel runs no program (FG-041): under a grant that withholds FS it
+# issues its own synthetic `openat` and its LSTAR gate must deny it (exit 8).
+# That is ALL this shows - the program's code never runs, so this says nothing
+# about the evil agent (CE-9 B7: `exit(3)` reports 0 under an FS grant). The
+# grant is stated explicitly (T48: an absent one used to read as every effect).
+
+echo "[axon-kernel-gate] Layer 3b: bare-metal K5 gate-installs smoke check"
 
 if [[ $DRY_RUN -eq 1 ]]; then
-    echo "  [dry-run] Skipping Firecracker tests (--dry-run)"
-    PASS=$((PASS+1))
-elif ! command -v firecracker &>/dev/null; then
-    echo "  [skip] firecracker not in PATH — skipping live VM tests"
-    echo "         Install from github.com/firecracker-microvm/firecracker to run Layer 3"
-elif [[ ! -f "$KERNEL" ]] || [[ ! -f "$INITRD" ]]; then
-    echo "  [skip] guest image missing — run ./scripts/build-guest-image.sh first"
+    echo "  [dry-run] Skipping (--dry-run)"
+elif ! command -v firecracker &>/dev/null || [[ ! -f "$KERNEL" ]] || [[ ! -f "$INITRD" ]]; then
+    echo "  [skip] firecracker or the bare-metal image ($KERNEL, $INITRD) missing — smoke check not run"
 else
-    # R26: `axon-vm run` requires a PINNED kernel baseline — it will not
-    # trust-on-first-use (P7-KRN-05). Pin the gate's own freshly-built kernel
-    # explicitly, exactly as an operator would. `--expect-digest` on each run
-    # would work too, but pinning once exercises the intended flow.
+    # R26: `axon-vm run` requires a PINNED kernel baseline (P7-KRN-05).
     KERNEL_DIGEST="$(sha256sum "$KERNEL" | cut -d' ' -f1)"
     "$AXON_VM" attest --kernel "$KERNEL" --pin-baseline --repin >/dev/null 2>&1 \
         || echo "  [warn] could not pin kernel baseline; runs will use --expect-digest"
-
-    # good_agent: expect exit 0
-    #
-    # AUDIT T48. The grant is stated EXPLICITLY here. It used to be omitted, and
-    # the guest kernel read an absent grant as EffectSet(0xFF) — every effect —
-    # so this case passed by being granted full authority, which is precisely
-    # what Layer 3 claims to be testing. With the fail-open default closed, the
-    # grant has to be real.
-    #
-    # `FS` is here for the SUBSTRATE, not for the program: the guest runs the
-    # interpreter, which must `openat` /axon/program.ax before any Axon code
-    # executes. agent_task.ax's own effect union is `["IO"]` (it only prints).
-    # Whether axon-vm should add that substrate baseline itself — and what it
-    # means that a guest therefore always holds FS — is an open design question,
-    # recorded as O034; stating it here keeps the gate honest meanwhile.
-    if [[ -f "$GOOD" ]]; then
-        EXIT_CODE=0
-        AXON_VM_ALLOWED_EFFECTS=IO,FS timeout 30 "$AXON_VM" run "$GOOD" \
-            --kernel "$KERNEL" --initrd "$INITRD" \
-            --expect-digest "$KERNEL_DIGEST" \
-            --json > /tmp/axon_gate_good.json 2>&1 || EXIT_CODE=$?
-        ACTUAL=$(python3 -c "import json; d=json.load(open('/tmp/axon_gate_good.json')); print(d.get('exit_code',d.get('ok')))" 2>/dev/null || echo "$EXIT_CODE")
-        if [[ "$ACTUAL" == "0" ]] || [[ "$ACTUAL" == "True" ]]; then
-            ok "good_agent.ax exits 0 inside microVM"
-        else
-            fail "good_agent.ax exited $ACTUAL (expected 0)"
-        fi
-    fi
-
-    # evil_agent: expect exit 8 (SandboxViolation from syscall gate).
-    #
-    # The grant must be stated explicitly. `run` derives the in-guest policy from
-    # the program's .axmeta manifest, and the evil agent CANNOT have one — `axon
-    # check` refuses it outright (3× E1001), so `build --emit-manifest` never
-    # produces a manifest to derive from. With no manifest the policy defaults to
-    # OPEN (all 8 effect bits), so this case previously ran with FS granted and
-    # the deny path was never exercised at all: the check has never once observed
-    # the violation it claims to test. AXON_VM_ALLOWED_EFFECTS states the grant
-    # the demo intends — AI only — so the evil agent's openat is a real breach of
-    # a real ceiling.
-    if [[ -f "$EVIL" ]]; then
-        EXIT_CODE=0
-        AXON_VM_ALLOWED_EFFECTS=AI timeout 30 "$AXON_VM" run "$EVIL" \
-            --kernel "$KERNEL" --initrd "$INITRD" \
-            --expect-digest "$KERNEL_DIGEST" \
-            --json > /tmp/axon_gate_evil.json 2>&1 || EXIT_CODE=$?
-        ACTUAL=$(python3 -c "import json; d=json.load(open('/tmp/axon_gate_evil.json')); print(d.get('exit_code'))" 2>/dev/null || echo "$EXIT_CODE")
-        if [[ "$ACTUAL" == "8" ]]; then
-            ok "evil_agent.ax exits 8 (SandboxViolation) inside microVM"
-        else
-            fail "evil_agent.ax exited $ACTUAL (expected 8)"
-        fi
+    K5_OUT="$(mktemp "${TMPDIR:-/tmp}/axon-kernel-gate-k5.XXXXXX")"
+    EXIT_CODE=0
+    AXON_VM_ALLOWED_EFFECTS=AI timeout 30 "$AXON_VM" run "$EVIL" \
+        --kernel "$KERNEL" --initrd "$INITRD" \
+        --expect-digest "$KERNEL_DIGEST" \
+        --json > "$K5_OUT" 2>&1 || EXIT_CODE=$?
+    ACTUAL=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('exit_code'))" "$K5_OUT" 2>/dev/null || echo "$EXIT_CODE")
+    rm -f "$K5_OUT"
+    if [[ "$ACTUAL" == "8" ]]; then
+        ok "K5 gate installs: the LSTAR gate denied the withheld FS syscall (exit 8; no program ran)"
+    else
+        fail "K5 gate installs: exit $ACTUAL (expected 8 from the denied synthetic openat)"
     fi
 fi
 
@@ -199,10 +224,13 @@ fi
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo ""
-if [[ $FAIL -eq 0 ]]; then
-    echo "[axon-kernel-gate] PASS ($PASS checks, 0 failures)"
-    exit 0
-else
+if [[ $FAIL -ne 0 ]]; then
     echo "[axon-kernel-gate] FAIL ($PASS passed, $FAIL failed)"
     exit 1
+elif [[ -n "$L3_SKIP" ]]; then
+    echo "[axon-kernel-gate] SKIP ($PASS passed, 0 failed; Layer 3 not run: $L3_SKIP)"
+    exit 77
+else
+    echo "[axon-kernel-gate] PASS ($PASS checks, 0 failures)"
+    exit 0
 fi

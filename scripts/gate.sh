@@ -901,6 +901,19 @@ stage_begin S24 "guest-fs corpus differential"
 bash scripts/guest_fs_corpus.sh || fail "guest-fs corpus differential"
 stage_end
 fi
+# guest-fs GF-4: the K5 kernel gate, whose Layer 3 runs the flagship good/evil
+# pair in the Linux microVM. SKIP (77: no root/KVM/firecracker/built image) is
+# a NON-RESULT, reported as such, never as a pass.
+if lane_runs S25; then
+stage_begin S25 "axon kernel gate (Linux microVM good/evil)"
+bash scripts/axon_kernel_gate.sh; rc=$?
+case $rc in
+  0) echo "axon kernel gate: PASS" ;;
+  77) echo "axon kernel gate: SKIP (non-result: Layer 3 not run on this host)" ;;
+  *) fail "axon kernel gate" ;;
+esac
+stage_end "$rc"
+fi
 
 # The same crate again with `ai` on, because that feature gates the only
 # model-backed generator — the one production path where a model contributes to

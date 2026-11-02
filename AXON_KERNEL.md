@@ -185,6 +185,17 @@ Target: a program whose effect row is `{IO}` cannot call `connect(2)`.
 - Gate: `examples/flagship/good_agent.ax` (IO-only) runs; `examples/flagship/evil_agent.ax`
   (tries Net without declaration) exits 8; both verified by `scripts/acceptance_gate.sh`
 
+  **guest-fs GF-4 (2026-11-02).** This kernel runs no program (FG-041), so its
+  exit 8 shows only that the gate is installed, never anything a program did.
+  `scripts/axon_kernel_gate.sh` Layer 3 now runs the pair on the Linux microVM
+  profile (`scripts/fc_linux_profile.sh`, `dist/guest-linux`):
+  `agent_task.ax` under `{"fs":"none","allowed_effects":["IO"]}` must exit 0 and
+  print what the host interpreter prints; `agent_task_evil.ax` under `["IO"]` is
+  refused at check in the guest (E1001, workload exit 2). The bare-metal run is
+  kept as Layer 3b, a labelled "gate installs" smoke check (exit 8 from the
+  kernel's own synthetic `openat`). No root, `/dev/kvm`, firecracker or built
+  image: exit 77, a non-result. `gate.sh` runs it as selectable stage S25.
+
 ### Phase K4 — host_await hypercall (2h)
 
 Target: `host_await("ping")` in a guest program returns `"pong"` from the `axon-vm`
@@ -235,5 +246,5 @@ crates/axon-core/
   src/interp.rs           run_suspendable_hypercall (alongside vsock path)
 scripts/
   build-guest-image.sh    --kernel-only: axon-os build instead of Linux
-  axon_kernel_gate.sh     K3 enforcement gate (good/evil agent test)
+  axon_kernel_gate.sh     K5 gate: good/evil pair in the Linux microVM (Layer 3) + K5 smoke (3b)
 ```
