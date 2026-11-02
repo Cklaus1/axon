@@ -2250,6 +2250,18 @@ mod host_of_url_tests {
         assert_eq!(host_of("http://[::1]:8080/v1"), "[::1]");
         assert_eq!(host_of("http://[::1]/v1"), "[::1]");
     }
+
+    /// ceilings CE-1 guard: the CE-1 pin (declared ∩ `AXON_ALLOWED_NET`) is
+    /// enforced by this check. An override whose host is outside the pin is
+    /// refused; the empty pin refuses everything. (Exercised on the pure
+    /// check, not through `NET_PIN`, which is process-global and first-wins.)
+    #[test]
+    fn pin_refuses_override_outside_pin() {
+        let pin = vec!["api.anthropic.com".to_string()];
+        assert!(!host_allowed(&host_of("http://attacker:8080/v1"), &pin));
+        assert!(host_allowed(&host_of("https://api.anthropic.com"), &pin));
+        assert!(!host_allowed(&host_of("https://api.anthropic.com"), &[]));
+    }
 }
 
 #[cfg(test)]

@@ -14532,5 +14532,18 @@ MUTATIONS += [
      'axon-ai', '--lib', 'tests::structured_response_returns_the_usage_total'),
 ]
 
+# ceilings CE-1 (ids M4680-M4681): the operator's AXON_ALLOWED_NET joins the AI
+# endpoint pin as an intersection (tasks/ceilings-spec.md CE-1).
+MUTATIONS += [
+    ('M4680', 'CE-1: an operator net scope does not pin a program that declares no host', 'crates/axon-core/src/interp.rs',
+     '    if declared.is_empty() && ambient.is_none() {\n        return None;',
+     '    if declared.is_empty() {\n        return None;',
+     'axon-core', '--no-default-features --lib', 'interp::tests::ai_pin_hosts_ambient_pins_unannotated_program'),
+    ('M4681', 'CE-1: the pin is the union of declared and operator hosts (CEA#3), so a declared host leaves the operator scope', 'crates/axon-core/src/interp.rs',
+     '        pin = intersect_host_patterns(&pin, list);',
+     '        pin.extend(list.iter().cloned());',
+     'axon-core', '--no-default-features --lib', 'interp::tests::ai_pin_hosts_intersects_declared_with_ambient'),
+]
+
 if __name__ == "__main__":
     main()

@@ -4380,10 +4380,69 @@ fn declared_net_hosts(program: &Program) -> Vec<String> {
     hosts
 }
 
+/// ceilings CE-1: the AI endpoint pin. One rule:
+///
+/// pin = (declared hosts, or the implicit host if none are declared)
+///       ∩ each operator-side list that is set; `*` (= `None`) passes all.
+///
+/// The operator-side list is the ambient `AXON_ALLOWED_NET` scope (read
+/// through `ambient_scope_var`, so the pin and the sandbox scope cannot parse
+/// it differently). With no declared host and no operator list there is no
+/// pin (`None`): a bare run is bounded only by what its source declares.
+/// Before CE-1 the operator's scope never reached the pin, so in an
+/// `asi-runtime` build `AXON_ALLOWED_NET=api.anthropic.com` +
+/// `AXON_AI_BASE_URL=http://attacker` passed the dispatch check (which tests
+/// the implicit host) and then dialled the attacker with the key.
+///
+/// Always compiled so it is unit-testable in the default build.
+#[cfg_attr(not(feature = "asi-runtime"), allow(dead_code))]
+fn ai_pin_hosts(program: &Program, ambient: Option<&[String]>) -> Option<Vec<String>> {
+    let declared = declared_net_hosts(program);
+    if declared.is_empty() && ambient.is_none() {
+        return None;
+    }
+    let mut pin = if declared.is_empty() {
+        vec![crate::capabilities::ai_implicit_host().to_string()]
+    } else {
+        declared
+    };
+    if let Some(list) = ambient {
+        pin = intersect_host_patterns(&pin, list);
+    }
+    Some(pin)
+}
+
+/// Intersection of two leading-`*` host-glob lists: every entry of `a` that
+/// some entry of `b` matches, plus every entry of `b` that some entry of `a`
+/// matches. A pattern `*s` is matched by `*t` when `s` ends with `t`
+/// (`host_matches_glob` applied to the pattern text gives exactly that). With
+/// literal hosts this is plain set intersection.
+#[cfg_attr(not(feature = "asi-runtime"), allow(dead_code))]
+fn intersect_host_patterns(a: &[String], b: &[String]) -> Vec<String> {
+    use crate::capabilities::host_matches_glob;
+    let mut out: Vec<String> = Vec::new();
+    let mut keep = |h: &String| {
+        if !out.contains(h) {
+            out.push(h.clone());
+        }
+    };
+    for x in a {
+        if b.iter().any(|g| host_matches_glob(x, g)) {
+            keep(x);
+        }
+    }
+    for y in b {
+        if a.iter().any(|g| host_matches_glob(y, g)) {
+            keep(y);
+        }
+    }
+    out
+}
+
 #[cfg(feature = "asi-runtime")]
 fn pin_ai_net_allowlist(program: &Program) {
-    let hosts = declared_net_hosts(program);
-    if !hosts.is_empty() {
+    let ambient = ambient_scope_var("AXON_ALLOWED_NET", std::env::var_os("AXON_ALLOWED_NET"));
+    if let Some(hosts) = ai_pin_hosts(program, ambient.as_deref()) {
         axon_ai::pin_net_allowlist(hosts);
     }
 }
@@ -8137,6 +8196,81 @@ fn main() { }
             hosts.contains(&crate::capabilities::ai_implicit_host().to_string()),
             "the host the checker validates against must be reachable: {hosts:?}"
         );
+    }
+
+    /// ceilings CE-1: an operator net scope pins an unannotated program. With no
+    /// declared host the base is the implicit host, and `gw.example` does not
+    /// match it, so every live AI call is refused (the dispatch check already
+    /// refuses those runs).
+    #[test]
+    fn ai_pin_hosts_ambient_pins_unannotated_program() {
+        let p = crate::parse_source(r#"fn main() { println("hi") }"#).expect("parse failed");
+        let amb = vec!["gw.example".to_string()];
+        assert_eq!(
+            ai_pin_hosts(&p, Some(&amb)),
+            Some(Vec::<String>::new()),
+            "ATTACK: an operator net scope left the AI endpoint unpinned"
+        );
+        let amb = vec![crate::capabilities::ai_implicit_host().to_string()];
+        assert_eq!(ai_pin_hosts(&p, Some(&amb)), Some(amb.clone()));
+    }
+
+    /// ceilings CE-1: declared ∩ ambient, never the union. A program declaring
+    /// `x.com` under `AXON_ALLOWED_NET=api.anthropic.com` must not get `x.com`
+    /// into the pin (else `AXON_AI_BASE_URL=https://x.com` leaves the
+    /// operator's scope). Globs intersect both ways.
+    #[test]
+    fn ai_pin_hosts_intersects_declared_with_ambient() {
+        let p = crate::parse_source(
+            r#"
+@[contained(net: ["x.com"])]
+fn f() -> i64 { 0 }
+fn main() { }
+"#,
+        )
+        .expect("parse failed");
+        let implicit = crate::capabilities::ai_implicit_host().to_string();
+        let amb = vec![implicit.clone()];
+        let pin = ai_pin_hosts(&p, Some(&amb)).expect("pinned");
+        assert!(
+            !pin.contains(&"x.com".to_string()),
+            "ATTACK: a declared host outside the operator net scope was pinned: {pin:?}"
+        );
+        assert_eq!(pin, vec![implicit]);
+        let p = crate::parse_source(
+            r#"
+@[contained(net: ["*.x.com"])]
+fn f() -> i64 { 0 }
+fn main() { }
+"#,
+        )
+        .expect("parse failed");
+        let amb = vec!["a.x.com".to_string()];
+        assert_eq!(
+            ai_pin_hosts(&p, Some(&amb)),
+            Some(vec!["a.x.com".to_string()]),
+            "ATTACK: the glob intersection of declared and operator hosts was wrong"
+        );
+    }
+
+    /// ceilings CE-1: `*` (parsed to `None`) and an unset variable do not
+    /// narrow; with neither a declared host nor an operator list, no pin.
+    #[test]
+    fn ai_pin_hosts_star_and_unset_do_not_narrow() {
+        let p = crate::parse_source(
+            r#"
+@[contained(net: ["x.com"])]
+fn f() -> i64 { 0 }
+fn main() { }
+"#,
+        )
+        .expect("parse failed");
+        assert_eq!(parse_scope_list("*"), None);
+        let pin = ai_pin_hosts(&p, None).expect("declared hosts pin");
+        assert_eq!(pin, declared_net_hosts(&p));
+        assert!(pin.contains(&"x.com".to_string()));
+        let bare = crate::parse_source(r#"fn main() { }"#).expect("parse failed");
+        assert_eq!(ai_pin_hosts(&bare, None), None);
     }
 
     #[test]

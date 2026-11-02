@@ -46,7 +46,7 @@
      "split_cmd": "cargo test --locked -p axon-cortex --features ai", "lint_unit": true},
     {"id": "S10", "banner": "gate_verdict_is_read", "class": "selectable", "split": "none"},
     {"id": "S11", "banner": "native codegen build", "class": "selectable", "split": "none"},
-    {"id": "S12", "banner": "serde-json feature builds + tests", "class": "selectable", "split": "none"},
+    {"id": "S12", "banner": "feature builds + tests (serde-json, asi-runtime)", "class": "selectable", "split": "none"},
     {"id": "S13", "banner": "lib clippy", "class": "selectable", "split": "none"},
     {"id": "S14", "banner": "runtime-crate clippy", "class": "selectable", "split": "none"},
     {"id": "S15", "banner": "clippy coverage", "class": "always"},

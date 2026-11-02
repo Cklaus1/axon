@@ -4010,3 +4010,9 @@ ATTACK_MARKERS.update({
     'M4621': r'ATTACK: extract cost uncounted',
     'M4622': r'ATTACK: live extract tokens stored as 0',
 })
+
+# ceilings CE-1 (ids M4680-M4681)
+ATTACK_MARKERS.update({
+    'M4680': r'ATTACK: an operator net scope left the AI endpoint unpinned',
+    'M4681': r'ATTACK: a declared host outside the operator net scope was pinned',
+})
