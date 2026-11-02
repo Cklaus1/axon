@@ -100,8 +100,10 @@ no h-task is dropped, edited or re-graded after the first paid call.
 binaries: `axon` sha256 `1ca22353…` and `axon-intent` `cd1f507c…`, built from ec3ce598, which includes GV-1.
 Arm a verified every task in every replicate, so 0 of 12 tasks are hard (the threshold is 3), and no task
 is possibly defective. Infra rows: 0. Arm b, round 0, missed h06 and h08 in a2 and h03 and h09 in a3; one
-repair round fixed each (repair gain 2 + 2). Refused attempts across all rounds: 0, 1 and 2. h12 has no
-visible example (see above), so arm a accepts it on check and gates alone; it was verified 3/3 regardless.
+repair round fixed each (repair gain 2 + 2). Refused attempts across all rounds: 0, 1 and 2. **Known defect
+(selection rule 3):** h12 has no visible example, which breaks the slot table's ">= 1 visible" (see above). So
+arm a accepts any h12 program that passes check and gates; the empty program was accepted there and failed
+the hidden examples (the dry run's 1 false acceptance). Haiku's h12 programs still verified 3/3.
 Caps: `genviab.py --cap-usd` bounds the total of every `calls/*.jsonl` under `results/`, not one run's spend,
 so before each run `--cap-usd` was set to `spent` + $0.25 (arm a) or + $0.05 (arm c), with reserves $0.02
 and $0.005 (integrator-approved reading of the spec's per-invocation caps). Item spend was $0.1459 against the
