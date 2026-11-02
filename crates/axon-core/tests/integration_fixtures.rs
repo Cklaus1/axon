@@ -3293,3 +3293,77 @@ fn huge_arrays_panic_natively_like_the_interpreter() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(fails.is_empty(), "{}", fails.join("\n"));
 }
+
+// lang-forms LF-4 (lane C): the native build cache key covers a module found
+// beside the entry file.
+
+/// m1 built natively with no module path prints `16`; after its sibling
+/// `mathutil.ax` changes, a second CACHED build (no `--no-cache`) prints `17`,
+/// as `axon run` does. `HOME` is private, so the cache starts empty and no
+/// `~/.axon/lib` is searched.
+#[cfg(all(feature = "codegen", unix))]
+#[test]
+fn build_cache_key_covers_the_sibling() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+    let attack = "ATTACK: the build cache reused a binary after its sibling module changed";
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let root = std::env::temp_dir().join(format!("axon_lf4_cache_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = root.join("m1");
+    let home = root.join("home");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let main = dir.join("main.ax");
+    std::fs::write(
+        &main,
+        "mod mathutil\nuse mathutil.{square}\nfn main() { println(to_str(square(4))) }\n",
+    )
+    .unwrap();
+    let axon = |args: &[&std::ffi::OsStr]| {
+        Command::new(axon_bin)
+            .args(args)
+            .env_remove("AXON_PATH")
+            .env_remove("AXON_PATH_EXCLUSIVE")
+            .env("HOME", &home)
+            .output()
+            .unwrap()
+    };
+    let mut fails = Vec::new();
+    for (round, body, want) in [("first", "x * x", "16\n"), ("second", "x * x + 1", "17\n")] {
+        std::fs::write(
+            dir.join("mathutil.ax"),
+            format!("pub fn square(x: i64) -> i64 {{ {body} }}\n"),
+        )
+        .unwrap();
+        let run = axon(&["run".as_ref(), main.as_os_str()]);
+        let bin = dir.join(format!("m1_{round}"));
+        let build = axon(&[
+            "build".as_ref(),
+            main.as_os_str(),
+            "-o".as_ref(),
+            bin.as_os_str(),
+        ]);
+        if !build.status.success() {
+            fails.push(format!(
+                "{round}: build: {}",
+                String::from_utf8_lossy(&build.stderr)
+            ));
+            continue;
+        }
+        let native = Command::new(&bin).output().unwrap();
+        let (r, n) = (
+            String::from_utf8_lossy(&run.stdout).into_owned(),
+            String::from_utf8_lossy(&native.stdout).into_owned(),
+        );
+        if r != want || n != want {
+            fails.push(format!(
+                "{round}: want {want:?}, run {r:?} (stderr {}), native {n:?}",
+                String::from_utf8_lossy(&run.stderr)
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(fails.is_empty(), "{attack}: {}", fails.join("\n"));
+}

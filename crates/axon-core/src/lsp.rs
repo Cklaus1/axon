@@ -101,7 +101,10 @@ pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
     };
 
     // ── AXON_PATH module loading ──────────────────────────────────────────
-    let search_dirs = crate::axon_search_dirs(None);
+    // LF-4: a `file://` document's own directory is searched last, as for
+    // `axon check` on that file.
+    let doc_path = file_uri_to_path(uri);
+    let search_dirs = crate::axon_search_dirs(None, doc_path.as_deref().and_then(|p| p.parent()));
     let (load_errors, imports) = crate::load_use_decls_recorded(&mut program, &search_dirs);
     let mut diagnostics: Vec<LspDiagnostic> = load_errors
         .into_iter()
@@ -874,6 +877,29 @@ fn path_to_file_uri(path: &str) -> String {
         }
     }
     uri
+}
+
+/// The local path a `file://` URI names (percent-decoded), or `None` for any
+/// other scheme, a URI with a host, or bytes that are not UTF-8.
+fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    if !rest.starts_with('/') {
+        return None;
+    }
+    let raw = rest.as_bytes();
+    let mut bytes = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == b'%' {
+            let hex = std::str::from_utf8(raw.get(i + 1..i + 3)?).ok()?;
+            bytes.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            bytes.push(raw[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(bytes).ok().map(std::path::PathBuf::from)
 }
 
 // ── JSON-RPC framing ──────────────────────────────────────────────────────────

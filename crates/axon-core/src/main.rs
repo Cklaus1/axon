@@ -1408,12 +1408,20 @@ fn cmd_caps(file: PathBuf, fn_name: Option<String>, base_dir: Option<PathBuf>, j
     };
     // Read before moving: the file path is the caller's, relative to the
     // directory it was invoked from; `use` resolution is relative to DIR.
-    if let Some(dir) = &base_dir {
-        if let Err(e) = std::env::set_current_dir(dir) {
-            eprintln!("error: --base-dir {}: {e}", dir.display());
-            process::exit(2);
+    // DIR is also the entry directory searched last for modules (LF-4: the
+    // file itself may be staged elsewhere, e.g. cortex's temp copy), taken
+    // absolute before the move so a relative DIR still names it.
+    let entry_dir: Option<PathBuf> = match &base_dir {
+        Some(dir) => {
+            let abs = std::path::absolute(dir).unwrap_or_else(|_| dir.clone());
+            if let Err(e) = std::env::set_current_dir(dir) {
+                eprintln!("error: --base-dir {}: {e}", dir.display());
+                process::exit(2);
+            }
+            Some(abs)
         }
-    }
+        None => axon_core::entry_dir_of(&file).map(Path::to_path_buf),
+    };
     let use_json = json || !std::io::stderr().is_terminal();
     let mut program = match parse_source_located_cli(&src, &file) {
         Ok(p) => p,
@@ -1426,7 +1434,8 @@ fn cmd_caps(file: PathBuf, fn_name: Option<String>, base_dir: Option<PathBuf>, j
             process::exit(2);
         }
     };
-    let (located, _ictx, _closure) = run_check_pipeline_located(&mut program, &src, &file);
+    let (located, _ictx, _closure) =
+        run_check_pipeline_located(&mut program, &src, &file, entry_dir.as_deref());
     let fatal: Vec<&axon_core::PipelineDiagnostic> = located
         .iter()
         .filter(|d| d.severity == "error" && !is_capability_code(&d.code))
@@ -1540,7 +1549,10 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // whole `use` closure, so a deeply-nested import can't slip a capability or
     // a tampered byte past the gate (R6).
     let (import_cap_errors, lock_errors) = time_passes::time("imports", || {
-        let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+        let search_dirs = axon_core::axon_search_dirs(
+            std::env::current_exe().ok().as_deref(),
+            axon_core::entry_dir_of(&file),
+        );
         let (resolved_imports, _unresolved) =
             axon_core::resolve_use_files_transitive(&program, &search_dirs);
         let mut import_cap_errors: Vec<String> = Vec::new();
@@ -1568,7 +1580,8 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // Type-check pipeline. R8 typed end-to-end: use the LOCATED form so the
     // JSON a tool/agent consumes carries file/line/col (resolved from each
     // typed diagnostic's byte-span against the source), not just code+message.
-    let (located, _infer_ctx, _closure) = run_check_pipeline_located(&mut program, &src, &file);
+    let (located, _infer_ctx, _closure) =
+        run_check_pipeline_located(&mut program, &src, &file, axon_core::entry_dir_of(&file));
     // M5: accepted-`mut` notes ride on the same channel and schema as every
     // other diagnostic, so a host parsing axon-diag/1 sees them without a
     // special case.
@@ -1660,7 +1673,10 @@ fn resolve_modules_or_exit(file: &PathBuf) -> Vec<axon_core::ResolvedModule> {
             process::exit(2);
         }
     };
-    let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+    let search_dirs = axon_core::axon_search_dirs(
+        std::env::current_exe().ok().as_deref(),
+        axon_core::entry_dir_of(file),
+    );
     // Transitive closure: lock/verify-lock must pin EVERY module that joins the
     // program (A uses B uses C → all three), not just the direct edge (R6).
     let (resolved, unresolved) = axon_core::resolve_use_files_transitive(&program, &search_dirs);
@@ -1961,7 +1977,10 @@ fn verify_lock_tamper(
     fatal: bool,
     use_json: bool,
 ) -> Vec<String> {
-    let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+    let search_dirs = axon_core::axon_search_dirs(
+        std::env::current_exe().ok().as_deref(),
+        axon_core::entry_dir_of(file),
+    );
     let (resolved, _unresolved) = axon_core::resolve_use_files_transitive(program, &search_dirs);
     check_locked_imports(file, &resolved, fatal, use_json, true)
 }
@@ -5700,7 +5719,8 @@ fn session_probe_checks(src: &str, cell_no: usize) -> bool {
         // A closure that is not the required one fails the probe (AR5): the real
         // check then refuses the cell with E2404, and this file is still removed.
         Ok(mut program) => {
-            let (errors, _, closure) = check_pipeline_located_unenforced(&mut program, src, &path);
+            let (errors, _, closure) =
+                check_pipeline_located_unenforced(&mut program, src, &path, None);
             errors.is_empty() && imports_digest_mismatch(&closure).is_none()
         }
         Err(_) => false,
@@ -5926,7 +5946,7 @@ fn run_cell(
             };
         }
     };
-    let (errors, _, closure) = check_pipeline_located_unenforced(&mut program, &src, &path);
+    let (errors, _, closure) = check_pipeline_located_unenforced(&mut program, &src, &path, None);
     // AR5: a closure that is not the `AXON_REQUIRE_IMPORTS_DIGEST` one refuses
     // the cell before it executes or accumulates, and ends the session (exit 8
     // at its end path) — the same contract `run` keeps, with a frame.
@@ -6309,7 +6329,8 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
     // `found` were all dropped, so a model in a run-and-see loop was told
     // neither what was wrong nor where. The located variant differs only in
     // being handed `src`.
-    let (errors, _infer_ctx, _closure) = run_check_pipeline_located(&mut program, &src, &file);
+    let (errors, _infer_ctx, _closure) =
+        run_check_pipeline_located(&mut program, &src, &file, axon_core::entry_dir_of(&file));
     // M5: notes are emitted even when the program is otherwise clean — `run`
     // must not be the quiet path again (that was §2's whole defect).
     for note in floor_division_warnings(&src, &file) {
@@ -7204,12 +7225,13 @@ fn run_check_pipeline_located(
     program: &mut axon_core::ast::Program,
     src: &str,
     source_path: &Path,
+    entry_dir: Option<&Path>,
 ) -> (
     Vec<axon_core::PipelineDiagnostic>,
     axon_core::infer::InferCtx,
     axon_core::ImportClosure,
 ) {
-    let checked = check_pipeline_located_unenforced(program, src, source_path);
+    let checked = check_pipeline_located_unenforced(program, src, source_path, entry_dir);
     enforce_required_imports_digest(&checked.2);
     checked
 }
@@ -7217,10 +7239,13 @@ fn run_check_pipeline_located(
 /// [`run_check_pipeline_located`] without the `AXON_REQUIRE_IMPORTS_DIGEST`
 /// exit: the caller MUST check [`imports_digest_mismatch`] on the returned
 /// closure before anything executes (only `axon session` does, AR5).
+/// `entry_dir` is the directory searched last for modules (LF-4; `None` for
+/// a program staged in-process, like `axon session`'s cells).
 fn check_pipeline_located_unenforced(
     program: &mut axon_core::ast::Program,
     src: &str,
     source_path: &Path,
+    entry_dir: Option<&Path>,
 ) -> (
     Vec<axon_core::PipelineDiagnostic>,
     axon_core::infer::InferCtx,
@@ -7234,6 +7259,7 @@ fn check_pipeline_located_unenforced(
             program,
             src,
             source_path,
+            entry_dir,
             true,
             SealView::Whole,
             None,
@@ -7272,6 +7298,7 @@ fn check_pipeline_located_unenforced(
         program,
         src,
         source_path,
+        entry_dir,
         true,
         SealView::OperatorsOnly,
         Some(&decls.uses),
@@ -7291,6 +7318,7 @@ fn check_pipeline_located_unenforced(
         &mut iso,
         src,
         source_path,
+        entry_dir,
         false,
         SealView::SealedOnly,
         None,
@@ -7315,8 +7343,10 @@ fn check_pipeline_located_unenforced(
 /// [`axon_core::axon_search_dirs`], returning what it merged.
 fn load_program_modules(
     program: &mut axon_core::ast::Program,
+    entry_dir: Option<&Path>,
 ) -> (Vec<axon_core::MergeError>, axon_core::ImportClosure) {
-    let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+    let search_dirs =
+        axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref(), entry_dir);
     axon_core::load_use_decls_recorded(program, &search_dirs)
 }
 
@@ -7383,6 +7413,7 @@ fn run_check_pipeline_inner(
     program: &mut axon_core::ast::Program,
     src: &str,
     source_path: &Path,
+    entry_dir: Option<&Path>,
     load_modules: bool,
     view: SealView,
     hide_uses: Option<&std::collections::HashSet<(Vec<String>, Vec<String>)>>,
@@ -7504,7 +7535,7 @@ fn run_check_pipeline_inner(
     // CS3-7: a `use` that fails (not found, circular) carries its span; other
     // MergeErrors are file-level, so their line/col stay 0.
     let load_errors = if load_modules {
-        let (errors, loaded) = load_program_modules(program);
+        let (errors, loaded) = load_program_modules(program, entry_dir);
         *closure = loaded;
         errors
     } else {
@@ -8045,7 +8076,10 @@ fn run_build_pipeline(
         // Sorted by module name so the key does not depend on resolution order,
         // which would make it unstable across runs for no reason.
         {
-            let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+            let search_dirs = axon_core::axon_search_dirs(
+                std::env::current_exe().ok().as_deref(),
+                axon_core::entry_dir_of(source_path),
+            );
             let (mut resolved, _unresolved) =
                 axon_core::resolve_use_files_transitive(program, &search_dirs);
             resolved.sort_by(|a, b| a.name.cmp(&b.name));
@@ -8343,7 +8377,12 @@ fn check_program_located(
     let src = axon_core::time_passes::time("read", || {
         std::fs::read_to_string(source_path).unwrap_or_default()
     });
-    let (diags, ictx, _closure) = run_check_pipeline_located(program, &src, source_path);
+    let (diags, ictx, _closure) = run_check_pipeline_located(
+        program,
+        &src,
+        source_path,
+        axon_core::entry_dir_of(source_path),
+    );
     (diags, ictx)
 }
 
@@ -8592,7 +8631,8 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
         }
     };
 
-    let (errors, _ctx, closure) = run_check_pipeline_located(&mut program, &src, &file);
+    let (errors, _ctx, closure) =
+        run_check_pipeline_located(&mut program, &src, &file, axon_core::entry_dir_of(&file));
 
     // Collect the functions for the review report.
     //
@@ -8799,7 +8839,7 @@ fn import_closure_of(src: &str, file: &Path) -> (axon_core::ImportClosure, Strin
             process::exit(2);
         }
     };
-    let (errors, closure) = load_program_modules(&mut program);
+    let (errors, closure) = load_program_modules(&mut program, axon_core::entry_dir_of(file));
     if !errors.is_empty() {
         for e in &errors {
             eprintln!("error[{}]: {}", e.code, e.message);
@@ -9457,7 +9497,8 @@ fn cmd_deploy(
         }
     };
 
-    let (errors, _ctx, closure) = run_check_pipeline_located(&mut program, &src, &file);
+    let (errors, _ctx, closure) =
+        run_check_pipeline_located(&mut program, &src, &file, axon_core::entry_dir_of(&file));
     if !errors.is_empty() {
         if json_flag {
             // The `errors` array is part of the published schema that axon-web
@@ -9952,7 +9993,8 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
         }
     };
 
-    let (errors, _ctx, _closure) = run_check_pipeline_located(&mut program, &src, &file);
+    let (errors, _ctx, _closure) =
+        run_check_pipeline_located(&mut program, &src, &file, axon_core::entry_dir_of(&file));
     if !errors.is_empty() {
         if json_flag {
             // The `errors` array is part of the published schema that axon-web

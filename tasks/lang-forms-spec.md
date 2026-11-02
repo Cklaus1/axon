@@ -604,7 +604,7 @@ tests fail at a5310878; guards pass today and exist to kill a mutant.
   `env -u AXON_PATH AXON_PATH_EXCLUSIVE=1` → rc ≠ 0, stdout does not contain `16`, stderr has E0001 "cannot find name `square`".
   Observed today: exactly that one E0001 line, rc 2, for both `check` and `run` (no E0901, no E0003; a bare `use` without `mod` gives
   E0003 instead). Do not assert E0901. Kills M4667.
-- `world_writable_entry_dir_is_not_searched`: m1 in a dir `chmod 0o777`, and again in a dir `chmod 0o770` (group-writable) → rc 2,
+- `world_writable_entry_dir_is_not_searched`: m1 in a dir `chmod 0o777` `[REVISED: build lf/c: 0o707 - a 0o777 dir is also group-writable, so the 0o020 rule alone skips it and M4668 survives]`, and again in a dir `chmod 0o770` (group-writable) → rc 2,
   E0901, and (the fail-first assertion; E0901 alone already holds today) the `searched:` list contains `(not searched: group- or
   world-writable directory)`. ATTACK: `ATTACK: a module was resolved from a world-writable directory`.
 - Fail-first `relative_entry_path_searches_dot`: `axon run main.ax` with `current_dir` = m1's 0700 dir → `16` (kills a mutant that
@@ -739,7 +739,7 @@ feature on), as existing rows do (`v022_g01_mutations.py:11904`, `:12242`, `:127
 | M4665 | LF-4 | entry dir appended in `axon_search_dirs` | lib.rs | `sibling_module_resolves_last` | `ATTACK: a module beside its importer was not found` |
 | M4666 | LF-4 | appended after `<bindir>` (mutant: before `AXON_PATH`) | lib.rs | `axon_path_still_wins_over_sibling` | `ATTACK: a sibling module shadowed AXON_PATH` |
 | M4667 | LF-4 | after the EXCLUSIVE early return (mutant: before it) | lib.rs | `exclusive_never_searches_the_entry_dir` | `ATTACK: EXCLUSIVE searched the entry dir` |
-| M4668 | LF-4 | world-writable skip (`mode & 0o002`) | lib.rs | `world_writable_entry_dir_is_not_searched` (0o777 case) | `ATTACK: a module was resolved from a world-writable directory` |
+| M4668 | LF-4 | world-writable skip (`mode & 0o002`) | lib.rs | `world_writable_entry_dir_is_not_searched` (0o777 case `[REVISED: build lf/c: 0o707, see LF-4 tests]`) | `ATTACK: a module was resolved from a world-writable directory` |
 | M4669 | LF-4 | skip while sealing | lib.rs | `sealed_run_ignores_the_entry_dir` | `ATTACK: a sealed run searched the entry dir` |
 | M4670 | LF-4 | lock resolver passes the entry dir | main.rs | `lock_pins_the_sibling_module` | `ATTACK: the lock pinned a different closure` |
 | ~~M4671~~ | LF-4 | `[REVISED: LFA#3, LFD#4, ruling 4]` **withdrawn**: axon-os `job_module_dir_sets` is unchanged in this spec (O-LF-03). The id stays unused. | - | - | - |

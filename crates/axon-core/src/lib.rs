@@ -521,14 +521,27 @@ pub use cache::{
 
 /// Build the ordered list of directories to search for Axon modules.
 ///
-/// Search order (spec §6):
+/// Search order (spec §6, lang-forms LF-4):
 /// 1. Each entry in `AXON_PATH` (colon-separated on Unix, semicolon on Windows).
 /// 2. `~/.axon/lib/`
 /// 3. `<dir of axon binary>/../lib/axon/`
+/// 4. `entry_dir`, the entry file's own directory, LAST: every module found
+///    in 1-3 still wins, so only a program that failed with E0901 can change.
 ///
-/// Pass `binary_path` as `std::env::current_exe().ok()` for option 3.
-pub fn axon_search_dirs(binary_path: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
+/// Pass `binary_path` as `std::env::current_exe().ok()` for option 3. Under
+/// `AXON_PATH_EXCLUSIVE=1` only option 1 is searched; while an `axon test
+/// --seal` run is active, `entry_dir` is never searched (sealed runs keep
+/// their resolution exactly). An `entry_dir` that anyone but its owner could
+/// write to, or the system temp directory, is skipped by rule
+/// ([`entry_dir_skip_reason`]): a flat file staged in a shared directory must
+/// not load a module another local user planted beside it. The skip is
+/// recorded so the E0901 `searched:` list can say why.
+pub fn axon_search_dirs(
+    binary_path: Option<&std::path::Path>,
+    entry_dir: Option<&std::path::Path>,
+) -> Vec<std::path::PathBuf> {
     let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    ENTRY_DIR_SKIP.with(|s| *s.borrow_mut() = None);
 
     // 1. AXON_PATH env var.
     if let Ok(axon_path) = std::env::var("AXON_PATH") {
@@ -540,8 +553,9 @@ pub fn axon_search_dirs(binary_path: Option<&std::path::Path>) -> Vec<std::path:
         }
     }
     // A caller that names every directory a run may load from (Fabric, for a
-    // check it will vouch for) disables the ambient ones below: `~/.axon/lib`
-    // and the binary's own library are not part of the tree being judged.
+    // check it will vouch for) disables the ambient ones below: `~/.axon/lib`,
+    // the binary's own library and the entry file's directory are not part of
+    // the tree being judged.
     if std::env::var("AXON_PATH_EXCLUSIVE").as_deref() == Ok("1") {
         return dirs;
     }
@@ -559,7 +573,88 @@ pub fn axon_search_dirs(binary_path: Option<&std::path::Path>) -> Vec<std::path:
         }
     }
 
+    // 4. The entry file's directory, last. Never while sealing.
+    if let Some(dir) = entry_dir {
+        if crate::resolver::sealed_module_dirs().is_empty() {
+            // `Path::new("main.ax").parent()` is `""`: the cwd.
+            let dir = if dir.as_os_str().is_empty() {
+                std::path::Path::new(".")
+            } else {
+                dir
+            };
+            match entry_dir_skip_reason(dir) {
+                None => dirs.push(dir.to_path_buf()),
+                Some(reason) => ENTRY_DIR_SKIP.with(|s| {
+                    *s.borrow_mut() = Some((dirs.clone(), dir.to_path_buf(), reason));
+                }),
+            }
+        }
+    }
+
     dirs
+}
+
+thread_local! {
+    /// The entry directory the last [`axon_search_dirs`] call on this thread
+    /// skipped, with the list it returned and why. The E0901 text reports it
+    /// only for a search over exactly that list.
+    static ENTRY_DIR_SKIP: std::cell::RefCell<
+        Option<(Vec<std::path::PathBuf>, std::path::PathBuf, &'static str)>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+/// The entry file's directory for a source path (`None` for stdin, `-`).
+pub fn entry_dir_of(source_path: &std::path::Path) -> Option<&std::path::Path> {
+    if source_path.as_os_str() == "-" {
+        return None;
+    }
+    source_path.parent()
+}
+
+/// Why the entry directory `dir` is not searched, or `None` if it is
+/// (lang-forms D10, fail-closed): its permissions cannot be read, it is
+/// group- or world-writable, or it is the system temp directory.
+pub fn entry_dir_skip_reason(dir: &std::path::Path) -> Option<&'static str> {
+    const UNREADABLE: &str = "cannot read its permissions";
+    const WRITABLE: &str = "group- or world-writable directory";
+    const TEMP: &str = "the system temp directory";
+    let Ok(meta) = std::fs::metadata(dir) else {
+        return Some(UNREADABLE);
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode();
+        if mode & 0o002 != 0 {
+            return Some(WRITABLE);
+        }
+        if mode & 0o020 != 0 {
+            return Some(WRITABLE);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = meta;
+    let Ok(canon) = dir.canonicalize() else {
+        return Some(UNREADABLE);
+    };
+    match std::env::temp_dir().canonicalize() {
+        Ok(tmp) if tmp != canon => None,
+        _ => Some(TEMP),
+    }
+}
+
+/// The E0901 `searched:` line for an entry directory skipped by the
+/// [`axon_search_dirs`] call that produced `search_dirs`, if any.
+fn entry_dir_skip_line(
+    search_dirs: &[std::path::PathBuf],
+    rel: &std::path::Path,
+) -> Option<String> {
+    ENTRY_DIR_SKIP.with(|s| {
+        s.borrow().as_ref().and_then(|(dirs, dir, reason)| {
+            (dirs.as_slice() == search_dirs)
+                .then(|| format!("    {} (not searched: {reason})", dir.join(rel).display()))
+        })
+    })
 }
 
 /// Load source files referenced by `use` declarations in `program` and merge
@@ -1128,6 +1223,7 @@ fn load_module_recursive(
         let detail = searched
             .iter()
             .map(|s| format!("    {s} (not found)"))
+            .chain(entry_dir_skip_line(search_dirs, &rel))
             .collect::<Vec<_>>()
             .join("\n");
         // BUG_HUNT #34: a multi-segment `use a::b` is loaded as the NESTED

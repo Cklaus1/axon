@@ -3929,3 +3929,18 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M4623': r'ATTACK: acid test passed without running: a crashing axon \(rc 101\)',
 })
+
+# lang-forms LF-4: sibling-directory modules (ids M4665-M4679; M4671 withdrawn)
+ATTACK_MARKERS.update({
+    'M4665': r'ATTACK: a module beside its importer was not found',
+    'M4666': r'ATTACK: a sibling module shadowed AXON_PATH',
+    'M4667': r'ATTACK: EXCLUSIVE searched the entry dir',
+    'M4668': r'ATTACK: a module was resolved from a world-writable directory',
+    'M4669': r'ATTACK: a sealed run searched the entry dir',
+    'M4670': r'ATTACK: the lock pinned a different closure',
+    'M4672': r'ATTACK: caps resolved from the staging dir',
+    'M4675': r'ATTACK: the build cache reused a binary after its sibling module changed',
+    'M4677': r'ATTACK: a sibling module skipped the import-edge capability check',
+    'M4678': r'ATTACK: a module was resolved from a group-writable directory',
+    'M4679': r'ATTACK: a relative entry path lost its sibling module',
+})

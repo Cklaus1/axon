@@ -1,5 +1,9 @@
 # Axon Changelog
 
+## Language forms: () , if let, for (a, b), sibling modules (lang-forms)
+
+- **Sibling modules:** `mod util` now also finds `util.ax` in the entry file's own directory, searched LAST (after `AXON_PATH`, `~/.axon/lib` and `<bindir>/../lib/axon`), so `main.ax` + `mathutil.ax` side by side runs with `AXON_PATH` unset (it was E0901; `env -u AXON_PATH axon check examples/modular/agent.ax` is now rc 0). Every module found before is still found first, so only programs that failed with E0901 change. The entry directory is never searched under `AXON_PATH_EXCLUSIVE=1`, while sealing (`axon test --seal`), or when it is group- or world-writable, the system temp directory, or its permissions cannot be read; the E0901 `searched:` list then shows `<dir>/util.ax (not searched: <reason>)`. One directory per program (the entry file's), used alike by `check`/`run`/`build` (including the native build cache key), `axon lock`/`check --locked`, the `@[contained]` import-edge check (E1203), `axon imports` and the LSP (a `file://` document's directory); `axon caps --base-dir DIR` uses DIR; `axon session` cells and axon-os jobs get none (O-LF-03). g01 rows M4665-M4670, M4672, M4675, M4677-M4679.
+
 ## Unattended repair authorization built, not enabled; the repair run ledger (NH-R1 A0-A4, R6 L1-L3)
 
 - **`cortex repair --unattended` refuses by default (NH-R1 A3):** the flag exists only in builds with the cargo feature `unattended` (off by default). Without a verified `axon-approval/4` repair envelope every attempt exits 29 `unauthorized` with nothing written. Enabling unattended execution is NOT authorized: it still needs the §9 evidence in `tasks/unattended-auth-spec.md` (S-tests and full gate green, a read-only adversarial security review, R6 L1-L3 with a clean C1 audit) and then a separate human decision. Under an envelope the `cortex-repair/1` record gains `authorization` and the envelope id appears in the episode id.

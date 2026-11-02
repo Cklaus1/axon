@@ -44600,6 +44600,12 @@ fn module_not_found_names_the_use_line() {
         "mathutil.ax",
         "pub fn square(x: i64) -> i64 { x * x }\npub fn cube(x: i64) -> i64 { x * x * x }\n",
     );
+    // LF-4: the entry case imports a module that exists nowhere (`mathutil.ax`
+    // beside `main.ax` now resolves; that is the control below).
+    let entry_main = w(
+        "e_main.ax",
+        "mod nomod\nuse nomod.{square}\nfn main() {\n    println(to_str(square(4)))\n}\n",
+    );
     let nested_main = w(
         "n_main.ax",
         "use n_mid.{f}\nfn main() {\n    println(to_str(f()))\n}\n",
@@ -44636,11 +44642,11 @@ fn module_not_found_names_the_use_line() {
             .to_string()
     };
     let mut fails = Vec::new();
-    // Entry-file `use` with `AXON_PATH` unset: the module beside main is not
-    // searched (documented), and the error names line 2.
-    let (rc, err) = check(&main, None);
+    // Entry-file `use` with `AXON_PATH` unset: a module found nowhere, and the
+    // error names line 2.
+    let (rc, err) = check(&entry_main, None);
     let d = find(&err, "E0901");
-    if rc != Some(2) || !d.contains("\"line\":2,") || !d.contains("main.ax\"") {
+    if rc != Some(2) || !d.contains("\"line\":2,") || !d.contains("e_main.ax\"") {
         fails.push(format!("entry: rc={rc:?} {d}"));
     }
     // A missing `use` inside an imported module: that module's file, line 2.
@@ -45458,5 +45464,331 @@ fn run_sh_hello_goal_fails_on_replay_only_crash() {
     assert!(
         !m.contains("loop complete"),
         "the loop must not report completion after a crashed replay:\n{m}"
+    );
+}
+
+// lang-forms LF-4: `mod util` also searches the entry file's directory, last.
+// Never under `AXON_PATH_EXCLUSIVE=1`, never while sealing, never when the
+// directory is group- or world-writable or the system temp directory.
+
+const LF4_MAIN: &str =
+    "mod mathutil\nuse mathutil.{square}\nfn main() { println(to_str(square(4))) }\n";
+const LF4_LIB: &str = "pub fn square(x: i64) -> i64 { x * x }\n";
+
+/// A fresh directory `temp_dir()/axon_lf4_<tag>_<pid>` holding `files`, its
+/// mode set to `mode` after they are written.
+#[cfg(unix)]
+fn lf4_dir(tag: &str, mode: u32, files: &[(&str, &str)]) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let d = std::env::temp_dir().join(format!("axon_lf4_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    for (name, text) in files {
+        std::fs::write(d.join(name), text).unwrap();
+    }
+    std::fs::set_permissions(&d, std::fs::Permissions::from_mode(mode)).unwrap();
+    d
+}
+
+/// `axon <args>` in `cwd` with no module path in the environment (a user who
+/// never set `AXON_PATH`), plus `env`. Returns (rc, stdout, stderr).
+fn lf4_axon(
+    args: &[&str],
+    cwd: &std::path::Path,
+    env: &[(&str, &str)],
+) -> (Option<i32>, String, String) {
+    let mut c = axon();
+    c.args(args)
+        .current_dir(cwd)
+        .env_remove("AXON_PATH")
+        .env_remove("AXON_PATH_EXCLUSIVE")
+        .env_remove("AXON_REQUIRE_IMPORTS_DIGEST");
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let o = c.output().unwrap();
+    (
+        o.status.code(),
+        String::from_utf8_lossy(&o.stdout).into_owned(),
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn sibling_module_resolves_last() {
+    let attack = "ATTACK: a module beside its importer was not found";
+    let d = lf4_dir(
+        "sib",
+        0o700,
+        &[("main.ax", LF4_MAIN), ("mathutil.ax", LF4_LIB)],
+    );
+    let main = d.join("main.ax");
+    let tmp = std::env::temp_dir();
+    let (crc, _, cerr) = lf4_axon(&["check", main.to_str().unwrap()], &tmp, &[]);
+    let (rrc, rout, rerr) = lf4_axon(&["run", main.to_str().unwrap()], &tmp, &[]);
+    let _ = std::fs::remove_dir_all(&d);
+    assert_eq!(crc, Some(0), "{attack}: check: {cerr}");
+    assert_eq!(
+        (rrc, rout.as_str()),
+        (Some(0), "16\n"),
+        "{attack}: run: {rerr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn axon_path_still_wins_over_sibling() {
+    let attack = "ATTACK: a sibling module shadowed AXON_PATH";
+    let lib = lf4_dir(
+        "win_lib",
+        0o700,
+        &[(
+            "mathutil.ax",
+            "pub fn square(x: i64) -> i64 { x * x + 100 }\n",
+        )],
+    );
+    let d = lf4_dir(
+        "win",
+        0o700,
+        &[("main.ax", LF4_MAIN), ("mathutil.ax", LF4_LIB)],
+    );
+    let (rc, out, err) = lf4_axon(
+        &["run", d.join("main.ax").to_str().unwrap()],
+        &std::env::temp_dir(),
+        &[("AXON_PATH", lib.to_str().unwrap())],
+    );
+    let _ = std::fs::remove_dir_all(&d);
+    let _ = std::fs::remove_dir_all(&lib);
+    assert_eq!((rc, out.as_str()), (Some(0), "116\n"), "{attack}: {err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn exclusive_never_searches_the_entry_dir() {
+    let attack = "ATTACK: EXCLUSIVE searched the entry dir";
+    let d = lf4_dir(
+        "excl",
+        0o700,
+        &[("main.ax", LF4_MAIN), ("mathutil.ax", LF4_LIB)],
+    );
+    let main = d.join("main.ax");
+    let mut fails = Vec::new();
+    for verb in ["check", "run"] {
+        let (rc, out, err) = lf4_axon(
+            &[verb, main.to_str().unwrap()],
+            &std::env::temp_dir(),
+            &[("AXON_PATH_EXCLUSIVE", "1")],
+        );
+        if rc == Some(0)
+            || out.contains("16")
+            || !err.contains("E0001")
+            || !err.contains("cannot find name `square`")
+        {
+            fails.push(format!("{verb}: rc={rc:?} out={out:?} err={err}"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(fails.is_empty(), "{attack}: {}", fails.join("\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn world_writable_entry_dir_is_not_searched() {
+    // [REVISED: build lf/c] 0o707, not 0o777: a 0o777 directory is also
+    // group-writable, so the group-bit rule alone would still skip it and the
+    // world-bit row (M4668) could not be killed by it.
+    let skip = "(not searched: group- or world-writable directory)";
+    let mut fails = Vec::new();
+    for (tag, mode, attack) in [
+        (
+            "world",
+            0o707,
+            "ATTACK: a module was resolved from a world-writable directory",
+        ),
+        (
+            "group",
+            0o770,
+            "ATTACK: a module was resolved from a group-writable directory",
+        ),
+    ] {
+        let d = lf4_dir(
+            &format!("ww_{tag}"),
+            mode,
+            &[("main.ax", LF4_MAIN), ("mathutil.ax", LF4_LIB)],
+        );
+        let main = d.join("main.ax");
+        let (rc, out, err) = lf4_axon(&["run", main.to_str().unwrap()], &std::env::temp_dir(), &[]);
+        let _ = std::fs::remove_dir_all(&d);
+        let line = format!("{}/mathutil.ax {skip}", d.display());
+        if rc != Some(2) || out.contains("16") || !err.contains("E0901") || !err.contains(&line) {
+            fails.push(format!(
+                "{attack} [{mode:o}]: rc={rc:?} out={out:?} want `{line}` in: {err}"
+            ));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn relative_entry_path_searches_dot() {
+    let attack = "ATTACK: a relative entry path lost its sibling module";
+    let d = lf4_dir(
+        "rel",
+        0o700,
+        &[("main.ax", LF4_MAIN), ("mathutil.ax", LF4_LIB)],
+    );
+    let (rc, out, err) = lf4_axon(&["run", "main.ax"], &d, &[]);
+    let _ = std::fs::remove_dir_all(&d);
+    assert_eq!((rc, out.as_str()), (Some(0), "16\n"), "{attack}: {err}");
+}
+
+/// A sealed run resolves exactly as before LF-4: an operator copy of the
+/// candidate's module beside the suite is not searched. Were the suite's
+/// directory searched, the sealed guard would find that operator module and
+/// refuse the run (E0901 "a sealed module may not supply it").
+#[cfg(unix)]
+#[test]
+fn sealed_run_ignores_the_entry_dir() {
+    let attack = "ATTACK: a sealed run searched the entry dir";
+    let cand = lf4_dir(
+        "seal_cand",
+        0o700,
+        &[("f.ax", "pub fn double(x: i64) -> i64 { x + x }\n")],
+    );
+    let suite = lf4_dir(
+        "seal_suite",
+        0o700,
+        &[
+            (
+                "accept.ax",
+                "mod f\nuse f.{double}\n\n@[test]\nfn t_ok() { assert_eq(double(21), 42) }\n",
+            ),
+            ("f.ax", "pub fn double(x: i64) -> i64 { 0 }\n"),
+        ],
+    );
+    let out = axon()
+        .current_dir(&suite)
+        .arg("test")
+        .arg(suite.join("accept.ax"))
+        .arg("--json")
+        .arg("--seal")
+        .arg(&cand)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("AXON_PATH", &cand)
+        .output()
+        .unwrap();
+    let so = String::from_utf8_lossy(&out.stdout).into_owned();
+    let se = String::from_utf8_lossy(&out.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&cand);
+    let _ = std::fs::remove_dir_all(&suite);
+    assert_eq!(out.status.code(), Some(0), "{attack}: {so}{se}");
+    assert!(
+        so.contains("\"name\":\"t_ok\",\"status\":\"ok\""),
+        "{attack}: {so}{se}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn lock_pins_the_sibling_module() {
+    let attack = "ATTACK: the lock pinned a different closure";
+    let d = lf4_dir(
+        "lock",
+        0o700,
+        &[("main.ax", LF4_MAIN), ("mathutil.ax", LF4_LIB)],
+    );
+    let main = d.join("main.ax");
+    let m = main.to_str().unwrap();
+    let tmp = std::env::temp_dir();
+    let mut fails = Vec::new();
+    let (rc, _, err) = lf4_axon(&["lock", m], &tmp, &[]);
+    if rc != Some(0) {
+        fails.push(format!("lock: rc={rc:?} {err}"));
+    }
+    // [REVISED: build lf/c] `axon run` has no `--locked`; `axon check
+    // --locked` is the verb that enforces the lock.
+    let (rc, _, err) = lf4_axon(&["check", "--locked", m], &tmp, &[]);
+    if rc != Some(0) {
+        fails.push(format!("check --locked: rc={rc:?} {err}"));
+    }
+    std::fs::write(
+        d.join("mathutil.ax"),
+        "pub fn square(x: i64) -> i64 { x * x + 1 }\n",
+    )
+    .unwrap();
+    let (rc, _, err) = lf4_axon(&["check", "--locked", m], &tmp, &[]);
+    if rc != Some(2) || !err.contains("E1201") || !err.contains("mathutil") {
+        fails.push(format!("tampered: rc={rc:?} {err}"));
+    }
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(fails.is_empty(), "{attack}: {}", fails.join("\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn caps_base_dir_is_the_entry_dir() {
+    let attack = "ATTACK: caps resolved from the staging dir";
+    let s = lf4_dir(
+        "caps_s",
+        0o700,
+        &[(
+            "main.ax",
+            "mod util\nuse util.{f}\nfn main() { println(to_str(f())) }\n",
+        )],
+    );
+    let base = lf4_dir("caps_d", 0o700, &[("util.ax", "pub fn f() -> i64 { 7 }\n")]);
+    let (rc, out, err) = lf4_axon(
+        &[
+            "caps",
+            s.join("main.ax").to_str().unwrap(),
+            "--base-dir",
+            base.to_str().unwrap(),
+            "--json",
+        ],
+        &std::env::temp_dir(),
+        &[],
+    );
+    let _ = std::fs::remove_dir_all(&s);
+    let _ = std::fs::remove_dir_all(&base);
+    assert_eq!(rc, Some(0), "{attack}: {out}{err}");
+    assert!(
+        out.contains("\"schema\":\"axon-caps/1\""),
+        "{attack}: {out}{err}"
+    );
+}
+
+/// The `@[contained]` import-edge check (E1203) covers a module found beside
+/// the entry file. Program text from `import_widening_capabilities_is_rejected_e1203`.
+#[cfg(unix)]
+#[test]
+fn contained_import_edge_checks_a_sibling_module() {
+    let attack = "ATTACK: a sibling module skipped the import-edge capability check";
+    let d = lf4_dir(
+        "e1203",
+        0o700,
+        &[
+            (
+                "netmod.ax",
+                "fn fetch() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(_) => \"\" } }\n",
+            ),
+            (
+                "deny.ax",
+                "mod netmod\nuse netmod.{fetch}\n@[contained(fs: [read(\"./data/\")], exec: none)]\nfn main() -> i64 { 0 }\n",
+            ),
+        ],
+    );
+    let (rc, out, err) = lf4_axon(
+        &["check", d.join("deny.ax").to_str().unwrap()],
+        &std::env::temp_dir(),
+        &[("AXON_AI_MOCK", "1")],
+    );
+    let _ = std::fs::remove_dir_all(&d);
+    assert_eq!(rc, Some(2), "{attack}: {out}{err}");
+    assert!(
+        err.contains("E1203") && err.contains("net"),
+        "{attack}: {out}{err}"
     );
 }

@@ -248,11 +248,6 @@ when you write the candidate:
    the module name has no value at run time. Likewise a type or enum name is not a value;
    build a struct literal `P { x: 1 }` or name a variant `S::A`.
 
-10. **A module file beside yours is not found without `AXON_PATH`.** `mod util` searches
-    `AXON_PATH`, then `~/.axon/lib`, then `<bindir>/../lib/axon` — never the importing file's own
-    directory. With `util.ax` next to `main.ax`, run `AXON_PATH=. axon run main.ax` (E0901 otherwise;
-    the E0901 message names the directories it searched).
-
 ---
 
 ## 7. AI / capability features (Axon's reason to exist)
