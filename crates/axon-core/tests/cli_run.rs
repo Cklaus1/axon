@@ -44324,6 +44324,10 @@ fn wrapper_lambda_param_kind_is_checked() {
 /// statement (`exit_same_stmt`) and a handler that answers an effect without
 /// `resume`, inside the wrapper (`handler_inside`) or around its call after
 /// an earlier `println` (`handler_outside`), also leave the call unrun.
+/// CS4-4 (run order): a call that runs after a sibling argument's call
+/// (`c_sib`) or a statement's call (`c_seq`) derives nothing, nor does a
+/// call with a call in its own args (`m4716`); a nested wrapper call and a
+/// method receiver passed a value they accept run (`c_ok2`, `method_ok`).
 #[test]
 fn wrapper_lambda_controls_stay_legal() {
     let attack = "ATTACK: a wrapper-lambda program that runs was refused";
@@ -44396,6 +44400,27 @@ fn wrapper_lambda_controls_stay_legal() {
             "handler_outside",
             format!("fn main() {{\n{f}  let g = |y| {{\n    println(\"x\")\n    f(y)\n  }}\n  let v = with handler {{ on IO(p) => 7 }} {{\n    g(5)\n  }}\n  println(to_str(v))\n}}\n"),
             "7\n",
+        ),
+        (
+            "c_sib",
+            format!("fn main() {{\n{f}  let h2 = |a, b| 0\n  let g = |y| h2(println(\"x\"), f(y))\n  let v = with handler {{ on IO(p) => 7 }} {{\n    g(5)\n  }}\n  println(to_str(v))\n}}\n"),
+            "7\n",
+        ),
+        (
+            "c_seq",
+            format!("fn main() {{\n{f}  let g = |y| {{ println(\"x\"); f(y) }}\n  let v = with handler {{ on IO(p) => 7 }} {{\n    g(5)\n  }}\n  println(to_str(v))\n}}\n"),
+            "7\n",
+        ),
+        (
+            "m4716",
+            "fn main() {\n  let f = |x, z| str_len(x)\n  let g = |y| f(y, println(\"x\"))\n  let v = with handler { on IO(p) => 7 } {\n    g(5)\n  }\n  println(to_str(v))\n}\n".to_string(),
+            "7\n",
+        ),
+        ("c_ok2", format!("fn main() {{\n{f}  let g = |y| println(to_str(f(y)))\n  g(\"abc\")\n}}\n"), "3\n"),
+        (
+            "method_ok",
+            format!("{CS4_DBL}fn main() {{\n{f}  let g = |y| f(y).dbl()\n  println(to_str(g(\"abc\")))\n}}\n"),
+            "6\n",
         ),
     ];
     for (tag, src, out) in cases {
@@ -46999,5 +47024,220 @@ fn if_join_leaves_o_af_01_and_o_af_02_open() {
         );
         let (rc, out) = af2_run(&format!("cs4_{tag}"), src);
         assert_eq!((rc, out.as_str()), (Some(0), want), "[{tag}]: run");
+    }
+}
+
+// ── checker-soundness-4 lane S4c: CS4-3, CS4-4 ─────────────────────────────
+
+/// The code and line of the first error diagnostic in `axon check` output.
+fn cs4_first_error(diags: &str) -> Option<(String, u32)> {
+    let at = diags.find("\"severity\":\"error\",\"code\":\"")?
+        + "\"severity\":\"error\",\"code\":\"".len();
+    let rest = &diags[at..];
+    let code = rest[..rest.find('"')?].to_string();
+    let line_at = rest.find("\"line\":")? + "\"line\":".len();
+    let digits: String = rest[line_at..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    Some((code, digits.parse().ok()?))
+}
+
+/// CS4-3 (O-LF-01): a tuple pattern on a subject of a known type is
+/// type-checked: a tuple of another length or a non-tuple subject is E0102,
+/// and the sub-patterns take the component types, so a wrong use of one is
+/// refused too. Each case checked rc 0 and then panicked at run (`no match
+/// arm matched`, `cannot apply Add`), or ran a dead arm (`t_iflet`,
+/// `t_mixed_arity`, `t_struct_subj`; refused by decision D9).
+#[test]
+fn tuple_pattern_is_type_checked() {
+    let attack = "ATTACK: a tuple pattern of the wrong shape checked clean";
+    let main = |body: &str| format!("fn main() {{\n{body}\n}}\n");
+    let cases = [
+        ("t_arity3", main("    let r = match (1, 2, 3) { (a, b) => a + b }\n    println(to_str(r))"), 2, true),
+        ("t_nontuple", main("    let r = match 5 { (a, b) => a + b }\n    println(to_str(r))"), 2, true),
+        ("t_comptype", main("    let r = match (1, \"s\") { (a, b) => to_str(b + 1) }\n    println(r)"), 2, false),
+        (
+            "t_nested_ty",
+            main("    let r = match (Some(1), 2) { (Some(a), b) => a + b, _ => 0 }\n    let s = match (Some(\"x\"), 2) { (Some(a), b) => a + 1, _ => 0 }\n    println(to_str(r + s))"),
+            3,
+            false,
+        ),
+        (
+            "t_iflet_ty",
+            main("    let t = (1, \"s\")\n    if let (a, b) = t { println(to_str(b + 1)) } else { println(\"no\") }"),
+            3,
+            false,
+        ),
+        (
+            "t_iflet",
+            main("    let t = (1, 2, 3)\n    if let (a, b) = t { println(to_str(a + b)) } else { println(\"no\") }"),
+            3,
+            true,
+        ),
+        ("t_mixed_arity", main("    let r = match (1, 2) { (a, b) => a + b, (a, b, c) => a }\n    println(to_str(r))"), 2, true),
+        (
+            "t_struct_subj",
+            format!("type P = {{ x: i64 }}\n{}", main("    let p = P { x: 1 }\n    let r = match p { (a, b) => 1, _ => 2 }\n    println(to_str(r))")),
+            4,
+            true,
+        ),
+    ];
+    for (tag, src, line, shape) in cases {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs4t_{tag}"), &src);
+        let first = cs4_first_error(&cmsg);
+        assert!(
+            crc == Some(2) && first == Some(("E0102".to_string(), line)),
+            "{attack} [{tag}]: want rc 2, first error E0102 at line {line}, got rc {crc:?} {first:?}: {cmsg}"
+        );
+        assert!(
+            !shape || cmsg.contains("tuple pattern"),
+            "{attack} [{tag}]: the E0102 must name the tuple pattern: {cmsg}"
+        );
+        assert!(
+            rrc == Some(2) && rout.is_empty(),
+            "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+        );
+    }
+}
+
+/// CS4-3 false-refusal guard: valid tuple matches still check rc 0 and
+/// print the same. A subject whose type is not known when the pattern is
+/// bound (an untyped lambda's param, a generic `T`) is left unchecked, so a
+/// match with arms of two arities that both run stays legal (`l1`, `g3`).
+/// Literal sub-patterns are not type-checked (`t_lit_ty`, O-CS4-04), nor is
+/// the unit pattern `()`, whose type is `Unit` (`unit`, `unit_on_int`).
+#[test]
+fn tuple_pattern_controls_stay_legal() {
+    let attack = "ATTACK: a valid tuple match was refused";
+    let cases = [
+        (
+            "t_ok",
+            "fn f(p: (i64, str)) -> str {\n    match p {\n        (0, s) => s + \"!\"\n        (n, s) => to_str(n) + s\n    }\n}\n\
+             fn main() {\n    println(f((0, \"a\")))\n    println(f((3, \"b\")))\n    \
+             let r = match (Some(1), 2) { (Some(a), b) => a + b, (None, b) => b }\n    println(to_str(r))\n    \
+             let q = match ((1, 2), 3) { ((a, b), c) => a + b + c }\n    println(to_str(q))\n}\n",
+            "a!\n3b\n3\n6\n",
+        ),
+        (
+            "t_ok_arr",
+            "fn main() {\n    let xs = [(1, \"a\"), (2, \"b\")]\n    for p in xs {\n        match p { (n, s) => println(to_str(n) + s) }\n    }\n    \
+             let d = [(1, 2)]\n    let r = match d[0] { (a, b) => a * b }\n    println(to_str(r))\n}\n",
+            "1a\n2b\n2\n",
+        ),
+        (
+            "t_ok_iflet",
+            "fn main() {\n    let t = (1, \"s\")\n    if let (1, b) = t { println(b) } else { println(\"no\") }\n    \
+             if let (a, \"s\") = t { println(to_str(a)) } else { println(\"no\") }\n}\n",
+            "s\n1\n",
+        ),
+        ("t_ok_lambda", "fn main() {\n    let g = |p| match p { (a, b) => a + b }\n    println(to_str(g((1, 2))))\n}\n", "3\n"),
+        (
+            "t_generic",
+            "fn swap<A, B>(p: (A, B)) -> (B, A) {\n    match p { (a, b) => (b, a) }\n}\n\
+             fn main() {\n    let q = swap((1, \"x\"))\n    match q { (s, n) => println(s + to_str(n)) }\n}\n",
+            "x1\n",
+        ),
+        (
+            "t_tparam",
+            "fn f<T>(x: T) -> i64 {\n    match x { (a, b) => 1, _ => 2 }\n}\nfn main() { println(to_str(f((1, 2)))) println(to_str(f(5))) }\n",
+            "1\n2\n",
+        ),
+        ("t_wild", "fn main() {\n    let r = match (1, 2) { _ => 5 }\n    let s = match 7 { x => x }\n    println(to_str(r + s))\n}\n", "12\n"),
+        ("t_lit_ty", "fn main() {\n    let r = match (1, 2) { (\"a\", y) => y, (x, _) => x }\n    println(to_str(r))\n}\n", "1\n"),
+        (
+            "l1",
+            "fn main() {\n    let e = |p| match p { (a, b) => 2, (a, b, c) => 3, _ => 0 }\n    println(to_str(e((1, 2))))\n    println(to_str(e((1, 2, 3))))\n}\n",
+            "2\n3\n",
+        ),
+        (
+            "l2",
+            "fn main() {\n    let e = |p| match p { (a, b) => 2, _ => 0 }\n    println(to_str(e((1, 2))))\n    println(to_str(e(5)))\n}\n",
+            "2\n0\n",
+        ),
+        (
+            "g2",
+            "fn f<T>(x: T) -> i64 { match x { Some(a) => 1, Ok(b) => 2, _ => 0 } }\nfn main() { println(to_str(f(Some(1)))) println(to_str(f(5))) }\n",
+            "1\n0\n",
+        ),
+        (
+            "g3",
+            "fn f<T>(x: T) -> i64 { match x { (a, b) => 2, (a, b, c) => 3, _ => 0 } }\nfn main() { println(to_str(f((1, 2)))) println(to_str(f((1, 2, 3)))) }\n",
+            "2\n3\n",
+        ),
+        (
+            "g4",
+            "fn f(o: Option<(i64, (str, i64))>) -> i64 { match o { Some((a, (_, c))) => a + c, None => 0 } }\n\
+             fn h<A, B>(o: Option<(A, B)>) -> i64 { match o { Some((_, _)) => 1, _ => 0 } }\n\
+             fn main() { println(to_str(f(Some((1, (\"x\", 2)))))) println(to_str(h(Some((1, \"y\"))))) println(to_str(h(None))) }\n",
+            "3\n1\n0\n",
+        ),
+        (
+            "g5",
+            "fn main() {\n    let ps = [(1, \"a\"), (2, \"b\")]\n    for p in ps { match p { (n, s) => println(s + to_str(n)) } }\n    \
+             let xs = [1, 2]\n    let e = |p| match p { (i, x) => i + x }\n    println(to_str(e((1, 2))))\n    \
+             let q = (1, 2)\n    while let (a, b) = q { println(to_str(a + b)) break }\n}\n",
+            "a1\nb2\n3\n3\n",
+        ),
+        (
+            "unit",
+            "fn g() {}\nfn h(k: i64) -> Result<(), str> { if k == 0 { Ok(()) } else { Err(\"bad\") } }\n\
+             fn main() {\n    let a = match () { () => 1 }\n    let b = match g() { () => 2 }\n    \
+             let c = match h(0) { Ok(()) => 3, Err(e) => 4 }\n    \
+             if let Ok(()) = h(1) { println(\"ok\") } else { println(\"err\") }\n    println(to_str(a + b + c))\n}\n",
+            "err\n6\n",
+        ),
+        ("unit_on_int", "fn main() {\n    let a = match 5 { () => 1, _ => 2 }\n    println(to_str(a))\n}\n", "2\n"),
+    ];
+    for (tag, src, out) in cases {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs4tc_{tag}"), src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: {rerr}"
+        );
+    }
+}
+
+/// A trait method on `i64` for the CS4-4 method-receiver cases.
+const CS4_DBL: &str = "trait Dbl {\n    fn dbl(self) -> i64\n}\nimpl Dbl for i64 {\n    fn dbl(self: i64) -> i64 { self * 2 }\n}\n";
+
+/// CS4-4 (O-CS3-05): a wrapper lambda's call nested in another call's args
+/// or in a method receiver runs first (an argument runs before its call), so
+/// it derives the kind of its callee's param as a call at the top does
+/// (CS3-2). Each case checked rc 0 and then panicked at run (`expected str,
+/// got i64`).
+#[test]
+fn wrapper_lambda_nested_call_kind_is_checked() {
+    let attack = "ATTACK: a wrong-kind argument through a nested wrapper call checked clean";
+    let f = "  let f = |x| str_len(x)\n";
+    let msg = "arg 0 of a call through a fn value (expected str), found i64";
+    let cases = [
+        (
+            "w17b",
+            format!("fn main() {{\n{f}  let g = |y| println(to_str(f(y)))\n  g(5)\n}}\n"),
+        ),
+        (
+            "w17c",
+            format!("fn main() {{\n{f}  let g = |y| to_str(f(y))\n  println(g(5))\n}}\n"),
+        ),
+        (
+            "method_recv",
+            format!(
+                "{CS4_DBL}fn main() {{\n{f}  let g = |y| f(y).dbl()\n  println(to_str(g(5)))\n}}\n"
+            ),
+        ),
+    ];
+    for (tag, src) in cases {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs4w_{tag}"), &src);
+        assert!(
+            crc == Some(2) && cmsg.contains("E0102") && cmsg.contains(msg),
+            "{attack} [{tag}]: want rc 2 E0102 with {msg:?}, got rc {crc:?}: {cmsg}"
+        );
+        assert!(
+            rrc == Some(2) && rout.is_empty(),
+            "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+        );
     }
 }

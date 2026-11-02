@@ -983,10 +983,15 @@ pub struct InferCtx {
     /// CS3-2: the param vars of the innermost lambda being inferred.
     lambda_params: Vec<u32>,
     /// CS3-2: the calls started so far in the innermost lambda's body. Only
-    /// a call that is the body's first, with no call in its callee or args,
-    /// derives kinds: a call run before it may perform an effect that an
-    /// enclosing handler answers without `resume`, so the call never runs.
+    /// the call that runs first, with no call in its callee or args, derives
+    /// kinds: a call run before it may perform an effect that an enclosing
+    /// handler answers without `resume`, so the call never runs.
     lambda_calls: u32,
+    /// CS4-4: the calls in the innermost lambda's body whose callee,
+    /// receiver or args are still being inferred. An argument runs before
+    /// its call, so a call whose `lambda_calls` at start equals this count
+    /// is the first to run (`println(to_str(f(y)))` runs `f` first).
+    pending_calls: u32,
     /// CS3-2: the param vars of every lambda inferred. A var two lambda
     /// params share after solving (`g = |w| ...` over `let g = |y| ...`, two
     /// lambdas in one array or `if`) derives no kind: the call reaching one of
@@ -1075,6 +1080,7 @@ impl InferCtx {
             cond_depth: 0,
             lambda_params: Vec::new(),
             lambda_calls: 0,
+            pending_calls: 0,
             all_lambda_params: Vec::new(),
         };
         for (name, sig) in builtin_sigs() {
@@ -1988,316 +1994,10 @@ impl InferCtx {
                 // CS3-2: this call, and every call in its callee and args.
                 let calls_before = self.lambda_calls;
                 self.lambda_calls += 1;
-                let fn_name = match callee.as_ref() {
-                    Expr::Ident(n) => Some(n.clone()),
-                    // Chan::new(n) / chan<T>() both parse as StructLit { name: ... }
-                    Expr::StructLit { name, fields } if fields.is_empty() => Some(name.clone()),
-                    _ => None,
-                };
-
-                // Phase 13 Slice 2: P(dist op k) probability predicate.
-                // The argument is a comparison whose LHS is a distribution struct —
-                // skip all type-checking for these; they are handled at runtime.
-                // NOTE: we intentionally do NOT infer args here because `dist <= k`
-                // would constrain the distribution type against f64, causing E0102.
-                if let Some(ref name) = fn_name {
-                    if crate::builtins::is_prob_pred_ident(name) {
-                        return Type::F64;
-                    }
-                }
-
-                // Handle `chan<T>()` lowered form: "chan::<T>" → Type::Chan(T)
-                if let Some(ref name) = fn_name {
-                    if let Some(inner) = name
-                        .strip_prefix("chan::<")
-                        .and_then(|s| s.strip_suffix(">"))
-                    {
-                        for arg in args {
-                            self.infer_expr(arg, scope, ret_ty);
-                        }
-                        return Type::Chan(Box::new(parse_type_str(inner)));
-                    }
-                }
-
-                // R13 native FFI: `M::fn(...)` (a StructLit-callee call whose
-                // `::`-joined name resolves in the native registry). Constrain
-                // each arg to its FFI param type and return the FFI return type.
-                // Cross-module handle mismatch (E1802) and non-representable args
-                // (E1801) are diagnosed in the checker; here we just thread types.
-                if let Some(ref name) = fn_name {
-                    if let Some((_m, nf)) = crate::native::resolve_call(name) {
-                        for (i, arg) in args.iter().enumerate() {
-                            let arg_ty = self.infer_expr(arg, scope, ret_ty);
-                            if let Some((pty, _mode)) = nf.params.get(i) {
-                                self.constrain(arg_ty, pty.to_type(), "native FFI argument");
-                            }
-                        }
-                        return nf.ret.to_type();
-                    }
-                }
-
-                // Handle `ai_extract::<T>(prompt)` lowered form (Layer-3 ASI):
-                //   "ai_extract::<T>" → Result<T, str>, taking a single str arg.
-                // Mirrors the chan decode just above. The T set is enforced HERE
-                // (`builtins::ai_extract_target`, the mapping the interpreter,
-                // effects and codegen share): an out-of-set T used to check
-                // clean, panic in the interpreter and be dropped silently by
-                // native code. It is E1304 now, on every engine.
-                if let Some(ref name) = fn_name {
-                    if let Some(inner) = crate::builtins::ai_extract_turbofish_type(name) {
-                        if crate::builtins::ai_extract_target(inner).is_none() {
-                            let mut err = InferError::new(
-                                crate::error::E1304,
-                                format!(
-                                    "ai_extract::<{inner}> is not supported: T must be one of \
-                                     i64, f64, bool, Uncertain<i64>, Uncertain<f64>"
-                                ),
-                            )
-                            .with_span(self.current_stmt_span);
-                            err.help = Some(
-                                "for free text use ai_complete(prompt); for a record, extract \
-                                 each field with its own ai_extract::<T>"
-                                    .to_string(),
-                            );
-                            self.errors.push(err);
-                        }
-                        let t = parse_type_str(inner);
-                        // Constrain the (single) arg to be `str`.
-                        for arg in args {
-                            let arg_ty = self.infer_expr(arg, scope, ret_ty);
-                            self.constrain(arg_ty, Type::Str, "arg 0 of `ai_extract`");
-                        }
-                        return Type::Result(Box::new(t), Box::new(Type::Str));
-                    }
-                }
-
-                // `len` accepts a `str` OR any slice/array `[T]` — the interpreter
-                // handles both, but the builtin signature only lists `str`. Special
-                // -case the arg type so `len(my_array)` type-checks. A non-slice arg
-                // flows through the declared `str` param, so `len(42)` still errors.
-                if let Some(ref name) = fn_name {
-                    if name == "len" && args.len() == 1 {
-                        let arg_ty = self.infer_expr(&args[0], scope, ret_ty);
-                        let from_for =
-                            matches!(&args[0], Expr::Ident(n) if n.starts_with("__forarr_"));
-                        match arg_ty {
-                            Type::Slice(_) => {}
-                            Type::Dict(_) if from_for => {
-                                self.errors
-                                    .push(for_over_dict_error(self.current_stmt_span));
-                            }
-                            // Unresolved here (`?`/match binding): decide after
-                            // solving, when it may have become `[T]`.
-                            Type::Var(_) => {
-                                let span = self.current_stmt_span;
-                                self.len_obligations.push((arg_ty, span, from_for));
-                            }
-                            _ => self.constrain(arg_ty, Type::Str, "arg 0 of `len`"),
-                        }
-                        return Type::I64;
-                    }
-                }
-
-                // `to_str` is polymorphic over scalars (i64/i32/.../f64/bool) —
-                // the interpreter dispatches on the runtime value (BUG_HUNT #29),
-                // so picking `to_str_f64`/`to_str_bool` is never required. Accept
-                // any scalar without constraint; a non-scalar arg still flows to
-                // the declared `i64` param below and errors, so `to_str([1,2])`
-                // is rejected.
-                if let Some(ref name) = fn_name {
-                    if name == "to_str" && args.len() == 1 {
-                        let arg_ty = self.infer_expr(&args[0], scope, ret_ty);
-                        // `is_str` as well as `is_scalar`: `to_str` of a `str` is
-                        // the identity. See interp/builtins.rs for why refusing it
-                        // was a wart (9 of 36 measured first errors).
-                        if arg_ty.is_scalar() || arg_ty.is_str() {
-                            return Type::Str;
-                        }
-                        // Not yet RESOLVED is not the same as wrong. A value bound
-                        // by a pattern (`Err(e) => to_str(e)`) is still a type var
-                        // here and only becomes `str` when the constraints solve —
-                        // so constraining it to `i64` below reported
-                        // "expected i64, found str" for exactly the identity call
-                        // the arm above exists to allow. Measured: this was the
-                        // remaining half of the `to_str`-of-a-`str` wart, still
-                        // firing on the benchmark after the widening landed. A
-                        // genuinely non-scalar arg (`to_str([1, 2])`) resolves to a
-                        // concrete type and is still rejected by the checker's own
-                        // argument loop, which skips only scalars and `str`.
-                        if type_is_unresolved(&arg_ty) {
-                            return Type::Str;
-                        }
-                        // Non-scalar: constrain the ALREADY-inferred arg to the
-                        // declared `i64` param right here — reproducing the exact
-                        // E0102 the general arg loop below would emit — instead of
-                        // falling through to re-infer the arg. Falling through
-                        // double-visited the arg: a `to_str(<undefined>)` then
-                        // emitted its E0101 "cannot find value" diagnostic TWICE
-                        // (once here, once below). `to_str` is always str-returning.
-                        self.constrain(arg_ty, Type::I64, "arg 0 of `to_str`");
-                        return Type::Str;
-                    }
-                }
-                // CS2-6: a callee name bound by a local or a param that holds a
-                // fn value is typed by that binding, never by the top-level fn
-                // or builtin of the same name (a call by name runs the local).
-                let local_callee = matches!(callee.as_ref(), Expr::Ident(n)
-                    if scope.lookup(n).is_some_and(|t| matches!(t, Type::Fn(..) | Type::Var(_))));
-                let callee_ty = self.infer_expr(callee, scope, ret_ty);
-
-                if let Some(name) = fn_name.filter(|_| !local_callee) {
-                    // CS-4: the sig of the fn this call reaches — the builtin's
-                    // for a plain call to a builtin name, the user fn's otherwise.
-                    let prefers_builtin = crate::builtins::call_prefers_builtin(
-                        &name,
-                        crate::builtins::call_has_mut_arg(args),
-                    );
-                    let user_sig = if prefers_builtin {
-                        None
-                    } else {
-                        self.user_fn_sigs.get(&name)
-                    };
-                    // For generic functions: instantiate with fresh type vars per
-                    // call site, using the type-param names of the sig reached.
-                    // `generic_fn_params` keys are top-level user fns, all of
-                    // which are in `user_fn_sigs`; any other `fn_sigs` entry
-                    // takes the builtin's names (none for a non-builtin).
-                    let (sig, param_names, reaches_builtin) = match user_sig {
-                        Some(s) => (
-                            Some(s.clone()),
-                            self.generic_fn_params
-                                .get(&name)
-                                .cloned()
-                                .unwrap_or_default(),
-                            false,
-                        ),
-                        None => (
-                            self.fn_sigs.get(&name).cloned(),
-                            self.builtin_generic_params
-                                .get(&name)
-                                .cloned()
-                                .unwrap_or_default(),
-                            self.builtin_generic_params.contains_key(&name),
-                        ),
-                    };
-                    // CS2-3b: a generalized bare-`Dict` fn's implicit params
-                    // are instantiated per call like its declared ones.
-                    let declared_n = param_names.len();
-                    let mut param_names = param_names;
-                    if !prefers_builtin {
-                        if let Some(extra) = self.implicit_fn_params.get(&name) {
-                            param_names.extend(extra.iter().cloned());
-                        }
-                    }
-                    if let Some(sig) = sig {
-                        let (inst_sig, var_map) = if !param_names.is_empty() {
-                            self.instantiate_sig(&sig, &param_names)
-                        } else {
-                            (sig, HashMap::new())
-                        };
-                        // CS2-3a: a numeric key fn's return must resolve to a number.
-                        if let Some(&v) = var_map.get(NUM_PARAM) {
-                            self.num_obligations
-                                .push((Type::Var(v), self.current_stmt_span));
-                        }
-                        // ── Layer-1 ASI: confidence propagation note ─────────
-                        // When any argument has type `Uncertain<_>`, the call's
-                        // result confidence should logically be the product of the
-                        // input confidences (cf. PRD AI_Language_Plan.md §1360-).
-                        // Phase-1 leaves this informational; we do not enforce a
-                        // type-system rule yet (no monomorphisation over confidence).
-                        // A future pass can walk `args` for `Type::Uncertain(_)`
-                        // and emit runtime instrumentation to multiply confidences
-                        // at call boundaries.
-                        // Fix #16: include function name and param index in
-                        // the constraint origin for clearer error messages.
-                        for (i, (arg, param_ty)) in
-                            args.iter().zip(inst_sig.params.iter()).enumerate()
-                        {
-                            let arg_ty = self.infer_expr(arg, scope, ret_ty);
-                            // R19: a literal arg coerces to a fixed-width/unsigned param.
-                            if self.try_int_literal_coercion(arg, &arg_ty, param_ty) {
-                                continue;
-                            }
-                            // CS2-3a: a closure of the wrong arity is the checker's
-                            // E0306, which names the shape to write; unifying it here
-                            // would add a bare E0102 for the same call.
-                            if matches!((&arg_ty, param_ty),
-                                (Type::Fn(a, _), Type::Fn(p, _)) if a.len() != p.len())
-                            {
-                                continue;
-                            }
-                            // CS2-3a: a builtin discards the result of a closure
-                            // param declared with a unit return, so that return
-                            // is a fresh var the closure's body may fix to anything.
-                            let freed;
-                            let param_ty = match param_ty {
-                                Type::Fn(ps, r) if reaches_builtin && **r == Type::Unit => {
-                                    freed = Type::Fn(ps.clone(), Box::new(self.fresh()));
-                                    &freed
-                                }
-                                p => p,
-                            };
-                            self.constrain(
-                                arg_ty,
-                                param_ty.clone(),
-                                &format!("arg {i} of `{name}`"),
-                            );
-                        }
-                        let ret = inst_sig.ret.clone();
-                        // Record instantiation for the mono pass (resolved later).
-                        //
-                        // BUILTINS are excluded. Their type-variable slots are
-                        // instantiated above so inference binds `T` once and
-                        // checks it against the rest -- but there is no AST body
-                        // to specialize, so queueing one makes the mono pass emit
-                        // a stub that shadows the real extern. That is how a
-                        // native `dict_set` silently stored nothing while the
-                        // interpreter stored 20.
-                        if !var_map.is_empty() && !reaches_builtin {
-                            // CS2-3b: only the declared params; an implicit one
-                            // (a bare `Dict`'s value) has no AST name to specialize.
-                            let var_ids: Vec<u32> = param_names[..declared_n]
-                                .iter()
-                                .filter_map(|n| var_map.get(n).copied())
-                                .collect();
-                            // Store pending instantiation — vars will be resolved after solving.
-                            if !var_ids.is_empty() {
-                                self.call_instantiations.push((
-                                    name,
-                                    var_ids.iter().map(|&v| Type::Var(v)).collect(),
-                                    callee.as_ref() as *const Expr as usize,
-                                ));
-                            }
-                        }
-                        return ret;
-                    }
-                }
-                // A callee with no signature by name: a local or param, an
-                // index, a call, a field, a lambda. CS2-6: once the
-                // constraints are solved, a callee that resolves to a fn type
-                // checks the call's arity and argument types, and gives its
-                // return type ([`InferCtx::solve`]).
-                let call_args: Vec<Type> = args
-                    .iter()
-                    .map(|arg| self.infer_expr(arg, scope, ret_ty))
-                    .collect();
-                let ret = self.fresh();
-                self.call_obligations.push(CallObligation {
-                    callee: callee_ty,
-                    args: call_args,
-                    ret: ret.clone(),
-                    span: self.current_stmt_span,
-                    derives_for: if self.cond_depth == 0
-                        && calls_before == 0
-                        && self.lambda_calls == 1
-                    {
-                        self.lambda_params.clone()
-                    } else {
-                        Vec::new()
-                    },
-                });
-                ret
+                let pending_at_entry = self.pending_calls;
+                self.in_pending_window(|s| {
+                    s.infer_call(callee, args, scope, ret_ty, calls_before, pending_at_entry)
+                })
             }
 
             // ── Method call (Phase 1: treat as top-level fn lookup) ───────────
@@ -2308,57 +2008,9 @@ impl InferCtx {
             } => {
                 // CS3-2: a method call counts as a call (see `lambda_calls`).
                 self.lambda_calls += 1;
-                let recv_ty = self.infer_expr(receiver, scope, ret_ty);
-                if matches!(recv_ty, Type::Var(_)) {
-                    self.method_receiver_vars
-                        .push((receiver.as_ref() as *const Expr as usize, recv_ty.clone()));
-                }
-                // Special-case Chan<T> methods: recv() → T, send(T) → Unit, clone() → Chan<T>.
-                match (method.as_str(), &recv_ty) {
-                    ("recv", Type::Chan(inner)) => {
-                        return *inner.clone();
-                    }
-                    ("send", Type::Chan(inner)) => {
-                        for arg in args {
-                            let arg_ty = self.infer_expr(arg, scope, ret_ty);
-                            self.constrain(arg_ty, *inner.clone(), "chan.send argument");
-                        }
-                        return Type::Unit;
-                    }
-                    ("clone", Type::Chan(inner)) => {
-                        return Type::Chan(inner.clone());
-                    }
-                    _ => {}
-                }
-                // DynTrait receiver: look up trait method signature.
-                if let Type::DynTrait(trait_name) = &recv_ty {
-                    if let Some(method_sigs) = self.trait_method_sigs.get(trait_name).cloned() {
-                        if let Some(sig) = method_sigs.get(method.as_str()).cloned() {
-                            for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
-                                let arg_ty = self.infer_expr(arg, scope, ret_ty);
-                                self.constrain(arg_ty, param_ty.clone(), "trait method argument");
-                            }
-                            return sig.ret.clone();
-                        }
-                    }
-                    // Unknown trait method — infer args and return fresh.
-                    for arg in args {
-                        self.infer_expr(arg, scope, ret_ty);
-                    }
-                    return self.fresh();
-                }
-                if let Some(sig) = self.sig_instance(method) {
-                    for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
-                        let arg_ty = self.infer_expr(arg, scope, ret_ty);
-                        self.constrain(arg_ty, param_ty.clone(), "method argument");
-                    }
-                    sig.ret.clone()
-                } else {
-                    for arg in args {
-                        self.infer_expr(arg, scope, ret_ty);
-                    }
-                    self.fresh()
-                }
+                self.in_pending_window(|s| {
+                    s.infer_method_call(receiver, method, args, scope, ret_ty)
+                })
             }
 
             // ── ? operator ────────────────────────────────────────────────────
@@ -2795,7 +2447,9 @@ impl InferCtx {
                     u32::from(!matches!(body.as_ref(), Expr::Block(_)) && may_leave_early(body));
                 let outer_depth = std::mem::replace(&mut self.cond_depth, entry_depth);
                 let outer_calls = std::mem::replace(&mut self.lambda_calls, 0);
+                let outer_pending = std::mem::replace(&mut self.pending_calls, 0);
                 let body_ty = self.infer_expr(body, scope, &lambda_ret_var);
+                self.pending_calls = outer_pending;
                 self.lambda_calls = outer_calls;
                 self.cond_depth = outer_depth;
                 self.lambda_params = outer_params;
@@ -2932,6 +2586,403 @@ impl InferCtx {
         }
     }
 
+    /// CS4-4: run `f` (the inference of one call's callee, receiver and
+    /// args) with that call counted in `pending_calls`. The count is lowered
+    /// on every exit path, the early returns of `infer_call` included.
+    fn in_pending_window<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.pending_calls += 1;
+        let t = f(self);
+        self.pending_calls -= 1;
+        t
+    }
+
+    /// Infer a call `callee(args)` (the `Expr::Call` arm of [`Self::infer_expr`]).
+    /// `calls_before` and `pending_at_entry` are `lambda_calls` and
+    /// `pending_calls` before this call was counted (CS3-2, CS4-4).
+    fn infer_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        scope: &mut Scope,
+        ret_ty: &Type,
+        calls_before: u32,
+        pending_at_entry: u32,
+    ) -> Type {
+        let fn_name = match callee {
+            Expr::Ident(n) => Some(n.clone()),
+            // Chan::new(n) / chan<T>() both parse as StructLit { name: ... }
+            Expr::StructLit { name, fields } if fields.is_empty() => Some(name.clone()),
+            _ => None,
+        };
+
+        // Phase 13 Slice 2: P(dist op k) probability predicate.
+        // The argument is a comparison whose LHS is a distribution struct —
+        // skip all type-checking for these; they are handled at runtime.
+        // NOTE: we intentionally do NOT infer args here because `dist <= k`
+        // would constrain the distribution type against f64, causing E0102.
+        if let Some(ref name) = fn_name {
+            if crate::builtins::is_prob_pred_ident(name) {
+                return Type::F64;
+            }
+        }
+
+        // Handle `chan<T>()` lowered form: "chan::<T>" → Type::Chan(T)
+        if let Some(ref name) = fn_name {
+            if let Some(inner) = name
+                .strip_prefix("chan::<")
+                .and_then(|s| s.strip_suffix(">"))
+            {
+                for arg in args {
+                    self.infer_expr(arg, scope, ret_ty);
+                }
+                return Type::Chan(Box::new(parse_type_str(inner)));
+            }
+        }
+
+        // R13 native FFI: `M::fn(...)` (a StructLit-callee call whose
+        // `::`-joined name resolves in the native registry). Constrain
+        // each arg to its FFI param type and return the FFI return type.
+        // Cross-module handle mismatch (E1802) and non-representable args
+        // (E1801) are diagnosed in the checker; here we just thread types.
+        if let Some(ref name) = fn_name {
+            if let Some((_m, nf)) = crate::native::resolve_call(name) {
+                for (i, arg) in args.iter().enumerate() {
+                    let arg_ty = self.infer_expr(arg, scope, ret_ty);
+                    if let Some((pty, _mode)) = nf.params.get(i) {
+                        self.constrain(arg_ty, pty.to_type(), "native FFI argument");
+                    }
+                }
+                return nf.ret.to_type();
+            }
+        }
+
+        // Handle `ai_extract::<T>(prompt)` lowered form (Layer-3 ASI):
+        //   "ai_extract::<T>" → Result<T, str>, taking a single str arg.
+        // Mirrors the chan decode just above. The T set is enforced HERE
+        // (`builtins::ai_extract_target`, the mapping the interpreter,
+        // effects and codegen share): an out-of-set T used to check
+        // clean, panic in the interpreter and be dropped silently by
+        // native code. It is E1304 now, on every engine.
+        if let Some(ref name) = fn_name {
+            if let Some(inner) = crate::builtins::ai_extract_turbofish_type(name) {
+                if crate::builtins::ai_extract_target(inner).is_none() {
+                    let mut err = InferError::new(
+                        crate::error::E1304,
+                        format!(
+                            "ai_extract::<{inner}> is not supported: T must be one of \
+                                     i64, f64, bool, Uncertain<i64>, Uncertain<f64>"
+                        ),
+                    )
+                    .with_span(self.current_stmt_span);
+                    err.help = Some(
+                        "for free text use ai_complete(prompt); for a record, extract \
+                                 each field with its own ai_extract::<T>"
+                            .to_string(),
+                    );
+                    self.errors.push(err);
+                }
+                let t = parse_type_str(inner);
+                // Constrain the (single) arg to be `str`.
+                for arg in args {
+                    let arg_ty = self.infer_expr(arg, scope, ret_ty);
+                    self.constrain(arg_ty, Type::Str, "arg 0 of `ai_extract`");
+                }
+                return Type::Result(Box::new(t), Box::new(Type::Str));
+            }
+        }
+
+        // `len` accepts a `str` OR any slice/array `[T]` — the interpreter
+        // handles both, but the builtin signature only lists `str`. Special
+        // -case the arg type so `len(my_array)` type-checks. A non-slice arg
+        // flows through the declared `str` param, so `len(42)` still errors.
+        if let Some(ref name) = fn_name {
+            if name == "len" && args.len() == 1 {
+                let arg_ty = self.infer_expr(&args[0], scope, ret_ty);
+                let from_for = matches!(&args[0], Expr::Ident(n) if n.starts_with("__forarr_"));
+                match arg_ty {
+                    Type::Slice(_) => {}
+                    Type::Dict(_) if from_for => {
+                        self.errors
+                            .push(for_over_dict_error(self.current_stmt_span));
+                    }
+                    // Unresolved here (`?`/match binding): decide after
+                    // solving, when it may have become `[T]`.
+                    Type::Var(_) => {
+                        let span = self.current_stmt_span;
+                        self.len_obligations.push((arg_ty, span, from_for));
+                    }
+                    _ => self.constrain(arg_ty, Type::Str, "arg 0 of `len`"),
+                }
+                return Type::I64;
+            }
+        }
+
+        // `to_str` is polymorphic over scalars (i64/i32/.../f64/bool) —
+        // the interpreter dispatches on the runtime value (BUG_HUNT #29),
+        // so picking `to_str_f64`/`to_str_bool` is never required. Accept
+        // any scalar without constraint; a non-scalar arg still flows to
+        // the declared `i64` param below and errors, so `to_str([1,2])`
+        // is rejected.
+        if let Some(ref name) = fn_name {
+            if name == "to_str" && args.len() == 1 {
+                let arg_ty = self.infer_expr(&args[0], scope, ret_ty);
+                // `is_str` as well as `is_scalar`: `to_str` of a `str` is
+                // the identity. See interp/builtins.rs for why refusing it
+                // was a wart (9 of 36 measured first errors).
+                if arg_ty.is_scalar() || arg_ty.is_str() {
+                    return Type::Str;
+                }
+                // Not yet RESOLVED is not the same as wrong. A value bound
+                // by a pattern (`Err(e) => to_str(e)`) is still a type var
+                // here and only becomes `str` when the constraints solve —
+                // so constraining it to `i64` below reported
+                // "expected i64, found str" for exactly the identity call
+                // the arm above exists to allow. Measured: this was the
+                // remaining half of the `to_str`-of-a-`str` wart, still
+                // firing on the benchmark after the widening landed. A
+                // genuinely non-scalar arg (`to_str([1, 2])`) resolves to a
+                // concrete type and is still rejected by the checker's own
+                // argument loop, which skips only scalars and `str`.
+                if type_is_unresolved(&arg_ty) {
+                    return Type::Str;
+                }
+                // Non-scalar: constrain the ALREADY-inferred arg to the
+                // declared `i64` param right here — reproducing the exact
+                // E0102 the general arg loop below would emit — instead of
+                // falling through to re-infer the arg. Falling through
+                // double-visited the arg: a `to_str(<undefined>)` then
+                // emitted its E0101 "cannot find value" diagnostic TWICE
+                // (once here, once below). `to_str` is always str-returning.
+                self.constrain(arg_ty, Type::I64, "arg 0 of `to_str`");
+                return Type::Str;
+            }
+        }
+        // CS2-6: a callee name bound by a local or a param that holds a
+        // fn value is typed by that binding, never by the top-level fn
+        // or builtin of the same name (a call by name runs the local).
+        let local_callee = matches!(callee, Expr::Ident(n)
+                    if scope.lookup(n).is_some_and(|t| matches!(t, Type::Fn(..) | Type::Var(_))));
+        // CS4-4: a callee runs after the args (`eval_call`) but is inferred
+        // before them, so no call in it is known to run first.
+        self.cond_depth += 1;
+        let callee_ty = self.infer_expr(callee, scope, ret_ty);
+        self.cond_depth -= 1;
+
+        if let Some(name) = fn_name.filter(|_| !local_callee) {
+            // CS-4: the sig of the fn this call reaches — the builtin's
+            // for a plain call to a builtin name, the user fn's otherwise.
+            let prefers_builtin = crate::builtins::call_prefers_builtin(
+                &name,
+                crate::builtins::call_has_mut_arg(args),
+            );
+            let user_sig = if prefers_builtin {
+                None
+            } else {
+                self.user_fn_sigs.get(&name)
+            };
+            // For generic functions: instantiate with fresh type vars per
+            // call site, using the type-param names of the sig reached.
+            // `generic_fn_params` keys are top-level user fns, all of
+            // which are in `user_fn_sigs`; any other `fn_sigs` entry
+            // takes the builtin's names (none for a non-builtin).
+            let (sig, param_names, reaches_builtin) = match user_sig {
+                Some(s) => (
+                    Some(s.clone()),
+                    self.generic_fn_params
+                        .get(&name)
+                        .cloned()
+                        .unwrap_or_default(),
+                    false,
+                ),
+                None => (
+                    self.fn_sigs.get(&name).cloned(),
+                    self.builtin_generic_params
+                        .get(&name)
+                        .cloned()
+                        .unwrap_or_default(),
+                    self.builtin_generic_params.contains_key(&name),
+                ),
+            };
+            // CS2-3b: a generalized bare-`Dict` fn's implicit params
+            // are instantiated per call like its declared ones.
+            let declared_n = param_names.len();
+            let mut param_names = param_names;
+            if !prefers_builtin {
+                if let Some(extra) = self.implicit_fn_params.get(&name) {
+                    param_names.extend(extra.iter().cloned());
+                }
+            }
+            if let Some(sig) = sig {
+                let (inst_sig, var_map) = if !param_names.is_empty() {
+                    self.instantiate_sig(&sig, &param_names)
+                } else {
+                    (sig, HashMap::new())
+                };
+                // CS2-3a: a numeric key fn's return must resolve to a number.
+                if let Some(&v) = var_map.get(NUM_PARAM) {
+                    self.num_obligations
+                        .push((Type::Var(v), self.current_stmt_span));
+                }
+                // ── Layer-1 ASI: confidence propagation note ─────────
+                // When any argument has type `Uncertain<_>`, the call's
+                // result confidence should logically be the product of the
+                // input confidences (cf. PRD AI_Language_Plan.md §1360-).
+                // Phase-1 leaves this informational; we do not enforce a
+                // type-system rule yet (no monomorphisation over confidence).
+                // A future pass can walk `args` for `Type::Uncertain(_)`
+                // and emit runtime instrumentation to multiply confidences
+                // at call boundaries.
+                // Fix #16: include function name and param index in
+                // the constraint origin for clearer error messages.
+                for (i, (arg, param_ty)) in args.iter().zip(inst_sig.params.iter()).enumerate() {
+                    let arg_ty = self.infer_expr(arg, scope, ret_ty);
+                    // R19: a literal arg coerces to a fixed-width/unsigned param.
+                    if self.try_int_literal_coercion(arg, &arg_ty, param_ty) {
+                        continue;
+                    }
+                    // CS2-3a: a closure of the wrong arity is the checker's
+                    // E0306, which names the shape to write; unifying it here
+                    // would add a bare E0102 for the same call.
+                    if matches!((&arg_ty, param_ty),
+                                (Type::Fn(a, _), Type::Fn(p, _)) if a.len() != p.len())
+                    {
+                        continue;
+                    }
+                    // CS2-3a: a builtin discards the result of a closure
+                    // param declared with a unit return, so that return
+                    // is a fresh var the closure's body may fix to anything.
+                    let freed;
+                    let param_ty = match param_ty {
+                        Type::Fn(ps, r) if reaches_builtin && **r == Type::Unit => {
+                            freed = Type::Fn(ps.clone(), Box::new(self.fresh()));
+                            &freed
+                        }
+                        p => p,
+                    };
+                    self.constrain(arg_ty, param_ty.clone(), &format!("arg {i} of `{name}`"));
+                }
+                let ret = inst_sig.ret.clone();
+                // Record instantiation for the mono pass (resolved later).
+                //
+                // BUILTINS are excluded. Their type-variable slots are
+                // instantiated above so inference binds `T` once and
+                // checks it against the rest -- but there is no AST body
+                // to specialize, so queueing one makes the mono pass emit
+                // a stub that shadows the real extern. That is how a
+                // native `dict_set` silently stored nothing while the
+                // interpreter stored 20.
+                if !var_map.is_empty() && !reaches_builtin {
+                    // CS2-3b: only the declared params; an implicit one
+                    // (a bare `Dict`'s value) has no AST name to specialize.
+                    let var_ids: Vec<u32> = param_names[..declared_n]
+                        .iter()
+                        .filter_map(|n| var_map.get(n).copied())
+                        .collect();
+                    // Store pending instantiation — vars will be resolved after solving.
+                    if !var_ids.is_empty() {
+                        self.call_instantiations.push((
+                            name,
+                            var_ids.iter().map(|&v| Type::Var(v)).collect(),
+                            callee as *const Expr as usize,
+                        ));
+                    }
+                }
+                return ret;
+            }
+        }
+        // A callee with no signature by name: a local or param, an
+        // index, a call, a field, a lambda. CS2-6: once the
+        // constraints are solved, a callee that resolves to a fn type
+        // checks the call's arity and argument types, and gives its
+        // return type ([`InferCtx::solve`]).
+        let call_args: Vec<Type> = args
+            .iter()
+            .map(|arg| self.infer_expr(arg, scope, ret_ty))
+            .collect();
+        let ret = self.fresh();
+        self.call_obligations.push(CallObligation {
+            callee: callee_ty,
+            args: call_args,
+            ret: ret.clone(),
+            span: self.current_stmt_span,
+            // CS4-4: counted in run order. Every call started before this one
+            // is an ancestor still inferring its args (none has run), and no
+            // call sits in this call's own callee or args.
+            derives_for: if self.cond_depth == 0
+                && calls_before == pending_at_entry
+                && self.lambda_calls == calls_before + 1
+            {
+                self.lambda_params.clone()
+            } else {
+                Vec::new()
+            },
+        });
+        ret
+    }
+
+    /// Infer a method call `receiver.method(args)` (the `Expr::MethodCall`
+    /// arm of [`Self::infer_expr`]).
+    fn infer_method_call(
+        &mut self,
+        receiver: &Expr,
+        method: &str,
+        args: &[Expr],
+        scope: &mut Scope,
+        ret_ty: &Type,
+    ) -> Type {
+        let recv_ty = self.infer_expr(receiver, scope, ret_ty);
+        if matches!(recv_ty, Type::Var(_)) {
+            self.method_receiver_vars
+                .push((receiver as *const Expr as usize, recv_ty.clone()));
+        }
+        // Special-case Chan<T> methods: recv() → T, send(T) → Unit, clone() → Chan<T>.
+        match (method, &recv_ty) {
+            ("recv", Type::Chan(inner)) => {
+                return *inner.clone();
+            }
+            ("send", Type::Chan(inner)) => {
+                for arg in args {
+                    let arg_ty = self.infer_expr(arg, scope, ret_ty);
+                    self.constrain(arg_ty, *inner.clone(), "chan.send argument");
+                }
+                return Type::Unit;
+            }
+            ("clone", Type::Chan(inner)) => {
+                return Type::Chan(inner.clone());
+            }
+            _ => {}
+        }
+        // DynTrait receiver: look up trait method signature.
+        if let Type::DynTrait(trait_name) = &recv_ty {
+            if let Some(method_sigs) = self.trait_method_sigs.get(trait_name).cloned() {
+                if let Some(sig) = method_sigs.get(method).cloned() {
+                    for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
+                        let arg_ty = self.infer_expr(arg, scope, ret_ty);
+                        self.constrain(arg_ty, param_ty.clone(), "trait method argument");
+                    }
+                    return sig.ret.clone();
+                }
+            }
+            // Unknown trait method — infer args and return fresh.
+            for arg in args {
+                self.infer_expr(arg, scope, ret_ty);
+            }
+            return self.fresh();
+        }
+        if let Some(sig) = self.sig_instance(method) {
+            for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
+                let arg_ty = self.infer_expr(arg, scope, ret_ty);
+                self.constrain(arg_ty, param_ty.clone(), "method argument");
+            }
+            sig.ret.clone()
+        } else {
+            for arg in args {
+                self.infer_expr(arg, scope, ret_ty);
+            }
+            self.fresh()
+        }
+    }
+
     // ── Match arm helper ──────────────────────────────────────────────────────
 
     #[allow(dead_code)]
@@ -3023,9 +3074,38 @@ impl InferCtx {
                     self.bind_pattern_with_subj(pat, scope, None);
                 }
             }
+            // CS4-3 (O-LF-01): a tuple pattern on a subject whose type is
+            // already concrete must be a tuple of the same length, and its
+            // sub-patterns take the component types (E0102 otherwise, like
+            // `Some` on an `i64`). A subject not yet resolved (an untyped
+            // lambda's param, a generic, an unknown type) is left unchecked:
+            // constraining it in one arm would refuse a later arm of another
+            // arity that runs (`|p| match p { (a, b) => 2, (a, b, c) => 3 }`).
+            // The unit pattern `()` is left unchecked too: `()` has type
+            // `Unit`, not an empty `Tuple`, and `match 5 { () => 1, _ => 2 }`
+            // runs today.
             Pattern::Tuple(pats) => {
-                for pat in pats {
-                    self.bind_pattern_with_subj(pat, scope, None);
+                let concrete = subj_ty.filter(|st| {
+                    !pats.is_empty()
+                        && !matches!(
+                            st,
+                            Type::Var(_)
+                                | Type::Deferred(_)
+                                | Type::Unknown
+                                | Type::TypeParam(_)
+                                | Type::DynTrait(_)
+                        )
+                });
+                if let Some(st) = concrete {
+                    let vars: Vec<Type> = pats.iter().map(|_| self.fresh()).collect();
+                    self.constrain(st.clone(), Type::Tuple(vars.clone()), "tuple pattern");
+                    for (pat, var) in pats.iter().zip(&vars) {
+                        self.bind_pattern_with_subj(pat, scope, Some(var));
+                    }
+                } else {
+                    for pat in pats {
+                        self.bind_pattern_with_subj(pat, scope, None);
+                    }
                 }
             }
         }

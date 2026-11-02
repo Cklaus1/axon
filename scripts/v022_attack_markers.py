@@ -4019,3 +4019,14 @@ ATTACK_MARKERS.update({
     'M4621': r'ATTACK: extract cost uncounted',
     'M4622': r'ATTACK: live extract tokens stored as 0',
 })
+
+# checker-soundness-4 lane S4c: CS4-3 tuple patterns are type-checked, CS4-4 a nested
+# wrapper-lambda call derives a kind (ids M4713-M4718)
+ATTACK_MARKERS.update({
+    'M4713': r'ATTACK: a tuple pattern of the wrong shape checked clean',
+    'M4714': r'ATTACK: a tuple pattern of the wrong shape checked clean \[t_comptype\]',
+    'M4715': r'ATTACK: a valid tuple match was refused',
+    'M4716': r'ATTACK: a wrong-kind argument through a nested wrapper call checked clean',
+    'M4717': r'ATTACK: a wrapper-lambda program that runs was refused',
+    'M4718': r'ATTACK: a wrapper-lambda program that runs was refused',
+})
