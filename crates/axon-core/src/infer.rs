@@ -3075,15 +3075,16 @@ impl InferCtx {
                 }
             }
             // CS4-3 (O-LF-01): a tuple pattern on a subject whose type is
-            // already concrete must be a tuple of the same length, and its
-            // sub-patterns take the component types (E0102 otherwise, like
-            // `Some` on an `i64`). A subject not yet resolved (an untyped
-            // lambda's param, a generic, an unknown type) is left unchecked:
-            // constraining it in one arm would refuse a later arm of another
-            // arity that runs (`|p| match p { (a, b) => 2, (a, b, c) => 3 }`).
-            // The unit pattern `()` is left unchecked too: `()` has type
-            // `Unit`, not an empty `Tuple`, and `match 5 { () => 1, _ => 2 }`
-            // runs today.
+            // already concrete must be a tuple of the same length (E0102
+            // otherwise, like `Some` on an `i64`). A subject not yet resolved
+            // (an untyped lambda's param, a generic, an unknown type) is left
+            // unchecked: constraining it in one arm would refuse a later arm
+            // of another arity that runs (`|p| match p { (a, b) => 2, (a, b,
+            // c) => 3 }`). The unit pattern `()` is left unchecked too: `()`
+            // has type `Unit`, not an empty `Tuple`, and `match 5 { () => 1,
+            // _ => 2 }` runs today. [REVISED: ICS-1] The sub-patterns are
+            // bound without the component types, as before: an int literal's
+            // component used as `u8` or `f64` runs today.
             Pattern::Tuple(pats) => {
                 let concrete = subj_ty.filter(|st| {
                     !pats.is_empty()
@@ -3098,14 +3099,10 @@ impl InferCtx {
                 });
                 if let Some(st) = concrete {
                     let vars: Vec<Type> = pats.iter().map(|_| self.fresh()).collect();
-                    self.constrain(st.clone(), Type::Tuple(vars.clone()), "tuple pattern");
-                    for (pat, var) in pats.iter().zip(&vars) {
-                        self.bind_pattern_with_subj(pat, scope, Some(var));
-                    }
-                } else {
-                    for pat in pats {
-                        self.bind_pattern_with_subj(pat, scope, None);
-                    }
+                    self.constrain(st.clone(), Type::Tuple(vars), "tuple pattern");
+                }
+                for pat in pats {
+                    self.bind_pattern_with_subj(pat, scope, None);
                 }
             }
         }

@@ -14561,13 +14561,15 @@ MUTATIONS += [
 # type-checked (E0102); CS4-4 a wrapper lambda's call nested in another call's args derives a kind.
 MUTATIONS += [
     ('M4713', 'CS4-3: a tuple pattern no longer constrains a concrete subject (t_arity3 checks clean)', 'crates/axon-core/src/infer.rs',
-     'self.constrain(st.clone(), Type::Tuple(vars.clone()), "tuple pattern");',
+     'self.constrain(st.clone(), Type::Tuple(vars), "tuple pattern");',
      'let _ = st;',
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_is_type_checked'),
-    ('M4714', 'CS4-3: tuple sub-patterns are bound without the component types (t_comptype checks clean)', 'crates/axon-core/src/infer.rs',
-     'self.bind_pattern_with_subj(pat, scope, Some(var));',
-     'self.bind_pattern_with_subj(pat, scope, None);\n                        let _ = var;',
-     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_is_type_checked'),
+    # [REVISED: ICS-1] M4714 is the regression ICS-1 found: the sub-patterns
+    # bound with the component types refuse `let x: u8 = a` on `(1, 2)`.
+    ('M4714', 'CS4-3: tuple sub-patterns are bound with the component types (ics_w4 `let x: u8 = a` refused)', 'crates/axon-core/src/infer.rs',
+     '                    self.constrain(st.clone(), Type::Tuple(vars), "tuple pattern");\n                }\n                for pat in pats {\n                    self.bind_pattern_with_subj(pat, scope, None);\n                }\n',
+     '                    self.constrain(st.clone(), Type::Tuple(vars.clone()), "tuple pattern");\n                    for (pat, var) in pats.iter().zip(&vars) {\n                        self.bind_pattern_with_subj(pat, scope, Some(var));\n                    }\n                } else {\n                for pat in pats {\n                    self.bind_pattern_with_subj(pat, scope, None);\n                }\n                }\n',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_controls_stay_legal'),
     ('M4715', 'CS4-3: a tuple pattern constrains an unresolved subject too (l1, arms of two arities, refused)', 'crates/axon-core/src/infer.rs',
      'if let Some(st) = concrete {',
      'if let Some(st) = subj_ty.filter(|_| !pats.is_empty()).or(concrete) {',

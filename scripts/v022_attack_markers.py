@@ -4024,7 +4024,7 @@ ATTACK_MARKERS.update({
 # wrapper-lambda call derives a kind (ids M4713-M4718)
 ATTACK_MARKERS.update({
     'M4713': r'ATTACK: a tuple pattern of the wrong shape checked clean',
-    'M4714': r'ATTACK: a tuple pattern of the wrong shape checked clean \[t_comptype\]',
+    'M4714': r'ATTACK: a valid tuple match was refused \[ics_w4\]',
     'M4715': r'ATTACK: a valid tuple match was refused',
     'M4716': r'ATTACK: a wrong-kind argument through a nested wrapper call checked clean',
     'M4717': r'ATTACK: a wrapper-lambda program that runs was refused',

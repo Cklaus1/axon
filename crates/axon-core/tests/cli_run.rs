@@ -47049,46 +47049,31 @@ fn cs4_first_error(diags: &str) -> Option<(String, u32)> {
 }
 
 /// CS4-3 (O-LF-01): a tuple pattern on a subject of a known type is
-/// type-checked: a tuple of another length or a non-tuple subject is E0102,
-/// and the sub-patterns take the component types, so a wrong use of one is
-/// refused too. Each case checked rc 0 and then panicked at run (`no match
-/// arm matched`, `cannot apply Add`), or ran a dead arm (`t_iflet`,
-/// `t_mixed_arity`, `t_struct_subj`; refused by decision D9).
+/// shape-checked: a tuple of another length or a non-tuple subject is
+/// E0102. Each case checked rc 0 and then panicked at run (`no match arm
+/// matched`), or ran a dead arm (`t_iflet`, `t_mixed_arity`,
+/// `t_struct_subj`; refused by decision D9). `[REVISED: ICS-1]` The
+/// components are not typed (see `tuple_pattern_controls_stay_legal`).
 #[test]
 fn tuple_pattern_is_type_checked() {
     let attack = "ATTACK: a tuple pattern of the wrong shape checked clean";
     let main = |body: &str| format!("fn main() {{\n{body}\n}}\n");
     let cases = [
-        ("t_arity3", main("    let r = match (1, 2, 3) { (a, b) => a + b }\n    println(to_str(r))"), 2, true),
-        ("t_nontuple", main("    let r = match 5 { (a, b) => a + b }\n    println(to_str(r))"), 2, true),
-        ("t_comptype", main("    let r = match (1, \"s\") { (a, b) => to_str(b + 1) }\n    println(r)"), 2, false),
-        (
-            "t_nested_ty",
-            main("    let r = match (Some(1), 2) { (Some(a), b) => a + b, _ => 0 }\n    let s = match (Some(\"x\"), 2) { (Some(a), b) => a + 1, _ => 0 }\n    println(to_str(r + s))"),
-            3,
-            false,
-        ),
-        (
-            "t_iflet_ty",
-            main("    let t = (1, \"s\")\n    if let (a, b) = t { println(to_str(b + 1)) } else { println(\"no\") }"),
-            3,
-            false,
-        ),
+        ("t_arity3", main("    let r = match (1, 2, 3) { (a, b) => a + b }\n    println(to_str(r))"), 2),
+        ("t_nontuple", main("    let r = match 5 { (a, b) => a + b }\n    println(to_str(r))"), 2),
         (
             "t_iflet",
             main("    let t = (1, 2, 3)\n    if let (a, b) = t { println(to_str(a + b)) } else { println(\"no\") }"),
             3,
-            true,
         ),
-        ("t_mixed_arity", main("    let r = match (1, 2) { (a, b) => a + b, (a, b, c) => a }\n    println(to_str(r))"), 2, true),
+        ("t_mixed_arity", main("    let r = match (1, 2) { (a, b) => a + b, (a, b, c) => a }\n    println(to_str(r))"), 2),
         (
             "t_struct_subj",
             format!("type P = {{ x: i64 }}\n{}", main("    let p = P { x: 1 }\n    let r = match p { (a, b) => 1, _ => 2 }\n    println(to_str(r))")),
             4,
-            true,
         ),
     ];
-    for (tag, src, line, shape) in cases {
+    for (tag, src, line) in cases {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs4t_{tag}"), &src);
         let first = cs4_first_error(&cmsg);
         assert!(
@@ -47096,7 +47081,7 @@ fn tuple_pattern_is_type_checked() {
             "{attack} [{tag}]: want rc 2, first error E0102 at line {line}, got rc {crc:?} {first:?}: {cmsg}"
         );
         assert!(
-            !shape || cmsg.contains("tuple pattern"),
+            cmsg.contains("tuple pattern"),
             "{attack} [{tag}]: the E0102 must name the tuple pattern: {cmsg}"
         );
         assert!(
@@ -47112,6 +47097,11 @@ fn tuple_pattern_is_type_checked() {
 /// match with arms of two arities that both run stays legal (`l1`, `g3`).
 /// Literal sub-patterns are not type-checked (`t_lit_ty`, O-CS4-04), nor is
 /// the unit pattern `()`, whose type is `Unit` (`unit`, `unit_on_int`).
+/// `[REVISED: ICS-1]` A component is a fresh var, not the subject's
+/// element type, so a use the interpreter accepts stays legal: an int
+/// literal's component used as `u8`/`i32`/`f64` (`ics_w4`..`ics_v3`), or
+/// used where a `str`/`bool` is declared (`ics_q*`; the value passes
+/// through and prints).
 #[test]
 fn tuple_pattern_controls_stay_legal() {
     let attack = "ATTACK: a valid tuple match was refused";
@@ -47193,6 +47183,36 @@ fn tuple_pattern_controls_stay_legal() {
             "err\n6\n",
         ),
         ("unit_on_int", "fn main() {\n    let a = match 5 { () => 1, _ => 2 }\n    println(to_str(a))\n}\n", "2\n"),
+        // [REVISED: ICS-1] audit probes p7/w4..w9, p9/v3 and lane probes q*.
+        ("ics_w4", "fn main() {\n    match (1, 2) { (a, b) => { let x: u8 = a; println(to_str(x)) } }\n}\n", "1\n"),
+        ("ics_w5", "fn main() {\n    let t = (300, 2)\n    if let (a, _) = t { let x: u8 = a; println(to_str(x)) }\n}\n", "44\n"),
+        ("ics_w6", "fn main() {\n    let t = (1, 2)\n    match t { (a, b) => { let x: f64 = a; println(to_str(x)) } }\n}\n", "1\n"),
+        (
+            "ics_w7",
+            "fn sh(x: u8) -> i64 { 1 }\nfn main() {\n    let t = (1, 2)\n    match t { (a, b) => println(to_str(sh(a) + b)) }\n}\n",
+            "3\n",
+        ),
+        (
+            "ics_w8",
+            "fn sh(x: i32) -> i32 { x + 1 }\nfn main() {\n    match (5, \"s\") { (a, s) => println(s + to_str(sh(a))) }\n}\n",
+            "s6\n",
+        ),
+        (
+            "ics_w9",
+            "type P = { x: u8 }\nfn main() {\n    match (7, 0) { (a, _) => { let p = P { x: a }; println(to_str(p.x)) } }\n}\n",
+            "7\n",
+        ),
+        (
+            "ics_v3",
+            "fn sh(x: u8) -> i64 { 1 }\nfn f(t: (i64, i64)) -> i64 { match t { (a, b) => sh(a) } }\nfn main() { println(to_str(f((1, 2)))) }\n",
+            "1\n",
+        ),
+        ("ics_q4", "fn main() {\n    match (1, 2) { (a, b) => { let s: str = a; println(s) } }\n}\n", "1\n"),
+        ("ics_q5", "fn sh(x: str) -> i64 { 1 }\nfn main() {\n    match (1, 2) { (a, b) => println(to_str(sh(a))) }\n}\n", "1\n"),
+        ("ics_q7", "type R = { s: str }\nfn main() {\n    match (1, 2) { (a, b) => { let r = R { s: a }; println(r.s) } }\n}\n", "1\n"),
+        ("ics_q11", "fn ni(x: i64) -> i64 { x }\nfn main() {\n    match (true, 2) { (a, b) => println(to_str(ni(a))) }\n}\n", "true\n"),
+        ("ics_q18", "fn main() {\n    match (\"s\", 2) { (a, b) => { let x: i64 = a; println(to_str(x)) } }\n}\n", "s\n"),
+        ("ics_q19", "fn main() {\n    match (1.5, 2) { (a, b) => { let x: str = a; println(x) } }\n}\n", "1.5\n"),
     ];
     for (tag, src, out) in cases {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs4tc_{tag}"), src);
