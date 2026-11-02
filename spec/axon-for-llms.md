@@ -324,7 +324,10 @@ fn worker() -> i64 { /* may only write under ./out/ and reach that host */ 0 }
 matching `AXON_ALLOWED_*` / `AXON_BUDGET_TOKENS` / `AXON_MAX_DEPTH` variable and nothing in the
 program can widen it; a ceiling also turns `--require-contained` on, so `main` needs a
 `@[contained]` grant for the I/O it reaches (E1005). A bad file is E1007 (exit 2). Without a
-ceiling a run is bounded only by what its source and those variables declare.
+ceiling a run is bounded only by what its source and those variables declare. Live AI calls are
+pinned to the program's `net` hosts (or `api.anthropic.com` if none) met with `AXON_ALLOWED_NET`
+and the ceiling's `net` list; a run with no declared host and neither list is not pinned and may
+send AI traffic to whatever `AXON_AI_BASE_URL` names.
 
 **Refinement types** constrain values; violations exit with code 6 at runtime:
 ```axon

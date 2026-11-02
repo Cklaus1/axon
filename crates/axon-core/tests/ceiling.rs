@@ -434,3 +434,65 @@ fn ceiling_implies_require_contained() {
         "ATTACK: a ceilinged run reached an ungranted capability without R45: {t}"
     );
 }
+
+// -- CE-3: the AI endpoint under a ceiling (NH-C3 A) ------------------------
+
+/// A program granted every host (`net: ["*"]`) under a ceiling whose `net` is
+/// `["api.anthropic.com"]`: the AI endpoint is pinned to the ceiling, so an
+/// `AXON_AI_BASE_URL` naming a local listener gets the catchable allowlist
+/// `Err` and the listener sees no connection (no prompt, no key). Without the
+/// ceiling the same run dials the listener - an unceilinged run may send AI
+/// traffic wherever `AXON_AI_BASE_URL` points (documented). Live AI exists
+/// only in `asi-runtime` builds.
+#[cfg(feature = "asi-runtime")]
+#[test]
+fn ceiling_net_pins_the_ai_endpoint() {
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    const SRC: &str = "@[contained(net: [\"*\"])]\nfn main() {\n    match ai_complete(\"hi\") { Ok(s) => println(s), Err(e) => println(\"err=\" + e) }\n}\n";
+    // Returns (connections seen, output).
+    let probe = |tag: &str, ceiling: bool| -> (usize, String) {
+        let d = tmp(tag);
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        // Count and drop each connection at once, so the client fails fast
+        // instead of waiting out its HTTP timeout. The thread is detached.
+        let seen = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for s in l.incoming() {
+                counter.fetch_add(1, Ordering::SeqCst);
+                drop(s);
+            }
+        });
+        let c = write_ceiling(
+            &d,
+            &ceiling_json(&[("net", Some("[\"api.anthropic.com\"]"))]),
+        );
+        let mut vars = vec![
+            ("ANTHROPIC_API_KEY", "sk-dummy"),
+            ("AXON_AI_BASE_URL", url.as_str()),
+        ];
+        let cs = c.to_str().unwrap().to_string();
+        if ceiling {
+            vars.push(("AXON_CEILING", cs.as_str()));
+        }
+        let o = run(&d, SRC, &vars);
+        (seen.load(Ordering::SeqCst), text(&o))
+    };
+    let (bare, _) = probe("ce3_bare", false);
+    assert!(
+        bare > 0,
+        "control: the unceilinged run dials AXON_AI_BASE_URL"
+    );
+    let (seen, t) = probe("ce3_ceil", true);
+    assert_eq!(
+        seen, 0,
+        "ATTACK: a ceiling net scope left the AI endpoint unpinned: {t}"
+    );
+    assert!(
+        t.contains("is not in this program's net allowlist"),
+        "ATTACK: a ceiling net scope left the AI endpoint unpinned: {t}"
+    );
+}

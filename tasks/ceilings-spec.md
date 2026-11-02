@@ -332,6 +332,14 @@ after CE-1 because the result is `None`.
 
 **Cost.** A: ~0 beyond CE-1/CE-2 plus docs. B: ~20 lines in `pin_ai_net_allowlist`, plus docs and a CHANGELOG migration note.
 
+`[REVISED: build CE-3]` Built as A. The only code is CE-1's pin reading `effective_net_scope()` (ambient met with the
+ceiling's `net`, CE-2), so a ceiling with a `net` list pins the endpoint. A ceiling's `net` may be `null` (§CE-2: `null` =
+explicitly unbounded), and then the run is not pinned unless `AXON_ALLOWED_NET` or a declared host pins it: "every
+ceilinged run is pinned" holds only for a `net` list. Test (asi-runtime only, so outside the default gate):
+`ceiling.rs::ceiling_net_pins_the_ai_endpoint`, a 127.0.0.1 listener that the unceilinged control run reaches and the
+ceilinged run (`net: ["api.anthropic.com"]`, program `net: ["*"]`) does not. Docs: `spec/axon-for-llms.md` (operator
+ceilings paragraph).
+
 ---
 
 ### CE-4 (P2, NH-C4) Per-fn AI budget does not cover callees (O032)
