@@ -4164,3 +4164,8 @@ ATTACK_MARKERS.update({
     'M4779': r"ATTACK: a contained main.s module-level let reached an ungranted capability",
     'M4781': r'ATTACK: a contained main called a module-level lambda that reached an ungranted capability',
 })
+
+# genviab-b3 B3-5 (id M4780, b3 block M4770-M4789)
+ATTACK_MARKERS.update({
+    'M4780': r'ATTACK: a missing ceiling was reported as two ceilings',
+})

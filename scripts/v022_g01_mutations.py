@@ -14909,8 +14909,8 @@ MUTATIONS += [
      '            let _ = meters;\n            dispatch(cli.command)',
      'axon-core', '--no-default-features --test ceiling', 'ceiling_ai_calls_span_every_test'),
     ('M4754', 'ICE-3: one ceiling file in two spellings is refused', 'crates/axon-core/src/main.rs',
-     '                    (Ok(a), Ok(b)) if a == b',
-     '                    (Ok(a), Ok(b)) if a == b && a != b',
+     '                (Ok(a), Ok(b)) => a != b,',
+     '                (Ok(a), Ok(b)) => a != b || a == b,',
      'axon-core', '--no-default-features --test ceiling', 'ceiling_same_file_two_spellings_is_accepted'),
     ('M4755', 'ICE-2: the interpreter thread drops the run meters', 'crates/axon-core/src/interp.rs',
      '            .spawn_scoped(s, move || with_run_meters_opt(run, f))',
@@ -15065,6 +15065,16 @@ MUTATIONS += [
      '        module_lets: Some(&module_lets.by_name),',
      '        module_lets: None,',
      'axon-core', '--no-default-features --test cli_run', 'a_contained_main_calling_a_module_lambda_is_checked'),
+]
+
+# genviab-b3 B3-5 (tasks/genviab-b3-spec.md §3, id M4780, b3 block M4770-M4789):
+# a ceiling spelling that does not resolve is named by the loader (`cannot
+# read`), not refused as a second ceiling.
+MUTATIONS += [
+    ('M4780', 'B3-5: the unresolved-spelling branch falls to "two different"', 'crates/axon-core/src/main.rs',
+     '                (Err(_), _) => false,',
+     '                (Err(_), _) => true,',
+     'axon-core', '--no-default-features --test ceiling', 'a_missing_ceiling_in_two_spellings_reports_cannot_read'),
 ]
 
 if __name__ == "__main__":

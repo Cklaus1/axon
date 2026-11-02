@@ -294,6 +294,50 @@ fn ceiling_flag_and_env_differ_is_e1007() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// genviab-b3 B3-5 (O-CE-01): a ceiling spelling that does not resolve is a
+/// missing ceiling, not a second one: the loader's E1007 names it (`cannot
+/// read`), the flag's first, and the program does not run.
+#[test]
+fn a_missing_ceiling_in_two_spellings_reports_cannot_read() {
+    let d = tmp("b3_missing");
+    write_ceiling(&d, &ceiling_json(&[]));
+    for (env, flag, names) in [
+        (
+            "./policy/missing.json",
+            "policy/missing.json",
+            "ceiling policy/missing.json: cannot read",
+        ),
+        (
+            "./policy/ceiling.json",
+            "policy/missing.json",
+            "ceiling policy/missing.json: cannot read",
+        ),
+        (
+            "./policy/missing.json",
+            "policy/ceiling.json",
+            "ceiling ./policy/missing.json: cannot read",
+        ),
+    ] {
+        let o = run_with(
+            &d,
+            &["run", "--ceiling", flag],
+            HELLO,
+            &[("AXON_CEILING", env)],
+        );
+        let t = text(&o);
+        assert!(
+            !t.contains("two different"),
+            "ATTACK: a missing ceiling was reported as two ceilings: {env} / {flag}: {t}"
+        );
+        assert_e1007(
+            &o,
+            names,
+            "ATTACK: a missing ceiling was not named by the loader",
+        );
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn ceiling_missing_key_is_e1007() {
     let d = tmp("ce2_missing");

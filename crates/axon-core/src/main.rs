@@ -1027,17 +1027,23 @@ const CEILING_HELP: &str = "Operator ceiling file (axon-ceiling/1; same as AXON_
 /// said.
 fn apply_ceiling(flag: Option<PathBuf>, require_contained: bool) {
     if let Some(path) = flag {
+        let mut spelled = path.clone().into_os_string();
         if let Some(env) = std::env::var_os("AXON_CEILING") {
             // ICE-3: one file spelled two ways (`./c.json`, `c.json`) is one
-            // ceiling. Refused when the resolved paths differ or either does
-            // not resolve (a missing file spelled identically twice still
-            // reaches the loader's own E1007).
-            let same = std::path::Path::new(&env) == path
-                || matches!(
-                    (std::fs::canonicalize(&env), std::fs::canonicalize(&path)),
-                    (Ok(a), Ok(b)) if a == b
-                );
-            if !same {
+            // ceiling; two files that both resolve and differ are refused.
+            // genviab-b3 B3-5 (O-CE-01): a spelling that does not resolve is
+            // not a second ceiling but a missing one, so the loader names it
+            // (`cannot read ...`, the same E1007 and record): the flag's when
+            // it fails, else the variable's.
+            let differ = match (std::fs::canonicalize(&path), std::fs::canonicalize(&env)) {
+                (Ok(a), Ok(b)) => a != b,
+                (Err(_), _) => false,
+                (Ok(_), Err(_)) => {
+                    spelled = env.clone();
+                    false
+                }
+            };
+            if differ {
                 let line = format!(
                     "error[E1007]: --ceiling {} and AXON_CEILING={} name two different \
                      ceilings; refusing to run. Pass one.",
@@ -1048,7 +1054,7 @@ fn apply_ceiling(flag: Option<PathBuf>, require_contained: bool) {
                 outcome::exit_with_outcome(outcome::Kind::Compile, "ceilings", 2, &line);
             }
         }
-        std::env::set_var("AXON_CEILING", &path);
+        std::env::set_var("AXON_CEILING", &spelled);
     }
     let ceilinged = axon_core::ceiling::active().is_some();
     axon_core::capabilities::set_require_contained(require_contained || ceilinged);
