@@ -165,8 +165,8 @@ fn the_linux_rootfs_build_installs_a_default_features_axon_guest_init() {
         "axon-guest-init must be installed into the rootfs"
     );
     assert!(
-        body.contains("grep -qa 'AXON_GUEST_ALLOW_NO_POLICY'"),
-        "the build must refuse a binary that carries the bypass"
+        body.contains("grep -qa -e 'AXON_GUEST_ALLOW_NO_POLICY' -e '--host-fs-mirror'"),
+        "the build must refuse a binary that carries the bypass or the host fs mirror"
     );
 }
 

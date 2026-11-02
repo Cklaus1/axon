@@ -606,6 +606,57 @@ else
     record x2_scope_unsupported_axis_refuses FAIL "path refused=$LP host refused=$LH reason=$(jq_r "$WORK/x2-path/result.json" reason)" "ACF-G26"
 fi
 
+# ── (g) guest-fs GF-3: the `fs` axis ("fs": "none", schema axon-vm-mmds/2) ───
+# g1: the L0 program under fs:none runs in the guest and prints exactly what the
+#     pinned axon prints on the host; the guest reported the axis (B263-FS) and
+#     the policy is bound.
+# g2: the guest itself enforces it: an IO-only program reading a guest file
+#     (the launcher would refuse it, so the policy word goes on the cmdline
+#     through the test hook) stops with exit 8 before the read; READER-GOT and
+#     READER-END never print.
+# g3: the launcher refuses fs:none before anything is acquired for a program
+#     that needs a filesystem (hello.ax writes a file), one that imports a
+#     module (examples/modular/agent.ax, module --put beside it), and a policy
+#     that grants Exec (execve is not withheld).
+say "(g) guest-fs fs axis"
+printf '{"schema":"axon-vm-mmds/2","allowed_effects":["IO"],"fs":"none"}' > "$WORK/pol-fsnone.json"
+printf '{"schema":"axon-vm-mmds/2","allowed_effects":["IO","Exec"],"fs":"none"}' > "$WORK/pol-fsnone-exec.json"
+PIN_AX="$(jq_r "$MANIFEST" artifacts.axon.sha256)"
+G_AX="$REPO/dist/guest-linux/axon"
+G1="$WORK/g1"; mkdir -p "$WORK/g1-host"
+G1_HOST=""
+[[ "$(sha256sum < "$G_AX" | cut -d' ' -f1)" == "$PIN_AX" ]] \
+    && G1_HOST="$(cd "$WORK/g1-host" && env -i PATH=/bin:/usr/bin HOME="$WORK/g1-host" XDG_CACHE_HOME="$WORK/g1-host/cache" \
+        "$G_AX" run "$REPO/examples/flagship/agent_task.ax" 2>/dev/null </dev/null | sha256sum | cut -d' ' -f1)"
+"$LAUNCH" --program "$REPO/examples/flagship/agent_task.ax" --policy "$WORK/pol-fsnone.json" --out "$G1" --timeout-s 90 >/dev/null 2>&1; RC_G1=$?
+G1_SHA="$(sha256sum < "$G1/out/stdout" 2>/dev/null | cut -d' ' -f1)"
+if [[ $RC_G1 == 0 && -n "$G1_HOST" && "$G1_SHA" == "$G1_HOST" && "$(jq_r "$G1/result.json" policy.bound)" == true \
+      && "$(jq_r "$G1/result.json" policy.fs)" == none && "$(jq_r "$G1/result.json" policy.serial_fs)" == "none insns="* ]]; then
+    record g1_fs_none_l0_program_runs_bound PASS "fs:none + agent_task.ax: exit 0, guest stdout == pinned axon's host stdout (sha256 ${G1_SHA:0:16}); serial '$(jq_r "$G1/result.json" policy.serial_fs)'; policy bound" "CE-9"
+else
+    record g1_fs_none_l0_program_runs_bound FAIL "rc=$RC_G1 guest=$G1_SHA host=$G1_HOST bound=$(jq_r "$G1/result.json" policy.bound) serial_fs=$(jq_r "$G1/result.json" policy.serial_fs) stderr=$(head -c 300 "$G1/out/stderr" 2>/dev/null | tr '\n' '|')" "CE-9"
+fi
+G2="$WORK/g2"
+FC_PROFILE_TEST_POLICY_WORD="axon.policy=$(base64 -w0 < "$WORK/pol-fsnone.json")" \
+    "$LAUNCH" --program "$FIX/fs_reader.ax" --out "$G2" --timeout-s 60 >/dev/null 2>&1
+if [[ "$(jq_r "$G2/result.json" workload_exit)" == 8 ]] && grep -q READER-START "$G2/out/stdout" \
+      && ! grep -q -e READER-GOT -e READER-END "$G2/out/stdout" && grep -aq "B263-FS none insns=" "$G2/serial.log"; then
+    record g2_fs_none_guest_refuses_a_read PASS "fs:none on the cmdline + fs_reader.ax: the guest reported B263-FS, the read of /init stopped the workload (exit 8) before READER-GOT; the launcher's own refusal was bypassed (test hook), so this is the guest's enforcement" "CE-9"
+else
+    record g2_fs_none_guest_refuses_a_read FAIL "workload_exit=$(jq_r "$G2/result.json" workload_exit) stdout=$(head -c 200 "$G2/out/stdout" 2>/dev/null | tr '\n' '|') stderr=$(head -c 300 "$G2/out/stderr" 2>/dev/null | tr '\n' '|')" "CE-9"
+fi
+launcher_refuses "$WORK/g3-hello" --policy "$WORK/pol-fsnone.json" --program "$FIX/hello.ax"; G3A=$?
+launcher_refuses "$WORK/g3-mod" --policy "$WORK/pol-fsnone.json" --program "$REPO/examples/modular/agent.ax" \
+    --put "$REPO/examples/modular/scorelib.ax:/job/scorelib.ax"; G3B=$?
+launcher_refuses "$WORK/g3-exec" --policy "$WORK/pol-fsnone-exec.json"; G3C=$?
+if [[ $G3A == 0 && $G3B == 0 && $G3C == 0 && "$(jq_r "$WORK/g3-hello/result.json" reason)" == *"fs:write"* \
+      && "$(jq_r "$WORK/g3-mod/result.json" reason)" == *"imports a module"* \
+      && "$(jq_r "$WORK/g3-exec/result.json" reason)" == *"Exec"* ]]; then
+    record g3_fs_none_launcher_refuses_what_it_would_break PASS "fs:none refused before launch (rc 22, nothing acquired) for hello.ax (needs fs:write), examples/modular/agent.ax (imports a module) and a policy granting Exec" "CE-9"
+else
+    record g3_fs_none_launcher_refuses_what_it_would_break FAIL "hello=$G3A ($(jq_r "$WORK/g3-hello/result.json" reason)) module=$G3B ($(jq_r "$WORK/g3-mod/result.json" reason)) exec=$G3C ($(jq_r "$WORK/g3-exec/result.json" reason))" "CE-9"
+fi
+
 # ── BLOCKED: required by the gates, not testable honestly here ───────────────
 record x3_l0_hypervisor_boundary BLOCKED "$X3_REASON" "G03-r22-physical-isolation"
 record x4_trusted_evidence_issuer BLOCKED "G13-r22-profile-qualification requires binding to a TRUSTED evidence issuer. This evidence is produced and signed by nobody but the invoking root shell; no issuer key exists in this repo. The record is unsigned." "G13-r22-profile-qualification"

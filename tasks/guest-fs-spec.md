@@ -460,6 +460,19 @@ selector-eligible set it requires 0 differences between (a) and (b) where (a) = 
 both-fail programs explicitly. It joins `gate.sh` as a new selectable stage in `governance/gate-lanes.json`; it is host-only
 and needs no KVM.
 
+[REVISED: build 2026-11-02 GF-3] Built as specified, with these deviations. (1) The corpus's (b) leg is not a Python
+mirror (`hostgate.py`): it is the real guest child path, run on the host by `axon-guest-init --host-fs-mirror` (non-default
+cargo feature `host-fs-mirror`; `build-guest-image.sh` refuses an init binary containing the flag, and
+`tests/no_bypass_in_default_build.rs` checks the default build lacks it). The script also runs leg (f) (`axon run
+--source-fd 3`, GF-1 parity, every program) and re-runs (a) three times before reporting a difference. Observed at the GF-3
+commit: 716 tracked programs, 531 admitted under `fs:none`, 281 of them exit 0 with identical stdout, 250 both-fail, 4
+nondeterministic, **0 differences** (73 s at `--jobs 16`). The gate stage id is `S24`. (2) M4767 rows the WRITE half of the
+empty-scope export (the coverage check sees the changed line); the READ half, `check_fs_axis`'s two refusals and
+`POLICY_SCHEMA_FS` are OBSERVED-NOT-ROWED exemptions (hand mutations failed `fs_key_requires_schema_v2` /
+`fs_none_exports_empty_path_scopes`), because the M4760-M4769 block is full. (3) The `B263-FS` line is written to
+`/dev/console` by the forked child just before exec. (4) The `reader_init.ax` row uses the tracked copy
+`profiles/linux-microvm/fixtures/fs_reader.ax`.
+
 ### GF-4 (P2, §8.7) `axon_kernel_gate.sh` Layer 3
 
 **Anchors.**

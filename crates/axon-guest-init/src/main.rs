@@ -2,8 +2,9 @@
 //!
 //! Boot sequence:
 //!   1. Re-seed entropy from virtio-rng (/dev/urandom)
-//!   2. Read the capability policy (schema axon-vm-mmds/1) and REFUSE to start
-//!      the guest unless it constrains something (see "Policy channels").
+//!   2. Read the capability policy (schema axon-vm-mmds/1, or /2 with the `fs`
+//!      axis) and REFUSE to start the guest unless it constrains something
+//!      (see "Policy channels").
 //!   3. Fork: parent becomes PID-1 supervisor; child applies seccomp then execs Axon
 //!   4. Supervisor loop: reap zombies, forward SIGTERM/SIGINT, exit with child's code
 //!
@@ -54,6 +55,17 @@
 //! and nothing in the workspace reads them -- in particular the guest does NOT
 //! today check the loaded image against AXON_SOURCE_HASH (R36 S2 owns that; see
 //! its (i) clause). Do not read this list as a policy that is enforced.
+//!
+//! The `fs` axis (guest-fs GF-3, schema `axon-vm-mmds/2` only): `"fs": "none"`
+//! makes the child export `AXON_ALLOWED_FS_READ=` and `AXON_ALLOWED_FS_WRITE=`
+//! (empty: every Axon-level file read and write is refused, exit 8) and install
+//! the COMPILED-IN substrate filter (`fs_none_filter`) after any policy
+//! `seccomp_bpf_b64`: path-taking file syscalls fail with EACCES, the
+//! interpreter's substrate is allowed, every other syscall and any non-x86_64
+//! syscall ABI kills the process. It then prints `B263-FS none insns=<n>` on
+//! the serial console, so the host can tell that the axis was applied. A `/1`
+//! policy carrying `fs` is refused: an image that predates `/2` refuses the
+//! schema, so no guest silently ignores the axis.
 
 use std::ffi::CString;
 use std::io::{Read, Write};
@@ -84,7 +96,8 @@ impl MmdsPayload {
     /// REPRODUCED at parse level: `{}`, an all-null body, and an
     /// unknown-fields-only body all deserialize to `Some(all None)`.
     ///
-    /// Only the three ENFORCED mechanisms count. `principal`, `run_id` and
+    /// Only the four ENFORCED mechanisms count (`fs` since guest-fs GF-3; its
+    /// value is held to `"none"` by `check_fs_axis`). `principal`, `run_id` and
     /// `source_hash` are LABELS — the module header above is explicit that they
     /// "grant and withhold nothing" — so a payload carrying only labels is
     /// exactly as unpoliced as `{}` and must not be rescued by them.
@@ -92,6 +105,7 @@ impl MmdsPayload {
         self.allowed_effects.is_some()
             || self.budget_tokens.is_some()
             || self.seccomp_bpf_b64.is_some()
+            || self.fs.is_some()
     }
 
     /// Does it carry any of the LABEL fields? Used only to tell a labels-only
@@ -114,12 +128,19 @@ struct MmdsPayload {
     source_hash: Option<String>,
     seccomp_bpf_b64: Option<String>,
     run_id: Option<String>,
+    /// guest-fs GF-3: `"none"` withholds the filesystem (schema `/2` only;
+    /// `check_fs_axis`). Absent = today's behaviour.
+    fs: Option<String>,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    #[cfg(feature = "host-fs-mirror")]
+    if args.get(1).map(String::as_str) == Some("--host-fs-mirror") {
+        host_fs_mirror(&args);
+    }
     let (source, binary, exec_args) = match parse_args(&args) {
         Ok(v) => v,
         Err(e) => {
@@ -159,7 +180,7 @@ fn main() {
                      (allowed_effects omitted) — the guest runs unrestricted on that axis"
                 );
             }
-            if p.seccomp_bpf_b64.is_none() {
+            if p.seccomp_bpf_b64.is_none() && p.fs.is_none() {
                 eprintln!(
                     "[axon-guest-init] WARNING: policy loaded with NO seccomp filter \
                      (seccomp_bpf_b64 omitted) — defence in depth is absent"
@@ -207,9 +228,53 @@ fn main() {
             );
             process::exit(1);
         }
-        0 => child_main(policy, &binary, &exec_args, source.as_ref()),
+        0 => child_main(
+            policy,
+            &binary,
+            &exec_args,
+            source.as_ref(),
+            Path::new(SERIAL_CONSOLE),
+        ),
         pid => supervisor_main(pid),
     }
+}
+
+/// guest-fs GF-3 corpus differential (`scripts/guest_fs_corpus.sh`), on the
+/// HOST: run the guest child's exact path - load before gate, empty path
+/// scopes, the compiled-in `fs:none` filter, exec - under the policy
+/// `{"schema":"axon-vm-mmds/2","fs":"none"}`, with no fork, no supervisor and
+/// the `B263-FS` report on stderr. `axon-guest-init --host-fs-mirror
+/// --source-fd N=PATH -- <binary> [args...]`. Compiled only with the
+/// non-default feature `host-fs-mirror`; no image carries it (it reads no
+/// policy). `tests/no_bypass_in_default_build.rs` checks the default build.
+#[cfg(feature = "host-fs-mirror")]
+fn host_fs_mirror(args: &[String]) -> ! {
+    let mut rest = vec![args[0].clone()];
+    rest.extend_from_slice(&args[2..]);
+    let (source, binary, exec_args) = match parse_args(&rest) {
+        Ok((Some(s), b, a)) => (s, b, a),
+        Ok((None, _, _)) => {
+            eprintln!("[axon-guest-init] --host-fs-mirror needs --source-fd N=PATH");
+            process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("[axon-guest-init] --host-fs-mirror argv: {e}");
+            process::exit(1);
+        }
+    };
+    let policy = parse_policy_json_strict(r#"{"schema":"axon-vm-mmds/2","fs":"none"}"#)
+        .and_then(|p| check_fs_axis(&p).map(|()| p))
+        .unwrap_or_else(|e| {
+            eprintln!("[axon-guest-init] --host-fs-mirror policy: {e}");
+            process::exit(1);
+        });
+    child_main(
+        Some(policy),
+        &binary,
+        &exec_args,
+        Some(&source),
+        Path::new("/dev/stderr"),
+    )
 }
 
 /// The program to open before the gate: `--source-fd N=PATH`.
@@ -360,8 +425,11 @@ fn allow_unpoliced() -> bool {
 const CMDLINE_PATH: &str = "/proc/cmdline";
 /// The one cmdline word that carries the policy.
 const CMDLINE_POLICY_KEY: &str = "axon.policy=";
-/// The only schema the cmdline channel accepts.
+/// The schema the cmdline channel accepts for a policy without the `fs` axis.
 const POLICY_SCHEMA: &str = "axon-vm-mmds/1";
+/// guest-fs GF-3: `/1` plus the `fs` axis. A policy carrying `fs` must say it,
+/// so an image that predates the axis refuses the schema instead of ignoring it.
+const POLICY_SCHEMA_FS: &str = "axon-vm-mmds/2";
 /// x86 `COMMAND_LINE_SIZE`. The kernel keeps at most `COMMAND_LINE_SIZE - 1`
 /// bytes and silently TRUNCATES the rest, so a cmdline that reaches that
 /// length may have lost the tail of the policy. Refuse rather than guess; the
@@ -397,8 +465,12 @@ enum CmdlinePolicyError {
     /// Parsed, carries labels (principal/run_id/source_hash) but no enforced
     /// mechanism. Labels grant and withhold nothing.
     LabelsOnly,
-    /// `schema` absent or not `axon-vm-mmds/1`.
+    /// `schema` absent or neither `axon-vm-mmds/1` nor `axon-vm-mmds/2`.
     WrongSchema(Option<String>),
+    /// guest-fs GF-3: an `fs` key under a schema other than `axon-vm-mmds/2`.
+    FsNeedsSchemaV2(Option<String>),
+    /// guest-fs GF-3: an `fs` value other than `"none"`.
+    BadFsValue(String),
 }
 
 impl std::fmt::Display for CmdlinePolicyError {
@@ -422,8 +494,8 @@ impl std::fmt::Display for CmdlinePolicyError {
             DuplicateKey(k) => write!(f, "cmdline policy has DUPLICATE KEY `{k}`"),
             ConstrainsNothing => write!(
                 f,
-                "cmdline policy CONSTRAINS NOTHING: no allowed_effects, budget_tokens or \
-                 seccomp_bpf_b64"
+                "cmdline policy CONSTRAINS NOTHING: no allowed_effects, budget_tokens, \
+                 seccomp_bpf_b64 or fs"
             ),
             LabelsOnly => write!(
                 f,
@@ -432,7 +504,18 @@ impl std::fmt::Display for CmdlinePolicyError {
             ),
             WrongSchema(s) => write!(
                 f,
-                "cmdline policy has WRONG SCHEMA: expected `{POLICY_SCHEMA}`, got {s:?}"
+                "cmdline policy has WRONG SCHEMA: expected `{POLICY_SCHEMA}` or \
+                 `{POLICY_SCHEMA_FS}`, got {s:?}"
+            ),
+            FsNeedsSchemaV2(s) => write!(
+                f,
+                "policy carries the `fs` axis under schema {s:?}: `fs` is valid only \
+                 under `{POLICY_SCHEMA_FS}`"
+            ),
+            BadFsValue(v) => write!(
+                f,
+                "policy `fs` is {v:?}: the only value is \"none\" (path scope is not \
+                 projected into the guest)"
             ),
         }
     }
@@ -483,10 +566,30 @@ fn parse_cmdline_policy(cmdline: &str) -> Result<Option<MmdsPayload>, CmdlinePol
             CmdlinePolicyError::ConstrainsNothing
         });
     }
+    if payload.schema.as_deref() == Some(POLICY_SCHEMA_FS) {
+        check_fs_axis(&payload)?;
+        return Ok(Some(payload));
+    }
     if payload.schema.as_deref() != Some(POLICY_SCHEMA) {
         return Err(CmdlinePolicyError::WrongSchema(payload.schema));
     }
+    check_fs_axis(&payload)?;
     Ok(Some(payload))
+}
+
+/// guest-fs GF-3: the `fs` axis is valid only under `axon-vm-mmds/2`, and its
+/// only value is `"none"`. Both channels hold a payload to this.
+fn check_fs_axis(p: &MmdsPayload) -> Result<(), CmdlinePolicyError> {
+    let Some(v) = &p.fs else {
+        return Ok(());
+    };
+    if p.schema.as_deref() != Some(POLICY_SCHEMA_FS) {
+        return Err(CmdlinePolicyError::FsNeedsSchemaV2(p.schema.clone()));
+    }
+    if v != "none" {
+        return Err(CmdlinePolicyError::BadFsValue(v.clone()));
+    }
+    Ok(())
 }
 
 /// Parse the payload JSON refusing duplicate object keys at any depth.
@@ -603,7 +706,12 @@ fn load_policy(
         Ok(None) => match mmds() {
             // CONTENT, not presence. A body that parsed but constrains nothing
             // is not a policy — see `MmdsPayload::constrains_anything`.
-            Ok(Some(p)) if p.constrains_anything() => Ok((p, PolicySource::Mmds)),
+            // guest-fs GF-3: the `fs` axis is held to the same rule as on the
+            // cmdline (schema `/2`, value `"none"`).
+            Ok(Some(p)) if p.constrains_anything() => match check_fs_axis(&p) {
+                Ok(()) => Ok((p, PolicySource::Mmds)),
+                Err(e) => Err(format!("MMDS {e}")),
+            },
             Ok(Some(_)) => Err(
                 "policy ABSENT: no `axon.policy=` on the kernel cmdline, and \
                                 the MMDS payload constrains nothing"
@@ -629,6 +737,7 @@ fn child_main(
     binary: &str,
     exec_args: &[String],
     source: Option<&SourceFd>,
+    fs_report: &Path,
 ) -> ! {
     // guest-fs GF-2: load before gate. The program is opened here, before the
     // env export and before `apply_seccomp`, so the workload's first file
@@ -656,11 +765,38 @@ fn child_main(
         if let Some(hash) = &p.source_hash {
             env::set_var("AXON_SOURCE_HASH", hash);
         }
+        // guest-fs GF-3: `"fs": "none"` (check_fs_axis admitted no other
+        // value). The path scopes are emptied here, and the report stream (the
+        // serial console in the guest) is opened now, before any filter, to
+        // report the axis once it is on.
+        let fs_console = if p.fs.is_some() {
+            export_fs_none_env();
+            match open_console(fs_report) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    eprintln!(
+                        "[axon-guest-init] cannot open {} for the fs axis: {e}",
+                        fs_report.display()
+                    );
+                    process::exit(1);
+                }
+            }
+        } else {
+            None
+        };
 
         // Apply seccomp AFTER setting env vars (set_var would be blocked after).
         if let Some(bpf_b64) = &p.seccomp_bpf_b64 {
             if let Err(e) = apply_seccomp(bpf_b64) {
                 eprintln!("[axon-guest-init] seccomp apply failed: {e}");
+                process::exit(1);
+            }
+        }
+        // The fs filter goes on LAST: it withholds `prctl`, so no filter can
+        // be installed after it. Stacked filters take the strictest result.
+        if let Some(console) = fs_console {
+            if let Err(e) = apply_fs_none(console) {
+                eprintln!("[axon-guest-init] fs axis apply failed: {e}");
                 process::exit(1);
             }
         }
@@ -805,7 +941,15 @@ fn apply_seccomp(bpf_b64: &str) -> Result<(), String> {
         ));
     }
     let n_insns = (bpf_bytes.len() / 8) as u16;
+    install_bpf(&bpf_bytes, n_insns)?;
+    eprintln!("[axon-guest-init] seccomp applied ({n_insns} instructions)");
+    Ok(())
+}
 
+/// Install `n_insns` sock_filter instructions from `bpf_bytes` on the calling
+/// thread, after setting no-new-privs. Shared by the policy's own program
+/// (`apply_seccomp`) and the compiled-in `fs` axis filter (`apply_fs_none`).
+fn install_bpf(bpf_bytes: &[u8], n_insns: u16) -> Result<(), String> {
     unsafe {
         // PR_SET_NO_NEW_PRIVS: mandatory prerequisite for installing a seccomp
         // filter without CAP_SYS_ADMIN. Irreversible for this process and all
@@ -839,8 +983,165 @@ fn apply_seccomp(bpf_b64: &str) -> Result<(), String> {
             ));
         }
     }
+    Ok(())
+}
 
-    eprintln!("[axon-guest-init] seccomp applied ({n_insns} instructions)");
+// ── guest-fs GF-3: the `fs` axis ──────────────────────────────────────────────
+
+/// The serial console, where `B263-FS` is reported for the host to bind.
+const SERIAL_CONSOLE: &str = "/dev/console";
+
+/// x86_64 syscalls the interpreter substrate needs under `"fs": "none"`:
+/// memory, threads, signals, fd-relative I/O, time, `getrandom`, and `execve`
+/// (the filter is installed BEFORE this child execs the workload). Not here,
+/// so KILLED: `prctl` (no further filter can be installed or relaxed), every
+/// socket call, `ptrace`, `mount`, ... Numbers, not names: the arch check
+/// pins the table to x86_64 whatever target this binary was built for.
+const FS_NONE_ALLOW: [u32; 41] = [
+    0,   // read
+    1,   // write
+    3,   // close
+    5,   // fstat
+    7,   // poll
+    8,   // lseek
+    9,   // mmap
+    10,  // mprotect
+    11,  // munmap
+    12,  // brk
+    13,  // rt_sigaction
+    14,  // rt_sigprocmask
+    15,  // rt_sigreturn
+    16,  // ioctl
+    17,  // pread64
+    19,  // readv
+    20,  // writev
+    24,  // sched_yield
+    25,  // mremap
+    28,  // madvise
+    35,  // nanosleep
+    39,  // getpid
+    56,  // clone
+    59,  // execve
+    60,  // exit
+    72,  // fcntl
+    131, // sigaltstack
+    158, // arch_prctl
+    186, // gettid
+    202, // futex
+    204, // sched_getaffinity
+    218, // set_tid_address
+    228, // clock_gettime
+    230, // clock_nanosleep
+    231, // exit_group
+    234, // tgkill
+    273, // set_robust_list
+    302, // prlimit64
+    318, // getrandom
+    324, // membarrier
+    334, // rseq
+];
+
+/// x86_64 path-taking filesystem syscalls: refused with EACCES (not killed),
+/// so the interpreter's own probes fail like a denied open and an Axon-level
+/// read reaches the runtime's refusal (exit 8) instead of a SIGSYS.
+const FS_NONE_EACCES: [u32; 28] = [
+    2,   // open (musl opens with `open`)
+    4,   // stat
+    6,   // lstat
+    21,  // access
+    79,  // getcwd
+    80,  // chdir
+    82,  // rename
+    83,  // mkdir
+    84,  // rmdir
+    85,  // creat
+    86,  // link
+    87,  // unlink
+    88,  // symlink
+    89,  // readlink
+    90,  // chmod
+    92,  // chown
+    217, // getdents64
+    257, // openat
+    258, // mkdirat
+    262, // newfstatat
+    263, // unlinkat
+    264, // renameat
+    267, // readlinkat
+    269, // faccessat
+    316, // renameat2
+    332, // statx
+    437, // openat2
+    439, // faccessat2
+];
+
+const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
+const SECCOMP_RET_ALLOW: u32 = 0x7FFF_0000;
+const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
+const SECCOMP_RET_ERRNO_EACCES: u32 = 0x0005_0000 | libc::EACCES as u32;
+const BPF_LD_W_ABS: u16 = 0x20;
+const BPF_JEQ_K: u16 = 0x15;
+const BPF_RET_K: u16 = 0x06;
+
+fn bpf_ins(out: &mut Vec<u8>, code: u16, jt: u8, jf: u8, k: u32) {
+    out.extend_from_slice(&code.to_le_bytes());
+    out.push(jt);
+    out.push(jf);
+    out.extend_from_slice(&k.to_le_bytes());
+}
+
+/// The compiled-in `"fs": "none"` filter. Layout: arch check (any ABI but
+/// x86_64 is KILLED), load the syscall number, one JEQ per ALLOW and per
+/// EACCES entry, then RET KILL (default), RET EACCES, RET ALLOW. An x32
+/// number (bit 30 set) matches no entry and is KILLED by the default.
+fn fs_none_filter() -> Vec<u8> {
+    let (n_a, n_f) = (FS_NONE_ALLOW.len(), FS_NONE_EACCES.len());
+    let mut p = Vec::with_capacity((n_a + n_f + 7) * 8);
+    bpf_ins(&mut p, BPF_LD_W_ABS, 0, 0, 4); // seccomp_data.arch
+    bpf_ins(&mut p, BPF_JEQ_K, 1, 0, AUDIT_ARCH_X86_64);
+    bpf_ins(&mut p, BPF_RET_K, 0, 0, SECCOMP_RET_KILL_PROCESS);
+    bpf_ins(&mut p, BPF_LD_W_ABS, 0, 0, 0); // seccomp_data.nr
+    for (i, nr) in FS_NONE_ALLOW.iter().enumerate() {
+        let to_allow = (n_a - 1 - i) + n_f + 2;
+        bpf_ins(&mut p, BPF_JEQ_K, to_allow as u8, 0, *nr);
+    }
+    for (i, nr) in FS_NONE_EACCES.iter().enumerate() {
+        let to_eacces = (n_f - 1 - i) + 1;
+        bpf_ins(&mut p, BPF_JEQ_K, to_eacces as u8, 0, *nr);
+    }
+    bpf_ins(&mut p, BPF_RET_K, 0, 0, SECCOMP_RET_KILL_PROCESS);
+    bpf_ins(&mut p, BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO_EACCES);
+    bpf_ins(&mut p, BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW);
+    p
+}
+
+/// `"fs": "none"` (a): empty Axon-level path scopes. Empty means every
+/// interpreter read and write is refused (exit 8) before any syscall is made.
+fn export_fs_none_env() {
+    env::set_var("AXON_ALLOWED_FS_READ", "");
+    env::set_var("AXON_ALLOWED_FS_WRITE", "");
+}
+
+/// Open the serial console for the `B263-FS` report. Close-on-exec (std's
+/// default), so the workload never inherits it.
+fn open_console(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NOCTTY)
+        .open(path)
+}
+
+/// `"fs": "none"` (b) + (c): install the compiled-in filter on top of any the
+/// policy carried (stacked filters take the strictest result), then report
+/// `B263-FS none insns=<n>` on `report` - a `write` on an fd opened before the
+/// filter, which the filter allows.
+fn apply_fs_none(mut report: std::fs::File) -> Result<(), String> {
+    let filter = fs_none_filter();
+    let n_insns = (filter.len() / 8) as u16;
+    install_bpf(&filter, n_insns)?;
+    writeln!(report, "B263-FS none insns={n_insns}")
+        .map_err(|e| format!("cannot report B263-FS: {e}"))?;
     Ok(())
 }
 
@@ -1126,8 +1427,8 @@ mod tests {
             CmdlinePolicyError::WrongSchema(None)
         );
         assert_eq!(
-            cmdline_err(r#"{"schema":"axon-vm-mmds/2","allowed_effects":["IO"]}"#),
-            CmdlinePolicyError::WrongSchema(Some("axon-vm-mmds/2".to_string()))
+            cmdline_err(r#"{"schema":"axon-vm-mmds/3","allowed_effects":["IO"]}"#),
+            CmdlinePolicyError::WrongSchema(Some("axon-vm-mmds/3".to_string()))
         );
     }
 
@@ -1621,5 +1922,200 @@ mod tests {
         );
         let _ = std::fs::remove_file(&link);
         let _ = std::fs::remove_file(&p);
+    }
+
+    // ── guest-fs GF-3: the `fs` axis ──────────────────────────────────────────
+
+    /// `fs` is valid only under `axon-vm-mmds/2`, its one value is `"none"`,
+    /// and `/2` alone (no `fs`) is still a policy. MMDS is held to the same.
+    #[test]
+    fn fs_key_requires_schema_v2() {
+        assert_eq!(
+            cmdline_err(r#"{"schema":"axon-vm-mmds/1","allowed_effects":["IO"],"fs":"none"}"#),
+            CmdlinePolicyError::FsNeedsSchemaV2(Some("axon-vm-mmds/1".to_string())),
+            "ATTACK: a /1 policy carrying fs was accepted"
+        );
+        assert_eq!(
+            cmdline_err(r#"{"schema":"axon-vm-mmds/2","allowed_effects":["IO"],"fs":"read"}"#),
+            CmdlinePolicyError::BadFsValue("read".to_string()),
+            "ATTACK: an fs value other than none was accepted"
+        );
+        assert!(matches!(
+            cmdline_err(r#"{"schema":"axon-vm-mmds/3","fs":"none"}"#),
+            CmdlinePolicyError::WrongSchema(_)
+        ));
+        let ok = |j: &str| {
+            parse_cmdline_policy(&cmdline_with(&format!("axon.policy={}", b64(j))))
+                .expect("accepted")
+                .expect("present")
+        };
+        let p = ok(r#"{"schema":"axon-vm-mmds/2","fs":"none"}"#);
+        assert_eq!(p.fs.as_deref(), Some("none"), "fs alone is a policy");
+        let p = ok(r#"{"schema":"axon-vm-mmds/2","allowed_effects":["IO"]}"#);
+        assert_eq!(p.fs, None);
+        let mmds = || {
+            Ok(Some(
+                serde_json::from_str::<MmdsPayload>(
+                    r#"{"schema":"axon-vm-mmds/1","allowed_effects":["IO"],"fs":"none"}"#,
+                )
+                .unwrap(),
+            ))
+        };
+        assert!(
+            load_policy(Ok(None), mmds).is_err(),
+            "ATTACK: an MMDS /1 policy carrying fs was accepted"
+        );
+    }
+
+    /// The empty path scopes: both variables PRESENT and empty (empty denies
+    /// every read / write; absent would be unrestricted).
+    #[test]
+    fn fs_none_exports_empty_path_scopes() {
+        if !alone("tests::fs_none_exports_empty_path_scopes") {
+            return;
+        }
+        std::env::set_var("AXON_ALLOWED_FS_READ", "/");
+        std::env::set_var("AXON_ALLOWED_FS_WRITE", "/");
+        super::export_fs_none_env();
+        assert_eq!(
+            std::env::var("AXON_ALLOWED_FS_READ").as_deref(),
+            Ok(""),
+            "ATTACK: fs none left the read path scope open"
+        );
+        assert_eq!(
+            std::env::var("AXON_ALLOWED_FS_WRITE").as_deref(),
+            Ok(""),
+            "ATTACK: fs none left the write path scope open"
+        );
+    }
+
+    /// Step a classic-BPF program over one `seccomp_data` (nr, arch). Only the
+    /// three opcodes `fs_none_filter` emits are understood.
+    fn run_bpf(prog: &[u8], arch: u32, nr: u32) -> u32 {
+        let (mut pc, mut acc) = (0usize, 0u32);
+        loop {
+            let i = &prog[pc * 8..pc * 8 + 8];
+            let code = u16::from_le_bytes([i[0], i[1]]);
+            let (jt, jf) = (i[2] as usize, i[3] as usize);
+            let k = u32::from_le_bytes([i[4], i[5], i[6], i[7]]);
+            pc += 1;
+            match code {
+                0x20 => {
+                    acc = match k {
+                        0 => nr,
+                        4 => arch,
+                        _ => panic!("unexpected load offset {k}"),
+                    }
+                }
+                0x15 => pc += if acc == k { jt } else { jf },
+                0x06 => return k,
+                _ => panic!("unexpected opcode {code:#x}"),
+            }
+        }
+    }
+
+    /// Any ABI but x86_64 (i386, and x32 numbers on x86_64) is KILLED; the
+    /// tables decide the rest; anything unlisted (`prctl`) is KILLED.
+    #[test]
+    fn fs_none_filter_kills_non_x86_64_arch() {
+        let p = super::fs_none_filter();
+        const I386: u32 = 0x4000_0003;
+        const KILL: u32 = super::SECCOMP_RET_KILL_PROCESS;
+        for nr in [0, 1, 257, 2] {
+            assert_eq!(
+                run_bpf(&p, I386, nr),
+                KILL,
+                "ATTACK: i386 syscall {nr} got through the arch check"
+            );
+        }
+        assert_eq!(
+            run_bpf(&p, super::AUDIT_ARCH_X86_64, 0x4000_0000),
+            KILL,
+            "x32 read"
+        );
+        assert_eq!(run_bpf(&p, super::AUDIT_ARCH_X86_64, 157), KILL, "prctl");
+        for nr in super::FS_NONE_ALLOW {
+            assert_eq!(
+                run_bpf(&p, super::AUDIT_ARCH_X86_64, nr),
+                super::SECCOMP_RET_ALLOW
+            );
+        }
+        for nr in super::FS_NONE_EACCES {
+            assert_eq!(
+                run_bpf(&p, super::AUDIT_ARCH_X86_64, nr),
+                super::SECCOMP_RET_ERRNO_EACCES,
+                "ATTACK: path syscall {nr} was not refused with EACCES"
+            );
+        }
+        assert_eq!(p.len() / 8, 76);
+    }
+
+    /// In a forked child: install the fs filter, then `open` is EACCES while
+    /// `write` and `getrandom` work, the `B263-FS` report is written, and a
+    /// later `prctl` (another filter) is KILLED.
+    #[test]
+    fn fs_none_filter_denies_path_syscalls() {
+        if !alone("tests::fs_none_filter_denies_path_syscalls") {
+            return;
+        }
+        let target = write_tmp("gf3-target", "secret\n");
+        let report = write_tmp("gf3-report", "");
+        let c_target = std::ffi::CString::new(target.to_str().unwrap()).unwrap();
+        let st = forked(10, || {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&report)
+                .unwrap();
+            if super::apply_fs_none(f).is_err() {
+                return 10;
+            }
+            // SAFETY: plain syscalls on a NUL-terminated path and local buffers.
+            unsafe {
+                let fd = libc::open(c_target.as_ptr(), libc::O_RDONLY);
+                if fd != -1 {
+                    return 11;
+                }
+                if *libc::__errno_location() != libc::EACCES {
+                    return 12;
+                }
+                if libc::write(1, b"".as_ptr().cast(), 0) != 0 {
+                    return 13;
+                }
+                let mut buf = [0u8; 8];
+                if libc::getrandom(buf.as_mut_ptr().cast(), 8, 0) != 8 {
+                    return 14;
+                }
+            }
+            0
+        })
+        .expect("the filtered child hung");
+        assert!(
+            libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0,
+            "ATTACK: under fs none a path syscall was not refused with EACCES \
+             (or the substrate was withheld): status {st:#x}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&report).unwrap(),
+            "B263-FS none insns=76\n"
+        );
+        let st = forked(10, || {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&report)
+                .unwrap();
+            if super::apply_fs_none(f).is_err() {
+                return 10;
+            }
+            // SAFETY: prctl with no pointer arguments.
+            unsafe { libc::prctl(libc::PR_GET_SECCOMP, 0, 0, 0, 0) };
+            0
+        })
+        .expect("the filtered child hung");
+        assert!(
+            libc::WIFSIGNALED(st) && libc::WTERMSIG(st) == libc::SIGSYS,
+            "ATTACK: prctl ran under the fs filter: status {st:#x}"
+        );
+        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_file(&report);
     }
 }

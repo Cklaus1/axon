@@ -218,9 +218,11 @@ build_rootfs_linux() {
         exit 1
     fi
     # The artefact-level check that the bypass is absent: the only code that
-    # spells the variable's name is compiled out of a default build.
-    if grep -qa 'AXON_GUEST_ALLOW_NO_POLICY' "$INIT_BIN"; then
-        echo "[build-guest-image] ERROR: $INIT_BIN contains the no-policy bypass" >&2
+    # spells the variable's name is compiled out of a default build. The same
+    # for guest-fs GF-3's `--host-fs-mirror` (feature `host-fs-mirror`), which
+    # runs the workload under a policy it never read.
+    if grep -qa -e 'AXON_GUEST_ALLOW_NO_POLICY' -e '--host-fs-mirror' "$INIT_BIN"; then
+        echo "[build-guest-image] ERROR: $INIT_BIN contains the no-policy bypass or the host fs mirror" >&2
         exit 1
     fi
 

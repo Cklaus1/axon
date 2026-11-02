@@ -16,6 +16,20 @@
 >   scope is NOT enforced: a request for it is refused (x2, "unsupported axis
 >   refuses", operator default D8). Fabric's own x1/x2 refusals (`backend.rs`)
 >   are owned by lane L5c and are not changed here.
+> * **guest-fs GF-3: the `fs` axis (`"fs": "none"`, schema `axon-vm-mmds/2`).**
+>   A policy carrying `fs` must say schema `/2` (an image whose guest predates
+>   the axis refuses `/2` as WrongSchema instead of ignoring it); the only value
+>   is `"none"`. The guest child then exports empty `AXON_ALLOWED_FS_READ=` /
+>   `AXON_ALLOWED_FS_WRITE=` (every Axon-level read/write: SandboxViolation,
+>   exit 8) and installs a compiled-in seccomp filter last (path-taking file
+>   syscalls EACCES, the interpreter substrate allowed, anything else and any
+>   non-x86_64 ABI KILLED), then prints `B263-FS none insns=<n>` on serial. The
+>   launcher refuses `fs:none` before anything is acquired when `axon caps`
+>   names a capability outside {`env`, `net`} (or cannot classify the program),
+>   the program imports a module or fails `axon check`, `allowed_effects`
+>   names `Exec`, or the run is PSV mode; and it marks a run whose serial lacks
+>   `B263-FS` policy-unbound. This withholds the filesystem; it is not path
+>   scoping (NH-F4 = A: no kernel-level path scope).
 > * **Qualification after S3-2/S3-5** on a **WSL2 host with nested KVM**
 >   (decision D2; the L0 Hyper-V hypervisor is outside the boundary): x1a–x1e,
 >   x2 and g4 are asserted rows; x3 (the L0 boundary) and x4 (the trusted
@@ -116,7 +130,7 @@ fc_linux_profile.sh --verify-result DIR     # re-check the output binding of a f
 | Flag | Default | Meaning |
 |---|---|---|
 | `--program FILE` | required | Becomes `/work/job/program.ax`. In the guest, `axon-guest-init` opens it (no symlink, a regular file) BEFORE it applies any seccomp filter and hands it to the workload on fd 3: `axon-guest-init --source-fd 3=/work/job/program.ax -- axon run --source-fd 3 /work/job/program.ax`. The workload never opens its own program (guest-fs GF-2); the path is still its entry directory and provenance label |
-| `--policy FILE` | required | Capability policy, schema `axon-vm-mmds/1`. Validated before anything is acquired (strict JSON: no duplicate keys, no unknown keys, grantable effect names only, must constrain something via `allowed_effects` / `budget_tokens` / `seccomp_bpf_b64`). Path/host scope keys (`fs_write`, `net_hosts`, …) are REFUSED as an unsupported axis (ACF-G26, operator default D8) — never passed through, since the guest parser ignores unknown keys. Embedded as exactly one `axon.policy=<standard padded base64 of the file's exact bytes>` cmdline word; the whole cmdline must be ≤ 2046 bytes or the launch is refused. `result.json` records `policy_sha256` |
+| `--policy FILE` | required | Capability policy, schema `axon-vm-mmds/1`, or `axon-vm-mmds/2` when it carries `"fs": "none"` (guest-fs GF-3; `fs` under `/1` or any other value is refused). Validated before anything is acquired (strict JSON: no duplicate keys, no unknown keys, grantable effect names only, must constrain something via `allowed_effects` / `budget_tokens` / `seccomp_bpf_b64` / `fs`). Path/host scope keys (`fs_write`, `net_hosts`, …) are REFUSED as an unsupported axis (ACF-G26, operator default D8) — never passed through, since the guest parser ignores unknown keys. `fs:none` is refused before launch for a program that would need a filesystem (see the status note above). Embedded as exactly one `axon.policy=<standard padded base64 of the file's exact bytes>` cmdline word; the whole cmdline must be ≤ 2046 bytes or the launch is refused. `result.json` records `policy_sha256`, and `policy.fs` / `policy.serial_fs` (a `fs` policy without a serial `B263-FS` line is `policy-unbound`, exit 25) |
 | `--out DIR` | required | Must be new or empty; receives every output |
 | `--put SRC:DEST` | — | Extra input file, placed at `/work/DEST` (repeatable) |
 | `--vcpus N` / `--mem-mib N` | 1 / 256 | Guest machine size |

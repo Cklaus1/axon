@@ -893,6 +893,14 @@ case $rc in
 esac
 stage_end "$rc"
 fi
+# guest-fs GF-3: the corpus differential. Host only (no KVM): every tracked .ax
+# program under (a) a path run, (f) --source-fd and (b) the guest child's
+# fs:none path (axon-guest-init --host-fs-mirror); any difference fails.
+if lane_runs S24; then
+stage_begin S24 "guest-fs corpus differential"
+bash scripts/guest_fs_corpus.sh || fail "guest-fs corpus differential"
+stage_end
+fi
 
 # The same crate again with `ai` on, because that feature gates the only
 # model-backed generator — the one production path where a model contributes to

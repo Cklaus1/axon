@@ -42,6 +42,7 @@
     {"id": "S07", "banner": "v0.22 trust-root preflight (inline, or its background start)", "class": "selectable",
      "split": "none", "compile": "workspace"},
     {"id": "S08", "banner": "v0.22 PSV real-guest boot", "class": "selectable", "split": "none"},
+    {"id": "S24", "banner": "guest-fs corpus differential", "class": "selectable", "split": "none"},
     {"id": "S09", "banner": "cortex ai-generator lint + tests", "class": "selectable", "split": "per-target",
      "split_cmd": "cargo test --locked -p axon-cortex --features ai", "lint_unit": true},
     {"id": "S10", "banner": "gate_verdict_is_read", "class": "selectable", "split": "none"},

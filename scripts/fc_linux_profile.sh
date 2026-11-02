@@ -9,14 +9,18 @@
 #   fc_linux_profile.sh --program PROG.ax --out DIR [options]
 #
 #   --program FILE        Axon program run as /work/job/program.ax (required)
-#   --policy FILE         capability policy, schema axon-vm-mmds/1 (required).
+#   --policy FILE         capability policy, schema axon-vm-mmds/1, or /2 when it
+#                         carries the `fs` axis (required).
 #                         Validated here (strict JSON, known keys only, grantable
 #                         effect names, constrains something) and embedded as
 #                         exactly one `axon.policy=<standard padded base64 of
 #                         the file's exact bytes>` kernel-cmdline word, which
 #                         axon-guest-init enforces in the guest. A request for an
 #                         axis this profile cannot project (path or host scope)
-#                         is REFUSED, never silently dropped.
+#                         is REFUSED, never silently dropped. `"fs": "none"`
+#                         (guest-fs GF-3) withholds the filesystem from the
+#                         workload; it is refused before launch for a program
+#                         that would need one (see section 1c).
 #   --out DIR             result directory, must not exist or be empty (required)
 #   --put SRC:DEST        copy SRC into the workspace drive at DEST (repeatable)
 #   --vcpus N             guest vCPUs                        (default 1)
@@ -133,6 +137,7 @@ SR_OUT_SHA='B263-OUT stdout=([0-9a-f]{64}) exit=[0-9]+'
 SR_OUT_EXIT='B263-OUT stdout=[0-9a-f]{64} exit=([0-9]+)'
 SR_POLICY='B263-POLICY (.*)'
 SR_DONE='(B263-DONE)'
+SR_FS='B263-FS (none insns=[0-9]+)'
 SR_VERDICT='PSV-VERDICT-INIT sha256=([0-9a-f]{64})'
 SR_MANIFEST='PSV-MANIFEST sha256=([0-9a-f]{64})'
 
@@ -323,7 +328,7 @@ fi
 
 # ── 1b. policy: validated and encoded BEFORE anything is acquired ─────────────
 TEST_HOOKS=()
-POLICY_SHA="" POLICY_BYTES=0 POLICY_WORD=""
+POLICY_SHA="" POLICY_BYTES=0 POLICY_WORD="" FS_AXIS=""
 if [[ -n "${FC_PROFILE_TEST_POLICY_WORD+x}" ]]; then
     TEST_HOOKS+=("FC_PROFILE_TEST_POLICY_WORD")
     POLICY_WORD="$FC_PROFILE_TEST_POLICY_WORD"
@@ -350,14 +355,21 @@ except UnicodeDecodeError as e: fail(f"not UTF-8: {e}")
 try: p = json.loads(text, object_pairs_hook=no_dups, parse_constant=no_const)
 except json.JSONDecodeError as e: fail(f"malformed JSON: {e}")
 if not isinstance(p, dict): fail("top-level value is not a JSON object")
-if p.get("schema") != "axon-vm-mmds/1": fail(f"schema must be 'axon-vm-mmds/1', got {p.get('schema')!r}")
+SCHEMA_FS = "axon-vm-mmds/2"
+if p.get("schema") not in ("axon-vm-mmds/1", SCHEMA_FS): fail(f"schema must be 'axon-vm-mmds/1' or '{SCHEMA_FS}', got {p.get('schema')!r}")
+# guest-fs GF-3: `fs` is the one filesystem axis the guest enforces, only under
+# schema /2 (an image that predates the axis refuses /2 instead of ignoring
+# it), and its only value is "none".
+if "fs" in p:
+    if p.get("schema") != SCHEMA_FS: fail(f"the fs axis needs schema '{SCHEMA_FS}', got {p.get('schema')!r}")
+    if p["fs"] != "none": fail(f"fs must be \"none\", got {p['fs']!r} (path scope is not projected into the linux-microvm guest)")
 # ACF-G26 / operator default D8: path and host scope are NOT projected into this
 # profile's guest. A request for them is refused by name — the guest's parser
 # ignores unknown keys, so passing one through would read as enforced.
-SCOPE = {"fs", "fs_read", "fs_write", "fs_scope", "paths", "path", "net", "net_hosts",
+SCOPE = {"fs_read", "fs_write", "fs_scope", "paths", "path", "net", "net_hosts",
          "hosts", "host", "scope", "exec_scope"}
 KNOWN = {"schema", "principal", "allowed_effects", "budget_tokens", "source_hash",
-         "seccomp_bpf_b64", "run_id"}
+         "seccomp_bpf_b64", "run_id", "fs"}
 scope = sorted(k for k in p if k in SCOPE)
 if scope: fail(f"unsupported axis: {scope} (path/host scope is not projected into the linux-microvm guest; refused, not ignored)")
 unknown = sorted(k for k in p if k not in KNOWN)
@@ -372,12 +384,48 @@ bt = p.get("budget_tokens")
 if bt is not None and (isinstance(bt, bool) or not isinstance(bt, int) or bt < 0): fail("budget_tokens must be a non-negative integer")
 for k in ("principal", "source_hash", "seccomp_bpf_b64", "run_id"):
     if p.get(k) is not None and not isinstance(p[k], str): fail(f"{k} must be a string")
-if ae is None and bt is None and p.get("seccomp_bpf_b64") is None:
-    fail("policy constrains nothing (no allowed_effects, budget_tokens or seccomp_bpf_b64)")
+if ae is None and bt is None and p.get("seccomp_bpf_b64") is None and p.get("fs") is None:
+    fail("policy constrains nothing (no allowed_effects, budget_tokens, seccomp_bpf_b64 or fs)")
 PY
 )" || refuse_prelaunch "invalid --policy: $PV"
     POLICY_SHA="$(sha256sum "$POLICY" | cut -d' ' -f1)"
     POLICY_BYTES="$(stat -c %s "$POLICY")"
+    FS_AXIS="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("fs") or "")' "$POLICY")"
+    # ── 1c. guest-fs GF-3: `"fs": "none"` is refused, before anything is
+    # acquired, for a launch whose workload would need a filesystem. The guest
+    # would enforce it anyway (empty path scopes: exit 8; path syscalls: EACCES);
+    # this turns a run that can only fail into a refusal that says why.
+    if [[ "$FS_AXIS" == none ]]; then
+        [[ "$PSV" == true ]] \
+            && refuse_prelaunch "fs:none in PSV mode: the runner reads its suite and candidate from /in, which fs:none withholds"
+        python3 -I -c 'import json,sys; sys.exit(1 if "Exec" in (json.load(open(sys.argv[1])).get("allowed_effects") or []) else 0)' "$POLICY" \
+            || refuse_prelaunch "fs:none with allowed_effects naming Exec: execve is not withheld under fs:none, so a spawned process would reach the filesystem"
+        FS_AXON="$ADIR/axon"
+        [[ -f "$FS_AXON" && "$(sha256sum "$FS_AXON" | cut -d' ' -f1)" == "$PIN_AXON" ]] \
+            || refuse_prelaunch "fs:none: $FS_AXON is not the pinned axon, so the program's capabilities cannot be read"
+        # The program ALONE, with module search confined to an empty
+        # directory: a program that imports a module fails here, as it would
+        # under fs:none in the guest (module search opens files).
+        FS_CK="$(mktemp -d)"
+        cp "$PROGRAM" "$FS_CK/program.ax"
+        mkdir "$FS_CK/no-modules"
+        fs_axon() { (cd "$FS_CK" && env -i HOME="$FS_CK" AXON_PATH="$FS_CK/no-modules" AXON_PATH_EXCLUSIVE=1 "$FS_AXON" "$@"); }
+        if ! fs_axon check program.ax >/dev/null 2>"$FS_CK/check.err"; then
+            FS_WHY="axon check fails"
+            grep -q E0901 "$FS_CK/check.err" && FS_WHY="the program imports a module (module search opens files)"
+            rm -rf "$FS_CK"
+            refuse_prelaunch "fs:none: $FS_WHY"
+        fi
+        FS_CAPS_WHY="$(fs_axon caps --json program.ax 2>/dev/null | python3 -I -c '
+import json, sys
+try: c = json.load(sys.stdin)
+except ValueError: print("axon caps gave no result"); sys.exit(1)
+if c.get("unknown") is not False: print("axon caps cannot classify everything the program reaches"); sys.exit(1)
+bad = sorted(x for x in c.get("capabilities") or [] if x not in ("env", "net"))
+if bad: print(f"the program needs {bad}, which fs:none withholds"); sys.exit(1)
+')" || { rm -rf "$FS_CK"; refuse_prelaunch "fs:none: $FS_CAPS_WHY"; }
+        rm -rf "$FS_CK"
+    fi
     EMBED="$POLICY"
     if [[ -n "${FC_PROFILE_TEST_EMBED_POLICY:-}" ]]; then
         TEST_HOOKS+=("FC_PROFILE_TEST_EMBED_POLICY")
@@ -709,6 +757,11 @@ SERIAL_POLICY="$(serial_record first "$OUT/serial.log" "$SR_POLICY")"
 SERIAL_POLICY_SHA="$(printf '%s' "$SERIAL_POLICY" | sed -n 's/^sha=\([0-9a-f]\{64\}\)$/\1/p')"
 POLICY_BOUND=false
 [[ -n "$POLICY_SHA" && "$SERIAL_POLICY_SHA" == "$POLICY_SHA" ]] && POLICY_BOUND=true
+# guest-fs GF-3: a policy carrying `fs` is bound only when the guest reported
+# the axis applied (`B263-FS`, printed by axon-guest-init after its filter is
+# installed). An image that does not report it did not enforce it.
+SERIAL_FS="$(serial_record first "$OUT/serial.log" "$SR_FS")"
+[[ -n "$FS_AXIS" && -z "$SERIAL_FS" ]] && POLICY_BOUND=false
 ENGINE_BOUND=true
 [[ "$ENGINE_CHROOT_SHA" == "$PIN_FC" ]] || ENGINE_BOUND=false
 [[ -z "${ENGINE_RUN_SHA:-}" || "$ENGINE_RUN_SHA" == "$PIN_FC" ]] || ENGINE_BOUND=false
@@ -766,6 +819,8 @@ r = {
              "sha256": "$POLICY_SHA" or None, "bytes": $POLICY_BYTES,
              "serial_report": "$SERIAL_POLICY" or None,
              "serial_sha256": "$SERIAL_POLICY_SHA" or None,
+             "fs": "$FS_AXIS" or None,
+             "serial_fs": "$SERIAL_FS" or None,
              "bound": "$POLICY_BOUND" == "true"},
   "engine": {"firecracker_pinned": "$PIN_FC", "jailer_pinned": "$PIN_JAILER",
              "firecracker_chroot_copy_sha256": "$ENGINE_CHROOT_SHA" or None,

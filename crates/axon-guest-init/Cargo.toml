@@ -28,3 +28,7 @@ serde_json = { workspace = true }
 # `tests/no_bypass_in_default_build.rs` fails if this becomes a default.
 default = []
 dev-allow-no-policy = []
+# OFF by default, never in an image: `--host-fs-mirror` runs the guest child's
+# fs:none path on the HOST for scripts/guest_fs_corpus.sh (guest-fs GF-3). It
+# reads no policy, so a binary with it must never be PID 1.
+host-fs-mirror = []

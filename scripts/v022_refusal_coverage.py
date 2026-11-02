@@ -1597,6 +1597,50 @@ TERM_EXEMPT += [
      "refuses it (the child exits 1 before exec)"),
 ]
 
+# guest-fs GF-3 (tasks/guest-fs-spec.md): the `fs` axis sites outside the rows
+# M4765 (EACCES class), M4766 (arch check) and M4767 (empty path scopes).
+_GF3_MIRROR = ("NON-PRODUCTION: compiled only with the non-default cargo feature `host-fs-mirror` "
+               "(scripts/guest_fs_corpus.sh, on the host), which build-guest-image.sh never enables "
+               "(DEFAULT FEATURES ONLY, and it refuses an init binary that contains the string "
+               "`--host-fs-mirror`); tests/no_bypass_in_default_build.rs checks the default build")
+EXEMPT += [
+    (GIN, '    if args.get(1).map(String::as_str) == Some("--host-fs-mirror") {', _GF3_MIRROR),
+    (GIN, '            eprintln!("[axon-guest-init] --host-fs-mirror needs --source-fd N=PATH");', _GF3_MIRROR),
+    (GIN, '            eprintln!("[axon-guest-init] --host-fs-mirror argv: {e}");', _GF3_MIRROR),
+    (GIN, '            eprintln!("[axon-guest-init] --host-fs-mirror policy: {e}");', _GF3_MIRROR),
+    (GIN, '        return Err(CmdlinePolicyError::FsNeedsSchemaV2(p.schema.clone()));',
+     "OBSERVED-NOT-ROWED (guest-fs block M4760-M4769 is full): disabling the condition "
+     "(`if false && ...`) fails tests::fs_key_requires_schema_v2 (a /1 policy carrying fs is "
+     "accepted; observed 2026-11-02)"),
+    (GIN, '        return Err(CmdlinePolicyError::BadFsValue(v.clone()));',
+     "OBSERVED-NOT-ROWED (guest-fs block M4760-M4769 is full): disabling the condition "
+     "(`if false && ...`) fails tests::fs_key_requires_schema_v2 (fs \"read\" is accepted; "
+     "observed 2026-11-02)"),
+    (GIN, 'const POLICY_SCHEMA_FS: &str = "axon-vm-mmds/2";',
+     "OBSERVED-NOT-ROWED (guest-fs block M4760-M4769 is full): appending `-eq4x` to the tag "
+     "fails tests::fs_key_requires_schema_v2 (\"an fs value other than none was accepted\": the "
+     "/2 policy is then refused as the wrong schema; observed 2026-11-02)"),
+    (GIN, '                Err(e) => Err(format!("MMDS {e}")),',
+     "NOT ON THE PROTECTED ROUTE: the MMDS arm (the protected VM has no network; the cmdline "
+     "channel wins); it relays check_fs_axis's refusal, which load_policy's caller turns into "
+     "exit 1 before the fork"),
+    (GIN, '                        "[axon-guest-init] cannot open {} for the fs axis: {e}",',
+     "OS ERROR: the report stream cannot be opened; the child exits 1 before any filter and "
+     "before exec (fails closed)"),
+    (GIN, '                eprintln!("[axon-guest-init] fs axis apply failed: {e}");',
+     "OS ERROR / RELAY: apply_fs_none failed (prctl or the report write); the child exits 1 "
+     "before exec (fails closed)"),
+    (GIN, '    env::set_var("AXON_ALLOWED_FS_READ", "");',
+     "OBSERVED-NOT-ROWED (guest-fs block M4760-M4769 is full; M4767 rows the write half): "
+     "deleting the read export fails tests::fs_none_exports_empty_path_scopes (\"fs none left "
+     "the read path scope open\"; observed 2026-11-02)"),
+    (GIN, 'const SERIAL_CONSOLE: &str = "/dev/console";',
+     "REMAINDER (no row yet, amendment 95): the fixed path the `B263-FS` report is written to. "
+     "No host test opens the guest console; the KVM row b263 g1 observes the report (a "
+     "mutated path fails the open and the child exits 1 before exec, or reports elsewhere and "
+     "the launcher marks the run policy-unbound)"),
+]
+
 # C9 round 4c, workstream SITES (amendment 75): the dependency sites the crate
 # rule brought in (NOT_YET_SCANNED at 64d9f436), judged one by one by their
 # callers on the protected route; the ledger of every disposition is

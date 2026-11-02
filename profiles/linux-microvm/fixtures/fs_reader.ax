@@ -1,0 +1,11 @@
+// guest-fs GF-3 (g2): an IO-only program that reads another guest file. Under
+// `"fs": "none"` the guest refuses the read (empty path scope: exit 8), so
+// READER-GOT / READER-END never print. (From the CE-9 spike's reader_init.ax.)
+fn main() {
+    println("READER-START")
+    match read_file("/init") {
+        Ok(s) => println("READER-GOT {to_str(len(s))} bytes")
+        Err(e) => println("READER-ERR {e}")
+    }
+    println("READER-END")
+}

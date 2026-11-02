@@ -70,3 +70,17 @@ fn default_build_binary_does_not_contain_the_bypass_variable_name() {
          — the no-policy bypass is compiled in"
     );
 }
+
+/// guest-fs GF-3: `--host-fs-mirror` (feature `host-fs-mirror`) runs the
+/// child path under a policy it never read from the cmdline. A default build
+/// does not contain the flag at all (`scripts/build-guest-image.sh` checks the
+/// image's binary the same way).
+#[test]
+fn default_build_has_no_host_fs_mirror() {
+    let bin = std::fs::read(env!("CARGO_BIN_EXE_axon-guest-init")).expect("read binary");
+    let needle = b"--host-fs-mirror";
+    assert!(
+        !bin.windows(needle.len()).any(|w| w == needle),
+        "ATTACK: the default-features axon-guest-init binary contains `--host-fs-mirror`"
+    );
+}

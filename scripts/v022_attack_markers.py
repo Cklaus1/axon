@@ -4130,3 +4130,10 @@ ATTACK_MARKERS.update({
     'M4764': r'ATTACK: fd \d+ is close-on-exec: the workload would not inherit its program',
     'M4769': r'ATTACK: a symlinked program was followed',
 })
+
+# guest-fs GF-3 (ids M4765-M4767, guest-fs block M4760-M4769)
+ATTACK_MARKERS.update({
+    'M4765': r'ATTACK: under fs none a path syscall was not refused with EACCES',
+    'M4766': r'ATTACK: i386 syscall \d+ got through the arch check',
+    'M4767': r'ATTACK: fs none left the write path scope open',
+})

@@ -14965,5 +14965,24 @@ MUTATIONS += [
      'axon-guest-init', '--bin axon-guest-init', 'tests::open_source_before_gate_dups_to_n'),
 ]
 
+# guest-fs GF-3 (ids M4765-M4767, guest-fs block M4760-M4769): the `fs` axis.
+# `"fs": "none"` (schema axon-vm-mmds/2) makes axon-guest-init's child export
+# empty path scopes and install the compiled-in fs:none substrate filter
+# (path syscalls EACCES, any non-x86_64 ABI KILLED), reporting `B263-FS`.
+MUTATIONS += [
+    ('M4765', 'GF-3: a path syscall is ALLOWED under fs:none', 'crates/axon-guest-init/src/main.rs',
+     '    bpf_ins(&mut p, BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO_EACCES);',
+     '    bpf_ins(&mut p, BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW);',
+     'axon-guest-init', '--bin axon-guest-init', 'tests::fs_none_filter_denies_path_syscalls'),
+    ('M4766', 'GF-3: the fs:none filter drops its arch check', 'crates/axon-guest-init/src/main.rs',
+     '    bpf_ins(&mut p, BPF_JEQ_K, 1, 0, AUDIT_ARCH_X86_64);',
+     '    bpf_ins(&mut p, BPF_JEQ_K, 1, 1, AUDIT_ARCH_X86_64);',
+     'axon-guest-init', '--bin axon-guest-init', 'tests::fs_none_filter_kills_non_x86_64_arch'),
+    ('M4767', 'GF-3: fs:none skips the empty write path-scope export', 'crates/axon-guest-init/src/main.rs',
+     '    env::set_var("AXON_ALLOWED_FS_READ", "");\n    env::set_var("AXON_ALLOWED_FS_WRITE", "");',
+     '    env::set_var("AXON_ALLOWED_FS_READ", "");',
+     'axon-guest-init', '--bin axon-guest-init', 'tests::fs_none_exports_empty_path_scopes'),
+]
+
 if __name__ == "__main__":
     main()
