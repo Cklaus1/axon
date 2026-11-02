@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: f95a53d38b9e27479e315324a7cfa17f1f630b3d
+generated-at: 05aefe5b2f68bc2b8ed659924004420053424b2b
 
-`git diff --numstat 31413ca7..f95a53d3 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..05aefe5b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -28,7 +28,7 @@ generated-at: f95a53d38b9e27479e315324a7cfa17f1f630b3d
 | `crates/axon-core/src/borrow.rs` | 272 | 45 |
 | `crates/axon-core/src/builtins.rs` | 423 | 44 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
-| `crates/axon-core/src/capabilities.rs` | 1177 | 346 |
+| `crates/axon-core/src/capabilities.rs` | 1335 | 345 |
 | `crates/axon-core/src/card.rs` | 736 | 0 |
 | `crates/axon-core/src/ceiling.rs` | 554 | 0 |
 | `crates/axon-core/src/cert_gate.rs` | 5 | 2 |
@@ -52,14 +52,14 @@ generated-at: f95a53d38b9e27479e315324a7cfa17f1f630b3d
 | `crates/axon-core/src/complexity.rs` | 1 | 0 |
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
 | `crates/axon-core/src/effects.rs` | 757 | 126 |
-| `crates/axon-core/src/env_registry.rs` | 27 | 11 |
-| `crates/axon-core/src/error.rs` | 52 | 19 |
+| `crates/axon-core/src/env_registry.rs` | 28 | 11 |
+| `crates/axon-core/src/error.rs` | 54 | 21 |
 | `crates/axon-core/src/fmt.rs` | 355 | 33 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 2381 | 487 |
-| `crates/axon-core/src/interp.rs` | 8340 | 2871 |
-| `crates/axon-core/src/interp/builtins.rs` | 1307 | 851 |
+| `crates/axon-core/src/interp.rs` | 8372 | 2875 |
+| `crates/axon-core/src/interp/builtins.rs` | 1313 | 851 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
@@ -71,7 +71,7 @@ generated-at: f95a53d38b9e27479e315324a7cfa17f1f630b3d
 | `crates/axon-core/src/interp/pick_tests.rs` | 395 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 967 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 99 | 63 |
-| `crates/axon-core/src/interp/provenance.rs` | 11 | 1 |
+| `crates/axon-core/src/interp/provenance.rs` | 27 | 7 |
 | `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
 | `crates/axon-core/src/interp/sym.rs` | 1243 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1676 | 0 |
@@ -91,10 +91,10 @@ generated-at: f95a53d38b9e27479e315324a7cfa17f1f630b3d
 | `crates/axon-core/src/lib.rs` | 447 | 102 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 215 | 60 |
-| `crates/axon-core/src/main.rs` | 2053 | 517 |
+| `crates/axon-core/src/main.rs` | 2241 | 620 |
 | `crates/axon-core/src/mono.rs` | 71 | 17 |
 | `crates/axon-core/src/mut_borrow.rs` | 944 | 0 |
-| `crates/axon-core/src/outcome.rs` | 232 | 0 |
+| `crates/axon-core/src/outcome.rs` | 248 | 0 |
 | `crates/axon-core/src/parse_help.rs` | 125 | 2 |
 | `crates/axon-core/src/parser.rs` | 766 | 64 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
@@ -104,9 +104,9 @@ generated-at: f95a53d38b9e27479e315324a7cfa17f1f630b3d
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 68600 | 9570 |
+| total | 69019 | 9684 |
 
-`git log --reverse 31413ca7..f95a53d3 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..05aefe5b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -526,7 +526,13 @@ generated-at: f95a53d38b9e27479e315324a7cfa17f1f630b3d
 | 50b02709 | GV-1 outcome reason | INTERPRETER (main.rs): the outcome record's compile reason is the first entry of the errors-only list; only the supervisor record's reason text changes. No program's output or exit code changes. |
 | 5454b4fb | b2/gvos merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | f95a53d3 | merge b2/ce (ICE-3 + GV-1) | INTERPRETER CLI (main.rs): the merge keeps both sides of apply_ceiling: --ceiling and AXON_CEILING naming one file in two spellings is one ceiling (ICE-3), and a real two-ceiling refusal is E1007 exit 2 that also writes the GV-1 outcome record under a supervisor. No other behaviour changes. |
-| 416 commits | | |
+| e149e969 | GF-1 axon run --source-fd | INTERPRETER CLI (main.rs): `axon run --source-fd N FILE` reads the program from inherited fd N (N >= 3); FILE stays the entry directory and label, and run_start hashes the fd bytes. Without the flag, axon run is unchanged. |
+| 77274a15 | GF-5 syscall_hint removed | CODEGEN MANIFEST (main.rs, codegen feature): the .axmeta manifest carries the program's capabilities instead of a derived syscall_hint; the unenforced manifest -> seccomp derivation is deleted. The interpreter and every program's output are unchanged. |
+| 2ea75377 | B3-3 outcome nonce on its own pipe | INTERPRETER + AXON-OS: under a supervisor the outcome nonce arrives on its own pipe (fd 4, AXON_OUTCOME_NONCE_FD), never in the environment; the interpreter reads and closes it and becomes non-dumpable. A run is Completed only from the record's class (an exit from main outside every sandbox_run); the stdout completion marker is gone. The old AXON_OUTCOME_NONCE variable is refused (exit 2). Without a supervisor, axon run output and exit codes are unchanged. |
+| 3df245d0 | B3-7 contained covers module-level lets | CHECKER (capabilities.rs): a @[contained] / --require-contained main is checked over its non-lambda module-level let initialisers (E1001/E1005 name the let), and a module lambda counts only where it is called. Programs whose module-level lets are pure, and unused module lambdas, check as before (717 tracked .ax files: same exit codes). |
+| 99806953 | B3-5 ceiling spelling | INTERPRETER CLI (main.rs): a --ceiling / AXON_CEILING spelling that does not resolve gets the loader's E1007 'cannot read' (exit 2) instead of 'two different ceilings'. Exit code and outcome record unchanged; only the reason text. |
+| a31bbd08 | B3 audit fixes (IRS-1..3) | CHECKER (capabilities.rs): a non-main @[contained] walk reads a plain-value module let as data (its initialiser ran before main and is charged there), and a local or parameter that shadows a module let no longer pulls in its initialiser. INTERPRETER (main.rs): a nonce fd whose writer is still open is refused with exit 2 instead of blocking. The exit builtin stays Pure; the inner-exit class is set where an exit leaves sandbox_run or a module-level initialiser. 717 tracked .ax files: same exit codes for check, check --require-contained and run as the base binary. |
+| 422 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -685,7 +691,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 754 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4723-M4727, M4730, M4732, M4740-M4756
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 770 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4723-M4727, M4730, M4732, M4740-M4756, M4760-M4763, M4771-M4774, M4779-M4786
 
 | delta | rows (named in the amendment's own text) |
 |---|---|

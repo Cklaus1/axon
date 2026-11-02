@@ -1,6 +1,6 @@
 # guest-fs - DRAFT spec (CE-9 / NH-C8 = C)
 
-**Status: DRAFT (after Step 1 review). Authorized for build by the human 2026-11-02 (NH-F4 A, NH-F5 A; §9).**
+**Status: BUILT 2026-11-02 on `b3/int` (GF-1..GF-5 e149e969..77274a15, IGF fixes 749db550/0285e7a4, merged 05aefe5b). Authorized for build by the human 2026-11-02 (NH-F4 A, NH-F5 A; §9).**
 
 Verdict: C is FEASIBLE on the Linux-microvm profile, and I observed it end to end in a real Firecracker guest. C cannot be
 shown on the bare-metal `axon-guest-kernel` backend, because that kernel does not run programs at all (FG-041).

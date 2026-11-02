@@ -1272,6 +1272,10 @@ but does not grant anything.
 `[DECIDED 2026-11-02: NH-C8 C, spike in progress (separate CE-9 lane); not built on b2/ce]`
 `[SPECCED 2026-11-02: tasks/guest-fs-spec.md (DRAFT after Step 1 review; GF-1..GF-5). The CE-9 spike found C feasible on the Linux
 microvm profile and not on the bare-metal guest kernel; spike code not merged (tasks/guest-fs-spike/spike-code.diff). Open.]`
+`[FIXED 2026-11-02: guest-fs GF-1..GF-5 (e149e969..77274a15, audit fixes 749db550/0285e7a4). On the Linux microvm profile the guest
+loads the program from an inherited fd before the gate, and `"fs": "none"` gives the program empty path scopes plus a substrate
+filter (path syscalls EACCES). The kernel gate runs the flagship good/evil pair in the guest (S25). The bare-metal guest kernel does
+not run programs (FG-041), so this fix does not cover it. NH-F4 A: no kernel-level path scoping.]`
 
 *Found while closing OSK-P7-C3 (T48).* Needs a decision; the gate states the
 grant explicitly meanwhile.
@@ -3137,6 +3141,8 @@ From verifying GV-3 (`tasks/genviab-b2-spec.md` §2, GVA review): `raise ValueEr
 fault fails any expected exit. This inflates arm c, which the ADVERSE rule compares against. NH-G3 as decided covers only environment
 and binds, so `gv.py` keeps arm c's `-I` runner and its crash semantics (`gv.py:341`). Fix direction (spec recommendation): run arm c
 through the GV-3 fault runner too; the integrator decides before the PREREG freeze.
+`[FIXED 2026-11-02: genviab-b3 B3-1 (b8013fce, IGP-3 a306bc11): arm c runs under the reference fault runner. A raised exception
+fails whatever the exit status, even when the program rebinds `open`, `sys.stderr`, `traceback` or `SystemExit`. Residual: O-GV-10.]`
 
 ### O-GV-05 - [low] Dev task h12 has no visible example
 `dev/h12-schedule-append` withholds fs_read entirely (a tempting task), and `build.py`'s hidden check then forbids a visible example,
@@ -3144,6 +3150,9 @@ so h12 breaks the GV-4 slot table's ">= 1 visible". Arm a accepts any h12 progra
 accepted there and failed the hidden examples (1 false acceptance in the $0 dry run); Haiku's h12 programs verified 3/3. Left
 unedited because selection rule 3 freezes tasks after the first paid call. Fix direction: let a tempting task carry a visible example
 that stages no input, or exempt tempting tasks from the slot rule in the spec. Found by LaneGvPy.
+`[FIXED 2026-11-02: genviab-b3 B3-2 (35a0598a, IGP-2 f3ef54a5): a task whose ceiling grants no fs_read may have visible examples.
+A hidden run past them must check stdout, exit or an output to a value that no visible run expects for that field. h12 itself is
+frozen and stays unedited.]`
 
 ### O-GV-06 - [medium] The GV-1 outcome nonce is readable through `/proc/self/environ`
 `take_outcome_channel` removes `AXON_OUTCOME_NONCE` with `std::env::remove_var` (`main.rs:1154`), which edits only libc's `environ`;
@@ -3154,16 +3163,22 @@ marker, a job can print `__axon_os_done:<nonce>` then `exit(n)` and be classifie
 needs fs_write on `/proc/self/fd/3` and an exit without the interpreter's own record (a second record is already refused). Fix
 direction: send the nonce on a second close-on-exec fd read once (not the environment); draw the completion marker separately; add
 a `/proc/self/environ` case beside M4723's test, which checks only `env_var`.
+`[FIXED 2026-11-02: genviab-b3 B3-3 (2ea75377, IRS-3 a31bbd08): the nonce arrives on its own pipe (fd 4,
+`AXON_OUTCOME_NONCE_FD`), never in the environment. The interpreter reads and closes it, refuses a writer that is still open, and
+becomes non-dumpable. Completion now comes from the record's class, and the stdout marker is gone. The `/proc/self/environ` probe
+no longer shows a nonce.]`
 
 ### O-CE-01 - [low] A missing ceiling file named in two spellings reports "two different ceilings"
 `AXON_CEILING=./pol/missing.json` with `--ceiling pol/missing.json` gives E1007 "name two different ceilings" (`main.rs:1022-1031`,
 merge f95a53d3) because `canonicalize` fails on both. Exit 2, E1007 and the outcome record are right; only the reason is wrong.
 Fix: when either path fails to resolve, report the loader's "cannot read" error. Found by ImplAuditCE2.
+`[FIXED 2026-11-02: genviab-b3 B3-5 (99806953): an unresolvable spelling gets the loader's E1007 "cannot read".]`
 
 ### O-GV-07 - [low] A SIGKILL'd sandbox run reports "(signal signal 9)"
 `signal_name` already returns "signal 9" for signals it does not name, and the caller wraps it in "signal" again
 (`crates/axon-os/src/runtime.rs`, outcome-record refusal). A `sandbox_capture` test pins the doubled text. Fix the wording and
 the test together. Found by LaneGvOs.
+`[FIXED 2026-11-02: genviab-b3 B3-6 (e31c4cf2): "(killed by signal 9)".]`
 
 ### O-GV-08 - [high] fs_read/fs_write prefixes are checked lexically: a symlink under a granted prefix, or a `/proc/` grant, reaches any file
 `scope_violation` (`crates/axon-core/src/interp/builtins.rs:213` at 636391c5) compares the path text with the granted prefixes and
@@ -3180,6 +3195,21 @@ In an axon-os job granted only `./data/`, `let X = early()` at module level read
 (verdict `completed`); the same body called from `main` is DENIED. It also passes `@[contained]` (check rc 0) and
 `--require-contained` (rc 0). Pre-existing (also with the ebbb4e02 binary). Probes `/var/tmp/r51-tmp/GenviabB3/job/modlet2.ax`,
 `fnonly.ax`. Specced as genviab-b3 B3-7. Found by DraftB3.
+`[FIXED 2026-11-02: genviab-b3 B3-7 (27b24045 runtime, 3df245d0 static, IRS-1/IRS-2 a31bbd08). Under axon-os the job's grant
+is the interpreter's ambient scope, so module-level initialisers run inside it. A `@[contained]` / `--require-contained` `main`
+is checked over its non-lambda module lets. A module lambda counts only where it is called, and a shadowed name is not followed.]`
+
+### O-GV-10 - [low] Arm c can still dodge the fault marker by sabotaging `/gv/fault/`
+After IGP-3 the Python runner binds its marker writer before the program runs, so rebinding `open`, `sys.stderr`, `traceback`
+or `SystemExit` no longer hides a raised exception. A program that pre-creates a directory at `/gv/fault/raised`, or otherwise
+makes the marker unwritable (the directory is writable to it), or that reaches the runner's frame, still escapes the fault grade.
+This is a limit of grading in-process. It affects only arm c (the Python comparison arm), not the gating arm a. One fix direction:
+report the fault on a pre-opened pipe fd held by a parent process, not a file under the program's own writable mount. Found by
+LaneB3Py (genviab-b3 build).
+
+### O-GV-11 - [low] `axon-intent compile` writes invalid TOML for a control character in an `## Allowed` value
+For `- fs_read: ./data/\x1f`, `axon-intent compile` writes a `t.axjob` that is not valid TOML: the raw `\x1f` ends up inside a
+basic string. genviab refuses such lines since IGP-1, but the compiler should refuse them or escape them. Found by LaneB3Py.
 
 ## hx3 author quirks, 2026-10-31 (QuirkRepro triage of the hx3 N5a authors' notes, `/var/tmp/r51-tmp/QuirkRepro/REPORT.md`; fixes NOT in this batch)
 

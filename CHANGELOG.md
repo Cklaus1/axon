@@ -1,5 +1,23 @@
 # Axon Changelog
 
+## genviab-b3 B3-1..B3-7 and guest-fs GF-1..GF-5: a supervisor grades a run only through a channel the program cannot read; a grant covers code before `main`; a microVM program with `fs: none` cannot open files
+
+Items B3-1..B3-7 of `tasks/genviab-b3-spec.md` and GF-1..GF-5 of `tasks/guest-fs-spec.md` (human decisions NH-F4 A and NH-F5 A, 2026-11-02).
+
+- **Outcome nonce on its own pipe (B3-3, O-GV-06):** under a supervisor, the outcome nonce arrives on its own pipe (fd 4, `AXON_OUTCOME_NONCE_FD`) and never in the environment. The interpreter reads and closes it, refuses a writer that is still open, and becomes non-dumpable. A job is Completed only on an `exit` record from `main` outside every `sandbox_run`, and the stdout completion marker is gone. **Behaviour change:** the old `AXON_OUTCOME_NONCE` variable is refused (exit 2). Without a supervisor, `axon run` output is byte-identical. g01: M4770-M4775, M4784.
+- **Module-level `let` runs inside the grant (B3-7, O-GV-09):** under axon-os, the job's grant is the interpreter's ambient scope (`AXON_ALLOWED_*`), so module-level `let` initialisers run inside it. They used to read and write outside the grant. A `@[contained]` / `--require-contained` `main` is checked over its non-lambda module `let`s (E1001/E1005 name the `let`). A module lambda counts only where it is called, and a local that shadows a module `let` does not pull in its initialiser. **Behaviour change:** a program whose module-level `let` does I/O is refused under `--require-contained`. The 717 tracked `.ax` files give the same exit codes for `check`, `check --require-contained` and `run`. g01: M4776, M4777, M4779, M4781-M4783, M4785, M4786.
+- **Ceiling spelling (B3-5, O-CE-01):** a `--ceiling` / `AXON_CEILING` spelling that does not resolve now gets the loader's E1007 "cannot read", not "two different ceilings". g01: M4780.
+- **Signal wording (B3-6, O-GV-07):** a run killed by a signal reads "(killed by signal 9)". g01: M4778.
+- **genviab arm c fault runner (B3-1, O-GV-04):** arm c runs under the reference fault runner. A raised exception fails whatever the exit status, even when the program rebinds `open`, `sys.stderr`, `traceback` or `SystemExit`. `PYTHONHASHSEED` binds. Each arm keeps its own stdout bound, and a run over it names the bound. Residual: O-GV-10.
+- **genviab `## Allowed` parsing (B3-4):** genviab reads `## Allowed` as `axon-intent` does (Rust whitespace, `- ` / `* ` bullets). A task is refused if a line is not a bullet, holds a control character, or uses a `..` fs component.
+- **genviab tempting tasks (B3-2, O-GV-05):** a task whose ceiling grants no fs_read may have visible examples. A hidden run past them must check stdout, exit or an output to a value that no visible run expects for that field.
+- **`axon run --source-fd N FILE` (GF-1):** the program is read from inherited fd N (N >= 3). FILE stays the entry directory and label, and `run_start` hashes the fd bytes. g01: M4760-M4763.
+- **Guest loads the program before the gate (GF-2):** `axon-guest-init --source-fd N=PATH` opens it with `O_NOFOLLOW` (regular files only) and hands fd 3 to `axon run --source-fd 3`.
+- **`"fs": "none"` in the Linux microVM (GF-3, O034):** the guest child gets empty path scopes and a compiled-in substrate filter: path syscalls return EACCES, and a non-x86_64 host gets KILL. The guest reports B263-FS. The launcher refuses `fs: none` for a program that needs a filesystem. The corpus differential is `scripts/guest_fs_corpus.sh`.
+- **Kernel gate in the guest (GF-4):** `axon_kernel_gate.sh` Layer 3 runs the flagship good/evil pair in the Linux microVM (gate stage S25). Its skip (exit 77) is recorded and is fatal under `AXON_HARNESS_STRICT=1`.
+- **Manifest carries capabilities (GF-5):** the manifest `syscall_hint` -> seccomp derivation is deleted. No launcher applied it, and when applied it killed every interpreter. `.axmeta` now carries capabilities.
+- **`gate_lane.py select`:** the named-by rule reads each file once per selection, not once per added path and unit. The selection is the same, and a run that took more than an hour now takes seconds.
+
 ## checker-soundness-4 CS4-1..CS4-4: `if` joins like `match`; strings inside slots; `axon fmt` keeps braces; tuple patterns and wrapper-lambda kinds are checked
 
 Items CS4-1..CS4-4 of `tasks/checker-soundness-4-spec.md`. CS4-5 waits on a human decision (NH-4).

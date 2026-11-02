@@ -1,6 +1,6 @@
 # genviab-b3 - spec (B3-1..B3-7)
 
-**Status: DRAFT (after Step 1 review). Authorized for build by the human 2026-11-02 (batch 3).**
+**Status: BUILT 2026-11-02 on `b3/int` (B3-1/B3-2/B3-4 b3/gvpy 4b3be68d + IGP fixes f4a89d08; B3-3/B3-5/B3-6/B3-7 b3/rs 99806953 + IRS fixes a31bbd08). Authorized for build by the human 2026-11-02 (batch 3).**
 
 Subject: the genviab harness (`crates/axon-intent/benchmarks/genviab/`: `gv.py`, `build.py`, `selftest.py`, `PREREG-genviab.md`,
 `README.md`), the GV-1 outcome channel and the sandbox wrapper it grades through (`crates/axon-core/src/{main.rs,outcome.rs,interp.rs,
