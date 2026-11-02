@@ -71,7 +71,10 @@ else
 fi
 
 if [[ -f "$EVIL" ]]; then
-    if "$AXON" check "$EVIL" 2>&1 | grep -q "E1001\|E1004\|E1310"; then
+    # Captured first: under pipefail, `axon check` exiting 2 (as it must for
+    # this program) used to fail the pipe and print the "not caught" branch.
+    EVIL_CHECK="$("$AXON" check "$EVIL" 2>&1 || true)"
+    if grep -q "E1001\|E1004\|E1310" <<<"$EVIL_CHECK"; then
         ok "evil_agent.ax is rejected by axon check (E1001/E1310 as expected)"
     else
         # If the evil agent passes the checker, the redteam is the gate.
@@ -123,7 +126,7 @@ elif ! command -v firecracker &>/dev/null; then
 elif [[ ! -f "$LINUX_DIR/manifest.json" || ! -f "$LINUX_DIR/vmlinux" || ! -f "$LINUX_DIR/rootfs.sqfs" ]]; then
     L3_SKIP="no built $LINUX_DIR image (AXON_KERNEL_BACKEND=linux scripts/build-guest-image.sh)"
 else
-    L3="$(mktemp -d "${TMPDIR:-/tmp}/axon-kernel-gate.XXXXXX")"
+    L3="$(mktemp -d "${TMPDIR:-/tmp}/axon-kernel-gate.XXXXXX")"; REPO="$PWD"
     printf '{"schema":"axon-vm-mmds/2","allowed_effects":["IO"],"fs":"none"}' > "$L3/pol-good.json"
     printf '{"schema":"axon-vm-mmds/1","allowed_effects":["IO"]}' > "$L3/pol-evil.json"
 
@@ -132,9 +135,9 @@ else
     # prints for it.
     mkdir -p "$L3/host"
     HOST_SHA="$(cd "$L3/host" && env -i PATH=/usr/bin:/bin HOME="$L3/host" XDG_CACHE_HOME="$L3/host/cache" \
-        "$AXON" run "$PWD/$GOOD" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+        "$AXON" run "$REPO/$GOOD" 2>/dev/null | sha256sum | cut -d' ' -f1)"
     RC=0
-    bash scripts/fc_linux_profile.sh --program "$PWD/$GOOD" --policy "$L3/pol-good.json" \
+    bash scripts/fc_linux_profile.sh --program "$REPO/$GOOD" --policy "$L3/pol-good.json" \
         --out "$L3/good" --timeout-s 90 > "$L3/good.log" 2>&1 || RC=$?
     GSHA="$(sha256sum < "$L3/good/out/stdout" 2>/dev/null | cut -d' ' -f1 || true)"
     if [[ $RC == 0 && "$GSHA" == "$HOST_SHA" ]] && grep -q "^scores: " "$L3/good/out/stdout"; then
@@ -146,7 +149,7 @@ else
     # evil agent: ["IO"] -> the guest's `axon run` refuses it at check (E1001,
     # workload exit 2; launcher rc 10), the policy is bound, nothing printed.
     RC=0
-    bash scripts/fc_linux_profile.sh --program "$PWD/$EVIL" --policy "$L3/pol-evil.json" \
+    bash scripts/fc_linux_profile.sh --program "$REPO/$EVIL" --policy "$L3/pol-evil.json" \
         --out "$L3/evil" --timeout-s 90 > "$L3/evil.log" 2>&1 || RC=$?
     WEXIT="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("workload_exit"), d.get("policy",{}).get("bound"))' "$L3/evil/result.json" 2>/dev/null || echo "none none")"
     if [[ $RC == 10 && "$WEXIT" == "2 True" && ! -s "$L3/evil/out/stdout" ]] \
