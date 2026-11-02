@@ -101,6 +101,7 @@ pub const E1002: &str = "E1002"; // @[contained] clause is malformed
 pub const E1003: &str = "E1003"; // capability path is not parseable
 pub const E1004: &str = "E1004"; // call hits a never: clause (hard violation)
 pub const E1005: &str = "E1005"; // R45: un-granted capability reached from an entry point under --require-contained
+pub const E1007: &str = "E1007"; // ceilings CE-2: the `axon-ceiling/1` file is missing, unreadable, malformed, has an unknown/missing key, or lies inside its own fs_write scope
 
 // Verify errors (ASI Layer-2: @[verify])
 pub const E1101: &str = "E1101"; // verify bound not satisfied (runtime gate)
@@ -510,6 +511,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E1003", "capability path is not parseable"),
     ("E1004", "call hits a never: clause (hard violation)"),
     ("E1005", "R45: an un-granted capability is reached from an entry point under `--require-contained`; distinct from E1001, which means a grant EXISTS and was exceeded"),
+    ("E1007", "the `axon-ceiling/1` file (`--ceiling` / `AXON_CEILING`) is missing, unreadable or malformed, has an unknown or missing key, or lies inside its own `fs_write` scope; the run is refused (exit 2) before any program code runs"),
     ("E1101", "verify bound not satisfied (runtime gate)"),
     ("E1102", "verify bound statically VIOLABLE — SMT counterexample (R9)"),
     ("E1103", "a `@[verify]` predicate names a name not in scope there, is ill-typed or not `bool`, has a param named like one of its binders, or contains a `return`/`break`/`continue` that would leave its frame, or sits on a return the runtime cannot check (not a scalar, `Uncertain<T>` or `Temporal<T>`)"),

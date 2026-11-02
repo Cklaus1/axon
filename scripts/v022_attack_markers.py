@@ -4011,7 +4011,7 @@ ATTACK_MARKERS.update({
     'M4622': r'ATTACK: live extract tokens stored as 0',
 })
 
-# ceilings CE-1, CE-7, CE-8 (ids M4680-M4685)
+# ceilings CE-1, CE-7, CE-8, CE-2, CE-10 (ids M4680-M4691)
 ATTACK_MARKERS.update({
     'M4680': r'ATTACK: an operator net scope left the AI endpoint unpinned',
     'M4681': r'ATTACK: a declared host outside the operator net scope was pinned',
@@ -4019,4 +4019,10 @@ ATTACK_MARKERS.update({
     'M4683': r'ATTACK: a native AI bridge with no key returned instead of stopping',
     'M4684': r'ATTACK: a declared fallback was not the native no-key reply',
     'M4685': r'ATTACK: a native no-key ai_complete ignored the declared fallback',
+    'M4686': r'ATTACK: a ceiling with a missing key was accepted',
+    'M4687': r'ATTACK: a misspelled ceiling key was ignored',
+    'M4688': r'ATTACK: a ceiling the run may rewrite was accepted',
+    'M4689': r'ATTACK: the env var widened the ceiling.s effects',
+    'M4690': r'ATTACK: a native binary ran past an operator ceiling',
+    'M4691': r'ATTACK: a ceilinged run reached an ungranted capability without R45',
 })

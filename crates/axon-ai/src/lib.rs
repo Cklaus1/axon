@@ -1649,7 +1649,8 @@ mod tests {
                 "--nocapture",
                 "--test-threads=1",
             ])
-            .env("AXON_AI_NO_KEY_CHILD", case)
+            // Test-only, so deliberately outside the `AXON_*` registry namespace.
+            .env("NO_KEY_BRIDGE_CHILD", case)
             .env_remove("ANTHROPIC_API_KEY")
             .env_remove("AXON_AI_API_KEY")
             .env_remove("AXON_AI_MOCK")
@@ -1666,7 +1667,7 @@ mod tests {
     /// a case.
     #[test]
     fn no_key_bridge_child() {
-        let Ok(case) = std::env::var("AXON_AI_NO_KEY_CHILD") else {
+        let Ok(case) = std::env::var("NO_KEY_BRIDGE_CHILD") else {
             return;
         };
         let p = b"hi";

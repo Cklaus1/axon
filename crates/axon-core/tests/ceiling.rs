@@ -168,3 +168,269 @@ fn goal_run_ai_metric_refused_in_program_sandbox() {
         "ATTACK: a sandboxed goal_run metric reached a model: {t}"
     );
 }
+
+// ── CE-2: `axon-ceiling/1` ─────────────────────────────────────────────────
+
+/// A complete ceiling whose keys are each `null`-unbounded except `fs_write`
+/// (`[]`), with `over` replacing (or, for a new key, adding) entries.
+/// `None` in `over` drops the key.
+fn ceiling_json(over: &[(&str, Option<&str>)]) -> String {
+    let mut keys: Vec<(String, String)> = [
+        ("schema", "\"axon-ceiling/1\""),
+        ("effects", "null"),
+        ("fs_read", "null"),
+        ("fs_write", "[]"),
+        ("net", "null"),
+        ("ai_tokens", "null"),
+        ("max_depth", "null"),
+    ]
+    .iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    for (k, v) in over {
+        let at = keys.iter().position(|(x, _)| x == k);
+        match (at, v) {
+            (Some(i), Some(v)) => keys[i].1 = v.to_string(),
+            (Some(i), None) => {
+                keys.remove(i);
+            }
+            (None, Some(v)) => keys.push((k.to_string(), v.to_string())),
+            (None, None) => {}
+        }
+    }
+    let body: Vec<String> = keys.iter().map(|(k, v)| format!("\"{k}\": {v}")).collect();
+    format!("{{ {} }}\n", body.join(", "))
+}
+
+/// Write `json` to `<dir>/policy/ceiling.json` (outside the program's own
+/// directory) and return its path.
+fn write_ceiling(dir: &Path, json: &str) -> PathBuf {
+    let p = dir.join("policy");
+    std::fs::create_dir_all(&p).unwrap();
+    let f = p.join("ceiling.json");
+    std::fs::write(&f, json).unwrap();
+    f
+}
+
+const HELLO: &str = "fn main() { println(\"hi\") }\n";
+
+fn assert_e1007(o: &Output, what: &str, attack: &str) {
+    let t = text(o);
+    assert_eq!(o.status.code(), Some(2), "{attack}: {what}: {t}");
+    assert!(t.contains("error[E1007]"), "{attack}: {what}: {t}");
+    assert!(t.contains(what), "{attack}: {what}: {t}");
+    assert!(!t.contains("hi\n"), "{attack}: program code ran: {t}");
+}
+
+#[test]
+fn ceiling_missing_key_is_e1007() {
+    let d = tmp("ce2_missing");
+    let c = write_ceiling(&d, &ceiling_json(&[("max_depth", None)]));
+    let o = run_with(&d, &["run", "--ceiling", c.to_str().unwrap()], HELLO, &[]);
+    assert_e1007(
+        &o,
+        "missing key(s) `max_depth`",
+        "ATTACK: a ceiling with a missing key was accepted",
+    );
+}
+
+#[test]
+fn ceiling_unknown_key_is_e1007() {
+    let d = tmp("ce2_unknown");
+    let c = write_ceiling(&d, &ceiling_json(&[("stpes", Some("10"))]));
+    let o = run(&d, HELLO, &[("AXON_CEILING", c.to_str().unwrap())]);
+    assert_e1007(
+        &o,
+        "unknown key `stpes`",
+        "ATTACK: a misspelled ceiling key was ignored",
+    );
+}
+
+#[test]
+fn ceiling_fs_write_null_is_e1007() {
+    let d = tmp("ce2_fswrite_null");
+    let c = write_ceiling(&d, &ceiling_json(&[("fs_write", Some("null"))]));
+    let o = run(&d, HELLO, &[("AXON_CEILING", c.to_str().unwrap())]);
+    assert_e1007(
+        &o,
+        "`fs_write` must be a list",
+        "ATTACK: an unbounded fs_write ceiling was accepted",
+    );
+}
+
+#[test]
+fn ceiling_inside_own_write_scope_is_e1007() {
+    let d = tmp("ce2_self_overlap");
+    let policy = d.join("policy");
+    let scope = format!("[\"{}/\"]", policy.display());
+    let c = write_ceiling(&d, &ceiling_json(&[("fs_write", Some(&scope))]));
+    let o = run(&d, HELLO, &[("AXON_CEILING", c.to_str().unwrap())]);
+    assert_e1007(
+        &o,
+        "lies inside its own `fs_write` scope",
+        "ATTACK: a ceiling the run may rewrite was accepted",
+    );
+}
+
+/// `AXON_ALLOWED_EFFECTS=IO,AI` and a ceiling of `["IO"]`: the narrower wins,
+/// so an AI call is a sandbox violation (exit 8).
+#[test]
+fn ceiling_intersects_env_never_widens() {
+    let d = tmp("ce2_intersect");
+    let c = write_ceiling(
+        &d,
+        &ceiling_json(&[
+            ("effects", Some("[\"IO\"]")),
+            ("net", Some("[\"api.anthropic.com\"]")),
+        ]),
+    );
+    let src = r#"
+@[contained(net: ["api.anthropic.com"])]
+fn main() {
+    match ai_complete("hello") {
+        Ok(s) => println("reply " + s),
+        Err(e) => println("err " + e),
+    }
+}
+"#;
+    let o = run(
+        &d,
+        src,
+        &[
+            ("AXON_CEILING", c.to_str().unwrap()),
+            ("AXON_ALLOWED_EFFECTS", "IO,AI"),
+            ("AXON_AI_MOCK", "1"),
+        ],
+    );
+    let t = text(&o);
+    assert_eq!(
+        o.status.code(),
+        Some(8),
+        "ATTACK: the env var widened the ceiling's effects: {t}"
+    );
+    assert!(
+        t.contains("builtin `ai_complete` requires effect `AI`"),
+        "ATTACK: the env var widened the ceiling's effects: {t}"
+    );
+}
+
+#[test]
+fn ceiling_digest_in_run_start() {
+    use sha2::{Digest, Sha256};
+    let d = tmp("ce2_digest");
+    let json = ceiling_json(&[]);
+    let c = write_ceiling(&d, &json);
+    let o = run(&d, HELLO, &[("AXON_CEILING", c.to_str().unwrap())]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    let want: String = Sha256::digest(json.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let log = std::fs::read_to_string(d.join("cache/axon/provenance.jsonl")).unwrap_or_default();
+    let start = log
+        .lines()
+        .rev()
+        .find(|l| l.contains("\"event\":\"run_start\""))
+        .unwrap_or("");
+    assert!(
+        start.contains(&format!("\"ceiling_sha256\":\"{want}\"")),
+        "ATTACK: run_start does not name the ceiling that bounded the run: {start:?}"
+    );
+}
+
+/// An `ai_tokens` ceiling lowers the run token cap (E1303, exit 5).
+#[test]
+fn ceiling_ai_tokens_caps_the_run() {
+    let d = tmp("ce2_tokens");
+    let c = write_ceiling(
+        &d,
+        &ceiling_json(&[
+            ("ai_tokens", Some("1")),
+            ("net", Some("[\"api.anthropic.com\"]")),
+        ]),
+    );
+    let src = r#"
+@[contained(net: ["api.anthropic.com"])]
+fn main() {
+    match ai_complete("a prompt long enough to cost more than one token") {
+        Ok(s) => println("reply " + s),
+        Err(e) => println("err " + e),
+    }
+}
+"#;
+    let o = run(
+        &d,
+        src,
+        &[
+            ("AXON_CEILING", c.to_str().unwrap()),
+            ("AXON_BUDGET_TOKENS", "100000"),
+            ("AXON_AI_MOCK", "1"),
+        ],
+    );
+    let t = text(&o);
+    assert_eq!(
+        o.status.code(),
+        Some(5),
+        "ATTACK: the ceiling's ai_tokens did not cap the run: {t}"
+    );
+    assert!(
+        t.contains("E1303"),
+        "ATTACK: the ceiling's ai_tokens did not cap the run: {t}"
+    );
+}
+
+/// A `max_depth` ceiling lowers the recursion limit.
+#[test]
+fn ceiling_max_depth_lowers_the_limit() {
+    let d = tmp("ce2_depth");
+    let c = write_ceiling(&d, &ceiling_json(&[("max_depth", Some("50"))]));
+    let src = r#"
+fn down(n: i64) -> i64 {
+    if n == 0 { 0 } else { 1 + down(n - 1) }
+}
+fn main() { println(to_str(down(200))) }
+"#;
+    let free = run(&d, src, &[]);
+    assert_eq!(free.status.code(), Some(0), "{}", text(&free));
+    let o = run(&d, src, &[("AXON_CEILING", c.to_str().unwrap())]);
+    assert_ne!(
+        o.status.code(),
+        Some(0),
+        "ATTACK: the ceiling's max_depth did not bound recursion: {}",
+        text(&o)
+    );
+}
+
+// ── CE-10: a ceiling's presence turns R45 on ────────────────────────────────
+
+const C03_LEAK_FS: &str = r#"
+fn leak() -> str { match read_file("/etc/hostname") { Ok(s) => s, Err(e) => "" } }
+fn main() { println(to_str(len(leak()) > 0)) }
+"#;
+
+#[test]
+fn ceiling_implies_require_contained() {
+    let d = tmp("ce10_r45");
+    let bare = run(&d, C03_LEAK_FS, &[]);
+    assert_eq!(
+        bare.status.code(),
+        Some(0),
+        "bare runs are unchanged: {}",
+        text(&bare)
+    );
+    let c = write_ceiling(
+        &d,
+        &ceiling_json(&[("fs_read", Some("[]")), ("net", Some("[]"))]),
+    );
+    let o = run(&d, C03_LEAK_FS, &[("AXON_CEILING", c.to_str().unwrap())]);
+    let t = text(&o);
+    assert_eq!(
+        o.status.code(),
+        Some(2),
+        "ATTACK: a ceilinged run reached an ungranted capability without R45: {t}"
+    );
+    assert!(
+        t.contains("E1005"),
+        "ATTACK: a ceilinged run reached an ungranted capability without R45: {t}"
+    );
+}

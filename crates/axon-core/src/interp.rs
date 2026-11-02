@@ -2524,9 +2524,14 @@ const MAX_STACK_BYTES: usize = MAX_DEPTH_CEILING.saturating_mul(256 * 1024);
 /// Resolve the effective recursion limit: `AXON_MAX_DEPTH` if set to a positive
 /// integer (clamped to [`MAX_DEPTH_CEILING`]), else [`RECURSION_LIMIT`]. A
 /// malformed or zero value falls back to the default rather than failing the
-/// run — the env var is a convenience lever, not load-bearing.
+/// run — the env var is a convenience lever, not load-bearing. An operator
+/// ceiling's `max_depth` (CE-2) can only lower the result.
 fn resolve_max_depth() -> usize {
-    max_depth_from_env(std::env::var("AXON_MAX_DEPTH").ok().as_deref())
+    let env = max_depth_from_env(std::env::var("AXON_MAX_DEPTH").ok().as_deref());
+    match crate::ceiling::active().and_then(|c| c.max_depth) {
+        Some(cap) => env.min(cap),
+        None => env,
+    }
 }
 
 /// Pure core of [`resolve_max_depth`]: maps an optional raw env value to the
@@ -4441,7 +4446,9 @@ fn intersect_host_patterns(a: &[String], b: &[String]) -> Vec<String> {
 
 #[cfg(feature = "asi-runtime")]
 fn pin_ai_net_allowlist(program: &Program) {
-    let ambient = ambient_scope_var("AXON_ALLOWED_NET", std::env::var_os("AXON_ALLOWED_NET"));
+    // `AXON_ALLOWED_NET` met with a ceiling's `net` (CE-2): under a ceiling the
+    // `net` key is mandatory, so every ceilinged run with a list is pinned.
+    let ambient = effective_net_scope();
     if let Some(hosts) = ai_pin_hosts(program, ambient.as_deref()) {
         axon_ai::pin_net_allowlist(hosts);
     }
@@ -7621,19 +7628,26 @@ thread_local! {
 /// the typo is recoverable in one look.
 ///
 /// A negative value clamps to 0, which is meaningful and distinct from unset.
+/// An operator ceiling's `ai_tokens` (CE-2) can only lower the result.
 fn parse_token_budget() -> Option<i64> {
-    let raw = std::env::var("AXON_BUDGET_TOKENS").ok()?;
-    let t = raw.trim();
-    match t.parse::<i64>() {
-        Ok(n) => Some(n.max(0)),
-        Err(_) => {
-            eprintln!(
-                "warning: AXON_BUDGET_TOKENS={raw:?} is not an integer — failing closed \
-                 to a budget of 0 (no AI calls). Set a whole number of tokens, or unset \
-                 the variable for no cap."
-            );
-            Some(0)
+    let ceiling = crate::ceiling::active().and_then(|c| c.ai_tokens);
+    let env = std::env::var("AXON_BUDGET_TOKENS").ok().map(|raw| {
+        let t = raw.trim();
+        match t.parse::<i64>() {
+            Ok(n) => n.max(0),
+            Err(_) => {
+                eprintln!(
+                    "warning: AXON_BUDGET_TOKENS={raw:?} is not an integer — failing closed \
+                     to a budget of 0 (no AI calls). Set a whole number of tokens, or unset \
+                     the variable for no cap."
+                );
+                0
+            }
         }
+    });
+    match (env, ceiling) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
     }
 }
 
@@ -7676,62 +7690,64 @@ fn parse_token_budget() -> Option<i64> {
 /// Bound to principal handle 0 so audit attribution matches the rest of the
 /// run.
 fn ambient_sandbox() -> Vec<SandboxEntry> {
+    // ceilings CE-2: an operator's `axon-ceiling/1` file narrows every one of
+    // these the same way; the narrower of the variable and the ceiling wins.
+    let ceiling = crate::ceiling::active();
     let scope = SandboxScope {
-        fs_read: ambient_scope_var(
-            "AXON_ALLOWED_FS_READ",
-            std::env::var_os("AXON_ALLOWED_FS_READ"),
+        fs_read: crate::ceiling::meet_paths(
+            ambient_scope_var(
+                "AXON_ALLOWED_FS_READ",
+                std::env::var_os("AXON_ALLOWED_FS_READ"),
+            ),
+            ceiling.and_then(|c| c.fs_read.as_ref()),
         ),
-        fs_write: ambient_scope_var(
-            "AXON_ALLOWED_FS_WRITE",
-            std::env::var_os("AXON_ALLOWED_FS_WRITE"),
+        fs_write: crate::ceiling::meet_paths(
+            ambient_scope_var(
+                "AXON_ALLOWED_FS_WRITE",
+                std::env::var_os("AXON_ALLOWED_FS_WRITE"),
+            ),
+            ceiling.and_then(|c| c.fs_write.as_ref()),
         ),
-        net: ambient_scope_var("AXON_ALLOWED_NET", std::env::var_os("AXON_ALLOWED_NET")),
+        net: effective_net_scope(),
     };
     let scoped = scope.fs_read.is_some() || scope.fs_write.is_some() || scope.net.is_some();
-    let raw = match std::env::var("AXON_ALLOWED_EFFECTS") {
-        Ok(raw) => raw,
-        // SET but not UTF-8: no effect name can be read out of it, so it
-        // grants none. Reading it as unset (no ceiling, or `all_effects`
-        // beside a scope variable) let a set ceiling fail open — the same
-        // rule `ambient_scope_var` applies to the scope variables.
-        Err(std::env::VarError::NotUnicode(_)) => {
-            // Once per PROCESS: `axon test` builds an interpreter per test,
-            // and each build reads the ceiling.
-            static WARNED: std::sync::Once = std::sync::Once::new();
-            WARNED.call_once(|| {
-                eprintln!("warning: AXON_ALLOWED_EFFECTS is not UTF-8 — it denies every effect");
-            });
-            String::new()
-        }
-        Err(std::env::VarError::NotPresent) => {
-            if !scoped {
-                return Vec::new();
+    let env_effects: Option<std::collections::HashSet<String>> =
+        match std::env::var("AXON_ALLOWED_EFFECTS") {
+            Ok(raw) => Some(
+                raw.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+            ),
+            // SET but not UTF-8: no effect name can be read out of it, so it
+            // grants none. Reading it as unset (no ceiling, or `all_effects`
+            // beside a scope variable) let a set ceiling fail open — the same
+            // rule `ambient_scope_var` applies to the scope variables.
+            Err(std::env::VarError::NotUnicode(_)) => {
+                // Once per PROCESS: `axon test` builds an interpreter per test,
+                // and each build reads the ceiling.
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    eprintln!(
+                        "warning: AXON_ALLOWED_EFFECTS is not UTF-8 — it denies every effect"
+                    );
+                });
+                Some(std::collections::HashSet::new())
             }
-            return vec![SandboxEntry {
-                principal: 0,
-                allowed: std::collections::HashSet::new(),
-                scope,
-                all_effects: true,
-                ambient: true,
-            }];
-        }
-    };
-    let allowed: std::collections::HashSet<String> = raw
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+            Err(std::env::VarError::NotPresent) => None,
+        };
     // A misspelled entry is silently a grant of NOTHING. That fails closed,
     // which is the right direction — but it also means an operator who writes
     // `AXON_ALLOWED_EFFECTS=IO,Exce` believes they granted `Exec` and is told
     // otherwise only if the program happens to spawn. A grant that was never
     // valid, recorded as granted: say so at parse time, the way
-    // `AXON_BUDGET_TOKENS` already does for a malformed value.
-    let mut unknown: Vec<&String> = allowed
-        .iter()
-        .filter(|e| !crate::builtins::is_grantable_effect(e))
-        .collect();
-    if !unknown.is_empty() {
+    // `AXON_BUDGET_TOKENS` already does for a malformed value. (A ceiling
+    // file's unknown effect is E1007 instead: `ceiling::parse`.)
+    if let Some(allowed) = &env_effects {
+        let mut unknown: Vec<&String> = allowed
+            .iter()
+            .filter(|e| !crate::builtins::is_grantable_effect(e))
+            .collect();
         unknown.sort();
         for e in unknown {
             eprintln!(
@@ -7741,13 +7757,46 @@ fn ambient_sandbox() -> Vec<SandboxEntry> {
             );
         }
     }
-    vec![SandboxEntry {
-        principal: 0,
-        allowed,
-        scope,
-        all_effects: false,
-        ambient: true,
-    }]
+    let ceiling_effects = ceiling.and_then(|c| c.effects.as_ref()).map(|v| {
+        v.iter()
+            .cloned()
+            .collect::<std::collections::HashSet<String>>()
+    });
+    let effects = match (env_effects, ceiling_effects) {
+        (None, None) => None,
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
+    };
+    match effects {
+        None if !scoped => Vec::new(),
+        None => vec![SandboxEntry {
+            principal: 0,
+            allowed: std::collections::HashSet::new(),
+            scope,
+            all_effects: true,
+            ambient: true,
+        }],
+        Some(allowed) => vec![SandboxEntry {
+            principal: 0,
+            allowed,
+            scope,
+            all_effects: false,
+            ambient: true,
+        }],
+    }
+}
+
+/// The run's effective ambient host scope: `AXON_ALLOWED_NET` met with the
+/// ceiling's `net` (CE-2). The sandbox's net scope and the AI endpoint pin
+/// (CE-1) both read it, so the two cannot disagree.
+fn effective_net_scope() -> Option<Vec<String>> {
+    let env = ambient_scope_var("AXON_ALLOWED_NET", std::env::var_os("AXON_ALLOWED_NET"));
+    match (env, crate::ceiling::active().and_then(|c| c.net.as_ref())) {
+        (None, None) => None,
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b.clone()),
+        (Some(a), Some(b)) => Some(intersect_host_patterns(&a, b)),
+    }
 }
 
 /// One ambient scope variable: unset = unrestricted (`None`), otherwise

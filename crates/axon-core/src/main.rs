@@ -302,6 +302,10 @@ enum Command {
                 loop; it is unrelated to the 7-day cap on scheduled `/loop` cron jobs."
         )]
         iterate: Option<usize>,
+
+        /// Operator ceiling file (`axon-ceiling/1`); same as `AXON_CEILING`.
+        #[arg(long, value_name = "FILE", help = CEILING_HELP)]
+        ceiling: Option<PathBuf>,
     },
 
     /// Type-check a .ax file and interpret it.
@@ -323,6 +327,14 @@ enum Command {
                     Does NOT cover functions dispatched by name at runtime."
         )]
         require_contained: bool,
+
+        /// Operator ceiling file (`axon-ceiling/1`): one JSON object bounding
+        /// the run's effects, fs/net scope, AI tokens and recursion depth.
+        /// Same as `AXON_CEILING=FILE`. A bad file is E1007 (exit 2) before
+        /// any program code runs; its presence also turns `--require-contained`
+        /// on.
+        #[arg(long, value_name = "FILE", help = CEILING_HELP)]
+        ceiling: Option<PathBuf>,
 
         /// Print `axon: run-id <id>` on stderr before the program starts. Off by
         /// default so the program owns its stderr; the id is always stamped to
@@ -420,6 +432,10 @@ enum Command {
         /// Emit results as newline-delimited JSON (NDJSON).
         #[arg(long, help = "Machine-readable NDJSON output")]
         json: bool,
+
+        /// Operator ceiling file (`axon-ceiling/1`); same as `AXON_CEILING`.
+        #[arg(long, value_name = "FILE", help = CEILING_HELP)]
+        ceiling: Option<PathBuf>,
     },
 
     /// Read a host journal (`AXON_RECORD`) as a human-reviewable transcript, or
@@ -524,6 +540,10 @@ enum Command {
         ///   AXON_REPLAY=j.journal axon session < t.ax
         #[arg(long, value_name = "PATH", help = "Write each cell to PATH as it runs")]
         transcript: Option<PathBuf>,
+
+        /// Operator ceiling file (`axon-ceiling/1`); same as `AXON_CEILING`.
+        #[arg(long, value_name = "FILE", help = CEILING_HELP)]
+        ceiling: Option<PathBuf>,
     },
 
     /// Summarize the provenance log: per-`@[adaptive]`-fn score trajectory.
@@ -972,6 +992,38 @@ fn main() {
         .expect("worker thread panicked");
 }
 
+/// `--ceiling` help text, shared by the four executing verbs.
+const CEILING_HELP: &str = "Operator ceiling file (axon-ceiling/1; same as AXON_CEILING). \
+                            Bad file: E1007, exit 2. Turns --require-contained on";
+
+/// ceilings CE-2: install the operator ceiling before any program code runs.
+///
+/// `--ceiling FILE` is spelled into `AXON_CEILING` so the interpreter has one
+/// source (`axon_core::ceiling::active`). The flag and a DIFFERENT
+/// `AXON_CEILING` are refused (E1007): two ceilings with no rule for which
+/// one bounds the run is not a ceiling. The file is read and validated here,
+/// so a bad one stops the verb (E1007, exit 2) before it loads the program,
+/// and its presence turns R45 on (NH-C2 A) whatever `--require-contained`
+/// said.
+fn apply_ceiling(flag: Option<PathBuf>, require_contained: bool) {
+    if let Some(path) = flag {
+        if let Some(env) = std::env::var_os("AXON_CEILING") {
+            if std::path::Path::new(&env) != path {
+                eprintln!(
+                    "error[E1007]: --ceiling {} and AXON_CEILING={} name two different \
+                     ceilings; refusing to run. Pass one.",
+                    path.display(),
+                    PathBuf::from(env).display()
+                );
+                process::exit(2);
+            }
+        }
+        std::env::set_var("AXON_CEILING", &path);
+    }
+    let ceilinged = axon_core::ceiling::active().is_some();
+    axon_core::capabilities::set_require_contained(require_contained || ceilinged);
+}
+
 /// G1d: the import-closure digest an executing verb must load, or refuse.
 const REQUIRE_IMPORTS_DIGEST_ENV: &str = "AXON_REQUIRE_IMPORTS_DIGEST";
 
@@ -1127,14 +1179,19 @@ fn dispatch(command: Command) {
             file,
             emit,
             iterate,
-        } => cmd_goal(file, emit, iterate),
+            ceiling,
+        } => {
+            apply_ceiling(ceiling, false);
+            cmd_goal(file, emit, iterate)
+        }
         Command::Run {
             file,
             require_contained,
+            ceiling,
             verbose,
             args,
         } => {
-            axon_core::capabilities::set_require_contained(require_contained);
+            apply_ceiling(ceiling, require_contained);
             cmd_run(file, args, verbose)
         }
         Command::Fmt { files, check } => cmd_fmt(files, check),
@@ -1153,7 +1210,9 @@ fn dispatch(command: Command) {
             completion_key_stdin,
             exact,
             seal,
+            ceiling,
         } => {
+            apply_ceiling(ceiling, false);
             axon_core::resolver::set_sealed_module_dirs(&seal);
             cmd_test(files, filter, jobs, json, completion_key_stdin, exact)
         }
@@ -1169,8 +1228,9 @@ fn dispatch(command: Command) {
             show_program,
             require_contained,
             transcript,
+            ceiling,
         } => {
-            axon_core::capabilities::set_require_contained(require_contained);
+            apply_ceiling(ceiling, require_contained);
             cmd_session(protocol, show_program, transcript)
         }
         Command::Trace {
@@ -3752,6 +3812,8 @@ fn refuse_if_ambient_ceiling(context: &str) {
         "AXON_ALLOWED_FS_WRITE",
         "AXON_ALLOWED_NET",
         "AXON_BUDGET_TOKENS",
+        // ceilings CE-2: the operator ceiling file bounds the same controls.
+        "AXON_CEILING",
     ] {
         // `var_os`: a set variable whose value is not UTF-8 is still set, and
         // `env::var` would have read it as absent.

@@ -2153,6 +2153,11 @@ pub extern "C" fn __axon_rt_refuse_interp_only_env() {
              cannot raise",
         ),
         (
+            "AXON_CEILING",
+            "run past every bound in the operator's ceiling file (effects, \
+             fs/net scope, AI tokens, depth) — none of which this engine reads",
+        ),
+        (
             "AXON_REQUIRE_IMPORTS_DIGEST",
             "run imported code no one checked against the approved closure — \
              a built binary cannot recompute the modules it was linked from",

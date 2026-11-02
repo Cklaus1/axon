@@ -619,9 +619,19 @@ pub fn append_run_start_jsonl(run_id: &str, seed: u64, src: &str) {
         Some(h) => format!(",\"src_hash\":{}", json_quote(h)),
         None => String::new(),
     };
+    // ceilings CE-2: which operator ceiling bounded this run, by digest and
+    // path, so `axon trace` can say what bounded it.
+    let ceiling_field = match crate::ceiling::active() {
+        Some(c) => format!(
+            ",\"ceiling_sha256\":{},\"ceiling\":{}",
+            json_quote(&c.sha256),
+            json_quote(&c.path.to_string_lossy())
+        ),
+        None => String::new(),
+    };
     let line = format!(
         "{{\"ts_ms\":{ts},\"fn\":\"__run__\",\"event\":\"run_start\",\
-         \"run_id\":{rid},\"seed\":{seed},\"src\":{src}{hash_field}{cf}}}\n",
+         \"run_id\":{rid},\"seed\":{seed},\"src\":{src}{hash_field}{ceiling_field}{cf}}}\n",
         rid = json_quote(run_id),
         src = json_quote(src),
         cf = cell_field(),

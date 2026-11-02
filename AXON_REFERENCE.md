@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 28 CLI verbs, 344 builtins, 24 attributes, 154 diagnostic codes (141 live, 13 reserved), 66 environment variables.
+The complete surface of this build — 28 CLI verbs, 344 builtins, 24 attributes, 155 diagnostic codes (142 live, 13 reserved), 67 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -71,7 +71,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (66)
+## Environment variables (67)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -104,6 +104,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_BUDGET_TOKENS` | run-wide AI token cap; the call that would exceed it halts with E1303 (exit 5) BEFORE dispatch. A malformed value fails closed to 0 |
 | `AXON_DOTENV` | path to a `.env` file to load for AI configuration |
 | `AXON_DOTENV_WALK` | walk parent directories looking for a `.env` file |
+| `AXON_CEILING` | path to an operator ceiling file (`axon-ceiling/1` JSON; same as `--ceiling` on run/session/goal/test): every key required (`schema`, `effects`, `fs_read`, `fs_write`, `net`, `ai_tokens`, `max_depth`; `null` = explicitly unbounded, except `fs_write`, which must be a list). Each bound narrows its env var counterpart (narrowest wins, a program cannot widen it) and its presence turns `--require-contained` on. A missing/unknown key, malformed value, unreadable file, or a file inside its own `fs_write` scope is E1007, exit 2, before any program code runs. Its sha256 is recorded in `run_start`. Interpreter-only: `axon build` refuses (E0910) and a native binary exits 2 |
 | `AXON_ALLOWED_EFFECTS` | ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset; a value that is not UTF-8 also denies every effect (with a warning). Interpreter-only |
 | `AXON_ALLOWED_FS_READ` | ambient read-path scope for the whole run: comma-separated path prefixes, matched like `sandbox_create_scoped` (per argument, `..` refused). Unset = unrestricted, EMPTY = deny every filesystem read, `*` = unrestricted. Independent of AXON_ALLOWED_EFFECTS (with it unset every effect stays allowed and only paths are restricted); a ceiling an inner sandbox may narrow but never widen. Interpreter-only |
 | `AXON_ALLOWED_FS_WRITE` | ambient write-path scope for the whole run, as AXON_ALLOWED_FS_READ for writes (`write_file`, `append_file`, `file_copy`'s destination, both `file_rename` paths, `dir_create`, the durable store, the `@[adaptive]` provenance row). EMPTY = deny every write while `println` keeps working. Interpreter-only |
@@ -144,7 +145,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEE_ENCLAVE` | R24 TEE: set to 1 by the gramine-direct manifest to signal the workload is executing inside an enclave; this is what makes `tee_in_enclave()` return true. Read through the host seam, so it is recorded and replayed |
 | `AXON_TEE_MEASUREMENT` | R24 TEE: the simulated enclave launch measurement returned by `tee_attest_measurement()` when set, a stub otherwise. A genuine hardware-rooted quote comes only from confidential hardware. Read through the host seam |
 
-## Diagnostic codes (154, of which 141 live)
+## Diagnostic codes (155, of which 142 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -217,6 +218,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E1003` | capability path is not parseable |
 | `E1004` | call hits a never: clause (hard violation) |
 | `E1005` | R45: an un-granted capability is reached from an entry point under `--require-contained`; distinct from E1001, which means a grant EXISTS and was exceeded |
+| `E1007` | the `axon-ceiling/1` file (`--ceiling` / `AXON_CEILING`) is missing, unreadable or malformed, has an unknown or missing key, or lies inside its own `fs_write` scope; the run is refused (exit 2) before any program code runs |
 | `E1101` | verify bound not satisfied (runtime gate) |
 | `E1102` | verify bound statically VIOLABLE — SMT counterexample (R9) |
 | `E1103` | a `@[verify]` predicate names a name not in scope there, is ill-typed or not `bool`, has a param named like one of its binders, or contains a `return`/`break`/`continue` that would leave its frame, or sits on a return the runtime cannot check (not a scalar, `Uncertain<T>` or `Temporal<T>`) |

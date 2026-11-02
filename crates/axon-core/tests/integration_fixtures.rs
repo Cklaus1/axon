@@ -3667,3 +3667,70 @@ fn native_fallback_matches_interp() {
         );
     }
 }
+
+/// ceilings CE-2: an operator ceiling (`AXON_CEILING`) is interpreter-only, so
+/// `axon build` under one refuses (E0910, exit 2) and a native binary run
+/// under one exits 2 rather than run past every bound in it.
+#[cfg(feature = "codegen")]
+#[test]
+fn native_refuses_under_ceiling() {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_ce2_native_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("hello.ax");
+    std::fs::write(&file, "fn main() { println(\"RAN\") }\n").unwrap();
+    let ceiling = dir.join("ceiling.json");
+    std::fs::write(
+        &ceiling,
+        "{ \"schema\": \"axon-ceiling/1\", \"effects\": [], \"fs_read\": [], \"fs_write\": [], \
+         \"net\": [], \"ai_tokens\": 0, \"max_depth\": null }\n",
+    )
+    .unwrap();
+    let bin = dir.join("hello_bin");
+    let build = |with_ceiling: bool| {
+        let mut c = Command::new(axon_bin);
+        c.arg("build")
+            .arg(&file)
+            .arg("-o")
+            .arg(&bin)
+            .arg("--no-cache")
+            .current_dir(&dir)
+            .env_remove("AXON_CEILING");
+        if with_ceiling {
+            c.env("AXON_CEILING", &ceiling);
+        }
+        c.output().unwrap()
+    };
+    let refused = build(true);
+    let err = String::from_utf8_lossy(&refused.stderr);
+    assert_eq!(
+        refused.status.code(),
+        Some(2),
+        "ATTACK: a native build under a ceiling was emitted: {err}"
+    );
+    assert!(
+        err.contains("error[E0910]") && err.contains("AXON_CEILING"),
+        "ATTACK: a native build under a ceiling was emitted: {err}"
+    );
+    let built = build(false);
+    assert!(
+        built.status.success(),
+        "native build: {}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let run = Command::new(&bin)
+        .current_dir(&dir)
+        .env("AXON_CEILING", &ceiling)
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&run.stdout).into_owned();
+    let err = String::from_utf8_lossy(&run.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        (run.status.code(), out.as_str()),
+        (Some(2), ""),
+        "ATTACK: a native binary ran past an operator ceiling: {err}"
+    );
+    assert!(err.contains("`AXON_CEILING` is set"), "{err}");
+}

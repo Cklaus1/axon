@@ -11593,8 +11593,8 @@ MUTATIONS += [
      '        (\n            "AXON_ALLOWED_NET",', '        (\n            "AXON_ALLOWED_NET_NOT_THIS",',
      'axon-core', '--test ambient_scope', 'a_compiled_binary_refuses_the_scope_rather_than_dropping_it'),
     ('M3727', 'R0b NATIVE BUILD: a binary is emitted while an ambient scope variable is set (E0910 dropped)', 'crates/axon-core/src/main.rs',
-     '        "AXON_ALLOWED_FS_READ",\n        "AXON_ALLOWED_FS_WRITE",\n        "AXON_ALLOWED_NET",\n        "AXON_BUDGET_TOKENS",\n    ] {',
-     '        "AXON_BUDGET_TOKENS",\n    ] {',
+     '        "AXON_ALLOWED_FS_READ",\n        "AXON_ALLOWED_FS_WRITE",\n        "AXON_ALLOWED_NET",\n        "AXON_BUDGET_TOKENS",\n',
+     '        "AXON_BUDGET_TOKENS",\n',
      'axon-core', '--test ambient_scope', 'a_compiled_binary_refuses_the_scope_rather_than_dropping_it'),
     ('M3728', 'R0a CAPS: a refinement predicate the interpreter runs implicitly is not walked', 'crates/axon-core/src/capabilities.rs',
      '                        work.push(Walk::Expr(&r.predicate));', '                        let _ = &r.predicate;',
@@ -11719,8 +11719,8 @@ MUTATIONS += [
      '    drain_walk(work, &mut ctx);\n    let called: Vec<&str> = reach',
      'axon-core', '--lib', 'capabilities::tests::a_native_call_in_a_used_refinement_needs_the_users_grant_e1004'),
     ('M3765', 'FU-5 CEILING: the interpreter reads a non-UTF-8 AXON_ALLOWED_EFFECTS as a grant', 'crates/axon-core/src/interp.rs',
-     'it denies every effect");\n            });\n            String::new()',
-     'it denies every effect");\n            });\n            "IO".to_string()',
+     'it denies every effect"\n                    );\n                });\n                Some(std::collections::HashSet::new())',
+     'it denies every effect"\n                    );\n                });\n                Some(["IO".to_string()].into_iter().collect())',
      'axon-core', '--test cli_run', 'a_non_utf8_effect_ceiling_denies_every_effect'),
     ('M3766', 'FU-5 CEILING: axon test --completion-key-stdin widens a non-UTF-8 AXON_ALLOWED_EFFECTS', 'crates/axon-core/src/main.rs',
      'it denies every effect");\n                Vec::new()',
@@ -14569,6 +14569,36 @@ MUTATIONS += [
      '            if name == "ai_complete" && self.functions.contains_key(AI_COMPLETE_FALLBACK_FN) {',
      '            if false && self.functions.contains_key(AI_COMPLETE_FALLBACK_FN) {',
      'axon-core', '--test integration_fixtures', 'native_fallback_matches_interp'),
+]
+
+# ceilings CE-2 (ids M4686-M4690) and CE-10 (id M4691): the operator's
+# `axon-ceiling/1` file fails closed (E1007), narrows the env vars, is refused
+# natively, and turns R45 on.
+MUTATIONS += [
+    ('M4686', 'CE-2: a ceiling with a missing key is accepted', 'crates/axon-core/src/ceiling.rs',
+     '    if !missing.is_empty() {',
+     '    if false && !missing.is_empty() {',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_missing_key_is_e1007'),
+    ('M4687', 'CE-2: an unknown ceiling key (a typo) is not refused', 'crates/axon-core/src/ceiling.rs',
+     '        if !KEYS.contains(&k.as_str()) {',
+     '        if false && !KEYS.contains(&k.as_str()) {',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_unknown_key_is_e1007'),
+    ('M4688', 'CE-2: a ceiling inside its own fs_write scope is accepted', 'crates/axon-core/src/ceiling.rs',
+     '    refuse_self_overlap(&c, cwd)?;',
+     '    let _ = refuse_self_overlap(&c, cwd);',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_inside_own_write_scope_is_e1007'),
+    ('M4689', 'CE-2: AXON_ALLOWED_EFFECTS widens the ceiling effects instead of meeting them', 'crates/axon-core/src/interp.rs',
+     '        (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),',
+     '        (Some(a), Some(_b)) => Some(a),',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_intersects_env_never_widens'),
+    ('M4690', 'CE-2: a native binary runs under AXON_CEILING instead of refusing it', 'crates/axon-rt/src/lib.rs',
+     '        (\n            "AXON_CEILING",',
+     '        (\n            "AXON_CEILING_NOT_THIS",',
+     'axon-core', '--test integration_fixtures', 'native_refuses_under_ceiling'),
+    ('M4691', 'CE-10: a ceiling no longer turns R45 (--require-contained) on', 'crates/axon-core/src/main.rs',
+     '    axon_core::capabilities::set_require_contained(require_contained || ceilinged);',
+     '    axon_core::capabilities::set_require_contained(require_contained || (ceilinged && false));',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_implies_require_contained'),
 ]
 
 if __name__ == "__main__":

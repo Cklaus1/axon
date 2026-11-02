@@ -317,6 +317,15 @@ fn worker() -> i64 { /* may only write under ./out/ and reach that host */ 0 }
 - **`env_var(...)` is denied inside `@[contained]`** (error `E1001`) — env is an
   ungrantable ambient secret channel. Read it *outside* the boundary and pass the value in.
 
+**Operator ceilings.** Whoever runs your program may bound it with `--ceiling FILE` (or
+`AXON_CEILING=FILE`), a JSON `axon-ceiling/1` object with every key present (`null` = unbounded):
+`{"schema":"axon-ceiling/1","effects":["IO"],"fs_read":["/srv/in/"],"fs_write":["/srv/out/"],
+"net":["api.anthropic.com"],"ai_tokens":200000,"max_depth":6000}`. Each bound narrows the
+matching `AXON_ALLOWED_*` / `AXON_BUDGET_TOKENS` / `AXON_MAX_DEPTH` variable and nothing in the
+program can widen it; a ceiling also turns `--require-contained` on, so `main` needs a
+`@[contained]` grant for the I/O it reaches (E1005). A bad file is E1007 (exit 2). Without a
+ceiling a run is bounded only by what its source and those variables declare.
+
 **Refinement types** constrain values; violations exit with code 6 at runtime:
 ```axon
 fn safe_div(a: i64, b: i64 where b != 0) -> i64 { a / b }
