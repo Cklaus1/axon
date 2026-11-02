@@ -173,11 +173,13 @@ VISION.md and README in the result commit, pending a separate decision; it choos
   `--reserve-usd` per task [FILL AT FREEZE: proposal 0.5 for Opus]. Billed spend is "OAuth, not billed per
   call". A cap-interrupted run is INCOMPLETE. Expected ≈ $8-9 Opus arm a (48 tasks × ≤ 4 calls), ≈ $1 Opus
   arm c, ≈ $0.4 per Haiku arm [INFERENCE: spec cost table scaled to 48 tasks].
-- `once-ledger.jsonl`: one hash-chained row per (manifest, arm, model) written before the first call and
-  committed by the run (`git commit -- once-ledger.jsonl`) before any model call; a run is refused while
-  the ledger differs from its committed copy (uncommitted, edited or deleted rows), so a fresh worktree of
-  a commit carrying the ledger cannot restart the chain; a second score is refused; one resume after 30
-  min. `--only` is refused on the once set.
+- `once-ledger.jsonl`: one hash-chained row per (manifest, arm, model) written before the first call,
+  committed and pushed to `main` of `https://github.com/Cklaus1/axon.git` (the `origin` remote, URL checked)
+  before any model call; a once run is refused when origin is not that URL, is unreachable, when the
+  checkout is not `origin/main`, or when the push fails. The ledger of record is that branch, so a fresh
+  clone, another worktree or a reset cannot restart the chain; a second score is refused; one resume after
+  30 min. `--only` is refused on the once set, and so is a run with the selftest's ledger override
+  (`GENVIAB_SELFTEST`, `GENVIAB_LEDGER_URL`) set.
 - Commands (after freeze; `AXON_BIN` = the pinned build):
   `python3 -B build.py --check --set once`, then for each (arm, model) in section 3
   `python3 -B genviab.py run --set once --arm <a|c> --generator micode --model <m> --out results/once/<arm>-<m> --cap-usd 25 --reserve-usd <r>`,

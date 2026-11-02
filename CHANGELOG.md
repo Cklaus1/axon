@@ -1,5 +1,15 @@
 # Axon Changelog
 
+## genviab GV-2..GV-4: the once ledger is pushed before any model call; a once reference may be `reference.py`; 12 harder dev tasks
+
+Items GV-2, GV-3 and GV-4 (authoring) of `tasks/genviab-b2-spec.md`. GV-1 (the sandbox classifier) is a separate lane.
+
+- **Once ledger on the pinned origin (GV-2, O-IG-02):** a once run's ledger row is committed and pushed to `main` of `https://github.com/Cklaus1/axon.git` (the `origin` remote, URL checked) before any model call. A once run is refused when origin is another URL, is unreachable, when the checkout is not `origin/main`, or when the push fails. Before, the ledger was checked only in the local clone, so a fresh clone or a `git reset` that dropped the row commit could score the same once set again. The `git log --all` check is removed. A test-only URL override (`GENVIAB_LEDGER_URL` under `GENVIAB_SELFTEST=1`) lets the selftest use a bare repo; a once run refuses if either is set.
+- **`reference.py` for once tasks (GV-3, human decision option B):** a once task's reference may be `reference.py` (once only; exactly one reference). It is graded by its own runner: a raised exception (including `KeyboardInterrupt`) is a fault whatever the exit status, reported through a harness file and not stderr. The runner uses a clean environment, `PYTHONHASHSEED=0`, binds fs_read prefixes only when staged, and applies the Axon reference's 1 MiB stdout bound. `build.py` lints its string constants as paths and allows only the v1-scope imports. It refuses `exec`/`eval`/`compile`/`__import__` and non-text `open` modes, an `exit` outside 0..=255, and a once ceiling granting `exec`. The oracle generator refuses a non-Axon reference.
+- **Behaviour change, arm c:** the Python baseline now runs with the same clean environment (it inherited the harness's) and binds an fs_read prefix only when that run staged it (`os.path.isdir("data")` with no input is now `False`, as in Axon). Dev arm c results stay as recorded.
+- **Gate stage `genviab-selftest` (S23):** builds `axon` + `axon-intent` and runs `selftest.py` with `GENVIAB_REQUIRE_BINS=1`, so a missing binary fails the stage instead of printing a skip.
+- **12 model-authored dev tasks (GV-4):** `dev/h01`-`h12` (3 stateful, 3 errors, 3 multi-step, 3 tempting); the dev manifest (28 tasks) is committed before any paid call. Oracle 12/12, empty program 0/12, $0. The Haiku headroom measurement runs after GV-1 lands.
+
 ## asi-fixes AF-1..AF-6: `ai_extract::<T>` runs and is charged; match arms are alternatives for moves; bare variant names refused; the Hello Goal acid gate fails closed
 
 Items AF-1 to AF-6 of `tasks/asi-fixes-spec.md`.

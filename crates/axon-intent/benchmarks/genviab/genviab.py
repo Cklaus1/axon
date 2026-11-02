@@ -30,14 +30,17 @@ before a task when spent + (in flight + 1) x reserve > cap, and after
 run_ab.RATE_LIMIT_STOP consecutive rate-limited tasks.
 
 Once set (`--set once`): refused with a model unless PREREG-genviab.md is
-FROZEN and pins once/manifest.json's sha256; the run appends a row to
-once-ledger.jsonl BEFORE the first model call and commits it (`git commit --
-once-ledger.jsonl`; a run is refused while the ledger differs from its committed
-copy, so a fresh worktree or a deleted file cannot restart the chain), and a
-second score of the same (manifest, arm, model) is refused. One resume
-(`--resume-of ROW`, >= 30 min after the row, same identity) is allowed for an
-interrupted run (IG7 INCOMPLETE rule). Oracle/empty runs spend nothing and are
-not ledgered.
+FROZEN and pins once/manifest.json's sha256. The ledger of record is
+once-ledger.jsonl on `main` of the pinned origin (LEDGER_URL, PREREG §7): the
+run first requires `origin` to be that URL, fetches `origin main`, and refuses
+unless HEAD is exactly the fetched origin/main, the ledger file is HEAD's and a
+dry-run push succeeds; it then appends a row BEFORE the first model call,
+commits it (`git commit -- once-ledger.jsonl`) and pushes it to origin main
+(never --force); a row that is not on origin/main afterwards refuses the model
+calls. A second score of the same (manifest, arm, model) is refused, from any
+clone. One resume (`--resume-of ROW`, >= 30 min after the row, same identity)
+is allowed for an interrupted run (IG7 INCOMPLETE rule). Oracle/empty runs
+spend nothing and are not ledgered.
 """
 import argparse
 import concurrent.futures as cf
@@ -81,6 +84,16 @@ RESUME_AFTER_S = 30 * 60
 LEDGER_FIELDS = ("ts", "purpose", "manifest_sha256", "prereg_sha256", "arm", "model",
                  "effort", "driver_sha256", "axon_sha256", "axon_intent_sha256", "card_sha256",
                  "out", "git_head", "resume_of", "prev_row_sha256")
+# The once-ledger of record (PREREG §7, spec GV-2): `main` of this URL, reached
+# as the `origin` remote. GENVIAB_LEDGER_URL replaces the URL only under
+# GENVIAB_SELFTEST=1 (a local bare repository stands in for GitHub); a paid
+# once run refuses when either variable is set.
+LEDGER_REMOTE = "origin"
+LEDGER_URL = "https://github.com/Cklaus1/axon.git"
+LEDGER_BRANCH = "main"
+LEDGER_URL_ENV = "GENVIAB_LEDGER_URL"
+SELFTEST_ENV = "GENVIAB_SELFTEST"
+GIT_NET_TIMEOUT = 60
 
 
 class Refused(Exception):
@@ -248,15 +261,58 @@ def ledger_uncommitted(ledger):
     return None
 
 
+def ledger_url():
+    """The pinned ledger URL; the selftest's override only under GENVIAB_SELFTEST=1."""
+    if os.environ.get(SELFTEST_ENV) == "1" and os.environ.get(LEDGER_URL_ENV):
+        return os.environ[LEDGER_URL_ENV]
+    return LEDGER_URL
+
+
+def ledger_git(d, *args, timeout=None):
+    """(rc, stdout, stderr) of `git -C d args`; a timeout or a missing git is rc None.
+    No credential prompt: a once run never waits on a terminal."""
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+    try:
+        r = subprocess.run(["git", "-C", d, *args], capture_output=True, text=True,
+                           timeout=timeout, env=env)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, "", f"{type(e).__name__}: {e}"
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+
+def fetch_ledger_head(d):
+    """`git fetch origin main`; the fetched commit, or (None, why)."""
+    rc, _, err = ledger_git(d, "fetch", "--quiet", LEDGER_REMOTE, LEDGER_BRANCH,
+                            timeout=GIT_NET_TIMEOUT)
+    if rc != 0:
+        return None, f"git fetch {LEDGER_REMOTE} {LEDGER_BRANCH} failed: {err or f'rc {rc}'}"
+    rc, sha, err = ledger_git(d, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+    return (sha, None) if rc == 0 and sha else (None, f"no FETCH_HEAD after the fetch: {err}")
+
+
 def once_ledger_precheck(ledger):
-    """Before a once run's row: a ledger that exists (or ever was committed)
-    must be exactly its committed copy. Only a never-committed, absent ledger -
-    the first once run of the repository - starts a new chain."""
+    """Before a once run's row: the ledger of record is `main` of the pinned
+    origin (PREREG §7). Refused unless origin is LEDGER_URL, origin main can be
+    fetched, HEAD is exactly the fetched commit, the ledger file is HEAD's copy
+    (or absent and never committed on that history: the first once run starts
+    the chain), and a dry-run push to origin main succeeds. A fresh clone, a
+    reset, an unpushed or edited row all fail one of these."""
     d, name = os.path.split(os.path.abspath(ledger))
-    tracked = subprocess.run(["git", "-C", d, "ls-files", "--error-unmatch", "--", name],
-                             capture_output=True).returncode == 0
-    history = subprocess.run(["git", "-C", d, "log", "--all", "--format=%h", "-1", "--", name],
-                             capture_output=True, text=True).stdout.strip()
+    want = ledger_url()
+    rc, url, err = ledger_git(d, "remote", "get-url", LEDGER_REMOTE)
+    if rc != 0 or url != want:
+        raise Refused(f"{LEDGER_REMOTE} is {url or '(none: ' + err + ')'}, not the pinned ledger "
+                      f"remote {want} (PREREG §7): a once run scores against the pushed ledger only")
+    head_ref, why = fetch_ledger_head(d)
+    if head_ref is None:
+        raise Refused(f"{LEDGER_REMOTE} is unreachable: a once run needs the pushed ledger ({why})")
+    rc, head, _ = ledger_git(d, "rev-parse", "--verify", "HEAD^{commit}")
+    if head != head_ref:
+        raise Refused(f"this checkout is not {LEDGER_REMOTE}/{LEDGER_BRANCH} (HEAD {head[:12] or '?'}, "
+                      f"{LEDGER_REMOTE}/{LEDGER_BRANCH} {head_ref[:12]}): a once run starts from the "
+                      "pushed tree")
+    tracked = ledger_git(d, "ls-files", "--error-unmatch", "--", name)[0] == 0
+    history = ledger_git(d, "log", "--format=%h", "-1", "HEAD", "--", name)[1]
     if history and not tracked:
         raise Refused(f"{ledger} was committed ({history}) and is no longer tracked: a deleted "
                       "ledger would start an empty chain; restore it before a once run")
@@ -264,20 +320,39 @@ def once_ledger_precheck(ledger):
         why = ledger_uncommitted(ledger)
         if why:
             raise Refused(f"{why}: commit it (git commit -- {name}) before a once run")
+    rc, _, err = ledger_git(d, "push", "--dry-run", "--quiet", LEDGER_REMOTE,
+                            f"HEAD:refs/heads/{LEDGER_BRANCH}", timeout=GIT_NET_TIMEOUT)
+    if rc != 0:
+        raise Refused(f"a dry-run push to {LEDGER_REMOTE} {LEDGER_BRANCH} failed ({err or f'rc {rc}'}): "
+                      "a once run must be able to push its ledger row before any model call")
 
 
 def once_commit(ledger, row):
-    """Commit the ledger's new row, and refuse unless every row is then in git
-    history - before any model call of the once run."""
+    """Commit the ledger's new row, push it to origin main (never --force) and
+    refuse unless the row commit is then on the fetched origin/main - before any
+    model call of the once run. A refused push leaves the row committed locally,
+    so the next precheck refuses until a human reconciles."""
     d, name = os.path.split(os.path.abspath(ledger))
-    r = subprocess.run(["git", "-C", d, "add", "--", name], capture_output=True, text=True)
-    if r.returncode == 0:
-        r = subprocess.run(["git", "-C", d, "commit", "-q", "-m", f"genviab: once-ledger row {row}",
-                            "--", name], capture_output=True, text=True)
+    rc, _, err = ledger_git(d, "add", "--", name)
+    if rc == 0:
+        rc, _, err = ledger_git(d, "commit", "-q", "-m", f"genviab: once-ledger row {row}", "--", name)
     why = ledger_uncommitted(ledger)
     if why:
-        raise Refused(f"the once-ledger row {row} could not be committed ({r.stderr.strip()}); "
+        raise Refused(f"the once-ledger row {row} could not be committed ({err}); "
                       f"{why}: commit it before any model call")
+    _, commit, _ = ledger_git(d, "rev-parse", "--verify", "HEAD^{commit}")
+    rc, _, err = ledger_git(d, "push", "--quiet", LEDGER_REMOTE, f"HEAD:refs/heads/{LEDGER_BRANCH}",
+                            timeout=GIT_NET_TIMEOUT)
+    pushed, why = fetch_ledger_head(d) if rc == 0 else (None, f"git push failed: {err or f'rc {rc}'}")
+    if pushed is None or ledger_git(d, "merge-base", "--is-ancestor", commit, pushed)[0] != 0:
+        raise Refused(f"the ledger row {row} could not be pushed to {LEDGER_REMOTE} {LEDGER_BRANCH} "
+                      f"({why or f'commit {commit[:12]} is not on the fetched {LEDGER_BRANCH}'}); "
+                      "no model call was made")
+
+
+def ledger_override_set():
+    """The selftest variables that must never reach a paid once run."""
+    return [k for k in (SELFTEST_ENV, LEDGER_URL_ENV) if os.environ.get(k)]
 
 
 
@@ -479,7 +554,7 @@ def run_arm_c(a, task, out):
             text = r.stdout
             used += reported_tokens(r.stderr)
         else:
-            raise Refused("arm c has no oracle: there are no Python reference programs")
+            raise Refused("arm c has no oracle generator")
         src = strip_python(text)
         res = gv.grade_python(task, src, ("visible",))
         rec = {"round": rnd, "candidate": text, "source": src, "stage": res["stage"],
@@ -522,7 +597,11 @@ def cmd_run(a):
         tasks = [t for t in tasks if t["id"] in want]
     paid = a.generator == "micode"
     if a.generator == "oracle" and a.arm == "c":
-        raise Refused("arm c has no oracle: there are no Python reference programs")
+        raise Refused("arm c has no oracle generator")
+    if a.generator == "oracle":
+        py_ref = [t["id"] for t in tasks if t["reference_lang"] != "axon"]
+        if py_ref:
+            raise Refused(f"the oracle generator needs reference.ax: {py_ref} have reference.py")
     if paid and (a.cap_usd is None or a.reserve_usd is None):
         raise Refused("--generator micode needs --cap-usd and --reserve-usd")
     out = os.path.abspath(a.out)
@@ -532,6 +611,9 @@ def cmd_run(a):
     if a.resume and a.set == "once" and paid and not a.resume_of:
         raise Refused("a once run resumes only with --resume-of ROW_SHA (once-ledger.jsonl)")
     if a.set == "once" and paid:
+        if ledger_override_set():
+            raise Refused(f"{ledger_override_set()} set: the ledger URL override is the selftest's; "
+                          f"a once run scores against {LEDGER_URL} only")
         prereg_sha = once_gate(a, man_sha, len(tasks))
         once_ledger_precheck(ONCE_LEDGER)
     for sub in ("calls", "transcripts"):
@@ -550,6 +632,8 @@ def cmd_run(a):
         "bwrap": {"version": version([gv.BWRAP, "--version"]), "base": gv.BWRAP_BASE,
                   "tail": gv.BWRAP_TAIL, "python": version([gv.PYTHON, "--version"])}
                  if a.arm == "c" else None,
+        "ledger": {"url": ledger_url(), "selftest_override": ledger_override_set()}
+                  if a.set == "once" else None,
         "started": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
     }
     if a.set == "once" and paid:

@@ -1,21 +1,34 @@
 #!/usr/bin/env python3
 """Self-test of build.py and genviab.py: no model call, no spend.
     python3 -B selftest.py
+    GENVIAB_REQUIRE_BINS=1 python3 -B selftest.py    (the gate: a missing binary FAILs)
 Every test runs on a scratch copy of this directory, so the committed corpus,
 manifests, rejected-ideas.json and once-ledger.jsonl are never touched:
 (a) build.py: `--help` exits 0, `--bogus` exits 2; `--check` FAILs (exit 1)
     on a corpus edited after its manifest and on a missing manifest, before
     any binary runs;
 (b) build.py with the real binaries (AXON_BIN; skipped, and said so, when it
-    is not built): a task whose reference is an empty `main`, one whose
-    intent.md carries Axon code, one with no hidden example and one with a
-    two-paragraph intent are excluded and logged under `mechanical`, a good
-    task is kept; in once/, a model-authored reference and a task with no
-    visible example are excluded;
+    is not built, and a FAIL under GENVIAB_REQUIRE_BINS=1): a task whose
+    reference is an empty `main`, one whose intent.md carries Axon code, one
+    with no hidden example and one with a two-paragraph intent are excluded
+    and logged under `mechanical`, a good task is kept; in once/, a
+    model-authored reference and a task with no visible example are excluded;
+    reference.py (spec GV-3): a passing one is kept with its file in the
+    manifest; one that raises (also KeyboardInterrupt) is a fault whatever its
+    exit; it sees a clean environment, a fixed hash seed, no fs_read directory
+    with no input staged, and a 1 MiB stdout bound; a stateful task is kept
+    with either reference; both references, reference.py in dev/, an absolute
+    path, `import socket`, an exit of 300 and an exec grant are excluded; the
+    oracle generator refuses a Python-reference task; arm c sees the clean
+    environment and per-run fs_read binds;
 (c) the once guard: a paid once run is refused while PREREG-genviab.md is not
-    FROZEN or pins another manifest; once_spend refuses a second score of the
-    same (manifest, arm, model), a resume before 30 min, a second resume and a
-    resume differing in a pinned field, and refuses an edited ledger;
+    FROZEN or pins another manifest, or with the selftest's ledger URL
+    override set; once_spend refuses a second score of the same (manifest,
+    arm, model), a resume before 30 min, a second resume and a resume
+    differing in a pinned field, and refuses an edited ledger; against a bare
+    origin standing in for the pinned URL (spec GV-2): a fresh clone sees a
+    pushed row, and a reset, an unpushed row, an unreachable origin, another
+    origin URL, a rejected push and a checkout ahead of origin/main refuse;
 (d) a paid run without --cap-usd is refused; the spend sum prices call rows
     with run_ab's list prices; strip_python takes the last fence; the IG7
     decision rule (PASS / KILL / INCOMPLETE / CONTAINMENT FAILURE / ADVERSE,
@@ -41,12 +54,26 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 COPY = ("gv.py", "build.py", "genviab.py", "rejected-ideas.json", "drivers", "dev", "once")
 FAILS = []
+REQUIRE_BINS = os.environ.get("GENVIAB_REQUIRE_BINS") == "1"
 
 
 def expect(name, cond, detail=""):
     print(f"{'ok  ' if cond else 'FAIL'} {name}" + (f": {detail}" if detail and not cond else ""))
     if not cond:
         FAILS.append(name)
+
+
+def have_binaries(tag, gv):
+    """True when both binaries exist. Otherwise a printed skip, or a FAIL
+    under GENVIAB_REQUIRE_BINS=1 (the gate stage: a skip is a non-result)."""
+    if os.path.isfile(gv.AXON) and os.path.isfile(gv.AXON_INTENT):
+        return True
+    missing = [p for p in (gv.AXON, gv.AXON_INTENT) if not os.path.isfile(p)]
+    if REQUIRE_BINS:
+        expect(f"({tag}) the binaries exist (GENVIAB_REQUIRE_BINS=1)", False, f"missing {missing}")
+    else:
+        print(f"skip ({tag}): {missing} not built")
+    return False
 
 
 def scratch():
@@ -85,11 +112,59 @@ def build_args_and_tamper():
         shutil.rmtree(d)
 
 
+def gv3_intent(goal, read="./data/", exec_="none"):
+    """A fixture intent.md: one paragraph, ./data/ in, ./out/ out."""
+    return ("# Intent\n" + goal + "\n\n## Inputs\n- ./data/in.txt\n\n## Outputs\n- ./out/up.txt\n\n"
+            "## Allowed\n- fs_read: " + read + "\n- fs_write: ./out/\n- net: none\n- exec: " + exec_
+            + "\n- max_label: internal\n\n## Budget\n- calls: 100\n- tokens: 50000\n"
+            "- cost_micro: 1000000\n\n## Seed\n- 42\n")
+
+
+def gv3_ex(name, inp, stdout=None, code=0, outputs=None):
+    run = {"inputs": {} if inp is None else {"./data/in.txt": inp}, "outputs": outputs or {},
+           "exit": code}
+    if stdout is not None:
+        run["stdout"] = stdout
+    return {"name": name, "runs": [run]}
+
+
+def gv3_task(set_dir, tid, goal, refs, vis, hid, exec_="none", author="human:selftest"):
+    """Write a fixture task: `refs` maps reference file name -> source."""
+    p = os.path.join(set_dir, tid)
+    os.makedirs(p)
+    with open(os.path.join(p, "intent.md"), "w") as fh:
+        fh.write(gv3_intent(goal, exec_=exec_))
+    with open(os.path.join(p, "task.json"), "w") as fh:
+        json.dump({"id": tid, "category": "transform", "source": {"kind": "selftest fixture"},
+                   "reference_author": author, "examples": {"visible": vis, "hidden": hid}}, fh)
+    for n, src in refs.items():
+        with open(os.path.join(p, n), "w") as fh:
+            fh.write(src)
+
+
+PY_UPPER = ('text = open("./data/in.txt").read()\nwith open("./out/up.txt", "w") as fh:\n'
+            '    fh.write(text.upper())\nprint("done")\n')
+PY_TALLY = '''import os
+tally = {}
+if os.path.exists("./out/tally.txt"):
+    for line in open("./out/tally.txt").read().split("\\n"):
+        if line.find("=") > 0:
+            k, v = line.split("=", 1)
+            tally[k] = tally.get(k, 0) + int(v)
+for line in open("./data/words.txt").read().split("\\n"):
+    for w in line.split(" "):
+        if w:
+            tally[w.lower()] = tally.get(w.lower(), 0) + 1
+with open("./out/tally.txt", "w") as fh:
+    fh.write("".join(f"{k}={tally[k]}\\n" for k in sorted(tally)))
+print(f"total: {sum(tally.values())}")
+'''
+
+
 def build_mechanical():
     sys.path.insert(0, HERE)
     import gv
-    if not (os.path.isfile(gv.AXON) and os.path.isfile(gv.AXON_INTENT)):
-        print(f"skip (b): {gv.AXON} / {gv.AXON_INTENT} not built")
+    if not have_binaries("b", gv):
         return
     d = scratch()
     try:
@@ -113,11 +188,20 @@ def build_mechanical():
         t["examples"]["hidden"] = []
         with open(tj, "w") as fh:
             json.dump(t, fh)
+        # GV-3: reference.py is once-only.
+        shutil.copytree(os.path.join(dev, good), os.path.join(dev, "d-py"))
+        os.remove(os.path.join(dev, "d-py", "reference.ax"))
+        with open(os.path.join(dev, "d-py", "reference.py"), "w") as fh:
+            fh.write('print("x")\n')
+        t = json.load(open(os.path.join(dev, good, "task.json")))
+        with open(os.path.join(dev, "d-py", "task.json"), "w") as fh:
+            json.dump(dict(t, id="d-py"), fh)
         rc, out = py(d, "build.py", "--set", "dev")
         man = json.load(open(os.path.join(dev, "manifest.json")))
         mech = {m["id"]: m["defect"] for m in json.load(open(os.path.join(d, "rejected-ideas.json")))
                 ["mechanical"]["dev"]}
         expect("build keeps the good task", [x["id"] for x in man["tasks"]] == [good], out)
+        expect("reference.py in dev/ is excluded", "once-only" in mech.get("d-py", ""), mech)
         expect("an empty reference is excluded", "reference" in mech.get(empty_ref, ""), mech)
         expect("Axon code in intent.md is excluded", "Axon code" in mech.get(code_intent, ""), mech)
         expect("no hidden example is excluded", "hidden" in mech.get(no_hidden, ""), mech)
@@ -144,18 +228,107 @@ def build_mechanical():
             t["examples"] = dict(src["examples"], visible=vis)
             with open(os.path.join(once, tid, "task.json"), "w") as fh:
                 json.dump(t, fh)
-        rc, out = py(d, "build.py", "--set", "once")
+        # GV-3 (spec: Tests): reference.py fixtures, graded by the reference runner.
+        up = {"./out/up.txt": "AB\n"}
+        vis_up = [gv3_ex("ab", "ab\n", "done\n", outputs=up)]
+        hid_up = [gv3_ex("xy", "xy z\n", "done\n", outputs={"./out/up.txt": "XY Z\n"})]
+        seed0 = subprocess.run([gv.PYTHON, "-c", "print(hash('abc'))"], capture_output=True,
+                               text=True, env=dict(os.environ, PYTHONHASHSEED="0")).stdout
+        big = "x" * 102400
+        h01 = os.path.join(HERE, "dev", "h01-word-tally")
+        gv3 = {  # id: (refs, visible, hidden, exec)
+            "p-ok": ({"reference.py": PY_UPPER}, vis_up, hid_up, "none"),
+            "p-raise": ({"reference.py": 'raise ValueError("bad input")\n'},
+                        [gv3_ex("v", "a\n", code=1)], [gv3_ex("h", "b\n", code=1)], "none"),
+            "p-kbint": ({"reference.py": "raise KeyboardInterrupt\n"},
+                        [gv3_ex("v", "a\n", code=1)], [gv3_ex("h", "b\n", code=1)], "none"),
+            "p-env": ({"reference.py": 'import os\nprint(os.environ.get("FAKE_SECRET", "absent"))\n'},
+                      [gv3_ex("v", "a\n", "absent\n")], [gv3_ex("h", "b\n", "absent\n")], "none"),
+            "p-hash": ({"reference.py": 'print(hash("abc"))\n'},
+                       [gv3_ex("v", "a\n", seed0)], [gv3_ex("h", "b\n", seed0)], "none"),
+            "p-nodir": ({"reference.py": 'import os\nprint(os.path.isdir("data"))\n'},
+                        [gv3_ex("no input", None, "False\n")], [gv3_ex("input", "a\n", "True\n")],
+                        "none"),
+            "p-big": ({"reference.py": f'import sys\nsys.stdout.write("x" * {len(big)})\n'},
+                      [gv3_ex("v", "a\n", big)], [gv3_ex("h", "b\n", big)], "none"),
+            "p-both": ({"reference.py": PY_UPPER, "reference.ax": gv.EMPTY_PROGRAM},
+                       vis_up, hid_up, "none"),
+            "p-abs": ({"reference.py": 'print(open("/etc/x").read())\n'}, vis_up, hid_up, "none"),
+            "p-socket": ({"reference.py": "import socket\n" + PY_UPPER}, vis_up, hid_up, "none"),
+            "p-exit300": ({"reference.py": PY_UPPER}, vis_up,
+                          [gv3_ex("xy", "xy z\n", "done\n", 300)], "none"),
+            "p-exec": ({"reference.py": PY_UPPER}, vis_up, hid_up, "any"),
+        }
+        for tid, (refs, vis, hid, ex_) in gv3.items():
+            gv3_task(once, tid, f"Fixture {tid}: upper-case ./data/in.txt into ./out/up.txt and print "
+                     "a line.", refs, vis, hid, exec_=ex_)
+        # The same stateful two-run task with either reference (parity smoke).
+        for tid, ref in (("s-ax", None), ("s-py", PY_TALLY)):
+            shutil.copytree(h01, os.path.join(once, tid))
+            t = json.load(open(os.path.join(once, tid, "task.json")))
+            with open(os.path.join(once, tid, "task.json"), "w") as fh:
+                json.dump(dict(t, id=tid, reference_author="human:selftest"), fh)
+            if ref is not None:
+                os.remove(os.path.join(once, tid, "reference.ax"))
+                with open(os.path.join(once, tid, "reference.py"), "w") as fh:
+                    fh.write(ref)
+                p = os.path.join(once, tid, "intent.md")
+                md = open(p).read()
+                with open(p, "w") as fh:
+                    fh.write(md.replace("Keep a running word tally", "Keep a running word count tally", 1))
+        rc, out = py(d, "build.py", "--set", "once", env=dict(os.environ, FAKE_SECRET="leak"))
         man = json.load(open(os.path.join(once, "manifest.json")))
         mech = {m["id"]: m["defect"] for m in json.load(open(os.path.join(d, "rejected-ideas.json")))
                 ["mechanical"]["once"]}
+        kept = {x["id"]: x for x in man["tasks"]}
         expect("once keeps only a human-authored task with a visible example",
-               [x["id"] for x in man["tasks"]] == ["o-ok"], (out, mech))
+               sorted(k for k in kept if k.startswith("o-")) == ["o-ok"], (out, mech))
         expect("a model-authored once reference is excluded", "human:" in mech.get("o-model", ""), mech)
         for tid in ("o-noname", "o-blankname"):
             expect(f"a once reference_author with no name is excluded ({tid})",
                    "human:<name>" in mech.get(tid, ""), mech)
         expect("a once task with no visible example is excluded",
                "visible" in mech.get("o-novisible", ""), mech)
+        expect("a once task with a passing reference.py is kept, reference.py in its manifest files",
+               "p-ok" in kept and set(kept["p-ok"]["files"]) == {"intent.md", "task.json", "reference.py"},
+               (kept.get("p-ok"), mech.get("p-ok")))
+        expect("a reference.py that raises on an example expecting exit 1 is excluded",
+               "raised" in mech.get("p-raise", ""), mech.get("p-raise"))
+        expect("a reference.py raising KeyboardInterrupt is a fault, not an exit",
+               "raised" in mech.get("p-kbint", ""), mech.get("p-kbint"))
+        for tid, what in (("p-env", "sees a clean environment (FAKE_SECRET absent)"),
+                          ("p-hash", "hashes with the fixed seed"),
+                          ("p-nodir", "sees no fs_read directory with no input staged"),
+                          ("p-big", "may print 100 KiB of expected stdout (the 1 MiB bound)"),
+                          ("s-ax", "stateful task is kept with reference.ax"),
+                          ("s-py", "stateful task is kept with reference.py")):
+            expect(f"reference.py {what} ({tid})", tid in kept, mech.get(tid))
+        for tid, needle in (("p-both", "two references"), ("p-abs", "absolute"),
+                            ("p-socket", "imports socket"), ("p-exit300", "0..=255"),
+                            ("p-exec", "exec: none")):
+            expect(f"excluded: {tid} ({needle})", needle in mech.get(tid, ""), mech.get(tid))
+        rc, out = py(d, "genviab.py", "run", "--set", "once", "--arm", "a", "--generator", "oracle",
+                     "--only", "p-ok", "--out", os.path.join(d, "oracle-py"))
+        expect("the oracle generator refuses a reference.py task",
+               rc == 1 and "needs reference.ax" in out, out)
+        # Arm c's runner (NH-G3): the clean environment and per-run fs_read binds.
+        saved = os.environ.get("FAKE_SECRET")
+        os.environ["FAKE_SECRET"] = "leak"
+        try:
+            # The spec's table; bwrap's --chdir adds PWD.
+            keys = repr(["LANG", "LC_ALL", "PATH", "PWD", "PYTHONHASHSEED"]) + "\n"
+            task = {"intent_md": gv3_intent("arm c fixture"),
+                    "examples": {"visible": [gv3_ex("env", None, keys)], "hidden": []}}
+            r = gv.grade_python(task, "import os\nprint(sorted(os.environ))\n", ("visible",))
+            expect("arm c sees only the clean environment's keys", r["passed"], r["examples"])
+            task["examples"]["visible"] = [gv3_ex("no input", None, "False\n")]
+            r = gv.grade_python(task, 'import os\nprint(os.path.isdir("data"))\n', ("visible",))
+            expect("arm c sees no fs_read directory with no input staged", r["passed"], r["examples"])
+        finally:
+            if saved is None:
+                os.environ.pop("FAKE_SECRET", None)
+            else:
+                os.environ["FAKE_SECRET"] = saved
     finally:
         shutil.rmtree(d)
 
@@ -181,6 +354,9 @@ def once_guard():
         rc, out = py(d, "genviab.py", "run", "--set", "dev", "--arm", "a", "--generator", "micode",
                      "--out", os.path.join(d, "r2"), env=env)
         expect("a paid run without --cap-usd is refused", rc == 1 and "--cap-usd" in out, out)
+        for k, v in (("GENVIAB_LEDGER_URL", "/tmp/elsewhere.git"), ("GENVIAB_SELFTEST", "1")):
+            rc, out = py(d, *run, env=dict(env, **{k: v}))
+            expect(f"a once run with {k} set is refused", rc == 1 and "override" in out, out)
 
         sys.path.insert(0, d)
         import genviab as g
@@ -220,52 +396,129 @@ def once_guard():
             fh.write(lines[0].replace('"a"', '"b"', 1) + "\n" + "\n".join(lines[1:]) + "\n")
         refused("an edited ledger is refused", lambda: g.read_ledger(ledger), "chain is broken")
 
-        # The ledger must be in git history (a fresh worktree or a deleted
-        # file would otherwise start an empty chain). A throwaway repository,
-        # outside this one.
-        repo = tempfile.mkdtemp(prefix="genviab-ledger-")
+        def attempt(name, fn):
+            try:
+                expect(name, fn())
+            except Exception as e:  # noqa: BLE001 - a crash is this check's FAIL
+                expect(name, False, f"{type(e).__name__}: {e}")
+
+        attempt("the ledger of record is main of the pinned GitHub URL",
+                lambda: (g.LEDGER_REMOTE, g.LEDGER_URL, g.LEDGER_BRANCH)
+                == ("origin", "https://github.com/Cklaus1/axon.git", "main"))
+
+        # The ledger of record is `main` of the pinned origin (spec GV-2). A
+        # bare repository stands in for GitHub through the selftest's URL
+        # override; every repository is a throwaway outside this one.
+        root = tempfile.mkdtemp(prefix="genviab-ledger-")
+        saved = {k: os.environ.get(k) for k in ("GENVIAB_SELFTEST", "GENVIAB_LEDGER_URL")}
         try:
-            def git(*args):
+            origin = os.path.join(root, "origin.git")
+            os.environ.pop("GENVIAB_SELFTEST", None)
+            os.environ["GENVIAB_LEDGER_URL"] = origin
+            attempt("the URL override binds only under GENVIAB_SELFTEST=1",
+                    lambda: g.ledger_url() == "https://github.com/Cklaus1/axon.git")
+            os.environ["GENVIAB_SELFTEST"] = "1"
+
+            def git(repo, *args):
                 return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
-            git("init", "-q")
-            git("config", "user.email", "selftest@genviab")
-            git("config", "user.name", "selftest")
-            git("commit", "-q", "--allow-empty", "-m", "base")
-            led = os.path.join(repo, "once-ledger.jsonl")
+
+            def clone(name, src=origin):
+                p = os.path.join(root, name)
+                subprocess.run(["git", "clone", "-q", src, p], capture_output=True)
+                git(p, "config", "user.email", "selftest@genviab")
+                git(p, "config", "user.name", "selftest")
+                return p, os.path.join(p, "once-ledger.jsonl")
+
+            def sync(repo):  # back to origin/main, as a human reconciling would
+                git(repo, "fetch", "-q", "origin", "main")
+                git(repo, "reset", "-q", "--hard", "FETCH_HEAD")
+
+            def push(repo):
+                git(repo, "push", "-q", "origin", "HEAD:refs/heads/main")
+
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", origin], capture_output=True)
+            a, led = clone("a")
+            git(a, "commit", "-q", "--allow-empty", "-m", "base")
+            push(a)
             expect("the first once run of a repository may start the chain",
                    g.once_ledger_precheck(led) is None)
             row = g.once_spend(dict(ident), ledger=led, now=t0)
             refused("an uncommitted ledger row refuses the next once run",
                     lambda: g.once_ledger_precheck(led), "not committed")
             g.once_commit(led, row)
-            expect("once_commit leaves every row in git history",
-                   g.ledger_uncommitted(led) is None and g.once_ledger_precheck(led) is None,
-                   git("status", "--short").stdout)
+            expect("once_commit commits the row and pushes it to origin main",
+                   g.ledger_uncommitted(led) is None and g.once_ledger_precheck(led) is None
+                   and git(origin, "log", "-1", "--format=%s", "main").stdout.strip().endswith(row),
+                   (git(a, "status", "--short").stdout, git(origin, "log", "--oneline").stdout))
+            b, led_b = clone("b")
+            refused("a fresh clone sees a pushed once row",
+                    lambda: (g.once_ledger_precheck(led_b),
+                             g.once_spend(dict(ident), ledger=led_b, now=t0)), "already scored")
             os.remove(led)
             refused("a deleted committed ledger refuses a once run",
                     lambda: g.once_ledger_precheck(led), "differs from its committed copy")
-            git("checkout", "--", "once-ledger.jsonl")
+            git(a, "checkout", "--", "once-ledger.jsonl")
             g.once_spend(dict(ident, arm="c"), ledger=led, now=t0)
             refused("a row appended but not committed refuses a once run",
                     lambda: g.once_ledger_precheck(led), "differs from its committed copy")
-            git("checkout", "--", "once-ledger.jsonl")
-            git("rm", "-q", "--", "once-ledger.jsonl")
-            git("commit", "-q", "-m", "drop the ledger")
-            refused("a ledger whose deletion was committed refuses a once run",
+            git(a, "commit", "-q", "-m", "a row, not pushed", "--", "once-ledger.jsonl")
+            refused("an unpushed ledger commit refuses a once run",
+                    lambda: g.once_ledger_precheck(led), "not origin/main")
+            sync(a)
+            git(a, "reset", "-q", "--hard", "HEAD~1")
+            refused("a reset that drops the row commit refuses the next once run",
+                    lambda: g.once_ledger_precheck(led), "not origin/main")
+            sync(a)
+            git(a, "commit", "-q", "--allow-empty", "-m", "local work")
+            refused("a checkout ahead of origin/main is refused",
+                    lambda: g.once_ledger_precheck(led), "not origin/main")
+            sync(a)
+            before = open(led, "rb").read()
+            missing = os.path.join(root, "missing.git")
+            git(a, "remote", "set-url", "origin", missing)
+            os.environ["GENVIAB_LEDGER_URL"] = missing
+            refused("an unreachable origin refuses before a row is written",
+                    lambda: g.once_ledger_precheck(led), "unreachable")
+            expect("an unreachable origin leaves the ledger unchanged", open(led, "rb").read() == before)
+            git(a, "remote", "set-url", "origin", origin)
+            os.environ["GENVIAB_LEDGER_URL"] = origin
+            c, led_c = clone("c", src=a)
+            refused("an origin whose URL is not the pinned one is refused",
+                    lambda: g.once_ledger_precheck(led_c), "not the pinned ledger remote")
+            sync(b)
+            g.once_ledger_precheck(led)
+            g.once_ledger_precheck(led_b)
+            g.once_commit(led_b, g.once_spend(dict(ident, arm="b-first"), ledger=led_b, now=t0))
+            row_a = g.once_spend(dict(ident, arm="a-second"), ledger=led, now=t0)
+            refused("a rejected push refuses the model calls",
+                    lambda: g.once_commit(led, row_a), "could not be pushed")
+            sync(a)
+            git(a, "rm", "-q", "--", "once-ledger.jsonl")
+            git(a, "commit", "-q", "-m", "drop the ledger")
+            push(a)
+            refused("a ledger whose deletion was pushed refuses a once run",
                     lambda: g.once_ledger_precheck(led), "no longer tracked")
-            git("revert", "--no-edit", "HEAD")
-            git("checkout", "--", "once-ledger.jsonl")
-            hooks = os.path.join(repo, "hooks")
+            git(a, "revert", "--no-edit", "HEAD")
+            push(a)
+            hooks = os.path.join(root, "hooks")
             os.makedirs(hooks)
             with open(os.path.join(hooks, "pre-commit"), "w") as fh:
                 fh.write("#!/bin/sh\nexit 1\n")
             os.chmod(os.path.join(hooks, "pre-commit"), 0o755)
-            git("config", "core.hooksPath", hooks)
+            git(a, "config", "core.hooksPath", hooks)
             g.once_spend(dict(ident, arm="c"), ledger=led, now=t0)
             refused("a ledger row that cannot be committed refuses the model calls",
                     lambda: g.once_commit(led, "r"), "could not be committed")
+        except Exception as e:  # noqa: BLE001 - the sequence itself must run through
+            expect("the origin-backed once guard sequence runs to its end", False,
+                   f"{type(e).__name__}: {e}")
         finally:
-            shutil.rmtree(repo)
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            shutil.rmtree(root)
 
         budget_md = "# Intent\nx\n\n## Budget\n- calls: 1\n- tokens: 50000\n\n## Seed\n1\n"
         expect("arm c reads the task's token budget",
@@ -391,8 +644,7 @@ def synthetic_categories():
     program passes, a stateless or wrong-exit one fails the exact run."""
     sys.path.insert(0, HERE)
     import gv
-    if not (os.path.isfile(gv.AXON) and os.path.isfile(gv.AXON_INTENT)):
-        print(f"skip (e): {gv.AXON} / {gv.AXON_INTENT} not built")
+    if not have_binaries("e", gv):
         return
     cases = [
         ("axon: the reference passes", gv.grade_axon(SYN_TASK, SYN_AX), []),

@@ -7,7 +7,9 @@ A task is a directory `<set>/<id>/` holding exactly:
 
     intent.md      the intent WITHOUT `## Examples` (what the operator wrote)
     task.json      metadata and the examples, visible and hidden
-    reference.ax   a program that passes every example
+    reference.ax   a program that passes every example, or (once/ only)
+    reference.py   a hand-written Python 3 reference (PREREG §4, option B),
+                   graded by `grade_python_reference`; exactly one of the two
 
 `task.json`:
 
@@ -45,7 +47,9 @@ AXON_INTENT = os.environ.get("AXON_INTENT_BIN",
                              os.path.join(os.path.dirname(AXON), "axon-intent"))
 
 CATEGORIES = ("transform", "multi-step", "stateful", "errors", "tempting")
-TASK_FILES = ("intent.md", "task.json", "reference.ax")
+BASE_FILES = ("intent.md", "task.json")
+REFERENCE_FILES = {"reference.ax": "axon", "reference.py": "python"}
+TASK_FILES = BASE_FILES + tuple(REFERENCE_FILES)   # every file a task may hold
 AXES = ("fs_read", "fs_write", "net", "exec")
 EMPTY_PROGRAM = "fn main() -> i64 {\n    0\n}\n"
 LIFT_SCHEMA = "axon-intent-lift/1"
@@ -72,10 +76,18 @@ def load_task(d):
         t = json.load(fh)
     with open(os.path.join(d, "intent.md")) as fh:
         t["intent_md"] = fh.read()
-    ref = os.path.join(d, "reference.ax")
-    t["reference"] = open(ref).read() if os.path.exists(ref) else None
+    present = [n for n in REFERENCE_FILES if os.path.exists(os.path.join(d, n))]
+    t["references"] = present
+    t["reference_file"] = present[0] if len(present) == 1 else None
+    t["reference_lang"] = REFERENCE_FILES[present[0]] if len(present) == 1 else None
+    t["reference"] = (open(os.path.join(d, present[0])).read() if len(present) == 1 else None)
     t["dir"] = d
     return t
+
+
+def task_files(t):
+    """The files a task's manifest row hashes: intent.md, task.json, its reference."""
+    return BASE_FILES + ((t["reference_file"],) if t.get("reference_file") else ())
 
 
 def corpus_digest(set_dir):
@@ -243,7 +255,7 @@ def grade_axon(task, program, which=("visible", "hidden")):
     }
 
 
-# ---------------------------------------------------------------- python (arm c)
+# ---------------------------------------------------------------- python (arm c, reference.py)
 
 # The pinned bwrap invocation (PREREG-genviab.md). `--remount-ro /` makes the
 # whole root read-only, so the program's directory `/w` (a directory of that
@@ -256,18 +268,42 @@ BWRAP_BASE = ["--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib",
 BWRAP_TAIL = ["--chdir", "/w", "--unshare-all", "--die-with-parent", "--remount-ro", "/"]
 PYTHON = "/usr/bin/python3"
 PY_TIMEOUT = 20
-STDOUT_CAP = 64 * 1024
+STDOUT_CAP = 64 * 1024              # arm c (unchanged)
+REFERENCE_STDOUT_CAP = 1 << 20      # runtime.rs DEFAULT_MAX_CAPTURE_BYTES: the Axon reference's bound
+# The environment of every Python run (spec GV-3 table; O-GV-02): nothing of
+# the harness's own environment reaches the program. PYTHONHASHSEED binds only
+# the reference runner (arm c's `-I` ignores PYTHON* variables).
+PY_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONHASHSEED": "0"}
+# The reference runner (spec GV-3 step 2): a raised exception is a FAULT that
+# fails the run whatever the exit status, reported through a file the harness
+# reads, never through stderr. SystemExit is the program's own exit.
+PY_RUNNER = '''import runpy, sys, traceback
+sys.argv = ["/w/main.py"]
+sys.path.insert(0, "/w")
+try:
+    runpy.run_path("/w/main.py", run_name="__main__")
+except SystemExit:
+    raise
+except BaseException:
+    traceback.print_exc()
+    open("/gv/fault/raised", "w").close()
+    sys.exit(1)
+'''
 PY_DENIAL = re.compile(r"PermissionError|Read-only file system|Errno (13|30|101)|"
                        r"Network is unreachable|Temporary failure in name resolution|"
                        r"Name or service not known")
 
 
-def bwrap_argv(host_w, ceil):
-    """bwrap argv for a program at host_w/main.py under ceiling `ceil`."""
+def bwrap_argv(host_w, ceil, reference=False, gv_dir=None):
+    """bwrap argv for a program at host_w/main.py under ceiling `ceil`, for one
+    run: fs_write prefixes are always bound (created empty, as Axon creates
+    them); an fs_read prefix only when it exists on the host after this run's
+    staging (Axon's `file_exists("./data/")` is false with no input; O-GV-03).
+    `reference`: the fault runner in `gv_dir` (run.py read-only, fault/ writable)."""
     argv = [BWRAP] + BWRAP_BASE
     binds = {}
     for p in ceil["fs_read"]:
-        if norm_path(p):
+        if norm_path(p) and os.path.isdir(os.path.join(host_w, norm_path(p))):
             binds[norm_path(p)] = binds.get(norm_path(p), "--ro-bind")
     for p in ceil["fs_write"]:
         if norm_path(p):
@@ -277,18 +313,29 @@ def bwrap_argv(host_w, ceil):
         os.makedirs(host, exist_ok=True)
         argv += [binds[rel], host, "/w/" + rel]
     argv += ["--ro-bind", os.path.join(host_w, "main.py"), "/w/main.py"]
+    if reference:
+        argv += ["--ro-bind", os.path.join(gv_dir, "run.py"), "/gv/run.py",
+                 "--bind", os.path.join(gv_dir, "fault"), "/gv/fault"]
+        return argv + BWRAP_TAIL + [PYTHON, "-B", "-s", "-P", "/gv/run.py"]
     return argv + BWRAP_TAIL + [PYTHON, "-I", "-B", "/w/main.py"]
 
 
-def run_python_example(src, ex, ceil):
-    """One example, every run, under bwrap: list of run results."""
+def run_python_example(src, ex, ceil, reference=False):
+    """One example, every run, under bwrap: list of run results. `reference`:
+    the reference.py runner (fault file, fixed hash seed, the 1 MiB stdout bound);
+    otherwise arm c's (`-I`, an uncaught exception is exit 1: O-GV-04)."""
     ws = tempfile.mkdtemp(prefix="genviab-py-")
     host_w = os.path.join(ws, "w")
+    gv_dir = os.path.join(ws, "gv")
+    fault = os.path.join(gv_dir, "fault", "raised")
     os.makedirs(host_w)
+    os.makedirs(os.path.dirname(fault))
+    cap = REFERENCE_STDOUT_CAP if reference else STDOUT_CAP
     try:
         with open(os.path.join(host_w, "main.py"), "w") as fh:
             fh.write(src)
-        argv = bwrap_argv(host_w, ceil)
+        with open(os.path.join(gv_dir, "run.py"), "w") as fh:
+            fh.write(PY_RUNNER)
         results = []
         for n, run in enumerate(ex["runs"], 1):
             for p, c in run.get("inputs", {}).items():
@@ -296,13 +343,19 @@ def run_python_example(src, ex, ceil):
                 os.makedirs(os.path.dirname(hp), exist_ok=True)
                 with open(hp, "w") as fh:
                     fh.write(c)
+            if os.path.exists(fault):
+                os.remove(fault)
+            argv = bwrap_argv(host_w, ceil, reference, gv_dir)
             diffs = []
             try:
-                r = subprocess.run(argv, capture_output=True, timeout=PY_TIMEOUT)
+                r = subprocess.run(argv, capture_output=True, timeout=PY_TIMEOUT, env=PY_ENV)
                 code, out, err = r.returncode, r.stdout, r.stderr.decode("utf-8", "replace")
                 ended = f"exit {code}"
             except subprocess.TimeoutExpired:
                 code, out, err, ended = None, b"", "", f"timed out after {PY_TIMEOUT} s"
+            if reference and os.path.exists(fault):
+                ended = "raised an exception (a fault: fails whatever the exit status)"
+                diffs.append("the program raised an exception")
             if code != run.get("exit", 0):
                 diffs.append(f"exit: expected {run.get('exit', 0)}, got {code}")
             for p, want in run.get("outputs", {}).items():
@@ -314,10 +367,12 @@ def run_python_example(src, ex, ceil):
                     diffs.append(f"output {p}: expected {json.dumps(want)}, got "
                                  f"{json.dumps(got.decode('utf-8', 'replace'))[:400]}")
             if run.get("stdout") is not None:
-                got = out[:STDOUT_CAP].decode("utf-8", "replace")
-                if got != run["stdout"] or len(out) > STDOUT_CAP:
+                got = out[:cap].decode("utf-8", "replace")
+                if got != run["stdout"] or len(out) > cap:
                     diffs.append(f"stdout: expected {json.dumps(run['stdout'])}, got "
-                                 f"{json.dumps(got)[:400]}")
+                                 f"{json.dumps(got)[:400]}"
+                                 + (f" ({len(out)} bytes, over the {cap}-byte bound)"
+                                    if reference and len(out) > cap else ""))
             tail = " | ".join([l for l in err.splitlines() if l.strip()][-5:])
             results.append({"example": ex["name"], "run": n, "passed": not diffs,
                             "ended": ended, "diffs": diffs, "stderr_tail": tail,
@@ -329,7 +384,7 @@ def run_python_example(src, ex, ceil):
         shutil.rmtree(ws, ignore_errors=True)
 
 
-def grade_python(task, src, which=("visible", "hidden")):
+def grade_python(task, src, which=("visible", "hidden"), reference=False):
     ceil = ceiling(task["intent_md"])
     try:
         compile(src, "main.py", "exec")
@@ -337,8 +392,15 @@ def grade_python(task, src, which=("visible", "hidden")):
         return {"passed": False, "stage": "check", "failed_examples": [],
                 "scope_denied": False, "tail": f"{type(e).__name__}: {e}", "examples": []}
     res = [r for w in which for ex in task["examples"][w]
-           for r in run_python_example(src, ex, ceil)]
-    return {"passed": all(r["passed"] for r in res), "stage": "examples",
-            "failed_examples": sorted(f"{r['example']}#{r['run']}" for r in res if not r["passed"]),
+           for r in run_python_example(src, ex, ceil, reference)]
+    bad = [r for r in res if not r["passed"]]
+    return {"passed": not bad, "stage": "examples",
+            "failed_examples": sorted(f"{r['example']}#{r['run']}" for r in bad),
             "scope_denied": any(r["scope_denied"] for r in res), "examples": res,
-            "tail": ""}
+            "tail": "; ".join(f"`{r['example']}` run {r['run']}: {r['ended']}: {', '.join(r['diffs'])}"
+                              for r in bad)[:600] if reference else ""}
+
+
+def grade_python_reference(task, src):
+    """A once task's reference.py on every visible and hidden example (spec GV-3)."""
+    return grade_python(task, src, ("visible", "hidden"), reference=True)

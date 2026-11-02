@@ -8,26 +8,33 @@ Without --set both sets are processed. The binaries are AXON_BIN (default
 target/debug/axon) and AXON_INTENT_BIN (default: next to AXON_BIN).
 
 Mechanical checks, per task (gv.py has the task format):
-  schema       the fields, a known category, example paths relative and under
-               the ceiling's fs_read (inputs) / fs_write (outputs) prefixes
+  schema       the fields, a known category, exactly one reference (reference.py
+               only in once/), example paths relative and under the ceiling's
+               fs_read (inputs) / fs_write (outputs) prefixes, every exit in 0..=255
   intent-text  intent.md carries no Axon code: no fence, no `fn`/`let`/builtin call;
                `# Intent` is one paragraph (the loop shows only the first)
   hidden       at least one hidden example; hidden names differ from visible ones;
                no hidden example repeats a visible one; at least one hidden run
                stages inputs no visible run stages (vacuous with no visible example)
   reference    reference.ax passes the visible and hidden examples, lifted through
-               `axon-intent compile` (axon check, the gates, the ceiling's sandbox)
+               `axon-intent compile` (axon check, the gates, the ceiling's sandbox);
+               a reference.py passes them under gv.grade_python_reference (bwrap,
+               the fault runner: a raised exception fails whatever the exit)
   empty-fails  an empty `main` fails the hidden examples
   human-value  `human_expected` (the source's human-computed answer) is what the
                hidden examples expect at that path, so the reference reproduces it
-  path-lint    every path-like string literal in the reference is relative, has
-               no `..`, and starts with a ceiling prefix spelled exactly
-  v1-scope     the reference calls no `ai_*` and no `http_*` builtin (F10)
+  path-lint    every path-like string literal in the reference (for Python: every
+               `str` constant outside f-strings) is relative, has no `..`, and
+               starts with a ceiling prefix spelled exactly
+  v1-scope     the reference calls no `ai_*` and no `http_*` builtin (F10); a
+               reference.py imports only PY_IMPORTS and calls no exec/eval/
+               compile/__import__, no open() in a mode other than r/w/a text
   tempting     a tempting task names a forbidden axis the ceiling withholds and
                hidden examples that reach the tempting branch
   unique       no two tasks share an intent text (a shared reference is allowed)
   once         (once/ only) reference_author is `human:<name>`; at least one
-               visible example
+               visible example; the ceiling grants no `exec` (the outcome record
+               is forgeable under an exec grant)
 
 A task failing a check is excluded from the manifest and logged under
 `mechanical` in rejected-ideas.json (never for a model's failure: no model
@@ -36,6 +43,7 @@ the manifest records; a corpus that changed since the manifest FAILs (rebuild);
 changed binaries re-run every check against the manifest.
 """
 import argparse
+import ast
 import concurrent.futures as cf
 import datetime
 import json
@@ -56,7 +64,17 @@ AXON_CODE = re.compile(r"```|\bfn\s+\w+\s*\(|\blet\s+\w+\s*=|->\s*i64|\b(read_fi
 STRING_LIT = re.compile(r'"((?:[^"\\]|\\.)*)"')
 PATHLIKE = re.compile(r"^(\.{0,2}/|[\w.-]+/)[\w./-]*$")
 V1_EXCLUDED = re.compile(r"\b(ai_\w+|http_\w+)\s*\(")
+# reference.py's v1-scope (spec GV-3 step 4, NH-G2): a once task must be
+# solvable by an Axon v1 program, so its Python reference uses only these.
+PY_IMPORTS = ("sys", "os", "os.path", "json", "csv", "re", "math", "collections", "itertools",
+              "functools", "string")
+PY_CALLS_EXCLUDED = ("exec", "eval", "compile", "__import__")
+PY_OPEN_MODES = ("r", "w", "a", "rt", "wt", "at")
 REQUIRED = ("id", "category", "source", "reference_author", "examples")
+
+
+def in_once(t):
+    return os.path.basename(os.path.dirname(t["dir"])) == "once"
 
 
 def manifest_path(set_):
@@ -87,8 +105,12 @@ def check_schema(t):
         return f"id {t['id']!r} is not the directory name"
     if t["category"] not in gv.CATEGORIES:
         return f"unknown category {t['category']!r}"
+    if len(t["references"]) > 1:
+        return f"two references ({', '.join(t['references'])}): a task has exactly one"
     if t["reference"] is None:
-        return "no reference.ax"
+        return "no reference.ax (or, in once/, reference.py)"
+    if t["reference_lang"] == "python" and not in_once(t):
+        return "reference.py is once-only (the dev oracle generator needs reference.ax)"
     extra = sorted(set(os.listdir(t["dir"])) - set(gv.TASK_FILES))
     if extra:
         return f"unexpected files {extra}"
@@ -108,8 +130,11 @@ def check_schema(t):
                 for p in run.get("outputs", {}):
                     if not gv.under(p, ceil["fs_write"]):
                         return f"{w} `{ex['name']}`: output {p} is not under fs_write"
-                if not isinstance(run.get("exit", 0), int):
+                code = run.get("exit", 0)
+                if not isinstance(code, int) or isinstance(code, bool):
                     return f"{w} `{ex['name']}`: exit is not an integer"
+                if not 0 <= code <= 255:
+                    return f"{w} `{ex['name']}`: exit {code} is outside 0..=255 (both engines truncate)"
     return None
 
 
@@ -161,12 +186,35 @@ def check_human_value(t):
     return None
 
 
+def py_tree(t):
+    """(ast of reference.py, None) or (None, why)."""
+    try:
+        return ast.parse(t["reference"], "reference.py"), None
+    except (SyntaxError, ValueError) as e:
+        return None, f"reference.py does not parse ({type(e).__name__}: {e})"
+
+
+def reference_strings(t):
+    """The reference's string literals: Axon's double-quoted literals; Python's
+    `str` constants, f-string literal parts skipped (like Axon's `{` rule)."""
+    if t["reference_lang"] != "python":
+        return [m.group(1) for m in STRING_LIT.finditer(t["reference"])], None
+    tree, why = py_tree(t)
+    if tree is None:
+        return [], why
+    in_fstring = {id(v) for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for v in n.values}
+    return [n.value for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in in_fstring], None
+
+
 def check_path_lint(t):
     ceil = gv.ceiling(t["intent_md"])
     prefixes = ceil["fs_read"] + ceil["fs_write"]
-    for m in STRING_LIT.finditer(t["reference"]):
-        s = m.group(1)
-        if "{" in s or not PATHLIKE.match(s):
+    strings, why = reference_strings(t)
+    if why:
+        return why
+    for s in strings:
+        if (t["reference_lang"] != "python" and "{" in s) or not PATHLIKE.match(s):
             continue
         if s.startswith("/") or ".." in s.split("/"):
             return f"reference literal {s!r} is absolute or climbs out"
@@ -175,7 +223,36 @@ def check_path_lint(t):
     return None
 
 
+def check_v1_python(t):
+    tree, why = py_tree(t)
+    if tree is None:
+        return why
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            mods = [a.name for a in n.names]
+        elif isinstance(n, ast.ImportFrom):
+            mods = ["." * n.level + (n.module or "")]
+        else:
+            mods = []
+        for m in mods:
+            if m not in PY_IMPORTS:
+                return f"reference.py imports {m} (allowed: {', '.join(PY_IMPORTS)})"
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name):
+            if n.func.id in PY_CALLS_EXCLUDED:
+                return f"reference.py calls {n.func.id}()"
+            if n.func.id == "open":
+                mode = n.args[1] if len(n.args) > 1 else next(
+                    (k.value for k in n.keywords if k.arg == "mode"), None)
+                if mode is not None and not (isinstance(mode, ast.Constant)
+                                             and mode.value in PY_OPEN_MODES):
+                    return (f"reference.py calls open() with mode {ast.unparse(mode)} "
+                            "(only r/w/a text)")
+    return None
+
+
 def check_v1(t):
+    if t["reference_lang"] == "python":
+        return check_v1_python(t)
     m = V1_EXCLUDED.search(t["reference"])
     return f"reference calls {m.group(1)} (v1 excludes ai_*/http_*)" if m else None
 
@@ -199,12 +276,15 @@ def check_tempting(t):
 def check_once(t):
     """Once set only (spec IG6, Q7): written by hand, and the loop gets example
     feedback (the dev atlas tasks' zero-visible shape is never copied here)."""
-    if os.path.basename(os.path.dirname(t["dir"])) != "once":
+    if not in_once(t):
         return None
     if not re.fullmatch(r"human:\S.*", str(t["reference_author"])):
         return "a once reference_author must be `human:<name>` (written by hand, never by a model)"
     if not t["examples"]["visible"]:
         return "a once task needs at least one visible example"
+    if gv.ceiling(t["intent_md"])["exec"] != "none":
+        return ("a once task's ceiling must grant `exec: none` (a spawned process could forge "
+                "the interpreter's outcome record)")
     return None
 
 
@@ -220,10 +300,15 @@ def check_task(t):
         checks[name] = "ok" if why is None else why
         if why is not None:
             return checks, f"{name}: {why}"
-    ref = gv.grade_axon(t, t["reference"])
-    checks["reference"] = "ok" if ref["passed"] else ref
+    if t["reference_lang"] == "python":
+        ref = gv.grade_python_reference(t, t["reference"])
+        tail = ref["tail"][:300]
+    else:
+        ref = gv.grade_axon(t, t["reference"])
+        tail = ref["tail"][-300:]
+    checks["reference"] = "ok" if ref["passed"] else {k: v for k, v in ref.items() if k != "examples"}
     if not ref["passed"]:
-        return checks, f"reference: fails ({ref['stage']}, {ref['failed_examples']}) {ref['tail'][-300:]}"
+        return checks, f"reference: fails ({ref['stage']}, {ref['failed_examples']}) {tail}"
     empty = gv.grade_axon(t, gv.EMPTY_PROGRAM, ("hidden",))
     checks["empty-fails"] = "ok" if not empty["passed"] else "an empty main passes the hidden examples"
     if empty["passed"]:
@@ -265,7 +350,7 @@ def check_set(set_):
         if why is not None:
             bad.append((t["id"], why))
             continue
-        files = {n: gv.sha256_file(os.path.join(t["dir"], n)) for n in gv.TASK_FILES}
+        files = {n: gv.sha256_file(os.path.join(t["dir"], n)) for n in gv.task_files(t)}
         ok.append({"id": t["id"], "category": t["category"],
                    "tempting": t["category"] == "tempting",
                    "reference_author": t["reference_author"],
