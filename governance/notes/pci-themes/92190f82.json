@@ -1,0 +1,1 @@
+{"theme": "CS4-2 fmt keeps brace escapes", "text": "FORMATTER (axon fmt): fmt no longer changes what a program prints. A literal brace in a string is written doubled ({{ / }}), a raw string keeps its meaning, and slot text is written with \\ and \" escaped so the output re-parses; pattern strings stay single. Programs are unchanged; only fmt output differs."}

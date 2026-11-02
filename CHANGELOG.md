@@ -1,5 +1,16 @@
 # Axon Changelog
 
+## checker-soundness-4 CS4-1..CS4-4: `if` joins like `match`; strings inside slots; `axon fmt` keeps braces; tuple patterns and wrapper-lambda kinds are checked
+
+Items CS4-1..CS4-4 of `tasks/checker-soundness-4-spec.md`. CS4-5 waits on a human decision (NH-4).
+
+- **`if` joins live branches like `match` (CS4-1, O-AF-07):** a name moved before an `if` and re-bound in every branch that reaches the code after it is usable after the `if`; `rjif` no longer gives E0601. A `break`/`continue` before a branch's end still keeps the move (O-AF-02 unchanged); a final one joins. **Behaviour change:** an `exit` bound by an enclosing match-arm pattern is no longer read as the diverging builtin inside an `if` (`exarmif` is E0601).
+- **String literal inside an interpolation slot (CS4-2, O-HX3-04):** `"hi {name + "!"}"` and `"{str_join(xs, ", ")}"` now run, as grammar §6.12 says. A slot that starts with `"` lexes as before. **Behaviour change:** a `match` pattern string read this way (a `{` followed by an operator or opener and a `"`) is E0000 with help, instead of silently re-reading the arms after it.
+- **`axon fmt` keeps brace escapes (CS4-2):** fmt used to write `{{n}}` as `{n}` and a raw `r"{n}"` as `"{n}"`, changing what the program printed, and wrote slot strings without escapes. Literal braces are now doubled (patterns stay single) and slot text is written with `\\` and `\"`.
+- **Tuple patterns are type-checked (CS4-3, O-LF-01 in part):** on a subject whose type is known, a tuple pattern of another length or on a non-tuple is E0102, and the components take the element types (`(a, b)` on `(i64, str)` with `b + 1` is refused at check instead of panicking at run). Untyped lambda params, generics and `()` are unchanged. **Behaviour change:** a dead tuple arm next to `_` on a non-tuple subject is E0102.
+- **Wrapper-lambda kinds through nested calls (CS4-4, O-CS3-05):** `let g = |y| println(to_str(f(y)))` with `f` expecting `str` and `g(5)` is E0102 at check instead of a run panic. Calls are counted in run order; a call after a sibling argument's or an earlier statement's call derives nothing.
+- The 712 tracked `.ax` files check with the same exit codes before and after. g01: M4700-M4718.
+
 ## genviab GV-2..GV-4: the once ledger is pushed before any model call; a once reference may be `reference.py`; 12 harder dev tasks
 
 Items GV-2, GV-3 and GV-4 (authoring) of `tasks/genviab-b2-spec.md`. GV-1 (the sandbox classifier) is a separate lane.

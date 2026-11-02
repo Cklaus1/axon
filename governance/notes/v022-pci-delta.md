@@ -16,16 +16,16 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 71ddb2173ea88e73fb62c5ba0468564a67ea5507
+generated-at: 9e9671bb256c0c8484f06b4b677fe6e8ca27adb3
 
-`git diff --numstat 31413ca7..71ddb217 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..9e9671bb -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
 | `crates/axon-core/src/ai_routing.rs` | 63 | 5 |
 | `crates/axon-core/src/ast.rs` | 355 | 81 |
 | `crates/axon-core/src/bin/axon-run.rs` | 19 | 0 |
-| `crates/axon-core/src/borrow.rs` | 233 | 43 |
+| `crates/axon-core/src/borrow.rs` | 272 | 45 |
 | `crates/axon-core/src/builtins.rs` | 365 | 44 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 1177 | 346 |
@@ -52,10 +52,10 @@ generated-at: 71ddb2173ea88e73fb62c5ba0468564a67ea5507
 | `crates/axon-core/src/effects.rs` | 757 | 126 |
 | `crates/axon-core/src/env_registry.rs` | 21 | 10 |
 | `crates/axon-core/src/error.rs` | 41 | 15 |
-| `crates/axon-core/src/fmt.rs` | 263 | 28 |
+| `crates/axon-core/src/fmt.rs` | 355 | 33 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 2105 | 288 |
+| `crates/axon-core/src/infer.rs` | 2389 | 492 |
 | `crates/axon-core/src/interp.rs` | 7787 | 2882 |
 | `crates/axon-core/src/interp/builtins.rs` | 1207 | 849 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
@@ -84,25 +84,25 @@ generated-at: 71ddb2173ea88e73fb62c5ba0468564a67ea5507
 | `crates/axon-core/src/interp/vm/purefn.rs` | 860 | 0 |
 | `crates/axon-core/src/interp/vm/tests.rs` | 2755 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
-| `crates/axon-core/src/lexer.rs` | 163 | 0 |
-| `crates/axon-core/src/lib.rs` | 434 | 86 |
+| `crates/axon-core/src/lexer.rs` | 204 | 0 |
+| `crates/axon-core/src/lib.rs` | 444 | 102 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 215 | 60 |
-| `crates/axon-core/src/main.rs` | 1814 | 475 |
+| `crates/axon-core/src/main.rs` | 1820 | 487 |
 | `crates/axon-core/src/mono.rs` | 71 | 17 |
 | `crates/axon-core/src/mut_borrow.rs` | 944 | 0 |
 | `crates/axon-core/src/parse_help.rs` | 125 | 2 |
-| `crates/axon-core/src/parser.rs` | 745 | 48 |
+| `crates/axon-core/src/parser.rs` | 766 | 64 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
 | `crates/axon-core/src/resolver.rs` | 961 | 122 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
 | `crates/axon-core/src/span.rs` | 98 | 3 |
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
-| `crates/axon-core/src/token.rs` | 245 | 67 |
+| `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 65874 | 9272 |
+| total | 66682 | 9531 |
 
-`git log --reverse 31413ca7..71ddb217 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..9e9671bb -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -499,7 +499,14 @@ generated-at: 71ddb2173ea88e73fb62c5ba0468564a67ea5507
 | dd6c6dd3 | AF-1/AF-4 ai_extract::<T> runs and extracts are audited | CHECKER + INTERPRETER + CODEGEN: `ai_extract::<T>(prompt)` with T in i64, f64, bool, Uncertain<i64>, Uncertain<f64> now runs on `axon run` (tree and VM; it checked clean and then panicked 'not callable', exit 101) with the same answers as a native build; one mapping (builtins::ai_extract_target) gives the T set to infer, interpreter, effects and codegen. Any other T is the new E1304 at check (it checked clean, panicked in the interpreter and was dropped natively), also when the call is never reached. With no asi-runtime build, no AXON_AI_MOCK and no AXON_AI_REPLAY recording, every extract is E1300 exit 5 (ai_extract_uncertain_* was a 101 panic). RUNTIME/AUDIT: every extract on every path (mock, replay, live) appends one ai_call provenance record at the decision model's tier (cheap / claude-haiku-5-5 with no AXON_AI_MODEL_* override) and is added to ai_cost_spent(); live tokens come from the response usage (they were stored as 0), a 0-token replay entry is charged at the prompt estimate, and a call's micro-dollar cost rounds up so a call that reached a model never costs 0. |
 | a4accbe1 | asi/next merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 1ccab0d5 | asi-fixes merge (asi/next into af/a) | merge commit (Merge branch 'asi/next' into af/a); joins AF-3 (E0409) onto AF-1/AF-4; error.rs's `error_codes_are_unique` array conflicted only on the line both sides extended and keeps both E0409 and E1304; no change beyond the commits it joins |
-| 393 commits | | |
+| 92190f82 | CS4-2 fmt keeps brace escapes | FORMATTER (axon fmt): fmt no longer changes what a program prints. A literal brace in a string is written doubled ({{ / }}), a raw string keeps its meaning, and slot text is written with \ and " escaped so the output re-parses; pattern strings stay single. Programs are unchanged; only fmt output differs. |
+| 954dfca3 | CS4-4 infer_call extraction | REFACTOR (infer.rs): the Call and MethodCall arms move into infer_call / infer_method_call with no logic change; the 712 tracked .ax files give byte-identical diagnostics before and after; no behaviour change. |
+| 652f2714 | CS4-1 if join | CHECKER (borrow.rs If rule, all engines): a name moved before an if and re-bound in every live branch is re-bound after it, like the match rule; a branch that leaves by a non-final break/continue still keeps the move (O-AF-02 unchanged), a final one joins; a name popped by a shadowing let reads as Moved; an exit bound by an enclosing match-arm pattern is no longer read as the diverging builtin (exarmif is now E0601). The 712 tracked .ax files check with the same exit codes before and after. |
+| d4ea99f2 | CS4-3/CS4-4 tuple patterns and wrapper-lambda kinds | CHECKER (infer.rs, all engines): a tuple pattern on a subject whose type is already known is type-checked - a tuple of another length or a non-tuple subject is E0102 and the components take the element types; untyped lambda params, generics and the unit pattern () are unchanged. A wrapper lambda's call nested in another call's arguments or in a method receiver now derives its param kind in run order, so a kind mismatch that panicked at run is E0102 at check; a call after a sibling argument's call or an earlier statement's call derives nothing. New refusals are dead tuple arms on non-tuple subjects (t_iflet, t_mixed_arity, t_struct_subj). The 712 tracked .ax files check with identical diagnostics before and after. |
+| fe1e54e3 | b2/s4c merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| b6c355c5 | CS4-2 string literal inside an interpolation slot | LEXER/PARSER (all engines): a string literal may sit inside an interpolation slot after an operator or opener ("hi {name + "!"}", "{str_join(xs, ", ")}"), as grammar 6.12 states; a slot that starts with a quote lexes as before. A string read this way is a SlotStr token only expressions accept; a match pattern made of one is E0000 with help instead of silently re-reading the arms after it (patswallow, the one refusal of a running program, listed in the spec). The W0007/W0008 scanners and fmt's comment check skip slot strings. The 712 tracked .ax files check with the same exit codes before and after. |
+| 9e9671bb | b2/s4b merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 400 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -658,7 +665,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 693 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4679
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 712 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4679, M4700-M4718
 
 | delta | rows (named in the amendment's own text) |
 |---|---|

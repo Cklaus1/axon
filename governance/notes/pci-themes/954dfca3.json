@@ -1,0 +1,1 @@
+{"theme": "CS4-4 infer_call extraction", "text": "REFACTOR (infer.rs): the Call and MethodCall arms move into infer_call / infer_method_call with no logic change; the 712 tracked .ax files give byte-identical diagnostics before and after; no behaviour change."}

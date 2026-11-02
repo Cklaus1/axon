@@ -1,6 +1,6 @@
 # checker-soundness-4 - spec (CS4-1..CS4-5)
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: PARTIAL 2026-11-02 on b2/int 9e9671bb (CS4-1 652f2714; CS4-2 92190f82, b6c355c5; CS4-3 + CS4-4 954dfca3, d4ea99f2). CS4-5 is not built (NH-4), so O-AF-04 stays open; O-LF-01 stays open for unresolved subjects.**
 
 ### Step 1 review
 
@@ -706,6 +706,14 @@ its own commit (pure move, no behaviour change) so the CS4-3/CS4-4 diffs stay re
 For the human's information (decided by ruling 5, not open): the batch refuses these programs that run today, none of them tracked -
 `exarmif` (D3/D9), `t_iflet`, `t_mixed_arity`, `t_struct_subj` (D9), `patswallow` (D11), and with CS4-5 `v2q_noall`, `en`. All but
 `exarmif` are dead code or a pattern string holding `{` and `"`. The zero-refusal route for `patswallow` is CS4-2 alternative (e).
+
+`[REVISED: build 2026-11-02]` Found while building, decided by the integrator under D9:
+- Lane S4c: a tuple arm next to `_` on an array, str, Option, record or `Uncertain` subject (six untracked probes that print `0`
+  today) is now E0102. These are dead arms of the `t_struct_subj` class; the "any other concrete type" rule intends them.
+- Lane S4c deviations kept: the unit pattern `()` is not tuple-checked (it is `Unit`, not an empty tuple; `lf2/unit.ax` stays rc 0),
+  and no call inside a callee derives a kind (the callee is inferred before its arguments but runs after them). Both keep today's
+  behaviour and are pinned by controls.
+- Lane S4a: M4702's mutant is `unwrap_or(Moved)` -> `unwrap_or(Owned)`; "skip absent names" would leave `shi` refused and survive.
 
 ## 9. Verification log (reference binary ebbb4e02, `/var/tmp/r51-tmp/Soundness4/`)
 

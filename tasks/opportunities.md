@@ -3095,6 +3095,8 @@ script until it is fixed.
 ### O-CS3-05 - [medium] A wrapper lambda's non-first call still checks clean and panics (lane B residual)
 CS3-2 derives a kind only from the calls a wrapper body always runs as its value: `let g = |y| println(f(y))` (w17), where `f(y)` is an
 argument of another call, still checks 0 and panics on the wrong kind.
+`[FIXED 2026-11-02: checker-soundness-4 CS4-4 (d4ea99f2): a wrapper call nested in another call's arguments or a method receiver
+derives its param kind in run order; w17 is E0102 at check. A call after a sibling's or an earlier statement's call derives nothing.]`
 
 ### O-CS3-06 - [low] LSP module-load errors still carry a dummy span (lane C residual)
 CS3-7 gives E0901/E0902 the `use` line on the CLI; the LSP path still reports the load error at a dummy span.
@@ -3181,6 +3183,8 @@ fn main() {
 ### O-HX3-04 - [medium] False refusal against grammar.ebnf §6.12: a string literal inside an interpolation slot
 `"hi {name + "!"}"` gives E0000 "unclosed `{`". The escaped form (`q6d_interp_escaped_quote.ax`) works but is not documented. Probes
 `q6a_interp_strlit.ax`, `q6b_interp_strlit_simple.ax`, twin `q6c_twin_concat.ax` (REPORT §6).
+`[FIXED 2026-11-02: checker-soundness-4 CS4-2 (b6c355c5; fmt 92190f82): a string literal after an operator or opener in a slot lexes
+as a SlotStr; q6a runs. A match pattern made of one is E0000 (patswallow, listed in the spec's §8).]`
 
 ### O-HX3-05 - [low] Docs: reserved `Unit`, builtin-named user fns, stale gotcha 1
 `Unit` is reserved (E0005, `q7a_type_unit.ax`) and a user fn sharing a builtin's name loses to the builtin (`ln`, `a11_user_fn_ln.ax`);
@@ -3305,6 +3309,7 @@ semantics of `return` in `spawn` are unspecified; AF-2 does not treat `Spawn` as
 ### O-AF-04 - [low] A qualified pattern of a different enum is accepted and never matches
 `match c { D::Up => 2, _ => 1 }` with `c: C` (`bv/v2q.ax`) checks rc 0 and prints `1`. This is a pattern/subject type mismatch, outside
 AF-3's bare-name rule.
+`[OPEN 2026-11-02: checker-soundness-4 CS4-5 is specced, not built - NH-4 (whether to refuse v2q_noall/en) is with the human.]`
 
 ### O-AF-05 - [low] `cli_run.rs` tests that return early with "skipping" are invisible to strict mode
 About 52 tests return early when a script or toolchain is missing (`cli_run.rs:298, :812, :849, :888, :924, :961, :998, :19321, :19365,
@@ -3318,6 +3323,8 @@ About 52 tests return early when a script or toolchain is missing (`cli_run.rs:2
 ### O-AF-07 - [medium] The `if` twin of a returning match arm is still a false refusal
 `rjif` (the `if`/`else` form of the AF-2 `rj` probe, a move in a branch that returns) is E0601 on base and after AF-2, because AF-2
 left the `If` rule unchanged (asi-fixes AF-2 step 5). The `match` form now checks rc 0. Found by LaneAFB.
+`[FIXED 2026-11-02: checker-soundness-4 CS4-1 (652f2714): an if whose live branches all re-bind the name joins like match; rjif
+checks rc 0. O-AF-01/O-AF-02 stay open by decision.]`
 
 ### O-AF-08 - [low] E0409 points at the statement holding the match, not the arm
 `MatchArm` carries no span, so AF-3's E0409 reports the line of the enclosing statement. Giving arms a span is an AST change. Found by
@@ -3327,6 +3334,9 @@ LaneAFC.
 `match (1, 2, 3) { (a, b) => .. }` and `match 5 { (a, b) => .. }` check rc 0 and then panic `no match arm matched` (rc 101).
 `match (1, "s") { (a, b) => to_str(b + 1) }` checks rc 0 and panics `cannot apply Add to str / i64`: `infer.rs:2975-2978` binds
 tuple-pattern components with no subject type. `if let (a, b) = t` inherits this.
+`[PARTLY FIXED 2026-11-02: checker-soundness-4 CS4-3 (d4ea99f2): a tuple pattern on a subject of known type is type-checked (wrong
+length, non-tuple and component misuse are E0102). A tuple pattern on a still-unresolved subject (untyped lambda param, generic) stays
+unchecked, so l1-shaped programs keep running.]`
 
 ### O-LF-02 - [low] Fewer names than tuple elements is accepted in `let` (and so in `for (a, b)`)
 `let (a, b) = p` with `p: (i64, i64, i64)` checks rc 0 and prints `3` (`parser.rs:2350-2387` emits one `.i` per name). LF-3 inherits
