@@ -513,11 +513,7 @@ impl Formatter {
             Expr::Block(stmts) => {
                 self.writeln("{");
                 self.push();
-                for stmt in stmts {
-                    self.ind();
-                    self.emit_expr(&stmt.expr);
-                    self.nl();
-                }
+                self.emit_stmts(stmts);
                 self.pop();
                 self.ind();
                 self.write("}");
@@ -538,14 +534,31 @@ impl Formatter {
         }
         self.writeln("{");
         self.push();
-        for stmt in stmts {
-            self.ind();
-            self.emit_expr(&stmt.expr);
-            self.nl();
-        }
+        self.emit_stmts(stmts);
         self.pop();
         self.ind();
         self.write("}");
+    }
+
+    /// One indented line per statement. A `let (a, b) = e` desugar (a
+    /// `__tup_N` let and its field lets, spliced into the block by the
+    /// parser) prints back as the tuple `let` (LF-3).
+    fn emit_stmts(&mut self, stmts: &[Stmt]) {
+        let mut i = 0;
+        while i < stmts.len() {
+            self.ind();
+            if let Some((names, value, used)) = as_desugared_let_tuple(&stmts[i..]) {
+                self.write("let (");
+                self.write(&names.join(", "));
+                self.write(") = ");
+                self.emit_value(value);
+                i += used;
+            } else {
+                self.emit_expr(&stmts[i].expr);
+                i += 1;
+            }
+            self.nl();
+        }
     }
 
     /// Emit an expression in value position (a binding's value, `return`, a
@@ -1105,7 +1118,9 @@ fn binop_prec(op: &BinOp) -> u8 {
 /// surface form rather than leaking its internal names. The shape is:
 /// `{ ref __forarr_N = coll  for __fori_N in 0..len(__forarr_N) {
 ///      let x = __forarr_N[__fori_N]  <body…> } }`.
-/// Returns `(loop var, collection, body without the element binding)`.
+/// Returns `(loop var or pattern, collection, body without the bindings)`.
+/// A `for (a, b)` loop (LF-3) binds `__forpat_N_nK` and then one field let
+/// per name; those lets are folded back into the printed pattern.
 fn as_desugared_foreach(stmts: &[Stmt]) -> Option<(String, &Expr, Vec<Stmt>)> {
     if stmts.len() != 2 {
         return None;
@@ -1144,7 +1159,94 @@ fn as_desugared_foreach(stmts: &[Stmt]) -> Option<(String, &Expr, Vec<Stmt>)> {
     if rn != arr {
         return None;
     }
-    Some((uservar.clone(), coll.as_ref(), body[1..].to_vec()))
+    let rest = &body[1..];
+    if uservar.starts_with("__forpat_") {
+        let mut pos = 0;
+        let pat = resugar_for_pat(uservar, rest, &mut pos)?;
+        return Some((pat, coll.as_ref(), rest[pos..].to_vec()));
+    }
+    Some((uservar.clone(), coll.as_ref(), rest.to_vec()))
+}
+
+/// The `for` tuple pattern bound to `base` (`<stem>_n<arity>`), rebuilt from
+/// the field lets at `stmts[*pos..]` (`let a = base.0`; a nested level binds
+/// `base_k_n<m>` and then its own lets). Slots with no let are `_`.
+fn resugar_for_pat(base: &str, stmts: &[Stmt], pos: &mut usize) -> Option<String> {
+    let arity: usize = base.rsplit_once("_n")?.1.parse().ok()?;
+    let mut slots = vec![String::from("_"); arity];
+    let mut next = 0;
+    while let Some(Stmt {
+        expr: Expr::Let {
+            name,
+            ty: None,
+            value,
+        },
+        ..
+    }) = stmts.get(*pos)
+    {
+        let Expr::FieldAccess { receiver, field } = value.as_ref() else {
+            break;
+        };
+        if !matches!(receiver.as_ref(), Expr::Ident(r) if r == base) {
+            break;
+        }
+        let Some(k) = field
+            .parse::<usize>()
+            .ok()
+            .filter(|k| *k >= next && *k < arity)
+        else {
+            break;
+        };
+        *pos += 1;
+        let nested = format!("{base}_{k}_n");
+        slots[k] = match name.strip_prefix(&nested) {
+            Some(m) if !m.is_empty() && m.bytes().all(|b| b.is_ascii_digit()) => {
+                resugar_for_pat(name, stmts, pos)?
+            }
+            _ => name.clone(),
+        };
+        next = k + 1;
+    }
+    Some(format!("({})", slots.join(", ")))
+}
+
+/// Recognize `let (a, b) = e`'s desugar at the head of `stmts`:
+/// `let __tup_N = e` then `let a = __tup_N.0`, `let b = __tup_N.1`, ...
+/// Returns `(names, e, statements consumed)`.
+fn as_desugared_let_tuple(stmts: &[Stmt]) -> Option<(Vec<&str>, &Expr, usize)> {
+    let Expr::Let {
+        name: tmp,
+        ty: None,
+        value,
+    } = &stmts.first()?.expr
+    else {
+        return None;
+    };
+    if !tmp.starts_with("__tup_") {
+        return None;
+    }
+    let mut names = Vec::new();
+    for s in &stmts[1..] {
+        let Expr::Let {
+            name,
+            ty: None,
+            value: v,
+        } = &s.expr
+        else {
+            break;
+        };
+        let Expr::FieldAccess { receiver, field } = v.as_ref() else {
+            break;
+        };
+        if !matches!(receiver.as_ref(), Expr::Ident(r) if r == tmp)
+            || *field != names.len().to_string()
+        {
+            break;
+        }
+        names.push(name.as_str());
+    }
+    let used = names.len() + 1;
+    Some((names, value.as_ref(), used))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1463,5 +1565,36 @@ mod tests {
             assert!(out1.contains(want), "{attack}: want {want:?} in {out1}");
         }
         assert!(!out1.contains("= {}"), "{attack}: {out1}");
+    }
+
+    #[test]
+    fn fmt_for_tuple_round_trips() {
+        // LF-3: the `for (a, b) in xs` desugar (`__forpat_N` plus one field
+        // let per name) prints back as the pattern, nested and `_` included.
+        let attack = "ATTACK: fmt leaked __forpat_";
+        let src = "fn main() {\n    let t = 0\n    for (i, (a, _)) in arr_enumerate(arr_zip([1, 2], [10, 20])) {\n        t = t + i + a\n    }\n    for (k, v) in [(1, 2)] {\n        t = t + k + v\n    }\n    println(to_str(t))\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        assert!(
+            out1.contains("for (i, (a, _)) in arr_enumerate(arr_zip([1, 2], [10, 20])) {")
+                && out1.contains("for (k, v) in [(1, 2)] {"),
+            "{attack}: {out1}"
+        );
+        assert!(!out1.contains("__forpat"), "{attack}: {out1}");
+    }
+
+    #[test]
+    fn fmt_let_tuple_round_trips() {
+        // LF-3: `let (n, s) = p` printed as `let __tup_N = p` and one field
+        // let per name (fm02), which then passed `fmt --check`.
+        let attack = "ATTACK: fmt leaked __tup_";
+        let src = "fn main() {\n    let p = (1, \"a\")\n    let (n, s) = p\n    println(\"{to_str(n)}{s}\")\n    if true {\n        let (x, y) = (2, 3)\n        println(to_str(x + y))\n    }\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        assert!(
+            out1.contains("    let (n, s) = p\n") && out1.contains("let (x, y) = (2, 3)\n"),
+            "{attack}: {out1}"
+        );
+        assert!(!out1.contains("__tup_"), "{attack}: {out1}");
     }
 }

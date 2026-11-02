@@ -216,7 +216,8 @@ expr       ::= let_bind
     own  — explicit move / owned binding
     ref  — shared reference binding
 *)
-let_bind   ::= 'let' IDENT [ ':' type ] '=' expr ;   (* optional type annotation *)
+let_bind   ::= 'let' IDENT [ ':' type ] '=' expr     (* optional type annotation *)
+             | 'let' '(' [ IDENT { ',' IDENT } [ ',' ] ] ')' '=' expr ;   (* tuple destructure *)
 own_bind   ::= 'own' IDENT [ ':' type ] '=' expr ;
 ref_bind   ::= 'ref' IDENT [ ':' type ] '=' expr ;
 
@@ -245,9 +246,16 @@ while_expr ::= 'while' comparison '{' { stmt } '}' ;
 (*
   Range form iterates integers; the collection form (`for x in xs`) iterates a
   slice/array's elements (the parser desugars it to a `0..len` index loop).
+  A tuple pattern (`for (i, x) in arr_enumerate(xs)`, nesting and `_` allowed,
+  at least two elements per tuple) is desugared to that loop over a synthetic
+  element plus one `let name = elem.k` per bound name, so it is typed exactly
+  like `let (a, b) = p`. A pattern is refused over a range (a range binds one
+  integer name) and with one name in parentheses (`for (a) in xs`).
 *)
-for_expr   ::= 'for' IDENT 'in' ( expr ( '..' | '..=' ) expr   (* range  *)
-                                | expr ) '{' { stmt } '}' ;     (* collection *)
+for_expr   ::= 'for' for_pat 'in' ( expr ( '..' | '..=' ) expr   (* range: IDENT only *)
+                                  | expr ) '{' { stmt } '}' ;     (* collection *)
+for_pat    ::= IDENT | '(' for_pat_elem ',' for_pat_elem { ',' for_pat_elem } [ ',' ] ')' ;
+for_pat_elem ::= IDENT | '_' | '(' for_pat_elem ',' for_pat_elem { ',' for_pat_elem } [ ',' ] ')' ;
 
 (* ── 6.5  Match expression ───────────────────────────────────────────────── *)
 

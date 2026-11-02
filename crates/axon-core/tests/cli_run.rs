@@ -44888,3 +44888,153 @@ fn paren_lambda_with_no_params_stays_a_lambda() {
     let src = "fn main() {\n    let f = () => 7\n    println(to_str(f()))\n    let g = ()\n    match g { () => println(\"g\") }\n}\n";
     assert_eq!(lf_runs(attack, "lf1_p18", src), "7\ng\n", "{attack}");
 }
+
+// lang-forms LF-3 / LF-3b: `for (a, b) in xs` destructures each element with
+// field-access lets (typed like `let (a, b) = p`), and every generated
+// statement of a collection-`for` carries the `for` keyword's span.
+
+/// Check `src` (the diagnostics JSON) without running it.
+fn lf_check(tag: &str, src: &str) -> (Option<i32>, String) {
+    let (crc, cmsg, _, _, _) = sf6_check_and_run(tag, src);
+    (crc, cmsg)
+}
+
+/// The diagnostic line carrying `code`, or a panic naming `attack`.
+fn lf_diag_line<'a>(attack: &str, out: &'a str, code: &str) -> &'a str {
+    let key = format!("\"code\":\"{code}\"");
+    out.lines()
+        .find(|l| l.contains(&key))
+        .unwrap_or_else(|| panic!("{attack}: no {code} in: {out}"))
+}
+
+#[test]
+fn for_tuple_pattern_runs() {
+    let attack = "ATTACK: for (a, b) in was refused at parse";
+    for (tag, src, out) in [
+        (
+            "lf3_f01",
+            "fn main() {\n    let pairs = [(1, \"a\"), (2, \"b\")]\n    for (n, s) in pairs {\n        println(\"{to_str(n)}={s}\")\n    }\n}\n",
+            "1=a\n2=b\n",
+        ),
+        (
+            "lf3_f02",
+            "fn main() {\n    for (i, s) in arr_enumerate([\"x\", \"y\"]) {\n        println(\"{to_str(i)}{s}\")\n    }\n}\n",
+            "0x\n1y\n",
+        ),
+        // Moved from parse_help_probe `refused_forms_point_at_the_axon_spelling`
+        // (`for_tuple`): the CS3-5 row that refused it is gone.
+        (
+            "lf3_for_tuple",
+            "fn main() {\n    let pairs = [(1, \"a\"), (2, \"b\")]\n    for (n, s) in pairs { println(\"{to_str(n)}={s}\") }\n}\n",
+            "1=a\n2=b\n",
+        ),
+        (
+            "lf3_wild",
+            "fn main() {\n    let pairs = [(1, \"a\"), (2, \"b\")]\n    for (_, s) in pairs {\n        println(s)\n    }\n}\n",
+            "a\nb\n",
+        ),
+    ] {
+        assert_eq!(lf_runs(attack, tag, src), out, "{attack} [{tag}]");
+    }
+    let attack = "ATTACK: a nested for pattern bound nothing";
+    let src = "fn main() {\n    let t = 0\n    for (i, (a, b)) in arr_enumerate(arr_zip([1, 2], [10, 20])) {\n        t = t + i + a * b\n    }\n    println(to_str(t))\n}\n";
+    assert_eq!(lf_runs(attack, "lf3_nested", src), "51\n", "{attack}");
+}
+
+#[test]
+fn for_tuple_pattern_is_typed() {
+    let attack = "ATTACK: a for-tuple binding was untyped";
+    let src =
+        "fn main() {\n    for (a, b) in [(1, \"s\")] {\n        println(to_str(b + 1))\n    }\n}\n";
+    let (crc, cmsg, rrc, _, rerr) = sf6_check_and_run("lf3_typed", src);
+    assert_eq!(crc, Some(2), "{attack}: check: {cmsg}");
+    assert!(
+        cmsg.contains("\"severity\":\"error\""),
+        "{attack}: check: {cmsg}"
+    );
+    assert_ne!(rrc, Some(101), "{attack}: run panicked: {rerr}");
+}
+
+#[test]
+fn for_tuple_arity_error_points_at_the_for() {
+    let attack = "ATTACK: a destructure error landed on line 1";
+    let src = "fn main() {\n    for (a, b, c) in [(1, 2)] {\n        println(to_str(a + b + c))\n    }\n}\n";
+    let (crc, out) = lf_check("lf3_arity", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0401");
+    assert!(
+        d.contains("tuple index 2 out of bounds (length 2)") && d.contains("\"line\":2,"),
+        "{attack}: {d}"
+    );
+}
+
+#[test]
+fn let_tuple_error_points_at_the_let() {
+    let attack = "ATTACK: a destructure error landed on line 1";
+    let q06 = "fn main() {\n    let (a, b, c) = (1, 2)\n    println(to_str(a + b + c))\n}\n";
+    let (crc, out) = lf_check("lf3_q06", q06);
+    assert_eq!(crc, Some(2), "{attack} [q06]: {out}");
+    let d = lf_diag_line(attack, &out, "E0401");
+    assert!(
+        d.contains("tuple index 2 out of bounds") && d.contains("\"line\":2,\"col\":5"),
+        "{attack} [q06]: {d}"
+    );
+    let p22 = "fn main() {\n    let s = 0\n    for p in [1, 2] {\n        let (a, b) = p\n        s = s + a + b\n    }\n    println(to_str(s))\n}\n";
+    let (crc, out) = lf_check("lf3_p22", p22);
+    assert_eq!(crc, Some(2), "{attack} [p22]: {out}");
+    let d = lf_diag_line(attack, &out, "E0401");
+    assert!(d.contains("\"line\":4,\"col\":9"), "{attack} [p22]: {d}");
+}
+
+#[test]
+fn for_tuple_over_range_is_refused() {
+    let attack = "ATTACK: for (a, b) over a range was accepted";
+    let src = "fn main() {\n    for (a, b) in 0..3 {\n        println(to_str(a))\n    }\n}\n";
+    let (crc, out) = lf_check("lf3_range", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0000");
+    assert!(
+        d.contains("a `for` over a range binds one integer name") && d.contains("\"line\":2,"),
+        "{attack}: {d}"
+    );
+    // `for (a) in xs`: one name needs no parentheses.
+    let src = "fn main() {\n    for (a) in [1] {\n        println(to_str(a))\n    }\n}\n";
+    let (crc, out) = lf_check("lf3_one", src);
+    assert_eq!(crc, Some(2), "{out}");
+    assert!(
+        lf_diag_line(attack, &out, "E0000").contains("a one-name pattern needs no parentheses"),
+        "{out}"
+    );
+}
+
+#[test]
+fn three_clause_for_keeps_its_help() {
+    let attack = "ATTACK: the three-clause for lost its help";
+    let src = "fn main() {\n    for (i = 0; i < 2; i = i + 1) { println(\"x\") }\n}\n";
+    let (crc, out) = lf_check("lf3_c3", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0000");
+    assert!(
+        d.contains("\"line\":2,") && d.contains("Axon has no three-clause `for`"),
+        "{attack}: {d}"
+    );
+}
+
+#[test]
+fn for_over_dict_names_dict_to_pairs() {
+    let attack = "ATTACK: for over a dict blamed len";
+    let src = "fn main() {\n    let d = dict_new()\n    dict_set(d, \"a\", 1)\n    for p in d {\n        let (k, v) = p\n        println(k)\n    }\n    println(\"x\")\n}\n";
+    let (crc, out) = lf_check("lf3_p23", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0402");
+    assert!(
+        d.contains("\"line\":4,")
+            && d.contains("a Dict is not one")
+            && d.contains("dict_to_pairs(d)"),
+        "{attack}: {d}"
+    );
+    assert!(
+        !out.contains("arg 0 of `len`"),
+        "{attack}: the desugaring's `len` was blamed: {out}"
+    );
+}

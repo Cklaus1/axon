@@ -3402,3 +3402,25 @@ fn unit_match_with_a_binding_arm_is_refused_natively() {
         "{attack}: build ok={built}, native printed {native:?}, stderr: {berr}"
     );
 }
+
+/// LF-3: `for (a, b) in xs` desugars to field-access lets, the shape both
+/// engines already ran when written by hand (d08, d05).
+#[cfg(feature = "codegen")]
+#[test]
+fn for_tuple_pattern_matches_on_both_engines() {
+    let attack = "ATTACK: for (a, b) diverged natively";
+    for (tag, src, want) in [
+        (
+            "lf3_d08",
+            "fn main() {\n    let pairs = [(1, 10), (2, 20)]\n    let t = 0\n    for (a, b) in pairs {\n        t = t + a * b\n    }\n    for (i, x) in arr_enumerate([5, 6, 7]) {\n        t = t + i * x\n    }\n    println(to_str(t))\n}\n",
+            "70\n",
+        ),
+        (
+            "lf3_d05",
+            "fn main() {\n    let d = dict_new()\n    dict_set(d, \"b\", 2)\n    dict_set(d, \"a\", 1)\n    for (k, v) in dict_to_pairs(d) {\n        println(\"{k}={to_str(v)}\")\n    }\n}\n",
+            "a=1\nb=2\n",
+        ),
+    ] {
+        lf_same_on_both_engines(attack, tag, src, want);
+    }
+}

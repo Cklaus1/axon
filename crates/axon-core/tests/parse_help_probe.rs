@@ -665,12 +665,13 @@ fn a_collection_where_a_str_is_expected_is_not_told_to_cast() {
     );
 }
 
-/// CS3-5 rows 2-6, 10 and 11: forms Axon refuses on purpose. Each parse error
-/// used to name a token (`unexpected token: LBrace, expected For`) and carry no
-/// help; each now names the Axon spelling. The sources are the O-GAP-08 probes
-/// (`c04`, `g03`, `c14`, `52`, `71`, `q01`, `c03`, `g10b`, `g10e`, `g10d`,
-/// `g11b`), inlined. Row 1 (`()`) is gone: lang-forms LF-1 made `()` the unit
-/// value, and its cases run in `cli_run`'s `unit_value_paren_is_the_empty_block`.
+/// CS3-5 rows 2, 4-6, 10 and 11: forms Axon refuses on purpose. Each parse
+/// error used to name a token (`unexpected token: LBrace, expected For`) and
+/// carry no help; each now names the Axon spelling. The sources are the
+/// O-GAP-08 probes (`g03`, `c14`, `52`, `71`, `q01`, `c03`, `g10b`, `g10e`,
+/// `g10d`, `g11b`), inlined. Rows 1 (`()`) and 3 (`for (a, b)`) are gone:
+/// lang-forms LF-1 and LF-3 made those forms valid, and their cases run in
+/// `cli_run`'s `unit_value_paren_is_the_empty_block` and `for_tuple_pattern_runs`.
 #[test]
 fn refused_forms_point_at_the_axon_spelling() {
     let attack = "ATTACK: a refused form's parse error named no Axon spelling";
@@ -684,11 +685,6 @@ fn refused_forms_point_at_the_axon_spelling() {
             "else_if_let",
             "fn main() {\n    let o = Some(3)\n    if false { println(\"a\") } else if let Some(v) = o { println(to_str(v)) }\n}\n",
             "Axon has no `if let`",
-        ),
-        (
-            "for_tuple",
-            "fn main() {\n    let pairs = [(1, \"a\"), (2, \"b\")]\n    for (n, s) in pairs {\n        println(\"{to_str(n)}={s}\")\n    }\n}\n",
-            "`for` binds one name — write `for p in xs { let (a, b) = p … }`",
         ),
         (
             "impl_inherent",
@@ -770,6 +766,10 @@ fn the_refused_form_advice_actually_compiles() {
         (
             "let tuple in for",
             "fn main() -> i64 {\n    for p in [(1, \"a\")] {\n        let (a, b) = p\n        println(\"{to_str(a)}{b}\")\n    }\n    0\n}\n",
+        ),
+        (
+            "for tuple pattern",
+            "fn main() -> i64 {\n    for (a, b) in [(1, \"a\")] {\n        println(\"{to_str(a)}{b}\")\n    }\n    0\n}\n",
         ),
         (
             "escaped quote",

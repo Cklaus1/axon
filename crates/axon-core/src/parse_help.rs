@@ -151,13 +151,6 @@ fn refused_form_help(msg: &str, src: &str, offset: usize) -> Option<&'static str
              (`while let` exists)",
         );
     }
-    // `for (a, b) in pairs` (the three-clause `for` has a `;` and its own row).
-    if msg.contains("unexpected token: LParen, expected identifier")
-        && tw.first() == Some(&"for")
-        && !tline.contains(';')
-    {
-        return Some("`for` binds one name — write `for p in xs { let (a, b) = p … }`");
-    }
     // `impl T { … }`: the parser wanted `for` after the type name.
     if msg.contains("unexpected token: LBrace, expected For") && tw.first() == Some(&"impl") {
         return Some(
@@ -458,8 +451,13 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
         ));
     }
 
-    // `for (i = 0; i < n; i = i + 1)` — the C/Java/JS three-clause loop.
-    if msg.contains("expected identifier") && w.first() == Some(&"for") && line.contains(';') {
+    // `for (i = 0; i < n; i = i + 1)` — the C/Java/JS three-clause loop. Since
+    // LF-3 a `(` after `for` starts a tuple pattern, whose parser reports the
+    // `=` as "in a `for` pattern"; the line's `;` still marks the C loop.
+    if (msg.contains("expected identifier") || msg.contains("in a `for` pattern"))
+        && w.first() == Some(&"for")
+        && line.contains(';')
+    {
         return Some(
             "Axon has no three-clause `for` — iterate a range with \
              `for i in 0..n { … }`, or write the counter loop with `while`: \
@@ -618,6 +616,12 @@ mod tests {
             (
                 "three-clause for",
                 "unexpected token: LParen, expected identifier",
+                "fn main() {\n    for (i = 0; i < 2; i = i + 1) { }\n}\n",
+                "for i in 0..n",
+            ),
+            (
+                "three-clause for (for-pattern parser)",
+                "unexpected token: Eq in a `for` pattern, expected `,` or `)`",
                 "fn main() {\n    for (i = 0; i < 2; i = i + 1) { }\n}\n",
                 "for i in 0..n",
             ),

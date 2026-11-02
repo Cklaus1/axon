@@ -440,6 +440,9 @@ for (a, (b, _)) in xs { body }
 ```
 
 Nested tuples use an intermediate `__forpat_N_<path>` (not `.1.0`, which the lexer may read as a float [INFERENCE]); `_` emits no `let`.
+`[REVISED: build lf/ab]` Every tuple level's synthetic name also carries its arity: `__forpat_N_n<K>` (nested: `<parent>_<k>_n<K>`).
+Reason: `_` emits no `let`, so without the arity fmt cannot print a trailing `_` slot back (`for (a, _) in xs` would print as the
+refused `for (a) in xs`); `as_desugared_foreach` reads K from the name.
 `[REVISED: LFA#4, ruling 5]` Every generated statement carries one span captured at `parse_for` entry: `let span = self.current_span();`
 moves from after `parse_for_body()` (`parser.rs:2101`, where it is the span of the token after the closing `}`) to the top of
 `parse_for`, before `self.expect(&Token::For)` (`:2058`), so it is the `for` keyword's span (user text), never `Span::dummy()`. This
@@ -726,7 +729,7 @@ feature on), as existing rows do (`v022_g01_mutations.py:11904`, `:12242`, `:127
 | M4652 | LF-3 | `at(LParen)` branch in `parse_for` | parser.rs | `for_tuple_pattern_runs` | `ATTACK: for (a, b) in was refused at parse` |
 | M4653 | LF-3 | field-access lets (mutant: `match` tuple pattern body) | parser.rs | `for_tuple_pattern_is_typed` | `ATTACK: a for-tuple binding was untyped` |
 | M4654 | LF-3 | generated lets carry the pattern span (mutant: `Span::dummy()`) | parser.rs | `for_tuple_arity_error_points_at_the_for` | `ATTACK: a destructure error landed on line 1` |
-| M4655 | LF-3 | `parse_let` destructure span (mutant: `Span::dummy()` at today's `:2372`) | parser.rs | `let_tuple_error_points_at_the_let` | same |
+| M4655 | LF-3 | `parse_let` destructure span (mutant: `Span::dummy()` at today's `:2372`) `[REVISED: build lf/ab]` mutant moved to the field lets' span (today's `:2384`): E0401 "tuple index k out of bounds" is raised on a field let, so a dummy span on the `__tup_N` let alone is equivalent for this killer | parser.rs | `let_tuple_error_points_at_the_let` | same |
 | M4656 | LF-3 | nested pattern intermediate (mutant: skip nesting lets) | parser.rs | `for_tuple_pattern_runs` (nested case) | `ATTACK: a nested for pattern bound nothing` |
 | M4657 | LF-3 | `_` emits no let (mutant: binds `_`) | parser.rs | `for_tuple_pattern_runs` (`_` case) [INFERENCE: if binding `_` is harmless the mutant is EQUIVALENT; the builder then drops this row] | - |
 | M4658 | LF-3 | range form refused (mutant: accepted) | parser.rs | `for_tuple_over_range_is_refused` | `ATTACK: for (a, b) over a range was accepted` |

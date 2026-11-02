@@ -39,6 +39,24 @@ pub(crate) const MAX_TYPE_DEPTH: Option<usize> = Some(224);
 pub(crate) const MAX_TYPE_DEPTH: Option<usize> = None;
 const E1900: &str = "E1900";
 const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant/field
+const E0402: &str = "E0402";
+
+/// LF-3b: `for x in d` over a `Dict`. The collection loop desugars to
+/// `len(__forarr_N)`, so the mismatch used to blame `len` (a call the author
+/// never wrote); name the loop and the deterministic spellings instead.
+fn for_over_dict_error(span: crate::span::Span) -> InferError {
+    InferError {
+        help: Some(
+            "iterate `dict_to_pairs(d)` for sorted (key, value) pairs, or `dict_keys(d)`"
+                .to_string(),
+        ),
+        ..InferError::new(
+            E0402,
+            "`for x in …` iterates an ARRAY, and a Dict is not one",
+        )
+        .with_span(span)
+    }
+}
 
 // ── Integer widening ──────────────────────────────────────────────────────────
 
@@ -899,7 +917,8 @@ pub struct InferCtx {
     /// must resolve to `str` or `[T]`; checked by `solve()` once the
     /// substitution is final (pinning the var to `str` at the call refused a
     /// `?`- or match-bound array).
-    len_obligations: Vec<(Type, crate::span::Span)>,
+    /// The bool marks a `for` loop's desugared `len(__forarr_N)` (LF-3b).
+    len_obligations: Vec<(Type, crate::span::Span, bool)>,
     /// CS2-3a: the `Num` variable of each call to a numeric-key builtin, which
     /// `solve()` requires to be an int or a float.
     num_obligations: Vec<(Type, crate::span::Span)>,
@@ -2045,13 +2064,19 @@ impl InferCtx {
                 if let Some(ref name) = fn_name {
                     if name == "len" && args.len() == 1 {
                         let arg_ty = self.infer_expr(&args[0], scope, ret_ty);
+                        let from_for =
+                            matches!(&args[0], Expr::Ident(n) if n.starts_with("__forarr_"));
                         match arg_ty {
                             Type::Slice(_) => {}
+                            Type::Dict(_) if from_for => {
+                                self.errors
+                                    .push(for_over_dict_error(self.current_stmt_span));
+                            }
                             // Unresolved here (`?`/match binding): decide after
                             // solving, when it may have become `[T]`.
                             Type::Var(_) => {
                                 let span = self.current_stmt_span;
-                                self.len_obligations.push((arg_ty, span));
+                                self.len_obligations.push((arg_ty, span, from_for));
                             }
                             _ => self.constrain(arg_ty, Type::Str, "arg 0 of `len`"),
                         }
@@ -3289,9 +3314,11 @@ impl InferCtx {
             self.unify(c.lhs.clone(), c.rhs.clone(), &c.origin, &mut subst);
         }
         // CS-5: a deferred `len` arg is fine as `[T]`, else it must be `str`.
-        for (ty, span) in std::mem::take(&mut self.len_obligations) {
+        for (ty, span, from_for) in std::mem::take(&mut self.len_obligations) {
             let ty = subst.apply(&ty);
-            if !matches!(ty, Type::Slice(_)) {
+            if from_for && matches!(ty, Type::Dict(_)) {
+                self.errors.push(for_over_dict_error(span));
+            } else if !matches!(ty, Type::Slice(_)) {
                 self.current_stmt_span = span;
                 self.unify(ty, Type::Str, "arg 0 of `len`", &mut subst);
             }

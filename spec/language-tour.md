@@ -128,6 +128,25 @@ fn sum_to(n: i64) -> i64 {
 }
 ```
 
+### for
+
+```axon
+fn weighted(xs: [i64]) -> i64 {
+    let total = 0
+    for i in 0..len(xs) {
+        total = total + xs[i]
+    }
+    for (i, x) in arr_enumerate(xs) {
+        total = total + i * x
+    }
+    total
+}
+```
+
+`for x in xs` walks an array; `for (a, b) in pairs` destructures each tuple
+element (nesting and `_` allowed: `for (i, (a, _)) in ...`). A dict is not
+iterable: walk `dict_to_pairs(d)` (sorted `(key, value)` pairs) or `dict_keys(d)`.
+
 ### Logical operators
 
 ```axon

@@ -67,6 +67,8 @@ fn main() {
     while x < 10 { x = x + 1 }
     let n = 3
     for i in 0..n { x = x + i }   // i is i64, 0 ≤ i < n
+    for (i, v) in arr_enumerate([10, 20]) { x = x + i * v }   // tuple elements destructure
+    let (q, r) = (x / 3, x % 3)   // so does `let`
 
     let p = Point { x: 1.0, y: 2.0 }
     println(to_str_f64(p.x))
@@ -255,6 +257,10 @@ when you write the candidate:
     `AXON_PATH`, then `~/.axon/lib`, then `<bindir>/../lib/axon` — never the importing file's own
     directory. With `util.ax` next to `main.ax`, run `AXON_PATH=. axon run main.ax` (E0901 otherwise;
     the E0901 message names the directories it searched).
+
+11. **A dict is not iterable.** `for (k, v) in d` is E0402 — iterate `dict_to_pairs(d)` (sorted
+    `(key, value)` pairs) or `dict_keys(d)`. `for (a, b) in xs` destructures only tuple elements, never
+    a range (`for i in 0..n` binds one integer name).
 
 ---
 
