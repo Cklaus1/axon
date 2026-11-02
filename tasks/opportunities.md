@@ -3165,6 +3165,22 @@ Fix: when either path fails to resolve, report the loader's "cannot read" error.
 (`crates/axon-os/src/runtime.rs`, outcome-record refusal). A `sandbox_capture` test pins the doubled text. Fix the wording and
 the test together. Found by LaneGvOs.
 
+### O-GV-08 - [high] fs_read/fs_write prefixes are checked lexically: a symlink under a granted prefix, or a `/proc/` grant, reaches any file
+`scope_violation` (`crates/axon-core/src/interp/builtins.rs:213` at 636391c5) compares the path text with the granted prefixes and
+then opens the path, following symlinks. With `data/link -> /etc/hostname` and `AXON_ALLOWED_FS_READ=./data/`,
+`read_file("./data/link")` printed the host name. A grant containing `/proc/` covers the whole filesystem through
+`/proc/self/root/...` (a job read its own axon-os wrapper that way under `fs_read = ["./data/", "/proc/"]`). Probes:
+`/var/tmp/r51-tmp/GenviabB3/` (DraftB3, 2026-11-02). This is the interpreter's path scope, not the guest-kernel path scoping that
+guest-fs NH-F4 declined. Fix direction: resolve beneath the granted directory (`openat2` `RESOLVE_BENEATH`/`RESOLVE_NO_MAGICLINKS`,
+or canonicalize and re-check, with the TOCTOU stated), and refuse `/proc` prefixes in a grant. genviab-b3 B3-3/B3-4 are designed not
+to depend on it. Found by DraftB3.
+
+### O-GV-09 - [high] A module-level `let` initialiser runs outside the sandbox, `@[contained]` and `--require-contained`
+In an axon-os job granted only `./data/`, `let X = early()` at module level read `/etc/hostname` and wrote `./out/leak.txt`
+(verdict `completed`); the same body called from `main` is DENIED. It also passes `@[contained]` (check rc 0) and
+`--require-contained` (rc 0). Pre-existing (also with the ebbb4e02 binary). Probes `/var/tmp/r51-tmp/GenviabB3/job/modlet2.ax`,
+`fnonly.ax`. Specced as genviab-b3 B3-7. Found by DraftB3.
+
 ## hx3 author quirks, 2026-10-31 (QuirkRepro triage of the hx3 N5a authors' notes, `/var/tmp/r51-tmp/QuirkRepro/REPORT.md`; fixes NOT in this batch)
 
 ### O-HX3-02 - [high] False refusal: a move inside one block match arm plus a move in another arm is E0601
