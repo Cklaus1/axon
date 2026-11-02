@@ -5,7 +5,12 @@
 //! decides what is bounded.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+
+/// Wall-clock cap on one child run. A run a ceiling should have stopped
+/// (`while true`) would otherwise hang the test; past the cap it is killed
+/// and its status (no exit code) fails the assertion that names the attack.
+const CHILD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 
 const BOUND_VARS: [&str; 8] = [
     "AXON_ALLOWED_EFFECTS",
@@ -44,7 +49,29 @@ fn run_with(dir: &Path, args: &[&str], src: &str, vars: &[(&str, &str)]) -> Outp
     for (k, v) in vars {
         cmd.env(k, v);
     }
-    cmd.output().unwrap()
+    // Output goes to files, not pipes: a runaway child that prints forever
+    // must not block on a full pipe before the deadline kills it.
+    let (out_p, err_p) = (dir.join("child.stdout"), dir.join("child.stderr"));
+    cmd.stdin(Stdio::null())
+        .stdout(std::fs::File::create(&out_p).unwrap())
+        .stderr(std::fs::File::create(&err_p).unwrap());
+    let mut child = cmd.spawn().unwrap();
+    let start = std::time::Instant::now();
+    let status = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break s;
+        }
+        if start.elapsed() > CHILD_DEADLINE {
+            let _ = child.kill();
+            break child.wait().unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    Output {
+        status,
+        stdout: std::fs::read(&out_p).unwrap(),
+        stderr: std::fs::read(&err_p).unwrap(),
+    }
 }
 
 fn run(dir: &Path, src: &str, vars: &[(&str, &str)]) -> Output {
