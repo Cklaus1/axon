@@ -1,6 +1,6 @@
 # ceilings - DRAFT spec
 
-**Status: PARTIAL 2026-11-02 on b2/ce d71e5c56 (CE-1, CE-7, CE-8, CE-2, CE-10 built; the rest in progress: O-HI-03 open).**
+**Status: PARTIAL 2026-11-02 on b2/ce eebe06f7 (CE-1..CE-8, CE-10 built; CE-9 separate; NH-C9 deferred).**
 
 Author: `Ceilings` (2026-11-01), base `main` a5310878 (worktree `/home/cklaus/projects/axon-lanes/asi-next`, branch `asi/next`).
 Reference binary: `/var/tmp/r51-tmp/asi-bin/axon` (`axon 0.1.0 (a5310878)`, default features: `codegen`, no `asi-runtime`).
@@ -511,8 +511,9 @@ shortcuts compare against a new `fast_depth` (0 under a ceiling) so those calls 
 steps in either engine (a loop inside one is). `ceiling.rs` gains the required keys `steps` and `wall_ms` (E1007 if
 absent). E1006 maps to a new `Flow::ResourceBound` and `RESOURCE_BOUND_EXIT_CODE` 9 in `axon-core`
 (`governance/EXIT_CODES.md` row now "os + core"). Parity: `scripts/vm_parity.sh` step leg over
-`tests/fixtures/ce5_steps/*.ax` at 4 caps. `vm_perf_gate.sh` not run [INFERENCE: unceilinged cost is one predictable
-branch per call in `enter_fn`; the VM's emitted code is unchanged].
+`tests/fixtures/ce5_steps/*.ax` at 4 caps. `vm_perf_gate.sh --allow-busy` (release, base b3a9c56e vs CE-5): every
+program within budget; mandelbrot is OVER its +0.5 % ref check on BOTH binaries (base +2.69 %, CE-5 +2.79 %), so that
+failure predates this build; the other five move by <= 0.1 % instructions.
 
 ---
 
