@@ -3145,6 +3145,21 @@ accepted there and failed the hidden examples (1 false acceptance in the $0 dry 
 unedited because selection rule 3 freezes tasks after the first paid call. Fix direction: let a tempting task carry a visible example
 that stages no input, or exempt tempting tasks from the slot rule in the spec. Found by LaneGvPy.
 
+### O-GV-06 - [medium] The GV-1 outcome nonce is readable through `/proc/self/environ`
+`take_outcome_channel` removes `AXON_OUTCOME_NONCE` with `std::env::remove_var` (`main.rs:1154`), which edits only libc's `environ`;
+the kernel's copy of the initial environment keeps it. Observed by ImplAuditGV (head dad3e032, `/var/tmp/r51-tmp/GV1Audit/probe2.py`):
+`read_file("/proc/self/environ")` printed the record's nonce while `env_var` gave none. Reach: a grant whose fs_read covers `/proc`
+(exec grants were already a stated limit, `tasks/genviab-b2-spec.md` §2). Because `run_nonce()` also makes the job completion
+marker, a job can print `__axon_os_done:<nonce>` then `exit(n)` and be classified `Completed{n}`. Forging a capture record further
+needs fs_write on `/proc/self/fd/3` and an exit without the interpreter's own record (a second record is already refused). Fix
+direction: send the nonce on a second close-on-exec fd read once (not the environment); draw the completion marker separately; add
+a `/proc/self/environ` case beside M4723's test, which checks only `env_var`.
+
+### O-CE-01 - [low] A missing ceiling file named in two spellings reports "two different ceilings"
+`AXON_CEILING=./pol/missing.json` with `--ceiling pol/missing.json` gives E1007 "name two different ceilings" (`main.rs:1022-1031`,
+merge f95a53d3) because `canonicalize` fails on both. Exit 2, E1007 and the outcome record are right; only the reason is wrong.
+Fix: when either path fails to resolve, report the loader's "cannot read" error. Found by ImplAuditCE2.
+
 ## hx3 author quirks, 2026-10-31 (QuirkRepro triage of the hx3 N5a authors' notes, `/var/tmp/r51-tmp/QuirkRepro/REPORT.md`; fixes NOT in this batch)
 
 ### O-HX3-02 - [high] False refusal: a move inside one block match arm plus a move in another arm is E0601

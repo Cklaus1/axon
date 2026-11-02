@@ -420,7 +420,9 @@ struct OutcomePipe {
 /// GV-1: arrange for `cmd`'s child to find `writer` on [`OUTCOME_FD`], and
 /// tell its interpreter so (`AXON_OUTCOME_FD`, `AXON_OUTCOME_NONCE`). The
 /// interpreter removes both variables before the program runs and makes the
-/// fd close-on-exec, so neither the program nor what it spawns can reach them.
+/// fd close-on-exec, so `env_var` and spawned children cannot reach them. The
+/// kernel's copy (`/proc/self/environ`) still holds the nonce: a grant whose
+/// fs_read covers `/proc`, or an exec grant, can read it (O-GV-06).
 fn give_child_outcome_fd(cmd: &mut Command, writer: &std::io::PipeWriter, nonce: &str) {
     use std::os::fd::AsRawFd;
     use std::os::unix::process::CommandExt;
