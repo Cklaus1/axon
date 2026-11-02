@@ -1,0 +1,45 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Join ./data/customers.csv and ./data/orders.csv into a spending report. Every line of both files ends with a newline and neither has a header. customers.csv lines are `id,name`; if an id appears on more than one line, the first such line wins. orders.csv lines are `order_id,customer_id,amount` with amount a non-negative integer; an order_id that appears on more than one line counts only at its first line. Write ./out/report.txt with one line `NAME: TOTAL` for each customer that has at least one counted order, where TOTAL is the sum of the amounts of that customer's counted orders, sorted by TOTAL descending (as numbers) and, for equal totals, by NAME in ascending byte order; then a last line `unmatched: U`, where U is the number of counted orders whose customer_id is not an id in customers.csv. Every line ends with a newline. Print nothing and exit 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "7446b2016524d4b4e8d8a7d7e78a4115f7857e5489da74af3e975b9697bee4ab",
+      "candidate": "```axon\nfn build(ctext: str, otext: str) -> i64 {\n    let cust = dict_new()\n    let clines = str_split(ctext, \"\\n\")\n    for i in 0..len(clines) {\n        let line = str_trim(clines[i])\n        if len(line) > 0 {\n            let p = str_index_of(line, \",\")\n            if p > 0 {\n                let id = str_trim(str_slice(line, 0, p))\n                let name = str_trim(str_slice(line, p + 1, len(line)))\n                if dict_has(cust, id) == false {\n                    dict_set(cust, id, name)\n                }\n            }\n        }\n    }\n\n    let seen = dict_new()\n    let tot = dict_new()\n    let ids = arr_repeat(\"\", 0)\n    let unmatched = 0\n    let olines = str_split(otext, \"\\n\")\n    for i in 0..len(olines) {\n        let line = str_trim(olines[i])\n        if len(line) > 0 {\n            let f = str_split(line, \",\")\n            if len(f) == 3 {\n                let oid = str_trim(f[0])\n                let cid = str_trim(f[1])\n                let amt = parse_int_or(str_trim(f[2]), 0)\n                if dict_has(seen, oid) == false {\n                    dict_set(seen, oid, \"1\")\n                    if dict_has(cust, cid) {\n                        if dict_has(tot, cid) == false {\n                            dict_set(tot, cid, 0)\n                            ids = arr_push(ids, cid)\n                        }\n                        dict_set(tot, cid, dict_get_or(tot, cid, 0) + amt)\n                    } else {\n                        unmatched = unmatched + 1\n                    }\n                }\n            }\n        }\n    }\n\n    let n = len(ids)\n    let names = arr_repeat(\"\", n)\n    let totals = arr_repeat(0, n)\n    for i in 0..n {\n        names[i] = dict_get_or(cust, ids[i], \"\")\n        totals[i] = dict_get_or(tot, ids[i], 0)\n    }\n\n    let ord = arr_range(0, n)\n    for pass_i in 0..n {\n        for j in 0..(n - 1 - pass_i) {\n            let a = ord[j]\n            let b = ord[j + 1]\n            let swap = false\n            if totals[a] < totals[b] {\n                swap = true\n            }\n            if totals[a] == totals[b] {\n                if str_cmp(names[a], names[b]) > 0 {\n                    swap = true\n                }\n            }\n            if swap {\n                ord[j] = b\n                ord[j + 1] = a\n            }\n        }\n    }\n\n    let out = \"\"\n    for k in 0..n {\n        let o = ord[k]\n        out = out + names[o] + \": \" + to_str(totals[o]) + \"\\n\"\n    }\n    out = out + \"unmatched: \" + to_str(unmatched) + \"\\n\"\n\n    match write_file(\"./out/report.txt\", out) {\n        Ok(_) => 0\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/customers.csv\") {\n        Ok(ctext) => match read_file(\"./data/orders.csv\") {\n            Ok(otext) => build(ctext, otext)\n            Err(e) => {\n                eprintln(\"cannot read orders: {e}\")\n                2\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read customers: {e}\")\n            2\n        }\n    }\n}\n```",
+      "tokens": 22381,
+      "generator_failure": null,
+      "wall_ms": 34425,
+      "report": {
+        "stage": "accepted",
+        "source": "fn build(ctext: str, otext: str) -> i64 {\n    let cust = dict_new()\n    let clines = str_split(ctext, \"\\n\")\n    for i in 0..len(clines) {\n        let line = str_trim(clines[i])\n        if len(line) > 0 {\n            let p = str_index_of(line, \",\")\n            if p > 0 {\n                let id = str_trim(str_slice(line, 0, p))\n                let name = str_trim(str_slice(line, p + 1, len(line)))\n                if dict_has(cust, id) == false {\n                    dict_set(cust, id, name)\n                }\n            }\n        }\n    }\n\n    let seen = dict_new()\n    let tot = dict_new()\n    let ids = arr_repeat(\"\", 0)\n    let unmatched = 0\n    let olines = str_split(otext, \"\\n\")\n    for i in 0..len(olines) {\n        let line = str_trim(olines[i])\n        if len(line) > 0 {\n            let f = str_split(line, \",\")\n            if len(f) == 3 {\n                let oid = str_trim(f[0])\n                let cid = str_trim(f[1])\n                let amt = parse_int_or(str_trim(f[2]), 0)\n                if dict_has(seen, oid) == false {\n                    dict_set(seen, oid, \"1\")\n                    if dict_has(cust, cid) {\n                        if dict_has(tot, cid) == false {\n                            dict_set(tot, cid, 0)\n                            ids = arr_push(ids, cid)\n                        }\n                        dict_set(tot, cid, dict_get_or(tot, cid, 0) + amt)\n                    } else {\n                        unmatched = unmatched + 1\n                    }\n                }\n            }\n        }\n    }\n\n    let n = len(ids)\n    let names = arr_repeat(\"\", n)\n    let totals = arr_repeat(0, n)\n    for i in 0..n {\n        names[i] = dict_get_or(cust, ids[i], \"\")\n        totals[i] = dict_get_or(tot, ids[i], 0)\n    }\n\n    let ord = arr_range(0, n)\n    for pass_i in 0..n {\n        for j in 0..(n - 1 - pass_i) {\n            let a = ord[j]\n            let b = ord[j + 1]\n            let swap = false\n            if totals[a] < totals[b] {\n                swap = true\n            }\n            if totals[a] == totals[b] {\n                if str_cmp(names[a], names[b]) > 0 {\n                    swap = true\n                }\n            }\n            if swap {\n                ord[j] = b\n                ord[j + 1] = a\n            }\n        }\n    }\n\n    let out = \"\"\n    for k in 0..n {\n        let o = ord[k]\n        out = out + names[o] + \": \" + to_str(totals[o]) + \"\\n\"\n    }\n    out = out + \"unmatched: \" + to_str(unmatched) + \"\\n\"\n\n    match write_file(\"./out/report.txt\", out) {\n        Ok(_) => 0\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/customers.csv\") {\n        Ok(ctext) => match read_file(\"./data/orders.csv\") {\n            Ok(otext) => build(ctext, otext)\n            Err(e) => {\n                eprintln(\"cannot read orders: {e}\")\n                2\n            }\n        }\n        Err(e) => {\n            eprintln(\"cannot read customers: {e}\")\n            2\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "basic",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 34425,
+  "tokens": 22381,
+  "tokens_reported": 22381,
+  "token_budget": 50000
+}

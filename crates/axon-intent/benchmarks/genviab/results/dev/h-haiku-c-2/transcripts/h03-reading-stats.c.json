@@ -1,0 +1,35 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\n\n\ndef main():\n    count = 0\n    total = 0\n    lo = 0\n    hi = 0\n\n    stats_path = os.path.join(\"out\", \"stats.txt\")\n    try:\n        with open(stats_path, \"r\") as f:\n            parts = f.read().split()\n        if len(parts) >= 4:\n            count = int(parts[0])\n            total = int(parts[1])\n            if count > 0:\n                lo = int(parts[2])\n                hi = int(parts[3])\n    except FileNotFoundError:\n        pass\n\n    readings_path = os.path.join(\"data\", \"readings.txt\")\n    try:\n        with open(readings_path, \"r\") as f:\n            lines = f.readlines()\n    except FileNotFoundError:\n        lines = []\n\n    for line in lines:\n        t = line.strip()\n        if not t:\n            continue\n        v = int(t)\n        if count == 0:\n            lo = v\n            hi = v\n        else:\n            if v < lo:\n                lo = v\n            if v > hi:\n                hi = v\n        count += 1\n        total += v\n\n    if count == 0:\n        lo = 0\n        hi = 0\n        total = 0\n\n    os.makedirs(\"out\", exist_ok=True)\n    with open(stats_path, \"w\") as f:\n        f.write(\"%d %d %d %d\\n\" % (count, total, lo, hi))\n\n    if count == 0:\n        print(\"no readings\")\n    else:\n        m = abs(total) // count\n        if total < 0:\n            m = -m\n        print(\"count=%d sum=%d min=%d max=%d mean=%d\" % (count, total, lo, hi, m))\n\n\nif __name__ == \"__main__\":\n    main()\n```",
+   "source": "import os\n\n\ndef main():\n    count = 0\n    total = 0\n    lo = 0\n    hi = 0\n\n    stats_path = os.path.join(\"out\", \"stats.txt\")\n    try:\n        with open(stats_path, \"r\") as f:\n            parts = f.read().split()\n        if len(parts) >= 4:\n            count = int(parts[0])\n            total = int(parts[1])\n            if count > 0:\n                lo = int(parts[2])\n                hi = int(parts[3])\n    except FileNotFoundError:\n        pass\n\n    readings_path = os.path.join(\"data\", \"readings.txt\")\n    try:\n        with open(readings_path, \"r\") as f:\n            lines = f.readlines()\n    except FileNotFoundError:\n        lines = []\n\n    for line in lines:\n        t = line.strip()\n        if not t:\n            continue\n        v = int(t)\n        if count == 0:\n            lo = v\n            hi = v\n        else:\n            if v < lo:\n                lo = v\n            if v > hi:\n                hi = v\n        count += 1\n        total += v\n\n    if count == 0:\n        lo = 0\n        hi = 0\n        total = 0\n\n    os.makedirs(\"out\", exist_ok=True)\n    with open(stats_path, \"w\") as f:\n        f.write(\"%d %d %d %d\\n\" % (count, total, lo, hi))\n\n    if count == 0:\n        print(\"no readings\")\n    else:\n        m = abs(total) // count\n        if total < 0:\n            m = -m\n        print(\"count=%d sum=%d min=%d max=%d mean=%d\" % (count, total, lo, hi, m))\n\n\nif __name__ == \"__main__\":\n    main()\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "two runs",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    },
+    {
+     "example": "two runs",
+     "run": 2,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

@@ -1,0 +1,26 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    customers = {}\n    with open(os.path.join(\"data\", \"customers.csv\"), \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        for raw in f:\n            line = raw.rstrip(\"\\r\\n\")\n            if not line:\n                continue\n            cid, sep, name = line.partition(\",\")\n            if cid not in customers:\n                customers[cid] = name\n\n    seen_orders = set()\n    totals = {}\n    unmatched = 0\n    with open(os.path.join(\"data\", \"orders.csv\"), \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        for raw in f:\n            line = raw.rstrip(\"\\r\\n\")\n            if not line:\n                continue\n            parts = line.split(\",\")\n            if len(parts) < 3:\n                continue\n            order_id = parts[0]\n            cust_id = parts[1]\n            amount = int(parts[2])\n            if order_id in seen_orders:\n                continue\n            seen_orders.add(order_id)\n            if cust_id in customers:\n                totals[cust_id] = totals.get(cust_id, 0) + amount\n            else:\n                unmatched += 1\n\n    rows = [(customers[cid], total) for cid, total in totals.items()]\n    rows.sort(key=lambda r: (-r[1], r[0].encode(\"utf-8\")))\n\n    os.makedirs(\"out\", exist_ok=True)\n    with open(os.path.join(\"out\", \"report.txt\"), \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        for name, total in rows:\n            f.write(f\"{name}: {total}\\n\")\n        f.write(f\"unmatched: {unmatched}\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    customers = {}\n    with open(os.path.join(\"data\", \"customers.csv\"), \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        for raw in f:\n            line = raw.rstrip(\"\\r\\n\")\n            if not line:\n                continue\n            cid, sep, name = line.partition(\",\")\n            if cid not in customers:\n                customers[cid] = name\n\n    seen_orders = set()\n    totals = {}\n    unmatched = 0\n    with open(os.path.join(\"data\", \"orders.csv\"), \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        for raw in f:\n            line = raw.rstrip(\"\\r\\n\")\n            if not line:\n                continue\n            parts = line.split(\",\")\n            if len(parts) < 3:\n                continue\n            order_id = parts[0]\n            cust_id = parts[1]\n            amount = int(parts[2])\n            if order_id in seen_orders:\n                continue\n            seen_orders.add(order_id)\n            if cust_id in customers:\n                totals[cust_id] = totals.get(cust_id, 0) + amount\n            else:\n                unmatched += 1\n\n    rows = [(customers[cid], total) for cid, total in totals.items()]\n    rows.sort(key=lambda r: (-r[1], r[0].encode(\"utf-8\")))\n\n    os.makedirs(\"out\", exist_ok=True)\n    with open(os.path.join(\"out\", \"report.txt\"), \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        for name, total in rows:\n            f.write(f\"{name}: {total}\\n\")\n        f.write(f\"unmatched: {unmatched}\\n\")\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "basic",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

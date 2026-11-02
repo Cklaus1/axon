@@ -1,0 +1,35 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport re\nimport sys\n\n\ndef main():\n    with open(\"./data/app.conf\", \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        text = f.read()\n\n    lines = text.split(\"\\n\")\n    if lines and lines[-1] == \"\":\n        lines.pop()\n\n    values = {}\n\n    for idx, line in enumerate(lines, start=1):\n        if line.strip() == \"\":\n            continue\n        if line[0] == \"#\":\n            continue\n\n        pos = line.find(\"=\")\n        if pos < 0:\n            print(f\"syntax error: line {idx}\")\n            sys.exit(2)\n\n        key = line[:pos].strip()\n        value = line[pos + 1:].strip()\n\n        if key == \"\":\n            print(f\"syntax error: line {idx}\")\n            sys.exit(2)\n\n        if key in values:\n            print(f\"duplicate key: {key} (line {idx})\")\n            sys.exit(3)\n\n        if key == \"port\":\n            ok = False\n            if re.fullmatch(r\"[0-9]+\", value):\n                n = int(value)\n                if 1 <= n <= 65535:\n                    ok = True\n            if not ok:\n                print(f\"bad port: line {idx}\")\n                sys.exit(4)\n\n        values[key] = value\n\n    if \"name\" not in values:\n        print(\"missing key: name\")\n        sys.exit(5)\n    if \"port\" not in values:\n        print(\"missing key: port\")\n        sys.exit(5)\n\n    os.makedirs(\"out\", exist_ok=True)\n    out_text = \"\".join(f\"{k}={values[k]}\\n\" for k in sorted(values))\n    with open(\"./out/app.conf\", \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(out_text)\n\n    print(f\"ok: {len(values)} keys\")\n    sys.exit(0)\n\n\nif __name__ == \"__main__\":\n    main()\n```",
+   "source": "import os\nimport re\nimport sys\n\n\ndef main():\n    with open(\"./data/app.conf\", \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        text = f.read()\n\n    lines = text.split(\"\\n\")\n    if lines and lines[-1] == \"\":\n        lines.pop()\n\n    values = {}\n\n    for idx, line in enumerate(lines, start=1):\n        if line.strip() == \"\":\n            continue\n        if line[0] == \"#\":\n            continue\n\n        pos = line.find(\"=\")\n        if pos < 0:\n            print(f\"syntax error: line {idx}\")\n            sys.exit(2)\n\n        key = line[:pos].strip()\n        value = line[pos + 1:].strip()\n\n        if key == \"\":\n            print(f\"syntax error: line {idx}\")\n            sys.exit(2)\n\n        if key in values:\n            print(f\"duplicate key: {key} (line {idx})\")\n            sys.exit(3)\n\n        if key == \"port\":\n            ok = False\n            if re.fullmatch(r\"[0-9]+\", value):\n                n = int(value)\n                if 1 <= n <= 65535:\n                    ok = True\n            if not ok:\n                print(f\"bad port: line {idx}\")\n                sys.exit(4)\n\n        values[key] = value\n\n    if \"name\" not in values:\n        print(\"missing key: name\")\n        sys.exit(5)\n    if \"port\" not in values:\n        print(\"missing key: port\")\n        sys.exit(5)\n\n    os.makedirs(\"out\", exist_ok=True)\n    out_text = \"\".join(f\"{k}={values[k]}\\n\" for k in sorted(values))\n    with open(\"./out/app.conf\", \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(out_text)\n\n    print(f\"ok: {len(values)} keys\")\n    sys.exit(0)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "ok",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    },
+    {
+     "example": "no name",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 5",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

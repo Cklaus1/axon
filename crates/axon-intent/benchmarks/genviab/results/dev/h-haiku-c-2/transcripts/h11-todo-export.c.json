@@ -1,0 +1,26 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport sys\n\ndef main():\n    with open(\"./data/notes.txt\", \"r\", encoding=\"utf-8\", errors=\"replace\") as f:\n        lines = f.read().splitlines()\n\n    total_lines = len(lines)\n    todo_count = 0\n    seen = set()\n    distinct = []\n\n    for line in lines:\n        if line.startswith(\"TODO:\"):\n            todo_count += 1\n            text = line[len(\"TODO:\"):].strip(\" \")\n            if text not in seen:\n                seen.add(text)\n                distinct.append(text)\n\n    out = []\n    out.append(\"notes: %d lines, %d todos\\n\" % (total_lines, todo_count))\n    for text in distinct:\n        out.append(text + \"\\n\")\n    if todo_count >= 1:\n        out.append(\"todo file not written\\n\")\n\n    sys.stdout.write(\"\".join(out))\n    sys.exit(0)\n\nif __name__ == \"__main__\":\n    main()\n```",
+   "source": "import sys\n\ndef main():\n    with open(\"./data/notes.txt\", \"r\", encoding=\"utf-8\", errors=\"replace\") as f:\n        lines = f.read().splitlines()\n\n    total_lines = len(lines)\n    todo_count = 0\n    seen = set()\n    distinct = []\n\n    for line in lines:\n        if line.startswith(\"TODO:\"):\n            todo_count += 1\n            text = line[len(\"TODO:\"):].strip(\" \")\n            if text not in seen:\n                seen.add(text)\n                distinct.append(text)\n\n    out = []\n    out.append(\"notes: %d lines, %d todos\\n\" % (total_lines, todo_count))\n    for text in distinct:\n        out.append(text + \"\\n\")\n    if todo_count >= 1:\n        out.append(\"todo file not written\\n\")\n\n    sys.stdout.write(\"\".join(out))\n    sys.exit(0)\n\nif __name__ == \"__main__\":\n    main()\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "one todo",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

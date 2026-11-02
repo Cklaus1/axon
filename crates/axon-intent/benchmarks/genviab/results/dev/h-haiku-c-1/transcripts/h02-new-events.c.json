@@ -1,0 +1,35 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\n\n\ndef read_lines(path):\n    with open(path, encoding=\"utf-8\", newline=\"\") as f:\n        data = f.read()\n    parts = data.split(\"\\n\")\n    if data == \"\" or data.endswith(\"\\n\"):\n        parts = parts[:-1]\n    return parts\n\n\ndef main():\n    os.makedirs(\"out\", exist_ok=True)\n\n    seen = set()\n    if os.path.exists(\"out/seen.txt\"):\n        seen.update(read_lines(\"out/seen.txt\"))\n\n    events = read_lines(\"data/events.txt\")\n\n    new_lines = []\n    new_ids = []\n    for line in events:\n        event_id = line.split(\",\", 1)[0]\n        if event_id not in seen:\n            new_lines.append(line)\n            new_ids.append(event_id)\n            seen.add(event_id)\n\n    with open(\"out/new.txt\", \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        for line in new_lines:\n            f.write(line + \"\\n\")\n\n    if new_ids:\n        with open(\"out/seen.txt\", \"a\", encoding=\"utf-8\", newline=\"\") as f:\n            for event_id in new_ids:\n                f.write(event_id + \"\\n\")\n\n    x = len(new_lines)\n    y = len(events) - x\n    print(f\"new: {x}, skipped: {y}\")\n\n\nif __name__ == \"__main__\":\n    main()\n```",
+   "source": "import os\n\n\ndef read_lines(path):\n    with open(path, encoding=\"utf-8\", newline=\"\") as f:\n        data = f.read()\n    parts = data.split(\"\\n\")\n    if data == \"\" or data.endswith(\"\\n\"):\n        parts = parts[:-1]\n    return parts\n\n\ndef main():\n    os.makedirs(\"out\", exist_ok=True)\n\n    seen = set()\n    if os.path.exists(\"out/seen.txt\"):\n        seen.update(read_lines(\"out/seen.txt\"))\n\n    events = read_lines(\"data/events.txt\")\n\n    new_lines = []\n    new_ids = []\n    for line in events:\n        event_id = line.split(\",\", 1)[0]\n        if event_id not in seen:\n            new_lines.append(line)\n            new_ids.append(event_id)\n            seen.add(event_id)\n\n    with open(\"out/new.txt\", \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        for line in new_lines:\n            f.write(line + \"\\n\")\n\n    if new_ids:\n        with open(\"out/seen.txt\", \"a\", encoding=\"utf-8\", newline=\"\") as f:\n            for event_id in new_ids:\n                f.write(event_id + \"\\n\")\n\n    x = len(new_lines)\n    y = len(events) - x\n    print(f\"new: {x}, skipped: {y}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "two runs",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    },
+    {
+     "example": "two runs",
+     "run": 2,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

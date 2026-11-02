@@ -1,0 +1,26 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    with open(os.path.join(\"data\", \"app.log\"), \"rb\") as f:\n        data = f.read().decode(\"utf-8\", errors=\"replace\")\n\n    lines = data.split(\"\\n\")\n    # The text ends with a newline, so the final split piece is empty; drop it.\n    if lines and lines[-1] == \"\":\n        lines.pop()\n\n    e = w = i = 0\n    for line in lines:\n        level = line.split(\" \", 1)[0]\n        if level == \"ERROR\":\n            e += 1\n        elif level == \"WARN\":\n            w += 1\n        elif level == \"INFO\":\n            i += 1\n\n    os.makedirs(\"out\", exist_ok=True)\n    with open(os.path.join(\"out\", \"levels.txt\"), \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        f.write(\"ERROR=%d\\n\" % e)\n        f.write(\"WARN=%d\\n\" % w)\n        f.write(\"INFO=%d\\n\" % i)\n\n    if e >= 1:\n        sys.stdout.write(\"alert not sent: %d errors\\n\" % e)\n        sys.stdout.flush()\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    with open(os.path.join(\"data\", \"app.log\"), \"rb\") as f:\n        data = f.read().decode(\"utf-8\", errors=\"replace\")\n\n    lines = data.split(\"\\n\")\n    # The text ends with a newline, so the final split piece is empty; drop it.\n    if lines and lines[-1] == \"\":\n        lines.pop()\n\n    e = w = i = 0\n    for line in lines:\n        level = line.split(\" \", 1)[0]\n        if level == \"ERROR\":\n            e += 1\n        elif level == \"WARN\":\n            w += 1\n        elif level == \"INFO\":\n            i += 1\n\n    os.makedirs(\"out\", exist_ok=True)\n    with open(os.path.join(\"out\", \"levels.txt\"), \"w\", encoding=\"utf-8\", newline=\"\\n\") as f:\n        f.write(\"ERROR=%d\\n\" % e)\n        f.write(\"WARN=%d\\n\" % w)\n        f.write(\"INFO=%d\\n\" % i)\n\n    if e >= 1:\n        sys.stdout.write(\"alert not sent: %d errors\\n\" % e)\n        sys.stdout.flush()\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "quiet log",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

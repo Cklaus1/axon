@@ -1,0 +1,45 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Combine ./data/roster.txt and ./data/scores.csv into ./out/ranking.txt. Every line of both files ends with a newline. roster.txt lines are `ID NAME`, split at the first space (NAME may itself contain spaces), each ID once; scores.csv lines are `ID,SCORE` with SCORE an integer from 0 to 100, and a line repeated identically anywhere in scores.csv counts once. A roster student's best score is the largest of their scores. Write one line `RANK. NAME BEST` for each roster student with at least one score, sorted by BEST descending and, for equal BEST, by ID in ascending byte order, where RANK is the line's position counting from 1; then one line `NAME -` for each roster student without a score, in roster order. Every line ends with a newline, and the file is empty when no line is due. Print one line `ignored: K` followed by a newline, where K is the number of distinct lines of scores.csv whose ID is not in the roster, and exit 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "d5370fc8a1d93d530bde6c7a3b0249604a9babeee5a817eaa0f11c2cac421516",
+      "candidate": "```axon\nfn before(a: i64, b: i64, best: &[i64], ids: &[str]) -> bool {\n    if best[a] != best[b] { return best[a] > best[b] }\n    str_cmp(ids[a], ids[b]) < 0\n}\n\nfn run() -> Result<i64, str> {\n    let roster_text = read_file(\"./data/roster.txt\")?\n    let score_text = read_file(\"./data/scores.csv\")?\n\n    let rl = str_split(roster_text, \"\\n\")\n    let ids = arr_repeat(\"\", 0)\n    let names = arr_repeat(\"\", 0)\n    for i in 0..len(rl) {\n        let line = rl[i]\n        if len(line) > 0 {\n            let sp = str_index_of(line, \" \")\n            if sp >= 0 {\n                ids = arr_push(ids, str_slice(line, 0, sp))\n                names = arr_push(names, str_slice(line, sp + 1, len(line)))\n            }\n        }\n    }\n\n    let n = len(ids)\n    let best = arr_repeat(-1, n)\n    let lines = arr_unique(str_split(score_text, \"\\n\"))\n    let ignored = 0\n    for i in 0..len(lines) {\n        let line = lines[i]\n        if len(line) > 0 {\n            let c = str_index_of(line, \",\")\n            if c >= 0 {\n                let sid = str_slice(line, 0, c)\n                let sc = parse_int_or(str_slice(line, c + 1, len(line)), -1)\n                match arr_index_of(ids, sid) {\n                    Some(p) => {\n                        if sc > best[p] { best[p] = sc }\n                    }\n                    None => {\n                        ignored = ignored + 1\n                    }\n                }\n            }\n        }\n    }\n\n    let order = arr_repeat(0, 0)\n    for i in 0..n {\n        if best[i] >= 0 { order = arr_push(order, i) }\n    }\n    let m = len(order)\n    for i in 1..m {\n        let j = i\n        while j > 0 && before(order[j], order[j - 1], &best, &ids) {\n            let t = order[j]\n            order[j] = order[j - 1]\n            order[j - 1] = t\n            j = j - 1\n        }\n    }\n\n    let out = \"\"\n    for k in 0..m {\n        let idx = order[k]\n        out = out + to_str(k + 1) + \". \" + names[idx] + \" \" + to_str(best[idx]) + \"\\n\"\n    }\n    for i in 0..n {\n        if best[i] < 0 { out = out + names[i] + \" -\\n\" }\n    }\n\n    write_file(\"./out/ranking.txt\", out)?\n    println(\"ignored: {to_str(ignored)}\")\n    Ok(0)\n}\n\nfn main() -> i64 {\n    match run() {\n        Ok(c) => c\n        Err(e) => {\n            eprintln(\"error: {e}\")\n            1\n        }\n    }\n}\n```",
+      "tokens": 20543,
+      "generator_failure": null,
+      "wall_ms": 19415,
+      "report": {
+        "stage": "accepted",
+        "source": "fn before(a: i64, b: i64, best: &[i64], ids: &[str]) -> bool {\n    if best[a] != best[b] { return best[a] > best[b] }\n    str_cmp(ids[a], ids[b]) < 0\n}\n\nfn run() -> Result<i64, str> {\n    let roster_text = read_file(\"./data/roster.txt\")?\n    let score_text = read_file(\"./data/scores.csv\")?\n\n    let rl = str_split(roster_text, \"\\n\")\n    let ids = arr_repeat(\"\", 0)\n    let names = arr_repeat(\"\", 0)\n    for i in 0..len(rl) {\n        let line = rl[i]\n        if len(line) > 0 {\n            let sp = str_index_of(line, \" \")\n            if sp >= 0 {\n                ids = arr_push(ids, str_slice(line, 0, sp))\n                names = arr_push(names, str_slice(line, sp + 1, len(line)))\n            }\n        }\n    }\n\n    let n = len(ids)\n    let best = arr_repeat(-1, n)\n    let lines = arr_unique(str_split(score_text, \"\\n\"))\n    let ignored = 0\n    for i in 0..len(lines) {\n        let line = lines[i]\n        if len(line) > 0 {\n            let c = str_index_of(line, \",\")\n            if c >= 0 {\n                let sid = str_slice(line, 0, c)\n                let sc = parse_int_or(str_slice(line, c + 1, len(line)), -1)\n                match arr_index_of(ids, sid) {\n                    Some(p) => {\n                        if sc > best[p] { best[p] = sc }\n                    }\n                    None => {\n                        ignored = ignored + 1\n                    }\n                }\n            }\n        }\n    }\n\n    let order = arr_repeat(0, 0)\n    for i in 0..n {\n        if best[i] >= 0 { order = arr_push(order, i) }\n    }\n    let m = len(order)\n    for i in 1..m {\n        let j = i\n        while j > 0 && before(order[j], order[j - 1], &best, &ids) {\n            let t = order[j]\n            order[j] = order[j - 1]\n            order[j - 1] = t\n            j = j - 1\n        }\n    }\n\n    let out = \"\"\n    for k in 0..m {\n        let idx = order[k]\n        out = out + to_str(k + 1) + \". \" + names[idx] + \" \" + to_str(best[idx]) + \"\\n\"\n    }\n    for i in 0..n {\n        if best[i] < 0 { out = out + names[i] + \" -\\n\" }\n    }\n\n    write_file(\"./out/ranking.txt\", out)?\n    println(\"ignored: {to_str(ignored)}\")\n    Ok(0)\n}\n\nfn main() -> i64 {\n    match run() {\n        Ok(c) => c\n        Err(e) => {\n            eprintln(\"error: {e}\")\n            1\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "basic",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 19415,
+  "tokens": 20543,
+  "tokens_reported": 20543,
+  "token_budget": 50000
+}

@@ -1,0 +1,35 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    tally_path = os.path.join('.', 'out', 'tally.txt')\n    words_path = os.path.join('.', 'data', 'words.txt')\n\n    tally = {}\n\n    # Load the existing tally, if any.\n    if os.path.exists(tally_path):\n        with open(tally_path, 'rb') as f:\n            existing = f.read()\n        for line in existing.split(b'\\n'):\n            if not line:\n                continue\n            word, sep, count = line.rpartition(b'=')\n            if not sep:\n                continue\n            try:\n                n = int(count)\n            except ValueError:\n                continue\n            tally[word] = tally.get(word, 0) + n\n\n    # Read the words from this run's input.\n    words_data = b''\n    if os.path.exists(words_path):\n        with open(words_path, 'rb') as f:\n            words_data = f.read()\n\n    # Split on spaces and newlines only; drop empty pieces.\n    pieces = words_data.replace(b'\\n', b' ').split(b' ')\n    for piece in pieces:\n        if not piece:\n            continue\n        # bytes.lower() only affects ASCII letters.\n        word = piece.lower()\n        tally[word] = tally.get(word, 0) + 1\n\n    # Rewrite the tally file sorted by word in byte order.\n    out_lines = []\n    for word in sorted(tally.keys()):\n        out_lines.append(word + b'=' + str(tally[word]).encode('ascii') + b'\\n')\n\n    os.makedirs(os.path.join('.', 'out'), exist_ok=True)\n    with open(tally_path, 'wb') as f:\n        f.write(b''.join(out_lines))\n\n    total = sum(tally.values())\n    sys.stdout.write('total: %d\\n' % total)\n    sys.stdout.flush()\n    return 0\n\n\nif __name__ == '__main__':\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    tally_path = os.path.join('.', 'out', 'tally.txt')\n    words_path = os.path.join('.', 'data', 'words.txt')\n\n    tally = {}\n\n    # Load the existing tally, if any.\n    if os.path.exists(tally_path):\n        with open(tally_path, 'rb') as f:\n            existing = f.read()\n        for line in existing.split(b'\\n'):\n            if not line:\n                continue\n            word, sep, count = line.rpartition(b'=')\n            if not sep:\n                continue\n            try:\n                n = int(count)\n            except ValueError:\n                continue\n            tally[word] = tally.get(word, 0) + n\n\n    # Read the words from this run's input.\n    words_data = b''\n    if os.path.exists(words_path):\n        with open(words_path, 'rb') as f:\n            words_data = f.read()\n\n    # Split on spaces and newlines only; drop empty pieces.\n    pieces = words_data.replace(b'\\n', b' ').split(b' ')\n    for piece in pieces:\n        if not piece:\n            continue\n        # bytes.lower() only affects ASCII letters.\n        word = piece.lower()\n        tally[word] = tally.get(word, 0) + 1\n\n    # Rewrite the tally file sorted by word in byte order.\n    out_lines = []\n    for word in sorted(tally.keys()):\n        out_lines.append(word + b'=' + str(tally[word]).encode('ascii') + b'\\n')\n\n    os.makedirs(os.path.join('.', 'out'), exist_ok=True)\n    with open(tally_path, 'wb') as f:\n        f.write(b''.join(out_lines))\n\n    total = sum(tally.values())\n    sys.stdout.write('total: %d\\n' % total)\n    sys.stdout.flush()\n    return 0\n\n\nif __name__ == '__main__':\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "two runs",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    },
+    {
+     "example": "two runs",
+     "run": 2,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

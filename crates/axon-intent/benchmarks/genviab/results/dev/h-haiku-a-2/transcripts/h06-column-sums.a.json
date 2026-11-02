@@ -1,0 +1,97 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Sum the columns of ./data/table.csv. Every line ends with a newline. The first line is a header of comma-separated column names; each later line is a row of comma-separated integers, possibly negative. If the file does not exist print `missing input` and exit 5; if it is empty print `no header` and exit 2. Otherwise rows are checked in order, so the first offending line decides, and within a line the field count is checked first: a row whose number of fields differs from the header's prints `line N: expected A fields, got B` (A the header's field count, B the row's) and exits 3; a field that is not an integer prints `line N: bad number \"FIELD\"` (the first such field in the row, between double quotes) and exits 4, where N counts lines from 1 with the header as line 1. On any error write no file. On success write ./out/sums.txt with one line `NAME=SUM` per column in header order, each ending in a newline, print `rows: R` where R is the number of rows after the header, and exit 0. Every printed line ends with a newline.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "2e484366aff4962a5c52e299d5b4111f5656cbae779bb561420ed47acb709cf3",
+      "candidate": "```axon\nfn process(text: str) -> i64 {\n    if str_len(text) == 0 {\n        println(\"no header\")\n        return 2\n    }\n    let lines = str_split(text, \"\\n\")\n    let nl = len(lines)\n    let nlines = nl\n    if str_eq(lines[nl - 1], \"\") {\n        nlines = nl - 1\n    }\n    let names = str_split(lines[0], \",\")\n    let a = len(names)\n    let sums = arr_repeat(0, a)\n    for i in 1..nlines {\n        let fields = str_split(lines[i], \",\")\n        if len(fields) != a {\n            println(\"line \" + to_str(i + 1) + \": expected \" + to_str(a) + \" fields, got \" + to_str(len(fields)))\n            return 3\n        }\n        for j in 0..a {\n            match parse_int(fields[j]) {\n                Ok(v) => {\n                    sums[j] = sums[j] + v\n                }\n                Err(_) => {\n                    println(\"line \" + to_str(i + 1) + \": bad number \\\"\" + fields[j] + \"\\\"\")\n                    return 4\n                }\n            }\n        }\n    }\n    let out = \"\"\n    for j in 0..a {\n        out = out + names[j] + \"=\" + to_str(sums[j]) + \"\\n\"\n    }\n    match dir_create(\"./out\") {\n        Err(e) => {\n            eprintln(\"cannot create dir: {e}\")\n            1\n        }\n        Ok(_) => {\n            match write_file(\"./out/sums.txt\", out) {\n                Ok(_) => {\n                    println(\"rows: \" + to_str(nlines - 1))\n                    0\n                }\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/table.csv\") {\n        Err(_) => {\n            println(\"missing input\")\n            5\n        }\n        Ok(text) => process(text)\n    }\n}\n```",
+      "tokens": 19074,
+      "generator_failure": null,
+      "wall_ms": 12713,
+      "report": {
+        "stage": "examples",
+        "source": "fn process(text: str) -> i64 {\n    if str_len(text) == 0 {\n        println(\"no header\")\n        return 2\n    }\n    let lines = str_split(text, \"\\n\")\n    let nl = len(lines)\n    let nlines = nl\n    if str_eq(lines[nl - 1], \"\") {\n        nlines = nl - 1\n    }\n    let names = str_split(lines[0], \",\")\n    let a = len(names)\n    let sums = arr_repeat(0, a)\n    for i in 1..nlines {\n        let fields = str_split(lines[i], \",\")\n        if len(fields) != a {\n            println(\"line \" + to_str(i + 1) + \": expected \" + to_str(a) + \" fields, got \" + to_str(len(fields)))\n            return 3\n        }\n        for j in 0..a {\n            match parse_int(fields[j]) {\n                Ok(v) => {\n                    sums[j] = sums[j] + v\n                }\n                Err(_) => {\n                    println(\"line \" + to_str(i + 1) + \": bad number \\\"\" + fields[j] + \"\\\"\")\n                    return 4\n                }\n            }\n        }\n    }\n    let out = \"\"\n    for j in 0..a {\n        out = out + names[j] + \"=\" + to_str(sums[j]) + \"\\n\"\n    }\n    match dir_create(\"./out\") {\n        Err(e) => {\n            eprintln(\"cannot create dir: {e}\")\n            1\n        }\n        Ok(_) => {\n            match write_file(\"./out/sums.txt\", out) {\n                Ok(_) => {\n                    println(\"rows: \" + to_str(nlines - 1))\n                    0\n                }\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/table.csv\") {\n        Err(_) => {\n            println(\"missing input\")\n            5\n        }\n        Ok(text) => process(text)\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "ok",
+            "run": 1,
+            "passed": false,
+            "ended": "refused by the sandbox: axon: sandbox violation: builtin `dir_create` is not permitted to write path `./out`: the active sandbox restricts it to [\"./out/\"] (principal handle -2586342012074457337)",
+            "diffs": [
+              "expected exit 0, the run stopped before `main` returned",
+              "output ./out/sums.txt: expected \"a=4\\nb=-2\\n\", the file does not exist",
+              "stdout: expected \"rows: 2\\n\", got \"\""
+            ],
+            "stderr_tail": "axon: sandbox violation: builtin `dir_create` is not permitted to write path `./out`: the active sandbox restricts it to [\"./out/\"] (principal handle -2586342012074457337)"
+          },
+          {
+            "example": "ragged",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 3",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": "runtime-scope",
+        "feedback": "The program type-checks but did not do what the examples expect:\nexample `ok` run 1: refused by the sandbox: axon: sandbox violation: builtin `dir_create` is not permitted to write path `./out`: the active sandbox restricts it to [\"./out/\"] (principal handle -2586342012074457337)\n  expected exit 0, the run stopped before `main` returned\n  output ./out/sums.txt: expected \"a=4\\nb=-2\\n\", the file does not exist\n  stdout: expected \"rows: 2\\n\", got \"\"\n  stderr: axon: sandbox violation: builtin `dir_create` is not permitted to write path `./out`: the active sandbox restricts it to [\"./out/\"] (principal handle -2586342012074457337)\n",
+        "infrastructure": null
+      }
+    },
+    {
+      "round": 1,
+      "prompt_sha256": "de71569787f64263c1b951744933b37dd35be27ba49eb1a2d411aaf13ef8420c",
+      "candidate": "```axon\nfn process(text: str) -> i64 {\n    if str_len(text) == 0 {\n        println(\"no header\")\n        return 2\n    }\n    let lines = str_split(text, \"\\n\")\n    let nl = len(lines)\n    let nlines = nl\n    if str_eq(lines[nl - 1], \"\") {\n        nlines = nl - 1\n    }\n    let names = str_split(lines[0], \",\")\n    let a = len(names)\n    let sums = arr_repeat(0, a)\n    for i in 1..nlines {\n        let fields = str_split(lines[i], \",\")\n        if len(fields) != a {\n            println(\"line \" + to_str(i + 1) + \": expected \" + to_str(a) + \" fields, got \" + to_str(len(fields)))\n            return 3\n        }\n        for j in 0..a {\n            match parse_int(fields[j]) {\n                Ok(v) => {\n                    sums[j] = sums[j] + v\n                }\n                Err(_) => {\n                    println(\"line \" + to_str(i + 1) + \": bad number \\\"\" + fields[j] + \"\\\"\")\n                    return 4\n                }\n            }\n        }\n    }\n    let out = \"\"\n    for j in 0..a {\n        out = out + names[j] + \"=\" + to_str(sums[j]) + \"\\n\"\n    }\n    match dir_create(\"./out/\") {\n        Err(e) => {\n            eprintln(\"cannot create dir: {e}\")\n            1\n        }\n        Ok(_) => {\n            match write_file(\"./out/sums.txt\", out) {\n                Ok(_) => {\n                    println(\"rows: \" + to_str(nlines - 1))\n                    0\n                }\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/table.csv\") {\n        Err(_) => {\n            println(\"missing input\")\n            5\n        }\n        Ok(text) => process(text)\n    }\n}\n```",
+      "tokens": 18058,
+      "generator_failure": null,
+      "wall_ms": 7609,
+      "report": {
+        "stage": "accepted",
+        "source": "fn process(text: str) -> i64 {\n    if str_len(text) == 0 {\n        println(\"no header\")\n        return 2\n    }\n    let lines = str_split(text, \"\\n\")\n    let nl = len(lines)\n    let nlines = nl\n    if str_eq(lines[nl - 1], \"\") {\n        nlines = nl - 1\n    }\n    let names = str_split(lines[0], \",\")\n    let a = len(names)\n    let sums = arr_repeat(0, a)\n    for i in 1..nlines {\n        let fields = str_split(lines[i], \",\")\n        if len(fields) != a {\n            println(\"line \" + to_str(i + 1) + \": expected \" + to_str(a) + \" fields, got \" + to_str(len(fields)))\n            return 3\n        }\n        for j in 0..a {\n            match parse_int(fields[j]) {\n                Ok(v) => {\n                    sums[j] = sums[j] + v\n                }\n                Err(_) => {\n                    println(\"line \" + to_str(i + 1) + \": bad number \\\"\" + fields[j] + \"\\\"\")\n                    return 4\n                }\n            }\n        }\n    }\n    let out = \"\"\n    for j in 0..a {\n        out = out + names[j] + \"=\" + to_str(sums[j]) + \"\\n\"\n    }\n    match dir_create(\"./out/\") {\n        Err(e) => {\n            eprintln(\"cannot create dir: {e}\")\n            1\n        }\n        Ok(_) => {\n            match write_file(\"./out/sums.txt\", out) {\n                Ok(_) => {\n                    println(\"rows: \" + to_str(nlines - 1))\n                    0\n                }\n                Err(e) => {\n                    eprintln(\"cannot write: {e}\")\n                    1\n                }\n            }\n        }\n    }\n}\n\nfn main() -> i64 {\n    match read_file(\"./data/table.csv\") {\n        Err(_) => {\n            println(\"missing input\")\n            5\n        }\n        Ok(text) => process(text)\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "ok",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          },
+          {
+            "example": "ragged",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 3",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [
+    "runtime-scope"
+  ],
+  "outcome": "accepted",
+  "wall_ms": 20322,
+  "tokens": 37132,
+  "tokens_reported": 37132,
+  "token_budget": 50000
+}

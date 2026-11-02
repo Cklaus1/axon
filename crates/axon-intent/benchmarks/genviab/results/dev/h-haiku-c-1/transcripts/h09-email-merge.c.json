@@ -1,0 +1,26 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\n\n\ndef load(path):\n    with open(path, \"rb\") as f:\n        data = f.read()\n    result = set()\n    for line in data.split(b\"\\n\"):\n        addr = line.strip(b\" \\t\\r\\n\\x0b\\x0c\").lower()\n        if addr:\n            result.add(addr)\n    return result\n\n\ndef sort_key(addr):\n    domain = addr.rpartition(b\"@\")[2]\n    return (domain, addr)\n\n\ndef main():\n    a = load(os.path.join(\"data\", \"a.txt\"))\n    b = load(os.path.join(\"data\", \"b.txt\"))\n\n    both = a & b\n    a_only = a - b\n    b_only = b - a\n\n    merged = sorted(a | b, key=sort_key)\n\n    os.makedirs(\"out\", exist_ok=True)\n    with open(os.path.join(\"out\", \"merged.txt\"), \"wb\") as f:\n        for addr in merged:\n            f.write(addr + b\"\\n\")\n\n    print(\"a-only: %d, both: %d, b-only: %d\" % (len(a_only), len(both), len(b_only)))\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n```",
+   "source": "import os\n\n\ndef load(path):\n    with open(path, \"rb\") as f:\n        data = f.read()\n    result = set()\n    for line in data.split(b\"\\n\"):\n        addr = line.strip(b\" \\t\\r\\n\\x0b\\x0c\").lower()\n        if addr:\n            result.add(addr)\n    return result\n\n\ndef sort_key(addr):\n    domain = addr.rpartition(b\"@\")[2]\n    return (domain, addr)\n\n\ndef main():\n    a = load(os.path.join(\"data\", \"a.txt\"))\n    b = load(os.path.join(\"data\", \"b.txt\"))\n\n    both = a & b\n    a_only = a - b\n    b_only = b - a\n\n    merged = sorted(a | b, key=sort_key)\n\n    os.makedirs(\"out\", exist_ok=True)\n    with open(os.path.join(\"out\", \"merged.txt\"), \"wb\") as f:\n        for addr in merged:\n            f.write(addr + b\"\\n\")\n\n    print(\"a-only: %d, both: %d, b-only: %d\" % (len(a_only), len(both), len(b_only)))\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "basic",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

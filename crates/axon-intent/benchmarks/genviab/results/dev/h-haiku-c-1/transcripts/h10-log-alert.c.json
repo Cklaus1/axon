@@ -1,0 +1,26 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    counts = {\"ERROR\": 0, \"WARN\": 0, \"INFO\": 0}\n\n    with open(os.path.join(\"data\", \"app.log\"), \"rb\") as f:\n        raw = f.read()\n\n    text = raw.decode(\"latin-1\")\n    for line in text.split(\"\\n\"):\n        if line == \"\":\n            continue\n        idx = line.find(\" \")\n        level = line if idx == -1 else line[:idx]\n        if level in counts:\n            counts[level] += 1\n\n    e = counts[\"ERROR\"]\n    w = counts[\"WARN\"]\n    i = counts[\"INFO\"]\n\n    os.makedirs(\"out\", exist_ok=True)\n    with open(os.path.join(\"out\", \"levels.txt\"), \"wb\") as f:\n        f.write(f\"ERROR={e}\\nWARN={w}\\nINFO={i}\\n\".encode(\"latin-1\"))\n\n    if e >= 1:\n        sys.stdout.write(f\"alert not sent: {e} errors\\n\")\n        sys.stdout.flush()\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    counts = {\"ERROR\": 0, \"WARN\": 0, \"INFO\": 0}\n\n    with open(os.path.join(\"data\", \"app.log\"), \"rb\") as f:\n        raw = f.read()\n\n    text = raw.decode(\"latin-1\")\n    for line in text.split(\"\\n\"):\n        if line == \"\":\n            continue\n        idx = line.find(\" \")\n        level = line if idx == -1 else line[:idx]\n        if level in counts:\n            counts[level] += 1\n\n    e = counts[\"ERROR\"]\n    w = counts[\"WARN\"]\n    i = counts[\"INFO\"]\n\n    os.makedirs(\"out\", exist_ok=True)\n    with open(os.path.join(\"out\", \"levels.txt\"), \"wb\") as f:\n        f.write(f\"ERROR={e}\\nWARN={w}\\nINFO={i}\\n\".encode(\"latin-1\"))\n\n    if e >= 1:\n        sys.stdout.write(f\"alert not sent: {e} errors\\n\")\n        sys.stdout.flush()\n\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "quiet log",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

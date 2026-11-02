@@ -1,0 +1,35 @@
+{
+ "schema": "genviab-python/1",
+ "rounds": [
+  {
+   "round": 0,
+   "candidate": "```python\nimport os\nimport sys\n\n\ndef main():\n    events_path = os.path.join(\"data\", \"events.txt\")\n    seen_path = os.path.join(\"out\", \"seen.txt\")\n    new_path = os.path.join(\"out\", \"new.txt\")\n\n    os.makedirs(\"out\", exist_ok=True)\n\n    # Load previously seen ids.\n    seen = set()\n    if os.path.exists(seen_path):\n        with open(seen_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n            for line in f.read().split(\"\\n\"):\n                if line.endswith(\"\\r\"):\n                    line = line[:-1]\n                if line != \"\":\n                    seen.add(line)\n\n    # Read events, preserving line content.\n    with open(events_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        data = f.read()\n    parts = data.split(\"\\n\")\n    if parts and parts[-1] == \"\":\n        parts.pop()  # trailing newline produces an empty final piece\n\n    new_lines = []\n    new_ids = []\n    skipped = 0\n    for raw in parts:\n        line = raw[:-1] if raw.endswith(\"\\r\") else raw\n        event_id = line.split(\",\", 1)[0]\n        if event_id in seen:\n            skipped += 1\n            continue\n        seen.add(event_id)\n        new_lines.append(line + \"\\n\")\n        new_ids.append(event_id)\n\n    with open(new_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(\"\".join(new_lines))\n\n    if new_ids:\n        with open(seen_path, \"a\", encoding=\"utf-8\", newline=\"\") as f:\n            f.write(\"\".join(i + \"\\n\" for i in new_ids))\n\n    sys.stdout.write(\"new: %d, skipped: %d\\n\" % (len(new_ids), skipped))\n    sys.stdout.flush()\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+   "source": "import os\nimport sys\n\n\ndef main():\n    events_path = os.path.join(\"data\", \"events.txt\")\n    seen_path = os.path.join(\"out\", \"seen.txt\")\n    new_path = os.path.join(\"out\", \"new.txt\")\n\n    os.makedirs(\"out\", exist_ok=True)\n\n    # Load previously seen ids.\n    seen = set()\n    if os.path.exists(seen_path):\n        with open(seen_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n            for line in f.read().split(\"\\n\"):\n                if line.endswith(\"\\r\"):\n                    line = line[:-1]\n                if line != \"\":\n                    seen.add(line)\n\n    # Read events, preserving line content.\n    with open(events_path, \"r\", encoding=\"utf-8\", newline=\"\") as f:\n        data = f.read()\n    parts = data.split(\"\\n\")\n    if parts and parts[-1] == \"\":\n        parts.pop()  # trailing newline produces an empty final piece\n\n    new_lines = []\n    new_ids = []\n    skipped = 0\n    for raw in parts:\n        line = raw[:-1] if raw.endswith(\"\\r\") else raw\n        event_id = line.split(\",\", 1)[0]\n        if event_id in seen:\n            skipped += 1\n            continue\n        seen.add(event_id)\n        new_lines.append(line + \"\\n\")\n        new_ids.append(event_id)\n\n    with open(new_path, \"w\", encoding=\"utf-8\", newline=\"\") as f:\n        f.write(\"\".join(new_lines))\n\n    if new_ids:\n        with open(seen_path, \"a\", encoding=\"utf-8\", newline=\"\") as f:\n            f.write(\"\".join(i + \"\\n\" for i in new_ids))\n\n    sys.stdout.write(\"new: %d, skipped: %d\\n\" % (len(new_ids), skipped))\n    sys.stdout.flush()\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+   "stage": "examples",
+   "passed": true,
+   "scope_denied": false,
+   "examples": [
+    {
+     "example": "two runs",
+     "run": 1,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    },
+    {
+     "example": "two runs",
+     "run": 2,
+     "passed": true,
+     "ended": "exit 0",
+     "diffs": [],
+     "stderr_tail": "",
+     "scope_denied": false
+    }
+   ]
+  }
+ ],
+ "accepted": true,
+ "token_budget_exhausted": null
+}

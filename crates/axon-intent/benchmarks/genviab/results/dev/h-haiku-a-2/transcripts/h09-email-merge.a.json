@@ -1,0 +1,45 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/micode-program.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Merge the address lists ./data/a.txt and ./data/b.txt. Each holds one email address per line, every line ending in a newline; normalize each line by removing surrounding spaces and lowercasing ASCII letters, and skip lines that are empty after that. Write ./out/merged.txt with every distinct normalized address from either file, one per line, each ending in a newline (an empty file when there are none), sorted by domain (the text after the last `@`) in ascending byte order and, for equal domains, by the whole address in ascending byte order. Print one line `a-only: X, both: Y, b-only: Z` followed by a newline, counting the distinct normalized addresses found only in a.txt, in both files, and only in b.txt, and exit 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "a338f076cc6e8c656ebe57bed02f4478b2392e7a9a1f93648bcc91e9e8be2829",
+      "candidate": "```axon\nfn domain_of(s: str) -> str {\n    let i = str_len(s) - 1\n    while i >= 0 {\n        if char_at(s, i) == 64 {\n            return str_slice(s, i + 1, str_len(s))\n        }\n        i = i - 1\n    }\n    s\n}\n\nfn cmp_addr(a: str, b: str) -> i64 {\n    let c = str_cmp(domain_of(a), domain_of(b))\n    if c != 0 {\n        c\n    } else {\n        str_cmp(a, b)\n    }\n}\n\nfn run() -> Result<i64, str> {\n    let ta = read_file(\"./data/a.txt\")?\n    let tb = read_file(\"./data/b.txt\")?\n    let da = dict_new()\n    let db = dict_new()\n    let du = dict_new()\n    let la = str_split(ta, \"\\n\")\n    for i in 0..len(la) {\n        let n = str_to_lower(str_trim(la[i]))\n        if str_len(n) > 0 {\n            dict_set(da, n, 1)\n            dict_set(du, n, 1)\n        }\n    }\n    let lb = str_split(tb, \"\\n\")\n    for i in 0..len(lb) {\n        let n = str_to_lower(str_trim(lb[i]))\n        if str_len(n) > 0 {\n            dict_set(db, n, 1)\n            dict_set(du, n, 1)\n        }\n    }\n    let keys = dict_keys(du)\n    let addrs = arr_sort_by(keys, |x, y| cmp_addr(x, y))\n    let ao = 0\n    let bo = 0\n    let bn = 0\n    let out = \"\"\n    for i in 0..len(addrs) {\n        let k = addrs[i]\n        let ia = dict_has(da, k)\n        let ib = dict_has(db, k)\n        if ia && ib {\n            bo = bo + 1\n        } else if ia {\n            ao = ao + 1\n        } else {\n            bn = bn + 1\n        }\n        out = out + k + \"\\n\"\n    }\n    write_file(\"./out/merged.txt\", out)?\n    println(\"a-only: {to_str(ao)}, both: {to_str(bo)}, b-only: {to_str(bn)}\")\n    Ok(0)\n}\n\nfn main() -> i64 {\n    match run() {\n        Ok(c) => c\n        Err(e) => {\n            eprintln(\"error: {e}\")\n            1\n        }\n    }\n}\n```",
+      "tokens": 19136,
+      "generator_failure": null,
+      "wall_ms": 20521,
+      "report": {
+        "stage": "accepted",
+        "source": "fn domain_of(s: str) -> str {\n    let i = str_len(s) - 1\n    while i >= 0 {\n        if char_at(s, i) == 64 {\n            return str_slice(s, i + 1, str_len(s))\n        }\n        i = i - 1\n    }\n    s\n}\n\nfn cmp_addr(a: str, b: str) -> i64 {\n    let c = str_cmp(domain_of(a), domain_of(b))\n    if c != 0 {\n        c\n    } else {\n        str_cmp(a, b)\n    }\n}\n\nfn run() -> Result<i64, str> {\n    let ta = read_file(\"./data/a.txt\")?\n    let tb = read_file(\"./data/b.txt\")?\n    let da = dict_new()\n    let db = dict_new()\n    let du = dict_new()\n    let la = str_split(ta, \"\\n\")\n    for i in 0..len(la) {\n        let n = str_to_lower(str_trim(la[i]))\n        if str_len(n) > 0 {\n            dict_set(da, n, 1)\n            dict_set(du, n, 1)\n        }\n    }\n    let lb = str_split(tb, \"\\n\")\n    for i in 0..len(lb) {\n        let n = str_to_lower(str_trim(lb[i]))\n        if str_len(n) > 0 {\n            dict_set(db, n, 1)\n            dict_set(du, n, 1)\n        }\n    }\n    let keys = dict_keys(du)\n    let addrs = arr_sort_by(keys, |x, y| cmp_addr(x, y))\n    let ao = 0\n    let bo = 0\n    let bn = 0\n    let out = \"\"\n    for i in 0..len(addrs) {\n        let k = addrs[i]\n        let ia = dict_has(da, k)\n        let ib = dict_has(db, k)\n        if ia && ib {\n            bo = bo + 1\n        } else if ia {\n            ao = ao + 1\n        } else {\n            bn = bn + 1\n        }\n        out = out + k + \"\\n\"\n    }\n    write_file(\"./out/merged.txt\", out)?\n    println(\"a-only: {to_str(ao)}, both: {to_str(bo)}, b-only: {to_str(bn)}\")\n    Ok(0)\n}\n\nfn main() -> i64 {\n    match run() {\n        Ok(c) => c\n        Err(e) => {\n            eprintln(\"error: {e}\")\n            1\n        }\n    }\n}",
+        "fences_stripped": true,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "basic",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 20521,
+  "tokens": 19136,
+  "tokens_reported": 19136,
+  "token_budget": 50000
+}
