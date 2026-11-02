@@ -44966,6 +44966,17 @@ fn for_tuple_arity_error_points_at_the_for() {
         d.contains("tuple index 2 out of bounds (length 2)") && d.contains("\"line\":2,"),
         "{attack}: {d}"
     );
+    // Each generated `let` carries the `for` span itself (a dummy one keeps
+    // the E0401 above on the loop line through the enclosing statement, but
+    // the unused-name warning is raised on the let and lost its location).
+    let unused = "fn main() {\n    let z = 1\n    for (a, b) in [(1, \"s\")] {\n        println(b)\n    }\n    println(to_str(z))\n}\n";
+    let (crc, out) = lf_check("lf3_unused", unused);
+    assert_eq!(crc, Some(0), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "W0006");
+    assert!(
+        d.contains("`a`") && d.contains("\"line\":3,\"col\":5"),
+        "{attack}: {d}"
+    );
 }
 
 #[test]
@@ -44984,6 +44995,16 @@ fn let_tuple_error_points_at_the_let() {
     assert_eq!(crc, Some(2), "{attack} [p22]: {out}");
     let d = lf_diag_line(attack, &out, "E0401");
     assert!(d.contains("\"line\":4,\"col\":9"), "{attack} [p22]: {d}");
+    // The field lets carry the `let` span themselves: the unused-name warning
+    // is raised on one (it had no location at all before).
+    let unused = "fn main() {\n    let z = 1\n    let (a, b) = (1, 2)\n    println(to_str(b + z))\n}\n";
+    let (crc, out) = lf_check("lf3_let_unused", unused);
+    assert_eq!(crc, Some(0), "{attack} [unused]: {out}");
+    let d = lf_diag_line(attack, &out, "W0006");
+    assert!(
+        d.contains("`a`") && d.contains("\"line\":3,\"col\":5"),
+        "{attack} [unused]: {d}"
+    );
 }
 
 #[test]

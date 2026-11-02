@@ -14242,7 +14242,9 @@ MUTATIONS += [
      'axon-core', '--test integration_fixtures', 'unit_match_with_a_binding_arm_is_refused_natively'),
 ]
 
-# lang-forms LF-3 / LF-3b (ids M4652-M4660, M4662-M4664, M4674): `for (a, b) in xs` desugars to
+# lang-forms LF-3 / LF-3b (ids M4652-M4656, M4658-M4660, M4662-M4664, M4674; M4657 dropped as
+# EQUIVALENT: binding a `_` slot as `let _ = elem.k` is invisible to every engine, as the spec foresaw):
+# `for (a, b) in xs` desugars to
 # field lets carrying the `for` span; `let (a, b)` lets carry the `let` span; fmt prints both back;
 # the three-clause `for` keeps its help; `for` over a Dict names dict_to_pairs.
 MUTATIONS += [
@@ -14254,21 +14256,17 @@ MUTATIONS += [
      '            let mut lets = Vec::new();\n            for_pat_lets(&var, elems, span, &mut lets);\n            body.splice(0..0, lets);',
      '            fn to_pat(e: &[ForPat]) -> Pattern { Pattern::Tuple(e.iter().map(|p| match p { ForPat::Name(n) => Pattern::Ident(n.clone()), ForPat::Wild => Pattern::Wildcard, ForPat::Tuple(s) => to_pat(s) }).collect()) }\n            let inner = std::mem::take(&mut body);\n            body.push(Stmt { expr: Expr::Match { subject: Box::new(Expr::Ident(var.clone())), arms: vec![MatchArm { pattern: to_pat(elems), guard: None, body: Expr::Block(inner) }] }, span });',
      'axon-core', '--no-default-features --test cli_run', 'for_tuple_pattern_is_typed'),
-    ('M4654', 'LF-3: the for pattern lets carry a dummy span, so an arity error lands on line 1', 'crates/axon-core/src/parser.rs',
+    ('M4654', 'LF-3: the for pattern lets carry a dummy span, so an unused pattern name is warned with no location', 'crates/axon-core/src/parser.rs',
      '                    field: k.to_string(),\n                }),\n            },\n            span,',
      '                    field: k.to_string(),\n                }),\n            },\n            span: Span::dummy(),',
      'axon-core', '--no-default-features --test cli_run', 'for_tuple_arity_error_points_at_the_for'),
-    ('M4655', 'LF-3: `let (a, b) = e` field lets carry a dummy span again (E0401 at 1:1)', 'crates/axon-core/src/parser.rs',
+    ('M4655', 'LF-3: `let (a, b) = e` field lets carry a dummy span again (an unused name is warned with no location)', 'crates/axon-core/src/parser.rs',
      '                            field: i.to_string(),\n                        }),\n                    },\n                    span,',
      '                            field: i.to_string(),\n                        }),\n                    },\n                    span: Span::dummy(),',
      'axon-core', '--no-default-features --test cli_run', 'let_tuple_error_points_at_the_let'),
     ('M4656', 'LF-3: a nested for pattern binds its intermediate but none of its names', 'crates/axon-core/src/parser.rs',
      '            for_pat_lets(&name, sub, span, out);',
      '            let _ = (sub, span);',
-     'axon-core', '--no-default-features --test cli_run', 'for_tuple_pattern_runs'),
-    ('M4657', 'LF-3: a `_` slot of a for pattern binds `_`', 'crates/axon-core/src/parser.rs',
-     '            ForPat::Wild => continue,',
-     '            ForPat::Wild => "_".to_string(),',
      'axon-core', '--no-default-features --test cli_run', 'for_tuple_pattern_runs'),
     ('M4658', 'LF-3: `for (a, b) in 0..n` is accepted as a range loop', 'crates/axon-core/src/parser.rs',
      '        if pat.is_some() && (self.at(&Token::DotDotEq) || self.at(&Token::DotDot)) {',

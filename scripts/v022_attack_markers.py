@@ -3920,14 +3920,13 @@ ATTACK_MARKERS.update({
     'M4676': r'ATTACK: a unit match arm was skipped natively without a refusal',
 })
 
-# lang-forms LF-3 / LF-3b (ids M4652-M4660, M4662-M4664, M4674)
+# lang-forms LF-3 / LF-3b (ids M4652-M4656, M4658-M4660, M4662-M4664, M4674)
 ATTACK_MARKERS.update({
     'M4652': r'ATTACK: for \(a, b\) in was refused at parse',
     'M4653': r'ATTACK: a for-tuple binding was untyped',
     'M4654': r'ATTACK: a destructure error landed on line 1',
     'M4655': r'ATTACK: a destructure error landed on line 1',
     'M4656': r'ATTACK: a nested for pattern bound nothing',
-    'M4657': r'ATTACK: for \(a, b\) in was refused at parse',
     'M4658': r'ATTACK: for \(a, b\) over a range was accepted',
     'M4659': r'ATTACK: fmt leaked __forpat_',
     'M4660': r'ATTACK: fmt leaked __tup_',
