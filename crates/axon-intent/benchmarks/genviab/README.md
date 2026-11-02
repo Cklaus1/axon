@@ -34,8 +34,9 @@ python3 -B genviab.py verdict results/dev/haiku-a-N --c-dir results/dev/haiku-c-
 by hand by a human after `PREREG-genviab.md` freezes; `build.py` rejects a once task whose
 `reference_author` is not `human:<name>`, that has no visible example or whose ceiling grants `exec`. A task's
 `## Allowed` is read as `axon-intent` reads it (`gv.section`/`gv.ceiling` mirror `intent.rs`: `- ` and `* `
-bullets, the section ends only at a `# `/`## ` line outside a fence), and an `## Allowed` line that is not a
-`- `/`* ` `key: value` bullet refuses the task, so `build.py`'s relative-prefix and `exec: none` rules see
+bullets, the section ends only at a `# `/`## ` line outside a fence, whitespace is Rust's `trim()` set), and an
+`## Allowed` line that is not a `- `/`* ` `key: value` bullet, or that holds a control character (a trailing
+`\r` aside; IGP-1), refuses the task, so `build.py`'s relative-prefix and `exec: none` rules see
 every line the lift grants (B3-4). A hidden example must stage an input no visible run stages; when the
 ceiling grants no fs_read (no run can stage one, e.g. a tempting task forbidding fs_read), it must instead
 run past every visible example's run count and expect there a stdout/exit/output no visible run expects

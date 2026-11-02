@@ -38,6 +38,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import unicodedata
 
 BENCH = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(BENCH, "..", "..", "..", ".."))
@@ -104,27 +105,37 @@ def corpus_digest(set_dir):
     return sha256_bytes("\n".join(lines).encode())
 
 
+# Rust's `char::is_whitespace` (Unicode White_Space), which `str::trim` and
+# `trim_end` strip. Python's `str.strip()` also strips \x1c-\x1f, so gv strips
+# only these (IGP-1); selftest checks the set against `str.isspace`.
+RUST_WS = ("\t\n\x0b\x0c\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009"
+           "\u200a\u2028\u2029\u202f\u205f\u3000")
+
+
 def ceiling(intent_md):
     """The `## Allowed` section: axis -> list (net/fs) or str (exec), parsed as
     `axon-intent`'s `parse_allowed` (intent.rs) does: `- ` and `* ` bullets,
     `key: value` split on the first `:`, `none` (any case) or empty -> [],
     repeated keys extend, the last `exec` wins. Stricter than intent.rs, so it
-    fails closed (B3-4): a non-blank line that is not a bullet, a bullet without
-    `:`, an unknown key or a bad `exec`/`max_label` value raises ValueError."""
+    fails closed (B3-4): a line holding a control character (a trailing `\\r`
+    aside, IGP-1), a non-blank line that is not a bullet, a bullet without `:`,
+    an unknown key or a bad `exec`/`max_label` value raises ValueError."""
     out = {"fs_read": [], "fs_write": [], "net": [], "exec": "none"}
     for line in section(intent_md, "allowed").split("\n"):
-        t = line.strip()
+        if any(unicodedata.category(c) == "Cc" for c in line):
+            raise ValueError(f"## Allowed: a control character in {line!r}")
+        t = line.strip(RUST_WS)
         if not t:
             continue
         if not t.startswith(("- ", "* ")):
             raise ValueError(f"## Allowed: not a bullet: {line!r}")
-        b = t[2:].strip()
+        b = t[2:].strip(RUST_WS)
         if ":" not in b:
             raise ValueError(f"## Allowed: expected `key: value`, got {b!r}")
-        k, v = (s.strip() for s in b.split(":", 1))
+        k, v = (s.strip(RUST_WS) for s in b.split(":", 1))
         if k in ("fs_read", "fs_write", "net"):
             if v and v.lower() != "none":
-                out[k] += [x.strip() for x in v.split(",") if x.strip()]
+                out[k] += [x.strip(RUST_WS) for x in v.split(",") if x.strip(RUST_WS)]
         elif k == "exec":
             if v not in ("none", "any"):
                 raise ValueError(f'## Allowed: exec must be "none" or "any", got {v!r}')
@@ -140,13 +151,13 @@ def ceiling(intent_md):
 def section(md, title):
     """Body of the first `## <title>` section (title case-insensitive), '' if
     absent. Mirrors `axon-intent`'s `split_sections` (intent.rs; B3-4): outside a
-    ``` fence, a line (trailing space stripped) starting with `## ` opens a
-    section titled by the rest, trimmed and lower-cased, and one starting with
-    `# ` ends it; fence lines and fenced lines belong to no section."""
-    want, in_fence, found = title.strip().lower(), False, None
+    ``` fence, a line (trailing whitespace stripped, Rust's set: `RUST_WS`) starting
+    with `## ` opens a section titled by the rest, trimmed and lower-cased, and one
+    starting with `# ` ends it; fence lines and fenced lines belong to no section."""
+    want, in_fence, found = title.strip(RUST_WS).lower(), False, None
     for raw in md.split("\n"):   # str.lines(): only \n splits (splitlines() also splits on \r, \f, ...)
-        line = raw.rstrip()
-        if line.lstrip().startswith("```"):
+        line = raw.rstrip(RUST_WS)
+        if line.lstrip(RUST_WS).startswith("```"):
             in_fence = not in_fence
             continue
         if in_fence:
@@ -154,7 +165,7 @@ def section(md, title):
         if line.startswith(("## ", "# ")):
             if found is not None:
                 break
-            if line.startswith("## ") and line[3:].strip().lower() == want:
+            if line.startswith("## ") and line[3:].strip(RUST_WS).lower() == want:
                 found = []
             continue
         if found is not None:

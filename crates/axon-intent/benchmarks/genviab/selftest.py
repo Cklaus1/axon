@@ -278,7 +278,7 @@ def build_mechanical():
         # the section ends only at `# `/`## `), and refuses any other line.
         b34 = {"c-star-proc": "* fs_read: /proc/\n", "c-star-exec": "* exec: any\n",
                "c-tabhash": "#\tnote\n- fs_read: /proc/\n", "c-nonbullet": "fs_read: ./data/\n",
-               "c-star-ok": "* fs_read: ./out/\n"}
+               "c-star-ok": "* fs_read: ./out/\n", "c-us-exec": "- exec: any\n\x1f- exec: none\n"}
         for tid, extra in b34.items():
             gv3_task(once, tid, f"Fixture {tid}: upper-case ./data/in.txt into ./out/up.txt and print "
                      "a line.", {"reference.py": PY_UPPER}, vis_up, hid_up, extra=extra)
@@ -362,8 +362,10 @@ def build_mechanical():
         for tid, needle, what in (
                 ("c-star-proc", "not a relative directory prefix", "a '* fs_read: /proc/' bullet is refused"),
                 ("c-star-exec", "exec: none", "a '* exec: any' bullet in a once task is refused"),
-                ("c-tabhash", "not a bullet", "a '#\\t' line before '- fs_read: /proc/' in ## Allowed is refused"),
-                ("c-nonbullet", "not a bullet", "a non-bullet line in ## Allowed is refused")):
+                ("c-tabhash", "control character", "a '#\\t' line before '- fs_read: /proc/' in ## Allowed is refused"),
+                ("c-nonbullet", "not a bullet", "a non-bullet line in ## Allowed is refused"),
+                ("c-us-exec", "control character",
+                 "IGP-1: '- exec: any' then '\\x1f- exec: none' (exec any to axon-intent) is refused")):
             expect(f"B3-4: {what} ({tid})", needle in mech.get(tid, ""), mech.get(tid, "kept"))
         expect("B3-4: a '* fs_read: ./out/' bullet is a ceiling line like '- ' (c-star-ok kept)",
                "c-star-ok" in kept, mech.get("c-star-ok"))
@@ -454,7 +456,10 @@ def intent_rs_ceiling(gv, intent_md):
             if r.returncode == 8 and f"needs `{axis}` authority" in r.stdout + r.stderr:
                 out[axis] = "none" if axis == "exec" else []
             elif r.returncode == 0:
-                grant = tomllib.load(open(os.path.join(ws, "o", "t.axjob"), "rb"))["grant"]
+                try:
+                    grant = tomllib.load(open(os.path.join(ws, "o", "t.axjob"), "rb"))["grant"]
+                except tomllib.TOMLDecodeError as e:
+                    return None, f"{axis}: t.axjob is not TOML: {e}"
                 out[axis] = grant[axis]
             else:
                 return None, f"{axis}: rc {r.returncode}: {(r.stdout + r.stderr)[-300:]}"
@@ -474,8 +479,13 @@ def ceiling_agreement():
         return
     intents = {os.path.basename(d): open(os.path.join(d, "intent.md")).read()
                for d in gv.task_dirs(os.path.join(HERE, "dev"))}
-    for tid, extra in (("star-proc", "* fs_read: /proc/\n"), ("star-exec", "* exec: any\n"),
-                       ("star-repeat", "* fs_write: ./log/\n- fs_read: none\n")):
+    # (extra `## Allowed` lines, gv.ceiling must refuse): \x1f is whitespace to
+    # Python's strip() and not to Rust's trim() (IGP-1).
+    fixtures = {"star-proc": ("* fs_read: /proc/\n", False), "star-exec": ("* exec: any\n", False),
+                "star-repeat": ("* fs_write: ./log/\n- fs_read: none\n", False),
+                "us-exec-any": ("\x1f- exec: any\n", True),
+                "us-exec-none": ("- exec: any\n\x1f- exec: none\n", True)}
+    for tid, (extra, _) in fixtures.items():
         intents["fixture " + tid] = gv3_intent(f"Fixture {tid}: upper-case ./data/in.txt.", extra=extra)
     with cf.ThreadPoolExecutor(max_workers=8) as ex:
         theirs = dict(zip(intents, ex.map(lambda md: intent_rs_ceiling(gv, md), intents.values())))
@@ -486,10 +496,20 @@ def ceiling_agreement():
             ours = gv.ceiling(md)
         except ValueError as e:
             ours = f"ValueError: {e}"
-        if why or ours != got:
+        must_refuse = fixtures.get(tid.removeprefix("fixture "), (None, False))[1]
+        if must_refuse:
+            if not isinstance(ours, str):
+                bad[tid] = {"gv.ceiling": ours, "axon-intent": got or why, "want": "ValueError"}
+        elif why or ours != got:
             bad[tid] = {"gv.ceiling": ours, "axon-intent": got or why}
-    expect(f"B3-4: gv.ceiling and axon-intent read the same ceiling ({len(intents)} intents: "
-           f"{len(intents) - 3} dev + 3 fixtures)", not bad, bad)
+    n_fix = len(fixtures)
+    expect(f"B3-4/IGP-1: gv.ceiling and axon-intent read the same ceiling, or gv.ceiling refuses a "
+           f"control character ({len(intents)} intents: {len(intents) - n_fix} dev + {n_fix} fixtures)",
+           not bad, bad)
+    expect("IGP-1: gv.RUST_WS is Rust's char::is_whitespace (str.isspace minus \\x1c-\\x1f)",
+           set(getattr(gv, "RUST_WS", "")) == {c for c in map(chr, range(0x110000))
+                                               if c.isspace() and c not in "\x1c\x1d\x1e\x1f"},
+           getattr(gv, "RUST_WS", None))
 
 
 def once_guard():

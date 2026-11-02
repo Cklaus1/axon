@@ -414,6 +414,16 @@ does, and `build.py`'s intent-text check refuses any fence. `gv.ceiling` also re
 `exec` other than `none`/`any`, and a `max_label` other than `public`/`internal`/`secret`, which `parse_allowed`
 refuses too. `load_task` calls `gv.ceiling`, so a malformed `## Allowed` is a `load:` defect.
 
+`[REVISED: build IGP-1]` Python's `str.strip()` treats `\x1c`-`\x1f` as whitespace and Rust's `trim()` does not.
+Because of that, `- exec: any` followed by `\x1f- exec: none` read as `exec: none` to `gv.ceiling` but as `exec: any`
+to `axon-intent`, which passed the once `exec` guard. `gv.section` and `gv.ceiling` now strip only Rust's whitespace
+set (`gv.RUST_WS`; the selftest checks it against `str.isspace` minus `\x1c`-`\x1f`). Any `## Allowed` line that
+holds a control character (Unicode Cc; a trailing `\r` is stripped first) is refused; tabs are refused too. The
+agreement check gains both `\x1f` fixtures, and `gv.ceiling` must refuse them. The once fixture `c-us-exec` is
+refused. `c-tabhash` is now refused for the control character, before the not-a-bullet rule. Observed, outside this
+lane: for `- fs_read: ./data/\x1f`, `axon-intent compile` writes a `t.axjob` that is not valid TOML (raw `\x1f` in
+a basic string).
+
 **Docs.** genviab `README.md` (once rules); PREREG §4 schema line: "an `## Allowed` line that is not a `- `/`* ` bullet is refused".
 
 ### B3-5 (P2) A missing ceiling in two spellings reports "two different ceilings" (O-CE-01)
