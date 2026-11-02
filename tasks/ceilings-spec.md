@@ -1,6 +1,6 @@
 # ceilings - DRAFT spec
 
-**Status: DRAFT (after Step 1 review). §9 decided by human 2026-11-02 (the recommendations); build authorized 2026-11-02.**
+**Status: PARTIAL 2026-11-02 on b2/ce d9ad9086 (CE-1 built; the rest in progress; O-HI-03 open).**
 
 Author: `Ceilings` (2026-11-01), base `main` a5310878 (worktree `/home/cklaus/projects/axon-lanes/asi-next`, branch `asi/next`).
 Reference binary: `/var/tmp/r51-tmp/asi-bin/axon` (`axon 0.1.0 (a5310878)`, default features: `codegen`, no `asi-runtime`).
@@ -179,6 +179,8 @@ the default build (`cargo test -p axon-core --no-default-features --lib ai_pin_h
 - `ai_pin_hosts_ambient_pins_unannotated_program`: no declared hosts, ambient `["gw.example"]` → `Some([])`.
 - `ai_pin_hosts_intersects_declared_with_ambient`: declared `["x.com"]`, ambient `["api.anthropic.com"]` → `Some([])`.
   Declared `["*.x.com"]`, ambient `["a.x.com"]` → `Some(["a.x.com"])`.
+  `[REVISED: build d9ad9086]` `declared_net_hosts` adds the implicit host to any non-empty declared set (T35), so the first
+  case gives `Some(["api.anthropic.com"])`, not `Some([])`; the test asserts that `x.com` is absent, which is the CEA#3 point.
 - `ai_pin_hosts_star_and_unset_do_not_narrow`: declared `["x.com"]`, ambient `*` or unset → `Some(["x.com"])`. With no
   declared hosts and ambient unset → `None`.
 
@@ -188,10 +190,15 @@ behavioural assertion is the returned list, not the missing symbol (CED-10).
 Guard, not fail-first: an `axon-ai` unit test `pin_refuses_override_outside_pin`, in which `checked_endpoint_url` returns an
 `Err` naming the host. It passes today. It runs in S20 only if axon-ai's `asi`-free build compiles it [INFERENCE: it is not
 feature-gated today].
+`[REVISED: build d9ad9086]` `NET_PIN` is a process-global first-wins `OnceLock`, so the guard exercises the pure check
+(`host_allowed(host_of(url), pin)`) in `host_of_url_tests`, not `checked_endpoint_url` itself.
 
 **Gate line** (`[REVISED: CED-1]`). Add `cargo check --locked -p axon-core --no-default-features --features asi-runtime` as a
 `gate.sh` step with a `governance/gate-lanes.json` unit. Until it lands, `asi-runtime` is **not gated**: 0 hits in either
 file at a5310878. Its wall time is not measured [INFERENCE: one extra `cargo check` including `reqwest`, a few minutes cold].
+`[REVISED: build d9ad9086]` Measured 8.0 s cold (fresh target dir), so it runs on every gate, not `--strict` only. It sits in
+stage S12, renamed "feature builds + tests (serde-json, asi-runtime)", rather than a new stage, so the lane registry needs no
+new audited unit.
 
 **Acceptance.**
 - The three unit tests pass in the default build.

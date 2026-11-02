@@ -1,5 +1,9 @@
 # Axon Changelog
 
+## ceilings: the operator's ceiling (`tasks/ceilings-spec.md`)
+
+- **CE-1: the operator's `AXON_ALLOWED_NET` pins the AI endpoint (O027).** In an `asi-runtime` build the AI endpoint pin was the program's declared `@[contained(net: ..)]` hosts only, so `AXON_ALLOWED_NET=api.anthropic.com AXON_AI_BASE_URL=http://elsewhere` passed the dispatch check (which tests the implicit host) and sent the prompt and key elsewhere. The pin is now (declared hosts, or the implicit host if none) ∩ `AXON_ALLOWED_NET` when that is set; `*` or unset does not narrow, and a run with neither is not pinned. An override outside the pin returns the existing catchable "is not in this program's net allowlist" `Err` and sends nothing (checked with a 127.0.0.1 listener). The default build is unchanged. New gate line in S12: `cargo check --locked -p axon-core --no-default-features --features asi-runtime` (8 s cold). g01: M4680, M4681.
+
 ## asi-fixes AF-1..AF-6: `ai_extract::<T>` runs and is charged; match arms are alternatives for moves; bare variant names refused; the Hello Goal acid gate fails closed
 
 Items AF-1 to AF-6 of `tasks/asi-fixes-spec.md`.
