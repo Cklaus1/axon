@@ -876,18 +876,20 @@ fn run_nonce() -> std::io::Result<String> {
     Ok(b.iter().map(|x| format!("{x:02x}")).collect())
 }
 
-fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> String {
+/// The interpreter's sandbox tags for `grant`, as the csv both the wrapper's
+/// `sandbox_create_scoped` and the child's `AXON_ALLOWED_EFFECTS` carry.
+///
+/// `IO` is ALWAYS in the set: it is console output and `exit`, not a
+/// capability admission grants. It used to be emitted only when
+/// fs_read/fs_write/exec was granted, so a print-only job was admitted
+/// under an empty grant and refused here. What else `IO` covers stays
+/// narrowed by the interpreter: the filesystem by the allowlists (an empty
+/// list is deny-all), process spawn by its own `Exec` tag, and `env_var` by
+/// the fs_read allowlist (deny-all when empty), the axis admission projects
+/// an environment read onto. `Time`/`Random` stay out (examples/jobs/evasion:
+/// the runtime fence for effects admission cannot represent).
+fn grant_sandbox_tags(grant: &Grant) -> String {
     let ceiling = grant.effect_set();
-    // `IO` is ALWAYS in the set: it is console output and `exit`, not a
-    // capability admission grants. It used to be emitted only when
-    // fs_read/fs_write/exec was granted, so a print-only job was admitted
-    // under an empty grant and refused here. What else `IO` covers stays
-    // narrowed by the interpreter: the filesystem by the allowlists below (an
-    // empty list is deny-all), process spawn by its own `Exec` tag, and
-    // `env_var` by the fs_read allowlist (deny-all when empty), the axis
-    // admission projects an environment read onto. `Time`/`Random` stay out
-    // (examples/jobs/evasion: the runtime fence for effects admission cannot
-    // represent).
     let mut tags: Vec<&str> = vec!["IO"];
     if ceiling.net {
         tags.push("Net");
@@ -896,7 +898,12 @@ fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> St
     if ceiling.exec {
         tags.push("Exec");
     }
-    let csv = tags.join(",");
+    tags.join(",")
+}
+
+fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> String {
+    let ceiling = grant.effect_set();
+    let csv = grant_sandbox_tags(grant);
     // AUDIT T3: pass the ALLOWLISTS through, not just the booleans they induce.
     // `axon-os explain` renders "This program MAY: write ./out/" to the human
     // approving the run; before this the prefixes were dropped here and the
@@ -1339,6 +1346,18 @@ impl AxonCoreRuntime {
         if let Some(digest) = required_imports {
             cmd.env(REQUIRE_IMPORTS_DIGEST_ENV, digest);
         }
+        // B3-7: the grant is also the interpreter's AMBIENT scope. The
+        // wrapper opens the grant's sandbox in `main`, but every module-level
+        // `let` initialiser of the job is evaluated before `main`; without
+        // this it ran with the empty ambient scope of `env_clear`, i.e. with
+        // no restriction at all. Same tags and allowlists as the wrapper's
+        // `sandbox_create_scoped` (an empty list is deny-all), so the
+        // wrapper's `sandbox_run` stays a narrowing of the ambient ceiling.
+        // Set after `job_child_command`'s `env_clear`.
+        cmd.env("AXON_ALLOWED_EFFECTS", grant_sandbox_tags(grant));
+        cmd.env("AXON_ALLOWED_FS_READ", grant.fs_read.join(","));
+        cmd.env("AXON_ALLOWED_FS_WRITE", grant.fs_write.join(","));
+        cmd.env("AXON_ALLOWED_NET", grant.net.join(","));
         // GV-1: the outcome pipe. The interpreter writes one `axon-outcome/1`
         // record with this run's nonce to fd 3 before it exits; the program
         // owns stdout and stderr, so how the run ended is read from here.

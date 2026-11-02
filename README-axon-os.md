@@ -56,6 +56,15 @@ cost_micro = 1000000
 the network while the grant withholds `net` — so the static gate **denies it
 before it runs** (exit 8). That is the containment thesis in one command.
 
+At run time the program runs inside an interpreter sandbox built from the
+grant: the wrapper `axon-os` stages calls the job's `main` through
+`sandbox_run` with the grant's effect tags and allowlists. The grant is also
+the interpreter's ambient scope (`AXON_ALLOWED_EFFECTS`, `AXON_ALLOWED_FS_READ`,
+`AXON_ALLOWED_FS_WRITE`, `AXON_ALLOWED_NET`), so module-level `let`s, which are
+evaluated before `main`, run inside it too: an initialiser that reads outside
+`fs_read` or uses an effect the grant withholds (`Time`, `Random`) is a sandbox
+refusal (exit 8).
+
 ## Approval tokens
 
 A job's `.approval` sibling (written by `axon-intent approve`) is verified

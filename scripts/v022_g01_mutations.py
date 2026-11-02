@@ -14984,5 +14984,20 @@ MUTATIONS += [
      'axon-guest-init', '--bin axon-guest-init', 'tests::fs_none_exports_empty_path_scopes'),
 ]
 
+# genviab-b3 B3-7 runtime (tasks/genviab-b3-spec.md §3, ids M4776-M4777, b3
+# block M4770-M4789): `launch` makes the grant the interpreter's ambient
+# scope (AXON_ALLOWED_*), so a module-level `let` initialiser, evaluated
+# before the wrapper's `sandbox_run`, runs inside the grant.
+MUTATIONS += [
+    ('M4776', "B3-7: launch omits the ambient-scope block (module-level lets run unconfined)", 'crates/axon-os/src/runtime.rs',
+     '        cmd.env("AXON_ALLOWED_EFFECTS", grant_sandbox_tags(grant));\n        cmd.env("AXON_ALLOWED_FS_READ", grant.fs_read.join(","));\n        cmd.env("AXON_ALLOWED_FS_WRITE", grant.fs_write.join(","));\n        cmd.env("AXON_ALLOWED_NET", grant.net.join(","));\n',
+     '        let _ = grant_sandbox_tags;\n',
+     'axon-os', '--test sandbox_capture', 'a_module_level_let_runs_inside_the_grant'),
+    ('M4777', "B3-7: the ambient AXON_ALLOWED_EFFECTS is not set (scopes kept)", 'crates/axon-os/src/runtime.rs',
+     '        cmd.env("AXON_ALLOWED_EFFECTS", grant_sandbox_tags(grant));\n',
+     '',
+     'axon-os', '--test sandbox_console', 'a_job_module_level_let_cannot_use_time'),
+]
+
 if __name__ == "__main__":
     main()

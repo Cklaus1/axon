@@ -71,6 +71,31 @@ fn run(tag: &str, src: &str, g: &Grant) -> Verdict {
     out.verdict
 }
 
+/// [`run`], plus whether the job left `out/leak.txt` behind.
+fn run_leak(tag: &str, src: &str, g: &Grant) -> (Verdict, bool) {
+    let dir = std::env::temp_dir().join(format!("axon-os-console-{}-{tag}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("out")).unwrap();
+    std::fs::create_dir_all(dir.join("data")).unwrap();
+    let path = dir.join("j.ax");
+    std::fs::write(&path, src).unwrap();
+    let rt = AxonCoreRuntime::with_bin_and_timeout(axon_bin(), std::time::Duration::from_secs(60));
+    let out = rt.run_sandboxed(
+        &ProgramSource {
+            path: &path,
+            text: src,
+        },
+        &PrincipalHandle(0),
+        g,
+        &g.budget,
+        1,
+        None,
+    );
+    let leaked = dir.join("out/leak.txt").exists();
+    let _ = std::fs::remove_dir_all(&dir);
+    (out.verdict, leaked)
+}
+
 fn is_sandbox_denial(v: &Verdict) -> bool {
     matches!(v, Verdict::Denied { axis, .. } if axis == "sandbox")
 }
@@ -149,4 +174,27 @@ fn console_access_opens_no_filesystem_or_process() {
             "ATTACK: the always-on IO tag opened the filesystem or exec ({tag}): {v:?}"
         );
     }
+}
+
+// ---- B3-7: a module-level `let` initialiser runs inside the grant ----------
+
+#[test]
+fn a_job_module_level_let_cannot_read_outside_the_grant() {
+    let src = "fn early() -> i64 {\n    let s = match read_file(\"/etc/passwd\") {\n        Ok(s) => \"LEAK \" + s,\n        Err(e) => \"refused \" + e,\n    }\n    match write_file(\"./out/leak.txt\", s) {\n        Ok(_) => 0,\n        Err(e) => 1,\n    }\n}\nlet X = early()\nfn main() -> i64 {\n    0\n}\n";
+    let (v, leaked) = run_leak("b3-modlet", src, &grant(&["./data/"], &["./out/"]));
+    assert!(
+        is_sandbox_denial(&v) && !leaked,
+        "ATTACK: a module-level let read outside the grant (leaked: {leaked}): {v:?}"
+    );
+}
+
+#[test]
+fn a_job_module_level_let_cannot_use_time() {
+    // `Time` is never in a job's tags (`wrap_in_sandbox`).
+    let src = "let T = now_ms()\nfn main() -> i64 {\n    println(\"ml t ok\")\n    0\n}\n";
+    let v = run("b3-modlet-time", src, &grant(&["./data/"], &["./out/"]));
+    assert!(
+        is_sandbox_denial(&v),
+        "ATTACK: a module-level let used an effect the grant withholds: {v:?}"
+    );
 }

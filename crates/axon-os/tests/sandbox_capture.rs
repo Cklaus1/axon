@@ -653,3 +653,37 @@ fn a_completed_job_whose_stderr_names_a_violation_is_completed() {
         "ATTACK: a completed job was sealed as a denial by its stderr"
     );
 }
+
+// ---- B3-7: a module-level `let` initialiser runs inside the grant ----------
+
+/// The wrapper opens the grant's sandbox in `main`, but every module-level
+/// `let` is evaluated before `main`. The grant is also the interpreter's
+/// ambient scope, so an initialiser reading outside `fs_read` is a sandbox
+/// fault, not output.
+#[test]
+fn a_module_level_let_runs_inside_the_grant() {
+    let r = capture(
+        "b3-modlet",
+        "fn early() -> str {\n    match read_file(\"/etc/passwd\") {\n        Ok(s) => \"LEAK \" + s,\n        Err(e) => \"refused \" + e,\n    }\n}\nlet X = early()\nfn main() -> i64 {\n    println(X)\n    0\n}\n",
+        Duration::from_secs(60),
+    );
+    assert!(
+        is_sandbox_fault(&r.outcome) && !r.stdout.contains("LEAK"),
+        "ATTACK: a module-level let read outside the grant: {r:?}"
+    );
+}
+
+/// Control: an initialiser inside the grant still runs.
+#[test]
+fn an_in_grant_module_level_let_still_runs() {
+    let r = capture(
+        "b3-modlet-ok",
+        "fn early() -> str {\n    match read_file(\"./data/in.txt\") {\n        Ok(s) => s,\n        Err(e) => \"refused \" + e,\n    }\n}\nlet X = early()\nfn main() -> i64 {\n    println(X)\n    0\n}\n",
+        Duration::from_secs(60),
+    );
+    assert_eq!(
+        (r.outcome.clone(), r.stdout.as_str()),
+        (SandboxOutcome::Exited { code: 0 }, "abc\n"),
+        "{r:?}"
+    );
+}

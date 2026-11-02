@@ -4137,3 +4137,9 @@ ATTACK_MARKERS.update({
     'M4766': r'ATTACK: i386 syscall \d+ got through the arch check',
     'M4767': r'ATTACK: fs none left the write path scope open',
 })
+
+# genviab-b3 B3-7 runtime (ids M4776-M4777, b3 block M4770-M4789)
+ATTACK_MARKERS.update({
+    'M4776': r'ATTACK: a module-level let read outside the grant',
+    'M4777': r'ATTACK: a module-level let used an effect the grant withholds',
+})
