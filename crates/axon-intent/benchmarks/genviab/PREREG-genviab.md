@@ -109,7 +109,8 @@ eligible non-tempting tasks, the run does not start; the human writes replacemen
 `reference_author`, `examples.visible` ≥ 1, `examples.hidden` ≥ 1, `tempting` for tempting tasks),
 `reference.ax`. Unlike the dev atlas tasks, every once task has at least one visible example.
 
-**Eligibility = the mechanical checks** of `build.py` (schema, once, intent-text, hidden, human-value,
+**Eligibility = the mechanical checks** of `build.py` (schema, once, intent-text, hidden (no fs_read: a hidden
+example has more runs than every visible one, and a run past them expects something no visible run expects), human-value,
 path-lint, v1-scope, tempting, reference, empty-fails, unique), run before any model call. A failing task
 is excluded and logged under `mechanical.once` in `rejected-ideas.json`. v1 excludes tasks needing
 `ai_*`/`http_*` (F10).

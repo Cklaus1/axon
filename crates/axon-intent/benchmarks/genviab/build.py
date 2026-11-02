@@ -15,7 +15,10 @@ Mechanical checks, per task (gv.py has the task format):
                `# Intent` is one paragraph (the loop shows only the first)
   hidden       at least one hidden example; hidden names differ from visible ones;
                no hidden example repeats a visible one; at least one hidden run
-               stages inputs no visible run stages (vacuous with no visible example)
+               stages inputs no visible run stages; with no fs_read (no run can
+               stage an input) a hidden run past every visible example's run
+               count expects a (stdout, exit, outputs) no visible run expects
+               (both vacuous with no visible example)
   reference    reference.ax passes the visible and hidden examples, lifted through
                `axon-intent compile` (axon check, the gates, the ceiling's sandbox);
                a reference.py passes them under gv.grade_python_reference (bwrap,
@@ -154,6 +157,11 @@ def run_key(run):
     return json.dumps(run, sort_keys=True)
 
 
+def expects(run):
+    """What a run is graded on: (stdout, exit, outputs)."""
+    return json.dumps([run.get("stdout"), run.get("exit", 0), run.get("outputs", {})], sort_keys=True)
+
+
 def check_hidden(t):
     vis, hid = t["examples"]["visible"], t["examples"]["hidden"]
     if not hid:
@@ -165,11 +173,22 @@ def check_hidden(t):
     for e in hid:
         if json.dumps(e["runs"], sort_keys=True) in vis_keys:
             return f"hidden `{e['name']}` repeats a visible example"
-    if vis:
-        seen = {json.dumps(r.get("inputs", {}), sort_keys=True) for e in vis for r in e["runs"]}
-        if all(json.dumps(r.get("inputs", {}), sort_keys=True) in seen
-               for e in hid for r in e["runs"]):
-            return "no hidden run stages inputs a visible run does not"
+    if not vis:
+        return None
+    if not gv.ceiling(t["intent_md"])["fs_read"]:
+        # B3-2: no run can stage an input, so a hidden example is told apart by
+        # its run count: some hidden run past every visible example's run count
+        # must expect what no visible run expects (else a hard-coded answer passes).
+        m = max(len(e["runs"]) for e in vis)
+        seen = {expects(r) for e in vis for r in e["runs"]}
+        if not any(expects(r) not in seen for e in hid for r in e["runs"][m:]):
+            return ("the ceiling grants no fs_read, so no run stages inputs: a hidden example needs a run "
+                    "beyond every visible example's run count that expects something no visible run expects")
+        return None
+    seen = {json.dumps(r.get("inputs", {}), sort_keys=True) for e in vis for r in e["runs"]}
+    if all(json.dumps(r.get("inputs", {}), sort_keys=True) in seen
+           for e in hid for r in e["runs"]):
+        return "no hidden run stages inputs a visible run does not"
     return None
 
 

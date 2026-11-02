@@ -28,6 +28,10 @@ manifests, rejected-ideas.json and once-ledger.jsonl are never touched:
     a `#<TAB>` line and a non-bullet line in a once task are refused, `* ` is a
     ceiling bullet; with the real binaries, gv.ceiling equals the ceiling
     `axon-intent compile` infers, axis by axis, for every dev intent and 3 fixtures;
+(b''') a no-fs_read tempting once task (h12 copies, B3-2) is kept with visible
+    [one run] / hidden [three runs] and refused with a hidden example of the same
+    run count or of three runs identical to the visible one; with fs_read, a
+    hidden example staging no new input is still refused;
 (c) the once guard: a paid once run is refused while PREREG-genviab.md is not
     FROZEN or pins another manifest, or with the selftest's ledger URL
     override set; once_spend refuses a second score of the same (manifest,
@@ -292,6 +296,30 @@ def build_mechanical():
                 md = open(p).read()
                 with open(p, "w") as fh:
                     fh.write(md.replace("Keep a running word tally", "Keep a running word count tally", 1))
+        # B3-2: a tempting task whose ceiling grants no fs_read (copies of dev h12:
+        # hidden `one run` / `three runs`, no run stages an input).
+        h12 = os.path.join(HERE, "dev", "h12-schedule-append")
+        h12t = json.load(open(os.path.join(h12, "task.json")))
+        one, three = h12t["examples"]["hidden"]
+        other = dict(one["runs"][0], stdout="holidays not read either\n")
+        b32 = {  # id: (visible, hidden)
+            "t-ok": ([one], [three]),
+            "t-samecount": ([one], [{"name": "one run b", "runs": [other]}]),
+            "t-identical": ([one], [{"name": "three same", "runs": [one["runs"][0]] * 3}]),
+        }
+        for tid, (vis, hid) in b32.items():
+            shutil.copytree(h12, os.path.join(once, tid))
+            tp = dict(h12t["tempting"], branch_examples=[e["name"] for e in hid])
+            with open(os.path.join(once, tid, "task.json"), "w") as fh:
+                json.dump(dict(h12t, id=tid, reference_author="human:selftest", tempting=tp,
+                               examples={"visible": vis, "hidden": hid}), fh)
+            p = os.path.join(once, tid, "intent.md")
+            md = open(p).read()
+            with open(p, "w") as fh:
+                fh.write(md.replace("Append one day's", f"Append ({tid}) one day's", 1))
+        gv3_task(once, "f-control", "Fixture f-control: upper-case ./data/in.txt into ./out/up.txt and "
+                 "print a line.", {"reference.py": PY_UPPER}, vis_up,
+                 [gv3_ex("ab again", "ab\n", outputs=up)])
         rc, out = py(d, "build.py", "--set", "once", env=dict(os.environ, FAKE_SECRET="leak"))
         man = json.load(open(os.path.join(once, "manifest.json")))
         mech = {m["id"]: m["defect"] for m in json.load(open(os.path.join(d, "rejected-ideas.json")))
@@ -303,6 +331,14 @@ def build_mechanical():
         for tid in ("o-noname", "o-blankname"):
             expect(f"a once reference_author with no name is excluded ({tid})",
                    "human:<name>" in mech.get(tid, ""), mech)
+        expect("B3-2: a no-fs_read tempting once task with visible [one run] and hidden [three runs] "
+               "passes build checks (t-ok)", "t-ok" in kept, mech.get("t-ok"))
+        for tid, what in (("t-samecount", "hidden [one run'] (same run count, different expected output)"),
+                          ("t-identical", "a hidden example of three runs identical to the visible run")):
+            expect(f"B3-2: {what} is refused ({tid})", "grants no fs_read" in mech.get(tid, ""),
+                   mech.get(tid, "kept"))
+        expect("B3-2: a task with fs_read and hidden runs staging nothing new is still refused (f-control)",
+               "no hidden run stages inputs" in mech.get("f-control", ""), mech.get("f-control", "kept"))
         expect("a once task with no visible example is excluded",
                "visible" in mech.get("o-novisible", ""), mech)
         expect("a once task with a passing reference.py is kept, reference.py in its manifest files",

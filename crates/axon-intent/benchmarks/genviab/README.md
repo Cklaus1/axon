@@ -36,7 +36,10 @@ by hand by a human after `PREREG-genviab.md` freezes; `build.py` rejects a once 
 `## Allowed` is read as `axon-intent` reads it (`gv.section`/`gv.ceiling` mirror `intent.rs`: `- ` and `* `
 bullets, the section ends only at a `# `/`## ` line outside a fence), and an `## Allowed` line that is not a
 `- `/`* ` `key: value` bullet refuses the task, so `build.py`'s relative-prefix and `exec: none` rules see
-every line the lift grants (B3-4). A once
+every line the lift grants (B3-4). A hidden example must stage an input no visible run stages; when the
+ceiling grants no fs_read (no run can stage one, e.g. a tempting task forbidding fs_read), it must instead
+run past every visible example's run count and expect there a stdout/exit/output no visible run expects
+(B3-2), so the loop still gets a visible example and a hard-coded answer still fails. A once
 reference is `reference.ax` or `reference.py` (PREREG §4, option B; `reference.py` only in `once/`). A
 `reference.py` imports only `sys`, `os`, `os.path`, `json`, `csv`, `re`, `math`, `collections`, `itertools`,
 `functools`, `string` and is graded by `gv.grade_python_reference`: the runner arm c uses too (a raised
@@ -78,8 +81,9 @@ model and adopted by the operator 2026-11-01, so dev-only), and `h01`-`h12` (spe
   `human-value` check requires each to reproduce the source's human expected value. The once set's
   references are written by hand.
 - Before `h01`-`h12`, no dev task was `stateful` and `e01-score-average` was the only `errors` task. `h12`
-  has no visible example: its ceiling withholds fs_read, so no run can stage an input and `build.py`'s
-  `hidden` check would refuse any visible one.
+  has no visible example: its ceiling withholds fs_read, so no run can stage an input, and when it was
+  written `build.py`'s `hidden` check refused any visible one. Since B3-2 such a task may have a visible
+  example (see "The once set"); `h12` is frozen after paid calls and stays as written.
 - **Ceiling effect:** on the current card and prompt Haiku 5.5 verifies 14/14 non-tempting `a`/`e`/`i`/`j`
   dev tasks in arms a, b and c, and every `h01`-`h12` task in all 3 replicates of arms a and c (GV-4: no
   headroom found).
