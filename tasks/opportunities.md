@@ -3337,3 +3337,10 @@ directory is the staging dir, not the program's. `job_module_dir_sets` (`:749-77
 ### O-LF-04 - [low] No module-not-found line for a missing `mod` under `AXON_PATH_EXCLUSIVE=1`
 `mod mathutil` + `use mathutil.{square}` with an empty search list gives only E0001 "cannot find name `square`" (rc 2). Without
 EXCLUSIVE the same file gives E0901 at the `mod` line.
+
+### O-AF-09 - [medium] A live AI reply that fails to parse is billed by the provider but not recorded or charged
+`axon_ai::complete_typed_i64` (`crates/axon-ai/src/lib.rs:1025-1030`) gets `(value, tokens)` and then returns `Err` when the value is
+not T, so the token count is dropped. The interpreter's live extract arm (`interp/builtins.rs:739`) then skips `ai_call_record` and
+the cost, which leaves `ai_cost_spent()` and budget ceilings low. The f64 and bool paths have the same shape, and so does `ai_complete`
+(`:6355`, older than this batch). This only affects `--features asi-runtime`, which no gate stage builds [INFERENCE: not run]. Fix
+direction: return the tokens with the parse error and record the call before returning `Err`. Found by ImplAuditASI.
