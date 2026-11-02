@@ -14532,5 +14532,23 @@ MUTATIONS += [
      'axon-ai', '--lib', 'tests::structured_response_returns_the_usage_total'),
 ]
 
+# checker-soundness-4 CS4-2 (fmt half): `axon fmt` keeps brace escapes and
+# escapes slot text (tasks/checker-soundness-4-spec.md §4; ids M4709-M4711)
+_CS42F = 'crates/axon-core/src/fmt.rs'
+MUTATIONS += [
+    ('M4709', 'CS4-2: fmt writes a literal `{` of an interpolated string single, so it reads back as a slot', _CS42F,
+     "                                    '{' => self.write(\"{{\"),\n",
+     "                                    '{' => self.write(\"{\"),\n",
+     'axon-core', '--no-default-features --lib', 'fmt::tests::fmt_keeps_brace_escapes'),
+    ('M4710', 'CS4-2: fmt doubles the braces of a pattern string, which gets no brace processing', _CS42F,
+     "                        '{' if !pattern => self.write(\"{{\"),\n",
+     "                        '{' => self.write(\"{{\"),\n",
+     'axon-core', '--no-default-features --lib', 'fmt::tests::fmt_brace_pattern_stays_single'),
+    ('M4711', 'CS4-2: fmt writes slot text bare, so a string literal in a slot ends the outer string', _CS42F,
+     '                            for ch in slot.chars() {\n',
+     '                            self.buf.push_str(&slot);\n                            for ch in "".chars() {\n',
+     'axon-core', '--no-default-features --lib', 'fmt::tests::fmt_slot_string_round_trips'),
+]
+
 if __name__ == "__main__":
     main()

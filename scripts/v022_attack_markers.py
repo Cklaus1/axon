@@ -4010,3 +4010,10 @@ ATTACK_MARKERS.update({
     'M4621': r'ATTACK: extract cost uncounted',
     'M4622': r'ATTACK: live extract tokens stored as 0',
 })
+
+# checker-soundness-4 CS4-2 (fmt half) (ids M4709-M4711)
+ATTACK_MARKERS.update({
+    'M4709': r'ATTACK: fmt turned a literal brace into a slot',
+    'M4710': r'ATTACK: fmt changed a brace pattern',
+    'M4711': r'ATTACK: fmt wrote a slot that does not re-parse',
+})
