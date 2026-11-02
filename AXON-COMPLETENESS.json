@@ -1059,6 +1059,48 @@
       "open": "Native refuses at BOTH build and run time. The run-time half closed the D-002 residual: a binary built with no ceiling and run under one used to print and exit 0; it now exits 2 naming the variable, while an unconstrained run is unaffected (control verified). Native still does not ENFORCE the ceiling \u2014 the safety boundary is equivalent, the capability is not. wasm and guest remain UNASSESSED. GUEST DEMOTED from `enforced` to blocked-by-open-defect, after an adversarial review and a trace of both guest backends. The `enforced` rested on 'the guest payload is `axon run`, which honours this'. That is true of the payload and false of any guest run, because no guest ever reaches the payload: DEFAULT backend \u2014 axon-guest-kernel does not load a program (enforce::run_program halts after one gate-exercising openat; verified in a live Firecracker VM this session). LINUX backend \u2014 axon-guest-init reads policy ONLY from MMDS over TCP and refuses to start without one, while axon-vm configures NO network interface (`network_interfaces: []`, main.rs ~2350), so MMDS config is rejected and guest-init exits 1 before exec unless AXON_GUEST_ALLOW_NO_POLICY is set. Separately, NOTHING delivers most of these variables into a guest at all: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route). A code-path that no guest run reaches is not a guest enforcement."
     },
     {
+      "name": "AXON_MAX_STEPS",
+      "category": "resource-budget",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "explicitly-refused",
+        "wasm": "explicitly-refused",
+        "guest": "blocked-by-open-defect"
+      },
+      "evidence": "crates/axon-core/tests/ceiling.rs",
+      "note": "ceilings CE-5: run-wide step ceiling (a step is one loop-body, fn-body or lambda-body entry, counted identically by tree and VM); the step past it stops the run with E1006, exit 9. A ceiling's `steps` narrows it. Tests: ceiling.rs step_ceiling_halts_while_true_e1006_exit9, step_ceiling_equal_across_engines, lambda_entry_is_one_step_on_both_engines; integration_fixtures.rs native_refuses_axon_max_steps (cfg codegen).",
+      "open": "MEASURED 2026-11-02 at b2/ce 9c828162, probe `while i < 100000 { i = i + 1 }` (loop.ax). INTERPRETER: `AXON_MAX_STEPS=10 axon run loop.ax` -> E1006, exit 9. NATIVE: `AXON_MAX_STEPS=10 axon build loop.ax` -> E0910, exit 2; a binary built with the var unset, run as `AXON_MAX_STEPS=10 ./loopnat` -> exit 2 naming the variable (axon-rt refusal list); unset it prints 100000, exit 0. Native does not ENFORCE the bound; it refuses to run under it. WASM: two artifacts, both measured, the weaker state recorded. (a) wasip1 interpreter bundle (axon-run.wasm, release) under wasmtime 49: `wasmtime run --dir . --env AXON_MAX_STEPS=10 axon-run.wasm loop.ax` -> E1006, exit 9 (enforced). (b) wasip1 AOT (`axon target build --engine codegen --target wasm32-wasip1 loop.ax`, linked against the wasip1 axon-rt): build under the var -> E0910, exit 2; `wasmtime run --invoke main --env AXON_MAX_STEPS=10 loop.linked.wasm` -> exit 2 naming the variable. The browser target (wasm32-unknown-unknown) has no process environment; not measured. GUEST: blocking defect — the one AXON_BUDGET_TOKENS records: no guest run reaches the `axon run` payload (axon-guest-kernel has no program loader; the linux backend's guest-init needs MMDS that axon-vm does not configure). Even past that, axon-guest-init exports only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH (crates/axon-guest-init/src/main.rs:34-35), so nothing delivers this variable to the guest (source audit, not run)."
+    },
+    {
+      "name": "AXON_WALL_MS",
+      "category": "resource-budget",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "explicitly-refused",
+        "wasm": "explicitly-refused",
+        "guest": "blocked-by-open-defect"
+      },
+      "evidence": "crates/axon-core/tests/ceiling.rs",
+      "note": "ceilings CE-5: run-wide wall-clock ceiling in milliseconds, read at the first step and every 4096th after; past it the run stops with E1006, exit 9. A ceiling's `wall_ms` narrows it. Tests: ceiling.rs wall_ceiling_halts_exit9, lambda_only_work_meets_wall_and_step_ceilings; integration_fixtures.rs native_refuses_axon_max_steps, which covers AXON_WALL_MS too (cfg codegen).",
+      "open": "MEASURED 2026-11-02 at b2/ce 9c828162, probes spin.ax (`while true { i = i + 1 }`) and loop.ax. INTERPRETER: `AXON_WALL_MS=50 axon run spin.ax` -> E1006 (axis wall_ms), exit 9. NATIVE: `AXON_WALL_MS=50 axon build loop.ax` -> E0910, exit 2; a binary built with it unset, run as `AXON_WALL_MS=50 ./loopnat` -> exit 2 naming the variable. Native does not ENFORCE the bound; it refuses to run under it. WASM: (a) wasip1 interpreter bundle under wasmtime 49: `wasmtime run --dir . --env AXON_WALL_MS=50 axon-run.wasm spin.ax` -> E1006, exit 9 (enforced; WASI clock). (b) wasip1 AOT: build under the var -> E0910, exit 2; `wasmtime run --invoke main --env AXON_WALL_MS=50 loop.linked.wasm` -> exit 2 naming the variable. Recorded as the weaker of the two. Browser target not measured (no process environment). GUEST: blocking defect — no guest run reaches the `axon run` payload (axon-guest-kernel has no program loader; see AXON_BUDGET_TOKENS), and axon-guest-init's export list (crates/axon-guest-init/src/main.rs:34-35) does not carry this variable (source audit, not run)."
+    },
+    {
+      "name": "AXON_CEILING",
+      "category": "resource-budget",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "explicitly-refused",
+        "wasm": "explicitly-refused",
+        "guest": "blocked-by-open-defect"
+      },
+      "evidence": "crates/axon-core/tests/ceiling.rs",
+      "note": "ceilings CE-2: path to an operator ceiling file (`axon-ceiling/1` JSON, same as `--ceiling`), every key required; each bound narrows its env counterpart, `ai_calls` has none; a bad file is E1007, exit 2, before any program code runs; its presence turns --require-contained on. Tests: ceiling.rs (ceiling_missing_key_is_e1007, ceiling_ai_calls_caps_the_run, ...); integration_fixtures.rs native_refuses_under_ceiling (cfg codegen).",
+      "open": "MEASURED 2026-11-02 at b2/ce 9c828162 with ceiling.json = every key null except `fs_write: []` and `steps: 10`, probe loop.ax. INTERPRETER: `AXON_CEILING=ceiling.json axon run loop.ax` -> E1006 at step 11, exit 9. NATIVE: `AXON_CEILING=ceiling.json axon build loop.ax` -> E0910, exit 2; a binary built with it unset, run as `AXON_CEILING=ceiling.json ./loopnat` -> exit 2 naming the variable. Native does not ENFORCE any bound in the file; it refuses to run under it. WASM: (a) wasip1 interpreter bundle under wasmtime 49: `wasmtime run --dir . --env AXON_CEILING=ceiling.json axon-run.wasm loop.ax` -> E1006, exit 9; `--env AXON_CEILING=nope.json` -> E1007, exit 2 (enforced). (b) wasip1 AOT: build under the var -> E0910, exit 2; `wasmtime run --invoke main --env AXON_CEILING=ceiling.json loop.linked.wasm` -> exit 2 naming the variable. Recorded as the weaker of the two. Browser target not measured (no process environment). GUEST: blocking defect — no guest run reaches the `axon run` payload (axon-guest-kernel has no program loader; see AXON_BUDGET_TOKENS), and axon-guest-init's export list (crates/axon-guest-init/src/main.rs:34-35) does not carry this variable, nor would the file be inside the guest (source audit, not run)."
+    },
+    {
       "name": "AXON_REPLAY",
       "category": "replay/record/audit",
       "status": "open",
