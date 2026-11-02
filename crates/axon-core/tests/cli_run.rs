@@ -44997,7 +44997,8 @@ fn let_tuple_error_points_at_the_let() {
     assert!(d.contains("\"line\":4,\"col\":9"), "{attack} [p22]: {d}");
     // The field lets carry the `let` span themselves: the unused-name warning
     // is raised on one (it had no location at all before).
-    let unused = "fn main() {\n    let z = 1\n    let (a, b) = (1, 2)\n    println(to_str(b + z))\n}\n";
+    let unused =
+        "fn main() {\n    let z = 1\n    let (a, b) = (1, 2)\n    println(to_str(b + z))\n}\n";
     let (crc, out) = lf_check("lf3_let_unused", unused);
     assert_eq!(crc, Some(0), "{attack} [unused]: {out}");
     let d = lf_diag_line(attack, &out, "W0006");
@@ -45058,4 +45059,207 @@ fn for_over_dict_names_dict_to_pairs() {
         !out.contains("arg 0 of `len`"),
         "{attack}: the desugaring's `len` was blamed: {out}"
     );
+}
+
+// lang-forms LF-2: `if let PAT = EXPR { A } else { B }` desugars to
+// `match EXPR { PAT => { A }, __iflet_N => { B } }`; `else if` / `else if let`
+// links chain through the catch-all arm.
+
+#[test]
+fn if_let_runs() {
+    let attack = "ATTACK: if let was refused at parse";
+    for (tag, src, out) in [
+        (
+            "lf2_i01",
+            "fn main() {\n    let o = Some(3)\n    if let Some(v) = o { println(to_str(v)) }\n}\n",
+            "3\n",
+        ),
+        (
+            "lf2_i02",
+            "fn get(o: Option<i64>) -> i64 { if let Some(v) = o { v } else { 0 } }\nfn main() {\n    println(to_str(get(Some(4))))\n    println(to_str(get(None)))\n}\n",
+            "4\n0\n",
+        ),
+        (
+            "lf2_i03",
+            "fn main() {\n    let o = Some(3)\n    if false { println(\"a\") } else if let Some(v) = o { println(to_str(v)) }\n}\n",
+            "3\n",
+        ),
+        (
+            "lf2_chain",
+            "fn pick(a: Option<i64>, r: Result<i64, str>, c: bool) -> str {\n    if let Some(v) = a {\n        \"some \" + to_str(v)\n    } else if let Ok(w) = r {\n        \"ok \" + to_str(w)\n    } else if c {\n        \"c\"\n    } else {\n        \"none\"\n    }\n}\nfn main() {\n    println(pick(Some(1), Ok(2), true))\n    println(pick(None, Ok(2), true))\n    println(pick(None, Err(\"e\"), true))\n    println(pick(None, Err(\"e\"), false))\n}\n",
+            "some 1\nok 2\nc\nnone\n",
+        ),
+        (
+            "lf2_value",
+            "fn main() {\n    let o: Option<str> = None\n    let n = if let Some(s) = o { len(s) } else { 0 - 1 }\n    println(to_str(n))\n}\n",
+            "-1\n",
+        ),
+    ] {
+        assert_eq!(lf_runs(attack, tag, src), out, "{attack} [{tag}]");
+    }
+}
+
+#[test]
+fn if_let_binding_is_scoped_to_the_then_block() {
+    let attack = "ATTACK: an if let binding leaked out of its block";
+    let src = "fn main() {\n    let o = Some(3)\n    if let Some(v) = o { println(\"in\") }\n    println(to_str(v))\n}\n";
+    let (crc, out) = lf_check("lf2_scope", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0001");
+    assert!(d.contains("cannot find name `v`"), "{attack}: {d}");
+}
+
+#[test]
+fn if_let_without_else_must_be_unit() {
+    let attack = "ATTACK: if let without else named a match arm";
+    let src =
+        "fn main() {\n    let o = Some(3)\n    if let Some(v) = o { v }\n    println(\"x\")\n}\n";
+    let (crc, out) = lf_check("lf2_unit", src);
+    assert_eq!(crc, Some(2), "{attack}: {out}");
+    let d = lf_diag_line(attack, &out, "E0102");
+    assert!(
+        d.contains("`if let` without `else`") && d.contains("\"line\":3"),
+        "{attack}: {d}"
+    );
+    assert!(!d.contains("match arm"), "{attack}: {d}");
+}
+
+#[test]
+fn irrefutable_if_let_warns() {
+    let attack = "ATTACK: an irrefutable if let named a match arm";
+    for (tag, src, out) in [
+        (
+            "lf2_irr_bind",
+            "fn main() {\n    if let x = 5 { println(to_str(x)) } else { println(\"no\") }\n}\n",
+            "5\n",
+        ),
+        (
+            "lf2_irr_tuple",
+            "fn main() {\n    let t = (1, 2)\n    if let (a, b) = t { println(to_str(a + b)) } else { println(\"no\") }\n}\n",
+            "3\n",
+        ),
+    ] {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+        assert_eq!(crc, Some(0), "{attack} [{tag}]: {cmsg}");
+        assert_eq!((rrc, rout.as_str()), (Some(0), out), "{attack} [{tag}]: {rerr}");
+        let d = lf_diag_line(attack, &cmsg, "W0004");
+        assert!(
+            d.contains("irrefutable `if let`: the pattern always matches"),
+            "{attack} [{tag}]: {d}"
+        );
+    }
+}
+
+#[test]
+fn if_let_value_and_statement_forms_match_their_match_twins() {
+    let attack = "ATTACK: an if let diverged from its match twin";
+    for (tag, sugar, twin) in [
+        (
+            "lf2_t_stmt",
+            "fn main() {\n    let s = Some(\"abc\")\n    if let Some(t) = s { println(t) }\n    if let Some(t) = s { println(t) } else { println(\"-\") }\n}\n",
+            "fn main() {\n    let s = Some(\"abc\")\n    match s { Some(t) => { println(t) }, _ => {} }\n    match s { Some(t) => { println(t) }, _ => { println(\"-\") } }\n}\n",
+        ),
+        (
+            "lf2_t_value",
+            "fn f(r: Result<i64, str>) -> i64 { if let Ok(n) = r { n * 2 } else { 0 - 1 } }\nfn main() {\n    println(to_str(f(Ok(21)) + f(Err(\"x\"))))\n}\n",
+            "fn f(r: Result<i64, str>) -> i64 { match r { Ok(n) => n * 2, _ => 0 - 1 } }\nfn main() {\n    println(to_str(f(Ok(21)) + f(Err(\"x\"))))\n}\n",
+        ),
+        (
+            "lf2_t_lit",
+            "fn main() {\n    let n = 4\n    if let 4 = n { println(\"four\") } else { println(\"other\") }\n}\n",
+            "fn main() {\n    let n = 4\n    match n { 4 => { println(\"four\") }, _ => { println(\"other\") } }\n}\n",
+        ),
+    ] {
+        let a = lf_runs(attack, tag, sugar);
+        let b = lf_runs(attack, &format!("{tag}_twin"), twin);
+        assert_eq!(a, b, "{attack} [{tag}]");
+        assert!(!a.is_empty(), "{attack} [{tag}]");
+    }
+}
+
+/// `else_if_chain`'s twin with `else if let {i} = n` links.
+fn else_if_let_chain(links: usize, pick: usize) -> String {
+    let mut src =
+        format!("fn main() -> i64 {{\n    let n = {pick}\n    let x = if let 0 = n {{ 0 }}");
+    for i in 1..=links {
+        src.push_str(&format!(" else if let {i} = n {{ {i} }}"));
+    }
+    src.push_str(" else { 7777 }\n    println(to_str(x))\n    0\n}\n");
+    src
+}
+
+#[test]
+fn else_if_let_chain_is_bounded() {
+    // Each `else if let` link goes through the same nesting charge as an
+    // `else if` link (AX-60/AX-67): a long chain runs, a too-long one is the
+    // nesting refusal on every front end, never a stack overflow.
+    let attack = "ATTACK: an else-if-let chain overflowed the stack";
+    let dir = std::env::temp_dir().join(format!("axon_elif_let_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = |name: &str, src: String| {
+        let f = dir.join(format!("{name}.ax"));
+        std::fs::write(&f, src).unwrap();
+        f
+    };
+    for (pick, want) in [(0, "0"), (1500, "1500"), (3000, "3000"), (99_999, "7777")] {
+        let f = file("ok", else_if_let_chain(3000, pick));
+        for runner in [
+            Command::new(env!("CARGO_BIN_EXE_axon"))
+                .arg("run")
+                .arg(&f)
+                .output()
+                .unwrap(),
+            Command::new(env!("CARGO_BIN_EXE_axon-run"))
+                .arg(&f)
+                .output()
+                .unwrap(),
+        ] {
+            assert_eq!(
+                runner.status.code(),
+                Some(0),
+                "{attack}: pick {pick}: {}",
+                String::from_utf8_lossy(&runner.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&runner.stdout),
+                format!("{want}\n"),
+                "{attack}: pick {pick}"
+            );
+        }
+    }
+    for links in [5_000, 30_000] {
+        let f = file("deep", else_if_let_chain(links, 0));
+        for (what, out) in [
+            (
+                "axon run",
+                axon().args(["run", f.to_str().unwrap()]).output().unwrap(),
+            ),
+            (
+                "axon check",
+                axon()
+                    .args(["check", f.to_str().unwrap()])
+                    .output()
+                    .unwrap(),
+            ),
+            (
+                "axon-run",
+                Command::new(env!("CARGO_BIN_EXE_axon-run"))
+                    .arg(&f)
+                    .output()
+                    .unwrap(),
+            ),
+        ] {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{attack}: {what}, {links} links: {stderr}"
+            );
+            assert!(
+                stderr.contains("expression nesting too deep (limit 4000)"),
+                "{attack}: {what}, {links} links: {stderr}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

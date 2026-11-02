@@ -573,6 +573,18 @@ impl Formatter {
         }
     }
 
+    /// ` else ` and the branch of an `if` / `if let`: another `if` or `if
+    /// let` continues the chain (`else if ...`, `else if let ...`); anything
+    /// else is a block.
+    fn emit_else(&mut self, e: &Expr) {
+        self.write(" else ");
+        match e {
+            Expr::If { .. } => self.emit_expr(e),
+            Expr::Match { arms, .. } if crate::ast::is_if_let_desugar(arms) => self.emit_expr(e),
+            _ => self.emit_block_body(e),
+        }
+    }
+
     // ── Expressions ───────────────────────────────────────────────────────────
 
     fn emit_expr(&mut self, expr: &Expr) {
@@ -721,11 +733,7 @@ impl Formatter {
                 self.write(" ");
                 self.emit_block_body(then);
                 if let Some(e) = else_ {
-                    self.write(" else ");
-                    match e.as_ref() {
-                        Expr::If { .. } => self.emit_expr(e),
-                        _ => self.emit_block_body(e),
-                    }
+                    self.emit_else(e);
                 }
             }
             Expr::While { cond, body } => {
@@ -748,6 +756,19 @@ impl Formatter {
                 self.emit_block_body(&Expr::Block(body.clone()));
             }
 
+            // LF-2: the parser's `if let` desugar prints back as `if let`.
+            Expr::Match { subject, arms } if crate::ast::is_if_let_desugar(arms) => {
+                self.write("if let ");
+                self.emit_pattern(&arms[0].pattern);
+                self.write(" = ");
+                self.emit_expr(subject);
+                self.write(" ");
+                self.emit_block_body(&arms[0].body);
+                // `if let P = e { A } else {}` is the no-else form.
+                if !matches!(&arms[1].body, Expr::Block(b) if b.is_empty()) {
+                    self.emit_else(&arms[1].body);
+                }
+            }
             Expr::Match { subject, arms } => {
                 self.write("match ");
                 self.emit_expr(subject);
@@ -1596,5 +1617,45 @@ mod tests {
             "{attack}: {out1}"
         );
         assert!(!out1.contains("__tup_"), "{attack}: {out1}");
+    }
+
+    #[test]
+    fn fmt_if_let_round_trips() {
+        // LF-2: the `if let` desugar (`match e { P => A, __iflet_N => B }`)
+        // prints back as `if let`, every chain shape included.
+        let attack = "ATTACK: fmt rewrote if let as match";
+        let src = "fn f(o: Option<i64>, r: Result<i64, str>, c: bool) -> i64 {\n    if let Some(v) = o { println(to_str(v)) }\n    let a = if let Some(v) = o { v } else { 0 }\n    if let Some(v) = o { println(\"s\") } else if let Ok(w) = r { println(\"o\") } else { println(\"n\") }\n    if let Some(v) = o { println(\"s\") } else if c { println(\"c\") }\n    if c { println(\"c\") } else if let Some(v) = o { println(\"s\") } else { println(\"n\") }\n    a\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        assert!(!out1.contains("__iflet_"), "{attack}: {out1}");
+        assert!(!out1.contains("match "), "{attack}: {out1}");
+        for want in [
+            "    if let Some(v) = o {\n        println(to_str(v))\n    }\n",
+            "    let a = if let Some(v) = o {\n",
+            "    } else {\n        0\n    }\n",
+        ] {
+            assert!(out1.contains(want), "{attack}: want {want:?} in {out1}");
+        }
+        let chain = "ATTACK: fmt broke an else-if-let chain";
+        for want in [
+            "} else if let Ok(w) = r {\n",
+            "    } else if c {\n",
+            "    if c {\n        println(\"c\")\n    } else if let Some(v) = o {\n",
+        ] {
+            assert!(out1.contains(want), "{chain}: want {want:?} in {out1}");
+        }
+        assert!(!out1.contains("else {\n        if"), "{chain}: {out1}");
+    }
+
+    #[test]
+    fn fmt_user_match_with_wildcard_is_not_resugared() {
+        // LF-2: only the parser's `__iflet_` catch-all is an `if let`; a
+        // two-arm `match` the user wrote stays a `match`.
+        let attack = "ATTACK: fmt rewrote a user match";
+        let src = "fn f(o: Option<i64>) -> i64 {\n    let a = match o {\n        Some(v) => v,\n        _ => 0,\n    }\n    let b = match o {\n        Some(v) => v,\n        other => 1,\n    }\n    a + b\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        assert!(!out1.contains("if let"), "{attack}: {out1}");
+        assert_eq!(out1.matches("match o {").count(), 2, "{attack}: {out1}");
     }
 }

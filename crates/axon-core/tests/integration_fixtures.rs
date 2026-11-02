@@ -3424,3 +3424,13 @@ fn for_tuple_pattern_matches_on_both_engines() {
         lf_same_on_both_engines(attack, tag, src, want);
     }
 }
+
+/// LF-2: `if let` desugars to a two-arm `match` with a binding catch-all,
+/// which both engines already lowered when written by hand (z01).
+#[cfg(feature = "codegen")]
+#[test]
+fn if_let_matches_on_both_engines() {
+    let attack = "ATTACK: if let diverged natively";
+    let src = "fn get(o: Option<i64>) -> i64 { if let Some(v) = o { v } else { 0 } }\nfn main() {\n    let o = Some(3)\n    if let Some(v) = o { println(to_str(v)) }\n    let s = Some(\"abc\")\n    let n = if let Some(t) = s { len(t) } else { 0 }\n    println(to_str(n))\n    if let None = s { println(\"none\") } else if let Some(t) = s { println(t) }\n    println(to_str(get(Some(4)) + get(None)))\n    let x = 5\n    let r = match x { y => y + 1 }\n    println(to_str(r))\n}\n";
+    lf_same_on_both_engines(attack, "lf2_z01", src, "3\n3\nabc\n4\n6\n");
+}

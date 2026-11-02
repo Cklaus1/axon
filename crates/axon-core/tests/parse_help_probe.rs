@@ -665,27 +665,18 @@ fn a_collection_where_a_str_is_expected_is_not_told_to_cast() {
     );
 }
 
-/// CS3-5 rows 2, 4-6, 10 and 11: forms Axon refuses on purpose. Each parse
+/// CS3-5 rows 4-6, 10 and 11: forms Axon refuses on purpose. Each parse
 /// error used to name a token (`unexpected token: LBrace, expected For`) and
 /// carry no help; each now names the Axon spelling. The sources are the
-/// O-GAP-08 probes (`g03`, `c14`, `52`, `71`, `q01`, `c03`, `g10b`, `g10e`,
-/// `g10d`, `g11b`), inlined. Rows 1 (`()`) and 3 (`for (a, b)`) are gone:
-/// lang-forms LF-1 and LF-3 made those forms valid, and their cases run in
-/// `cli_run`'s `unit_value_paren_is_the_empty_block` and `for_tuple_pattern_runs`.
+/// O-GAP-08 probes (`c14`, `52`, `71`, `q01`, `c03`, `g10b`, `g10e`,
+/// `g10d`, `g11b`), inlined. Rows 1 (`()`), 2 (`if let`) and 3 (`for (a, b)`)
+/// are gone: lang-forms LF-1, LF-2 and LF-3 made those forms valid, and their
+/// cases run in `cli_run`'s `unit_value_paren_is_the_empty_block`,
+/// `if_let_runs` and `for_tuple_pattern_runs`.
 #[test]
 fn refused_forms_point_at_the_axon_spelling() {
     let attack = "ATTACK: a refused form's parse error named no Axon spelling";
     for (tag, src, want) in [
-        (
-            "if_let",
-            "fn main() {\n    let o = Some(3)\n    if let Some(v) = o { println(to_str(v)) }\n}\n",
-            "Axon has no `if let`",
-        ),
-        (
-            "else_if_let",
-            "fn main() {\n    let o = Some(3)\n    if false { println(\"a\") } else if let Some(v) = o { println(to_str(v)) }\n}\n",
-            "Axon has no `if let`",
-        ),
         (
             "impl_inherent",
             "type V = { x: i64 }\nimpl V {\n    fn double(self: V) -> i64 { self.x * 2 }\n}\nfn main() { println(to_str(V { x: 2 }.double())) }\n",
@@ -745,7 +736,7 @@ fn refused_forms_point_at_the_axon_spelling() {
 }
 
 /// The advice the CS3-5 rows give is itself valid Axon: the empty-block unit
-/// value, `match` for `if let`, a `let (a, b) = p` in a `for` body, and an
+/// value, `match` and `if let`, a `let (a, b) = p` in a `for` body, and an
 /// escaped `"` in a normal string. A hint that does not compile is worse than
 /// none.
 #[test]
@@ -762,6 +753,10 @@ fn the_refused_form_advice_actually_compiles() {
         (
             "match for if let",
             "fn main() -> i64 {\n    let o = Some(3)\n    match o { Some(v) => println(to_str(v)), None => println(\"none\") }\n    0\n}\n",
+        ),
+        (
+            "if let",
+            "fn main() -> i64 {\n    let o = Some(3)\n    if let Some(v) = o { println(to_str(v)) } else { println(\"none\") }\n    0\n}\n",
         ),
         (
             "let tuple in for",

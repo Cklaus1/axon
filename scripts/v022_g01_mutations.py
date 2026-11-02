@@ -14298,5 +14298,47 @@ MUTATIONS += [
      'axon-core', '--test integration_fixtures', 'for_tuple_pattern_matches_on_both_engines'),
 ]
 
+# lang-forms LF-2 (ids M4644-M4651, M4673): `if let PAT = EXPR { A } else B` desugars to
+# `match EXPR { PAT => { A }, __iflet_N => B }`; infer types the no-else form like `if` without
+# `else`; the checker warns on an irrefutable PAT; fmt prints the desugar back as `if let`.
+MUTATIONS += [
+    ('M4644', 'LF-2: no `let` branch after `if`, so `if let` is a parse error again', 'crates/axon-core/src/parser.rs',
+     '        let head = if self.eat(&Token::Let) {',
+     '        let head = if false && self.eat(&Token::Let) {',
+     'axon-core', '--no-default-features --test cli_run', 'if_let_runs'),
+    ('M4645', 'LF-2: the catch-all arm drops the `else` branch, so `if let .. else ..` runs nothing on a miss', 'crates/axon-core/src/parser.rs',
+     '                        body: else_.map_or_else(|| Expr::Block(Vec::new()), |e| *e),',
+     '                        body: Expr::Block(Vec::new()),',
+     'axon-core', '--no-default-features --test cli_run', 'if_let_runs'),
+    ('M4646', 'LF-2: the catch-all arm is `_`, so fmt prints a user-visible `match` for an `if let`', 'crates/axon-core/src/parser.rs',
+     '                        pattern: Pattern::Ident(format!("{IF_LET_CATCH_ALL}{uid}")),',
+     '                        pattern: Pattern::Wildcard,',
+     'axon-core', '--no-default-features --lib', 'fmt::tests::fmt_if_let_round_trips'),
+    ('M4647', 'LF-2: an `else if` link is parsed without the nesting charge, so a long `else if let` chain overflows the stack', 'crates/axon-core/src/parser.rs',
+     '                self.nested(Self::parse_if)?',
+     '                self.parse_if()?',
+     'axon-core', '--no-default-features --test cli_run', 'else_if_let_chain_is_bounded'),
+    ('M4648', 'LF-2: `if let` without `else` is typed as a match, so a non-unit body is blamed on a match arm', 'crates/axon-core/src/infer.rs',
+     '                if crate::ast::is_if_let_desugar(arms)',
+     '                if false && crate::ast::is_if_let_desugar(arms)',
+     'axon-core', '--no-default-features --test cli_run', 'if_let_without_else_must_be_unit'),
+    ('M4649', 'LF-2: the irrefutable `if let` check sees only a bare binding/`_`, so `if let (a, b) = t` gets no warning', 'crates/axon-core/src/checker.rs',
+     '            || !self.pattern_irrefutable(&arms[0].pattern)',
+     '            || !matches!(&arms[0].pattern, Pattern::Wildcard | Pattern::Ident(_))',
+     'axon-core', '--no-default-features --test cli_run', 'irrefutable_if_let_warns'),
+    ('M4650', 'LF-2: any binding catch-all counts as an `if let`, so fmt rewrites a user `match .. other =>` into `if let`', 'crates/axon-core/src/ast.rs',
+     '            if n.starts_with(IF_LET_CATCH_ALL)',
+     '            if true || n.starts_with(IF_LET_CATCH_ALL)',
+     'axon-core', '--no-default-features --lib', 'fmt::tests::fmt_user_match_with_wildcard_is_not_resugared'),
+    ('M4651', 'LF-2: fmt prints an `else if let` link as `else { if let .. }`', 'crates/axon-core/src/fmt.rs',
+     '            Expr::Match { arms, .. } if crate::ast::is_if_let_desugar(arms) => self.emit_expr(e),',
+     '            Expr::Match { arms, .. } if false && crate::ast::is_if_let_desugar(arms) => self.emit_expr(e),',
+     'axon-core', '--no-default-features --lib', 'fmt::tests::fmt_if_let_round_trips'),
+    ('M4673', 'LF-2: no `let` branch after `if` (as M4644), seen through the gated native test', 'crates/axon-core/src/parser.rs',
+     '        let head = if self.eat(&Token::Let) {',
+     '        let head = if false && self.eat(&Token::Let) {',
+     'axon-core', '--test integration_fixtures', 'if_let_matches_on_both_engines'),
+]
+
 if __name__ == "__main__":
     main()

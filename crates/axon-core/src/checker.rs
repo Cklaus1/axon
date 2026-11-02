@@ -6614,7 +6614,10 @@ impl CheckCtx {
         // CONCLUSIVELY equal — skip bind/wildcard/deep-subpattern arms (a guard or
         // a sub-pattern difference can make a repeat reachable). The first
         // occurrence wins; warn on each subsequent duplicate.
-        {
+        // LF-2: an `if let` whose pattern always matches gets its own W0004
+        // (a tuple pattern included, which the generic loop does not see); its
+        // only other finding would be the same catch-all arm.
+        if !self.warn_irrefutable_if_let(arms, node_path) {
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut catch_all_seen = false;
             for arm in arms {
@@ -7104,6 +7107,30 @@ impl CheckCtx {
             Type::Enum(n) | Type::Struct(n) => self.enum_variants.get(n).map_or(1, Vec::len),
             _ => 1,
         })
+    }
+
+    /// LF-2: if `arms` is an `if let` desugar whose pattern is irrefutable
+    /// (`if let x = e`, `if let (a, b) = t`, ...), push the `if let` W0004 and
+    /// return true.
+    fn warn_irrefutable_if_let(&mut self, arms: &[MatchArm], node_path: &NodePath) -> bool {
+        if !crate::ast::is_if_let_desugar(arms)
+            || arms[0].guard.is_some()
+            || !self.pattern_irrefutable(&arms[0].pattern)
+        {
+            return false;
+        }
+        let file = self.file.clone();
+        self.errors.push(
+            CheckError::warning(
+                crate::error::W0004,
+                "irrefutable `if let`: the pattern always matches, so the `else` branch never runs"
+                    .to_string(),
+            )
+            .node(node_path)
+            .at(&file, 0, 0)
+            .fix("write `let PAT = EXPR` (a tuple pattern) or drop the `if let`".to_string()),
+        );
+        true
     }
 
     /// A pattern that matches every value of its type: a binding, `_`, a tuple

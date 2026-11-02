@@ -263,8 +263,15 @@ match_expr ::= 'match' comparison '{' { match_arm [ ',' ] } '}' ;
 match_arm  ::= pattern { '|' pattern } [ 'if' comparison ] '=>' expr ;   (* or-patterns *)
 
 (* ── 6.6  If / else expression ───────────────────────────────────────────── *)
+(*
+   `if let` is desugared by the parser: `if let P = e { A } else B` is
+   `match e { P => { A }, __iflet_N => B }` (B is `{}` without an `else`), so
+   P's names are in scope in A only, and without `else` A must be unit. `e` is
+   a logical expression (no `&&` let-chains); P is one pattern (no `|`).
+*)
 
-if_expr    ::= 'if' comparison block [ 'else' ( if_expr | block ) ] ;
+if_expr    ::= 'if' comparison block [ 'else' ( if_expr | block ) ]
+             | 'if' 'let' pattern '=' logical block [ 'else' ( if_expr | block ) ] ;
 
 (* ── 6.7  Concurrency forms ─────────────────────────────────────────────── *)
 

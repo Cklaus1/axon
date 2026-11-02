@@ -140,17 +140,7 @@ fn after_variant_paren(src: &str, offset: usize) -> bool {
 fn refused_form_help(msg: &str, src: &str, offset: usize) -> Option<&'static str> {
     let tline = token_line(src, offset);
     let tw = words(tline);
-    let before = text_before(src, offset);
 
-    // `if let Some(v) = o` / `else if let`.
-    if msg.contains("unexpected token: Let, expected expression")
-        && before.split_whitespace().last() == Some("if")
-    {
-        return Some(
-            "Axon has no `if let` — write `match o { Some(v) => …, None => … }` \
-             (`while let` exists)",
-        );
-    }
     // `impl T { … }`: the parser wanted `for` after the type name.
     if msg.contains("unexpected token: LBrace, expected For") && tw.first() == Some(&"impl") {
         return Some(

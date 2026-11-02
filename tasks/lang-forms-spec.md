@@ -357,6 +357,8 @@ Alternatives considered:
 LSP: hover/definition operate on the desugared AST; the builder checks that completions do not offer `__iflet_*` names
 [INFERENCE: whether lsp.rs filters `__` locals today was not confirmed - `grep '__' lsp.rs` finds no filter; if completions list
 match-arm bindings, add `!name.starts_with("__")` at the completion source]. AX-10 JSON: a `Match`; no schema change.
+`[REVISED: build lf/ab]` Checked: `lsp.rs` `compute_completions` lists only `ctx.fn_sigs` keys (function names), never locals or
+match-arm bindings, so no `__iflet_*` name can be offered; no change.
 
 **`axon fmt` (decided).** Add `as_desugared_if_let(arms)` next to `as_desugared_foreach` (`fmt.rs:1097`): a `Match` with exactly two
 arms, the second unguarded with `Pattern::Ident(n)` and `n.starts_with("__iflet_")`. Print `if let PAT = SUBJ { A }`; if the second
@@ -366,6 +368,9 @@ otherwise unchanged. `[REVISED: LFA#9]` The plain-`if` side of a mixed chain nee
 prints `else` + `emit_expr(e)` only for `Expr::If` and sends anything else through `emit_block_body`, so `if c { .. } else if let
 .. { .. }` would print as `else { if let .. }`. The match at `:700-703` gains a second chain case: an `Expr::Match` for which
 `as_desugared_if_let` returns `Some` is printed with `emit_expr` like `Expr::If`.
+`[REVISED: build lf/ab]` The recognizer is one shared fn, `ast::is_if_let_desugar(arms)` (next to `MatchArm`), used by fmt, the
+infer special case and the checker pre-check, so the three agree on what an `if let` is; fmt's `If` and `if let` arms share one
+`emit_else` that continues a chain for an `If` or an `if let`. Reason: one definition instead of three copies of the same shape test.
 
 **Fail-first tests** (`cli_run.rs` block `// lang-forms LF-2`):
 - `if_let_runs`: i01 prints `3`; i02 (`fn get(o: Option<i64>) -> i64 { if let Some(v) = o { v } else { 0 } }`) prints `4\n0` for
@@ -724,7 +729,7 @@ feature on), as existing rows do (`v022_g01_mutations.py:11904`, `:12242`, `:127
 | M4647 | LF-2 | `else if` link goes through `self.nested` (mutant: direct call) | parser.rs | `else_if_let_chain_is_bounded` (`[REVISED: LFD#5]`, cli_run, `--no-default-features`) | `ATTACK: an else-if-let chain overflowed the stack` |
 | M4648 | LF-2 | infer's `if let` without `else` wording (mutant: match-arm wording) | infer.rs | `if_let_without_else_must_be_unit` | `ATTACK: if let without else named a match arm` |
 | M4649 | LF-2 | W0004 `if let` pre-check uses `pattern_irrefutable` (`[REVISED: LFA#8]` mutant: `matches!(.., Wildcard \| Ident(_))` only) | checker.rs | `irrefutable_if_let_warns` (tuple case) | `ATTACK: an irrefutable if let named a match arm` |
-| M4650 | LF-2 | fmt recognizer requires the `__iflet_` prefix (mutant: any binding catch-all) | fmt.rs | `fmt::tests::fmt_user_match_with_wildcard_is_not_resugared` | `ATTACK: fmt rewrote a user match` |
+| M4650 | LF-2 | fmt recognizer requires the `__iflet_` prefix (mutant: any binding catch-all) `[REVISED: build lf/ab]` the prefix test lives in the shared `ast::is_if_let_desugar`, so the row mutates ast.rs | fmt.rs | `fmt::tests::fmt_user_match_with_wildcard_is_not_resugared` | `ATTACK: fmt rewrote a user match` |
 | M4651 | LF-2 | fmt prints `else` chains (mutant: `else { .. }` always) | fmt.rs | `fmt::tests::fmt_if_let_round_trips` | `ATTACK: fmt broke an else-if-let chain` |
 | M4652 | LF-3 | `at(LParen)` branch in `parse_for` | parser.rs | `for_tuple_pattern_runs` | `ATTACK: for (a, b) in was refused at parse` |
 | M4653 | LF-3 | field-access lets (mutant: `match` tuple pattern body) | parser.rs | `for_tuple_pattern_is_typed` | `ATTACK: a for-tuple binding was untyped` |

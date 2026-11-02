@@ -2380,6 +2380,18 @@ impl InferCtx {
                 self.cond_depth += 1;
                 let first_ty =
                     self.infer_match_arm_with_subj(&arms[0], scope, ret_ty, Some(&subj_ty));
+                // LF-2: an `if let` without `else` (its catch-all body the
+                // empty block) is typed like `if` without `else`: the
+                // then-body must be unit, and the error names the `if let`,
+                // not a match arm the user never wrote.
+                if crate::ast::is_if_let_desugar(arms)
+                    && matches!(&arms[1].body, Expr::Block(b) if b.is_empty())
+                {
+                    self.infer_match_arm_with_subj(&arms[1], scope, ret_ty, Some(&subj_ty));
+                    self.constrain(first_ty, Type::Unit, "`if let` without `else`");
+                    self.cond_depth -= 1;
+                    return Type::Unit;
+                }
                 for arm in &arms[1..] {
                     let arm_ty = self.infer_match_arm_with_subj(arm, scope, ret_ty, Some(&subj_ty));
                     self.constrain(arm_ty, first_ty.clone(), "match arm type");

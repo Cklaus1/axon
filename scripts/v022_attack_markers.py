@@ -3935,3 +3935,16 @@ ATTACK_MARKERS.update({
     'M4664': r'ATTACK: for over a dict blamed len',
     'M4674': r'ATTACK: for \(a, b\) diverged natively',
 })
+
+# lang-forms LF-2 (ids M4644-M4651, M4673)
+ATTACK_MARKERS.update({
+    'M4644': r'ATTACK: if let was refused at parse',
+    'M4645': r'ATTACK: if let was refused at parse',
+    'M4646': r'ATTACK: fmt rewrote if let as match',
+    'M4647': r'ATTACK: an else-if-let chain overflowed the stack',
+    'M4648': r'ATTACK: if let without else named a match arm',
+    'M4649': r'ATTACK: an irrefutable if let named a match arm',
+    'M4650': r'ATTACK: fmt rewrote a user match',
+    'M4651': r'ATTACK: fmt broke an else-if-let chain',
+    'M4673': r'ATTACK: if let diverged natively',
+})

@@ -114,6 +114,30 @@ fn sign(n: i64) -> str {
 
 `if` is an expression — it returns a value.
 
+### if let
+
+```axon
+fn or_zero(o: Option<i64>) -> i64 {
+    if let Some(v) = o { v } else { 0 }
+}
+
+fn describe(o: Option<i64>, r: Result<i64, str>) -> str {
+    if let Some(v) = o {
+        "some {to_str(v)}"
+    } else if let Ok(w) = r {
+        "ok {to_str(w)}"
+    } else {
+        "neither"
+    }
+}
+```
+
+`if let PAT = EXPR { A } else { B }` is a two-arm `match`: `PAT`'s names are in
+scope in `A` only. Without `else` the body must be unit, as for `if`. There are
+no `&&` chains (`if let Some(x) = o && c`) and no `|` patterns; use `match` for
+those. A pattern that always matches (`if let x = e`, `if let (a, b) = t`) is
+warned (W0004): write `let`.
+
 ### while
 
 ```axon

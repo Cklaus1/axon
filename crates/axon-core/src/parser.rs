@@ -2637,8 +2637,24 @@ impl Parser {
     }
 
     fn parse_if(&mut self) -> Result<Expr> {
+        let uid = self.pos; // unique per `if` in this parse (the `if let` catch-all name)
         self.expect(&Token::If)?;
-        let cond = self.parse_logical()?;
+        // LF-2: `if let PAT = EXPR { A } else B` desugars to
+        // `match EXPR { PAT => { A }, __iflet_N => B }` (B is `{}` without an
+        // `else`). The catch-all binds a name, not `_`, so fmt can tell an
+        // `if let` from a user's `match ... _ =>`; the leading `_` keeps
+        // W0006 quiet. EXPR is `parse_logical`, as for `while let`.
+        enum Head {
+            Cond(Expr),
+            Let(Pattern, Expr),
+        }
+        let head = if self.eat(&Token::Let) {
+            let pattern = self.parse_pattern()?;
+            self.expect(&Token::Eq)?;
+            Head::Let(pattern, self.parse_logical()?)
+        } else {
+            Head::Cond(self.parse_logical()?)
+        };
         let then = self.parse_block()?;
         let else_ = if self.eat(&Token::Else) {
             Some(Box::new(if self.at(&Token::If) {
@@ -2654,10 +2670,27 @@ impl Parser {
         } else {
             None
         };
-        Ok(Expr::If {
-            cond: Box::new(cond),
-            then: Box::new(then),
-            else_,
+        Ok(match head {
+            Head::Cond(cond) => Expr::If {
+                cond: Box::new(cond),
+                then: Box::new(then),
+                else_,
+            },
+            Head::Let(pattern, subject) => Expr::Match {
+                subject: Box::new(subject),
+                arms: vec![
+                    MatchArm {
+                        pattern,
+                        guard: None,
+                        body: then,
+                    },
+                    MatchArm {
+                        pattern: Pattern::Ident(format!("{IF_LET_CATCH_ALL}{uid}")),
+                        guard: None,
+                        body: else_.map_or_else(|| Expr::Block(Vec::new()), |e| *e),
+                    },
+                ],
+            },
         })
     }
 
