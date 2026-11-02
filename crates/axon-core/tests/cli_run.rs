@@ -46258,6 +46258,160 @@ fn else_if_let_chain_is_bounded() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// ── asi-fixes AF-3: a bare variant name in a pattern binds, it does not compare (E0409) ──
+
+/// `axon check` on `src`: (exit code, stderr).
+fn af3_check(name: &str, src: &str) -> (Option<i32>, String) {
+    let f = tmp_ax(&format!("af3_{name}"), src);
+    let out = axon()
+        .arg("check")
+        .arg(&f)
+        .output()
+        .expect("spawn axon check");
+    let _ = std::fs::remove_file(&f);
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// Every shape that today binds a catch-all and answers wrong on both engines
+/// (bv/ probes v1, v5-v11), plus the last-arm form (ruling 7) that answers
+/// right today: each is E0409 with the qualified `E::V` help.
+#[test]
+fn bare_variant_in_pattern_is_e0409() {
+    const C: &str = "enum C { Red, Green, Blue }\n";
+    const S: &str = "type S = A { v: i64 } | B { w: i64 }\n";
+    let catch_all = "ATTACK: bare variant name bound as catch-all";
+    let cases: [(&str, String, &str, &str); 9] = [
+        ("v1", format!("{C}fn score(c: C) -> i64 {{\n    match c {{ Green => 2, Red => 1, Blue => 3 }}\n}}\nfn main() {{ println(to_str(score(C::Red))) }}\n"),
+         "write `C::Green`", catch_all),
+        ("v5", format!("{C}fn score(o: Option<C>) -> i64 {{\n    match o {{ Some(Green) => 2, Some(Red) => 1, Some(Blue) => 3, None => 0 }}\n}}\nfn main() {{ println(to_str(score(Some(C::Red)))) }}\n"),
+         "write `C::Green`", "ATTACK: Some(Green) bound instead of compared"),
+        ("v6", format!("{C}fn score(c: C, k: i64) -> i64 {{\n    match c {{ Green if k > 0 => 2, C::Red => 1, _ => 3 }}\n}}\nfn main() {{ println(to_str(score(C::Red, 1))) }}\n"),
+         "write `C::Green`", catch_all),
+        ("v7", format!("{S}fn f(s: S) -> i64 {{\n    match s {{ B => 2, S::A {{ v }} => v }}\n}}\nfn main() {{ println(to_str(f(S::A {{ v: 7 }}))) }}\n"),
+         "write `S::B { w }`", catch_all),
+        ("v8", "enum C { Red, Green }\nfn f(c: C) -> i64 {\n    match c { Red => 1 }\n}\nfn main() { println(to_str(f(C::Green))) }\n".to_string(),
+         "write `C::Red`", catch_all),
+        ("v9", format!("{C}fn score(p: (C, i64)) -> i64 {{\n    match p {{ (Green, n) => n + 2, (Red, n) => n + 1, _ => 0 }}\n}}\nfn main() {{ println(to_str(score((C::Red, 10)))) }}\n"),
+         "write `C::Green`", "ATTACK: (Green, n) bound instead of compared"),
+        ("v10", format!("{C}fn main() {{\n    let mut xs = [Some(C::Red), None]\n    let mut i = 0\n    let mut hits = 0\n    while let Some(Green) = xs[i] {{\n        hits = hits + 1\n        i = i + 1\n    }}\n    println(to_str(hits))\n}}\n"),
+         "write `C::Green`", "ATTACK: Some(Green) bound instead of compared"),
+        ("v11", format!("{C}fn score(c: C) -> i64 {{\n    match c {{ Green => 2 }}\n}}\nfn main() {{ println(to_str(score(C::Red))) }}\n"),
+         "write `C::Green`", catch_all),
+        ("last", format!("{C}fn score(c: C) -> i64 {{\n    match c {{ C::Red => 1, C::Green => 2, Blue => 3 }}\n}}\nfn main() {{ println(to_str(score(C::Blue))) }}\n"),
+         "write `C::Blue`", catch_all),
+    ];
+    let mut fails = Vec::new();
+    for (name, src, help, attack) in &cases {
+        let (rc, err) = af3_check(name, src);
+        let e0409 = err
+            .lines()
+            .find(|l| l.contains("\"code\":\"E0409\"") && l.contains(help));
+        let line = if *name == "v10" { 6 } else { 3 };
+        let ok = rc == Some(2)
+            && e0409.is_some_and(|l| {
+                l.contains("does not compare against the variant")
+                    && l.contains(&format!("\"line\":{line},"))
+            });
+        if !ok {
+            fails.push(format!("{attack} [{name}]: rc={rc:?} {err}"));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// A bare name that is a variant of a DIFFERENT enum (v2), a binding against a
+/// non-enum subject (v4), a lowercase binding (v3) and a shorthand variant
+/// field named like a variant of the field's enum (AFA#6, sh.ax) all keep
+/// checking clean: they bind, and binding is what they mean (v4 prints 5).
+#[test]
+fn bare_name_of_other_enum_or_non_enum_subject_is_not_e0409() {
+    let attack = "ATTACK: legal binding refused";
+    let cases = [
+        ("v2", "enum C { Red, Green, Blue }\nenum D { Up, Down }\nfn score(c: C) -> i64 {\n    match c { Up => 2, _ => 1 }\n}\nfn main() { println(to_str(score(C::Red))) }\n"),
+        ("v3", "enum C { Red, Green, Blue }\nfn score(c: C) -> i64 {\n    match c { C::Green => 2, other => 1 }\n}\nfn main() { println(to_str(score(C::Red))) }\n"),
+        ("v4", "enum C { Red, Green, Blue }\nfn score(n: i64) -> i64 {\n    match n { Red => Red + 1 }\n}\nfn main() { println(to_str(score(4))) }\n"),
+        ("sh", "enum K { x, y }\ntype S = A { x: K } | B { w: i64 }\nfn f(s: S) -> i64 {\n    match s { S::A { x } => 1, S::B { w } => w }\n}\nfn main() { println(to_str(f(S::A { x: K::x }))) }\n"),
+    ];
+    let mut fails = Vec::new();
+    for (name, src) in cases {
+        let (rc, err) = af3_check(name, src);
+        if rc != Some(0) || err.contains("E0409") {
+            fails.push(format!("{attack} [{name}]: rc={rc:?} {err}"));
+        }
+    }
+    let f = tmp_ax("af3_v4_run", cases[2].1);
+    let out = axon().arg("run").arg(&f).output().expect("spawn axon run");
+    let _ = std::fs::remove_file(&f);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if out.status.code() != Some(0) || stdout.trim() != "5" {
+        fails.push(format!(
+            "{attack} [v4 run]: rc={:?} {stdout}",
+            out.status.code()
+        ));
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// LF-2's `if let P = e` is `match e { P => .., __iflet_N => .. }`, so the
+/// Match check covers it: `if let Green = c` is E0409 like `match`, the
+/// qualified form checks clean, and the parser's `__iflet_N` catch-all is
+/// never taken for a variant, even when the enum declares one of that name.
+#[test]
+fn bare_variant_in_if_let_is_e0409() {
+    let catch_all = "ATTACK: bare variant name bound as catch-all";
+    let mut fails = Vec::new();
+    for (name, src) in [
+        ("iflet", "enum C { Red, Green, Blue }\nfn score(c: C) -> i64 {\n    if let Green = c { 2 } else { 1 }\n}\nfn main() { println(to_str(score(C::Red))) }\n"),
+        ("iflet_some", "enum C { Red, Green }\nfn f(o: Option<C>) -> i64 {\n    if let Some(Green) = o { 2 } else { 1 }\n}\nfn main() { println(to_str(f(Some(C::Red)))) }\n"),
+    ] {
+        let (rc, err) = af3_check(name, src);
+        let ok = rc == Some(2)
+            && err.lines().any(|l| {
+                l.contains("\"code\":\"E0409\"")
+                    && l.contains("\"line\":3,")
+                    && l.contains("write `C::Green`")
+            });
+        if !ok {
+            fails.push(format!("{catch_all} [{name}]: rc={rc:?} {err}"));
+        }
+    }
+    let qualified = "enum C { Red, Green, Blue }\nfn score(c: C) -> i64 {\n    if let C::Green = c { 2 } else { 1 }\n}\nfn main() { println(to_str(score(C::Red))) }\n";
+    // The `if` sits within the first 40 tokens, so one of these variants is
+    // the desugar's own `__iflet_N` name.
+    let mut synthetic = String::from(
+        "fn score(e: E) -> i64 {\n    if let E::A = e { 2 } else { 1 }\n}\nfn main() { println(to_str(score(E::A))) }\nenum E { A",
+    );
+    for i in 0..=40 {
+        synthetic.push_str(&format!(", __iflet_{i}"));
+    }
+    synthetic.push_str(" }\n");
+    for (name, src, want) in [
+        ("iflet_qualified", qualified, "1"),
+        ("iflet_synthetic", synthetic.as_str(), "2"),
+    ] {
+        let attack = "ATTACK: the if-let catch-all refused as a variant";
+        let (rc, err) = af3_check(name, src);
+        if rc != Some(0) || err.contains("E0409") {
+            fails.push(format!("{attack} [{name}]: rc={rc:?} {err}"));
+            continue;
+        }
+        let f = tmp_ax(&format!("af3_{name}_run"), src);
+        let out = axon().arg("run").arg(&f).output().expect("spawn axon run");
+        let _ = std::fs::remove_file(&f);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if out.status.code() != Some(0) || stdout.trim() != want {
+            fails.push(format!(
+                "{attack} [{name} run]: rc={:?} {stdout}",
+                out.status.code()
+            ));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
 // ── asi-fixes AF-1 / AF-4: `ai_extract::<T>` runs, and every extract is recorded ──
 
 /// `axon <args>` in `dir`, with every AI / engine variable the suite might

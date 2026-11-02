@@ -4749,6 +4749,10 @@ impl CheckCtx {
                 // R04: exhaustiveness for Option / Result.
                 let subj_ty = self.resolve_expr_type(subject, &subj_path, scope);
                 self.check_match_exhaustiveness(&subj_ty, arms, node_path);
+                // E0409: a bare variant name in any arm, the last included.
+                for arm in arms {
+                    self.check_bare_variant_patterns(&arm.pattern, &subj_ty, node_path);
+                }
 
                 for (i, arm) in arms.iter().enumerate() {
                     // A name the pattern binds shadows an outer local, a
@@ -5032,8 +5036,15 @@ impl CheckCtx {
                     self.check_stmt(stmt, &node_path.idx("body_stmt", i), scope);
                 }
             }
-            Expr::WhileLet { expr, body, .. } => {
-                self.check_expr(expr, &node_path.child("while_let_expr"), scope);
+            Expr::WhileLet {
+                pattern,
+                expr,
+                body,
+            } => {
+                let expr_path = node_path.child("while_let_expr");
+                self.check_expr(expr, &expr_path, scope);
+                let expr_ty = self.resolve_expr_type(expr, &expr_path, scope);
+                self.check_bare_variant_patterns(pattern, &expr_ty, node_path);
                 for (i, stmt) in body.iter().enumerate() {
                     self.check_stmt(stmt, &node_path.idx("while_let_body", i), scope);
                 }
@@ -6597,6 +6608,111 @@ impl CheckCtx {
     // ─────────────────────────────────────────────────────────────────────────
     // R04 — match exhaustiveness for Option and Result
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// E0409: a `Pattern::Ident` whose expected type is enum `E` and whose
+    /// name is a variant of `E` binds a new variable that matches every `E`
+    /// (the interpreter and codegen bind every bare name), so `Green =>` is a
+    /// catch-all, not a comparison. Walks `pat` with its expected type through
+    /// `Some`/`None`, `Ok`/`Err`, tuples and variant fields; stops where the
+    /// type is unknown. A shorthand field (`E::V { f }`) and the parser's
+    /// `__`-prefixed synthetic names are pure bindings and are skipped.
+    fn check_bare_variant_patterns(&mut self, pat: &Pattern, ty: &Type, node_path: &NodePath) {
+        match pat {
+            Pattern::Ident(n) => {
+                if n.starts_with("__") {
+                    return;
+                }
+                let enum_name = match ty {
+                    Type::Enum(e) => e,
+                    Type::Struct(e) if self.enum_variants.contains_key(e) => e,
+                    _ => return,
+                };
+                if !self
+                    .enum_variants
+                    .get(enum_name)
+                    .is_some_and(|vs| vs.iter().any(|v| v == n))
+                {
+                    return;
+                }
+                let qualified = format!("{enum_name}::{n}");
+                let help = match self.enum_variant_fields.get(&qualified) {
+                    Some(fs) if !fs.is_empty() => {
+                        format!("write `{qualified} {{ {} }}`", fs.join(", "))
+                    }
+                    _ => format!("write `{qualified}`"),
+                };
+                let file = self.file.clone();
+                self.errors.push(
+                    CheckError::new(
+                        crate::error::E0409,
+                        format!(
+                            "`{n}` in a pattern binds a new variable that matches every \
+                             `{enum_name}`; it does not compare against the variant `{qualified}`"
+                        ),
+                    )
+                    .node(node_path)
+                    .at(&file, 0, 0)
+                    .with_span(self.current_span)
+                    .fix(help),
+                );
+            }
+            Pattern::Some(inner) => {
+                if let Type::Option(t) = ty {
+                    self.check_bare_variant_patterns(inner, t, node_path);
+                }
+            }
+            Pattern::Ok(inner) => {
+                if let Type::Result(t, _) = ty {
+                    self.check_bare_variant_patterns(inner, t, node_path);
+                }
+            }
+            Pattern::Err(inner) => {
+                if let Type::Result(_, e) = ty {
+                    self.check_bare_variant_patterns(inner, e, node_path);
+                }
+            }
+            Pattern::Tuple(elems) => {
+                if let Type::Tuple(tys) = ty {
+                    if tys.len() == elems.len() {
+                        for (p, t) in elems.iter().zip(tys) {
+                            self.check_bare_variant_patterns(p, t, node_path);
+                        }
+                    }
+                }
+            }
+            Pattern::Struct { name, fields } => {
+                // The variant's own path names its enum; a bare `V { .. }`
+                // takes the enum from the expected type.
+                let mut segs = name.rsplit("::");
+                let variant = segs.next().unwrap_or(name);
+                let enum_name = match (segs.next(), ty) {
+                    (Some(e), _) => e,
+                    (None, Type::Enum(e)) => e.as_str(),
+                    (None, Type::Struct(e)) if self.enum_variants.contains_key(e) => e.as_str(),
+                    _ => return,
+                };
+                let key = format!("{enum_name}::{variant}");
+                let (Some(names), Some(tys)) = (
+                    self.enum_variant_fields.get(&key),
+                    self.enum_variant_field_types.get(&key),
+                ) else {
+                    return;
+                };
+                let typed: Vec<(&Pattern, Type)> = fields
+                    .iter()
+                    .filter(|(fname, fpat)| !matches!(fpat, Pattern::Ident(b) if b == fname))
+                    .filter_map(|(fname, fpat)| {
+                        let i = names.iter().position(|k| k == fname)?;
+                        Some((fpat, tys.get(i)?.clone()))
+                    })
+                    .collect();
+                for (p, t) in typed {
+                    self.check_bare_variant_patterns(p, &t, node_path);
+                }
+            }
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::None => {}
+        }
+    }
 
     fn check_match_exhaustiveness(
         &mut self,
