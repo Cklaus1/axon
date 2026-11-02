@@ -79,6 +79,13 @@ of it, and no model is run on a once task before the gated run. `task.json` carr
 files (CSV/JSON/text in, a file and/or stdout out). The author writes the intent first, then the examples,
 then the reference; the reference is never shown to a model.
 
+`[DECIDED by human 2026-11-02: option B.]` The human writes the intent, ceiling and the visible and hidden examples
+(the grading surface) by hand, as above. The once **reference** may be a hand-written Axon or Python 3 program
+(`reference.ax` or `reference.py`, run under the same examples by `build.py`); it still has `reference_author:
+"human:<name>"`, is never model-written and is never shown to a model. Its only role is the `reference` check
+(the task is solvable and its examples agree). This section binds once the harness change lands; it is part of step 3
+and does not touch the freeze.
+
 **Categories and counts (proposal).**
 
 | Category | Count | Rule |

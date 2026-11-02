@@ -1,6 +1,6 @@
 # ceilings - DRAFT spec
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: DRAFT (after Step 1 review). §9 decided by human 2026-11-02 (the recommendations); build authorized 2026-11-02.**
 
 Author: `Ceilings` (2026-11-01), base `main` a5310878 (worktree `/home/cklaus/projects/axon-lanes/asi-next`, branch `asi/next`).
 Reference binary: `/var/tmp/r51-tmp/asi-bin/axon` (`axon 0.1.0 (a5310878)`, default features: `codegen`, no `asi-runtime`).
@@ -1007,6 +1007,11 @@ File-overlap graph (a5310878 anchors):
 | NH-C8 | Guest substrate FS (O034)? | **A** keep explicit `IO,FS` (0; guests can read any guest file). **B** union FS baseline (0; same hole by default). **C** load-before-gate (spike first; needs an interpreter fd/stdin source). **D** path-scoped `openat` | **C** after a ≤ 1-day spike; D if the spike fails |
 | NH-C9 | Should a later NH-R1 envelope bind a `ceiling_sha256` for the runs inside an unattended repair loop? | **A** yes, in a new envelope version after CE-2 ships; the fence passes the ceiling explicitly. **B** no; the envelope's own budget suffices | **A**, deferred (no change to `axon-approval/4`) |
 | NH-C10 `[REVISED: CEA#1, CEA#2]` | What does a native AI binary do with **no key and no mock**? Today: a catchable key `Err`, rc 0, where the interpreter gives E1300 rc 5 or the `fallback:` value | **A** always refuse, exit 2 (18 native-buildable direct-AI programs go rc 0 → 2; `ai_fallback.ax` exits 2 where the interpreter prints its fallback; 2 axon-ai tests rewritten). **B** mirror the interpreter: fallback value or E1300 exit 5 (byte parity; ABI change ~100-150 lines; same 2 tests rewritten). **C** keep + document (silent wrong answer stays) | **B** (A if B's ABI change is declined) |
+
+`[DECIDED by human 2026-11-02: the recommendations column - NH-C1 A1, NH-C2 A (a ceiling's presence turns R45 on),
+NH-C3 A, NH-C4 A, NH-C5 A, NH-C6 A, NH-C7 A (stamp O031/O-HI-03 closed in effect by 105444e6), NH-C8 C after a
+≤ 1-day spike (D if the spike fails), NH-C9 A deferred (no change to axon-approval/4), NH-C10 B (A if B's ABI change
+is declined at build time).]`
 
 `[REVISED: CED-8; integrator ruling 4]` **Batch 0, buildable without any answer: CE-1 and CE-7.** CE-7 makes a refusal
 narrower, and its guards keep model-reaching `goal_*` calls refused. CE-1 refuses only an AI call whose endpoint leaves the

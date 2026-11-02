@@ -3291,6 +3291,7 @@ the founder's call. Found by TriageGuestKernel.
 `for x in xs { s = s + p.x; let t = p }` (`mv3/loopmove.ax`) and `mv3/hmcont_if.ax` both check rc 0 and run (`14`, `8`): `borrow.rs`
 walks a loop body once (`:452-487`). Closing it refuses programs that run today and print the right answer, so it was left open by
 asi-fixes decision §6.11.
+`[DECIDED by human 2026-11-02: stays open (asi-fixes §6.11); not in batch 2.]`
 
 ### O-AF-02 - [low] A move escapes a tail-diverging `if` branch through `break`
 `mv2/br1.ax` checks rc 0 and prints `7`. The CS-6 `If` rule (`borrow.rs:344-363`) uses only the syntactic `branch_diverges`. AF-2 did
