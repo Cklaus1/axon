@@ -3127,6 +3127,21 @@ check or a pushed ledger ref before a once run.
 ### O-IG-03 - [medium] The genviab dev set has no headroom
 Haiku solves 14/14 dev tasks, so dev runs cannot show a generator or prompt change helping. The once set is still unauthored (spec IG6:
 once references by hand, never model-drafted) and the gated run awaits it and the PREREG freeze.
+`[MEASURED 2026-11-02: genviab GV-4 (b2/gvdev 09d988da): 12 harder model-authored dev tasks h01-h12; Haiku 5.5 verified 12/12 in all
+3 replicates of arms a and c ($0.1459), so 0 tasks are hard and the dev set still has no headroom. Stays open.]`
+
+### O-GV-04 - [medium] Arm c grades an uncaught Python exception as exit 1
+From verifying GV-3 (`tasks/genviab-b2-spec.md` §2, GVA review): `raise ValueError` PASSES an example expecting exit 1, while arm a's
+fault fails any expected exit. This inflates arm c, which the ADVERSE rule compares against. NH-G3 as decided covers only environment
+and binds, so `gv.py` keeps arm c's `-I` runner and its crash semantics (`gv.py:341`). Fix direction (spec recommendation): run arm c
+through the GV-3 fault runner too; the integrator decides before the PREREG freeze.
+
+### O-GV-05 - [low] Dev task h12 has no visible example
+`dev/h12-schedule-append` withholds fs_read entirely (a tempting task), and `build.py`'s hidden check then forbids a visible example,
+so h12 breaks the GV-4 slot table's ">= 1 visible". Arm a accepts any h12 program that passes check and gates: the empty program was
+accepted there and failed the hidden examples (1 false acceptance in the $0 dry run); Haiku's h12 programs verified 3/3. Left
+unedited because selection rule 3 freezes tasks after the first paid call. Fix direction: let a tempting task carry a visible example
+that stages no input, or exempt tempting tasks from the slot rule in the spec. Found by LaneGvPy.
 
 ## hx3 author quirks, 2026-10-31 (QuirkRepro triage of the hx3 N5a authors' notes, `/var/tmp/r51-tmp/QuirkRepro/REPORT.md`; fixes NOT in this batch)
 
