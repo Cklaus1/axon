@@ -30,6 +30,7 @@ use crate::ast;
 use crate::types::Type;
 
 use super::build_wrappers;
+use super::builtins::AI_COMPLETE_FALLBACK_FN;
 
 /// Where an array place expression is flowing; decides whether
 /// `emit_expr_owned` must snapshot it (see "Array value semantics").
@@ -9932,6 +9933,22 @@ impl<'ctx> super::Codegen<'ctx> {
                         return r;
                     }
                 }
+            }
+        }
+
+        // ceilings CE-8: an `ai_complete` in a fn declaring
+        // `@[ai(policy(fallback: ..))]` calls the variant that hands the
+        // fallback to the runtime, which answers it when no model is reachable
+        // (no key, no mock), as the interpreter does.
+        if let (ast::Expr::Ident(name), Some(fb)) = (callee, self.current_ai_fallback.as_ref()) {
+            if name == "ai_complete" && self.functions.contains_key(AI_COMPLETE_FALLBACK_FN) {
+                let mut with_fb = args.to_vec();
+                with_fb.push(ast::Expr::Literal(ast::Literal::Str(fb.clone())));
+                return self.emit_call(
+                    &ast::Expr::Ident(AI_COMPLETE_FALLBACK_FN.to_string()),
+                    &with_fb,
+                    fn_val,
+                );
             }
         }
 

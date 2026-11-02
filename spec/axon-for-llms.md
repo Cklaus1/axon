@@ -304,8 +304,16 @@ stops with E1300 (exit 5).
 
 **AI calls in a native build.** A natively built binary never calls a model: under `AXON_AI_MOCK=1`
 it returns the deterministic stub; with an API key it refuses with exit 2 (native builds write no
-`ai_call` audit record - run with `axon run`); with neither, the AI builtin returns `Err` with the
-missing-key message.
+`ai_call` audit record - run with `axon run`); with neither it acts like `axon run` with no model:
+`ai_complete` returns the fn's `fallback:`, otherwise the run stops with E1300 (exit 5).
+
+**AI call budgets.** `@[ai(policy(budget: N))]` on a fn allows at most N model calls
+(`ai_complete` and `ai_extract::<T>` alike) while that fn's activation is on the stack, its
+callees' calls included; the next call stops the run with E1301 (exit 5) naming the fn. Each
+activation starts a fresh count, and a callee's own budget can only narrow, never widen, its
+caller's. Native builds refuse a budgeted fn (E0910). The operator's run token cap
+(`AXON_BUDGET_TOKENS`, a ceiling's `ai_tokens`) counts input + output: a call that cannot fit
+its prompt plus a 1024-token reply stops with E1303 (exit 5) before dispatch.
 
 **Capability sandboxing** — the compiler refuses any I/O a function didn't declare:
 
@@ -319,6 +327,21 @@ fn worker() -> i64 { /* may only write under ./out/ and reach that host */ 0 }
 - `never: [...]`: hard deny, overrides the allowlist.
 - **`env_var(...)` is denied inside `@[contained]`** (error `E1001`) — env is an
   ungrantable ambient secret channel. Read it *outside* the boundary and pass the value in.
+
+**Operator ceilings.** Whoever runs your program may bound it with `--ceiling FILE` (or
+`AXON_CEILING=FILE`), a JSON `axon-ceiling/1` object with every key present (`null` = unbounded):
+`{"schema":"axon-ceiling/1","effects":["IO"],"fs_read":["/srv/in/"],"fs_write":["/srv/out/"],
+"net":["api.anthropic.com"],"ai_tokens":200000,"ai_calls":200,"max_depth":6000,
+"steps":2000000000,"wall_ms":600000}`. Each bound narrows the matching `AXON_ALLOWED_*` /
+`AXON_BUDGET_TOKENS` / `AXON_MAX_DEPTH` / `AXON_MAX_STEPS` / `AXON_WALL_MS` variable and nothing
+in the program can widen it; `ai_calls` caps the run's model calls (E1303, exit 5). `steps`
+counts loop-body and fn-body entries and `wall_ms` the run's milliseconds; past either the run
+stops with E1006 (exit 9). A ceiling also turns `--require-contained` on, so `main` needs a
+`@[contained]` grant for the I/O it reaches (E1005). A bad file is E1007 (exit 2). Without a
+ceiling a run is bounded only by what its source and those variables declare. Live AI calls are
+pinned to the program's `net` hosts (or `api.anthropic.com` if none) met with `AXON_ALLOWED_NET`
+and the ceiling's `net` list; a run with no declared host and neither list is not pinned and may
+send AI traffic to whatever `AXON_AI_BASE_URL` names.
 
 **Refinement types** constrain values; violations exit with code 6 at runtime:
 ```axon

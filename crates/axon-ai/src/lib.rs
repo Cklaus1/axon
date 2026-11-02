@@ -363,14 +363,6 @@ unsafe fn write_err_out(s: &str, out_len: *mut i64, out_ptr: *mut *mut u8) {
 
 // -- Main exported symbol ------------------------------------------------------
 
-/// Call the Anthropic Messages API with prompt as a single user message.
-///
-/// Out-param ABI (mirrors __axon_read_file):
-/// - success: *out_len >= 0, *out_ptr = heap buffer with the assistant reply
-/// - error:   *out_len < 0 (negated message length), *out_ptr = error string
-///
-/// Reads ANTHROPIC_API_KEY from the environment.  If unset, returns an error.
-/// Uses model claude-sonnet-4-6, max_tokens 1024.
 /// Refuse a LIVE model call from a NATIVELY BUILT binary, because native writes
 /// no audit record for it.
 ///
@@ -407,19 +399,25 @@ unsafe fn write_err_out(s: &str, out_len: *mut i64, out_ptr: *mut *mut u8) {
 ///
 /// Exit 2, matching the other native refusals, and NOT a catchable `Err`: an
 /// audit control a program can swallow and continue past is not a control.
-fn refuse_unaudited_native_live_ai(builtin: &str) {
+///
+/// NO KEY (ceilings CE-8, NH-C10 B): no request can be issued, so there is no
+/// audit exposure, and the binary does what the interpreter does when no model
+/// is reachable: answer the calling fn's `@[ai(policy(fallback: ..))]`
+/// (`fallback`, `Some` only for `ai_complete`; the caller returns it as
+/// `Ok`), else stop with the interpreter's E1300 line and exit 5. It used to
+/// return the key error as a catchable `Err`, so a `fallback:` program printed
+/// the error text where `axon run` printed the fallback.
+fn refuse_unaudited_native_live_ai(builtin: &str, fallback: Option<&str>) -> Option<String> {
     if ai_mock_enabled() {
-        return;
+        return None;
     }
-    // SCOPED TO THE CALL THAT ACTUALLY HAPPENS. With no key resolvable, no
-    // request is issued, nothing is billed and there is no call to attribute —
-    // so there is no audit exposure to refuse, and the existing "missing API
-    // key" error stays a catchable `Err` that a program doing optional AI
-    // enrichment can fall back from. Refusing that too would be breadth
-    // without benefit. The key is resolved by the SAME `api_key` the live path
-    // uses, not by a second copy of the rule that could drift from it.
+    // The key is resolved by the SAME `api_key` the live path uses, not by a
+    // second copy of the rule that could drift from it.
     if api_key(provider()).is_err() {
-        return;
+        if let Some(fb) = fallback {
+            return Some(fb.to_string());
+        }
+        refuse_offline_native_ai(builtin);
     }
     eprintln!(
         "axon: `{builtin}` reached a LIVE model call, but this is a NATIVELY \
@@ -433,14 +431,57 @@ for the deterministic stub."
     std::process::exit(2);
 }
 
+/// The interpreter's E1300 stop (`interp/builtins.rs`, offline `ai_complete`
+/// and `ai_extract`): same line, same exit 5 (`Flow::AiPolicyUnreachable`).
+/// The interpreter's last hint (build `--features asi-runtime`) names a fix a
+/// native binary does not have, so this one names only mock.
+fn refuse_offline_native_ai(builtin: &str) -> ! {
+    if builtin == "ai_complete" {
+        eprintln!(
+            "axon: ai policy: [E1300] `ai_complete` cannot run: no model reachable and no \
+             @[ai(policy(fallback: …))] in scope — declare a fallback to run offline (or set \
+             AXON_AI_MOCK=1)"
+        );
+    } else {
+        eprintln!(
+            "axon: ai policy: [E1300] `{builtin}` cannot run: no model reachable — an extract \
+             has no @[ai(policy(fallback: …))] path (a fallback is a `str`, not the extracted \
+             type); set AXON_AI_MOCK=1"
+        );
+    }
+    std::process::exit(5);
+}
+
+/// Call the Anthropic Messages API with prompt as a single user message.
+///
+/// Out-param ABI (mirrors __axon_read_file):
+/// - success: *out_len >= 0, *out_ptr = heap buffer with the assistant reply
+/// - error:   *out_len < 0 (negated message length), *out_ptr = error string
+///
+/// `fallback_ptr`/`fallback_len`: the calling fn's `@[ai(policy(fallback:
+/// ..))]` (ceilings CE-8); `fallback_len < 0` means none. With no key and no
+/// mock the fallback is the reply, or E1300 / exit 5 when there is none
+/// (`refuse_unaudited_native_live_ai`). Uses model claude-sonnet-4-6,
+/// max_tokens 1024.
 #[no_mangle]
 pub extern "C" fn __axon_ai_complete(
     prompt_ptr: *const u8,
     prompt_len: i64,
+    fallback_ptr: *const u8,
+    fallback_len: i64,
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    refuse_unaudited_native_live_ai("ai_complete");
+    // Safety: the Axon codegen always passes valid str{ptr,len} pairs, and a
+    // null pointer or negative length for "no fallback".
+    let fallback = (!fallback_ptr.is_null() && fallback_len >= 0).then(|| unsafe {
+        let slice = std::slice::from_raw_parts(fallback_ptr, fallback_len as usize);
+        std::str::from_utf8_unchecked(slice)
+    });
+    if let Some(fb) = refuse_unaudited_native_live_ai("ai_complete", fallback) {
+        unsafe { write_str_out(&fb, out_len, out_ptr) };
+        return;
+    }
     // Safety: the Axon codegen always passes valid str{ptr,len} pairs.
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
@@ -501,6 +542,42 @@ pub fn decision_model() -> String {
         .unwrap_or_else(|| DECISION_MODEL_DEFAULT.to_string())
 }
 
+/// The reply cap every request this crate sends carries (`max_tokens`). The
+/// interpreter's run token cap (`AXON_BUDGET_TOKENS`, ceilings CE-6) reserves
+/// it before dispatch, so a call cannot take a run past its cap.
+pub const MAX_TOKENS: i64 = 1024;
+
+/// A model call that failed. `tokens` is what the provider billed for it: the
+/// total token count of a reply that arrived but could not be used (no answer
+/// in it, or not the requested type), else 0 (nothing was billed: no key, the
+/// request failed, or the provider refused it). O-AF-09: the interpreter
+/// records and charges a billed failure before it returns the `Err`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AiCallError {
+    pub message: String,
+    pub tokens: i64,
+}
+
+impl AiCallError {
+    /// A failure the provider billed `tokens` for.
+    fn billed(message: String, tokens: i64) -> Self {
+        AiCallError { message, tokens }
+    }
+}
+
+impl From<String> for AiCallError {
+    /// A failure before any reply arrived: nothing billed.
+    fn from(message: String) -> Self {
+        AiCallError { message, tokens: 0 }
+    }
+}
+
+impl std::fmt::Display for AiCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 fn ai_complete_inner(prompt: &str) -> Result<String, String> {
     ai_complete_inner_model(prompt, DEFAULT_MODEL)
 }
@@ -510,7 +587,9 @@ fn ai_complete_inner(prompt: &str) -> Result<String, String> {
 /// strong model instead of the hardcoded sonnet. The interpreter passes
 /// `Tier::api_model()` (itself env-overridable for a proxy/gateway deployment).
 fn ai_complete_inner_model(prompt: &str, model: &str) -> Result<String, String> {
-    ai_complete_inner_model_usage(prompt, model).map(|(text, _tokens)| text)
+    ai_complete_inner_model_usage(prompt, model)
+        .map(|(text, _tokens)| text)
+        .map_err(|e| e.message)
 }
 
 /// `ai_complete` returning BOTH the reply and the REAL total token count
@@ -519,7 +598,7 @@ fn ai_complete_inner_model(prompt: &str, model: &str) -> Result<String, String> 
 /// estimate from the prompt (~4 chars/token) so mocked cost stays reproducible
 /// and identical to the interpreter's pre-dispatch estimate; only a LIVE call
 /// reports the model's actual usage.
-fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i64), String> {
+fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i64), AiCallError> {
     // Deterministic mock: the interpreter's stub + the same token estimate the
     // pre-dispatch meter uses, so mock metering is exact and reproducible.
     if ai_mock_enabled() {
@@ -534,12 +613,12 @@ fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i
     let body = match p {
         Provider::Anthropic => serde_json::json!({
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": MAX_TOKENS,
             "messages": [ { "role": "user", "content": prompt } ]
         }),
         Provider::OpenAi => serde_json::json!({
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": MAX_TOKENS,
             "messages": [ { "role": "user", "content": prompt } ]
         }),
     };
@@ -560,11 +639,17 @@ fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i
             Provider::Anthropic => "Anthropic",
             Provider::OpenAi => "OpenAI",
         };
-        return Err(format!("{label} API error {}: {}", status.as_u16(), text));
+        return Err(format!("{label} API error {}: {}", status.as_u16(), text).into());
     }
 
-    let json: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Failed to parse API response as JSON: {}", e))?;
+    // From here on a 2xx reply arrived, so the provider billed the call: a
+    // reply the code cannot use still carries its token count (O-AF-09).
+    let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        AiCallError::billed(
+            format!("Failed to parse API response as JSON: {}", e),
+            unparsed_reply_tokens(prompt, &text),
+        )
+    })?;
 
     // Extract the reply text — different response shapes per provider.
     let reply = match p {
@@ -573,20 +658,33 @@ fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i
             .as_array()
             .and_then(|arr| arr.first())
             .and_then(|item| item["text"].as_str())
-            .ok_or_else(|| format!("Unexpected Anthropic response shape: {}", text))?
-            .to_string(),
+            .map(str::to_string)
+            .ok_or_else(|| format!("Unexpected Anthropic response shape: {}", text)),
         // OpenAI: choices[0].message.content
         Provider::OpenAi => json["choices"]
             .as_array()
             .and_then(|arr| arr.first())
             .and_then(|item| item["message"]["content"].as_str())
-            .ok_or_else(|| format!("Unexpected OpenAI response shape: {}", text))?
-            .to_string(),
+            .map(str::to_string)
+            .ok_or_else(|| format!("Unexpected OpenAI response shape: {}", text)),
     };
+    match reply {
+        Ok(reply) => {
+            let total = usage_total(p, &json, prompt, reply.len());
+            Ok((reply, total))
+        }
+        Err(msg) => Err(AiCallError::billed(
+            msg,
+            usage_total(p, &json, prompt, text.len()),
+        )),
+    }
+}
 
-    let total = usage_total(p, &json, prompt, reply.len());
-
-    Ok((reply, total))
+/// The billed token count of a 2xx reply whose body is not JSON (so it has no
+/// `usage`): the same prompt/reply-length estimate [`usage_total`] falls back
+/// to.
+fn unparsed_reply_tokens(prompt: &str, text: &str) -> i64 {
+    (prompt.len() as i64) / 4 + 1 + (text.len() as i64) / 4
 }
 
 /// The REAL total token count (input + output) of a response `json`, for
@@ -631,7 +729,7 @@ pub fn complete_with_model(prompt: &str, model: &str) -> Result<String, String> 
 /// interpreter uses this on a LIVE call so the cost reflects what the model
 /// actually charged, not a prompt-length estimate. Under AXON_AI_MOCK the count
 /// is the same deterministic estimate the pre-dispatch meter uses (reproducible).
-pub fn complete_with_model_usage(prompt: &str, model: &str) -> Result<(String, i64), String> {
+pub fn complete_with_model_usage(prompt: &str, model: &str) -> Result<(String, i64), AiCallError> {
     ai_complete_inner_model_usage(prompt, model)
 }
 
@@ -697,7 +795,7 @@ pub fn post_json_bearer(
 pub fn build_typed_uncertain_body(prompt: &str, value_type: &str) -> serde_json::Value {
     serde_json::json!({
         "model": DECISION_MODEL_DEFAULT,
-        "max_tokens": 1024,
+        "max_tokens": MAX_TOKENS,
         "tools": [{
             "name": "answer",
             "description": "Return your answer with a confidence score in [0.0, 1.0].",
@@ -775,7 +873,7 @@ fn build_openai_tool_body(
     };
     serde_json::json!({
         "model": model,
-        "max_tokens": 1024,
+        "max_tokens": MAX_TOKENS,
         "tools": [{
             "type": "function",
             "function": {
@@ -835,7 +933,7 @@ fn complete_structured_inner(
     prompt: &str,
     value_type: &str,
     with_confidence: bool,
-) -> Result<(serde_json::Value, i64), String> {
+) -> Result<(serde_json::Value, i64), AiCallError> {
     // AUDIT T35 (finding RT-01): this went straight to `api_key(p)?` and a live
     // billed POST with no mock check anywhere in it or its callers — only the
     // plain `ai_complete` path honoured AXON_AI_MOCK. Every `ai_extract_*`
@@ -900,7 +998,7 @@ fn complete_structured_inner(
             Provider::Anthropic => "Anthropic",
             Provider::OpenAi => "OpenAI",
         };
-        return Err(format!("{label} API error {}: {}", status.as_u16(), text));
+        return Err(format!("{label} API error {}: {}", status.as_u16(), text).into());
     }
 
     parse_structured_response(p, &text, prompt)
@@ -914,34 +1012,60 @@ fn parse_structured_response(
     p: Provider,
     text: &str,
     prompt: &str,
-) -> Result<(serde_json::Value, i64), String> {
-    let json: serde_json::Value = serde_json::from_str(text)
-        .map_err(|e| format!("Failed to parse API response as JSON: {}", e))?;
+) -> Result<(serde_json::Value, i64), AiCallError> {
+    let json: serde_json::Value = serde_json::from_str(text).map_err(|e| {
+        AiCallError::billed(
+            format!("Failed to parse API response as JSON: {}", e),
+            unparsed_reply_tokens(prompt, text),
+        )
+    })?;
     let input = match p {
         Provider::Anthropic => parse_tool_use_input(&json).cloned(),
         Provider::OpenAi => parse_openai_tool_args(&json),
-    }?;
-    let tokens = usage_total(p, &json, prompt, input.to_string().len());
-    Ok((input, tokens))
+    };
+    match input {
+        Ok(input) => {
+            let tokens = usage_total(p, &json, prompt, input.to_string().len());
+            Ok((input, tokens))
+        }
+        Err(msg) => Err(AiCallError::billed(
+            msg,
+            usage_total(p, &json, prompt, text.len()),
+        )),
+    }
+}
+
+/// The answer object's `value`, or an error that keeps the reply's billed
+/// `tokens` (O-AF-09).
+fn answer_value(input: &serde_json::Value, tokens: i64) -> Result<serde_json::Value, AiCallError> {
+    input.get("value").cloned().ok_or_else(|| {
+        AiCallError::billed(
+            format!("structured output missing `value`: {}", input),
+            tokens,
+        )
+    })
 }
 
 fn complete_typed_uncertain_inner(
     prompt: &str,
     value_type: &str,
-) -> Result<(serde_json::Value, f64, i64), String> {
+) -> Result<(serde_json::Value, f64, i64), AiCallError> {
     let (input, tokens) = complete_structured_inner(prompt, value_type, true)?;
+    let value = answer_value(&input, tokens)?;
+    let billed = |msg: String| AiCallError::billed(msg, tokens);
 
-    let value = input
-        .get("value")
-        .ok_or_else(|| format!("structured output missing `value`: {}", input))?
-        .clone();
-
-    let confidence = input["confidence"]
-        .as_f64()
-        .ok_or_else(|| format!("structured output `confidence` is not a number: {}", input))?;
+    let confidence = input["confidence"].as_f64().ok_or_else(|| {
+        billed(format!(
+            "structured output `confidence` is not a number: {}",
+            input
+        ))
+    })?;
 
     if !(0.0..=1.0).contains(&confidence) {
-        return Err(format!("confidence {} out of range [0.0, 1.0]", confidence));
+        return Err(billed(format!(
+            "confidence {} out of range [0.0, 1.0]",
+            confidence
+        )));
     }
 
     Ok((value, confidence, tokens))
@@ -950,23 +1074,30 @@ fn complete_typed_uncertain_inner(
 /// Send `prompt` to Anthropic with a structured-output tool that constrains
 /// the answer to `{value: integer, confidence: number}`.  Returns
 /// `(value, confidence, tokens)` on success; `tokens` is the call's total
-/// token count (`usage`), which the interpreter meters cost by.
-pub fn complete_typed_uncertain_i64(prompt: &str) -> Result<(i64, f64, i64), String> {
+/// token count (`usage`), which the interpreter meters cost by. A reply that
+/// is not an integer is an `Err` that keeps its billed tokens.
+pub fn complete_typed_uncertain_i64(prompt: &str) -> Result<(i64, f64, i64), AiCallError> {
     let (value, confidence, tokens) = complete_typed_uncertain_inner(prompt, "integer")?;
-    let v = value
-        .as_i64()
-        .ok_or_else(|| format!("tool_use input `value` is not an integer: {}", value))?;
+    let v = value.as_i64().ok_or_else(|| {
+        AiCallError::billed(
+            format!("tool_use input `value` is not an integer: {}", value),
+            tokens,
+        )
+    })?;
     Ok((v, confidence, tokens))
 }
 
 /// Send `prompt` to Anthropic with a structured-output tool that constrains
 /// the answer to `{value: number, confidence: number}`.  Returns
 /// `(value, confidence, tokens)` on success.
-pub fn complete_typed_uncertain_f64(prompt: &str) -> Result<(f64, f64, i64), String> {
+pub fn complete_typed_uncertain_f64(prompt: &str) -> Result<(f64, f64, i64), AiCallError> {
     let (value, confidence, tokens) = complete_typed_uncertain_inner(prompt, "number")?;
-    let v = value
-        .as_f64()
-        .ok_or_else(|| format!("tool_use input `value` is not a number: {}", value))?;
+    let v = value.as_f64().ok_or_else(|| {
+        AiCallError::billed(
+            format!("tool_use input `value` is not a number: {}", value),
+            tokens,
+        )
+    })?;
     Ok((v, confidence, tokens))
 }
 
@@ -985,7 +1116,7 @@ pub fn complete_typed_uncertain_f64(prompt: &str) -> Result<(f64, f64, i64), Str
 pub fn build_typed_flat_body(prompt: &str, value_type: &str) -> serde_json::Value {
     serde_json::json!({
         "model": DECISION_MODEL_DEFAULT,
-        "max_tokens": 1024,
+        "max_tokens": MAX_TOKENS,
         "tools": [{
             "name": "answer",
             "description": "Return your answer as the single `value` field.",
@@ -1010,45 +1141,47 @@ pub fn build_typed_flat_body(prompt: &str, value_type: &str) -> serde_json::Valu
 fn complete_typed_flat_inner(
     prompt: &str,
     value_type: &str,
-) -> Result<(serde_json::Value, i64), String> {
+) -> Result<(serde_json::Value, i64), AiCallError> {
     let (input, tokens) = complete_structured_inner(prompt, value_type, false)?;
-    let value = input
-        .get("value")
-        .ok_or_else(|| format!("structured output missing `value`: {}", input))?
-        .clone();
-    Ok((value, tokens))
+    Ok((answer_value(&input, tokens)?, tokens))
+}
+
+/// The flat answer `value` projected by `as_t`, or an error naming `what`
+/// that keeps the reply's billed `tokens` (O-AF-09).
+fn flat_typed<T>(
+    prompt: &str,
+    value_type: &str,
+    what: &str,
+    as_t: impl Fn(&serde_json::Value) -> Option<T>,
+) -> Result<(T, i64), AiCallError> {
+    let (value, tokens) = complete_typed_flat_inner(prompt, value_type)?;
+    match as_t(&value) {
+        Some(v) => Ok((v, tokens)),
+        None => Err(AiCallError::billed(
+            format!("tool_use input `value` is not {what}: {value}"),
+            tokens,
+        )),
+    }
 }
 
 /// Send `prompt` and return a single `i64` and the call's total token count.
 /// Tool schema constrains `{value: integer}`; rejection (no integer) becomes
-/// `Err`.
-pub fn complete_typed_i64(prompt: &str) -> Result<(i64, i64), String> {
-    let (value, tokens) = complete_typed_flat_inner(prompt, "integer")?;
-    let v = value
-        .as_i64()
-        .ok_or_else(|| format!("tool_use input `value` is not an integer: {}", value))?;
-    Ok((v, tokens))
+/// `Err`, which keeps the reply's billed tokens.
+pub fn complete_typed_i64(prompt: &str) -> Result<(i64, i64), AiCallError> {
+    flat_typed(prompt, "integer", "an integer", serde_json::Value::as_i64)
 }
 
 /// Send `prompt` and return a single `f64` and the call's total token count.
 /// Tool schema constrains `{value: number}`.  Integers are accepted (JSON
 /// numbers).
-pub fn complete_typed_f64(prompt: &str) -> Result<(f64, i64), String> {
-    let (value, tokens) = complete_typed_flat_inner(prompt, "number")?;
-    let v = value
-        .as_f64()
-        .ok_or_else(|| format!("tool_use input `value` is not a number: {}", value))?;
-    Ok((v, tokens))
+pub fn complete_typed_f64(prompt: &str) -> Result<(f64, i64), AiCallError> {
+    flat_typed(prompt, "number", "a number", serde_json::Value::as_f64)
 }
 
 /// Send `prompt` and return a single `bool` and the call's total token count.
 /// Tool schema constrains `{value: boolean}`.
-pub fn complete_typed_bool(prompt: &str) -> Result<(bool, i64), String> {
-    let (value, tokens) = complete_typed_flat_inner(prompt, "boolean")?;
-    let v = value
-        .as_bool()
-        .ok_or_else(|| format!("tool_use input `value` is not a boolean: {}", value))?;
-    Ok((v, tokens))
+pub fn complete_typed_bool(prompt: &str) -> Result<(bool, i64), AiCallError> {
+    flat_typed(prompt, "boolean", "a boolean", serde_json::Value::as_bool)
 }
 
 // -- Layer-3 typed-extraction extern bridges ----------------------------------
@@ -1105,7 +1238,7 @@ pub extern "C" fn __axon_ai_extract_uncertain_i64(
         }
         return 1;
     }
-    refuse_unaudited_native_live_ai("ai_extract_uncertain_i64");
+    refuse_unaudited_native_live_ai("ai_extract_uncertain_i64", None);
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
         std::str::from_utf8_unchecked(slice)
@@ -1127,7 +1260,7 @@ pub extern "C" fn __axon_ai_extract_uncertain_i64(
         }
         Err(e) => {
             unsafe {
-                write_typed_err(&e, out_err_len, out_err_ptr);
+                write_typed_err(&e.message, out_err_len, out_err_ptr);
             }
             1
         }
@@ -1156,7 +1289,7 @@ pub extern "C" fn __axon_ai_extract_uncertain_f64(
         }
         return 1;
     }
-    refuse_unaudited_native_live_ai("ai_extract_uncertain_f64");
+    refuse_unaudited_native_live_ai("ai_extract_uncertain_f64", None);
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
         std::str::from_utf8_unchecked(slice)
@@ -1178,7 +1311,7 @@ pub extern "C" fn __axon_ai_extract_uncertain_f64(
         }
         Err(e) => {
             unsafe {
-                write_typed_err(&e, out_err_len, out_err_ptr);
+                write_typed_err(&e.message, out_err_len, out_err_ptr);
             }
             1
         }
@@ -1214,7 +1347,7 @@ pub extern "C" fn __axon_ai_extract_i64(
         }
         return 1;
     }
-    refuse_unaudited_native_live_ai("ai_extract_i64");
+    refuse_unaudited_native_live_ai("ai_extract_i64", None);
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
         std::str::from_utf8_unchecked(slice)
@@ -1233,7 +1366,7 @@ pub extern "C" fn __axon_ai_extract_i64(
         }
         Err(e) => {
             unsafe {
-                write_typed_err(&e, out_err_len, out_err_ptr);
+                write_typed_err(&e.message, out_err_len, out_err_ptr);
             }
             1
         }
@@ -1259,7 +1392,7 @@ pub extern "C" fn __axon_ai_extract_f64(
         }
         return 1;
     }
-    refuse_unaudited_native_live_ai("ai_extract_f64");
+    refuse_unaudited_native_live_ai("ai_extract_f64", None);
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
         std::str::from_utf8_unchecked(slice)
@@ -1278,7 +1411,7 @@ pub extern "C" fn __axon_ai_extract_f64(
         }
         Err(e) => {
             unsafe {
-                write_typed_err(&e, out_err_len, out_err_ptr);
+                write_typed_err(&e.message, out_err_len, out_err_ptr);
             }
             1
         }
@@ -1309,7 +1442,7 @@ pub extern "C" fn __axon_ai_extract_bool(
         }
         return 1;
     }
-    refuse_unaudited_native_live_ai("ai_extract_bool");
+    refuse_unaudited_native_live_ai("ai_extract_bool", None);
     let prompt = unsafe {
         let slice = std::slice::from_raw_parts(prompt_ptr, prompt_len as usize);
         std::str::from_utf8_unchecked(slice)
@@ -1328,7 +1461,7 @@ pub extern "C" fn __axon_ai_extract_bool(
         }
         Err(e) => {
             unsafe {
-                write_typed_err(&e, out_err_len, out_err_ptr);
+                write_typed_err(&e.message, out_err_len, out_err_ptr);
             }
             1
         }
@@ -1507,6 +1640,31 @@ mod tests {
         assert_eq!(tokens, 8 / 4 + 1 + r#"{"value":1}"#.len() as i64 / 4);
     }
 
+    /// O-AF-09: a 2xx reply the code cannot use was still billed, so its
+    /// `Err` keeps the token count (the interpreter records and charges it).
+    #[test]
+    fn unusable_structured_reply_keeps_its_billed_tokens() {
+        let no_answer = r#"{"content":[{"type":"text","text":"seven"}],
+            "usage":{"input_tokens":100,"output_tokens":20}}"#;
+        let e = parse_structured_response(Provider::Anthropic, no_answer, "q")
+            .expect_err("no answer tool block");
+        assert_eq!(
+            e.tokens, 120,
+            "ATTACK: a billed unparsed reply dropped its tokens"
+        );
+        let not_json = "this is not json at all";
+        let e = parse_structured_response(Provider::OpenAi, not_json, "abcdefgh")
+            .expect_err("not JSON");
+        assert_eq!(
+            e.tokens,
+            8 / 4 + 1 + not_json.len() as i64 / 4,
+            "ATTACK: a billed unparsed reply dropped its tokens"
+        );
+        // Before any reply: nothing billed.
+        let e: AiCallError = "HTTP request failed".to_string().into();
+        assert_eq!(e.tokens, 0);
+    }
+
     /// The structured-output request body must declare a single `answer` tool
     /// whose schema requires both `value` and `confidence`, and the tool_choice
     /// must force that tool.  This is the contract that turns LLM output into
@@ -1594,98 +1752,133 @@ mod tests {
     // fell through to the key check — measured failing a Stage-2 strict gate.
     use super::TEST_ENV_LOCK as ENV_LOCK;
 
-    /// Exercise the bridges with an unset API key so we never touch the network.
-    /// The bridges must serialise the error through `out_err_*`, return 1, and
-    /// leave the success out-params untouched.  Tested as one block (under the
-    /// env lock) for both i64 and f64 plus the null-out-param defensive path.
+    /// ceilings CE-8 (NH-C10 B): with no key and no mock a bridge stops the
+    /// way the interpreter does (E1300, exit 5), or `__axon_ai_complete`
+    /// answers the caller's fallback. It used to hand the key error back as a
+    /// catchable `Err`. A stopping bridge exits the process, so each case runs
+    /// in a child copy of this test binary (`no_key_bridge_child`), with the
+    /// key and mock removed from ITS environment only.
+    fn run_no_key_child(case: &str) -> (Option<i32>, String, String) {
+        let o = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "tests::no_key_bridge_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            // Test-only, so deliberately outside the `AXON_*` registry namespace.
+            .env("NO_KEY_BRIDGE_CHILD", case)
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("AXON_AI_API_KEY")
+            .env_remove("AXON_AI_MOCK")
+            .output()
+            .expect("spawn the test binary");
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    }
+
+    /// The child half of `run_no_key_child`: a no-op unless the parent named
+    /// a case.
     #[test]
-    fn extract_bridges_report_missing_api_key_and_tolerate_nulls() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-
-        let prev = std::env::var("ANTHROPIC_API_KEY").ok();
-        std::env::remove_var("ANTHROPIC_API_KEY");
-        // ALSO neutralise AXON_AI_MOCK. This test asserts "no API key => rc 1",
-        // but mock mode ALSO produces a successful rc 0 without a key, so the
-        // assertion only holds when mock is off — a premise the test did not
-        // control. Sibling tests in this file set AXON_AI_MOCK=1 and restore
-        // it, and if one of them leaves it set (a panic while holding the
-        // poison-tolerant ENV_LOCK is enough) this test fails with
-        // "missing API key must return 1: left 0, right 1".
-        //
-        // MEASURED: green 5/5 in a warm tree and RED in a cold gate worktree,
-        // which is the signature of an ordering race rather than a code
-        // change. The run receipt showed `env_axon_names=` empty, ruling out
-        // an inherited AXON_AI_MOCK and localising the pollution to
-        // in-process state.
-        let prev_mock = std::env::var("AXON_AI_MOCK").ok();
-        std::env::remove_var("AXON_AI_MOCK");
-
-        // ── i64 bridge ──
-        let prompt = b"hi";
-        let mut value_i: i64 = i64::MIN;
-        let mut conf_i: f64 = -1.0;
-        let mut err_len: i64 = 0;
-        let mut err_ptr: *mut u8 = std::ptr::null_mut();
-        let rc = __axon_ai_extract_uncertain_i64(
-            prompt.as_ptr(),
-            prompt.len() as i64,
-            &mut value_i,
-            &mut conf_i,
-            &mut err_len,
-            &mut err_ptr,
-        );
-        assert_eq!(rc, 1, "missing API key must return 1");
-        assert!(err_len > 0, "err_len should be positive on the error path");
-        assert!(!err_ptr.is_null());
-        // Out value/confidence untouched on error.
-        assert_eq!(value_i, i64::MIN);
-        assert_eq!(conf_i, -1.0);
-        let msg = unsafe {
-            let slice = std::slice::from_raw_parts(err_ptr, err_len as usize);
-            std::str::from_utf8_unchecked(slice)
+    fn no_key_bridge_child() {
+        let Ok(case) = std::env::var("NO_KEY_BRIDGE_CHILD") else {
+            return;
         };
+        let p = b"hi";
+        let (pp, pl) = (p.as_ptr(), p.len() as i64);
+        let (mut len, mut ptr): (i64, *mut u8) = (0, std::ptr::null_mut());
+        let (mut i, mut f, mut c, mut b) = (0i64, 0f64, 0f64, false);
+        match case.as_str() {
+            "ai_complete" | "ai_complete_fallback" => {
+                let fb = b"FB";
+                let (fp, fl) = if case == "ai_complete" {
+                    (std::ptr::null(), -1)
+                } else {
+                    (fb.as_ptr(), fb.len() as i64)
+                };
+                __axon_ai_complete(pp, pl, fp, fl, &mut len, &mut ptr);
+                let text = unsafe {
+                    std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                        ptr,
+                        len.unsigned_abs() as usize,
+                    ))
+                };
+                println!("CHILD-REPLY len={len} text={text}");
+            }
+            "ai_extract_uncertain_i64" => {
+                __axon_ai_extract_uncertain_i64(pp, pl, &mut i, &mut c, &mut len, &mut ptr);
+            }
+            "ai_extract_uncertain_f64" => {
+                __axon_ai_extract_uncertain_f64(pp, pl, &mut f, &mut c, &mut len, &mut ptr);
+            }
+            "ai_extract_i64" => {
+                __axon_ai_extract_i64(pp, pl, &mut i, &mut len, &mut ptr);
+            }
+            "ai_extract_f64" => {
+                __axon_ai_extract_f64(pp, pl, &mut f, &mut len, &mut ptr);
+            }
+            "ai_extract_bool" => {
+                __axon_ai_extract_bool(pp, pl, &mut b, &mut len, &mut ptr);
+            }
+            other => panic!("unknown child case {other}"),
+        }
+        println!("CHILD-RETURNED");
+    }
+
+    #[test]
+    fn no_key_bridges_stop_with_e1300_like_the_interpreter() {
+        for case in [
+            "ai_complete",
+            "ai_extract_uncertain_i64",
+            "ai_extract_uncertain_f64",
+            "ai_extract_i64",
+            "ai_extract_f64",
+            "ai_extract_bool",
+        ] {
+            let (code, out, err) = run_no_key_child(case);
+            assert_eq!(
+                code,
+                Some(5),
+                "ATTACK: a native AI bridge with no key returned instead of stopping \
+                 ({case}): {out}{err}"
+            );
+            assert!(
+                err.contains(&format!("axon: ai policy: [E1300] `{case}` cannot run")),
+                "{case}: {err}"
+            );
+            assert!(!out.contains("CHILD-RETURNED"), "{case}: {out}");
+        }
+    }
+
+    #[test]
+    fn no_key_complete_answers_the_declared_fallback() {
+        let (code, out, err) = run_no_key_child("ai_complete_fallback");
         assert!(
-            msg.contains("ANTHROPIC_API_KEY"),
-            "expected key-error message, got: {msg}"
+            out.contains("CHILD-REPLY len=2 text=FB"),
+            "ATTACK: a declared fallback was not the native no-key reply: {out}{err}"
         );
+        assert_eq!(code, Some(0), "{out}{err}");
+    }
 
-        // ── f64 bridge ──
-        let mut value_f: f64 = f64::NAN;
-        let mut conf_f: f64 = -1.0;
-        let mut err_len2: i64 = 0;
-        let mut err_ptr2: *mut u8 = std::ptr::null_mut();
-        let rc = __axon_ai_extract_uncertain_f64(
-            prompt.as_ptr(),
-            prompt.len() as i64,
-            &mut value_f,
-            &mut conf_f,
-            &mut err_len2,
-            &mut err_ptr2,
-        );
-        assert_eq!(rc, 1);
-        assert!(err_len2 > 0);
-        assert!(!err_ptr2.is_null());
-        assert_eq!(conf_f, -1.0);
-
-        // ── null out-params: must not segfault, return 1 ──
-        let rc = __axon_ai_extract_uncertain_i64(
-            prompt.as_ptr(),
-            prompt.len() as i64,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        );
-        assert_eq!(rc, 1);
-
-        // Restore env var.
+    /// Null out-params on the success path (mock) must not segfault.
+    #[test]
+    fn extract_bridges_tolerate_null_out_params() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev_mock = std::env::var("AXON_AI_MOCK").ok();
+        std::env::set_var("AXON_AI_MOCK", "1");
+        let p = b"hi";
+        use std::ptr::null_mut as n;
+        let rc_u = __axon_ai_extract_uncertain_i64(p.as_ptr(), 2, n(), n(), n(), n());
+        let rc_i = __axon_ai_extract_i64(p.as_ptr(), 2, n(), n(), n());
+        let rc_b = __axon_ai_extract_bool(p.as_ptr(), 2, n(), n(), n());
         match prev_mock {
             Some(v) => std::env::set_var("AXON_AI_MOCK", v),
             None => std::env::remove_var("AXON_AI_MOCK"),
         }
-        if let Some(v) = prev {
-            std::env::set_var("ANTHROPIC_API_KEY", v);
-        }
+        assert_eq!((rc_u, rc_i, rc_b), (0, 0, 0));
     }
 
     /// Null prompt pointer is rejected before any network attempt.
@@ -1822,94 +2015,10 @@ mod tests {
         assert!(input.get("value").is_none() || !input.get("value").unwrap().is_i64());
     }
 
-    /// Exercise the three new flat-T extern bridges with no API key.  Each
-    /// must serialise its error through `out_err_*`, return 1, and leave
-    /// `*out_value` untouched.  Also covers the null-out-param defensive path.
+    /// A null prompt pointer on a flat-T bridge is rejected before any key
+    /// or network check, as a catchable error.
     #[test]
-    fn flat_extract_bridges_report_missing_api_key_and_tolerate_nulls() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        let prev = std::env::var("ANTHROPIC_API_KEY").ok();
-        std::env::remove_var("ANTHROPIC_API_KEY");
-        // ALSO neutralise AXON_AI_MOCK. This test asserts "no API key => rc 1",
-        // but mock mode ALSO produces a successful rc 0 without a key, so the
-        // assertion only holds when mock is off — a premise the test did not
-        // control. Sibling tests in this file set AXON_AI_MOCK=1 and restore
-        // it, and if one of them leaves it set (a panic while holding the
-        // poison-tolerant ENV_LOCK is enough) this test fails with
-        // "missing API key must return 1: left 0, right 1".
-        //
-        // MEASURED: green 5/5 in a warm tree and RED in a cold gate worktree,
-        // which is the signature of an ordering race rather than a code
-        // change. The run receipt showed `env_axon_names=` empty, ruling out
-        // an inherited AXON_AI_MOCK and localising the pollution to
-        // in-process state.
-        let prev_mock = std::env::var("AXON_AI_MOCK").ok();
-        std::env::remove_var("AXON_AI_MOCK");
-
-        let prompt = b"hi";
-
-        // ── i64 bridge ──
-        let mut v_i: i64 = i64::MIN;
-        let mut elen: i64 = 0;
-        let mut eptr: *mut u8 = std::ptr::null_mut();
-        let rc = __axon_ai_extract_i64(
-            prompt.as_ptr(),
-            prompt.len() as i64,
-            &mut v_i,
-            &mut elen,
-            &mut eptr,
-        );
-        assert_eq!(rc, 1);
-        assert!(elen > 0);
-        assert!(!eptr.is_null());
-        assert_eq!(v_i, i64::MIN, "out_value must be untouched on error");
-        let msg = unsafe {
-            std::str::from_utf8_unchecked(std::slice::from_raw_parts(eptr, elen as usize))
-        };
-        assert!(msg.contains("ANTHROPIC_API_KEY"), "got: {msg}");
-
-        // ── f64 bridge ──
-        let mut v_f: f64 = f64::NAN;
-        let mut elen2: i64 = 0;
-        let mut eptr2: *mut u8 = std::ptr::null_mut();
-        let rc = __axon_ai_extract_f64(
-            prompt.as_ptr(),
-            prompt.len() as i64,
-            &mut v_f,
-            &mut elen2,
-            &mut eptr2,
-        );
-        assert_eq!(rc, 1);
-        assert!(elen2 > 0);
-        assert!(!eptr2.is_null());
-
-        // ── bool bridge ──
-        let mut v_b: bool = false;
-        let mut elen3: i64 = 0;
-        let mut eptr3: *mut u8 = std::ptr::null_mut();
-        let rc = __axon_ai_extract_bool(
-            prompt.as_ptr(),
-            prompt.len() as i64,
-            &mut v_b,
-            &mut elen3,
-            &mut eptr3,
-        );
-        assert_eq!(rc, 1);
-        assert!(elen3 > 0);
-        assert!(!eptr3.is_null());
-        assert!(!v_b, "out_value must be untouched on error");
-
-        // ── null out-params defensive path (i64 bridge as representative) ──
-        let rc = __axon_ai_extract_i64(
-            prompt.as_ptr(),
-            prompt.len() as i64,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        );
-        assert_eq!(rc, 1);
-
-        // ── null prompt pointer rejected before any network attempt ──
+    fn flat_extract_bridge_rejects_null_prompt() {
         let mut v_i2: i64 = 0;
         let mut elen4: i64 = 0;
         let mut eptr4: *mut u8 = std::ptr::null_mut();
@@ -1922,14 +2031,6 @@ mod tests {
             msg2.contains("invalid prompt pointer/length"),
             "got: {msg2}"
         );
-
-        match prev_mock {
-            Some(v) => std::env::set_var("AXON_AI_MOCK", v),
-            None => std::env::remove_var("AXON_AI_MOCK"),
-        }
-        if let Some(v) = prev {
-            std::env::set_var("ANTHROPIC_API_KEY", v);
-        }
     }
 
     /// R1 parity: with AXON_AI_MOCK set, the native AI path returns the
@@ -2249,6 +2350,18 @@ mod host_of_url_tests {
     fn ipv6_literal_is_not_chopped_at_an_inner_colon() {
         assert_eq!(host_of("http://[::1]:8080/v1"), "[::1]");
         assert_eq!(host_of("http://[::1]/v1"), "[::1]");
+    }
+
+    /// ceilings CE-1 guard: the CE-1 pin (declared ∩ `AXON_ALLOWED_NET`) is
+    /// enforced by this check. An override whose host is outside the pin is
+    /// refused; the empty pin refuses everything. (Exercised on the pure
+    /// check, not through `NET_PIN`, which is process-global and first-wins.)
+    #[test]
+    fn pin_refuses_override_outside_pin() {
+        let pin = vec!["api.anthropic.com".to_string()];
+        assert!(!host_allowed(&host_of("http://attacker:8080/v1"), &pin));
+        assert!(host_allowed(&host_of("https://api.anthropic.com"), &pin));
+        assert!(!host_allowed(&host_of("https://api.anthropic.com"), &[]));
     }
 }
 

@@ -260,6 +260,14 @@ pub struct Codegen<'ctx> {
     /// an instantiated generic). Runtime panics that name their frame use it so
     /// native stderr matches the interpreter's (native-parity NP-4).
     pub(super) current_src_fn: String,
+    /// ceilings CE-8: each top-level fn's `@[ai(policy(fallback: ..))]`
+    /// (`ai_routing::fallback_from_attrs`), keyed by source name.
+    ai_fallbacks: HashMap<String, String>,
+    /// The fallback of the fn whose body is being emitted, looked up by
+    /// `current_src_fn` the way the interpreter's `current_ai_fallback` looks
+    /// up its current fn. An `ai_complete` emitted under `Some` hands it to the
+    /// runtime, which answers it when no model is reachable.
+    current_ai_fallback: Option<String>,
     /// Current lambda's closure environment, set when emitting a lambda body.
     /// Tuple of (env_ptr, env_struct_ty, capture_index_map).
     /// When set, `Ident` lookups that miss `self.locals` fall back to loading
@@ -513,6 +521,8 @@ impl<'ctx> Codegen<'ctx> {
             comptime_env: HashMap::new(),
             loop_stack: Vec::new(),
             current_src_fn: String::new(),
+            ai_fallbacks: HashMap::new(),
+            current_ai_fallback: None,
             current_lambda_env: None,
             pending_lambda_param_tys: None,
             current_adaptive_fn: None,
@@ -1187,6 +1197,18 @@ impl<'ctx> Codegen<'ctx> {
         for (name, f) in &fn_work {
             self.fndefs.insert(name.clone(), f.clone());
         }
+        // ceilings CE-8: the interpreter finds the current fn's fallback by
+        // NAME among the top-level fns (`current_fn_def`), so the same map.
+        self.ai_fallbacks = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ast::Item::FnDef(f) => {
+                    crate::ai_routing::fallback_from_attrs(&f.attrs).map(|fb| (f.name.clone(), fb))
+                }
+                _ => None,
+            })
+            .collect();
 
         // Phase 6: precompute per-fn ACTUAL builtin effects (transitive) so the
         // `with handler` lowering can tell whether a handler genuinely intercepts
@@ -1284,12 +1306,11 @@ impl<'ctx> Codegen<'ctx> {
             // mirroring `__axon_verify_panic`), refuse rather than emit a binary
             // that silently ignores the ceiling.
             //
-            // The refusal condition mirrors the interpreter's ENFORCEMENT
-            // condition exactly: the meter keys on the fn that is *current* when
-            // the call happens (R3c §3 "per-fn-activation"), so only a DIRECT
-            // `ai_complete` in this fn's own body is metered. A call made from an
-            // un-budgeted helper is unmetered in the interpreter too, so refusing
-            // it would reject a program the two backends already agree on.
+            // Every fn with a valid budget is refused, whatever its body calls:
+            // since ceilings CE-4 the interpreter's budget bounds every AI call
+            // made while the fn's activation is on the stack, callees included,
+            // so a budgeted fn whose own body makes no AI call can still be the
+            // one that stops the run.
 
             // ── R3b/F062: the PER-CALL `tier:` (AUDIT T46). ──────────────────
             // The scan above resolves the tier from fn ATTRIBUTES only. R3b also
@@ -1540,6 +1561,7 @@ impl<'ctx> Codegen<'ctx> {
 
     fn emit_fn(&mut self, f: &ast::FnDef, llvm_fn: FunctionValue<'ctx>) {
         self.current_src_fn = f.name.clone();
+        self.current_ai_fallback = self.ai_fallbacks.get(&f.name).cloned();
         let entry = self.ir.context.append_basic_block(llvm_fn, "entry");
         self.ir.builder.position_at_end(entry);
 

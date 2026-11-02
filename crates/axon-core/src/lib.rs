@@ -71,6 +71,7 @@ pub mod mut_borrow;
 pub mod audit;
 pub mod cache;
 pub mod capabilities;
+pub mod ceiling;
 pub mod complexity;
 pub mod doc;
 pub mod effects;

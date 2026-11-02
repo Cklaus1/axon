@@ -1,6 +1,6 @@
 # ceilings - DRAFT spec
 
-**Status: DRAFT (after Step 1 review). §9 decided by human 2026-11-02 (the recommendations); build authorized 2026-11-02.**
+**Status: PARTIAL 2026-11-02 on b2/ce eebe06f7 (CE-1..CE-8, CE-10 built; CE-9 separate; NH-C9 deferred).**
 
 Author: `Ceilings` (2026-11-01), base `main` a5310878 (worktree `/home/cklaus/projects/axon-lanes/asi-next`, branch `asi/next`).
 Reference binary: `/var/tmp/r51-tmp/asi-bin/axon` (`axon 0.1.0 (a5310878)`, default features: `codegen`, no `asi-runtime`).
@@ -179,6 +179,8 @@ the default build (`cargo test -p axon-core --no-default-features --lib ai_pin_h
 - `ai_pin_hosts_ambient_pins_unannotated_program`: no declared hosts, ambient `["gw.example"]` → `Some([])`.
 - `ai_pin_hosts_intersects_declared_with_ambient`: declared `["x.com"]`, ambient `["api.anthropic.com"]` → `Some([])`.
   Declared `["*.x.com"]`, ambient `["a.x.com"]` → `Some(["a.x.com"])`.
+  `[REVISED: build d9ad9086]` `declared_net_hosts` adds the implicit host to any non-empty declared set (T35), so the first
+  case gives `Some(["api.anthropic.com"])`, not `Some([])`; the test asserts that `x.com` is absent, which is the CEA#3 point.
 - `ai_pin_hosts_star_and_unset_do_not_narrow`: declared `["x.com"]`, ambient `*` or unset → `Some(["x.com"])`. With no
   declared hosts and ambient unset → `None`.
 
@@ -188,10 +190,15 @@ behavioural assertion is the returned list, not the missing symbol (CED-10).
 Guard, not fail-first: an `axon-ai` unit test `pin_refuses_override_outside_pin`, in which `checked_endpoint_url` returns an
 `Err` naming the host. It passes today. It runs in S20 only if axon-ai's `asi`-free build compiles it [INFERENCE: it is not
 feature-gated today].
+`[REVISED: build d9ad9086]` `NET_PIN` is a process-global first-wins `OnceLock`, so the guard exercises the pure check
+(`host_allowed(host_of(url), pin)`) in `host_of_url_tests`, not `checked_endpoint_url` itself.
 
 **Gate line** (`[REVISED: CED-1]`). Add `cargo check --locked -p axon-core --no-default-features --features asi-runtime` as a
 `gate.sh` step with a `governance/gate-lanes.json` unit. Until it lands, `asi-runtime` is **not gated**: 0 hits in either
 file at a5310878. Its wall time is not measured [INFERENCE: one extra `cargo check` including `reqwest`, a few minutes cold].
+`[REVISED: build d9ad9086]` Measured 8.0 s cold (fresh target dir), so it runs on every gate, not `--strict` only. It sits in
+stage S12, renamed "feature builds + tests (serde-json, asi-runtime)", rather than a new stage, so the lane registry needs no
+new audited unit.
 
 **Acceptance.**
 - The three unit tests pass in the default build.
@@ -290,6 +297,10 @@ see CE-10 and the counts in §3.
 
 **Acceptance.** All six pass. `axon run --help` documents `--ceiling`, `env_registry.rs` has an `AXON_CEILING` row, and
 `AXON_REFERENCE.md` lists it in its env table (`:103-112`).
+`[REVISED: build d71e5c56]` Built as written, plus one rule the spec left open: `--ceiling FILE` together with a
+DIFFERENT `AXON_CEILING` is E1007 (two ceilings and no rule for which wins is not a ceiling); the same path twice is
+accepted. The ceiling is read once per process (`ceiling::active`), and also by `axon goal`/`axon test`, not only `run`.
+CE-10 (R45 on under a ceiling) is the one line in `main.rs::apply_ceiling` and is tested by `ceiling_implies_require_contained`.
 
 ---
 
@@ -320,6 +331,14 @@ see CE-10 and the counts in §3.
 after CE-1 because the result is `None`.
 
 **Cost.** A: ~0 beyond CE-1/CE-2 plus docs. B: ~20 lines in `pin_ai_net_allowlist`, plus docs and a CHANGELOG migration note.
+
+`[REVISED: build CE-3]` Built as A. The only code is CE-1's pin reading `effective_net_scope()` (ambient met with the
+ceiling's `net`, CE-2), so a ceiling with a `net` list pins the endpoint. A ceiling's `net` may be `null` (§CE-2: `null` =
+explicitly unbounded), and then the run is not pinned unless `AXON_ALLOWED_NET` or a declared host pins it: "every
+ceilinged run is pinned" holds only for a `net` list. Test (asi-runtime only, so outside the default gate):
+`ceiling.rs::ceiling_net_pins_the_ai_endpoint`, a 127.0.0.1 listener that the unceilinged control run reaches and the
+ceilinged run (`net: ["api.anthropic.com"]`, program `net: ["*"]`) does not. Docs: `spec/axon-for-llms.md` (operator
+ceilings paragraph).
 
 ---
 
@@ -405,6 +424,13 @@ The first two are RED at a5310878.
 **Cost.** ~80 lines: the stack replaces `ai_calls_this_fn` plus `AiBudgetGuard`. R3c spec amendment, CHANGELOG, pci theme,
 `spec/axon-for-llms.md` budget paragraph. Sequenced after AF-4 [pending asi-fixes-spec.md], so extracts are charged too.
 
+`[REVISED: build CE-4]` Built as A. `Interp::ai_budget_stack` replaces `ai_calls_this_fn`; the frame is pushed on entry
+to an `ai_metered` fn with a valid budget and popped by `AiBudgetGuard`. The gate is `ai_call_prologue`
+(`interp/builtins.rs`), which since AF-4 every extract also passes, so "every AI dispatch" counts `ai_extract::<T>` too
+(test `budget_counts_extracts`). Tests are in `ceiling.rs`; the three named ones plus that one and a control
+(`budget_within_extent_runs`). The flipped `cli_run.rs` test was rewritten as
+`ai_budget_covers_callees_through_unmetered_helpers` (outer budget 6). VM checked by hand on b01/b03/b05 (E1301, rc 5).
+
 ---
 
 ### CE-5 (P2, NH-C5) No step or wall-clock ceiling
@@ -477,6 +503,18 @@ All are RED at a5310878 except the guard.
 **Cost.** ~250 lines across `eval.rs`, `interp.rs`, `vm/compile.rs`, `vm/mod.rs`, the gating in `vm/pure.rs`/`purefn.rs`, plus
 `env_registry.rs`, `main.rs:3724`, `axon-rt/src/lib.rs:2127`. `vm_perf_gate.sh` must stay green.
 
+`[REVISED: build CE-5]` Built as A. `Interp::step` (`interp.rs`) is called by the tree's `run_loop_body`, by `enter_fn`
+(fn-body entry, so both engines' calls count there) and by the VM's new `Op::Step`, which `Compiler::step` emits at each
+loop body's start only when a ceiling is set. Deviations: fused-loop gating sits in `vm/compile.rs` (`pure_loop`/`pure_for`
+return `None`), not in `pure.rs`; the pure-fn tier is off via `PureSlot::never()`; the VM's leaf-call and moves-body
+shortcuts compare against a new `fast_depth` (0 under a ceiling) so those calls reach `enter_fn`. Lambda entries are not
+steps in either engine (a loop inside one is). `ceiling.rs` gains the required keys `steps` and `wall_ms` (E1007 if
+absent). E1006 maps to a new `Flow::ResourceBound` and `RESOURCE_BOUND_EXIT_CODE` 9 in `axon-core`
+(`governance/EXIT_CODES.md` row now "os + core"). Parity: `scripts/vm_parity.sh` step leg over
+`tests/fixtures/ce5_steps/*.ax` at 4 caps. `vm_perf_gate.sh --allow-busy` (release, base b3a9c56e vs CE-5): every
+program within budget; mandelbrot is OVER its +0.5 % ref check on BOTH binaries (base +2.69 %, CE-5 +2.79 %), so that
+failure predates this build; the other five move by <= 0.1 % instructions.
+
 ---
 
 ### CE-6 (P2, NH-C6) The token cap charges a prompt-length estimate, never the reply
@@ -525,6 +563,19 @@ earlier [INFERENCE: fixtures under `crates/axon-guest-init/tests/policy_refusals
 `token_cap_reserves_max_tokens` (cap 100, any prompt → E1303 before dispatch; RED).
 
 **Cost.** ~40 lines in `builtins.rs:6036-6215`. Sequenced after AF-4 [pending asi-fixes-spec.md] so extracts settle the same way.
+
+`[REVISED: build CE-6]` Built as A. `ai_call_prologue` reserves `prompt bytes + 16 + axon_ai::MAX_TOKENS` (1024, a const
+pinned to the interpreter's copy by a compile-time assert) for every model call, extracts included; `settle_run_tokens`
+charges real usage (live) or `est + reply.len()/4 + 1` (mock, replay) after the call answers. A third fail-first test,
+`token_cap_meters_extracts`, covers the extract half (before CE-6 extracts never touched the cap). The cli_run test's caps
+became 1100/1200. O-AF-09 built in the same window: `axon_ai` typed/plain completions return `AiCallError { message,
+tokens }`, a billed 2xx reply that cannot be used keeps its tokens, and the interpreter records it (`ai_call`, reason
+`unusable reply`), costs it and settles it before returning `Err` (`billed_unusable_reply_is_recorded_and_charged`, a
+127.0.0.1 sink, `asi-runtime` only). The live-reservation bound (input tokens ≤ prompt bytes + 16) stays [INFERENCE].
+The `ai_calls` ceiling key (§CE-2 table, CED-7) shipped as its own commit after CE-6: a run-wide `Interp::ai_calls_cap`
+read from the ceiling only (no env var, as §CE-2 proposes), gated in `ai_call_prologue` after the token gate with E1303
+wording "AI call budget of N call(s)"; fail-first `ceiling_ai_calls_caps_the_run`, g01 M4740 (overflow block: M4680-M4699
+were spent by CE-1..CE-6).
 
 ---
 
@@ -692,6 +743,13 @@ Options:
     and the five extract bridges [INFERENCE: ~100-150 lines across `codegen/`, `axon-ai`]. Extract semantics follow whatever
     the interpreter does for each extract [pending asi-fixes-spec.md AF-1].
   - Same test rewrites as A, asserting E1300/exit 5 instead.
+  - `[REVISED: build d5e8aa21]` Built as B. Only `__axon_ai_complete` gained the fallback argument (`fallback_ptr`,
+    `fallback_len`, `< 0` = none): the interpreter's extracts never take a fallback (AF-1: "a fallback is a `str`, not the
+    extracted type"), so the five extract bridges keep their ABI and stop with the extract E1300 line, exit 5. Codegen calls a
+    second wrapper `ai_complete.fallback` only from a fn that declares one (`ai_routing::fallback_from_attrs`, now shared with
+    `Interp::current_ai_fallback`). The two in-process tests became `no_key_bridges_stop_with_e1300_like_the_interpreter` and
+    `no_key_complete_answers_the_declared_fallback`, which re-run the test binary as a child. A closure body inside a fallback
+    fn was not probed natively (it hits an unrelated E0910 / IR error at this base) [INFERENCE: it follows the enclosing fn].
 - **C: keep + document** the divergence in `axon build --help` and `spec/axon-for-llms.md`. This leaves a silent wrong answer
   (the third-worst outcome).
 

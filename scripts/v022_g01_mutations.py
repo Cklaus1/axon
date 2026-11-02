@@ -11593,8 +11593,8 @@ MUTATIONS += [
      '        (\n            "AXON_ALLOWED_NET",', '        (\n            "AXON_ALLOWED_NET_NOT_THIS",',
      'axon-core', '--test ambient_scope', 'a_compiled_binary_refuses_the_scope_rather_than_dropping_it'),
     ('M3727', 'R0b NATIVE BUILD: a binary is emitted while an ambient scope variable is set (E0910 dropped)', 'crates/axon-core/src/main.rs',
-     '        "AXON_ALLOWED_FS_READ",\n        "AXON_ALLOWED_FS_WRITE",\n        "AXON_ALLOWED_NET",\n        "AXON_BUDGET_TOKENS",\n    ] {',
-     '        "AXON_BUDGET_TOKENS",\n    ] {',
+     '        "AXON_ALLOWED_FS_READ",\n        "AXON_ALLOWED_FS_WRITE",\n        "AXON_ALLOWED_NET",\n        "AXON_BUDGET_TOKENS",\n',
+     '        "AXON_BUDGET_TOKENS",\n',
      'axon-core', '--test ambient_scope', 'a_compiled_binary_refuses_the_scope_rather_than_dropping_it'),
     ('M3728', 'R0a CAPS: a refinement predicate the interpreter runs implicitly is not walked', 'crates/axon-core/src/capabilities.rs',
      '                        work.push(Walk::Expr(&r.predicate));', '                        let _ = &r.predicate;',
@@ -11719,8 +11719,8 @@ MUTATIONS += [
      '    drain_walk(work, &mut ctx);\n    let called: Vec<&str> = reach',
      'axon-core', '--lib', 'capabilities::tests::a_native_call_in_a_used_refinement_needs_the_users_grant_e1004'),
     ('M3765', 'FU-5 CEILING: the interpreter reads a non-UTF-8 AXON_ALLOWED_EFFECTS as a grant', 'crates/axon-core/src/interp.rs',
-     'it denies every effect");\n            });\n            String::new()',
-     'it denies every effect");\n            });\n            "IO".to_string()',
+     'it denies every effect"\n                    );\n                });\n                Some(std::collections::HashSet::new())',
+     'it denies every effect"\n                    );\n                });\n                Some(["IO".to_string()].into_iter().collect())',
      'axon-core', '--test cli_run', 'a_non_utf8_effect_ceiling_denies_every_effect'),
     ('M3766', 'FU-5 CEILING: axon test --completion-key-stdin widens a non-UTF-8 AXON_ALLOWED_EFFECTS', 'crates/axon-core/src/main.rs',
      'it denies every effect");\n                Vec::new()',
@@ -14634,6 +14634,170 @@ MUTATIONS += [
      '                Ok(Pattern::Literal(Literal::Str(s)))\n'
      '            }\n',
      'axon-core', _CS42_T, 'slot_string_outside_an_expression_is_refused'),
+]
+
+# ceilings CE-1 (ids M4680-M4681): the operator's AXON_ALLOWED_NET joins the AI
+# endpoint pin as an intersection (tasks/ceilings-spec.md CE-1).
+MUTATIONS += [
+    ('M4680', 'CE-1: an operator net scope does not pin a program that declares no host', 'crates/axon-core/src/interp.rs',
+     '    if declared.is_empty() && ambient.is_none() {\n        return None;',
+     '    if declared.is_empty() {\n        return None;',
+     'axon-core', '--no-default-features --lib', 'interp::tests::ai_pin_hosts_ambient_pins_unannotated_program'),
+    ('M4681', 'CE-1: the pin is the union of declared and operator hosts (CEA#3), so a declared host leaves the operator scope', 'crates/axon-core/src/interp.rs',
+     '        pin = intersect_host_patterns(&pin, list);',
+     '        pin.extend(list.iter().cloned());',
+     'axon-core', '--no-default-features --lib', 'interp::tests::ai_pin_hosts_intersects_declared_with_ambient'),
+]
+
+# ceilings CE-7 (id M4682): the goal_* dispatch row is IO; the metric's own
+# model call keeps its AI check.
+MUTATIONS += [
+    ('M4682', 'CE-7: the IO-only dispatch exemption also covers the AI builtins, so a metric reaches a model without AI', 'crates/axon-core/src/builtins.rs',
+     '    if GOAL_DISPATCH_IO_ONLY.contains(&name) {\n        &["IO"]',
+     '    if GOAL_DISPATCH_IO_ONLY.contains(&name) || name.starts_with("ai_") {\n        &["IO"]',
+     'axon-core', '--no-default-features --test ceiling', 'goal_run_ai_metric_still_refused_without_ai_grant'),
+]
+
+# ceilings CE-8 (ids M4683-M4685, NH-C10 B): with no key and no mock a native
+# AI bridge answers the fn's fallback or stops with E1300 / exit 5.
+MUTATIONS += [
+    ('M4683', 'CE-8: a no-key native bridge returns the key error as Err again', 'crates/axon-ai/src/lib.rs',
+     '        refuse_offline_native_ai(builtin);\n    }',
+     '        return None;\n    }',
+     'axon-ai', '--lib', 'tests::no_key_bridges_stop_with_e1300_like_the_interpreter'),
+    ('M4684', 'CE-8: the no-key native ai_complete ignores the fallback it was handed', 'crates/axon-ai/src/lib.rs',
+     '        if let Some(fb) = fallback {',
+     '        if let Some(fb) = fallback.filter(|_| false) {',
+     'axon-ai', '--lib', 'tests::no_key_complete_answers_the_declared_fallback'),
+    ('M4685', 'CE-8: codegen never hands the calling fn fallback to the runtime', 'crates/axon-core/src/codegen/expr.rs',
+     '            if name == "ai_complete" && self.functions.contains_key(AI_COMPLETE_FALLBACK_FN) {',
+     '            if false && self.functions.contains_key(AI_COMPLETE_FALLBACK_FN) {',
+     'axon-core', '--test integration_fixtures', 'native_fallback_matches_interp'),
+]
+
+# ceilings CE-2 (ids M4686-M4690) and CE-10 (id M4691): the operator's
+# `axon-ceiling/1` file fails closed (E1007), narrows the env vars, is refused
+# natively, and turns R45 on.
+MUTATIONS += [
+    ('M4686', 'CE-2: a ceiling with a missing key is accepted', 'crates/axon-core/src/ceiling.rs',
+     '    if !missing.is_empty() {',
+     '    if false && !missing.is_empty() {',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_missing_key_is_e1007'),
+    ('M4687', 'CE-2: an unknown ceiling key (a typo) is not refused', 'crates/axon-core/src/ceiling.rs',
+     '        if !KEYS.contains(&k.as_str()) {',
+     '        if false && !KEYS.contains(&k.as_str()) {',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_unknown_key_is_e1007'),
+    ('M4688', 'CE-2: a ceiling inside its own fs_write scope is accepted', 'crates/axon-core/src/ceiling.rs',
+     '    refuse_self_overlap(&c, cwd)?;',
+     '    let _ = refuse_self_overlap(&c, cwd);',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_inside_own_write_scope_is_e1007'),
+    ('M4689', 'CE-2: AXON_ALLOWED_EFFECTS widens the ceiling effects instead of meeting them', 'crates/axon-core/src/interp.rs',
+     '        (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),',
+     '        (Some(a), Some(_b)) => Some(a),',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_intersects_env_never_widens'),
+    ('M4690', 'CE-2: a native binary runs under AXON_CEILING instead of refusing it', 'crates/axon-rt/src/lib.rs',
+     '        (\n            "AXON_CEILING",',
+     '        (\n            "AXON_CEILING_NOT_THIS",',
+     'axon-core', '--test integration_fixtures', 'native_refuses_under_ceiling'),
+    ('M4691', 'CE-10: a ceiling no longer turns R45 (--require-contained) on', 'crates/axon-core/src/main.rs',
+     '    axon_core::capabilities::set_require_contained(require_contained || ceilinged);',
+     '    axon_core::capabilities::set_require_contained(require_contained || (ceilinged && false));',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_implies_require_contained'),
+]
+
+# ceilings CE-4 (ids M4692-M4694, NH-C4 A): an @[ai(policy(budget: N))]
+# activation bounds every model call made while it is on the stack.
+MUTATIONS += [
+    ('M4692', 'CE-4: a call counts only in the innermost budget frame', 'crates/axon-core/src/interp/builtins.rs',
+     '            for fr in stack.iter_mut() {\n                fr.used += 1;',
+     '            for fr in stack.iter_mut().rev().take(1) {\n                fr.used += 1;',
+     'axon-core', '--no-default-features --test ceiling', 'nested_budget_bounded_by_outer'),
+    ('M4693', 'CE-4: extracts are not metered against the budget', 'crates/axon-core/src/interp/builtins.rs',
+     '        let _ = self.current_ai_budget();\n        {',
+     '        let _ = self.current_ai_budget();\n        if name == "ai_complete" {',
+     'axon-core', '--no-default-features --test ceiling', 'budget_counts_extracts'),
+    ('M4694', 'CE-4: a budget halts only calls made directly in its own fn', 'crates/axon-core/src/interp/builtins.rs',
+     '            if let Some(fr) = stack.iter().rev().find(|fr| fr.used >= fr.budget) {',
+     '            if let Some(fr) = stack.iter().rev().find(|fr| fr.used >= fr.budget && fr.fn_name == caller) {',
+     'axon-core', '--no-default-features --test ceiling', 'budget_covers_unbudgeted_helper'),
+]
+
+# ceilings CE-6 (ids M4695-M4697, NH-C6 A): the run token cap reserves the
+# reply cap before dispatch and charges what each call used, extracts included.
+# O-AF-09 (ids M4698-M4699): a billed reply that cannot be used keeps its
+# tokens, and the interpreter records and charges it.
+MUTATIONS += [
+    ('M4695', 'CE-6: the reservation omits the reply cap', 'crates/axon-core/src/interp/builtins.rs',
+     '                .saturating_add(AI_MAX_REPLY_TOKENS);',
+     '                .saturating_add(0);',
+     'axon-core', '--no-default-features --test ceiling', 'token_cap_reserves_max_tokens'),
+    ('M4696', 'CE-6: an answered call is never charged to the run cap', 'crates/axon-core/src/interp/builtins.rs',
+     '            .set(self.tokens_used.get().saturating_add(tokens.max(0)));',
+     '            .set(self.tokens_used.get().saturating_add(0 * tokens.max(0)));',
+     'axon-core', '--no-default-features --test ceiling', 'token_cap_charges_reply'),
+    ('M4697', 'CE-6: extracts skip the run token cap', 'crates/axon-core/src/interp/builtins.rs',
+     '        if let Some(cap) = self.token_budget {',
+     '        if let Some(cap) = self.token_budget.filter(|_| name == "ai_complete") {',
+     'axon-core', '--no-default-features --test ceiling', 'token_cap_meters_extracts'),
+    ('M4698', 'O-AF-09: a billed unusable live reply is neither recorded nor charged', 'crates/axon-core/src/interp/builtins.rs',
+     '        if e.tokens > 0 {',
+     '        if false && e.tokens > 0 {',
+     'axon-core', '--no-default-features --features asi-runtime --test ceiling', 'billed_unusable_reply_is_recorded_and_charged'),
+    ('M4699', 'O-AF-09: a structured reply with no answer drops its billed tokens', 'crates/axon-ai/src/lib.rs',
+     '            Ok((input, tokens))\n        }\n        Err(msg) => Err(AiCallError::billed(\n            msg,\n            usage_total(p, &json, prompt, text.len()),',
+     '            Ok((input, tokens))\n        }\n        Err(msg) => Err(AiCallError::billed(\n            msg,\n            0 * usage_total(p, &json, prompt, text.len()),',
+     'axon-ai', '--lib', 'tests::unusable_structured_reply_keeps_its_billed_tokens'),
+]
+
+# ceilings CE-6 `ai_calls` (id M4740, overflow block): a ceiling's run-wide
+# model-call cap stops the call past it with E1303 before dispatch.
+MUTATIONS += [
+    ('M4740', 'CE-6: a ceiling ai_calls cap is never enforced', 'crates/axon-core/src/interp/builtins.rs',
+     '            if used >= cap {',
+     '            if false && used >= cap {',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_ai_calls_caps_the_run'),
+]
+
+# ceilings CE-5 (ids M4741-M4749, overflow block, NH-C5 A): a run-wide step
+# ceiling (AXON_MAX_STEPS / a ceiling's `steps`) and wall-clock ceiling
+# (AXON_WALL_MS / `wall_ms`), E1006 exit 9, counted alike by tree and VM.
+MUTATIONS += [
+    ('M4741', 'CE-5: the tree engine skips the loop-body step', 'crates/axon-core/src/interp/eval.rs',
+     '        // `for`), before the body\'s scope opens.\n        self.step()?;',
+     '        // `for`), before the body\'s scope opens.',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_halts_while_true_e1006_exit9'),
+    ('M4742', 'CE-5: the VM emits no step op at a loop body', 'crates/axon-core/src/interp/vm/compile.rs',
+     '        if self.ix.meter.on {\n            self.emit(Op::Step, 0, 0);',
+     '        if false && self.ix.meter.on {\n            self.emit(Op::Step, 0, 0);',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_halts_while_true_e1006_exit9'),
+    ('M4743', 'CE-5: a counted while stays fused under a step ceiling', 'crates/axon-core/src/interp/vm/compile.rs',
+     '        if self.ix.meter.on {\n            return None;\n        }\n        let n = &mut 0;',
+     '        let n = &mut 0;',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_halts_fused_pure_loop'),
+    ('M4744', 'CE-5: a range for stays fused under a step ceiling', 'crates/axon-core/src/interp/vm/compile.rs',
+     '        if self.ix.meter.on {\n            return None;\n        }\n        if var.slot >= NOT_LOCAL {',
+     '        if var.slot >= NOT_LOCAL {',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_halts_fused_pure_loop'),
+    ('M4745', 'CE-5: a fn-body entry is not a step', 'crates/axon-core/src/interp.rs',
+     '        // ceilings CE-5: one step per fn-body entry, charged to the callee.\n        self.step()?;',
+     '        // ceilings CE-5: one step per fn-body entry, charged to the callee.',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_counts_calls'),
+    ('M4746', 'CE-5: the VM leaf-call shortcut skips the fn-body step', 'crates/axon-core/src/interp.rs',
+     '            fast_depth: if meter.on { 0 } else { max_depth },',
+     '            fast_depth: max_depth,',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_equal_across_engines'),
+    ('M4747', 'CE-5: the wall-clock ceiling is never read', 'crates/axon-core/src/interp.rs',
+     '        if n & 4095 == 1 {',
+     '        if false && n & 4095 == 1 {',
+     'axon-core', '--no-default-features --test ceiling', 'wall_ceiling_halts_exit9'),
+    ('M4748', 'CE-5: a malformed AXON_MAX_STEPS disarms the ceiling', 'crates/axon-core/src/interp.rs',
+     '                 stops at its first step). Set a whole number, or unset the variable for no bound."\n            );\n            Some(0)',
+     '                 stops at its first step). Set a whole number, or unset the variable for no bound."\n            );\n            None',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_malformed_fails_closed'),
+    ('M4749', 'CE-5: a ceiling steps key is ignored', 'crates/axon-core/src/interp.rs',
+     '        ceiling.and_then(|c| c.steps),',
+     '        ceiling.and_then(|c| c.steps).filter(|_| false),',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_steps_and_wall_ms_bound_the_run'),
 ]
 
 if __name__ == "__main__":

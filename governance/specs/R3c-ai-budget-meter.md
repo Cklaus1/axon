@@ -30,7 +30,7 @@ fn summarize_each(items: [str]) -> str {
 
 - `budget: N` is a non-negative integer field of the `@[ai(policy(...))]` group, parsed like `tier:`/`fallback:` (the parser flattens the group, so the interp reads the attr arg `"budget: N"`).
 - A fn with **no** `budget:` is **unmetered** (today's behavior — back-compat; the budget is opt-in).
-- The budget is **per-fn-activation**: it counts the `ai_complete` calls made *while that fn is the current fn*, reset each time the fn is entered (so calling a budgeted fn in a loop gives each call its own budget — the budget is a property of the activation, not a global).
+- The budget is **per-fn-activation**: it counts the model calls made *while that fn's activation is on the stack*, reset each time the fn is entered (so calling a budgeted fn in a loop gives each call its own budget — the budget is a property of the activation, not a global). **Amended 2026-11-02 by ceilings CE-4 (`tasks/ceilings-spec.md`, NH-C4 A):** this used to read "while that fn is the current fn", so an un-budgeted helper's calls counted against nothing (O032). The budget now covers callees (dynamic extent) and counts `ai_extract::<T>` calls as well as `ai_complete`.
 
 ### 4. Semantics (what it does)
 
@@ -40,9 +40,9 @@ fn summarize_each(items: [str]) -> str {
 | Same fn makes a 3rd `ai_complete` | **E1301** — the 3rd call halts with `Flow::Panic(E1301)` before any model dispatch (mock/live/fallback). The first two are unaffected. |
 | `@[ai(policy)]` with no `budget:` | Unmetered — unbounded calls, today's behavior (back-compat). |
 | `budget: 0` | The *first* `ai_complete` is E1301 (zero calls allowed). A fn that declares `budget: 0` may make no AI calls. |
-| `budget:` on a fn that makes no AI calls | No effect — the meter is never consulted. |
+| `budget:` on a fn whose extent makes no AI calls | No effect — the meter is never consulted. |
 | Negative or non-integer `budget:` value | Parse-time/encounter-time: treated as **absent** (unmetered) with a `W1311` warning — a malformed budget must not silently *enforce* a wrong number nor crash. |
-| Nested: budgeted fn A calls budgeted fn B | Each fn meters **its own** `ai_complete` calls (the meter keys on the current fn). A's budget does not cover B's calls and vice-versa. |
+| Nested: budgeted fn A calls fn B (budgeted or not) | (CE-4) Every activation on the stack meters every call made while it is live: B's calls count against A's budget too. Each call is checked against every live budget, innermost first; the first exhausted one halts the call with E1301 naming *that* fn, otherwise the call counts in all of them. B's own budget can only narrow A's, never widen it. |
 | Mock (`AXON_AI_MOCK=1`) | The meter ticks identically — E1301 fires on the (N+1)th mock call too (the budget is about call *count*, deterministic regardless of mode). |
 
 The meter is checked **before** the W1310 unmetered-warning and before model dispatch, so an over-budget call produces E1301, not a stray mock/live response or a W1310.

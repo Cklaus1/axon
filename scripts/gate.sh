@@ -935,8 +935,13 @@ fi
 # could not be compiled at all. An advertised command with no build gate is a
 # command that will eventually stop existing without anyone noticing.
 if lane_runs S12; then
-stage_begin S12 "serde-json feature builds + tests"
-echo "── gate: serde-json feature builds (axon lsp / axon parse --json) ─"
+stage_begin S12 "feature builds + tests (serde-json, asi-runtime)"
+echo "── gate: feature builds (axon lsp / axon parse --json; asi-runtime) ─"
+# ceilings CE-1: the `asi-runtime` feature (live AI in the interpreter, the AI
+# endpoint pin) had no gate line at all, so a cfg(asi-runtime) edit could stop
+# compiling unseen. Measured 8.0 s cold (fresh target dir) on this host, so it runs on every gate.
+cargo check --locked -p axon-core --no-default-features --features asi-runtime \
+  || fail "asi-runtime feature check"
 # clippy type-checks what `cargo check` did (lib + bin) plus every test target,
 # and -D warnings also fails on what check only warns about. No other axon-core
 # clippy run enables serde-json, so lsp.rs lints went unseen (four by 2026-10).

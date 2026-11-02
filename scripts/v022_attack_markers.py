@@ -4046,3 +4046,45 @@ ATTACK_MARKERS.update({
     'M4708': r'ATTACK: a string literal in a slot was refused',
     'M4712': r'ATTACK: a slot string outside an expression changed meaning silently',
 })
+
+# ceilings CE-1, CE-7, CE-8, CE-2, CE-10, CE-4, CE-6, O-AF-09 (ids M4680-M4699)
+ATTACK_MARKERS.update({
+    'M4680': r'ATTACK: an operator net scope left the AI endpoint unpinned',
+    'M4681': r'ATTACK: a declared host outside the operator net scope was pinned',
+    'M4682': r'ATTACK: a goal_run metric reached a model without an AI grant',
+    'M4683': r'ATTACK: a native AI bridge with no key returned instead of stopping',
+    'M4684': r'ATTACK: a declared fallback was not the native no-key reply',
+    'M4685': r'ATTACK: a native no-key ai_complete ignored the declared fallback',
+    'M4686': r'ATTACK: a ceiling with a missing key was accepted',
+    'M4687': r'ATTACK: a misspelled ceiling key was ignored',
+    'M4688': r'ATTACK: a ceiling the run may rewrite was accepted',
+    'M4689': r'ATTACK: the env var widened the ceiling.s effects',
+    'M4690': r'ATTACK: a native binary ran past an operator ceiling',
+    'M4691': r'ATTACK: a ceilinged run reached an ungranted capability without R45',
+    'M4692': r'ATTACK: a callee.s larger budget widened the caller.s budget',
+    'M4693': r'ATTACK: an ai_extract call escaped the fn.s AI budget',
+    'M4694': r'ATTACK: an unbudgeted helper laundered AI calls past the caller.s budget',
+    'M4695': r'ATTACK: a call was dispatched without room for its reply',
+    'M4696': r'ATTACK: a model reply was not charged to the run token cap',
+    'M4697': r'ATTACK: an ai_extract call escaped the run token cap',
+    'M4698': r'ATTACK: a billed unusable extract reply was not recorded or charged',
+    'M4699': r'ATTACK: a billed unparsed reply dropped its tokens',
+})
+
+# ceilings CE-6 ai_calls (id M4740, overflow block)
+ATTACK_MARKERS.update({
+    'M4740': r'ATTACK: a ceiling.s ai_calls did not cap the run.s model calls',
+})
+
+# ceilings CE-5 (ids M4741-M4749, overflow block)
+ATTACK_MARKERS.update({
+    'M4741': r'ATTACK: a run went past its steps ceiling \(tree\)',
+    'M4742': r'ATTACK: a run went past its steps ceiling \(vm\)',
+    'M4743': r'ATTACK: a fused while loop ran past the step ceiling',
+    'M4744': r'ATTACK: a fused for loop ran past the step ceiling',
+    'M4745': r'ATTACK: (calls were not counted as steps|a run went past its steps ceiling \(tree\))',
+    'M4746': r'ATTACK: the engines stopped at different steps',
+    'M4747': r'ATTACK: a run went past its wall_ms ceiling',
+    'M4748': r'ATTACK: a run went past its steps ceiling',
+    'M4749': r'ATTACK: the ceiling.s steps did not narrow the env var',
+})

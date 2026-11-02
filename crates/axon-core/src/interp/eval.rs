@@ -1065,6 +1065,9 @@ impl<'p> Interp<'p> {
                 RUN_LOOP_BODY
             }
         );
+        // ceilings CE-5: one step per loop-body entry (`while`, `while let`,
+        // `for`), before the body's scope opens.
+        self.step()?;
         env.push();
         for stmt in body {
             match self.eval_t::<T>(&stmt.expr, env) {

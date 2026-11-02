@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 28 CLI verbs, 344 builtins, 24 attributes, 154 diagnostic codes (141 live, 13 reserved), 66 environment variables.
+The complete surface of this build — 28 CLI verbs, 344 builtins, 24 attributes, 156 diagnostic codes (143 live, 13 reserved), 69 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -71,7 +71,7 @@ Run `axon <verb> --help` for flags and long-form help.
 - `@[bpf]`
 - `@[enclave]`
 
-## Environment variables (66)
+## Environment variables (69)
 
 Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so a variable that quietly does nothing cannot appear here, and one that changes behaviour cannot be left out.
 
@@ -82,6 +82,8 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_EQ_GIT_ENV` | TEST-ONLY re-exec marker: the git_cmd environment test runs the child in a process whose environment it controls (axon-fabric git_data) |
 | `AXON_EQ_HARDEN` | TEST-ONLY re-exec marker: the helper's harden() test runs in a fresh single-test process because it forks (axon-fabric privileged_launcher) |
 | `AXON_MAX_DEPTH` | interpreter recursion-depth ceiling (default 6000, clamped to 1,000,000); the interpreter thread stack scales with it. Native binaries have no depth counter; they recurse until the OS stack overflows (exit 101, "stack overflow") |
+| `AXON_MAX_STEPS` | run-wide step ceiling (a whole number): a step is one loop-body entry (`while`, `while let`, `for`) or one fn-body entry, counted identically by both engines; the step past it stops the run with E1006, exit 9. Unset = no bound; a malformed value fails closed to 0. A ceiling's `steps` narrows it. Interpreter-only: `axon build` refuses (E0910) and a native binary exits 2 |
+| `AXON_WALL_MS` | run-wide wall-clock ceiling in milliseconds, checked at the first step and every 4096th after it (steps as AXON_MAX_STEPS); past it the run stops with E1006, exit 9. Unset = no bound; a malformed value fails closed to 0. A ceiling's `wall_ms` narrows it. Interpreter-only: `axon build` refuses (E0910) and a native binary exits 2 |
 | `AXON_ENGINE` | engine for fn bodies under `axon run`/`axon-run`/`axon test`/`axon goal`: `vm` (default; R50 bytecode engine, a body compiled on its second entry or on its first when it holds a loop that may run long, same observable behaviour) or `tree` (the reference tree-walker); any other value exits 2 before the program runs. A sealed run (`axon test --seal`, R51) executes on the tree only: unset or `tree` selects it, `vm` is refused (exit 2) |
 | `AXON_VM_TRACE` | `1`: under AXON_ENGINE=vm, print one `vm: ...` stderr line per compiled body (op and tree-fallback counts), per fallback, and `vm: defer <name>` per body whose first entry runs on the tree; never changes stdout or the exit code |
 | `AXON_VM_EAGER` | `1`: under AXON_ENGINE=vm, compile every body on its first entry instead of deferring a body with no long loop to its second entry (R50 S9); never changes stdout or the exit code |
@@ -101,9 +103,10 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_AI_MODEL_CHEAP` | override the model `@[ai(tier: cheap)]` resolves to (default `claude-haiku-5-5`); also the first choice for every `ai_extract_*` call and `axon improve discover --ai` |
 | `AXON_AI_MODEL_BALANCED` | override the model `@[ai(tier: balanced)]` resolves to (default `claude-sonnet-4-6`); `ai_extract_*` and `axon improve discover --ai` fall back to it when AXON_AI_MODEL_CHEAP is unset, then to `claude-haiku-5-5` |
 | `AXON_AI_MODEL_STRONG` | override the model `@[ai(tier: strong)]` resolves to |
-| `AXON_BUDGET_TOKENS` | run-wide AI token cap; the call that would exceed it halts with E1303 (exit 5) BEFORE dispatch. A malformed value fails closed to 0 |
+| `AXON_BUDGET_TOKENS` | run-wide AI token cap (provider tokens, input + output): every model call (ai_complete, ai_extract::<T>) first reserves prompt bytes + 16 + the 1024-token reply cap and halts with E1303 (exit 5) BEFORE dispatch if that does not fit, then is charged what it used. A malformed value fails closed to 0 |
 | `AXON_DOTENV` | path to a `.env` file to load for AI configuration |
 | `AXON_DOTENV_WALK` | walk parent directories looking for a `.env` file |
+| `AXON_CEILING` | path to an operator ceiling file (`axon-ceiling/1` JSON; same as `--ceiling` on run/session/goal/test): every key required (`schema`, `effects`, `fs_read`, `fs_write`, `net`, `ai_tokens`, `ai_calls`, `max_depth`, `steps`, `wall_ms`; `null` = explicitly unbounded, except `fs_write`, which must be a list). Each bound narrows its env var counterpart (narrowest wins, a program cannot widen it); `ai_calls` (run-wide model calls, extracts included; E1303, exit 5) has none. Its presence turns `--require-contained` on. A missing/unknown key, malformed value, unreadable file, or a file inside its own `fs_write` scope is E1007, exit 2, before any program code runs. Its sha256 is recorded in `run_start`. Interpreter-only: `axon build` refuses (E0910) and a native binary exits 2 |
 | `AXON_ALLOWED_EFFECTS` | ambient effect ceiling for the whole run; a true ceiling that an inner sandbox may narrow but never widen. EMPTY means deny every effect and is not the same as unset; a value that is not UTF-8 also denies every effect (with a warning). Interpreter-only |
 | `AXON_ALLOWED_FS_READ` | ambient read-path scope for the whole run: comma-separated path prefixes, matched like `sandbox_create_scoped` (per argument, `..` refused). Unset = unrestricted, EMPTY = deny every filesystem read, `*` = unrestricted. Independent of AXON_ALLOWED_EFFECTS (with it unset every effect stays allowed and only paths are restricted); a ceiling an inner sandbox may narrow but never widen. Interpreter-only |
 | `AXON_ALLOWED_FS_WRITE` | ambient write-path scope for the whole run, as AXON_ALLOWED_FS_READ for writes (`write_file`, `append_file`, `file_copy`'s destination, both `file_rename` paths, `dir_create`, the durable store, the `@[adaptive]` provenance row). EMPTY = deny every write while `println` keeps working. Interpreter-only |
@@ -144,7 +147,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEE_ENCLAVE` | R24 TEE: set to 1 by the gramine-direct manifest to signal the workload is executing inside an enclave; this is what makes `tee_in_enclave()` return true. Read through the host seam, so it is recorded and replayed |
 | `AXON_TEE_MEASUREMENT` | R24 TEE: the simulated enclave launch measurement returned by `tee_attest_measurement()` when set, a stub otherwise. A genuine hardware-rooted quote comes only from confidential hardware. Read through the host seam |
 
-## Diagnostic codes (154, of which 141 live)
+## Diagnostic codes (156, of which 143 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -217,6 +220,8 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E1003` | capability path is not parseable |
 | `E1004` | call hits a never: clause (hard violation) |
 | `E1005` | R45: an un-granted capability is reached from an entry point under `--require-contained`; distinct from E1001, which means a grant EXISTS and was exceeded |
+| `E1006` | the run passed its step ceiling (`AXON_MAX_STEPS` / a ceiling's `steps`; a step is one loop-body or fn-body entry, counted the same on both engines) or its wall-clock ceiling (`AXON_WALL_MS` / a ceiling's `wall_ms`); the run stops with exit 9 (RESOURCE_BOUND) |
+| `E1007` | the `axon-ceiling/1` file (`--ceiling` / `AXON_CEILING`) is missing, unreadable or malformed, has an unknown or missing key, or lies inside its own `fs_write` scope; the run is refused (exit 2) before any program code runs |
 | `E1101` | verify bound not satisfied (runtime gate) |
 | `E1102` | verify bound statically VIOLABLE — SMT counterexample (R9) |
 | `E1103` | a `@[verify]` predicate names a name not in scope there, is ill-typed or not `bool`, has a param named like one of its binders, or contains a `return`/`break`/`continue` that would leave its frame, or sits on a return the runtime cannot check (not a scalar, `Uncertain<T>` or `Temporal<T>`) |
@@ -233,9 +238,9 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E1210` | a `sql_query` template is not a string literal — user data must be a bound parameter, never concatenated SQL (injection) |
 | `E1211` | a refinement predicate names a name not in scope there, is ill-typed or not `bool`, or contains a `return`/`break`/`continue` that would leave its frame |
 | `E1300` | ai_* call unreachable and no @[ai(policy(fallback))] in scope |
-| `E1301` | ai_complete exceeded the fn's @[ai(policy(budget: N))] (R3c) |
+| `E1301` | an AI call (ai_complete or an extract) exceeded the @[ai(policy(budget: N))] of a fn still on the stack: a budget covers its callees (R3c, CE-4) |
 | `E1302` | tier: resolves to a tier with no host-configured model |
-| `E1303` | run exceeded AXON_BUDGET_TOKENS, the ambient run-level token cap |
+| `E1303` | run exceeded its operator AI cap: the token cap (AXON_BUDGET_TOKENS / a ceiling's `ai_tokens`; a call must fit prompt + 16 + a 1024-token reply before dispatch) or a ceiling's `ai_calls` call count |
 | `E1304` | ai_extract::<T> with a T outside i64, f64, bool, Uncertain<i64>, Uncertain<f64> |
 | `E1306` | raw effect-row syntax `\| {…}` used in a `surface`-marked file |
 | `E1310` | effect-row leak: call performs effect E ∉ the caller's declared row |

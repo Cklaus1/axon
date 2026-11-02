@@ -1243,6 +1243,11 @@ pub enum Flow {
     /// flow (exit code 8) so a supervisor can tell "the sandbox caught this" apart
     /// from a genuine crash (101), a policy rejection (3), or the kill-switch (4).
     SandboxViolation(Box<str>),
+    /// ceilings CE-5: the run passed its step ceiling (`AXON_MAX_STEPS` / a
+    /// ceiling's `steps`) or its wall-clock ceiling (`AXON_WALL_MS` / a
+    /// ceiling's `wall_ms`), E1006. Not a crash: the operator's bound fired,
+    /// so a distinct flow (exit 9, the R27 `RESOURCE_BOUND` meaning).
+    ResourceBound(Box<str>),
 }
 
 /// Process exit code for an `@[verify]` / deploy-gate rejection. Distinct from
@@ -1282,6 +1287,11 @@ pub const GOAL_BUDGET_EXIT_CODE: i32 = 7;
 /// specifically. The tool call is refused; the sandbox and the enclosing program
 /// continue with an `Err` result.
 pub const SANDBOX_VIOLATION_EXIT_CODE: i32 = 8;
+
+/// Process exit code when a run passes its step or wall-clock ceiling
+/// (ceilings CE-5, E1006): the ledger's `RESOURCE_BOUND` code, shared with
+/// `axon-os` (`governance/EXIT_CODES.md`).
+pub const RESOURCE_BOUND_EXIT_CODE: i32 = 9;
 
 /// The enforcement ledger's block, and the shell's.
 ///
@@ -1463,7 +1473,8 @@ pub(crate) fn frame_edge(f: Flow, edge: FrameEdge<'_>) -> Flow {
         | Flow::MultiShotUnsound(_)
         | Flow::RefineViolation(_)
         | Flow::GoalBudgetExhausted(_)
-        | Flow::SandboxViolation(_) => return f,
+        | Flow::SandboxViolation(_)
+        | Flow::ResourceBound(_) => return f,
     };
     Flow::Panic(msg.into_boxed_str())
 }
@@ -1966,6 +1977,14 @@ pub struct Interp<'p> {
     /// or `AXON_MAX_DEPTH` (clamped) when set. Resolved once at build time so
     /// every `call_fn` sees a consistent value.
     max_depth: usize,
+    /// The depth the VM's call shortcuts (a leaf body, a moves body) compare
+    /// against instead of `max_depth`: `max_depth`, or 0 under a step or
+    /// wall ceiling (ceilings CE-5), so every call there takes the path
+    /// through [`Interp::enter_fn`], which counts its step. Same compare as
+    /// before, so an unceilinged run pays nothing for it.
+    fast_depth: usize,
+    /// ceilings CE-5: the run's step and wall-clock ceilings.
+    meter: StepMeter,
     /// R51 S5 (Protected Check Isolation, RUNTIME sealing): which
     /// definitions come from a sealed (candidate) module. `seal.active` is
     /// the one "this run executes sealed code" bit: computed once in
@@ -2057,11 +2076,13 @@ pub struct Interp<'p> {
     /// per-call costs of a recursive user fn. A vector indexed by sym, so the
     /// lookup hashes nothing (AX-18).
     callees: RefCell<Vec<u32>>,
-    /// R3c: count of `ai_complete` calls made by the current fn activation, used
-    /// to enforce `@[ai(policy(budget: N))]`. Reset on entry to a fn that may
-    /// meter (`FnEntry::ai_metered`), restored on exit (so the budget is
-    /// per-activation, not global).
-    ai_calls_this_fn: Cell<u64>,
+    /// R3c as amended by ceilings CE-4 (NH-C4 A): one frame per live
+    /// activation of a fn with a valid `@[ai(policy(budget: N))]`, outermost
+    /// first. A budget bounds every `ai_complete` made while its activation is
+    /// on the stack, callees included; each call is checked against every
+    /// frame and, if none is exhausted, counted in every frame. Pushed on entry
+    /// (`FnEntry::ai_metered`), popped on exit by `AiBudgetGuard`.
+    ai_budget_stack: RefCell<Vec<AiBudgetFrame>>,
     /// AX-54: emptied argument vectors of finished user-fn calls, reused by
     /// `eval_call` so a call does not allocate one.
     arg_bufs: RefCell<Vec<Vec<Value>>>,
@@ -2098,11 +2119,11 @@ pub struct Interp<'p> {
     /// not repetitions. The text names only the fn, so every repeat after the
     /// first carries no information a reader did not already have.
     w1310_warned: RefCell<std::collections::HashSet<String>>,
-    /// Tokens consumed so far by `ai_complete`, against [`Interp::token_budget`].
+    /// Tokens consumed so far by model calls, against [`Interp::token_budget`].
     ///
     /// Distinct from both sibling meters: `ai_cost_micro` is MONEY (per-token
-    /// µ$ at the tier's rate) and R3c's `ai_calls_this_fn` counts CALLS within
-    /// one fn. This is TOKENS across the whole run, because that is the unit an
+    /// µ$ at the tier's rate) and R3c's `ai_budget_stack` counts CALLS within
+    /// budgeted activations. This is TOKENS across the whole run, because that is the unit an
     /// ambient operator cap is denominated in.
     tokens_used: Cell<i64>,
     /// Ambient run-level token cap from `AXON_BUDGET_TOKENS`, or `None` for no
@@ -2114,6 +2135,13 @@ pub struct Interp<'p> {
     /// inert control surface that reads as a safety mechanism. Enforced
     /// pre-dispatch beside the R3c per-fn budget gate.
     token_budget: Option<i64>,
+    /// Model calls dispatched so far this run (`ai_complete` and every
+    /// extract), against [`Interp::ai_calls_cap`].
+    ai_calls_used: Cell<u64>,
+    /// Ceilings CE-6 (`ai_calls`): an operator ceiling's run-wide cap on model
+    /// calls, or `None` (no ceiling, or the ceiling said `null`). There is no
+    /// environment variable for it: the ceiling is its only source.
+    ai_calls_cap: Option<u64>,
     /// Phase 6: the stack of active effect-handler frames installed by enclosing
     /// `with handler { … } { body }` expressions. When a builtin carrying effect
     /// `E` is dispatched, the nearest frame with an `on E` arm intercepts it
@@ -2524,9 +2552,14 @@ const MAX_STACK_BYTES: usize = MAX_DEPTH_CEILING.saturating_mul(256 * 1024);
 /// Resolve the effective recursion limit: `AXON_MAX_DEPTH` if set to a positive
 /// integer (clamped to [`MAX_DEPTH_CEILING`]), else [`RECURSION_LIMIT`]. A
 /// malformed or zero value falls back to the default rather than failing the
-/// run — the env var is a convenience lever, not load-bearing.
+/// run — the env var is a convenience lever, not load-bearing. An operator
+/// ceiling's `max_depth` (CE-2) can only lower the result.
 fn resolve_max_depth() -> usize {
-    max_depth_from_env(std::env::var("AXON_MAX_DEPTH").ok().as_deref())
+    let env = max_depth_from_env(std::env::var("AXON_MAX_DEPTH").ok().as_deref());
+    match crate::ceiling::active().and_then(|c| c.max_depth) {
+        Some(cap) => env.min(cap),
+        None => env,
+    }
 }
 
 /// Pure core of [`resolve_max_depth`]: maps an optional raw env value to the
@@ -2946,16 +2979,22 @@ impl Drop for FnNameOptGuard<'_> {
     }
 }
 
-/// R3c: saves the caller's `ai_calls_this_fn` count and restores it on drop, so
-/// each fn activation meters its own `ai_complete` calls against its own
-/// `@[ai(policy(budget))]` (the budget is per-activation, not global).
+/// R3c / CE-4: one budgeted activation: its fn, its `budget: N`, and the
+/// `ai_complete` calls made so far while it is on the stack.
+struct AiBudgetFrame {
+    fn_name: String,
+    budget: u64,
+    used: u64,
+}
+
+/// R3c / CE-4: pops the activation's `AiBudgetFrame` on exit, however the
+/// activation ends.
 struct AiBudgetGuard<'a> {
-    cell: &'a Cell<u64>,
-    prev: u64,
+    stack: &'a RefCell<Vec<AiBudgetFrame>>,
 }
 impl Drop for AiBudgetGuard<'_> {
     fn drop(&mut self) {
-        self.cell.set(self.prev);
+        self.stack.borrow_mut().pop();
     }
 }
 
@@ -3440,6 +3479,11 @@ pub fn run_named_fn_as_bool_with_score(
                 let _ = std::io::stdout().flush();
                 eprintln!("axon: halted in {fn_name}: {msg}");
                 HALTED_EXIT_CODE
+            }
+            Err(Flow::ResourceBound(msg)) => {
+                let _ = std::io::stdout().flush();
+                eprintln!("axon: resource bound in {fn_name}: {msg}");
+                RESOURCE_BOUND_EXIT_CODE
             }
             Err(Flow::Panic(msg)) => {
                 let _ = std::io::stdout().flush();
@@ -4380,10 +4424,71 @@ fn declared_net_hosts(program: &Program) -> Vec<String> {
     hosts
 }
 
+/// ceilings CE-1: the AI endpoint pin. One rule:
+///
+/// pin = (declared hosts, or the implicit host if none are declared)
+///       ∩ each operator-side list that is set; `*` (= `None`) passes all.
+///
+/// The operator-side list is the ambient `AXON_ALLOWED_NET` scope (read
+/// through `ambient_scope_var`, so the pin and the sandbox scope cannot parse
+/// it differently). With no declared host and no operator list there is no
+/// pin (`None`): a bare run is bounded only by what its source declares.
+/// Before CE-1 the operator's scope never reached the pin, so in an
+/// `asi-runtime` build `AXON_ALLOWED_NET=api.anthropic.com` +
+/// `AXON_AI_BASE_URL=http://attacker` passed the dispatch check (which tests
+/// the implicit host) and then dialled the attacker with the key.
+///
+/// Always compiled so it is unit-testable in the default build.
+#[cfg_attr(not(feature = "asi-runtime"), allow(dead_code))]
+fn ai_pin_hosts(program: &Program, ambient: Option<&[String]>) -> Option<Vec<String>> {
+    let declared = declared_net_hosts(program);
+    if declared.is_empty() && ambient.is_none() {
+        return None;
+    }
+    let mut pin = if declared.is_empty() {
+        vec![crate::capabilities::ai_implicit_host().to_string()]
+    } else {
+        declared
+    };
+    if let Some(list) = ambient {
+        pin = intersect_host_patterns(&pin, list);
+    }
+    Some(pin)
+}
+
+/// Intersection of two leading-`*` host-glob lists: every entry of `a` that
+/// some entry of `b` matches, plus every entry of `b` that some entry of `a`
+/// matches. A pattern `*s` is matched by `*t` when `s` ends with `t`
+/// (`host_matches_glob` applied to the pattern text gives exactly that). With
+/// literal hosts this is plain set intersection.
+#[cfg_attr(not(feature = "asi-runtime"), allow(dead_code))]
+fn intersect_host_patterns(a: &[String], b: &[String]) -> Vec<String> {
+    use crate::capabilities::host_matches_glob;
+    let mut out: Vec<String> = Vec::new();
+    let mut keep = |h: &String| {
+        if !out.contains(h) {
+            out.push(h.clone());
+        }
+    };
+    for x in a {
+        if b.iter().any(|g| host_matches_glob(x, g)) {
+            keep(x);
+        }
+    }
+    for y in b {
+        if a.iter().any(|g| host_matches_glob(y, g)) {
+            keep(y);
+        }
+    }
+    out
+}
+
 #[cfg(feature = "asi-runtime")]
 fn pin_ai_net_allowlist(program: &Program) {
-    let hosts = declared_net_hosts(program);
-    if !hosts.is_empty() {
+    // `AXON_ALLOWED_NET` met with a ceiling's `net` (CE-2): under a ceiling the
+    // `net` key is mandatory, so every ceilinged run with a list is pinned.
+    let ambient = effective_net_scope();
+    if let Some(hosts) = ai_pin_hosts(program, ambient.as_deref()) {
         axon_ai::pin_net_allowlist(hosts);
     }
 }
@@ -4741,6 +4846,14 @@ fn run_program_inner(
             eprintln!("axon: sandbox violation: {msg}");
             SANDBOX_VIOLATION_EXIT_CODE
         }
+        Err(Flow::ResourceBound(msg)) => {
+            // ceilings CE-5: the operator's step or wall-clock ceiling fired
+            // (E1006). Not a crash; exit 9, the ledger's RESOURCE_BOUND code.
+            let _ = std::io::stdout().flush();
+            set_last_abort(format!("resource bound: {msg}"));
+            eprintln!("axon: resource bound: {msg}");
+            RESOURCE_BOUND_EXIT_CODE
+        }
         // A stray return/break/continue escaping `main` — treat as clean exit.
         Err(_) => 0,
     }
@@ -4909,6 +5022,8 @@ impl<'p> Interp<'p> {
             // A sandbox violation inside a test is a failure (lets
             // `@[test(should_fail)]` assert the sandbox ceiling fired).
             Err(Flow::SandboxViolation(m)) => Err(TestFailure::rejected(m)),
+            // A step/wall ceiling firing inside a test fails it.
+            Err(Flow::ResourceBound(m)) => Err(TestFailure::rejected(m)),
             Err(Flow::Resume(_)) => Err(TestFailure::stopped(
                 "`resume` called outside an effect-handler arm",
             )),
@@ -4950,7 +5065,8 @@ fn flow_to_msg(f: Flow) -> String {
         | Flow::AiPolicyUnreachable(m)
         | Flow::RefineViolation(m)
         | Flow::GoalBudgetExhausted(m)
-        | Flow::SandboxViolation(m) => m.into(),
+        | Flow::SandboxViolation(m)
+        | Flow::ResourceBound(m) => m.into(),
         Flow::Exit(n) => format!("exited with code {n}"),
         _ => "non-local control flow escaped the program".into(),
     }
@@ -5102,10 +5218,21 @@ impl<'p> Interp<'p> {
                 });
             }
         }
+        let meter = resolve_step_meter();
+        let max_depth = resolve_max_depth();
 
         Interp {
             res,
-            pure_slots: fn_table.iter().map(|_| vm::PureSlot::default()).collect(),
+            pure_slots: fn_table
+                .iter()
+                .map(|_| {
+                    if meter.on {
+                        vm::PureSlot::never()
+                    } else {
+                        vm::PureSlot::default()
+                    }
+                })
+                .collect(),
             fn_table,
             fn_of_sym,
             fn_of_def,
@@ -5131,7 +5258,9 @@ impl<'p> Interp<'p> {
             nest: Cell::new(0),
             #[cfg(target_arch = "wasm32")]
             nest_limit: resolve_max_depth().saturating_mul(NEST_PER_DEPTH),
-            max_depth: resolve_max_depth(),
+            max_depth,
+            fast_depth: if meter.on { 0 } else { max_depth },
+            meter,
             seal,
             pins,
             frame_sealed: Cell::new(false),
@@ -5155,7 +5284,7 @@ impl<'p> Interp<'p> {
             current_fn: Cell::new(None),
             current_call_tier: RefCell::new(None),
             callees: RefCell::new(Vec::new()),
-            ai_calls_this_fn: Cell::new(0),
+            ai_budget_stack: RefCell::new(Vec::new()),
             arg_bufs: RefCell::new(Vec::new()),
             env_pool: RefCell::new(Vec::new()),
             frame_spare: Cell::new(None),
@@ -5166,6 +5295,8 @@ impl<'p> Interp<'p> {
             w1310_warned: RefCell::new(std::collections::HashSet::new()),
             tokens_used: Cell::new(0),
             token_budget: parse_token_budget(),
+            ai_calls_used: Cell::new(0),
+            ai_calls_cap: crate::ceiling::active().and_then(|c| c.ai_calls),
             handlers: RefCell::new(Vec::new()),
             resume_replay: RefCell::new(None),
             resume_ctx: RefCell::new(Vec::new()),
@@ -5588,22 +5719,14 @@ impl<'p> Interp<'p> {
     // ── Function / closure calls ─────────────────────────────────────────────
 
     /// R3 §3.3: the `@[ai(policy(fallback: "…"))]` value declared on the
-    /// currently-executing fn, if any. Accepts both the grouped form and the
-    /// flat `@[ai(fallback: "…")]` (the parser flattens the group), so the arg
-    /// reads as `"fallback: <value>"`. Returns the fallback string when present.
-    /// This is what lets an offline `ai_complete` stay total instead of panicking.
-    /// Only read on the `#[cfg(not(asi-runtime))]` offline branch — when the live
-    /// model is compiled in, there is no offline fallback path, so it is dead there.
+    /// currently-executing fn, if any (`ai_routing::fallback_from_attrs`, the
+    /// rule native codegen shares). This is what lets an offline `ai_complete`
+    /// stay total instead of panicking. Only read on the
+    /// `#[cfg(not(asi-runtime))]` offline branch — when the live model is
+    /// compiled in, there is no offline fallback path, so it is dead there.
     #[cfg_attr(feature = "asi-runtime", allow(dead_code))]
     fn current_ai_fallback(&self) -> Option<String> {
-        let f = self.current_fn_def()?;
-        let ai = f.attrs.iter().find(|a| a.name == "ai")?;
-        for arg in &ai.args {
-            if let Some(rest) = arg.strip_prefix("fallback:") {
-                return Some(rest.trim().to_string());
-            }
-        }
-        None
+        crate::ai_routing::fallback_from_attrs(&self.current_fn_def()?.attrs)
     }
 
     /// R3c: the `@[ai(policy(budget: N))]` ceiling declared on the
@@ -5880,10 +6003,64 @@ impl<'p> Interp<'p> {
             return Err(self.depth_exceeded(f));
         }
         self.call_depth.set(depth);
-        Ok(CallGuard {
+        let guard = CallGuard {
             interp: self,
             prev_fn: self.current_fn.replace(Some(f)),
-        })
+        };
+        // ceilings CE-5: one step per fn-body entry, charged to the callee.
+        self.step()?;
+        Ok(guard)
+    }
+
+    /// ceilings CE-5: one step (a loop-body or fn-body entry) against the
+    /// run's step and wall-clock ceilings. Both engines call it at the same
+    /// points, so a run stops at the same step in each.
+    #[inline(always)]
+    pub(super) fn step(&self) -> Result<(), Flow> {
+        if self.meter.on {
+            self.step_metered()
+        } else {
+            Ok(())
+        }
+    }
+
+    /// [`Interp::step`] under a ceiling: count, refuse past the step cap,
+    /// and read the clock at the first step and every 4096th after it.
+    #[inline(never)]
+    fn step_metered(&self) -> Result<(), Flow> {
+        let n = self.meter.used.get() + 1;
+        let name = || self.current_fn.get().map_or("main", |f| f.name.as_str());
+        if n > self.meter.cap {
+            return Err(Flow::ResourceBound(
+                format!(
+                    "[{}] `{}` passed the run's step ceiling (axis `steps`) of {} step(s) - a step \
+                     is one loop-body or fn-body entry; raise AXON_MAX_STEPS / the ceiling's \
+                     `steps`, or bound the loop",
+                    crate::error::E1006,
+                    name(),
+                    self.meter.cap
+                )
+                .into(),
+            ));
+        }
+        self.meter.used.set(n);
+        if n & 4095 == 1 {
+            if let Some((start, ms)) = self.meter.wall {
+                if start.elapsed().as_millis() >= u128::from(ms) {
+                    return Err(Flow::ResourceBound(
+                        format!(
+                            "[{}] `{}` passed the run's wall-clock ceiling (axis `wall_ms`) of {} \
+                             ms; raise AXON_WALL_MS / the ceiling's `wall_ms`",
+                            crate::error::E1006,
+                            name(),
+                            ms
+                        )
+                        .into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// AX-56: charges `W` bytes (a `nest_cost` frame) against the wasm32
@@ -6124,12 +6301,18 @@ impl<'p> Interp<'p> {
         } else {
             None
         };
-        // R3c: each fn activation meters its own ai_complete calls — reset to 0
-        // on entry, restore the caller's count on exit. Only a fn that may meter
-        // touches the counter, so for any other the reset/restore is inert.
-        let _ai_budget_guard = entry.ai_metered.then(|| AiBudgetGuard {
-            cell: &self.ai_calls_this_fn,
-            prev: self.ai_calls_this_fn.replace(0),
+        // R3c / CE-4: a fn with a valid `budget: N` (`FnEntry::ai_budget`)
+        // pushes a frame that bounds every model call made until it returns,
+        // its callees' included.
+        let _ai_budget_guard = entry.ai_budget.map(|budget| {
+            self.ai_budget_stack.borrow_mut().push(AiBudgetFrame {
+                fn_name: f.name.clone(),
+                budget,
+                used: 0,
+            });
+            AiBudgetGuard {
+                stack: &self.ai_budget_stack,
+            }
         });
 
         if f.params.len() != args.len() {
@@ -7570,19 +7753,83 @@ thread_local! {
 /// the typo is recoverable in one look.
 ///
 /// A negative value clamps to 0, which is meaningful and distinct from unset.
+/// An operator ceiling's `ai_tokens` (CE-2) can only lower the result.
 fn parse_token_budget() -> Option<i64> {
-    let raw = std::env::var("AXON_BUDGET_TOKENS").ok()?;
-    let t = raw.trim();
-    match t.parse::<i64>() {
-        Ok(n) => Some(n.max(0)),
-        Err(_) => {
+    let ceiling = crate::ceiling::active().and_then(|c| c.ai_tokens);
+    let env = std::env::var("AXON_BUDGET_TOKENS").ok().map(|raw| {
+        let t = raw.trim();
+        match t.parse::<i64>() {
+            Ok(n) => n.max(0),
+            Err(_) => {
+                eprintln!(
+                    "warning: AXON_BUDGET_TOKENS={raw:?} is not an integer — failing closed \
+                     to a budget of 0 (no AI calls). Set a whole number of tokens, or unset \
+                     the variable for no cap."
+                );
+                0
+            }
+        }
+    });
+    match (env, ceiling) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// ceilings CE-5: a run's step and wall-clock ceilings. `on` is false (and
+/// nothing counts) unless one of them is set.
+struct StepMeter {
+    on: bool,
+    /// Steps allowed (`u64::MAX` when only a wall ceiling is set).
+    cap: u64,
+    used: Cell<u64>,
+    /// The run's start and its wall-clock ceiling in milliseconds.
+    wall: Option<(std::time::Instant, u64)>,
+}
+
+/// One CE-5 env var (`raw` is its `var_os` read, spelled at the call site so
+/// the env-registry gate finds the literal): unset is `None`; a whole number
+/// is itself; anything else FAILS CLOSED to 0 with a warning (the
+/// `AXON_BUDGET_TOKENS` rule: a typo must never disarm an operator's bound).
+fn parse_run_bound(var: &str, raw: Option<std::ffi::OsString>) -> Option<u64> {
+    let raw = raw?;
+    match raw
+        .to_str()
+        .map(str::trim)
+        .and_then(|t| t.parse::<u64>().ok())
+    {
+        Some(n) => Some(n),
+        None => {
             eprintln!(
-                "warning: AXON_BUDGET_TOKENS={raw:?} is not an integer — failing closed \
-                 to a budget of 0 (no AI calls). Set a whole number of tokens, or unset \
-                 the variable for no cap."
+                "warning: {var}={raw:?} is not a whole number - failing closed to 0 (the run \
+                 stops at its first step). Set a whole number, or unset the variable for no bound."
             );
             Some(0)
         }
+    }
+}
+
+/// Resolve the CE-5 meter from `AXON_MAX_STEPS` / `AXON_WALL_MS` and the
+/// operator ceiling's `steps` / `wall_ms`; the narrower of each pair wins.
+fn resolve_step_meter() -> StepMeter {
+    let ceiling = crate::ceiling::active();
+    let narrow = |env: Option<u64>, c: Option<u64>| match (env, c) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    let steps = narrow(
+        parse_run_bound("AXON_MAX_STEPS", std::env::var_os("AXON_MAX_STEPS")),
+        ceiling.and_then(|c| c.steps),
+    );
+    let wall_ms = narrow(
+        parse_run_bound("AXON_WALL_MS", std::env::var_os("AXON_WALL_MS")),
+        ceiling.and_then(|c| c.wall_ms),
+    );
+    StepMeter {
+        on: steps.is_some() || wall_ms.is_some(),
+        cap: steps.unwrap_or(u64::MAX),
+        used: Cell::new(0),
+        wall: wall_ms.map(|ms| (std::time::Instant::now(), ms)),
     }
 }
 
@@ -7625,62 +7872,64 @@ fn parse_token_budget() -> Option<i64> {
 /// Bound to principal handle 0 so audit attribution matches the rest of the
 /// run.
 fn ambient_sandbox() -> Vec<SandboxEntry> {
+    // ceilings CE-2: an operator's `axon-ceiling/1` file narrows every one of
+    // these the same way; the narrower of the variable and the ceiling wins.
+    let ceiling = crate::ceiling::active();
     let scope = SandboxScope {
-        fs_read: ambient_scope_var(
-            "AXON_ALLOWED_FS_READ",
-            std::env::var_os("AXON_ALLOWED_FS_READ"),
+        fs_read: crate::ceiling::meet_paths(
+            ambient_scope_var(
+                "AXON_ALLOWED_FS_READ",
+                std::env::var_os("AXON_ALLOWED_FS_READ"),
+            ),
+            ceiling.and_then(|c| c.fs_read.as_ref()),
         ),
-        fs_write: ambient_scope_var(
-            "AXON_ALLOWED_FS_WRITE",
-            std::env::var_os("AXON_ALLOWED_FS_WRITE"),
+        fs_write: crate::ceiling::meet_paths(
+            ambient_scope_var(
+                "AXON_ALLOWED_FS_WRITE",
+                std::env::var_os("AXON_ALLOWED_FS_WRITE"),
+            ),
+            ceiling.and_then(|c| c.fs_write.as_ref()),
         ),
-        net: ambient_scope_var("AXON_ALLOWED_NET", std::env::var_os("AXON_ALLOWED_NET")),
+        net: effective_net_scope(),
     };
     let scoped = scope.fs_read.is_some() || scope.fs_write.is_some() || scope.net.is_some();
-    let raw = match std::env::var("AXON_ALLOWED_EFFECTS") {
-        Ok(raw) => raw,
-        // SET but not UTF-8: no effect name can be read out of it, so it
-        // grants none. Reading it as unset (no ceiling, or `all_effects`
-        // beside a scope variable) let a set ceiling fail open — the same
-        // rule `ambient_scope_var` applies to the scope variables.
-        Err(std::env::VarError::NotUnicode(_)) => {
-            // Once per PROCESS: `axon test` builds an interpreter per test,
-            // and each build reads the ceiling.
-            static WARNED: std::sync::Once = std::sync::Once::new();
-            WARNED.call_once(|| {
-                eprintln!("warning: AXON_ALLOWED_EFFECTS is not UTF-8 — it denies every effect");
-            });
-            String::new()
-        }
-        Err(std::env::VarError::NotPresent) => {
-            if !scoped {
-                return Vec::new();
+    let env_effects: Option<std::collections::HashSet<String>> =
+        match std::env::var("AXON_ALLOWED_EFFECTS") {
+            Ok(raw) => Some(
+                raw.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+            ),
+            // SET but not UTF-8: no effect name can be read out of it, so it
+            // grants none. Reading it as unset (no ceiling, or `all_effects`
+            // beside a scope variable) let a set ceiling fail open — the same
+            // rule `ambient_scope_var` applies to the scope variables.
+            Err(std::env::VarError::NotUnicode(_)) => {
+                // Once per PROCESS: `axon test` builds an interpreter per test,
+                // and each build reads the ceiling.
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    eprintln!(
+                        "warning: AXON_ALLOWED_EFFECTS is not UTF-8 — it denies every effect"
+                    );
+                });
+                Some(std::collections::HashSet::new())
             }
-            return vec![SandboxEntry {
-                principal: 0,
-                allowed: std::collections::HashSet::new(),
-                scope,
-                all_effects: true,
-                ambient: true,
-            }];
-        }
-    };
-    let allowed: std::collections::HashSet<String> = raw
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+            Err(std::env::VarError::NotPresent) => None,
+        };
     // A misspelled entry is silently a grant of NOTHING. That fails closed,
     // which is the right direction — but it also means an operator who writes
     // `AXON_ALLOWED_EFFECTS=IO,Exce` believes they granted `Exec` and is told
     // otherwise only if the program happens to spawn. A grant that was never
     // valid, recorded as granted: say so at parse time, the way
-    // `AXON_BUDGET_TOKENS` already does for a malformed value.
-    let mut unknown: Vec<&String> = allowed
-        .iter()
-        .filter(|e| !crate::builtins::is_grantable_effect(e))
-        .collect();
-    if !unknown.is_empty() {
+    // `AXON_BUDGET_TOKENS` already does for a malformed value. (A ceiling
+    // file's unknown effect is E1007 instead: `ceiling::parse`.)
+    if let Some(allowed) = &env_effects {
+        let mut unknown: Vec<&String> = allowed
+            .iter()
+            .filter(|e| !crate::builtins::is_grantable_effect(e))
+            .collect();
         unknown.sort();
         for e in unknown {
             eprintln!(
@@ -7690,13 +7939,46 @@ fn ambient_sandbox() -> Vec<SandboxEntry> {
             );
         }
     }
-    vec![SandboxEntry {
-        principal: 0,
-        allowed,
-        scope,
-        all_effects: false,
-        ambient: true,
-    }]
+    let ceiling_effects = ceiling.and_then(|c| c.effects.as_ref()).map(|v| {
+        v.iter()
+            .cloned()
+            .collect::<std::collections::HashSet<String>>()
+    });
+    let effects = match (env_effects, ceiling_effects) {
+        (None, None) => None,
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (Some(a), Some(b)) => Some(a.intersection(&b).cloned().collect()),
+    };
+    match effects {
+        None if !scoped => Vec::new(),
+        None => vec![SandboxEntry {
+            principal: 0,
+            allowed: std::collections::HashSet::new(),
+            scope,
+            all_effects: true,
+            ambient: true,
+        }],
+        Some(allowed) => vec![SandboxEntry {
+            principal: 0,
+            allowed,
+            scope,
+            all_effects: false,
+            ambient: true,
+        }],
+    }
+}
+
+/// The run's effective ambient host scope: `AXON_ALLOWED_NET` met with the
+/// ceiling's `net` (CE-2). The sandbox's net scope and the AI endpoint pin
+/// (CE-1) both read it, so the two cannot disagree.
+fn effective_net_scope() -> Option<Vec<String>> {
+    let env = ambient_scope_var("AXON_ALLOWED_NET", std::env::var_os("AXON_ALLOWED_NET"));
+    match (env, crate::ceiling::active().and_then(|c| c.net.as_ref())) {
+        (None, None) => None,
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b.clone()),
+        (Some(a), Some(b)) => Some(intersect_host_patterns(&a, b)),
+    }
 }
 
 /// One ambient scope variable: unset = unrestricted (`None`), otherwise
@@ -8137,6 +8419,81 @@ fn main() { }
             hosts.contains(&crate::capabilities::ai_implicit_host().to_string()),
             "the host the checker validates against must be reachable: {hosts:?}"
         );
+    }
+
+    /// ceilings CE-1: an operator net scope pins an unannotated program. With no
+    /// declared host the base is the implicit host, and `gw.example` does not
+    /// match it, so every live AI call is refused (the dispatch check already
+    /// refuses those runs).
+    #[test]
+    fn ai_pin_hosts_ambient_pins_unannotated_program() {
+        let p = crate::parse_source(r#"fn main() { println("hi") }"#).expect("parse failed");
+        let amb = vec!["gw.example".to_string()];
+        assert_eq!(
+            ai_pin_hosts(&p, Some(&amb)),
+            Some(Vec::<String>::new()),
+            "ATTACK: an operator net scope left the AI endpoint unpinned"
+        );
+        let amb = vec![crate::capabilities::ai_implicit_host().to_string()];
+        assert_eq!(ai_pin_hosts(&p, Some(&amb)), Some(amb.clone()));
+    }
+
+    /// ceilings CE-1: declared ∩ ambient, never the union. A program declaring
+    /// `x.com` under `AXON_ALLOWED_NET=api.anthropic.com` must not get `x.com`
+    /// into the pin (else `AXON_AI_BASE_URL=https://x.com` leaves the
+    /// operator's scope). Globs intersect both ways.
+    #[test]
+    fn ai_pin_hosts_intersects_declared_with_ambient() {
+        let p = crate::parse_source(
+            r#"
+@[contained(net: ["x.com"])]
+fn f() -> i64 { 0 }
+fn main() { }
+"#,
+        )
+        .expect("parse failed");
+        let implicit = crate::capabilities::ai_implicit_host().to_string();
+        let amb = vec![implicit.clone()];
+        let pin = ai_pin_hosts(&p, Some(&amb)).expect("pinned");
+        assert!(
+            !pin.contains(&"x.com".to_string()),
+            "ATTACK: a declared host outside the operator net scope was pinned: {pin:?}"
+        );
+        assert_eq!(pin, vec![implicit]);
+        let p = crate::parse_source(
+            r#"
+@[contained(net: ["*.x.com"])]
+fn f() -> i64 { 0 }
+fn main() { }
+"#,
+        )
+        .expect("parse failed");
+        let amb = vec!["a.x.com".to_string()];
+        assert_eq!(
+            ai_pin_hosts(&p, Some(&amb)),
+            Some(vec!["a.x.com".to_string()]),
+            "ATTACK: the glob intersection of declared and operator hosts was wrong"
+        );
+    }
+
+    /// ceilings CE-1: `*` (parsed to `None`) and an unset variable do not
+    /// narrow; with neither a declared host nor an operator list, no pin.
+    #[test]
+    fn ai_pin_hosts_star_and_unset_do_not_narrow() {
+        let p = crate::parse_source(
+            r#"
+@[contained(net: ["x.com"])]
+fn f() -> i64 { 0 }
+fn main() { }
+"#,
+        )
+        .expect("parse failed");
+        assert_eq!(parse_scope_list("*"), None);
+        let pin = ai_pin_hosts(&p, None).expect("declared hosts pin");
+        assert_eq!(pin, declared_net_hosts(&p));
+        assert!(pin.contains(&"x.com".to_string()));
+        let bare = crate::parse_source(r#"fn main() { }"#).expect("parse failed");
+        assert_eq!(ai_pin_hosts(&bare, None), None);
     }
 
     #[test]
@@ -9487,6 +9844,7 @@ fn main() { }
             let out = on_deep_stack(|| {
                 let mut interp = Interp::build_in(&prog, std::slice::from_ref(&sdir))?;
                 interp.max_depth = limit;
+                interp.fast_depth = limit;
                 interp.init_globals().map_err(flow_to_msg)?;
                 let f = interp.fns.get("t").copied().expect("the suite defines `t`");
                 interp.test_outcome(f).map_err(|f| f.message)

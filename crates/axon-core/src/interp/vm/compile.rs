@@ -367,6 +367,7 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
         let inner = scopes + scoped as u32;
         self.scopes = inner;
         let start = self.here();
+        self.step();
         for s in body {
             self.stmt(&s.expr);
         }
@@ -430,6 +431,7 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
         );
         self.scopes = inner;
         let first = self.here();
+        self.step();
         for s in body {
             self.stmt(&s.expr);
         }
@@ -709,6 +711,7 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
         let inner = scopes + scoped as u32 + body_scoped as u32;
         self.scopes = inner;
         let start = self.here();
+        self.step();
         for s in body {
             self.stmt(&s.expr);
         }
@@ -1129,6 +1132,11 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
     /// ([`Compiler::pure_stmts`], spec §4 S7, S10); its exit is patched by
     /// [`Compiler::while_`].
     fn pure_loop(&mut self, cond: &'p Expr, body: &'p [Stmt]) -> Option<u32> {
+        // ceilings CE-5: a fused loop has no step checkpoint, so none under a
+        // step or wall ceiling; the body runs on the op loop and counts.
+        if self.ix.meter.on {
+            return None;
+        }
         let n = &mut 0;
         let cond = self.pure_at(cond, n, 0, true)?;
         let stmts = self.pure_stmts(body, true, 0)?;
@@ -1140,12 +1148,23 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
     /// { body }` when every statement is a pure statement (spec §4 S10); its
     /// exit is patched by [`Compiler::for_`].
     fn pure_for(&mut self, var: Var<'p>, inclusive: bool, body: &'p [Stmt]) -> Option<u32> {
+        if self.ix.meter.on {
+            return None;
+        }
         if var.slot >= NOT_LOCAL {
             return None;
         }
         let stmts = self.pure_stmts(body, true, 0)?;
         let lp = Box::new(PureLoop::new(None, Some((var, inclusive)), stmts));
         Some(self.emit(Op::PureFor { lp, exit: 0 }, 0, 0))
+    }
+
+    /// ceilings CE-5: an [`Op::Step`] at a loop body's start, only under a
+    /// step or wall ceiling (an unceilinged body is unchanged).
+    fn step(&mut self) {
+        if self.ix.meter.on {
+            self.emit(Op::Step, 0, 0);
+        }
     }
 
     /// `body` as [`PureStmt`]s, or `None`: an untyped `let x = <pure>` (only

@@ -1,0 +1,14 @@
+// ceilings CE-5 parity fixture (scripts/vm_parity.sh step leg): the
+// s03_count shape, which the VM lowers to a fused register loop with no
+// checkpoint; under AXON_MAX_STEPS it must not be fused and must stop at
+// the same step as the tree engine.
+fn main() {
+    let s = 0
+    let i = 0
+    while i < 200000 {
+        s = s + i
+        i = i + 1
+        if i % 1000 == 0 { println(to_str(s)) }
+    }
+    println(to_str(s))
+}

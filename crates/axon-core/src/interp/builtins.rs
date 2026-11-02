@@ -525,6 +525,25 @@ struct AiCallCtx {
     principal: String,
 }
 
+/// Ceilings CE-6: the request framing a model call may add to its prompt's
+/// bytes in input tokens, reserved against the run token cap.
+const AI_REQUEST_FRAMING_TOKENS: i64 = 16;
+
+/// Ceilings CE-6: the reply cap (`max_tokens`) every model request carries,
+/// reserved against the run token cap before dispatch. The interpreter
+/// without `asi-runtime` has no `axon-ai`, so the value is stated here and
+/// pinned to the crate's at compile time when it is linked.
+const AI_MAX_REPLY_TOKENS: i64 = 1024;
+#[cfg(feature = "asi-runtime")]
+const _: () = assert!(AI_MAX_REPLY_TOKENS == axon_ai::MAX_TOKENS);
+
+/// Ceilings CE-6: the run tokens a mock or replayed call settles: the
+/// deterministic prompt estimate plus the reply's (~4 bytes/token, +1). A
+/// live call settles the provider's real input + output count instead.
+fn settled_reply_tokens(ctx: &AiCallCtx, reply: &str) -> i64 {
+    ctx.est_tokens + (reply.len() as i64) / 4 + 1
+}
+
 impl<'p> Interp<'p> {
     // ── Builtins ───────────────────────────────────────────────────────────────
 
@@ -532,12 +551,12 @@ impl<'p> Interp<'p> {
     /// five `ai_extract_*` targets, AF-4): the call's context for its
     /// `ai_call` record, after the gates that may refuse it.
     ///
-    /// The gates — the R3c `@[ai(policy(budget: N))]` call count, the
-    /// `AXON_BUDGET_TOKENS` run cap, the once-per-fn W1310 warning — and the
-    /// R28 hashed-prompt ledger row apply to `ai_complete` only. An extract's
-    /// ledger row is written by `pre_effect_gate` (which skips `ai_complete`),
-    /// and metering extracts against the two budgets is Ceilings CE-4/CE-6,
-    /// which hook this one gate.
+    /// The gates — the R3c `@[ai(policy(budget: N))]` call count and the
+    /// `AXON_BUDGET_TOKENS` run-cap reservation (every model call, extracts
+    /// included, since Ceilings CE-4 / CE-6), the once-per-fn W1310 warning —
+    /// and the R28 hashed-prompt ledger row. W1310 and the ledger row apply to
+    /// `ai_complete` only here: an extract's ledger row is written by
+    /// `pre_effect_gate` (which skips `ai_complete`).
     fn ai_call_prologue(
         &self,
         name: &str,
@@ -564,53 +583,84 @@ impl<'p> Interp<'p> {
         // gates below (an over-budget call dispatches nothing, so it must
         // not charge cost).
         let est_tokens = (prompt.len() as i64) / 4 + 1;
+        // R3c as amended by CE-4 (NH-C4 A): meter this call — `ai_complete`
+        // or an extract — against EVERY live budgeted activation
+        // (`ai_budget_stack`), so a budget covers the calls its callees make.
+        // The first exhausted frame, innermost first, halts the call with
+        // E1301 naming that fn, BEFORE any model dispatch (mock/live/fallback)
+        // and before the W1310 warning — an over-budget call is a hard
+        // failure, not a stray response. Otherwise the call counts in every
+        // frame. `current_ai_budget` still runs for its W1311 warning on a
+        // malformed budget.
+        let _ = self.current_ai_budget();
+        {
+            let mut stack = self.ai_budget_stack.borrow_mut();
+            if let Some(fr) = stack.iter().rev().find(|fr| fr.used >= fr.budget) {
+                return ai_policy_err(format!(
+                    "[{}] `{}` exceeded its AI budget of {} call(s) — \
+                     raise the budget or reduce ai_complete calls",
+                    crate::error::E1301,
+                    fr.fn_name,
+                    fr.budget,
+                ));
+            }
+            for fr in stack.iter_mut() {
+                fr.used += 1;
+            }
+        }
+        // The ambient RUN-level token cap (`AXON_BUDGET_TOKENS`, lowered by a
+        // ceiling's `ai_tokens`), checked in the same pre-dispatch window and
+        // for the same reason as the R3c gate above: a call that could take
+        // the run past the cap must not reach a model, so nothing is charged
+        // and no response can arrive.
+        //
+        // The two gates are complementary, not redundant. R3c is a per-fn
+        // CALL count the program's own author declares; this is a run-wide
+        // TOKEN cap an operator imposes from outside, and a program cannot
+        // lower or raise it. `axon-guest-init` sets the var from the VM's
+        // MMDS policy.
+        //
+        // Ceilings CE-6 (NH-C6 A): reserve, then settle. The unit is provider
+        // tokens, input + output. Before dispatch the call must fit its
+        // worst case: the prompt's bytes (a byte-level tokenizer makes at
+        // most one input token per byte) + 16 for the request framing + the
+        // `max_tokens` reply cap every request carries. Nothing is charged
+        // here; [`Interp::settle_run_tokens`] charges what the call used
+        // after it answers (`ai_complete` and every extract alike), so a run
+        // cannot exceed its cap and a long reply is no longer free.
+        if let Some(cap) = self.token_budget {
+            let used = self.tokens_used.get();
+            let reserve = (prompt.len() as i64)
+                .saturating_add(AI_REQUEST_FRAMING_TOKENS)
+                .saturating_add(AI_MAX_REPLY_TOKENS);
+            if used.saturating_add(reserve) > cap {
+                return ai_policy_err(format!(
+                    "[{}] `{}` exceeded the run's token budget of {cap} \
+                     (used {used}, this call reserves {reserve}: prompt + \
+                     {AI_REQUEST_FRAMING_TOKENS} + a {AI_MAX_REPLY_TOKENS}-token reply) — \
+                     raise AXON_BUDGET_TOKENS or reduce AI work",
+                    crate::error::E1303,
+                    who(),
+                ));
+            }
+        }
+        // Ceilings CE-6 (`ai_calls`): the operator ceiling's run-wide CALL
+        // cap, in the same pre-dispatch window. A call that would be one too
+        // many stops with E1303 before it reaches a model; a call that passes
+        // every gate counts, whichever path (replay, mock, live) answers it.
+        if let Some(cap) = self.ai_calls_cap {
+            let used = self.ai_calls_used.get();
+            if used >= cap {
+                return ai_policy_err(format!(
+                    "[{}] `{}` exceeded the run's AI call budget of {cap} call(s) \
+                     (the ceiling's `ai_calls`) — raise it or reduce AI work",
+                    crate::error::E1303,
+                    who(),
+                ));
+            }
+            self.ai_calls_used.set(used + 1);
+        }
         if name == "ai_complete" {
-            // R3c: meter this call against the fn's @[ai(policy(budget: N))].
-            // The (N+1)th call halts with E1301 BEFORE any model dispatch
-            // (mock/live/fallback) and before the W1310 warning — an
-            // over-budget call is a hard failure, not a stray response. A fn
-            // with no budget is unmetered (current_ai_budget → None).
-            if let Some(budget) = self.current_ai_budget() {
-                let used = self.ai_calls_this_fn.get();
-                if used >= budget {
-                    return ai_policy_err(format!(
-                        "[{}] `{}` exceeded its AI budget of {budget} call(s) — \
-                         raise the budget or reduce ai_complete calls",
-                        crate::error::E1301,
-                        who(),
-                    ));
-                }
-                self.ai_calls_this_fn.set(used + 1);
-            }
-            // The ambient RUN-level token cap (`AXON_BUDGET_TOKENS`), checked
-            // in the same pre-dispatch window and for the same reason as the
-            // R3c gate above: a call that would exceed the cap must not reach
-            // a model, so nothing is charged and no response can arrive.
-            //
-            // The two gates are complementary, not redundant. R3c is a
-            // per-fn CALL count the program's own author declares; this is a
-            // run-wide TOKEN cap an operator imposes from outside, and a
-            // program cannot lower or raise it. `axon-guest-init` sets the
-            // var from the VM's MMDS policy and nothing read it, so a VM
-            // operator who capped a run's tokens got no cap at all.
-            //
-            // Uses the pre-dispatch ESTIMATE for the same reason R3c does:
-            // the decision has to be made before the call, and the real
-            // token count is only knowable after. The estimate is
-            // deterministic, so mock/replay/live runs all gate identically.
-            if let Some(cap) = self.token_budget {
-                let used = self.tokens_used.get();
-                if used.saturating_add(est_tokens) > cap {
-                    return ai_policy_err(format!(
-                        "[{}] `{}` exceeded the run's token budget of {cap} \
-                         (used {used}, this call needs ~{est_tokens}) — raise \
-                         AXON_BUDGET_TOKENS or reduce AI work",
-                        crate::error::E1303,
-                        who(),
-                    ));
-                }
-                self.tokens_used.set(used + est_tokens);
-            }
             // W1310: a fn making an AI call with no @[ai(policy)] is allowed,
             // but its cost is unmetered and the call un-pinned — warn once so
             // the audit gap is visible (only meaningful for live/mock calls).
@@ -649,6 +699,20 @@ impl<'p> Interp<'p> {
     /// `tokens`: charge its per-token cost at the call's tier to the meter
     /// (`ai_cost_spent`) and append its `ai_call` provenance record.
     fn ai_call_record(&self, ctx: &AiCallCtx, prompt: &str, params: &str, mode: &str, tokens: i64) {
+        self.ai_call_record_reason(ctx, prompt, params, mode, "", tokens);
+    }
+
+    /// [`Self::ai_call_record`] with the record's `reason`: why a call the
+    /// provider billed still answered the program with `Err` (O-AF-09).
+    fn ai_call_record_reason(
+        &self,
+        ctx: &AiCallCtx,
+        prompt: &str,
+        params: &str,
+        mode: &str,
+        reason: &str,
+        tokens: i64,
+    ) {
         let micro = ctx.tier.cost_micro(tokens);
         self.ai_cost_micro.set(self.ai_cost_micro.get() + micro);
         // Same ceiling as every other durable write — see the agent_action
@@ -663,13 +727,38 @@ impl<'p> Interp<'p> {
                 model_ver,
                 params,
                 mode,
-                "",
+                reason,
                 micro as f64 / 1_000_000.0,
                 &ctx.goal,
                 "AI",
                 &ctx.principal,
             );
         }
+    }
+
+    /// Ceilings CE-6: charge `tokens` a call used to the run token cap
+    /// (`AXON_BUDGET_TOKENS`) after it answered; the prologue only reserved.
+    fn settle_run_tokens(&self, tokens: i64) {
+        self.tokens_used
+            .set(self.tokens_used.get().saturating_add(tokens.max(0)));
+    }
+
+    /// O-AF-09: a live call the provider billed (`e.tokens > 0`) whose reply
+    /// could not be used is recorded, costed and charged to the run cap like
+    /// any answered call, then reaches the program as `Err`.
+    #[cfg(feature = "asi-runtime")]
+    fn ai_live_failure(
+        &self,
+        ctx: &AiCallCtx,
+        prompt: &str,
+        params: &str,
+        e: axon_ai::AiCallError,
+    ) -> Value {
+        if e.tokens > 0 {
+            self.ai_call_record_reason(ctx, prompt, params, "live", "unusable reply", e.tokens);
+            self.settle_run_tokens(e.tokens);
+        }
+        Value::Err(VBox::new(Value::Str(Rc::new(e.message))))
     }
 
     /// The five `ai_extract::<T>` runtime targets (`name`, one of
@@ -693,6 +782,7 @@ impl<'p> Interp<'p> {
             // pre-dispatch estimate rather than as free.
             let tokens = if tokens > 0 { tokens } else { ctx.est_tokens };
             self.ai_call_record(&ctx, prompt, PARAMS, "replay", tokens);
+            self.settle_run_tokens(settled_reply_tokens(&ctx, &cached));
             return Ok(replay_extract(&cached, name));
         }
         if ai_mock_enabled() {
@@ -707,6 +797,7 @@ impl<'p> Interp<'p> {
             };
             let (v, entry) = extract_answer(value, confidence);
             self.ai_call_record(&ctx, prompt, PARAMS, "mock", ctx.est_tokens);
+            self.settle_run_tokens(settled_reply_tokens(&ctx, &entry));
             ai_replay_store(prompt, name, &entry, ctx.est_tokens);
             return Ok(Value::Ok(VBox::new(v)));
         }
@@ -733,10 +824,11 @@ impl<'p> Interp<'p> {
                 Ok((value, confidence, tokens)) => {
                     let (v, entry) = extract_answer(value, confidence);
                     self.ai_call_record(&ctx, prompt, PARAMS, "live", tokens);
+                    self.settle_run_tokens(tokens);
                     ai_replay_store(prompt, name, &entry, tokens);
                     Value::Ok(VBox::new(v))
                 }
-                Err(e) => Value::Err(VBox::new(Value::Str(Rc::new(e)))),
+                Err(e) => self.ai_live_failure(&ctx, prompt, PARAMS, e),
             })
         }
         // No model compiled in, no mock, no recording: a refusal (E1300, exit
@@ -1052,7 +1144,9 @@ impl<'p> Interp<'p> {
         // ledger entry. One gate, called from every effect entry point.
         self.pre_effect_gate(
             name,
-            crate::builtins::builtin_effect_row(name),
+            // ceilings CE-7: the DISPATCH row (`goal_*` run-variants are `IO`;
+            // their metric's model calls are gated at their own dispatch).
+            crate::builtins::dispatch_effect_row(name),
             // The MULTI resolver: `capability_of_builtin` returns None for
             // `file_copy`/`file_rename`, and `pre_effect_gate` only writes the
             // @[agent] action record `if let Some(cap) = cap`. Measured — an
@@ -6314,6 +6408,7 @@ impl<'p> Interp<'p> {
                 let replay_model = tier.api_model();
                 if let Some((cached, cached_tokens)) = ai_replay_lookup(&prompt, &replay_model) {
                     self.ai_call_record(&ctx, &prompt, params, "replay", cached_tokens);
+                    self.settle_run_tokens(settled_reply_tokens(&ctx, &cached));
                     ok!(Value::Ok(VBox::new(Value::Str(Rc::new(cached)))));
                 }
                 if ai_mock_enabled() {
@@ -6326,6 +6421,7 @@ impl<'p> Interp<'p> {
                     let stub = "Mock summary: the single most important fact, stated concisely."
                         .to_string();
                     self.ai_call_record(&ctx, &prompt, params, "mock", ctx.est_tokens);
+                    self.settle_run_tokens(settled_reply_tokens(&ctx, &stub));
                     // Record so a re-run replays this exact response (under mock the
                     // recorded tokens are the deterministic estimate).
                     ai_replay_store(&prompt, &replay_model, &stub, ctx.est_tokens);
@@ -6339,20 +6435,21 @@ impl<'p> Interp<'p> {
                     // env-overridable per tier for a proxy/gateway deployment.
                     // R3: charge the model's REAL token count (input+output from
                     // `usage`), not the pre-dispatch prompt-length estimate — so
-                    // the metered cost matches what the provider actually billed.
-                    // (The BUDGET gate still uses the estimate, correctly: it must
-                    // decide before the call whether to dispatch at all.)
+                    // the metered cost matches what the provider actually billed,
+                    // and settle the same count against the run token cap (CE-6;
+                    // the prologue reserved the worst case before dispatch).
                     ok!(
                         match axon_ai::complete_with_model_usage(&prompt, &replay_model) {
                             Ok((s, real_tokens)) => {
                                 self.ai_call_record(&ctx, &prompt, params, "live", real_tokens);
+                                self.settle_run_tokens(real_tokens);
                                 // Record the live (response, real token-count) so a
                                 // re-run with the same AXON_AI_REPLAY file reproduces
                                 // this exact response AND cost — the F2 replay engine.
                                 ai_replay_store(&prompt, &replay_model, &s, real_tokens);
                                 Value::Ok(VBox::new(Value::Str(Rc::new(s))))
                             }
-                            Err(e) => Value::Err(VBox::new(Value::Str(Rc::new(e)))),
+                            Err(e) => self.ai_live_failure(&ctx, &prompt, params, e),
                         }
                     );
                 }

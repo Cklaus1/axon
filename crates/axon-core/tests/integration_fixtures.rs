@@ -3577,3 +3577,222 @@ fn ai_extract_generic_native_matches_interp_under_mock() {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+/// ceilings CE-8 (NH-C10 B): run `src` with no API key and no mock, on the
+/// interpreter and as a native binary, from an empty directory (no `.env`).
+/// Returns `[(exit code, stdout, stderr)]` for interp then native.
+#[cfg(feature = "codegen")]
+fn no_key_both_engines(tag: &str, src: &str) -> Vec<(Option<i32>, String, String)> {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_ce8_{tag}_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(format!("{tag}.ax"));
+    std::fs::write(&file, src).unwrap();
+    let bin = dir.join(format!("{tag}_bin"));
+    let build = Command::new(axon_bin)
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "native build: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let no_key = |mut c: Command| {
+        let o = c
+            .current_dir(&dir)
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("AXON_AI_API_KEY")
+            .env_remove("AXON_AI_MOCK")
+            .env_remove("AXON_AI_REPLAY")
+            .output()
+            .unwrap();
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    };
+    let mut interp = Command::new(axon_bin);
+    interp.arg("run").arg(&file);
+    let out = vec![no_key(interp), no_key(Command::new(&bin))];
+    let _ = std::fs::remove_dir_all(&dir);
+    out
+}
+
+/// ceilings CE-8: with no key, no mock and no fallback, a native binary stops
+/// with E1300 / exit 5 like the interpreter. It used to hand the key error to
+/// the program as `Err` and exit 0.
+#[cfg(feature = "codegen")]
+#[test]
+fn native_no_key_matches_interp() {
+    let runs = no_key_both_engines(
+        "n01",
+        "fn main() {\n    let r = ai_complete(\"hello\")\n    match r { Ok(s) => println(\"ok\"), Err(e) => println(\"err=\" + e) }\n    println(\"r=2\")\n}\n",
+    );
+    for (engine, (code, out, err)) in ["interp", "native"].iter().zip(&runs) {
+        assert_eq!(
+            (*code, out.as_str()),
+            (Some(5), ""),
+            "ATTACK: a native no-key ai_complete returned a key error the interpreter never \
+             returns ({engine}): {err}"
+        );
+        assert!(
+            err.contains("axon: ai policy: [E1300] `ai_complete` cannot run"),
+            "{engine}: {err}"
+        );
+    }
+}
+
+/// ceilings CE-8: with no key and no mock, a fn's `@[ai(policy(fallback:
+/// ..))]` is the native reply too.
+#[cfg(feature = "codegen")]
+#[test]
+fn native_fallback_matches_interp() {
+    let runs = no_key_both_engines(
+        "n02",
+        "@[ai(policy(fallback: \"FB\"))]\nfn ask() -> str {\n    match ai_complete(\"hello\") { Ok(s) => s, Err(e) => \"err=\" + e }\n}\n\nfn main() { println(ask()) }\n",
+    );
+    for (engine, (code, out, err)) in ["interp", "native"].iter().zip(&runs) {
+        assert_eq!(
+            (*code, out.as_str()),
+            (Some(0), "FB\n"),
+            "ATTACK: a native no-key ai_complete ignored the declared fallback ({engine}): {err}"
+        );
+    }
+}
+
+/// ceilings CE-2: an operator ceiling (`AXON_CEILING`) is interpreter-only, so
+/// `axon build` under one refuses (E0910, exit 2) and a native binary run
+/// under one exits 2 rather than run past every bound in it.
+#[cfg(feature = "codegen")]
+#[test]
+fn native_refuses_under_ceiling() {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_ce2_native_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("hello.ax");
+    std::fs::write(&file, "fn main() { println(\"RAN\") }\n").unwrap();
+    let ceiling = dir.join("ceiling.json");
+    std::fs::write(
+        &ceiling,
+        "{ \"schema\": \"axon-ceiling/1\", \"effects\": [], \"fs_read\": [], \"fs_write\": [], \
+         \"net\": [], \"ai_tokens\": 0, \"ai_calls\": 0, \"max_depth\": null, \"steps\": null, \
+         \"wall_ms\": null }\n",
+    )
+    .unwrap();
+    let bin = dir.join("hello_bin");
+    let build = |with_ceiling: bool| {
+        let mut c = Command::new(axon_bin);
+        c.arg("build")
+            .arg(&file)
+            .arg("-o")
+            .arg(&bin)
+            .arg("--no-cache")
+            .current_dir(&dir)
+            .env_remove("AXON_CEILING");
+        if with_ceiling {
+            c.env("AXON_CEILING", &ceiling);
+        }
+        c.output().unwrap()
+    };
+    let refused = build(true);
+    let err = String::from_utf8_lossy(&refused.stderr);
+    assert_eq!(
+        refused.status.code(),
+        Some(2),
+        "ATTACK: a native build under a ceiling was emitted: {err}"
+    );
+    assert!(
+        err.contains("error[E0910]") && err.contains("AXON_CEILING"),
+        "ATTACK: a native build under a ceiling was emitted: {err}"
+    );
+    let built = build(false);
+    assert!(
+        built.status.success(),
+        "native build: {}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let run = Command::new(&bin)
+        .current_dir(&dir)
+        .env("AXON_CEILING", &ceiling)
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&run.stdout).into_owned();
+    let err = String::from_utf8_lossy(&run.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        (run.status.code(), out.as_str()),
+        (Some(2), ""),
+        "ATTACK: a native binary ran past an operator ceiling: {err}"
+    );
+    assert!(err.contains("`AXON_CEILING` is set"), "{err}");
+}
+
+/// ceilings CE-5: the step and wall-clock ceilings are counted by the
+/// interpreter only, so `axon build` under `AXON_MAX_STEPS` / `AXON_WALL_MS`
+/// refuses (E0910, exit 2) and a native binary run under either exits 2
+/// rather than run unbounded.
+#[cfg(feature = "codegen")]
+#[test]
+fn native_refuses_axon_max_steps() {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_ce5_native_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("hello.ax");
+    std::fs::write(&file, "fn main() { println(\"RAN\") }\n").unwrap();
+    let bin = dir.join("hello_bin");
+    let build = |var: Option<&str>| {
+        let mut c = Command::new(axon_bin);
+        c.arg("build")
+            .arg(&file)
+            .arg("-o")
+            .arg(&bin)
+            .arg("--no-cache")
+            .current_dir(&dir)
+            .env_remove("AXON_MAX_STEPS")
+            .env_remove("AXON_WALL_MS");
+        if let Some(v) = var {
+            c.env(v, "1000");
+        }
+        c.output().unwrap()
+    };
+    for var in ["AXON_MAX_STEPS", "AXON_WALL_MS"] {
+        let refused = build(Some(var));
+        let err = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            refused.status.code() == Some(2) && err.contains("error[E0910]") && err.contains(var),
+            "ATTACK: a native build under {var} was emitted: {err}"
+        );
+    }
+    let built = build(None);
+    assert!(
+        built.status.success(),
+        "native build: {}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    for var in ["AXON_MAX_STEPS", "AXON_WALL_MS"] {
+        let run = Command::new(&bin)
+            .current_dir(&dir)
+            .env(var, "1000")
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&run.stdout).into_owned();
+        let err = String::from_utf8_lossy(&run.stderr).into_owned();
+        assert_eq!(
+            (run.status.code(), out.as_str()),
+            (Some(2), ""),
+            "ATTACK: a native binary ran past an operator step ceiling ({var}): {err}"
+        );
+        assert!(err.contains(&format!("`{var}` is set")), "{err}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

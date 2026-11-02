@@ -1005,6 +1005,8 @@ machinery (O006b) is built and waiting on the policy decision.
 
 ## O027 — the AI endpoint pin only binds programs that declared a net grant
 
+`[FIXED 2026-11-02: ceilings CE-1 (d9ad9086) + CE-3 (d54b7e73): in an asi-runtime build the AI endpoint pin is the declared hosts (or the implicit host if none) met with AXON_ALLOWED_NET and a ceiling's net list; an unceilinged run with neither stays unpinned and the docs say so (NH-C3 A)]`
+
 Shipped as part of T35 (RT-02) and worth stating as a limitation rather than
 leaving it implied by the code.
 
@@ -1119,6 +1121,8 @@ than discovering it when the first driver lands.
 
 ## O031 — native codegen silently upgrades the AI runtime from *offline* to *live*
 
+`[FIXED 2026-11-02: ceilings CE-8 (d5e8aa21): a native AI call with no key and no mock answers the fn's declared fallback or stops with E1300 exit 5, as axon run does (NH-C10 B); live dialling was already closed in effect by 105444e6 (NH-C7 A)]`
+
 *Found while reproducing F141 / P6-EXIT-04 (T41).* Needs a decision; not fixed.
 
 `axon-core`'s default feature set does **not** include `asi-runtime`, so the
@@ -1184,6 +1188,8 @@ be *documented* and the interpreter's E1300 must stop claiming the program
 ---
 
 ## O032 — an `@[ai(policy(budget: N))]` is escaped by extracting a helper
+
+`[FIXED 2026-11-02: ceilings CE-4 (38474a58): an @[ai(policy(budget: N))] activation bounds every model call made while it is on the stack, callees and extracts included; the first exhausted frame stops the run with E1301 (NH-C4 A)]`
 
 *Found while reproducing F141 (T41).* Spec-blessed today; worth revisiting.
 
@@ -1262,6 +1268,8 @@ but does not grant anything.
 ---
 
 ## O034 — the guest substrate needs FS, and that is not the program's authority
+
+`[DECIDED 2026-11-02: NH-C8 C, spike in progress (separate CE-9 lane); not built on b2/ce]`
 
 *Found while closing OSK-P7-C3 (T48).* Needs a decision; the gate states the
 grant explicitly meanwhile.
@@ -1712,6 +1720,8 @@ Sweep the rest of `opportunities.md` against current code before the next loop
 plans from it.
 
 ## O-HI-03 — H2/O031 reclassified: native AI builds are an INTENDED capability (proposed: HIGH — decision, not code)
+
+`[FIXED 2026-11-02: closed in effect by 105444e6 (native no longer dials a model; NH-C7 A); ceilings CE-8 (d5e8aa21) makes the no-key native path mirror the interpreter (fallback or E1300 exit 5)]`
 
 `[REVISED 105444e6: native no longer dials a model - live calls refuse with exit 2 (crates/axon-ai/src/lib.rs:410,433); docs line per tasks/asi-fixes-spec.md AF-6(a) in axon build --help (crates/axon-core/src/main.rs:127-131) and spec/axon-for-llms.md §7]`
 
@@ -3351,6 +3361,7 @@ directory is the staging dir, not the program's. `job_module_dir_sets` (`:749-77
 EXCLUSIVE the same file gives E0901 at the `mod` line.
 
 ### O-AF-09 - [medium] A live AI reply that fails to parse is billed by the provider but not recorded or charged
+`[FIXED 2026-11-02: ceilings CE-6 + O-AF-09 (832ae9d8): axon_ai completions return AiCallError { message, tokens }; a billed unusable reply is recorded (ai_call, reason "unusable reply"), costed and charged to the run cap before the program sees the Err]`
 `axon_ai::complete_typed_i64` (`crates/axon-ai/src/lib.rs:1025-1030`) gets `(value, tokens)` and then returns `Err` when the value is
 not T, so the token count is dropped. The interpreter's live extract arm (`interp/builtins.rs:739`) then skips `ai_call_record` and
 the cost, which leaves `ai_cost_spent()` and budget ceilings low. The f64 and bool paths have the same shape, and so does `ai_complete`

@@ -202,6 +202,7 @@ run_once() {
   (
     cd "$run" &&
       env -u AXON_VM_TRACE -u AXON_VM_EAGER -u AXON_DUMP_BINDINGS -u AXON_DUMP_SHAPES -u AXON_RECORD -u AXON_REPLAY \
+        -u AXON_MAX_STEPS -u AXON_WALL_MS -u AXON_CEILING \
         TMPDIR="$run/tmp" XDG_CACHE_HOME="$run/cache" AXON_AUDIT_LEDGER="$run/audit.ledger" \
         AXON_LEARNER_STATE=learner.state AXON_BANDIT_STATE=bandit.state \
         AXON_AI_MOCK=1 AXON_SEED=42 AXON_CLOCK=0:1 AXON_AUDIT_DETERMINISTIC=1 \
@@ -345,6 +346,7 @@ test_once() { # <src> <out dir> <engine> [eager] — stdout and exit code into <
   (
     cd "$run" &&
       env -u AXON_VM_TRACE -u AXON_VM_EAGER -u AXON_DUMP_BINDINGS -u AXON_DUMP_SHAPES -u AXON_RECORD -u AXON_REPLAY \
+        -u AXON_MAX_STEPS -u AXON_WALL_MS -u AXON_CEILING \
         TMPDIR="$run/tmp" XDG_CACHE_HOME="$run/cache" AXON_AUDIT_LEDGER="$run/audit.ledger" \
         AXON_LEARNER_STATE=learner.state AXON_BANDIT_STATE=bandit.state \
         AXON_AI_MOCK=1 AXON_SEED=42 AXON_CLOCK=0:1 AXON_AUDIT_DETERMINISTIC=1 \
@@ -384,6 +386,61 @@ if [ "$tfiles" -lt 3 ]; then
   other=$((other + 1))
 fi
 echo "vm_parity: $tfiles axon test files, tree vs vm (eager, default)"
+
+# ── Step-ceiling leg (ceilings CE-5) ────────────────────────────────────────
+# Every crates/axon-core/tests/fixtures/ce5_steps/*.ax under AXON_MAX_STEPS at
+# several caps, tree vs vm eager vs vm default: each run must exit 9 (E1006)
+# and print the same stdout, i.e. stop at the same step. Same isolation as
+# test_once.
+step_once() { # <src> <out dir> <engine> <cap> [eager]
+  local src="$1" out="$2" engine="$3" cap="$4" eager="${5:-}" run="$WORK/srun"
+  rm -rf "$run" "$out"
+  mkdir -p "$run/tmp" "$run/cache" "$out"
+  local -a extra=()
+  [ -n "$eager" ] && extra+=(AXON_VM_EAGER=1)
+  (
+    cd "$run" &&
+      env -u AXON_VM_TRACE -u AXON_VM_EAGER -u AXON_DUMP_BINDINGS -u AXON_DUMP_SHAPES -u AXON_RECORD -u AXON_REPLAY \
+        -u AXON_WALL_MS -u AXON_CEILING \
+        TMPDIR="$run/tmp" XDG_CACHE_HOME="$run/cache" AXON_AUDIT_LEDGER="$run/audit.ledger" \
+        AXON_AI_MOCK=1 AXON_SEED=42 AXON_CLOCK=0:1 AXON_AUDIT_DETERMINISTIC=1 \
+        AXON_ENGINE="$engine" AXON_MAX_STEPS="$cap" "${extra[@]}" \
+        timeout -k 5 30 "$AXON" run "$src" </dev/null >"$out/stdout" 2>/dev/null
+  )
+  echo $? >"$out/exit"
+  rm -rf "$run"
+}
+sfiles=0
+for src in "$ROOT"/crates/axon-core/tests/fixtures/ce5_steps/*.ax; do
+  [ -f "$src" ] || continue
+  rel="${src#"$ROOT"/}"
+  sfiles=$((sfiles + 1))
+  for cap in 1 77 1500 3001; do
+    step_once "$src" "$WORK/sA" tree "$cap"
+    if [ "$(cat "$WORK/sA/exit")" != 9 ]; then
+      echo "FAIL steps $rel: the tree run under AXON_MAX_STEPS=$cap exited $(cat "$WORK/sA/exit"), not 9"
+      other=$((other + 1))
+      continue
+    fi
+    for leg in "vm eager" "vm"; do
+      read -r eng eag <<<"$leg"
+      step_once "$src" "$WORK/sV" "$eng" "$cap" "$eag"
+      for ch in stdout exit; do
+        if ! cmp -s "$WORK/sA/$ch" "$WORK/sV/$ch"; then
+          echo "FAIL differ $rel: AXON_MAX_STEPS=$cap stops tree and $leg at different steps ($ch)"
+          diff "$WORK/sA/$ch" "$WORK/sV/$ch" | head -8 | sed 's/^/      /'
+          differ=$((differ + 1))
+          break
+        fi
+      done
+    done
+  done
+done
+if [ "$sfiles" -lt 2 ]; then
+  echo "FAIL steps: only $sfiles ce5_steps/*.ax fixtures (mixed and counted are 2)"
+  other=$((other + 1))
+fi
+echo "vm_parity: $sfiles step-ceiling files, tree vs vm (eager, default) at 4 caps"
 if [ "$differ" -ne 0 ] || [ "$other" -ne 0 ]; then
   echo "vm_parity: FAILED — $differ differ, $other other failure(s) (timeouts, check rejections, lowered-list violations)"
   exit 1

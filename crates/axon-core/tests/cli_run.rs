@@ -17970,12 +17970,14 @@ fn main() -> i64 { let _ = bad()  0 }
 }
 
 #[test]
-fn ai_budget_is_per_activation_through_unmetered_helpers() {
-    // R3c / AX-54: only a fn that can meter saves and resets the call count, so
-    // an unmetered helper between two metered fns must neither reset the
-    // caller's count nor let the callees' calls leak into it. `outer` makes 2
-    // calls around a helper whose callees each make 2: within every budget.
-    // A third `outer` call is then the (N+1)th of ITS activation: E1301.
+fn ai_budget_covers_callees_through_unmetered_helpers() {
+    // R3c as amended by ceilings CE-4 (NH-C4 A): a budget bounds every call
+    // made while its activation is on the stack, callees included, and each
+    // activation of a budgeted fn starts its own count. `outer` (budget 6)
+    // makes 2 calls around a helper whose 2 `inner` activations (budget 2
+    // each) make 2 calls apiece: 6 in `outer`'s extent, every budget met.
+    // `main`'s own `helper()` runs under no budget. A third `outer` call is
+    // then the 7th of ITS extent: E1301 naming `outer`.
     let two = r#"
 @[ai(policy(budget: 2))]
 fn inner() -> i64 {
@@ -17984,7 +17986,7 @@ fn inner() -> i64 {
     1
 }
 fn helper() -> i64 { inner() + inner() }
-@[ai(policy(budget: 2))]
+@[ai(policy(budget: 6))]
 fn outer() -> i64 {
     let _a = match ai_complete("o1") { Ok(s) => s  Err(_) => "" }
     let n = helper()
@@ -25011,8 +25013,10 @@ fn ambient_token_budget_env_var_is_actually_enforced() {
     // per-fn CALL count the author declares, this is a run-wide TOKEN cap
     // imposed from outside that the program cannot raise.
     //
-    // Under AXON_AI_MOCK the token estimate is the deterministic prompt-length
-    // one, so the arithmetic below is stable: each prompt is 15 tokens.
+    // Ceilings CE-6: before dispatch each call reserves its worst case, the
+    // prompt's bytes (57 here) + 16 framing + the 1024-token reply cap = 1097;
+    // after it answers it settles what it used (under AXON_AI_MOCK the
+    // deterministic estimate: 15 for the prompt + ~16 for the stub reply).
     let dir = std::env::temp_dir();
     let f = dir.join(format!("axon_tokbudget_{}.ax", std::process::id()));
     std::fs::write(
@@ -25050,11 +25054,12 @@ fn ambient_token_budget_env_var_is_actually_enforced() {
     assert!(sout.contains("finished"), "{sout}");
 
     // (2) A cap that admits the first call but not the second halts on the
-    // SECOND — proving the accounting is cumulative per-TOKEN, not per-call.
-    let (code20, sout20, serr20) = run(Some("20"));
+    // SECOND — proving the accounting is cumulative per-TOKEN, not per-call:
+    // 0 + 1097 fits 1100, ~31 + 1097 does not.
+    let (code20, sout20, serr20) = run(Some("1100"));
     assert_eq!(code20, 5, "over-budget must be AI-policy exit 5: {serr20}");
     assert!(
-        serr20.contains("E1303") && serr20.contains("token budget of 20"),
+        serr20.contains("E1303") && serr20.contains("token budget of 1100"),
         "the halt must name the code and the cap: {serr20}"
     );
     assert!(
@@ -25064,7 +25069,7 @@ fn ambient_token_budget_env_var_is_actually_enforced() {
 
     // (3) NEGATIVE CONTROL — a cap large enough for both calls runs to
     // completion. Without this, (2) passes for any cap that always fires.
-    let (code30, sout30, serr30) = run(Some("30"));
+    let (code30, sout30, serr30) = run(Some("1200"));
     assert_eq!(code30, 0, "a sufficient cap must not fire: {serr30}");
     assert!(sout30.contains("finished"), "{sout30}");
 

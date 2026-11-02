@@ -29,6 +29,11 @@ use crate::types::Type;
 // inkwell instantiation to one copy instead of one-per-call-site.
 use super::build_wrappers;
 
+/// ceilings CE-8: the `ai_complete` variant that also passes the calling fn's
+/// `@[ai(policy(fallback: ..))]` to `__axon_ai_complete`. Not an identifier, so
+/// no user fn can shadow it.
+pub(super) const AI_COMPLETE_FALLBACK_FN: &str = "ai_complete.fallback";
+
 impl<'ctx> super::Codegen<'ctx> {
     // ── Pass 1: forward-declare functions ────────────────────────────────────
 
@@ -3820,9 +3825,13 @@ impl<'ctx> super::Codegen<'ctx> {
         let _ = (i32_ty, bool_ty, void_ty, i8_ptr, i64_ty);
 
         // ── AI: ai_complete(prompt: str) -> Result<str, str> ─────────────────────
-        // Runtime: __axon_ai_complete(prompt_ptr, prompt_len, out_len: *i64, out_ptr: **u8)
-        // Same out-param ABI as __axon_read_file: out_len<0 on error.
-        {
+        // Runtime: __axon_ai_complete(prompt_ptr, prompt_len, fallback_ptr,
+        // fallback_len, out_len: *i64, out_ptr: **u8). Same out-param ABI as
+        // __axon_read_file: out_len<0 on error. ceilings CE-8: `fallback_len < 0`
+        // means no `@[ai(policy(fallback: ..))]`; the variant
+        // `AI_COMPLETE_FALLBACK_FN(prompt, fallback)` passes the calling fn's
+        // fallback (the call is redirected in `emit_call`).
+        for (wrapper, with_fb) in [("ai_complete", false), (AI_COMPLETE_FALLBACK_FN, true)] {
             let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
             let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
@@ -3839,6 +3848,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 &[
                     i8_ptr.into(),
                     i64_ty.into(),
+                    i8_ptr.into(),
+                    i64_ty.into(),
                     i64_ptr.into(),
                     i8_ptr_ptr.into(),
                 ],
@@ -3847,10 +3858,19 @@ impl<'ctx> super::Codegen<'ctx> {
             let rt_fn = self
                 .ir
                 .module
-                .add_function("__axon_ai_complete", rt_ty, None);
+                .get_function("__axon_ai_complete")
+                .unwrap_or_else(|| {
+                    self.ir
+                        .module
+                        .add_function("__axon_ai_complete", rt_ty, None)
+                });
 
-            let fn_ty = result_ty.fn_type(&[str_ty.into()], false);
-            let fn_val = self.ir.module.add_function("ai_complete", fn_ty, None);
+            let mut params: Vec<inkwell::types::BasicMetadataTypeEnum> = vec![str_ty.into()];
+            if with_fb {
+                params.push(str_ty.into());
+            }
+            let fn_ty = result_ty.fn_type(&params, false);
+            let fn_val = self.ir.module.add_function(wrapper, fn_ty, None);
 
             let entry_bb = self.ir.context.append_basic_block(fn_val, "aic_entry");
             let ok_bb = self.ir.context.append_basic_block(fn_val, "aic_ok");
@@ -3865,6 +3885,17 @@ impl<'ctx> super::Codegen<'ctx> {
             let prompt_ptr_v =
                 build_wrappers::w_extract_value(&self.ir.builder, prompt_str, 1, "aic_pptr")
                     .into_pointer_value();
+            let (fb_ptr_v, fb_len) = if with_fb {
+                let fb_str = fn_val.get_nth_param(1).unwrap().into_struct_value();
+                (
+                    build_wrappers::w_extract_value(&self.ir.builder, fb_str, 1, "aic_fbptr")
+                        .into_pointer_value(),
+                    build_wrappers::w_extract_value(&self.ir.builder, fb_str, 0, "aic_fblen")
+                        .into_int_value(),
+                )
+            } else {
+                (i8_ptr.const_null(), i64_ty.const_int(u64::MAX, true))
+            };
 
             let out_len_slot =
                 build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "aic_out_len");
@@ -3882,6 +3913,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 &[
                     prompt_ptr_v.into(),
                     prompt_len.into(),
+                    fb_ptr_v.into(),
+                    fb_len.into(),
                     out_len_slot.into(),
                     out_ptr_cast.into(),
                 ],
@@ -4016,7 +4049,11 @@ impl<'ctx> super::Codegen<'ctx> {
             if let Some(b) = saved {
                 self.ir.builder.position_at_end(b);
             }
-            self.functions.insert("ai_complete".to_string(), fn_val);
+            self.functions.insert(wrapper.to_string(), fn_val);
+            self.fn_return_types.insert(
+                wrapper.to_string(),
+                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+            );
         }
 
         // ── ASI Layer-3: ai_extract_uncertain_i64 / ai_extract_uncertain_f64 ───
