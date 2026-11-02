@@ -4011,9 +4011,12 @@ ATTACK_MARKERS.update({
     'M4622': r'ATTACK: live extract tokens stored as 0',
 })
 
-# ceilings CE-1, CE-7 (ids M4680-M4682)
+# ceilings CE-1, CE-7, CE-8 (ids M4680-M4685)
 ATTACK_MARKERS.update({
     'M4680': r'ATTACK: an operator net scope left the AI endpoint unpinned',
     'M4681': r'ATTACK: a declared host outside the operator net scope was pinned',
     'M4682': r'ATTACK: a goal_run metric reached a model without an AI grant',
+    'M4683': r'ATTACK: a native AI bridge with no key returned instead of stopping',
+    'M4684': r'ATTACK: a declared fallback was not the native no-key reply',
+    'M4685': r'ATTACK: a native no-key ai_complete ignored the declared fallback',
 })

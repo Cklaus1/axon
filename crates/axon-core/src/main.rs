@@ -128,7 +128,8 @@ enum Command {
     /// A natively built binary never calls a model: under `AXON_AI_MOCK=1` it
     /// returns the deterministic stub; with an API key it refuses with exit 2
     /// (native builds write no `ai_call` audit record - run with `axon run`);
-    /// with neither, the AI builtin returns `Err` with the missing-key message.
+    /// with neither, it does what `axon run` does with no model: `ai_complete`
+    /// returns the fn's `@[ai(policy(fallback: ..))]`, else E1300 (exit 5).
     Build {
         /// Path(s) to .ax source files. All files share a single global namespace.
         #[arg(help = "Path(s) to .ax source file(s)", num_args = 1..)]

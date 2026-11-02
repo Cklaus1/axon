@@ -14554,5 +14554,22 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test ceiling', 'goal_run_ai_metric_still_refused_without_ai_grant'),
 ]
 
+# ceilings CE-8 (ids M4683-M4685, NH-C10 B): with no key and no mock a native
+# AI bridge answers the fn's fallback or stops with E1300 / exit 5.
+MUTATIONS += [
+    ('M4683', 'CE-8: a no-key native bridge returns the key error as Err again', 'crates/axon-ai/src/lib.rs',
+     '        refuse_offline_native_ai(builtin);\n    }',
+     '        return None;\n    }',
+     'axon-ai', '--lib', 'tests::no_key_bridges_stop_with_e1300_like_the_interpreter'),
+    ('M4684', 'CE-8: the no-key native ai_complete ignores the fallback it was handed', 'crates/axon-ai/src/lib.rs',
+     '        if let Some(fb) = fallback {',
+     '        if let Some(fb) = fallback.filter(|_| false) {',
+     'axon-ai', '--lib', 'tests::no_key_complete_answers_the_declared_fallback'),
+    ('M4685', 'CE-8: codegen never hands the calling fn fallback to the runtime', 'crates/axon-core/src/codegen/expr.rs',
+     '            if name == "ai_complete" && self.functions.contains_key(AI_COMPLETE_FALLBACK_FN) {',
+     '            if false && self.functions.contains_key(AI_COMPLETE_FALLBACK_FN) {',
+     'axon-core', '--test integration_fixtures', 'native_fallback_matches_interp'),
+]
+
 if __name__ == "__main__":
     main()

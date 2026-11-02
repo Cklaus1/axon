@@ -173,6 +173,21 @@ pub fn budget_from_attrs(attrs: &[crate::ast::Attr]) -> Option<Result<u64, Strin
     None
 }
 
+/// R3 §3.3: the `@[ai(policy(fallback: "…"))]` value declared on a fn (the
+/// parser flattens the group, so the arg reads `fallback: <value>`).
+///
+/// The SINGLE source of the fallback rule, shared by the interpreter's offline
+/// `ai_complete` (`current_ai_fallback`) and native codegen, which hands the
+/// value to `__axon_ai_complete` (ceilings CE-8): with no model reachable both
+/// engines answer this value, or stop with E1300 when there is none.
+pub fn fallback_from_attrs(attrs: &[crate::ast::Attr]) -> Option<String> {
+    let ai = attrs.iter().find(|a| a.name == "ai")?;
+    ai.args
+        .iter()
+        .find_map(|arg| arg.strip_prefix("fallback:"))
+        .map(|rest| rest.trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

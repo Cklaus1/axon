@@ -5647,22 +5647,14 @@ impl<'p> Interp<'p> {
     // ── Function / closure calls ─────────────────────────────────────────────
 
     /// R3 §3.3: the `@[ai(policy(fallback: "…"))]` value declared on the
-    /// currently-executing fn, if any. Accepts both the grouped form and the
-    /// flat `@[ai(fallback: "…")]` (the parser flattens the group), so the arg
-    /// reads as `"fallback: <value>"`. Returns the fallback string when present.
-    /// This is what lets an offline `ai_complete` stay total instead of panicking.
-    /// Only read on the `#[cfg(not(asi-runtime))]` offline branch — when the live
-    /// model is compiled in, there is no offline fallback path, so it is dead there.
+    /// currently-executing fn, if any (`ai_routing::fallback_from_attrs`, the
+    /// rule native codegen shares). This is what lets an offline `ai_complete`
+    /// stay total instead of panicking. Only read on the
+    /// `#[cfg(not(asi-runtime))]` offline branch — when the live model is
+    /// compiled in, there is no offline fallback path, so it is dead there.
     #[cfg_attr(feature = "asi-runtime", allow(dead_code))]
     fn current_ai_fallback(&self) -> Option<String> {
-        let f = self.current_fn_def()?;
-        let ai = f.attrs.iter().find(|a| a.name == "ai")?;
-        for arg in &ai.args {
-            if let Some(rest) = arg.strip_prefix("fallback:") {
-                return Some(rest.trim().to_string());
-            }
-        }
-        None
+        crate::ai_routing::fallback_from_attrs(&self.current_fn_def()?.attrs)
     }
 
     /// R3c: the `@[ai(policy(budget: N))]` ceiling declared on the

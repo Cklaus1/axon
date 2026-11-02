@@ -3577,3 +3577,93 @@ fn ai_extract_generic_native_matches_interp_under_mock() {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+/// ceilings CE-8 (NH-C10 B): run `src` with no API key and no mock, on the
+/// interpreter and as a native binary, from an empty directory (no `.env`).
+/// Returns `[(exit code, stdout, stderr)]` for interp then native.
+#[cfg(feature = "codegen")]
+fn no_key_both_engines(tag: &str, src: &str) -> Vec<(Option<i32>, String, String)> {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_ce8_{tag}_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(format!("{tag}.ax"));
+    std::fs::write(&file, src).unwrap();
+    let bin = dir.join(format!("{tag}_bin"));
+    let build = Command::new(axon_bin)
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "native build: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let no_key = |mut c: Command| {
+        let o = c
+            .current_dir(&dir)
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("AXON_AI_API_KEY")
+            .env_remove("AXON_AI_MOCK")
+            .env_remove("AXON_AI_REPLAY")
+            .output()
+            .unwrap();
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    };
+    let mut interp = Command::new(axon_bin);
+    interp.arg("run").arg(&file);
+    let out = vec![no_key(interp), no_key(Command::new(&bin))];
+    let _ = std::fs::remove_dir_all(&dir);
+    out
+}
+
+/// ceilings CE-8: with no key, no mock and no fallback, a native binary stops
+/// with E1300 / exit 5 like the interpreter. It used to hand the key error to
+/// the program as `Err` and exit 0.
+#[cfg(feature = "codegen")]
+#[test]
+fn native_no_key_matches_interp() {
+    let runs = no_key_both_engines(
+        "n01",
+        "fn main() {\n    let r = ai_complete(\"hello\")\n    match r { Ok(s) => println(\"ok\"), Err(e) => println(\"err=\" + e) }\n    println(\"r=2\")\n}\n",
+    );
+    for (engine, (code, out, err)) in ["interp", "native"].iter().zip(&runs) {
+        assert_eq!(
+            (*code, out.as_str()),
+            (Some(5), ""),
+            "ATTACK: a native no-key ai_complete returned a key error the interpreter never \
+             returns ({engine}): {err}"
+        );
+        assert!(
+            err.contains("axon: ai policy: [E1300] `ai_complete` cannot run"),
+            "{engine}: {err}"
+        );
+    }
+}
+
+/// ceilings CE-8: with no key and no mock, a fn's `@[ai(policy(fallback:
+/// ..))]` is the native reply too.
+#[cfg(feature = "codegen")]
+#[test]
+fn native_fallback_matches_interp() {
+    let runs = no_key_both_engines(
+        "n02",
+        "@[ai(policy(fallback: \"FB\"))]\nfn ask() -> str {\n    match ai_complete(\"hello\") { Ok(s) => s, Err(e) => \"err=\" + e }\n}\n\nfn main() { println(ask()) }\n",
+    );
+    for (engine, (code, out, err)) in ["interp", "native"].iter().zip(&runs) {
+        assert_eq!(
+            (*code, out.as_str()),
+            (Some(0), "FB\n"),
+            "ATTACK: a native no-key ai_complete ignored the declared fallback ({engine}): {err}"
+        );
+    }
+}
