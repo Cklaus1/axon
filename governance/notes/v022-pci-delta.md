@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 6f3458afa71c649ccebe8b5ad49c741a808bcf14
+generated-at: a469f6e4da79e53fe023ea79bd367877b8687e0d
 
-`git diff --numstat 31413ca7..6f3458af -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..a469f6e4 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -52,7 +52,7 @@ generated-at: 6f3458afa71c649ccebe8b5ad49c741a808bcf14
 | `crates/axon-core/src/effects.rs` | 755 | 126 |
 | `crates/axon-core/src/env_registry.rs` | 19 | 8 |
 | `crates/axon-core/src/error.rs` | 39 | 17 |
-| `crates/axon-core/src/fmt.rs` | 261 | 28 |
+| `crates/axon-core/src/fmt.rs` | 263 | 28 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 2083 | 280 |
@@ -100,9 +100,9 @@ generated-at: 6f3458afa71c649ccebe8b5ad49c741a808bcf14
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 245 | 67 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 64878 | 8994 |
+| total | 64880 | 8994 |
 
-`git log --reverse 31413ca7..6f3458af -- crates/axon-core/src`:
+`git log --reverse 31413ca7..a469f6e4 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -487,7 +487,8 @@ generated-at: 6f3458afa71c649ccebe8b5ad49c741a808bcf14
 | 0cce6c13 | lang-forms LF-1 unit value | INTERPRETER (lang-forms LF-1, `()` unit value): the parser builds `()` as the empty block `{}` (the node every engine already handles), so `Ok(())`, `let u = ()` and `return ()` now pass where they were E0000 parse errors; `() => e` stays a lambda. The interpreter's `()` pattern now matches the unit value: a `match` that passed check and panicked with `no match arm matched` now runs, and one with a fallback arm beside a `()` arm now takes the `()` arm (intended behaviour change, CHANGELOG). Native: a `match` on a value-less (unit) subject whose arms are all `()`/`_` now runs its first arm instead of running none; any other pattern there is refused with E0910 instead of being skipped. fmt prints the unit value as `()` in value position. The CS3-5 `()` parse-help row is deleted. |
 | 1031fdeb | lang-forms LF-3 for tuple pattern | INTERPRETER (lang-forms LF-3/LF-3b, parser desugar and checker diagnostics only): `for (a, b) in xs` (names and `_`, nested) now parses where it was an E0000 parse error; it desugars to the existing collection loop plus one field-access `let` per name, so every engine runs it as the hand-written desugar and the names are typed like `let (a, b) = p`. A pattern over a range and `for (a) in xs` stay parse errors. The generated statements of every collection `for` carry the `for` keyword's span and a `let (a, b)`'s lets the `let` span, so a diagnostic moves line (no new accept or refuse). `for x in d` over a Dict is still refused, now E0402 on the `for` line instead of E0102 on `len`. fmt prints both forms back. What an already-valid program computes is unchanged. |
 | 6f3458af | lang-forms LF-2 if let | INTERPRETER (lang-forms LF-2, parser desugar plus checker/infer diagnostics only): `if let PAT = EXPR { A } else B` and `else if let` chains now parse where they were an E0000 parse error; they desugar to `match EXPR { PAT => { A }, __iflet_N => B }` (B an empty block without `else`), a shape every engine already ran, so what an already-valid program computes is unchanged. A no-else `if let` with a non-unit body is E0102 naming the `if let`; an irrefutable `if let` pattern is W0004 naming the `if let`. fmt prints the form back. The CS3-5 parse help for `if let` is removed. |
-| 381 commits | | |
+| a469f6e4 | lang-forms LF-2 if let | TEST ONLY (fmt.rs unit test): fmt_if_let_round_trips asserts the printed `else if let` chain shape before format idempotence, so a mutant is reported under its own marker. No change to what any program computes, accepts or refuses. |
+| 382 commits | | |
 <!-- END MECHANICAL -->
 
 
