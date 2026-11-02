@@ -1,6 +1,6 @@
 # ceilings - DRAFT spec
 
-**Status: PARTIAL 2026-11-02 on b2/ce d5e8aa21 (CE-1, CE-7, CE-8 built; the rest in progress: O-HI-03 open).**
+**Status: PARTIAL 2026-11-02 on b2/ce d71e5c56 (CE-1, CE-7, CE-8, CE-2, CE-10 built; the rest in progress: O-HI-03 open).**
 
 Author: `Ceilings` (2026-11-01), base `main` a5310878 (worktree `/home/cklaus/projects/axon-lanes/asi-next`, branch `asi/next`).
 Reference binary: `/var/tmp/r51-tmp/asi-bin/axon` (`axon 0.1.0 (a5310878)`, default features: `codegen`, no `asi-runtime`).
@@ -297,6 +297,10 @@ see CE-10 and the counts in §3.
 
 **Acceptance.** All six pass. `axon run --help` documents `--ceiling`, `env_registry.rs` has an `AXON_CEILING` row, and
 `AXON_REFERENCE.md` lists it in its env table (`:103-112`).
+`[REVISED: build d71e5c56]` Built as written, plus one rule the spec left open: `--ceiling FILE` together with a
+DIFFERENT `AXON_CEILING` is E1007 (two ceilings and no rule for which wins is not a ceiling); the same path twice is
+accepted. The ceiling is read once per process (`ceiling::active`), and also by `axon goal`/`axon test`, not only `run`.
+CE-10 (R45 on under a ceiling) is the one line in `main.rs::apply_ceiling` and is tested by `ceiling_implies_require_contained`.
 
 ---
 
