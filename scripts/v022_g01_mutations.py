@@ -12539,13 +12539,15 @@ MUTATIONS += [
 # intent-gen IgIntent IG4 prerequisite: `run_sandboxed_capture` tells a compile failure, an
 # exit status, a timeout and a sandbox fault apart and strips the completion marker.
 MUTATIONS += [
+    # GV-1 re-anchored M4032/M4033 in place: a capture run is classified from the
+    # interpreter's outcome record, so the exit code and the compile arm are read there.
     ('M4032', 'IG4 capture: every completed run reads as exit 0', 'crates/axon-os/src/runtime.rs',
-     'code: proc.code.unwrap_or(0),',
-     'code: 0,',
+     'RecordKind::Exit => SandboxOutcome::Exited { code: r.code },',
+     'RecordKind::Exit => SandboxOutcome::Exited { code: 0 },',
      'axon-os', '--test sandbox_capture', 'exit_status_and_output_are_captured'),
     ('M4033', 'IG4 capture: a compile failure reads as an exit status', 'crates/axon-os/src/runtime.rs',
-     'return SandboxOutcome::CompileFailed { diagnostic };',
-     'return SandboxOutcome::Exited { code: diagnostic.len() as i32 };',
+     '                RecordKind::Compile => SandboxOutcome::CompileFailed {\n                    diagnostic: r.reason,\n                },',
+     '                RecordKind::Compile => SandboxOutcome::Exited {\n                    code: r.reason.len() as i32,\n                },',
      'axon-os', '--test sandbox_capture', 'a_compile_failure_is_not_an_exit_status'),
     ('M4034', 'IG4 capture: a timeout reads as a fault', 'crates/axon-os/src/runtime.rs',
      '        if proc.timed_out {\n            return SandboxOutcome::TimedOut {',
@@ -12892,29 +12894,33 @@ MUTATIONS += [
      'tokens: reported_tokens(&run.stderr),',
      'tokens: None,',
      'axon-intent', '--test genloop', 'a_cmd_generator_s_reported_tokens_count_against_the_budget'),
-    ('M4506', 'integration int/31: a compile failure is named by its first diagnostic of any severity (a warning)', 'crates/axon-os/src/runtime.rs',
-     'if first_error.is_none() && d.get("severity").and_then(|s| s.as_str()) == Some("error") {',
-     'if first_error.is_none() {',
+    # GV-1 re-anchored M4506/M4507/M4509-M4512 in place: the compile reason is chosen by
+    # main.rs `diag_outcome_reason`, and a fault verdict by the record's class
+    # (runtime.rs `fault_verdict`), no longer by stderr lines. M4500-M4502, M4513 and
+    # M4516 are retired below (_GV1_STALE).
+    ('M4506', 'integration int/31: a compile failure is named by its first diagnostic of any severity (a warning)', 'crates/axon-core/src/main.rs',
+     '        .find(|d| d.severity == "error")\n        .or_else(|| diags.first())',
+     '        .find(|_| true)\n        .or_else(|| diags.first())',
      'axon-os', '--test sandbox_capture', 'a_compile_failure_names_its_first_error_not_a_warning'),
     ('M4507', 'integration int/31: the verify fault arm no longer matches, so a failed verify falls to the runtime axis', 'crates/axon-os/src/runtime.rs',
-     '        "axon: verify failed" => Verdict::Denied {',
-     '        "axon: verify failed_" => Verdict::Denied {',
+     '        "verify" | "ai-policy" | "sandbox" | "steps" | "wall" => Verdict::Denied {',
+     '        "ai-policy" | "sandbox" | "steps" | "wall" => Verdict::Denied {',
      'axon-os', '--test sandbox_capture', 'a_failed_verify_is_a_verify_denial'),
     ('M4509', 'integration int/31: an interpreter halt is denied on the runtime axis, not Halted', 'crates/axon-os/src/runtime.rs',
-     '        "axon: halted" => Verdict::Halted { reason },',
-     '        "axon: halted" => Verdict::Denied { reason, axis: "runtime".into() },',
+     '        "halted" => Verdict::Halted { reason },',
+     '        "halted" => Verdict::Denied { reason, axis: "runtime".into() },',
      'axon-os', '--test sandbox_capture', 'each_interpreter_fault_line_is_its_own_verdict'),
     ('M4510', 'integration int/31: the AI-policy fault arm no longer matches, so the stop falls to the runtime axis', 'crates/axon-os/src/runtime.rs',
-     '        "axon: ai policy: " => Verdict::Denied {',
-     '        "axon: ai policy:_ " => Verdict::Denied {',
+     '        "verify" | "ai-policy" | "sandbox" | "steps" | "wall" => Verdict::Denied {',
+     '        "verify" | "sandbox" | "steps" | "wall" => Verdict::Denied {',
      'axon-os', '--test sandbox_capture', 'each_interpreter_fault_line_is_its_own_verdict'),
     ('M4511', 'integration int/31: a refinement breach is denied on the runtime axis, not RefineViolation', 'crates/axon-os/src/runtime.rs',
-     '        "axon: refinement violated: " => Verdict::RefineViolation { reason },',
-     '        "axon: refinement violated: " => Verdict::Denied { reason, axis: "runtime".into() },',
+     '        "refine" => Verdict::RefineViolation { reason },',
+     '        "refine" => Verdict::Denied { reason, axis: "runtime".into() },',
      'axon-os', '--test sandbox_capture', 'each_interpreter_fault_line_is_its_own_verdict'),
     ('M4512', 'integration int/31: an exhausted goal budget is a plain denial, not BudgetExhausted', 'crates/axon-os/src/runtime.rs',
-     '        "axon: goal budget exhausted: " => Verdict::BudgetExhausted {',
-     '        "axon: goal budget exhausted: " => Verdict::Denied {\n            reason: String::new(),',
+     '        "goal-budget" => Verdict::BudgetExhausted {',
+     '        "goal-budget" => Verdict::Denied {\n            reason: String::new(),',
      'axon-os', '--test sandbox_capture', 'each_interpreter_fault_line_is_its_own_verdict'),
     ('M4513', 'integration int/31: the sandbox fault arm no longer matches, so a violation falls to the runtime axis', 'crates/axon-os/src/runtime.rs',
      '        "axon: sandbox violation: " => Verdict::Denied {',
@@ -12924,9 +12930,9 @@ MUTATIONS += [
      '        _ => Verdict::Denied {\n            reason,\n            axis: "runtime".into(),',
      '        _ => Verdict::Malformed {\n            reason,\n            // axis: "runtime".into(),',
      'axon-os', '--test sandbox_capture', 'an_interpreter_panic_is_still_a_fault'),
-    ('M4515', 'integration int/31: the panic fault line is keyed to exit 102, so a panic (101) reads as an exit status', 'crates/axon-os/src/runtime.rs',
-     '    (101, "axon: panic"),',
-     '    (102, "axon: panic"),',
+    ('M4515', 'integration int/31: the panic fault is keyed to exit 102, so a panic (101) is not its fault', 'crates/axon-core/src/interp.rs',
+     'fault("panic", format!("axon: panic: {msg}"), 101)',
+     'fault("panic", format!("axon: panic: {msg}"), 102)',
      'axon-os', '--test sandbox_capture', 'an_interpreter_panic_is_still_a_fault'),
     ('M4516', 'integration int/31: a compile failure keeps the LAST error, not the first', 'crates/axon-os/src/runtime.rs',
      'if first_error.is_none() && d.get("severity")',
@@ -12937,6 +12943,24 @@ MUTATIONS += [
      '                    if true {',
      'axon-core', '--test cli_run', 'a_wasm_runnable_label_is_only_printed_for_a_module_that_runs'),
 ]
+
+# GV-1 retired the stderr classifier (`ran_to_completion` in classify_capture,
+# `interpreter_fault`, `compile_failure`): a capture run ends by the record on its
+# outcome pipe, so those mutation points no longer exist.
+_GV1_STALE = {
+    "M4500": {"property": "a completed run is not classed by its stderr", "replacement": "M4724",
+              "how": "GV-1: no stderr is read; a program's exit is its `exit` record, which M4724 turns into a fault"},
+    "M4501": {"property": "fault words in stderr do not make a fault", "replacement": "M4724",
+              "how": "GV-1: no stderr is read; the `exit` record decides, which M4724 mutates"},
+    "M4502": {"property": "a silent exit(2) is not a compile failure", "replacement": "M4725",
+              "how": "GV-1: only a `compile` record is a compile failure; M4725 removes the record from the check-error exit"},
+    "M4513": {"property": "a sandbox fault is a sandbox denial", "replacement": "M4728",
+              "how": "GV-1: the fault is the record's `sandbox` class; M4728 maps that class to the runtime axis"},
+    "M4516": {"property": "a compile failure is named by its first error", "replacement": "M4506",
+              "how": "GV-1: the reason is chosen once by main.rs `diag_outcome_reason`; M4506 mutates that choice"},
+}
+STALE_REFACTORED.update(_GV1_STALE)
+RETIRED |= set(_GV1_STALE)
 
 # NH-R1 A4 (tasks/unattended-auth-spec.md E1/E1s/E3/E4/E5/E6/E9/E11, ids M4090-M4119, M4200):
 # the E5 write helper, the E1 scope pins, the unattended checks, the E6 child env and the E3 watchdog.
@@ -14798,6 +14822,66 @@ MUTATIONS += [
      '        ceiling.and_then(|c| c.steps),',
      '        ceiling.and_then(|c| c.steps).filter(|_| false),',
      'axon-core', '--no-default-features --test ceiling', 'ceiling_steps_and_wall_ms_bound_the_run'),
+]
+
+# genviab-b2 GV-1 (tasks/genviab-b2-spec.md §3, ids M4720-M4732): a sandbox run
+# ends by the interpreter's `axon-outcome/1` record on the supervisor's outcome
+# pipe (fd 3, per-run nonce), never by the program's stderr. Rows on main.rs /
+# interp.rs are killed by axon-os tests: the runner drops AXON_BIN, so
+# `workspace_bin` rebuilds `axon` from the mutated tree (precedent M3561).
+MUTATIONS += [
+    ('M4720', "GV-1: a record without this run's nonce decides the run", 'crates/axon-os/src/runtime.rs',
+     '    if v.get("nonce").and_then(|s| s.as_str()) != Some(nonce) {',
+     '    if false && v.get("nonce").and_then(|s| s.as_str()) != Some(nonce) {',
+     'axon-os', '--test sandbox_capture', 'a_record_with_another_runs_nonce_is_not_the_interpreters'),
+    ('M4721', "GV-1: a capture run with no outcome record is graded as the program's exit", 'crates/axon-os/src/runtime.rs',
+     '            Err(no_record) => SandboxOutcome::Faulted {\n                code: proc.code,\n                verdict: Verdict::Denied {\n                    reason: no_record,\n                    axis: "sandbox".into(),\n                },\n            },',
+     '            Err(_no_record) => SandboxOutcome::Exited {\n                code: proc.code.unwrap_or(-1),\n            },',
+     'axon-os', '--test sandbox_capture', 'a_run_without_an_outcome_record_is_a_sandbox_fault'),
+    ('M4722', 'GV-1: the supervisor launches the interpreter without an outcome pipe', 'crates/axon-os/src/runtime.rs',
+     '        give_child_outcome_fd(&mut cmd, &writer, &nonce);\n',
+     '        let _ = give_child_outcome_fd;\n',
+     'axon-os', '--test sandbox_capture', 'the_supervisor_hands_the_interpreter_an_outcome_pipe'),
+    ('M4723', "GV-1: the outcome nonce stays in the program's environment", 'crates/axon-core/src/main.rs',
+     '    std::env::remove_var(outcome::OUTCOME_NONCE_ENV);\n    let refuse = |why: String| -> ! {',
+     '    let refuse = |why: String| -> ! {',
+     'axon-os', '--test sandbox_capture', 'the_outcome_nonce_and_fd_are_not_in_the_programs_environment'),
+    ('M4724', "GV-1: a program's own exit(n) is recorded as a sandbox fault", 'crates/axon-core/src/interp.rs',
+     '        Err(Flow::Exit(code)) if map_status => {\n            record_run(Kind::Exit, "exit", "");',
+     '        Err(Flow::Exit(code)) if map_status => {\n            record_run(Kind::Fault, "sandbox", "axon: sandbox violation: exit");',
+     'axon-os', '--test sandbox_capture', 'a_program_printing_the_sandbox_fault_line_and_exiting_8_is_its_own_exit'),
+    ('M4725', 'GV-1: a type error exits 2 without a compile record', 'crates/axon-core/src/main.rs',
+     '            emit_pipeline_diag(err);\n        }\n        outcome::exit_with_outcome(\n            outcome::Kind::Compile,\n            "check",\n            2,\n            &diag_outcome_reason(&errors),\n        );',
+     '            emit_pipeline_diag(err);\n        }\n        process::exit(2);',
+     'axon-os', '--test sandbox_capture', 'a_type_error_is_a_compile_outcome'),
+    ('M4726', 'GV-1: the outcome fd is not close-on-exec, so a spawned process inherits it', 'crates/axon-core/src/main.rs',
+     '        if unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } == -1 {',
+     '        if false && unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } == -1 {',
+     'axon-core', '--no-default-features --test cli_run', 'a_spawned_process_does_not_inherit_the_outcome_fd'),
+    ('M4727', 'GV-1: a verb other than run accepts the outcome variables', 'crates/axon-core/src/main.rs',
+     '    if !matches!(command, Command::Run { .. }) {\n        refuse(format!(\n            "`{}` / `{}` are set, but only `axon run` writes an outcome record.',
+     '    if false && !matches!(command, Command::Run { .. }) {\n        refuse(format!(\n            "`{}` / `{}` are set, but only `axon run` writes an outcome record.',
+     'axon-core', '--no-default-features --test cli_run', 'other_verbs_refuse_the_outcome_fd'),
+    ('M4728', 'GV-1: the sandbox fault class maps to a runtime denial', 'crates/axon-os/src/runtime.rs',
+     '        "verify" | "ai-policy" | "sandbox" | "steps" | "wall" => Verdict::Denied {',
+     '        "verify" | "ai-policy" | "steps" | "wall" => Verdict::Denied {',
+     'axon-os', '--test sandbox_capture', 'an_unterminated_eprint_before_a_sandbox_fault_is_a_sandbox_fault'),
+    ('M4729', 'GV-1: the first of several outcome records is accepted', 'crates/axon-os/src/runtime.rs',
+     "    if line.contains('\\n') {\n        return refuse(\"more than one record\");\n    }",
+     "    let line = line.split('\\n').next().unwrap_or(line);",
+     'axon-os', '--test sandbox_capture', 'two_outcome_records_are_no_record'),
+    ('M4730', 'GV-1: the replay-divergence exit writes no outcome record', 'crates/axon-core/src/main.rs',
+     '            eprintln!("{line}");\n        }\n        outcome::exit_with_outcome(\n            outcome::Kind::Fault,\n            "replay-divergence",\n            axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE,\n            &line,\n        );',
+     '            eprintln!("{line}");\n        }\n        process::exit(axon_core::replay::REPLAY_DIVERGENCE_EXIT_CODE);',
+     'axon-core', '--no-default-features --test cli_run', 'replay_divergence_writes_a_fault_record'),
+    ('M4731', "GV-1b: a job's stderr overrides its outcome record", 'crates/axon-os/src/runtime.rs',
+     '        let r = match read_outcome_record(proc, nonce) {\n            Ok(r) => r,',
+     '        let r = match read_outcome_record(proc, nonce)\n            .and_then(|r| if proc.stderr.contains("sandbox violation") { Err(proc.stderr.clone()) } else { Ok(r) })\n        {\n            Ok(r) => r,',
+     'axon-os', '--test sandbox_capture', 'a_completed_job_whose_stderr_names_a_violation_is_completed'),
+    ('M4732', "GV-1 x CE-5: an E1006 step/wall stop is recorded as the program's exit", 'crates/axon-core/src/interp.rs',
+     '            fault(\n                class,\n                format!("axon: resource bound: {msg}"),\n                RESOURCE_BOUND_EXIT_CODE,\n            )',
+     '            {\n                let _ = class;\n                eprintln!("axon: resource bound: {msg}");\n                record_run(Kind::Exit, "exit", "");\n                RESOURCE_BOUND_EXIT_CODE\n            }',
+     'axon-os', '--test sandbox_capture', 'step_exhaustion_is_a_fault_not_the_programs_exit_9'),
 ]
 
 if __name__ == "__main__":

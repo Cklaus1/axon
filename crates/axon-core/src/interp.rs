@@ -4708,11 +4708,14 @@ fn run_program_inner(
     discharged: crate::verify::Discharged,
     map_status: bool,
 ) -> i32 {
+    use crate::outcome::{record_run, Kind};
     let mut interp = match Interp::build(program) {
         Ok(ix) => ix.with_discharged(discharged),
         Err(refused) => {
             let _ = std::io::stdout().flush();
-            eprintln!("error: {refused}");
+            let line = format!("error: {refused}");
+            eprintln!("{line}");
+            record_run(Kind::Compile, "build", &line);
             return 2;
         }
     };
@@ -4722,7 +4725,9 @@ fn run_program_inner(
     // exit 0, which masqueraded as success.
     if !interp.fns.contains_key("main") {
         let _ = std::io::stdout().flush();
-        eprintln!("error: no `main` function defined — a runnable program needs `fn main() -> i64` (or `fn main()`)");
+        let line = "error: no `main` function defined — a runnable program needs `fn main() -> i64` (or `fn main()`)";
+        eprintln!("{line}");
+        record_run(Kind::Compile, "no-main", line);
         return 2;
     }
     let outcome = interp.init_globals().and_then(|()| interp.run_main());
@@ -4759,26 +4764,50 @@ fn run_program_inner(
         }
         code
     };
+    // GV-1: every arm states how the run ended (`crate::outcome`), so a
+    // supervisor reads it from the outcome record, never from this stderr.
+    // The fault line printed is the record's `reason`.
+    let fault = |class: &'static str, line: String, code: i32| -> i32 {
+        let _ = std::io::stdout().flush();
+        eprintln!("{line}");
+        record_run(Kind::Fault, class, &line);
+        code
+    };
     match outcome {
-        Ok(Value::Int(n)) if map_status => report(returned_exit_status(n)),
-        Ok(Value::Int(n)) => n as i32,
-        Ok(_) => 0,
-        Err(Flow::Exit(code)) if map_status => report(stated_exit_status(code as i64)),
-        Err(Flow::Exit(code)) => code,
+        Ok(Value::Int(n)) if map_status => {
+            record_run(Kind::Exit, "return", "");
+            report(returned_exit_status(n))
+        }
+        Ok(Value::Int(n)) => {
+            record_run(Kind::Exit, "return", "");
+            n as i32
+        }
+        Ok(_) => {
+            record_run(Kind::Exit, "return", "");
+            0
+        }
+        Err(Flow::Exit(code)) if map_status => {
+            record_run(Kind::Exit, "exit", "");
+            report(stated_exit_status(code as i64))
+        }
+        Err(Flow::Exit(code)) => {
+            record_run(Kind::Exit, "exit", "");
+            code
+        }
         Err(Flow::VerifyFailed(msg)) => {
             // Policy rejection, not a crash — distinct exit code so CI can tell
             // "verification failed" apart from "the program panicked" (#26).
-            let _ = std::io::stdout().flush();
-            eprintln!("axon: verify failed: {msg}");
-            VERIFY_FAILED_EXIT_CODE
+            fault(
+                "verify",
+                format!("axon: verify failed: {msg}"),
+                VERIFY_FAILED_EXIT_CODE,
+            )
         }
         Err(Flow::Halted(msg)) => {
             // The corrigibility kill-switch caught a call — refused, not crashed.
             // Distinct exit code (4) so a supervisor branches on "the switch
             // fired" specifically. (R9)
-            let _ = std::io::stdout().flush();
-            eprintln!("axon: halted: {msg}");
-            HALTED_EXIT_CODE
+            fault("halted", format!("axon: halted: {msg}"), HALTED_EXIT_CODE)
         }
         Err(Flow::AiPolicyUnreachable(msg)) => {
             // AI-policy condition (E1300/E1301/E1302): offline-no-fallback,
@@ -4787,14 +4816,16 @@ fn run_program_inner(
             // attention" instead of treating it like an overflow/div0 bug.
             let _ = std::io::stdout().flush();
             set_last_abort(format!("ai policy: {msg}"));
-            eprintln!("axon: ai policy: {msg}");
-            AI_POLICY_EXIT_CODE
+            fault(
+                "ai-policy",
+                format!("axon: ai policy: {msg}"),
+                AI_POLICY_EXIT_CODE,
+            )
         }
         Err(Flow::Panic(msg)) => {
             let _ = std::io::stdout().flush();
             set_last_abort(format!("panic: {msg}"));
-            eprintln!("axon: panic: {msg}");
-            101
+            fault("panic", format!("axon: panic: {msg}"), 101)
         }
         Err(Flow::Resume(_)) => {
             // `resume(..)` reached the top level — it was used outside a handler
@@ -4802,8 +4833,11 @@ fn run_program_inner(
             // runtime backstop). A crash, not a silent exit.
             let _ = std::io::stdout().flush();
             set_last_abort("panic: `resume` called outside an effect-handler arm".to_string());
-            eprintln!("axon: panic: `resume` called outside an effect-handler arm");
-            101
+            fault(
+                "panic",
+                "axon: panic: `resume` called outside an effect-handler arm".to_string(),
+                101,
+            )
         }
         Err(Flow::HandlerDone(..)) => {
             // A multi-shot handler's `HandlerDone` escaped its `with` block — an
@@ -4811,51 +4845,73 @@ fn run_program_inner(
             // as a panic rather than a silent exit.
             let _ = std::io::stdout().flush();
             set_last_abort("panic: handler continuation escaped its `with` block".to_string());
-            eprintln!("axon: panic: handler continuation escaped its `with` block");
-            101
+            fault(
+                "panic",
+                "axon: panic: handler continuation escaped its `with` block".to_string(),
+                101,
+            )
         }
         Err(Flow::MultiShotUnsound(msg)) => {
             // E1314: a multi-shot `resume` over a body that re-fires effects. The
             // replay-based continuation can't soundly re-execute a side effect, so
             // we refuse rather than silently double-fire or drop work. A panic-class
             // stop (the program wants true delimited continuations — deferred).
-            let _ = std::io::stdout().flush();
-            eprintln!("axon: multi-shot resume not supported here: {msg}");
-            101
+            fault(
+                "multishot",
+                format!("axon: multi-shot resume not supported here: {msg}"),
+                101,
+            )
         }
         Err(Flow::RefineViolation(msg)) => {
             // A refinement-type precondition was violated by a non-constant arg.
             // Not a crash — the caller passed an out-of-contract value — so a
             // distinct exit code (6), like @[verify]→3 / @[corrigible]→4.
-            let _ = std::io::stdout().flush();
-            eprintln!("axon: refinement violated: {msg}");
-            REFINE_VIOLATION_EXIT_CODE
+            fault(
+                "refine",
+                format!("axon: refinement violated: {msg}"),
+                REFINE_VIOLATION_EXIT_CODE,
+            )
         }
         Err(Flow::GoalBudgetExhausted(msg)) => {
             // R12b: a kernel Goal hit its principal's budget ceiling. Not a crash;
             // distinct exit code (7) so a supervisor can branch on it. (E1604)
-            let _ = std::io::stdout().flush();
-            eprintln!("axon: goal budget exhausted: {msg}");
-            GOAL_BUDGET_EXIT_CODE
+            fault(
+                "goal-budget",
+                format!("axon: goal budget exhausted: {msg}"),
+                GOAL_BUDGET_EXIT_CODE,
+            )
         }
         Err(Flow::SandboxViolation(msg)) => {
             // F5: a sandboxed call attempted an effect outside its declared ceiling.
             // Not a crash — the sandbox is doing its job — distinct exit code (8)
             // so a supervisor can branch on "the sandbox caught this" specifically.
-            let _ = std::io::stdout().flush();
-            eprintln!("axon: sandbox violation: {msg}");
-            SANDBOX_VIOLATION_EXIT_CODE
+            fault(
+                "sandbox",
+                format!("axon: sandbox violation: {msg}"),
+                SANDBOX_VIOLATION_EXIT_CODE,
+            )
         }
         Err(Flow::ResourceBound(msg)) => {
             // ceilings CE-5: the operator's step or wall-clock ceiling fired
             // (E1006). Not a crash; exit 9, the ledger's RESOURCE_BOUND code.
             let _ = std::io::stdout().flush();
             set_last_abort(format!("resource bound: {msg}"));
-            eprintln!("axon: resource bound: {msg}");
-            RESOURCE_BOUND_EXIT_CODE
+            let class = if msg.contains("(axis `steps`)") {
+                "steps"
+            } else {
+                "wall"
+            };
+            fault(
+                class,
+                format!("axon: resource bound: {msg}"),
+                RESOURCE_BOUND_EXIT_CODE,
+            )
         }
         // A stray return/break/continue escaping `main` — treat as clean exit.
-        Err(_) => 0,
+        Err(Flow::Return(_)) | Err(Flow::Break) | Err(Flow::Continue) => {
+            record_run(Kind::Exit, "stray", "");
+            0
+        }
     }
 }
 

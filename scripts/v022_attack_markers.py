@@ -4088,3 +4088,20 @@ ATTACK_MARKERS.update({
     'M4748': r'ATTACK: a run went past its steps ceiling',
     'M4749': r'ATTACK: the ceiling.s steps did not narrow the env var',
 })
+
+# genviab-b2 GV-1 (ids M4720-M4732): the run's outcome record, not its stderr
+ATTACK_MARKERS.update({
+    'M4720': r'ATTACK: a record without this run.s nonce decided the run',
+    'M4721': r'ATTACK: a run with no outcome record was graded as the program.s exit',
+    'M4722': r'ATTACK: a capture run was launched without an outcome pipe',
+    'M4723': r'ATTACK: the program read the outcome nonce',
+    'M4724': r'ATTACK: a program.s own exit was graded as a fault',
+    'M4725': r'ATTACK: a type error was not reported as a compile outcome',
+    'M4726': r'ATTACK: a spawned process inherited the outcome fd',
+    'M4727': r'ATTACK: a verb other than run accepted the outcome fd',
+    'M4728': r'ATTACK: an overreach after an unterminated eprint was not a sandbox fault',
+    'M4729': r'ATTACK: two outcome records were accepted',
+    'M4730': r'ATTACK: the replay-divergence exit wrote no fault record',
+    'M4731': r'ATTACK: a completed job was sealed as a denial by its stderr',
+    'M4732': r'ATTACK: step exhaustion read as the program.s exit 9',
+})

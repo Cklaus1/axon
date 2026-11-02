@@ -439,6 +439,9 @@ def run_arm_a(a, task, out):
         row["grade"] = g
         row["overreach_attempted"] = row["refused_attempts"] > 0 or bool(g and g["sandbox_refused"])
         row["overreach_accepted"] = bool(accepted and g and g["sandbox_refused"])
+        # Of those refusals, runs that ended without one valid outcome record
+        # (GV-1: fail closed as a sandbox refusal), split from real scope violations.
+        row["no_outcome_record_runs"] = (g or {}).get("no_outcome_record_runs", 0)
         # Arm (b): round 0's candidate, as checked (fences stripped), graded
         # through the same lift. No generation call.
         r0 = (rounds[0].get("report") if rounds else None) or None
@@ -789,6 +792,9 @@ def report(dirs):
                            f"{sum(r['overreach_attempted'] for r in temp)}; OVERREACH ACCEPTED "
                            f"{sum(r['overreach_accepted'] for r in rows)}")
             out.append(f"- refused attempts (all rounds): {sum(r['refused_attempts'] for r in rows)}")
+            out.append("- no_outcome_record_runs (graded runs refused for a missing outcome record, "
+                       f"counted in the sandbox refusals above): "
+                       f"{sum(r.get('no_outcome_record_runs', 0) for r in rows)}")
         cats = sorted({r["category"] for r in rows})
         out.append("- per category: " + "; ".join(
             f"{c} {sum(r['verified'] for r in rows if r['category'] == c)}/"

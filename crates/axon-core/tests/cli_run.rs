@@ -47397,3 +47397,328 @@ fn floor_division_lint_skips_slot_strings() {
         "fmt changed the program:\n{formatted}\n{err}"
     );
 }
+
+// ---- GV-1: `axon run`'s outcome record (`axon_core::outcome`) -------------
+
+const GV_NONCE: &str = "0123456789abcdef0123456789abcdef";
+
+/// A scratch directory for one GV-1 case.
+fn gv_dir(tag: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("axon-gv1-{}-{tag}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// Run `cmd` with a pipe on fd 3 named by `AXON_OUTCOME_FD` (and
+/// [`GV_NONCE`]), as axon-os does: its output, and every byte written to the
+/// pipe.
+#[cfg(target_os = "linux")]
+fn with_outcome_pipe(cmd: &mut Command) -> (std::process::Output, String) {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+    let (mut reader, writer) = std::io::pipe().unwrap();
+    let wfd = writer.as_raw_fd();
+    cmd.env("AXON_OUTCOME_FD", "3")
+        .env("AXON_OUTCOME_NONCE", GV_NONCE)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    // SAFETY: only async-signal-safe `dup2`/`fcntl` between fork and exec.
+    unsafe {
+        cmd.pre_exec(move || {
+            let ok = if wfd == 3 {
+                let f = libc::fcntl(3, libc::F_GETFD);
+                f != -1 && libc::fcntl(3, libc::F_SETFD, f & !libc::FD_CLOEXEC) != -1
+            } else {
+                libc::dup2(wfd, 3) != -1
+            };
+            if ok {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+    let child = cmd.spawn().unwrap();
+    drop(writer);
+    let out = child.wait_with_output().unwrap();
+    let mut record = String::new();
+    reader.read_to_string(&mut record).unwrap();
+    (out, record)
+}
+
+/// `(tag, source, env, kind, class, code)`: one `axon run` and the record it
+/// must write.
+#[cfg(target_os = "linux")]
+type RecordCase<'a> = (
+    &'a str,
+    &'a str,
+    &'a [(&'a str, &'a str)],
+    &'a str,
+    &'a str,
+    i32,
+);
+
+/// One `axon run` per case in `d`, with the outcome pipe: a line per case
+/// that did not exit `code` with exactly one record of that kind and class.
+#[cfg(target_os = "linux")]
+fn outcome_record_misses(d: &std::path::Path, cases: &[RecordCase]) -> Vec<String> {
+    let mut fails = Vec::new();
+    for (tag, src, env, kind, class, code) in cases {
+        let f = d.join(format!("{tag}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let mut cmd = axon();
+        cmd.current_dir(d).arg("run").arg(&f);
+        for (k, v) in *env {
+            cmd.env(k, v);
+        }
+        let (out, record) = with_outcome_pipe(&mut cmd);
+        let head = format!(
+            "{{\"schema\":\"axon-outcome/1\",\"nonce\":\"{GV_NONCE}\",\"kind\":\"{kind}\",\"code\":{code},\"class\":\"{class}\",\"reason\":"
+        );
+        let one = record.ends_with("}\n") && record.matches('\n').count() == 1;
+        if out.status.code() != Some(*code) || !record.starts_with(&head) || !one {
+            fails.push(format!(
+                "[{tag}] want one {kind}/{class} record with code {code}; status {:?}, record {record:?}, stderr {:?}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+    }
+    fails
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn run_writes_one_outcome_record_to_the_outcome_fd() {
+    let d = gv_dir("record");
+    let fails = outcome_record_misses(
+        &d,
+        &[
+            ("return", "fn main() -> i64 { 0 }\n", &[], "exit", "return", 0),
+            ("exit3", "fn main() -> i64 {\n    exit(3)\n    0\n}\n", &[], "exit", "exit", 3),
+            (
+                "sandbox",
+                "fn main() -> i64 {\n    match read_file(\"/etc/passwd\") {\n        Ok(_) => 0,\n        Err(_) => 1,\n    }\n}\n",
+                &[("AXON_ALLOWED_EFFECTS", "")],
+                "fault",
+                "sandbox",
+                8,
+            ),
+            ("panic", "fn main() -> i64 {\n    let v = [1]\n    v[5]\n}\n", &[], "fault", "panic", 101),
+            ("parse", "fn main( {\n", &[], "compile", "parse", 2),
+            ("check", "fn main() -> i64 {\n    let x: i64 = \"s\"\n    0\n}\n", &[], "compile", "check", 2),
+            ("engine", "fn main() -> i64 { 0 }\n", &[("AXON_ENGINE", "bogus")], "compile", "engine", 2),
+            (
+                "steps",
+                "fn main() -> i64 {\n    let i = 0\n    while i < 100000 {\n        i = i + 1\n    }\n    0\n}\n",
+                &[("AXON_MAX_STEPS", "100")],
+                "fault",
+                "steps",
+                9,
+            ),
+            ("ceilings", "fn main() -> i64 { 0 }\n", &[("AXON_CEILING", "/nonexistent/axon-gv1-ceiling.json")], "compile", "ceilings", 2),
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(
+        fails.is_empty(),
+        "ATTACK: `axon run` did not state how the run ended on its outcome fd:\n{}",
+        fails.join("\n")
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn replay_divergence_writes_a_fault_record() {
+    let d = gv_dir("divergence");
+    // Record a journal of one host call, then replay it with a program that
+    // makes none.
+    let journal = d.join("j.journal");
+    let rd = "fn main() -> i64 {\n    match read_file(\"in.txt\") {\n        Ok(_) => 0,\n        Err(_) => 1,\n    }\n}\n";
+    std::fs::write(d.join("rd.ax"), rd).unwrap();
+    let rec = axon()
+        .current_dir(&d)
+        .arg("run")
+        .arg(d.join("rd.ax"))
+        .env("AXON_RECORD", &journal)
+        .output()
+        .unwrap();
+    assert_eq!(
+        rec.status.code(),
+        Some(1),
+        "premise: the journal was recorded: {rec:?}"
+    );
+    let fails = outcome_record_misses(
+        &d,
+        &[(
+            "divergence",
+            "fn main() -> i64 { 0 }\n",
+            &[("AXON_REPLAY", journal.to_str().unwrap())],
+            "fault",
+            "replay-divergence",
+            11,
+        )],
+    );
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(
+        fails.is_empty(),
+        "ATTACK: the replay-divergence exit wrote no fault record:\n{}",
+        fails.join("\n")
+    );
+}
+
+/// Guard: without the variables `axon run` is exactly what it was (golden
+/// output recorded with the base binary, 5a023316).
+#[test]
+fn run_without_the_outcome_fd_is_byte_identical() {
+    let d = gv_dir("golden");
+    // (tag, source, env, exit code, stdout, stderr)
+    type GoldenCase<'a> = (
+        &'a str,
+        &'a str,
+        &'a [(&'a str, &'a str)],
+        i32,
+        &'a str,
+        &'a str,
+    );
+    let cases: &[GoldenCase] = &[
+        (
+            "exit3",
+            "fn main() -> i64 {\n    println(\"out\")\n    eprint(\"err\")\n    exit(3)\n    0\n}\n",
+            &[],
+            3,
+            "out\n",
+            "err",
+        ),
+        (
+            "sandbox",
+            "fn main() -> i64 {\n    match read_file(\"/etc/passwd\") {\n        Ok(_) => 0,\n        Err(_) => 1,\n    }\n}\n",
+            &[("AXON_ALLOWED_EFFECTS", "")],
+            8,
+            "",
+            "axon: sandbox violation: builtin `read_file` requires effect `IO` which is not in the active sandbox's allowed set {} (principal handle 0)\n",
+        ),
+        (
+            "panic",
+            "fn main() -> i64 {\n    let v = [1]\n    v[5]\n}\n",
+            &[],
+            101,
+            "",
+            "axon: panic: index 5 out of bounds (len 1)\n",
+        ),
+        (
+            "parse",
+            "fn main( {\n",
+            &[],
+            2,
+            "",
+            "{\"schema\":\"axon-diag/1\",\"severity\":\"error\",\"code\":\"E0000\",\"file\":\"parse.ax\",\"line\":1,\"col\":11,\"message\":\"unexpected token: LBrace, expected identifier\"}\n",
+        ),
+        ("return", "fn main() -> i64 {\n    println(\"hi\")\n    0\n}\n", &[], 0, "hi\n", ""),
+    ];
+    let mut fails = Vec::new();
+    for (tag, src, env, code, stdout, stderr) in cases {
+        std::fs::write(d.join(format!("{tag}.ax")), src).unwrap();
+        let mut cmd = axon();
+        cmd.current_dir(&d)
+            .args(["run", &format!("{tag}.ax")])
+            .env_remove("AXON_OUTCOME_FD")
+            .env_remove("AXON_OUTCOME_NONCE");
+        for (k, v) in *env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().unwrap();
+        let got = (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        );
+        if got != (Some(*code), stdout.to_string(), stderr.to_string()) {
+            fails.push(format!("[{tag}] {got:?}"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(
+        fails.is_empty(),
+        "`axon run` without an outcome fd changed its output:\n{}",
+        fails.join("\n")
+    );
+}
+
+#[test]
+fn other_verbs_refuse_the_outcome_fd() {
+    let d = gv_dir("verbs");
+    let f = d.join("p.ax");
+    std::fs::write(&f, "fn main() -> i64 { 0 }\n").unwrap();
+    let out = axon()
+        .arg("check")
+        .arg(&f)
+        .env("AXON_OUTCOME_FD", "3")
+        .env("AXON_OUTCOME_NONCE", GV_NONCE)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "ATTACK: a verb other than run accepted the outcome fd (`axon check`): {out:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("only `axon run` writes an outcome record")
+    );
+}
+
+#[test]
+fn a_closed_outcome_fd_is_refused() {
+    let d = gv_dir("closed");
+    let f = d.join("p.ax");
+    std::fs::write(&f, "fn main() -> i64 { 0 }\n").unwrap();
+    // fd 9 is not open in the child (std opens only 0-2 for it, all else is
+    // close-on-exec).
+    let out = axon()
+        .arg("run")
+        .arg(&f)
+        .env("AXON_OUTCOME_FD", "9")
+        .env("AXON_OUTCOME_NONCE", GV_NONCE)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "ATTACK: a run with no outcome channel ran: {out:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("names no open fd (9)"),
+        "{out:?}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_spawned_process_does_not_inherit_the_outcome_fd() {
+    let d = gv_dir("inherit");
+    let f = d.join("p.ax");
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n    match exec(\"sh\", [\"-c\", \"if [ -e /proc/$$/fd/3 ]; then echo fd3-open; else echo fd3-closed; fi\"]) {\n        Ok(o) => {\n            println(o)\n            0\n        }\n        Err(e) => {\n            println(e)\n            1\n        }\n    }\n}\n",
+    )
+    .unwrap();
+    let mut cmd = axon();
+    cmd.current_dir(&d).arg("run").arg(&f);
+    let (out, record) = with_outcome_pipe(&mut cmd);
+    let _ = std::fs::remove_dir_all(&d);
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "premise: exec ran: {out:?}");
+    assert!(
+        record.contains("\"kind\":\"exit\""),
+        "premise: a record: {record:?}"
+    );
+    assert!(
+        stdout.contains("fd3-closed"),
+        "ATTACK: a spawned process inherited the outcome fd: {stdout:?}"
+    );
+}

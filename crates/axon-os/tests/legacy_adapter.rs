@@ -28,6 +28,12 @@ fn script(dir: &Path, body: &str) -> PathBuf {
     p
 }
 
+/// The `axon-outcome/1` record the real interpreter writes when `main`
+/// returns 0 (GV-1b: a job is classified by it).
+const EXIT_0_RECORD: &str =
+    "printf '{\"schema\":\"axon-outcome/1\",\"nonce\":\"%s\",\"kind\":\"exit\",\
+     \"code\":0,\"class\":\"return\",\"reason\":\"\"}\\n' \"$AXON_OUTCOME_NONCE\" >&3";
+
 fn job(dir: &Path) -> axon_os::JobManifest {
     job_with(dir, "restricted")
 }
@@ -145,12 +151,15 @@ fn captured_output_is_bounded_and_the_verdict_survives_it() {
     let d = tmp("bounded");
     let m = job(&d);
     // Flood stdout AND stderr, then print the wrapper's completion marker
-    // (read out of the wrapper, as the real wrapper would print it).
+    // (read out of the wrapper, as the real wrapper would print it) and the
+    // interpreter's outcome record (GV-1b), as the real interpreter would.
     let bin = script(
         &d,
-        "head -c 4194304 /dev/zero | tr '\\0' y >&2\n\
-         head -c 4194304 /dev/zero | tr '\\0' x\necho\n\
-         grep -o '__axon_os_done:[0-9a-f]*' \"$2\"\nexit 0",
+        &format!(
+            "head -c 4194304 /dev/zero | tr '\\0' y >&2\n\
+             head -c 4194304 /dev/zero | tr '\\0' x\necho\n\
+             grep -o '__axon_os_done:[0-9a-f]*' \"$2\"\n{EXIT_0_RECORD}\nexit 0"
+        ),
     );
     let rt = AxonCoreRuntime::with_bin_and_timeout(bin, Duration::from_secs(30))
         .with_max_capture(8 * 1024);
@@ -209,11 +218,13 @@ fn run_with_an_escaped_descendant(tag: &str, rest: &str, timeout: Duration) -> (
     let m = job(&d);
     let pid_file = d.join("escaped.pid");
     // The job goes on only once the escape is complete (its pid is written
-    // after `setsid`), so the timeout kill cannot pre-empt it.
+    // after `setsid`), so the timeout kill cannot pre-empt it. The descendant
+    // does not get the outcome pipe: the real interpreter's copy is
+    // close-on-exec (GV-1).
     let bin = script(
         &d,
         &format!(
-            "setsid sh -c 'echo $$ > \"{pf}\"; exec sleep 25' &\n\
+            "setsid sh -c 'echo $$ > \"{pf}\"; exec sleep 25' 3>&- &\n\
              while [ ! -s '{pf}' ]; do sleep 0.05; done\n{rest}",
             pf = pid_file.display()
         ),
@@ -237,7 +248,7 @@ fn run_with_an_escaped_descendant(tag: &str, rest: &str, timeout: Duration) -> (
 fn an_escaped_descendant_cannot_hold_the_supervisor_after_the_job_exits() {
     let (took, verdict) = run_with_an_escaped_descendant(
         "escape-exit",
-        "grep -o '__axon_os_done:[0-9a-f]*' \"$2\"\nexit 0",
+        &format!("grep -o '__axon_os_done:[0-9a-f]*' \"$2\"\n{EXIT_0_RECORD}\nexit 0"),
         Duration::from_secs(30),
     );
     assert!(

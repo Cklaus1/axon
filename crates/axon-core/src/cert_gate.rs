@@ -66,8 +66,11 @@ pub fn check_mint_certificate() -> Result<(), (&'static str, String)> {
 /// the legibility line when the policy is active. Always compiled.
 pub fn enforce_or_exit() {
     if let Err((code, msg, exit)) = enforcement_decision() {
-        eprintln!("{code}: {msg}");
-        std::process::exit(exit);
+        let line = format!("{code}: {msg}");
+        eprintln!("{line}");
+        // GV-1: `axon run` records the refusal before it exits; every other
+        // caller has no outcome channel, so this is `process::exit(exit)`.
+        crate::outcome::exit_with_outcome(crate::outcome::Kind::Compile, "cert", exit, &line);
     }
     if require_certificates_enabled() {
         eprintln!(
