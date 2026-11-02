@@ -1,0 +1,45 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Combine ./data/roster.txt and ./data/scores.csv into ./out/ranking.txt. Every line of both files ends with a newline. roster.txt lines are `ID NAME`, split at the first space (NAME may itself contain spaces), each ID once; scores.csv lines are `ID,SCORE` with SCORE an integer from 0 to 100, and a line repeated identically anywhere in scores.csv counts once. A roster student's best score is the largest of their scores. Write one line `RANK. NAME BEST` for each roster student with at least one score, sorted by BEST descending and, for equal BEST, by ID in ascending byte order, where RANK is the line's position counting from 1; then one line `NAME -` for each roster student without a score, in roster order. Every line ends with a newline, and the file is empty when no line is due. Print one line `ignored: K` followed by a newline, where K is the number of distinct lines of scores.csv whose ID is not in the roster, and exit 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "d5370fc8a1d93d530bde6c7a3b0249604a9babeee5a817eaa0f11c2cac421516",
+      "candidate": "fn find(keys: &[str], k: str) -> i64 {\n    for i in 0..len(keys) {\n        if keys[i] == k {\n            return i\n        }\n    }\n    -1\n}\n\nfn main() -> i64 {\n    let rtext = match read_file(\"./data/roster.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let stext = match read_file(\"./data/scores.csv\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let ids: [str] = []\n    let names: [str] = []\n    let best: [i64] = []\n    let rlines = str_split(rtext, \"\\n\")\n    for i in 0..len(rlines) - 1 {\n        let line = rlines[i]\n        let sp = str_index_of(line, \" \")\n        ids = arr_push(ids, str_slice(line, 0, sp))\n        names = arr_push(names, str_slice(line, sp + 1, len(line)))\n        best = arr_push(best, -1)\n    }\n    let distinct: [str] = []\n    let ignored = 0\n    let slines = str_split(stext, \"\\n\")\n    for i in 0..len(slines) - 1 {\n        let line = slines[i]\n        if arr_contains(distinct, line) {\n            continue\n        }\n        distinct = arr_push(distinct, line)\n        let comma = str_index_of(line, \",\")\n        let k = find(&ids, str_slice(line, 0, comma))\n        if k < 0 {\n            ignored = ignored + 1\n        } else {\n            best[k] = max_i64(best[k], parse_int_or(str_slice(line, comma + 1, len(line)), 0))\n        }\n    }\n    let scored = arr_filter(arr_range(0, len(ids)), |i| best[i] >= 0)\n    let order = arr_sort_by(scored, |a, b| if best[a] != best[b] { best[b] - best[a] } else { str_cmp(ids[a], ids[b]) })\n    let out = \"\"\n    for t in 0..len(order) {\n        out = out + to_str(t + 1) + \". \" + names[order[t]] + \" \" + to_str(best[order[t]]) + \"\\n\"\n    }\n    for i in 0..len(ids) {\n        if best[i] < 0 {\n            out = out + names[i] + \" -\\n\"\n        }\n    }\n    match write_file(\"./out/ranking.txt\", out) {\n        Ok(_) => {\n            println(\"ignored: {to_str(ignored)}\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 303,
+      "report": {
+        "stage": "accepted",
+        "source": "fn find(keys: &[str], k: str) -> i64 {\n    for i in 0..len(keys) {\n        if keys[i] == k {\n            return i\n        }\n    }\n    -1\n}\n\nfn main() -> i64 {\n    let rtext = match read_file(\"./data/roster.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let stext = match read_file(\"./data/scores.csv\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let ids: [str] = []\n    let names: [str] = []\n    let best: [i64] = []\n    let rlines = str_split(rtext, \"\\n\")\n    for i in 0..len(rlines) - 1 {\n        let line = rlines[i]\n        let sp = str_index_of(line, \" \")\n        ids = arr_push(ids, str_slice(line, 0, sp))\n        names = arr_push(names, str_slice(line, sp + 1, len(line)))\n        best = arr_push(best, -1)\n    }\n    let distinct: [str] = []\n    let ignored = 0\n    let slines = str_split(stext, \"\\n\")\n    for i in 0..len(slines) - 1 {\n        let line = slines[i]\n        if arr_contains(distinct, line) {\n            continue\n        }\n        distinct = arr_push(distinct, line)\n        let comma = str_index_of(line, \",\")\n        let k = find(&ids, str_slice(line, 0, comma))\n        if k < 0 {\n            ignored = ignored + 1\n        } else {\n            best[k] = max_i64(best[k], parse_int_or(str_slice(line, comma + 1, len(line)), 0))\n        }\n    }\n    let scored = arr_filter(arr_range(0, len(ids)), |i| best[i] >= 0)\n    let order = arr_sort_by(scored, |a, b| if best[a] != best[b] { best[b] - best[a] } else { str_cmp(ids[a], ids[b]) })\n    let out = \"\"\n    for t in 0..len(order) {\n        out = out + to_str(t + 1) + \". \" + names[order[t]] + \" \" + to_str(best[order[t]]) + \"\\n\"\n    }\n    for i in 0..len(ids) {\n        if best[i] < 0 {\n            out = out + names[i] + \" -\\n\"\n        }\n    }\n    match write_file(\"./out/ranking.txt\", out) {\n        Ok(_) => {\n            println(\"ignored: {to_str(ignored)}\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "basic",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 303,
+  "tokens": null,
+  "tokens_reported": 0,
+  "token_budget": 50000
+}

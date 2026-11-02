@@ -1,0 +1,67 @@
+fn find(keys: &[str], k: str) -> i64 {
+    for i in 0..len(keys) {
+        if keys[i] == k {
+            return i
+        }
+    }
+    -1
+}
+
+fn main() -> i64 {
+    let stock_text = match read_file("./data/stock.txt") {
+        Ok(t) => t
+        Err(_) => {
+            println("missing input")
+            return 5
+        }
+    }
+    let order_text = match read_file("./data/orders.txt") {
+        Ok(t) => t
+        Err(_) => {
+            println("missing input")
+            return 5
+        }
+    }
+    let items: [str] = []
+    let qty: [i64] = []
+    let slines = str_split(stock_text, "\n")
+    for i in 0..len(slines) - 1 {
+        let f = str_split(slines[i], " ")
+        items = arr_push(items, f[0])
+        qty = arr_push(qty, parse_int_or(f[1], 0))
+    }
+    let olines = str_split(order_text, "\n")
+    let n = len(olines) - 1
+    for i in 0..n {
+        let f = str_split(olines[i], " ")
+        let q = if len(f) == 2 { parse_int_or(f[1], 0) } else { 0 }
+        if len(f) != 2 || q < 1 || len(f[0]) == 0 {
+            println("bad order: line {to_str(i + 1)}")
+            return 2
+        }
+        let k = find(&items, f[0])
+        if k < 0 {
+            println("unknown item: {f[0]} (line {to_str(i + 1)})")
+            return 3
+        }
+        if q > qty[k] {
+            println("insufficient stock: {f[0]} (line {to_str(i + 1)})")
+            return 4
+        }
+        qty[k] = qty[k] - q
+    }
+    let out = ""
+    for i in 0..len(items) {
+        out = out + items[i] + " " + to_str(qty[i]) + "\n"
+    }
+    match write_file("./out/stock.txt", out) {
+        Ok(_) => {
+            println("applied {to_str(n)} orders")
+            0
+        }
+        Err(e) => {
+            eprintln("cannot write: {e}")
+            1
+        }
+    }
+}

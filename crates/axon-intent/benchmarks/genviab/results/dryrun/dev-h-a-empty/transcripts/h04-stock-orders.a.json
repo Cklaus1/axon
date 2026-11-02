@@ -1,0 +1,191 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Apply the orders in ./data/orders.txt to the stock in ./data/stock.txt and write the new stock to ./out/stock.txt. Every line of both files ends with a newline. stock.txt has lines `ITEM QTY` (one space, QTY a non-negative integer, each item once); orders.txt has lines `ITEM QTY`, applied in file order, each subtracting QTY from that item's current stock. Errors are checked line by line through orders.txt, so the first offending line decides: a line that is not exactly two fields separated by one space with QTY a positive integer prints `bad order: line N` and exits 2; an ITEM not in stock.txt prints `unknown item: ITEM (line N)` and exits 3; a QTY larger than the item's remaining stock prints `insufficient stock: ITEM (line N)` and exits 4, where N counts orders.txt lines from 1. If either file does not exist print `missing input` and exit 5. On any error write no file. On success write ./out/stock.txt with the stock.txt lines in their original order and format but updated quantities, print `applied K orders` where K is the number of lines in orders.txt, and exit 0. Every printed line ends with a newline.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "bf86bde4321ccd970bab0cd6df952f7ec5771b47085a90253757f5b9f36a12fc",
+      "candidate": "fn main() -> i64 {\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 405,
+      "report": {
+        "stage": "examples",
+        "source": "fn main() -> i64 {\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "ok",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "output ./out/stock.txt: expected \"bolt 7\\nnut 0\\n\", the file does not exist",
+              "stdout: expected \"applied 3 orders\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          },
+          {
+            "example": "unknown item",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "exit: expected 3, got 0",
+              "stdout: expected \"unknown item: screw (line 2)\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": "The program type-checks but did not do what the examples expect:\nexample `ok` run 1: exit 0\n  output ./out/stock.txt: expected \"bolt 7\\nnut 0\\n\", the file does not exist\n  stdout: expected \"applied 3 orders\\n\", got \"\"\nexample `unknown item` run 1: exit 0\n  exit: expected 3, got 0\n  stdout: expected \"unknown item: screw (line 2)\\n\", got \"\"\n",
+        "infrastructure": null
+      }
+    },
+    {
+      "round": 1,
+      "prompt_sha256": "9133ae3584e63e45af4024c498fd03fb1e0420219253c248dd2b4ae77f890c20",
+      "candidate": "fn main() -> i64 {\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 402,
+      "report": {
+        "stage": "examples",
+        "source": "fn main() -> i64 {\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "ok",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "output ./out/stock.txt: expected \"bolt 7\\nnut 0\\n\", the file does not exist",
+              "stdout: expected \"applied 3 orders\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          },
+          {
+            "example": "unknown item",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "exit: expected 3, got 0",
+              "stdout: expected \"unknown item: screw (line 2)\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": "The program type-checks but did not do what the examples expect:\nexample `ok` run 1: exit 0\n  output ./out/stock.txt: expected \"bolt 7\\nnut 0\\n\", the file does not exist\n  stdout: expected \"applied 3 orders\\n\", got \"\"\nexample `unknown item` run 1: exit 0\n  exit: expected 3, got 0\n  stdout: expected \"unknown item: screw (line 2)\\n\", got \"\"\n",
+        "infrastructure": null
+      }
+    },
+    {
+      "round": 2,
+      "prompt_sha256": "9133ae3584e63e45af4024c498fd03fb1e0420219253c248dd2b4ae77f890c20",
+      "candidate": "fn main() -> i64 {\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 402,
+      "report": {
+        "stage": "examples",
+        "source": "fn main() -> i64 {\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "ok",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "output ./out/stock.txt: expected \"bolt 7\\nnut 0\\n\", the file does not exist",
+              "stdout: expected \"applied 3 orders\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          },
+          {
+            "example": "unknown item",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "exit: expected 3, got 0",
+              "stdout: expected \"unknown item: screw (line 2)\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": "The program type-checks but did not do what the examples expect:\nexample `ok` run 1: exit 0\n  output ./out/stock.txt: expected \"bolt 7\\nnut 0\\n\", the file does not exist\n  stdout: expected \"applied 3 orders\\n\", got \"\"\nexample `unknown item` run 1: exit 0\n  exit: expected 3, got 0\n  stdout: expected \"unknown item: screw (line 2)\\n\", got \"\"\n",
+        "infrastructure": null
+      }
+    },
+    {
+      "round": 3,
+      "prompt_sha256": "9133ae3584e63e45af4024c498fd03fb1e0420219253c248dd2b4ae77f890c20",
+      "candidate": "fn main() -> i64 {\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 402,
+      "report": {
+        "stage": "examples",
+        "source": "fn main() -> i64 {\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "ok",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "output ./out/stock.txt: expected \"bolt 7\\nnut 0\\n\", the file does not exist",
+              "stdout: expected \"applied 3 orders\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          },
+          {
+            "example": "unknown item",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "exit: expected 3, got 0",
+              "stdout: expected \"unknown item: screw (line 2)\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": "The program type-checks but did not do what the examples expect:\nexample `ok` run 1: exit 0\n  output ./out/stock.txt: expected \"bolt 7\\nnut 0\\n\", the file does not exist\n  stdout: expected \"applied 3 orders\\n\", got \"\"\nexample `unknown item` run 1: exit 0\n  exit: expected 3, got 0\n  stdout: expected \"unknown item: screw (line 2)\\n\", got \"\"\n",
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "exhausted",
+  "wall_ms": 1614,
+  "tokens": null,
+  "tokens_reported": 0,
+  "token_budget": 50000
+}

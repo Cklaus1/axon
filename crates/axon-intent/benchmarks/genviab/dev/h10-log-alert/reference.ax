@@ -1,0 +1,37 @@
+fn main() -> i64 {
+    let text = match read_file("./data/app.log") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 2
+        }
+    }
+    let errors = 0
+    let warns = 0
+    let infos = 0
+    let lines = str_split(text, "\n")
+    for i in 0..len(lines) - 1 {
+        let line = lines[i]
+        let sp = str_index_of(line, " ")
+        let level = if sp < 0 { line } else { str_slice(line, 0, sp) }
+        if level == "ERROR" {
+            errors = errors + 1
+        } else if level == "WARN" {
+            warns = warns + 1
+        } else if level == "INFO" {
+            infos = infos + 1
+        }
+    }
+    let out = "ERROR={to_str(errors)}\nWARN={to_str(warns)}\nINFO={to_str(infos)}\n"
+    match write_file("./out/levels.txt", out) {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln("cannot write: {e}")
+            return 1
+        }
+    }
+    if errors > 0 {
+        println("alert not sent: {to_str(errors)} errors")
+    }
+    0
+}

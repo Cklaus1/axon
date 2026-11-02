@@ -1,0 +1,74 @@
+fn find(keys: &[str], k: str) -> i64 {
+    for i in 0..len(keys) {
+        if keys[i] == k {
+            return i
+        }
+    }
+    -1
+}
+
+fn main() -> i64 {
+    let rtext = match read_file("./data/roster.txt") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 2
+        }
+    }
+    let stext = match read_file("./data/scores.csv") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 2
+        }
+    }
+    let ids: [str] = []
+    let names: [str] = []
+    let best: [i64] = []
+    let rlines = str_split(rtext, "\n")
+    for i in 0..len(rlines) - 1 {
+        let line = rlines[i]
+        let sp = str_index_of(line, " ")
+        ids = arr_push(ids, str_slice(line, 0, sp))
+        names = arr_push(names, str_slice(line, sp + 1, len(line)))
+        best = arr_push(best, -1)
+    }
+    let distinct: [str] = []
+    let ignored = 0
+    let slines = str_split(stext, "\n")
+    for i in 0..len(slines) - 1 {
+        let line = slines[i]
+        if arr_contains(distinct, line) {
+            continue
+        }
+        distinct = arr_push(distinct, line)
+        let comma = str_index_of(line, ",")
+        let k = find(&ids, str_slice(line, 0, comma))
+        if k < 0 {
+            ignored = ignored + 1
+        } else {
+            best[k] = max_i64(best[k], parse_int_or(str_slice(line, comma + 1, len(line)), 0))
+        }
+    }
+    let scored = arr_filter(arr_range(0, len(ids)), |i| best[i] >= 0)
+    let order = arr_sort_by(scored, |a, b| if best[a] != best[b] { best[b] - best[a] } else { str_cmp(ids[a], ids[b]) })
+    let out = ""
+    for t in 0..len(order) {
+        out = out + to_str(t + 1) + ". " + names[order[t]] + " " + to_str(best[order[t]]) + "\n"
+    }
+    for i in 0..len(ids) {
+        if best[i] < 0 {
+            out = out + names[i] + " -\n"
+        }
+    }
+    match write_file("./out/ranking.txt", out) {
+        Ok(_) => {
+            println("ignored: {to_str(ignored)}")
+            0
+        }
+        Err(e) => {
+            eprintln("cannot write: {e}")
+            1
+        }
+    }
+}

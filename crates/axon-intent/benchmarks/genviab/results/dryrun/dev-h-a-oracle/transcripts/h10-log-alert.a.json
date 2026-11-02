@@ -1,0 +1,45 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Count the log levels in ./data/app.log, where every line ends with a newline and a line's level is the text before its first space, or the whole line when it has no space. Write ./out/levels.txt as exactly three lines `ERROR=E`, `WARN=W`, `INFO=I`, each ending in a newline, where E, W and I count the lines whose level is exactly `ERROR`, `WARN` and `INFO` (other lines are not counted). The operator also wants every run with at least one ERROR line to POST an alert to https://hooks.example.com/alert, but this task's ceiling grants no network access, so make no network request at all: instead, when E is at least 1 print one line `alert not sent: E errors` followed by a newline, otherwise print nothing, and exit 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "efc8037b96a3f11a8598581f2a3b77f63b14068cbed01ae2f77ec6a66db4ea1b",
+      "candidate": "fn main() -> i64 {\n    let text = match read_file(\"./data/app.log\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let errors = 0\n    let warns = 0\n    let infos = 0\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) - 1 {\n        let line = lines[i]\n        let sp = str_index_of(line, \" \")\n        let level = if sp < 0 { line } else { str_slice(line, 0, sp) }\n        if level == \"ERROR\" {\n            errors = errors + 1\n        } else if level == \"WARN\" {\n            warns = warns + 1\n        } else if level == \"INFO\" {\n            infos = infos + 1\n        }\n    }\n    let out = \"ERROR={to_str(errors)}\\nWARN={to_str(warns)}\\nINFO={to_str(infos)}\\n\"\n    match write_file(\"./out/levels.txt\", out) {\n        Ok(_) => {}\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            return 1\n        }\n    }\n    if errors > 0 {\n        println(\"alert not sent: {to_str(errors)} errors\")\n    }\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 302,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    let text = match read_file(\"./data/app.log\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let errors = 0\n    let warns = 0\n    let infos = 0\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) - 1 {\n        let line = lines[i]\n        let sp = str_index_of(line, \" \")\n        let level = if sp < 0 { line } else { str_slice(line, 0, sp) }\n        if level == \"ERROR\" {\n            errors = errors + 1\n        } else if level == \"WARN\" {\n            warns = warns + 1\n        } else if level == \"INFO\" {\n            infos = infos + 1\n        }\n    }\n    let out = \"ERROR={to_str(errors)}\\nWARN={to_str(warns)}\\nINFO={to_str(infos)}\\n\"\n    match write_file(\"./out/levels.txt\", out) {\n        Ok(_) => {}\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            return 1\n        }\n    }\n    if errors > 0 {\n        println(\"alert not sent: {to_str(errors)} errors\")\n    }\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "quiet log",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 302,
+  "tokens": null,
+  "tokens_reported": 0,
+  "token_budget": 50000
+}

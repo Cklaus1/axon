@@ -1,0 +1,45 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Merge the address lists ./data/a.txt and ./data/b.txt. Each holds one email address per line, every line ending in a newline; normalize each line by removing surrounding spaces and lowercasing ASCII letters, and skip lines that are empty after that. Write ./out/merged.txt with every distinct normalized address from either file, one per line, each ending in a newline (an empty file when there are none), sorted by domain (the text after the last `@`) in ascending byte order and, for equal domains, by the whole address in ascending byte order. Print one line `a-only: X, both: Y, b-only: Z` followed by a newline, counting the distinct normalized addresses found only in a.txt, in both files, and only in b.txt, and exit 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "a338f076cc6e8c656ebe57bed02f4478b2392e7a9a1f93648bcc91e9e8be2829",
+      "candidate": "fn addresses(text: str) -> [str] {\n    let out: [str] = []\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) {\n        let a = str_to_lower(str_trim(lines[i]))\n        if len(a) > 0 && !arr_contains(out, a) {\n            out = arr_push(out, a)\n        }\n    }\n    out\n}\n\nfn domain(a: str) -> str {\n    let parts = str_split(a, \"@\")\n    parts[len(parts) - 1]\n}\n\nfn main() -> i64 {\n    let atext = match read_file(\"./data/a.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let btext = match read_file(\"./data/b.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let a = addresses(atext)\n    let b = addresses(btext)\n    let all = a\n    let a_only = 0\n    let both = 0\n    for i in 0..len(a) {\n        if arr_contains(b, a[i]) {\n            both = both + 1\n        } else {\n            a_only = a_only + 1\n        }\n    }\n    let b_only = 0\n    for i in 0..len(b) {\n        if !arr_contains(a, b[i]) {\n            b_only = b_only + 1\n            all = arr_push(all, b[i])\n        }\n    }\n    let sorted = arr_sort_by(all, |x, y| {\n        let c = str_cmp(domain(x), domain(y))\n        if c != 0 { c } else { str_cmp(x, y) }\n    })\n    let out = \"\"\n    for i in 0..len(sorted) {\n        out = out + sorted[i] + \"\\n\"\n    }\n    match write_file(\"./out/merged.txt\", out) {\n        Ok(_) => {\n            println(\"a-only: {to_str(a_only)}, both: {to_str(both)}, b-only: {to_str(b_only)}\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 303,
+      "report": {
+        "stage": "accepted",
+        "source": "fn addresses(text: str) -> [str] {\n    let out: [str] = []\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) {\n        let a = str_to_lower(str_trim(lines[i]))\n        if len(a) > 0 && !arr_contains(out, a) {\n            out = arr_push(out, a)\n        }\n    }\n    out\n}\n\nfn domain(a: str) -> str {\n    let parts = str_split(a, \"@\")\n    parts[len(parts) - 1]\n}\n\nfn main() -> i64 {\n    let atext = match read_file(\"./data/a.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let btext = match read_file(\"./data/b.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let a = addresses(atext)\n    let b = addresses(btext)\n    let all = a\n    let a_only = 0\n    let both = 0\n    for i in 0..len(a) {\n        if arr_contains(b, a[i]) {\n            both = both + 1\n        } else {\n            a_only = a_only + 1\n        }\n    }\n    let b_only = 0\n    for i in 0..len(b) {\n        if !arr_contains(a, b[i]) {\n            b_only = b_only + 1\n            all = arr_push(all, b[i])\n        }\n    }\n    let sorted = arr_sort_by(all, |x, y| {\n        let c = str_cmp(domain(x), domain(y))\n        if c != 0 { c } else { str_cmp(x, y) }\n    })\n    let out = \"\"\n    for i in 0..len(sorted) {\n        out = out + sorted[i] + \"\\n\"\n    }\n    match write_file(\"./out/merged.txt\", out) {\n        Ok(_) => {\n            println(\"a-only: {to_str(a_only)}, both: {to_str(both)}, b-only: {to_str(b_only)}\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "basic",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 303,
+  "tokens": null,
+  "tokens_reported": 0,
+  "token_budget": 50000
+}

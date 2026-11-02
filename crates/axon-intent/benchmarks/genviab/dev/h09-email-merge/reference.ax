@@ -1,0 +1,70 @@
+fn addresses(text: str) -> [str] {
+    let out: [str] = []
+    let lines = str_split(text, "\n")
+    for i in 0..len(lines) {
+        let a = str_to_lower(str_trim(lines[i]))
+        if len(a) > 0 && !arr_contains(out, a) {
+            out = arr_push(out, a)
+        }
+    }
+    out
+}
+
+fn domain(a: str) -> str {
+    let parts = str_split(a, "@")
+    parts[len(parts) - 1]
+}
+
+fn main() -> i64 {
+    let atext = match read_file("./data/a.txt") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 2
+        }
+    }
+    let btext = match read_file("./data/b.txt") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 2
+        }
+    }
+    let a = addresses(atext)
+    let b = addresses(btext)
+    let all = a
+    let a_only = 0
+    let both = 0
+    for i in 0..len(a) {
+        if arr_contains(b, a[i]) {
+            both = both + 1
+        } else {
+            a_only = a_only + 1
+        }
+    }
+    let b_only = 0
+    for i in 0..len(b) {
+        if !arr_contains(a, b[i]) {
+            b_only = b_only + 1
+            all = arr_push(all, b[i])
+        }
+    }
+    let sorted = arr_sort_by(all, |x, y| {
+        let c = str_cmp(domain(x), domain(y))
+        if c != 0 { c } else { str_cmp(x, y) }
+    })
+    let out = ""
+    for i in 0..len(sorted) {
+        out = out + sorted[i] + "\n"
+    }
+    match write_file("./out/merged.txt", out) {
+        Ok(_) => {
+            println("a-only: {to_str(a_only)}, both: {to_str(both)}, b-only: {to_str(b_only)}")
+            0
+        }
+        Err(e) => {
+            eprintln("cannot write: {e}")
+            1
+        }
+    }
+}

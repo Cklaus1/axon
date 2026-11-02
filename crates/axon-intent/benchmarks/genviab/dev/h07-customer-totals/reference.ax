@@ -1,0 +1,72 @@
+fn find(keys: &[str], k: str) -> i64 {
+    for i in 0..len(keys) {
+        if keys[i] == k {
+            return i
+        }
+    }
+    -1
+}
+
+fn main() -> i64 {
+    let ctext = match read_file("./data/customers.csv") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 2
+        }
+    }
+    let otext = match read_file("./data/orders.csv") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 2
+        }
+    }
+    let ids: [str] = []
+    let names: [str] = []
+    let totals: [i64] = []
+    let used: [bool] = []
+    let clines = str_split(ctext, "\n")
+    for i in 0..len(clines) - 1 {
+        let line = clines[i]
+        let comma = str_index_of(line, ",")
+        let id = str_slice(line, 0, comma)
+        if find(&ids, id) < 0 {
+            ids = arr_push(ids, id)
+            names = arr_push(names, str_slice(line, comma + 1, len(line)))
+            totals = arr_push(totals, 0)
+            used = arr_push(used, false)
+        }
+    }
+    let seen: [str] = []
+    let unmatched = 0
+    let olines = str_split(otext, "\n")
+    for i in 0..len(olines) - 1 {
+        let f = str_split(olines[i], ",")
+        if arr_contains(seen, f[0]) {
+            continue
+        }
+        seen = arr_push(seen, f[0])
+        let k = find(&ids, f[1])
+        if k < 0 {
+            unmatched = unmatched + 1
+        } else {
+            totals[k] = totals[k] + parse_int_or(f[2], 0)
+            used[k] = true
+        }
+    }
+    let idx = arr_filter(arr_range(0, len(ids)), |i| used[i])
+    let order = arr_sort_by(idx, |a, b| if totals[a] != totals[b] { totals[b] - totals[a] } else { str_cmp(names[a], names[b]) })
+    let out = ""
+    for t in 0..len(order) {
+        out = out + names[order[t]] + ": " + to_str(totals[order[t]]) + "\n"
+    }
+    out = out + "unmatched: " + to_str(unmatched) + "\n"
+    match write_file("./out/report.txt", out) {
+        Ok(_) => 0
+        Err(e) => {
+            eprintln("cannot write: {e}")
+            1
+        }
+    }
+}

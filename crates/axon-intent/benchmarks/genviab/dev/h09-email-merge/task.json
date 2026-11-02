@@ -1,0 +1,79 @@
+{
+ "id": "h09-email-merge",
+ "category": "multi-step",
+ "source": {
+  "kind": "model-authored dev task",
+  "note": "GV-4 dev headroom task written by the builder (LaneGvPy.GvAuthor) on 2026-11-02; dev only, never a once task (PREREG-genviab.md §4)"
+ },
+ "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+ "examples": {
+  "visible": [
+   {
+    "name": "basic",
+    "runs": [
+     {
+      "inputs": {
+       "./data/a.txt": "Ann@x.org\nbob@y.com\n",
+       "./data/b.txt": "bob@Y.com\ncat@x.org\n"
+      },
+      "outputs": {
+       "./out/merged.txt": "ann@x.org\ncat@x.org\nbob@y.com\n"
+      },
+      "stdout": "a-only: 1, both: 1, b-only: 1\n",
+      "exit": 0
+     }
+    ]
+   }
+  ],
+  "hidden": [
+   {
+    "name": "dupes and blanks",
+    "runs": [
+     {
+      "inputs": {
+       "./data/a.txt": "  z@q.io \n\nz@Q.IO\na@r.io\n",
+       "./data/b.txt": ""
+      },
+      "outputs": {
+       "./out/merged.txt": "z@q.io\na@r.io\n"
+      },
+      "stdout": "a-only: 2, both: 0, b-only: 0\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "domain tie",
+    "runs": [
+     {
+      "inputs": {
+       "./data/a.txt": "m@d.net\nz@ab.com\n",
+       "./data/b.txt": "b@d.net\nm@d.net\nk@c.net\nx@e.net\na@b.com\n"
+      },
+      "outputs": {
+       "./out/merged.txt": "z@ab.com\na@b.com\nk@c.net\nb@d.net\nm@d.net\nx@e.net\n"
+      },
+      "stdout": "a-only: 1, both: 1, b-only: 4\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "both empty",
+    "runs": [
+     {
+      "inputs": {
+       "./data/a.txt": "\n",
+       "./data/b.txt": ""
+      },
+      "outputs": {
+       "./out/merged.txt": ""
+      },
+      "stdout": "a-only: 0, both: 0, b-only: 0\n",
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ }
+}

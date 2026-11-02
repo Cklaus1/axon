@@ -1,0 +1,95 @@
+{
+ "id": "h08-best-scores",
+ "category": "multi-step",
+ "source": {
+  "kind": "model-authored dev task",
+  "note": "GV-4 dev headroom task written by the builder (LaneGvPy.GvAuthor) on 2026-11-02; dev only, never a once task (PREREG-genviab.md §4)"
+ },
+ "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+ "examples": {
+  "visible": [
+   {
+    "name": "basic",
+    "runs": [
+     {
+      "inputs": {
+       "./data/roster.txt": "s1 Ann Lee\ns2 Bo\n",
+       "./data/scores.csv": "s1,70\ns2,90\ns1,95\n"
+      },
+      "outputs": {
+       "./out/ranking.txt": "1. Ann Lee 95\n2. Bo 90\n"
+      },
+      "stdout": "ignored: 0\n",
+      "exit": 0
+     }
+    ]
+   }
+  ],
+  "hidden": [
+   {
+    "name": "tie and unmatched",
+    "runs": [
+     {
+      "inputs": {
+       "./data/roster.txt": "b2 Kim\na9 Lu\nc1 Max\nd4 Ned\n",
+       "./data/scores.csv": "c1,80\nb2,80\nx1,50\nx1,50\nx1,60\na9,80\nb2,10\n"
+      },
+      "outputs": {
+       "./out/ranking.txt": "1. Lu 80\n2. Kim 80\n3. Max 80\nNed -\n"
+      },
+      "stdout": "ignored: 2\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "no scores",
+    "runs": [
+     {
+      "inputs": {
+       "./data/roster.txt": "z Zoe\na Al\n",
+       "./data/scores.csv": ""
+      },
+      "outputs": {
+       "./out/ranking.txt": "Zoe -\nAl -\n"
+      },
+      "stdout": "ignored: 0\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "byte order ids",
+    "runs": [
+     {
+      "inputs": {
+       "./data/roster.txt": "9 Nine\n10 Ten\n",
+       "./data/scores.csv": "9,50\n10,50\n100,1\n9,5\n"
+      },
+      "outputs": {
+       "./out/ranking.txt": "1. Ten 50\n2. Nine 50\n"
+      },
+      "stdout": "ignored: 1\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "empty roster",
+    "runs": [
+     {
+      "inputs": {
+       "./data/roster.txt": "",
+       "./data/scores.csv": "q,1\n"
+      },
+      "outputs": {
+       "./out/ranking.txt": ""
+      },
+      "stdout": "ignored: 1\n",
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ }
+}

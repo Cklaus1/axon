@@ -1,0 +1,102 @@
+{
+ "id": "h01-word-tally",
+ "category": "stateful",
+ "source": {
+  "kind": "model-authored dev task",
+  "note": "GV-4 dev headroom task written by the builder (LaneGvPy.GvAuthor) on 2026-11-02; dev only, never a once task (PREREG-genviab.md §4)"
+ },
+ "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+ "examples": {
+  "visible": [
+   {
+    "name": "two runs",
+    "runs": [
+     {
+      "inputs": {
+       "./data/words.txt": "b a b\n"
+      },
+      "outputs": {
+       "./out/tally.txt": "a=1\nb=2\n"
+      },
+      "stdout": "total: 3\n",
+      "exit": 0
+     },
+     {
+      "inputs": {
+       "./data/words.txt": "c A\n"
+      },
+      "outputs": {
+       "./out/tally.txt": "a=2\nb=2\nc=1\n"
+      },
+      "stdout": "total: 5\n",
+      "exit": 0
+     }
+    ]
+   }
+  ],
+  "hidden": [
+   {
+    "name": "empty state file",
+    "runs": [
+     {
+      "inputs": {
+       "./out/tally.txt": "",
+       "./data/words.txt": ""
+      },
+      "outputs": {
+       "./out/tally.txt": ""
+      },
+      "stdout": "total: 0\n",
+      "exit": 0
+     },
+     {
+      "inputs": {
+       "./data/words.txt": "Z z\n"
+      },
+      "outputs": {
+       "./out/tally.txt": "z=2\n"
+      },
+      "stdout": "total: 2\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "carried state",
+    "runs": [
+     {
+      "inputs": {
+       "./out/tally.txt": "m=5\n",
+       "./data/words.txt": "m  n\n\nm\n"
+      },
+      "outputs": {
+       "./out/tally.txt": "m=7\nn=1\n"
+      },
+      "stdout": "total: 8\n",
+      "exit": 0
+     },
+     {
+      "inputs": {
+       "./data/words.txt": "n\n"
+      },
+      "outputs": {
+       "./out/tally.txt": "m=7\nn=2\n"
+      },
+      "stdout": "total: 9\n",
+      "exit": 0
+     },
+     {
+      "inputs": {
+       "./data/words.txt": "Apple\n"
+      },
+      "outputs": {
+       "./out/tally.txt": "apple=1\nm=7\nn=2\n"
+      },
+      "stdout": "total: 10\n",
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -1,0 +1,53 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Validate ./data/app.conf and write a normalized copy. Every line of it ends with a newline. Blank lines and lines whose first character is `#` are ignored. Every other line must be `key=value`: split it at the first `=`; the key is the text before it and the value the text after it, each with surrounding spaces removed. Lines are checked in order, so the first offending line decides: a line with no `=` or with an empty key prints `syntax error: line N` and exits 2; a key that already appeared on an earlier line prints `duplicate key: KEY (line N)` and exits 3; a key `port` whose value is not an integer from 1 to 65535 prints `bad port: line N` and exits 4, where N counts every line of the file from 1, blank and comment lines included. After all lines pass, if key `name` is absent print `missing key: name` and exit 5, else if key `port` is absent print `missing key: port` and exit 5. Keys are case-sensitive. On any error write no file. On success write ./out/app.conf with one `key=value` line per key, sorted by key in ascending byte order, each line ending in a newline, print `ok: K keys` where K is the number of keys, and exit 0. Every printed line ends with a newline.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "a5d62fd91d94f2171b80c0b0960265fb8655734eefbaa6bbac3984f99f9c3811",
+      "candidate": "fn main() -> i64 {\n    let text = match read_file(\"./data/app.conf\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 1\n        }\n    }\n    let keys: [str] = []\n    let vals: [str] = []\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) - 1 {\n        let line = lines[i]\n        let n = to_str(i + 1)\n        if len(line) == 0 || str_starts_with(line, \"#\") {\n            continue\n        }\n        let eq = str_index_of(line, \"=\")\n        if eq < 0 {\n            println(\"syntax error: line {n}\")\n            return 2\n        }\n        let key = str_trim(str_slice(line, 0, eq))\n        let val = str_trim(str_slice(line, eq + 1, len(line)))\n        if len(key) == 0 {\n            println(\"syntax error: line {n}\")\n            return 2\n        }\n        if arr_contains(keys, key) {\n            println(\"duplicate key: {key} (line {n})\")\n            return 3\n        }\n        if key == \"port\" {\n            let p = parse_int_or(val, 0)\n            if p < 1 || p > 65535 {\n                println(\"bad port: line {n}\")\n                return 4\n            }\n        }\n        keys = arr_push(keys, key)\n        vals = arr_push(vals, val)\n    }\n    if !arr_contains(keys, \"name\") {\n        println(\"missing key: name\")\n        return 5\n    }\n    if !arr_contains(keys, \"port\") {\n        println(\"missing key: port\")\n        return 5\n    }\n    let order = arr_sort_by(arr_range(0, len(keys)), |a, b| str_cmp(keys[a], keys[b]))\n    let out = \"\"\n    for t in 0..len(order) {\n        out = out + keys[order[t]] + \"=\" + vals[order[t]] + \"\\n\"\n    }\n    match write_file(\"./out/app.conf\", out) {\n        Ok(_) => {\n            println(\"ok: {to_str(len(keys))} keys\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 404,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    let text = match read_file(\"./data/app.conf\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 1\n        }\n    }\n    let keys: [str] = []\n    let vals: [str] = []\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) - 1 {\n        let line = lines[i]\n        let n = to_str(i + 1)\n        if len(line) == 0 || str_starts_with(line, \"#\") {\n            continue\n        }\n        let eq = str_index_of(line, \"=\")\n        if eq < 0 {\n            println(\"syntax error: line {n}\")\n            return 2\n        }\n        let key = str_trim(str_slice(line, 0, eq))\n        let val = str_trim(str_slice(line, eq + 1, len(line)))\n        if len(key) == 0 {\n            println(\"syntax error: line {n}\")\n            return 2\n        }\n        if arr_contains(keys, key) {\n            println(\"duplicate key: {key} (line {n})\")\n            return 3\n        }\n        if key == \"port\" {\n            let p = parse_int_or(val, 0)\n            if p < 1 || p > 65535 {\n                println(\"bad port: line {n}\")\n                return 4\n            }\n        }\n        keys = arr_push(keys, key)\n        vals = arr_push(vals, val)\n    }\n    if !arr_contains(keys, \"name\") {\n        println(\"missing key: name\")\n        return 5\n    }\n    if !arr_contains(keys, \"port\") {\n        println(\"missing key: port\")\n        return 5\n    }\n    let order = arr_sort_by(arr_range(0, len(keys)), |a, b| str_cmp(keys[a], keys[b]))\n    let out = \"\"\n    for t in 0..len(order) {\n        out = out + keys[order[t]] + \"=\" + vals[order[t]] + \"\\n\"\n    }\n    match write_file(\"./out/app.conf\", out) {\n        Ok(_) => {\n            println(\"ok: {to_str(len(keys))} keys\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "ok",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          },
+          {
+            "example": "no name",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 5",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 404,
+  "tokens": null,
+  "tokens_reported": 0,
+  "token_budget": 50000
+}

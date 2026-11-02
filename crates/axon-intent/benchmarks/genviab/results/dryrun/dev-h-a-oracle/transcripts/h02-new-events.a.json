@@ -1,0 +1,53 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Process ./data/events.txt incrementally across runs, remembering processed ids in ./out/seen.txt. Each line of events.txt is `id,payload` and ends with a newline; the id is the text before the first comma. ./out/seen.txt lists the ids processed by earlier runs, one per line, each line ending in a newline; if it does not exist no id has been processed. An event is new when its id is not in seen.txt and did not already appear on an earlier line of the same events.txt. Each run writes ./out/new.txt containing the new events' lines, unchanged and in input order, each ending in a newline (an empty file when there are none), appends each new event's id as a line to ./out/seen.txt in the same order (creating the file if needed, and leaving it unchanged when there are none), prints one line `new: X, skipped: Y` followed by a newline, where X is the number of new events and Y the number of other lines of events.txt, and exits 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "6a92fa24fba8675e20f15ef6b6c97b19fa66c6a93eaa9d21155ca62b8fb91f3e",
+      "candidate": "fn main() -> i64 {\n    let seen: [str] = []\n    match read_file(\"./out/seen.txt\") {\n        Ok(state) => {\n            let lines = str_split(state, \"\\n\")\n            for i in 0..len(lines) - 1 {\n                seen = arr_push(seen, lines[i])\n            }\n        }\n        Err(_) => {}\n    }\n    let text = match read_file(\"./data/events.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let lines = str_split(text, \"\\n\")\n    let fresh = \"\"\n    let ids = \"\"\n    let added = 0\n    let skipped = 0\n    for i in 0..len(lines) - 1 {\n        let line = lines[i]\n        let comma = str_index_of(line, \",\")\n        let id = if comma < 0 { line } else { str_slice(line, 0, comma) }\n        if arr_contains(seen, id) {\n            skipped = skipped + 1\n        } else {\n            fresh = fresh + line + \"\\n\"\n            ids = ids + id + \"\\n\"\n            seen = arr_push(seen, id)\n            added = added + 1\n        }\n    }\n    match write_file(\"./out/new.txt\", fresh) {\n        Ok(_) => {}\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            return 1\n        }\n    }\n    if added > 0 {\n        match append_file(\"./out/seen.txt\", ids) {\n            Ok(_) => {}\n            Err(e) => {\n                eprintln(\"cannot append: {e}\")\n                return 1\n            }\n        }\n    }\n    println(\"new: {to_str(added)}, skipped: {to_str(skipped)}\")\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 403,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    let seen: [str] = []\n    match read_file(\"./out/seen.txt\") {\n        Ok(state) => {\n            let lines = str_split(state, \"\\n\")\n            for i in 0..len(lines) - 1 {\n                seen = arr_push(seen, lines[i])\n            }\n        }\n        Err(_) => {}\n    }\n    let text = match read_file(\"./data/events.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let lines = str_split(text, \"\\n\")\n    let fresh = \"\"\n    let ids = \"\"\n    let added = 0\n    let skipped = 0\n    for i in 0..len(lines) - 1 {\n        let line = lines[i]\n        let comma = str_index_of(line, \",\")\n        let id = if comma < 0 { line } else { str_slice(line, 0, comma) }\n        if arr_contains(seen, id) {\n            skipped = skipped + 1\n        } else {\n            fresh = fresh + line + \"\\n\"\n            ids = ids + id + \"\\n\"\n            seen = arr_push(seen, id)\n            added = added + 1\n        }\n    }\n    match write_file(\"./out/new.txt\", fresh) {\n        Ok(_) => {}\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            return 1\n        }\n    }\n    if added > 0 {\n        match append_file(\"./out/seen.txt\", ids) {\n            Ok(_) => {}\n            Err(e) => {\n                eprintln(\"cannot append: {e}\")\n                return 1\n            }\n        }\n    }\n    println(\"new: {to_str(added)}, skipped: {to_str(skipped)}\")\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "two runs",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          },
+          {
+            "example": "two runs",
+            "run": 2,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 404,
+  "tokens": null,
+  "tokens_reported": 0,
+  "token_budget": 50000
+}

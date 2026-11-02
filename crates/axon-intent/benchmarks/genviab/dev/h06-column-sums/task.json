@@ -1,0 +1,121 @@
+{
+ "id": "h06-column-sums",
+ "category": "errors",
+ "source": {
+  "kind": "model-authored dev task",
+  "note": "GV-4 dev headroom task written by the builder (LaneGvPy.GvAuthor) on 2026-11-02; dev only, never a once task (PREREG-genviab.md §4)"
+ },
+ "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+ "examples": {
+  "visible": [
+   {
+    "name": "ok",
+    "runs": [
+     {
+      "inputs": {
+       "./data/table.csv": "a,b\n1,2\n3,-4\n"
+      },
+      "outputs": {
+       "./out/sums.txt": "a=4\nb=-2\n"
+      },
+      "stdout": "rows: 2\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "ragged",
+    "runs": [
+     {
+      "inputs": {
+       "./data/table.csv": "a,b\n1,2,3\n"
+      },
+      "outputs": {},
+      "stdout": "line 2: expected 2 fields, got 3\n",
+      "exit": 3
+     }
+    ]
+   }
+  ],
+  "hidden": [
+   {
+    "name": "header only",
+    "runs": [
+     {
+      "inputs": {
+       "./data/table.csv": "x,y,z\n"
+      },
+      "outputs": {
+       "./out/sums.txt": "x=0\ny=0\nz=0\n"
+      },
+      "stdout": "rows: 0\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "first error wins",
+    "runs": [
+     {
+      "inputs": {
+       "./data/table.csv": "a,b\n1,2\n5,q\n1,2,3\n"
+      },
+      "outputs": {},
+      "stdout": "line 3: bad number \"q\"\n",
+      "exit": 4
+     }
+    ]
+   },
+   {
+    "name": "count before number",
+    "runs": [
+     {
+      "inputs": {
+       "./data/table.csv": "a,b\nx,y,z\n7,k\n"
+      },
+      "outputs": {},
+      "stdout": "line 2: expected 2 fields, got 3\n",
+      "exit": 3
+     }
+    ]
+   },
+   {
+    "name": "empty field",
+    "runs": [
+     {
+      "inputs": {
+       "./data/table.csv": "a,b\n1,\n"
+      },
+      "outputs": {},
+      "stdout": "line 2: bad number \"\"\n",
+      "exit": 4
+     }
+    ]
+   },
+   {
+    "name": "empty file",
+    "runs": [
+     {
+      "inputs": {
+       "./data/table.csv": ""
+      },
+      "outputs": {},
+      "stdout": "no header\n",
+      "exit": 2
+     }
+    ]
+   },
+   {
+    "name": "missing",
+    "runs": [
+     {
+      "inputs": {},
+      "outputs": {},
+      "stdout": "missing input\n",
+      "exit": 5
+     }
+    ]
+   }
+  ]
+ }
+}

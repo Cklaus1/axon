@@ -1,0 +1,114 @@
+{
+ "id": "h02-new-events",
+ "category": "stateful",
+ "source": {
+  "kind": "model-authored dev task",
+  "note": "GV-4 dev headroom task written by the builder (LaneGvPy.GvAuthor) on 2026-11-02; dev only, never a once task (PREREG-genviab.md §4)"
+ },
+ "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+ "examples": {
+  "visible": [
+   {
+    "name": "two runs",
+    "runs": [
+     {
+      "inputs": {
+       "./data/events.txt": "a,1\nb,2\n"
+      },
+      "outputs": {
+       "./out/new.txt": "a,1\nb,2\n",
+       "./out/seen.txt": "a\nb\n"
+      },
+      "stdout": "new: 2, skipped: 0\n",
+      "exit": 0
+     },
+     {
+      "inputs": {
+       "./data/events.txt": "b,3\nc,4\n"
+      },
+      "outputs": {
+       "./out/new.txt": "c,4\n",
+       "./out/seen.txt": "a\nb\nc\n"
+      },
+      "stdout": "new: 1, skipped: 1\n",
+      "exit": 0
+     }
+    ]
+   }
+  ],
+  "hidden": [
+   {
+    "name": "repeat within file",
+    "runs": [
+     {
+      "inputs": {
+       "./data/events.txt": "x,1\nx,2\ny,3\nx,4\n"
+      },
+      "outputs": {
+       "./out/new.txt": "x,1\ny,3\n",
+       "./out/seen.txt": "x\ny\n"
+      },
+      "stdout": "new: 2, skipped: 2\n",
+      "exit": 0
+     },
+     {
+      "inputs": {
+       "./data/events.txt": "y,9\n"
+      },
+      "outputs": {
+       "./out/new.txt": "",
+       "./out/seen.txt": "x\ny\n"
+      },
+      "stdout": "new: 0, skipped: 1\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "prior state",
+    "runs": [
+     {
+      "inputs": {
+       "./out/seen.txt": "k\n",
+       "./data/events.txt": "k,1\nm,a,b\n"
+      },
+      "outputs": {
+       "./out/new.txt": "m,a,b\n",
+       "./out/seen.txt": "k\nm\n"
+      },
+      "stdout": "new: 1, skipped: 1\n",
+      "exit": 0
+     },
+     {
+      "inputs": {
+       "./data/events.txt": ""
+      },
+      "outputs": {
+       "./out/new.txt": "",
+       "./out/seen.txt": "k\nm\n"
+      },
+      "stdout": "new: 0, skipped: 0\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "empty seen file",
+    "runs": [
+     {
+      "inputs": {
+       "./out/seen.txt": "",
+       "./data/events.txt": "q,1\nq,1\n"
+      },
+      "outputs": {
+       "./out/new.txt": "q,1\n",
+       "./out/seen.txt": "q\n"
+      },
+      "stdout": "new: 1, skipped: 1\n",
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ }
+}

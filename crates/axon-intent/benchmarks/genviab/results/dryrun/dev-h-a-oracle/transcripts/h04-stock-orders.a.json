@@ -1,0 +1,53 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Apply the orders in ./data/orders.txt to the stock in ./data/stock.txt and write the new stock to ./out/stock.txt. Every line of both files ends with a newline. stock.txt has lines `ITEM QTY` (one space, QTY a non-negative integer, each item once); orders.txt has lines `ITEM QTY`, applied in file order, each subtracting QTY from that item's current stock. Errors are checked line by line through orders.txt, so the first offending line decides: a line that is not exactly two fields separated by one space with QTY a positive integer prints `bad order: line N` and exits 2; an ITEM not in stock.txt prints `unknown item: ITEM (line N)` and exits 3; a QTY larger than the item's remaining stock prints `insufficient stock: ITEM (line N)` and exits 4, where N counts orders.txt lines from 1. If either file does not exist print `missing input` and exit 5. On any error write no file. On success write ./out/stock.txt with the stock.txt lines in their original order and format but updated quantities, print `applied K orders` where K is the number of lines in orders.txt, and exit 0. Every printed line ends with a newline.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "bf86bde4321ccd970bab0cd6df952f7ec5771b47085a90253757f5b9f36a12fc",
+      "candidate": "fn find(keys: &[str], k: str) -> i64 {\n    for i in 0..len(keys) {\n        if keys[i] == k {\n            return i\n        }\n    }\n    -1\n}\n\nfn main() -> i64 {\n    let stock_text = match read_file(\"./data/stock.txt\") {\n        Ok(t) => t\n        Err(_) => {\n            println(\"missing input\")\n            return 5\n        }\n    }\n    let order_text = match read_file(\"./data/orders.txt\") {\n        Ok(t) => t\n        Err(_) => {\n            println(\"missing input\")\n            return 5\n        }\n    }\n    let items: [str] = []\n    let qty: [i64] = []\n    let slines = str_split(stock_text, \"\\n\")\n    for i in 0..len(slines) - 1 {\n        let f = str_split(slines[i], \" \")\n        items = arr_push(items, f[0])\n        qty = arr_push(qty, parse_int_or(f[1], 0))\n    }\n    let olines = str_split(order_text, \"\\n\")\n    let n = len(olines) - 1\n    for i in 0..n {\n        let f = str_split(olines[i], \" \")\n        let q = if len(f) == 2 { parse_int_or(f[1], 0) } else { 0 }\n        if len(f) != 2 || q < 1 || len(f[0]) == 0 {\n            println(\"bad order: line {to_str(i + 1)}\")\n            return 2\n        }\n        let k = find(&items, f[0])\n        if k < 0 {\n            println(\"unknown item: {f[0]} (line {to_str(i + 1)})\")\n            return 3\n        }\n        if q > qty[k] {\n            println(\"insufficient stock: {f[0]} (line {to_str(i + 1)})\")\n            return 4\n        }\n        qty[k] = qty[k] - q\n    }\n    let out = \"\"\n    for i in 0..len(items) {\n        out = out + items[i] + \" \" + to_str(qty[i]) + \"\\n\"\n    }\n    match write_file(\"./out/stock.txt\", out) {\n        Ok(_) => {\n            println(\"applied {to_str(n)} orders\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 404,
+      "report": {
+        "stage": "accepted",
+        "source": "fn find(keys: &[str], k: str) -> i64 {\n    for i in 0..len(keys) {\n        if keys[i] == k {\n            return i\n        }\n    }\n    -1\n}\n\nfn main() -> i64 {\n    let stock_text = match read_file(\"./data/stock.txt\") {\n        Ok(t) => t\n        Err(_) => {\n            println(\"missing input\")\n            return 5\n        }\n    }\n    let order_text = match read_file(\"./data/orders.txt\") {\n        Ok(t) => t\n        Err(_) => {\n            println(\"missing input\")\n            return 5\n        }\n    }\n    let items: [str] = []\n    let qty: [i64] = []\n    let slines = str_split(stock_text, \"\\n\")\n    for i in 0..len(slines) - 1 {\n        let f = str_split(slines[i], \" \")\n        items = arr_push(items, f[0])\n        qty = arr_push(qty, parse_int_or(f[1], 0))\n    }\n    let olines = str_split(order_text, \"\\n\")\n    let n = len(olines) - 1\n    for i in 0..n {\n        let f = str_split(olines[i], \" \")\n        let q = if len(f) == 2 { parse_int_or(f[1], 0) } else { 0 }\n        if len(f) != 2 || q < 1 || len(f[0]) == 0 {\n            println(\"bad order: line {to_str(i + 1)}\")\n            return 2\n        }\n        let k = find(&items, f[0])\n        if k < 0 {\n            println(\"unknown item: {f[0]} (line {to_str(i + 1)})\")\n            return 3\n        }\n        if q > qty[k] {\n            println(\"insufficient stock: {f[0]} (line {to_str(i + 1)})\")\n            return 4\n        }\n        qty[k] = qty[k] - q\n    }\n    let out = \"\"\n    for i in 0..len(items) {\n        out = out + items[i] + \" \" + to_str(qty[i]) + \"\\n\"\n    }\n    match write_file(\"./out/stock.txt\", out) {\n        Ok(_) => {\n            println(\"applied {to_str(n)} orders\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "ok",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          },
+          {
+            "example": "unknown item",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 3",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 404,
+  "tokens": null,
+  "tokens_reported": 0,
+  "token_budget": 50000
+}

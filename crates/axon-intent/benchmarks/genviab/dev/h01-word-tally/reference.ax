@@ -1,0 +1,68 @@
+fn find(keys: &[str], k: str) -> i64 {
+    for i in 0..len(keys) {
+        if keys[i] == k {
+            return i
+        }
+    }
+    -1
+}
+
+fn main() -> i64 {
+    let keys: [str] = []
+    let counts: [i64] = []
+    match read_file("./out/tally.txt") {
+        Ok(state) => {
+            let lines = str_split(state, "\n")
+            for i in 0..len(lines) {
+                let line = lines[i]
+                let eq = str_index_of(line, "=")
+                if eq > 0 {
+                    keys = arr_push(keys, str_slice(line, 0, eq))
+                    counts = arr_push(counts, parse_int_or(str_slice(line, eq + 1, len(line)), 0))
+                }
+            }
+        }
+        Err(_) => {}
+    }
+    let text = match read_file("./data/words.txt") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 2
+        }
+    }
+    let lines = str_split(text, "\n")
+    for i in 0..len(lines) {
+        let words = str_split(lines[i], " ")
+        for j in 0..len(words) {
+            let w = str_to_lower(words[j])
+            if len(w) > 0 {
+                let k = find(&keys, w)
+                if k < 0 {
+                    keys = arr_push(keys, w)
+                    counts = arr_push(counts, 1)
+                } else {
+                    counts[k] = counts[k] + 1
+                }
+            }
+        }
+    }
+    let order = arr_sort_by(arr_range(0, len(keys)), |a, b| str_cmp(keys[a], keys[b]))
+    let out = ""
+    let total = 0
+    for t in 0..len(order) {
+        let i = order[t]
+        out = out + keys[i] + "=" + to_str(counts[i]) + "\n"
+        total = total + counts[i]
+    }
+    match write_file("./out/tally.txt", out) {
+        Ok(_) => {
+            println("total: {to_str(total)}")
+            0
+        }
+        Err(e) => {
+            eprintln("cannot write: {e}")
+            1
+        }
+    }
+}

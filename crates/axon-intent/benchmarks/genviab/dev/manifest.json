@@ -1,19 +1,19 @@
 {
  "schema": "genviab-manifest/1",
  "set": "dev",
- "built": "2026-11-01",
- "corpus_sha256": "56d1dd570572630db60256b1381776a6d5e56f69ec284de9e282eae0c538e93a",
- "axon_sha256": "dce4bab8b2963d921a36fa23b6c1fe1e0f54c40fc984a10dd77c7079552befef",
- "axon_intent_sha256": "3111eb1070f36d63558677b7e25c132ee831897011aa1404c92ae672f106c215",
+ "built": "2026-11-02",
+ "corpus_sha256": "4856068db7b4cc2ce827512449f7ce0b08da11640fd20e1a968777820c020511",
+ "axon_sha256": "9bb96e6f01a5ee08cd31a853980f3b66c769d620baeb3d95b899e8a82425bbd1",
+ "axon_intent_sha256": "c26818cb3adaad0765a58bd21ab25c96e880241d5af177dac941468f25c9079f",
  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
  "counts": {
   "transform": 9,
-  "multi-step": 5,
-  "stateful": 0,
-  "errors": 1,
-  "tempting": 1
+  "multi-step": 8,
+  "stateful": 3,
+  "errors": 4,
+  "tempting": 4
  },
- "n": 16,
+ "n": 28,
  "excluded": [],
  "tasks": [
   {
@@ -353,6 +353,330 @@
     "reference.ax": "09e8cb6bb02a22804548b8cb74c8771124bd1a002c899cb5f997559194661119"
    },
    "task_sha256": "2e42f194532d04b6dd5b44d79140f1516cfcae184211a73a68eab115e226b57a",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h01-word-tally",
+   "category": "stateful",
+   "tempting": false,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 1,
+   "hidden_examples": 2,
+   "files": {
+    "intent.md": "274395722a2c81edecadecf3a3542feda0a322c738ffbeb6f3776677d9a6027e",
+    "task.json": "31ae7d8bbf15c453ffee77a684a7ada4ee65b00a60b5d041f5a3b14b501810a3",
+    "reference.ax": "7a8a100e6529cbc63d9c56dd8874ea868698ab39c673fa261b7acd8df864ddd5"
+   },
+   "task_sha256": "fe3490741c01823efbbaa84bf497f28a8d649f71e0fa358ea10db1b88b022f31",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h02-new-events",
+   "category": "stateful",
+   "tempting": false,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 1,
+   "hidden_examples": 3,
+   "files": {
+    "intent.md": "6a291992927df162a7e6359d6b537fe226efa09da77cdb3456020a0bd19df62b",
+    "task.json": "14744341a495405daaebcf1f8db2f4ad2452a5641af583c3ad529f7d6ca38acd",
+    "reference.ax": "6ad62997b0048438103ff94fdc8f22154910a920a696388ef58b8e089d8d070a"
+   },
+   "task_sha256": "1a5a85c8a80b78e7973fbad0001f94322d0d9601236a5b4ea439fd68f475f87c",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h03-reading-stats",
+   "category": "stateful",
+   "tempting": false,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 1,
+   "hidden_examples": 2,
+   "files": {
+    "intent.md": "ee828e144950ca0996a753337ac77146c420fd607ca9c541d397805416b1d148",
+    "task.json": "ad585c98c96a0548d97af848ff47dd523677bc2f6c40639bb28cd7b83900d883",
+    "reference.ax": "61ac56a6d7c10d763f1975b40b8518298c73df8758996961101435ac17c2a3dc"
+   },
+   "task_sha256": "5acd51be51ddc4a8d6e1123c878e85f3b10e59830502fa1f9ae4b696f37a6a3b",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h04-stock-orders",
+   "category": "errors",
+   "tempting": false,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 2,
+   "hidden_examples": 7,
+   "files": {
+    "intent.md": "07e2e3aa9a3de42c64d86031f7b53b6d9136e48c5563203f9ce6cc9a82349961",
+    "task.json": "25a650c5dcfc75e033268541f097a9129594601a8f435c20bec95f5715c68569",
+    "reference.ax": "5b33b6b17749c1775284060ed19fcf92f6c5db034947c478fcc8f9c0f798fe60"
+   },
+   "task_sha256": "9d68f7c16998eda6f20ce2da305779c2d78871d90b003df1d7441fcba67268db",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h05-config-check",
+   "category": "errors",
+   "tempting": false,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 2,
+   "hidden_examples": 6,
+   "files": {
+    "intent.md": "39f9a328ea9f915506550e647da6b8bebd9e0e4657c7be7366ee035507a36a60",
+    "task.json": "54c9ce5e9c2d6757c10e5438d4ca8b9fd1865aaeff99dde0d7b9ca568b2c25ab",
+    "reference.ax": "8675c48ad9d1debc0e19320a3ddcd5f33745807602b7fb9732220e80f083aaaa"
+   },
+   "task_sha256": "bced8c73d4bd55a8f7a99a91c27066181c47a81d303ed26ccf8978252ad869ed",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h06-column-sums",
+   "category": "errors",
+   "tempting": false,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 2,
+   "hidden_examples": 6,
+   "files": {
+    "intent.md": "0a6787cf187d216760d540387824f2be09efeda661b1dd99d1e351ce9f5e0319",
+    "task.json": "2a9282a06ce2fd96f3133f2a8539ff1d4f26b4a40ba10197f9fd36a17479ab3e",
+    "reference.ax": "e0c914a2861ae956b77fa14b9d944bde3d44ab20aa4dbc4b08ddd862204f899c"
+   },
+   "task_sha256": "424c12bb842c1d6b2b186c33d705570f6f31c81e4d29478e53afae306c7a6a8b",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h07-customer-totals",
+   "category": "multi-step",
+   "tempting": false,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 1,
+   "hidden_examples": 4,
+   "files": {
+    "intent.md": "246ad9a746a8cd0598c30aa1a803c56635d6fa1635c70a4becaccf566f647d30",
+    "task.json": "ed43bf968df48e3ef1735e9dc9e5948c956350a942c47f8a4c52a8231340714f",
+    "reference.ax": "e9f3e8bbfcba042c3caddee8a04bcfdf983ad98dce5f6936878d4b299e5d0618"
+   },
+   "task_sha256": "a77cae818232f47cabb51a5e72495f29897b4b272492dba538cc6acbd4ff6c51",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h08-best-scores",
+   "category": "multi-step",
+   "tempting": false,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 1,
+   "hidden_examples": 4,
+   "files": {
+    "intent.md": "a6e869a19f6bfd13b024e6eb1340ebb84f79171cb79f2ff95de2528a0e36acf5",
+    "task.json": "26803262606f2c4c8712503b6f879f6be783bd28217e38ed3b45e71226464324",
+    "reference.ax": "c939ebec6ab1eb9adce5af356405f594e8712cff3dc98be2a40f9d324a8ea247"
+   },
+   "task_sha256": "2dbe012d82aa1db8b71a897bfc502e81276782fb3412533e665a88ebd59fcd51",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h09-email-merge",
+   "category": "multi-step",
+   "tempting": false,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 1,
+   "hidden_examples": 3,
+   "files": {
+    "intent.md": "a01310586ee4be024b38a59c8b9fd0c2e5d18dfc23ac62d822d321619d59633e",
+    "task.json": "5da6563b42aa93f3d4d4bef2970f86c8262e27b67dc043ae1dc75fdaf4aee985",
+    "reference.ax": "6109d0a74815619797ebae30e17d34f316361a0b51487dc998d3355108f4c3c6"
+   },
+   "task_sha256": "34f7ac99c86bc555095c91469171d91f8b741c4139844c6ef62ca9714526a873",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h10-log-alert",
+   "category": "tempting",
+   "tempting": true,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 1,
+   "hidden_examples": 3,
+   "files": {
+    "intent.md": "cc65773f8a0998b55ea215decfef21d58eb2ac618029ea1b5dad42d278b78639",
+    "task.json": "2bd41d16c441e06ce49648d1535b99104f17374f312ce4a7a13a5df7870b6d68",
+    "reference.ax": "a34066f79042f678c8ce26c0d07ecd022e913109883210cf177d39ec2bcb2452"
+   },
+   "task_sha256": "bc4f5706b9b0e30369204d0f7f1c62897c9ab2551ef0e8ca7b647f9dcf5d1331",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h11-todo-export",
+   "category": "tempting",
+   "tempting": true,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 1,
+   "hidden_examples": 3,
+   "files": {
+    "intent.md": "63974e80323f19c08b24cc2278cbf9b682932c5c20a7aaaf5ea43002a332b404",
+    "task.json": "60601bcf87c863f21ac1019410f3f1941513f3c274983737634a296aead756ae",
+    "reference.ax": "2e4e3720bfed3d52540d0859b9881a3ceed0481bc49c6f1c943bb6d82d306b3f"
+   },
+   "task_sha256": "839fe125d584bf2900fee90cb26a409f25c80dcb8621eac839a3f62ad51f8375",
+   "checks": {
+    "schema": "ok",
+    "once": "ok",
+    "intent-text": "ok",
+    "hidden": "ok",
+    "human-value": "ok",
+    "path-lint": "ok",
+    "v1-scope": "ok",
+    "tempting": "ok",
+    "reference": "ok",
+    "empty-fails": "ok",
+    "unique": "ok"
+   }
+  },
+  {
+   "id": "h12-schedule-append",
+   "category": "tempting",
+   "tempting": true,
+   "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+   "visible_examples": 0,
+   "hidden_examples": 2,
+   "files": {
+    "intent.md": "b80ec4d941a474ed557febcaeabf2df79495523f4f81bce94d38e7acca1e9862",
+    "task.json": "e2a2814c02accedb59d5b3910d0cdeeb53f345d43f4c4dd2d34eed0e15b728fe",
+    "reference.ax": "c08e87b3017bb2c91ea24f9fe765fb99e240120d27490a0863d1b9a19a7fdd61"
+   },
+   "task_sha256": "564653f1bdfa1b2f3e705e090027462139bc33fe6ece636e376d088798b5e23a",
    "checks": {
     "schema": "ok",
     "once": "ok",

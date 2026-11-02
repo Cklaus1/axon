@@ -1,0 +1,31 @@
+fn main() -> i64 {
+    let text = match read_file("./data/notes.txt") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 2
+        }
+    }
+    let lines = str_split(text, "\n")
+    let count = len(lines) - 1
+    let todos = 0
+    let texts: [str] = []
+    for i in 0..count {
+        let line = lines[i]
+        if str_starts_with(line, "TODO:") {
+            todos = todos + 1
+            let t = str_trim(str_slice(line, 5, len(line)))
+            if !arr_contains(texts, t) {
+                texts = arr_push(texts, t)
+            }
+        }
+    }
+    println("notes: {to_str(count)} lines, {to_str(todos)} todos")
+    for i in 0..len(texts) {
+        println(texts[i])
+    }
+    if todos > 0 {
+        println("todo file not written")
+    }
+    0
+}

@@ -1,0 +1,95 @@
+{
+ "id": "h07-customer-totals",
+ "category": "multi-step",
+ "source": {
+  "kind": "model-authored dev task",
+  "note": "GV-4 dev headroom task written by the builder (LaneGvPy.GvAuthor) on 2026-11-02; dev only, never a once task (PREREG-genviab.md §4)"
+ },
+ "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+ "examples": {
+  "visible": [
+   {
+    "name": "basic",
+    "runs": [
+     {
+      "inputs": {
+       "./data/customers.csv": "1,Ann\n2,Bob\n3,Cy\n",
+       "./data/orders.csv": "o1,1,30\no2,2,50\no3,1,5\n"
+      },
+      "outputs": {
+       "./out/report.txt": "Bob: 50\nAnn: 35\nunmatched: 0\n"
+      },
+      "stdout": "",
+      "exit": 0
+     }
+    ]
+   }
+  ],
+  "hidden": [
+   {
+    "name": "tie and unmatched",
+    "runs": [
+     {
+      "inputs": {
+       "./data/customers.csv": "7,Zed\n8,Amy\n9,Max\n",
+       "./data/orders.csv": "a,7,10\nb,8,4\nc,8,6\nd,5,99\nb,9,100\n"
+      },
+      "outputs": {
+       "./out/report.txt": "Amy: 10\nZed: 10\nunmatched: 1\n"
+      },
+      "stdout": "",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "duplicate customer",
+    "runs": [
+     {
+      "inputs": {
+       "./data/customers.csv": "1,First\n1,Second\n2,Bea\n",
+       "./data/orders.csv": "x,1,0\ny,2,3\nz,4,1\nw,4,2\n"
+      },
+      "outputs": {
+       "./out/report.txt": "Bea: 3\nFirst: 0\nunmatched: 2\n"
+      },
+      "stdout": "",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "numeric order",
+    "runs": [
+     {
+      "inputs": {
+       "./data/customers.csv": "1,A\n2,B\n",
+       "./data/orders.csv": "p,1,9\nq,2,10\n"
+      },
+      "outputs": {
+       "./out/report.txt": "B: 10\nA: 9\nunmatched: 0\n"
+      },
+      "stdout": "",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "no orders",
+    "runs": [
+     {
+      "inputs": {
+       "./data/customers.csv": "1,A\n",
+       "./data/orders.csv": ""
+      },
+      "outputs": {
+       "./out/report.txt": "unmatched: 0\n"
+      },
+      "stdout": "",
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ }
+}

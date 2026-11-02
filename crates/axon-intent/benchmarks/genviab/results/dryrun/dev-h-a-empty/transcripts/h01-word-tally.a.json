@@ -1,0 +1,147 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Keep a running word tally across runs. Each run reads ./data/words.txt, splits it into words on spaces and newlines (empty pieces are not words), lowercases every ASCII letter of each word, and adds each occurrence to the tally stored in ./out/tally.txt by the previous run; if ./out/tally.txt does not exist the tally starts empty, and an existing empty file is an empty tally. The tally file holds one line `word=count` per word, sorted by word in ascending byte order, every line ending in a newline (an empty tally is an empty file). Each run rewrites ./out/tally.txt with the updated tally, prints one line `total: N` followed by a newline, where N is the sum of all counts in the updated tally, and exits 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "f3c8ca7cfb8cb9dc545bee89e669796b394ee1d58165013ae451fc6d327d7282",
+      "candidate": "fn main() -> i64 {\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 303,
+      "report": {
+        "stage": "examples",
+        "source": "fn main() -> i64 {\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "two runs",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "output ./out/tally.txt: expected \"a=1\\nb=2\\n\", the file does not exist",
+              "stdout: expected \"total: 3\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": "The program type-checks but did not do what the examples expect:\nexample `two runs` run 1: exit 0\n  output ./out/tally.txt: expected \"a=1\\nb=2\\n\", the file does not exist\n  stdout: expected \"total: 3\\n\", got \"\"\n",
+        "infrastructure": null
+      }
+    },
+    {
+      "round": 1,
+      "prompt_sha256": "6828eb84904172e40d3cf3d67867c587bc0f31b819643b824adea82b42f5ed84",
+      "candidate": "fn main() -> i64 {\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 302,
+      "report": {
+        "stage": "examples",
+        "source": "fn main() -> i64 {\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "two runs",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "output ./out/tally.txt: expected \"a=1\\nb=2\\n\", the file does not exist",
+              "stdout: expected \"total: 3\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": "The program type-checks but did not do what the examples expect:\nexample `two runs` run 1: exit 0\n  output ./out/tally.txt: expected \"a=1\\nb=2\\n\", the file does not exist\n  stdout: expected \"total: 3\\n\", got \"\"\n",
+        "infrastructure": null
+      }
+    },
+    {
+      "round": 2,
+      "prompt_sha256": "6828eb84904172e40d3cf3d67867c587bc0f31b819643b824adea82b42f5ed84",
+      "candidate": "fn main() -> i64 {\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 302,
+      "report": {
+        "stage": "examples",
+        "source": "fn main() -> i64 {\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "two runs",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "output ./out/tally.txt: expected \"a=1\\nb=2\\n\", the file does not exist",
+              "stdout: expected \"total: 3\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": "The program type-checks but did not do what the examples expect:\nexample `two runs` run 1: exit 0\n  output ./out/tally.txt: expected \"a=1\\nb=2\\n\", the file does not exist\n  stdout: expected \"total: 3\\n\", got \"\"\n",
+        "infrastructure": null
+      }
+    },
+    {
+      "round": 3,
+      "prompt_sha256": "6828eb84904172e40d3cf3d67867c587bc0f31b819643b824adea82b42f5ed84",
+      "candidate": "fn main() -> i64 {\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 302,
+      "report": {
+        "stage": "examples",
+        "source": "fn main() -> i64 {\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "two runs",
+            "run": 1,
+            "passed": false,
+            "ended": "exit 0",
+            "diffs": [
+              "output ./out/tally.txt: expected \"a=1\\nb=2\\n\", the file does not exist",
+              "stdout: expected \"total: 3\\n\", got \"\""
+            ],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": "The program type-checks but did not do what the examples expect:\nexample `two runs` run 1: exit 0\n  output ./out/tally.txt: expected \"a=1\\nb=2\\n\", the file does not exist\n  stdout: expected \"total: 3\\n\", got \"\"\n",
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "exhausted",
+  "wall_ms": 1210,
+  "tokens": null,
+  "tokens_reported": 0,
+  "token_budget": 50000
+}

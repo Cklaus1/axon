@@ -1,0 +1,53 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Keep a running word tally across runs. Each run reads ./data/words.txt, splits it into words on spaces and newlines (empty pieces are not words), lowercases every ASCII letter of each word, and adds each occurrence to the tally stored in ./out/tally.txt by the previous run; if ./out/tally.txt does not exist the tally starts empty, and an existing empty file is an empty tally. The tally file holds one line `word=count` per word, sorted by word in ascending byte order, every line ending in a newline (an empty tally is an empty file). Each run rewrites ./out/tally.txt with the updated tally, prints one line `total: N` followed by a newline, where N is the sum of all counts in the updated tally, and exits 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "f3c8ca7cfb8cb9dc545bee89e669796b394ee1d58165013ae451fc6d327d7282",
+      "candidate": "fn find(keys: &[str], k: str) -> i64 {\n    for i in 0..len(keys) {\n        if keys[i] == k {\n            return i\n        }\n    }\n    -1\n}\n\nfn main() -> i64 {\n    let keys: [str] = []\n    let counts: [i64] = []\n    match read_file(\"./out/tally.txt\") {\n        Ok(state) => {\n            let lines = str_split(state, \"\\n\")\n            for i in 0..len(lines) {\n                let line = lines[i]\n                let eq = str_index_of(line, \"=\")\n                if eq > 0 {\n                    keys = arr_push(keys, str_slice(line, 0, eq))\n                    counts = arr_push(counts, parse_int_or(str_slice(line, eq + 1, len(line)), 0))\n                }\n            }\n        }\n        Err(_) => {}\n    }\n    let text = match read_file(\"./data/words.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) {\n        let words = str_split(lines[i], \" \")\n        for j in 0..len(words) {\n            let w = str_to_lower(words[j])\n            if len(w) > 0 {\n                let k = find(&keys, w)\n                if k < 0 {\n                    keys = arr_push(keys, w)\n                    counts = arr_push(counts, 1)\n                } else {\n                    counts[k] = counts[k] + 1\n                }\n            }\n        }\n    }\n    let order = arr_sort_by(arr_range(0, len(keys)), |a, b| str_cmp(keys[a], keys[b]))\n    let out = \"\"\n    let total = 0\n    for t in 0..len(order) {\n        let i = order[t]\n        out = out + keys[i] + \"=\" + to_str(counts[i]) + \"\\n\"\n        total = total + counts[i]\n    }\n    match write_file(\"./out/tally.txt\", out) {\n        Ok(_) => {\n            println(\"total: {to_str(total)}\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 404,
+      "report": {
+        "stage": "accepted",
+        "source": "fn find(keys: &[str], k: str) -> i64 {\n    for i in 0..len(keys) {\n        if keys[i] == k {\n            return i\n        }\n    }\n    -1\n}\n\nfn main() -> i64 {\n    let keys: [str] = []\n    let counts: [i64] = []\n    match read_file(\"./out/tally.txt\") {\n        Ok(state) => {\n            let lines = str_split(state, \"\\n\")\n            for i in 0..len(lines) {\n                let line = lines[i]\n                let eq = str_index_of(line, \"=\")\n                if eq > 0 {\n                    keys = arr_push(keys, str_slice(line, 0, eq))\n                    counts = arr_push(counts, parse_int_or(str_slice(line, eq + 1, len(line)), 0))\n                }\n            }\n        }\n        Err(_) => {}\n    }\n    let text = match read_file(\"./data/words.txt\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let lines = str_split(text, \"\\n\")\n    for i in 0..len(lines) {\n        let words = str_split(lines[i], \" \")\n        for j in 0..len(words) {\n            let w = str_to_lower(words[j])\n            if len(w) > 0 {\n                let k = find(&keys, w)\n                if k < 0 {\n                    keys = arr_push(keys, w)\n                    counts = arr_push(counts, 1)\n                } else {\n                    counts[k] = counts[k] + 1\n                }\n            }\n        }\n    }\n    let order = arr_sort_by(arr_range(0, len(keys)), |a, b| str_cmp(keys[a], keys[b]))\n    let out = \"\"\n    let total = 0\n    for t in 0..len(order) {\n        let i = order[t]\n        out = out + keys[i] + \"=\" + to_str(counts[i]) + \"\\n\"\n        total = total + counts[i]\n    }\n    match write_file(\"./out/tally.txt\", out) {\n        Ok(_) => {\n            println(\"total: {to_str(total)}\")\n            0\n        }\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "two runs",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          },
+          {
+            "example": "two runs",
+            "run": 2,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 404,
+  "tokens": null,
+  "tokens_reported": 0,
+  "token_budget": 50000
+}

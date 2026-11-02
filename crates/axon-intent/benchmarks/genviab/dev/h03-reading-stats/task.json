@@ -1,0 +1,91 @@
+{
+ "id": "h03-reading-stats",
+ "category": "stateful",
+ "source": {
+  "kind": "model-authored dev task",
+  "note": "GV-4 dev headroom task written by the builder (LaneGvPy.GvAuthor) on 2026-11-02; dev only, never a once task (PREREG-genviab.md §4)"
+ },
+ "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+ "examples": {
+  "visible": [
+   {
+    "name": "two runs",
+    "runs": [
+     {
+      "inputs": {
+       "./data/readings.txt": "4\n10\n"
+      },
+      "outputs": {
+       "./out/stats.txt": "2 14 4 10\n"
+      },
+      "stdout": "count=2 sum=14 min=4 max=10 mean=7\n",
+      "exit": 0
+     },
+     {
+      "inputs": {
+       "./data/readings.txt": "1\n"
+      },
+      "outputs": {
+       "./out/stats.txt": "3 15 1 10\n"
+      },
+      "stdout": "count=3 sum=15 min=1 max=10 mean=5\n",
+      "exit": 0
+     }
+    ]
+   }
+  ],
+  "hidden": [
+   {
+    "name": "nothing yet",
+    "runs": [
+     {
+      "inputs": {
+       "./data/readings.txt": ""
+      },
+      "outputs": {
+       "./out/stats.txt": "0 0 0 0\n"
+      },
+      "stdout": "no readings\n",
+      "exit": 0
+     },
+     {
+      "inputs": {
+       "./data/readings.txt": "-3\n-4\n"
+      },
+      "outputs": {
+       "./out/stats.txt": "2 -7 -4 -3\n"
+      },
+      "stdout": "count=2 sum=-7 min=-4 max=-3 mean=-3\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "staged state",
+    "runs": [
+     {
+      "inputs": {
+       "./out/stats.txt": "3 30 5 15\n",
+       "./data/readings.txt": "20\n"
+      },
+      "outputs": {
+       "./out/stats.txt": "4 50 5 20\n"
+      },
+      "stdout": "count=4 sum=50 min=5 max=20 mean=12\n",
+      "exit": 0
+     },
+     {
+      "inputs": {
+       "./data/readings.txt": ""
+      },
+      "outputs": {
+       "./out/stats.txt": "4 50 5 20\n"
+      },
+      "stdout": "count=4 sum=50 min=5 max=20 mean=12\n",
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ }
+}

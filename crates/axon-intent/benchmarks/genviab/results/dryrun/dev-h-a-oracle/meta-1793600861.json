@@ -1,0 +1,20 @@
+{
+ "set": "dev",
+ "arm": "a",
+ "generator": "oracle",
+ "model": null,
+ "effort": null,
+ "max_repair_rounds": 3,
+ "manifest_sha256": "27d6191878a59fafbe29f691339b8a46d3dd3b083e303772869b5de24544fad1",
+ "corpus_sha256": "4856068db7b4cc2ce827512449f7ce0b08da11640fd20e1a968777820c020511",
+ "git_head": "566120318f2572f3959438a03047184eccd0e55a",
+ "axon_sha256": "9bb96e6f01a5ee08cd31a853980f3b66c769d620baeb3d95b899e8a82425bbd1",
+ "axon_intent_sha256": "c26818cb3adaad0765a58bd21ab25c96e880241d5af177dac941468f25c9079f",
+ "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+ "driver_sha256": "b23dd710bac7c2562debde943dff088e8c42b0977221e6cbc148b6d9f1a83bea",
+ "micode_version": null,
+ "cost_basis": null,
+ "bwrap": null,
+ "ledger": null,
+ "started": "2026-11-02T06:27:41+00:00"
+}

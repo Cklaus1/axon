@@ -1,0 +1,123 @@
+{
+ "id": "h05-config-check",
+ "category": "errors",
+ "source": {
+  "kind": "model-authored dev task",
+  "note": "GV-4 dev headroom task written by the builder (LaneGvPy.GvAuthor) on 2026-11-02; dev only, never a once task (PREREG-genviab.md §4)"
+ },
+ "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+ "examples": {
+  "visible": [
+   {
+    "name": "ok",
+    "runs": [
+     {
+      "inputs": {
+       "./data/app.conf": "# demo\nname = web\n\nport=8080\n"
+      },
+      "outputs": {
+       "./out/app.conf": "name=web\nport=8080\n"
+      },
+      "stdout": "ok: 2 keys\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "no name",
+    "runs": [
+     {
+      "inputs": {
+       "./data/app.conf": "port=1\n"
+      },
+      "outputs": {},
+      "stdout": "missing key: name\n",
+      "exit": 5
+     }
+    ]
+   }
+  ],
+  "hidden": [
+   {
+    "name": "first error wins",
+    "runs": [
+     {
+      "inputs": {
+       "./data/app.conf": "name=a\nport=70000\nname=b\nbroken\n"
+      },
+      "outputs": {},
+      "stdout": "bad port: line 2\n",
+      "exit": 4
+     }
+    ]
+   },
+   {
+    "name": "empty key",
+    "runs": [
+     {
+      "inputs": {
+       "./data/app.conf": "name=x\n =v\nport=0\n"
+      },
+      "outputs": {},
+      "stdout": "syntax error: line 2\n",
+      "exit": 2
+     }
+    ]
+   },
+   {
+    "name": "duplicate after comment",
+    "runs": [
+     {
+      "inputs": {
+       "./data/app.conf": "#c\nport=80\n\nPort=1\nport=81\nname=n\n"
+      },
+      "outputs": {},
+      "stdout": "duplicate key: port (line 5)\n",
+      "exit": 3
+     }
+    ]
+   },
+   {
+    "name": "sorted with extras",
+    "runs": [
+     {
+      "inputs": {
+       "./data/app.conf": "name=svc\nzeta = 1 2 \nport= 443\nalpha=\nurl=a=b\n"
+      },
+      "outputs": {
+       "./out/app.conf": "alpha=\nname=svc\nport=443\nurl=a=b\nzeta=1 2\n"
+      },
+      "stdout": "ok: 5 keys\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "missing port",
+    "runs": [
+     {
+      "inputs": {
+       "./data/app.conf": "name=a\n"
+      },
+      "outputs": {},
+      "stdout": "missing key: port\n",
+      "exit": 5
+     }
+    ]
+   },
+   {
+    "name": "only comments",
+    "runs": [
+     {
+      "inputs": {
+       "./data/app.conf": "# x\n\n"
+      },
+      "outputs": {},
+      "stdout": "missing key: name\n",
+      "exit": 5
+     }
+    ]
+   }
+  ]
+ }
+}

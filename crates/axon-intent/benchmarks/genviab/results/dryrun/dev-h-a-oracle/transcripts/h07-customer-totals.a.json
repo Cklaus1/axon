@@ -1,0 +1,45 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Join ./data/customers.csv and ./data/orders.csv into a spending report. Every line of both files ends with a newline and neither has a header. customers.csv lines are `id,name`; if an id appears on more than one line, the first such line wins. orders.csv lines are `order_id,customer_id,amount` with amount a non-negative integer; an order_id that appears on more than one line counts only at its first line. Write ./out/report.txt with one line `NAME: TOTAL` for each customer that has at least one counted order, where TOTAL is the sum of the amounts of that customer's counted orders, sorted by TOTAL descending (as numbers) and, for equal totals, by NAME in ascending byte order; then a last line `unmatched: U`, where U is the number of counted orders whose customer_id is not an id in customers.csv. Every line ends with a newline. Print nothing and exit 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "7446b2016524d4b4e8d8a7d7e78a4115f7857e5489da74af3e975b9697bee4ab",
+      "candidate": "fn find(keys: &[str], k: str) -> i64 {\n    for i in 0..len(keys) {\n        if keys[i] == k {\n            return i\n        }\n    }\n    -1\n}\n\nfn main() -> i64 {\n    let ctext = match read_file(\"./data/customers.csv\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let otext = match read_file(\"./data/orders.csv\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let ids: [str] = []\n    let names: [str] = []\n    let totals: [i64] = []\n    let used: [bool] = []\n    let clines = str_split(ctext, \"\\n\")\n    for i in 0..len(clines) - 1 {\n        let line = clines[i]\n        let comma = str_index_of(line, \",\")\n        let id = str_slice(line, 0, comma)\n        if find(&ids, id) < 0 {\n            ids = arr_push(ids, id)\n            names = arr_push(names, str_slice(line, comma + 1, len(line)))\n            totals = arr_push(totals, 0)\n            used = arr_push(used, false)\n        }\n    }\n    let seen: [str] = []\n    let unmatched = 0\n    let olines = str_split(otext, \"\\n\")\n    for i in 0..len(olines) - 1 {\n        let f = str_split(olines[i], \",\")\n        if arr_contains(seen, f[0]) {\n            continue\n        }\n        seen = arr_push(seen, f[0])\n        let k = find(&ids, f[1])\n        if k < 0 {\n            unmatched = unmatched + 1\n        } else {\n            totals[k] = totals[k] + parse_int_or(f[2], 0)\n            used[k] = true\n        }\n    }\n    let idx = arr_filter(arr_range(0, len(ids)), |i| used[i])\n    let order = arr_sort_by(idx, |a, b| if totals[a] != totals[b] { totals[b] - totals[a] } else { str_cmp(names[a], names[b]) })\n    let out = \"\"\n    for t in 0..len(order) {\n        out = out + names[order[t]] + \": \" + to_str(totals[order[t]]) + \"\\n\"\n    }\n    out = out + \"unmatched: \" + to_str(unmatched) + \"\\n\"\n    match write_file(\"./out/report.txt\", out) {\n        Ok(_) => 0\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 303,
+      "report": {
+        "stage": "accepted",
+        "source": "fn find(keys: &[str], k: str) -> i64 {\n    for i in 0..len(keys) {\n        if keys[i] == k {\n            return i\n        }\n    }\n    -1\n}\n\nfn main() -> i64 {\n    let ctext = match read_file(\"./data/customers.csv\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let otext = match read_file(\"./data/orders.csv\") {\n        Ok(t) => t\n        Err(e) => {\n            eprintln(\"cannot read: {e}\")\n            return 2\n        }\n    }\n    let ids: [str] = []\n    let names: [str] = []\n    let totals: [i64] = []\n    let used: [bool] = []\n    let clines = str_split(ctext, \"\\n\")\n    for i in 0..len(clines) - 1 {\n        let line = clines[i]\n        let comma = str_index_of(line, \",\")\n        let id = str_slice(line, 0, comma)\n        if find(&ids, id) < 0 {\n            ids = arr_push(ids, id)\n            names = arr_push(names, str_slice(line, comma + 1, len(line)))\n            totals = arr_push(totals, 0)\n            used = arr_push(used, false)\n        }\n    }\n    let seen: [str] = []\n    let unmatched = 0\n    let olines = str_split(otext, \"\\n\")\n    for i in 0..len(olines) - 1 {\n        let f = str_split(olines[i], \",\")\n        if arr_contains(seen, f[0]) {\n            continue\n        }\n        seen = arr_push(seen, f[0])\n        let k = find(&ids, f[1])\n        if k < 0 {\n            unmatched = unmatched + 1\n        } else {\n            totals[k] = totals[k] + parse_int_or(f[2], 0)\n            used[k] = true\n        }\n    }\n    let idx = arr_filter(arr_range(0, len(ids)), |i| used[i])\n    let order = arr_sort_by(idx, |a, b| if totals[a] != totals[b] { totals[b] - totals[a] } else { str_cmp(names[a], names[b]) })\n    let out = \"\"\n    for t in 0..len(order) {\n        out = out + names[order[t]] + \": \" + to_str(totals[order[t]]) + \"\\n\"\n    }\n    out = out + \"unmatched: \" + to_str(unmatched) + \"\\n\"\n    match write_file(\"./out/report.txt\", out) {\n        Ok(_) => 0\n        Err(e) => {\n            eprintln(\"cannot write: {e}\")\n            1\n        }\n    }\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [
+          {
+            "example": "basic",
+            "run": 1,
+            "passed": true,
+            "ended": "exit 0",
+            "diffs": [],
+            "stderr_tail": ""
+          }
+        ],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 303,
+  "tokens": null,
+  "tokens_reported": 0,
+  "token_budget": 50000
+}

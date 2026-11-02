@@ -1,0 +1,59 @@
+fn main() -> i64 {
+    let c = 0
+    let s = 0
+    let lo = 0
+    let hi = 0
+    match read_file("./out/stats.txt") {
+        Ok(state) => {
+            let f = str_split(str_trim(state), " ")
+            if len(f) == 4 {
+                c = parse_int_or(f[0], 0)
+                s = parse_int_or(f[1], 0)
+                lo = parse_int_or(f[2], 0)
+                hi = parse_int_or(f[3], 0)
+            }
+        }
+        Err(_) => {}
+    }
+    let text = match read_file("./data/readings.txt") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 2
+        }
+    }
+    let lines = str_split(text, "\n")
+    for i in 0..len(lines) - 1 {
+        match parse_int(lines[i]) {
+            Ok(v) => {
+                if c == 0 {
+                    lo = v
+                    hi = v
+                } else {
+                    lo = min_i64(lo, v)
+                    hi = max_i64(hi, v)
+                }
+                c = c + 1
+                s = s + v
+            }
+            Err(e) => {
+                eprintln("bad reading: {e}")
+                return 2
+            }
+        }
+    }
+    let state = "{to_str(c)} {to_str(s)} {to_str(lo)} {to_str(hi)}\n"
+    match write_file("./out/stats.txt", state) {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln("cannot write: {e}")
+            return 1
+        }
+    }
+    if c == 0 {
+        println("no readings")
+    } else {
+        println("count={to_str(c)} sum={to_str(s)} min={to_str(lo)} max={to_str(hi)} mean={to_str(s / c)}")
+    }
+    0
+}

@@ -1,0 +1,55 @@
+fn main() -> i64 {
+    let seen: [str] = []
+    match read_file("./out/seen.txt") {
+        Ok(state) => {
+            let lines = str_split(state, "\n")
+            for i in 0..len(lines) - 1 {
+                seen = arr_push(seen, lines[i])
+            }
+        }
+        Err(_) => {}
+    }
+    let text = match read_file("./data/events.txt") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 2
+        }
+    }
+    let lines = str_split(text, "\n")
+    let fresh = ""
+    let ids = ""
+    let added = 0
+    let skipped = 0
+    for i in 0..len(lines) - 1 {
+        let line = lines[i]
+        let comma = str_index_of(line, ",")
+        let id = if comma < 0 { line } else { str_slice(line, 0, comma) }
+        if arr_contains(seen, id) {
+            skipped = skipped + 1
+        } else {
+            fresh = fresh + line + "\n"
+            ids = ids + id + "\n"
+            seen = arr_push(seen, id)
+            added = added + 1
+        }
+    }
+    match write_file("./out/new.txt", fresh) {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln("cannot write: {e}")
+            return 1
+        }
+    }
+    if added > 0 {
+        match append_file("./out/seen.txt", ids) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln("cannot append: {e}")
+                return 1
+            }
+        }
+    }
+    println("new: {to_str(added)}, skipped: {to_str(skipped)}")
+    0
+}

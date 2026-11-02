@@ -1,0 +1,66 @@
+fn main() -> i64 {
+    let text = match read_file("./data/app.conf") {
+        Ok(t) => t
+        Err(e) => {
+            eprintln("cannot read: {e}")
+            return 1
+        }
+    }
+    let keys: [str] = []
+    let vals: [str] = []
+    let lines = str_split(text, "\n")
+    for i in 0..len(lines) - 1 {
+        let line = lines[i]
+        let n = to_str(i + 1)
+        if len(line) == 0 || str_starts_with(line, "#") {
+            continue
+        }
+        let eq = str_index_of(line, "=")
+        if eq < 0 {
+            println("syntax error: line {n}")
+            return 2
+        }
+        let key = str_trim(str_slice(line, 0, eq))
+        let val = str_trim(str_slice(line, eq + 1, len(line)))
+        if len(key) == 0 {
+            println("syntax error: line {n}")
+            return 2
+        }
+        if arr_contains(keys, key) {
+            println("duplicate key: {key} (line {n})")
+            return 3
+        }
+        if key == "port" {
+            let p = parse_int_or(val, 0)
+            if p < 1 || p > 65535 {
+                println("bad port: line {n}")
+                return 4
+            }
+        }
+        keys = arr_push(keys, key)
+        vals = arr_push(vals, val)
+    }
+    if !arr_contains(keys, "name") {
+        println("missing key: name")
+        return 5
+    }
+    if !arr_contains(keys, "port") {
+        println("missing key: port")
+        return 5
+    }
+    let order = arr_sort_by(arr_range(0, len(keys)), |a, b| str_cmp(keys[a], keys[b]))
+    let out = ""
+    for t in 0..len(order) {
+        out = out + keys[order[t]] + "=" + vals[order[t]] + "\n"
+    }
+    match write_file("./out/app.conf", out) {
+        Ok(_) => {
+            println("ok: {to_str(len(keys))} keys")
+            0
+        }
+        Err(e) => {
+            eprintln("cannot write: {e}")
+            1
+        }
+    }
+}

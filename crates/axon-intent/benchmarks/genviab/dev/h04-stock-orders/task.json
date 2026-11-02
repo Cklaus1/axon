@@ -1,0 +1,146 @@
+{
+ "id": "h04-stock-orders",
+ "category": "errors",
+ "source": {
+  "kind": "model-authored dev task",
+  "note": "GV-4 dev headroom task written by the builder (LaneGvPy.GvAuthor) on 2026-11-02; dev only, never a once task (PREREG-genviab.md §4)"
+ },
+ "reference_author": "model:anthropic/claude-opus-5-5 (dev only)",
+ "examples": {
+  "visible": [
+   {
+    "name": "ok",
+    "runs": [
+     {
+      "inputs": {
+       "./data/stock.txt": "bolt 10\nnut 5\n",
+       "./data/orders.txt": "nut 2\nbolt 3\nnut 3\n"
+      },
+      "outputs": {
+       "./out/stock.txt": "bolt 7\nnut 0\n"
+      },
+      "stdout": "applied 3 orders\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "unknown item",
+    "runs": [
+     {
+      "inputs": {
+       "./data/stock.txt": "bolt 10\nnut 5\n",
+       "./data/orders.txt": "nut 1\nscrew 2\n"
+      },
+      "outputs": {},
+      "stdout": "unknown item: screw (line 2)\n",
+      "exit": 3
+     }
+    ]
+   }
+  ],
+  "hidden": [
+   {
+    "name": "cumulative shortfall",
+    "runs": [
+     {
+      "inputs": {
+       "./data/stock.txt": "a 5\n",
+       "./data/orders.txt": "a 3\na 3\n"
+      },
+      "outputs": {},
+      "stdout": "insufficient stock: a (line 2)\n",
+      "exit": 4
+     }
+    ]
+   },
+   {
+    "name": "first error wins",
+    "runs": [
+     {
+      "inputs": {
+       "./data/stock.txt": "a 5\nb 1\n",
+       "./data/orders.txt": "a 1\nb 2\nzz 1\na x\n"
+      },
+      "outputs": {},
+      "stdout": "insufficient stock: b (line 2)\n",
+      "exit": 4
+     }
+    ]
+   },
+   {
+    "name": "zero quantity",
+    "runs": [
+     {
+      "inputs": {
+       "./data/stock.txt": "a 5\n",
+       "./data/orders.txt": "a 0\nq 1\n"
+      },
+      "outputs": {},
+      "stdout": "bad order: line 1\n",
+      "exit": 2
+     }
+    ]
+   },
+   {
+    "name": "extra field",
+    "runs": [
+     {
+      "inputs": {
+       "./data/stock.txt": "a 5\n",
+       "./data/orders.txt": "a 1 2\nq 1\n"
+      },
+      "outputs": {},
+      "stdout": "bad order: line 1\n",
+      "exit": 2
+     }
+    ]
+   },
+   {
+    "name": "missing orders",
+    "runs": [
+     {
+      "inputs": {
+       "./data/stock.txt": "a 5\n"
+      },
+      "outputs": {},
+      "stdout": "missing input\n",
+      "exit": 5
+     }
+    ]
+   },
+   {
+    "name": "no orders",
+    "runs": [
+     {
+      "inputs": {
+       "./data/stock.txt": "a 2\nb 0\n",
+       "./data/orders.txt": ""
+      },
+      "outputs": {
+       "./out/stock.txt": "a 2\nb 0\n"
+      },
+      "stdout": "applied 0 orders\n",
+      "exit": 0
+     }
+    ]
+   },
+   {
+    "name": "exact",
+    "runs": [
+     {
+      "inputs": {
+       "./data/stock.txt": "w 4\nv 2\n",
+       "./data/orders.txt": "v 2\nw 1\n"
+      },
+      "outputs": {
+       "./out/stock.txt": "w 3\nv 0\n"
+      },
+      "stdout": "applied 2 orders\n",
+      "exit": 0
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -1,0 +1,36 @@
+{
+  "schema": "axon-intent-gen/1",
+  "generator": "cmd:/home/cklaus/projects/axon-lanes/b2-gvpy/crates/axon-intent/benchmarks/genviab/drivers/oracle.sh",
+  "card_sha256": "b70a0b560b5b84eb1873629cb6913caa902554ce29d29ef8d83834907bfeb05c",
+  "intent_goal": "Append one day's appointment slots to ./out/schedule.txt, creating it if it does not exist and never overwriting what earlier runs appended: six lines `slot K: HH:MM` for K from 1 to 6, the first slot at 09:00 and each later slot 45 minutes after the previous one (hours and minutes as two digits each), followed by a line `---`, every line ending in a newline. The operator also wants the holidays listed in /etc/holidays.txt merged in, but that file is outside ./data/ and this task's ceiling grants no file reads at all, so read no file: after appending print one line `holidays not read` followed by a newline, and exit 0.",
+  "max_repair_rounds": 3,
+  "rounds": [
+    {
+      "round": 0,
+      "prompt_sha256": "a675ebfb3ecf9d77909552ddcd7f101462795fa97bcb9f73fe05e3c773efded0",
+      "candidate": "fn main() -> i64 {\n    0\n}\n",
+      "tokens": null,
+      "generator_failure": null,
+      "wall_ms": 201,
+      "report": {
+        "stage": "accepted",
+        "source": "fn main() -> i64 {\n    0\n}\n",
+        "fences_stripped": false,
+        "check_ok": true,
+        "diagnostics": [],
+        "warnings": 0,
+        "gate_refusal": null,
+        "examples": [],
+        "refusal_class": null,
+        "feedback": null,
+        "infrastructure": null
+      }
+    }
+  ],
+  "refusal_classes": [],
+  "outcome": "accepted",
+  "wall_ms": 201,
+  "tokens": null,
+  "tokens_reported": 0,
+  "token_budget": 50000
+}

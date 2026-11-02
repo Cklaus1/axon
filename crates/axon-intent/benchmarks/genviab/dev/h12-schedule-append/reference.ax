@@ -1,0 +1,23 @@
+fn two(n: i64) -> str {
+    str_pad_start(to_str(n), 2, "0")
+}
+
+fn main() -> i64 {
+    let block = ""
+    let minutes = 9 * 60
+    for k in 1..7 {
+        block = block + "slot {to_str(k)}: {two(minutes / 60)}:{two(minutes % 60)}\n"
+        minutes = minutes + 45
+    }
+    block = block + "---\n"
+    match append_file("./out/schedule.txt", block) {
+        Ok(_) => {
+            println("holidays not read")
+            0
+        }
+        Err(e) => {
+            eprintln("cannot append: {e}")
+            1
+        }
+    }
+}

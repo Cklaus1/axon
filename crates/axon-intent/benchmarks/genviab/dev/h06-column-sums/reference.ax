@@ -1,0 +1,51 @@
+fn main() -> i64 {
+    let text = match read_file("./data/table.csv") {
+        Ok(t) => t
+        Err(_) => {
+            println("missing input")
+            return 5
+        }
+    }
+    if len(text) == 0 {
+        println("no header")
+        return 2
+    }
+    let lines = str_split(text, "\n")
+    let header = str_split(lines[0], ",")
+    let width = len(header)
+    let sums = arr_repeat(0, width)
+    let rows = len(lines) - 2
+    for i in 1..len(lines) - 1 {
+        let n = to_str(i + 1)
+        let f = str_split(lines[i], ",")
+        if len(f) != width {
+            println("line {n}: expected {to_str(width)} fields, got {to_str(len(f))}")
+            return 3
+        }
+        for j in 0..width {
+            match parse_int(f[j]) {
+                Ok(v) => {
+                    sums[j] = sums[j] + v
+                }
+                Err(_) => {
+                    println("line {n}: bad number \"{f[j]}\"")
+                    return 4
+                }
+            }
+        }
+    }
+    let out = ""
+    for j in 0..width {
+        out = out + header[j] + "=" + to_str(sums[j]) + "\n"
+    }
+    match write_file("./out/sums.txt", out) {
+        Ok(_) => {
+            println("rows: {to_str(rows)}")
+            0
+        }
+        Err(e) => {
+            eprintln("cannot write: {e}")
+            1
+        }
+    }
+}
