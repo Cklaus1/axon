@@ -1,6 +1,6 @@
 # ceilings - DRAFT spec
 
-**Status: PARTIAL 2026-11-02 on b2/ce d9ad9086 (CE-1 built; the rest in progress; O-HI-03 open).**
+**Status: PARTIAL 2026-11-02 on b2/ce d93f5d0d (CE-1, CE-7 built; the rest in progress; O-HI-03 open).**
 
 Author: `Ceilings` (2026-11-01), base `main` a5310878 (worktree `/home/cklaus/projects/axon-lanes/asi-next`, branch `asi/next`).
 Reference binary: `/var/tmp/r51-tmp/asi-bin/axon` (`axon 0.1.0 (a5310878)`, default features: `codegen`, no `asi-runtime`).
