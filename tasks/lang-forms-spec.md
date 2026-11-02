@@ -1,6 +1,6 @@
-# lang-forms - DRAFT spec
+# lang-forms - spec (built)
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: BUILT 2026-11-01 on asi/next a048e302 (LF-1, LF-2, LF-3, LF-3b, LF-4; lanes lf/ab 095e16f5 and lf/c 6c38a23f). Unit `()`, `if let`, `for (a, b) in` and sibling-directory `mod` ship; nothing else in §8 of checker-soundness-3 is authorized.**
 
 Four language additions the human decided on 2026-11-01 (`tasks/checker-soundness-3-spec.md:545-547`, the `[DECIDED ...]` line after
 the §8 table): NH-1 `()` unit value, NH-2 `if let`, NH-3 `for (a, b) in`, NH-12 module search in the entry file's directory, searched
@@ -357,6 +357,8 @@ Alternatives considered:
 LSP: hover/definition operate on the desugared AST; the builder checks that completions do not offer `__iflet_*` names
 [INFERENCE: whether lsp.rs filters `__` locals today was not confirmed - `grep '__' lsp.rs` finds no filter; if completions list
 match-arm bindings, add `!name.starts_with("__")` at the completion source]. AX-10 JSON: a `Match`; no schema change.
+`[REVISED: build lf/ab]` Checked: `lsp.rs` `compute_completions` lists only `ctx.fn_sigs` keys (function names), never locals or
+match-arm bindings, so no `__iflet_*` name can be offered; no change.
 
 **`axon fmt` (decided).** Add `as_desugared_if_let(arms)` next to `as_desugared_foreach` (`fmt.rs:1097`): a `Match` with exactly two
 arms, the second unguarded with `Pattern::Ident(n)` and `n.starts_with("__iflet_")`. Print `if let PAT = SUBJ { A }`; if the second
@@ -366,6 +368,9 @@ otherwise unchanged. `[REVISED: LFA#9]` The plain-`if` side of a mixed chain nee
 prints `else` + `emit_expr(e)` only for `Expr::If` and sends anything else through `emit_block_body`, so `if c { .. } else if let
 .. { .. }` would print as `else { if let .. }`. The match at `:700-703` gains a second chain case: an `Expr::Match` for which
 `as_desugared_if_let` returns `Some` is printed with `emit_expr` like `Expr::If`.
+`[REVISED: build lf/ab]` The recognizer is one shared fn, `ast::is_if_let_desugar(arms)` (next to `MatchArm`), used by fmt, the
+infer special case and the checker pre-check, so the three agree on what an `if let` is; fmt's `If` and `if let` arms share one
+`emit_else` that continues a chain for an `If` or an `if let`. Reason: one definition instead of three copies of the same shape test.
 
 **Fail-first tests** (`cli_run.rs` block `// lang-forms LF-2`):
 - `if_let_runs`: i01 prints `3`; i02 (`fn get(o: Option<i64>) -> i64 { if let Some(v) = o { v } else { 0 } }`) prints `4\n0` for
@@ -440,6 +445,9 @@ for (a, (b, _)) in xs { body }
 ```
 
 Nested tuples use an intermediate `__forpat_N_<path>` (not `.1.0`, which the lexer may read as a float [INFERENCE]); `_` emits no `let`.
+`[REVISED: build lf/ab]` Every tuple level's synthetic name also carries its arity: `__forpat_N_n<K>` (nested: `<parent>_<k>_n<K>`).
+Reason: `_` emits no `let`, so without the arity fmt cannot print a trailing `_` slot back (`for (a, _) in xs` would print as the
+refused `for (a) in xs`); `as_desugared_foreach` reads K from the name.
 `[REVISED: LFA#4, ruling 5]` Every generated statement carries one span captured at `parse_for` entry: `let span = self.current_span();`
 moves from after `parse_for_body()` (`parser.rs:2101`, where it is the span of the token after the closing `}`) to the top of
 `parse_for`, before `self.expect(&Token::For)` (`:2058`), so it is the `for` keyword's span (user text), never `Span::dummy()`. This
@@ -721,14 +729,14 @@ feature on), as existing rows do (`v022_g01_mutations.py:11904`, `:12242`, `:127
 | M4647 | LF-2 | `else if` link goes through `self.nested` (mutant: direct call) | parser.rs | `else_if_let_chain_is_bounded` (`[REVISED: LFD#5]`, cli_run, `--no-default-features`) | `ATTACK: an else-if-let chain overflowed the stack` |
 | M4648 | LF-2 | infer's `if let` without `else` wording (mutant: match-arm wording) | infer.rs | `if_let_without_else_must_be_unit` | `ATTACK: if let without else named a match arm` |
 | M4649 | LF-2 | W0004 `if let` pre-check uses `pattern_irrefutable` (`[REVISED: LFA#8]` mutant: `matches!(.., Wildcard \| Ident(_))` only) | checker.rs | `irrefutable_if_let_warns` (tuple case) | `ATTACK: an irrefutable if let named a match arm` |
-| M4650 | LF-2 | fmt recognizer requires the `__iflet_` prefix (mutant: any binding catch-all) | fmt.rs | `fmt::tests::fmt_user_match_with_wildcard_is_not_resugared` | `ATTACK: fmt rewrote a user match` |
+| M4650 | LF-2 | fmt recognizer requires the `__iflet_` prefix (mutant: any binding catch-all) `[REVISED: build lf/ab]` the prefix test lives in the shared `ast::is_if_let_desugar`, so the row mutates ast.rs | fmt.rs | `fmt::tests::fmt_user_match_with_wildcard_is_not_resugared` | `ATTACK: fmt rewrote a user match` |
 | M4651 | LF-2 | fmt prints `else` chains (mutant: `else { .. }` always) | fmt.rs | `fmt::tests::fmt_if_let_round_trips` | `ATTACK: fmt broke an else-if-let chain` |
 | M4652 | LF-3 | `at(LParen)` branch in `parse_for` | parser.rs | `for_tuple_pattern_runs` | `ATTACK: for (a, b) in was refused at parse` |
 | M4653 | LF-3 | field-access lets (mutant: `match` tuple pattern body) | parser.rs | `for_tuple_pattern_is_typed` | `ATTACK: a for-tuple binding was untyped` |
-| M4654 | LF-3 | generated lets carry the pattern span (mutant: `Span::dummy()`) | parser.rs | `for_tuple_arity_error_points_at_the_for` | `ATTACK: a destructure error landed on line 1` |
-| M4655 | LF-3 | `parse_let` destructure span (mutant: `Span::dummy()` at today's `:2372`) | parser.rs | `let_tuple_error_points_at_the_let` | same |
+| M4654 | LF-3 | generated lets carry the pattern span (mutant: `Span::dummy()`) `[REVISED: build lf/ab]` the arity E0401 alone did not kill it (the checker keeps the last real statement span, the `for` loop's own); the killer also asserts the W0006 for an unused pattern name sits at the `for` (with the mutant it has no line at all) | parser.rs | `for_tuple_arity_error_points_at_the_for` | `ATTACK: a destructure error landed on line 1` |
+| M4655 | LF-3 | `parse_let` destructure span (mutant: `Span::dummy()` at today's `:2372`) `[REVISED: build lf/ab]` mutant moved to the field lets' span (today's `:2384`), and, as for M4654, the killer also asserts the unused-name W0006 sits at the `let` (E0401 kept the enclosing statement's span, so it alone did not kill it) | parser.rs | `let_tuple_error_points_at_the_let` | same |
 | M4656 | LF-3 | nested pattern intermediate (mutant: skip nesting lets) | parser.rs | `for_tuple_pattern_runs` (nested case) | `ATTACK: a nested for pattern bound nothing` |
-| M4657 | LF-3 | `_` emits no let (mutant: binds `_`) | parser.rs | `for_tuple_pattern_runs` (`_` case) [INFERENCE: if binding `_` is harmless the mutant is EQUIVALENT; the builder then drops this row] | - |
+| M4657 | LF-3 | `_` emits no let (mutant: binds `_`) `[REVISED: build lf/ab]` **dropped as EQUIVALENT**: g01 run, survived; `let _ = elem.k` is unreadable and silent (leading `_`), so no engine output differs | parser.rs | - | - |
 | M4658 | LF-3 | range form refused (mutant: accepted) | parser.rs | `for_tuple_over_range_is_refused` | `ATTACK: for (a, b) over a range was accepted` |
 | M4659 | LF-3 | fmt `__forpat_` resugar | fmt.rs | `fmt::tests::fmt_for_tuple_round_trips` | `ATTACK: fmt leaked __forpat_` |
 | M4660 | LF-3 | fmt `__tup_` resugar | fmt.rs | `fmt::tests::fmt_let_tuple_round_trips` | `ATTACK: fmt leaked __tup_` |

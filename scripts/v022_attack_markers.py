@@ -3945,6 +3945,45 @@ ATTACK_MARKERS.update({
     'M4679': r'ATTACK: a relative entry path lost its sibling module',
 })
 
+# lang-forms LF-1 (ids M4640-M4643, M4661, M4676)
+ATTACK_MARKERS.update({
+    'M4640': r'ATTACK: Ok\(\(\)\) was refused at parse',
+    'M4641': r'ATTACK: \(\) => was parsed as unit',
+    'M4642': r'ATTACK: a \(\) pattern passed check and panicked',
+    'M4643': r'ATTACK: fmt wrote a W0008 empty block',
+    'M4661': r'ATTACK: a \(\) arm was skipped natively',
+    'M4676': r'ATTACK: a unit match arm was skipped natively without a refusal',
+})
+
+# lang-forms LF-3 / LF-3b (ids M4652-M4656, M4658-M4660, M4662-M4664, M4674)
+ATTACK_MARKERS.update({
+    'M4652': r'ATTACK: for \(a, b\) in was refused at parse',
+    'M4653': r'ATTACK: a for-tuple binding was untyped',
+    'M4654': r'ATTACK: a destructure error landed on line 1',
+    'M4655': r'ATTACK: a destructure error landed on line 1',
+    'M4656': r'ATTACK: a nested for pattern bound nothing',
+    'M4658': r'ATTACK: for \(a, b\) over a range was accepted',
+    'M4659': r'ATTACK: fmt leaked __forpat_',
+    'M4660': r'ATTACK: fmt leaked __tup_',
+    'M4662': r'ATTACK: for over a dict blamed len',
+    'M4663': r'ATTACK: the three-clause for lost its help',
+    'M4664': r'ATTACK: for over a dict blamed len',
+    'M4674': r'ATTACK: for \(a, b\) diverged natively',
+})
+
+# lang-forms LF-2 (ids M4644-M4651, M4673)
+ATTACK_MARKERS.update({
+    'M4644': r'ATTACK: if let was refused at parse',
+    'M4645': r'ATTACK: if let was refused at parse',
+    'M4646': r'ATTACK: fmt rewrote if let as match',
+    'M4647': r'ATTACK: an else-if-let chain overflowed the stack',
+    'M4648': r'ATTACK: if let without else named a match arm',
+    'M4649': r'ATTACK: an irrefutable if let named a match arm',
+    'M4650': r'ATTACK: fmt rewrote a user match',
+    'M4651': r'ATTACK: fmt broke an else-if-let chain',
+    'M4673': r'ATTACK: if let diverged natively',
+})
+
 # asi-fixes AF-3: bare variant name in a pattern, E0409 (ids M4617-M4619, M4626, M4627)
 ATTACK_MARKERS.update({
     'M4617': r'ATTACK: bare variant name bound as catch-all \[v1\]',

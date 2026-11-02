@@ -45,6 +45,9 @@ Every program starts at `fn main()`. No imports — all builtins are in global s
 fn add(a: i64, b: i64) -> i64 { a + b }
 fn inc(x: i64) -> i64 { x + 1 }
 
+// `()` is the unit value (the same value as an empty block `{}`)
+fn check(n: i64) -> Result<(), str> { if n < 0 { Err("negative") } else { Ok(()) } }
+
 // Structs — declared with `type`, structural (no `implements`)
 type Point = { x: f64, y: f64 }
 
@@ -61,9 +64,12 @@ fn main() {
 
     // if / while / match are EXPRESSIONS
     let label = if x > 0 { "pos" } else { "non-pos" }
+    let at = if let Some(i) = arr_index_of([7, 8], 8) { i } else { -1 }   // `if let` = 2-arm match
     while x < 10 { x = x + 1 }
     let n = 3
     for i in 0..n { x = x + i }   // i is i64, 0 ≤ i < n
+    for (i, v) in arr_enumerate([10, 20]) { x = x + i * v }   // tuple elements destructure
+    let (q, r) = (x / 3, x % 3)   // so does `let`
 
     let p = Point { x: 1.0, y: 2.0 }
     println(to_str_f64(p.x))
@@ -249,6 +255,11 @@ when you write the candidate:
    then call `parse(x)`. `util.parse(x)`, `util::parse(x)` and `let f = util` are `E0404`:
    the module name has no value at run time. Likewise a type or enum name is not a value;
    build a struct literal `P { x: 1 }` or name a variant `S::A`.
+
+10. **`if let` has no `&&` chains and no `|` patterns; a dict is not iterable.** `if let Some(x) = o && c`
+    parses `o && c` as the subject — nest an `if` inside, or `match`. `for (k, v) in d` is E0402 —
+    iterate `dict_to_pairs(d)` (sorted `(key, value)` pairs) or `dict_keys(d)`. `for (a, b) in xs`
+    destructures only tuple elements, never a range (`for i in 0..n` binds one integer name).
 
 ---
 
