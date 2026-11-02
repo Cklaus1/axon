@@ -74,6 +74,23 @@ fn fib(n: i64) -> i64 {
 }
 ```
 
+### Modules
+
+A module is a file. `mod util` declares it and `use util.{parse}` imports names from it (both
+lines are required); call `parse(x)` directly. The file `util.ax` is searched for on
+`AXON_PATH`, then `~/.axon/lib`, then the installed library, and last in the entry file's own
+directory, so a `util.ax` beside `main.ax` needs no setup:
+
+```sh
+# main.ax:  mod util / use util.{parse} / fn main() { println(to_str(parse("7"))) }
+# util.ax:  pub fn parse(s: str) -> i64 { ... }
+axon run main.ax
+```
+
+The entry directory is not searched when it is group- or world-writable or the system temp
+directory, under `AXON_PATH_EXCLUSIVE=1`, or in a sealed `axon test --seal` run; the E0901
+message lists each directory it searched and says why one was skipped.
+
 ---
 
 ## 4. String Interpolation

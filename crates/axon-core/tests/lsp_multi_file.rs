@@ -315,3 +315,51 @@ fn a_module_the_entry_imports_directly_anchors_on_its_own_use() {
     let main = "mod a\nmod c\nuse a.{fa}\nuse c.{fc}\nfn main() -> i64 { fa() + fc() }\n";
     assert_anchored("direct import", &dir, main, "c.ax", 2, 3, 10);
 }
+
+/// lang-forms LF-4: with no module path at all, a `file://` document's own
+/// directory is searched last, as `axon check` searches the entry file's. The
+/// directory name has spaces, so the URI is percent-decoded to find it.
+#[cfg(unix)]
+#[test]
+fn a_module_beside_the_document_is_found_without_axon_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = modules("sibling", &[("lib.ax", "fn one() -> i64 { 1 }\n")]);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let main_uri = file_uri(&dir.join("main.ax"));
+    let main = "mod lib\nuse lib.{one}\nfn main() -> i64 { one() }\n";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_axon"))
+        .arg("lsp")
+        .current_dir(std::env::temp_dir())
+        .env_remove("AXON_PATH")
+        .env_remove("AXON_PATH_EXCLUSIVE")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn axon lsp");
+    let mut input = Vec::new();
+    for m in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+        json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
+            "params":{"textDocument":{"uri":main_uri,"languageId":"axon","version":1,"text":main}}}),
+        json!({"jsonrpc":"2.0","id":99,"method":"shutdown"}),
+        json!({"jsonrpc":"2.0","method":"exit"}),
+    ] {
+        input.extend(frame(&m));
+    }
+    child.stdin.take().unwrap().write_all(&input).unwrap();
+    let mut raw = Vec::new();
+    child.stdout.take().unwrap().read_to_end(&mut raw).unwrap();
+    child.wait().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let msgs = parse_frames(&raw);
+    let publish = msgs
+        .iter()
+        .find(|m| m["method"] == "textDocument/publishDiagnostics")
+        .expect("diagnostics published");
+    assert_eq!(
+        publish["params"]["diagnostics"],
+        json!([]),
+        "ATTACK: the LSP did not find a module beside its document: {publish:#}"
+    );
+}

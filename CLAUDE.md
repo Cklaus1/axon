@@ -397,8 +397,11 @@ fn parse(s: str) -> Result<i64, str> {
 // `mod` puts it there — so the two lines are not alternatives.
 //
 // Resolution is AMBIENT: `axon_search_dirs` is AXON_PATH, then ~/.axon/lib,
-// then <bindir>/../lib/axon. THE ENTRY FILE'S OWN DIRECTORY IS NEVER SEARCHED,
-// so a module sitting beside its importer does not resolve without AXON_PATH.
+// then <bindir>/../lib/axon, then LAST the entry file's own directory (one
+// list per program, not per importing module), so a module beside main.ax
+// resolves without AXON_PATH. The entry dir is skipped when group- or
+// world-writable or the temp dir (the E0901 `searched:` list says why), under
+// AXON_PATH_EXCLUSIVE=1, and while sealing (`axon test --seal`).
 // First match wins and nothing records which file was chosen.
 
 // Goal-directed optimization: `@[adaptive]` marks the METRIC (it takes the
