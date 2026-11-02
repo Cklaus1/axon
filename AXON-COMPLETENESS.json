@@ -1949,6 +1949,34 @@
       "evidence": "governance/cortex-v015/ENV_CONTROL_AUDIT.md",
       "note": "G1d. Interpreter: run/test/goal/session/deploy compare the import closure the shared loader recorded against the value and exit 8 before anything executes; read once at dispatch and removed from the environment, so it binds that process only. Every other verb refuses it with exit 2 (including `axon build`). Tests: cli_run require_imports_digest_refuses_any_other_closure_before_running.",
       "open": "Native and wasm AOT refuse at run time through the axon-rt REFUSED table (source audit; not separately measured on wasip1). A built binary cannot recompute the closure it was linked from, so refusal is the only honest state. GUEST: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH, so nothing delivers this variable into a guest. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route), the same defect as its sibling controls."
+    },
+    {
+      "name": "AXON_OUTCOME_FD",
+      "category": "launcher-side",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "silently-ignored",
+        "wasm": "silently-ignored",
+        "guest": "not-applicable"
+      },
+      "evidence": "crates/axon-core/src/outcome.rs",
+      "note": "GV-1. Set by axon-os (`run_sandboxed_capture` and the job path) to 3, the write end of a pipe it creates per run; `axon run` writes exactly one axon-outcome/1 JSON line there (kind exit|fault|compile, class, code, reason, the run's nonce) before it exits, and the supervisor classifies the run by that record, never by the program's stderr. Read once at dispatch, removed from the environment and made close-on-exec, so neither the program nor a process it spawns sees it. Must be set with AXON_OUTCOME_NONCE; an fd that is not open, or any verb other than `axon run`, is refused (exit 2). Tests: cli_run run_writes_one_outcome_record_to_the_outcome_fd, other_verbs_refuse_the_outcome_fd, a_closed_outcome_fd_is_refused, a_spawned_process_does_not_inherit_the_outcome_fd; axon-os sandbox_capture.",
+      "open": "Native and wasm AOT binaries never read this variable: axon-os launches only `axon run` with it, so a built binary given it by hand writes no record and the caller sees none (a supervisor reading the pipe then fails closed). GUEST: not-applicable for THIS row because the pipe is created by the axon-os capture/job launcher for its `axon run` child, and axon-vm guests are started by axon-vm, which sets no outcome fd."
+    },
+    {
+      "name": "AXON_OUTCOME_NONCE",
+      "category": "launcher-side",
+      "status": "open",
+      "engines": {
+        "interpreter": "enforced",
+        "native": "silently-ignored",
+        "wasm": "silently-ignored",
+        "guest": "not-applicable"
+      },
+      "evidence": "crates/axon-core/src/outcome.rs",
+      "note": "GV-1. The per-run nonce (16-128 lowercase hex digits, from the OS random source in axon-os) that `axon run` repeats in its axon-outcome/1 record, so a record without it is not this run's. Read once at dispatch and removed from the environment, so the program cannot read it with `env_var` and forge a record. Must be set with AXON_OUTCOME_FD; any verb other than `axon run` refuses it (exit 2). Tests: axon-os sandbox_capture the_outcome_nonce_and_fd_are_not_in_the_programs_environment, a_record_with_another_runs_nonce_is_not_the_interpreters.",
+      "open": "Native and wasm AOT binaries never read this variable (see AXON_OUTCOME_FD). GUEST: not-applicable for THIS row because the nonce travels with the outcome pipe that only the axon-os launcher creates for `axon run`; axon-vm starts guests without one."
     }
   ],
   "false_greens": [
