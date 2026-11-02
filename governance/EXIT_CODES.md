@@ -23,7 +23,7 @@ it.** Derived from the actual constants, not from memory:
 | 6 | `REFINE_VIOLATION_EXIT_CODE` | core + rt | Refinement-type contract violated (param / return / struct / let) |
 | 7 | `GOAL_BUDGET_EXIT_CODE` | core | A kernel `Goal` exhausted its principal's budget (E1604) |
 | 8 | `SANDBOX_VIOLATION_EXIT_CODE` | core | `sandbox_run` caught an effect outside the declared ceiling |
-| 9 | `RESOURCE_BOUND_EXIT_CODE` | os | A carved resource bound (budget_cap / persist_cap) was exceeded |
+| 9 | `RESOURCE_BOUND_EXIT_CODE` | os + core | A carved resource bound (budget_cap / persist_cap) was exceeded; in the interpreter, the run's step or wall-clock ceiling (`AXON_MAX_STEPS` / `AXON_WALL_MS` / a ceiling's `steps` / `wall_ms`, E1006) |
 | 10 | `COALITION_BOUND_EXIT_CODE` | os | R33 coalition ceiling exceeded |
 | **11** | `REPLAY_DIVERGENCE_EXIT_CODE` | core | **A replay is not the run its journal describes** (see below) |
 | 12 | `CONTAINMENT_VIOLATION_EXIT_CODE` | os | Monitor detected a containment violation |

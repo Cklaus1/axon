@@ -1243,6 +1243,11 @@ pub enum Flow {
     /// flow (exit code 8) so a supervisor can tell "the sandbox caught this" apart
     /// from a genuine crash (101), a policy rejection (3), or the kill-switch (4).
     SandboxViolation(Box<str>),
+    /// ceilings CE-5: the run passed its step ceiling (`AXON_MAX_STEPS` / a
+    /// ceiling's `steps`) or its wall-clock ceiling (`AXON_WALL_MS` / a
+    /// ceiling's `wall_ms`), E1006. Not a crash: the operator's bound fired,
+    /// so a distinct flow (exit 9, the R27 `RESOURCE_BOUND` meaning).
+    ResourceBound(Box<str>),
 }
 
 /// Process exit code for an `@[verify]` / deploy-gate rejection. Distinct from
@@ -1282,6 +1287,11 @@ pub const GOAL_BUDGET_EXIT_CODE: i32 = 7;
 /// specifically. The tool call is refused; the sandbox and the enclosing program
 /// continue with an `Err` result.
 pub const SANDBOX_VIOLATION_EXIT_CODE: i32 = 8;
+
+/// Process exit code when a run passes its step or wall-clock ceiling
+/// (ceilings CE-5, E1006): the ledger's `RESOURCE_BOUND` code, shared with
+/// `axon-os` (`governance/EXIT_CODES.md`).
+pub const RESOURCE_BOUND_EXIT_CODE: i32 = 9;
 
 /// The enforcement ledger's block, and the shell's.
 ///
@@ -1463,7 +1473,8 @@ pub(crate) fn frame_edge(f: Flow, edge: FrameEdge<'_>) -> Flow {
         | Flow::MultiShotUnsound(_)
         | Flow::RefineViolation(_)
         | Flow::GoalBudgetExhausted(_)
-        | Flow::SandboxViolation(_) => return f,
+        | Flow::SandboxViolation(_)
+        | Flow::ResourceBound(_) => return f,
     };
     Flow::Panic(msg.into_boxed_str())
 }
@@ -1966,6 +1977,14 @@ pub struct Interp<'p> {
     /// or `AXON_MAX_DEPTH` (clamped) when set. Resolved once at build time so
     /// every `call_fn` sees a consistent value.
     max_depth: usize,
+    /// The depth the VM's call shortcuts (a leaf body, a moves body) compare
+    /// against instead of `max_depth`: `max_depth`, or 0 under a step or
+    /// wall ceiling (ceilings CE-5), so every call there takes the path
+    /// through [`Interp::enter_fn`], which counts its step. Same compare as
+    /// before, so an unceilinged run pays nothing for it.
+    fast_depth: usize,
+    /// ceilings CE-5: the run's step and wall-clock ceilings.
+    meter: StepMeter,
     /// R51 S5 (Protected Check Isolation, RUNTIME sealing): which
     /// definitions come from a sealed (candidate) module. `seal.active` is
     /// the one "this run executes sealed code" bit: computed once in
@@ -3461,6 +3480,11 @@ pub fn run_named_fn_as_bool_with_score(
                 eprintln!("axon: halted in {fn_name}: {msg}");
                 HALTED_EXIT_CODE
             }
+            Err(Flow::ResourceBound(msg)) => {
+                let _ = std::io::stdout().flush();
+                eprintln!("axon: resource bound in {fn_name}: {msg}");
+                RESOURCE_BOUND_EXIT_CODE
+            }
             Err(Flow::Panic(msg)) => {
                 let _ = std::io::stdout().flush();
                 eprintln!("axon: panic in {fn_name}: {msg}");
@@ -4822,6 +4846,14 @@ fn run_program_inner(
             eprintln!("axon: sandbox violation: {msg}");
             SANDBOX_VIOLATION_EXIT_CODE
         }
+        Err(Flow::ResourceBound(msg)) => {
+            // ceilings CE-5: the operator's step or wall-clock ceiling fired
+            // (E1006). Not a crash; exit 9, the ledger's RESOURCE_BOUND code.
+            let _ = std::io::stdout().flush();
+            set_last_abort(format!("resource bound: {msg}"));
+            eprintln!("axon: resource bound: {msg}");
+            RESOURCE_BOUND_EXIT_CODE
+        }
         // A stray return/break/continue escaping `main` — treat as clean exit.
         Err(_) => 0,
     }
@@ -4990,6 +5022,8 @@ impl<'p> Interp<'p> {
             // A sandbox violation inside a test is a failure (lets
             // `@[test(should_fail)]` assert the sandbox ceiling fired).
             Err(Flow::SandboxViolation(m)) => Err(TestFailure::rejected(m)),
+            // A step/wall ceiling firing inside a test fails it.
+            Err(Flow::ResourceBound(m)) => Err(TestFailure::rejected(m)),
             Err(Flow::Resume(_)) => Err(TestFailure::stopped(
                 "`resume` called outside an effect-handler arm",
             )),
@@ -5031,7 +5065,8 @@ fn flow_to_msg(f: Flow) -> String {
         | Flow::AiPolicyUnreachable(m)
         | Flow::RefineViolation(m)
         | Flow::GoalBudgetExhausted(m)
-        | Flow::SandboxViolation(m) => m.into(),
+        | Flow::SandboxViolation(m)
+        | Flow::ResourceBound(m) => m.into(),
         Flow::Exit(n) => format!("exited with code {n}"),
         _ => "non-local control flow escaped the program".into(),
     }
@@ -5183,10 +5218,21 @@ impl<'p> Interp<'p> {
                 });
             }
         }
+        let meter = resolve_step_meter();
+        let max_depth = resolve_max_depth();
 
         Interp {
             res,
-            pure_slots: fn_table.iter().map(|_| vm::PureSlot::default()).collect(),
+            pure_slots: fn_table
+                .iter()
+                .map(|_| {
+                    if meter.on {
+                        vm::PureSlot::never()
+                    } else {
+                        vm::PureSlot::default()
+                    }
+                })
+                .collect(),
             fn_table,
             fn_of_sym,
             fn_of_def,
@@ -5212,7 +5258,9 @@ impl<'p> Interp<'p> {
             nest: Cell::new(0),
             #[cfg(target_arch = "wasm32")]
             nest_limit: resolve_max_depth().saturating_mul(NEST_PER_DEPTH),
-            max_depth: resolve_max_depth(),
+            max_depth,
+            fast_depth: if meter.on { 0 } else { max_depth },
+            meter,
             seal,
             pins,
             frame_sealed: Cell::new(false),
@@ -5955,10 +6003,64 @@ impl<'p> Interp<'p> {
             return Err(self.depth_exceeded(f));
         }
         self.call_depth.set(depth);
-        Ok(CallGuard {
+        let guard = CallGuard {
             interp: self,
             prev_fn: self.current_fn.replace(Some(f)),
-        })
+        };
+        // ceilings CE-5: one step per fn-body entry, charged to the callee.
+        self.step()?;
+        Ok(guard)
+    }
+
+    /// ceilings CE-5: one step (a loop-body or fn-body entry) against the
+    /// run's step and wall-clock ceilings. Both engines call it at the same
+    /// points, so a run stops at the same step in each.
+    #[inline(always)]
+    pub(super) fn step(&self) -> Result<(), Flow> {
+        if self.meter.on {
+            self.step_metered()
+        } else {
+            Ok(())
+        }
+    }
+
+    /// [`Interp::step`] under a ceiling: count, refuse past the step cap,
+    /// and read the clock at the first step and every 4096th after it.
+    #[inline(never)]
+    fn step_metered(&self) -> Result<(), Flow> {
+        let n = self.meter.used.get() + 1;
+        let name = || self.current_fn.get().map_or("main", |f| f.name.as_str());
+        if n > self.meter.cap {
+            return Err(Flow::ResourceBound(
+                format!(
+                    "[{}] `{}` passed the run's step ceiling (axis `steps`) of {} step(s) - a step \
+                     is one loop-body or fn-body entry; raise AXON_MAX_STEPS / the ceiling's \
+                     `steps`, or bound the loop",
+                    crate::error::E1006,
+                    name(),
+                    self.meter.cap
+                )
+                .into(),
+            ));
+        }
+        self.meter.used.set(n);
+        if n & 4095 == 1 {
+            if let Some((start, ms)) = self.meter.wall {
+                if start.elapsed().as_millis() >= u128::from(ms) {
+                    return Err(Flow::ResourceBound(
+                        format!(
+                            "[{}] `{}` passed the run's wall-clock ceiling (axis `wall_ms`) of {} \
+                             ms; raise AXON_WALL_MS / the ceiling's `wall_ms`",
+                            crate::error::E1006,
+                            name(),
+                            ms
+                        )
+                        .into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// AX-56: charges `W` bytes (a `nest_cost` frame) against the wasm32
@@ -7671,6 +7773,63 @@ fn parse_token_budget() -> Option<i64> {
     match (env, ceiling) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
+    }
+}
+
+/// ceilings CE-5: a run's step and wall-clock ceilings. `on` is false (and
+/// nothing counts) unless one of them is set.
+struct StepMeter {
+    on: bool,
+    /// Steps allowed (`u64::MAX` when only a wall ceiling is set).
+    cap: u64,
+    used: Cell<u64>,
+    /// The run's start and its wall-clock ceiling in milliseconds.
+    wall: Option<(std::time::Instant, u64)>,
+}
+
+/// One CE-5 env var (`raw` is its `var_os` read, spelled at the call site so
+/// the env-registry gate finds the literal): unset is `None`; a whole number
+/// is itself; anything else FAILS CLOSED to 0 with a warning (the
+/// `AXON_BUDGET_TOKENS` rule: a typo must never disarm an operator's bound).
+fn parse_run_bound(var: &str, raw: Option<std::ffi::OsString>) -> Option<u64> {
+    let raw = raw?;
+    match raw
+        .to_str()
+        .map(str::trim)
+        .and_then(|t| t.parse::<u64>().ok())
+    {
+        Some(n) => Some(n),
+        None => {
+            eprintln!(
+                "warning: {var}={raw:?} is not a whole number - failing closed to 0 (the run \
+                 stops at its first step). Set a whole number, or unset the variable for no bound."
+            );
+            Some(0)
+        }
+    }
+}
+
+/// Resolve the CE-5 meter from `AXON_MAX_STEPS` / `AXON_WALL_MS` and the
+/// operator ceiling's `steps` / `wall_ms`; the narrower of each pair wins.
+fn resolve_step_meter() -> StepMeter {
+    let ceiling = crate::ceiling::active();
+    let narrow = |env: Option<u64>, c: Option<u64>| match (env, c) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    let steps = narrow(
+        parse_run_bound("AXON_MAX_STEPS", std::env::var_os("AXON_MAX_STEPS")),
+        ceiling.and_then(|c| c.steps),
+    );
+    let wall_ms = narrow(
+        parse_run_bound("AXON_WALL_MS", std::env::var_os("AXON_WALL_MS")),
+        ceiling.and_then(|c| c.wall_ms),
+    );
+    StepMeter {
+        on: steps.is_some() || wall_ms.is_some(),
+        cap: steps.unwrap_or(u64::MAX),
+        used: Cell::new(0),
+        wall: wall_ms.map(|ms| (std::time::Instant::now(), ms)),
     }
 }
 
@@ -9685,6 +9844,7 @@ fn main() { }
             let out = on_deep_stack(|| {
                 let mut interp = Interp::build_in(&prog, std::slice::from_ref(&sdir))?;
                 interp.max_depth = limit;
+                interp.fast_depth = limit;
                 interp.init_globals().map_err(flow_to_msg)?;
                 let f = interp.fns.get("t").copied().expect("the suite defines `t`");
                 interp.test_outcome(f).map_err(|f| f.message)

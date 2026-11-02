@@ -647,6 +647,10 @@ pub(super) enum Op<'p> {
     Logic(&'p BinOp),
     /// Pop, apply a unary operator other than `&mut`, push.
     Unary(&'p UnaryOp),
+    /// ceilings CE-5: one step, at the start of a loop body
+    /// ([`Interp::step`], as `run_loop_body` counts). Emitted only under a
+    /// step or wall ceiling, so an unceilinged body carries none.
+    Step,
     Jump(u32),
     /// `env.pop()`, then jump: the end of a `while` iteration.
     PopJump(u32),
@@ -1930,6 +1934,7 @@ impl<'p> Interp<'p> {
                 }
                 Op::ScopePop => pop_scope(env, scopes),
                 Op::Jump(t) => pc = *t as usize,
+                Op::Step => tri!(self.step()),
                 Op::PopJump(t) => {
                     pop_scope(env, scopes);
                     pc = *t as usize;
@@ -2955,7 +2960,7 @@ impl<'p> Interp<'p> {
         let param = |v: &Var<'_>| v.slot == 0 && v.s == p && v.s != SYM_GOAL_MET;
         if !param(l)
             || entry.param_coerce[0].1.is_some()
-            || self.call_depth.get() >= self.max_depth
+            || self.call_depth.get() >= self.fast_depth
             || !matches!(int_fast(op, a, *r)?, Scalar::Bool(true))
         {
             return None;
@@ -3070,7 +3075,7 @@ impl<'p> Interp<'p> {
     #[inline(always)]
     fn leaf_call(&self, entry: &FnEntry<'p>, args: &[Opnd<'_>], env: &Env) -> Option<Value> {
         let body = entry.compiled.as_ref()?.get()?;
-        if args.len() > 2 || self.call_depth.get() >= self.max_depth {
+        if args.len() > 2 || self.call_depth.get() >= self.fast_depth {
             return None;
         }
         // Parameter `k`'s value as `bind_params` binds it.
@@ -3413,7 +3418,7 @@ impl<'p> Interp<'p> {
         env: &mut Env,
         st: &mut Vec<Value>,
     ) -> bool {
-        if self.call_depth.get() >= self.max_depth {
+        if self.call_depth.get() >= self.fast_depth {
             return false;
         }
         let Some(at) = st.len().checked_sub(stacked as usize) else {
@@ -3552,6 +3557,10 @@ impl<'p> Interp<'p> {
         let (p, q) = body.pure_ops();
         if p + q > 0 {
             eprintln!("vm: pure {name} {p} exprs, {q} loops");
+        }
+        let steps = body.ops.iter().filter(|op| matches!(op, Op::Step)).count();
+        if steps > 0 {
+            eprintln!("vm: steps {name} {steps}");
         }
         let (f, k) = body.bulk_loops();
         if f + k > 0 {

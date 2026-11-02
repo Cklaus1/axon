@@ -3814,6 +3814,9 @@ fn refuse_if_ambient_ceiling(context: &str) {
         "AXON_BUDGET_TOKENS",
         // ceilings CE-2: the operator ceiling file bounds the same controls.
         "AXON_CEILING",
+        // ceilings CE-5: step and wall-clock ceilings, interpreter-counted.
+        "AXON_MAX_STEPS",
+        "AXON_WALL_MS",
     ] {
         // `var_os`: a set variable whose value is not UTF-8 is still set, and
         // `env::var` would have read it as absent.

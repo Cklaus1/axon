@@ -77,6 +77,7 @@ fn kinds(body: &Body<'_>) -> Vec<&'static str> {
             Op::ShortCircuit { .. } => "short",
             Op::Logic(_) => "logic",
             Op::Unary(_) => "unary",
+            Op::Step => "step",
             Op::Jump(_) => "jump",
             Op::PopJump(_) => "pop-jump",
             Op::BranchFalse { .. } => "branch",

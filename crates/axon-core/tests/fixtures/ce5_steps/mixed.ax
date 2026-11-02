@@ -1,0 +1,25 @@
+// ceilings CE-5 parity fixture (scripts/vm_parity.sh step leg): loops of
+// every kind, leaf and non-leaf calls, a lambda with a loop in it. Under
+// AXON_MAX_STEPS both engines must stop at the same step.
+fn sq(x: i64) -> i64 { x * x }
+fn add(a: i64, b: i64) -> i64 { a + b }
+fn even(n: i64) -> bool { if n == 0 { true } else { odd(n - 1) } }
+fn odd(n: i64) -> bool { if n == 0 { false } else { even(n - 1) } }
+fn main() {
+    let f = |x: i64| -> i64 {
+        let j = 0
+        while j < 3 { j = j + 1 }
+        x + j
+    }
+    let s = 0
+    for k in 0..300 {
+        s = add(s, sq(k)) + f(k)
+        let it = Some(k)
+        while let Some(v) = it {
+            it = None
+            s = s + v
+        }
+        if even(k % 7) { s = s + 1 }
+        println(to_str(s))
+    }
+}

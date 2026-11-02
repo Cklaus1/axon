@@ -503,6 +503,17 @@ All are RED at a5310878 except the guard.
 **Cost.** ~250 lines across `eval.rs`, `interp.rs`, `vm/compile.rs`, `vm/mod.rs`, the gating in `vm/pure.rs`/`purefn.rs`, plus
 `env_registry.rs`, `main.rs:3724`, `axon-rt/src/lib.rs:2127`. `vm_perf_gate.sh` must stay green.
 
+`[REVISED: build CE-5]` Built as A. `Interp::step` (`interp.rs`) is called by the tree's `run_loop_body`, by `enter_fn`
+(fn-body entry, so both engines' calls count there) and by the VM's new `Op::Step`, which `Compiler::step` emits at each
+loop body's start only when a ceiling is set. Deviations: fused-loop gating sits in `vm/compile.rs` (`pure_loop`/`pure_for`
+return `None`), not in `pure.rs`; the pure-fn tier is off via `PureSlot::never()`; the VM's leaf-call and moves-body
+shortcuts compare against a new `fast_depth` (0 under a ceiling) so those calls reach `enter_fn`. Lambda entries are not
+steps in either engine (a loop inside one is). `ceiling.rs` gains the required keys `steps` and `wall_ms` (E1007 if
+absent). E1006 maps to a new `Flow::ResourceBound` and `RESOURCE_BOUND_EXIT_CODE` 9 in `axon-core`
+(`governance/EXIT_CODES.md` row now "os + core"). Parity: `scripts/vm_parity.sh` step leg over
+`tests/fixtures/ce5_steps/*.ax` at 4 caps. `vm_perf_gate.sh` not run [INFERENCE: unceilinged cost is one predictable
+branch per call in `enter_fn`; the VM's emitted code is unchanged].
+
 ---
 
 ### CE-6 (P2, NH-C6) The token cap charges a prompt-length estimate, never the reply

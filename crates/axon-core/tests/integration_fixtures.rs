@@ -3684,7 +3684,8 @@ fn native_refuses_under_ceiling() {
     std::fs::write(
         &ceiling,
         "{ \"schema\": \"axon-ceiling/1\", \"effects\": [], \"fs_read\": [], \"fs_write\": [], \
-         \"net\": [], \"ai_tokens\": 0, \"ai_calls\": 0, \"max_depth\": null }\n",
+         \"net\": [], \"ai_tokens\": 0, \"ai_calls\": 0, \"max_depth\": null, \"steps\": null, \
+         \"wall_ms\": null }\n",
     )
     .unwrap();
     let bin = dir.join("hello_bin");
@@ -3733,4 +3734,65 @@ fn native_refuses_under_ceiling() {
         "ATTACK: a native binary ran past an operator ceiling: {err}"
     );
     assert!(err.contains("`AXON_CEILING` is set"), "{err}");
+}
+
+/// ceilings CE-5: the step and wall-clock ceilings are counted by the
+/// interpreter only, so `axon build` under `AXON_MAX_STEPS` / `AXON_WALL_MS`
+/// refuses (E0910, exit 2) and a native binary run under either exits 2
+/// rather than run unbounded.
+#[cfg(feature = "codegen")]
+#[test]
+fn native_refuses_axon_max_steps() {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_ce5_native_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("hello.ax");
+    std::fs::write(&file, "fn main() { println(\"RAN\") }\n").unwrap();
+    let bin = dir.join("hello_bin");
+    let build = |var: Option<&str>| {
+        let mut c = Command::new(axon_bin);
+        c.arg("build")
+            .arg(&file)
+            .arg("-o")
+            .arg(&bin)
+            .arg("--no-cache")
+            .current_dir(&dir)
+            .env_remove("AXON_MAX_STEPS")
+            .env_remove("AXON_WALL_MS");
+        if let Some(v) = var {
+            c.env(v, "1000");
+        }
+        c.output().unwrap()
+    };
+    for var in ["AXON_MAX_STEPS", "AXON_WALL_MS"] {
+        let refused = build(Some(var));
+        let err = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            refused.status.code() == Some(2) && err.contains("error[E0910]") && err.contains(var),
+            "ATTACK: a native build under {var} was emitted: {err}"
+        );
+    }
+    let built = build(None);
+    assert!(
+        built.status.success(),
+        "native build: {}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    for var in ["AXON_MAX_STEPS", "AXON_WALL_MS"] {
+        let run = Command::new(&bin)
+            .current_dir(&dir)
+            .env(var, "1000")
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&run.stdout).into_owned();
+        let err = String::from_utf8_lossy(&run.stderr).into_owned();
+        assert_eq!(
+            (run.status.code(), out.as_str()),
+            (Some(2), ""),
+            "ATTACK: a native binary ran past an operator step ceiling ({var}): {err}"
+        );
+        assert!(err.contains(&format!("`{var}` is set")), "{err}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

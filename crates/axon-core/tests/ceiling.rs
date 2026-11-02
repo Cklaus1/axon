@@ -184,6 +184,8 @@ fn ceiling_json(over: &[(&str, Option<&str>)]) -> String {
         ("ai_tokens", "null"),
         ("ai_calls", "null"),
         ("max_depth", "null"),
+        ("steps", "null"),
+        ("wall_ms", "null"),
     ]
     .iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -808,4 +810,241 @@ fn billed_unusable_reply_is_recorded_and_charged() {
         assert_eq!(rows, 1, "{attack}: {log}");
         assert!(log.contains("unusable reply"), "{attack}: {log}");
     }
+}
+
+// ── CE-5: step and wall-clock ceilings ──────────────────────────────────────
+
+const WHILE_TRUE: &str = r#"
+fn main() {
+    let i = 0
+    while true {
+        i = i + 1
+        if i % 100 == 0 { println(to_str(i)) }
+    }
+}
+"#;
+
+/// `src` under each engine with `vars`; asserts E1006 / exit 9 naming
+/// `axis`, and returns each engine's stdout.
+fn bounded(tag: &str, src: &str, vars: &[(&str, &str)], axis: &str) -> [String; 2] {
+    let d = tmp(tag);
+    let out = ["tree", "vm"].map(|engine| {
+        let mut v = vars.to_vec();
+        v.push(("AXON_ENGINE", engine));
+        let o = run(&d, src, &v);
+        let t = text(&o);
+        assert_eq!(
+            o.status.code(),
+            Some(9),
+            "ATTACK: a run went past its {axis} ceiling ({engine}): {t}"
+        );
+        assert!(
+            t.contains("[E1006]") && t.contains(&format!("axis `{axis}`")),
+            "{engine}: the halt must name E1006 and the axis: {t}"
+        );
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    });
+    let _ = std::fs::remove_dir_all(&d);
+    out
+}
+
+#[test]
+fn step_ceiling_halts_while_true_e1006_exit9() {
+    let [tree, vm] = bounded(
+        "ce5_while",
+        WHILE_TRUE,
+        &[("AXON_MAX_STEPS", "1050")],
+        "steps",
+    );
+    // main's own entry is step 1, so 1049 iterations run: the last line is 1000.
+    assert_eq!(tree.lines().last(), Some("1000"), "{tree}");
+    assert_eq!(tree, vm, "ATTACK: the engines stopped at different steps");
+}
+
+/// Fn-body entries are steps: mutual recursion well under the depth limit
+/// still stops at the step ceiling.
+#[test]
+fn step_ceiling_counts_calls() {
+    let src = r#"
+fn even(n: i64) -> bool { if n == 0 { true } else { odd(n - 1) } }
+fn odd(n: i64) -> bool { if n == 0 { false } else { even(n - 1) } }
+fn main() {
+    println(to_str(even(40)))
+    println(to_str(even(400)))
+}
+"#;
+    let d = tmp("ce5_calls_free");
+    let free = run(&d, src, &[("AXON_MAX_STEPS", "1000000")]);
+    assert_eq!(free.status.code(), Some(0), "{}", text(&free));
+    let _ = std::fs::remove_dir_all(&d);
+    // 1 (main) + 41 (even(40)) fit in 100; even(400) does not.
+    let [tree, vm] = bounded("ce5_calls", src, &[("AXON_MAX_STEPS", "100")], "steps");
+    assert_eq!(
+        tree, "true\n",
+        "ATTACK: calls were not counted as steps: {tree}"
+    );
+    assert_eq!(tree, vm);
+}
+
+/// Both engines stop at the same step: loops, calls (leaf and not) and
+/// `while let` / `for` mixed, at many caps.
+#[test]
+fn step_ceiling_equal_across_engines() {
+    let src = r#"
+fn sq(x: i64) -> i64 { x * x }
+fn add(a: i64, b: i64) -> i64 { a + b }
+fn main() {
+    let s = 0
+    let xs = [1, 2, 3]
+    for k in 0..400 {
+        s = add(s, sq(k))
+        let j = 0
+        while j < 2 { j = j + 1 }
+        let it = Some(k)
+        while let Some(v) = it {
+            it = None
+            s = s + v
+        }
+        println(to_str(s))
+    }
+}
+"#;
+    for cap in ["7", "64", "333", "1001", "1999"] {
+        let [tree, vm] = bounded(
+            &format!("ce5_eq{cap}"),
+            src,
+            &[("AXON_MAX_STEPS", cap)],
+            "steps",
+        );
+        assert!(!tree.is_empty() || cap == "7", "cap {cap}: no output");
+        assert_eq!(
+            tree, vm,
+            "ATTACK: the engines stopped at different steps (cap {cap})"
+        );
+    }
+}
+
+#[test]
+fn wall_ceiling_halts_exit9() {
+    let t0 = std::time::Instant::now();
+    bounded(
+        "ce5_wall",
+        WHILE_TRUE,
+        &[("AXON_WALL_MS", "300")],
+        "wall_ms",
+    );
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(60),
+        "the wall ceiling fired late: {:?}",
+        t0.elapsed()
+    );
+}
+
+const S03_COUNT: &str = r#"
+fn main() {
+    let s = 0
+    let i = 0
+    while i < 20000000 {
+        s = s + i
+        i = i + 1
+    }
+    println(to_str(s))
+}
+"#;
+
+const S03_FOR: &str = r#"
+fn main() {
+    let s = 0
+    for i in 0..20000000 {
+        s = s + i
+    }
+    println(to_str(s))
+}
+"#;
+
+/// The VM fuses these loops (a counted `while`, a range `for`) into register
+/// loops with no checkpoint; under a step ceiling it must not.
+#[test]
+fn step_ceiling_halts_fused_pure_loop() {
+    let d = tmp("ce5_fused");
+    for (shape, src) in [("while", S03_COUNT), ("for", S03_FOR)] {
+        let free = run(&d, src, &[("AXON_ENGINE", "vm"), ("AXON_VM_TRACE", "1")]);
+        assert!(
+            text(&free).contains("vm: pure main 0 exprs, 1 loops"),
+            "the {shape} probe no longer lowers to a fused loop: {}",
+            text(&free)
+        );
+        let o = run(
+            &d,
+            src,
+            &[("AXON_ENGINE", "vm"), ("AXON_MAX_STEPS", "1000")],
+        );
+        assert_eq!(
+            o.status.code(),
+            Some(9),
+            "ATTACK: a fused {shape} loop ran past the step ceiling: {}",
+            text(&o)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Guard: without a step or wall ceiling the VM emits no step op (cost).
+#[test]
+fn no_ceiling_vm_emits_no_step_ops() {
+    let d = tmp("ce5_noop");
+    let trace = |vars: &[(&str, &str)]| {
+        let mut v = vec![("AXON_ENGINE", "vm"), ("AXON_VM_TRACE", "1")];
+        v.extend_from_slice(vars);
+        text(&run(
+            &d,
+            WHILE_TRUE.replace("while true", "while i < 10").as_str(),
+            &v,
+        ))
+    };
+    let free = trace(&[]);
+    let capped = trace(&[("AXON_MAX_STEPS", "1000")]);
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(!free.contains("vm: steps"), "{free}");
+    assert!(capped.contains("vm: steps main 1"), "{capped}");
+}
+
+/// A malformed `AXON_MAX_STEPS` fails closed (0 steps), never disarms.
+#[test]
+fn step_ceiling_malformed_fails_closed() {
+    let [tree, _] = bounded(
+        "ce5_bad",
+        WHILE_TRUE,
+        &[("AXON_MAX_STEPS", "10OO")],
+        "steps",
+    );
+    assert_eq!(tree, "");
+}
+
+/// A ceiling's `steps` narrows `AXON_MAX_STEPS`; a ceiling's `wall_ms` bounds
+/// the run with no env var at all.
+#[test]
+fn ceiling_steps_and_wall_ms_bound_the_run() {
+    let d = tmp("ce5_ceiling");
+    let c = write_ceiling(&d, &ceiling_json(&[("steps", Some("150"))]));
+    let c = c.to_str().unwrap().to_string();
+    let [tree, vm] = bounded(
+        "ce5_ceiling_s",
+        WHILE_TRUE,
+        &[("AXON_CEILING", &c), ("AXON_MAX_STEPS", "1000000")],
+        "steps",
+    );
+    assert_eq!(
+        tree, "100\n",
+        "ATTACK: the ceiling's steps did not narrow the env var"
+    );
+    assert_eq!(tree, vm);
+    let w = write_ceiling(&d, &ceiling_json(&[("wall_ms", Some("200"))]));
+    bounded(
+        "ce5_ceiling_w",
+        WHILE_TRUE,
+        &[("AXON_CEILING", w.to_str().unwrap())],
+        "wall_ms",
+    );
+    let _ = std::fs::remove_dir_all(&d);
 }

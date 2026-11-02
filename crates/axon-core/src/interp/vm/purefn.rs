@@ -108,6 +108,17 @@ pub(in crate::interp) struct PureSlot {
     tries: Cell<u32>,
 }
 
+impl PureSlot {
+    /// A slot decided "never qualifies" up front: under a step or wall
+    /// ceiling (ceilings CE-5) no fn runs on this tier, whose frame loop has
+    /// no step checkpoint, so every call takes a path that counts its entry.
+    pub(in crate::interp) fn never() -> PureSlot {
+        let slot = PureSlot::default();
+        let _ = slot.code.set(None);
+        slot
+    }
+}
+
 /// A suspended caller in [`run`]: its fn-table index, resume pc, and
 /// register base.
 #[derive(Clone, Copy)]

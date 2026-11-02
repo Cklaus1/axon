@@ -101,6 +101,7 @@ pub const E1002: &str = "E1002"; // @[contained] clause is malformed
 pub const E1003: &str = "E1003"; // capability path is not parseable
 pub const E1004: &str = "E1004"; // call hits a never: clause (hard violation)
 pub const E1005: &str = "E1005"; // R45: un-granted capability reached from an entry point under --require-contained
+pub const E1006: &str = "E1006"; // ceilings CE-5: the run passed its step ceiling (AXON_MAX_STEPS / ceiling `steps`) or wall-clock ceiling (AXON_WALL_MS / ceiling `wall_ms`), exit 9
 pub const E1007: &str = "E1007"; // ceilings CE-2: the `axon-ceiling/1` file is missing, unreadable, malformed, has an unknown/missing key, or lies inside its own fs_write scope
 
 // Verify errors (ASI Layer-2: @[verify])
@@ -511,6 +512,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E1003", "capability path is not parseable"),
     ("E1004", "call hits a never: clause (hard violation)"),
     ("E1005", "R45: an un-granted capability is reached from an entry point under `--require-contained`; distinct from E1001, which means a grant EXISTS and was exceeded"),
+    ("E1006", "the run passed its step ceiling (`AXON_MAX_STEPS` / a ceiling's `steps`; a step is one loop-body or fn-body entry, counted the same on both engines) or its wall-clock ceiling (`AXON_WALL_MS` / a ceiling's `wall_ms`); the run stops with exit 9 (RESOURCE_BOUND)"),
     ("E1007", "the `axon-ceiling/1` file (`--ceiling` / `AXON_CEILING`) is missing, unreadable or malformed, has an unknown or missing key, or lies inside its own `fs_write` scope; the run is refused (exit 2) before any program code runs"),
     ("E1101", "verify bound not satisfied (runtime gate)"),
     ("E1102", "verify bound statically VIOLABLE — SMT counterexample (R9)"),

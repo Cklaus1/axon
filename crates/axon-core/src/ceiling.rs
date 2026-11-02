@@ -11,7 +11,8 @@
 //!   "effects": ["IO", "AI"],
 //!   "fs_read": ["/srv/job/in/"], "fs_write": ["/srv/job/out/"],
 //!   "net": ["api.anthropic.com"],
-//!   "ai_tokens": 200000, "ai_calls": 200, "max_depth": 6000 }
+//!   "ai_tokens": 200000, "ai_calls": 200, "max_depth": 6000,
+//!   "steps": 2000000000, "wall_ms": 600000 }
 //! ```
 //!
 //! Rules (spec §8.4), all failing closed with **E1007** / exit 2:
@@ -49,6 +50,8 @@ pub const KEYS: &[&str] = &[
     "ai_tokens",
     "ai_calls",
     "max_depth",
+    "steps",
+    "wall_ms",
 ];
 
 /// A parsed, validated ceiling. `None` in a bound means the file said `null`
@@ -67,6 +70,10 @@ pub struct Ceiling {
     /// Run-wide cap on model calls (CE-6); no env-var counterpart.
     pub ai_calls: Option<u64>,
     pub max_depth: Option<usize>,
+    /// Run-wide step ceiling (CE-5): loop-body and fn-body entries.
+    pub steps: Option<u64>,
+    /// Run-wide wall-clock ceiling in milliseconds (CE-5).
+    pub wall_ms: Option<u64>,
 }
 
 /// One JSON value of the flat schema.
@@ -309,6 +316,8 @@ pub fn parse(bytes: &[u8], path: &Path, cwd: &Path) -> Result<Ceiling, String> {
         ai_tokens: None,
         ai_calls: None,
         max_depth: None,
+        steps: None,
+        wall_ms: None,
     };
     for (k, v) in fields {
         match k.as_str() {
@@ -359,6 +368,8 @@ pub fn parse(bytes: &[u8], path: &Path, cwd: &Path) -> Result<Ceiling, String> {
                     None => None,
                 }
             }
+            "steps" => c.steps = whole("steps", v)?,
+            "wall_ms" => c.wall_ms = whole("wall_ms", v)?,
             _ => unreachable!("unknown keys were refused above"),
         }
     }
@@ -470,7 +481,7 @@ mod tests {
 
     const FULL: &str = r#"{ "schema": "axon-ceiling/1", "effects": ["IO"], "fs_read": null,
         "fs_write": [], "net": ["api.anthropic.com"], "ai_tokens": 100, "ai_calls": 3,
-        "max_depth": null }"#;
+        "max_depth": null, "steps": 50, "wall_ms": null }"#;
 
     fn p(src: &str) -> Result<Ceiling, String> {
         parse(
@@ -488,6 +499,8 @@ mod tests {
         assert_eq!(c.ai_tokens, Some(100));
         assert_eq!(c.ai_calls, Some(3));
         assert_eq!(c.max_depth, None);
+        assert_eq!(c.steps, Some(50));
+        assert_eq!(c.wall_ms, None);
         assert_eq!(c.sha256.len(), 64);
     }
 
@@ -502,6 +515,9 @@ mod tests {
             (r#""effects": ["IO"]"#, r#""effects": ["IOO"]"#),
             (r#""effects": ["IO"]"#, r#""effects": [1]"#),
             (r#""max_depth": null"#, r#""max_depth": 0"#),
+            (r#""steps": 50"#, r#""steps": -1"#),
+            (r#""steps": 50"#, r#""steps": "50""#),
+            (r#""wall_ms": null"#, r#""wall_ms": 1.5"#),
             (
                 r#""schema": "axon-ceiling/1""#,
                 r#""schema": "axon-ceiling/2""#,

@@ -14654,5 +14654,47 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test ceiling', 'ceiling_ai_calls_caps_the_run'),
 ]
 
+# ceilings CE-5 (ids M4741-M4749, overflow block, NH-C5 A): a run-wide step
+# ceiling (AXON_MAX_STEPS / a ceiling's `steps`) and wall-clock ceiling
+# (AXON_WALL_MS / `wall_ms`), E1006 exit 9, counted alike by tree and VM.
+MUTATIONS += [
+    ('M4741', 'CE-5: the tree engine skips the loop-body step', 'crates/axon-core/src/interp/eval.rs',
+     '        // `for`), before the body\'s scope opens.\n        self.step()?;',
+     '        // `for`), before the body\'s scope opens.',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_halts_while_true_e1006_exit9'),
+    ('M4742', 'CE-5: the VM emits no step op at a loop body', 'crates/axon-core/src/interp/vm/compile.rs',
+     '        if self.ix.meter.on {\n            self.emit(Op::Step, 0, 0);',
+     '        if false && self.ix.meter.on {\n            self.emit(Op::Step, 0, 0);',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_halts_while_true_e1006_exit9'),
+    ('M4743', 'CE-5: a counted while stays fused under a step ceiling', 'crates/axon-core/src/interp/vm/compile.rs',
+     '        if self.ix.meter.on {\n            return None;\n        }\n        let n = &mut 0;',
+     '        let n = &mut 0;',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_halts_fused_pure_loop'),
+    ('M4744', 'CE-5: a range for stays fused under a step ceiling', 'crates/axon-core/src/interp/vm/compile.rs',
+     '        if self.ix.meter.on {\n            return None;\n        }\n        if var.slot >= NOT_LOCAL {',
+     '        if var.slot >= NOT_LOCAL {',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_halts_fused_pure_loop'),
+    ('M4745', 'CE-5: a fn-body entry is not a step', 'crates/axon-core/src/interp.rs',
+     '        // ceilings CE-5: one step per fn-body entry, charged to the callee.\n        self.step()?;',
+     '        // ceilings CE-5: one step per fn-body entry, charged to the callee.',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_counts_calls'),
+    ('M4746', 'CE-5: the VM leaf-call shortcut skips the fn-body step', 'crates/axon-core/src/interp.rs',
+     '            fast_depth: if meter.on { 0 } else { max_depth },',
+     '            fast_depth: max_depth,',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_equal_across_engines'),
+    ('M4747', 'CE-5: the wall-clock ceiling is never read', 'crates/axon-core/src/interp.rs',
+     '        if n & 4095 == 1 {',
+     '        if false && n & 4095 == 1 {',
+     'axon-core', '--no-default-features --test ceiling', 'wall_ceiling_halts_exit9'),
+    ('M4748', 'CE-5: a malformed AXON_MAX_STEPS disarms the ceiling', 'crates/axon-core/src/interp.rs',
+     '                 stops at its first step). Set a whole number, or unset the variable for no bound."\n            );\n            Some(0)',
+     '                 stops at its first step). Set a whole number, or unset the variable for no bound."\n            );\n            None',
+     'axon-core', '--no-default-features --test ceiling', 'step_ceiling_malformed_fails_closed'),
+    ('M4749', 'CE-5: a ceiling steps key is ignored', 'crates/axon-core/src/interp.rs',
+     '        ceiling.and_then(|c| c.steps),',
+     '        ceiling.and_then(|c| c.steps).filter(|_| false),',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_steps_and_wall_ms_bound_the_run'),
+]
+
 if __name__ == "__main__":
     main()

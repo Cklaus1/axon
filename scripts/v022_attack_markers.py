@@ -4039,3 +4039,16 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M4740': r'ATTACK: a ceiling.s ai_calls did not cap the run.s model calls',
 })
+
+# ceilings CE-5 (ids M4741-M4749, overflow block)
+ATTACK_MARKERS.update({
+    'M4741': r'ATTACK: a run went past its steps ceiling \(tree\)',
+    'M4742': r'ATTACK: a run went past its steps ceiling \(vm\)',
+    'M4743': r'ATTACK: a fused while loop ran past the step ceiling',
+    'M4744': r'ATTACK: a fused for loop ran past the step ceiling',
+    'M4745': r'ATTACK: calls were not counted as steps',
+    'M4746': r'ATTACK: the engines stopped at different steps',
+    'M4747': r'ATTACK: a run went past its wall_ms ceiling',
+    'M4748': r'ATTACK: a run went past its steps ceiling',
+    'M4749': r'ATTACK: the ceiling.s steps did not narrow the env var',
+})

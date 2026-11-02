@@ -2155,7 +2155,20 @@ pub extern "C" fn __axon_rt_refuse_interp_only_env() {
         (
             "AXON_CEILING",
             "run past every bound in the operator's ceiling file (effects, \
-             fs/net scope, AI tokens, depth) — none of which this engine reads",
+             fs/net scope, AI tokens, depth, steps, wall clock) — none of \
+             which this engine reads",
+        ),
+        // ceilings CE-5: the step and wall-clock ceilings are counted by the
+        // interpreter only.
+        (
+            "AXON_MAX_STEPS",
+            "run past the step ceiling the operator set, to completion or \
+             forever — a bound the interpreter counts and this engine cannot",
+        ),
+        (
+            "AXON_WALL_MS",
+            "run past the wall-clock ceiling the operator set — a bound the \
+             interpreter checks and this engine cannot",
         ),
         (
             "AXON_REQUIRE_IMPORTS_DIGEST",
