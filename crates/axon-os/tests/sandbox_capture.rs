@@ -507,7 +507,6 @@ fn a_run_without_an_outcome_record_is_a_sandbox_fault() {
             "truncated (no newline)",
         ),
         ("mismatch", format!("{exit0}\nexit 5"), "its code 0 is not the exit status (exit 5)"),
-        ("sigkill", format!("{exit0}\nkill -KILL $$"), "(signal signal 9)"),
     ] {
         let r = capture_stub(&format!("gv-norec-{tag}"), &body);
         assert!(
@@ -516,6 +515,26 @@ fn a_run_without_an_outcome_record_is_a_sandbox_fault() {
              want {which:?}: {r:?}"
         );
     }
+}
+
+/// O-GV-07: a run killed by a signal nobody here sent has no valid record;
+/// its reason names the signal once (`(killed by signal 9)`), not
+/// `(signal signal 9)`.
+#[test]
+fn a_sigkilled_run_names_the_signal_once() {
+    let r = capture_stub(
+        "gv-norec-sigkill",
+        &format!("{}\nkill -KILL $$", record("exit", 0, "return")),
+    );
+    let shown = format!("{:?}", r.outcome);
+    assert!(
+        is_sandbox_fault(&r.outcome),
+        "premise: a sigkilled run is a sandbox fault: {r:?}"
+    );
+    assert!(
+        shown.contains("(killed by signal 9)") && !shown.contains("signal signal"),
+        "ATTACK: the signal was named twice: {shown}"
+    );
 }
 
 #[test]

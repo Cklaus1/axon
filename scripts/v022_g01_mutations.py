@@ -15043,5 +15043,14 @@ _B3_STALE = {
 STALE_REFACTORED.update(_B3_STALE)
 RETIRED |= set(_B3_STALE)
 
+# genviab-b3 B3-6 (tasks/genviab-b3-spec.md §3, id M4778, b3 block M4770-M4789):
+# a signal death's reason names the signal once (`killed by signal 9`).
+MUTATIONS += [
+    ('M4778', 'B3-6: the old `signal {}` wrapper names the signal twice', 'crates/axon-os/src/runtime.rs',
+     '        (Some(sig), _) => format!("killed by {}", signal_name(sig)),',
+     '        (Some(sig), _) => format!("signal {}", signal_name(sig)),',
+     'axon-os', '--test sandbox_capture', 'a_sigkilled_run_names_the_signal_once'),
+]
+
 if __name__ == "__main__":
     main()

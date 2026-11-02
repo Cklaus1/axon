@@ -3714,7 +3714,7 @@ EXEMPT += [
     ("crates/axon-os/src/runtime.rs", '        return refuse("malformed");\n    };\n    if kind == RecordKind::Fault', _GV1R),
     ("crates/axon-os/src/runtime.rs", '        return refuse("unknown fault class");', _GV1R),
     ("crates/axon-os/src/runtime.rs", '        return refuse("the interpreter died by a signal after writing it");',
-     _GV1R + _GV1T + "[sigkill]"),
+     _GV1R + "; observed by sandbox_capture `a_sigkilled_run_names_the_signal_once` (genviab-b3 B3-6)"),
     ("crates/axon-os/src/runtime.rs", '''        return refuse(&format!("its code {code} is not the exit status"));''',
      _GV1R + _GV1T + "[mismatch]"),
     ("crates/axon-os/src/runtime.rs", "const FAULT_CLASSES: &[&str] = &[",

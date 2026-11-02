@@ -4153,3 +4153,8 @@ ATTACK_MARKERS.update({
     'M4774': r'ATTACK: an exit before main was sealed as completed',
     'M4775': r'ATTACK: a job that stopped itself was sealed as completed',
 })
+
+# genviab-b3 B3-6 (id M4778, b3 block M4770-M4789)
+ATTACK_MARKERS.update({
+    'M4778': r'ATTACK: the signal was named twice',
+})

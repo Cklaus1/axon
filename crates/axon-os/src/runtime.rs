@@ -1543,14 +1543,14 @@ const FAULT_CLASSES: &[&str] = &[
 
 /// GV-1: the one record the interpreter wrote to this run's outcome pipe, or
 /// why there is none (`Err` is the whole reason, `no outcome record: <which>
-/// (exit <n>|signal <s>)`). Valid only as exactly one newline-terminated
+/// (exit <n>|killed by <signal>)`). Valid only as exactly one newline-terminated
 /// `axon-outcome/1` JSON line within [`OUTCOME_RECORD_MAX`], carrying THIS
 /// run's nonce, a known kind and class, and a `code` equal to the process
 /// exit status. Death by a signal is never a valid end: the supervisor's own
 /// kills are decided before this is asked.
 fn read_outcome_record(proc: &ProcOutcome, nonce: &str) -> Result<OutcomeRecord, String> {
     let ended = match (proc.exit_signal, proc.code) {
-        (Some(sig), _) => format!("signal {}", signal_name(sig)),
+        (Some(sig), _) => format!("killed by {}", signal_name(sig)),
         (None, Some(c)) => format!("exit {c}"),
         (None, None) => "no exit status".to_string(),
     };
