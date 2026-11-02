@@ -1158,6 +1158,21 @@ PYEOF
 stage_end
 fi
 
+# genviab's self-test (tasks/genviab-b2-spec.md §3, NH-G6): build.py's
+# mechanical checks, the once guard and both graders, against the axon and
+# axon-intent THIS gate builds. GENVIAB_REQUIRE_BINS=1: a missing binary is a
+# FAIL, never a printed skip. No model call, no spend.
+if lane_runs S23; then
+stage_begin S23 "genviab-selftest"
+echo "── gate: genviab selftest (GENVIAB_REQUIRE_BINS=1) ───────────────"
+lane_cargo B8 cargo build --locked -q -p axon-core -p axon-intent --bin axon --bin axon-intent \
+  || fail "axon + axon-intent build (genviab selftest)"
+GENVIAB_REQUIRE_BINS=1 AXON_BIN="$(built_bin axon)" AXON_INTENT_BIN="$(built_bin axon-intent)" \
+  python3 -B crates/axon-intent/benchmarks/genviab/selftest.py \
+  || fail "genviab selftest (crates/axon-intent/benchmarks/genviab/selftest.py)"
+stage_end
+fi
+
 # A lane (or the audit's --lane-units run) ends here: it refuses --strict and
 # --profile, so nothing below applies, and it never prints the PASS line.
 if [ -n "$LANE_SEL" ]; then

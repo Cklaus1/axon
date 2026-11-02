@@ -62,6 +62,7 @@
                 "axon-loop", "axon-loop-contracts", "axon-os", "axon-psv", "axon-reflex", "axon-rt", "axon-rt-ai",
                 "axon-signal", "axon-surface", "axon-vm", "axon-wasm", "axon-web", "axon-workspace-recipe",
                 "cortex-policy-adapter"]},
+    {"id": "S23", "banner": "genviab-selftest", "class": "selectable", "split": "none"},
     {"id": "S21", "banner": "v0.22 Stage-5 verification profile", "class": "profile-only"}
   ],
   "builds": [
@@ -71,6 +72,7 @@
     {"id": "B4", "stage": "S08", "cmd": "cargo build -q -p axon-psv --example psv_dev"},
     {"id": "B5", "stage": "S11", "cmd": "cargo build --locked -p axon-core"},
     {"id": "B6", "stage": "S17", "cmd": "cargo build --locked -q -p axon-core --bin axon"},
-    {"id": "B7", "stage": "S22", "cmd": "cargo build --locked -q --release -p axon-core --no-default-features --bin axon"}
+    {"id": "B7", "stage": "S22", "cmd": "cargo build --locked -q --release -p axon-core --no-default-features --bin axon"},
+    {"id": "B8", "stage": "S23", "cmd": "cargo build --locked -q -p axon-core -p axon-intent --bin axon --bin axon-intent"}
   ]
 }
