@@ -12,7 +12,6 @@ pub struct Policy<'a> {
     pub budget_tokens: Option<u64>,
     pub source_hash: Option<&'a str>, // unused at kernel level
     pub run_id: Option<&'a str>,      // unused at kernel level
-    pub seccomp_hint: &'a [u8],       // unused at kernel level
 }
 
 /// Bitmask of allowed effect rows.
@@ -181,7 +180,6 @@ pub fn read_policy() -> Policy<'static> {
                 budget_tokens: None,
                 source_hash: None,
                 run_id: None,
-                seccomp_hint: &[],
             };
         }
         let principal = if PRINCIPAL_LEN > 0 {
@@ -203,7 +201,6 @@ pub fn read_policy() -> Policy<'static> {
             },
             source_hash: None,
             run_id: None,
-            seccomp_hint: &[],
         }
     }
 }

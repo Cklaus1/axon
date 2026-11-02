@@ -28,7 +28,7 @@
     "This profile is also a SEPARATE ARTIFACT from the agent's code: nothing keeps the two",
     "in sync. Edit the agent to need a new capability and this file silently stays wrong",
     "(over- or under-permissioned) until a human remembers to update it. Axon derives the",
-    "syscall allowlist FROM the code (.axmeta syscall_hint), so it cannot drift."
+    "policy FROM the code (the .axmeta `capabilities`, what `axon caps` reports), so it cannot drift."
   ],
   "defaultAction": "SCMP_ACT_ALLOW",
   "syscalls": [

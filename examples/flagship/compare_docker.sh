@@ -97,14 +97,14 @@ rule
 bold "Why Axon wins this comparison (three independent reasons)"
 echo
 cyan "  1. PROVENANCE — the policy is DERIVED FROM THE CODE."
-echo  "     Axon emits the syscall allowlist from @[contained] into the .axmeta"
-echo  "     manifest (syscall_hint). The seccomp profile above is a SEPARATE file a"
-echo  "     human maintains; edit the agent and it silently drifts out of sync. Axon's"
-echo  "     cannot drift — it is regenerated from the types on every build."
+echo  "     Axon derives the program's capabilities from its code into the .axmeta"
+echo  "     manifest (\"capabilities\", what 'axon caps' reports). The seccomp profile"
+echo  "     above is a SEPARATE file a human maintains; edit the agent and it silently"
+echo  "     drifts out of sync. Axon's cannot drift — it is regenerated on every build."
 if [ -f "$D/agent_task.axmeta" ]; then
   echo
-  dim "     (live: syscall_hint derived for the GOOD agent)"
-  grep -o '"syscall_hint":\[[^]]*\]' "$D/agent_task.axmeta" 2>/dev/null | sed 's/^/       /' | head -1
+  dim "     (live: capabilities derived for the GOOD agent)"
+  grep -o '"capabilities":\[[^]]*\]' "$D/agent_task.axmeta" 2>/dev/null | sed 's/^/       /' | head -1
 fi
 echo
 cyan "  2. TIMING — refusal happens BEFORE the code runs, not at the syscall trap."

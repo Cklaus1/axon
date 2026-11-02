@@ -3,6 +3,17 @@
 Architecture sketch, API mapping, and gap analysis for a Firecracker-based launcher
 that derives its security policy directly from Axon's type system.
 
+> **guest-fs GF-5 (2026-11-02): the `syscall_hint` → seccomp path below is DELETED.**
+> `axon build --emit-manifest` no longer emits `syscall_hint`; the `.axmeta` carries
+> `"capabilities"` (the labels `axon caps` reports) instead. `axon-vm` no longer builds a
+> `seccomp_bpf_b64` from the manifest (`bpf_allowlist` and its syscall table are gone), and
+> the bare-metal kernel's unused `seccomp_hint` field is gone. That allowlist was never
+> enforced (the only backend `axon-vm` boots ignored it) and, applied, it killed every
+> interpreter at `execve` while granting `openat` for `IO`. The one syscall profile of the
+> Linux guest is `axon-guest-init`'s compiled-in `fs:none` filter (GF-3; see
+> `profiles/linux-microvm/README.md`). The diagram and gap list below are the original
+> sketch and are kept as history.
+
 ---
 
 ## Core Insight
@@ -255,11 +266,11 @@ does this before reading MMDS.
 ## Gaps and Build Order
 
 ### Done
-- [x] `axon build --emit-manifest` → `.axmeta` with effect_union + contained specs + syscall_hint
+- [x] `axon build --emit-manifest` → `.axmeta` with effect_union + contained specs + capabilities (the `syscall_hint` list was removed, guest-fs GF-5)
 
 ### Required before axon-vm works
 
-**Gap 1 — BPF bytecode emission (4 hours)**
+**Gap 1 — BPF bytecode emission (4 hours)** — *superseded (guest-fs GF-5): no manifest-derived BPF exists; see the note at the top.*
 The `.axmeta` has a `syscall_hint` string list. The launcher needs to compile that
 into actual BPF bytecode using the `seccompiler` crate. Either:
 - `axon build --emit-seccomp` adds a `.axbpf` sidecar alongside `.axmeta`, or
@@ -344,8 +355,8 @@ axon-vm launch goal.ax \
 ```
 
 Internally:
-1. Read `goal.axmeta` → effect_union, syscall_hint, contained specs, risk
-2. Compile syscall_hint → BPF bytecode (`seccompiler`)
+1. Read `goal.axmeta` → effect_union, capabilities, contained specs, risk
+2. (No manifest-derived seccomp: guest-fs GF-5 deleted the `syscall_hint` → BPF step.)
 3. Allocate uid for principal "alice", set up TAP + netns (if Net/AI in effects)
 4. POST Firecracker API calls (machine-config, boot-source, drives, vsock, mmds)
 5. Populate MMDS with principal/budget/BPF payload

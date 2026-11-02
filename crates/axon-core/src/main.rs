@@ -9240,105 +9240,6 @@ fn risk_level_name(r: i64) -> &'static str {
     }
 }
 
-/// Derive a conservative set of Linux syscall names implied by a set of effect names.
-///
-/// Used by `--emit-manifest` to populate `syscall_hint` in the `.axmeta` sidecar.
-/// A microVM launcher converts this list into a seccomp-BPF allowlist without
-/// re-parsing the source.  The list is conservative (over-approximates) — it
-/// includes every syscall the Axon runtime or libc may need for a given effect.
-#[cfg(feature = "codegen")]
-fn syscalls_for_effects(effects: &[String]) -> Vec<&'static str> {
-    // Baseline syscalls every Axon binary needs regardless of effects.
-    let mut set: Vec<&'static str> = vec![
-        "read",
-        "write",
-        "exit",
-        "exit_group",
-        "brk",
-        "mmap",
-        "munmap",
-        "mprotect",
-        "arch_prctl",
-        "set_tid_address",
-        "set_robust_list",
-        "rseq",
-        "futex",
-        "sigaltstack",
-        "rt_sigaction",
-        "rt_sigprocmask",
-    ];
-    for eff in effects {
-        match eff.to_lowercase().as_str() {
-            "io" | "fs" => {
-                for s in &[
-                    "openat",
-                    "close",
-                    "lseek",
-                    "fstat",
-                    "newfstatat",
-                    "getdents64",
-                    "mkdir",
-                    "mkdirat",
-                    "unlink",
-                    "unlinkat",
-                    "rename",
-                    "renameat2",
-                    "dup",
-                    "dup2",
-                    "fcntl",
-                    "ioctl",
-                ] {
-                    if !set.contains(s) {
-                        set.push(s);
-                    }
-                }
-            }
-            "net" | "ai" => {
-                for s in &[
-                    "socket",
-                    "connect",
-                    "sendto",
-                    "recvfrom",
-                    "sendmsg",
-                    "recvmsg",
-                    "setsockopt",
-                    "getsockopt",
-                    "getpeername",
-                    "getsockname",
-                    "poll",
-                    "epoll_create1",
-                    "epoll_ctl",
-                    "epoll_wait",
-                    "close",
-                ] {
-                    if !set.contains(s) {
-                        set.push(s);
-                    }
-                }
-            }
-            "exec" => {
-                for s in &[
-                    "execve", "execveat", "fork", "clone", "clone3", "waitpid", "wait4", "kill",
-                    "pipe2", "dup2",
-                ] {
-                    if !set.contains(s) {
-                        set.push(s);
-                    }
-                }
-            }
-            "random" => {
-                for s in &["getrandom", "openat"] {
-                    if !set.contains(s) {
-                        set.push(s);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    set
-}
-
 /// Build the JSON content of the `<binary>.axmeta` capability manifest (`axon-manifest/1`).
 ///
 /// Schema fields:
@@ -9348,7 +9249,12 @@ fn syscalls_for_effects(effects: &[String]) -> Vec<&'static str> {
 /// - `risk`         — 0=low, 1=medium, 2=high, 3=critical
 /// - `risk_label`   — human-readable risk label
 /// - `effect_union` — union of all declared effect row effects across all fns
-/// - `syscall_hint` — conservative Linux syscall allowlist derived from effect_union
+/// - `capabilities` — `capabilities::program_capabilities`, the labels `axon caps`
+///   reports (`fs:read`, `fs:write`, `net`, `exec`, `env`, `dstore`, `native:M`).
+///   guest-fs GF-5: this replaces `syscall_hint`, a per-effect Linux syscall
+///   list no launcher ever enforced (the backend axon-vm boots ignored it) and
+///   which, applied, killed every interpreter at `execve`. The Linux guest's one
+///   syscall profile is axon-guest-init's compiled-in `fs:none` filter.
 /// - `fns`          — per-function capability detail
 #[cfg(feature = "codegen")]
 fn build_axmeta_manifest(
@@ -9459,10 +9365,9 @@ fn build_axmeta_manifest(
         ));
     }
 
-    let syscall_hints = syscalls_for_effects(&effect_union);
-    let syscall_json = syscall_hints
+    let capabilities_json = axon_core::capabilities::program_capabilities(program)
         .iter()
-        .map(|s| format!("\"{s}\""))
+        .map(|c| json_str(c))
         .collect::<Vec<_>>()
         .join(",");
     let effect_union_json = effect_union
@@ -9480,7 +9385,7 @@ fn build_axmeta_manifest(
          \"risk\":{risk_int},\
          \"risk_label\":\"{risk_label}\",\
          \"effect_union\":[{effect_union_json}],\
-         \"syscall_hint\":[{syscall_json}],\
+         \"capabilities\":[{capabilities_json}],\
          \"fns\":[{fns_json}]\
          }}",
         json_str(&source.display().to_string()),
@@ -10605,5 +10510,26 @@ mod tests {
         // verdict is deterministic.
         let v = trend_label(&[10.0, 20.0, 10.0]);
         assert_eq!(v, "flat");
+    }
+
+    /// guest-fs GF-5: the `.axmeta` sidecar carries the `axon caps` labels and no
+    /// `syscall_hint`. The hint was a seccomp allowlist nobody enforced; applied,
+    /// it killed every interpreter at `execve`, and it granted `openat` for `IO`.
+    #[cfg(feature = "codegen")]
+    #[test]
+    fn manifest_carries_capabilities_not_a_syscall_hint() {
+        let src = "fn main() -> i64 {\n    match read_file(\"/etc/hostname\") {\n        Ok(s) => println(s),\n        Err(e) => println(e)\n    }\n    0\n}\n";
+        let program = parse_source(src).expect("parses");
+        let json = build_axmeta_manifest(&program, Path::new("p.ax"), Path::new("p"));
+        let v: serde_json::Value = serde_json::from_str(&json).expect("manifest is JSON");
+        assert!(
+            v.get("syscall_hint").is_none(),
+            "ATTACK: the manifest still emits an unenforced syscall_hint: {json}"
+        );
+        assert_eq!(
+            v.get("capabilities"),
+            Some(&serde_json::json!(["fs:read"])),
+            "ATTACK: the manifest does not carry the program's capabilities: {json}"
+        );
     }
 }

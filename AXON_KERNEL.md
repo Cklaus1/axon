@@ -121,8 +121,9 @@ standard Linux/bzImage multiboot header that Firecracker already speaks.
 
 ### Effect-row → syscall gate
 
-The enforcement table maps each effect row to an allowed syscall set, mirroring
-`syscalls_for_effects` in `axon-core/src/main.rs`:
+The enforcement table maps each effect row to an allowed syscall set. (It once
+mirrored `syscalls_for_effects` in `axon-core/src/main.rs`, the manifest's
+`syscall_hint`; guest-fs GF-5 deleted both, so this kernel table is the only copy.)
 
 | Effect row | Allowed kernel syscalls |
 |------------|------------------------|

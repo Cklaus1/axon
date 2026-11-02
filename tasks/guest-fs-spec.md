@@ -535,6 +535,17 @@ Blast radius [REVISED: GFA-6; from `git grep -l syscall_hint` at b3a9c56e]:
 
 The untracked `docs/axon_cortex_v0_23/*` copies are not touched.
 
+[REVISED: build 2026-11-02 GF-5] Built as specified, with these deviations. (1) The two `docs/axon_cortex_v0_22/...` records
+are NOT annotated: both are pinned by sha256 in `SHA256SUMS_v0_22.json`, `V022_PARENT_LOCK.json` and the package's
+`source_manifest.json`, so any in-file note breaks those packages' own validators. This note is the annotation. The same
+manifest pins `examples/flagship/seccomp-agent.json`; its comment line naming `syscall_hint` was still changed, because a
+live example must not claim a derivation that no longer exists (the historical pin goes stale for that one file).
+(2) `tasks/opportunities.md` is integrator-owned in batch 3; the O034 stamp is left to the integrator. (3) `AXON_VM.md` is a
+design sketch: it gets a header note and the three concrete claims are corrected; the original diagram is kept as history.
+(4) GF-3's selector reads `axon caps --json`, not the manifest's new `capabilities` key (the launcher has the program, not
+a built binary). (5) The fail-first test is `axon-core` bin unit test `manifest_carries_capabilities_not_a_syscall_hint`
+(`codegen` feature): at base it fails with the full `syscall_hint` list (`openat` included for `IO`).
+
 ---
 
 ## 4. Diagnostics and exit codes

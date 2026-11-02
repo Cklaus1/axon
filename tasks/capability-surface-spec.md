@@ -186,6 +186,8 @@ Refusal coverage: unaffected — `SCOPE_FILES` is `interp/conform.rs` only and n
 - Its one consumer is `build_axmeta_manifest` (`main.rs:8994`, `#[cfg(feature = "codegen")]` :8967) → `effect_union`,
   `syscall_hint` (:9076) → axon-vm admission (`axon-vm/src/admit.rs:100-101`, `axon-vm/src/main.rs:1261`). The
   declared-row union (`main.rs:8999-9014`) does not save it: un-annotated and `main` are open rows (`effects.rs:136-143`).
+  [REVISED: guest-fs GF-5, 2026-11-02] `syscall_hint` and the axon-vm `seccomp_bpf_b64` derivation are deleted; the
+  manifest carries `capabilities` (`program_capabilities`) instead, so `effect_union` is the only consumer left here.
 - Live gap under codegen: `gfx`, `platform` (`effects: &["IO"]`, `native.rs:289,545`; `modbus`/`fhir`/`fix` are
   codegen-refused, :496-498) and `ai_extract::<T>` (`AI, Net`, `builtins.rs:2652-2662`).
   `Reach::note` (:622-649) maps all three for `axon caps`.

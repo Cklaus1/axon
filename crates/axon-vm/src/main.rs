@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use std::{env, fs, process};
 
-use base64::Engine as _;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
@@ -601,7 +600,7 @@ enum QuorumCmd {
 
 /// Schema: axon-manifest/1 — sidecar emitted by `axon build --emit-manifest`. `schema`/`source`/
 /// `binary`/`per_fn` mirror the full sidecar schema for documentation/forward-compat even though
-/// only `effect_union`/`syscall_hint`/`risk` are read today — pre-existing, found (not introduced)
+/// only `effect_union`/`risk` are read today — pre-existing, found (not introduced)
 /// while adding axon-vm to gate.sh's clippy coverage 2026-07-19.
 #[derive(Deserialize, Debug, Default)]
 #[allow(dead_code)]
@@ -610,7 +609,9 @@ struct AxonManifest {
     source: Option<String>,
     binary: Option<String>,
     effect_union: Option<Vec<String>>,
-    syscall_hint: Option<Vec<String>>,
+    /// guest-fs GF-5: `axon caps` labels; replaces `syscall_hint` (an older
+    /// sidecar's `syscall_hint` is an unknown key serde ignores, and is not read).
+    capabilities: Option<Vec<String>>,
     /// AUDIT T48. This was `Option<String>`, but `axon build --emit-manifest`
     /// emits `"risk": 0` — a NUMBER — alongside `"risk_label": "low"`. So every
     /// manifest failed to deserialise, and `load_manifest`'s `unwrap_or_default()`
@@ -1217,23 +1218,6 @@ fn cmd_run(
     // Resolve the principal.
     let principal = principal_name.as_ref().and_then(|n| load_principal(n));
 
-    // Build the seccomp BPF policy from the manifest's syscall_hint.
-    let seccomp_b64 = if let Some(ref hints) = manifest.syscall_hint {
-        if hints.is_empty() {
-            None
-        } else {
-            match bpf_allowlist(hints) {
-                Ok(b64) => Some(b64),
-                Err(e) => {
-                    eprintln!("axon-vm: BPF generation failed: {e}");
-                    None
-                }
-            }
-        }
-    } else {
-        None
-    };
-
     // D-019: the launch gates — narrow-only override (R36 §S0), no null grant
     // (T48), kernel attestation with no TOFU (R26/P7-KRN-05) and, if requested,
     // the extended TCB (R31/T52) — live in `axon_vm::admit`, which is the only
@@ -1263,7 +1247,12 @@ fn cmd_run(
         effects_override: effects_override.as_deref(),
         budget_tokens: principal.as_ref().map(|p| p.budget_tokens),
         source_hash: Some(&source_hash),
-        seccomp_bpf_b64: seccomp_b64.as_deref(),
+        // guest-fs GF-5: no seccomp is derived from the manifest. Its old
+        // `syscall_hint` allowlist was never enforced (the bare-metal kernel
+        // ignores the field) and, applied, killed every interpreter at
+        // `execve`. The Linux guest's syscall profile is axon-guest-init's
+        // compiled-in `fs:none` filter.
+        seccomp_bpf_b64: None,
         kernel_pin: if no_attest {
             KernelPin::DevBypass
         } else {
@@ -2087,362 +2076,6 @@ fn cmd_quorum_check(
     report_quorum_result(result, n, json_out);
 }
 
-// ── BPF policy generation ─────────────────────────────────────────────────────
-
-/// Generate a seccomp-BPF allowlist program from a list of syscall names.
-/// Returns the base64-encoded BPF bytecode (sock_filter array, 8 bytes each).
-///
-/// Layout (N allowed syscalls):
-///   [0]   LD  syscall_nr from seccomp_data.nr
-///   [1..N] JEQ to ALLOW for each allowed syscall (fallthrough = next check)
-///   [N+1] RET KILL_PROCESS (default deny)
-///   [N+2] RET ALLOW
-pub fn bpf_allowlist(syscall_names: &[String]) -> Result<String, Box<dyn std::error::Error>> {
-    let mut syscall_nrs: Vec<u32> = Vec::with_capacity(syscall_names.len());
-    for name in syscall_names {
-        match SYSCALL_TABLE.iter().find(|(n, _)| *n == name.as_str()) {
-            Some((_, nr)) => syscall_nrs.push(*nr),
-            None => eprintln!("axon-vm: unknown syscall '{name}', skipping"),
-        }
-    }
-
-    if syscall_nrs.is_empty() {
-        return Err("no recognized syscall names".into());
-    }
-
-    let n = syscall_nrs.len();
-    // Total instructions: 1 (LD) + N (JEQ) + 1 (RET KILL) + 1 (RET ALLOW)
-    let n_insns = 1 + n + 2;
-    let mut prog = Vec::with_capacity(n_insns * 8);
-
-    // Encode a sock_filter as 8 LE bytes: [code_lo, code_hi, jt, jf, k0..k3]
-    let encode = |buf: &mut Vec<u8>, code: u16, jt: u8, jf: u8, k: u32| {
-        buf.extend_from_slice(&code.to_le_bytes());
-        buf.push(jt);
-        buf.push(jf);
-        buf.extend_from_slice(&k.to_le_bytes());
-    };
-
-    // BPF opcodes
-    const LD_W_ABS: u16 = 0x20; // load 32-bit word from absolute offset
-    const JMP_JEQ_K: u16 = 0x15; // jump if equal to constant
-    const RET_K: u16 = 0x06; // return constant
-
-    // seccomp_data.nr offset = 0 (x86_64 ABI)
-    encode(&mut prog, LD_W_ABS, 0, 0, 0);
-
-    // JEQ instructions: if syscall_nr matches, jump forward to RET ALLOW.
-    // The ALLOW instruction is at offset N+1 from insn 0 (= N - j from insn j).
-    for (j, &nr) in syscall_nrs.iter().enumerate() {
-        // jt = how many instructions to skip to reach ALLOW (index N+1 relative to this insn)
-        let jt = (n - j) as u8; // j is 0-based; allow is at absolute index N+1
-        encode(&mut prog, JMP_JEQ_K, jt, 0, nr);
-    }
-
-    // Default deny: KILL_PROCESS
-    const KILL_PROCESS: u32 = 0x8000_0000;
-    encode(&mut prog, RET_K, 0, 0, KILL_PROCESS);
-
-    // ALLOW
-    const ALLOW: u32 = 0x7fff_0000;
-    encode(&mut prog, RET_K, 0, 0, ALLOW);
-
-    Ok(base64::engine::general_purpose::STANDARD.encode(&prog))
-}
-
-// x86_64 Linux syscall table (most common; extend as needed).
-static SYSCALL_TABLE: &[(&str, u32)] = &[
-    ("read", 0),
-    ("write", 1),
-    ("open", 2),
-    ("close", 3),
-    ("stat", 4),
-    ("fstat", 5),
-    ("lstat", 6),
-    ("poll", 7),
-    ("lseek", 8),
-    ("mmap", 9),
-    ("mprotect", 10),
-    ("munmap", 11),
-    ("brk", 12),
-    ("rt_sigaction", 13),
-    ("rt_sigprocmask", 14),
-    ("rt_sigreturn", 15),
-    ("ioctl", 16),
-    ("pread64", 17),
-    ("pwrite64", 18),
-    ("readv", 19),
-    ("writev", 20),
-    ("access", 21),
-    ("pipe", 22),
-    ("select", 23),
-    ("sched_yield", 24),
-    ("mremap", 25),
-    ("msync", 26),
-    ("mincore", 27),
-    ("madvise", 28),
-    ("dup", 32),
-    ("dup2", 33),
-    ("nanosleep", 35),
-    ("getitimer", 36),
-    ("alarm", 37),
-    ("setitimer", 38),
-    ("getpid", 39),
-    ("sendfile", 40),
-    ("socket", 41),
-    ("connect", 42),
-    ("accept", 43),
-    ("sendto", 44),
-    ("recvfrom", 45),
-    ("sendmsg", 46),
-    ("recvmsg", 47),
-    ("shutdown", 48),
-    ("bind", 49),
-    ("listen", 50),
-    ("getsockname", 51),
-    ("getpeername", 52),
-    ("socketpair", 53),
-    ("setsockopt", 54),
-    ("getsockopt", 55),
-    ("clone", 56),
-    ("fork", 57),
-    ("vfork", 58),
-    ("execve", 59),
-    ("exit", 60),
-    ("wait4", 61),
-    ("kill", 62),
-    ("uname", 63),
-    ("fcntl", 72),
-    ("fsync", 74),
-    ("ftruncate", 77),
-    ("getdents", 78),
-    ("getcwd", 79),
-    ("chdir", 80),
-    ("rename", 82),
-    ("mkdir", 83),
-    ("rmdir", 84),
-    ("creat", 85),
-    ("link", 86),
-    ("unlink", 87),
-    ("symlink", 88),
-    ("readlink", 89),
-    ("chmod", 90),
-    ("chown", 92),
-    ("umask", 95),
-    ("gettimeofday", 96),
-    ("getrlimit", 97),
-    ("getrusage", 98),
-    ("sysinfo", 99),
-    ("times", 100),
-    ("getuid", 102),
-    ("syslog", 103),
-    ("getgid", 104),
-    ("setuid", 105),
-    ("setgid", 106),
-    ("geteuid", 107),
-    ("getegid", 108),
-    ("setpgid", 109),
-    ("getppid", 110),
-    ("getpgrp", 111),
-    ("setsid", 112),
-    ("setreuid", 113),
-    ("setregid", 114),
-    ("getgroups", 115),
-    ("setgroups", 116),
-    ("setresuid", 117),
-    ("getresuid", 118),
-    ("setresgid", 119),
-    ("getresgid", 120),
-    ("getpgid", 121),
-    ("setfsuid", 122),
-    ("setfsgid", 123),
-    ("getsid", 124),
-    ("capget", 125),
-    ("capset", 126),
-    ("rt_sigsuspend", 130),
-    ("sigaltstack", 131),
-    ("utime", 132),
-    ("mknod", 133),
-    ("personality", 135),
-    ("statfs", 137),
-    ("fstatfs", 138),
-    ("getpriority", 140),
-    ("setpriority", 141),
-    ("sched_setparam", 142),
-    ("sched_getparam", 143),
-    ("sched_setscheduler", 144),
-    ("sched_getscheduler", 145),
-    ("sched_get_priority_max", 146),
-    ("sched_get_priority_min", 147),
-    ("sched_rr_get_interval", 148),
-    ("mlock", 149),
-    ("munlock", 150),
-    ("mlockall", 151),
-    ("munlockall", 152),
-    ("vhangup", 153),
-    ("pivot_root", 155),
-    ("prctl", 157),
-    ("arch_prctl", 158),
-    ("adjtimex", 159),
-    ("setrlimit", 160),
-    ("chroot", 161),
-    ("sync", 162),
-    ("acct", 163),
-    ("settimeofday", 164),
-    ("umount2", 166),
-    ("swapon", 167),
-    ("swapoff", 168),
-    ("reboot", 169),
-    ("sethostname", 170),
-    ("setdomainname", 171),
-    ("iopl", 172),
-    ("ioperm", 173),
-    ("init_module", 175),
-    ("delete_module", 176),
-    ("gettid", 186),
-    ("readahead", 187),
-    ("getxattr", 191),
-    ("lgetxattr", 192),
-    ("fgetxattr", 193),
-    ("listxattr", 194),
-    ("llistxattr", 195),
-    ("flistxattr", 196),
-    ("removexattr", 197),
-    ("lremovexattr", 198),
-    ("fremovexattr", 199),
-    ("tkill", 200),
-    ("time", 201),
-    ("futex", 202),
-    ("sched_setaffinity", 203),
-    ("sched_getaffinity", 204),
-    ("io_setup", 206),
-    ("io_destroy", 207),
-    ("io_getevents", 208),
-    ("io_submit", 209),
-    ("io_cancel", 210),
-    ("lookup_dcookie", 212),
-    ("epoll_create", 213),
-    ("epoll_ctl_old", 214),
-    ("epoll_wait_old", 215),
-    ("remap_file_pages", 216),
-    ("getdents64", 217),
-    ("set_tid_address", 218),
-    ("restart_syscall", 219),
-    ("semtimedop", 220),
-    ("fadvise64", 221),
-    ("timer_create", 222),
-    ("timer_settime", 223),
-    ("timer_gettime", 224),
-    ("timer_getoverrun", 225),
-    ("timer_delete", 226),
-    ("clock_settime", 227),
-    ("clock_gettime", 228),
-    ("clock_getres", 229),
-    ("clock_nanosleep", 230),
-    ("exit_group", 231),
-    ("epoll_wait", 232),
-    ("epoll_ctl", 233),
-    ("tgkill", 234),
-    ("utimes", 235),
-    ("mbind", 237),
-    ("set_mempolicy", 238),
-    ("get_mempolicy", 239),
-    ("mq_open", 240),
-    ("mq_unlink", 241),
-    ("mq_timedsend", 242),
-    ("mq_timedreceive", 243),
-    ("mq_notify", 244),
-    ("mq_getsetattr", 245),
-    ("waitid", 247),
-    ("add_key", 248),
-    ("request_key", 249),
-    ("keyctl", 250),
-    ("ioprio_set", 251),
-    ("ioprio_get", 252),
-    ("inotify_init", 253),
-    ("inotify_add_watch", 254),
-    ("inotify_rm_watch", 255),
-    ("migrate_pages", 256),
-    ("openat", 257),
-    ("mkdirat", 258),
-    ("mknodat", 259),
-    ("fchownat", 260),
-    ("futimesat", 261),
-    ("newfstatat", 262),
-    ("unlinkat", 263),
-    ("renameat", 264),
-    ("linkat", 265),
-    ("symlinkat", 266),
-    ("readlinkat", 267),
-    ("fchmodat", 268),
-    ("faccessat", 269),
-    ("pselect6", 270),
-    ("ppoll", 271),
-    ("unshare", 272),
-    ("set_robust_list", 273),
-    ("get_robust_list", 274),
-    ("splice", 275),
-    ("tee", 276),
-    ("sync_file_range", 277),
-    ("vmsplice", 278),
-    ("move_pages", 279),
-    ("utimensat", 280),
-    ("epoll_pwait", 281),
-    ("signalfd", 282),
-    ("timerfd_create", 283),
-    ("eventfd", 284),
-    ("fallocate", 285),
-    ("timerfd_settime", 286),
-    ("timerfd_gettime", 287),
-    ("accept4", 288),
-    ("signalfd4", 289),
-    ("eventfd2", 290),
-    ("epoll_create1", 291),
-    ("dup3", 292),
-    ("pipe2", 293),
-    ("inotify_init1", 294),
-    ("preadv", 295),
-    ("pwritev", 296),
-    ("rt_tgsigqueueinfo", 297),
-    ("perf_event_open", 298),
-    ("recvmmsg", 299),
-    ("fanotify_init", 300),
-    ("fanotify_mark", 301),
-    ("prlimit64", 302),
-    ("name_to_handle_at", 303),
-    ("open_by_handle_at", 304),
-    ("clock_adjtime", 305),
-    ("syncfs", 306),
-    ("sendmmsg", 307),
-    ("setns", 308),
-    ("getcpu", 309),
-    ("process_vm_readv", 310),
-    ("process_vm_writev", 311),
-    ("kcmp", 312),
-    ("finit_module", 313),
-    ("sched_setattr", 314),
-    ("sched_getattr", 315),
-    ("renameat2", 316),
-    ("seccomp", 317),
-    ("getrandom", 318),
-    ("memfd_create", 319),
-    ("kexec_file_load", 320),
-    ("bpf", 321),
-    ("execveat", 322),
-    ("userfaultfd", 323),
-    ("membarrier", 324),
-    ("mlock2", 325),
-    ("copy_file_range", 326),
-    ("preadv2", 327),
-    ("pwritev2", 328),
-    ("pkey_mprotect", 329),
-    ("pkey_alloc", 330),
-    ("pkey_free", 331),
-    ("statx", 332),
-    ("io_pgetevents", 333),
-    ("rseq", 334),
-];
-
 // ── Manifest loading ──────────────────────────────────────────────────────────
 
 /// Load the `.axmeta` policy sidecar next to `program`.
@@ -2587,61 +2220,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bpf_encodes_allow_write_exit() {
-        // Allow write(1) + exit_group(231) — minimal Axon pure program.
-        let names: Vec<String> = vec!["write".into(), "exit_group".into()];
-        let b64 = bpf_allowlist(&names).unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&b64)
-            .unwrap();
-        // 1 LD + 2 JEQ + 1 KILL + 1 ALLOW = 5 instructions × 8 bytes = 40
-        assert_eq!(bytes.len(), 40);
-    }
-
-    #[test]
-    fn bpf_first_insn_is_ld_abs() {
-        let names: Vec<String> = vec!["read".into()];
-        let b64 = bpf_allowlist(&names).unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&b64)
-            .unwrap();
-        // First 2 bytes = opcode (LD_W_ABS = 0x0020 LE)
-        assert_eq!(u16::from_le_bytes([bytes[0], bytes[1]]), 0x0020);
-    }
-
-    #[test]
-    fn bpf_last_insn_is_ret_allow() {
-        let names: Vec<String> = vec!["write".into()];
-        let b64 = bpf_allowlist(&names).unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&b64)
-            .unwrap();
-        let last_insn = &bytes[bytes.len() - 8..];
-        // RET_K = 0x0006
-        assert_eq!(u16::from_le_bytes([last_insn[0], last_insn[1]]), 0x0006);
-        // k = ALLOW = 0x7fff_0000
-        assert_eq!(
-            u32::from_le_bytes([last_insn[4], last_insn[5], last_insn[6], last_insn[7]]),
-            0x7fff_0000
-        );
-    }
-
-    #[test]
-    fn bpf_kill_insn_before_allow() {
-        let names: Vec<String> = vec!["write".into()];
-        let b64 = bpf_allowlist(&names).unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&b64)
-            .unwrap();
-        // Second-to-last instruction = KILL
-        let kill_insn = &bytes[bytes.len() - 16..bytes.len() - 8];
-        assert_eq!(
-            u32::from_le_bytes([kill_insn[4], kill_insn[5], kill_insn[6], kill_insn[7]]),
-            0x8000_0000
-        );
-    }
-
-    #[test]
     fn principal_registry_roundtrip() {
         let reg = PrincipalRegistry {
             principals: vec![Principal {
@@ -2734,7 +2312,7 @@ mod tests {
         std::fs::write(
             dir.join("p.axmeta"),
             r#"{"schema":"axon-manifest/1","source":"p.ax","binary":"p","risk":0,
-                "risk_label":"low","effect_union":["IO"],"syscall_hint":["write"],"fns":[]}"#,
+                "risk_label":"low","effect_union":["IO"],"capabilities":[],"fns":[]}"#,
         )
         .unwrap();
         let m = load_manifest(&prog)
@@ -3169,6 +2747,7 @@ mod tests {
 
         // The base64 blob round-trips to the original JSON.
         let b64_part = result.split("axon.policy=").nth(1).unwrap();
+        use base64::Engine as _;
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(b64_part)
             .unwrap();
