@@ -21,6 +21,9 @@ manifests, rejected-ideas.json and once-ledger.jsonl are never touched:
     path, `import socket`, an exit of 300 and an exec grant are excluded; the
     oracle generator refuses a Python-reference task; arm c sees the clean
     environment and per-run fs_read binds;
+(b') arm c's runner (B3-1, bwrap only): a raised exception (also
+    KeyboardInterrupt) fails an example expecting exit 1 and says so, sys.exit(1)
+    passes, PYTHONHASHSEED binds, and a run over 64 KiB of stdout names the bound;
 (c) the once guard: a paid once run is refused while PREREG-genviab.md is not
     FROZEN or pins another manifest, or with the selftest's ledger URL
     override set; once_spend refuses a second score of the same (manifest,
@@ -331,6 +334,39 @@ def build_mechanical():
                 os.environ["FAKE_SECRET"] = saved
     finally:
         shutil.rmtree(d)
+
+
+def arm_c_runner():
+    """B3-1 (O-GV-04): arm c runs through the reference fault runner. A raised
+    exception (KeyboardInterrupt too) fails the example whatever the exit status,
+    SystemExit is the program's own exit, PYTHONHASHSEED binds, and arm c keeps
+    its 64 KiB stdout bound, named when a run goes over it. Needs bwrap only."""
+    sys.path.insert(0, HERE)
+    import gv
+    task = {"intent_md": gv3_intent("arm c fault fixture"),
+            "examples": {"visible": [gv3_ex("exit 1", None, code=1)], "hidden": []}}
+    for name, src, passes in (
+            ("arm c: raise ValueError on an example expecting exit 1 FAILS (\"raised an exception\")",
+             'raise ValueError("bad input")\n', False),
+            ("arm c: sys.exit(1) on that example passes", "import sys\nsys.exit(1)\n", True),
+            ("arm c: KeyboardInterrupt is a fault, not exit 130", "raise KeyboardInterrupt\n", False)):
+        r = gv.grade_python(task, src, ("visible",))
+        ended = [e["ended"] for e in r["examples"]]
+        fault = bool(ended) and ended[0].startswith("raised an exception")
+        expect(name, r["passed"] == passes and fault != passes
+               and (passes or "raised an exception" in r["tail"]), (ended, r["tail"]))
+    seed0 = subprocess.run([gv.PYTHON, "-c", 'print(hash("a"))'], capture_output=True, text=True,
+                           env=dict(gv.PY_ENV)).stdout
+    run = {"inputs": {}, "outputs": {}, "exit": 0, "stdout": seed0}
+    task["examples"]["visible"] = [{"name": "hash twice", "runs": [run, dict(run)]}]
+    r = gv.grade_python(task, 'print(hash("a"))\n', ("visible",))
+    expect('arm c: a program printing hash("a") prints the same value twice (PYTHONHASHSEED binds)',
+           r["passed"], r["examples"])
+    task["examples"]["visible"] = [gv3_ex("small", None, "x")]
+    r = gv.grade_python(task, f'import sys\nsys.stdout.write("x" * {gv.STDOUT_CAP + 1})\n', ("visible",))
+    diffs = [d for e in r["examples"] for d in e["diffs"]]
+    expect("arm c: a run over its 64 KiB stdout bound fails and names the bound",
+           not r["passed"] and any(f"over the {gv.STDOUT_CAP}-byte bound" in d for d in diffs), diffs)
 
 
 def once_guard():
@@ -802,6 +838,7 @@ def driver():
 def main():
     build_args_and_tamper()
     build_mechanical()
+    arm_c_runner()
     once_guard()
     synthetic_categories()
     forged_grades()

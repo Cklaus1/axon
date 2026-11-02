@@ -35,9 +35,9 @@ by hand by a human after `PREREG-genviab.md` freezes; `build.py` rejects a once 
 `reference_author` is not `human:<name>`, that has no visible example or whose ceiling grants `exec`. A once
 reference is `reference.ax` or `reference.py` (PREREG §4, option B; `reference.py` only in `once/`). A
 `reference.py` imports only `sys`, `os`, `os.path`, `json`, `csv`, `re`, `math`, `collections`, `itertools`,
-`functools`, `string` and is graded by its own runner (`gv.grade_python_reference`): a raised exception is a
-fault whatever the exit status, a clean environment, `PYTHONHASHSEED=0`, the fs_read prefixes bound only when
-staged, and the Axon reference's 1 MiB stdout bound. `genviab.py` refuses a paid once run unless the PREREG
+`functools`, `string` and is graded by `gv.grade_python_reference`: the runner arm c uses too (a raised
+exception is a fault whatever the exit status, a clean environment, `PYTHONHASHSEED=0`, the fs_read prefixes
+bound only when staged), with the Axon reference's 1 MiB stdout bound. `genviab.py` refuses a paid once run unless the PREREG
 is FROZEN and pins `once/manifest.json`; it writes the run's row to `once-ledger.jsonl`, commits it and
 pushes it to `main` of `https://github.com/Cklaus1/axon.git` before the first call. A once run is refused
 when `origin` is not that URL, is unreachable, when the checkout is not `origin/main`, or when the push fails;
@@ -50,8 +50,12 @@ a second score of the same (manifest, arm, model) is refused.
 - **b**: arm a's round-0 candidate from the transcript, graded the same way. No generation call.
 - **c**: Python 3 with the same goal, inputs, outputs, ceiling and visible examples, ≤ 3 repair rounds from the
   traceback or example diffs, every run under `bwrap` with the ceiling's binds (`gv.BWRAP_*`). Since GV-3 the
-  run sees only `PATH`, `LANG`, `LC_ALL`, `PYTHONHASHSEED` (ignored under `-I`) and bwrap's `PWD`, and an fs_read prefix is
-  bound only when that run staged it; the dev arm c rows below were recorded before that change.
+  run sees only `PATH`, `LANG`, `LC_ALL`, `PYTHONHASHSEED` and bwrap's `PWD`, and an fs_read prefix is
+  bound only when that run staged it. Since B3-1 arm c runs through the reference runner (`gv.PY_RUNNER`,
+  `-B -s -P`): an uncaught exception fails the example whatever the exit status (the feedback says "raised an
+  exception"), `PYTHONHASHSEED=0` binds, and the stdout bound stays 64 KiB. The dev arm c rows below were
+  recorded before both changes (re-grading the 97 recorded dev arm c candidates under the B3-1 runner changes
+  no grade).
 
 ## The dev set (tuning data, never a measurement)
 

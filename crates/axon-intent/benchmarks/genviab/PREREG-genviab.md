@@ -31,7 +31,7 @@ Fields marked **[FILL AT FREEZE]** are recomputed on the freeze commit's tree.
 | prompt (arm c) | `genviab.py::python_prompt` + the repair suffix in `run_arm_c`; pinned by `genviab.py`'s sha256 [FILL AT FREEZE] |
 | `axon` binary | sha256 `5697af4d…710e` (debug build of the draft-time tree; the dev manifest records it) [FILL AT FREEZE] |
 | `axon-intent` binary | sha256 `7644e29a…5575` (draft-time) [FILL AT FREEZE] |
-| bwrap (arm c) | `bubblewrap 0.11.1`; flags = `gv.BWRAP_BASE` + per-run binds + `gv.BWRAP_TAIL` (`--chdir /w --unshare-all --die-with-parent --remount-ro /`), Python `/usr/bin/python3` (3.14.4), `-I -B` |
+| bwrap (arm c) | `bubblewrap 0.11.1`; flags = `gv.BWRAP_BASE` + per-run binds + `gv.BWRAP_TAIL` (`--chdir /w --unshare-all --die-with-parent --remount-ro /`), Python `/usr/bin/python3` (3.14.4), `-B -s -P /gv/run.py` (the reference runner `gv.PY_RUNNER`, environment `gv.PY_ENV`) |
 
 The once manifest pin (filled by step 3; `genviab.py` reads exactly this line and refuses a once run whose
 `once/manifest.json` hashes differently):
@@ -126,7 +126,9 @@ call no task is removed, re-written or re-graded for any reason, including a ref
   one refusal-feedback round, a second capability refusal ends the task); overreach attempted;
   **overreach accepted** = accepted and the sandbox refused a path/host during grading.
 - arm b = arm a's round-0 candidate from the transcript, graded the same way; no extra call.
-- arm c: Python under bwrap with the same goal, inputs, outputs, ceiling and visible examples.
+- arm c: Python under bwrap with the same goal, inputs, outputs, ceiling and visible examples, run by the
+  reference runner (`gv.PY_RUNNER`): an uncaught exception fails the example whatever the exit status, and
+  `SystemExit` is the program's exit. Stdout bound 64 KiB.
 
 **Infrastructure (unscored) rows.** No transcript; loop outcome `infrastructure-failed`; grading stage
 `infrastructure`; a generator failure that is not the model's - deadline, micode exit/session error, no
@@ -155,7 +157,7 @@ Reported with the verdict, never gating: the two-sided 95 % Clopper-Pearson inte
 (26/32 -> [0.636, 0.928], 32/40 -> [0.644, 0.909]; the spec's 0.910 rounds 0.9095); **ADVERSE** (recorded) when arm c − arm a > 10 points
 on the paired non-tempting tasks, with exact McNemar p and Wilson intervals; repair gain (a vs b, exact
 McNemar), false acceptances, per-category rates (descriptive), tempting in-ceiling success, refused
-attempts, tokens and nominal cost.
+attempts, tokens and nominal cost. (arm c is graded as in §5: a raised exception is a failure.)
 
 Power at the 80 % threshold (exact binomial, spec IG7):
 
