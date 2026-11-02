@@ -1,0 +1,4 @@
+{
+  "theme": "asi-fixes merge (asi/next into af/a)",
+  "text": "merge commit (Merge branch 'asi/next' into af/a); joins AF-3 (E0409) onto AF-1/AF-4; error.rs's `error_codes_are_unique` array conflicted only on the line both sides extended and keeps both E0409 and E1304; no change beyond the commits it joins"
+}
