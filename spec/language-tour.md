@@ -249,6 +249,22 @@ fn area(s: Shape) -> f64 {
 }
 ```
 
+A variant in a pattern is always written qualified, `Shape::Circle { .. }` or `Color::Red`. A bare name in a pattern
+(`Red =>`, `Some(Red)`, `(Red, n)`) is a new variable that matches every value, not a comparison with the variant; when
+the name is a variant of the subject's enum, `axon check` refuses it with E0409 and names the qualified form:
+
+```axon
+enum Color { Red, Green, Blue }
+
+fn score(c: Color) -> i64 {
+    match c {
+        Color::Red   => 1
+        Color::Green => 2
+        Color::Blue  => 3    // `Blue => 3` here is E0409: write `Color::Blue`
+    }
+}
+```
+
 ---
 
 ## 10. Result<T, E> and Error Handling

@@ -70,6 +70,8 @@ fn main() {
     let sh = Shape::Circle { r: 5.0 }
 
     // Pattern matching — EXHAUSTIVE, `_` is the catch-all
+    // A variant is always qualified (`Color::Red =>`): a bare `Red =>` binds a new name
+    // that matches everything, and is E0409 when Red is a variant of the subject's enum
     let area = match sh {
         Shape::Circle { r }   => 3.14159 * r * r
         Shape::Square { side } => side * side

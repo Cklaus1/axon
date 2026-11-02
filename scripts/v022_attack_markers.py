@@ -3944,3 +3944,12 @@ ATTACK_MARKERS.update({
     'M4678': r'ATTACK: a module was resolved from a group-writable directory',
     'M4679': r'ATTACK: a relative entry path lost its sibling module',
 })
+
+# asi-fixes AF-3: bare variant name in a pattern, E0409 (ids M4617-M4619, M4626, M4627)
+ATTACK_MARKERS.update({
+    'M4617': r'ATTACK: bare variant name bound as catch-all \[v1\]',
+    'M4618': r'ATTACK: Some\(Green\) bound instead of compared \[v5\]',
+    'M4619': r'ATTACK: legal binding refused \[v4\]',
+    'M4626': r'ATTACK: \(Green, n\) bound instead of compared \[v9\]',
+    'M4627': r'ATTACK: legal binding refused \[sh\]',
+})

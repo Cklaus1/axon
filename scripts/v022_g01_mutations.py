@@ -14322,5 +14322,31 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'relative_entry_path_searches_dot'),
 ]
 
+# asi-fixes AF-3: a bare variant name in a pattern binds a catch-all, E0409
+# (tasks/asi-fixes-spec.md AF-3 and g01; ids M4617-M4619, plus M4626/M4627)
+_AF3 = 'crates/axon-core/src/checker.rs'
+MUTATIONS += [
+    ('M4617', 'AF-3: a bare variant name in a pattern is never reported (E0409 not pushed)', _AF3,
+     '                self.errors.push(\n                    CheckError::new(\n                        crate::error::E0409,',
+     '                drop(\n                    CheckError::new(\n                        crate::error::E0409,',
+     'axon-core', '--no-default-features --test cli_run', 'bare_variant_in_pattern_is_e0409'),
+    ('M4618', 'AF-3: the E0409 walk does not recurse into `Some(..)`', _AF3,
+     '                if let Type::Option(t) = ty {\n                    self.check_bare_variant_patterns(inner, t, node_path);',
+     '                if let Type::Option(_t) = ty {\n                    let _ = inner;',
+     'axon-core', '--no-default-features --test cli_run', 'bare_variant_in_pattern_is_e0409'),
+    ('M4619', 'AF-3: E0409 fires for a variant of ANY enum, not only the subject\'s', _AF3,
+     '                    Type::Struct(e) if self.enum_variants.contains_key(e) => e,\n                    _ => return,\n                };\n                if !self',
+     '                    Type::Struct(e) if self.enum_variants.contains_key(e) => e,\n                    _ => match self.enum_variants.iter().find(|(_, vs)| vs.iter().any(|v| v == n)) {\n                        Some((e, _)) => e,\n                        None => return,\n                    },\n                };\n                if !self',
+     'axon-core', '--no-default-features --test cli_run', 'bare_name_of_other_enum_or_non_enum_subject_is_not_e0409'),
+    ('M4626', 'AF-3: the E0409 walk does not recurse into tuple elements', _AF3,
+     '                            self.check_bare_variant_patterns(p, t, node_path);',
+     '                            let _ = (p, t);',
+     'axon-core', '--no-default-features --test cli_run', 'bare_variant_in_pattern_is_e0409'),
+    ('M4627', 'AF-3: a shorthand variant field `E::V { f }` is checked as a bare variant name', _AF3,
+     '.filter(|(fname, fpat)| !matches!(fpat, Pattern::Ident(b) if b == fname))',
+     '.filter(|(_fname, _fpat)| true)',
+     'axon-core', '--no-default-features --test cli_run', 'bare_name_of_other_enum_or_non_enum_subject_is_not_e0409'),
+]
+
 if __name__ == "__main__":
     main()
