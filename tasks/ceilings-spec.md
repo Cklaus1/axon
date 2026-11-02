@@ -521,7 +521,9 @@ step too. `call_closure_frame` (`interp.rs`, both engines call closures through 
 callback-only work. (2) The run-wide meters (`steps`, `wall_ms` start, `ai_calls`, run tokens) are process statics
 (`RUN_*` in `interp.rs`), so `axon test`'s per-test interpreters and child interpreters spend from one budget. R45
 stays `main`-only (`capabilities.rs`); documented. (3) `--ceiling` vs `AXON_CEILING` compare canonicalized paths.
-g01: M4750-M4754.
+g01: M4750-M4754. `vm_parity.sh` (release) PASS incl. a new `ce5_steps/lambda.ax`. `vm_perf_gate.sh --allow-busy`: every
+program within budget; arr-sum (an `arr_fold` callback per element) moves 4,315,003,970 -> 4,415,019,207 instructions
+(+2.3 %, still -11.3 % vs ref) for the uncapped step branch per closure call; mandelbrot OVER as before (pre-existing).
 
 ---
 
