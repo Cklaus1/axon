@@ -1884,18 +1884,15 @@ pub fn empty_block_binding_offsets(source: &str) -> Vec<usize> {
     let bytes = source.as_bytes();
     let mut out = Vec::new();
     let mut i = 0usize;
-    let mut in_str = false;
     while i < bytes.len() {
         match bytes[i] {
-            b'\\' if in_str => i += 2,
-            b'"' => {
-                in_str = !in_str;
-                i += 1;
-            }
-            b'/' if !in_str && i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+            // A string literal is skipped whole, read as the lexer reads it
+            // (a string inside its slot included, CS4-2).
+            b'"' => i = crate::token::string_literal_end(source, i),
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
                 i = source[i..].find('\n').map_or(source.len(), |n| i + n);
             }
-            b'{' if !in_str => {
+            b'{' => {
                 // `= {}` (any spacing), and nothing but whitespace inside.
                 let before = source[..i].trim_end();
                 let close = source[i + 1..]
@@ -1932,19 +1929,16 @@ pub fn floor_division_comment_offsets(source: &str) -> Vec<usize> {
     let bytes = source.as_bytes();
     let mut i = 0usize;
     let mut line_start = 0usize;
-    let mut in_str = false;
     while i < bytes.len() {
         match bytes[i] {
-            b'\n' if !in_str => {
+            b'\n' => {
                 line_start = i + 1;
                 i += 1;
             }
-            b'\\' if in_str => i += 2, // escape: never ends the string
-            b'"' => {
-                in_str = !in_str;
-                i += 1;
-            }
-            b'/' if !in_str && i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+            // A string literal is skipped whole, read as the lexer reads it
+            // (a string inside its slot included, CS4-2).
+            b'"' => i = crate::token::string_literal_end(source, i),
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
                 let before = source[line_start..i].trim_end();
                 // A standalone comment line has nothing before it; a trailing
                 // comment after an expression does. Only the latter can be a

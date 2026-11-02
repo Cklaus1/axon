@@ -59,6 +59,7 @@ fn greet(name: str) -> str {
 fn main() {
     println(to_str(add(3, 4)))   // 7
     println(greet("Axon"))        // hello, Axon
+    println("{greet("Axon") + "!"}")  // hello, Axon! (a string in a slot follows an operator or `(`)
 }
 ```
 

@@ -34,6 +34,12 @@ impl<'src> Lexer<'src> {
                         pending_newline = true;
                     }
                 }
+                // A string whose slot holds a string literal is its own token
+                // (`lex_str` flags it), so only an expression can take it.
+                Ok(Token::Str(s)) if lex.extras => {
+                    out.push((Token::SlotStr(s), lex.span(), pending_newline));
+                    pending_newline = false;
+                }
                 Ok(tok) => {
                     out.push((tok, lex.span(), pending_newline));
                     pending_newline = false;
@@ -385,5 +391,40 @@ mod tests {
             lex("a /* é */ b"),
             [Token::Ident("a".into()), Token::Ident("b".into())]
         );
+    }
+
+    #[test]
+    fn string_inside_a_slot_lexes_like_its_escaped_form() {
+        // CS4-2: a nested string's text is kept verbatim (escapes and all),
+        // the rest is unescaped, so the nested and the escaped spellings give
+        // the same value; the nested one is a `SlotStr`.
+        let pairs = [
+            (r#""hi {name + "!"}""#, r#""hi {name + \"!\"}""#),
+            (r#""a{id("}")}b""#, r#""a{id(\"}\")}b""#),
+            (r#""{f("a\"b")} \t""#, r#""{f(\"a\\\"b\")} \t""#),
+            (r#""{f("x{g("y")}z")}""#, r#""{f(\"x{g(\"y\")}z\")}""#),
+            (r#""{n + r"{"}""#, r#""{n + r\"{\"}""#),
+        ];
+        for (nested, escaped) in pairs {
+            let (Token::SlotStr(a), Token::Str(b)) = (&lex(nested)[0], &lex(escaped)[0]) else {
+                panic!(
+                    "{nested}: {:?} / {escaped}: {:?}",
+                    lex(nested),
+                    lex(escaped)
+                );
+            };
+            assert_eq!(a, b, "{nested} vs {escaped}");
+        }
+        // A `"` that does not follow an operator or opener ends the string,
+        // as before: these lex exactly as they always did.
+        assert_eq!(lex(r#""{"}"#)[0], Token::Str("{".into()));
+        assert_eq!(
+            lex(r#""{x}{"y"}""#)[..2],
+            [Token::Str("{x}{".into()), Token::Ident("y".into())]
+        );
+        assert_eq!(lex(r#""{ "a" + b }""#)[0], Token::Str("{ ".into()));
+        assert_eq!(lex(r#""{" => 1, "}""#)[0], Token::Str("{".into()));
+        // A nested reading that never closes falls back to the plain one.
+        assert_eq!(lex(r#""{f(" x"#)[0], Token::Str("{f(".into()));
     }
 }

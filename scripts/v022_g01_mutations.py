@@ -14586,5 +14586,55 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_controls_stay_legal'),
 ]
 
+# checker-soundness-4 CS4-2 (fmt half): `axon fmt` keeps brace escapes and
+# escapes slot text (tasks/checker-soundness-4-spec.md §4; ids M4709-M4711)
+_CS42F = 'crates/axon-core/src/fmt.rs'
+MUTATIONS += [
+    ('M4709', 'CS4-2: fmt writes a literal `{` of an interpolated string single, so it reads back as a slot', _CS42F,
+     "                                    '{' => self.write(\"{{\"),\n",
+     "                                    '{' => self.write(\"{\"),\n",
+     'axon-core', '--no-default-features --lib', 'fmt::tests::fmt_keeps_brace_escapes'),
+    ('M4710', 'CS4-2: fmt doubles the braces of a pattern string, which gets no brace processing', _CS42F,
+     "                        '{' if !pattern => self.write(\"{{\"),\n",
+     "                        '{' => self.write(\"{{\"),\n",
+     'axon-core', '--no-default-features --lib', 'fmt::tests::fmt_brace_pattern_stays_single'),
+    ('M4711', 'CS4-2: fmt writes slot text bare, so a string literal in a slot ends the outer string', _CS42F,
+     '                            for ch in slot.chars() {\n',
+     '                            self.buf.push_str(&slot);\n                            for ch in "".chars() {\n',
+     'axon-core', '--no-default-features --lib', 'fmt::tests::fmt_slot_string_round_trips'),
+]
+
+# checker-soundness-4 CS4-2 (lexer half): a string literal inside an
+# interpolation slot, `Token::SlotStr` (spec §4; ids M4705-M4708, M4712)
+_CS42T = 'crates/axon-core/src/token.rs'
+_CS42P = 'crates/axon-core/src/parser.rs'
+_CS42_T = '--no-default-features --test cli_run'
+MUTATIONS += [
+    ('M4705', 'CS4-2: a `"` in a slot always ends the outer string, so a string literal in a slot is refused', _CS42T,
+     "                b'\"' if opens_operand(last) => {\n",
+     "                b'\"' if false && opens_operand(last) => {\n",
+     'axon-core', _CS42_T, 'string_literal_inside_an_interpolation_slot_runs'),
+    ('M4706', 'CS4-2: a `"` opening a slot starts a nested string, so a `"{"` pattern swallows the arms after it', _CS42T,
+     '        None => false,\n',
+     '        None => true,\n',
+     'axon-core', _CS42_T, 'lone_brace_strings_keep_their_meaning'),
+    ('M4707', 'CS4-2: the slot matcher counts braces inside a string in the slot', _CS42P,
+     '                let close_opt = crate::token::slot_close(after_open);\n',
+     '                let close_opt = crate::token::slot_close_by_depth(after_open);\n',
+     'axon-core', _CS42_T, 'string_literal_inside_an_interpolation_slot_runs'),
+    ('M4708', 'CS4-2: a nested string is unescaped with the outer body, so its own escapes are lost', _CS42T,
+     '                value.push_str(&body[r.clone()]);\n',
+     '                value.push_str(&unescape(&body[r.clone()]));\n',
+     'axon-core', _CS42_T, 'string_literal_inside_an_interpolation_slot_runs'),
+    ('M4712', 'CS4-2: a pattern takes a slot string like a plain string, re-reading the arms after it', _CS42P,
+     '            Some(Token::SlotStr(_)) => Err(ParseError::Other(SLOT_STR_IN_PATTERN.into())),\n',
+     '            Some(Token::SlotStr(s)) if !SLOT_STR_IN_PATTERN.is_empty() => {\n'
+     '                let s = s.clone();\n'
+     '                self.advance()?;\n'
+     '                Ok(Pattern::Literal(Literal::Str(s)))\n'
+     '            }\n',
+     'axon-core', _CS42_T, 'slot_string_outside_an_expression_is_refused'),
+]
+
 if __name__ == "__main__":
     main()

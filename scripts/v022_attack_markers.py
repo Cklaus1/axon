@@ -4030,3 +4030,19 @@ ATTACK_MARKERS.update({
     'M4717': r'ATTACK: a wrapper-lambda program that runs was refused',
     'M4718': r'ATTACK: a wrapper-lambda program that runs was refused',
 })
+
+# checker-soundness-4 CS4-2 (fmt half) (ids M4709-M4711)
+ATTACK_MARKERS.update({
+    'M4709': r'ATTACK: fmt turned a literal brace into a slot',
+    'M4710': r'ATTACK: fmt changed a brace pattern',
+    'M4711': r'ATTACK: fmt wrote a slot that does not re-parse',
+})
+
+# checker-soundness-4 CS4-2 (lexer half) (ids M4705-M4708, M4712)
+ATTACK_MARKERS.update({
+    'M4705': r'ATTACK: a string literal in a slot was refused',
+    'M4706': r'ATTACK: a "\{" string changed meaning',
+    'M4707': r'ATTACK: a string literal in a slot was refused',
+    'M4708': r'ATTACK: a string literal in a slot was refused',
+    'M4712': r'ATTACK: a slot string outside an expression changed meaning silently',
+})

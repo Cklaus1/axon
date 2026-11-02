@@ -590,7 +590,7 @@ impl Formatter {
     fn emit_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Ident(name) => self.write(name),
-            Expr::Literal(lit) => self.emit_literal(lit),
+            Expr::Literal(lit) => self.emit_literal(lit, false),
 
             // Phase 6: `with <handler> { body }`.
             Expr::WithHandler { handler, body } => {
@@ -930,12 +930,15 @@ impl Formatter {
                 for part in parts {
                     match part {
                         FmtPart::Lit(s) => {
-                            // Re-escape special chars inside the literal fragment.
+                            // Re-escape special chars inside the literal fragment;
+                            // a literal brace is doubled, or it would read back as
+                            // a slot (`{{n}}` must not become `{n}`).
                             for ch in s.chars() {
                                 match ch {
                                     '"' => self.write("\\\""),
                                     '\\' => self.write("\\\\"),
-                                    '{' => self.write("{"),
+                                    '{' => self.write("{{"),
+                                    '}' => self.write("}}"),
                                     _ => {
                                         let mut tmp = [0u8; 4];
                                         self.write(ch.encode_utf8(&mut tmp));
@@ -944,8 +947,24 @@ impl Formatter {
                             }
                         }
                         FmtPart::Expr(e) => {
+                            // The slot text is part of the string's body, so it is
+                            // written with `\` and `"` escaped: the exact inverse
+                            // of `unescape`, so the string's value is the text
+                            // `emit_expr` produced, which the parser re-lexes.
                             self.write("{");
+                            let start = self.buf.len();
                             self.emit_expr(e);
+                            let slot = self.buf.split_off(start);
+                            for ch in slot.chars() {
+                                match ch {
+                                    '"' => self.write("\\\""),
+                                    '\\' => self.write("\\\\"),
+                                    _ => {
+                                        let mut tmp = [0u8; 4];
+                                        self.write(ch.encode_utf8(&mut tmp));
+                                    }
+                                }
+                            }
                             self.write("}");
                         }
                     }
@@ -976,7 +995,11 @@ impl Formatter {
         }
     }
 
-    fn emit_literal(&mut self, lit: &Literal) {
+    /// A string literal is written with `"`/`\`/newline/tab escapes. In a
+    /// value its braces are doubled (the parser reads a value's `{` as a slot,
+    /// and a raw string's value is written as a plain string); in a `pattern`
+    /// they stay single, because a pattern string gets no brace processing.
+    fn emit_literal(&mut self, lit: &Literal, pattern: bool) {
         match lit {
             Literal::Int(n) => self.write(&n.to_string()),
             Literal::Float(f) => {
@@ -996,6 +1019,8 @@ impl Formatter {
                         '\\' => self.write("\\\\"),
                         '\n' => self.write("\\n"),
                         '\t' => self.write("\\t"),
+                        '{' if !pattern => self.write("{{"),
+                        '}' if !pattern => self.write("}}"),
                         _ => {
                             let mut tmp = [0u8; 4];
                             self.write(ch.encode_utf8(&mut tmp));
@@ -1013,7 +1038,7 @@ impl Formatter {
             Pattern::Wildcard => self.write("_"),
             Pattern::Ident(n) => self.write(n),
             Pattern::None => self.write("None"),
-            Pattern::Literal(l) => self.emit_literal(l),
+            Pattern::Literal(l) => self.emit_literal(l, true),
             Pattern::Some(inner) => {
                 self.write("Some(");
                 self.emit_pattern(inner);
@@ -1659,5 +1684,67 @@ mod tests {
         assert_eq!(out1, out2, "{attack}: format must be idempotent");
         assert!(!out1.contains("if let"), "{attack}: {out1}");
         assert_eq!(out1.matches("match o {").count(), 2, "{attack}: {out1}");
+    }
+
+    /// Format `src`, check the output re-parses and is a fixed point, and
+    /// return it with the `(exit, stdout)` of the program before and after
+    /// formatting. Every failure carries `attack`.
+    fn fmt_and_run(src: &str, attack: &str) -> (String, (i32, String), (i32, String)) {
+        let prog1 = parse_source(src).expect("parse");
+        let out1 = format_program(&prog1);
+        let prog2 = parse_source(&out1)
+            .unwrap_or_else(|e| panic!("{attack}: fmt output does not parse ({e}):\n{out1}"));
+        let out2 = format_program(&prog2);
+        assert_eq!(out1, out2, "{attack}: format must be idempotent:\n{out1}");
+        let before = crate::interp::run_program_capturing(&prog1);
+        let after = crate::interp::run_program_capturing(&prog2);
+        (out1, before, after)
+    }
+
+    #[test]
+    fn fmt_keeps_brace_escapes() {
+        // CS4-2: a literal brace in a string value is written doubled, and a
+        // raw string is written as a plain string with the same value.
+        let attack = "ATTACK: fmt turned a literal brace into a slot";
+        let src = "fn f(c: str) -> i64 {\n    match c {\n        \"{\" => 1,\n        _ => 0,\n    }\n}\n\nfn main() {\n    let n = 1\n    println(\"set {{n}}\")\n    println(r\"raw {n}\")\n    println(\"a}}b {n} {{\")\n    println(to_str(f(\"{{\")))\n}\n";
+        let (out, before, after) = fmt_and_run(src, attack);
+        assert_eq!(
+            before,
+            (0, "set {n}\nraw {n}\na}b 1 {\n1\n".to_string()),
+            "{attack}: base run"
+        );
+        assert_eq!(after, before, "{attack}: output changed after fmt:\n{out}");
+        for want in ["\"set {{n}}\"", "\"raw {{n}}\"", "f(\"{{\")"] {
+            assert!(out.contains(want), "{attack}: want {want} in:\n{out}");
+        }
+    }
+
+    #[test]
+    fn fmt_slot_string_round_trips() {
+        // CS4-2: slot text is written with `\` and `"` escaped, so a string
+        // literal inside a slot re-parses, whatever precedes it (CS4A-2:
+        // `if "a" == s` and `match "a"` follow a keyword).
+        let attack = "ATTACK: fmt wrote a slot that does not re-parse";
+        let src = "fn main() {\n    let name = \"bo\"\n    let s = \"a\"\n    println(\"hi {name + \\\"!\\\"}\")\n    println(\"{match s { \\\"a\\\" => 1, _ => 2 }}\")\n    println(\"{if \\\"a\\\" == s { 1 } else { 2 }}\")\n    println(\"{match \\\"a\\\" { _ => 3 }}\")\n    println(\"{to_str(1) + \\\"x\\\\ty\\\"}\")\n}\n";
+        let (out, before, after) = fmt_and_run(src, attack);
+        assert_eq!(
+            before,
+            (0, "hi bo!\n1\n1\n3\n1x\ty\n".to_string()),
+            "{attack}: base run"
+        );
+        assert_eq!(after, before, "{attack}: output changed after fmt:\n{out}");
+    }
+
+    #[test]
+    fn fmt_brace_pattern_stays_single() {
+        // CS4-2: a pattern string gets no brace processing, so fmt keeps its
+        // braces single (doubling would change what the arm matches).
+        let attack = "ATTACK: fmt changed a brace pattern";
+        let src = "fn f(c: str) -> i64 {\n    match c {\n        \"{\" => 1,\n        \"}\" => 2,\n        _ => 0,\n    }\n}\n\nfn main() {\n    println(to_str(f(\"{{\")))\n    println(to_str(f(\"}\")))\n}\n";
+        let (out, before, after) = fmt_and_run(src, attack);
+        assert_eq!(before, (0, "1\n2\n".to_string()), "{attack}: base run");
+        assert_eq!(after, before, "{attack}: output changed after fmt:\n{out}");
+        assert!(out.contains("\"{\" =>"), "{attack}: {out}");
+        assert!(out.contains("\"}\" =>"), "{attack}: {out}");
     }
 }

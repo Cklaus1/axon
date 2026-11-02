@@ -47241,3 +47241,154 @@ fn wrapper_lambda_nested_call_kind_is_checked() {
         );
     }
 }
+
+// ── checker-soundness-4 CS4-2: a string literal inside an interpolation slot ──
+
+/// Run `axon <verb> <file>` on `src` written to a fresh temp file:
+/// `(exit code, stdout, stderr)`.
+fn cs42_axon(verb: &str, name: &str, src: &str) -> (Option<i32>, String, String) {
+    let f = tmp_ax(&format!("cs42_{verb}_{name}"), src);
+    let out = axon().arg(verb).arg(&f).output().expect("spawn axon");
+    let _ = std::fs::remove_file(&f);
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// CS4-2 (O-HX3-04): grammar.ebnf §6.12 lets a slot hold any expression, so a
+/// string literal after an operator or opener inside a slot is a nested
+/// string, not the end of the outer one. The escaped forms keep working.
+#[test]
+fn string_literal_inside_an_interpolation_slot_runs() {
+    let attack = "ATTACK: a string literal in a slot was refused";
+    let cases: &[(&str, &str, &str)] = &[
+        ("q6a", "fn main() {\n    let name = \"bo\"\n    println(\"hi {name + \"!\"}\")\n}\n", "hi bo!\n"),
+        ("join", "fn main() {\n    let xs = [\"a\", \"b\"]\n    println(\"{str_join(xs, \", \")}\")\n}\n", "a, b\n"),
+        ("brace", "fn id(s: str) -> str { s }\nfn main() {\n    println(\"a{id(\"}\")}b\")\n}\n", "a}b\n"),
+        ("nestslot", "fn f(s: str) -> str { s }\nfn main() {\n    let n = 5\n    println(\"{f(\"x{n}y\")}\")\n}\n", "x5y\n"),
+        ("nestraw", "fn main() {\n    let n = \"a\"\n    println(\"{n + r\"{\"}\")\n}\n", "a{\n"),
+        ("escq", "fn f(s: str) -> str { s }\nfn main() {\n    println(\"{f(\"a\\\"b\")}\")\n}\n", "a\"b\n"),
+        ("q6m_esc", "fn main() {\n    let name = \"bo\"\n    println(\"hi {name + \\\"!\\\"}\")\n}\n", "hi bo!\n"),
+        ("esc_brace", "fn id(s: str) -> str { s }\nfn main() {\n    println(\"a{id(\\\"}\\\")}b\")\n}\n", "a}b\n"),
+        ("esc_if", "fn main() {\n    let n = 2\n    println(\"{if n > 1 { \\\"many\\\" } else { \\\"one\\\" }}\")\n}\n", "many\n"),
+    ];
+    for (name, src, want) in cases {
+        let (rc, out, err) = cs42_axon("run", name, src);
+        assert_eq!(
+            (rc, out.as_str()),
+            (Some(0), *want),
+            "{attack} [{name}]: {err}\n{src}"
+        );
+    }
+}
+
+/// CS4-2: a `"` that does not follow an operator or opener in a slot still
+/// ends the string, so a lone-brace string keeps today's meaning: a `"{"`
+/// pattern, the E0000 of an unclosed slot, the guard spelling the pattern
+/// refusal suggests, and the three shapes that lex as today.
+#[test]
+fn lone_brace_strings_keep_their_meaning() {
+    let attack = "ATTACK: a \"{\" string changed meaning";
+    let runs: &[(&str, &str, &str)] = &[
+        ("q6o_pat", "fn f(c: str) -> i64 {\n    match c { \"{\" => 1, \"}\" => 2, _ => 0 }\n}\nfn main() { println(to_str(f(\"{{\"))) println(to_str(f(\"}\"))) }\n", "1\n2\n"),
+        ("patguard", "fn f(c: str) -> i64 {\n    match c { c2 if c2 == \"{{(\" => 1, \"x\" => 2, _ => 0 }\n}\nfn main() { println(to_str(f(\"{{(\"))) println(to_str(f(\"x\"))) }\n", "1\n2\n"),
+    ];
+    for (name, src, want) in runs {
+        let (rc, out, err) = cs42_axon("run", name, src);
+        assert_eq!(
+            (rc, out.as_str()),
+            (Some(0), *want),
+            "{attack} [{name}]: {err}"
+        );
+    }
+    let refused: &[(&str, &str, &str)] = &[
+        (
+            "q6n_lone",
+            "fn main() {\n    let s = \"{\"\n    println(s)\n}\n",
+            "unclosed `{` in interpolated string",
+        ),
+        (
+            "xbrace",
+            "fn main() {\n    let s = \"x{\"\n    println(s)\n}\n",
+            "unclosed `{` in interpolated string",
+        ),
+        (
+            "slot_then_str",
+            "fn main() {\n    let x = 1\n    println(\"{x}{\"y\"}\")\n}\n",
+            "this string ends at the `\\\"` before `y`",
+        ),
+        (
+            "slot_is_quote",
+            "fn main() {\n    println(\"{\"}\")\n}\n",
+            "unexpected character",
+        ),
+        (
+            "slot_starts_str",
+            "fn main() {\n    let b = \"z\"\n    println(\"{ \"a\" + b }\")\n}\n",
+            "this string ends at the `\\\"` before `a`",
+        ),
+    ];
+    for (name, src, msg) in refused {
+        let (rc, out, err) = cs42_axon("check", name, src);
+        assert_eq!(rc, Some(2), "{attack} [{name}]: {out}{err}");
+        assert!(
+            err.contains("\"code\":\"E0000\"") && err.contains(msg),
+            "{attack} [{name}]: {err}"
+        );
+    }
+}
+
+/// CS4-2 (CS4A-1): the same characters that hold a string in a slot lex as a
+/// shorter plain string without the nested reading, and a pattern gets no
+/// brace processing, so a pattern position refuses the slot string (E0000)
+/// instead of reading `"{(" => 1, "x"` as one pattern (which printed `0|0`).
+#[test]
+fn slot_string_outside_an_expression_is_refused() {
+    let attack = "ATTACK: a slot string outside an expression changed meaning silently";
+    let src = "fn f(c: str) -> i64 {\n    match c { \"{(\" => 1, \"x\" => 2, _ => 0 }\n}\nfn main() { println(to_str(f(\"{{(\"))) println(to_str(f(\"x\"))) }\n";
+    for verb in ["check", "run"] {
+        let (rc, out, err) = cs42_axon(verb, "patswallow", src);
+        assert!(!out.contains('0'), "{attack} [{verb}]: printed {out:?}");
+        assert_eq!(rc, Some(2), "{attack} [{verb}]: {out}{err}");
+        assert!(
+            err.contains("\"code\":\"E0000\"")
+                && err.contains("\"line\":2,")
+                && err.contains("interpolation slot"),
+            "{attack} [{verb}]: {err}"
+        );
+    }
+}
+
+/// CS4-2: the source scanners skip a string literal as the lexer reads it, so
+/// a `//` inside a string in a slot is neither a floor-division lint (W0007)
+/// nor a comment that makes `axon fmt` refuse the file.
+#[test]
+fn floor_division_lint_skips_slot_strings() {
+    let src = "fn f(s: str) -> str { s }\nfn main() {\n    let s = \"{f(\"a // 2\n\")}\"\n    print(s)\n}\n";
+    let (rc, out, err) = cs42_axon("check", "fdiv", src);
+    assert_eq!(rc, Some(0), "{out}{err}");
+    assert!(
+        !err.contains("W0007") && !out.contains("W0007"),
+        "a string read as code: {out}{err}"
+    );
+    let (rc, out, err) = cs42_axon("run", "fdiv", src);
+    assert_eq!((rc, out.as_str()), (Some(0), "a // 2\n"), "{err}");
+    let f = tmp_ax("cs42_fmt_fdiv", src);
+    let fo = axon().arg("fmt").arg(&f).output().expect("spawn axon fmt");
+    let fmt_err = String::from_utf8_lossy(&fo.stderr).into_owned();
+    let formatted = std::fs::read_to_string(&f).unwrap_or_default();
+    let _ = std::fs::remove_file(&f);
+    assert!(
+        !fmt_err.contains("contains comments"),
+        "a string read as a comment: {fmt_err}"
+    );
+    assert_eq!(fo.status.code(), Some(0), "{fmt_err}");
+    let (rc, out, err) = cs42_axon("run", "fdiv_fmt", &formatted);
+    assert_eq!(
+        (rc, out.as_str()),
+        (Some(0), "a // 2\n"),
+        "fmt changed the program:\n{formatted}\n{err}"
+    );
+}
