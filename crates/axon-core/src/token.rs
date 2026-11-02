@@ -2,9 +2,13 @@ use logos::Logos;
 
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\r]+")] // skip non-newline whitespace; \n is emitted as Newline
-#[logos(skip r"//[^\n]*")] // skip line comments
-                           // Block comments are NOT skipped — they are emitted as BlockComment tokens so
-                           // the lexer can detect newlines inside them and propagate ASI boundaries.
+#[logos(skip r"//[^\n]*")]
+// skip line comments
+// Block comments are NOT skipped — they are emitted as BlockComment tokens so
+// the lexer can detect newlines inside them and propagate ASI boundaries.
+// `extras`: set by [`lex_str`] when the string it just read holds a string
+// literal inside an interpolation slot; `Lexer` then emits [`Token::SlotStr`].
+#[logos(extras = bool)]
 pub enum Token {
     // Keywords
     #[token("fn")]
@@ -200,6 +204,14 @@ pub enum Token {
     #[token("\"", lex_str)]
     Str(String),
 
+    /// A string literal whose interpolation slot holds a string literal
+    /// (`"hi {name + "!"}"`, see [`scan_str_body`]). Never produced by logos
+    /// directly: `Lexer` turns a [`Token::Str`] into this when the scan opened
+    /// a nested string. Only an expression accepts it (like `Str`); every other
+    /// consumer matches `Str` alone and so refuses it, because the same
+    /// characters lex as a shorter plain string today (`"{(" => 1, "x"`).
+    SlotStr(String),
+
     /// Raw string literal `r"…"`: no escape processing, no `{…}` interpolation.
     /// Lets demos embed literal Axon/Rust/JSON code, regex patterns, or shell
     /// snippets that contain `\`, `{`, `}` characters without `{{`/`}}` doubling
@@ -241,7 +253,7 @@ impl std::fmt::Display for Token {
             Token::Int(n) => write!(f, "{n}"),
             Token::Float(n) => write!(f, "{n}"),
             Token::Decimal(s) => write!(f, "{s}d"),
-            Token::Str(s) => write!(f, "\"{s}\""),
+            Token::Str(s) | Token::SlotStr(s) => write!(f, "\"{s}\""),
             Token::BlockComment => write!(f, "/*...*/"),
             Token::Asm => write!(f, "asm"),
             other => write!(f, "{other:?}"),
@@ -249,30 +261,330 @@ impl std::fmt::Display for Token {
     }
 }
 
-/// The body of a string literal, after its opening quote: everything up to the
-/// closing `"`, where `\` takes the next character along with it (so `\"` does
-/// not close the string) and that character may not be a newline. This is the
-/// language the regex `"([^"\\]|\\.)*"` accepted; the body is scanned by a loop
-/// because the state machine logos generated for it recursed once per
-/// character (compilebench AX-65).
-///
-/// On failure (EOF before the closing quote, or a `\` with nothing or a
-/// newline after it) the token is an error over the text the regex had
-/// consumed: up to EOF, or up to the offending `\`.
+/// The body of a string literal, after its opening quote, scanned by
+/// [`scan_str_body`]. On failure the token is an error over the text up to
+/// EOF or up to the offending `\` (see [`scan_plain_str`]).
 fn lex_str(lex: &mut logos::Lexer<Token>) -> Result<String, ()> {
-    let rem = lex.remainder();
-    let bytes = rem.as_bytes();
+    match scan_str_body(lex.remainder()) {
+        Ok(scan) => {
+            lex.bump(scan.len);
+            lex.extras = scan.nested;
+            Ok(scan.value)
+        }
+        Err(at) => {
+            lex.bump(at);
+            Err(())
+        }
+    }
+}
+
+/// A string literal's body read by [`scan_str_body`].
+pub(crate) struct StrScan {
+    /// Bytes from the body's start through the closing quote.
+    pub len: usize,
+    /// The literal's value.
+    pub value: String,
+    /// The scan opened a string literal inside an interpolation slot.
+    pub nested: bool,
+}
+
+/// Scan a string literal's body (`src` starts after the opening quote): the
+/// one string scanner shared by the lexer, the slot matcher of
+/// `parse_fmt_str_raw` and the source scanners.
+///
+/// Outside a slot, `\` takes the next character (not a newline) and `"` ends
+/// the string; `{{` and `}}` are text, a single `{` opens a slot and a lone
+/// `}` is text. Inside a slot `{`/`}` count depth, and a `"` STARTS a nested
+/// string literal when the slot text before it ends with an operator or
+/// opener (see [`opens_operand`]); otherwise it ends the string, as it always
+/// did. `r"` there starts a nested raw string. A nested string is scanned by
+/// the same rules and its text is kept verbatim in the value, so the slot's
+/// re-lex reads it; the rest of the body is unescaped.
+///
+/// If that scan does not close (EOF, or a `\` before a newline), the body is
+/// read by today's rule (the first unescaped `"` ends it,
+/// [`scan_plain_str`]), so a string that lexed before and does not close
+/// under the nested reading lexes as before. A string with no nested string
+/// is byte-identical to that rule. `Err` carries the offset where the plain
+/// scan stopped.
+pub(crate) fn scan_str_body(src: &str) -> Result<StrScan, usize> {
+    if let Some((len, verbatim)) = scan_slot_strings(src) {
+        if !verbatim.is_empty() {
+            let body = &src[..len - 1];
+            let mut value = String::with_capacity(body.len());
+            let mut at = 0;
+            for r in verbatim {
+                value.push_str(&unescape(&body[at..r.start]));
+                value.push_str(&body[r.clone()]);
+                at = r.end;
+            }
+            value.push_str(&unescape(&body[at..]));
+            return Ok(StrScan {
+                len,
+                value,
+                nested: true,
+            });
+        }
+    }
+    let len = scan_plain_str(src)?;
+    Ok(StrScan {
+        len,
+        value: unescape(&src[..len - 1]),
+        nested: false,
+    })
+}
+
+/// The end (exclusive) of the string literal whose opening `"` is at
+/// `source[quote]`, read as the lexer reads it: a raw string `r"…"` ends at
+/// the next `"`, any other by [`scan_str_body`]'s rules (so a string literal
+/// inside a slot is part of it). An unclosed literal runs to the end of
+/// `source`. For the source scanners that skip string literals (W0007,
+/// W0008, fmt's comment check).
+pub fn string_literal_end(source: &str, quote: usize) -> usize {
+    let bytes = source.as_bytes();
+    let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let raw = quote > 0 && bytes[quote - 1] == b'r' && (quote < 2 || !ident(bytes[quote - 2]));
+    let body = &source[quote + 1..];
+    let len = if raw {
+        body.find('"').map(|n| n + 1)
+    } else {
+        str_literal_len(body)
+    };
+    len.map_or(source.len(), |n| quote + 1 + n)
+}
+
+/// The length of a string literal's body through its closing quote, by the
+/// rules of [`scan_str_body`], without building its value; `None` when it does
+/// not close.
+pub(crate) fn str_literal_len(after_quote: &str) -> Option<usize> {
+    match scan_slot_strings(after_quote) {
+        Some((len, _)) => Some(len),
+        None => scan_plain_str(after_quote).ok(),
+    }
+}
+
+/// The end of an interpolation slot in a string's VALUE: `text` follows the
+/// slot's `{`; the result is the offset of its closing `}`. The slot text is
+/// code, so a string literal in it (by [`scan_str_body`]'s rules) or a raw
+/// string is skipped whole, and a brace inside one does not count. If a
+/// string in the slot does not close, or no close is found that way, the
+/// brace-depth reading ([`slot_close_by_depth`]) decides, as it always did.
+pub(crate) fn slot_close(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'"' => {
-                lex.bump(i + 1);
-                let raw = lex.slice();
-                return Ok(unescape(&raw[1..raw.len() - 1]));
+            b'{' => depth += 1,
+            b'}' if depth == 0 => return Some(i),
+            b'}' => depth -= 1,
+            b'"' => match str_literal_len(&text[i + 1..]) {
+                Some(n) => {
+                    i += 1 + n;
+                    continue;
+                }
+                None => break,
+            },
+            b'r' if bytes.get(i + 1) == Some(&b'"')
+                && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_')) =>
+            {
+                match text[i + 2..].find('"') {
+                    Some(n) => {
+                        i += n + 3;
+                        continue;
+                    }
+                    None => break,
+                }
             }
-            b'\\' => match rem[i + 1..].chars().next() {
-                Some(c) if c != '\n' => i += 1 + c.len_utf8(),
-                _ => break,
+            _ => {}
+        }
+        i += 1;
+    }
+    slot_close_by_depth(text)
+}
+
+/// The end of a slot by brace depth alone, blind to strings: the reading
+/// before CS4-2, kept as [`slot_close`]'s fallback.
+pub(crate) fn slot_close_by_depth(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, ch) in text.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' if depth == 0 => return Some(i),
+            '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// One open construct while [`scan_slot_strings`] reads a string.
+#[derive(Clone, Copy)]
+enum Frame {
+    /// A string body; `raw` for `r"…"` (no escapes, no slots).
+    Str { raw: bool },
+    /// An interpolation slot: its brace depth, and the last non-blank byte
+    /// read in it (`None` while the slot is still empty).
+    Slot { depth: usize, last: Option<u8> },
+}
+
+/// Whether a `"` after `last` in a slot begins an operand, so starts a nested
+/// string: the slot is non-empty and ends with an operator or opener. A slot
+/// that STARTS with `"` keeps that quote as the string's end, which is how a
+/// pattern like `"{" => 1, "}" => 2` lexes.
+fn opens_operand(last: Option<u8>) -> bool {
+    match last {
+        None => false,
+        Some(b) => b"([{,;+-*/%=<>!&|?:".contains(&b),
+    }
+}
+
+/// The length (through the closing quote) of a string body read with nested
+/// strings in slots, and the byte ranges of the outermost nested strings, or
+/// `None` when it does not close. Iterative with an explicit stack: no
+/// recursion per nesting level or character (compilebench AX-65).
+fn scan_slot_strings(src: &str) -> Option<(usize, Vec<std::ops::Range<usize>>)> {
+    let bytes = src.as_bytes();
+    let mut stack = vec![Frame::Str { raw: false }];
+    // String frames on the stack; 1 is the literal being read.
+    let mut strs = 1usize;
+    let mut verbatim = Vec::new();
+    let mut nested_at = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        let top = stack.len() - 1;
+        // A string closes at the quote just read (its slots already popped).
+        let mut close = false;
+        match stack[top] {
+            Frame::Str { raw: true } => {
+                if b == b'"' {
+                    close = true;
+                }
+                i += 1;
+            }
+            Frame::Str { raw: false } => match b {
+                b'"' => {
+                    close = true;
+                    i += 1;
+                }
+                b'\\' => i += escape_len(src, i)?,
+                b'{' if bytes.get(i + 1) == Some(&b'{') => i += 2,
+                b'{' => {
+                    stack.push(Frame::Slot {
+                        depth: 1,
+                        last: None,
+                    });
+                    i += 1;
+                }
+                _ => i += 1,
+            },
+            Frame::Slot { depth, last } => match b {
+                b'"' if opens_operand(last) => {
+                    strs += 1;
+                    if strs == 2 {
+                        nested_at = i;
+                    }
+                    stack.push(Frame::Str { raw: false });
+                    i += 1;
+                }
+                b'r' if bytes.get(i + 1) == Some(&b'"') && opens_operand(last) => {
+                    strs += 1;
+                    if strs == 2 {
+                        nested_at = i;
+                    }
+                    stack.push(Frame::Str { raw: true });
+                    i += 2;
+                }
+                b'"' => {
+                    // Not an operand: the quote ends the innermost string.
+                    let slots = stack
+                        .iter()
+                        .rev()
+                        .take_while(|f| matches!(f, Frame::Slot { .. }))
+                        .count();
+                    stack.truncate(stack.len() - slots);
+                    close = true;
+                    i += 1;
+                }
+                b'\\' => {
+                    let n = escape_len(src, i)?;
+                    stack[top] = Frame::Slot {
+                        depth,
+                        last: Some(bytes[i + 1]),
+                    };
+                    i += n;
+                }
+                b'{' => {
+                    stack[top] = Frame::Slot {
+                        depth: depth + 1,
+                        last: Some(b'{'),
+                    };
+                    i += 1;
+                }
+                b'}' => {
+                    if depth == 1 {
+                        stack.pop();
+                    } else {
+                        stack[top] = Frame::Slot {
+                            depth: depth - 1,
+                            last: Some(b'}'),
+                        };
+                    }
+                    i += 1;
+                }
+                b' ' | b'\t' | b'\r' | b'\n' => i += 1,
+                _ => {
+                    stack[top] = Frame::Slot {
+                        depth,
+                        last: Some(b),
+                    };
+                    i += 1;
+                }
+            },
+        }
+        if close {
+            // `i` is just past the closing quote.
+            stack.pop();
+            strs -= 1;
+            match stack.last_mut() {
+                None => return Some((i, verbatim)),
+                Some(Frame::Slot { last, .. }) => *last = Some(b'"'),
+                Some(Frame::Str { .. }) => {}
+            }
+            if strs == 1 {
+                verbatim.push(nested_at..i);
+            }
+        }
+    }
+    None
+}
+
+/// The bytes an escape at `src[i] == '\\'` takes: the `\` and the next
+/// character, which may not be a newline (`None`, as in [`scan_plain_str`]).
+fn escape_len(src: &str, i: usize) -> Option<usize> {
+    match src[i + 1..].chars().next() {
+        Some(c) if c != '\n' => Some(1 + c.len_utf8()),
+        _ => None,
+    }
+}
+
+/// A string body by the rule before CS4-2: everything up to the first `"`,
+/// where `\` takes the next character along with it (so `\"` does not close
+/// the string) and that character may not be a newline. This is the language
+/// the regex `"([^"\\]|\\.)*"` accepted; the body is scanned by a loop
+/// because the state machine logos generated for it recursed once per
+/// character (compilebench AX-65). `Ok` is the length through the closing
+/// quote; `Err` the offset the regex had consumed: EOF, or the offending `\`.
+fn scan_plain_str(src: &str) -> Result<usize, usize> {
+    let bytes = src.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => return Ok(i + 1),
+            b'\\' => match escape_len(src, i) {
+                Some(n) => i += n,
+                None => break,
             },
             // Every byte of a multi-byte character is >= 0x80, so none of
             // them is `"` or `\`: stepping bytewise stays on character
@@ -280,8 +592,7 @@ fn lex_str(lex: &mut logos::Lexer<Token>) -> Result<String, ()> {
             _ => i += 1,
         }
     }
-    lex.bump(i);
-    Err(())
+    Err(i)
 }
 
 /// The value of a string literal's body: `\n`, `\t`, `\r`, `\\`, `\"` and `\0`

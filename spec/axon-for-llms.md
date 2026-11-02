@@ -85,6 +85,9 @@ fn main() {
 
     // String interpolation — `{expr}` evaluated at runtime; `{{`/`}}` for literal braces
     println("hello {s}, x is {to_str(x)}")
+    // A slot may hold a string literal after an operator or opener; it cannot START
+    // with one (write {("a" + s)}), and a `match` pattern cannot be such a string
+    println("{s + "!"} {str_join(["a", "b"], ", ")}")
 
     // Lambdas, and named functions as values (type `fn(i64) -> i64`)
     let double = |n| n * 2

@@ -380,6 +380,25 @@ primary    ::= block
   some time.)  Nested braces are matched, so the expression may itself contain
   `{ }`.
 
+  A STRING LITERAL INSIDE A SLOT (CS4-2).  Inside an open slot, a `"` starts
+  a nested string literal when the slot text before it ends with an operator
+  or opener — one of  ( [ { , ; + - * / % = < > ! & | ? :  — so
+  `"hi {name + "!"}"`, `"{str_join(xs, ", ")}"` and `"a{id("}")}b"` work;
+  `r"` there starts a nested raw string.  A nested string follows the same
+  rules (its own slots and escapes), and its braces do not count toward the
+  slot's.  Three consequences:
+    - A slot cannot START with a string literal: in `"{"a" + b}"` the `"`
+      after `{` ends the string, as it always did (so `"{" => 1` is still a
+      pattern).  Write `{("a" + b)}`.
+    - `\"` inside a slot is still accepted (`"hi {name + \"!\"}"`); it is
+      the same string with the same value.
+    - A string whose slot holds a string literal is an EXPRESSION only.
+      Without the nested reading the same characters lex as a shorter plain
+      string (`"{(" => 1, "x"`), so in a pattern (or any other place that
+      takes a plain string literal: `use`/`extern` paths, `asm`, attribute
+      values) it is a parse error (E0000), never re-read.  To match text that
+      starts with a brace, use a guard: `s if s == "{{("`.
+
   TWO RULES, both enforced:
 
     `{{` → literal `{`  and  `}}` → literal `}`.  A literal brace MUST be
@@ -395,6 +414,7 @@ primary    ::= block
 
   Examples:
     "hello"             → Literal::Str("hello")
+    "hi {name + "!"}"   → FmtStr { parts: [Lit("hi "), Expr(Binary(name + "!"))] }
     "hello {name}!"     → FmtStr { parts: [Lit("hello "), Expr(Ident("name")), Lit("!")] }
     "{to_str(n)} items" → FmtStr with Expr(Call(to_str, [n]))
     "a{{2,3}}"          → Literal::Str("a{2,3}")   (* the regex-safe spelling *)

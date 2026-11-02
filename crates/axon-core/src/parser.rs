@@ -114,6 +114,11 @@ pub fn clear_accepted_mut() {
     ACCEPTED_MUT.with(|v| v.borrow_mut().clear());
 }
 
+/// The refusal of a [`Token::SlotStr`] in a pattern (CS4-2).
+const SLOT_STR_IN_PATTERN: &str = "this string has an interpolation slot holding a string \
+     (`{` ... `\"`), and a pattern cannot hold one. To match text that starts with a brace, \
+     use a guard: `s if s == \"{{...}\"`";
+
 /// A string literal's parts. `expr_depth` is the outer parser's
 /// [`MAX_EXPR_DEPTH`] depth at the literal, under which each `{...}` slot is
 /// parsed (AX-60); `too_deep` is set when a slot is refused for nesting, so
@@ -181,21 +186,10 @@ fn parse_fmt_str_raw(
                 // Regular interpolation `{expr}`. Find the *matching* close `}`,
                 // honoring nested braces so the expression may itself contain
                 // `{ }` — e.g. `{to_str(if c { 1 } else { 0 })}` or a struct
-                // literal `{f(Pt { x: 1 })}`.
+                // literal `{f(Pt { x: 1 })}` — and skipping string literals in
+                // the slot, so `{id("}")}` closes after the `)` (CS4-2).
                 let after_open = &remaining[open + 1..];
-                let mut depth = 0usize;
-                let mut close_opt = None;
-                for (i, ch) in after_open.char_indices() {
-                    match ch {
-                        '{' => depth += 1,
-                        '}' if depth == 0 => {
-                            close_opt = Some(i);
-                            break;
-                        }
-                        '}' => depth -= 1,
-                        _ => {}
-                    }
-                }
+                let close_opt = crate::token::slot_close(after_open);
                 let close = close_opt.ok_or_else(|| {
                     ParseError::Other("unclosed `{` in interpolated string".into())
                 })?;
@@ -3468,7 +3462,11 @@ impl Parser {
             return Ok(());
         }
         let shown = match next {
-            Token::Ident(_) | Token::Int(_) | Token::Float(_) | Token::Str(_) => next.to_string(),
+            Token::Ident(_)
+            | Token::Int(_)
+            | Token::Float(_)
+            | Token::Str(_)
+            | Token::SlotStr(_) => next.to_string(),
             Token::RawStr(s) => format!("r\"{s}\""),
             Token::Bang => "!".to_string(),
             Token::LParen => "(".to_string(),
@@ -3551,9 +3549,11 @@ impl Parser {
                     unreachable!()
                 }
             }
-            Some(Token::Str(_)) => {
+            // `SlotStr`: a string whose slot holds a string literal (CS4-2);
+            // an expression reads it exactly like `Str`.
+            Some(Token::Str(_) | Token::SlotStr(_)) => {
                 let lit = self.current_span();
-                if let Token::Str(s) = self.advance()?.clone() {
+                if let Token::Str(s) | Token::SlotStr(s) = self.advance()?.clone() {
                     self.refuse_adjacent_after_string(lit)?;
                     parse_fmt_str_raw(&s, self.expr_depth, &mut self.too_deep, &mut self.tall)
                 } else {
@@ -3915,6 +3915,11 @@ impl Parser {
                     unreachable!()
                 }
             }
+            // A string whose slot holds a string literal lexes as a SHORTER
+            // plain string without the nested reading (`"{(" => 1, "x"` is
+            // the pattern `"{("` today), and a pattern gets no brace
+            // processing, so it cannot be one: refuse, never re-read (CS4-2).
+            Some(Token::SlotStr(_)) => Err(ParseError::Other(SLOT_STR_IN_PATTERN.into())),
             Some(Token::Ident(_)) => {
                 if let Token::Ident(name) = self.advance()?.clone() {
                     // Check for enum variant pattern: Enum :: Variant { fields }

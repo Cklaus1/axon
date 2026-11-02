@@ -6539,23 +6539,17 @@ fn source_has_scientific_float(src: &str) -> bool {
 fn source_has_comments(src: &str) -> bool {
     let b = src.as_bytes();
     let mut i = 0;
-    let mut in_str = false;
     while i < b.len() {
         let c = b[i];
-        if in_str {
-            if c == b'\\' {
-                i += 2; // skip the escaped char
-                continue;
-            }
-            if c == b'"' {
-                in_str = false;
-            }
-        } else if c == b'"' {
-            in_str = true;
+        if c == b'"' {
+            // A string literal is skipped whole, read as the lexer reads it
+            // (a string inside its slot included, CS4-2).
+            i = axon_core::token::string_literal_end(src, i);
         } else if c == b'/' && i + 1 < b.len() && (b[i + 1] == b'/' || b[i + 1] == b'*') {
             return true;
+        } else {
+            i += 1;
         }
-        i += 1;
     }
     false
 }
