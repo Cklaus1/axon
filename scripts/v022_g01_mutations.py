@@ -14545,5 +14545,14 @@ MUTATIONS += [
      'axon-core', '--no-default-features --lib', 'interp::tests::ai_pin_hosts_intersects_declared_with_ambient'),
 ]
 
+# ceilings CE-7 (id M4682): the goal_* dispatch row is IO; the metric's own
+# model call keeps its AI check.
+MUTATIONS += [
+    ('M4682', 'CE-7: the IO-only dispatch exemption also covers the AI builtins, so a metric reaches a model without AI', 'crates/axon-core/src/builtins.rs',
+     '    if GOAL_DISPATCH_IO_ONLY.contains(&name) {\n        &["IO"]',
+     '    if GOAL_DISPATCH_IO_ONLY.contains(&name) || name.starts_with("ai_") {\n        &["IO"]',
+     'axon-core', '--no-default-features --test ceiling', 'goal_run_ai_metric_still_refused_without_ai_grant'),
+]
+
 if __name__ == "__main__":
     main()

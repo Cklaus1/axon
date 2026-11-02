@@ -2725,6 +2725,37 @@ pub fn is_grantable_effect(name: &str) -> bool {
     GRANTABLE_EFFECTS.contains(&name)
 }
 
+/// ceilings CE-7: the `goal_*` run-variants whose STATIC row is
+/// `{AI, Net, IO}` only because the `@[adaptive]` metric they re-call MAY
+/// reach a model. The metric's own model calls are gated at their own
+/// `ai_complete`/`ai_extract_*` dispatch, inside the same active sandbox.
+pub const GOAL_DISPATCH_IO_ONLY: &[&str] = &[
+    "goal_run",
+    "goal_run_constrained",
+    "goal_run_categorical",
+    "goal_run_random",
+    "goal_run_multistart",
+    "goal_continue",
+    "goal_eval",
+];
+
+/// ceilings CE-7: the row the RUNTIME sandbox gate checks when `name` is
+/// dispatched. It is `builtin_effect_row(name)` except for
+/// [`GOAL_DISPATCH_IO_ONLY`], whose dispatch row is `["IO"]`: demanding `AI`
+/// at the `goal_*` call refused a `goal_run` whose metric never calls a model
+/// (exit 8 under `AXON_ALLOWED_EFFECTS=IO` or a program-made `IO` sandbox),
+/// while a metric that does call one is still refused at that call. The
+/// static row (`axon caps`, effect rows, E1310) is unchanged: it is a sound
+/// over-approximation for reporting. Pinned by
+/// `dispatch_row_is_subset_of_static_row`.
+pub fn dispatch_effect_row(name: &str) -> &'static [&'static str] {
+    if GOAL_DISPATCH_IO_ONLY.contains(&name) {
+        &["IO"]
+    } else {
+        builtin_effect_row(name)
+    }
+}
+
 pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
     match name {
         // AI / model inference — reaches the network for a model call.
@@ -3443,6 +3474,33 @@ mod tests {
         assert_eq!(builtin_effect_row("goal_run"), &["AI", "Net", "IO"]);
         assert!(builtin_effect_row("to_str").is_empty(), "to_str is pure");
         assert!(builtin_effect_row("abs_i32").is_empty(), "abs_i32 is pure");
+    }
+
+    /// ceilings CE-7: the runtime dispatch row is a subset of the static row
+    /// for every builtin, and differs only for the seven `goal_*`
+    /// run-variants, whose dispatch row is exactly `["IO"]`.
+    #[test]
+    fn dispatch_row_is_subset_of_static_row() {
+        for b in BUILTINS {
+            let stat = builtin_effect_row(b.name);
+            let disp = dispatch_effect_row(b.name);
+            assert!(
+                disp.iter().all(|e| stat.contains(e)),
+                "`{}`: dispatch row {disp:?} is not inside static row {stat:?}",
+                b.name
+            );
+            if GOAL_DISPATCH_IO_ONLY.contains(&b.name) {
+                assert_eq!(disp, &["IO"], "`{}`", b.name);
+            } else {
+                assert_eq!(disp, stat, "`{}`: only the goal_* rows may differ", b.name);
+            }
+        }
+        for n in GOAL_DISPATCH_IO_ONLY {
+            assert!(
+                BUILTINS.iter().any(|b| b.name == *n),
+                "`{n}` is not a builtin"
+            );
+        }
     }
 
     #[test]

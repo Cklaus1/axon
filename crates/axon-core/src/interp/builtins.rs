@@ -1052,7 +1052,9 @@ impl<'p> Interp<'p> {
         // ledger entry. One gate, called from every effect entry point.
         self.pre_effect_gate(
             name,
-            crate::builtins::builtin_effect_row(name),
+            // ceilings CE-7: the DISPATCH row (`goal_*` run-variants are `IO`;
+            // their metric's model calls are gated at their own dispatch).
+            crate::builtins::dispatch_effect_row(name),
             // The MULTI resolver: `capability_of_builtin` returns None for
             // `file_copy`/`file_rename`, and `pre_effect_gate` only writes the
             // @[agent] action record `if let Some(cap) = cap`. Measured — an
