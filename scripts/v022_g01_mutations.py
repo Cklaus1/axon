@@ -14532,5 +14532,34 @@ MUTATIONS += [
      'axon-ai', '--lib', 'tests::structured_response_returns_the_usage_total'),
 ]
 
+# checker-soundness-4 lane S4c (ids M4713-M4718): CS4-3 a tuple pattern on a concrete subject is
+# type-checked (E0102); CS4-4 a wrapper lambda's call nested in another call's args derives a kind.
+MUTATIONS += [
+    ('M4713', 'CS4-3: a tuple pattern no longer constrains a concrete subject (t_arity3 checks clean)', 'crates/axon-core/src/infer.rs',
+     'self.constrain(st.clone(), Type::Tuple(vars.clone()), "tuple pattern");',
+     'let _ = st;',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_is_type_checked'),
+    ('M4714', 'CS4-3: tuple sub-patterns are bound without the component types (t_comptype checks clean)', 'crates/axon-core/src/infer.rs',
+     'self.bind_pattern_with_subj(pat, scope, Some(var));',
+     'self.bind_pattern_with_subj(pat, scope, None);\n                        let _ = var;',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_is_type_checked'),
+    ('M4715', 'CS4-3: a tuple pattern constrains an unresolved subject too (l1, arms of two arities, refused)', 'crates/axon-core/src/infer.rs',
+     'if let Some(st) = concrete {',
+     'if let Some(st) = subj_ty.filter(|_| !pats.is_empty()).or(concrete) {',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_controls_stay_legal'),
+    ('M4716', 'CS4-4: a call derives only if no call started before it, ancestors included (w17b checks clean)', 'crates/axon-core/src/infer.rs',
+     '&& calls_before == pending_at_entry\n',
+     '&& calls_before == 0 * pending_at_entry\n',
+     'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_nested_call_kind_is_checked'),
+    ('M4717', 'CS4-4: a call with a call in its own args derives too (m4716 `f(y, println("x"))` refused)', 'crates/axon-core/src/infer.rs',
+     '&& calls_before == pending_at_entry\n                && self.lambda_calls == calls_before + 1\n',
+     '&& calls_before == pending_at_entry\n',
+     'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_controls_stay_legal'),
+    ('M4718', 'CS4-4: the pending window is never lowered, so a sibling call after an early-returning builtin derives (c_sib refused)', 'crates/axon-core/src/infer.rs',
+     '        self.pending_calls -= 1;\n',
+     '',
+     'axon-core', '--no-default-features --test cli_run', 'wrapper_lambda_controls_stay_legal'),
+]
+
 if __name__ == "__main__":
     main()

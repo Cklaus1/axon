@@ -983,10 +983,15 @@ pub struct InferCtx {
     /// CS3-2: the param vars of the innermost lambda being inferred.
     lambda_params: Vec<u32>,
     /// CS3-2: the calls started so far in the innermost lambda's body. Only
-    /// a call that is the body's first, with no call in its callee or args,
-    /// derives kinds: a call run before it may perform an effect that an
-    /// enclosing handler answers without `resume`, so the call never runs.
+    /// the call that runs first, with no call in its callee or args, derives
+    /// kinds: a call run before it may perform an effect that an enclosing
+    /// handler answers without `resume`, so the call never runs.
     lambda_calls: u32,
+    /// CS4-4: the calls in the innermost lambda's body whose callee,
+    /// receiver or args are still being inferred. An argument runs before
+    /// its call, so a call whose `lambda_calls` at start equals this count
+    /// is the first to run (`println(to_str(f(y)))` runs `f` first).
+    pending_calls: u32,
     /// CS3-2: the param vars of every lambda inferred. A var two lambda
     /// params share after solving (`g = |w| ...` over `let g = |y| ...`, two
     /// lambdas in one array or `if`) derives no kind: the call reaching one of
@@ -1075,6 +1080,7 @@ impl InferCtx {
             cond_depth: 0,
             lambda_params: Vec::new(),
             lambda_calls: 0,
+            pending_calls: 0,
             all_lambda_params: Vec::new(),
         };
         for (name, sig) in builtin_sigs() {
@@ -1984,14 +1990,28 @@ impl InferCtx {
             }
 
             // ── Function call ─────────────────────────────────────────────────
-            Expr::Call { callee, args, .. } => self.infer_call(callee, args, scope, ret_ty),
+            Expr::Call { callee, args, .. } => {
+                // CS3-2: this call, and every call in its callee and args.
+                let calls_before = self.lambda_calls;
+                self.lambda_calls += 1;
+                let pending_at_entry = self.pending_calls;
+                self.in_pending_window(|s| {
+                    s.infer_call(callee, args, scope, ret_ty, calls_before, pending_at_entry)
+                })
+            }
 
             // ── Method call (Phase 1: treat as top-level fn lookup) ───────────
             Expr::MethodCall {
                 receiver,
                 method,
                 args,
-            } => self.infer_method_call(receiver, method, args, scope, ret_ty),
+            } => {
+                // CS3-2: a method call counts as a call (see `lambda_calls`).
+                self.lambda_calls += 1;
+                self.in_pending_window(|s| {
+                    s.infer_method_call(receiver, method, args, scope, ret_ty)
+                })
+            }
 
             // ── ? operator ────────────────────────────────────────────────────
             Expr::Question(inner) => {
@@ -2427,7 +2447,9 @@ impl InferCtx {
                     u32::from(!matches!(body.as_ref(), Expr::Block(_)) && may_leave_early(body));
                 let outer_depth = std::mem::replace(&mut self.cond_depth, entry_depth);
                 let outer_calls = std::mem::replace(&mut self.lambda_calls, 0);
+                let outer_pending = std::mem::replace(&mut self.pending_calls, 0);
                 let body_ty = self.infer_expr(body, scope, &lambda_ret_var);
+                self.pending_calls = outer_pending;
                 self.lambda_calls = outer_calls;
                 self.cond_depth = outer_depth;
                 self.lambda_params = outer_params;
@@ -2564,17 +2586,28 @@ impl InferCtx {
         }
     }
 
+    /// CS4-4: run `f` (the inference of one call's callee, receiver and
+    /// args) with that call counted in `pending_calls`. The count is lowered
+    /// on every exit path, the early returns of `infer_call` included.
+    fn in_pending_window<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.pending_calls += 1;
+        let t = f(self);
+        self.pending_calls -= 1;
+        t
+    }
+
     /// Infer a call `callee(args)` (the `Expr::Call` arm of [`Self::infer_expr`]).
+    /// `calls_before` and `pending_at_entry` are `lambda_calls` and
+    /// `pending_calls` before this call was counted (CS3-2, CS4-4).
     fn infer_call(
         &mut self,
         callee: &Expr,
         args: &[Expr],
         scope: &mut Scope,
         ret_ty: &Type,
+        calls_before: u32,
+        pending_at_entry: u32,
     ) -> Type {
-        // CS3-2: this call, and every call in its callee and args.
-        let calls_before = self.lambda_calls;
-        self.lambda_calls += 1;
         let fn_name = match callee {
             Expr::Ident(n) => Some(n.clone()),
             // Chan::new(n) / chan<T>() both parse as StructLit { name: ... }
@@ -2729,7 +2762,11 @@ impl InferCtx {
         // or builtin of the same name (a call by name runs the local).
         let local_callee = matches!(callee, Expr::Ident(n)
                     if scope.lookup(n).is_some_and(|t| matches!(t, Type::Fn(..) | Type::Var(_))));
+        // CS4-4: a callee runs after the args (`eval_call`) but is inferred
+        // before them, so no call in it is known to run first.
+        self.cond_depth += 1;
         let callee_ty = self.infer_expr(callee, scope, ret_ty);
+        self.cond_depth -= 1;
 
         if let Some(name) = fn_name.filter(|_| !local_callee) {
             // CS-4: the sig of the fn this call reaches — the builtin's
@@ -2868,7 +2905,13 @@ impl InferCtx {
             args: call_args,
             ret: ret.clone(),
             span: self.current_stmt_span,
-            derives_for: if self.cond_depth == 0 && calls_before == 0 && self.lambda_calls == 1 {
+            // CS4-4: counted in run order. Every call started before this one
+            // is an ancestor still inferring its args (none has run), and no
+            // call sits in this call's own callee or args.
+            derives_for: if self.cond_depth == 0
+                && calls_before == pending_at_entry
+                && self.lambda_calls == calls_before + 1
+            {
                 self.lambda_params.clone()
             } else {
                 Vec::new()
@@ -2887,8 +2930,6 @@ impl InferCtx {
         scope: &mut Scope,
         ret_ty: &Type,
     ) -> Type {
-        // CS3-2: a method call counts as a call (see `lambda_calls`).
-        self.lambda_calls += 1;
         let recv_ty = self.infer_expr(receiver, scope, ret_ty);
         if matches!(recv_ty, Type::Var(_)) {
             self.method_receiver_vars
@@ -3033,9 +3074,38 @@ impl InferCtx {
                     self.bind_pattern_with_subj(pat, scope, None);
                 }
             }
+            // CS4-3 (O-LF-01): a tuple pattern on a subject whose type is
+            // already concrete must be a tuple of the same length, and its
+            // sub-patterns take the component types (E0102 otherwise, like
+            // `Some` on an `i64`). A subject not yet resolved (an untyped
+            // lambda's param, a generic, an unknown type) is left unchecked:
+            // constraining it in one arm would refuse a later arm of another
+            // arity that runs (`|p| match p { (a, b) => 2, (a, b, c) => 3 }`).
+            // The unit pattern `()` is left unchecked too: `()` has type
+            // `Unit`, not an empty `Tuple`, and `match 5 { () => 1, _ => 2 }`
+            // runs today.
             Pattern::Tuple(pats) => {
-                for pat in pats {
-                    self.bind_pattern_with_subj(pat, scope, None);
+                let concrete = subj_ty.filter(|st| {
+                    !pats.is_empty()
+                        && !matches!(
+                            st,
+                            Type::Var(_)
+                                | Type::Deferred(_)
+                                | Type::Unknown
+                                | Type::TypeParam(_)
+                                | Type::DynTrait(_)
+                        )
+                });
+                if let Some(st) = concrete {
+                    let vars: Vec<Type> = pats.iter().map(|_| self.fresh()).collect();
+                    self.constrain(st.clone(), Type::Tuple(vars.clone()), "tuple pattern");
+                    for (pat, var) in pats.iter().zip(&vars) {
+                        self.bind_pattern_with_subj(pat, scope, Some(var));
+                    }
+                } else {
+                    for pat in pats {
+                        self.bind_pattern_with_subj(pat, scope, None);
+                    }
                 }
             }
         }
