@@ -901,7 +901,45 @@ def decide(audit, us, chg, read_text=None):
             p = os.path.dirname(p)
             udirs.add(p)
     unread = []
-    added_literal = []
+    deferred = []  # added paths a dir/package rule claimed: still checked by G5c, after the loop
+    texts, named_files = {}, {}  # one read and one sorted file list per decide call, shared by every path
+
+    def named_by(p):
+        """G5c: units whose compile ∪ runtime set holds a file naming p (repo path or basename) literally.
+        Each unit is named by the first such file in sorted order. A file shared by many units is
+        searched once per path (`found`), not once per unit, and a unit already selected is not searched
+        for its reason (pick keeps the first). The per-unit rescans and a per-path re-read made this
+        quadratic in |C| (a 1089-path C ran for over an hour).
+        Returns whether ANY unit is named, which decides the caller's `unclassified` fallback."""
+        base, found = os.path.basename(p), {}
+
+        def naming(uid):
+            if uid not in named_files:
+                named_files[uid] = sorted(paths[uid][0] | set(au[uid]["reads"]))
+            for f in named_files[uid]:
+                if f not in found:
+                    if f not in texts:
+                        texts[f] = read_text(f) or ""
+                    found[f] = p in texts[f] or base in texts[f]
+                if found[f]:
+                    return f
+            return None
+
+        hit, before = False, []
+        for u in us:
+            uid = u["id"]
+            if uid not in paths:
+                continue
+            if sel[uid] is not None:
+                before.append(uid)
+                continue
+            f = naming(uid)
+            if f is not None:
+                pick(uid, f"named by {f}"); hit = True
+        if hit or all(v is not None for v in sel.values()):
+            return hit  # with every unit selected the fallback's picks are no-ops either way
+        return any(naming(uid) is not None for uid in before)
+
     for st, p in chg:
         if p in GLOBAL_INPUTS or p.startswith(".cargo/"):
             for u in us:
@@ -942,36 +980,22 @@ def decide(audit, us, chg, read_text=None):
                     pick(u["id"], f"added under enumerated {d or '.'}/"); hit = True
                 elif owners:
                     pick(u["id"], f"added in package {owners[0].rstrip('/')}"); hit = True
-            added_literal.append(p)
             if hit:
+                deferred.append(p)
                 continue
-            if read_text is not None and _named_by(audit, us, paths, p, read_text, pick):
+            if read_text is not None and named_by(p):
                 continue
             for u in us:
                 pick(u["id"], f"unclassified path {p}")
         else:
             for u in us:
                 pick(u["id"], f"unclassified path {p}")
+    # Paths G5c already checked in the loop are not checked again: pick keeps the first reason and named_by
+    # is deterministic, so a second pass over them could only re-pick units it already picked.
     if read_text is not None:
-        for p in added_literal:
-            _named_by(audit, us, paths, p, read_text, pick)
+        for p in deferred:
+            named_by(p)
     return sel, unread
-
-
-def _named_by(audit, us, paths, p, read_text, pick):
-    """G5c: units whose compile ∪ runtime set holds a file naming p (repo path or basename) literally."""
-    hit, base, cache = False, os.path.basename(p), {}
-    for u in us:
-        if u["id"] not in paths:
-            continue
-        files = paths[u["id"]][0] | set(audit["units"][u["id"]]["reads"])
-        for f in sorted(files):
-            if f not in cache:
-                cache[f] = read_text(f) or ""
-            if p in cache[f] or base in cache[f]:
-                pick(u["id"], f"named by {f}"); hit = True
-                break
-    return hit
 
 
 def needed_builds(steps, sel, audit, reg):
