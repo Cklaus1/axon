@@ -15052,5 +15052,20 @@ MUTATIONS += [
      'axon-os', '--test sandbox_capture', 'a_sigkilled_run_names_the_signal_once'),
 ]
 
+# genviab-b3 B3-7 static (tasks/genviab-b3-spec.md §3, ids M4779, M4781, b3
+# block M4770-M4789): a `@[contained]` / `--require-contained` main is checked
+# over its non-lambda module-level `let` initialisers, and every walk follows a
+# module `let` (a module lambda) its code names.
+MUTATIONS += [
+    ('M4779', 'B3-7: check_fn for main skips the non-lambda module-let roots', 'crates/axon-core/src/capabilities.rs',
+     '    let roots: &[(&str, &Expr, Span)] = if fndef.name == "main" {',
+     '    let roots: &[(&str, &Expr, Span)] = if false && fndef.name == "main" {',
+     'axon-core', '--no-default-features --test cli_run', 'a_contained_main_covers_module_level_lets'),
+    ('M4781', 'B3-7: check_fn keeps module_lets None (the lambda follow is dropped)', 'crates/axon-core/src/capabilities.rs',
+     '        module_lets: Some(&module_lets.by_name),',
+     '        module_lets: None,',
+     'axon-core', '--no-default-features --test cli_run', 'a_contained_main_calling_a_module_lambda_is_checked'),
+]
+
 if __name__ == "__main__":
     main()

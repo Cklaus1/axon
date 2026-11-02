@@ -333,6 +333,10 @@ fn worker() -> i64 { /* may only write under ./out/ and reach that host */ 0 }
 - `never: [...]`: hard deny, overrides the allowlist.
 - **`env_var(...)` is denied inside `@[contained]`** (error `E1001`) — env is an
   ungrantable ambient secret channel. Read it *outside* the boundary and pass the value in.
+- **Module-level `let`s run before `main`**, so a `@[contained]` (or `--require-contained`)
+  `main` is checked over every non-lambda module-level `let` initialiser too (E1001 / E1005,
+  naming the `let`); a module-level lambda counts only where it is called. Under axon-os the
+  job's grant is the run's ambient scope, so an initialiser outside it is a sandbox refusal (exit 8).
 
 **Operator ceilings.** Whoever runs your program may bound it with `--ceiling FILE` (or
 `AXON_CEILING=FILE`), a JSON `axon-ceiling/1` object with every key present (`null` = unbounded):

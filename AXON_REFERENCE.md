@@ -217,11 +217,11 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0911` | browser target (--host browser): a browser-incompatible builtin can't run in the tab — clean refusal mirroring E0910 (R7c) |
 | `E0912` | RESERVED — browser AOT link failure (R7c); the feature is unbuilt, so the condition cannot arise |
 | `W0913` | sleep_ms is a no-op on the browser host (main thread can't block) (R7c) |
-| `E1001` | I/O call not permitted by @[contained] spec |
+| `E1001` | I/O call not permitted by @[contained] spec; a contained `main` is also checked over the module-level `let` initialisers, which run before it (a module-level lambda counts when called) |
 | `E1002` | @[contained] clause is malformed |
 | `E1003` | capability path is not parseable |
 | `E1004` | call hits a never: clause (hard violation) |
-| `E1005` | R45: an un-granted capability is reached from an entry point under `--require-contained`; distinct from E1001, which means a grant EXISTS and was exceeded |
+| `E1005` | R45: an un-granted capability is reached from an entry point under `--require-contained` (module-level `let` initialisers count as reached from `main`); distinct from E1001, which means a grant EXISTS and was exceeded |
 | `E1006` | the run passed its step ceiling (`AXON_MAX_STEPS` / a ceiling's `steps`; a step is one loop-body, fn-body or lambda-body entry, counted the same on both engines) or its wall-clock ceiling (`AXON_WALL_MS` / a ceiling's `wall_ms`); the run stops with exit 9 (RESOURCE_BOUND) |
 | `E1007` | the `axon-ceiling/1` file (`--ceiling` / `AXON_CEILING`) is missing, unreadable or malformed, has an unknown or missing key, or lies inside its own `fs_write` scope; the run is refused (exit 2) before any program code runs |
 | `E1101` | verify bound not satisfied (runtime gate) |

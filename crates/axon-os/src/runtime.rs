@@ -909,6 +909,10 @@ fn grant_sandbox_tags(grant: &Grant) -> String {
 /// scan — which a single space (`exec (`) defeats. The interpreter now requires
 /// an explicit `Exec` tag for process spawning, so exec is emitted here only
 /// when the grant actually carries it.
+///
+/// genviab-b3 B3-7: the job's module-level `let` initialisers are copied with
+/// it and run before this `main` opens the sandbox; `launch` makes the grant
+/// the interpreter's ambient scope (`AXON_ALLOWED_*`), so they run inside it.
 fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget) -> String {
     let ceiling = grant.effect_set();
     let csv = grant_sandbox_tags(grant);

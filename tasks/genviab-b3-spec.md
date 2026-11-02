@@ -572,6 +572,13 @@ to be 0 of 717.
 from `main`". `README-axon-os.md` sandbox section: "the grant is also the interpreter's ambient scope, so module-level `let`s run
 inside it". `wrap_in_sandbox` doc comment.
 
+`[REVISED: build 2026-11-02 (b3/rs)]` (a) The E1001/E1005 wording lives in the code table `crates/axon-core/src/error.rs` (the
+reference is generated from it), so that file is edited, and `spec/axon-for-llms.md` gains one bullet (a user-visible rule).
+Neither is in §5's file list; no other lane owns them. (b) A violation is reported at the span of the walk's current site, as
+for `main`'s own helpers: a call written in the initialiser is reported at the `let`; one inside a helper the initialiser calls
+(`mlc.ax`, `ml.ax`) at that helper. Every such message carries "(module-level `let X`, evaluated before `main`)" (observed on
+`mlc.ax` E1001 and `ml.ax` E1005).
+
 ## 3. Shared mechanics
 
 - **pci themes.** Every behaviour-changing commit touching `crates/axon-core/src` gets `governance/notes/pci-themes/<sha8>.json`

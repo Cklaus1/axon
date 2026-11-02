@@ -48129,3 +48129,66 @@ fn a_spawned_process_cannot_open_the_interpreters_proc_files() {
         "ATTACK: a spawned process opened the interpreter's /proc files: {stdout:?}"
     );
 }
+
+// ---- genviab-b3 B3-7: module-level `let` initialisers run before `main` ----
+
+/// An initialiser that reads outside the (empty) grant, through a helper.
+const B3_EARLY: &str = "fn early() -> i64 {\n    match read_file(\"/etc/hostname\") {\n        Ok(s) => println(\"LEAK \" + s),\n        Err(e) => println(\"refused: \" + e),\n    }\n    0\n}\nlet X = early()\n";
+
+/// B3-7: a non-lambda module-level `let` initialiser runs before `main`, so a
+/// `@[contained]` main is checked over it too (E1001, naming the `let`).
+#[test]
+fn a_contained_main_covers_module_level_lets() {
+    let src =
+        format!("{B3_EARLY}@[contained(fs: [], exec: none)]\nfn main() -> i64 {{\n    0\n}}\n");
+    let (rc, err) = check_rc(&src, false, None);
+    assert!(
+        rc != 0 && err.contains("E1001") && err.contains("module-level `let X`"),
+        "ATTACK: a contained main's module-level let reached an ungranted capability: rc={rc} {err}"
+    );
+}
+
+/// B3-7: `--require-contained` covers what `main`'s module-level `let`s run:
+/// E1005, exit 2, and the read never happens.
+#[test]
+fn require_contained_covers_module_level_lets() {
+    let d = std::env::temp_dir().join(format!("axon-b3-ml-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("ml.ax");
+    std::fs::write(&f, format!("{B3_EARLY}fn main() -> i64 {{\n    0\n}}\n")).unwrap();
+    let out = axon()
+        .current_dir(&d)
+        .args(["run", "--require-contained"])
+        .arg(&f)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(2) && stderr.contains("E1005") && !stdout.contains("LEAK"),
+        "ATTACK: a module-level let ran outside --require-contained: {out:?}"
+    );
+}
+
+/// B3-7 (B3A-5): a contained main calling a module-level lambda runs the
+/// lambda's body, so the walk follows the name to it.
+#[test]
+fn a_contained_main_calling_a_module_lambda_is_checked() {
+    let src = "let g = |p: str| match read_file(p) {\n    Ok(s) => s,\n    Err(e) => e,\n}\n@[contained(fs: [], exec: none)]\nfn main() -> i64 {\n    println(g(\"/etc/hostname\"))\n    0\n}\n";
+    let (rc, err) = check_rc(src, false, None);
+    assert!(
+        rc != 0 && err.contains("E1001"),
+        "ATTACK: a contained main called a module-level lambda that reached an ungranted capability: rc={rc} {err}"
+    );
+}
+
+/// B3-7 (B3A-5) control: a module-level lambda nothing calls only builds a
+/// closure; it is not a capability of `main` (R45's unused-code rule).
+#[test]
+fn an_unused_module_lambda_is_not_a_capability_of_main() {
+    let src = "let g = |p: str| match read_file(p) {\n    Ok(s) => s,\n    Err(e) => e,\n}\n@[contained(fs: [], exec: none)]\nfn main() -> i64 {\n    println(\"hi\")\n    0\n}\n";
+    let (rc, err) = check_rc(src, false, None);
+    assert_eq!(rc, 0, "an unused module-level lambda was refused: {err}");
+}

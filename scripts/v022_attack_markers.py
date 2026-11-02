@@ -4158,3 +4158,9 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M4778': r'ATTACK: the signal was named twice',
 })
+
+# genviab-b3 B3-7 static (ids M4779, M4781, b3 block M4770-M4789)
+ATTACK_MARKERS.update({
+    'M4779': r"ATTACK: a contained main.s module-level let reached an ungranted capability",
+    'M4781': r'ATTACK: a contained main called a module-level lambda that reached an ungranted capability',
+})
