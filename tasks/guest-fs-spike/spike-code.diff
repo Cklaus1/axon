@@ -1,0 +1,279 @@
+diff --git a/crates/axon-core/src/interp.rs b/crates/axon-core/src/interp.rs
+index 73c574a8..920accd3 100644
+--- a/crates/axon-core/src/interp.rs
++++ b/crates/axon-core/src/interp.rs
+@@ -7526,9 +7526,9 @@ use provenance::*;
+ // than adding a second digest implementation that could disagree with them.
+ pub(crate) use provenance::sha256_hex;
+ pub use provenance::{
+-    append_run_start_jsonl, best_recorded_score, find_run_start, provenance_log_path,
+-    read_ai_calls, read_provenance, set_provenance_source, set_session_cell, AiCallRecord,
+-    ProvRecord, RunStartRecord,
++    append_run_start_jsonl, append_run_start_jsonl_bytes, best_recorded_score, find_run_start,
++    provenance_log_path, read_ai_calls, read_provenance, set_provenance_source, set_session_cell,
++    AiCallRecord, ProvRecord, RunStartRecord,
+ };
+ 
+ /// A pseudo-random `u64` from a process-global xorshift state (seeded from the
+diff --git a/crates/axon-core/src/interp/provenance.rs b/crates/axon-core/src/interp/provenance.rs
+index c767cee7..7cfa77d8 100644
+--- a/crates/axon-core/src/interp/provenance.rs
++++ b/crates/axon-core/src/interp/provenance.rs
+@@ -595,6 +595,20 @@ pub(super) fn ai_replay_store(prompt: &str, model: &str, response: &str, tokens:
+ /// run-id and effective seed that will govern this run.  Best-effort; errors
+ /// are silently ignored so a broken provenance path never aborts a user run.
+ pub fn append_run_start_jsonl(run_id: &str, seed: u64, src: &str) {
++    if provenance_log_path().is_none() {
++        return;
++    }
++    // Best-effort: an unreadable source (e.g. the `<session>` pseudo-path)
++    // records no digest, and the replay side says so rather than implying it
++    // verified something.
++    let bytes = std::fs::read(src).ok();
++    append_run_start_jsonl_bytes(run_id, seed, src, bytes.as_deref());
++}
++
++/// [`append_run_start_jsonl`] with the source bytes supplied by the caller, so
++/// a run whose program arrived on a descriptor (`axon run --source-fd`) never
++/// opens `src`, which is then only a label.
++pub fn append_run_start_jsonl_bytes(run_id: &str, seed: u64, src: &str, bytes: Option<&[u8]>) {
+     let Some(path) = provenance_log_path() else {
+         return;
+     };
+@@ -609,12 +623,7 @@ pub fn append_run_start_jsonl(run_id: &str, seed: u64, src: &str) {
+     // the replay makes `trace --replay` run entirely different code under the
+     // original run's id, seed and clock, while announcing a replay. Same shape
+     // as the AUDIT T10 approval attack, on the reproducibility surface.
+-    // Best-effort: an unreadable source (e.g. the `<session>` pseudo-path)
+-    // records no digest, and the replay side says so rather than implying it
+-    // verified something.
+-    let digest = std::fs::read(src)
+-        .ok()
+-        .map(|b| crate::lockfile::module_hash(&b));
++    let digest = bytes.map(crate::lockfile::module_hash);
+     let hash_field = match &digest {
+         Some(h) => format!(",\"src_hash\":{}", json_quote(h)),
+         None => String::new(),
+diff --git a/crates/axon-core/src/main.rs b/crates/axon-core/src/main.rs
+index 2568c3f7..999f69f4 100644
+--- a/crates/axon-core/src/main.rs
++++ b/crates/axon-core/src/main.rs
+@@ -335,6 +335,14 @@ enum Command {
+         )]
+         verbose: bool,
+ 
++        /// SPIKE (CE-9 option C): read the program from this already-open file
++        /// descriptor instead of opening FILE, which is then only a label
++        /// (diagnostics, provenance). For a supervisor that opens the program
++        /// before it installs a syscall filter withholding FS. No module search
++        /// and no lockfile lookup: the entry directory is not consulted.
++        #[arg(long, value_name = "FD")]
++        source_fd: Option<i32>,
++
+         /// Extra arguments. Not forwarded to the program yet: `axon run` warns and ignores them.
+         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+         args: Vec<String>,
+@@ -1131,10 +1139,11 @@ fn dispatch(command: Command) {
+             file,
+             require_contained,
+             verbose,
++            source_fd,
+             args,
+         } => {
+             axon_core::capabilities::set_require_contained(require_contained);
+-            cmd_run(file, args, verbose)
++            cmd_run(file, args, verbose, source_fd)
+         }
+         Command::Fmt { files, check } => cmd_fmt(files, check),
+         Command::Doc { files, out } => cmd_doc(files, out),
+@@ -4867,7 +4876,7 @@ fn cmd_trace_replay(run_id: String, path: Option<PathBuf>) {
+     let source_path = PathBuf::from(&rec.src);
+     // The replay is itself a run (it gets a fresh run-id in the log); the banner
+     // above already names what is being reproduced, so no extra stderr line.
+-    cmd_run(source_path, vec![], false);
++    cmd_run(source_path, vec![], false, None);
+ }
+ 
+ // ── Phase 9: run-id + seed helpers ───────────────────────────────────────────
+@@ -6272,10 +6281,15 @@ fn render_cell_jsonl(sess: &Session, r: &CellResult) -> String {
+     )
+ }
+ 
+-fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
++fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool, source_fd: Option<i32>) {
+     // Fix 5: validate .ax extension.
+     validate_ax_extension(&file);
+ 
++    // SPIKE (CE-9 C): with --source-fd the bytes come from the inherited fd and
++    // FILE is never opened, so a run under an FS-withholding filter issues no
++    // open of its own source.
++    let fd_src = source_fd.map(read_source_fd);
++
+     // Phase 9: stamp a run-start event (run-id + effective seed) so this run can
+     // be replayed deterministically via `axon trace --replay <run-id>`.
+     let run_id = generate_run_id();
+@@ -6285,7 +6299,17 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
+     if std::env::var("AXON_SEED").is_err() {
+         std::env::set_var("AXON_SEED", seed.to_string());
+     }
+-    axon_core::interp::append_run_start_jsonl(&run_id, seed, &file.display().to_string());
++    match &fd_src {
++        Some(src) => axon_core::interp::append_run_start_jsonl_bytes(
++            &run_id,
++            seed,
++            &file.display().to_string(),
++            Some(src.as_bytes()),
++        ),
++        None => {
++            axon_core::interp::append_run_start_jsonl(&run_id, seed, &file.display().to_string())
++        }
++    }
+     // AX-33: the program owns its stderr. The run-id used to be printed here
+     // unconditionally, so no stderr protocol could hold under `axon run` and a
+     // native build of the same program (which prints nothing) behaved
+@@ -6303,7 +6327,9 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
+     // (BUG_HUNT #4).
+     axon_core::interp::set_provenance_source(file.display().to_string());
+ 
+-    let src = read_source(&file);
++    // SPIKE rev2 (GF-1 design): FILE still names the entry directory in fd mode.
++    let entry_dir = axon_core::entry_dir_of(&file);
++    let src = fd_src.unwrap_or_else(|| read_source(&file));
+     // AXON_FOR_RLM §2. This used the unlocated `parse_source` and printed bare
+     // prose — no schema, no code, no line, no help — while `check` on the same
+     // file emitted a located, structured diagnostic. The parse tier is where
+@@ -6330,7 +6356,7 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
+     // neither what was wrong nor where. The located variant differs only in
+     // being handed `src`.
+     let (errors, _infer_ctx, _closure) =
+-        run_check_pipeline_located(&mut program, &src, &file, axon_core::entry_dir_of(&file));
++        run_check_pipeline_located(&mut program, &src, &file, entry_dir);
+     // M5: notes are emitted even when the program is otherwise clean — `run`
+     // must not be the quiet path again (that was §2's whole defect).
+     for note in floor_division_warnings(&src, &file) {
+@@ -6364,6 +6390,7 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
+     // exists and disagrees is surfaced. This WARNS rather than halting — dev mode
+     // is deliberately permissive per R6 §4.2, and `axon check --locked` remains
+     // the fail-closed gate — but silence was not a defensible third option.
++    // SPIKE rev2 (GF-1 design): the lock check runs in fd mode too.
+     let lock_json = !std::io::stderr().is_terminal();
+     let lock_errors = verify_lock_tamper(&file, &program, false, lock_json);
+     report_lock_errors(&lock_errors, lock_json);
+@@ -8321,6 +8348,33 @@ fn read_source(file: &PathBuf) -> String {
+     })
+ }
+ 
++/// SPIKE (CE-9 C): read the whole program from an inherited descriptor. The fd
++/// is consumed (closed after the read) so the program cannot reach it later.
++#[cfg(unix)]
++fn read_source_fd(fd: i32) -> String {
++    use std::io::Read;
++    use std::os::fd::FromRawFd;
++    if fd < 3 {
++        eprintln!("error: --source-fd {fd}: stdin/stdout/stderr cannot carry the program");
++        process::exit(1);
++    }
++    // SAFETY: the fd is the caller's (the supervisor opened it for us); we take
++    // ownership and close it on drop. An fd that is not open fails the read.
++    let mut f = unsafe { std::fs::File::from_raw_fd(fd) };
++    let mut s = String::new();
++    if let Err(e) = f.read_to_string(&mut s) {
++        eprintln!("error reading --source-fd {fd}: {e}");
++        process::exit(1);
++    }
++    s
++}
++
++#[cfg(not(unix))]
++fn read_source_fd(fd: i32) -> String {
++    eprintln!("error: --source-fd {fd} is supported on unix only");
++    process::exit(1);
++}
++
+ /// Parse for a CLI verb, returning a fully-populated parse diagnostic on error.
+ ///
+ /// AXON_FOR_RLM §2. `check` and `run` each used to build this diagnostic
+diff --git a/crates/axon-guest-init/src/main.rs b/crates/axon-guest-init/src/main.rs
+index ae34398b..96ca5908 100644
+--- a/crates/axon-guest-init/src/main.rs
++++ b/crates/axon-guest-init/src/main.rs
+@@ -110,7 +110,24 @@ struct MmdsPayload {
+ // ── Entry point ───────────────────────────────────────────────────────────────
+ 
+ fn main() {
+-    let args: Vec<String> = env::args().collect();
++    let mut args: Vec<String> = env::args().collect();
++
++    // SPIKE (CE-9 option C, load before gate):
++    //   axon-guest-init --source PATH <binary> [args...]
++    // opens PATH here, BEFORE seccomp, and execs `<binary> [args...]
++    // --source-fd N PATH`, so the workload never opens its own program and an
++    // FS-withholding filter can cover it from its first instruction.
++    let source: Option<String> = if args.get(1).map(String::as_str) == Some("--source") {
++        if args.len() < 4 {
++            eprintln!("[axon-guest-init] usage: axon-guest-init --source PATH <binary> [args...]");
++            process::exit(1);
++        }
++        let path = args.remove(2);
++        args.remove(1);
++        Some(path)
++    } else {
++        None
++    };
+ 
+     // Default target when invoked bare: /usr/bin/axon run /axon/program.ax
+     let (binary, exec_args): (String, Vec<String>) = if args.len() >= 2 {
+@@ -202,7 +219,7 @@ fn main() {
+             );
+             process::exit(1);
+         }
+-        0 => child_main(policy, &binary, &exec_args),
++        0 => child_main(policy, &binary, &exec_args, source.as_deref()),
+         pid => supervisor_main(pid),
+     }
+ }
+@@ -520,7 +537,34 @@ fn load_policy(
+ 
+ // ── Child: apply policy then exec ─────────────────────────────────────────────
+ 
+-fn child_main(policy: Option<MmdsPayload>, binary: &str, exec_args: &[String]) -> ! {
++fn child_main(
++    policy: Option<MmdsPayload>,
++    binary: &str,
++    exec_args: &[String],
++    source: Option<&str>,
++) -> ! {
++    // SPIKE (CE-9 C): open the program BEFORE the filter goes on. The fd is
++    // opened without O_CLOEXEC so it survives the exec; the workload reads it
++    // via `--source-fd` and never opens a path of its own.
++    let mut exec_args = exec_args.to_vec();
++    if let Some(path) = source {
++        let c_path = CString::new(path).unwrap_or_else(|_| {
++            eprintln!("[axon-guest-init] --source path contains null byte");
++            process::exit(1);
++        });
++        let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY) };
++        if fd < 0 {
++            eprintln!(
++                "[axon-guest-init] cannot open program {path}: {}",
++                std::io::Error::last_os_error()
++            );
++            process::exit(1);
++        }
++        eprintln!("[axon-guest-init] program {path} loaded before the gate (fd {fd})");
++        exec_args.push("--source-fd".to_string());
++        exec_args.push(fd.to_string());
++        exec_args.push(path.to_string());
++    }
+     if let Some(p) = &policy {
+         // Export identity to the Axon runtime (provenance log, ai_complete tier).
+         if let Some(principal) = &p.principal {
+@@ -548,7 +592,7 @@ fn child_main(policy: Option<MmdsPayload>, binary: &str, exec_args: &[String]) -
+         }
+     }
+ 
+-    exec_process(binary, exec_args)
++    exec_process(binary, &exec_args)
+ }
+ 
+ // ── Entropy re-seed ───────────────────────────────────────────────────────────

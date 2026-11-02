@@ -1,0 +1,6 @@
+[build-guest-image] Downloading Linux 6.1.188...
+[build-guest-image] Building Linux 6.1.188 (Firecracker v1.10.1 CI config, controlled)...
+.config:3236:warning: override: reassigning to symbol VIRTIO_MMIO_CMDLINE_DEVICES
+[build-guest-image] vmlinux → dist/guest-linux/vmlinux (39M)
+lineage: cannot show HEAD descends from 31413ca7: axon-provenance: the repository's own config sets blame.ignorerevsfile (/home/cklaus/projects/axon/.git/worktrees/b2-ce9/../../config): repository-local git settings that can redirect what git reports or run code are refused, never interpreted
+[build-guest-image] ERROR: HEAD does not descend from PCI-certified 31413ca7

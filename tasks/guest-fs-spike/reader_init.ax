@@ -1,0 +1,9 @@
+// CE-9 spike: an IO-only-looking program that tries to read another guest file.
+fn main() {
+    println("READER-START")
+    match read_file("/init") {
+        Ok(s) => println("READER-GOT {to_str(len(s))} bytes")
+        Err(e) => println("READER-ERR {e}")
+    }
+    println("READER-END")
+}

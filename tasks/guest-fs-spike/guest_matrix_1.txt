@@ -1,0 +1,102 @@
+== L1-path-errno (path, filter=errno, agent_task.ax) workload_rc=1 cmdline_bytes=1367 fc_rc=0 
+B263-POLICY sha=847e318e9de37e8974cabfcf90610223197bad7e2fadac322d4898d0d5da591f
+B263-START
+B263-OUT stdout=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 exit=1
+-- stdout
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] seccomp applied (76 instructions)
+error reading /work/job/program.ax: Permission denied (os error 13)
+
+== L2-fd-errno (fd, filter=errno, agent_task.ax) workload_rc=0 cmdline_bytes=1367 fc_rc=0 
+B263-POLICY sha=847e318e9de37e8974cabfcf90610223197bad7e2fadac322d4898d0d5da591f
+B263-START
+B263-OUT stdout=9f4f50fa1b1c0fd76b48e9b55fb88e7f25e736708581386d79887f0706de3cfc exit=0
+-- stdout
+scores: a=70 b=5 c=70
+best=70  (compiler-verified: no net/fs/exec; postcondition score>=0 enforced)
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] program /work/job/program.ax loaded before the gate (fd 3)
+[axon-guest-init] seccomp applied (76 instructions)
+
+== L3-fd-errno-reader (fd, filter=errno, reader_init.ax) workload_rc=0 cmdline_bytes=1367 fc_rc=0 
+B263-POLICY sha=847e318e9de37e8974cabfcf90610223197bad7e2fadac322d4898d0d5da591f
+B263-START
+B263-OUT stdout=8f181690e1d6b71c3dd1f914d4b7fe75d1fd3984ef30556445f39cae9f2453d2 exit=0
+-- stdout
+READER-START
+READER-ERR Permission denied (os error 13)
+READER-END
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] program /work/job/program.ax loaded before the gate (fd 3)
+[axon-guest-init] seccomp applied (76 instructions)
+
+== L4-fd-kill (fd, filter=kill, agent_task.ax) workload_rc=159 cmdline_bytes=1367 fc_rc=0 
+B263-POLICY sha=95c4b8da33f63d7543901abd0097d62699683d9c47ec43028bd271ba34b0bc5f
+B263-START
+B263-OUT stdout=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 exit=159
+-- stdout
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] program /work/job/program.ax loaded before the gate (fd 3)
+[axon-guest-init] seccomp applied (76 instructions)
+
+== L5-fd-kill-reader (fd, filter=kill, reader_init.ax) workload_rc=159 cmdline_bytes=1367 fc_rc=0 
+B263-POLICY sha=95c4b8da33f63d7543901abd0097d62699683d9c47ec43028bd271ba34b0bc5f
+B263-START
+B263-OUT stdout=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 exit=159
+-- stdout
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] program /work/job/program.ax loaded before the gate (fd 3)
+[axon-guest-init] seccomp applied (76 instructions)
+
+== L6-fd-nofilter-reader (fd, filter=none, reader_init.ax) workload_rc=0 cmdline_bytes=259 fc_rc=0 
+B263-POLICY sha=3fd87c2f06701192bdc8a66da0283d8292b3017cd9f6bd57f8f49511efd22e58
+B263-START
+B263-OUT stdout=0da70f8554f5d4966eea8afb25738eeee735da338c841bea81696cbd462637bb exit=0
+-- stdout
+READER-START
+READER-GOT 10548 bytes
+READER-END
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] WARNING: policy loaded with NO seccomp filter (seccomp_bpf_b64 omitted) — defence in depth is absent
+[axon-guest-init] program /work/job/program.ax loaded before the gate (fd 3)
+
+== L7-fd-errno-hello (fd, filter=errno, fx_hello.ax) workload_rc=0 cmdline_bytes=1367 fc_rc=0 
+B263-POLICY sha=847e318e9de37e8974cabfcf90610223197bad7e2fadac322d4898d0d5da591f
+B263-START
+B263-OUT stdout=0255d1441064a8e6a8e0bd0031c018c30a6a44c6319a16d6dfc0b2d81488fca2 exit=0
+-- stdout
+b263 hello from the linux microvm
+fib(20) = 6765
+artifact FAILED Permission denied (os error 13)
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] program /work/job/program.ax loaded before the gate (fd 3)
+[axon-guest-init] seccomp applied (76 instructions)
+
+== L8-path-nofilter-hello (path, filter=none, fx_hello.ax) workload_rc=0 cmdline_bytes=259 fc_rc=0 
+B263-POLICY sha=3fd87c2f06701192bdc8a66da0283d8292b3017cd9f6bd57f8f49511efd22e58
+B263-START
+B263-OUT stdout=4a3e8feeb46723b73b6334f0d1d30217ec8751c59d8bb0d6a5f2c7995a77de62 exit=0
+-- stdout
+b263 hello from the linux microvm
+fib(20) = 6765
+artifact written
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] WARNING: policy loaded with NO seccomp filter (seccomp_bpf_b64 omitted) — defence in depth is absent
+
+== L9-path-kill (path, filter=kill, agent_task.ax) workload_rc=159 cmdline_bytes=1367 fc_rc=0 
+B263-POLICY sha=95c4b8da33f63d7543901abd0097d62699683d9c47ec43028bd271ba34b0bc5f
+B263-START
+B263-OUT stdout=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 exit=159
+-- stdout
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] seccomp applied (76 instructions)
+

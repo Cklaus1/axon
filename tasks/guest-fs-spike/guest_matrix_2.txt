@@ -1,0 +1,38 @@
+== L11-fsnone-errno (fsnone, filter=errno, agent_task.ax) workload_rc=0 cmdline_bytes=1367 fc_rc=0 
+B263-OUT stdout=9f4f50fa1b1c0fd76b48e9b55fb88e7f25e736708581386d79887f0706de3cfc exit=0
+-- stdout
+scores: a=70 b=5 c=70
+best=70  (compiler-verified: no net/fs/exec; postcondition score>=0 enforced)
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] program /work/job/program.ax loaded before the gate (fd 3)
+[axon-guest-init] seccomp applied (76 instructions)
+== L12-fsnone-errno-reader (fsnone, filter=errno, reader_init.ax) workload_rc=8 cmdline_bytes=1367 fc_rc=0 
+B263-OUT stdout=448dab4ee3f90bd2e695dcb78e39b1e85a4d09d376217d7916b4ea867105ff29 exit=8
+-- stdout
+READER-START
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] program /work/job/program.ax loaded before the gate (fd 3)
+[axon-guest-init] seccomp applied (76 instructions)
+axon: sandbox violation: builtin `read_file` is not permitted to read path `/init`: the active sandbox restricts it to [] (principal handle 0)
+== L13-fsnone-errno-hello (fsnone, filter=errno, fx_hello.ax) workload_rc=8 cmdline_bytes=1367 fc_rc=0 
+B263-OUT stdout=3db6f6bbe70fbfa01cb41fac0d61fdf434d5c05434dbf8c64f758d6fc5a68da0 exit=8
+-- stdout
+b263 hello from the linux microvm
+fib(20) = 6765
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] program /work/job/program.ax loaded before the gate (fd 3)
+[axon-guest-init] seccomp applied (76 instructions)
+axon: sandbox violation: builtin `write_file` is not permitted to write path `/work/out/artifact.txt`: the active sandbox restricts it to [] (principal handle 0)
+== L10-fd-errno-evil (fd, filter=errno, agent_task_evil.ax) workload_rc=2 cmdline_bytes=1367 fc_rc=0 
+B263-OUT stdout=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 exit=2
+-- stdout
+-- stderr
+[axon-guest-init] policy loaded from the kernel cmdline (axon.policy=)
+[axon-guest-init] program /work/job/program.ax loaded before the gate (fd 3)
+[axon-guest-init] seccomp applied (76 instructions)
+{"schema":"axon-diag/1","severity":"error","code":"E1001","file":"/work/job/program.ax","line":27,"col":1,"message":"`read_file(\"/etc/passwd\")` is not permitted: no `fs: [read(...)]` in @[contained]","help":"Add `fs: [read(\"/etc/\")]` to
+{"schema":"axon-diag/1","severity":"error","code":"E1001","file":"/work/job/program.ax","line":27,"col":1,"message":"`ai_complete(...) [host api.anthropic.com]` is not permitted: no `net: [...]` in @[contained]","help":"Add `net: [\"api.ant
+{"schema":"axon-diag/1","severity":"error","code":"E1001","file":"/work/job/program.ax","line":27,"col":1,"message":"`exec(...)` is not permitted: `exec: none` or exec not specified in @[contained]","help":"Add `exec: any` to the @[containe

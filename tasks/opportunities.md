@@ -1270,6 +1270,8 @@ but does not grant anything.
 ## O034 — the guest substrate needs FS, and that is not the program's authority
 
 `[DECIDED 2026-11-02: NH-C8 C, spike in progress (separate CE-9 lane); not built on b2/ce]`
+`[SPECCED 2026-11-02: tasks/guest-fs-spec.md (DRAFT after Step 1 review; GF-1..GF-5). The CE-9 spike found C feasible on the Linux
+microvm profile and not on the bare-metal guest kernel; spike code not merged (tasks/guest-fs-spike/spike-code.diff). Open.]`
 
 *Found while closing OSK-P7-C3 (T48).* Needs a decision; the gate states the
 grant explicitly meanwhile.

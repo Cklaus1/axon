@@ -1,0 +1,25 @@
+--- /home/cklaus/projects/axon-lanes/b2-ce9/profiles/linux-microvm/guest-init.sh	2026-11-02 00:40:44.121688053 -0500
++++ /var/tmp/r51-tmp/CE9Spike/linux/init.sh	2026-11-02 01:04:59.615656083 -0500
+@@ -179,6 +179,22 @@
+         exec env -i PATH=/bin:/usr/bin HOME=/tmp XDG_CACHE_HOME=/tmp/cache \
+             /usr/bin/axon-guest-init /usr/bin/axon-psv-runner
+     fi
++    # CE9 SPIKE: /work/job/mode = "fd" -> load before gate (axon-guest-init
++    # opens the program, the workload reads it via --source-fd).
++    if [ "$(cat /work/job/mode 2>/dev/null)" = fd ]; then
++        # shellcheck disable=SC2086
++        exec env -i PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \
++            /usr/bin/axon-guest-init --source /work/job/program.ax /usr/bin/axon run $ARGS
++    fi
++    # CE9 SPIKE: "fsnone" = fd mode + the interpreter's own ambient path scopes
++    # emptied, so a program-level file access is a runtime refusal (exit 8)
++    # before the seccomp backstop is reached.
++    if [ "$(cat /work/job/mode 2>/dev/null)" = fsnone ]; then
++        # shellcheck disable=SC2086
++        exec env -i PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \
++            AXON_ALLOWED_FS_READ= AXON_ALLOWED_FS_WRITE= \
++            /usr/bin/axon-guest-init --source /work/job/program.ax /usr/bin/axon run $ARGS
++    fi
+     # shellcheck disable=SC2086
+     exec env -i PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \
+         /usr/bin/axon-guest-init /usr/bin/axon run /work/job/program.ax $ARGS
