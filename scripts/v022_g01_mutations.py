@@ -12895,12 +12895,13 @@ MUTATIONS += [
      'tokens: None,',
      'axon-intent', '--test genloop', 'a_cmd_generator_s_reported_tokens_count_against_the_budget'),
     # GV-1 re-anchored M4506/M4507/M4509-M4512 in place: the compile reason is chosen by
-    # main.rs `diag_outcome_reason`, and a fault verdict by the record's class
-    # (runtime.rs `fault_verdict`), no longer by stderr lines. M4500-M4502, M4513 and
-    # M4516 are retired below (_GV1_STALE).
-    ('M4506', 'integration int/31: a compile failure is named by its first diagnostic of any severity (a warning)', 'crates/axon-core/src/main.rs',
-     '        .find(|d| d.severity == "error")\n        .or_else(|| diags.first())',
-     '        .find(|_| true)\n        .or_else(|| diags.first())',
+    # main.rs `diag_outcome_reason` over the refusing list (errors only; a warning is
+    # printed as it arises and never enters it), and a fault verdict by the record's
+    # class (runtime.rs `fault_verdict`), no longer by stderr lines. M4500-M4502, M4513
+    # and M4516 are retired below (_GV1_STALE).
+    ('M4506', 'integration int/31: a compile failure is named by a later diagnostic, not its first error', 'crates/axon-core/src/main.rs',
+     '        .first()\n        .map(|d| format!("{} at line {}:{}: {}", d.code, d.line, d.col, d.message))',
+     '        .last()\n        .map(|d| format!("{} at line {}:{}: {}", d.code, d.line, d.col, d.message))',
      'axon-os', '--test sandbox_capture', 'a_compile_failure_names_its_first_error_not_a_warning'),
     ('M4507', 'integration int/31: the verify fault arm no longer matches, so a failed verify falls to the runtime axis', 'crates/axon-os/src/runtime.rs',
      '        "verify" | "ai-policy" | "sandbox" | "steps" | "wall" => Verdict::Denied {',
@@ -14881,7 +14882,7 @@ MUTATIONS += [
     ('M4732', "GV-1 x CE-5: an E1006 step/wall stop is recorded as the program's exit", 'crates/axon-core/src/interp.rs',
      '            fault(\n                class,\n                format!("axon: resource bound: {msg}"),\n                RESOURCE_BOUND_EXIT_CODE,\n            )',
      '            {\n                let _ = class;\n                eprintln!("axon: resource bound: {msg}");\n                record_run(Kind::Exit, "exit", "");\n                RESOURCE_BOUND_EXIT_CODE\n            }',
-     'axon-os', '--test sandbox_capture', 'step_exhaustion_is_a_fault_not_the_programs_exit_9'),
+     'axon-core', '--no-default-features --test cli_run', 'step_exhaustion_writes_a_steps_fault_record'),
 ]
 
 if __name__ == "__main__":

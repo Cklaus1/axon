@@ -6630,13 +6630,13 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
     outcome::exit_with_run_outcome(code);
 }
 
-/// The `reason` of a compile outcome record: the first error diagnostic (the
-/// first diagnostic when none is an error), as `<code> at line <l>:<c>: <msg>`.
+/// The `reason` of a compile outcome record: the first diagnostic of the
+/// refusing list, as `<code> at line <l>:<c>: <msg>`. That list holds errors
+/// only (warnings are printed as they arise and never refuse a run), so its
+/// first entry is the first error.
 fn diag_outcome_reason(diags: &[axon_core::PipelineDiagnostic]) -> String {
     diags
-        .iter()
-        .find(|d| d.severity == "error")
-        .or_else(|| diags.first())
+        .first()
         .map(|d| format!("{} at line {}:{}: {}", d.code, d.line, d.col, d.message))
         .unwrap_or_default()
 }

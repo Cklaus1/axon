@@ -4103,5 +4103,5 @@ ATTACK_MARKERS.update({
     'M4729': r'ATTACK: two outcome records were accepted',
     'M4730': r'ATTACK: the replay-divergence exit wrote no fault record',
     'M4731': r'ATTACK: a completed job was sealed as a denial by its stderr',
-    'M4732': r'ATTACK: step exhaustion read as the program.s exit 9',
+    'M4732': r'ATTACK: a step-ceiling stop was recorded as the program.s exit 9',
 })

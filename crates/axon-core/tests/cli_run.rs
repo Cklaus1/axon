@@ -47511,14 +47511,6 @@ fn run_writes_one_outcome_record_to_the_outcome_fd() {
             ("parse", "fn main( {\n", &[], "compile", "parse", 2),
             ("check", "fn main() -> i64 {\n    let x: i64 = \"s\"\n    0\n}\n", &[], "compile", "check", 2),
             ("engine", "fn main() -> i64 { 0 }\n", &[("AXON_ENGINE", "bogus")], "compile", "engine", 2),
-            (
-                "steps",
-                "fn main() -> i64 {\n    let i = 0\n    while i < 100000 {\n        i = i + 1\n    }\n    0\n}\n",
-                &[("AXON_MAX_STEPS", "100")],
-                "fault",
-                "steps",
-                9,
-            ),
             ("ceilings", "fn main() -> i64 { 0 }\n", &[("AXON_CEILING", "/nonexistent/axon-gv1-ceiling.json")], "compile", "ceilings", 2),
         ],
     );
@@ -47526,6 +47518,31 @@ fn run_writes_one_outcome_record_to_the_outcome_fd() {
     assert!(
         fails.is_empty(),
         "ATTACK: `axon run` did not state how the run ended on its outcome fd:\n{}",
+        fails.join("\n")
+    );
+}
+
+/// CE-5 x GV-1: a run stopped by its step ceiling (E1006, exit 9) records a
+/// `steps` fault, so a supervisor never reads it as the program's `exit(9)`.
+#[cfg(target_os = "linux")]
+#[test]
+fn step_exhaustion_writes_a_steps_fault_record() {
+    let d = gv_dir("steps");
+    let fails = outcome_record_misses(
+        &d,
+        &[(
+            "steps",
+            "fn main() -> i64 {\n    let i = 0\n    while i < 100000 {\n        i = i + 1\n    }\n    0\n}\n",
+            &[("AXON_MAX_STEPS", "100")],
+            "fault",
+            "steps",
+            9,
+        )],
+    );
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(
+        fails.is_empty(),
+        "ATTACK: a step-ceiling stop was recorded as the program's exit 9:\n{}",
         fails.join("\n")
     );
 }
@@ -47648,22 +47665,21 @@ fn run_without_the_outcome_fd_is_byte_identical() {
     );
 }
 
+/// A real open pipe on fd 3, so the refusal under test is the verb rule, not
+/// the "names no open fd" check that would refuse it anyway.
+#[cfg(target_os = "linux")]
 #[test]
 fn other_verbs_refuse_the_outcome_fd() {
     let d = gv_dir("verbs");
     let f = d.join("p.ax");
     std::fs::write(&f, "fn main() -> i64 { 0 }\n").unwrap();
-    let out = axon()
-        .arg("check")
-        .arg(&f)
-        .env("AXON_OUTCOME_FD", "3")
-        .env("AXON_OUTCOME_NONCE", GV_NONCE)
-        .output()
-        .unwrap();
+    let mut cmd = axon();
+    cmd.arg("check").arg(&f);
+    let (out, record) = with_outcome_pipe(&mut cmd);
     let _ = std::fs::remove_dir_all(&d);
     assert_eq!(
-        out.status.code(),
-        Some(2),
+        (out.status.code(), record.as_str()),
+        (Some(2), ""),
         "ATTACK: a verb other than run accepted the outcome fd (`axon check`): {out:?}"
     );
     assert!(
