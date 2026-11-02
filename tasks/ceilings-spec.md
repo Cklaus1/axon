@@ -1,6 +1,6 @@
 # ceilings - DRAFT spec
 
-**Status: PARTIAL 2026-11-02 on b2/ce d93f5d0d (CE-1, CE-7 built; the rest in progress; O-HI-03 open).**
+**Status: PARTIAL 2026-11-02 on b2/ce d5e8aa21 (CE-1, CE-7, CE-8 built; the rest in progress: O-HI-03 open).**
 
 Author: `Ceilings` (2026-11-01), base `main` a5310878 (worktree `/home/cklaus/projects/axon-lanes/asi-next`, branch `asi/next`).
 Reference binary: `/var/tmp/r51-tmp/asi-bin/axon` (`axon 0.1.0 (a5310878)`, default features: `codegen`, no `asi-runtime`).
@@ -699,6 +699,13 @@ Options:
     and the five extract bridges [INFERENCE: ~100-150 lines across `codegen/`, `axon-ai`]. Extract semantics follow whatever
     the interpreter does for each extract [pending asi-fixes-spec.md AF-1].
   - Same test rewrites as A, asserting E1300/exit 5 instead.
+  - `[REVISED: build d5e8aa21]` Built as B. Only `__axon_ai_complete` gained the fallback argument (`fallback_ptr`,
+    `fallback_len`, `< 0` = none): the interpreter's extracts never take a fallback (AF-1: "a fallback is a `str`, not the
+    extracted type"), so the five extract bridges keep their ABI and stop with the extract E1300 line, exit 5. Codegen calls a
+    second wrapper `ai_complete.fallback` only from a fn that declares one (`ai_routing::fallback_from_attrs`, now shared with
+    `Interp::current_ai_fallback`). The two in-process tests became `no_key_bridges_stop_with_e1300_like_the_interpreter` and
+    `no_key_complete_answers_the_declared_fallback`, which re-run the test binary as a child. A closure body inside a fallback
+    fn was not probed natively (it hits an unrelated E0910 / IR error at this base) [INFERENCE: it follows the enclosing fn].
 - **C: keep + document** the divergence in `axon build --help` and `spec/axon-for-llms.md`. This leaves a silent wrong answer
   (the third-worst outcome).
 
