@@ -7,17 +7,26 @@
 //! any stderr line can tell "the interpreter refused this" from "the program
 //! said so".
 //!
-//! The supervisor hands `axon run` a pipe on [`OUTCOME_FD_ENV`] and a per-run
-//! nonce on [`OUTCOME_NONCE_ENV`]. The CLI reads both once at start, removes
-//! them from the environment, makes the fd close-on-exec and installs it here
-//! ([`install`]). Every exit `axon run` can take then goes through
-//! [`exit_with_outcome`], which writes exactly one newline-terminated JSON line
+//! The supervisor hands `axon run` a pipe on [`OUTCOME_FD_ENV`] and a second
+//! pipe on [`OUTCOME_NONCE_FD_ENV`] carrying the per-run nonce (genviab-b3
+//! B3-3: never in the environment, whose kernel copy `/proc/self/environ`
+//! the program can read). The CLI reads the nonce once at start and closes
+//! its fd, removes both variables, makes the outcome fd close-on-exec, makes
+//! the process non-dumpable and installs the channel here ([`install`]).
+//! Every exit `axon run` can take then goes through [`exit_with_outcome`],
+//! which writes exactly one newline-terminated JSON line
 //!
 //! `{"schema":"axon-outcome/1","nonce":"..","kind":"exit"|"fault"|"compile","code":N,"class":"..","reason":".."}`
 //!
 //! to that fd before `process::exit(code)`. With no channel installed (every
 //! run without the variables, every other verb) it is exactly
 //! `process::exit(code)`: stdout, stderr and the status are unchanged.
+//!
+//! An `exit` record's `class` says which end the run reached: `return`
+//! (`main` returned), `exit` (`main` itself called `exit`, outside every
+//! `sandbox_run`), `inner-exit` (`exit` inside a `sandbox_run` call or in a
+//! module-level `let` initialiser, before `main`), `stray`. The axon-os job
+//! supervisor counts only `return` and `exit` as a completion.
 //!
 //! The interpreter's run entry (`interp::run_program_inner`) states how the
 //! program ended with [`record_run`]; the normal end of `axon run` writes that
@@ -30,8 +39,15 @@ use std::sync::{Mutex, OnceLock};
 
 /// The variable naming the fd the outcome record is written to.
 pub const OUTCOME_FD_ENV: &str = "AXON_OUTCOME_FD";
-/// The variable carrying the per-run nonce every record repeats.
-pub const OUTCOME_NONCE_ENV: &str = "AXON_OUTCOME_NONCE";
+/// The variable naming the fd the per-run nonce is read from (a pipe; the
+/// nonce plus `\n`), which every record repeats.
+pub const OUTCOME_NONCE_FD_ENV: &str = "AXON_OUTCOME_NONCE_FD";
+/// The retired nonce variable (B3-3). A supervisor still setting it would
+/// leave the nonce in the kernel's environment block, so it is refused.
+pub const RETIRED_OUTCOME_NONCE_ENV: &str = "AXON_OUTCOME_NONCE";
+/// The most bytes read from the nonce fd: a 128-digit nonce, its `\n`, and
+/// one more byte so an over-long nonce is seen as such.
+pub const OUTCOME_NONCE_READ_MAX: usize = 130;
 /// The record's `schema`.
 pub const OUTCOME_SCHEMA: &str = "axon-outcome/1";
 /// A record line, newline included, is at most this many bytes (`PIPE_BUF`,

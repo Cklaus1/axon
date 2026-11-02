@@ -162,7 +162,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_MAX_STEPS` | resource-budget | ✓ | refused | refused | ? | open |
 | `AXON_NATIVE_TRACE` | ai-routing/diagnostic | ✓ | ✓ | ? | **?** | native-closed |
 | `AXON_OUTCOME_FD` | launcher-side | ✓ | **IGNORED** | **IGNORED** | n/a | open |
-| `AXON_OUTCOME_NONCE` | launcher-side | ✓ | **IGNORED** | **IGNORED** | n/a | open |
+| `AXON_OUTCOME_NONCE_FD` | launcher-side | ✓ | **IGNORED** | **IGNORED** | n/a | open |
 | `AXON_PRINCIPAL` | replay/record/audit | ✓ | ✓ | ✓ | ? | closed |
 | `AXON_RECORD` | replay/record/audit | ✓ | refused | refused | ? | open |
 | `AXON_REPLAY` | replay/record/audit | ✓ | refused | refused | ? | open |
@@ -288,7 +288,7 @@ THE DEFECT IT FOUND: the parser took the first textual `"key":` anywhere in the 
 - **`AXON_RUNTIME_DIR`** —  READER (verified): codegen/link.rs (RUNTIME_DIR_VAR, read in the runtime locator), tested by cli_run `native_build_with_a_built_runtime_runs_no_cargo_and_ignores_the_callers_toolchain` and link.rs unit tests asserting the error names the variable. [wasm: not-applicable] the wasip1 AOT link picks its runtime through AXON_WASM_RT (main.rs find_wasm_axon_rt), never this variable. A program never reads it under any engine.
 - **`AXON_REQUIRE_IMPORTS_DIGEST`** — Native and wasm AOT refuse at run time through the axon-rt REFUSED table (source audit; not separately measured on wasip1). A built binary cannot recompute the closure it was linked from, so refusal is the only honest state. GUEST: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH, so nothing delivers this variable into a guest. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route), the same defect as its sibling controls.
 - **`AXON_OUTCOME_FD`** — Native and wasm AOT binaries never read this variable: axon-os launches only `axon run` with it, so a built binary given it by hand writes no record and the caller sees none (a supervisor reading the pipe then fails closed). GUEST: not-applicable for THIS row because the pipe is created by the axon-os capture/job launcher for its `axon run` child, and axon-vm guests are started by axon-vm, which sets no outcome fd.
-- **`AXON_OUTCOME_NONCE`** — Native and wasm AOT binaries never read this variable (see AXON_OUTCOME_FD). GUEST: not-applicable for THIS row because the nonce travels with the outcome pipe that only the axon-os launcher creates for `axon run`; axon-vm starts guests without one.
+- **`AXON_OUTCOME_NONCE_FD`** — Native and wasm AOT binaries never read this variable (see AXON_OUTCOME_FD). GUEST: not-applicable for THIS row because the nonce travels on a pipe that only the axon-os launcher creates for `axon run`; axon-vm starts guests without one.
 
 ## False greens
 

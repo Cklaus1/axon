@@ -887,7 +887,7 @@ MUTATIONS = [
     ('M243', 'PSV-4 (3b): the interpreter keys a failure in its own domain', 'crates/axon-core/src/main.rs', 'failure_token(k, &r.name)', 'completion_token(k, &r.name)', 'axon-core', '--no-default-features --test psv_test_selection', 'a_failure_is_keyed_in_its_own_domain'),
     ('M244', 'PSV-7 (3b): a protected-scope clearance needs an operator-rooted monitor key', 'crates/axon-loop/src/safety.rs', '            if config.protected_scopes.contains(&r.scope) {', '            if false && config.protected_scopes.contains(&r.scope) {', 'axon-loop', '--test protected_class', 'a_monitor_key_planted_in_the_store_never_clears_a_protected_trial'),
     ('M245', 'PSV-7 (3b): admission re-checks a clearance under the monitor root', 'crates/axon-loop/src/admission.rs', '                                    && crate::store::Config::rooted_key(\n                                        &config.monitor_keys,\n                                        &report.issuer_ref,\n                                        axon_loop_contracts::operator_trust::TrustAuthority::Monitor,\n                                    )\n                                    .ok()', '                                    && config.monitor_keys.get(&report.issuer_ref)', 'axon-loop', '--test protected_class', 'a_key_revoked_at_the_operator_root_no_longer_counts'),
-    ('M246', 'PSV-3 (c4): a key-holding axon test is non-dumpable', 'crates/axon-core/src/main.rs', 'libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0)', 'libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0)', 'axon-core', '--no-default-features --test psv_test_selection', 'holding_a_completion_key_makes_the_process_non_dumpable'),
+    ('M246', 'PSV-3 (c4): a key-holding axon test is non-dumpable', 'crates/axon-core/src/main.rs', 'libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {\n            eprintln!("axon test: --completion-key-stdin', 'libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0) } != 0 {\n            eprintln!("axon test: --completion-key-stdin', 'axon-core', '--no-default-features --test psv_test_selection', 'holding_a_completion_key_makes_the_process_non_dumpable'),
     ('M247', 'PSV-3 (c4): a key-holding axon test drops Exec from a granted ceiling', 'crates/axon-core/src/main.rs', '.filter(|e| !e.is_empty() && e != "Exec")', '.filter(|e| !e.is_empty())', 'axon-core', '--no-default-features --test psv_test_selection', 'holding_a_completion_key_spawns_nothing'),
     ('M248', 'PSV-3 (c4): a key-holding axon test with no ceiling still gets none with Exec', 'crates/axon-core/src/main.rs', '.filter(|e| **e != "Exec")', '.filter(|_| true)', 'axon-core', '--no-default-features --test psv_test_selection', 'holding_a_completion_key_spawns_nothing'),
     ('M249', 'PSV-3 (c4): the runner gives the key-holding process no Exec', 'crates/axon-psv/src/runner.rs', '.filter(|e| !e.is_empty() && *e != "Exec")', '.filter(|e| !e.is_empty())', 'axon-psv', '--test runner', 'the_process_holding_k_is_given_no_exec'),
@@ -11423,8 +11423,8 @@ MUTATIONS += [
 # ── gaps2 run, approval lane (AR1-AR3; ids M3620-M3639) ──────────────────────────
 MUTATIONS += [
     ('M3620', 'AR1 SINGLE READ: the sandbox stages the entry re-read from disk, not the text the token verified and the scan judged', 'crates/axon-os/src/runtime.rs',
-     '        let wrapper_src = wrap_in_sandbox(program.text, grant, budget, &nonce);',
-     '        let wrapper_src = wrap_in_sandbox(&std::fs::read_to_string(program.path).unwrap_or_default(), grant, budget, &nonce);',
+     '        let wrapper_src = wrap_in_sandbox(program.text, grant, budget);',
+     '        let wrapper_src = wrap_in_sandbox(&std::fs::read_to_string(program.path).unwrap_or_default(), grant, budget);',
      'axon-os', '--test acceptance', 'the_entry_bytes_the_token_verified_are_the_bytes_that_run'),
     ('M3621', 'AR1 READ REFUSAL: an unreadable entry runs as the empty program instead of being refused on the io axis', 'crates/axon-os/src/supervisor.rs',
      '        Err(e) => {\n            let denial = RawEvent::new("denied", "io", EffectSet::default(), "");',
@@ -14842,15 +14842,15 @@ MUTATIONS += [
      '            Err(_no_record) => SandboxOutcome::Exited {\n                code: proc.code.unwrap_or(-1),\n            },',
      'axon-os', '--test sandbox_capture', 'a_run_without_an_outcome_record_is_a_sandbox_fault'),
     ('M4722', 'GV-1: the supervisor launches the interpreter without an outcome pipe', 'crates/axon-os/src/runtime.rs',
-     '        give_child_outcome_fd(&mut cmd, &writer, &nonce);\n',
+     '        give_child_outcome_fd(&mut cmd, &writer, &nonce_reader);\n',
      '        let _ = give_child_outcome_fd;\n',
      'axon-os', '--test sandbox_capture', 'the_supervisor_hands_the_interpreter_an_outcome_pipe'),
     ('M4723', "GV-1: the outcome nonce stays in the program's environment", 'crates/axon-core/src/main.rs',
-     '    std::env::remove_var(outcome::OUTCOME_NONCE_ENV);\n    let refuse = |why: String| -> ! {',
-     '    let refuse = |why: String| -> ! {',
+     '    std::env::remove_var(outcome::OUTCOME_NONCE_FD_ENV);\n    std::env::remove_var(outcome::RETIRED_OUTCOME_NONCE_ENV);',
+     '    std::env::remove_var(outcome::RETIRED_OUTCOME_NONCE_ENV);',
      'axon-os', '--test sandbox_capture', 'the_outcome_nonce_and_fd_are_not_in_the_programs_environment'),
     ('M4724', "GV-1: a program's own exit(n) is recorded as a sandbox fault", 'crates/axon-core/src/interp.rs',
-     '        Err(Flow::Exit(code)) if map_status => {\n            record_run(Kind::Exit, "exit", "");',
+     '        Err(Flow::Exit(code)) if map_status => {\n            record_run(Kind::Exit, interp.exit_class.get(), "");',
      '        Err(Flow::Exit(code)) if map_status => {\n            record_run(Kind::Fault, "sandbox", "axon: sandbox violation: exit");',
      'axon-os', '--test sandbox_capture', 'a_program_printing_the_sandbox_fault_line_and_exiting_8_is_its_own_exit'),
     ('M4725', 'GV-1: a type error exits 2 without a compile record', 'crates/axon-core/src/main.rs',
@@ -14998,6 +14998,50 @@ MUTATIONS += [
      '',
      'axon-os', '--test sandbox_console', 'a_job_module_level_let_cannot_use_time'),
 ]
+
+# genviab-b3 B3-3 (tasks/genviab-b3-spec.md §3, ids M4770-M4775, b3 block
+# M4770-M4789): the outcome nonce reaches the interpreter on a pipe (fd 4),
+# never in the environment; the interpreter validates it, closes the fd and
+# makes itself non-dumpable; completion is the record's class (`exit` only
+# from `main` outside every `sandbox_run`), not a stdout marker.
+MUTATIONS += [
+    ('M4770', "B3-3: launch also puts the nonce in the child's environment", 'crates/axon-os/src/runtime.rs',
+     '        give_child_outcome_fd(&mut cmd, &writer, &nonce_reader);\n',
+     '        give_child_outcome_fd(&mut cmd, &writer, &nonce_reader);\n        cmd.env("AXON_NONCE", &nonce);\n',
+     'axon-os', '--test sandbox_capture', 'the_kernels_environ_copy_holds_no_outcome_nonce'),
+    ('M4771', 'B3-3: the nonce-fd read skips valid_nonce', 'crates/axon-core/src/main.rs',
+     '            Some(n) if outcome::valid_nonce(&n) => n,',
+     '            Some(n) => n,',
+     'axon-core', '--no-default-features --test cli_run', 'a_malformed_nonce_on_the_nonce_fd_is_refused'),
+    ('M4772', 'B3-3: the outcome channel leaves the interpreter dumpable', 'crates/axon-core/src/main.rs',
+     '        if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {\n            refuse("the outcome channel: could not make the process non-dumpable".into());\n        }\n',
+     '',
+     'axon-core', '--no-default-features --test cli_run', 'a_spawned_process_cannot_open_the_interpreters_proc_files'),
+    ('M4773', 'B3-3: exit ignores sandbox_run_depth (a job exit inside its sandbox is class exit)', 'crates/axon-core/src/interp/builtins.rs',
+     '                    if self.main_entered.get() && self.sandbox_run_depth.get() == 0 {',
+     '                    if self.main_entered.get() {',
+     'axon-os', '--test sandbox_console', 'a_job_forging_completion_through_proc_is_denied'),
+    ('M4774', 'B3-3: exit ignores main_entered (an exit in a module-level let is class exit)', 'crates/axon-core/src/interp/builtins.rs',
+     '                    if self.main_entered.get() && self.sandbox_run_depth.get() == 0 {',
+     '                    if self.sandbox_run_depth.get() == 0 {',
+     'axon-os', '--test sandbox_console', 'a_job_exiting_in_a_module_level_let_is_not_completed'),
+    ('M4775', 'B3-3: classify maps every Exit class to Completed', 'crates/axon-os/src/runtime.rs',
+     '            RecordKind::Exit if r.class == "exit" || r.class == "return" => Verdict::Completed {',
+     '            RecordKind::Exit if !r.class.is_empty() || r.class.is_empty() => Verdict::Completed {',
+     'axon-os', '--test sandbox_console', 'a_job_that_calls_exit_itself_is_not_completed'),
+]
+
+# B3-3 removed the wrapper's stdout completion marker (`DONE_SENTINEL`,
+# `ran_to_completion`, `strip_done_marker`): completion is the outcome
+# record's class, so these mutation points no longer exist.
+_B3_STALE = {
+    "M4035": {"property": "the wrapper's marker stays out of captured stdout", "replacement": "M4775",
+              "how": "B3-3: no marker is printed; completion is the record's class"},
+    "M4026": {"property": "an unterminated print does not lose the completion", "replacement": "M4775",
+              "how": "B3-3: no marker is printed; completion is the record's class, which M4775 mutates"},
+}
+STALE_REFACTORED.update(_B3_STALE)
+RETIRED |= set(_B3_STALE)
 
 if __name__ == "__main__":
     main()

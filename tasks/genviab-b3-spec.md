@@ -326,6 +326,16 @@ changes are needed:
   are covered by M4775 or exempted. Gate: `python3 -B scripts/v022_refusal_coverage.py` passes, and `--without=M4775` names those
   sites.
 
+`[REVISED: build 2026-11-02 (b3/rs)]` (a) M4770's mutant sets `AXON_NONCE`, not `AXON_OUTCOME_NONCE`: the interpreter now refuses
+the retired name (exit 2), so that mutant would die on a premise, not on the environ ATTACK line. (b) M4026 is retired with M4035
+(`_B3_STALE`, replacement M4775): its find string was `ran_to_completion`'s body, which B3-3 deletes. (c) Two older rows are
+re-anchored because B3-3 changed text they matched: M246 (the PSV-3 `PR_SET_DUMPABLE(0)` now occurs twice in `main.rs`; the find
+string gains the `--completion-key-stdin` line) and M3620 (`wrap_in_sandbox` lost its `nonce` argument). (d) Refusal coverage:
+the `OUTCOME_FD_ENV`/`OUTCOME_NONCE_ENV` const exemptions matched no site and are deleted; `place_outcome_fds` and the nonce-fd
+env line are `_GV1R`-exempt; the nonce fd value (`OUTCOME_NONCE_FD` 4, its `to_string()`) has two OBSERVED rows, each edited by
+hand and seen failing named tests. `--without=M4775` names no site: the scanner does not treat the `classify` arm as a verdict
+site (observed: `runtime.rs: 26 covered by a row, 62 exempt` either way).
+
 **Acceptance.** The forge, wrapper-read and environ probes above give `Denied`, `Denied` and "no nonce" in that order; controls
 unchanged; `--only` kills M4720-M4732 (re-anchored) and M4770-M4775; `sandbox_capture`, `sandbox_console`, `acceptance`,
 `legacy_adapter`, `cli_run` GV-1 tests pass; genviab selftest `forged_grades` holds.

@@ -29,10 +29,11 @@ fn script(dir: &Path, body: &str) -> PathBuf {
 }
 
 /// The `axon-outcome/1` record the real interpreter writes when `main`
-/// returns 0 (GV-1b: a job is classified by it).
-const EXIT_0_RECORD: &str =
-    "printf '{\"schema\":\"axon-outcome/1\",\"nonce\":\"%s\",\"kind\":\"exit\",\
-     \"code\":0,\"class\":\"return\",\"reason\":\"\"}\\n' \"$AXON_OUTCOME_NONCE\" >&3";
+/// returns 0 (GV-1b: a job is classified by it), with the nonce read from the
+/// nonce fd (4) as the interpreter reads it (B3-3).
+const EXIT_0_RECORD: &str = "read -r n <&4\n\
+     printf '{\"schema\":\"axon-outcome/1\",\"nonce\":\"%s\",\"kind\":\"exit\",\
+     \"code\":0,\"class\":\"return\",\"reason\":\"\"}\\n' \"$n\" >&3";
 
 fn job(dir: &Path) -> axon_os::JobManifest {
     job_with(dir, "restricted")
@@ -144,21 +145,20 @@ fn the_wrapper_is_staged_privately_and_removed() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// Captured output is bounded, and bounding it does not lose the completion
-/// marker (the tail is kept), so a chatty job is still sealed as completed.
+/// Captured output is bounded, and bounding it does not change the verdict:
+/// a chatty job is still sealed as completed.
 #[test]
 fn captured_output_is_bounded_and_the_verdict_survives_it() {
     let d = tmp("bounded");
     let m = job(&d);
-    // Flood stdout AND stderr, then print the wrapper's completion marker
-    // (read out of the wrapper, as the real wrapper would print it) and the
-    // interpreter's outcome record (GV-1b), as the real interpreter would.
+    // Flood stdout AND stderr, then write the interpreter's outcome record
+    // (GV-1b), as the real interpreter would.
     let bin = script(
         &d,
         &format!(
             "head -c 4194304 /dev/zero | tr '\\0' y >&2\n\
              head -c 4194304 /dev/zero | tr '\\0' x\necho\n\
-             grep -o '__axon_os_done:[0-9a-f]*' \"$2\"\n{EXIT_0_RECORD}\nexit 0"
+             {EXIT_0_RECORD}\nexit 0"
         ),
     );
     let rt = AxonCoreRuntime::with_bin_and_timeout(bin, Duration::from_secs(30))
@@ -167,7 +167,7 @@ fn captured_output_is_bounded_and_the_verdict_survives_it() {
     assert_eq!(
         rec.verdict,
         Verdict::Completed { value: 0 },
-        "the marker is in the retained tail"
+        "the verdict survives the bounded capture"
     );
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -243,12 +243,12 @@ fn run_with_an_escaped_descendant(tag: &str, rest: &str, timeout: Duration) -> (
 }
 
 /// G2c, the job exits on its own. What it printed is still captured: the
-/// completion marker decides its verdict.
+/// outcome record decides its verdict.
 #[test]
 fn an_escaped_descendant_cannot_hold_the_supervisor_after_the_job_exits() {
     let (took, verdict) = run_with_an_escaped_descendant(
         "escape-exit",
-        &format!("grep -o '__axon_os_done:[0-9a-f]*' \"$2\"\n{EXIT_0_RECORD}\nexit 0"),
+        &format!("{EXIT_0_RECORD}\nexit 0"),
         Duration::from_secs(30),
     );
     assert!(

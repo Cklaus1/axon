@@ -117,7 +117,7 @@ fn console_output_runs_under_an_empty_grant() {
 
 #[test]
 fn a_job_whose_last_output_has_no_newline_still_completes() {
-    // ATTACK: completion marker lost after an unterminated print
+    // ATTACK: a job whose output ends without a newline is not completed
     let v = run(
         "print",
         "fn main() -> i64 {\n    print(\"a\")\n    0\n}\n",
@@ -126,7 +126,7 @@ fn a_job_whose_last_output_has_no_newline_still_completes() {
     assert_eq!(
         v,
         Verdict::Completed { value: 0 },
-        "ATTACK: completion marker lost after an unterminated print: {v:?}"
+        "ATTACK: a job whose output ends without a newline was not completed: {v:?}"
     );
 }
 
@@ -196,5 +196,71 @@ fn a_job_module_level_let_cannot_use_time() {
     assert!(
         is_sandbox_denial(&v),
         "ATTACK: a module-level let used an effect the grant withholds: {v:?}"
+    );
+}
+
+// ---- B3-3: completion is the record's class, not a stdout token -----------
+
+fn is_runtime_denial(v: &Verdict) -> bool {
+    matches!(v, Verdict::Denied { axis, .. } if axis == "runtime")
+}
+
+/// O-GV-06: with fs_read on `/proc/`, a job read the nonce from the kernel's
+/// `/proc/self/environ` and the staged wrapper (with its completion marker)
+/// through `/proc/self/cmdline` + `/proc/self/root`, printed every marker it
+/// found, then stopped itself with `exit(3)`: sealed `Completed { value: 3 }`.
+#[test]
+fn a_job_forging_completion_through_proc_is_denied() {
+    let src = "fn main() -> i64 {\n\
+    let env = match read_file(\"/proc/self/environ\") {\n        Ok(s) => s,\n        Err(e) => \"\",\n    }\n\
+    let parts = str_split(env, \"AXON_OUTCOME_NONCE=\")\n\
+    if len(parts) > 1 {\n        println(\"__axon_os_done:\" + str_slice(parts[1], 0, 32))\n    }\n\
+    let cl = match read_file(\"/proc/self/cmdline\") {\n        Ok(s) => s,\n        Err(e) => \"\",\n    }\n\
+    for p in str_split(cl, chr(0)) {\n\
+        if str_ends_with(p, \".ax\") {\n\
+            let w = match read_file(\"/proc/self/root\" + p) {\n                Ok(s) => s,\n                Err(e) => \"\",\n            }\n\
+            for l in str_split(w, \"\\n\") {\n\
+                if str_contains(l, \"__axon_os_done:\") {\n\
+                    let q = str_split(l, \"\\\"\")\n\
+                    if len(q) > 1 {\n                        println(q[1])\n                    }\n\
+                }\n\
+            }\n\
+        }\n\
+    }\n\
+    exit(3)\n    0\n}\n";
+    let v = run("b3-forge", src, &grant(&["./data/", "/proc/"], &["./out/"]));
+    assert!(
+        is_runtime_denial(&v),
+        "ATTACK: a job's own exit inside its sandbox was sealed as completed: {v:?}"
+    );
+}
+
+/// AUDIT T44: a job that calls `exit(n)` itself stopped before the wrapper
+/// finished; that is not a completion.
+#[test]
+fn a_job_that_calls_exit_itself_is_not_completed() {
+    let v = run(
+        "b3-exit",
+        "fn main() -> i64 {\n    println(\"x\")\n    exit(3)\n    0\n}\n",
+        &grant(&[], &[]),
+    );
+    assert!(
+        is_runtime_denial(&v),
+        "ATTACK: a job that stopped itself was sealed as completed: {v:?}"
+    );
+}
+
+/// A module-level `let` initialiser runs before `main` (and so before the
+/// wrapper's `sandbox_run`); an `exit` there is not a completion either.
+#[test]
+fn a_job_exiting_in_a_module_level_let_is_not_completed() {
+    let v = run(
+        "b3-modlet-exit",
+        "fn early() -> i64 {\n    println(\"early ran\")\n    exit(0)\n    0\n}\nlet X = early()\nfn main() -> i64 {\n    println(\"main ran\")\n    5\n}\n",
+        &grant(&[], &[]),
+    );
+    assert!(
+        is_runtime_denial(&v),
+        "ATTACK: an exit before main was sealed as completed: {v:?}"
     );
 }

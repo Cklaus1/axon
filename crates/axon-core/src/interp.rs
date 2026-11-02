@@ -2001,6 +2001,16 @@ pub struct Interp<'p> {
     /// Frame provenance: whether the frame now running is a sealed
     /// (candidate) frame. Changed only by [`Interp::with_frame`].
     frame_sealed: Cell<bool>,
+    /// genviab-b3 B3-3: `main` is running (set just before
+    /// [`Interp::run_main`]); module-level `let` initialisers run before it.
+    main_entered: Cell<bool>,
+    /// genviab-b3 B3-3: `sandbox_run` calls now active (entered, not left).
+    sandbox_run_depth: Cell<u32>,
+    /// genviab-b3 B3-3: the outcome record's class for a `Flow::Exit`, set
+    /// by the `exit` builtin: `exit` when `main` called it outside every
+    /// `sandbox_run`, `inner-exit` otherwise (and when nothing stamped it).
+    /// The job supervisor counts only the first as a completion.
+    exit_class: Cell<&'static str>,
     /// The fn whose body is running, for the pin analysis (its `FnDef`
     /// address; a closure carries its creator's). 0 outside any fn.
     pin_fn: Cell<usize>,
@@ -4731,7 +4741,12 @@ fn run_program_inner(
         record_run(Kind::Compile, "no-main", line);
         return 2;
     }
-    let outcome = interp.init_globals().and_then(|()| interp.run_main());
+    // B3-3: a module-level `let` initialiser that calls `exit` stops the run
+    // before `main`; only an `exit` from `main` itself is the program's end.
+    let outcome = interp.init_globals().and_then(|()| {
+        interp.main_entered.set(true);
+        interp.run_main()
+    });
     // R44 Slice 1: materialise the session's bindings. Two consumers now — the
     // AXON_DUMP_* env vars (the original prototype surface, kept so existing
     // tests and external drivers keep working) and `axon session`, which calls
@@ -4787,12 +4802,13 @@ fn run_program_inner(
             record_run(Kind::Exit, "return", "");
             0
         }
+        // B3-3: the class the `exit` builtin stamped (`exit` / `inner-exit`).
         Err(Flow::Exit(code)) if map_status => {
-            record_run(Kind::Exit, "exit", "");
+            record_run(Kind::Exit, interp.exit_class.get(), "");
             report(stated_exit_status(code as i64))
         }
         Err(Flow::Exit(code)) => {
-            record_run(Kind::Exit, "exit", "");
+            record_run(Kind::Exit, interp.exit_class.get(), "");
             code
         }
         Err(Flow::VerifyFailed(msg)) => {
@@ -5323,6 +5339,9 @@ impl<'p> Interp<'p> {
             seal,
             pins,
             frame_sealed: Cell::new(false),
+            main_entered: Cell::new(false),
+            sandbox_run_depth: Cell::new(0),
+            exit_class: Cell::new("inner-exit"),
             pin_fn: Cell::new(0),
             sealed_frames: Cell::new(0),
             operator_frames: Cell::new(0),

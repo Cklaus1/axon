@@ -1149,58 +1149,80 @@ fn enforce_required_imports_digest(closure: &axon_core::ImportClosure) {
     }
 }
 
-/// GV-1: read `AXON_OUTCOME_FD` / `AXON_OUTCOME_NONCE` once, before any verb
-/// runs, remove both from the environment, and install the outcome channel
-/// ([`axon_core::outcome`]).
+/// GV-1: read `AXON_OUTCOME_FD` / `AXON_OUTCOME_NONCE_FD` once, before any
+/// verb runs, remove both from the environment, and install the outcome
+/// channel ([`axon_core::outcome`]).
 ///
 /// Removed so the program cannot read them (`env_var` reads this process's
-/// environment), exactly as [`take_required_imports_digest`] does. The fd is
-/// made close-on-exec so no process the program spawns inherits it. Only
-/// `axon run` writes an outcome record; every other verb refuses rather than
-/// ignore a channel its caller is waiting on.
+/// environment), exactly as [`take_required_imports_digest`] does. The
+/// outcome fd is made close-on-exec so no process the program spawns
+/// inherits it. Only `axon run` writes an outcome record; every other verb
+/// refuses rather than ignore a channel its caller is waiting on.
+///
+/// genviab-b3 B3-3 (O-GV-06): the nonce is never in the environment. The
+/// kernel keeps the block a process was started with at
+/// `/proc/self/environ`, which `remove_var` does not touch and a grant whose
+/// fs_read covers `/proc/` reads. It arrives on a pipe (`AXON_OUTCOME_NONCE_FD`),
+/// read here and closed, so it lives only in this process's memory; the
+/// process is then made non-dumpable, so a spawned process of the same uid
+/// cannot open `/proc/<this>/{environ,fd,mem}` either. The retired
+/// `AXON_OUTCOME_NONCE` is refused, so a stale supervisor cannot leave a
+/// nonce in the environment block unnoticed.
 fn take_outcome_channel(command: &Command) {
     let fd_raw = std::env::var_os(outcome::OUTCOME_FD_ENV);
-    let nonce_raw = std::env::var_os(outcome::OUTCOME_NONCE_ENV);
-    if fd_raw.is_none() && nonce_raw.is_none() {
+    let nonce_fd_raw = std::env::var_os(outcome::OUTCOME_NONCE_FD_ENV);
+    let retired = std::env::var_os(outcome::RETIRED_OUTCOME_NONCE_ENV).is_some();
+    if fd_raw.is_none() && nonce_fd_raw.is_none() && !retired {
         return;
     }
     std::env::remove_var(outcome::OUTCOME_FD_ENV);
-    std::env::remove_var(outcome::OUTCOME_NONCE_ENV);
+    std::env::remove_var(outcome::OUTCOME_NONCE_FD_ENV);
+    std::env::remove_var(outcome::RETIRED_OUTCOME_NONCE_ENV);
     let refuse = |why: String| -> ! {
         eprintln!("error: {why}");
         process::exit(2)
     };
+    if retired {
+        refuse(format!(
+            "{} is replaced by {}: the nonce travels on a pipe, never in the environment",
+            outcome::RETIRED_OUTCOME_NONCE_ENV,
+            outcome::OUTCOME_NONCE_FD_ENV
+        ));
+    }
     if !matches!(command, Command::Run { .. }) {
         refuse(format!(
             "`{}` / `{}` are set, but only `axon run` writes an outcome record. Refusing \
              rather than ignore them; unset them for this command.",
             outcome::OUTCOME_FD_ENV,
-            outcome::OUTCOME_NONCE_ENV
+            outcome::OUTCOME_NONCE_FD_ENV
         ));
     }
-    let (Some(fd_raw), Some(nonce_raw)) = (fd_raw, nonce_raw) else {
+    let (Some(fd_raw), Some(nonce_fd_raw)) = (fd_raw, nonce_fd_raw) else {
         refuse(format!(
             "`{}` and `{}` must be set together",
             outcome::OUTCOME_FD_ENV,
-            outcome::OUTCOME_NONCE_ENV
+            outcome::OUTCOME_NONCE_FD_ENV
         ));
     };
-    let fd = match fd_raw.to_str().and_then(|s| s.parse::<i32>().ok()) {
-        Some(fd) if fd > 2 => fd,
-        _ => refuse(format!(
-            "`{}` must be a file descriptor number above 2",
-            outcome::OUTCOME_FD_ENV
-        )),
+    let fd_number = |raw: &std::ffi::OsStr, var: &str| -> i32 {
+        match raw.to_str().and_then(|s| s.parse::<i32>().ok()) {
+            Some(fd) if fd > 2 => fd,
+            _ => refuse(format!("`{var}` must be a file descriptor number above 2")),
+        }
     };
-    let nonce = match nonce_raw.to_str() {
-        Some(n) if outcome::valid_nonce(n) => n.to_string(),
-        _ => refuse(format!(
-            "`{}` must be 16 to 128 lowercase hex digits",
-            outcome::OUTCOME_NONCE_ENV
-        )),
-    };
+    let fd = fd_number(&fd_raw, outcome::OUTCOME_FD_ENV);
+    let nonce_fd = fd_number(&nonce_fd_raw, outcome::OUTCOME_NONCE_FD_ENV);
+    if nonce_fd == fd {
+        refuse(format!(
+            "`{}` and `{}` name the same fd ({fd})",
+            outcome::OUTCOME_FD_ENV,
+            outcome::OUTCOME_NONCE_FD_ENV
+        ));
+    }
     #[cfg(target_os = "linux")]
     {
+        use std::io::Read;
+        use std::os::fd::FromRawFd;
         // SAFETY: fcntl on an integer fd only queries or sets its flags.
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
         if flags == -1 {
@@ -1216,17 +1238,51 @@ fn take_outcome_channel(command: &Command) {
                 outcome::OUTCOME_FD_ENV
             ));
         }
+        // SAFETY: as above.
+        if unsafe { libc::fcntl(nonce_fd, libc::F_GETFD) } == -1 {
+            refuse(format!(
+                "`{}` names no open fd ({nonce_fd})",
+                outcome::OUTCOME_NONCE_FD_ENV
+            ));
+        }
+        // SAFETY: the fd is open (checked above) and named only by the
+        // variable just removed; the `File` owns it from here and closes it
+        // when dropped below, so `/proc/self/fd/<nonce_fd>` is gone before
+        // the program runs.
+        let nonce_file = unsafe { std::fs::File::from_raw_fd(nonce_fd) };
+        let mut raw = Vec::with_capacity(outcome::OUTCOME_NONCE_READ_MAX);
+        let read = nonce_file
+            .take(outcome::OUTCOME_NONCE_READ_MAX as u64)
+            .read_to_end(&mut raw);
+        let nonce = match (read, std::str::from_utf8(&raw)) {
+            (Ok(_), Ok(s)) => Some(s.strip_suffix('\n').unwrap_or(s).to_string()),
+            _ => None,
+        };
+        let nonce = match nonce {
+            Some(n) if outcome::valid_nonce(&n) => n,
+            _ => refuse(format!(
+                "`{}` ({nonce_fd}) must carry 16 to 128 lowercase hex digits and a newline",
+                outcome::OUTCOME_NONCE_FD_ENV
+            )),
+        };
+        // PSV-3, as `--completion-key-stdin` does: the nonce is in this
+        // process's memory only; a non-dumpable process's `/proc/<pid>/`
+        // environ, fd/ and mem cannot be opened by another unprivileged
+        // process, its own children included.
+        // SAFETY: prctl(PR_SET_DUMPABLE, 0) takes no pointers.
+        if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
+            refuse("the outcome channel: could not make the process non-dumpable".into());
+        }
+        outcome::install(fd, nonce);
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (fd, nonce);
+        let _ = (fd, nonce_fd);
         refuse(format!(
             "`{}` is supported on Linux only",
             outcome::OUTCOME_FD_ENV
         ));
     }
-    #[cfg(target_os = "linux")]
-    outcome::install(fd, nonce);
 }
 
 fn dispatch(command: Command) {

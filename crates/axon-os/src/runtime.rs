@@ -403,9 +403,12 @@ struct ProcOutcome {
 
 /// GV-1: the fd the child finds its outcome pipe on (`AXON_OUTCOME_FD`).
 pub const OUTCOME_FD: i32 = 3;
+/// genviab-b3 B3-3: the fd the child finds the nonce pipe on
+/// (`AXON_OUTCOME_NONCE_FD`).
+pub const OUTCOME_NONCE_FD: i32 = 4;
 /// GV-1: `axon-core`'s outcome variables (`env_registry`).
 pub const OUTCOME_FD_ENV: &str = "AXON_OUTCOME_FD";
-pub const OUTCOME_NONCE_ENV: &str = "AXON_OUTCOME_NONCE";
+pub const OUTCOME_NONCE_FD_ENV: &str = "AXON_OUTCOME_NONCE_FD";
 /// GV-1: one record line's bound, newline included (`PIPE_BUF`).
 pub const OUTCOME_RECORD_MAX: usize = 4096;
 
@@ -417,35 +420,54 @@ struct OutcomePipe {
     writer: std::io::PipeWriter,
 }
 
-/// GV-1: arrange for `cmd`'s child to find `writer` on [`OUTCOME_FD`], and
-/// tell its interpreter so (`AXON_OUTCOME_FD`, `AXON_OUTCOME_NONCE`). The
-/// interpreter removes both variables before the program runs and makes the
-/// fd close-on-exec, so `env_var` and spawned children cannot reach them. The
-/// kernel's copy (`/proc/self/environ`) still holds the nonce: a grant whose
-/// fs_read covers `/proc`, or an exec grant, can read it (O-GV-06).
-fn give_child_outcome_fd(cmd: &mut Command, writer: &std::io::PipeWriter, nonce: &str) {
+/// GV-1 / B3-3: arrange for `cmd`'s child to find `writer` on [`OUTCOME_FD`]
+/// and `nonce_reader` (a pipe already holding the nonce and `\n`, its write
+/// end closed) on [`OUTCOME_NONCE_FD`], and tell its interpreter so
+/// (`AXON_OUTCOME_FD`, `AXON_OUTCOME_NONCE_FD`: numbers only). The
+/// interpreter reads the nonce and closes fd 4, removes both variables before
+/// the program runs, makes fd 3 close-on-exec and itself non-dumpable. The
+/// nonce is never in the environment, whose kernel copy `/proc/self/environ`
+/// a grant on `/proc/` reads (O-GV-06).
+fn give_child_outcome_fd(
+    cmd: &mut Command,
+    writer: &std::io::PipeWriter,
+    nonce_reader: &std::io::PipeReader,
+) {
     use std::os::fd::AsRawFd;
     use std::os::unix::process::CommandExt;
     let wfd = writer.as_raw_fd();
+    let nfd = nonce_reader.as_raw_fd();
     cmd.env(OUTCOME_FD_ENV, OUTCOME_FD.to_string());
-    cmd.env(OUTCOME_NONCE_ENV, nonce);
-    // SAFETY: runs in the forked child before exec and calls only `dup2` and
-    // `fcntl`, both async-signal-safe. `dup2` leaves the copy without
-    // close-on-exec; when the write end already IS fd 3, `dup2` is a no-op
-    // and the flag is cleared by hand.
+    cmd.env(OUTCOME_NONCE_FD_ENV, OUTCOME_NONCE_FD.to_string());
+    // SAFETY: runs in the forked child before exec and calls only `fcntl`
+    // and `dup2`, both async-signal-safe.
     unsafe {
-        cmd.pre_exec(move || {
-            if wfd == OUTCOME_FD {
-                let flags = libc::fcntl(wfd, libc::F_GETFD);
-                if flags == -1 || libc::fcntl(wfd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-            } else if libc::dup2(wfd, OUTCOME_FD) == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
+        cmd.pre_exec(move || place_outcome_fds(wfd, nfd));
     }
+}
+
+/// B3A-4: put `wfd` on [`OUTCOME_FD`] and `nfd` on [`OUTCOME_NONCE_FD`]
+/// whatever raw numbers they have. Both are first copied to fds >= 10
+/// (close-on-exec), so neither `dup2` can close the other's source (`nfd`
+/// being raw 3, or `wfd` raw 4); `dup2` then clears close-on-exec on 3 and
+/// 4, and the copies close on exec. Only async-signal-safe calls: it runs
+/// between fork and exec.
+fn place_outcome_fds(wfd: i32, nfd: i32) -> std::io::Result<()> {
+    // SAFETY: `fcntl`/`dup2` on integer fds take no pointers.
+    unsafe {
+        let w = libc::fcntl(wfd, libc::F_DUPFD_CLOEXEC, 10);
+        if w == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let n = libc::fcntl(nfd, libc::F_DUPFD_CLOEXEC, 10);
+        if n == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if libc::dup2(w, OUTCOME_FD) == -1 || libc::dup2(n, OUTCOME_NONCE_FD) == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
 }
 
 fn signal_name(sig: i32) -> String {
@@ -732,16 +754,6 @@ fn is_kill_file_tripped(path: &std::path::Path) -> bool {
     }
 }
 
-/// Did the sandbox wrapper run to completion? (AUDIT T44.) True only if stdout
-/// carries the exact marker for THIS run — the nonce makes it unforgeable by the
-/// job, which never sees the generated wrapper. The marker ENDS a line rather
-/// than being one: a job whose last output is `print` without a newline leaves
-/// the wrapper's `println` on that same line, and that job did finish.
-fn ran_to_completion(stdout: &str, nonce: &str) -> bool {
-    let expect = format!("{DONE_SENTINEL}{nonce}");
-    stdout.lines().any(|l| l.trim_end().ends_with(&expect))
-}
-
 /// A program's declared effects for admission, from the parsed program and
 /// the compiler's one admission-axes table
 /// (`axon_core::builtins::builtin_admission_axes`, through
@@ -842,30 +854,9 @@ fn job_module_dir_sets(axon_bin: &Path, program: &Path) -> Vec<Vec<PathBuf>> {
     vec![restricted, bin_lib]
 }
 
-/// Wrap a user program so it runs inside a RUNTIME sandbox enforcing `ceiling`.
-/// Renames the user's `fn main` to `__job_entry` and appends an orchestrator
-/// `main` that mints a principal and `sandbox_run`s the entry under the effect
-/// ceiling. The interpreter then enforces the AI/Net/IO ceiling at builtin
-/// dispatch (SandboxViolation → exit 8) — sound against renaming/indirection,
-/// unlike the static source scan. The grant axes map to the interpreter's
-/// coarse sandbox tags: net→{Net,AI} (model calls are AI+Net); any of
-/// fs_read/fs_write/exec→IO (the sandbox's single IO bucket — finer fs-vs-exec
-/// distinctions are enforced only by the static gate, a documented coarseness).
-///
-/// AUDIT T8: that coarseness was not merely imprecise, it was unsound for `exec`.
-/// Collapsing exec into the same `IO` bucket as fs meant any job granted
-/// `fs_read` or `fs_write` was granted arbitrary process spawn at runtime, and
-/// the ONLY thing separating `exec: "none"` from spawn was the static source
-/// scan — which a single space (`exec (`) defeats. The interpreter now requires
-/// an explicit `Exec` tag for process spawning, so exec is emitted here only
-/// when the grant actually carries it.
-/// Prefix of the completion marker the sandbox wrapper prints (AUDIT T44).
-/// Carries a per-run nonce, so a job cannot forge it: the nonce lives only in
-/// the generated wrapper, which is staged outside any granted fs_read prefix.
-const DONE_SENTINEL: &str = "__axon_os_done:";
-
-/// A per-run nonce: 16 bytes from the OS RNG, hex. It marks the completion
-/// line and every outcome record of the run (GV-1). Not derived from the job's
+/// A per-run nonce: 16 bytes from the OS RNG, hex. It marks every outcome
+/// record of the run (GV-1) and reaches the interpreter only on its nonce
+/// pipe (B3-3). Not derived from the job's
 /// seed or the clock - the job can read `AXON_SEED` from its own environment,
 /// and a guessable nonce is forgeable by the very code whose completion it
 /// attests. `Err` when the RNG cannot be read (the run is then not started).
@@ -901,7 +892,24 @@ fn grant_sandbox_tags(grant: &Grant) -> String {
     tags.join(",")
 }
 
-fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> String {
+/// Wrap a user program so it runs inside a RUNTIME sandbox enforcing `ceiling`.
+/// Renames the user's `fn main` to `__job_entry` and appends an orchestrator
+/// `main` that mints a principal and `sandbox_run`s the entry under the effect
+/// ceiling. The interpreter then enforces the AI/Net/IO ceiling at builtin
+/// dispatch (SandboxViolation → exit 8) — sound against renaming/indirection,
+/// unlike the static source scan. The grant axes map to the interpreter's
+/// coarse sandbox tags: net→{Net,AI} (model calls are AI+Net); any of
+/// fs_read/fs_write/exec→IO (the sandbox's single IO bucket — finer fs-vs-exec
+/// distinctions are enforced only by the static gate, a documented coarseness).
+///
+/// AUDIT T8: that coarseness was not merely imprecise, it was unsound for `exec`.
+/// Collapsing exec into the same `IO` bucket as fs meant any job granted
+/// `fs_read` or `fs_write` was granted arbitrary process spawn at runtime, and
+/// the ONLY thing separating `exec: "none"` from spawn was the static source
+/// scan — which a single space (`exec (`) defeats. The interpreter now requires
+/// an explicit `Exec` tag for process spawning, so exec is emitted here only
+/// when the grant actually carries it.
+fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget) -> String {
     let ceiling = grant.effect_set();
     let csv = grant_sandbox_tags(grant);
     // AUDIT T3: pass the ALLOWLISTS through, not just the booleans they induce.
@@ -924,24 +932,22 @@ fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> St
         .replace("fn main ()", "fn __job_entry(_axon_arg: i64)");
     // AUDIT T44 (OSK-P4-H2 / P4-OS-21). `main` returns the job's value and
     // `axon run` propagates it as the PROCESS EXIT CODE, so a job returning 8
-    // was indistinguishable from a sandbox violation. That collision is why the
-    // verdict was inferred from stderr PROSE — and the prose drifted (see the
-    // classifier). Emit a completion MARKER after the job returns instead: its
-    // presence says "the job ran to completion", so the exit code can then be
-    // read as main's return value, and its ABSENCE says the run stopped short,
-    // so the exit code is a fault. Same shape as the T33 guest-kernel sentinel.
-    //
-    // The marker carries the job's value only implicitly (via the exit code) —
-    // printing `to_str(__v)` would panic for the common `fn main()` job, whose
-    // renamed entry returns unit.
+    // was indistinguishable from a sandbox violation. GV-1 moved "how did the
+    // run end" to the interpreter's outcome record; genviab-b3 B3-3 moved
+    // "did the job finish" there too. The wrapper used to print a nonce-bearing
+    // completion marker after `sandbox_run` returned, but any marker it prints
+    // is a literal in this source, which the job reads through
+    // `/proc/self/root` (O-GV-06). The record's class says it instead: an
+    // `exit` from this `main`, outside `sandbox_run`, is class `exit`; the
+    // job's own `exit` (inside `sandbox_run`, or in a module-level `let`
+    // before `main`) is `inner-exit`, which `classify` does not complete.
     //
     // The wrapper STATES the job's value with `exit(__r)` rather than returning
     // it as a tail expression. A value falling out of `main` is an answer and may
     // not claim a ledger code — it is remapped to 1 — which is the language-level
     // half of this same collision (`interp::returned_exit_status`). A supervisor
     // deliberately propagating a job's chosen status is exactly the case `exit`
-    // exists for, and the marker is still printed BEFORE it, so "did it finish?"
-    // is still answered independently of the number.
+    // exists for.
     // Only a job that DECLARES a value has one to propagate. A nullary
     // `fn main()` job leaves `__r` unit, and `exit(())` is a type error — which is
     // why the tail differs by job shape rather than being uniform.
@@ -951,9 +957,7 @@ fn wrap_in_sandbox(src: &str, grant: &Grant, budget: &Budget, nonce: &str) -> St
         "    0\n"
     };
     format!(
-        "{renamed}\n// \u{2500}\u{2500} axon-os runtime sandbox wrapper \u{2500}\u{2500}\nfn main() -> i64 {{\n    let __p = principal_root(\"job\", {net}, {fsw}, {exec}, {budget})\n    let __sb = sandbox_create_scoped(__p, \"{csv}\", \"{fsr_l}\", \"{fsw_l}\", \"{net_l}\")\n    let __r = sandbox_run(__sb, \"__job_entry\", 0)\n    println(\"{sentinel}{nonce}\")\n{propagate}}}\n",
-        sentinel = DONE_SENTINEL,
-        nonce = nonce,
+        "{renamed}\n// \u{2500}\u{2500} axon-os runtime sandbox wrapper \u{2500}\u{2500}\nfn main() -> i64 {{\n    let __p = principal_root(\"job\", {net}, {fsw}, {exec}, {budget})\n    let __sb = sandbox_create_scoped(__p, \"{csv}\", \"{fsr_l}\", \"{fsw_l}\", \"{net_l}\")\n    let __r = sandbox_run(__sb, \"__job_entry\", 0)\n{propagate}}}\n",
         net = ceiling.net,
         fsw = ceiling.fs_write,
         exec = ceiling.exec,
@@ -1232,7 +1236,7 @@ impl AxonCoreRuntime {
         let outcome = self.classify_capture(&proc, &nonce);
         CapturedRun {
             outcome,
-            stdout: strip_done_marker(&proc.stdout, &nonce),
+            stdout: proc.stdout,
             stderr: proc.stderr,
             stdout_omitted: proc.stdout_omitted,
         }
@@ -1310,7 +1314,7 @@ impl AxonCoreRuntime {
             reason: format!("cannot read the OS random source for the run nonce: {e}"),
             axis: "io".into(),
         })?;
-        let wrapper_src = wrap_in_sandbox(program.text, grant, budget, &nonce);
+        let wrapper_src = wrap_in_sandbox(program.text, grant, budget);
         // B259: a PRIVATE per-run 0700 directory, removed on every exit path
         // when `staging` drops. The wrapper name inside it is fixed; its
         // uniqueness comes from the directory.
@@ -1365,7 +1369,27 @@ impl AxonCoreRuntime {
             reason: format!("cannot create the outcome pipe: {e}"),
             axis: "io".into(),
         })?;
-        give_child_outcome_fd(&mut cmd, &writer, &nonce);
+        // B3-3: the nonce travels on its own pipe (fd 4), never in the
+        // environment: the kernel's copy of that (`/proc/self/environ`) is
+        // readable by a grant on `/proc/` (O-GV-06). The nonce and its `\n`
+        // (at most 129 bytes, under `PIPE_BUF`) are written and the write end
+        // closed before the spawn, so the interpreter reads to EOF.
+        let nonce_reader = {
+            use std::io::Write;
+            let (nonce_reader, mut nonce_writer) =
+                std::io::pipe().map_err(|e| Verdict::Denied {
+                    reason: format!("cannot create the nonce pipe: {e}"),
+                    axis: "io".into(),
+                })?;
+            nonce_writer
+                .write_all(format!("{nonce}\n").as_bytes())
+                .map_err(|e| Verdict::Denied {
+                    reason: format!("cannot write the run nonce: {e}"),
+                    axis: "io".into(),
+                })?;
+            nonce_reader
+        };
+        give_child_outcome_fd(&mut cmd, &writer, &nonce_reader);
         let pipe = Some(OutcomePipe { reader, writer });
 
         // R27/R29: if AXON_KILL_FILE is set, poll it during run_bounded.
@@ -1398,10 +1422,14 @@ impl AxonCoreRuntime {
     /// and a completed job whose stderr merely NAMED a violation was sealed
     /// as a sandbox denial in the hash-chained record (O-GV-01).
     ///
-    /// `exit` is a completion only when the wrapper's completion marker
-    /// printed (the job returned and the wrapper propagated its value); a job
-    /// that called `exit(n)` itself stopped before the wrapper finished, which
-    /// is not a completion. No valid record is `Denied` on the `runtime` axis.
+    /// `exit` is a completion only when the record's class says the end was
+    /// the wrapper's (B3-3): `return` (a nullary job returned) or `exit` (the
+    /// wrapper's `main` propagated the job's value). Class `inner-exit` - a
+    /// job that called `exit(n)` itself inside `sandbox_run`, or in a
+    /// module-level `let` before `main` - stopped before the wrapper
+    /// finished, which is not a completion. Nothing on stdout decides it: the
+    /// job owns stdout and can read the wrapper's source. No valid record is
+    /// `Denied` on the `runtime` axis.
     fn classify(&self, proc: &ProcOutcome, nonce: &str) -> Verdict {
         if let Some(sig) = proc.killed_by_signal {
             // G2d: the supervisor was told to stop and took the job with it.
@@ -1445,7 +1473,7 @@ impl AxonCoreRuntime {
             .unwrap_or(&r.reason)
             .to_string();
         match r.kind {
-            RecordKind::Exit if ran_to_completion(&proc.stdout, nonce) => Verdict::Completed {
+            RecordKind::Exit if r.class == "exit" || r.class == "return" => Verdict::Completed {
                 value: r.code as i64,
             },
             RecordKind::Exit => Verdict::Denied {
@@ -1608,21 +1636,6 @@ fn fault_verdict(class: &str, reason: String) -> Verdict {
     }
 }
 
-/// `stdout` without THIS run's completion marker and the newline the
-/// wrapper's `println` ended it with. The marker ends a line: a job whose last
-/// output had no newline keeps that output.
-fn strip_done_marker(stdout: &str, nonce: &str) -> String {
-    let marker = format!("{DONE_SENTINEL}{nonce}");
-    match stdout.rfind(&marker) {
-        Some(at) => {
-            let rest = &stdout[at + marker.len()..];
-            let rest = rest.strip_prefix('\n').unwrap_or(rest);
-            format!("{}{}", &stdout[..at], rest)
-        }
-        None => stdout.to_string(),
-    }
-}
-
 /// A configurable in-memory `Runtime` for testing the supervisor with no I/O.
 #[cfg(any(test, feature = "mock"))]
 pub struct MockRuntime {
@@ -1687,6 +1700,49 @@ impl Runtime for MockRuntime {
 #[cfg(test)]
 mod runtime_tests {
     use super::*;
+
+    /// B3A-4: the outcome writer and the nonce reader land on 3 and 4
+    /// whatever raw fds they start on. The worst order - the writer on raw 4
+    /// and the nonce reader on raw 3, where a plain `dup2(w, 3)` would close
+    /// the nonce reader - is set up first, then [`place_outcome_fds`] runs.
+    #[test]
+    fn the_two_outcome_fds_survive_any_source_order() {
+        use std::io::{Read, Write};
+        use std::os::fd::AsRawFd;
+        use std::os::unix::process::CommandExt;
+        let (mut reader, writer) = std::io::pipe().unwrap();
+        let (nonce_reader, mut nonce_writer) = std::io::pipe().unwrap();
+        nonce_writer.write_all(b"0123456789abcdef\n").unwrap();
+        drop(nonce_writer);
+        let (wfd, nfd) = (writer.as_raw_fd(), nonce_reader.as_raw_fd());
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "read -r n <&4; echo \"$n\" >&3"]);
+        // SAFETY: only async-signal-safe `fcntl`/`dup2` between fork and exec.
+        unsafe {
+            cmd.pre_exec(move || {
+                let w = libc::fcntl(wfd, libc::F_DUPFD_CLOEXEC, 20);
+                let n = libc::fcntl(nfd, libc::F_DUPFD_CLOEXEC, 20);
+                if w == -1
+                    || n == -1
+                    || libc::dup2(w, OUTCOME_NONCE_FD) == -1
+                    || libc::dup2(n, OUTCOME_FD) == -1
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                place_outcome_fds(OUTCOME_NONCE_FD, OUTCOME_FD)
+            });
+        }
+        let status = cmd.status().unwrap();
+        drop(writer);
+        drop(nonce_reader);
+        let mut got = String::new();
+        reader.read_to_string(&mut got).unwrap();
+        assert!(status.success(), "{status:?}");
+        assert_eq!(
+            got, "0123456789abcdef\n",
+            "ATTACK: placing the outcome fds closed one of them"
+        );
+    }
 
     #[test]
     fn run_bounded_kills_a_runaway_at_the_timeout() {

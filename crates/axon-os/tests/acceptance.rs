@@ -1013,17 +1013,16 @@ fn t44_verdict_is_decided_by_exit_code_not_stderr_prose() {
 
     // (3) THE COLLISION THAT FORCED THE HEURISTIC. A clean job returning 8 —
     // the sandbox-violation code — must be recorded as a completion with
-    // value 8, not as a denial. This is what the completion marker buys: the
-    // exit code can be trusted precisely because "did it finish?" is answered
-    // separately.
+    // value 8, not as a denial. The exit code can be trusted because "did it
+    // finish?" is answered separately, by the interpreter's outcome record
+    // (GV-1; B3-3: its class).
     //
     // The job keeps its plain `8` tail: after renaming it is `__job_entry`, an
     // ordinary function, so the language-level rule (a value falling out of
     // `main` may not claim a ledger code — `interp::returned_exit_status`) does
     // not touch it. The WRAPPER chooses the process status, and it now STATES the
-    // job's value with `exit`. That rule and this marker are the same argument
-    // made twice: the exit channel is a vocabulary, and "did it finish?" must not
-    // be inferred from it.
+    // job's value with `exit`. The exit channel is a vocabulary, and "did it
+    // finish?" must not be inferred from it.
     let (code3, out3) = run_adhoc_job(
         &base.join("returns8"),
         &axon,
@@ -1044,8 +1043,8 @@ fn t44_verdict_is_decided_by_exit_code_not_stderr_prose() {
         "the record must preserve the returned value: {rec}"
     );
 
-    // (4) The marker is nonce-bearing, so a job cannot print one to launder a
-    // fault into a success. Forge two and then panic.
+    // (4) Nothing a job prints decides completion: a job printing lines shaped
+    // like the retired completion marker and then panicking is not completed.
     let (code4, out4) = run_adhoc_job(
         &base.join("forge"),
         &axon,
@@ -1054,11 +1053,11 @@ fn t44_verdict_is_decided_by_exit_code_not_stderr_prose() {
     );
     assert_ne!(
         code4, 0,
-        "a forged completion marker must not seal success: {out4}"
+        "a printed completion-shaped line must not seal success: {out4}"
     );
     assert!(
         !out4.contains("completed"),
-        "a job that panicked after forging the marker must not be completed: {out4}"
+        "a job that panicked after printing marker-shaped lines must not be completed: {out4}"
     );
 
     let _ = std::fs::remove_dir_all(&base);

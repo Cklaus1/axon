@@ -1,7 +1,7 @@
 //! `AxonCoreRuntime::run_sandboxed_capture` (IG4, "Before the once run" item 2):
 //! a sandbox run whose result tells a compile failure, a runtime exit status,
-//! a timeout and a sandbox refusal apart, with the program's stdout (the
-//! wrapper's completion marker removed) and stderr captured.
+//! a timeout and a sandbox refusal apart, with the program's stdout and
+//! stderr captured.
 
 mod common;
 #[path = "../../axon-core/tests/script_spawn/mod.rs"]
@@ -97,10 +97,9 @@ fn a_nullary_main_exits_zero_and_unterminated_output_is_kept() {
         Duration::from_secs(60),
     );
     assert_eq!(r.outcome, SandboxOutcome::Exited { code: 0 }, "{r:?}");
-    // ATTACK: the wrapper's completion marker leaks into captured stdout
     assert_eq!(
         r.stdout, "no newline",
-        "ATTACK: the wrapper's completion marker leaks into captured stdout"
+        "captured stdout is exactly the program's: {r:?}"
     );
 }
 
@@ -149,9 +148,9 @@ fn a_write_outside_the_allowlist_is_a_sandbox_fault() {
     );
 }
 
-/// P1 (implementation audit): how a run ended is decided by the deadline, the
-/// wrapper's completion marker and the interpreter's own final fault line -
-/// never by words the program itself writes to stderr.
+/// P1 (implementation audit): how a run ended is decided by the deadline and
+/// the interpreter's outcome record - never by words the program itself
+/// writes to stderr.
 #[test]
 fn stderr_words_do_not_decide_how_a_run_ended() {
     for (tag, said) in [
@@ -175,7 +174,7 @@ fn stderr_words_do_not_decide_how_a_run_ended() {
 }
 
 /// A run that returned from `main` ended there, whatever its exit status and
-/// whatever its last stderr line says: the completion marker decides first.
+/// whatever its last stderr line says: the outcome record decides.
 #[test]
 fn a_completed_run_returning_a_fault_code_is_an_exit_status() {
     let r = capture(
@@ -186,7 +185,7 @@ fn a_completed_run_returning_a_fault_code_is_an_exit_status() {
     assert_eq!(
         r.outcome,
         SandboxOutcome::Exited { code: 8 },
-        "ATTACK: a completed run was classed by its stderr before its completion marker: {r:?}"
+        "ATTACK: a completed run was classed by its stderr: {r:?}"
     );
 }
 
@@ -384,11 +383,12 @@ fn capture_stub(tag: &str, body: &str) -> CapturedRun {
     out
 }
 
-/// A stub line writing an `axon-outcome/1` record with this run's nonce.
+/// A stub line writing an `axon-outcome/1` record with this run's nonce,
+/// read from the nonce fd (4) as the interpreter reads it.
 fn record(kind: &str, code: i32, class: &str) -> String {
     format!(
-        "printf '{{\"schema\":\"axon-outcome/1\",\"nonce\":\"%s\",\"kind\":\"{kind}\",\"code\":{code},\
-         \"class\":\"{class}\",\"reason\":\"r\"}}\\n' \"$AXON_OUTCOME_NONCE\" >&3"
+        "read -r n <&4\nprintf '{{\"schema\":\"axon-outcome/1\",\"nonce\":\"%s\",\"kind\":\"{kind}\",\"code\":{code},\
+         \"class\":\"{class}\",\"reason\":\"r\"}}\\n' \"$n\" >&3"
     )
 }
 
@@ -503,7 +503,7 @@ fn a_run_without_an_outcome_record_is_a_sandbox_fault() {
         ("none", "exit 3".to_string(), "none written (exit 3)"),
         (
             "no-newline",
-            "printf '{\"schema\":\"axon-outcome/1\",\"nonce\":\"%s\",\"kind\":\"exit\",\"code\":0,\"class\":\"return\",\"reason\":\"\"}' \"$AXON_OUTCOME_NONCE\" >&3\nexit 0".to_string(),
+            "read -r n <&4\nprintf '{\"schema\":\"axon-outcome/1\",\"nonce\":\"%s\",\"kind\":\"exit\",\"code\":0,\"class\":\"return\",\"reason\":\"\"}' \"$n\" >&3\nexit 0".to_string(),
             "truncated (no newline)",
         ),
         ("mismatch", format!("{exit0}\nexit 5"), "its code 0 is not the exit status (exit 5)"),
@@ -555,13 +555,46 @@ fn the_supervisor_hands_the_interpreter_an_outcome_pipe() {
 fn the_outcome_nonce_and_fd_are_not_in_the_programs_environment() {
     let r = capture(
         "gv-env",
-        "fn main() -> i64 {\n    let a = match env_var(\"AXON_OUTCOME_NONCE\") {\n        Ok(_) => 1,\n        Err(_) => 0,\n    }\n    let b = match env_var(\"AXON_OUTCOME_FD\") {\n        Ok(_) => 2,\n        Err(_) => 0,\n    }\n    let c = match env_var(\"PATH\") {\n        Ok(_) => 0,\n        Err(_) => 4,\n    }\n    a + b + c\n}\n",
+        "fn main() -> i64 {\n    let a = match env_var(\"AXON_OUTCOME_NONCE\") {\n        Ok(_) => 1,\n        Err(_) => 0,\n    }\n    let b = match env_var(\"AXON_OUTCOME_FD\") {\n        Ok(_) => 2,\n        Err(_) => 0,\n    }\n    let c = match env_var(\"PATH\") {\n        Ok(_) => 0,\n        Err(_) => 4,\n    }\n    let d = match env_var(\"AXON_OUTCOME_NONCE_FD\") {\n        Ok(_) => 8,\n        Err(_) => 0,\n    }\n    a + b + c + d\n}\n",
         Duration::from_secs(60),
     );
     assert_eq!(
         r.outcome,
         SandboxOutcome::Exited { code: 0 },
-        "ATTACK: the program read the outcome nonce (1 nonce, 2 fd; 4 = premise: PATH unreadable): {r:?}"
+        "ATTACK: the program read the outcome nonce or AXON_OUTCOME_NONCE_FD (1 nonce, 2 fd, 8 nonce fd; 4 = premise: PATH unreadable): {r:?}"
+    );
+}
+
+/// B3-3 (O-GV-06): `remove_var` cleans libc's `environ` only; the kernel's
+/// copy at `/proc/self/environ` keeps what the process was started with. A
+/// grant whose fs_read covers `/proc/` reads it, so the nonce must never be
+/// in the environment: it arrives on the nonce fd, numbers only in env.
+#[test]
+fn the_kernels_environ_copy_holds_no_outcome_nonce() {
+    let mut g = grant();
+    g.fs_read = vec!["./data/".into(), "/proc/".into()];
+    let r = capture_with(
+        "b3-environ",
+        "fn main() -> i64 {\n    let env = match read_file(\"/proc/self/environ\") {\n        Ok(s) => s,\n        Err(e) => \"refused \" + e,\n    }\n    for kv in str_split(env, chr(0)) {\n        println(kv)\n    }\n    0\n}\n",
+        Duration::from_secs(60),
+        g,
+    );
+    assert!(
+        r.outcome == SandboxOutcome::Exited { code: 0 }
+            && r.stdout.lines().any(|l| l.starts_with("PATH=")),
+        "premise: the program read its kernel environ: {r:?}"
+    );
+    let leaked: Vec<&str> = r
+        .stdout
+        .lines()
+        .filter(|l| {
+            let name = l.split('=').next().unwrap_or("");
+            name.contains("NONCE") && name != "AXON_OUTCOME_NONCE_FD"
+        })
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "ATTACK: the program read the outcome nonce from /proc/self/environ: {leaked:?}"
     );
 }
 

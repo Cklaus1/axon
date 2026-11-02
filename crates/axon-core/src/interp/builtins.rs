@@ -4277,7 +4277,19 @@ impl<'p> Interp<'p> {
             }
             "exit" => {
                 want(1)?;
-                Err(Flow::Exit(as_int(&args[0])? as i32))
+                let code = as_int(&args[0])? as i32;
+                // genviab-b3 B3-3: the outcome record's class. Only `main`
+                // itself, outside every `sandbox_run`, ends the program; an
+                // `exit` in a module-level `let` initialiser or inside a
+                // sandboxed call stops it short (`inner-exit`).
+                self.exit_class.set(
+                    if self.main_entered.get() && self.sandbox_run_depth.get() == 0 {
+                        "exit"
+                    } else {
+                        "inner-exit"
+                    },
+                );
+                Err(Flow::Exit(code))
             }
 
             // ── R24 TEE: confidential-computing boundary ────────────────────
@@ -4985,7 +4997,9 @@ impl<'p> Interp<'p> {
                 } else {
                     None
                 };
+                self.sandbox_run_depth.set(self.sandbox_run_depth.get() + 1);
                 let result = self.call_fn(f, vec![Value::Int(arg)]);
+                self.sandbox_run_depth.set(self.sandbox_run_depth.get() - 1);
                 if let Some((idx, prev)) = sealed_ceiling {
                     self.kernels[1].active_sandbox.set(prev);
                     self.kernels[1].sandboxes.borrow_mut().truncate(idx);

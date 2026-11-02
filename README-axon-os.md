@@ -85,10 +85,13 @@ The program owns its stdout and stderr, and every code the interpreter uses for
 a fault (2-9, 101) is also a legal `exit(n)`, so neither can say how a run
 ended. Every interpreter run `axon-os` starts (`axon-os run` jobs and the
 `run_sandboxed_capture` the genviab harness grades through) gets a pipe on fd 3
-and a per-run nonce from the OS random source (`AXON_OUTCOME_FD`,
-`AXON_OUTCOME_NONCE`). `axon run` removes both from its environment, makes the
-fd close-on-exec, and before it exits writes exactly one `axon-outcome/1` JSON
-line there: `kind` `exit` (the program returned or called `exit(n)`), `fault`
+(`AXON_OUTCOME_FD`) and a per-run nonce from the OS random source on a second
+pipe, fd 4 (`AXON_OUTCOME_NONCE_FD`; the nonce is never in the environment,
+whose kernel copy `/proc/self/environ` a grant on `/proc/` can read). `axon run`
+reads the nonce and closes fd 4, removes both variables, makes fd 3
+close-on-exec and itself non-dumpable (so a process it spawns cannot open its
+`/proc` files), and before it exits writes exactly one `axon-outcome/1` JSON
+line on fd 3: `kind` `exit` (the program returned or called `exit(n)`), `fault`
 (the interpreter stopped it: sandbox, verify, halted, ai-policy, refine,
 goal-budget, panic, steps, wall, replay-divergence) or `compile` (nothing ran),
 with the code, a class and the reason. The supervisor decides from its own
@@ -98,10 +101,20 @@ another run's nonce, a code that is not the exit status, or death by a signal
 nobody here sent is a sandbox refusal (fail closed). A program printing
 `axon: sandbox violation: ...` and exiting 8 is graded as its own exit 8.
 
-Limit: when a grant allows `exec`, a process the program spawns runs as the
-same uid and could open `/proc/<interpreter>/fd/3` and read its environment,
-so it could forge a record. genviab therefore refuses a once task whose
-ceiling grants `exec`.
+An `exit` record's `class` says which end the run reached: `return` (`main`
+returned), `exit` (`main` itself called `exit(n)`, outside every
+`sandbox_run`), `inner-exit` (`exit(n)` inside a `sandbox_run`, or in a
+module-level `let` before `main`) or `stray`. An `axon-os run` job is
+completed only on `return` or `exit`: the wrapper states the job's value with
+`exit` from `main`, so a job that calls `exit(n)` itself stopped before the
+wrapper finished and is a runtime denial. Nothing printed on stdout decides
+completion. A capture run grades any `exit(n)` as the program's answer.
+
+Limit: a root supervisor, or a root process the program spawns, can still read
+interpreter memory. genviab once tasks are `exec: none`. A program with
+`fs_write` on `/proc/` can write to `/proc/self/fd/3`, but it cannot forge a
+record without the nonce, and a second line makes the run "more than one
+record", which fails closed as a sandbox fault.
 
 ## Exit codes
 

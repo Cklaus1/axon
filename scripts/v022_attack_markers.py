@@ -4143,3 +4143,13 @@ ATTACK_MARKERS.update({
     'M4776': r'ATTACK: a module-level let read outside the grant',
     'M4777': r'ATTACK: a module-level let used an effect the grant withholds',
 })
+
+# genviab-b3 B3-3 (ids M4770-M4775, b3 block M4770-M4789)
+ATTACK_MARKERS.update({
+    'M4770': r'ATTACK: the program read the outcome nonce from /proc/self/environ',
+    'M4771': r'ATTACK: a malformed nonce installed an outcome channel',
+    'M4772': r"ATTACK: a spawned process opened the interpreter's /proc files",
+    'M4773': r"ATTACK: a job's own exit inside its sandbox was sealed as completed",
+    'M4774': r'ATTACK: an exit before main was sealed as completed',
+    'M4775': r'ATTACK: a job that stopped itself was sealed as completed',
+})
