@@ -3092,7 +3092,7 @@ ATTACK_MARKERS.update({
     'M3725': r'ATTACK: a compiled binary ran under AXON_ALLOWED_FS_WRITE= instead of refusing it',
     'M3726': r'ATTACK: a compiled binary ran under AXON_ALLOWED_NET= instead of refusing it',
     'M3727': r'ATTACK: `axon build` emitted a binary while AXON_ALLOWED_FS_READ was set',
-    'M3728': r'ATTACK: refine_let: a write the interpreter runs implicitly is missing from caps',
+    'M3728': r'ATTACK: refine_let: a write the interpreter runs implicitly is missing from the reach',
     'M3729': r'ATTACK: a computed dispatch target was reported as fully known',
     'M3730': r'ATTACK: a computed dispatch target was reported as fully known',
     'M3731': r'ATTACK: --fn via_helper hid the write its helper does',
@@ -4168,4 +4168,13 @@ ATTACK_MARKERS.update({
 # genviab-b3 B3-5 (id M4780, b3 block M4770-M4789)
 ATTACK_MARKERS.update({
     'M4780': r'ATTACK: a missing ceiling was reported as two ceilings',
+})
+
+# genviab-b3 B3-7/B3-3 implementation-audit fixes (ids M4782-M4786, b3 block M4770-M4789)
+ATTACK_MARKERS.update({
+    'M4782': r"a contained helper was charged a plain module let's initialiser",
+    'M4783': r'a shadowed module lambda was followed',
+    'M4784': r'ATTACK: a nonce fd with its writer still open was waited on or accepted',
+    'M4785': r'ATTACK: a contained helper called a closure a module let built',
+    'M4786': r'ATTACK: a contained helper called a fn value a module let holds',
 })

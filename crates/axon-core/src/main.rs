@@ -1256,10 +1256,32 @@ fn take_outcome_channel(command: &Command) {
         // when dropped below, so `/proc/self/fd/<nonce_fd>` is gone before
         // the program runs.
         let nonce_file = unsafe { std::fs::File::from_raw_fd(nonce_fd) };
+        // IRS-3: a supervisor writes the nonce and closes its end before
+        // the spawn, so the read must reach EOF at once. Non-blocking: a
+        // writer still open (or nothing written) is refused now, not waited
+        // on forever.
+        // SAFETY: fcntl on an fd the `File` owns only sets its status flags.
+        let nonblocking = unsafe {
+            let fl = libc::fcntl(nonce_fd, libc::F_GETFL);
+            fl != -1 && libc::fcntl(nonce_fd, libc::F_SETFL, fl | libc::O_NONBLOCK) != -1
+        };
+        if !nonblocking {
+            refuse(format!(
+                "cannot make `{}` ({nonce_fd}) non-blocking",
+                outcome::OUTCOME_NONCE_FD_ENV
+            ));
+        }
         let mut raw = Vec::with_capacity(outcome::OUTCOME_NONCE_READ_MAX);
         let read = nonce_file
             .take(outcome::OUTCOME_NONCE_READ_MAX as u64)
             .read_to_end(&mut raw);
+        if matches!(&read, Err(e) if e.kind() == std::io::ErrorKind::WouldBlock) {
+            refuse(format!(
+                "`{}` ({nonce_fd}) did not reach end of file: the supervisor writes the \
+                 nonce and closes its end before starting `axon run`",
+                outcome::OUTCOME_NONCE_FD_ENV
+            ));
+        }
         let nonce = match (read, std::str::from_utf8(&raw)) {
             (Ok(_), Ok(s)) => Some(s.strip_suffix('\n').unwrap_or(s).to_string()),
             _ => None,

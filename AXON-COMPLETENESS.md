@@ -130,7 +130,7 @@ Deliberately NOT summarised as a single percentage. One number averages over the
 
 Per-engine support for each runtime/security control. States are a closed set: `enforced` / `explicitly-refused` / `not-applicable` / `unsupported` / `blocked-by-open-defect` / `unknown` / `silently-ignored`. `not-applicable` means the control cannot apply BY DESIGN; a control that is merely unreachable because some other defect is open is `blocked-by-open-defect`, so that fixing that defect cannot quietly convert a settled row into an untested one. The defect state is named on purpose — a control an engine neither honours nor refuses reads as system-wide when it is not, and that shape produced every divergence found so far.
 
-**74 controls tracked; 14 engine states unsettled (unknown / silently-ignored / blocked-by-open-defect).**
+**75 controls tracked; 16 engine states unsettled (unknown / silently-ignored / blocked-by-open-defect).**
 
 | control | category | interp | native | wasm | guest | status |
 |---|---|---|---|---|---|---|
@@ -162,6 +162,7 @@ Per-engine support for each runtime/security control. States are a closed set: `
 | `AXON_MAX_STEPS` | resource-budget | ✓ | refused | refused | ? | open |
 | `AXON_NATIVE_TRACE` | ai-routing/diagnostic | ✓ | ✓ | ? | **?** | native-closed |
 | `AXON_OUTCOME_FD` | launcher-side | ✓ | **IGNORED** | **IGNORED** | n/a | open |
+| `AXON_OUTCOME_NONCE` | launcher-side | ✓ | **IGNORED** | **IGNORED** | n/a | open |
 | `AXON_OUTCOME_NONCE_FD` | launcher-side | ✓ | **IGNORED** | **IGNORED** | n/a | open |
 | `AXON_PRINCIPAL` | replay/record/audit | ✓ | ✓ | ✓ | ? | closed |
 | `AXON_RECORD` | replay/record/audit | ✓ | refused | refused | ? | open |
@@ -289,6 +290,7 @@ THE DEFECT IT FOUND: the parser took the first textual `"key":` anywhere in the 
 - **`AXON_REQUIRE_IMPORTS_DIGEST`** — Native and wasm AOT refuse at run time through the axon-rt REFUSED table (source audit; not separately measured on wasip1). A built binary cannot recompute the closure it was linked from, so refusal is the only honest state. GUEST: guest-init sets only AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS and AXON_SOURCE_HASH, so nothing delivers this variable into a guest. BLOCKING DEFECT: no guest backend currently runs a payload under axon-vm (default kernel has no loader; linux backend has no MMDS route), the same defect as its sibling controls.
 - **`AXON_OUTCOME_FD`** — Native and wasm AOT binaries never read this variable: axon-os launches only `axon run` with it, so a built binary given it by hand writes no record and the caller sees none (a supervisor reading the pipe then fails closed). GUEST: not-applicable for THIS row because the pipe is created by the axon-os capture/job launcher for its `axon run` child, and axon-vm guests are started by axon-vm, which sets no outcome fd.
 - **`AXON_OUTCOME_NONCE_FD`** — Native and wasm AOT binaries never read this variable (see AXON_OUTCOME_FD). GUEST: not-applicable for THIS row because the nonce travels on a pipe that only the axon-os launcher creates for `axon run`; axon-vm starts guests without one.
+- **`AXON_OUTCOME_NONCE`** — Native and wasm AOT binaries never read this variable (see AXON_OUTCOME_FD), so a built binary given it does not refuse it; it also writes no record. GUEST: not-applicable for THIS row because axon-vm starts guests without an outcome channel.
 
 ## False greens
 

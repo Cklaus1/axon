@@ -632,6 +632,24 @@ for `main`'s own helpers: a call written in the initialiser is reported at the `
 (`mlc.ax`, `ml.ax`) at that helper. Every such message carries "(module-level `let X`, evaluated before `main`)" (observed on
 `mlc.ax` E1001 and `ml.ax` E1005).
 
+`[REVISED: build 2026-11-02 (b3/rs), implementation audit IRS-1..IRS-3]` (a) IRS-1: the first build walked an initialiser loudly
+wherever a body named the `let`, so a `@[contained]` helper that only read a module `let`'s VALUE was charged the initialiser's
+I/O (E1001; rc 0 at 128abc14). Only `main` roots the non-lambda initialisers; anywhere else a named initialiser is walked quietly
+(`CapCtx::quiet`: its builtin calls are not checked, because they ran before `main`), except that a lambda it writes and a user fn
+it names as a value are walked loudly, because they can be called later. (b) IRS-2: a module `let` is followed only where its name
+is free in the walked body (`resolver::collect_free_vars`, the closure-capture analysis), so a local, parameter, pattern or lambda
+parameter of the same name no longer pulls in a module lambda. (c) IRS-3 (B3-3): the nonce fd is read non-blocking, so a writer
+still open is refused (exit 2) at once instead of hanging `axon run`. Tests: cli_run
+`a_contained_helper_reading_a_module_let_value_is_not_charged_its_initialiser`, `a_shadowed_module_lambda_is_not_followed`,
+`a_nonce_fd_whose_writer_is_still_open_is_refused_without_waiting`; g01 M4782-M4786 (from the spare block). (d) B3-3's record
+class is no longer stamped by the `exit` builtin (that made a Pure arm read interpreter state, failing
+`interp::taint_tests::no_arm_of_a_pure_builtin_reads_or_advances_ambient_state`): `Interp::exit_inner` is set where a
+`Flow::Exit` leaves `sandbox_run` or `init_globals`, and the record says `inner-exit` when it is set. M4773/M4774/M4724 re-anchored
+to it. (e) The retired `AXON_OUTCOME_NONCE`, which `axon run` still reads to refuse it, has its own `env_registry` row
+(`env_registry::tests::every_env_var_read_by_shipped_code_is_in_the_registry` failed without one) and a control row in
+`AXON-COMPLETENESS.json`; `AXON_REFERENCE.md` regenerated.
+M3728/M3812 re-anchored to the IRS-1 walker.
+
 ## 3. Shared mechanics
 
 - **pci themes.** Every behaviour-changing commit touching `crates/axon-core/src` gets `governance/notes/pci-themes/<sha8>.json`
