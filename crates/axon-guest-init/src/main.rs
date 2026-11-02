@@ -28,7 +28,16 @@
 //!
 //! Invocation:
 //!   axon-guest-init <binary> [args...]
-//!   axon-guest-init /usr/bin/axon run /axon/program.ax
+//!   axon-guest-init --source-fd N=PATH -- <binary> [args...]
+//!   axon-guest-init        (bare: --source-fd 3=/axon/program.ax --
+//!                           /usr/bin/axon run --source-fd 3 /axon/program.ax)
+//!
+//! `--source-fd N=PATH` (guest-fs GF-2, load before gate): the forked child
+//! opens PATH (O_NOFOLLOW, a regular file) BEFORE it applies any seccomp filter
+//! and leaves it open on fd N (N >= 3) across the exec, so the workload
+//! (`axon run --source-fd N PATH`) never opens its own program and a filter
+//! withholding file syscalls can cover it from its first instruction. The argv
+//! after `--` is passed through untouched; the caller states the fd.
 //!
 //! Environment variables exported to child (from the policy payload):
 //!   AXON_PRINCIPAL, AXON_BUDGET_TOKENS, AXON_RUN_ID, AXON_ALLOWED_EFFECTS,
@@ -111,16 +120,12 @@ struct MmdsPayload {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-
-    // Default target when invoked bare: /usr/bin/axon run /axon/program.ax
-    let (binary, exec_args): (String, Vec<String>) = if args.len() >= 2 {
-        (args[1].clone(), args[1..].to_vec())
-    } else {
-        let bin = "/usr/bin/axon".to_string();
-        (
-            bin.clone(),
-            vec![bin, "run".to_string(), "/axon/program.ax".to_string()],
-        )
+    let (source, binary, exec_args) = match parse_args(&args) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[axon-guest-init] {e}");
+            process::exit(1);
+        }
     };
 
     // 1. Re-seed entropy before any crypto-adjacent work.
@@ -202,9 +207,108 @@ fn main() {
             );
             process::exit(1);
         }
-        0 => child_main(policy, &binary, &exec_args),
+        0 => child_main(policy, &binary, &exec_args, source.as_ref()),
         pid => supervisor_main(pid),
     }
+}
+
+/// The program to open before the gate: `--source-fd N=PATH`.
+#[derive(Debug, PartialEq, Eq)]
+struct SourceFd {
+    fd: libc::c_int,
+    path: String,
+}
+
+/// argv → (program to load before the gate, binary, the binary's argv).
+///
+/// * `axon-guest-init <binary> [args...]`: today's form, no source fd.
+/// * `axon-guest-init --source-fd N=PATH -- <binary> [args...]`: N >= 3 (fds
+///   0-2 are the workload's own streams), PATH non-empty, `--` and a binary
+///   required. The binary's argv is passed through untouched.
+/// * bare: `--source-fd 3=/axon/program.ax -- /usr/bin/axon run --source-fd 3
+///   /axon/program.ax`.
+fn parse_args(args: &[String]) -> Result<(Option<SourceFd>, String, Vec<String>), String> {
+    match args.get(1).map(String::as_str) {
+        None => {
+            let argv: Vec<String> = ["/usr/bin/axon", "run", "--source-fd", "3"]
+                .iter()
+                .map(|s| s.to_string())
+                .chain(["/axon/program.ax".to_string()])
+                .collect();
+            let source = SourceFd {
+                fd: 3,
+                path: argv[4].clone(),
+            };
+            return Ok((Some(source), argv[0].clone(), argv));
+        }
+        Some("--source-fd") => {}
+        Some(binary) => return Ok((None, binary.to_string(), args[1..].to_vec())),
+    }
+    // `--source-fd N=PATH -- <binary> ...`: all four parts, PATH non-empty.
+    let source = match (
+        args.get(2).and_then(|s| s.split_once('=')),
+        args.get(3).map(String::as_str),
+        args.get(4),
+    ) {
+        (Some((n, path)), Some("--"), Some(_)) if !path.is_empty() => {
+            n.parse::<libc::c_int>().ok().map(|fd| SourceFd {
+                fd,
+                path: path.to_string(),
+            })
+        }
+        _ => None,
+    };
+    match source {
+        Some(s) if s.fd >= 3 => Ok((Some(s), args[4].clone(), args[4..].to_vec())),
+        _ => Err(format!(
+            "usage: axon-guest-init --source-fd N=PATH -- <binary> [args...] \
+             (N >= 3: stdin, stdout and stderr cannot carry the program): {:?}",
+            &args[1..]
+        )),
+    }
+}
+
+/// Open `path` and leave it on exactly fd `n`, inheritable across `execve`
+/// (guest-fs GF-2). Run in the forked child BEFORE any seccomp filter: this is
+/// the workload's only open of its program, and it happens outside the gate.
+///
+/// `O_NOFOLLOW` (a symlink is refused, not followed), a regular file only.
+/// std opens with `O_CLOEXEC` and the fd is moved to `n` with
+/// `dup3(.., O_CLOEXEC)`, so no fd but `n` can leak into the workload;
+/// `FD_CLOEXEC` is then cleared on `n` alone. Returns the fd `open` returned
+/// (already closed unless it was `n`).
+fn open_source_before_gate(n: libc::c_int, path: &str) -> Result<libc::c_int, String> {
+    use std::os::fd::IntoRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    let regular = f.metadata().map_err(|e| e.to_string())?.is_file();
+    if !regular {
+        return Err("not a regular file".to_string());
+    }
+    let fd = f.into_raw_fd();
+    // SAFETY: dup3 / close / fcntl on fds this fn owns.
+    unsafe {
+        if fd != n {
+            let moved = libc::dup3(fd, n, libc::O_CLOEXEC);
+            let e = std::io::Error::last_os_error();
+            libc::close(fd);
+            if moved != n {
+                return Err(format!("dup3 to fd {n}: {e}"));
+            }
+        }
+        let flags = libc::fcntl(n, libc::F_GETFD);
+        if flags < 0 || libc::fcntl(n, libc::F_SETFD, flags & !libc::FD_CLOEXEC) != 0 {
+            return Err(format!(
+                "make fd {n} inheritable: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    Ok(fd)
 }
 
 /// What to do about the policy we did (or did not) load.
@@ -520,7 +624,21 @@ fn load_policy(
 
 // ── Child: apply policy then exec ─────────────────────────────────────────────
 
-fn child_main(policy: Option<MmdsPayload>, binary: &str, exec_args: &[String]) -> ! {
+fn child_main(
+    policy: Option<MmdsPayload>,
+    binary: &str,
+    exec_args: &[String],
+    source: Option<&SourceFd>,
+) -> ! {
+    // guest-fs GF-2: load before gate. The program is opened here, before the
+    // env export and before `apply_seccomp`, so the workload's first file
+    // syscall is never its own source.
+    if let Some(s) = source {
+        if let Err(e) = open_source_before_gate(s.fd, &s.path) {
+            eprintln!("[axon-guest-init] cannot open program {}: {e}", s.path);
+            process::exit(1);
+        }
+    }
     if let Some(p) = &policy {
         // Export identity to the Axon runtime (provenance log, ai_complete tier).
         if let Some(principal) = &p.principal {
@@ -1347,5 +1465,161 @@ mod tests {
                 "the supervisor reports its child's death by signal {sig} (128 + signal)"
             );
         }
+    }
+
+    // ── guest-fs GF-2: load before gate ─────────────────────────────────────
+
+    fn argv(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| w.to_string()).collect()
+    }
+
+    /// `--source-fd N=PATH -- <binary> <args...>` names the program to open
+    /// before the gate and passes the binary's argv through untouched,
+    /// trailing program args included. The plain form opens nothing; the bare
+    /// form opens the default program on fd 3.
+    #[test]
+    fn source_fd_arg_parses() {
+        let (src, bin, args) = super::parse_args(&argv(&[
+            "axon-guest-init",
+            "--source-fd",
+            "3=/work/job/program.ax",
+            "--",
+            "/usr/bin/axon",
+            "run",
+            "--source-fd",
+            "3",
+            "/work/job/program.ax",
+            "a",
+            "--b",
+        ]))
+        .unwrap();
+        assert_eq!(
+            src,
+            Some(super::SourceFd {
+                fd: 3,
+                path: "/work/job/program.ax".into()
+            }),
+            "ATTACK: --source-fd did not name the program to load before the gate"
+        );
+        assert_eq!(bin, "/usr/bin/axon");
+        assert_eq!(
+            args,
+            argv(&[
+                "/usr/bin/axon",
+                "run",
+                "--source-fd",
+                "3",
+                "/work/job/program.ax",
+                "a",
+                "--b"
+            ]),
+            "the binary's argv must pass through untouched"
+        );
+
+        let (src, bin, args) =
+            super::parse_args(&argv(&["axon-guest-init", "/bin/true", "x"])).unwrap();
+        assert_eq!(
+            (src, bin, args),
+            (None, "/bin/true".into(), argv(&["/bin/true", "x"]))
+        );
+
+        let (src, _, args) = super::parse_args(&argv(&["axon-guest-init"])).unwrap();
+        assert_eq!(
+            src,
+            Some(super::SourceFd {
+                fd: 3,
+                path: "/axon/program.ax".into()
+            }),
+            "ATTACK: the bare default does not load its program before the gate"
+        );
+        assert_eq!(
+            args,
+            argv(&[
+                "/usr/bin/axon",
+                "run",
+                "--source-fd",
+                "3",
+                "/axon/program.ax"
+            ])
+        );
+
+        for bad in [
+            &["axon-guest-init", "--source-fd"][..],
+            &["axon-guest-init", "--source-fd", "3"],
+            &["axon-guest-init", "--source-fd", "x=/p", "--", "/bin/true"],
+            &["axon-guest-init", "--source-fd", "3=", "--", "/bin/true"],
+            &["axon-guest-init", "--source-fd", "3=/p", "/bin/true"],
+            &["axon-guest-init", "--source-fd", "3=/p", "--"],
+        ] {
+            assert!(
+                super::parse_args(&argv(bad)).is_err(),
+                "a malformed --source-fd was accepted: {bad:?}"
+            );
+        }
+    }
+
+    /// fds 0-2 are the workload's own streams; the program never goes there.
+    #[test]
+    fn source_fd_rejects_std_fd() {
+        for n in ["0", "1", "2", "-1"] {
+            let e = super::parse_args(&argv(&[
+                "axon-guest-init",
+                "--source-fd",
+                &format!("{n}=/work/job/program.ax"),
+                "--",
+                "/usr/bin/axon",
+            ]));
+            assert!(
+                e.is_err(),
+                "ATTACK: --source-fd {n} was accepted: the program would replace a std stream"
+            );
+        }
+    }
+
+    /// The opened program sits on exactly fd N, readable, inheritable across
+    /// exec (FD_CLOEXEC clear), and the descriptor `open` returned is closed.
+    /// A symlink and a directory are refused. Run alone: it installs fd N in
+    /// the test process.
+    #[test]
+    fn open_source_before_gate_dups_to_n() {
+        if !alone("tests::open_source_before_gate_dups_to_n") {
+            return;
+        }
+        const N: libc::c_int = 417;
+        let p = write_tmp("gf2-src.ax", "fn main() -> i64 { 0 }\n");
+        let got = super::open_source_before_gate(N, p.to_str().unwrap()).unwrap();
+        // SAFETY: fcntl / read / close on fds this test owns.
+        unsafe {
+            let flags = libc::fcntl(N, libc::F_GETFD);
+            assert!(flags >= 0, "ATTACK: fd {N} is not open after the load");
+            assert_eq!(
+                flags & libc::FD_CLOEXEC,
+                0,
+                "ATTACK: fd {N} is close-on-exec: the workload would not inherit its program"
+            );
+            assert_ne!(got, N, "setup: open already returned {N}");
+            assert_eq!(
+                libc::fcntl(got, libc::F_GETFD),
+                -1,
+                "ATTACK: the fd open returned ({got}) leaked into the workload"
+            );
+            let mut buf = [0u8; 64];
+            let r = libc::read(N, buf.as_mut_ptr().cast(), buf.len());
+            assert_eq!(&buf[..r.max(0) as usize], b"fn main() -> i64 { 0 }\n");
+            libc::close(N);
+        }
+        let link = p.with_extension("link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&p, &link).unwrap();
+        assert!(
+            super::open_source_before_gate(N, link.to_str().unwrap()).is_err(),
+            "ATTACK: a symlinked program was followed"
+        );
+        assert!(
+            super::open_source_before_gate(N, std::env::temp_dir().to_str().unwrap()).is_err(),
+            "ATTACK: a directory was accepted as the program"
+        );
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_file(&p);
     }
 }

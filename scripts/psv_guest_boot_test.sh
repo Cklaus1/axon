@@ -32,6 +32,9 @@
 #                manifest does not name (nothing acquired); a guest booted
 #                under another policy word refuses in its runner; the helper
 #                refuses one before spending the nonce
+#   gf-l0        guest-fs GF-2: the plain-mode workload's program is loaded on
+#                fd 3 by axon-guest-init before its gate; the L0 program
+#                (agent_task.ax) prints the host interpreter's stdout digest
 #
 # Exit 0 all PASS; 1 any FAIL; 77 SKIP (not root / no KVM / no image). A SKIP is
 # a non-result and is reported as such, never as a pass.
@@ -333,6 +336,31 @@ if [[ $RC == 0 && -z "$TP" ]]; then
     ok "trust-probe: trust_root_guest_probe.sh ran in the real guest: the operator trust root is unaddressable there; control: /work is addressable (a mount)"
 else
     bad trust-probe "rc=$RC $TP stdout=$(head -c 400 <<<"$SO") log=$(tail -c 300 "$W/trust-probe/launch.log")"
+fi
+
+# guest-fs GF-2 (load before gate): the workload runs as `axon-guest-init
+# --source-fd 3=/work/job/program.ax -- axon run --source-fd 3 ...`, so its
+# program arrives on an fd the init opened before any filter. The L0 program
+# (examples/flagship/agent_task.ax) must print in the guest exactly what the
+# host interpreter prints for it (rc 0, same stdout digest). The host
+# interpreter is built here (--no-default-features, as the image's).
+if [[ -z "${AXON:-}" ]]; then
+    (cd "$REPO" && cargo build -q -p axon-core --no-default-features --bin axon) \
+        || { echo "FAIL: cargo build -p axon-core --no-default-features --bin axon"; exit 1; }
+fi
+use_built AXON axon
+mkdir -p "$W/gf-l0"
+HOST_SHA="$(cd "$W/gf-l0" && env -i PATH=/usr/bin:/bin HOME="$W/gf-l0" XDG_CACHE_HOME="$W/gf-l0/cache" \
+    "$AXON" run "$REPO/examples/flagship/agent_task.ax" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+"$LAUNCH" --program "$REPO/examples/flagship/agent_task.ax" --policy "$POLICY" \
+    --out "$W/gf-l0/out" --timeout-s 90 > "$W/gf-l0/launch.log" 2>&1
+RC=$?
+GSHA="$(sha256sum < "$W/gf-l0/out/out/stdout" 2>/dev/null | cut -d' ' -f1)"
+if [[ $RC == 0 && -n "$GSHA" && "$GSHA" == "$HOST_SHA" ]] \
+   && grep -q "^scores: " "$W/gf-l0/out/out/stdout"; then
+    ok "gf-l0: the L0 program, loaded on fd 3 before the gate, printed in the guest exactly what the host prints (stdout sha256 $GSHA)"
+else
+    bad gf-l0 "rc=$RC guest=$GSHA host=$HOST_SHA stderr=$(head -c 300 "$W/gf-l0/out/out/stderr" 2>/dev/null) log=$(tail -c 300 "$W/gf-l0/launch.log")"
 fi
 
 # A28: a suite module that exists but cannot be read (one Latin-1 byte) never

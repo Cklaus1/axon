@@ -115,7 +115,7 @@ fc_linux_profile.sh --verify-result DIR     # re-check the output binding of a f
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--program FILE` | required | Becomes `/work/job/program.ax`, run by `axon run` |
+| `--program FILE` | required | Becomes `/work/job/program.ax`. In the guest, `axon-guest-init` opens it (no symlink, a regular file) BEFORE it applies any seccomp filter and hands it to the workload on fd 3: `axon-guest-init --source-fd 3=/work/job/program.ax -- axon run --source-fd 3 /work/job/program.ax`. The workload never opens its own program (guest-fs GF-2); the path is still its entry directory and provenance label |
 | `--policy FILE` | required | Capability policy, schema `axon-vm-mmds/1`. Validated before anything is acquired (strict JSON: no duplicate keys, no unknown keys, grantable effect names only, must constrain something via `allowed_effects` / `budget_tokens` / `seccomp_bpf_b64`). Path/host scope keys (`fs_write`, `net_hosts`, …) are REFUSED as an unsupported axis (ACF-G26, operator default D8) — never passed through, since the guest parser ignores unknown keys. Embedded as exactly one `axon.policy=<standard padded base64 of the file's exact bytes>` cmdline word; the whole cmdline must be ≤ 2046 bytes or the launch is refused. `result.json` records `policy_sha256` |
 | `--out DIR` | required | Must be new or empty; receives every output |
 | `--put SRC:DEST` | — | Extra input file, placed at `/work/DEST` (repeatable) |

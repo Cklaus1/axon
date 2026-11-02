@@ -1558,6 +1558,45 @@ EXEMPT += [
      "protected lineage is the --snapshot record's descends_from_protected answer (M505)"),
 ]
 
+# guest-fs GF-2 (tasks/guest-fs-spec.md): axon-guest-init's load-before-gate
+# sites (`--source-fd N=PATH`) outside the rows M4764 (FD_CLOEXEC clear) and
+# M4769 (O_NOFOLLOW). M4768 (the open's ORDER before apply_seccomp) is EXEMPT
+# in v022_g01_mutations.py: only the KVM boot sees it.
+EXEMPT += [
+    (GIN, '            eprintln!("[axon-guest-init] {e}");\n            process::exit(1);',
+     "RELAY: prints parse_args's usage refusal and exits 1 before the entropy reseed, the policy "
+     "read and the fork; nothing is exec'd (fails closed)"),
+    (GIN, '        (Some((n, path)), Some("--"), Some(_)) if !path.is_empty() => {',
+     "NOTHING TO ADMIT: an argv that does not match yields None, which the next match refuses "
+     "(usage); an empty PATH admitted here is open(\"\"), ENOENT in the child, which exits 1 "
+     "before exec"),
+    (GIN, '        _ => Err(format!(\n            "usage: axon-guest-init --source-fd N=PATH',
+     "NAMED ROW: N < 3 admitted here is refused by the workload itself: `axon run --source-fd "
+     "N` refuses fds 0-2 (M4761), and `axon run --source-fd 3` (the fd guest-init.sh states) "
+     "refuses an fd 3 that is not an open regular file (read_source_fd); a malformed argv has "
+     "no program to admit"),
+    (GIN, '        return Err("not a regular file".to_string());',
+     "DOMINATED (checkable): `axon run --source-fd` refuses a non-regular fd itself "
+     "(read_source_fd's metadata check; cli_run::run_source_fd_refuses_directory), so a "
+     "directory admitted here runs nothing; removing it also fails "
+     "tests::open_source_before_gate_dups_to_n (\"a directory was accepted\")"),
+    (GIN, '            let moved = libc::dup3(fd, n, libc::O_CLOEXEC);',
+     "OBSERVED-NOT-ROWED (fails closed): without the move fd N is not open, the FD_CLOEXEC "
+     "clear fails (EBADF) and the child exits 1 (tests::open_source_before_gate_dups_to_n "
+     "fails at its unwrap); dup3's own O_CLOEXEC is undone on N by the next statement (M4764)"),
+    (GIN, '                return Err(format!("dup3 to fd {n}: {e}"));',
+     "OS ERROR: dup3 failed; the child exits 1 before exec (fails closed)"),
+    (GIN, '            eprintln!("[axon-guest-init] cannot open program {}: {e}", s.path);',
+     "RELAY: exits 1 on open_source_before_gate's refusals (rows M4764, M4769; the exemptions "
+     "above) before apply_seccomp and exec; nothing is exec'd (fails closed)"),
+]
+TERM_EXEMPT += [
+    (GIN, "flags < 0",
+     "DOMINATED (checkable): F_GETFD fails only on an fd that is not open (fcntl(2): EBADF), "
+     "and F_SETFD on that same fd then fails with EBADF too, so the other term of the `||` "
+     "refuses it (the child exits 1 before exec)"),
+]
+
 # C9 round 4c, workstream SITES (amendment 75): the dependency sites the crate
 # rule brought in (NOT_YET_SCANNED at 64d9f436), judged one by one by their
 # callers on the protected route; the ledger of every disposition is

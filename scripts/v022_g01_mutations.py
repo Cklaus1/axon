@@ -14945,5 +14945,25 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'run_source_fd_matches_path_run'),
 ]
 
+# guest-fs GF-2 (ids M4764, M4769; guest-fs block M4760-M4769): load before
+# gate. axon-guest-init's forked child opens the program (O_NOFOLLOW, regular
+# file) BEFORE apply_seccomp and leaves it on fd N with FD_CLOEXEC clear;
+# guest-init.sh runs `axon-guest-init --source-fd 3=PATH -- axon run
+# --source-fd 3 PATH`. M4769 (the block's spare id) rows the O_NOFOLLOW flag.
+# M4768 is EXEMPT, no row: "move the open after `apply_seccomp`" is killed
+# only by the S08 KVM boot (scripts/psv_guest_boot_test.sh, case gf2-l0): a
+# host cargo test installs no guest filter that withholds the open, so no
+# cargo-test anchor can see the order (tasks/guest-fs-spec.md §5).
+MUTATIONS += [
+    ('M4764', 'GF-2: the program fd is left close-on-exec (the workload never gets it)', 'crates/axon-guest-init/src/main.rs',
+     '        let flags = libc::fcntl(n, libc::F_GETFD);\n        if flags < 0 || libc::fcntl(n, libc::F_SETFD, flags & !libc::FD_CLOEXEC) != 0 {',
+     '        let flags = libc::fcntl(n, libc::F_GETFD);\n        if flags < 0 {',
+     'axon-guest-init', '--bin axon-guest-init', 'tests::open_source_before_gate_dups_to_n'),
+    ('M4769', 'GF-2: a symlinked program path is followed', 'crates/axon-guest-init/src/main.rs',
+     '        .custom_flags(libc::O_NOFOLLOW)\n        .open(path)',
+     '        .custom_flags(0)\n        .open(path)',
+     'axon-guest-init', '--bin axon-guest-init', 'tests::open_source_before_gate_dups_to_n'),
+]
+
 if __name__ == "__main__":
     main()

@@ -179,9 +179,13 @@ echo "B263-START"
         exec env -i PATH=/bin:/usr/bin HOME=/tmp XDG_CACHE_HOME=/tmp/cache \
             /usr/bin/axon-guest-init /usr/bin/axon-psv-runner
     fi
+    # guest-fs GF-2 (load before gate): axon-guest-init opens the program on
+    # fd 3 before it applies any seccomp filter, and axon reads it from there;
+    # the path stays the entry directory and the label, and is never opened.
     # shellcheck disable=SC2086
     exec env -i PATH=/bin:/usr/bin HOME=/work XDG_CACHE_HOME=/tmp/cache \
-        /usr/bin/axon-guest-init /usr/bin/axon run /work/job/program.ax $ARGS
+        /usr/bin/axon-guest-init --source-fd 3=/work/job/program.ax -- \
+        /usr/bin/axon run --source-fd 3 /work/job/program.ax $ARGS
 ) > /work/out/stdout 2> /work/out/stderr < /dev/null
 RC=$?
 echo "$RC" > /work/out/exit

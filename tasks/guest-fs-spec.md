@@ -554,6 +554,13 @@ No new codes.
 | M4767 | GF-3 | skip the empty path-scope export | `axon-guest-init` unit / `fs_none_exports_empty_path_scopes` |
 | M4768 | GF-2 | move the open after `apply_seccomp` | **EXEMPT**: "killed only by S08 KVM boot (`psv_guest_boot_test.sh`); no cargo-test anchor" |
 
+[REVISED: build 2026-11-02 GF-2] The spare M4769 is used: it rows `O_NOFOLLOW` on the child's open (a symlinked
+program is followed), killed by `axon-guest-init` unit `open_source_before_gate_dups_to_n` (symlink case). The refusal
+coverage gate found 12 further load-before-gate sites in `axon-guest-init`; they are exempted with checkable reasons in
+`scripts/v022_refusal_coverage.py` (guest-fs GF-2 block), none rowed. The S08 case is `gf-l0` (plain mode, `policy-io`,
+guest stdout digest = the host interpreter's); it kills M4768 only once GF-3 withholds the open, so GF-3 runs it under
+`fs: "none"` too. The child does not log a successful load (the workload's stderr is unchanged).
+
 - **Docs:**
   - `spec/axon-for-llms.md` (`axon run --source-fd`);
   - `AXON_REFERENCE.md` (regenerated);

@@ -4124,3 +4124,9 @@ ATTACK_MARKERS.update({
     'M4762': r'ATTACK: run_start did not hash the fd.s bytes',
     'M4763': r'ATTACK: a --source-fd run of .*main\.ax differs from the path run',
 })
+
+# guest-fs GF-2 (ids M4764, M4769, guest-fs block M4760-M4769)
+ATTACK_MARKERS.update({
+    'M4764': r'ATTACK: fd \d+ is close-on-exec: the workload would not inherit its program',
+    'M4769': r'ATTACK: a symlinked program was followed',
+})

@@ -57,9 +57,16 @@ fn guest_init_sh_execs_the_workload_under_axon_guest_init_inside_env_i() {
         l.starts_with("exec env -i "),
         "workload must be exec'd inside `env -i`: {l}"
     );
+    // guest-fs GF-2: the program is opened by axon-guest-init before its gate
+    // and handed to axon on fd 3; the path is never opened by the workload.
+    let words = l.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        l.contains(" /usr/bin/axon-guest-init /usr/bin/axon run /work/job/program.ax"),
-        "the workload must run UNDER axon-guest-init (the policy channel): {l}"
+        words.contains(
+            " /usr/bin/axon-guest-init --source-fd 3=/work/job/program.ax -- \
+             /usr/bin/axon run --source-fd 3 /work/job/program.ax"
+        ),
+        "the workload must run UNDER axon-guest-init (the policy channel), its program \
+         loaded before the gate: {l}"
     );
 }
 
@@ -502,7 +509,7 @@ fn run_workload_block(d: &Path, psv: bool) -> (Vec<String>, String) {
     exec::write_executable(
         &stub,
         format!(
-            "#!/bin/sh\ntr '\\0' '\\n' < /proc/$$/environ > '{env}'\necho \"$1\" > '{argv}'\n",
+            "#!/bin/sh\ntr '\\0' '\\n' < /proc/$$/environ > '{env}'\necho \"$*\" > '{argv}'\n",
             env = d.join("env").display(),
             argv = d.join("argv").display()
         ),
@@ -575,8 +582,13 @@ fn guest_init_sh_workload_starts_with_exactly_the_fixed_environment() {
     let d = scratch("wl-env");
     let (env, argv) = run_workload_block(&d, false);
     let _ = std::fs::remove_dir_all(&d);
+    let work = d.join("work").display().to_string();
     assert_eq!(
-        argv, "/usr/bin/axon",
+        argv,
+        format!(
+            "--source-fd 3={work}/job/program.ax -- /usr/bin/axon run --source-fd 3 \
+             {work}/job/program.ax"
+        ),
         "ATTACK: the workload was not started under axon-guest-init: {argv:?}"
     );
     let want: Vec<String> = [
