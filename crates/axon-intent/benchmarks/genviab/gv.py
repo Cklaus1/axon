@@ -78,6 +78,7 @@ def load_task(d):
         t = json.load(fh)
     with open(os.path.join(d, "intent.md")) as fh:
         t["intent_md"] = fh.read()
+    ceiling(t["intent_md"])   # a malformed `## Allowed` raises ValueError: the task is refused (B3-4)
     present = [n for n in REFERENCE_FILES if os.path.exists(os.path.join(d, n))]
     t["references"] = present
     t["reference_file"] = present[0] if len(present) == 1 else None
@@ -104,26 +105,61 @@ def corpus_digest(set_dir):
 
 
 def ceiling(intent_md):
-    """The `## Allowed` section: axis -> list (net/fs) or str (exec)."""
+    """The `## Allowed` section: axis -> list (net/fs) or str (exec), parsed as
+    `axon-intent`'s `parse_allowed` (intent.rs) does: `- ` and `* ` bullets,
+    `key: value` split on the first `:`, `none` (any case) or empty -> [],
+    repeated keys extend, the last `exec` wins. Stricter than intent.rs, so it
+    fails closed (B3-4): a non-blank line that is not a bullet, a bullet without
+    `:`, an unknown key or a bad `exec`/`max_label` value raises ValueError."""
     out = {"fs_read": [], "fs_write": [], "net": [], "exec": "none"}
-    sec = section(intent_md, "allowed")
-    for line in sec.splitlines():
-        m = re.match(r"\s*-\s*(\w+)\s*:\s*(.*)$", line)
-        if not m:
+    for line in section(intent_md, "allowed").split("\n"):
+        t = line.strip()
+        if not t:
             continue
-        k, v = m.group(1), m.group(2).strip()
+        if not t.startswith(("- ", "* ")):
+            raise ValueError(f"## Allowed: not a bullet: {line!r}")
+        b = t[2:].strip()
+        if ":" not in b:
+            raise ValueError(f"## Allowed: expected `key: value`, got {b!r}")
+        k, v = (s.strip() for s in b.split(":", 1))
         if k in ("fs_read", "fs_write", "net"):
-            if v != "none":
+            if v and v.lower() != "none":
                 out[k] += [x.strip() for x in v.split(",") if x.strip()]
         elif k == "exec":
+            if v not in ("none", "any"):
+                raise ValueError(f'## Allowed: exec must be "none" or "any", got {v!r}')
             out[k] = v
+        elif k == "max_label":
+            if v not in ("public", "internal", "secret"):
+                raise ValueError(f"## Allowed: max_label must be public|internal|secret, got {v!r}")
+        else:
+            raise ValueError(f"## Allowed: unknown key {k!r}")
     return out
 
 
 def section(md, title):
-    """Body of the `## <title>` section (case-insensitive), '' if absent."""
-    m = re.search(rf"^##\s+{re.escape(title)}\s*$(.*?)(?=^##?\s|\Z)", md, re.M | re.S | re.I)
-    return m.group(1) if m else ""
+    """Body of the first `## <title>` section (title case-insensitive), '' if
+    absent. Mirrors `axon-intent`'s `split_sections` (intent.rs; B3-4): outside a
+    ``` fence, a line (trailing space stripped) starting with `## ` opens a
+    section titled by the rest, trimmed and lower-cased, and one starting with
+    `# ` ends it; fence lines and fenced lines belong to no section."""
+    want, in_fence, found = title.strip().lower(), False, None
+    for raw in md.split("\n"):   # str.lines(): only \n splits (splitlines() also splits on \r, \f, ...)
+        line = raw.rstrip()
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if line.startswith(("## ", "# ")):
+            if found is not None:
+                break
+            if line.startswith("## ") and line[3:].strip().lower() == want:
+                found = []
+            continue
+        if found is not None:
+            found.append(line)
+    return "\n".join(found) if found is not None else ""
 
 
 def intent_paragraphs(md):

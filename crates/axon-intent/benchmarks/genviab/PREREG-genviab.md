@@ -104,7 +104,8 @@ eligible non-tempting tasks, the run does not start; the human writes replacemen
 
 **Per-task format** (`gv.py`, `build.py`; the dev set is the worked example of the format only):
 `once/<id>/intent.md` (one `# Intent` paragraph, `## Inputs`, `## Outputs`, `## Allowed`, `## Budget`,
-`## Seed`; no Axon code), `task.json` (`id`, `category`, `source` = `{"kind": "hand-written"}`,
+`## Seed`; no Axon code; an `## Allowed` line that is not a `- `/`* ` bullet is refused), `task.json`
+(`id`, `category`, `source` = `{"kind": "hand-written"}`,
 `reference_author`, `examples.visible` ≥ 1, `examples.hidden` ≥ 1, `tempting` for tempting tasks),
 `reference.ax`. Unlike the dev atlas tasks, every once task has at least one visible example.
 

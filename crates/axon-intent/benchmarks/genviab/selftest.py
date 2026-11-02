@@ -24,6 +24,10 @@ manifests, rejected-ideas.json and once-ledger.jsonl are never touched:
 (b') arm c's runner (B3-1, bwrap only): a raised exception (also
     KeyboardInterrupt) fails an example expecting exit 1 and says so, sys.exit(1)
     passes, PYTHONHASHSEED binds, and a run over 64 KiB of stdout names the bound;
+(b'') `## Allowed` as axon-intent reads it (B3-4): `* fs_read: /proc/`, `* exec: any`,
+    a `#<TAB>` line and a non-bullet line in a once task are refused, `* ` is a
+    ceiling bullet; with the real binaries, gv.ceiling equals the ceiling
+    `axon-intent compile` infers, axis by axis, for every dev intent and 3 fixtures;
 (c) the once guard: a paid once run is refused while PREREG-genviab.md is not
     FROZEN or pins another manifest, or with the selftest's ledger URL
     override set; once_spend refuses a second score of the same (manifest,
@@ -115,11 +119,12 @@ def build_args_and_tamper():
         shutil.rmtree(d)
 
 
-def gv3_intent(goal, read="./data/", exec_="none"):
-    """A fixture intent.md: one paragraph, ./data/ in, ./out/ out."""
+def gv3_intent(goal, read="./data/", exec_="none", extra=""):
+    """A fixture intent.md: one paragraph, ./data/ in, ./out/ out; `extra` is
+    appended to `## Allowed`."""
     return ("# Intent\n" + goal + "\n\n## Inputs\n- ./data/in.txt\n\n## Outputs\n- ./out/up.txt\n\n"
             "## Allowed\n- fs_read: " + read + "\n- fs_write: ./out/\n- net: none\n- exec: " + exec_
-            + "\n- max_label: internal\n\n## Budget\n- calls: 100\n- tokens: 50000\n"
+            + "\n- max_label: internal\n" + extra + "\n## Budget\n- calls: 100\n- tokens: 50000\n"
             "- cost_micro: 1000000\n\n## Seed\n- 42\n")
 
 
@@ -131,12 +136,12 @@ def gv3_ex(name, inp, stdout=None, code=0, outputs=None):
     return {"name": name, "runs": [run]}
 
 
-def gv3_task(set_dir, tid, goal, refs, vis, hid, exec_="none", author="human:selftest"):
+def gv3_task(set_dir, tid, goal, refs, vis, hid, exec_="none", author="human:selftest", extra=""):
     """Write a fixture task: `refs` maps reference file name -> source."""
     p = os.path.join(set_dir, tid)
     os.makedirs(p)
     with open(os.path.join(p, "intent.md"), "w") as fh:
-        fh.write(gv3_intent(goal, exec_=exec_))
+        fh.write(gv3_intent(goal, exec_=exec_, extra=extra))
     with open(os.path.join(p, "task.json"), "w") as fh:
         json.dump({"id": tid, "category": "transform", "source": {"kind": "selftest fixture"},
                    "reference_author": author, "examples": {"visible": vis, "hidden": hid}}, fh)
@@ -265,6 +270,14 @@ def build_mechanical():
         for tid, (refs, vis, hid, ex_) in gv3.items():
             gv3_task(once, tid, f"Fixture {tid}: upper-case ./data/in.txt into ./out/up.txt and print "
                      "a line.", refs, vis, hid, exec_=ex_)
+        # B3-4: gv.ceiling reads `## Allowed` as axon-intent does (`* ` bullets,
+        # the section ends only at `# `/`## `), and refuses any other line.
+        b34 = {"c-star-proc": "* fs_read: /proc/\n", "c-star-exec": "* exec: any\n",
+               "c-tabhash": "#\tnote\n- fs_read: /proc/\n", "c-nonbullet": "fs_read: ./data/\n",
+               "c-star-ok": "* fs_read: ./out/\n"}
+        for tid, extra in b34.items():
+            gv3_task(once, tid, f"Fixture {tid}: upper-case ./data/in.txt into ./out/up.txt and print "
+                     "a line.", {"reference.py": PY_UPPER}, vis_up, hid_up, extra=extra)
         # The same stateful two-run task with either reference (parity smoke).
         for tid, ref in (("s-ax", None), ("s-py", PY_TALLY)):
             shutil.copytree(h01, os.path.join(once, tid))
@@ -310,6 +323,14 @@ def build_mechanical():
                             ("p-socket", "imports socket"), ("p-exit300", "0..=255"),
                             ("p-exec", "exec: none")):
             expect(f"excluded: {tid} ({needle})", needle in mech.get(tid, ""), mech.get(tid))
+        for tid, needle, what in (
+                ("c-star-proc", "not a relative directory prefix", "a '* fs_read: /proc/' bullet is refused"),
+                ("c-star-exec", "exec: none", "a '* exec: any' bullet in a once task is refused"),
+                ("c-tabhash", "not a bullet", "a '#\\t' line before '- fs_read: /proc/' in ## Allowed is refused"),
+                ("c-nonbullet", "not a bullet", "a non-bullet line in ## Allowed is refused")):
+            expect(f"B3-4: {what} ({tid})", needle in mech.get(tid, ""), mech.get(tid, "kept"))
+        expect("B3-4: a '* fs_read: ./out/' bullet is a ceiling line like '- ' (c-star-ok kept)",
+               "c-star-ok" in kept, mech.get("c-star-ok"))
         rc, out = py(d, "genviab.py", "run", "--set", "once", "--arm", "a", "--generator", "oracle",
                      "--only", "p-ok", "--out", os.path.join(d, "oracle-py"))
         expect("the oracle generator refuses a reference.py task",
@@ -367,6 +388,72 @@ def arm_c_runner():
     diffs = [d for e in r["examples"] for d in e["diffs"]]
     expect("arm c: a run over its 64 KiB stdout bound fails and names the bound",
            not r["passed"] and any(f"over the {gv.STDOUT_CAP}-byte bound" in d for d in diffs), diffs)
+
+
+# One probe program per axis: a call whose argument is not a literal, so the
+# grant `axon-intent compile` infers for it is the ceiling's whole axis (or a
+# refusal with exit 8 when the ceiling grants nothing on it).
+CEILING_PROBES = {
+    "fs_read": 'match read_file("./" + to_str(0)) {\n        Ok(_) => 0,\n        Err(_) => 1,\n    }',
+    "fs_write": 'match write_file("./" + to_str(0), "a") {\n        Ok(_) => 0,\n        Err(_) => 1,\n    }',
+    "net": 'match http_get("http://" + to_str(0), "") {\n        Ok(_) => 0,\n        Err(_) => 1,\n    }',
+    "exec": 'match exec("t" + to_str(0), []) {\n        Ok(_) => 0,\n        Err(_) => 1,\n    }',
+}
+
+
+def intent_rs_ceiling(gv, intent_md):
+    """The ceiling `axon-intent` reads from `intent_md`, axis by axis: the
+    `[grant]` compile infers for a probe program, [] / "none" when compile
+    refuses the axis with exit 8; (None, why) on any other outcome."""
+    import tomllib
+    out = {}
+    for axis, body in CEILING_PROBES.items():
+        ws = tempfile.mkdtemp(prefix="genviab-ceil-")
+        try:
+            p = os.path.join(ws, "t.intent.md")
+            with open(p, "w") as fh:
+                fh.write(intent_md + "\n## Program\n```axon\nfn main() -> i64 {\n    " + body + "\n}\n```\n")
+            r = subprocess.run([gv.AXON_INTENT, "compile", p, "--out", os.path.join(ws, "o")], cwd=ws,
+                               env=gv.intent_env(), capture_output=True, text=True, timeout=120)
+            if r.returncode == 8 and f"needs `{axis}` authority" in r.stdout + r.stderr:
+                out[axis] = "none" if axis == "exec" else []
+            elif r.returncode == 0:
+                grant = tomllib.load(open(os.path.join(ws, "o", "t.axjob"), "rb"))["grant"]
+                out[axis] = grant[axis]
+            else:
+                return None, f"{axis}: rc {r.returncode}: {(r.stdout + r.stderr)[-300:]}"
+        finally:
+            shutil.rmtree(ws, ignore_errors=True)
+    return out, None
+
+
+def ceiling_agreement():
+    """B3-4: gv.ceiling reads every dev intent's `## Allowed` as axon-intent does,
+    and the `* ` / `#<TAB>` fixtures too (gv.ceiling refuses what intent.rs would
+    read differently)."""
+    import concurrent.futures as cf
+    sys.path.insert(0, HERE)
+    import gv
+    if not have_binaries("ceiling", gv):
+        return
+    intents = {os.path.basename(d): open(os.path.join(d, "intent.md")).read()
+               for d in gv.task_dirs(os.path.join(HERE, "dev"))}
+    for tid, extra in (("star-proc", "* fs_read: /proc/\n"), ("star-exec", "* exec: any\n"),
+                       ("star-repeat", "* fs_write: ./log/\n- fs_read: none\n")):
+        intents["fixture " + tid] = gv3_intent(f"Fixture {tid}: upper-case ./data/in.txt.", extra=extra)
+    with cf.ThreadPoolExecutor(max_workers=8) as ex:
+        theirs = dict(zip(intents, ex.map(lambda md: intent_rs_ceiling(gv, md), intents.values())))
+    bad = {}
+    for tid, md in intents.items():
+        got, why = theirs[tid]
+        try:
+            ours = gv.ceiling(md)
+        except ValueError as e:
+            ours = f"ValueError: {e}"
+        if why or ours != got:
+            bad[tid] = {"gv.ceiling": ours, "axon-intent": got or why}
+    expect(f"B3-4: gv.ceiling and axon-intent read the same ceiling ({len(intents)} intents: "
+           f"{len(intents) - 3} dev + 3 fixtures)", not bad, bad)
 
 
 def once_guard():
@@ -839,6 +926,7 @@ def main():
     build_args_and_tamper()
     build_mechanical()
     arm_c_runner()
+    ceiling_agreement()
     once_guard()
     synthetic_categories()
     forged_grades()

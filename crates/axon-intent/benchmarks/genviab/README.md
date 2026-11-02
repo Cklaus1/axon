@@ -32,7 +32,11 @@ python3 -B genviab.py verdict results/dev/haiku-a-N --c-dir results/dev/haiku-c-
 
 `once/` is an empty scaffold (`once/manifest.json`, n = 0). Its tasks, examples and references are written
 by hand by a human after `PREREG-genviab.md` freezes; `build.py` rejects a once task whose
-`reference_author` is not `human:<name>`, that has no visible example or whose ceiling grants `exec`. A once
+`reference_author` is not `human:<name>`, that has no visible example or whose ceiling grants `exec`. A task's
+`## Allowed` is read as `axon-intent` reads it (`gv.section`/`gv.ceiling` mirror `intent.rs`: `- ` and `* `
+bullets, the section ends only at a `# `/`## ` line outside a fence), and an `## Allowed` line that is not a
+`- `/`* ` `key: value` bullet refuses the task, so `build.py`'s relative-prefix and `exec: none` rules see
+every line the lift grants (B3-4). A once
 reference is `reference.ax` or `reference.py` (PREREG §4, option B; `reference.py` only in `once/`). A
 `reference.py` imports only `sys`, `os`, `os.path`, `json`, `csv`, `re`, `math`, `collections`, `itertools`,
 `functools`, `string` and is graded by `gv.grade_python_reference`: the runner arm c uses too (a raised
