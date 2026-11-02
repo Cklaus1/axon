@@ -595,6 +595,21 @@ pub(super) fn ai_replay_store(prompt: &str, model: &str, response: &str, tokens:
 /// run-id and effective seed that will govern this run.  Best-effort; errors
 /// are silently ignored so a broken provenance path never aborts a user run.
 pub fn append_run_start_jsonl(run_id: &str, seed: u64, src: &str) {
+    if provenance_log_path().is_none() {
+        return;
+    }
+    // Best-effort: an unreadable source (e.g. the `<session>` pseudo-path)
+    // records no digest, and the replay side says so rather than implying it
+    // verified something.
+    let bytes = std::fs::read(src).ok();
+    append_run_start_jsonl_bytes(run_id, seed, src, bytes.as_deref());
+}
+
+/// [`append_run_start_jsonl`] with the source bytes supplied by the caller
+/// (guest-fs GF-1): a run whose program arrived on a descriptor
+/// (`axon run --source-fd`) never opens `src`, which is then only the label.
+/// `src_hash` is the digest of `bytes`; `None` records no digest.
+pub fn append_run_start_jsonl_bytes(run_id: &str, seed: u64, src: &str, bytes: Option<&[u8]>) {
     let Some(path) = provenance_log_path() else {
         return;
     };
@@ -609,12 +624,7 @@ pub fn append_run_start_jsonl(run_id: &str, seed: u64, src: &str) {
     // the replay makes `trace --replay` run entirely different code under the
     // original run's id, seed and clock, while announcing a replay. Same shape
     // as the AUDIT T10 approval attack, on the reproducibility surface.
-    // Best-effort: an unreadable source (e.g. the `<session>` pseudo-path)
-    // records no digest, and the replay side says so rather than implying it
-    // verified something.
-    let digest = std::fs::read(src)
-        .ok()
-        .map(|b| crate::lockfile::module_hash(&b));
+    let digest = bytes.map(crate::lockfile::module_hash);
     let hash_field = match &digest {
         Some(h) => format!(",\"src_hash\":{}", json_quote(h)),
         None => String::new(),

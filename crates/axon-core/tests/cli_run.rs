@@ -47758,3 +47758,219 @@ fn a_spawned_process_does_not_inherit_the_outcome_fd() {
         "ATTACK: a spawned process inherited the outcome fd: {stdout:?}"
     );
 }
+
+// ---- guest-fs GF-1: `axon run --source-fd N FILE` ---------------------------
+
+/// A scratch directory for one GF-1 case.
+fn gf1_dir(tag: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("axon-gf1-{}-{tag}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// `axon run --source-fd <n> <label> <extra...>` with `src` (a file or a
+/// directory opened read-only) on fd `n`, as `axon-guest-init --source-fd`
+/// hands it over: cwd `cwd`, no `AXON_PATH`, provenance under `cache`.
+#[cfg(target_os = "linux")]
+fn run_with_source_fd(
+    src: &std::path::Path,
+    n: i32,
+    label: &str,
+    cwd: &std::path::Path,
+    cache: &std::path::Path,
+) -> std::process::Output {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+    let f = std::fs::File::open(src).unwrap();
+    let raw = f.as_raw_fd();
+    let mut cmd = axon();
+    cmd.current_dir(cwd)
+        .env_remove("AXON_PATH")
+        .env("XDG_CACHE_HOME", cache)
+        .env("AXON_AI_MOCK", "1")
+        .stdin(std::process::Stdio::null())
+        .args(["run", "--source-fd", &n.to_string(), label]);
+    // SAFETY: only async-signal-safe `dup2`/`fcntl` between fork and exec.
+    unsafe {
+        cmd.pre_exec(move || {
+            let ok = if raw == n {
+                let fl = libc::fcntl(n, libc::F_GETFD);
+                fl != -1 && libc::fcntl(n, libc::F_SETFD, fl & !libc::FD_CLOEXEC) != -1
+            } else {
+                libc::dup2(raw, n) != -1
+            };
+            if ok {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+    let out = cmd.output().unwrap();
+    drop(f);
+    out
+}
+
+/// The same run by path: `axon run FILE`, same cwd/env.
+#[cfg(target_os = "linux")]
+fn run_by_path(file: &str, cwd: &std::path::Path, cache: &std::path::Path) -> std::process::Output {
+    axon()
+        .current_dir(cwd)
+        .env_remove("AXON_PATH")
+        .env("XDG_CACHE_HOME", cache)
+        .env("AXON_AI_MOCK", "1")
+        .stdin(std::process::Stdio::null())
+        .args(["run", file])
+        .output()
+        .unwrap()
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn run_source_fd_matches_path_run() {
+    let d = gf1_dir("match");
+    let cwd = d.join("elsewhere");
+    std::fs::create_dir_all(&cwd).unwrap();
+    // A `mod` program whose module is a sibling of FILE: fd mode must still
+    // search FILE's directory (the entry directory), or `mod` breaks.
+    let prog = d.join("prog");
+    std::fs::create_dir_all(&prog).unwrap();
+    std::fs::write(
+        prog.join("gfmodlib.ax"),
+        "fn gf_twice(x: i64) -> i64 {\n    x * 2\n}\n",
+    )
+    .unwrap();
+    let main_ax = prog.join("main.ax");
+    std::fs::write(
+        &main_ax,
+        "mod gfmodlib\nuse gfmodlib.{gf_twice}\n\nfn main() -> i64 {\n    println(\"IMPORT-OK {to_str(gf_twice(21))}\")\n    0\n}\n",
+    )
+    .unwrap();
+    let agent = std::path::PathBuf::from(ex("flagship/agent_task.ax"));
+    for (file, want_stdout) in [
+        (main_ax.clone(), Some("IMPORT-OK 42\n")),
+        (agent.canonicalize().unwrap(), None),
+    ] {
+        let label = file.to_str().unwrap();
+        let by_path = run_by_path(label, &cwd, &d.join("cache-a"));
+        let by_fd = run_with_source_fd(&file, 3, label, &cwd, &d.join("cache-b"));
+        if let Some(want) = want_stdout {
+            assert_eq!(
+                String::from_utf8_lossy(&by_path.stdout),
+                want,
+                "premise: the path run imports its sibling module: {by_path:?}"
+            );
+        }
+        assert_eq!(by_path.status.code(), Some(0), "premise: {by_path:?}");
+        assert_eq!(
+            (
+                by_fd.status.code(),
+                String::from_utf8_lossy(&by_fd.stdout),
+                String::from_utf8_lossy(&by_fd.stderr)
+            ),
+            (
+                by_path.status.code(),
+                String::from_utf8_lossy(&by_path.stdout),
+                String::from_utf8_lossy(&by_path.stderr)
+            ),
+            "ATTACK: a --source-fd run of {label} differs from the path run"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn run_source_fd_never_opens_file() {
+    let d = gf1_dir("noopen");
+    let src = d.join("real.ax");
+    std::fs::write(
+        &src,
+        "fn main() -> i64 {\n    println(\"FROM-FD\")\n    0\n}\n",
+    )
+    .unwrap();
+    let out = run_with_source_fd(&src, 3, "/nonexistent/x.ax", &d, &d.join("cache"));
+    let _ = std::fs::remove_dir_all(&d);
+    assert_eq!(
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).as_ref()
+        ),
+        (Some(0), "FROM-FD\n"),
+        "ATTACK: --source-fd opened FILE instead of reading the fd: {out:?}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn run_source_fd_refuses_std_fds() {
+    let d = gf1_dir("stdfd");
+    // stdin is a regular file holding a valid program: only the N < 3 check
+    // keeps the program's own stdin from being taken as its source.
+    let src = d.join("stdin.ax");
+    std::fs::write(
+        &src,
+        "fn main() -> i64 {\n    println(\"FROM-STDIN\")\n    0\n}\n",
+    )
+    .unwrap();
+    let out = axon()
+        .current_dir(&d)
+        .env("XDG_CACHE_HOME", d.join("cache"))
+        .stdin(std::fs::File::open(&src).unwrap())
+        .args(["run", "--source-fd", "0", "x.ax"])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(1)
+            && err.contains("error: --source-fd 0: stdin/stdout/stderr cannot carry the program"),
+        "ATTACK: fd 0 (stdin) carried the program: {out:?}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn run_source_fd_refuses_directory() {
+    let d = gf1_dir("dir");
+    let out = run_with_source_fd(&d, 3, "x.ax", &d, &d.join("cache"));
+    let _ = std::fs::remove_dir_all(&d);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        err.contains("error: --source-fd 3: not a regular file"),
+        "{err}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn run_source_fd_provenance_hashes_fd_bytes() {
+    let d = gf1_dir("prov");
+    let fd_src = "fn main() -> i64 {\n    println(\"FD-BYTES\")\n    0\n}\n";
+    let src = d.join("fd.ax");
+    std::fs::write(&src, fd_src).unwrap();
+    // The label names a real file with DIFFERENT bytes: hashing the label
+    // would record the wrong program.
+    let label = d.join("label.ax");
+    std::fs::write(&label, "fn main() -> i64 {\n    0\n}\n").unwrap();
+    let cache = d.join("cache");
+    let out = run_with_source_fd(&src, 3, label.to_str().unwrap(), &d, &cache);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let log = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl")).unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+    let start = log
+        .lines()
+        .find(|l| l.contains("\"event\":\"run_start\""))
+        .unwrap_or_else(|| panic!("no run_start record: {log}"));
+    let want_hash = axon_core::lockfile::module_hash(fd_src.as_bytes());
+    assert!(
+        start.contains(&format!("\"src_hash\":\"{want_hash}\"")),
+        "ATTACK: run_start did not hash the fd's bytes ({want_hash}): {start}"
+    );
+    assert!(
+        start.contains(&format!("\"src\":\"{}\"", label.display())),
+        "run_start must store the FILE label: {start}"
+    );
+}

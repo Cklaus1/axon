@@ -7774,9 +7774,9 @@ use provenance::*;
 // than adding a second digest implementation that could disagree with them.
 pub(crate) use provenance::sha256_hex;
 pub use provenance::{
-    append_run_start_jsonl, best_recorded_score, find_run_start, provenance_log_path,
-    read_ai_calls, read_provenance, set_provenance_source, set_session_cell, AiCallRecord,
-    ProvRecord, RunStartRecord,
+    append_run_start_jsonl, append_run_start_jsonl_bytes, best_recorded_score, find_run_start,
+    provenance_log_path, read_ai_calls, read_provenance, set_provenance_source, set_session_cell,
+    AiCallRecord, ProvRecord, RunStartRecord,
 };
 
 /// A pseudo-random `u64` from a process-global xorshift state (seeded from the

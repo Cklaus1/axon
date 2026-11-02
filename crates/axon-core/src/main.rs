@@ -349,6 +349,20 @@ enum Command {
         )]
         verbose: bool,
 
+        /// guest-fs GF-1: read the program from this already-open file
+        /// descriptor (N >= 3, a regular file) instead of opening FILE. The fd
+        /// is read to EOF and closed. FILE is never opened: it stays the entry
+        /// directory (module search, `axon.lock`) and the label in diagnostics
+        /// and provenance. For a supervisor (`axon-guest-init --source-fd`)
+        /// that opens the program before it installs a filter withholding
+        /// file syscalls.
+        #[arg(
+            long,
+            value_name = "N",
+            help = "Read the program from inherited fd N (>= 3); FILE is only the label and entry dir"
+        )]
+        source_fd: Option<i32>,
+
         /// Extra arguments. Not forwarded to the program yet: `axon run` warns and ignores them.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -1292,10 +1306,11 @@ fn dispatch(command: Command) {
             require_contained,
             ceiling,
             verbose,
+            source_fd,
             args,
         } => {
             apply_ceiling(ceiling, require_contained);
-            cmd_run(file, args, verbose)
+            cmd_run(file, args, verbose, source_fd)
         }
         Command::Fmt { files, check } => cmd_fmt(files, check),
         Command::Doc { files, out } => cmd_doc(files, out),
@@ -5036,7 +5051,7 @@ fn cmd_trace_replay(run_id: String, path: Option<PathBuf>) {
     let source_path = PathBuf::from(&rec.src);
     // The replay is itself a run (it gets a fresh run-id in the log); the banner
     // above already names what is being reproduced, so no extra stderr line.
-    cmd_run(source_path, vec![], false);
+    cmd_run(source_path, vec![], false, None);
 }
 
 // ── Phase 9: run-id + seed helpers ───────────────────────────────────────────
@@ -6441,9 +6456,14 @@ fn render_cell_jsonl(sess: &Session, r: &CellResult) -> String {
     )
 }
 
-fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
+fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool, source_fd: Option<i32>) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
+
+    // guest-fs GF-1: with `--source-fd` the program's bytes come from the
+    // inherited fd and FILE is never opened, so a run under a filter that
+    // withholds file syscalls issues no open of its own source.
+    let fd_src = source_fd.map(read_source_fd);
 
     // Phase 9: stamp a run-start event (run-id + effective seed) so this run can
     // be replayed deterministically via `axon trace --replay <run-id>`.
@@ -6454,7 +6474,17 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
     if std::env::var("AXON_SEED").is_err() {
         std::env::set_var("AXON_SEED", seed.to_string());
     }
-    axon_core::interp::append_run_start_jsonl(&run_id, seed, &file.display().to_string());
+    match &fd_src {
+        Some(src) => axon_core::interp::append_run_start_jsonl_bytes(
+            &run_id,
+            seed,
+            &file.display().to_string(),
+            Some(src.as_bytes()),
+        ),
+        None => {
+            axon_core::interp::append_run_start_jsonl(&run_id, seed, &file.display().to_string())
+        }
+    }
     // AX-33: the program owns its stderr. The run-id used to be printed here
     // unconditionally, so no stderr protocol could hold under `axon run` and a
     // native build of the same program (which prints nothing) behaved
@@ -6472,7 +6502,7 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
     // (BUG_HUNT #4).
     axon_core::interp::set_provenance_source(file.display().to_string());
 
-    let src = read_source(&file);
+    let src = fd_src.unwrap_or_else(|| read_source(&file));
     // AXON_FOR_RLM §2. This used the unlocated `parse_source` and printed bare
     // prose — no schema, no code, no line, no help — while `check` on the same
     // file emitted a located, structured diagnostic. The parse tier is where
@@ -6503,8 +6533,11 @@ fn cmd_run(file: PathBuf, args: Vec<String>, verbose: bool) {
     // `found` were all dropped, so a model in a run-and-see loop was told
     // neither what was wrong nor where. The located variant differs only in
     // being handed `src`.
+    // guest-fs GF-1: FILE names the entry directory in fd mode too, so module
+    // search (and the lock check below) see what a path run sees.
+    let entry_dir = axon_core::entry_dir_of(&file);
     let (errors, _infer_ctx, _closure) =
-        run_check_pipeline_located(&mut program, &src, &file, axon_core::entry_dir_of(&file));
+        run_check_pipeline_located(&mut program, &src, &file, entry_dir);
     // M5: notes are emitted even when the program is otherwise clean — `run`
     // must not be the quiet path again (that was §2's whole defect).
     for note in floor_division_warnings(&src, &file) {
@@ -8515,6 +8548,48 @@ fn read_source(file: &PathBuf) -> String {
         // Fix 8: exit 1 for I/O errors.
         outcome::exit_with_outcome(outcome::Kind::Compile, "source", 1, &line);
     })
+}
+
+/// guest-fs GF-1: the whole program from an inherited descriptor
+/// (`axon run --source-fd N`). The fd is read to EOF and then closed, so the
+/// program can never reach it. fds 0-2 are the program's own streams and are
+/// refused, as is anything `fstat` does not call a regular file. Every refusal
+/// is rc 1, the class of `error reading FILE`.
+#[cfg(unix)]
+fn read_source_fd(fd: i32) -> String {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    let refuse = |line: String| -> ! {
+        eprintln!("{line}");
+        outcome::exit_with_outcome(outcome::Kind::Compile, "source", 1, &line);
+    };
+    if fd < 3 {
+        refuse(format!(
+            "error: --source-fd {fd}: stdin/stdout/stderr cannot carry the program"
+        ));
+    }
+    // SAFETY: the supervisor that started us handed this fd over for exactly
+    // this read. `ManuallyDrop` keeps a refusal from closing an fd that turned
+    // out not to be open (or not to be ours); only a successful read closes it.
+    let mut f = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
+    match f.metadata() {
+        Ok(m) if m.is_file() => {}
+        Ok(_) => refuse(format!("error: --source-fd {fd}: not a regular file")),
+        Err(e) => refuse(format!("error reading --source-fd {fd}: {e}")),
+    }
+    let mut s = String::new();
+    if let Err(e) = f.read_to_string(&mut s) {
+        refuse(format!("error reading --source-fd {fd}: {e}"));
+    }
+    drop(std::mem::ManuallyDrop::into_inner(f));
+    s
+}
+
+#[cfg(not(unix))]
+fn read_source_fd(fd: i32) -> String {
+    let line = format!("error: --source-fd {fd} is supported on unix only");
+    eprintln!("{line}");
+    outcome::exit_with_outcome(outcome::Kind::Compile, "source", 1, &line);
 }
 
 /// Parse for a CLI verb, returning a fully-populated parse diagnostic on error.

@@ -32,6 +32,12 @@ diagnostic (usually E0910, "native codegen does not lower …"). A program that 
 behaves differently is a compiler bug. Speed is not equal: the interpreter is far slower on
 loop- and call-heavy code.
 
+`axon run --source-fd N file.ax` reads the program from inherited file descriptor N (N ≥ 3, a
+regular file; read once, then closed) and never opens `file.ax`. The name still sets the entry
+directory (module search, `axon.lock`) and labels diagnostics and provenance. It exists for a
+supervisor that opens the program before it withholds file access (the Linux microVM guest's
+`axon-guest-init --source-fd`); fds 0-2 and non-regular files are refused with exit 1.
+
 Every program starts at `fn main()`. No imports — all builtins are in global scope.
 
 ---

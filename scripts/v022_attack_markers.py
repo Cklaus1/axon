@@ -4116,3 +4116,11 @@ ATTACK_MARKERS.update({
     'M4755': r'ATTACK: each test restarted the ceiling.s steps',
     'M4756': r'ATTACK: run meters leaked across runs',
 })
+
+# guest-fs GF-1 (ids M4760-M4763, guest-fs block M4760-M4769)
+ATTACK_MARKERS.update({
+    'M4760': r'ATTACK: --source-fd opened FILE instead of reading the fd',
+    'M4761': r'ATTACK: fd 0 \(stdin\) carried the program',
+    'M4762': r'ATTACK: run_start did not hash the fd.s bytes',
+    'M4763': r'ATTACK: a --source-fd run of .*main\.ax differs from the path run',
+})

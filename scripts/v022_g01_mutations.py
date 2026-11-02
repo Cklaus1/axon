@@ -14923,5 +14923,27 @@ MUTATIONS += [
      'axon-core', '--no-default-features --lib', 'interp::tests::run_meters_are_per_run_not_per_process'),
 ]
 
+# guest-fs GF-1 (ids M4760-M4763, guest-fs block M4760-M4769): `axon run
+# --source-fd N FILE` reads the program from an inherited fd and never opens
+# FILE, which stays the entry directory and the provenance label.
+MUTATIONS += [
+    ('M4760', 'GF-1: --source-fd opens FILE instead of reading the fd', 'crates/axon-core/src/main.rs',
+     '    let src = fd_src.unwrap_or_else(|| read_source(&file));',
+     '    let src = {\n        drop(fd_src);\n        read_source(&file)\n    };',
+     'axon-core', '--no-default-features --test cli_run', 'run_source_fd_never_opens_file'),
+    ('M4761', 'GF-1: --source-fd accepts stdin/stdout/stderr', 'crates/axon-core/src/main.rs',
+     '    if fd < 3 {\n        refuse(format!(',
+     '    if fd < 0 {\n        refuse(format!(',
+     'axon-core', '--no-default-features --test cli_run', 'run_source_fd_refuses_std_fds'),
+    ('M4762', 'GF-1: run_start hashes the FILE label instead of the fd bytes', 'crates/axon-core/src/main.rs',
+     '            Some(src.as_bytes()),',
+     '            std::fs::read(&file).ok().as_deref().or(Some(src.as_bytes())),',
+     'axon-core', '--no-default-features --test cli_run', 'run_source_fd_provenance_hashes_fd_bytes'),
+    ('M4763', 'GF-1: fd mode drops the entry directory (module search)', 'crates/axon-core/src/main.rs',
+     '    let entry_dir = axon_core::entry_dir_of(&file);',
+     '    let entry_dir = if source_fd.is_some() {\n        None\n    } else {\n        axon_core::entry_dir_of(&file)\n    };',
+     'axon-core', '--no-default-features --test cli_run', 'run_source_fd_matches_path_run'),
+]
+
 if __name__ == "__main__":
     main()
