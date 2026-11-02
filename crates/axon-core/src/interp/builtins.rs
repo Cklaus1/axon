@@ -59,28 +59,65 @@ use axon_audit;
 /// TWO DISAGREEING TIMELINES, since one was virtual and the other real. A
 /// `created_ms` from the real clock compared against a virtual `now_ms()` is
 /// arbitrary garbage, and nothing would have reported it.
-/// Rebuild an `Uncertain<T>` from a replay-cache entry written as `"<value>|<confidence>"`.
+/// Rebuild an extract target's answer from a replay-cache entry: `"<value>"`
+/// for `ai_extract_{i64,f64,bool}`, `"<value>|<confidence>"` for the
+/// `Uncertain` targets ([`extract_cache_entry`] writes both forms).
 ///
 /// A malformed entry is an `Err` VALUE, not a panic: the cache is a file a user can
 /// hand-edit or truncate, and a corrupt line must not take the program down. It is
 /// also not silently ignored — falling through to a live call would turn a broken
 /// replay into an unreproducible run, which is the failure this whole path exists
 /// to prevent, so the error names the cache and the key.
-fn replay_uncertain(cached: &str, who: &str, as_float: bool) -> Value {
-    let parsed = cached.split_once('|').and_then(|(v, c)| {
-        let conf = c.trim().parse::<f64>().ok()?;
-        if as_float {
-            Some((Value::Float(v.trim().parse::<f64>().ok()?), conf))
-        } else {
-            Some((Value::Int(v.trim().parse::<i64>().ok()?), conf))
+fn replay_extract(cached: &str, who: &str) -> Value {
+    let scalar = |v: &str| -> Option<Value> {
+        let v = v.trim();
+        match who {
+            "ai_extract_i64" | "ai_extract_uncertain_i64" => v.parse::<i64>().ok().map(Value::Int),
+            "ai_extract_f64" | "ai_extract_uncertain_f64" => {
+                v.parse::<f64>().ok().map(Value::Float)
+            }
+            "ai_extract_bool" => v.parse::<bool>().ok().map(Value::Bool),
+            _ => None,
         }
-    });
+    };
+    let uncertain = who.starts_with("ai_extract_uncertain_");
+    let parsed = if uncertain {
+        cached.split_once('|').and_then(|(v, c)| {
+            let conf = c.trim().parse::<f64>().ok()?;
+            Some(make_uncertain_ai(scalar(v)?, conf))
+        })
+    } else {
+        scalar(cached)
+    };
     match parsed {
-        Some((v, c)) => Value::Ok(VBox::new(make_uncertain_ai(v, c))),
-        None => Value::Err(VBox::new(Value::Str(Rc::new(format!(
-            "{who}: malformed AXON_AI_REPLAY entry {cached:?} (expected \"<value>|<confidence>\") \
-             — delete the cache to re-record rather than replaying a corrupt one"
-        ))))),
+        Some(v) => Value::Ok(VBox::new(v)),
+        None => {
+            let shape = if uncertain {
+                "<value>|<confidence>"
+            } else {
+                "<value>"
+            };
+            Value::Err(VBox::new(Value::Str(Rc::new(format!(
+                "{who}: malformed AXON_AI_REPLAY entry {cached:?} (expected \"{shape}\") \
+                 — delete the cache to re-record rather than replaying a corrupt one"
+            )))))
+        }
+    }
+}
+
+/// An extract target's answer: the `Ok` payload (`Uncertain` when the model
+/// reported a `confidence`) and its replay-cache form, the inverse of
+/// [`replay_extract`]. `value` is an `Int`, `Float` or `Bool`.
+fn extract_answer(value: Value, confidence: Option<f64>) -> (Value, String) {
+    let scalar = match &value {
+        Value::Int(n) => n.to_string(),
+        Value::Float(x) => x.to_string(),
+        Value::Bool(b) => b.to_string(),
+        _ => String::new(),
+    };
+    match confidence {
+        Some(c) => (make_uncertain_ai(value, c), format!("{scalar}|{c}")),
+        None => (value, scalar),
     }
 }
 
@@ -475,8 +512,245 @@ fn alloc_array_err(builtin: &str, n: usize, e: std::collections::TryReserveError
     Flow::Panic(format!("{builtin}: cannot allocate an array of {n} elements ({e})").into())
 }
 
+/// What a model call's `ai_call` record and cost are stamped with, from
+/// [`Interp::ai_call_prologue`].
+struct AiCallCtx {
+    /// The calling fn's name (`""` in `main`'s top level).
+    caller: String,
+    /// The tier the call is routed, costed and recorded at.
+    tier: crate::ai_routing::Tier,
+    /// The deterministic pre-dispatch token estimate (prompt length / 4 + 1).
+    est_tokens: i64,
+    goal: String,
+    principal: String,
+}
+
 impl<'p> Interp<'p> {
     // ── Builtins ───────────────────────────────────────────────────────────────
+
+    /// The pre-dispatch prologue every model call shares (`ai_complete` and the
+    /// five `ai_extract_*` targets, AF-4): the call's context for its
+    /// `ai_call` record, after the gates that may refuse it.
+    ///
+    /// The gates — the R3c `@[ai(policy(budget: N))]` call count, the
+    /// `AXON_BUDGET_TOKENS` run cap, the once-per-fn W1310 warning — and the
+    /// R28 hashed-prompt ledger row apply to `ai_complete` only. An extract's
+    /// ledger row is written by `pre_effect_gate` (which skips `ai_complete`),
+    /// and metering extracts against the two budgets is Ceilings CE-4/CE-6,
+    /// which hook this one gate.
+    fn ai_call_prologue(
+        &self,
+        name: &str,
+        prompt: &str,
+        tier: crate::ai_routing::Tier,
+    ) -> Result<AiCallCtx, Flow> {
+        let caller = self
+            .current_fn
+            .get()
+            .map_or("", |f| f.name.as_str())
+            .to_string();
+        let who = || {
+            if caller.is_empty() {
+                "<main>".to_string()
+            } else {
+                caller.clone()
+            }
+        };
+        // Phase-7 cost_meter / F4: estimate the call's tokens
+        // deterministically from the prompt length (~4 chars/token, a
+        // standard rule of thumb, +1 so an empty prompt still costs a
+        // token). Deterministic ⇒ mock/offline runs meter the same as
+        // live. The meter is only CHARGED by `ai_call_record`, after the
+        // gates below (an over-budget call dispatches nothing, so it must
+        // not charge cost).
+        let est_tokens = (prompt.len() as i64) / 4 + 1;
+        if name == "ai_complete" {
+            // R3c: meter this call against the fn's @[ai(policy(budget: N))].
+            // The (N+1)th call halts with E1301 BEFORE any model dispatch
+            // (mock/live/fallback) and before the W1310 warning — an
+            // over-budget call is a hard failure, not a stray response. A fn
+            // with no budget is unmetered (current_ai_budget → None).
+            if let Some(budget) = self.current_ai_budget() {
+                let used = self.ai_calls_this_fn.get();
+                if used >= budget {
+                    return ai_policy_err(format!(
+                        "[{}] `{}` exceeded its AI budget of {budget} call(s) — \
+                         raise the budget or reduce ai_complete calls",
+                        crate::error::E1301,
+                        who(),
+                    ));
+                }
+                self.ai_calls_this_fn.set(used + 1);
+            }
+            // The ambient RUN-level token cap (`AXON_BUDGET_TOKENS`), checked
+            // in the same pre-dispatch window and for the same reason as the
+            // R3c gate above: a call that would exceed the cap must not reach
+            // a model, so nothing is charged and no response can arrive.
+            //
+            // The two gates are complementary, not redundant. R3c is a
+            // per-fn CALL count the program's own author declares; this is a
+            // run-wide TOKEN cap an operator imposes from outside, and a
+            // program cannot lower or raise it. `axon-guest-init` sets the
+            // var from the VM's MMDS policy and nothing read it, so a VM
+            // operator who capped a run's tokens got no cap at all.
+            //
+            // Uses the pre-dispatch ESTIMATE for the same reason R3c does:
+            // the decision has to be made before the call, and the real
+            // token count is only knowable after. The estimate is
+            // deterministic, so mock/replay/live runs all gate identically.
+            if let Some(cap) = self.token_budget {
+                let used = self.tokens_used.get();
+                if used.saturating_add(est_tokens) > cap {
+                    return ai_policy_err(format!(
+                        "[{}] `{}` exceeded the run's token budget of {cap} \
+                         (used {used}, this call needs ~{est_tokens}) — raise \
+                         AXON_BUDGET_TOKENS or reduce AI work",
+                        crate::error::E1303,
+                        who(),
+                    ));
+                }
+                self.tokens_used.set(used + est_tokens);
+            }
+            // W1310: a fn making an AI call with no @[ai(policy)] is allowed,
+            // but its cost is unmetered and the call un-pinned — warn once so
+            // the audit gap is visible (only meaningful for live/mock calls).
+            // Once per FN: it used to fire once per CALL, so a goal search
+            // over an un-policied @[adaptive] fn emitted one identical line
+            // per evaluation. The message names only the fn.
+            if !self.current_fn_has_ai_policy() {
+                let who = who();
+                if self.w1310_warned.borrow_mut().insert(who.clone()) {
+                    eprintln!(
+                        "warning: [{}] AI call in `{who}` has no @[ai(policy)] — cost is unmetered and the call is harder to audit",
+                        crate::error::W1310
+                    );
+                }
+            }
+        }
+        // F3 (Phase 9): principal name for audit attribution.
+        let principal = self.current_principal_name();
+        // R28: append an AI-call entry to the capability audit ledger when
+        // AXON_AUDIT_LEDGER is set. Before all dispatch paths (mock/replay/
+        // live/fallback) so every ai_complete is captured exactly once.
+        if name == "ai_complete" && std::env::var_os("AXON_AUDIT_LEDGER").is_some() {
+            let _ = axon_audit::append_ai_call(&principal, prompt.as_bytes());
+        }
+        Ok(AiCallCtx {
+            caller,
+            tier,
+            est_tokens,
+            // F3: the goal being optimized when this call fired (causal link).
+            goal: self.current_goal_name().unwrap_or_default(),
+            principal,
+        })
+    }
+
+    /// A model call that dispatched (`mode` replay, mock or live) and used
+    /// `tokens`: charge its per-token cost at the call's tier to the meter
+    /// (`ai_cost_spent`) and append its `ai_call` provenance record.
+    fn ai_call_record(&self, ctx: &AiCallCtx, prompt: &str, params: &str, mode: &str, tokens: i64) {
+        let micro = ctx.tier.cost_micro(tokens);
+        self.ai_cost_micro.set(self.ai_cost_micro.get() + micro);
+        // Same ceiling as every other durable write — see the agent_action
+        // guard in `pre_effect_gate`.
+        if self.provenance_write_permitted() {
+            let (model_id, model_ver) = ctx.tier.model();
+            append_ai_call_jsonl(
+                &ctx.caller,
+                prompt,
+                ctx.tier.as_str(),
+                model_id,
+                model_ver,
+                params,
+                mode,
+                "",
+                micro as f64 / 1_000_000.0,
+                &ctx.goal,
+                "AI",
+                &ctx.principal,
+            );
+        }
+    }
+
+    /// The five `ai_extract::<T>` runtime targets (`name`, one of
+    /// `builtins::ai_extract_target`'s values): replay, then mock, then live
+    /// under `asi-runtime`, else E1300. Each path that answers charges and
+    /// records one `ai_call` at `ai_routing::decision_tier()`, the tier of
+    /// the model `axon_ai::decision_model()` sends (AF-4).
+    fn ai_extract(&self, name: &str, prompt: &str) -> Result<Value, Flow> {
+        // The structured request `axon_ai::complete_structured_inner` sends.
+        const PARAMS: &str = "max_tokens=1024;tool=answer";
+        let ctx = self.ai_call_prologue(name, prompt, crate::ai_routing::decision_tier())?;
+        // AXON_AI_REPLAY: the cache is keyed by sha256(model \0 prompt), and
+        // passing the BUILTIN NAME as the model keeps an extract's entry
+        // distinct from an `ai_complete` for the same prompt. Checked BEFORE
+        // mock/live, as `ai_complete` does (asi-replay RP-3): under
+        // AXON_AI_MOCK plus a cache the recording wins, and a mock answer is
+        // recorded so a later no-mock replay reproduces the run.
+        if let Some((cached, tokens)) = ai_replay_lookup(prompt, name) {
+            // An entry recorded before AF-4 stored 0 tokens for every extract;
+            // the call it recorded did reach a model, so it is costed at the
+            // pre-dispatch estimate rather than as free.
+            let tokens = if tokens > 0 { tokens } else { ctx.est_tokens };
+            self.ai_call_record(&ctx, prompt, PARAMS, "replay", tokens);
+            return Ok(replay_extract(&cached, name));
+        }
+        if ai_mock_enabled() {
+            // Byte parity with the native stub (`axon_ai`
+            // `complete_structured_inner`: 1, 1.0, true, confidence 0.9).
+            let (value, confidence) = match name {
+                "ai_extract_i64" => (Value::Int(1), None),
+                "ai_extract_f64" => (Value::Float(1.0), None),
+                "ai_extract_bool" => (Value::Bool(true), None),
+                "ai_extract_uncertain_i64" => (Value::Int(1), Some(0.9)),
+                _ => (Value::Float(1.0), Some(0.9)),
+            };
+            let (v, entry) = extract_answer(value, confidence);
+            self.ai_call_record(&ctx, prompt, PARAMS, "mock", ctx.est_tokens);
+            ai_replay_store(prompt, name, &entry, ctx.est_tokens);
+            return Ok(Value::Ok(VBox::new(v)));
+        }
+        #[cfg(feature = "asi-runtime")]
+        {
+            // The response's `usage` total is charged and stored, so a replay
+            // reproduces the cost (it used to store 0).
+            let live = match name {
+                "ai_extract_i64" => {
+                    axon_ai::complete_typed_i64(prompt).map(|(v, t)| (Value::Int(v), None, t))
+                }
+                "ai_extract_f64" => {
+                    axon_ai::complete_typed_f64(prompt).map(|(v, t)| (Value::Float(v), None, t))
+                }
+                "ai_extract_bool" => {
+                    axon_ai::complete_typed_bool(prompt).map(|(v, t)| (Value::Bool(v), None, t))
+                }
+                "ai_extract_uncertain_i64" => axon_ai::complete_typed_uncertain_i64(prompt)
+                    .map(|(v, c, t)| (Value::Int(v), Some(c), t)),
+                _ => axon_ai::complete_typed_uncertain_f64(prompt)
+                    .map(|(v, c, t)| (Value::Float(v), Some(c), t)),
+            };
+            Ok(match live {
+                Ok((value, confidence, tokens)) => {
+                    let (v, entry) = extract_answer(value, confidence);
+                    self.ai_call_record(&ctx, prompt, PARAMS, "live", tokens);
+                    ai_replay_store(prompt, name, &entry, tokens);
+                    Value::Ok(VBox::new(v))
+                }
+                Err(e) => Value::Err(VBox::new(Value::Str(Rc::new(e)))),
+            })
+        }
+        // No model compiled in, no mock, no recording: a refusal (E1300, exit
+        // 5) like `ai_complete`'s, not a crash. An extract has no fallback:
+        // `fallback:` is a `str` and cannot stand in for the extracted T.
+        #[cfg(not(feature = "asi-runtime"))]
+        ai_policy_err(format!(
+            "[{}] `{name}` cannot run: no model reachable — an extract has no \
+             @[ai(policy(fallback: …))] path (a fallback is a `str`, not the extracted \
+             type); set AXON_AI_MOCK=1, replay a recording with AXON_AI_REPLAY, or \
+             build --features asi-runtime",
+            crate::error::E1300,
+        ))
+    }
 
     /// Phase 7 (R12 Slice 2/3): run every currently-READY scheduler fiber to
     /// completion in the seed-deterministic order, catching per-fiber panics
@@ -6018,7 +6292,6 @@ impl<'p> Interp<'p> {
             "ai_complete" => {
                 want(1)?;
                 let prompt = as_str(&args[0])?.to_string();
-                let caller = self.current_fn.get().map_or("", |f| f.name.as_str()).to_string();
                 let params = "max_tokens=default;temperature=default";
                 // R3 §4.2: resolve the tier from the enclosing @[ai(policy(tier))]
                 // (default balanced); an unknown tier name is E1302. The resolved
@@ -6027,93 +6300,10 @@ impl<'p> Interp<'p> {
                 // hardcoded placeholder. (Per-call `tier:` args are deferred until
                 // named-arg call syntax — this covers policy + default.)
                 let tier = self.current_ai_tier()?;
-                let tier_name = tier.as_str();
-                let (model_id, model_ver) = tier.model();
-                // Phase-7 cost_meter / F4: estimate the call's tokens
-                // deterministically from the prompt length (~4 chars/token, a
-                // standard rule of thumb, +1 so an empty prompt still costs a
-                // token) and compute the real per-token cost at this tier's
-                // rate. Deterministic ⇒ mock/offline runs meter the same as
-                // live. The meter is only CHARGED after the R3c budget gate
-                // below (an over-budget call that panics dispatches nothing, so
-                // it must not charge cost).
-                let est_tokens = (prompt.len() as i64) / 4 + 1;
-                let cost_micro = tier.cost_micro(est_tokens);
-                let cost_usd = cost_micro as f64 / 1_000_000.0;
-                // R3c: meter this call against the fn's @[ai(policy(budget: N))].
-                // The (N+1)th call halts with E1301 BEFORE any model dispatch
-                // (mock/live/fallback) and before the W1310 warning — an
-                // over-budget call is a hard failure, not a stray response. A fn
-                // with no budget is unmetered (current_ai_budget → None).
-                if let Some(budget) = self.current_ai_budget() {
-                    let used = self.ai_calls_this_fn.get();
-                    if used >= budget {
-                        let who = if caller.is_empty() {
-                            "<main>".to_string()
-                        } else {
-                            caller.clone()
-                        };
-                        return ai_policy_err(format!(
-                            "[{}] `{who}` exceeded its AI budget of {budget} call(s) — \
-                             raise the budget or reduce ai_complete calls",
-                            crate::error::E1301,
-                        ));
-                    }
-                    self.ai_calls_this_fn.set(used + 1);
-                }
-                // The ambient RUN-level token cap (`AXON_BUDGET_TOKENS`), checked
-                // in the same pre-dispatch window and for the same reason as the
-                // R3c gate above: a call that would exceed the cap must not reach
-                // a model, so nothing is charged and no response can arrive.
-                //
-                // The two gates are complementary, not redundant. R3c is a
-                // per-fn CALL count the program's own author declares; this is a
-                // run-wide TOKEN cap an operator imposes from outside, and a
-                // program cannot lower or raise it. `axon-guest-init` sets the
-                // var from the VM's MMDS policy and nothing read it, so a VM
-                // operator who capped a run's tokens got no cap at all.
-                //
-                // Uses the pre-dispatch ESTIMATE for the same reason R3c does:
-                // the decision has to be made before the call, and the real
-                // token count is only knowable after. The estimate is
-                // deterministic, so mock/replay/live runs all gate identically.
-                if let Some(cap) = self.token_budget {
-                    let used = self.tokens_used.get();
-                    if used.saturating_add(est_tokens) > cap {
-                        let who = if caller.is_empty() {
-                            "<main>".to_string()
-                        } else {
-                            caller.clone()
-                        };
-                        return ai_policy_err(format!(
-                            "[{}] `{who}` exceeded the run's token budget of {cap} \
-                             (used {used}, this call needs ~{est_tokens}) — raise \
-                             AXON_BUDGET_TOKENS or reduce AI work",
-                            crate::error::E1303,
-                        ));
-                    }
-                    self.tokens_used.set(used + est_tokens);
-                }
-                // W1310: a fn making an AI call with no @[ai(policy)] is allowed,
-                // but its cost is unmetered and the call un-pinned — warn once so
-                // the audit gap is visible (only meaningful for live/mock calls).
-                if !self.current_fn_has_ai_policy() {
-                    let who = if caller.is_empty() {
-                        "<main>".to_string()
-                    } else {
-                        caller.clone()
-                    };
-                    // Once per FN, as the comment above has always said. It used
-                    // to fire once per CALL, so a goal search over an un-policied
-                    // @[adaptive] fn emitted one identical line per evaluation.
-                    // The message names only the fn, so repeats add nothing.
-                    if self.w1310_warned.borrow_mut().insert(who.clone()) {
-                        eprintln!(
-                            "warning: [{}] AI call in `{who}` has no @[ai(policy)] — cost is unmetered and the call is harder to audit",
-                            crate::error::W1310
-                        );
-                    }
-                }
+                // The pre-dispatch gates (R3c budget, run token cap), W1310, the
+                // goal and principal, and the R28 ledger row: the prologue every
+                // model call shares (AF-4).
+                let ctx = self.ai_call_prologue(name, &prompt, tier)?;
                 // F2 (ROADMAP §9.5): deterministic REPLAY. With AXON_AI_REPLAY set,
                 // a previously-recorded (prompt, model) response is replayed
                 // verbatim — no mock, no live call, no API key — so an AI run is
@@ -6122,37 +6312,8 @@ impl<'p> Interp<'p> {
                 // cost so the metered cost reproduces too. A miss falls through and
                 // the mock/live branches RECORD their response below.
                 let replay_model = tier.api_model();
-                // F3: the goal being optimized when this call fired (causal link).
-                let goal = self.current_goal_name().unwrap_or_default();
-                // F3 (Phase 9): principal name for audit attribution.
-                let principal = self.current_principal_name();
-                // R28: append an AI-call entry to the capability audit ledger when
-                // AXON_AUDIT_LEDGER is set. Called before all dispatch paths (mock/
-                // replay/live/fallback) so every ai_complete is captured exactly once.
-                if std::env::var_os("AXON_AUDIT_LEDGER").is_some() {
-                    let _ = axon_audit::append_ai_call(&principal, prompt.as_bytes());
-                }
                 if let Some((cached, cached_tokens)) = ai_replay_lookup(&prompt, &replay_model) {
-                    let micro = tier.cost_micro(cached_tokens);
-                    self.ai_cost_micro.set(self.ai_cost_micro.get() + micro);
-                    // Same ceiling as every other durable write — see the
-                    // agent_action guard above.
-                    if self.provenance_write_permitted() {
-                        append_ai_call_jsonl(
-                            &caller,
-                            &prompt,
-                            tier_name,
-                            model_id,
-                            model_ver,
-                            params,
-                            "replay",
-                            "",
-                            micro as f64 / 1_000_000.0,
-                            &goal,
-                            "AI",
-                            &principal,
-                        );
-                    }
+                    self.ai_call_record(&ctx, &prompt, params, "replay", cached_tokens);
                     ok!(Value::Ok(VBox::new(Value::Str(Rc::new(cached)))));
                 }
                 if ai_mock_enabled() {
@@ -6164,19 +6325,10 @@ impl<'p> Interp<'p> {
                     // response is stubbed), so the cost is the routing's cost.
                     let stub = "Mock summary: the single most important fact, stated concisely."
                         .to_string();
-                    self.ai_cost_micro
-                        .set(self.ai_cost_micro.get() + cost_micro);
-                    // Same ceiling as every other durable write — see the
-                    // agent_action guard above.
-                    if self.provenance_write_permitted() {
-                        append_ai_call_jsonl(
-                            &caller, &prompt, tier_name, model_id, model_ver, params, "mock", "",
-                            cost_usd, &goal, "AI", &principal,
-                        );
-                    }
+                    self.ai_call_record(&ctx, &prompt, params, "mock", ctx.est_tokens);
                     // Record so a re-run replays this exact response (under mock the
                     // recorded tokens are the deterministic estimate).
-                    ai_replay_store(&prompt, &replay_model, &stub, est_tokens);
+                    ai_replay_store(&prompt, &replay_model, &stub, ctx.est_tokens);
                     ok!(Value::Ok(VBox::new(Value::Str(Rc::new(stub)))));
                 }
                 #[cfg(feature = "asi-runtime")]
@@ -6185,28 +6337,15 @@ impl<'p> Interp<'p> {
                     // live request now actually honors the tier; `strong` reaches
                     // the strong model, not the hardcoded sonnet). The model is
                     // env-overridable per tier for a proxy/gateway deployment.
-                    // Charge the per-token cost to the meter and stamp it into the
-                    // provenance (Phase-7 cost_meter / F4 — was 0). R3: use the
-                    // model's REAL token count (input+output from `usage`) for the
-                    // charge, not the pre-dispatch prompt-length estimate — so the
-                    // metered cost matches what the provider actually billed. (The
-                    // BUDGET gate above still uses the estimate, correctly: it must
+                    // R3: charge the model's REAL token count (input+output from
+                    // `usage`), not the pre-dispatch prompt-length estimate — so
+                    // the metered cost matches what the provider actually billed.
+                    // (The BUDGET gate still uses the estimate, correctly: it must
                     // decide before the call whether to dispatch at all.)
                     ok!(
                         match axon_ai::complete_with_model_usage(&prompt, &replay_model) {
                             Ok((s, real_tokens)) => {
-                                let real_micro = tier.cost_micro(real_tokens);
-                                let real_usd = real_micro as f64 / 1_000_000.0;
-                                self.ai_cost_micro
-                                    .set(self.ai_cost_micro.get() + real_micro);
-                                // Same ceiling as every other durable write — see the
-                                // agent_action guard above.
-                                if self.provenance_write_permitted() {
-                                    append_ai_call_jsonl(
-                                        &caller, &prompt, tier_name, model_id, model_ver, params,
-                                        "live", "", real_usd, &goal, "AI", &principal,
-                                    );
-                                }
+                                self.ai_call_record(&ctx, &prompt, params, "live", real_tokens);
                                 // Record the live (response, real token-count) so a
                                 // re-run with the same AXON_AI_REPLAY file reproduces
                                 // this exact response AND cost — the F2 replay engine.
@@ -6227,25 +6366,24 @@ impl<'p> Interp<'p> {
                     // program that wants to run offline MUST declare a fallback.
                     if let Some(fallback) = self.current_ai_fallback() {
                         // Fallback: NO model was reached, so NO cost is charged
-                        // (cost_usd stays the unused estimate; the record is 0).
-                        // The cost meter only reflects calls that actually
-                        // dispatched to a (mock or live) model.
+                        // (the record is 0). The cost meter only reflects calls
+                        // that actually dispatched to a (mock or live) model.
                         // Same ceiling as every other durable write — see the
                         // agent_action guard above.
                         if self.provenance_write_permitted() {
                             append_ai_call_jsonl(
-                                &caller,
+                                &ctx.caller,
                                 &prompt,
-                                tier_name,
+                                tier.as_str(),
                                 "none",
                                 "offline",
                                 params,
                                 "fallback",
                                 "offline: no model reachable",
                                 0.0,
-                                &goal,
+                                &ctx.goal,
                                 "AI",
-                                &principal,
+                                &ctx.principal,
                             );
                         }
                         ok!(Value::Ok(VBox::new(Value::Str(Rc::new(fallback)))));
@@ -6258,69 +6396,16 @@ impl<'p> Interp<'p> {
                     ))
                 }
             }
-            "ai_extract_uncertain_i64" => {
+            // The five `ai_extract::<T>` runtime targets (`builtins::ai_extract_target`).
+            // `ai_extract_{i64,f64,bool}` have no `BUILTINS` row: only the
+            // turbofish dispatch reaches them (`eval_ai_extract`).
+            "ai_extract_i64"
+            | "ai_extract_f64"
+            | "ai_extract_bool"
+            | "ai_extract_uncertain_i64"
+            | "ai_extract_uncertain_f64" => {
                 want(1)?;
-                // AXON_AI_REPLAY was consulted ONLY by the `ai_complete` arm, so a
-                // typed extract made a live, unrecorded model call even under a
-                // replay cache — silently defeating the reproducibility the flag
-                // promises. Found in review. The cache is keyed by
-                // sha256(model \0 prompt), so passing the BUILTIN NAME as the model
-                // keeps an extract's entry distinct from an `ai_complete` for the
-                // same prompt. Checked BEFORE mock/live, as `ai_complete` does
-                // (asi-replay RP-3): under AXON_AI_MOCK plus a cache, the recording
-                // wins, and a mock answer is recorded so a later no-mock replay
-                // reproduces the run.
-                if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
-                    ok!(replay_uncertain(&cached, name, false));
-                }
-                if ai_mock_enabled() {
-                    ai_replay_store(as_str(&args[0])?, name, "1|0.9", 0);
-                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Int(1), 0.9))));
-                }
-                #[cfg(feature = "asi-runtime")]
-                {
-                    ok!(
-                        match axon_ai::complete_typed_uncertain_i64(as_str(&args[0])?) {
-                            Ok((v, c)) => {
-                                ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
-                                Value::Ok(VBox::new(make_uncertain_ai(Value::Int(v), c)))
-                            }
-                            Err(e) => Value::Err(VBox::new(Value::Str(Rc::new(e)))),
-                        }
-                    );
-                }
-                #[cfg(not(feature = "asi-runtime"))]
-                return panic(
-                    "ai_extract_uncertain_i64 requires --features asi-runtime (or set AXON_AI_MOCK=1)",
-                );
-            }
-            "ai_extract_uncertain_f64" => {
-                want(1)?;
-                // Same replay-before-mock order and mock recording as the i64
-                // variant above.
-                if let Some((cached, _)) = ai_replay_lookup(as_str(&args[0])?, name) {
-                    ok!(replay_uncertain(&cached, name, true));
-                }
-                if ai_mock_enabled() {
-                    ai_replay_store(as_str(&args[0])?, name, "1|0.9", 0);
-                    ok!(Value::Ok(VBox::new(make_uncertain_ai(Value::Float(1.0), 0.9))));
-                }
-                #[cfg(feature = "asi-runtime")]
-                {
-                    ok!(
-                        match axon_ai::complete_typed_uncertain_f64(as_str(&args[0])?) {
-                            Ok((v, c)) => {
-                                ai_replay_store(as_str(&args[0])?, name, &format!("{v}|{c}"), 0);
-                                Value::Ok(VBox::new(make_uncertain_ai(Value::Float(v), c)))
-                            }
-                            Err(e) => Value::Err(VBox::new(Value::Str(Rc::new(e)))),
-                        }
-                    );
-                }
-                #[cfg(not(feature = "asi-runtime"))]
-                return panic(
-                    "ai_extract_uncertain_f64 requires --features asi-runtime (or set AXON_AI_MOCK=1)",
-                );
+                ok!(self.ai_extract(name, as_str(&args[0])?)?);
             }
 
             // ── Phase 13: Probabilistic distribution builtins ───────────────────

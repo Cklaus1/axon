@@ -2574,6 +2574,39 @@ pub fn is_browser_incompatible_builtin(name: &str) -> bool {
     )
 }
 
+/// The runtime target of `ai_extract::<T>(prompt)` for the type spelling `t`
+/// (`parser.rs` `parse_ai_extract_turbofish` writes `axon_type_to_str` of the
+/// parsed T into the callee name `ai_extract::<T>`), or `None` for a T outside
+/// the supported set. The ONE mapping: infer refuses `None` (E1304), the
+/// interpreter dispatches to the target, the effect checker looks its row up
+/// under it, and codegen calls the native helper of the same name — so no two
+/// of them can disagree on which T exist.
+pub(crate) fn ai_extract_target(t: &str) -> Option<&'static str> {
+    match t.trim() {
+        "i64" => Some("ai_extract_i64"),
+        "f64" => Some("ai_extract_f64"),
+        "bool" => Some("ai_extract_bool"),
+        "Uncertain<i64>" => Some("ai_extract_uncertain_i64"),
+        "Uncertain<f64>" => Some("ai_extract_uncertain_f64"),
+        _ => None,
+    }
+}
+
+/// The extract targets reachable ONLY through `ai_extract::<T>`: runtime
+/// builtins with no `BUILTINS` row (no user surface, `ai_extract_i64("x")` is
+/// E0001). Tables keyed by builtin name that must still know them (the net
+/// host, the taint class) list them from here.
+pub(crate) const AI_EXTRACT_HIDDEN_TARGETS: &[&str] =
+    &["ai_extract_i64", "ai_extract_f64", "ai_extract_bool"];
+
+/// The `T` of a turbofish callee name `ai_extract::<T>`, or `None` for any
+/// other name.
+pub(crate) fn ai_extract_turbofish_type(callee: &str) -> Option<&str> {
+    callee
+        .strip_prefix("ai_extract::<")
+        .and_then(|s| s.strip_suffix('>'))
+}
+
 /// Phase 5 §2 P04 — builtins that are IMPURE: they do I/O, AI calls, touch the
 /// clock/RNG, spawn, mutate external state, or terminate the process. A
 /// `@[pure]` function may not call any of these (E1207). Every OTHER builtin is

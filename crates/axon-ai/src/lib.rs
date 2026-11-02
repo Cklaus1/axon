@@ -584,29 +584,30 @@ fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i
             .to_string(),
     };
 
-    // Real token usage (input + output). Anthropic: usage.{input,output}_tokens;
-    // OpenAI: usage.{prompt,completion}_tokens (or usage.total_tokens). Fall back
-    // to a prompt/reply-length estimate if the field is missing (some proxies).
-    let total = match p {
-        Provider::Anthropic => match (
-            json["usage"]["input_tokens"].as_i64(),
-            json["usage"]["output_tokens"].as_i64(),
-        ) {
-            (Some(i), Some(o)) => i + o,
-            _ => (prompt.len() as i64) / 4 + 1 + (reply.len() as i64) / 4,
-        },
-        Provider::OpenAi => json["usage"]["total_tokens"].as_i64().unwrap_or_else(|| {
-            match (
-                json["usage"]["prompt_tokens"].as_i64(),
-                json["usage"]["completion_tokens"].as_i64(),
-            ) {
-                (Some(i), Some(o)) => i + o,
-                _ => (prompt.len() as i64) / 4 + 1 + (reply.len() as i64) / 4,
-            }
-        }),
-    };
+    let total = usage_total(p, &json, prompt, reply.len());
 
     Ok((reply, total))
+}
+
+/// The REAL total token count (input + output) of a response `json`, for
+/// per-token cost metering. Anthropic: `usage.{input,output}_tokens`; OpenAI:
+/// `usage.total_tokens`, else `usage.{prompt,completion}_tokens`. A response
+/// without the fields (some proxies) falls back to a prompt/reply-length
+/// estimate (`reply_len` bytes of answer). Shared by the plain completion and
+/// the structured (`ai_extract_*`) paths, so both meter a live call the same.
+fn usage_total(p: Provider, json: &serde_json::Value, prompt: &str, reply_len: usize) -> i64 {
+    let estimate = || (prompt.len() as i64) / 4 + 1 + (reply_len as i64) / 4;
+    let pair = |i: &str, o: &str| match (json["usage"][i].as_i64(), json["usage"][o].as_i64()) {
+        (Some(i), Some(o)) => Some(i + o),
+        _ => None,
+    };
+    match p {
+        Provider::Anthropic => pair("input_tokens", "output_tokens").unwrap_or_else(estimate),
+        Provider::OpenAi => json["usage"]["total_tokens"]
+            .as_i64()
+            .or_else(|| pair("prompt_tokens", "completion_tokens"))
+            .unwrap_or_else(estimate),
+    }
 }
 
 /// Rust-callable plain completion (mirrors the `__axon_ai_complete` C ABI).
@@ -826,11 +827,15 @@ fn parse_openai_tool_args(json: &serde_json::Value) -> Result<serde_json::Value,
 /// uncertain (with confidence) and flat (value-only) paths via `with_confidence`.
 /// Anthropic and OpenAI differ in body schema, auth, and where the tool result
 /// lives in the response — all handled here so callers see one object.
+///
+/// Also returns the call's total token count: the response's `usage` on a live
+/// call ([`parse_structured_response`]), the interpreter's deterministic
+/// prompt-length estimate under mock — the counts the caller meters cost by.
 fn complete_structured_inner(
     prompt: &str,
     value_type: &str,
     with_confidence: bool,
-) -> Result<serde_json::Value, String> {
+) -> Result<(serde_json::Value, i64), String> {
     // AUDIT T35 (finding RT-01): this went straight to `api_key(p)?` and a live
     // billed POST with no mock check anywhere in it or its callers — only the
     // plain `ai_complete` path honoured AXON_AI_MOCK. Every `ai_extract_*`
@@ -849,11 +854,12 @@ fn complete_structured_inner(
             "boolean" | "bool" => serde_json::json!(true),
             _ => serde_json::json!(MOCK_AI_COMPLETE),
         };
-        return Ok(if with_confidence {
+        let input = if with_confidence {
             serde_json::json!({ "value": value, "confidence": 0.9 })
         } else {
             serde_json::json!({ "value": value })
-        });
+        };
+        return Ok((input, (prompt.len() as i64) / 4 + 1));
     }
 
     let p = provider();
@@ -897,20 +903,33 @@ fn complete_structured_inner(
         return Err(format!("{label} API error {}: {}", status.as_u16(), text));
     }
 
-    let json: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Failed to parse API response as JSON: {}", e))?;
+    parse_structured_response(p, &text, prompt)
+}
 
-    match p {
+/// Parse a structured-output response body `text` from provider `p`: the
+/// `answer` tool's arguments object and the call's total token count
+/// ([`usage_total`]). Pure (no network), so the parse is unit-tested on canned
+/// bodies.
+fn parse_structured_response(
+    p: Provider,
+    text: &str,
+    prompt: &str,
+) -> Result<(serde_json::Value, i64), String> {
+    let json: serde_json::Value = serde_json::from_str(text)
+        .map_err(|e| format!("Failed to parse API response as JSON: {}", e))?;
+    let input = match p {
         Provider::Anthropic => parse_tool_use_input(&json).cloned(),
         Provider::OpenAi => parse_openai_tool_args(&json),
-    }
+    }?;
+    let tokens = usage_total(p, &json, prompt, input.to_string().len());
+    Ok((input, tokens))
 }
 
 fn complete_typed_uncertain_inner(
     prompt: &str,
     value_type: &str,
-) -> Result<(serde_json::Value, f64), String> {
-    let input = complete_structured_inner(prompt, value_type, true)?;
+) -> Result<(serde_json::Value, f64, i64), String> {
+    let (input, tokens) = complete_structured_inner(prompt, value_type, true)?;
 
     let value = input
         .get("value")
@@ -925,29 +944,30 @@ fn complete_typed_uncertain_inner(
         return Err(format!("confidence {} out of range [0.0, 1.0]", confidence));
     }
 
-    Ok((value, confidence))
+    Ok((value, confidence, tokens))
 }
 
 /// Send `prompt` to Anthropic with a structured-output tool that constrains
 /// the answer to `{value: integer, confidence: number}`.  Returns
-/// `(value, confidence)` on success.
-pub fn complete_typed_uncertain_i64(prompt: &str) -> Result<(i64, f64), String> {
-    let (value, confidence) = complete_typed_uncertain_inner(prompt, "integer")?;
+/// `(value, confidence, tokens)` on success; `tokens` is the call's total
+/// token count (`usage`), which the interpreter meters cost by.
+pub fn complete_typed_uncertain_i64(prompt: &str) -> Result<(i64, f64, i64), String> {
+    let (value, confidence, tokens) = complete_typed_uncertain_inner(prompt, "integer")?;
     let v = value
         .as_i64()
         .ok_or_else(|| format!("tool_use input `value` is not an integer: {}", value))?;
-    Ok((v, confidence))
+    Ok((v, confidence, tokens))
 }
 
 /// Send `prompt` to Anthropic with a structured-output tool that constrains
 /// the answer to `{value: number, confidence: number}`.  Returns
-/// `(value, confidence)` on success.
-pub fn complete_typed_uncertain_f64(prompt: &str) -> Result<(f64, f64), String> {
-    let (value, confidence) = complete_typed_uncertain_inner(prompt, "number")?;
+/// `(value, confidence, tokens)` on success.
+pub fn complete_typed_uncertain_f64(prompt: &str) -> Result<(f64, f64, i64), String> {
+    let (value, confidence, tokens) = complete_typed_uncertain_inner(prompt, "number")?;
     let v = value
         .as_f64()
         .ok_or_else(|| format!("tool_use input `value` is not a number: {}", value))?;
-    Ok((v, confidence))
+    Ok((v, confidence, tokens))
 }
 
 // -- Layer-3 ASI flat-T structured output (no confidence) ---------------------
@@ -985,40 +1005,50 @@ pub fn build_typed_flat_body(prompt: &str, value_type: &str) -> serde_json::Valu
 }
 
 /// POST a flat-T structured-output request and return the parsed `value` as
-/// raw `serde_json::Value`.  The caller projects to the expected scalar type.
-fn complete_typed_flat_inner(prompt: &str, value_type: &str) -> Result<serde_json::Value, String> {
-    let input = complete_structured_inner(prompt, value_type, false)?;
-    input
+/// raw `serde_json::Value`, with the call's total token count.  The caller
+/// projects to the expected scalar type.
+fn complete_typed_flat_inner(
+    prompt: &str,
+    value_type: &str,
+) -> Result<(serde_json::Value, i64), String> {
+    let (input, tokens) = complete_structured_inner(prompt, value_type, false)?;
+    let value = input
         .get("value")
-        .ok_or_else(|| format!("structured output missing `value`: {}", input))
-        .cloned()
+        .ok_or_else(|| format!("structured output missing `value`: {}", input))?
+        .clone();
+    Ok((value, tokens))
 }
 
-/// Send `prompt` and return a single `i64`.  Tool schema constrains
-/// `{value: integer}`; rejection (no integer) becomes `Err`.
-pub fn complete_typed_i64(prompt: &str) -> Result<i64, String> {
-    let value = complete_typed_flat_inner(prompt, "integer")?;
-    value
+/// Send `prompt` and return a single `i64` and the call's total token count.
+/// Tool schema constrains `{value: integer}`; rejection (no integer) becomes
+/// `Err`.
+pub fn complete_typed_i64(prompt: &str) -> Result<(i64, i64), String> {
+    let (value, tokens) = complete_typed_flat_inner(prompt, "integer")?;
+    let v = value
         .as_i64()
-        .ok_or_else(|| format!("tool_use input `value` is not an integer: {}", value))
+        .ok_or_else(|| format!("tool_use input `value` is not an integer: {}", value))?;
+    Ok((v, tokens))
 }
 
-/// Send `prompt` and return a single `f64`.  Tool schema constrains
-/// `{value: number}`.  Integers are accepted (JSON numbers).
-pub fn complete_typed_f64(prompt: &str) -> Result<f64, String> {
-    let value = complete_typed_flat_inner(prompt, "number")?;
-    value
+/// Send `prompt` and return a single `f64` and the call's total token count.
+/// Tool schema constrains `{value: number}`.  Integers are accepted (JSON
+/// numbers).
+pub fn complete_typed_f64(prompt: &str) -> Result<(f64, i64), String> {
+    let (value, tokens) = complete_typed_flat_inner(prompt, "number")?;
+    let v = value
         .as_f64()
-        .ok_or_else(|| format!("tool_use input `value` is not a number: {}", value))
+        .ok_or_else(|| format!("tool_use input `value` is not a number: {}", value))?;
+    Ok((v, tokens))
 }
 
-/// Send `prompt` and return a single `bool`.  Tool schema constrains
-/// `{value: boolean}`.
-pub fn complete_typed_bool(prompt: &str) -> Result<bool, String> {
-    let value = complete_typed_flat_inner(prompt, "boolean")?;
-    value
+/// Send `prompt` and return a single `bool` and the call's total token count.
+/// Tool schema constrains `{value: boolean}`.
+pub fn complete_typed_bool(prompt: &str) -> Result<(bool, i64), String> {
+    let (value, tokens) = complete_typed_flat_inner(prompt, "boolean")?;
+    let v = value
         .as_bool()
-        .ok_or_else(|| format!("tool_use input `value` is not a boolean: {}", value))
+        .ok_or_else(|| format!("tool_use input `value` is not a boolean: {}", value))?;
+    Ok((v, tokens))
 }
 
 // -- Layer-3 typed-extraction extern bridges ----------------------------------
@@ -1081,7 +1111,7 @@ pub extern "C" fn __axon_ai_extract_uncertain_i64(
         std::str::from_utf8_unchecked(slice)
     };
     match complete_typed_uncertain_i64(prompt) {
-        Ok((v, c)) => {
+        Ok((v, c, _tokens)) => {
             unsafe {
                 if !out_value.is_null() {
                     *out_value = v;
@@ -1132,7 +1162,7 @@ pub extern "C" fn __axon_ai_extract_uncertain_f64(
         std::str::from_utf8_unchecked(slice)
     };
     match complete_typed_uncertain_f64(prompt) {
-        Ok((v, c)) => {
+        Ok((v, c, _tokens)) => {
             unsafe {
                 if !out_value.is_null() {
                     *out_value = v;
@@ -1190,7 +1220,7 @@ pub extern "C" fn __axon_ai_extract_i64(
         std::str::from_utf8_unchecked(slice)
     };
     match complete_typed_i64(prompt) {
-        Ok(v) => {
+        Ok((v, _tokens)) => {
             unsafe {
                 if !out_value.is_null() {
                     *out_value = v;
@@ -1235,7 +1265,7 @@ pub extern "C" fn __axon_ai_extract_f64(
         std::str::from_utf8_unchecked(slice)
     };
     match complete_typed_f64(prompt) {
-        Ok(v) => {
+        Ok((v, _tokens)) => {
             unsafe {
                 if !out_value.is_null() {
                     *out_value = v;
@@ -1285,7 +1315,7 @@ pub extern "C" fn __axon_ai_extract_bool(
         std::str::from_utf8_unchecked(slice)
     };
     match complete_typed_bool(prompt) {
-        Ok(v) => {
+        Ok((v, _tokens)) => {
             unsafe {
                 if !out_value.is_null() {
                     *out_value = v;
@@ -1376,11 +1406,12 @@ mod tests {
         std::env::remove_var("AXON_AI_API_KEY");
         std::env::set_var("AXON_AI_MOCK", "1");
 
-        assert_eq!(complete_typed_uncertain_i64("q"), Ok((1, 0.9)));
-        assert_eq!(complete_typed_uncertain_f64("q"), Ok((1.0, 0.9)));
-        assert_eq!(complete_typed_i64("q"), Ok(1));
-        assert_eq!(complete_typed_f64("q"), Ok(1.0));
-        assert_eq!(complete_typed_bool("q"), Ok(true));
+        // Tokens: the interpreter's deterministic estimate, len/4 + 1.
+        assert_eq!(complete_typed_uncertain_i64("q"), Ok((1, 0.9, 1)));
+        assert_eq!(complete_typed_uncertain_f64("q"), Ok((1.0, 0.9, 1)));
+        assert_eq!(complete_typed_i64("q"), Ok((1, 1)));
+        assert_eq!(complete_typed_f64("q"), Ok((1.0, 1)));
+        assert_eq!(complete_typed_bool("how many apples?"), Ok((true, 5)));
 
         // AXON_AI_MOCK=0 must NOT mock — it must fall through to the key check,
         // exactly as the plain ai_complete path does.
@@ -1436,6 +1467,44 @@ mod tests {
                 None => std::env::remove_var(k),
             }
         }
+    }
+
+    /// AF-4: the interpreter costs and records an extract at
+    /// `axon_core::ai_routing::decision_tier()`, which mirrors
+    /// [`decision_model`]'s precedence without depending on this crate. Both
+    /// sides pin the no-env default to the same literal (axon-core pins
+    /// `Tier::Cheap.api_model()`), so the record cannot name one model while
+    /// the request sends another.
+    #[test]
+    fn decision_model_default_is_the_cheap_tier_literal() {
+        assert_eq!(DECISION_MODEL_DEFAULT, "claude-haiku-5-5");
+    }
+
+    /// AF-4: a live structured (`ai_extract_*`) call meters the response's
+    /// `usage`, as the plain completion does. It used to store tokens 0, so
+    /// a live extract's replay entry and cost were zero.
+    #[test]
+    fn structured_response_returns_the_usage_total() {
+        let anthropic = r#"{"content":[{"type":"tool_use","name":"answer","input":{"value":7}}],
+            "usage":{"input_tokens":120,"output_tokens":30}}"#;
+        let (input, tokens) = parse_structured_response(Provider::Anthropic, anthropic, "q")
+            .expect("canned Anthropic body parses");
+        assert_eq!(input["value"], serde_json::json!(7));
+        assert_eq!(tokens, 150, "ATTACK: live extract tokens stored as 0");
+        let openai = r#"{"choices":[{"message":{"tool_calls":[{"function":{"name":"answer",
+            "arguments":"{\"value\":true}"}}]}}],"usage":{"total_tokens":42}}"#;
+        let (input, tokens) = parse_structured_response(Provider::OpenAi, openai, "q")
+            .expect("canned OpenAI body parses");
+        assert_eq!(input["value"], serde_json::json!(true));
+        assert_eq!(tokens, 42, "ATTACK: live extract tokens stored as 0");
+        let split = r#"{"choices":[{"message":{"tool_calls":[{"function":{"name":"answer",
+            "arguments":"{\"value\":1}"}}]}}],"usage":{"prompt_tokens":9,"completion_tokens":4}}"#;
+        let (_, tokens) = parse_structured_response(Provider::OpenAi, split, "q").unwrap();
+        assert_eq!(tokens, 13, "ATTACK: live extract tokens stored as 0");
+        // No usage (some proxies): the length estimate, never 0.
+        let bare = r#"{"content":[{"type":"tool_use","name":"answer","input":{"value":1}}]}"#;
+        let (_, tokens) = parse_structured_response(Provider::Anthropic, bare, "abcdefgh").unwrap();
+        assert_eq!(tokens, 8 / 4 + 1 + r#"{"value":1}"#.len() as i64 / 4);
     }
 
     /// The structured-output request body must declare a single `answer` tool

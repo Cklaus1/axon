@@ -3367,3 +3367,72 @@ fn build_cache_key_covers_the_sibling() {
     let _ = std::fs::remove_dir_all(&root);
     assert!(fails.is_empty(), "{attack}: {}", fails.join("\n"));
 }
+
+// ── asi-fixes AF-1: `ai_extract::<T>` native vs interpreter parity ──
+
+/// AF-1: the interpreter panicked (exit 101) on `ai_extract_generic.ax` while
+/// the native build ran it. Under `AXON_AI_MOCK=1` both now print the stub
+/// answers (`axon-ai` `complete_structured_inner`: 1, 1.0, true) and exit 0.
+#[cfg(feature = "codegen")]
+#[test]
+fn ai_extract_generic_native_matches_interp_under_mock() {
+    use std::process::Command;
+    let attack = "ATTACK: interp mock differs from native stub";
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_af1_np_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let fx = fixtures_dir().join("ai_extract_generic.ax");
+    let clean = |c: &mut Command| {
+        for k in [
+            "AXON_AI_REPLAY",
+            "AXON_ENGINE",
+            "AXON_VM_EAGER",
+            "ANTHROPIC_API_KEY",
+        ] {
+            c.env_remove(k);
+        }
+        c.env("AXON_AI_MOCK", "1")
+            .env("XDG_CACHE_HOME", dir.join("cache"));
+    };
+    let mut run = Command::new(axon_bin);
+    run.arg("run").arg(&fx);
+    clean(&mut run);
+    let run = run.output().unwrap();
+    let bin = dir.join("gen_bin");
+    let mut build = Command::new(axon_bin);
+    build
+        .arg("build")
+        .arg(&fx)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache");
+    clean(&mut build);
+    let build = build.output().unwrap();
+    assert!(
+        build.status.success(),
+        "build: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let mut native = Command::new(&bin);
+    clean(&mut native);
+    let native = native.output().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let want = "1\n1\nyes\n1\n1\n";
+    let (r, n) = (
+        String::from_utf8_lossy(&run.stdout).into_owned(),
+        String::from_utf8_lossy(&native.stdout).into_owned(),
+    );
+    assert_eq!(
+        (native.status.code(), n.as_str()),
+        (Some(0), want),
+        "premise: the native build runs the fixture: {}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(
+        (run.status.code(), r.as_str()),
+        (Some(0), want),
+        "{attack}: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}

@@ -1,13 +1,17 @@
 // Fixture: generic `ai_extract::<T>(prompt) -> Result<T, str>` builtin (Layer-3 ASI).
-// Parse + type-check only — does NOT execute (requires ANTHROPIC_API_KEY).
+// Runs on every engine: `axon run` (tree and VM) dispatches each T to its
+// runtime target, and a native build calls the `__axon_ai_extract_*` bridges.
+// A live call needs ANTHROPIC_API_KEY; under AXON_AI_MOCK=1 every engine
+// prints `1 1 yes 1 1` (one per line). With no model, no mock and no replay
+// the interpreter refuses with E1300 (exit 5).
 //
-// Demonstrates the v1-supported T set:
+// The supported T set (any other T is E1304 at check):
 //   i64, f64, bool, Uncertain<i64>, Uncertain<f64>
 //
 // The Uncertain<T> variants are aliases for the existing
-// `ai_extract_uncertain_{i64,f64}` helpers; the flat-T variants use the new
-// `__axon_ai_extract_{i64,f64,bool}` runtime bridges.  Backward compat with
-// the legacy aliases is covered by `ai_extract_uncertain.ax`.
+// `ai_extract_uncertain_{i64,f64}` helpers; the flat-T variants use the
+// `__axon_ai_extract_{i64,f64,bool}` runtime bridges natively.  Backward compat
+// with the legacy aliases is covered by `ai_extract_uncertain.ax`.
 
 fn extract_count(prompt: str) -> Result<i64, str> {
     ai_extract::<i64>(prompt)

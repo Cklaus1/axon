@@ -5,7 +5,7 @@
 
 # Axon Reference
 
-The complete surface of this build — 28 CLI verbs, 344 builtins, 24 attributes, 152 diagnostic codes (139 live, 13 reserved), 66 environment variables.
+The complete surface of this build — 28 CLI verbs, 344 builtins, 24 attributes, 153 diagnostic codes (140 live, 13 reserved), 66 environment variables.
 
 Generated from the compiler's own tables (`BUILTINS`, `DEFERRED_ATTRS`, the clap subcommand list), so it cannot describe a language this binary does not implement. `CLAUDE.md` is a curated selection and says so; this is the exhaustive counterpart.
 
@@ -144,7 +144,7 @@ Every `AXON_*` variable the SHIPPED code reads — gated in both directions, so 
 | `AXON_TEE_ENCLAVE` | R24 TEE: set to 1 by the gramine-direct manifest to signal the workload is executing inside an enclave; this is what makes `tee_in_enclave()` return true. Read through the host seam, so it is recorded and replayed |
 | `AXON_TEE_MEASUREMENT` | R24 TEE: the simulated enclave launch measurement returned by `tee_attest_measurement()` when set, a stub otherwise. A genuine hardware-rooted quote comes only from confidential hardware. Read through the host seam |
 
-## Diagnostic codes (152, of which 139 live)
+## Diagnostic codes (153, of which 140 live)
 
 A code marked **reserved** is declared but emitted nowhere in this build. Listing those as if they were live would be the same defect this reference exists to fix.
 
@@ -235,6 +235,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E1301` | ai_complete exceeded the fn's @[ai(policy(budget: N))] (R3c) |
 | `E1302` | tier: resolves to a tier with no host-configured model |
 | `E1303` | run exceeded AXON_BUDGET_TOKENS, the ambient run-level token cap |
+| `E1304` | ai_extract::<T> with a T outside i64, f64, bool, Uncertain<i64>, Uncertain<f64> |
 | `E1306` | raw effect-row syntax `\| {…}` used in a `surface`-marked file |
 | `E1310` | effect-row leak: call performs effect E ∉ the caller's declared row |
 | `E1316` | @[contained(...)] deprecation notice; prefer `\| {…}` effect-row syntax |

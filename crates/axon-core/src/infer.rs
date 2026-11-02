@@ -2019,15 +2019,29 @@ impl InferCtx {
 
                 // Handle `ai_extract::<T>(prompt)` lowered form (Layer-3 ASI):
                 //   "ai_extract::<T>" → Result<T, str>, taking a single str arg.
-                // Mirrors the chan decode just above.  v1 T set is enforced
-                // downstream in codegen (only i64/f64/bool/Uncertain<i64>/Uncertain<f64>
-                // get a dispatch); the type system flows the declared T through
-                // unchanged so callers see the right `Result<T, str>` shape.
+                // Mirrors the chan decode just above. The T set is enforced HERE
+                // (`builtins::ai_extract_target`, the mapping the interpreter,
+                // effects and codegen share): an out-of-set T used to check
+                // clean, panic in the interpreter and be dropped silently by
+                // native code. It is E1304 now, on every engine.
                 if let Some(ref name) = fn_name {
-                    if let Some(inner) = name
-                        .strip_prefix("ai_extract::<")
-                        .and_then(|s| s.strip_suffix(">"))
-                    {
+                    if let Some(inner) = crate::builtins::ai_extract_turbofish_type(name) {
+                        if crate::builtins::ai_extract_target(inner).is_none() {
+                            let mut err = InferError::new(
+                                crate::error::E1304,
+                                format!(
+                                    "ai_extract::<{inner}> is not supported: T must be one of \
+                                     i64, f64, bool, Uncertain<i64>, Uncertain<f64>"
+                                ),
+                            )
+                            .with_span(self.current_stmt_span);
+                            err.help = Some(
+                                "for free text use ai_complete(prompt); for a record, extract \
+                                 each field with its own ai_extract::<T>"
+                                    .to_string(),
+                            );
+                            self.errors.push(err);
+                        }
                         let t = parse_type_str(inner);
                         // Constrain the (single) arg to be `str`.
                         for arg in args {

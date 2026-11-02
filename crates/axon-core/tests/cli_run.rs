@@ -45792,3 +45792,284 @@ fn contained_import_edge_checks_a_sibling_module() {
         "{attack}: {out}{err}"
     );
 }
+
+// ── asi-fixes AF-1 / AF-4: `ai_extract::<T>` runs, and every extract is recorded ──
+
+/// `axon <args>` in `dir`, with every AI / engine variable the suite might
+/// export removed and `envs` set on top: `(exit, stdout, stderr)`.
+fn af_axon(
+    args: &[&str],
+    dir: &std::path::Path,
+    envs: &[(&str, &str)],
+) -> (Option<i32>, String, String) {
+    let mut c = axon();
+    c.args(args).current_dir(dir);
+    for k in [
+        "AXON_AI_MOCK",
+        "AXON_AI_REPLAY",
+        "AXON_AUDIT_LEDGER",
+        "AXON_ENGINE",
+        "AXON_VM_EAGER",
+        "AXON_BUDGET_TOKENS",
+        "AXON_AI_MODEL_CHEAP",
+        "AXON_AI_MODEL_BALANCED",
+        "ANTHROPIC_API_KEY",
+    ] {
+        c.env_remove(k);
+    }
+    c.env("XDG_CACHE_HOME", dir.join("cache"));
+    for (k, v) in envs {
+        c.env(k, v);
+    }
+    let o = c.output().expect("spawn axon");
+    (
+        o.status.code(),
+        String::from_utf8_lossy(&o.stdout).into_owned(),
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    )
+}
+
+fn af_dir(tag: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("axon_af_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// The `ai_call` provenance records of a run whose cache dir is `dir/cache`.
+fn af_ai_calls(dir: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(dir.join("cache").join("axon").join("provenance.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.contains("\"event\":\"ai_call\""))
+        .map(str::to_string)
+        .collect()
+}
+
+/// AF-1: `ai_extract::<T>(prompt)` checked clean and then panicked "value of
+/// type ai_extract is not callable" (exit 101) on every interpreter engine.
+/// Under mock it now answers like the native stub on tree, VM and VM-default.
+#[test]
+fn ai_extract_generic_runs_under_mock_on_every_engine() {
+    let d = af_dir("gen");
+    let fx = fixture("ai_extract_generic.ax");
+    let mut seen = Vec::new();
+    for (engine, eager) in [("tree", ""), ("vm", "1"), ("vm", "")] {
+        let mut envs = vec![("AXON_AI_MOCK", "1"), ("AXON_ENGINE", engine)];
+        if !eager.is_empty() {
+            envs.push(("AXON_VM_EAGER", eager));
+        }
+        let (rc, out, err) = af_axon(&["run", &fx], &d, &envs);
+        // Two ways to fail: the turbofish never dispatches (the base's
+        // "not callable" panic), or a T dispatches to the wrong target.
+        let attack = if err.contains("not callable") {
+            "ATTACK: ai_extract::<T> panicked not callable"
+        } else {
+            "ATTACK: ai_extract::<bool> dispatched to the i64 target"
+        };
+        assert_eq!(
+            (rc, out.as_str()),
+            (Some(0), "1\n1\nyes\n1\n1\n"),
+            "{attack} ({engine} eager={eager:?}): {err}"
+        );
+        seen.push((rc, out, err));
+    }
+    assert!(
+        seen.windows(2).all(|w| w[0] == w[1]),
+        "engines differ: {seen:?}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// AF-1: a T outside the five runtime targets is E1304 at check (it used to
+/// check clean, panic in the interpreter and be dropped natively). The
+/// fixture, all in-set, still checks clean.
+#[test]
+fn ai_extract_out_of_set_type_is_e1304() {
+    let attack = "ATTACK: ai_extract::<str> passed check and was dropped natively";
+    let d = af_dir("e1304");
+    let cases = [
+        (
+            "str",
+            "fn main() {\n    match ai_extract::<str>(\"name?\") { Ok(s) => println(s) Err(e) => println(e) }\n}\n",
+        ),
+        (
+            "rec",
+            "type R = { n: i64 }\nfn main() {\n    let r: Result<R, str> = ai_extract::<R>(\"n?\")\n    match r { Ok(v) => println(to_str(v.n)) Err(e) => println(e) }\n}\n",
+        ),
+    ];
+    for (tag, src) in cases {
+        let f = d.join(format!("{tag}.ax"));
+        std::fs::write(&f, src).unwrap();
+        let (rc, out, err) = af_axon(&["check", f.to_str().unwrap()], &d, &[]);
+        let line = if tag == "str" { 2 } else { 3 };
+        assert_eq!(rc, Some(2), "{attack} [{tag}]: {out}{err}");
+        assert!(
+            err.contains("E1304") && err.contains(&format!("\"line\":{line}")),
+            "{attack} [{tag}]: {err}"
+        );
+    }
+    let (rc, out, err) = af_axon(&["check", &fixture("ai_extract_generic.ax")], &d, &[]);
+    assert_eq!(
+        rc,
+        Some(0),
+        "the in-set fixture must check clean: {out}{err}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// AF-1: the turbofish's ledger row is AI, named for its runtime target.
+#[test]
+fn ai_extract_turbofish_audits_as_ai() {
+    let attack = "ATTACK: a model call audited outside the AI class";
+    let d = af_dir("audit");
+    std::fs::write(
+        d.join("p.ax"),
+        "fn main() {\n    let _ = ai_extract::<i64>(\"q\")\n}\n",
+    )
+    .unwrap();
+    let (rc, out, err) = af_axon(
+        &["run", "p.ax"],
+        &d,
+        &[("AXON_AI_MOCK", "1"), ("AXON_AUDIT_LEDGER", "l.ndjson")],
+    );
+    assert_eq!(rc, Some(0), "premise: the program must run: {out}{err}");
+    let body = std::fs::read_to_string(d.join("l.ndjson")).unwrap_or_default();
+    let row = body
+        .lines()
+        .find(|l| l.contains("\"operation\":\"ai_extract_i64\""))
+        .unwrap_or_else(|| panic!("{attack}: no audit row for ai_extract_i64:\n{body}"));
+    assert!(row.contains("\"effect\":\"AI\""), "{attack}: {row}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// AF-1: with no model compiled in, no mock and no recording, an extract is
+/// the E1300 refusal (exit 5) `ai_complete` gives, not a panic (exit 101).
+#[cfg(not(feature = "asi-runtime"))]
+#[test]
+fn ai_extract_without_runtime_or_mock_is_e1300() {
+    let d = af_dir("e1300");
+    for (tag, call) in [
+        ("unc", "ai_extract_uncertain_i64(\"n?\")"),
+        ("bool", "ai_extract::<bool>(\"yes?\")"),
+    ] {
+        let f = d.join(format!("{tag}.ax"));
+        std::fs::write(
+            &f,
+            format!("fn main() {{\n    match {call} {{ Ok(_) => println(\"ok\") Err(e) => println(e) }}\n}}\n"),
+        )
+        .unwrap();
+        for engine in ["tree", "vm"] {
+            let (rc, out, err) = af_axon(
+                &["run", f.to_str().unwrap()],
+                &d,
+                &[("AXON_ENGINE", engine)],
+            );
+            assert_eq!(
+                rc,
+                Some(5),
+                "ATTACK: an extract with no model crashed instead of E1300 [{tag} {engine}]: {out}{err}"
+            );
+            assert!(err.contains("E1300"), "[{tag} {engine}]: {err}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// AF-1: a sandbox whose net scope excludes the Anthropic host denies the
+/// turbofish exactly as it denies `ai_extract_uncertain_i64` (exit 8), and a
+/// scope naming the host admits both.
+#[test]
+fn ai_extract_turbofish_is_net_scoped_in_a_sandbox() {
+    let attack = "ATTACK: a sandboxed ai_extract::<T> skipped the host check";
+    let d = af_dir("sbnet");
+    for call in ["ai_extract_uncertain_i64", "ai_extract::<bool>"] {
+        for (scope, want) in [("api.trusted.io", Some(8)), ("api.anthropic.com", Some(0))] {
+            std::fs::write(
+                d.join("s.ax"),
+                format!(
+                    "fn reach(x: i64) -> i64 {{\n  match {call}(\"q\") {{ Ok(_) => 1  Err(_) => 0 }}\n}}\n\
+                     fn main() {{\n  let p = principal_root(\"p\", true, false, false, 100)\n  \
+                     let sb = sandbox_create_scoped(p, \"IO,Net,AI\", \"*\", \"*\", \"{scope}\")\n  \
+                     println(to_str(sandbox_run(sb, \"reach\", 0)))\n}}\n"
+                ),
+            )
+            .unwrap();
+            let (rc, out, err) = af_axon(&["run", "s.ax"], &d, &[("AXON_AI_MOCK", "1")]);
+            assert_eq!(rc, want, "{attack} [{call} scope {scope}]: {out}{err}");
+            if want == Some(8) {
+                assert!(
+                    err.contains("api.anthropic.com"),
+                    "{attack} [{call}]: {err}"
+                );
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// AF-4: an extract wrote no `ai_call` record and charged no cost. Each one
+/// now appends one record at the decision tier (`ai_routing::decision_tier`,
+/// the cheap model with no env override), mode `mock`, cost > 0; a second
+/// run that replays the first's recording without mock gives mode `replay`.
+#[test]
+fn extracts_write_ai_call_provenance_on_mock_and_replay() {
+    let attack = "ATTACK: extract left no ai_call record";
+    let d = af_dir("prov");
+    std::fs::write(
+        d.join("p1.ax"),
+        "fn main() {\n    match ai_complete(\"hi\") { Ok(s) => println(s) Err(e) => println(e) }\n    \
+         match ai_extract_uncertain_i64(\"how many?\") { Ok(u) => println(to_str(u.value)) Err(e) => println(e) }\n    \
+         match ai_extract::<f64>(\"how hot?\") { Ok(x) => println(to_str_f64(x)) Err(e) => println(e) }\n}\n",
+    )
+    .unwrap();
+    let (rc, out, err) = af_axon(
+        &["run", "p1.ax"],
+        &d,
+        &[("AXON_AI_MOCK", "1"), ("AXON_AI_REPLAY", "rep.cache")],
+    );
+    assert_eq!(rc, Some(0), "premise: {out}{err}");
+    let calls = af_ai_calls(&d);
+    assert_eq!(calls.len(), 3, "{attack}: {calls:#?}");
+    for rec in &calls[1..] {
+        assert!(
+            rec.contains("\"mode\":\"mock\"")
+                && rec.contains("\"tier\":\"cheap\"")
+                && rec.contains("\"model\":\"anthropic:claude-haiku\"")
+                && rec.contains("\"fn\":\"main\"")
+                && !rec.contains("\"cost_usd\":0,")
+                && !rec.contains("\"cost_usd\":0.0,"),
+            "{attack}: {rec}"
+        );
+    }
+    let _ = std::fs::remove_file(d.join("cache").join("axon").join("provenance.jsonl"));
+    let (rc, out2, err) = af_axon(&["run", "p1.ax"], &d, &[("AXON_AI_REPLAY", "rep.cache")]);
+    assert_eq!(rc, Some(0), "the replay run needs no mock: {out2}{err}");
+    assert_eq!(out2, out, "a replay reproduces the recorded answers");
+    let calls = af_ai_calls(&d);
+    assert_eq!(calls.len(), 3, "{attack} (replay): {calls:#?}");
+    assert!(
+        calls
+            .iter()
+            .all(|r| r.contains("\"mode\":\"replay\"") && !r.contains("\"cost_usd\":0,")),
+        "{attack} (replay): {calls:#?}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// AF-4: `ai_cost_spent()` counts extracts (it read 0 after any number).
+#[test]
+fn ai_cost_spent_counts_extracts() {
+    let d = af_dir("cost");
+    std::fs::write(
+        d.join("c.ax"),
+        "fn main() {\n    let _ = ai_extract::<i64>(\"how many?\")\n    \
+         let _ = ai_extract_uncertain_f64(\"how hot?\")\n    println(to_str(ai_cost_spent()))\n}\n",
+    )
+    .unwrap();
+    let (rc, out, err) = af_axon(&["run", "c.ax"], &d, &[("AXON_AI_MOCK", "1")]);
+    assert_eq!(rc, Some(0), "premise: {out}{err}");
+    let spent: i64 = out.trim().parse().unwrap_or(-1);
+    assert!(spent > 0, "ATTACK: extract cost uncounted: {out:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}

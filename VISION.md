@@ -120,7 +120,7 @@ Precise terms and the design principles behind the plain language above.
 
 | # | Capability | Status |
 |---|---|---|
-| 1 | AI as a primitive (`ai_complete`, `ai_extract<T>`, embed/tts) | shipped (`ai_complete`, `ai_extract*`) |
+| 1 | AI as a primitive (`ai_complete`, `ai_extract<T>`, embed/tts) | shipped (`ai_complete`; `ai_extract::<T>` for T in i64, f64, bool, Uncertain<i64>, Uncertain<f64>, other T is E1304) |
 | 2 | Three code zones — static / adaptive / agent | shipped (adaptive hill-climb, agent audit) |
 | 3 | Goal-directed search (`goal{…}`, `for! maximize`) | shipped (`goal_run`); surface keywords Phase 8 |
 | 4 | Uncertainty as a type + bounds (`Uncertain<T>`, `@[verify]`) | shipped |

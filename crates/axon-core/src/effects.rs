@@ -994,13 +994,15 @@ fn callback_arg_effects(
 /// The effect-table name a callee's row is listed under. The turbofish
 /// `ai_extract::<T>(p)` (a `StructLit` callee, `parser.rs`
 /// `parse_ai_extract_turbofish`) is a synthetic name no table lists by its
-/// spelling; it is the same model call as `ai_extract_i64`. Shared by the
-/// effect checker and the capability reach walker (`Reach::note`).
+/// spelling; its row is its runtime target's (`builtins::ai_extract_target`,
+/// the mapping the interpreter dispatches through). An out-of-set T is E1304
+/// at check, and is still a model call, so it takes the `i64` target's row.
+/// Shared by the effect checker and the capability reach walker
+/// (`Reach::note`).
 pub(crate) fn effect_row_name(callee: &str) -> &str {
-    if callee.starts_with("ai_extract::<") {
-        "ai_extract_i64"
-    } else {
-        callee
+    match crate::builtins::ai_extract_turbofish_type(callee) {
+        Some(t) => crate::builtins::ai_extract_target(t).unwrap_or("ai_extract_i64"),
+        None => callee,
     }
 }
 

@@ -711,7 +711,7 @@ fn closed_scalar_ret(ret: &str) -> bool {
 pub(crate) fn info(name: &str) -> Option<Info> {
     static MAP: OnceLock<HashMap<&'static str, Info>> = OnceLock::new();
     MAP.get_or_init(|| {
-        crate::builtins::BUILTINS
+        let mut map: HashMap<&'static str, Info> = crate::builtins::BUILTINS
             .iter()
             .map(|b| {
                 let class = if KERNEL_PREFIXES.iter().any(|p| b.name.starts_with(p)) {
@@ -733,7 +733,24 @@ pub(crate) fn info(name: &str) -> Option<Info> {
                     },
                 )
             })
-            .collect()
+            .collect();
+        // The `ai_extract::<T>` runtime targets have no `BUILTINS` row (no
+        // user surface), so the map above has no entry and `t_builtin_in`
+        // would do nothing for them. A model's answer is the world, as for
+        // `ai_extract_uncertain_*`. Not in `WORLD_BUILTINS`: that list's drift
+        // test requires every entry to be a builtin.
+        for &name in crate::builtins::AI_EXTRACT_HIDDEN_TARGETS {
+            map.insert(
+                name,
+                Info {
+                    class: Class::World,
+                    untype: false,
+                    writes_dict: false,
+                    as_cast: false,
+                },
+            );
+        }
+        map
     })
     .get(name)
     .copied()

@@ -2676,12 +2676,12 @@ impl Parser {
     ///
     /// Mirrors `parse_chan_new`: the type parameter T is encoded into a
     /// synthetic callee name `"ai_extract::<T>"` so infer can decode it back
-    /// into `Result<T, str>` and codegen can dispatch to the right runtime
-    /// helper.  Caller has already consumed the `ai_extract` Ident; this
-    /// expects the cursor at `::` `<`.
+    /// into `Result<T, str>` and the interpreter and codegen can dispatch to
+    /// the right runtime target.  Caller has already consumed the
+    /// `ai_extract` Ident; this expects the cursor at `::` `<`.
     ///
-    /// v1 supports T ∈ { i64, f64, bool, Uncertain<i64>, Uncertain<f64> }.
-    /// Other Ts will parse but fail downstream (codegen has no dispatch).
+    /// T ∈ { i64, f64, bool, Uncertain<i64>, Uncertain<f64> }
+    /// (`builtins::ai_extract_target`). Other Ts parse and are E1304 at check.
     fn parse_ai_extract_turbofish(&mut self) -> Result<Expr> {
         self.expect(&Token::ColonColon)?;
         self.expect(&Token::Lt)?;

@@ -661,6 +661,13 @@ impl<'p> Interp<'p> {
                         }
                         return Ok(Value::Chan(q));
                     }
+                    // `ai_extract::<T>(prompt)` lowers to a call whose callee
+                    // is the synthetic `ai_extract::<T>`. It fell through to
+                    // `eval_call`, which evaluated the callee to a value and
+                    // panicked "not callable" on a program that checked clean.
+                    if let Some(ty) = crate::builtins::ai_extract_turbofish_type(name) {
+                        return self.eval_ai_extract::<T>(ty, args, env);
+                    }
                     // R13 native FFI: a native `M::fn(...)` call dispatches to the
                     // in-process mock shim (one impl, two engines — I-2).
                     if crate::native::is_native_call(name) {
@@ -1675,42 +1682,17 @@ impl<'p> Interp<'p> {
             _ => {
                 // CS-4: a builtin name the shared predicate says does not win
                 // (`P`/`E`/`Var`) goes straight to a user fn of that name.
-                let builtin_first = crate::builtins::call_prefers_builtin(name, false)
-                    || !crate::builtins::is_builtin(name)
-                    || !self.fn_of_sym.contains_key(&s);
-                // A sealed run: what the builtin reads (its arguments, deep,
-                // and the kernel or world state its class says it reads) goes
-                // into the result, and the builtin runs under the control
-                // taint of its arguments: a callback it runs once per element
-                // of a tainted array runs a number of times the candidate
-                // chose, and what that callback stores carries it.
-                if T {
-                    self.t_builtin_in(name, argv.values());
+                // A hidden `ai_extract::<T>` target (`ai_extract_bool`, ...)
+                // is reachable through the turbofish only: an identifier of
+                // that spelling is the user's own fn (or E0001 at check).
+                let builtin_first = !crate::builtins::AI_EXTRACT_HIDDEN_TARGETS.contains(&name)
+                    && (crate::builtins::call_prefers_builtin(name, false)
+                        || !crate::builtins::is_builtin(name)
+                        || !self.fn_of_sym.contains_key(&s));
+                if let Some(v) = self.dispatch_builtin::<T>(name, &mut argv, &ats, builtin_first)? {
+                    argv.done(self);
+                    return Ok(v);
                 }
-                let pc = if T {
-                    Some(self.t_pc(self.taint.acc.get() & taint::VAL))
-                } else {
-                    None
-                };
-                // Whether sealed code ran inside the builtin (a callback).
-                let entries = if T { self.taint.entries.get() } else { 0 };
-                if builtin_first {
-                    if let Some(v) = self.call_builtin(name, argv.values())? {
-                        if T {
-                            self.t_builtin_out(name, argv.values(), &v);
-                            self.t_builtin_pick(
-                                argv.values(),
-                                &ats,
-                                self.taint.entries.get() != entries,
-                                &v,
-                            );
-                        }
-                        drop(pc);
-                        argv.done(self);
-                        return Ok(v);
-                    }
-                }
-                drop(pc);
                 let r = match self.fn_of_sym.get(&s) {
                     Some(&i) => CALLEE_FN + i,
                     None => CALLEE_NOT_FN,
@@ -1741,6 +1723,89 @@ impl<'p> Interp<'p> {
             return self.call_closure(c.clone(), argv.into_vec(self));
         }
         self.no_such_fn(name, format!("call to unknown function `{name}`"))
+    }
+
+    /// Step 2 of [`Interp::dispatch_named`]: run `name` as a builtin on the
+    /// evaluated `argv` when `builtin_first`, routing the taint (a sealed
+    /// run: what the builtin reads goes into the result, and it runs under
+    /// the control taint of its arguments). `Ok(None)`: not dispatched as a
+    /// builtin. The caller releases `argv` on `Some`. Shared with the
+    /// `ai_extract::<T>` turbofish, so a builtin is dispatched from exactly
+    /// one site (`builtins_are_dispatched_only_where_the_taint_is_routed`).
+    #[inline(always)]
+    fn dispatch_builtin<const T: bool>(
+        &self,
+        name: &str,
+        argv: &mut impl CallArgs,
+        ats: &[u8],
+        builtin_first: bool,
+    ) -> Result<Option<Value>, Flow> {
+        // A sealed run: what the builtin reads (its arguments, deep,
+        // and the kernel or world state its class says it reads) goes
+        // into the result, and the builtin runs under the control
+        // taint of its arguments: a callback it runs once per element
+        // of a tainted array runs a number of times the candidate
+        // chose, and what that callback stores carries it.
+        if T {
+            self.t_builtin_in(name, argv.values());
+        }
+        let pc = if T {
+            Some(self.t_pc(self.taint.acc.get() & taint::VAL))
+        } else {
+            None
+        };
+        // Whether sealed code ran inside the builtin (a callback).
+        let entries = if T { self.taint.entries.get() } else { 0 };
+        if builtin_first {
+            if let Some(v) = self.call_builtin(name, argv.values())? {
+                if T {
+                    self.t_builtin_out(name, argv.values(), &v);
+                    self.t_builtin_pick(
+                        argv.values(),
+                        ats,
+                        self.taint.entries.get() != entries,
+                        &v,
+                    );
+                }
+                drop(pc);
+                return Ok(Some(v));
+            }
+        }
+        drop(pc);
+        Ok(None)
+    }
+
+    /// `ai_extract::<ty>(prompt)`: evaluate the argument and dispatch the
+    /// runtime target `builtins::ai_extract_target` names through
+    /// [`Interp::dispatch_builtin`], the builtin step of every named call
+    /// (effect gate, sandbox scope, ledger, taint). The callee has no name
+    /// binding, so no local closure, user fn or sealed local can capture it.
+    /// An out-of-set `ty` is E1304 at check; a run that skipped the checker
+    /// gets the same code here rather than a "not callable" crash.
+    #[inline(never)]
+    fn eval_ai_extract<const T: bool>(&self, ty: &str, args: &[Expr], env: &mut Env) -> R {
+        let Some(target) = crate::builtins::ai_extract_target(ty) else {
+            return panic(format!(
+                "[{}] ai_extract::<{ty}> is not supported: T must be one of i64, f64, bool, \
+                 Uncertain<i64>, Uncertain<f64>",
+                crate::error::E1304
+            ));
+        };
+        let mut argv = self.take_args(args.len());
+        let mut ats = Vec::new();
+        for a in args {
+            argv.push(self.eval_t::<T>(a, env)?);
+            if T {
+                ats.push(self.tl::<T>());
+            }
+        }
+        match self.dispatch_builtin::<T>(target, &mut argv, &ats, true)? {
+            Some(v) => {
+                argv.done(self);
+                Ok(v)
+            }
+            None => panic(format!("`{target}` is not a runtime builtin")),
+        }
     }
 
     /// AX-08: `f(.., &mut a, ..)`. The checker (E0605/E0606) guarantees the

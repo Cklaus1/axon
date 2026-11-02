@@ -278,6 +278,14 @@ fn main() {
 }
 ```
 
+**Typed extraction.** `ai_extract::<T>(prompt) -> Result<T, str>` asks the model for one value of
+type `T`, where `T` is one of `i64`, `f64`, `bool`, `Uncertain<i64>`, `Uncertain<f64>`; any other
+`T` is E1304 at check (for free text use `ai_complete(prompt)`; for a record, extract each field
+with its own `ai_extract::<T>`). It runs on `axon run` (tree and VM) and natively. Under `axon run`
+each call writes one `ai_call` audit record and is charged to `ai_cost_spent()`. In a build without
+`--features asi-runtime`, with no `AXON_AI_MOCK=1` and no `AXON_AI_REPLAY` recording, `axon run`
+stops with E1300 (exit 5).
+
 **AI calls in a native build.** A natively built binary never calls a model: under `AXON_AI_MOCK=1`
 it returns the deterministic stub; with an API key it refuses with exit 2 (native builds write no
 `ai_call` audit record - run with `axon run`); with neither, the AI builtin returns `Err` with the

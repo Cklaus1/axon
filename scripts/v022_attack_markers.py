@@ -3944,3 +3944,19 @@ ATTACK_MARKERS.update({
     'M4678': r'ATTACK: a module was resolved from a group-writable directory',
     'M4679': r'ATTACK: a relative entry path lost its sibling module',
 })
+
+# asi-fixes AF-1 / AF-4: ai_extract::<T> runs and every extract is recorded
+# (ids M4600-M4607, M4620-M4622)
+ATTACK_MARKERS.update({
+    'M4600': r'ATTACK: ai_extract::<str> passed check and was dropped natively',
+    'M4601': r'ATTACK: ai_extract::<T> panicked not callable',
+    'M4602': r'ATTACK: ai_extract::<bool> dispatched to the i64 target',
+    'M4603': r'ATTACK: interp mock differs from native stub',
+    'M4604': r'ATTACK: a sandboxed ai_extract::<T> skipped the host check',
+    'M4605': r'ATTACK: an AI answer carried no world taint',
+    'M4606': r'ATTACK: a model call audited outside the AI class',
+    'M4607': r"ATTACK: a closed-row caller inherited nothing from a helper's ai_extract::<T>",
+    'M4620': r'ATTACK: extract left no ai_call record',
+    'M4621': r'ATTACK: extract cost uncounted',
+    'M4622': r'ATTACK: live extract tokens stored as 0',
+})

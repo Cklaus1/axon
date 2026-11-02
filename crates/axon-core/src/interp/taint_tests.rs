@@ -4359,3 +4359,21 @@ fn an_operator_closure_the_candidate_picked_is_never_called() {
     check_unit(&cases, true, true);
     attacks_are_live_unit(&cases);
 }
+
+/// AF-1: the `ai_extract::<T>` runtime targets have no `BUILTINS` row, so the
+/// taint class map must list them itself, or `t_builtin_in` does nothing and
+/// a model's answer reaches a candidate as clean data.
+#[test]
+fn ai_extract_targets_are_world_tainted() {
+    use super::taint::{info, Class};
+    for name in crate::builtins::AI_EXTRACT_HIDDEN_TARGETS
+        .iter()
+        .chain(["ai_extract_uncertain_i64", "ai_extract_uncertain_f64"].iter())
+    {
+        assert_eq!(
+            info(name).map(|i| i.class),
+            Some(Class::World),
+            "ATTACK: an AI answer carried no world taint (`{name}`)"
+        );
+    }
+}

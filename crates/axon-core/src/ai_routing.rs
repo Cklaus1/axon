@@ -99,10 +99,33 @@ impl Tier {
     }
 
     /// µ$ cost of a call estimated at `tokens` tokens at this tier's rate.
-    /// `rate_micro` is per 1000 tokens; negative token counts clamp to 0.
+    /// `rate_micro` is per 1000 tokens; negative token counts clamp to 0. The
+    /// division rounds UP: at the cheap rate (250 µ$/1k) a call of under four
+    /// tokens used to cost 0 µ$, so a call that reached a model left no cost
+    /// in the meter or its `ai_call` record (AF-4: most extracts are short).
     pub fn cost_micro(self, tokens: i64) -> i64 {
         let t = if tokens < 0 { 0 } else { tokens };
-        self.rate_micro() * t / 1000
+        (self.rate_micro() * t + 999) / 1000
+    }
+}
+
+/// The tier a structured DECISION call (every `ai_extract_*` target) is routed,
+/// costed and recorded at. Those calls do not follow the fn's
+/// `@[ai(policy(tier))]`: `axon_ai::decision_model()` sends the
+/// `AXON_AI_MODEL_CHEAP` model, else the `AXON_AI_MODEL_BALANCED` one, else
+/// Haiku 5.5. axon-core cannot call axon-ai without `asi-runtime`, so this is
+/// the same precedence on the tier side; set-but-empty counts as unset. Under
+/// any env, `decision_tier().api_model()` reads the variable
+/// `decision_model()` reads, and with none set both are `claude-haiku-5-5`
+/// (pinned on each side).
+pub fn decision_tier() -> Tier {
+    let set = |k: &str| std::env::var(k).is_ok_and(|v| !v.is_empty());
+    if set("AXON_AI_MODEL_CHEAP") {
+        Tier::Cheap
+    } else if set("AXON_AI_MODEL_BALANCED") {
+        Tier::Balanced
+    } else {
+        Tier::Cheap
     }
 }
 
@@ -315,5 +338,40 @@ mod tests {
         assert_eq!(Tier::Balanced.cost_micro(1000), 3000);
         // Negative clamps to 0.
         assert_eq!(Tier::Strong.cost_micro(-5), 0);
+        // A call that reached a model never costs 0: 1 cheap token is 1 µ$.
+        assert_eq!(Tier::Cheap.cost_micro(1), 1);
+        assert_eq!(Tier::Cheap.cost_micro(0), 0);
+    }
+
+    /// AF-4: extracts are recorded at `decision_tier()`, which must follow
+    /// `axon_ai::decision_model()`'s precedence (CHEAP env, else BALANCED env,
+    /// else the cheap default) and send the same model it does.
+    #[test]
+    fn decision_tier_follows_decision_model_precedence() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev: Vec<_> = ["AXON_AI_MODEL_CHEAP", "AXON_AI_MODEL_BALANCED"]
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect();
+        std::env::remove_var("AXON_AI_MODEL_CHEAP");
+        std::env::remove_var("AXON_AI_MODEL_BALANCED");
+        assert_eq!(decision_tier(), Tier::Cheap);
+        assert_eq!(decision_tier().api_model(), "claude-haiku-5-5");
+        std::env::set_var("AXON_AI_MODEL_BALANCED", "gw-balanced");
+        assert_eq!(decision_tier(), Tier::Balanced);
+        assert_eq!(decision_tier().api_model(), "gw-balanced");
+        std::env::set_var("AXON_AI_MODEL_CHEAP", "gw-cheap");
+        assert_eq!(decision_tier(), Tier::Cheap);
+        assert_eq!(decision_tier().api_model(), "gw-cheap");
+        std::env::set_var("AXON_AI_MODEL_CHEAP", "");
+        assert_eq!(decision_tier().api_model(), "gw-balanced");
+        std::env::set_var("AXON_AI_MODEL_BALANCED", "");
+        assert_eq!(decision_tier().api_model(), "claude-haiku-5-5");
+        for (k, v) in prev {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
     }
 }

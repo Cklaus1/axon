@@ -9924,23 +9924,14 @@ impl<'ctx> super::Codegen<'ctx> {
                     return self.emit_native_call(name, args, fn_val);
                 } else if name.starts_with("chan::<") {
                     self.functions.get("Chan::new").copied()
-                } else if let Some(inner) = name
-                    .strip_prefix("ai_extract::<")
-                    .and_then(|s| s.strip_suffix(">"))
-                {
-                    // ai_extract::<T> → dispatch to the per-T helper.
-                    // v1 T set: i64, f64, bool, Uncertain<i64>, Uncertain<f64>.
-                    // The concrete LLVM functions are emitted in
-                    // declare_builtins under the same names.
-                    let helper = match inner.trim() {
-                        "i64" => "ai_extract_i64",
-                        "f64" => "ai_extract_f64",
-                        "bool" => "ai_extract_bool",
-                        "Uncertain<i64>" => "ai_extract_uncertain_i64",
-                        "Uncertain<f64>" => "ai_extract_uncertain_f64",
-                        _ => "",
-                    };
-                    self.functions.get(helper).copied()
+                } else if let Some(inner) = crate::builtins::ai_extract_turbofish_type(name) {
+                    // ai_extract::<T> → dispatch to the per-T helper the
+                    // shared mapping names (`builtins::ai_extract_target`, the
+                    // one infer refuses `None` of, E1304). The concrete LLVM
+                    // functions are emitted in declare_builtins under the
+                    // same names.
+                    crate::builtins::ai_extract_target(inner)
+                        .and_then(|helper| self.functions.get(helper).copied())
                 } else {
                     self.functions.get(name.as_str()).copied()
                 }

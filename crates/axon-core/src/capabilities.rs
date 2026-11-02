@@ -185,10 +185,19 @@ pub fn ai_implicit_host() -> &'static str {
 /// (the Anthropic endpoint) and the first call argument is the PROMPT, not a
 /// host. Returns the implicit host for those builtins, or `None` for a net
 /// builtin whose first arg genuinely IS the host (`http_get`/`http_post`).
+///
+/// The hidden `ai_extract::<T>` targets (`builtins::AI_EXTRACT_HIDDEN_TARGETS`)
+/// are listed for the RUNTIME sandbox gate, which looks the host up by the
+/// name it dispatches. They are deliberately NOT in `classify_call`: the
+/// static walker classifies identifier callees by spelling, and a user fn
+/// named `ai_extract_bool` (legal, no builtin has the name) would be refused
+/// under `@[contained]`. The runtime never dispatches such a user call to the
+/// hidden target (`dispatch_named`).
 pub(crate) fn ai_builtin_host(name: &str) -> Option<&'static str> {
     if name == "ai_complete"
         || name == "ai_extract_uncertain_i64"
         || name == "ai_extract_uncertain_f64"
+        || crate::builtins::AI_EXTRACT_HIDDEN_TARGETS.contains(&name)
         || name.starts_with("ai_extract::<")
     {
         Some(ANTHROPIC_HOST)
