@@ -3211,6 +3211,14 @@ LaneB3Py (genviab-b3 build).
 For `- fs_read: ./data/\x1f`, `axon-intent compile` writes a `t.axjob` that is not valid TOML: the raw `\x1f` ends up inside a
 basic string. genviab refuses such lines since IGP-1, but the compiler should refuse them or escape them. Found by LaneB3Py.
 
+### O-GV-12 - [low] `--source-fd` equal to an installed outcome fd that is a regular file reads the outcome file as the program
+`take_outcome_channel` (`crates/axon-core/src/main.rs`) accepts any open fd above 2 as `AXON_OUTCOME_FD`, a regular file included.
+If `axon run --source-fd N` names that same fd, `read_source_fd` reads the empty outcome file as source and closes it: exit 2
+"no main function defined", and no outcome record is written. Pipes on fds 3/4 (what axon-os passes) are refused correctly
+("not a regular file" / EBADF after the nonce fd is closed). Needs an already miswired supervisor. Fix direction: refuse a
+`--source-fd` equal to the installed outcome fd, or require the outcome fd to be a pipe. Probe `/var/tmp/r51-tmp/SweepB3/probe.py`.
+Found by SweepB3 (batch 3 integrated sweep).
+
 ## hx3 author quirks, 2026-10-31 (QuirkRepro triage of the hx3 N5a authors' notes, `/var/tmp/r51-tmp/QuirkRepro/REPORT.md`; fixes NOT in this batch)
 
 ### O-HX3-02 - [high] False refusal: a move inside one block match arm plus a move in another arm is E0601

@@ -42,6 +42,7 @@ pub const BINARY_VARS: &[&str] = &[
     "AXON_BIN",
     "AXON_REF_BIN",
     "AXON_GUEST_KERNEL",
+    "AXON_GUEST_INIT",
     "AXON_OS",
     "AXON_VM",
     "AXON_FABRIC_BIN",

@@ -45,7 +45,7 @@ cargo build --locked -q -p axon-core --no-default-features --bin axon --release 
 cargo build --locked -q -p axon-guest-init --features host-fs-mirror --release --target "$T" \
     || { echo "guest_fs_corpus: FAIL — cargo build axon-guest-init" >&2; exit 2; }
 use_built AXON axon "$T" release
-use_built GINIT axon-guest-init "$T" release
+use_built AXON_GUEST_INIT axon-guest-init "$T" release
 
 W="$(mktemp -d "${TMPDIR:-/tmp}/guest-fs-corpus.XXXXXX")"
 trap 'rm -rf "$W"' EXIT
@@ -80,7 +80,7 @@ sys.exit(0 if c.get("unknown") is False
     a="$(run a "$AXON" run program.ax)"
     a2="$(run a2 "$AXON" run program.ax)"
     f="$(exec 3<"$d/job/program.ax" && run f "$AXON" run --source-fd 3 program.ax)"
-    b="$(run b "$GINIT" --host-fs-mirror --source-fd 3=program.ax -- "$AXON" run --source-fd 3 program.ax)"
+    b="$(run b "$AXON_GUEST_INIT" --host-fs-mirror --source-fd 3=program.ax -- "$AXON" run --source-fd 3 program.ax)"
     # A difference is only evidence when the program is deterministic: before
     # reporting one, run (a) three more times; any change makes it
     # NONDETERMINISTIC (the differing run is recorded as (a2)).
@@ -95,7 +95,7 @@ sys.exit(0 if c.get("unknown") is False
     rm -rf "$d"
 }
 export -f one
-export W AXON GINIT
+export W AXON AXON_GUEST_INIT
 xargs -0 -P "$JOBS" -I{} bash -c 'one "$1"' _ {} < "$W/list" | sort > "$OUT"
 
 python3 -I - "$OUT" <<'PY'
