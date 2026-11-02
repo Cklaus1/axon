@@ -4011,7 +4011,7 @@ ATTACK_MARKERS.update({
     'M4622': r'ATTACK: live extract tokens stored as 0',
 })
 
-# ceilings CE-1, CE-7, CE-8, CE-2, CE-10, CE-4 (ids M4680-M4694)
+# ceilings CE-1, CE-7, CE-8, CE-2, CE-10, CE-4, CE-6, O-AF-09 (ids M4680-M4699)
 ATTACK_MARKERS.update({
     'M4680': r'ATTACK: an operator net scope left the AI endpoint unpinned',
     'M4681': r'ATTACK: a declared host outside the operator net scope was pinned',
@@ -4028,4 +4028,9 @@ ATTACK_MARKERS.update({
     'M4692': r'ATTACK: a callee.s larger budget widened the caller.s budget',
     'M4693': r'ATTACK: an ai_extract call escaped the fn.s AI budget',
     'M4694': r'ATTACK: an unbudgeted helper laundered AI calls past the caller.s budget',
+    'M4695': r'ATTACK: a call was dispatched without room for its reply',
+    'M4696': r'ATTACK: a model reply was not charged to the run token cap',
+    'M4697': r'ATTACK: an ai_extract call escaped the run token cap',
+    'M4698': r'ATTACK: a billed unusable extract reply was not recorded or charged',
+    'M4699': r'ATTACK: a billed unparsed reply dropped its tokens',
 })

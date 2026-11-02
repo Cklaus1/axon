@@ -566,3 +566,181 @@ fn budget_within_extent_runs() {
     assert_eq!(code, Some(0), "a budget of 3 covers 3 calls: {t}");
     assert!(t.contains('3'), "{t}");
 }
+
+// -- CE-6: the run token cap reserves the reply cap and charges the reply ----
+
+/// Run `src` under `AXON_AI_MOCK=1` with `AXON_BUDGET_TOKENS=cap`.
+fn run_capped(tag: &str, src: &str, cap: &str) -> (Option<i32>, String) {
+    let d = tmp(tag);
+    let o = run(
+        &d,
+        src,
+        &[("AXON_AI_MOCK", "1"), ("AXON_BUDGET_TOKENS", cap)],
+    );
+    (o.status.code(), text(&o))
+}
+
+/// A call's reply counts against the cap. Two mock calls on the prompt `"x"`:
+/// the first settles 1 (prompt) + 16 (the 63-byte stub reply) = 17, so the
+/// second, which reserves 1 + 16 + 1024 = 1041, does not fit 1050 and halts
+/// naming `used 17`. Before CE-6 each call charged its prompt estimate (1)
+/// only, so both ran.
+#[test]
+fn token_cap_charges_reply() {
+    const SRC: &str = "fn main() {\n    let _a = ai_complete(\"x\")\n    let _b = ai_complete(\"x\")\n    println(\"finished\")\n}\n";
+    let (code, t) = run_capped("ce6_reply", SRC, "1050");
+    assert_eq!(
+        code,
+        Some(5),
+        "ATTACK: a model reply was not charged to the run token cap: {t}"
+    );
+    assert!(
+        t.contains("E1303") && t.contains("used 17"),
+        "ATTACK: a model reply was not charged to the run token cap: {t}"
+    );
+    assert!(!t.contains("finished"), "{t}");
+    // Control: a cap that fits both reservations runs to completion.
+    let (code, t) = run_capped("ce6_reply_ok", SRC, "1100");
+    assert_eq!(code, Some(0), "{t}");
+}
+
+/// Before dispatch a call must fit its worst case, the reply cap included: a
+/// cap of 100 refuses the first call (E1303, exit 5) whatever its prompt.
+#[test]
+fn token_cap_reserves_max_tokens() {
+    const SRC: &str = "fn main() {\n    match ai_complete(\"x\") { Ok(s) => println(\"reply \" + s), Err(e) => println(\"err \" + e) }\n}\n";
+    let (code, t) = run_capped("ce6_reserve", SRC, "100");
+    assert_eq!(
+        code,
+        Some(5),
+        "ATTACK: a call was dispatched without room for its reply: {t}"
+    );
+    assert!(
+        t.contains("E1303") && t.contains("reserves 1041"),
+        "ATTACK: a call was dispatched without room for its reply: {t}"
+    );
+    assert!(!t.contains("reply "), "{t}");
+}
+
+/// Every `ai_extract::<T>` is metered against the run token cap like
+/// `ai_complete`: before CE-6 an extract never touched it.
+#[test]
+fn token_cap_meters_extracts() {
+    const SRC: &str = "fn main() {\n    match ai_extract::<i64>(\"how many\") { Ok(n) => println(\"got \" + to_str(n)), Err(e) => println(\"err \" + e) }\n}\n";
+    let (code, t) = run_capped("ce6_extract", SRC, "100");
+    assert_eq!(
+        code,
+        Some(5),
+        "ATTACK: an ai_extract call escaped the run token cap: {t}"
+    );
+    assert!(
+        t.contains("E1303"),
+        "ATTACK: an ai_extract call escaped the run token cap: {t}"
+    );
+    assert!(!t.contains("got "), "{t}");
+}
+
+// -- O-AF-09: a billed reply that cannot be used is recorded and charged ----
+
+/// Serve every connection on a fresh 127.0.0.1 listener with HTTP 200 and
+/// `body`; return the base URL. The thread is detached.
+#[cfg(feature = "asi-runtime")]
+fn sink_200(body: &'static str) -> String {
+    use std::io::{Read, Write};
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let Ok(mut s) = s else { continue };
+            // Read the request head and its body before answering.
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = s.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                let head = String::from_utf8_lossy(&buf).to_string();
+                if let Some(end) = head.find("\r\n\r\n") {
+                    let len = head[..end]
+                        .lines()
+                        .find_map(|l| {
+                            let (k, v) = l.split_once(':')?;
+                            k.eq_ignore_ascii_case("content-length")
+                                .then(|| v.trim().parse::<usize>().ok())?
+                        })
+                        .unwrap_or(0);
+                    if buf.len() >= end + 4 + len {
+                        break;
+                    }
+                }
+            }
+            let _ = write!(
+                s,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    url
+}
+
+/// A live reply the provider billed (usage 100 + 20) that the code cannot use
+/// answers the program with `Err`, and is still charged (`ai_cost_spent() >
+/// 0`) and recorded (one `ai_call` provenance row). Before the fix the
+/// tokens were dropped on the parse-error path: cost 0, no record.
+#[cfg(feature = "asi-runtime")]
+#[test]
+fn billed_unusable_reply_is_recorded_and_charged() {
+    const EXTRACT: &str = "@[contained(net: [\"*\"])]\nfn main() {\n    match ai_extract::<i64>(\"how many\") { Ok(n) => println(\"got \" + to_str(n)), Err(e) => println(\"err \" + e) }\n    println(\"cost=\" + to_str(ai_cost_spent()))\n}\n";
+    const COMPLETE: &str = "@[contained(net: [\"*\"])]\nfn main() {\n    match ai_complete(\"hi\") { Ok(s) => println(\"reply \" + s), Err(e) => println(\"err \" + e) }\n    println(\"cost=\" + to_str(ai_cost_spent()))\n}\n";
+    // A tool answer of the wrong type, and a reply with no text block.
+    const WRONG_TYPE: &str = r#"{"content":[{"type":"tool_use","name":"answer","input":{"value":"seven"}}],"usage":{"input_tokens":100,"output_tokens":20}}"#;
+    const NO_TEXT: &str =
+        r#"{"content":[{"type":"image"}],"usage":{"input_tokens":100,"output_tokens":20}}"#;
+    for (tag, src, body, attack) in [
+        (
+            "oaf09_extract",
+            EXTRACT,
+            WRONG_TYPE,
+            "ATTACK: a billed unusable extract reply was not recorded or charged",
+        ),
+        (
+            "oaf09_complete",
+            COMPLETE,
+            NO_TEXT,
+            "ATTACK: a billed unusable ai_complete reply was not recorded or charged",
+        ),
+    ] {
+        let d = tmp(tag);
+        let url = sink_200(body);
+        let o = run(
+            &d,
+            src,
+            &[
+                ("ANTHROPIC_API_KEY", "sk-dummy"),
+                ("AXON_AI_BASE_URL", url.as_str()),
+            ],
+        );
+        let t = text(&o);
+        assert_eq!(o.status.code(), Some(0), "{t}");
+        assert!(
+            t.contains("err "),
+            "the unusable reply must reach the program as Err: {t}"
+        );
+        let cost: i64 = t
+            .lines()
+            .find_map(|l| l.strip_prefix("cost="))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or_else(|| panic!("no cost line: {t}"));
+        assert!(cost > 0, "{attack}: cost {cost}: {t}");
+        let log =
+            std::fs::read_to_string(d.join("cache/axon/provenance.jsonl")).unwrap_or_default();
+        let rows = log
+            .lines()
+            .filter(|l| l.contains("\"event\":\"ai_call\""))
+            .count();
+        assert_eq!(rows, 1, "{attack}: {log}");
+        assert!(log.contains("unusable reply"), "{attack}: {log}");
+    }
+}

@@ -47,7 +47,7 @@ pub const ALL_ENV_VARS: &[(&str, &str)] = &[
     ("AXON_AI_MODEL_CHEAP", "override the model `@[ai(tier: cheap)]` resolves to (default `claude-haiku-5-5`); also the first choice for every `ai_extract_*` call and `axon improve discover --ai`"),
     ("AXON_AI_MODEL_BALANCED", "override the model `@[ai(tier: balanced)]` resolves to (default `claude-sonnet-4-6`); `ai_extract_*` and `axon improve discover --ai` fall back to it when AXON_AI_MODEL_CHEAP is unset, then to `claude-haiku-5-5`"),
     ("AXON_AI_MODEL_STRONG", "override the model `@[ai(tier: strong)]` resolves to"),
-    ("AXON_BUDGET_TOKENS", "run-wide AI token cap; the call that would exceed it halts with E1303 (exit 5) BEFORE dispatch. A malformed value fails closed to 0"),
+    ("AXON_BUDGET_TOKENS", "run-wide AI token cap (provider tokens, input + output): every model call (ai_complete, ai_extract::<T>) first reserves prompt bytes + 16 + the 1024-token reply cap and halts with E1303 (exit 5) BEFORE dispatch if that does not fit, then is charged what it used. A malformed value fails closed to 0"),
     ("AXON_DOTENV", "path to a `.env` file to load for AI configuration"),
     ("AXON_DOTENV_WALK", "walk parent directories looking for a `.env` file"),
     // ── Capabilities, principals, audit ──────────────────────────────────

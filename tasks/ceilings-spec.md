@@ -552,6 +552,15 @@ earlier [INFERENCE: fixtures under `crates/axon-guest-init/tests/policy_refusals
 
 **Cost.** ~40 lines in `builtins.rs:6036-6215`. Sequenced after AF-4 [pending asi-fixes-spec.md] so extracts settle the same way.
 
+`[REVISED: build CE-6]` Built as A. `ai_call_prologue` reserves `prompt bytes + 16 + axon_ai::MAX_TOKENS` (1024, a const
+pinned to the interpreter's copy by a compile-time assert) for every model call, extracts included; `settle_run_tokens`
+charges real usage (live) or `est + reply.len()/4 + 1` (mock, replay) after the call answers. A third fail-first test,
+`token_cap_meters_extracts`, covers the extract half (before CE-6 extracts never touched the cap). The cli_run test's caps
+became 1100/1200. O-AF-09 built in the same window: `axon_ai` typed/plain completions return `AiCallError { message,
+tokens }`, a billed 2xx reply that cannot be used keeps its tokens, and the interpreter records it (`ai_call`, reason
+`unusable reply`), costs it and settles it before returning `Err` (`billed_unusable_reply_is_recorded_and_charged`, a
+127.0.0.1 sink, `asi-runtime` only). The live-reservation bound (input tokens ≤ prompt bytes + 16) stays [INFERENCE].
+
 ---
 
 ### CE-7 (P1, decided) `goal_*` dispatch demands `AI`/`Net` that its metric checks for itself

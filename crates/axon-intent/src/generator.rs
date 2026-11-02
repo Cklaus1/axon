@@ -209,7 +209,7 @@ impl Generator for AiGenerator {
                 text,
                 tokens: u64::try_from(tokens).ok(),
             }),
-            Ok(Err(reason)) => Err(GenFailure::Failed { reason }),
+            Ok(Err(e)) => Err(GenFailure::Failed { reason: e.message }),
             Err(_) => Err(GenFailure::TimedOut {
                 after_ms: self.timeout.as_millis() as u64,
             }),

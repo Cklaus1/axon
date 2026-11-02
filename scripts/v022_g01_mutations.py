@@ -14618,5 +14618,32 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test ceiling', 'budget_covers_unbudgeted_helper'),
 ]
 
+# ceilings CE-6 (ids M4695-M4697, NH-C6 A): the run token cap reserves the
+# reply cap before dispatch and charges what each call used, extracts included.
+# O-AF-09 (ids M4698-M4699): a billed reply that cannot be used keeps its
+# tokens, and the interpreter records and charges it.
+MUTATIONS += [
+    ('M4695', 'CE-6: the reservation omits the reply cap', 'crates/axon-core/src/interp/builtins.rs',
+     '                .saturating_add(AI_MAX_REPLY_TOKENS);',
+     '                .saturating_add(0);',
+     'axon-core', '--no-default-features --test ceiling', 'token_cap_reserves_max_tokens'),
+    ('M4696', 'CE-6: an answered call is never charged to the run cap', 'crates/axon-core/src/interp/builtins.rs',
+     '            .set(self.tokens_used.get().saturating_add(tokens.max(0)));',
+     '            .set(self.tokens_used.get().saturating_add(0 * tokens.max(0)));',
+     'axon-core', '--no-default-features --test ceiling', 'token_cap_charges_reply'),
+    ('M4697', 'CE-6: extracts skip the run token cap', 'crates/axon-core/src/interp/builtins.rs',
+     '        if let Some(cap) = self.token_budget {',
+     '        if let Some(cap) = self.token_budget.filter(|_| name == "ai_complete") {',
+     'axon-core', '--no-default-features --test ceiling', 'token_cap_meters_extracts'),
+    ('M4698', 'O-AF-09: a billed unusable live reply is neither recorded nor charged', 'crates/axon-core/src/interp/builtins.rs',
+     '        if e.tokens > 0 {',
+     '        if false && e.tokens > 0 {',
+     'axon-core', '--no-default-features --features asi-runtime --test ceiling', 'billed_unusable_reply_is_recorded_and_charged'),
+    ('M4699', 'O-AF-09: a structured reply with no answer drops its billed tokens', 'crates/axon-ai/src/lib.rs',
+     '            Ok((input, tokens))\n        }\n        Err(msg) => Err(AiCallError::billed(\n            msg,\n            usage_total(p, &json, prompt, text.len()),',
+     '            Ok((input, tokens))\n        }\n        Err(msg) => Err(AiCallError::billed(\n            msg,\n            0 * usage_total(p, &json, prompt, text.len()),',
+     'axon-ai', '--lib', 'tests::unusable_structured_reply_keeps_its_billed_tokens'),
+]
+
 if __name__ == "__main__":
     main()

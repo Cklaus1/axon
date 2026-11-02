@@ -25013,8 +25013,10 @@ fn ambient_token_budget_env_var_is_actually_enforced() {
     // per-fn CALL count the author declares, this is a run-wide TOKEN cap
     // imposed from outside that the program cannot raise.
     //
-    // Under AXON_AI_MOCK the token estimate is the deterministic prompt-length
-    // one, so the arithmetic below is stable: each prompt is 15 tokens.
+    // Ceilings CE-6: before dispatch each call reserves its worst case, the
+    // prompt's bytes (57 here) + 16 framing + the 1024-token reply cap = 1097;
+    // after it answers it settles what it used (under AXON_AI_MOCK the
+    // deterministic estimate: 15 for the prompt + ~16 for the stub reply).
     let dir = std::env::temp_dir();
     let f = dir.join(format!("axon_tokbudget_{}.ax", std::process::id()));
     std::fs::write(
@@ -25052,11 +25054,12 @@ fn ambient_token_budget_env_var_is_actually_enforced() {
     assert!(sout.contains("finished"), "{sout}");
 
     // (2) A cap that admits the first call but not the second halts on the
-    // SECOND — proving the accounting is cumulative per-TOKEN, not per-call.
-    let (code20, sout20, serr20) = run(Some("20"));
+    // SECOND — proving the accounting is cumulative per-TOKEN, not per-call:
+    // 0 + 1097 fits 1100, ~31 + 1097 does not.
+    let (code20, sout20, serr20) = run(Some("1100"));
     assert_eq!(code20, 5, "over-budget must be AI-policy exit 5: {serr20}");
     assert!(
-        serr20.contains("E1303") && serr20.contains("token budget of 20"),
+        serr20.contains("E1303") && serr20.contains("token budget of 1100"),
         "the halt must name the code and the cap: {serr20}"
     );
     assert!(
@@ -25066,7 +25069,7 @@ fn ambient_token_budget_env_var_is_actually_enforced() {
 
     // (3) NEGATIVE CONTROL — a cap large enough for both calls runs to
     // completion. Without this, (2) passes for any cap that always fires.
-    let (code30, sout30, serr30) = run(Some("30"));
+    let (code30, sout30, serr30) = run(Some("1200"));
     assert_eq!(code30, 0, "a sufficient cap must not fire: {serr30}");
     assert!(sout30.contains("finished"), "{sout30}");
 

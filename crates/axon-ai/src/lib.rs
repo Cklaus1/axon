@@ -542,6 +542,42 @@ pub fn decision_model() -> String {
         .unwrap_or_else(|| DECISION_MODEL_DEFAULT.to_string())
 }
 
+/// The reply cap every request this crate sends carries (`max_tokens`). The
+/// interpreter's run token cap (`AXON_BUDGET_TOKENS`, ceilings CE-6) reserves
+/// it before dispatch, so a call cannot take a run past its cap.
+pub const MAX_TOKENS: i64 = 1024;
+
+/// A model call that failed. `tokens` is what the provider billed for it: the
+/// total token count of a reply that arrived but could not be used (no answer
+/// in it, or not the requested type), else 0 (nothing was billed: no key, the
+/// request failed, or the provider refused it). O-AF-09: the interpreter
+/// records and charges a billed failure before it returns the `Err`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AiCallError {
+    pub message: String,
+    pub tokens: i64,
+}
+
+impl AiCallError {
+    /// A failure the provider billed `tokens` for.
+    fn billed(message: String, tokens: i64) -> Self {
+        AiCallError { message, tokens }
+    }
+}
+
+impl From<String> for AiCallError {
+    /// A failure before any reply arrived: nothing billed.
+    fn from(message: String) -> Self {
+        AiCallError { message, tokens: 0 }
+    }
+}
+
+impl std::fmt::Display for AiCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 fn ai_complete_inner(prompt: &str) -> Result<String, String> {
     ai_complete_inner_model(prompt, DEFAULT_MODEL)
 }
@@ -551,7 +587,9 @@ fn ai_complete_inner(prompt: &str) -> Result<String, String> {
 /// strong model instead of the hardcoded sonnet. The interpreter passes
 /// `Tier::api_model()` (itself env-overridable for a proxy/gateway deployment).
 fn ai_complete_inner_model(prompt: &str, model: &str) -> Result<String, String> {
-    ai_complete_inner_model_usage(prompt, model).map(|(text, _tokens)| text)
+    ai_complete_inner_model_usage(prompt, model)
+        .map(|(text, _tokens)| text)
+        .map_err(|e| e.message)
 }
 
 /// `ai_complete` returning BOTH the reply and the REAL total token count
@@ -560,7 +598,7 @@ fn ai_complete_inner_model(prompt: &str, model: &str) -> Result<String, String> 
 /// estimate from the prompt (~4 chars/token) so mocked cost stays reproducible
 /// and identical to the interpreter's pre-dispatch estimate; only a LIVE call
 /// reports the model's actual usage.
-fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i64), String> {
+fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i64), AiCallError> {
     // Deterministic mock: the interpreter's stub + the same token estimate the
     // pre-dispatch meter uses, so mock metering is exact and reproducible.
     if ai_mock_enabled() {
@@ -575,12 +613,12 @@ fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i
     let body = match p {
         Provider::Anthropic => serde_json::json!({
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": MAX_TOKENS,
             "messages": [ { "role": "user", "content": prompt } ]
         }),
         Provider::OpenAi => serde_json::json!({
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": MAX_TOKENS,
             "messages": [ { "role": "user", "content": prompt } ]
         }),
     };
@@ -601,11 +639,17 @@ fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i
             Provider::Anthropic => "Anthropic",
             Provider::OpenAi => "OpenAI",
         };
-        return Err(format!("{label} API error {}: {}", status.as_u16(), text));
+        return Err(format!("{label} API error {}: {}", status.as_u16(), text).into());
     }
 
-    let json: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Failed to parse API response as JSON: {}", e))?;
+    // From here on a 2xx reply arrived, so the provider billed the call: a
+    // reply the code cannot use still carries its token count (O-AF-09).
+    let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        AiCallError::billed(
+            format!("Failed to parse API response as JSON: {}", e),
+            unparsed_reply_tokens(prompt, &text),
+        )
+    })?;
 
     // Extract the reply text — different response shapes per provider.
     let reply = match p {
@@ -614,20 +658,33 @@ fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i
             .as_array()
             .and_then(|arr| arr.first())
             .and_then(|item| item["text"].as_str())
-            .ok_or_else(|| format!("Unexpected Anthropic response shape: {}", text))?
-            .to_string(),
+            .map(str::to_string)
+            .ok_or_else(|| format!("Unexpected Anthropic response shape: {}", text)),
         // OpenAI: choices[0].message.content
         Provider::OpenAi => json["choices"]
             .as_array()
             .and_then(|arr| arr.first())
             .and_then(|item| item["message"]["content"].as_str())
-            .ok_or_else(|| format!("Unexpected OpenAI response shape: {}", text))?
-            .to_string(),
+            .map(str::to_string)
+            .ok_or_else(|| format!("Unexpected OpenAI response shape: {}", text)),
     };
+    match reply {
+        Ok(reply) => {
+            let total = usage_total(p, &json, prompt, reply.len());
+            Ok((reply, total))
+        }
+        Err(msg) => Err(AiCallError::billed(
+            msg,
+            usage_total(p, &json, prompt, text.len()),
+        )),
+    }
+}
 
-    let total = usage_total(p, &json, prompt, reply.len());
-
-    Ok((reply, total))
+/// The billed token count of a 2xx reply whose body is not JSON (so it has no
+/// `usage`): the same prompt/reply-length estimate [`usage_total`] falls back
+/// to.
+fn unparsed_reply_tokens(prompt: &str, text: &str) -> i64 {
+    (prompt.len() as i64) / 4 + 1 + (text.len() as i64) / 4
 }
 
 /// The REAL total token count (input + output) of a response `json`, for
@@ -672,7 +729,7 @@ pub fn complete_with_model(prompt: &str, model: &str) -> Result<String, String> 
 /// interpreter uses this on a LIVE call so the cost reflects what the model
 /// actually charged, not a prompt-length estimate. Under AXON_AI_MOCK the count
 /// is the same deterministic estimate the pre-dispatch meter uses (reproducible).
-pub fn complete_with_model_usage(prompt: &str, model: &str) -> Result<(String, i64), String> {
+pub fn complete_with_model_usage(prompt: &str, model: &str) -> Result<(String, i64), AiCallError> {
     ai_complete_inner_model_usage(prompt, model)
 }
 
@@ -738,7 +795,7 @@ pub fn post_json_bearer(
 pub fn build_typed_uncertain_body(prompt: &str, value_type: &str) -> serde_json::Value {
     serde_json::json!({
         "model": DECISION_MODEL_DEFAULT,
-        "max_tokens": 1024,
+        "max_tokens": MAX_TOKENS,
         "tools": [{
             "name": "answer",
             "description": "Return your answer with a confidence score in [0.0, 1.0].",
@@ -816,7 +873,7 @@ fn build_openai_tool_body(
     };
     serde_json::json!({
         "model": model,
-        "max_tokens": 1024,
+        "max_tokens": MAX_TOKENS,
         "tools": [{
             "type": "function",
             "function": {
@@ -876,7 +933,7 @@ fn complete_structured_inner(
     prompt: &str,
     value_type: &str,
     with_confidence: bool,
-) -> Result<(serde_json::Value, i64), String> {
+) -> Result<(serde_json::Value, i64), AiCallError> {
     // AUDIT T35 (finding RT-01): this went straight to `api_key(p)?` and a live
     // billed POST with no mock check anywhere in it or its callers — only the
     // plain `ai_complete` path honoured AXON_AI_MOCK. Every `ai_extract_*`
@@ -941,7 +998,7 @@ fn complete_structured_inner(
             Provider::Anthropic => "Anthropic",
             Provider::OpenAi => "OpenAI",
         };
-        return Err(format!("{label} API error {}: {}", status.as_u16(), text));
+        return Err(format!("{label} API error {}: {}", status.as_u16(), text).into());
     }
 
     parse_structured_response(p, &text, prompt)
@@ -955,34 +1012,60 @@ fn parse_structured_response(
     p: Provider,
     text: &str,
     prompt: &str,
-) -> Result<(serde_json::Value, i64), String> {
-    let json: serde_json::Value = serde_json::from_str(text)
-        .map_err(|e| format!("Failed to parse API response as JSON: {}", e))?;
+) -> Result<(serde_json::Value, i64), AiCallError> {
+    let json: serde_json::Value = serde_json::from_str(text).map_err(|e| {
+        AiCallError::billed(
+            format!("Failed to parse API response as JSON: {}", e),
+            unparsed_reply_tokens(prompt, text),
+        )
+    })?;
     let input = match p {
         Provider::Anthropic => parse_tool_use_input(&json).cloned(),
         Provider::OpenAi => parse_openai_tool_args(&json),
-    }?;
-    let tokens = usage_total(p, &json, prompt, input.to_string().len());
-    Ok((input, tokens))
+    };
+    match input {
+        Ok(input) => {
+            let tokens = usage_total(p, &json, prompt, input.to_string().len());
+            Ok((input, tokens))
+        }
+        Err(msg) => Err(AiCallError::billed(
+            msg,
+            usage_total(p, &json, prompt, text.len()),
+        )),
+    }
+}
+
+/// The answer object's `value`, or an error that keeps the reply's billed
+/// `tokens` (O-AF-09).
+fn answer_value(input: &serde_json::Value, tokens: i64) -> Result<serde_json::Value, AiCallError> {
+    input.get("value").cloned().ok_or_else(|| {
+        AiCallError::billed(
+            format!("structured output missing `value`: {}", input),
+            tokens,
+        )
+    })
 }
 
 fn complete_typed_uncertain_inner(
     prompt: &str,
     value_type: &str,
-) -> Result<(serde_json::Value, f64, i64), String> {
+) -> Result<(serde_json::Value, f64, i64), AiCallError> {
     let (input, tokens) = complete_structured_inner(prompt, value_type, true)?;
+    let value = answer_value(&input, tokens)?;
+    let billed = |msg: String| AiCallError::billed(msg, tokens);
 
-    let value = input
-        .get("value")
-        .ok_or_else(|| format!("structured output missing `value`: {}", input))?
-        .clone();
-
-    let confidence = input["confidence"]
-        .as_f64()
-        .ok_or_else(|| format!("structured output `confidence` is not a number: {}", input))?;
+    let confidence = input["confidence"].as_f64().ok_or_else(|| {
+        billed(format!(
+            "structured output `confidence` is not a number: {}",
+            input
+        ))
+    })?;
 
     if !(0.0..=1.0).contains(&confidence) {
-        return Err(format!("confidence {} out of range [0.0, 1.0]", confidence));
+        return Err(billed(format!(
+            "confidence {} out of range [0.0, 1.0]",
+            confidence
+        )));
     }
 
     Ok((value, confidence, tokens))
@@ -991,23 +1074,30 @@ fn complete_typed_uncertain_inner(
 /// Send `prompt` to Anthropic with a structured-output tool that constrains
 /// the answer to `{value: integer, confidence: number}`.  Returns
 /// `(value, confidence, tokens)` on success; `tokens` is the call's total
-/// token count (`usage`), which the interpreter meters cost by.
-pub fn complete_typed_uncertain_i64(prompt: &str) -> Result<(i64, f64, i64), String> {
+/// token count (`usage`), which the interpreter meters cost by. A reply that
+/// is not an integer is an `Err` that keeps its billed tokens.
+pub fn complete_typed_uncertain_i64(prompt: &str) -> Result<(i64, f64, i64), AiCallError> {
     let (value, confidence, tokens) = complete_typed_uncertain_inner(prompt, "integer")?;
-    let v = value
-        .as_i64()
-        .ok_or_else(|| format!("tool_use input `value` is not an integer: {}", value))?;
+    let v = value.as_i64().ok_or_else(|| {
+        AiCallError::billed(
+            format!("tool_use input `value` is not an integer: {}", value),
+            tokens,
+        )
+    })?;
     Ok((v, confidence, tokens))
 }
 
 /// Send `prompt` to Anthropic with a structured-output tool that constrains
 /// the answer to `{value: number, confidence: number}`.  Returns
 /// `(value, confidence, tokens)` on success.
-pub fn complete_typed_uncertain_f64(prompt: &str) -> Result<(f64, f64, i64), String> {
+pub fn complete_typed_uncertain_f64(prompt: &str) -> Result<(f64, f64, i64), AiCallError> {
     let (value, confidence, tokens) = complete_typed_uncertain_inner(prompt, "number")?;
-    let v = value
-        .as_f64()
-        .ok_or_else(|| format!("tool_use input `value` is not a number: {}", value))?;
+    let v = value.as_f64().ok_or_else(|| {
+        AiCallError::billed(
+            format!("tool_use input `value` is not a number: {}", value),
+            tokens,
+        )
+    })?;
     Ok((v, confidence, tokens))
 }
 
@@ -1026,7 +1116,7 @@ pub fn complete_typed_uncertain_f64(prompt: &str) -> Result<(f64, f64, i64), Str
 pub fn build_typed_flat_body(prompt: &str, value_type: &str) -> serde_json::Value {
     serde_json::json!({
         "model": DECISION_MODEL_DEFAULT,
-        "max_tokens": 1024,
+        "max_tokens": MAX_TOKENS,
         "tools": [{
             "name": "answer",
             "description": "Return your answer as the single `value` field.",
@@ -1051,45 +1141,47 @@ pub fn build_typed_flat_body(prompt: &str, value_type: &str) -> serde_json::Valu
 fn complete_typed_flat_inner(
     prompt: &str,
     value_type: &str,
-) -> Result<(serde_json::Value, i64), String> {
+) -> Result<(serde_json::Value, i64), AiCallError> {
     let (input, tokens) = complete_structured_inner(prompt, value_type, false)?;
-    let value = input
-        .get("value")
-        .ok_or_else(|| format!("structured output missing `value`: {}", input))?
-        .clone();
-    Ok((value, tokens))
+    Ok((answer_value(&input, tokens)?, tokens))
+}
+
+/// The flat answer `value` projected by `as_t`, or an error naming `what`
+/// that keeps the reply's billed `tokens` (O-AF-09).
+fn flat_typed<T>(
+    prompt: &str,
+    value_type: &str,
+    what: &str,
+    as_t: impl Fn(&serde_json::Value) -> Option<T>,
+) -> Result<(T, i64), AiCallError> {
+    let (value, tokens) = complete_typed_flat_inner(prompt, value_type)?;
+    match as_t(&value) {
+        Some(v) => Ok((v, tokens)),
+        None => Err(AiCallError::billed(
+            format!("tool_use input `value` is not {what}: {value}"),
+            tokens,
+        )),
+    }
 }
 
 /// Send `prompt` and return a single `i64` and the call's total token count.
 /// Tool schema constrains `{value: integer}`; rejection (no integer) becomes
-/// `Err`.
-pub fn complete_typed_i64(prompt: &str) -> Result<(i64, i64), String> {
-    let (value, tokens) = complete_typed_flat_inner(prompt, "integer")?;
-    let v = value
-        .as_i64()
-        .ok_or_else(|| format!("tool_use input `value` is not an integer: {}", value))?;
-    Ok((v, tokens))
+/// `Err`, which keeps the reply's billed tokens.
+pub fn complete_typed_i64(prompt: &str) -> Result<(i64, i64), AiCallError> {
+    flat_typed(prompt, "integer", "an integer", serde_json::Value::as_i64)
 }
 
 /// Send `prompt` and return a single `f64` and the call's total token count.
 /// Tool schema constrains `{value: number}`.  Integers are accepted (JSON
 /// numbers).
-pub fn complete_typed_f64(prompt: &str) -> Result<(f64, i64), String> {
-    let (value, tokens) = complete_typed_flat_inner(prompt, "number")?;
-    let v = value
-        .as_f64()
-        .ok_or_else(|| format!("tool_use input `value` is not a number: {}", value))?;
-    Ok((v, tokens))
+pub fn complete_typed_f64(prompt: &str) -> Result<(f64, i64), AiCallError> {
+    flat_typed(prompt, "number", "a number", serde_json::Value::as_f64)
 }
 
 /// Send `prompt` and return a single `bool` and the call's total token count.
 /// Tool schema constrains `{value: boolean}`.
-pub fn complete_typed_bool(prompt: &str) -> Result<(bool, i64), String> {
-    let (value, tokens) = complete_typed_flat_inner(prompt, "boolean")?;
-    let v = value
-        .as_bool()
-        .ok_or_else(|| format!("tool_use input `value` is not a boolean: {}", value))?;
-    Ok((v, tokens))
+pub fn complete_typed_bool(prompt: &str) -> Result<(bool, i64), AiCallError> {
+    flat_typed(prompt, "boolean", "a boolean", serde_json::Value::as_bool)
 }
 
 // -- Layer-3 typed-extraction extern bridges ----------------------------------
@@ -1168,7 +1260,7 @@ pub extern "C" fn __axon_ai_extract_uncertain_i64(
         }
         Err(e) => {
             unsafe {
-                write_typed_err(&e, out_err_len, out_err_ptr);
+                write_typed_err(&e.message, out_err_len, out_err_ptr);
             }
             1
         }
@@ -1219,7 +1311,7 @@ pub extern "C" fn __axon_ai_extract_uncertain_f64(
         }
         Err(e) => {
             unsafe {
-                write_typed_err(&e, out_err_len, out_err_ptr);
+                write_typed_err(&e.message, out_err_len, out_err_ptr);
             }
             1
         }
@@ -1274,7 +1366,7 @@ pub extern "C" fn __axon_ai_extract_i64(
         }
         Err(e) => {
             unsafe {
-                write_typed_err(&e, out_err_len, out_err_ptr);
+                write_typed_err(&e.message, out_err_len, out_err_ptr);
             }
             1
         }
@@ -1319,7 +1411,7 @@ pub extern "C" fn __axon_ai_extract_f64(
         }
         Err(e) => {
             unsafe {
-                write_typed_err(&e, out_err_len, out_err_ptr);
+                write_typed_err(&e.message, out_err_len, out_err_ptr);
             }
             1
         }
@@ -1369,7 +1461,7 @@ pub extern "C" fn __axon_ai_extract_bool(
         }
         Err(e) => {
             unsafe {
-                write_typed_err(&e, out_err_len, out_err_ptr);
+                write_typed_err(&e.message, out_err_len, out_err_ptr);
             }
             1
         }
@@ -1546,6 +1638,31 @@ mod tests {
         let bare = r#"{"content":[{"type":"tool_use","name":"answer","input":{"value":1}}]}"#;
         let (_, tokens) = parse_structured_response(Provider::Anthropic, bare, "abcdefgh").unwrap();
         assert_eq!(tokens, 8 / 4 + 1 + r#"{"value":1}"#.len() as i64 / 4);
+    }
+
+    /// O-AF-09: a 2xx reply the code cannot use was still billed, so its
+    /// `Err` keeps the token count (the interpreter records and charges it).
+    #[test]
+    fn unusable_structured_reply_keeps_its_billed_tokens() {
+        let no_answer = r#"{"content":[{"type":"text","text":"seven"}],
+            "usage":{"input_tokens":100,"output_tokens":20}}"#;
+        let e = parse_structured_response(Provider::Anthropic, no_answer, "q")
+            .expect_err("no answer tool block");
+        assert_eq!(
+            e.tokens, 120,
+            "ATTACK: a billed unparsed reply dropped its tokens"
+        );
+        let not_json = "this is not json at all";
+        let e = parse_structured_response(Provider::OpenAi, not_json, "abcdefgh")
+            .expect_err("not JSON");
+        assert_eq!(
+            e.tokens,
+            8 / 4 + 1 + not_json.len() as i64 / 4,
+            "ATTACK: a billed unparsed reply dropped its tokens"
+        );
+        // Before any reply: nothing billed.
+        let e: AiCallError = "HTTP request failed".to_string().into();
+        assert_eq!(e.tokens, 0);
     }
 
     /// The structured-output request body must declare a single `answer` tool

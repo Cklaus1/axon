@@ -308,7 +308,9 @@ it returns the deterministic stub; with an API key it refuses with exit 2 (nativ
 (`ai_complete` and `ai_extract::<T>` alike) while that fn's activation is on the stack, its
 callees' calls included; the next call stops the run with E1301 (exit 5) naming the fn. Each
 activation starts a fresh count, and a callee's own budget can only narrow, never widen, its
-caller's. Native builds refuse a budgeted fn (E0910).
+caller's. Native builds refuse a budgeted fn (E0910). The operator's run token cap
+(`AXON_BUDGET_TOKENS`, a ceiling's `ai_tokens`) counts input + output: a call that cannot fit
+its prompt plus a 1024-token reply stops with E1303 (exit 5) before dispatch.
 
 **Capability sandboxing** — the compiler refuses any I/O a function didn't declare:
 
