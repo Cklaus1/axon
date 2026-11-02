@@ -4046,7 +4046,7 @@ ATTACK_MARKERS.update({
     'M4742': r'ATTACK: a run went past its steps ceiling \(vm\)',
     'M4743': r'ATTACK: a fused while loop ran past the step ceiling',
     'M4744': r'ATTACK: a fused for loop ran past the step ceiling',
-    'M4745': r'ATTACK: calls were not counted as steps',
+    'M4745': r'ATTACK: (calls were not counted as steps|a run went past its steps ceiling \(tree\))',
     'M4746': r'ATTACK: the engines stopped at different steps',
     'M4747': r'ATTACK: a run went past its wall_ms ceiling',
     'M4748': r'ATTACK: a run went past its steps ceiling',
