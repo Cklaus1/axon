@@ -903,13 +903,19 @@ stage_end
 fi
 # guest-fs GF-4: the K5 kernel gate, whose Layer 3 runs the flagship good/evil
 # pair in the Linux microVM. SKIP (77: no root/KVM/firecracker/built image) is
-# a NON-RESULT, reported as such, never as a pass.
+# a NON-RESULT: printed, recorded in $SKIPLOG, and FATAL under
+# AXON_HARNESS_STRICT=1 (the kernel_enforce_test / b263_qualify convention).
 if lane_runs S25; then
 stage_begin S25 "axon kernel gate (Linux microVM good/evil)"
 bash scripts/axon_kernel_gate.sh; rc=$?
 case $rc in
   0) echo "axon kernel gate: PASS" ;;
-  77) echo "axon kernel gate: SKIP (non-result: Layer 3 not run on this host)" ;;
+  77)
+    echo "axon kernel gate: SKIP (non-result: Layer 3 not run on this host)"
+    echo "axon_kernel_gate" >> "$SKIPLOG"
+    if [ "${AXON_HARNESS_STRICT:-}" = 1 ]; then
+      fail "axon_kernel_gate SKIPPED under AXON_HARNESS_STRICT=1"
+    fi ;;
   *) fail "axon kernel gate" ;;
 esac
 stage_end "$rc"

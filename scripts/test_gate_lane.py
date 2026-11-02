@@ -622,6 +622,51 @@ def fast_only_checks_run_in_full_gate():
     assert "tier=fast" not in rm and "--fast) fast=yes" not in rm
 
 
+@test
+def kernel_gate_skip_follows_harness_skip_convention():
+    """S25 (guest-fs GF-4): `axon_kernel_gate.sh` exit 77 is a non-result. Like kernel_enforce_test and
+    b263_qualify it is printed, appended to $SKIPLOG, and FATAL under AXON_HARNESS_STRICT=1 only; 0 passes
+    and anything else fails. The stage block is gate.sh's own text, run against a stubbed harness."""
+    text = open(GATE).read()
+    m = re.search(r"^if lane_runs S25; then\n.*?^fi\n", text, re.S | re.M)
+    assert m, "gate.sh has no S25 stage block"
+    block = m.group(0)
+
+    def run(harness_rc, strict):
+        d = tempfile.mkdtemp(prefix="gate-s25-test-")
+        os.makedirs(os.path.join(d, "scripts"))
+        with open(os.path.join(d, "scripts", "axon_kernel_gate.sh"), "w") as f:
+            f.write(f"exit {harness_rc}\n")
+        skiplog = os.path.join(d, "skips.log")
+        open(skiplog, "w").close()
+        tsv = os.path.join(d, "stages.tsv")
+        script = "\n".join([
+            "set -uo pipefail", "TIER=gate", 'PAR_DIR=""; PAR_NAMES=(); PAR_PIDS=()',
+            f'STAGE_TSV="{tsv}"; : > "$STAGE_TSV"', f'SKIPLOG="{skiplog}"',
+            "lane_runs() { return 0; }",
+            gate_functions("fail", "kill_tree", "par_abort", "stage_begin", "stage_end"),
+            block, "echo AFTER_STAGE"])
+        env = {k: v for k, v in os.environ.items() if k != "AXON_HARNESS_STRICT"}
+        if strict:
+            env["AXON_HARNESS_STRICT"] = "1"
+        r = subprocess.run(["bash", "-c", script], cwd=d, env=env, capture_output=True, text=True)
+        return r, open(skiplog).read()
+
+    r, skips = run(77, strict=False)
+    assert r.returncode == 0 and "AFTER_STAGE" in r.stdout, r.stdout + r.stderr
+    assert "SKIP (non-result" in r.stdout, r.stdout
+    assert skips == "axon_kernel_gate\n", f"ATTACK: a skipped kernel gate was not recorded in $SKIPLOG: {skips!r}"
+    r, skips = run(77, strict=True)
+    assert r.returncode == 1 and "AFTER_STAGE" not in r.stdout, \
+        "ATTACK: a skipped kernel gate passed under AXON_HARNESS_STRICT=1: " + r.stdout + r.stderr
+    assert "axon_kernel_gate SKIPPED under AXON_HARNESS_STRICT=1" in r.stdout, r.stdout
+    r, skips = run(0, strict=True)
+    assert r.returncode == 0 and "axon kernel gate: PASS" in r.stdout and skips == "", r.stdout + r.stderr
+    r, skips = run(1, strict=False)
+    assert r.returncode == 1 and "AFTER_STAGE" not in r.stdout and skips == "", r.stdout + r.stderr
+
+
+
 def main(argv):
     want = set(argv)
     failed = 0
