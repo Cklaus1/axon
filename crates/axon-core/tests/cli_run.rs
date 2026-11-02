@@ -44798,3 +44798,576 @@ fn a_string_followed_by_punctuation_or_a_spaced_keyword_stays_legal() {
         );
     }
 }
+
+// ── AF-2 (asi-fixes): match arms are alternatives for moves, and a `return`
+// in an arm or loop does not move for the code after it (O-HX3-02, O-HX3-03).
+// The programs are the spec's probes (tasks/asi-fixes-spec.md, AF-2 table);
+// the keep rows assert the code AND the line the table records.
+
+/// `axon check --json` on `src`: its exit code, the (code, line) of every
+/// error diagnostic, and the whole output for messages.
+fn af2_check(tag: &str, src: &str) -> (Option<i32>, Vec<(String, u64)>, String) {
+    let f = tmp_ax(&format!("af2_{tag}"), src);
+    let out = axon()
+        .args(["check", "--json"])
+        .arg(&f)
+        .output()
+        .expect("spawn axon check");
+    let _ = std::fs::remove_file(&f);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let errors = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|d| d["severity"] == "error")
+        .map(|d| {
+            (
+                d["code"].as_str().unwrap_or_default().to_string(),
+                d["line"].as_u64().unwrap_or_default(),
+            )
+        })
+        .collect();
+    (out.status.code(), errors, text)
+}
+
+/// `axon run` on `src` under `AXON_AI_MOCK=1`: its exit code and stdout.
+fn af2_run(tag: &str, src: &str) -> (Option<i32>, String) {
+    let f = tmp_ax(&format!("af2_run_{tag}"), src);
+    let out = axon()
+        .arg("run")
+        .arg(&f)
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .expect("spawn axon run");
+    let _ = std::fs::remove_file(&f);
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+const AF2_H2: &str = r#"fn label(k: i64, name: str) -> str {
+    let r = match k {
+        0 => {
+            let t = name
+            t + "0"
+        }
+        1 => {
+            let t = name
+            t + "1"
+        }
+        _ => "other"
+    }
+    r
+}
+fn main() {
+    println(label(0, "a"))
+    println(label(1, "b"))
+}
+"#;
+const AF2_H2TWIN: &str = r#"fn label(k: i64, name: str) -> str {
+    let r = if k == 0 {
+        let t = name
+        t + "0"
+    } else if k == 1 {
+        let t = name
+        t + "1"
+    } else { "other" }
+    r
+}
+fn main() {
+    println(label(0, "a"))
+    println(label(1, "b"))
+}
+"#;
+const AF2_HP4: &str = r#"fn f(k: i64, name: str) -> str {
+    let r = match k {
+        0 => {
+            let t = name
+            return t
+        }
+        _ => "other"
+    }
+    r + name
+}
+fn main() {
+    println(f(0, "a"))
+    println(f(1, "b"))
+}
+"#;
+const AF2_HP7: &str = r#"fn f(k: i64, name: str) -> str {
+    match k {
+        0 => {
+            let t = name
+            println(t)
+            exit(3)
+        }
+        _ => {}
+    }
+    name
+}
+fn main() {
+    println(f(1, "b"))
+    println(f(0, "a"))
+}
+"#;
+const AF2_HP7IF: &str = r#"fn f(k: i64, name: str) -> str {
+    if k == 0 {
+        let t = name
+        println(t)
+        exit(3)
+    }
+    name
+}
+fn main() {
+    println(f(1, "b"))
+    println(f(0, "a"))
+}
+"#;
+const AF2_GD: &str = r#"fn f(k: i64, name: str) -> str {
+    match k {
+        0 if len(name) > 0 => return name
+        _ => {}
+    }
+    name
+}
+fn main() { println(f(0, "a")) println(f(1, "b")) }
+"#;
+const AF2_NEST: &str = r#"fn f(o: Option<i64>, name: str) -> str {
+    match o {
+        Some(v) => {
+            match v {
+                0 => return name
+                _ => {}
+            }
+        }
+        None => {}
+    }
+    name
+}
+fn main() { println(f(Some(0), "a")) println(f(None, "b")) }
+"#;
+const AF2_HMINNER: &str = r#"type P = { x: i64 }
+fn f(p: P, xs: [i64]) -> i64 {
+    match len(xs) {
+        0 => {
+            let t = p
+            for y in xs { break }
+            return t.x
+        }
+        _ => {}
+    }
+    p.x
+}
+fn main() { println(to_str(f(P { x: 7 }, []))) println(to_str(f(P { x: 8 }, [1]))) }
+"#;
+const AF2_RJ: &str = r#"fn f(k: i64, s: str) -> str {
+    let mut s = s
+    let t = s
+    match k {
+        0 => { s = "zero" }
+        _ => { s = "other" }
+    }
+    s + t
+}
+fn main() { println(f(1, "a")) println(f(0, "a")) }
+"#;
+const AF2_RJ1: &str = r#"fn f(k: i64, s: str) -> str {
+    let mut s = s
+    let t = s
+    match k {
+        _ => { s = "other" }
+    }
+    s + t
+}
+fn main() { println(f(1, "a")) }
+"#;
+const AF2_RJD: &str = r#"fn f(k: i64, s: str) -> str {
+    let mut s = s
+    let t = s
+    match k {
+        0 => { return t }
+        _ => { s = "other" }
+    }
+    s + t
+}
+fn main() { println(f(1, "a")) println(f(0, "a")) }
+"#;
+const AF2_H3A: &str = r#"type P = { x: i64, y: i64 }
+fn b(p: P, o: Option<i64>) -> P {
+    match o {
+        None => return p
+        Some(_) => {}
+    }
+    P { x: p.x * 2, y: p.y }
+}
+fn main() {
+    println(to_str(b(P { x: 1, y: 2 }, None).x) + to_str(b(P { x: 1, y: 2 }, Some(1)).x))
+}
+"#;
+const AF2_H3ATWIN: &str = r#"type P = { x: i64, y: i64 }
+fn b(p: P, none: bool) -> P {
+    if none { return p }
+    P { x: p.x * 2, y: p.y }
+}
+fn main() {
+    println(to_str(b(P { x: 1, y: 2 }, true).x) + to_str(b(P { x: 1, y: 2 }, false).x))
+}
+"#;
+const AF2_H3B: &str = r#"fn first_neg(xs: [i64]) -> [i64] {
+    for x in xs {
+        if x < 0 { return xs }
+    }
+    []
+}
+fn main() {
+    println(to_str(len(first_neg([1, 0 - 2]))))
+    println(to_str(len(first_neg([1, 2]))))
+}
+"#;
+const AF2_H3BTWIN: &str = r#"fn first_neg(xs: [i64]) -> [i64] {
+    for i in 0..len(xs) {
+        if xs[i] < 0 { return xs }
+    }
+    []
+}
+fn main() {
+    println(to_str(len(first_neg([1, 0 - 2]))))
+    println(to_str(len(first_neg([1, 2]))))
+}
+"#;
+const AF2_LP1: &str = r#"fn f(xs: [i64], name: str) -> str {
+    for x in xs {
+        return name
+    }
+    name
+}
+fn main() { println(f([], "a")) println(f([1], "b")) }
+"#;
+const AF2_WL: &str = r#"fn f(n: i64, name: str) -> str {
+    let mut i = 0
+    while i < n {
+        return name
+    }
+    name
+}
+fn main() { println(f(1, "a")) println(f(0, "b")) }
+"#;
+const AF2_HP9: &str = r#"fn f(s: str) -> str {
+    ref r = s
+    if len(s) > 0 { return s }
+    "empty"
+}
+fn main() { println(f("a")) }
+"#;
+const AF2_HP1: &str = r#"fn f(k: i64, name: str) -> str {
+    let r = match k {
+        0 => {
+            let t = name
+            t + "0"
+        }
+        _ => "other"
+    }
+    r + name
+}
+fn main() { println(f(0, "a")) }
+"#;
+const AF2_HP2: &str = r#"fn f(k: i64, name: str) -> str {
+    match k {
+        0 => {
+            let t = name
+            t + name
+        }
+        _ => "other"
+    }
+}
+fn main() { println(f(0, "a")) }
+"#;
+const AF2_HP3: &str = r#"fn f(k: i64, name: str) -> str {
+    let r = match k {
+        0 => {
+            let t = name
+            t + "0"
+        }
+        1 => return "one"
+        _ => "other"
+    }
+    r + name
+}
+fn main() { println(f(0, "a")) }
+"#;
+const AF2_HP5: &str = r#"fn f(k: i64, name: str) -> str {
+    let t = name
+    match k {
+        0 => return name
+        _ => {}
+    }
+    t
+}
+fn main() { println(f(0, "a")) }
+"#;
+const AF2_HP6: &str = r#"fn f(k: i64, name: str) -> str {
+    let r = match k {
+        0 => {
+            let t = name
+            t + "0"
+        }
+        _ => {
+            let u = name
+            u + "1"
+        }
+    }
+    r + name
+}
+fn main() { println(f(0, "a")) }
+"#;
+const AF2_HP8: &str = r#"fn f(xs: [i64], name: str) -> str {
+    let mut out = ""
+    for x in xs {
+        match x {
+            0 => {
+                let t = name
+                break
+            }
+            _ => {}
+        }
+    }
+    out + name
+}
+fn main() { println(f([1, 0], "a")) }
+"#;
+const AF2_HMBR: &str = r#"type P = { x: i64 }
+fn f(p: P, xs: [i64]) -> i64 {
+    for x in xs {
+        match x {
+            0 => {
+                if x == 0 {
+                    let t = p
+                    break
+                }
+                return 1
+            }
+            _ => {}
+        }
+    }
+    p.x
+}
+fn main() { println(to_str(f(P { x: 7 }, [0]))) }
+"#;
+const AF2_BR2: &str = r#"type P = { x: i64 }
+fn f(p: P, c: bool) -> i64 {
+    let mut i = 0
+    while i < 3 {
+        if i == 0 {
+            if c {
+                let t = p
+                break
+            }
+        }
+        i = i + 1
+    }
+    p.x
+}
+fn main() { println(to_str(f(P { x: 7 }, true))) }
+"#;
+const AF2_HP9B: &str = r#"fn f(s: str) -> str {
+    ref r = s
+    let t = s
+    t
+}
+fn main() { println(f("a")) }
+"#;
+const AF2_EX: &str = r#"fn f(k: i64, name: str) -> str {
+    let o = Some(|c: i64| c + 1)
+    match o {
+        Some(exit) => { let t = name; exit(3) }
+        None => { 0 }
+    }
+    name
+}
+fn main() { println(f(0, "a")) }
+"#;
+const AF2_RA: &str = r#"fn f(k: i64, s: str) -> str {
+    let mut s = s
+    match k {
+        0 => { let t = s }
+        _ => { s = "new" }
+    }
+    s
+}
+fn main() { println(f(1, "a")) println(f(0, "a")) }
+"#;
+const AF2_GM: &str = r#"fn f(k: i64, name: str) -> str {
+    match k {
+        0 if { let t = name; false } => return "x"
+        _ => {}
+    }
+    name
+}
+fn main() { println(f(0, "a")) }
+"#;
+
+/// O-HX3-02: a move in one arm is not seen by another arm, and the moves of
+/// an arm that returns or exits never reach the code after the match. Each
+/// program checks clean and runs with the output of its `if` twin.
+#[test]
+fn match_arms_are_alternatives_for_moves() {
+    let cross = "ATTACK: cross-arm move refused a valid program";
+    let inner = "ATTACK: inner-loop break kept a returning arm live";
+    let rebound = "ATTACK: a name re-bound in every arm refused";
+    for (tag, src, attack) in [
+        ("h2", AF2_H2, cross),
+        ("hp4", AF2_HP4, cross),
+        ("hp7", AF2_HP7, cross),
+        ("gd", AF2_GD, cross),
+        ("nest", AF2_NEST, cross),
+        ("hminner", AF2_HMINNER, inner),
+        ("rj", AF2_RJ, rebound),
+        ("rj1", AF2_RJ1, rebound),
+        ("rjd", AF2_RJD, rebound),
+    ] {
+        let (rc, errors, text) = af2_check(tag, src);
+        assert_eq!((rc, errors), (Some(0), vec![]), "{attack} [{tag}]: {text}");
+    }
+    for (tag, src, twin) in [("h2", AF2_H2, AF2_H2TWIN), ("hp7", AF2_HP7, AF2_HP7IF)] {
+        assert_eq!(
+            af2_run(tag, src),
+            af2_run(&format!("{tag}_twin"), twin),
+            "[{tag}]: the match form must run like its if twin"
+        );
+    }
+    for (tag, src, want) in [
+        ("h2", AF2_H2, (Some(0), "a0\nb1\n")),
+        ("hp4", AF2_HP4, (Some(0), "a\notherb\n")),
+        ("hp7", AF2_HP7, (Some(3), "b\na\n")),
+        ("gd", AF2_GD, (Some(0), "a\nb\n")),
+        ("nest", AF2_NEST, (Some(0), "a\nb\n")),
+        ("hminner", AF2_HMINNER, (Some(0), "7\n8\n")),
+        ("rj", AF2_RJ, (Some(0), "othera\nzeroa\n")),
+        ("rj1", AF2_RJ1, (Some(0), "othera\n")),
+        ("rjd", AF2_RJD, (Some(0), "othera\na\n")),
+    ] {
+        let (rc, out) = af2_run(tag, src);
+        assert_eq!((rc, out.as_str()), want, "[{tag}]: run");
+    }
+}
+
+/// O-HX3-03: a `return` in a match arm or a loop body does not move the value
+/// for the code after it, and returning a `ref`-borrowed owner (the
+/// collection a `for` iterates) is not a move error: the return ends the frame.
+#[test]
+fn return_in_arm_or_loop_does_not_move_for_code_after() {
+    let loop_ret = "ATTACK: loop return marked value moved after loop";
+    for (tag, src, attack) in [
+        (
+            "h3a",
+            AF2_H3A,
+            "ATTACK: a returning arm's move reached the code after the match",
+        ),
+        ("h3b", AF2_H3B, "ATTACK: return xs in for x in xs refused"),
+        ("lp1", AF2_LP1, loop_ret),
+        ("wl", AF2_WL, loop_ret),
+        (
+            "hp9",
+            AF2_HP9,
+            "ATTACK: a return of a ref-borrowed owner refused",
+        ),
+    ] {
+        let (rc, errors, text) = af2_check(tag, src);
+        assert_eq!((rc, errors), (Some(0), vec![]), "{attack} [{tag}]: {text}");
+    }
+    for (tag, src, twin) in [("h3a", AF2_H3A, AF2_H3ATWIN), ("h3b", AF2_H3B, AF2_H3BTWIN)] {
+        assert_eq!(
+            af2_run(tag, src),
+            af2_run(&format!("{tag}_twin"), twin),
+            "[{tag}]: the match/for form must run like its twin"
+        );
+    }
+    for (tag, src, want) in [
+        ("h3a", AF2_H3A, "12\n"),
+        ("h3b", AF2_H3B, "2\n0\n"),
+        ("lp1", AF2_LP1, "a\nb\n"),
+        ("wl", AF2_WL, "a\nb\n"),
+        ("hp9", AF2_HP9, "a\n"),
+    ] {
+        let (rc, out) = af2_run(tag, src);
+        assert_eq!((rc, out.as_str()), (Some(0), want), "[{tag}]: run");
+    }
+}
+
+/// The holes AF-2 must not open: each stays refused with the code and line
+/// the spec's table records (hp6 only at :12, its cross-arm :8 is gone).
+#[test]
+fn move_hole_probes_stay_refused() {
+    let live = "ATTACK: a move in a live arm escaped the match";
+    let brk = "ATTACK: break move in loop body forgotten";
+    for (tag, src, code, line, attack) in [
+        ("hp1", AF2_HP1, "E0601", 9, live),
+        (
+            "hp2",
+            AF2_HP2,
+            "E0601",
+            5,
+            "ATTACK: a use after a move in the same arm was accepted",
+        ),
+        ("hp3", AF2_HP3, "E0601", 10, live),
+        ("hp5", AF2_HP5, "E0601", 3, "ATTACK: returned a moved value"),
+        ("hp6", AF2_HP6, "E0601", 12, live),
+        ("hp8", AF2_HP8, "E0601", 12, brk),
+        (
+            "hmbr",
+            AF2_HMBR,
+            "E0601",
+            15,
+            "ATTACK: a break-escaping move discarded with its arm",
+        ),
+        ("br2", AF2_BR2, "E0601", 13, brk),
+        (
+            "hp9b",
+            AF2_HP9B,
+            "E0602",
+            3,
+            "ATTACK: a move of a ref-borrowed value was accepted",
+        ),
+        (
+            "ex",
+            AF2_EX,
+            "E0601",
+            7,
+            "ATTACK: a closure named exit read as a diverging call",
+        ),
+    ] {
+        let (rc, errors, text) = af2_check(tag, src);
+        assert_eq!(
+            (rc, errors),
+            (Some(2), vec![(code.to_string(), line)]),
+            "{attack} [{tag}]: {text}"
+        );
+    }
+}
+
+/// Decided refusals (spec §6.10): `ra` moves `s` on arm 0 and then returns
+/// it, and `gm`'s guard moves `name` on every call that tries arm 0. Both ran
+/// only because the interpreter shares values.
+#[test]
+fn use_after_move_on_one_arm_is_refused() {
+    for (tag, src, line, attack) in [
+        (
+            "ra",
+            AF2_RA,
+            7,
+            "ATTACK: a move on one live arm was forgotten after the match",
+        ),
+        ("gm", AF2_GM, 6, "ATTACK: guard read a moved value"),
+    ] {
+        let (rc, errors, text) = af2_check(tag, src);
+        assert_eq!(
+            (rc, errors),
+            (Some(2), vec![("E0601".to_string(), line)]),
+            "{attack} [{tag}]: {text}"
+        );
+    }
+}

@@ -3909,3 +3909,18 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M4570': r'ATTACK: a model call audited outside the AI class: `ai_extract_uncertain_i64`',
 })
+
+# asi-fixes AF-2 (ids M4608-M4616, M4624, M4625)
+ATTACK_MARKERS.update({
+    'M4608': r'ATTACK: cross-arm move refused a valid program \[h2\]',
+    'M4609': r'ATTACK: a move in a live arm escaped the match \[hp1\]',
+    'M4610': r'ATTACK: a break-escaping move discarded with its arm \[hmbr\]',
+    'M4611': r'ATTACK: inner-loop break kept a returning arm live \[hminner\]',
+    'M4612': r'ATTACK: return xs in for x in xs refused \[h3b\]',
+    'M4613': r'ATTACK: returned a moved value \[hp5\]',
+    'M4614': r'ATTACK: loop return marked value moved after loop \[lp1\]',
+    'M4615': r'ATTACK: break move in loop body forgotten \[hp8\]',
+    'M4616': r'ATTACK: guard read a moved value \[gm\]',
+    'M4624': r'ATTACK: a closure named exit read as a diverging call \[ex\]',
+    'M4625': r'ATTACK: a name re-bound in every arm refused \[rj\]',
+})

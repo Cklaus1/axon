@@ -14213,5 +14213,57 @@ MUTATIONS += [
      'axon-core', '--test cli_run', 'every_model_call_audits_as_ai'),
 ]
 
+# asi-fixes AF-2: match arms are alternatives for moves; a return in an arm or
+# loop does not move for the code after it (ids M4608-M4616, M4624, M4625)
+_AF2 = 'crates/axon-core/src/borrow.rs'
+_AF2_T = '--no-default-features --test cli_run'
+MUTATIONS += [
+    ('M4608', 'AF-2: match arms share one state, so a move in one arm is seen by the next', _AF2,
+     '            self.bindings = tried.clone();\n',
+     '            self.bindings = joined.clone().unwrap_or_else(|| tried.clone());\n',
+     'axon-core', _AF2_T, 'match_arms_are_alternatives_for_moves'),
+    ('M4609', 'AF-2: the live-arm join drops a live arm\'s move', _AF2,
+     '    if *a == BindingState::Moved || b == BindingState::Moved {\n',
+     '    if false {\n',
+     'axon-core', _AF2_T, 'move_hole_probes_stay_refused'),
+    ('M4610', 'AF-2: a break/continue escaping a returning arm is not seen, so the arm is discarded', _AF2,
+     '            Expr::Break | Expr::Continue => return true,\n',
+     '            Expr::Break | Expr::Continue => return false,\n',
+     'axon-core', _AF2_T, 'move_hole_probes_stay_refused'),
+    ('M4611', 'AF-2: a break bound by a nested loop counts as escaping the arm', _AF2,
+     '            Expr::For { start, end, .. } => work.extend([&**start, &**end]),\n',
+     '            Expr::For { body, .. } => work.extend(body.iter().map(|s| &s.expr)),\n',
+     'axon-core', _AF2_T, 'match_arms_are_alternatives_for_moves'),
+    ('M4612', 'AF-2: returning a ref-borrowed owner is a move error (E0602)', _AF2,
+     '                let borrowed = matches!(v.as_ref(), Expr::Ident(n)\n'
+     '                    if self.bindings.get(n) == Some(&BindingState::Borrowed));\n',
+     '                let borrowed = false;\n',
+     'axon-core', _AF2_T, 'return_in_arm_or_loop_does_not_move_for_code_after'),
+    ('M4613', 'AF-2: returning a moved value is exempt like a borrowed one', _AF2,
+     '                    if self.bindings.get(n) == Some(&BindingState::Borrowed));\n',
+     '                    if matches!(self.bindings.get(n), Some(BindingState::Borrowed | BindingState::Moved)));\n',
+     'axon-core', _AF2_T, 'move_hole_probes_stay_refused'),
+    ('M4614', 'AF-2: a loop body ending in return never restores the state before the loop', _AF2,
+     '    stmts_diverge(body, exit_local) && !body.iter().any(|s| has_escaping_jump(&s.expr))\n',
+     '    false\n',
+     'axon-core', _AF2_T, 'return_in_arm_or_loop_does_not_move_for_code_after'),
+    ('M4615', 'AF-2: every loop body restores the state before the loop, so a break move is forgotten', _AF2,
+     '        let snapshot = loop_body_diverges(body, exit_local).then(|| self.bindings.clone());\n',
+     '        let snapshot = Some(self.bindings.clone());\n',
+     'axon-core', _AF2_T, 'move_hole_probes_stay_refused'),
+    ('M4616', 'AF-2: a guard is walked on a per-arm copy, so its move is lost for later arms', _AF2,
+     '                tried = self.bindings.clone();\n',
+     '',
+     'axon-core', _AF2_T, 'use_after_move_on_one_arm_is_refused'),
+    ('M4624', 'AF-2: an `exit` bound by the arm pattern is read as the diverging builtin', _AF2,
+     '            let binds_exit = pattern_binds_exit(&arm.pattern);\n',
+     '            let binds_exit = false;\n',
+     'axon-core', _AF2_T, 'move_hole_probes_stay_refused'),
+    ('M4625', 'AF-2: the join starts from the pre-match state, so a name re-bound in every arm stays moved', _AF2,
+     '        let mut joined: Option<HashMap<String, BindingState>> = None;\n',
+     '        let mut joined = Some(snapshot.clone());\n',
+     'axon-core', _AF2_T, 'match_arms_are_alternatives_for_moves'),
+]
+
 if __name__ == "__main__":
     main()

@@ -94,13 +94,72 @@ fn branch_diverges(e: &Expr, exit_local: bool) -> bool {
                     crate::builtins::call_has_mut_arg(args),
                 )
         }
-        Expr::Block(stmts) => stmts.split_last().is_some_and(|(last, init)| {
-            let binds_exit = init.iter().any(|s| {
-                matches!(&s.expr, Expr::Let { name, .. } | Expr::Own { name, .. } | Expr::RefBind { name, .. } if name == "exit")
-            });
-            branch_diverges(&last.expr, exit_local || binds_exit)
-        }),
+        Expr::Block(stmts) => stmts_diverge(stmts, exit_local),
         _ => false,
+    }
+}
+
+/// [`branch_diverges`] for a statement list: its last statement diverges,
+/// with an `exit` bound by an earlier statement counted as local.
+fn stmts_diverge(stmts: &[crate::ast::Stmt], exit_local: bool) -> bool {
+    stmts.split_last().is_some_and(|(last, init)| {
+        let binds_exit = init.iter().any(|s| {
+            matches!(&s.expr, Expr::Let { name, .. } | Expr::Own { name, .. } | Expr::RefBind { name, .. } if name == "exit")
+        });
+        branch_diverges(&last.expr, exit_local || binds_exit)
+    })
+}
+
+/// Whether `e` contains a `break` or `continue` that leaves `e`, i.e. one not
+/// bound by a loop nested inside `e`. Lambda bodies are not entered (they are
+/// checked separately); `spawn` and `select` bodies are (a jump there counts
+/// as escaping, which keeps moves: the refusing direction).
+fn has_escaping_jump(e: &Expr) -> bool {
+    let mut work = vec![e];
+    let mut kids = Vec::new();
+    while let Some(e) = work.pop() {
+        match e {
+            Expr::Break | Expr::Continue => return true,
+            Expr::Lambda { .. } => {}
+            // A nested loop binds the jumps of its body; its header does not.
+            Expr::While { cond, .. } => work.push(cond),
+            Expr::WhileLet { expr, .. } => work.push(expr),
+            Expr::For { start, end, .. } => work.extend([&**start, &**end]),
+            _ => {
+                crate::ast::children(e, &mut kids);
+                work.append(&mut kids);
+            }
+        }
+    }
+    false
+}
+
+/// Whether `pat` binds the name `exit` (a call to it then runs the bound
+/// value, not the builtin, so it does not diverge).
+fn pattern_binds_exit(pat: &crate::ast::Pattern) -> bool {
+    let mut names = Vec::new();
+    crate::resolver::collect_pattern_binding_names(pat, &mut names);
+    names.iter().any(|n| n == "exit")
+}
+
+/// Whether a loop body never falls out of the loop: its last statement
+/// diverges and no `break`/`continue` leaves it. Every iteration that starts
+/// then ends in `return`/`exit`, so none of the body's moves reach the code
+/// after the loop, and the zero-iteration path keeps the state before it.
+fn loop_body_diverges(body: &[crate::ast::Stmt], exit_local: bool) -> bool {
+    stmts_diverge(body, exit_local) && !body.iter().any(|s| has_escaping_jump(&s.expr))
+}
+
+/// A name's state after a match, from two live arms' end states: `Moved` if
+/// either arm moved it, `Borrowed` if either still holds a `ref` of it (the
+/// refusing direction), else the later arm's (the state they share).
+fn join_state(a: &BindingState, b: BindingState) -> BindingState {
+    if *a == BindingState::Moved || b == BindingState::Moved {
+        BindingState::Moved
+    } else if *a == BindingState::Borrowed {
+        BindingState::Borrowed
+    } else {
+        b
     }
 }
 
@@ -154,6 +213,10 @@ pub struct OwnershipGraph {
     types: HashMap<String, Type>,
     /// Span of the statement currently being checked (updated at each stmt boundary).
     current_span: Span,
+    /// How many enclosing match arms or loops have a pattern that binds
+    /// `exit`. The checker keeps no pattern bindings in `bindings`, so this
+    /// is how a call to such an `exit` is known to run the bound value.
+    exit_bound: usize,
 }
 
 impl OwnershipGraph {
@@ -164,6 +227,7 @@ impl OwnershipGraph {
             errors: Vec::new(),
             types: param_types.clone(),
             current_span: Span::dummy(),
+            exit_bound: 0,
         };
         // Parameters start as Owned.
         for name in param_types.keys() {
@@ -413,7 +477,14 @@ impl OwnershipGraph {
             }
 
             Expr::Return(Some(v)) => {
-                self.check_move_expr(v);
+                // A return ends the frame, so every `ref` of it is dead:
+                // returning a Borrowed owner is no move error (O-HX3-03, the
+                // collection `for` borrows its collection). A Moved one is.
+                let borrowed = matches!(v.as_ref(), Expr::Ident(n)
+                    if self.bindings.get(n) == Some(&BindingState::Borrowed));
+                if !borrowed {
+                    self.check_move_expr(v);
+                }
             }
 
             // The left spine of a long chain is walked with a loop (AX-64).
@@ -451,39 +522,26 @@ impl OwnershipGraph {
             }
             Expr::While { cond, body } => {
                 self.check_read(cond);
-                self.push_scope();
-                for stmt in body {
-                    if !stmt.span.is_dummy() {
-                        self.current_span = stmt.span;
-                    }
-                    self.check_expr(&stmt.expr);
-                }
-                self.pop_scope();
+                self.check_loop_body(body, false);
             }
-            Expr::WhileLet { expr, body, .. } => {
+            Expr::WhileLet {
+                pattern,
+                expr,
+                body,
+            } => {
                 self.check_read(expr);
-                self.push_scope();
-                for stmt in body {
-                    if !stmt.span.is_dummy() {
-                        self.current_span = stmt.span;
-                    }
-                    self.check_expr(&stmt.expr);
-                }
-                self.pop_scope();
+                self.check_loop_body(body, pattern_binds_exit(pattern));
             }
             Expr::For {
-                start, end, body, ..
+                var,
+                start,
+                end,
+                body,
+                ..
             } => {
                 self.check_read(start);
                 self.check_read(end);
-                self.push_scope();
-                for stmt in body {
-                    if !stmt.span.is_dummy() {
-                        self.current_span = stmt.span;
-                    }
-                    self.check_expr(&stmt.expr);
-                }
-                self.pop_scope();
+                self.check_loop_body(body, var == "exit");
             }
             Expr::Lambda { body, .. } => {
                 // Lambda bodies are checked separately.
@@ -499,14 +557,90 @@ impl OwnershipGraph {
             Expr::Comptime(inner) => self.check_read(inner),
             Expr::Match { subject, arms } => {
                 self.check_read(subject);
-                for arm in arms {
-                    self.push_scope();
-                    self.check_expr(&arm.body);
-                    self.pop_scope();
-                }
+                self.check_match_arms(arms);
             }
             Expr::Return(None) | Expr::Break | Expr::Continue | Expr::InlineAsm { .. } => {}
         }
+    }
+
+    /// Walk a loop body. Its moves flow past the loop, except when the body
+    /// never falls out of the loop (see [`loop_body_diverges`]): then the
+    /// state after the loop is the state before it.
+    fn check_loop_body(&mut self, body: &[crate::ast::Stmt], binds_exit: bool) {
+        let exit_local = binds_exit || self.exit_bound > 0 || self.bindings.contains_key("exit");
+        let snapshot = loop_body_diverges(body, exit_local).then(|| self.bindings.clone());
+        self.exit_bound += usize::from(binds_exit);
+        self.push_scope();
+        for stmt in body {
+            if !stmt.span.is_dummy() {
+                self.current_span = stmt.span;
+            }
+            self.check_expr(&stmt.expr);
+        }
+        self.pop_scope();
+        self.exit_bound -= usize::from(binds_exit);
+        if let Some(snapshot) = snapshot {
+            self.bindings = snapshot;
+        }
+    }
+
+    /// Match arms are alternatives (O-HX3-02): each arm starts from the state
+    /// its run reaches, which is the state before the match plus the moves
+    /// of every guard tried before it (a guard runs whenever its arm is
+    /// tried, even when it fails). An arm that diverges syntactically and
+    /// has no escaping `break`/`continue` never reaches the code after the
+    /// match, so it is not live. After the match each name is `Moved` if a
+    /// live arm ends with it moved or a guard moved it, else the state the
+    /// live arms end with; with no live arm it is the state after the guards.
+    fn check_match_arms(&mut self, arms: &[crate::ast::MatchArm]) {
+        let snapshot = self.bindings.clone();
+        let exit_local = self.exit_bound > 0 || snapshot.contains_key("exit");
+        let mut tried = snapshot.clone();
+        let mut joined: Option<HashMap<String, BindingState>> = None;
+        for arm in arms {
+            self.bindings = tried.clone();
+            self.push_scope();
+            if let Some(guard) = &arm.guard {
+                self.check_read(guard);
+                tried = self.bindings.clone();
+            }
+            let binds_exit = pattern_binds_exit(&arm.pattern);
+            self.exit_bound += usize::from(binds_exit);
+            self.check_expr(&arm.body);
+            self.exit_bound -= usize::from(binds_exit);
+            self.pop_scope();
+            let live = !branch_diverges(&arm.body, exit_local || binds_exit)
+                || has_escaping_jump(&arm.body);
+            if !live {
+                continue;
+            }
+            let end = std::mem::take(&mut self.bindings);
+            let Some(j) = joined.as_mut() else {
+                joined = Some(end);
+                continue;
+            };
+            for (name, state) in end {
+                match j.get_mut(&name) {
+                    None => {
+                        j.insert(name, state);
+                    }
+                    Some(cur) => *cur = join_state(cur, state),
+                }
+            }
+        }
+        self.bindings = match joined {
+            None => tried,
+            Some(mut j) => {
+                for (name, state) in tried {
+                    if state == BindingState::Moved
+                        && snapshot.get(&name) != Some(&BindingState::Moved)
+                    {
+                        j.insert(name, BindingState::Moved);
+                    }
+                }
+                j
+            }
+        };
     }
 
     /// Check `expr` in a "move" context (the value will be moved out of its owner).
