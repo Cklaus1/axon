@@ -21,6 +21,10 @@ that derives its security policy directly from Axon's type system.
 Firecracker gives us the VM boundary. Axon's compiler gives us the policy.
 Neither is enough alone — together they produce two independent enforcement layers:
 
+> *Historical (pre-GF-5) diagram.* The left column (`syscall_hint` list → BPF bytecode →
+> `seccomp_bpf_b64` → `prctl(PR_SET_SECCOMP)`) was never enforced and no longer exists; see the
+> note at the top. Nothing derives a seccomp filter from the manifest.
+
 ```
 @[contained] + effect rows
         │
@@ -60,6 +64,11 @@ clean: the compiler emits the policy, the runtime enforces it at boot.
 ---
 
 ## System Components
+
+> *Historical (pre-GF-5) diagram.* The launcher's "compiles syscall_hint → BPF bytecode" step,
+> the "BPF payload" / `seccomp_bpf_b64` it would put in MMDS, and the guest's "annotation-derived
+> BPF" do not exist. The only guest syscall filter today is `axon-guest-init`'s compiled-in
+> `fs:none` filter on the Linux profile (GF-3).
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -127,7 +136,7 @@ clean: the compiler emits the policy, the runtime enforces it at boot.
 | `PUT /network-interfaces` | TAP device for outbound Net effect calls | `.axmeta` effect_union contains "Net" |
 | `PUT /vsock` | guest_cid=3, uds_path per VM instance | Always; needed for host_await |
 | `PUT /mmds/config` | V2, ipv4=169.254.169.254 | Always |
-| `PUT /mmds` | principal, allowed_effects, budget_tokens, seccomp_bpf_b64 | `.axmeta` + Principal registry |
+| `PUT /mmds` | principal, allowed_effects, budget_tokens (no manifest-derived `seccomp_bpf_b64` since guest-fs GF-5) | `.axmeta` + Principal registry |
 | `PUT /actions InstanceStart` | Boot trigger | Always |
 | `PATCH /vm {"state":"Paused"}` | Before snapshot for fast-restart pool | Snapshot pool manager |
 | `PUT /snapshot/create` | Capture warmed Axon runtime state | Snapshot pool manager |
@@ -162,15 +171,19 @@ from launcher to guest runtime. No vsock needed before seccomp is applied.
 ```
 
 The guest reads this via MMDS V2 (requires session token PUT first, then GET).
-The `seccomp_bpf_b64` is the compiler-derived BPF program — the guest runtime
-applies it before any user code runs. `source_hash` lets the guest verify it's
-running the binary that was approved and manifested.
+The `seccomp_bpf_b64` field was meant to carry a compiler-derived BPF program. *Historical:*
+since guest-fs GF-5 no launcher derives one from the manifest; the field stays in the schema and
+`axon-guest-init` applies it only if an operator supplies one. `source_hash` lets the guest
+verify it's running the binary that was approved and manifested.
 
 ---
 
 ## Guest-Side Runtime Changes (axon-rt)
 
 The Axon runtime needs one new startup sequence before entering user code:
+
+> *Historical (pre-GF-5) sketch.* No `axon-rt` init applies a manifest-derived filter; the
+> `seccomp_bpf_b64` it decodes is never produced by `axon-vm` (see the note at the top).
 
 ```rust
 // In axon-rt/src/init.rs (new file)
@@ -281,7 +294,7 @@ Inline compilation is simpler (no new Axon CLI flag); the seccompiler step is <1
 A minimal static Rust PID-1 binary that:
 1. Re-seeds entropy from virtio-rng
 2. GETs MMDS (169.254.169.254) with token
-3. Applies seccomp BPF from MMDS payload
+3. Applies seccomp BPF from MMDS payload (*historical*: none is manifest-derived since guest-fs GF-5; under `"fs": "none"` it installs its compiled-in filter instead)
 4. Sets principal for provenance
 5. Execs the Axon binary (or interpreter with the .ax file)
 6. Handles SIGTERM/SIGCHLD (PID-1 requirements)
@@ -328,17 +341,17 @@ root — this is intentional, it's a security boundary).
 
 | Threat | Mitigation layer | Independent? |
 |---|---|---|
-| Axon code calls disallowed syscall | guest seccomp (BPF, annotation-derived) | Yes — compiler bug can't bypass |
-| Axon code contacts disallowed host | guest seccomp blocks `socket()` for non-Net binaries | Yes |
+| Axon code calls disallowed syscall | Linux profile only, under `"fs": "none"`: `axon-guest-init`'s compiled-in filter (path syscalls EACCES, non-x86_64 ABI killed). There is no effect-derived allowlist (the annotation-derived BPF was deleted in guest-fs GF-5) | Yes, for the path syscalls it covers; nothing else is filtered |
+| Axon code contacts disallowed host | interpreter Net grant (exit 8); the protected Linux profile has no NIC | The missing NIC is; the grant is the language layer |
 | Guest escapes to host filesystem | KVM hardware boundary | Yes |
 | Principal exceeds CPU budget | host cgroup (jailer `--cgroup cpu.max`) | Yes — guest can't lie to cgroup |
 | Principal exceeds memory budget | host cgroup `memory.max` hard cap | Yes |
 | One VM affects another VM | unique uid:gid per VM, separate netns | Yes |
-| Compiler checker bug in @[contained] | All three above layers still hold | Two still hold |
+| Compiler checker bug in @[contained] | The interpreter's runtime grant, the `fs:none` filter (path syscalls only), KVM + cgroup | Partly: no OS layer covers non-path syscalls |
 
-Three independently-enforced security boundaries: language (compiler), OS
-(guest seccomp), hardware (KVM + host cgroup). A single-layer bypass requires
-defeating all three.
+Three security boundaries: language (compiler + interpreter grants), OS (only the
+`fs:none` filter above; no effect-derived seccomp), hardware (KVM + host cgroup).
+The OS layer covers path syscalls only, so it is not a full third layer.
 
 ---
 
@@ -359,8 +372,8 @@ Internally:
 2. (No manifest-derived seccomp: guest-fs GF-5 deleted the `syscall_hint` → BPF step.)
 3. Allocate uid for principal "alice", set up TAP + netns (if Net/AI in effects)
 4. POST Firecracker API calls (machine-config, boot-source, drives, vsock, mmds)
-5. Populate MMDS with principal/budget/BPF payload
-6. Exec jailer → Firecracker boots → guest init applies seccomp → user code runs
+5. Populate MMDS with principal/budget payload (no manifest-derived BPF since guest-fs GF-5)
+6. Exec jailer → Firecracker boots → guest init applies its policy → user code runs
 7. Stream stdout/stderr back; collect exit code; tear down VM resources
 
 Cold start: ~200 ms. From snapshot pool: ~8 ms.
