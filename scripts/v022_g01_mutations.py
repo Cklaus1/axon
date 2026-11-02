@@ -14887,5 +14887,41 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'step_exhaustion_writes_a_steps_fault_record'),
 ]
 
+# ceilings audit fixes ICE-1..ICE-3 (ids M4750-M4756, overflow block): a
+# lambda-body entry is a step; the run-wide meters are per run (one
+# `RunMeters` per CLI invocation); one ceiling file in two spellings is one
+# ceiling.
+MUTATIONS += [
+    ('M4750', 'ICE-1: a lambda-body entry is not a step', 'crates/axon-core/src/interp.rs',
+     '        if let Err(e) = self.step() {\n            args.bind(|_, v| drop(v));',
+     '        if let Err(e) = Ok::<(), Flow>(()) {\n            args.bind(|_, v| drop(v));',
+     'axon-core', '--no-default-features --test ceiling', 'lambda_entry_is_one_step_on_both_engines'),
+    ('M4751', 'ICE-1: the VM fold-leaf tier skips the lambda step under a ceiling', 'crates/axon-core/src/interp/vm/pure.rs',
+     '        if !self.seal_pin_vm() || self.meter.on {',
+     '        if !self.seal_pin_vm() {',
+     'axon-core', '--no-default-features --test ceiling', 'lambda_entry_is_one_step_on_both_engines'),
+    ('M4752', 'ICE-2: every interpreter build ignores the run meters (steps restart)', 'crates/axon-core/src/interp.rs',
+     '        let run = installed_run_meters().unwrap_or_default();',
+     '        let run = RunMeters::new();',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_steps_span_every_test'),
+    ('M4753', 'ICE-2: the CLI installs no run meters (ai_calls restart per test)', 'crates/axon-core/src/main.rs',
+     '            axon_core::interp::with_run_meters(&meters, || dispatch(cli.command))',
+     '            let _ = meters;\n            dispatch(cli.command)',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_ai_calls_span_every_test'),
+    ('M4754', 'ICE-3: one ceiling file in two spellings is refused', 'crates/axon-core/src/main.rs',
+     '                    (Ok(a), Ok(b)) if a == b',
+     '                    (Ok(a), Ok(b)) if a == b && a != b',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_same_file_two_spellings_is_accepted'),
+    ('M4755', 'ICE-2: the interpreter thread drops the run meters', 'crates/axon-core/src/interp.rs',
+     '            .spawn_scoped(s, move || with_run_meters_opt(run, f))',
+     '            .spawn_scoped(s, move || {\n                drop(run);\n                f()\n            })',
+     'axon-core', '--no-default-features --test ceiling', 'ceiling_steps_span_every_test'),
+    ('M4756', 'ICE-2: an unscoped interpreter shares process-global meters', 'crates/axon-core/src/interp.rs',
+     '        let run = installed_run_meters().unwrap_or_default();',
+     '        static GLOBAL_RUN: std::sync::OnceLock<std::sync::Arc<RunMeters>> = std::sync::OnceLock::new();\n'
+     '        let run = installed_run_meters().unwrap_or_else(|| GLOBAL_RUN.get_or_init(RunMeters::new).clone());',
+     'axon-core', '--no-default-features --lib', 'interp::tests::run_meters_are_per_run_not_per_process'),
+]
+
 if __name__ == "__main__":
     main()

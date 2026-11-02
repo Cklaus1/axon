@@ -987,7 +987,12 @@ fn main() {
     // bounds recursion via RECURSION_LIMIT for runaway cases.)
     std::thread::Builder::new()
         .stack_size(1024 * 1024 * 1024)
-        .spawn(move || dispatch(cli.command))
+        // ceilings ICE-2: one set of run meters per CLI invocation, shared by
+        // every interpreter it builds (per-test, candidates, sessions).
+        .spawn(move || {
+            let meters = axon_core::interp::RunMeters::new();
+            axon_core::interp::with_run_meters(&meters, || dispatch(cli.command))
+        })
         .expect("spawn worker thread")
         .join()
         .expect("worker thread panicked");
@@ -1009,7 +1014,16 @@ const CEILING_HELP: &str = "Operator ceiling file (axon-ceiling/1; same as AXON_
 fn apply_ceiling(flag: Option<PathBuf>, require_contained: bool) {
     if let Some(path) = flag {
         if let Some(env) = std::env::var_os("AXON_CEILING") {
-            if std::path::Path::new(&env) != path {
+            // ICE-3: one file spelled two ways (`./c.json`, `c.json`) is one
+            // ceiling. Refused when the resolved paths differ or either does
+            // not resolve (a missing file spelled identically twice still
+            // reaches the loader's own E1007).
+            let same = std::path::Path::new(&env) == path
+                || matches!(
+                    (std::fs::canonicalize(&env), std::fs::canonicalize(&path)),
+                    (Ok(a), Ok(b)) if a == b
+                );
+            if !same {
                 let line = format!(
                     "error[E1007]: --ceiling {} and AXON_CEILING={} name two different \
                      ceilings; refusing to run. Pass one.",

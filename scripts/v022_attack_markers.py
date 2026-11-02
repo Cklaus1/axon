@@ -4105,3 +4105,14 @@ ATTACK_MARKERS.update({
     'M4731': r'ATTACK: a completed job was sealed as a denial by its stderr',
     'M4732': r'ATTACK: a step-ceiling stop was recorded as the program.s exit 9',
 })
+
+# ceilings audit fixes ICE-1..ICE-3 (ids M4750-M4756, overflow block)
+ATTACK_MARKERS.update({
+    'M4750': r'ATTACK: lambda entries were not counted as steps \(tree\)',
+    'M4751': r'ATTACK: lambda entries were not counted as steps \(vm\)',
+    'M4752': r'ATTACK: each test restarted the ceiling.s steps',
+    'M4753': r'ATTACK: each test restarted the ceiling.s ai_calls',
+    'M4754': r'ATTACK: one ceiling in two spellings was refused',
+    'M4755': r'ATTACK: each test restarted the ceiling.s steps',
+    'M4756': r'ATTACK: run meters leaked across runs',
+})

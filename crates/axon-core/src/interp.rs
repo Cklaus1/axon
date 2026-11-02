@@ -1985,6 +1985,10 @@ pub struct Interp<'p> {
     fast_depth: usize,
     /// ceilings CE-5: the run's step and wall-clock ceilings.
     meter: StepMeter,
+    /// ceilings ICE-2: the run's shared meters (steps, wall-clock start,
+    /// tokens, `ai_calls`) - the scope's [`RunMeters`] from
+    /// [`with_run_meters`], or fresh ones when none is installed.
+    pub(crate) run: std::sync::Arc<RunMeters>,
     /// R51 S5 (Protected Check Isolation, RUNTIME sealing): which
     /// definitions come from a sealed (candidate) module. `seal.active` is
     /// the one "this run executes sealed code" bit: computed once in
@@ -2119,14 +2123,8 @@ pub struct Interp<'p> {
     /// not repetitions. The text names only the fn, so every repeat after the
     /// first carries no information a reader did not already have.
     w1310_warned: RefCell<std::collections::HashSet<String>>,
-    /// Tokens consumed so far by model calls, against [`Interp::token_budget`].
-    ///
-    /// Distinct from both sibling meters: `ai_cost_micro` is MONEY (per-token
-    /// µ$ at the tier's rate) and R3c's `ai_budget_stack` counts CALLS within
-    /// budgeted activations. This is TOKENS across the whole run, because that is the unit an
-    /// ambient operator cap is denominated in.
-    tokens_used: Cell<i64>,
-    /// Ambient run-level token cap from `AXON_BUDGET_TOKENS`, or `None` for no
+    /// Ambient run-level token cap from `AXON_BUDGET_TOKENS` (charged in
+    /// [`Interp::run`]), or `None` for no
     /// cap (the default). `Some(0)` is meaningful — it means "no AI at all" —
     /// so this is deliberately not a sentinel `0`.
     ///
@@ -2135,10 +2133,8 @@ pub struct Interp<'p> {
     /// inert control surface that reads as a safety mechanism. Enforced
     /// pre-dispatch beside the R3c per-fn budget gate.
     token_budget: Option<i64>,
-    /// Model calls dispatched so far this run (`ai_complete` and every
-    /// extract), against [`Interp::ai_calls_cap`].
-    ai_calls_used: Cell<u64>,
-    /// Ceilings CE-6 (`ai_calls`): an operator ceiling's run-wide cap on model
+    /// Ceilings CE-6 (`ai_calls`, counted in [`Interp::run`]): an
+    /// operator ceiling's run-wide cap on model
     /// calls, or `None` (no ceiling, or the ceiling said `null`). There is no
     /// environment variable for it: the ceiling is its only source.
     ai_calls_cap: Option<u64>,
@@ -3015,10 +3011,12 @@ fn on_deep_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     // Size the stack to the (possibly user-raised) recursion limit so the
     // RECURSION_LIMIT guard always trips before a real overflow (BUG_HUNT #28).
     let stack = stack_size_for_depth(resolve_max_depth());
+    // ICE-2: the run's meters follow the run onto its thread.
+    let run = installed_run_meters();
     std::thread::scope(|s| {
         std::thread::Builder::new()
             .stack_size(stack)
-            .spawn_scoped(s, f)
+            .spawn_scoped(s, move || with_run_meters_opt(run, f))
             .expect("spawn interpreter thread")
             .join()
             .expect("interpreter thread panicked")
@@ -4268,12 +4266,15 @@ fn run_suspendable_values_inner(
     // so the closure is sized in place rather than nested inside another thread.
     let stack = stack_size_for_depth(resolve_max_depth());
     std::thread::scope(|scope| {
+        let run = installed_run_meters();
         let worker = std::thread::Builder::new()
             .stack_size(stack)
             .spawn_scoped(scope, move || {
                 HOST_AWAIT.with(|h| *h.borrow_mut() = Some(HostChannels { req_tx, rep_rx }));
-                let code =
-                    run_program_inner(program, crate::verify::Discharged::default(), map_status);
+                // ICE-2: the run's meters follow the run onto its worker.
+                let code = with_run_meters_opt(run, || {
+                    run_program_inner(program, crate::verify::Discharged::default(), map_status)
+                });
                 // Drop the channels → req_tx closes → the host loop below ends.
                 HOST_AWAIT.with(|h| *h.borrow_mut() = None);
                 code
@@ -5274,7 +5275,8 @@ impl<'p> Interp<'p> {
                 });
             }
         }
-        let meter = resolve_step_meter();
+        let run = installed_run_meters().unwrap_or_default();
+        let meter = resolve_step_meter(&run);
         let max_depth = resolve_max_depth();
 
         Interp {
@@ -5317,6 +5319,7 @@ impl<'p> Interp<'p> {
             max_depth,
             fast_depth: if meter.on { 0 } else { max_depth },
             meter,
+            run,
             seal,
             pins,
             frame_sealed: Cell::new(false),
@@ -5349,9 +5352,7 @@ impl<'p> Interp<'p> {
             pure_replay: Cell::new(false),
             ai_cost_micro: Cell::new(0),
             w1310_warned: RefCell::new(std::collections::HashSet::new()),
-            tokens_used: Cell::new(0),
             token_budget: parse_token_budget(),
-            ai_calls_used: Cell::new(0),
             ai_calls_cap: crate::ceiling::active().and_then(|c| c.ai_calls),
             handlers: RefCell::new(Vec::new()),
             resume_replay: RefCell::new(None),
@@ -6068,7 +6069,7 @@ impl<'p> Interp<'p> {
         Ok(guard)
     }
 
-    /// ceilings CE-5: one step (a loop-body or fn-body entry) against the
+    /// ceilings CE-5: one step (a loop-body, fn-body or lambda-body entry) against the
     /// run's step and wall-clock ceilings. Both engines call it at the same
     /// points, so a run stops at the same step in each.
     #[inline(always)]
@@ -6084,14 +6085,14 @@ impl<'p> Interp<'p> {
     /// and read the clock at the first step and every 4096th after it.
     #[inline(never)]
     fn step_metered(&self) -> Result<(), Flow> {
-        let n = self.meter.used.get() + 1;
+        let n = self.run.add_step();
         let name = || self.current_fn.get().map_or("main", |f| f.name.as_str());
         if n > self.meter.cap {
             return Err(Flow::ResourceBound(
                 format!(
                     "[{}] `{}` passed the run's step ceiling (axis `steps`) of {} step(s) - a step \
-                     is one loop-body or fn-body entry; raise AXON_MAX_STEPS / the ceiling's \
-                     `steps`, or bound the loop",
+                     is one loop-body, fn-body or lambda-body entry; raise AXON_MAX_STEPS / the \
+                     ceiling's `steps`, or bound the loop",
                     crate::error::E1006,
                     name(),
                     self.meter.cap
@@ -6099,9 +6100,9 @@ impl<'p> Interp<'p> {
                 .into(),
             ));
         }
-        self.meter.used.set(n);
         if n & 4095 == 1 {
-            if let Some((start, ms)) = self.meter.wall {
+            if let Some(ms) = self.meter.wall_ms {
+                let start = *self.run.start.get_or_init(std::time::Instant::now);
                 if start.elapsed().as_millis() >= u128::from(ms) {
                     return Err(Flow::ResourceBound(
                         format!(
@@ -7239,6 +7240,14 @@ impl<'p> Interp<'p> {
             args.bind(|_, v| drop(v));
             return lambda_arity_mismatch(n, got);
         }
+        // ceilings CE-5 / ICE-1: one step per lambda-body entry, on both
+        // engines (both call closures through this frame), so a run whose
+        // work is all callbacks (`arr_map`, `arr_fold`, ..) still meets its
+        // step and wall-clock ceilings.
+        if let Err(e) = self.step() {
+            args.bind(|_, v| drop(v));
+            return Err(e);
+        }
         // Operator code does not run an operator closure the candidate picked
         // (amendment 102; veto interp.rs:4747-4751).
         if T {
@@ -7838,9 +7847,107 @@ struct StepMeter {
     on: bool,
     /// Steps allowed (`u64::MAX` when only a wall ceiling is set).
     cap: u64,
-    used: Cell<u64>,
-    /// The run's start and its wall-clock ceiling in milliseconds.
-    wall: Option<(std::time::Instant, u64)>,
+    /// The run's wall-clock ceiling in milliseconds, measured from
+    /// [`RunMeters`]' start.
+    wall_ms: Option<u64>,
+}
+
+/// ceilings ICE-2: the run-wide meters belong to the RUN (one CLI
+/// invocation), not to one interpreter. `axon test` builds an interpreter per
+/// test and a run builds children (sandboxed candidates, sessions); with
+/// per-interpreter counters each of them restarted the operator's `steps`,
+/// `wall_ms`, `ai_calls` and token cap, so three tests made three model calls
+/// under `ai_calls: 1`. The CLI makes one per invocation and installs it with
+/// [`with_run_meters`]; every interpreter built inside that scope (on any
+/// thread the interpreter itself spawns) shares it. An interpreter built
+/// outside any scope (library use: LSP, axon-os, `cargo test` threads) gets
+/// fresh meters of its own, so nothing leaks between runs in one process.
+/// Counted only while the matching bound is set.
+#[derive(Debug, Default)]
+pub struct RunMeters {
+    /// Steps taken (loop-body, fn-body and lambda-body entries).
+    steps: AtomicU64,
+    /// Tokens charged to the run cap (`AXON_BUDGET_TOKENS`). Distinct from
+    /// both sibling meters: `ai_cost_micro` is MONEY (per-token µ$ at the
+    /// tier's rate) and R3c's `ai_budget_stack` counts CALLS within budgeted
+    /// activations. This is TOKENS, the unit an ambient operator cap is
+    /// denominated in.
+    tokens: std::sync::atomic::AtomicI64,
+    /// Model calls counted against a ceiling's `ai_calls`.
+    ai_calls: AtomicU64,
+    /// When the run's wall clock started: the first interpreter build under
+    /// a wall ceiling.
+    start: std::sync::OnceLock<std::time::Instant>,
+}
+
+impl RunMeters {
+    /// Fresh meters for one run.
+    pub fn new() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self::default())
+    }
+
+    /// Count one more step; the run's total after it.
+    fn add_step(&self) -> u64 {
+        self.steps.fetch_add(1, AtomicOrdering::Relaxed) + 1
+    }
+
+    /// Tokens charged so far.
+    pub(crate) fn tokens(&self) -> i64 {
+        self.tokens.load(AtomicOrdering::Relaxed)
+    }
+
+    /// Charge `n` tokens (negative counts are ignored), saturating.
+    pub(crate) fn charge_tokens(&self, n: i64) {
+        let n = n.max(0);
+        let _ = self
+            .tokens
+            .try_update(AtomicOrdering::Relaxed, AtomicOrdering::Relaxed, |t| {
+                Some(t.saturating_add(n))
+            });
+    }
+
+    /// Take one model call against `cap`: `true` when it fits (and is now
+    /// counted), `false` when the run already made `cap` calls.
+    pub(crate) fn take_ai_call(&self, cap: u64) -> bool {
+        self.ai_calls
+            .try_update(AtomicOrdering::Relaxed, AtomicOrdering::Relaxed, |u| {
+                (u < cap).then_some(u + 1)
+            })
+            .is_ok()
+    }
+}
+
+thread_local! {
+    /// The meters [`with_run_meters`] installed on this thread, if any.
+    static RUN_METERS: RefCell<Option<std::sync::Arc<RunMeters>>> = const { RefCell::new(None) };
+}
+
+/// Run `f` with `meters` as the run meters of every interpreter it builds
+/// (ICE-2). The previous installation is restored afterwards, so scopes nest.
+pub fn with_run_meters<T>(meters: &std::sync::Arc<RunMeters>, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<std::sync::Arc<RunMeters>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let prev = self.0.take();
+            RUN_METERS.with(|m| *m.borrow_mut() = prev);
+        }
+    }
+    let _restore = Restore(RUN_METERS.with(|m| m.borrow_mut().replace(meters.clone())));
+    f()
+}
+
+/// The installed run meters, if a scope is active on this thread. A thread
+/// the interpreter spawns carries them over (see `on_deep_stack`).
+fn installed_run_meters() -> Option<std::sync::Arc<RunMeters>> {
+    RUN_METERS.with(|m| m.borrow().clone())
+}
+
+/// Run `f` under `meters` when some, else as is.
+fn with_run_meters_opt<T>(meters: Option<std::sync::Arc<RunMeters>>, f: impl FnOnce() -> T) -> T {
+    match meters {
+        Some(m) => with_run_meters(&m, f),
+        None => f(),
+    }
 }
 
 /// One CE-5 env var (`raw` is its `var_os` read, spelled at the call site so
@@ -7867,7 +7974,7 @@ fn parse_run_bound(var: &str, raw: Option<std::ffi::OsString>) -> Option<u64> {
 
 /// Resolve the CE-5 meter from `AXON_MAX_STEPS` / `AXON_WALL_MS` and the
 /// operator ceiling's `steps` / `wall_ms`; the narrower of each pair wins.
-fn resolve_step_meter() -> StepMeter {
+fn resolve_step_meter(run: &RunMeters) -> StepMeter {
     let ceiling = crate::ceiling::active();
     let narrow = |env: Option<u64>, c: Option<u64>| match (env, c) {
         (Some(a), Some(b)) => Some(a.min(b)),
@@ -7881,11 +7988,13 @@ fn resolve_step_meter() -> StepMeter {
         parse_run_bound("AXON_WALL_MS", std::env::var_os("AXON_WALL_MS")),
         ceiling.and_then(|c| c.wall_ms),
     );
+    if wall_ms.is_some() {
+        run.start.get_or_init(std::time::Instant::now);
+    }
     StepMeter {
         on: steps.is_some() || wall_ms.is_some(),
         cap: steps.unwrap_or(u64::MAX),
-        used: Cell::new(0),
-        wall: wall_ms.map(|ms| (std::time::Instant::now(), ms)),
+        wall_ms,
     }
 }
 
@@ -8550,6 +8659,47 @@ fn main() { }
         assert!(pin.contains(&"x.com".to_string()));
         let bare = crate::parse_source(r#"fn main() { }"#).expect("parse failed");
         assert_eq!(ai_pin_hosts(&bare, None), None);
+    }
+
+    /// ceilings ICE-2: run meters are per run, not per process. Two
+    /// interpreters built in one process with no run scope each get the full
+    /// step budget (process-global counters made the second start spent);
+    /// two built inside one [`with_run_meters`] scope share one budget.
+    #[test]
+    fn run_meters_are_per_run_not_per_process() {
+        let p = crate::parse_source("fn main() { 0 }").expect("parse failed");
+        let capped = || {
+            let mut ix = Interp::build(&p).expect("build");
+            ix.meter = StepMeter {
+                on: true,
+                cap: 10,
+                wall_ms: None,
+            };
+            ix
+        };
+        for which in ["first", "second"] {
+            let ix = capped();
+            for i in 1..=10 {
+                assert!(
+                    ix.step().is_ok(),
+                    "ATTACK: run meters leaked across runs ({which} interpreter, step {i})"
+                );
+            }
+            assert!(ix.step().is_err(), "{which}: step 11 must pass the cap");
+        }
+        let run = RunMeters::new();
+        with_run_meters(&run, || {
+            let (a, b) = (capped(), capped());
+            for _ in 0..5 {
+                assert!(a.step().is_ok() && b.step().is_ok());
+            }
+            assert!(
+                a.step().is_err() && b.step().is_err(),
+                "ATTACK: two interpreters of one run did not share its step budget"
+            );
+        });
+        // The scope ended: the next interpreter is a fresh run again.
+        assert!(capped().step().is_ok());
     }
 
     #[test]
