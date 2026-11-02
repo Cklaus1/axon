@@ -3909,3 +3909,13 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M4570': r'ATTACK: a model call audited outside the AI class: `ai_extract_uncertain_i64`',
 })
+
+# lang-forms LF-1 (ids M4640-M4643, M4661, M4676)
+ATTACK_MARKERS.update({
+    'M4640': r'ATTACK: Ok\(\(\)\) was refused at parse',
+    'M4641': r'ATTACK: \(\) => was parsed as unit',
+    'M4642': r'ATTACK: a \(\) pattern passed check and panicked',
+    'M4643': r'ATTACK: fmt wrote a W0008 empty block',
+    'M4661': r'ATTACK: a \(\) arm was skipped natively',
+    'M4676': r'ATTACK: a unit match arm was skipped natively without a refusal',
+})

@@ -665,25 +665,16 @@ fn a_collection_where_a_str_is_expected_is_not_told_to_cast() {
     );
 }
 
-/// CS3-5 rows 1-6, 10 and 11: forms Axon refuses on purpose. Each parse error
+/// CS3-5 rows 2-6, 10 and 11: forms Axon refuses on purpose. Each parse error
 /// used to name a token (`unexpected token: LBrace, expected For`) and carry no
 /// help; each now names the Axon spelling. The sources are the O-GAP-08 probes
-/// (`b_unit`, `c04`, `g03`, `c14`, `52`, `71`, `q01`, `c03`, `g10b`, `g10e`,
-/// `g10d`, `g11b`), inlined.
+/// (`c04`, `g03`, `c14`, `52`, `71`, `q01`, `c03`, `g10b`, `g10e`, `g10d`,
+/// `g11b`), inlined. Row 1 (`()`) is gone: lang-forms LF-1 made `()` the unit
+/// value, and its cases run in `cli_run`'s `unit_value_paren_is_the_empty_block`.
 #[test]
 fn refused_forms_point_at_the_axon_spelling() {
     let attack = "ATTACK: a refused form's parse error named no Axon spelling";
     for (tag, src, want) in [
-        (
-            "unit_ok",
-            "fn f() -> Result<(), str> {\n    Ok(())\n}\nfn main() { match f() { Ok(_) => println(\"ok\") Err(e) => println(e) } }\n",
-            "the unit value is an empty block: `Ok({})`",
-        ),
-        (
-            "unit_let",
-            "fn main() {\n    let u = ()\n    println(\"x\")\n}\n",
-            "Axon has no `()` value",
-        ),
         (
             "if_let",
             "fn main() {\n    let o = Some(3)\n    if let Some(v) = o { println(to_str(v)) }\n}\n",
@@ -767,6 +758,10 @@ fn the_refused_form_advice_actually_compiles() {
         (
             "unit block",
             "fn f() -> Result<(), str> {\n    let u: () = {}\n    if false { return Ok({}) }\n    Ok({})\n}\nfn main() -> i64 {\n    match f() { Ok(_) => println(\"ok\"), Err(e) => println(e) }\n    0\n}\n",
+        ),
+        (
+            "unit value",
+            "fn f() -> Result<(), str> {\n    let u: () = ()\n    if false { return Ok(()) }\n    Ok(())\n}\nfn main() -> i64 {\n    match f() { Ok(()) => println(\"ok\"), Err(e) => println(e) }\n    0\n}\n",
         ),
         (
             "match for if let",

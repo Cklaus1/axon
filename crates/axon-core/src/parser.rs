@@ -3341,6 +3341,12 @@ impl Parser {
             Some(Token::LParen) => {
                 if self.is_paren_lambda() {
                     self.parse_paren_lambda()
+                } else if matches!(self.tokens.get(self.pos + 1), Some(Token::RParen)) {
+                    // LF-1: `()` is the unit value, the same node `{}` builds
+                    // (checked after the lambda test, so `() => 7` stays a lambda).
+                    self.advance()?;
+                    self.advance()?;
+                    Ok(Expr::Block(Vec::new()))
                 } else {
                     self.advance()?;
                     self.paren_depth += 1;

@@ -45,6 +45,9 @@ Every program starts at `fn main()`. No imports — all builtins are in global s
 fn add(a: i64, b: i64) -> i64 { a + b }
 fn inc(x: i64) -> i64 { x + 1 }
 
+// `()` is the unit value (the same value as an empty block `{}`)
+fn check(n: i64) -> Result<(), str> { if n < 0 { Err("negative") } else { Ok(()) } }
+
 // Structs — declared with `type`, structural (no `implements`)
 type Point = { x: f64, y: f64 }
 

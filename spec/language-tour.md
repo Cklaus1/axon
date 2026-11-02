@@ -41,7 +41,7 @@ fn main() {
 | `f64` | `3.14`, `1e10`| 64-bit float, scientific OK  |
 | `bool`| `true`/`false`| boolean                      |
 | `str` | `"hello"`     | UTF-8 string, immutable      |
-| `()`  | (implicit)    | unit / void                  |
+| `()`  | `()` or `{}`  | unit / void (`Ok(())`)       |
 
 ---
 

@@ -44798,3 +44798,93 @@ fn a_string_followed_by_punctuation_or_a_spaced_keyword_stays_legal() {
         );
     }
 }
+
+// lang-forms LF-1: `()` is the unit value (the same node as `{}`), and a `()`
+// pattern matches it. Every program here was refused at parse (`Ok(())`) or
+// passed check and panicked at run (`no match arm matched`) before.
+
+/// Check and run `src` (both must exit 0) and return run's stdout.
+fn lf_runs(attack: &str, tag: &str, src: &str) -> String {
+    let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(tag, src);
+    assert_eq!(crc, Some(0), "{attack} [{tag}]: check: {cmsg}");
+    assert_eq!(rrc, Some(0), "{attack} [{tag}]: run: {rerr}");
+    rout
+}
+
+#[test]
+fn unit_value_paren_is_the_empty_block() {
+    let attack = "ATTACK: Ok(()) was refused at parse";
+    for (tag, src, out) in [
+        (
+            "lf1_u01",
+            "fn run() -> Result<(), str> {\n    println(\"hi\")\n    Ok(())\n}\nfn main() { match run() { Ok(_) => println(\"ok\"), Err(e) => println(e) } }\n",
+            "hi\nok\n",
+        ),
+        (
+            "lf1_u02",
+            "fn main() {\n    let u = ()\n    println(if u == {} { \"same\" } else { \"diff\" })\n}\n",
+            "same\n",
+        ),
+        (
+            "lf1_u03",
+            "fn f(n: i64) -> Result<(), str> {\n    if n > 0 {\n        return Ok(())\n    }\n    Err(\"neg\")\n}\nfn main() { match f(1) { Ok(_) => println(\"ok\"), Err(e) => println(e) } }\n",
+            "ok\n",
+        ),
+        (
+            "lf1_u04",
+            "fn main() {\n    let r: Result<(), str> = Ok(())\n    match r { Ok(_) => println(\"ok\"), Err(e) => println(e) }\n}\n",
+            "ok\n",
+        ),
+        // Moved from parse_help_probe `refused_forms_point_at_the_axon_spelling`
+        // (`unit_ok`, `unit_let`): the CS3-5 row that refused them is gone.
+        (
+            "lf1_unit_ok",
+            "fn f() -> Result<(), str> {\n    Ok(())\n}\nfn main() { match f() { Ok(_) => println(\"ok\") Err(e) => println(e) } }\n",
+            "ok\n",
+        ),
+        (
+            "lf1_unit_let",
+            "fn main() {\n    let u = ()\n    println(\"x\")\n}\n",
+            "x\n",
+        ),
+    ] {
+        assert_eq!(lf_runs(attack, tag, src), out, "{attack} [{tag}]");
+    }
+}
+
+#[test]
+fn unit_pattern_matches_the_unit_value() {
+    let attack = "ATTACK: a () pattern passed check and panicked";
+    for (tag, src, out) in [
+        (
+            "lf1_u06",
+            "fn f() -> Result<(), str> { Ok({}) }\nfn main() {\n    match f() { Ok(()) => println(\"unit\"), Err(e) => println(e) }\n}\n",
+            "unit\n",
+        ),
+        (
+            "lf1_u11",
+            "fn k() -> () { {} }\nfn main() {\n    let u: () = k()\n    match u { () => println(\"unit\") }\n}\n",
+            "unit\n",
+        ),
+        (
+            "lf1_p17",
+            "fn main() {\n    let u: () = {}\n    match u { () => println(\"unit\") }\n}\n",
+            "unit\n",
+        ),
+        // A `()` arm beside a fallback arm: the fallback ran before (`other\nb`).
+        (
+            "lf1_u20",
+            "fn f() -> Result<(), str> { Ok({}) }\nfn main() {\n    match f() { Ok(()) => println(\"unit\"), _ => println(\"other\") }\n    let u: () = {}\n    match u { () => println(\"a\"), _ => println(\"b\") }\n}\n",
+            "unit\na\n",
+        ),
+    ] {
+        assert_eq!(lf_runs(attack, tag, src), out, "{attack} [{tag}]");
+    }
+}
+
+#[test]
+fn paren_lambda_with_no_params_stays_a_lambda() {
+    let attack = "ATTACK: () => was parsed as unit";
+    let src = "fn main() {\n    let f = () => 7\n    println(to_str(f()))\n    let g = ()\n    match g { () => println(\"g\") }\n}\n";
+    assert_eq!(lf_runs(attack, "lf1_p18", src), "7\ng\n", "{attack}");
+}

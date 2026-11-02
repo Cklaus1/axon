@@ -329,6 +329,7 @@ unary      ::= '&' unary                        (* reference-of            *)
   `primary` covers all atomic and bracketed expression forms.
 *)
 primary    ::= block
+             | '(' ')'                                     (* the unit value *)
              | '(' expr ')'
              | INT_LIT
              | FLOAT_LIT
@@ -455,6 +456,7 @@ pattern    ::= '_'                                          (* wildcard         
              | STR_RAW                                      (* string literal      *)
              | enum_variant_pat                             (* Enum::Variant { … } *)
              | IDENT                                        (* binding / named     *)
+             | '(' ')'                                      (* the unit value      *)
              ;
 
 (*
@@ -483,8 +485,7 @@ pat_field         ::= IDENT [ ':' pattern ] ;   (* omit `:` for shorthand bindin
   BOOL_LIT  ::= 'true' | 'false'
   UNIT      ::= '(' ')'                                          the unit value ()
 
-  UNIT is currently parsed as a grouped expression `( expr )` where the inner
-  expression is absent; in practice the unit value is represented as an empty
-  block or by the Named type "()" and does not appear as a standalone literal
-  in the current parser.
+  UNIT is a real primary: `()` is the unit value, the same value as an empty
+  block `{}` (the parser builds the same node for both). `() => e` is still a
+  zero-parameter lambda. The pattern `()` matches the unit value.
 *)

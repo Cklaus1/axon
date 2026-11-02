@@ -142,13 +142,6 @@ fn refused_form_help(msg: &str, src: &str, offset: usize) -> Option<&'static str
     let tw = words(tline);
     let before = text_before(src, offset);
 
-    // `Ok(())`, `let u = ()`, `return ()`: the `)` is peeked right after `(`.
-    if msg.contains("unexpected token: RParen, expected expression") && before.ends_with('(') {
-        return Some(
-            "Axon has no `()` value — the unit value is an empty block: `Ok({})`, \
-             `return {}`, `let u: () = {}`",
-        );
-    }
     // `if let Some(v) = o` / `else if let`.
     if msg.contains("unexpected token: Let, expected expression")
         && before.split_whitespace().last() == Some("if")

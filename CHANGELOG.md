@@ -1,5 +1,11 @@
 # Axon Changelog
 
+## Language forms: () , if let, for (a, b), sibling modules (lang-forms)
+
+- **`()` is the unit value (LF-1):** `Ok(())`, `let u = ()`, `return ()` and `return Ok(())` parse; `()` is the same node as an empty block `{}`, so every engine sees exactly today's unit value. `() => e` stays a zero-parameter lambda. `axon fmt` prints the empty block as `()` in value position (a binding's value, `return`, a call or `Ok`/`Err`/`Some` argument) and `{}` in body position, so fmt never writes the W0008-warned `= {}`. The CS3-5 parse help that pointed `()` at `{}` is gone. g01: M4640-M4643.
+- **Behaviour change: a `()` pattern now matches the unit value (LF-1).** A `match` that passed check and took a fallback arm next to a `()` arm (`Ok(())`, `()` arms) now takes the `()` arm, and one that panicked with `no match arm matched` (`match f() { Ok(()) => .. }`) now runs. No tracked program had a `()` pattern.
+- **Behaviour change, native: a `match` on a unit-valued subject runs its `()`/`_` arm instead of being skipped (LF-1).** The native binary ran no arm at all (`match k() { () => println("unit") }` printed nothing) while the build succeeded; any other pattern on such a subject (a binding) is now refused with E0910 instead of being skipped silently. g01: M4661, M4676.
+
 ## Unattended repair authorization built, not enabled; the repair run ledger (NH-R1 A0-A4, R6 L1-L3)
 
 - **`cortex repair --unattended` refuses by default (NH-R1 A3):** the flag exists only in builds with the cargo feature `unattended` (off by default). Without a verified `axon-approval/4` repair envelope every attempt exits 29 `unauthorized` with nothing written. Enabling unattended execution is NOT authorized: it still needs the §9 evidence in `tasks/unattended-auth-spec.md` (S-tests and full gate green, a read-only adversarial security review, R6 L1-L3 with a clean C1 audit) and then a separate human decision. Under an envelope the `cortex-repair/1` record gains `authorization` and the envelope id appears in the episode id.

@@ -548,6 +548,18 @@ impl Formatter {
         self.write("}");
     }
 
+    /// Emit an expression in value position (a binding's value, `return`, a
+    /// call or `Ok`/`Err`/`Some` argument): the empty block is the unit value
+    /// and prints as `()`, never the W0008-warned `{}` (LF-1). Body positions
+    /// keep `{}`.
+    fn emit_value(&mut self, expr: &Expr) {
+        if matches!(expr, Expr::Block(stmts) if stmts.is_empty()) {
+            self.write("()");
+        } else {
+            self.emit_expr(expr);
+        }
+    }
+
     // ── Expressions ───────────────────────────────────────────────────────────
 
     fn emit_expr(&mut self, expr: &Expr) {
@@ -607,31 +619,31 @@ impl Formatter {
                 self.write(name);
                 self.emit_opt_binding_type(ty);
                 self.write(" = ");
-                self.emit_expr(value);
+                self.emit_value(value);
             }
             Expr::Own { name, ty, value } => {
                 self.write("own ");
                 self.write(name);
                 self.emit_opt_binding_type(ty);
                 self.write(" = ");
-                self.emit_expr(value);
+                self.emit_value(value);
             }
             Expr::RefBind { name, ty, value } => {
                 self.write("ref ");
                 self.write(name);
                 self.emit_opt_binding_type(ty);
                 self.write(" = ");
-                self.emit_expr(value);
+                self.emit_value(value);
             }
             Expr::Assign { name, value } => {
                 self.write(name);
                 self.write(" = ");
-                self.emit_expr(value);
+                self.emit_value(value);
             }
             Expr::AssignTo { place, value } => {
                 self.emit_expr(place);
                 self.write(" = ");
-                self.emit_expr(value);
+                self.emit_value(value);
             }
 
             Expr::BinOp { op, left, right } => {
@@ -657,7 +669,7 @@ impl Formatter {
                     if i > 0 {
                         self.write(", ");
                     }
-                    self.emit_expr(a);
+                    self.emit_value(a);
                 }
                 self.write(")");
             }
@@ -674,7 +686,7 @@ impl Formatter {
                     if i > 0 {
                         self.write(", ");
                     }
-                    self.emit_expr(a);
+                    self.emit_value(a);
                 }
                 self.write(")");
             }
@@ -748,7 +760,7 @@ impl Formatter {
                 self.write("return");
                 if let Some(v) = val {
                     self.write(" ");
-                    self.emit_expr(v);
+                    self.emit_value(v);
                 }
             }
 
@@ -806,17 +818,17 @@ impl Formatter {
 
             Expr::Ok(inner) => {
                 self.write("Ok(");
-                self.emit_expr(inner);
+                self.emit_value(inner);
                 self.write(")");
             }
             Expr::Err(inner) => {
                 self.write("Err(");
-                self.emit_expr(inner);
+                self.emit_value(inner);
                 self.write(")");
             }
             Expr::Some(inner) => {
                 self.write("Some(");
-                self.emit_expr(inner);
+                self.emit_value(inner);
                 self.write(")");
             }
             Expr::None => self.write("None"),
@@ -1429,5 +1441,27 @@ mod tests {
             !out1.contains("__forarr"),
             "must not leak internal names: {out1}"
         );
+    }
+
+    #[test]
+    fn fmt_unit_value_prints_parens() {
+        // LF-1: `()` and `{}` are the same node. In value position fmt prints
+        // `()` (never the W0008-warned `= {}`); in body position `{}`.
+        let attack = "ATTACK: fmt wrote a W0008 empty block";
+        let src = "fn f(c: bool) -> Result<(), str> {\n    let u: () = ()\n    let v: () = {}\n    if true {}\n    match u {\n        _ => {}\n    }\n    if c {\n        return Ok(())\n    }\n    Ok({})\n}\nfn g() -> () {\n    return ()\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        for want in [
+            "let u: () = ()",
+            "let v: () = ()",
+            "return Ok(())",
+            "    Ok(())\n",
+            "return ()",
+            "_ => {}",
+            "if true {",
+        ] {
+            assert!(out1.contains(want), "{attack}: want {want:?} in {out1}");
+        }
+        assert!(!out1.contains("= {}"), "{attack}: {out1}");
     }
 }

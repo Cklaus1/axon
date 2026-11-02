@@ -14213,5 +14213,34 @@ MUTATIONS += [
      'axon-core', '--test cli_run', 'every_model_call_audits_as_ai'),
 ]
 
+# lang-forms LF-1 (ids M4640-M4643, M4661, M4676): `()` is the unit value; a `()` pattern
+# matches it; native lowers a unit-subject `match` whose arms are `()`/`_` and refuses the rest.
+MUTATIONS += [
+    ('M4640', 'LF-1: `()` falls through to parse_expr and `Ok(())` is a parse error again', 'crates/axon-core/src/parser.rs',
+     '                } else if matches!(self.tokens.get(self.pos + 1), Some(Token::RParen)) {',
+     '                } else if false && matches!(self.tokens.get(self.pos + 1), Some(Token::RParen)) {',
+     'axon-core', '--no-default-features --test cli_run', 'unit_value_paren_is_the_empty_block'),
+    ('M4641', 'LF-1: the unit check runs before the lambda test, so `() => 7` parses as `()`', 'crates/axon-core/src/parser.rs',
+     '                if self.is_paren_lambda() {',
+     '                if !matches!(self.tokens.get(self.pos + 1), Some(Token::RParen)) && self.is_paren_lambda() {',
+     'axon-core', '--no-default-features --test cli_run', 'paren_lambda_with_no_params_stays_a_lambda'),
+    ('M4642', 'LF-1: a `()` pattern does not match the unit value, so check passes and run panics', 'crates/axon-core/src/interp/eval.rs',
+     '                if pats.is_empty() && matches!(val, Value::Unit) {',
+     '                if false && pats.is_empty() && matches!(val, Value::Unit) {',
+     'axon-core', '--no-default-features --test cli_run', 'unit_pattern_matches_the_unit_value'),
+    ('M4643', 'LF-1: fmt prints the unit value as `{}` in value position (a W0008 `= {}`)', 'crates/axon-core/src/fmt.rs',
+     '        if matches!(expr, Expr::Block(stmts) if stmts.is_empty()) {',
+     '        if false && matches!(expr, Expr::Block(stmts) if stmts.is_empty()) {',
+     'axon-core', '--no-default-features --lib', 'fmt::tests::fmt_unit_value_prints_parens'),
+    ('M4661', 'LF-1: a value-less match subject leaves the whole native `match` with `?`, skipping every arm', 'crates/axon-core/src/codegen/expr.rs',
+     '                let subj_val = match self.emit_expr(subject, fn_val) {',
+     '                let subj_val = match Some(self.emit_expr(subject, fn_val)?) {',
+     'axon-core', '--test integration_fixtures', 'unit_match_runs_the_unit_arm_on_both_engines'),
+    ('M4676', 'LF-1: a unit subject gets the placeholder for every arm pattern, so a binding arm reads it', 'crates/axon-core/src/codegen/expr.rs',
+     '                    None if arms.iter().all(|a| reads_no_subject(&a.pattern)) => {',
+     '                    None if true || arms.iter().all(|a| reads_no_subject(&a.pattern)) => {',
+     'axon-core', '--test integration_fixtures', 'unit_match_with_a_binding_arm_is_refused_natively'),
+]
+
 if __name__ == "__main__":
     main()

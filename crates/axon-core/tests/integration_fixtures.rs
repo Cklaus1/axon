@@ -3293,3 +3293,112 @@ fn huge_arrays_panic_natively_like_the_interpreter() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(fails.is_empty(), "{}", fails.join("\n"));
 }
+
+// lang-forms lanes A/B (LF-1, LF-2, LF-3): each new form runs the same on the
+// interpreter and natively, or native refuses with E0910 - never a skipped arm.
+
+/// `axon run` then `axon build --no-cache` and the binary, for `src` written
+/// as `<tag>.ax` in its own temp dir. Returns (run stdout, run rc, build ok,
+/// build stderr, native stdout).
+#[cfg(feature = "codegen")]
+fn lf_both_engines(tag: &str, src: &str) -> (String, Option<i32>, bool, String, String) {
+    use std::process::Command;
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let dir = std::env::temp_dir().join(format!("axon_lf_{tag}_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(format!("{tag}.ax"));
+    std::fs::write(&file, src).unwrap();
+    let run = Command::new(axon_bin)
+        .arg("run")
+        .arg(&file)
+        .output()
+        .unwrap();
+    let bin = dir.join(format!("{tag}_bin"));
+    let build = Command::new(axon_bin)
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&bin)
+        .arg("--no-cache")
+        .output()
+        .unwrap();
+    let native = if build.status.success() {
+        let out = Command::new(&bin).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    } else {
+        String::new()
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    (
+        String::from_utf8_lossy(&run.stdout).into_owned(),
+        run.status.code(),
+        build.status.success(),
+        String::from_utf8_lossy(&build.stderr).into_owned(),
+        native,
+    )
+}
+
+/// Assert `src` prints `want` on both engines.
+#[cfg(feature = "codegen")]
+fn lf_same_on_both_engines(attack: &str, tag: &str, src: &str, want: &str) {
+    let (run, rc, built, berr, native) = lf_both_engines(tag, src);
+    assert_eq!(
+        (rc, run.as_str()),
+        (Some(0), want),
+        "{attack} [{tag}]: interpreter"
+    );
+    assert!(built, "{attack} [{tag}]: native build: {berr}");
+    assert_eq!(native, want, "{attack} [{tag}]: native binary");
+}
+
+/// LF-1: a `match` on a unit-valued subject. Natively the arm was skipped
+/// (no arm ran, the build succeeded); the interpreter panicked or took `_`.
+#[cfg(feature = "codegen")]
+#[test]
+fn unit_match_runs_the_unit_arm_on_both_engines() {
+    let attack = "ATTACK: a () arm was skipped natively";
+    for (tag, src, want) in [
+        (
+            "lf1_u22",
+            "fn k() -> () { {} }\nfn main() {\n    match k() { () => println(\"unit\") }\n    println(\"done\")\n}\n",
+            "unit\ndone\n",
+        ),
+        (
+            "lf1_u21b",
+            "fn k() -> () { {} }\nfn main() {\n    match k() { () => println(\"a\"), _ => println(\"b\") }\n    println(\"done\")\n}\n",
+            "a\ndone\n",
+        ),
+        (
+            "lf1_u21",
+            "fn k() -> () { {} }\nfn main() {\n    let s = match k() { () => \"a\", _ => \"b\" }\n    println(s)\n    println(\"done\")\n}\n",
+            "a\ndone\n",
+        ),
+        (
+            "lf1_d07",
+            "fn h(n: i64) -> () {\n    if n > 0 {\n        println(\"pos\")\n        return ()\n    }\n    println(\"nonpos\")\n}\nfn k() -> () { () }\nfn main() {\n    h(1)\n    h(0)\n    let _u: () = ()\n    k()\n    println(\"done\")\n}\n",
+            "pos\nnonpos\ndone\n",
+        ),
+    ] {
+        lf_same_on_both_engines(attack, tag, src, want);
+    }
+}
+
+/// LF-1: a binding arm on a unit subject cannot be lowered natively (the
+/// bound value would be a placeholder), so the build refuses with E0910 where
+/// it used to succeed and skip the arm.
+#[cfg(feature = "codegen")]
+#[test]
+fn unit_match_with_a_binding_arm_is_refused_natively() {
+    let attack = "ATTACK: a unit match arm was skipped natively without a refusal";
+    let src = "fn k() -> () { {} }\nfn main() {\n    match k() { u => println(\"x\") }\n    println(\"done\")\n}\n";
+    let (run, rc, built, berr, native) = lf_both_engines("lf1_u23", src);
+    assert_eq!(
+        (rc, run.as_str()),
+        (Some(0), "x\ndone\n"),
+        "{attack}: interpreter"
+    );
+    assert!(
+        !built && berr.contains("E0910") && berr.contains("value-less (unit) subject"),
+        "{attack}: build ok={built}, native printed {native:?}, stderr: {berr}"
+    );
+}
