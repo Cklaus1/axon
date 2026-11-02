@@ -1626,16 +1626,10 @@ mod tests {
         let attack = "ATTACK: fmt rewrote if let as match";
         let src = "fn f(o: Option<i64>, r: Result<i64, str>, c: bool) -> i64 {\n    if let Some(v) = o { println(to_str(v)) }\n    let a = if let Some(v) = o { v } else { 0 }\n    if let Some(v) = o { println(\"s\") } else if let Ok(w) = r { println(\"o\") } else { println(\"n\") }\n    if let Some(v) = o { println(\"s\") } else if c { println(\"c\") }\n    if c { println(\"c\") } else if let Some(v) = o { println(\"s\") } else { println(\"n\") }\n    a\n}\n";
         let (out1, out2) = round_trip(src);
-        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        // The shape checks run before the idempotence check, so each mutant
+        // is reported under its own marker.
         assert!(!out1.contains("__iflet_"), "{attack}: {out1}");
         assert!(!out1.contains("match "), "{attack}: {out1}");
-        for want in [
-            "    if let Some(v) = o {\n        println(to_str(v))\n    }\n",
-            "    let a = if let Some(v) = o {\n",
-            "    } else {\n        0\n    }\n",
-        ] {
-            assert!(out1.contains(want), "{attack}: want {want:?} in {out1}");
-        }
         let chain = "ATTACK: fmt broke an else-if-let chain";
         for want in [
             "} else if let Ok(w) = r {\n",
@@ -1645,6 +1639,14 @@ mod tests {
             assert!(out1.contains(want), "{chain}: want {want:?} in {out1}");
         }
         assert!(!out1.contains("else {\n        if"), "{chain}: {out1}");
+        assert_eq!(out1, out2, "{attack}: format must be idempotent");
+        for want in [
+            "    if let Some(v) = o {\n        println(to_str(v))\n    }\n",
+            "    let a = if let Some(v) = o {\n",
+            "    } else {\n        0\n    }\n",
+        ] {
+            assert!(out1.contains(want), "{attack}: want {want:?} in {out1}");
+        }
     }
 
     #[test]
