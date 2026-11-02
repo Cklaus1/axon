@@ -233,6 +233,8 @@ alone is already an improvement and is independently testable.
 
 ### O008 — [medium] Rebuilding the guest kernel invalidates the local attestation baseline
 
+`[REVISED e14fd4a2 (asi-fixes AF-6, re-grepped at ea91a254): fixed - explicit operator re-pin: axon-vm attest --pin-baseline [--repin] (crates/axon-vm/src/main.rs:283-295,891-903). Open - no doc says a kernel rebuild needs a re-pin, and scripts/axon_kernel_gate.sh:114 re-pins on its own]`
+
 `~/.axon/kernel_baseline.sha256` pins the kernel digest, and `axon-vm run`
 correctly refuses with "ATTESTATION FAILED: kernel digest mismatch" when the
 kernel is rebuilt. That is attestation working as designed — but there is no
@@ -249,6 +251,8 @@ Needs: a documented `axon-vm attest --record-baseline` (or equivalent) plus a
 note in the kernel-gate docs that a rebuild requires an explicit re-pin.
 
 ### O009 — [medium] Derive the wasm-parity exclusion set from `builtin_effect_row`, not a hand-written regex
+
+`[REVISED e459558a (asi-fixes AF-6, re-grepped at ea91a254): drift caught by a test (crates/axon-core/tests/cli_run.rs:3373-3432 divergent_builtins_are_excluded_from_the_wasm_pure_corpus; scripts/wasm_parity.sh:107,118). Open - HOST_BUILTINS still hand-written]`
 
 `scripts/wasm_parity.sh:50` defines `HOST_BUILTINS` as a hand-maintained
 alternation, directly beneath a comment promising "no hand-maintained list to
@@ -519,6 +523,8 @@ one cost a revert, and every executed-repro one landed cleanly.
 
 ### O016 — [high] OSK-P4-H2 CONFIRMED BY EXECUTION: a job that never ran seals as `Completed`
 
+`[FIXED 35ede229 (AUDIT T24) + e622e1c9 (T44): verdict by exit code + completion marker, never Completed by fallthrough (crates/axon-os/src/runtime.rs:1370-1458); test crates/axon-os/tests/acceptance.rs:966 t44_verdict_is_decided_by_exit_code_not_stderr_prose]`
+
 Re-triaged by running it, not reading it (the method O015 argued for). This one
 holds — and it is worse in the record than in the console.
 
@@ -559,6 +565,8 @@ worse than described). Executing before implementing is cheap and keeps paying.
 
 ### O017 — [high] OSK-P4-H4 CONFIRMED BY EXECUTION: the audit ledger never reaches a sandboxed job
 
+`[FIXED 16d5d48b (AUDIT T23): AXON_* controls forwarded after env_clear (crates/axon-os/src/runtime.rs:903-944)]`
+
 Third code-read finding re-triaged by running it. Confirmed, and the contrast
 makes it unambiguous:
 
@@ -597,6 +605,8 @@ exercises a capability.
 written (OSK-L02). Reading the code has not once predicted the outcome.
 
 ### O018 — [high] `AXON_AI_MOCK` is also stripped, and exit 5 seals as `Completed` — one repro, both bugs
+
+`[FIXED 16d5d48b (T23) + 35ede229 (T24): AXON_AI_MOCK/REPLAY forwarded (crates/axon-os/src/runtime.rs:934-935); exit 5 -> Denied ai-policy (runtime.rs:1368,1435); test crates/axon-os/tests/sandbox_capture.rs:293-316]`
 
 Follow-up to O017 (predicted) and O016 (strengthened). A job whose grant permits
 net, calling `ai_complete`, run under `AXON_AI_MOCK=1`:
@@ -641,6 +651,8 @@ NOT `Completed`.
 
 ### O019 — [high] OSK-P4-H3 CONFIRMED BY EXECUTION: axon-os deadlocks on a job with large stdout
 
+`[FIXED d5afa6c5 (T25, drain child pipes concurrently), bounded by e1127c42: spawn_drain/join_drains (crates/axon-os/src/runtime.rs:408-450); test runtime.rs:1822 run_bounded_capped_drains_a_flood_without_retaining_it]`
+
 The triage flagged this one honestly as *"Confirmed by code read (NOT reproduced
 — building axon-os was out of budget, so confidence is code-level)"*. Reproduced
 now, and it is real:
@@ -681,6 +693,8 @@ mis-attributed. Two were false. Two were true-but-understated. Reading has still
 never predicted the outcome.
 
 ### O020 — [high] OSK-P4-H6 CONFIRMED BY EXECUTION: `--killable --monitor` silently disables the kill switch
+
+`[FIXED 3aef7eb0: one shared <run>.kill for --killable/--monitor (crates/axon-os/src/cli.rs:433-439); test crates/axon-os/tests/r27_acceptance.rs one_kill_channel_per_run_across_flag_combinations]`
 
 Eighth execution re-triage. Confirmed, and it is a safety-control failure with a
 success banner on top.
@@ -1445,6 +1459,8 @@ to it directly — one `verb × corpus` matrix asserting every verb agrees with
 
 ## O-RLM-02 — `const` and `var` get no help, at the resolve tier (proposed: MEDIUM)
 
+`[FIXED 8363eb97: const/var foreign_keyword_help at the resolve tier (crates/axon-core/src/resolver.rs:494-497); test crates/axon-core/tests/parse_help_probe.rs:133]`
+
 `AXON_FOR_RLM.md` §1 names both. Probing showed they lex as ordinary identifiers
 and fail at name resolution (`cannot find name \`const\` in this scope`), not at
 the parse tier, so `parse_help` is never called for them and cannot be. They are
@@ -1469,6 +1485,8 @@ again, not because it is hard.
 
 ## O-RLM-04 — the clippy gate is an allowlist, and six crates are outside it (proposed: MEDIUM)
 
+`[FIXED 5e6e8f1c: six crates in runtime-crate clippy (S14) + clippy coverage stage S15 (scripts/gate.sh:984-1015)]`
+
 `scripts/gate.sh` lints `axon-core` (under `--no-default-features` only) plus
 `axon-rt/ai/surface/gfx-mock/domain/vm/attest/ledger`. Not linted:
 **`axon-intent`, `axon-os`, `axon-web`, `axon-audit`, `axon-certcheck`,
@@ -1490,6 +1508,8 @@ as finding P6-COV-02, which is still open. Needs an externally-anchored tip or a
 signed entry count.
 
 ## O-RLM-06 — `axon-web` has no auth and `Access-Control-Allow-Origin: *` (proposed: MEDIUM)
+
+`[REVISED 499d08d2: wildcard ACAO removed (crates/axon-web/src/server.rs:71-93). Open - no auth/Origin/CSRF; a cross-origin simple POST still executes]` `[INFERENCE: not probed]`
 
 `crates/axon-web/src/server.rs:70`. Every `POST /api/*` shells attacker-supplied
 program text into the interpreter. It binds loopback only, which is the
@@ -1693,6 +1713,8 @@ plans from it.
 
 ## O-HI-03 — H2/O031 reclassified: native AI builds are an INTENDED capability (proposed: HIGH — decision, not code)
 
+`[REVISED 105444e6: native no longer dials a model - live calls refuse with exit 2 (crates/axon-ai/src/lib.rs:410,433); docs line per tasks/asi-fixes-spec.md AF-6(a) in axon build --help (crates/axon-core/src/main.rs:127-131) and spec/axon-for-llms.md §7]`
+
 Attempted on the "fix all" instruction and **reverted**, because implementation
 revealed what the opportunity entry could not.
 
@@ -1732,6 +1754,8 @@ docs could say that a native build makes live AI calls regardless of
 `asi-runtime`, which is true today under every option above.
 
 ## O-SESS-01 — `arr_push` is `[i64]`-only, so a list of records cannot be BUILT (proposed: HIGH — blocks the RLM head-to-head)
+
+`[FIXED 8d019471 (arr_push generic) + 79ab856e (AX-44, native any element type): arr_push is [T], T -> [T] (crates/axon-core/src/builtins.rs:614-616; CHANGELOG.md:472)]`
 
 Found trying to port `atlas/spikes/rlm-engine/src/stateful.rs`'s chain fixture to
 Axon for the head-to-head against CPython.
@@ -1795,6 +1819,8 @@ would be `axon run` (or `axon test`) over every fixture that currently only has
 its parse asserted.
 
 ## O-RLM2-03 — 8/8 needs `str_concat` awareness too, not just `mut` (proposed: HIGH)
+
+`[FIXED 3df08219 + 1d01b014: + concatenates str and the card says so (crates/axon-core/src/card.rs:123); in-place s = s + t AX-31 (CHANGELOG.md:513)]` (8/8 not re-measured)
 
 Found finishing M5. The last fluency failure was `let mut result = ""` in a
 string accumulator, and M5 makes the `mut` parse. But the same task then does
@@ -1927,6 +1953,7 @@ concrete reason to expect it will not.
   **replay-diff** ("the first event at which run B departed from run A") becomes possible, which is
   the feature an auditor actually wants and nothing else in the design offers. Identified in the
   review of WHY_REPLAY_MATTERS.md; this is the highest-value item on the replayability axis.
+  `[FIXED 6741b51c: RecordingHost/ReplayHost (crates/axon-core/src/replay.rs:245,493); a miss refuses]`
 - **[HIGH] Gate: no builtin with a host/entropy/time/model effect row may lack a replay story.** The
   set is enumerable from `BUILTINS` + `builtin_effect_row`, so a unit test can walk every builtin whose
   row includes IO/Net/Exec/Time/Random and assert it has a record/replay path. This is the ONE genuinely
@@ -1965,6 +1992,7 @@ concrete reason to expect it will not.
   two `Vec<HostEvent>` and a walk — and the sequential matching already in place is what makes it
   possible. Note `axon-os/src/replay.rs` answers a coarser version (whole-record hash equality) and
   would compose: it says *whether*, this says *where*.
+  `[FIXED f3348d48: diff_journals (crates/axon-core/src/replay.rs:971) via axon replay --diff (crates/axon-core/src/main.rs:4914)]`
 - **[HIGH] Gate the replay column: fail CI when a new host effect has no replay story.** The
   `ai_extract_uncertain_*` bypass survived because nothing enumerated "effects that can reach the
   world". Now that `AxonHost` is the single seam, that set IS enumerable — the trait's method list.
@@ -1975,6 +2003,7 @@ concrete reason to expect it will not.
   match the existing `AXON_*` family, but a journal is an artifact a user hands to a reviewer, and a
   verb can carry `--diff`, `--show` (render a journal as a readable transcript), and `--verify`.
   Env-var-only also means the web UI and `axon deploy` cannot offer it without setting process env.
+  `[REVISED f3348d48: axon replay <journal> [--diff] [--show-values] (crates/axon-core/src/main.rs:437-453,1159-1163). Open - no --verify; no web/deploy integration]`
 - **[med] Wire the journal into `axon trace --replay` and `run_start`.** The run-start record already
   carries the seed and `ts_ms`; it should also carry the journal path when one was recorded, so
   `axon trace --replay <run-id>` restores entropy, time AND environment from one handle instead of
@@ -2130,6 +2159,8 @@ acting: copy the binary to a fixed path, run the test against that copy, and
 see whether the failure survives.
 
 ## No `wrapping_*` builtins exist, and two places promised them
+
+`[FIXED cac9cdf2: wrapping_add/sub/mul/div/rem - BUILTINS (crates/axon-core/src/builtins.rs:559+), interp (interp/builtins.rs:1775), ExternSig (codegen/builtin_externs.rs:105), __axon_wrapping_* (crates/axon-rt/src/lib.rs:1275)]`
 
 `interp/value.rs` carried the comment "Use the `wrapping_*` builtins for
 intentional modular arithmetic", and

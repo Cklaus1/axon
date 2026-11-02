@@ -9053,10 +9053,12 @@ fn asi_hello_goal_acid_test_loop_runs_end_to_end() {
     // @[verify] deploy gate FIRES (the safety catch — a sub-threshold result is
     // refused before deploy) and the run is REPLAY-reproducible (no model called).
     let script = format!("{}/../../examples/asi/run.sh", env!("CARGO_MANIFEST_DIR"));
-    if !std::path::Path::new(&script).exists() {
-        eprintln!("asi/run.sh not found — skipping");
-        return;
-    }
+    // AF-5: run.sh is tracked and harness() names the binary, so in a correct
+    // checkout neither can be missing: a milestone gate never passes vacuously.
+    assert!(
+        std::path::Path::new(&script).exists(),
+        "examples/asi/run.sh is missing: the Hello Goal acid test cannot run"
+    );
     let out = harness(&script)
         .arg("hello-goal")
         .env("AXON_AI_MOCK", "1")
@@ -9067,17 +9069,17 @@ fn asi_hello_goal_acid_test_loop_runs_end_to_end() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    if m.contains("axon binary not found") {
-        eprintln!("run.sh could not locate the axon binary — skipping");
-        return;
-    }
+    assert!(
+        !m.contains("axon binary not found"),
+        "run.sh could not locate the harness-named axon binary:\n{m}"
+    );
     assert!(
         out.status.success(),
         "the hello-goal loop must complete cleanly:\n{m}"
     );
     assert!(
-        m.contains("DEPLOY GATE FIRED") && m.contains("SAFETY CATCH"),
-        "the @[verify] deploy gate must fire as the safety catch:\n{m}"
+        m.contains("DEPLOY GATE FIRED (exit 3)") && m.contains("SAFETY CATCH"),
+        "the @[verify] deploy gate must fire (exit 3, not a crash) as the safety catch:\n{m}"
     );
     assert!(
         m.contains("reproducible"),
@@ -9095,12 +9097,12 @@ fn asi_demo_replay_and_audit_commands_work_end_to_end() {
     // landed F2/F3 auditability work on the flagship optimize.ax: `replay`
     // records every ai_complete then re-runs from the cache, verifying byte-for-
     // byte reproducibility (the model is never re-called); `audit` shows the
-    // AI-call trail. Both run under mock. Skips if run.sh can't find the binary.
+    // AI-call trail. Both run under mock. A missing run.sh or binary is a failure.
     let script = format!("{}/../../examples/asi/run.sh", env!("CARGO_MANIFEST_DIR"));
-    if !std::path::Path::new(&script).exists() {
-        eprintln!("asi/run.sh not found — skipping");
-        return;
-    }
+    assert!(
+        std::path::Path::new(&script).exists(),
+        "examples/asi/run.sh is missing: the ASI replay/audit test cannot run"
+    );
     // replay: record → replay → "reproducible".
     let rep = harness(&script)
         .arg("replay")
@@ -9112,10 +9114,10 @@ fn asi_demo_replay_and_audit_commands_work_end_to_end() {
         String::from_utf8_lossy(&rep.stdout),
         String::from_utf8_lossy(&rep.stderr)
     );
-    if r.contains("axon binary not found") {
-        eprintln!("run.sh could not locate the axon binary — skipping");
-        return;
-    }
+    assert!(
+        !r.contains("axon binary not found"),
+        "run.sh could not locate the harness-named axon binary:\n{r}"
+    );
     assert!(
         rep.status.success() && r.contains("reproducible"),
         "run.sh replay must report byte-for-byte reproducibility:\n{r}"
@@ -18539,10 +18541,10 @@ fn wasm_aot_runs_and_matches_interp_on_pure_int() {
         "{}/../../scripts/wasm_aot_run_parity.sh",
         env!("CARGO_MANIFEST_DIR")
     );
-    if !std::path::Path::new(&script).exists() {
-        eprintln!("wasm_aot_run_parity.sh not found — skipping");
-        return;
-    }
+    assert!(
+        std::path::Path::new(&script).exists(),
+        "scripts/wasm_aot_run_parity.sh is missing: the R7 milestone test cannot run"
+    );
     let out = harness(&script)
         .output()
         .expect("run wasm_aot_run_parity.sh");
@@ -45370,4 +45372,91 @@ fn use_after_move_on_one_arm_is_refused() {
             "{attack} [{tag}]: {text}"
         );
     }
+}
+
+// ── AF-5: the Hello Goal acid gate fails closed (tasks/asi-fixes-spec.md AF-5) ──
+// `examples/asi/run.sh hello-goal` used to swallow every step's exit code, so a
+// binary that panics on every call printed "DEPLOY GATE FIRED (exit 101) ...
+// SAFETY CATCH" and "reproducible" and exited 0. Each fake below is a small
+// shell script standing in for `axon`.
+
+#[cfg(unix)]
+fn af5_fake_axon(tag: &str, body: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("axon_af5_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let bin = dir.join("axon");
+    std::fs::write(&bin, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (dir, bin)
+}
+
+#[cfg(unix)]
+fn af5_run_hello_goal(bin: &std::path::Path) -> (Option<i32>, String) {
+    let script = format!("{}/../../examples/asi/run.sh", env!("CARGO_MANIFEST_DIR"));
+    let out = script_spawn::script(
+        "bash",
+        &script,
+        Bins::Named(&[("AXON", bin.to_str().unwrap())]),
+    )
+    .arg("hello-goal")
+    .env("AXON_AI_MOCK", "1")
+    .output()
+    .expect("run run.sh hello-goal");
+    let m = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.code(), m)
+}
+
+#[cfg(unix)]
+#[test]
+fn run_sh_hello_goal_fails_on_crashing_binary() {
+    // Every call panics (rc 101): step 1 must fail the acid test, by name.
+    let (dir, bin) = af5_fake_axon(
+        "crash",
+        "echo \"thread 'main' panicked at fake\" >&2\nexit 101",
+    );
+    let (rc, m) = af5_run_hello_goal(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        rc != Some(0) && m.contains("step 1 (run) exited 101"),
+        "ATTACK: acid test passed without running: a crashing axon (rc 101) must fail \
+         run.sh hello-goal at step 1 (rc {rc:?}):\n{m}"
+    );
+    assert!(
+        !m.contains("DEPLOY GATE FIRED") && !m.contains("loop complete"),
+        "a crash must never read as the safety catch:\n{m}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_sh_hello_goal_fails_on_replay_only_crash() {
+    // The record leg (AXON_AI_REPLAY set, AXON_AI_MOCK=1) and every other step
+    // fire the gate (rc 3); only the replay leg (AXON_AI_REPLAY set, no mock)
+    // panics. Record rc 3 != replay rc 101, so the acid test fails.
+    let (dir, bin) = af5_fake_axon(
+        "replay",
+        "if [ -n \"${AXON_AI_REPLAY:-}\" ] && [ -z \"${AXON_AI_MOCK:-}\" ]; then\n\
+         \x20 echo \"thread 'main' panicked at fake replay\" >&2\n\
+         \x20 exit 101\n\
+         fi\n\
+         echo 'verify failed'\n\
+         exit 3",
+    );
+    let (rc, m) = af5_run_hello_goal(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        rc != Some(0) && m.contains("step 5 replay exited 101"),
+        "ATTACK: acid test passed without running: a replay leg that crashes must fail \
+         run.sh hello-goal (rc {rc:?}):\n{m}"
+    );
+    assert!(
+        !m.contains("loop complete"),
+        "the loop must not report completion after a crashed replay:\n{m}"
+    );
 }

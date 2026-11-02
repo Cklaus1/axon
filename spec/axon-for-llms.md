@@ -283,6 +283,11 @@ fn main() {
 }
 ```
 
+**AI calls in a native build.** A natively built binary never calls a model: under `AXON_AI_MOCK=1`
+it returns the deterministic stub; with an API key it refuses with exit 2 (native builds write no
+`ai_call` audit record - run with `axon run`); with neither, the AI builtin returns `Err` with the
+missing-key message.
+
 **Capability sandboxing** — the compiler refuses any I/O a function didn't declare:
 
 ```axon

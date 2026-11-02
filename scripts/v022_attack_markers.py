@@ -3924,3 +3924,8 @@ ATTACK_MARKERS.update({
     'M4624': r'ATTACK: a closure named exit read as a diverging call \[ex\]',
     'M4625': r'ATTACK: a name re-bound in every arm refused \[rj\]',
 })
+
+# asi-fixes AF-5 acid gate (id M4623)
+ATTACK_MARKERS.update({
+    'M4623': r'ATTACK: acid test passed without running: a crashing axon \(rc 101\)',
+})
