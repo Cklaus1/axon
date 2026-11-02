@@ -14265,6 +14265,31 @@ MUTATIONS += [
      'axon-core', _AF2_T, 'match_arms_are_alternatives_for_moves'),
 ]
 
+# checker-soundness-4 CS4-1: the `if` rule joins live branches like the match
+# rule (tasks/checker-soundness-4-spec.md §4; ids M4700-M4704)
+MUTATIONS += [
+    ('M4700', 'CS4-1: the if re-bind join is dropped, so a name re-bound in every branch stays moved', _AF2,
+     '                if !blocks_join(then) && !else_.as_deref().is_some_and(blocks_join) {\n',
+     '                if false {\n',
+     'axon-core', _AF2_T, 'if_branches_are_alternatives_for_moves'),
+    ('M4701', 'CS4-1: a break/continue before a branch\'s end never blocks the if join (O-AF-02 widened)', _AF2,
+     '                let blocks_join = |b: &Expr| has_escaping_jump(b) && !jump_is_final(b);\n',
+     '                let blocks_join = |_: &Expr| false;\n',
+     'axon-core', _AF2_T, 'if_join_keeps_real_moves'),
+    ('M4702', 'CS4-1: a name a branch no longer holds (popped shadowing let) is read as re-bound', _AF2,
+     '                            .map(|end| end.get(name).cloned().unwrap_or(BindingState::Moved))\n',
+     '                            .map(|end| end.get(name).cloned().unwrap_or(BindingState::Owned))\n',
+     'axon-core', _AF2_T, 'if_join_keeps_real_moves'),
+    ('M4703', 'CS4-1: a final break/continue blocks the if join like a mid-branch one', _AF2,
+     '                let blocks_join = |b: &Expr| has_escaping_jump(b) && !jump_is_final(b);\n',
+     '                let blocks_join = |b: &Expr| has_escaping_jump(b);\n',
+     'axon-core', _AF2_T, 'if_branches_are_alternatives_for_moves'),
+    ('M4704', 'CS4-1: a returning/exiting then-branch is joined as live, so its moved state blocks the join', _AF2,
+     '                let then_live = !branch_diverges(then, exit_local);\n',
+     '                let then_live = true;\n',
+     'axon-core', _AF2_T, 'if_branches_are_alternatives_for_moves'),
+]
+
 # asi-fixes AF-5: the Hello Goal acid gate fails closed (tasks/asi-fixes-spec.md; id M4623)
 MUTATIONS += [
     ('M4623', 'AF-5: run.sh hello-goal accepts any step-1 exit code, so a crashing axon reads as the safety catch', 'examples/asi/run.sh',

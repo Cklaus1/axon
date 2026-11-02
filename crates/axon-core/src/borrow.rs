@@ -134,6 +134,19 @@ fn has_escaping_jump(e: &Expr) -> bool {
     false
 }
 
+/// Whether an `if` branch's only escaping `break`/`continue` is its final
+/// statement. That jump then leaves with the branch's end state (CS4-1).
+fn jump_is_final(e: &Expr) -> bool {
+    match e {
+        Expr::Break | Expr::Continue => true,
+        Expr::Block(stmts) => stmts.split_last().is_some_and(|(last, init)| {
+            matches!(last.expr, Expr::Break | Expr::Continue)
+                && !init.iter().any(|s| has_escaping_jump(&s.expr))
+        }),
+        _ => false,
+    }
+}
+
 /// Whether `pat` binds the name `exit` (a call to it then runs the bound
 /// value, not the builtin, so it does not diverge).
 fn pattern_binds_exit(pat: &crate::ast::Pattern) -> bool {
@@ -399,19 +412,12 @@ impl OwnershipGraph {
                 // Check both branches; union moved bindings.
                 let snapshot = self.bindings.clone();
                 self.check_expr(then);
-                let after_then = self.bindings.clone();
-                self.bindings = snapshot.clone();
+                let after_then = std::mem::replace(&mut self.bindings, snapshot.clone());
                 if let Some(e) = else_ {
                     self.check_expr(e);
                 }
-                let after_else = self.bindings.clone();
-                // Union: any binding moved in a branch that falls through is
-                // moved afterwards. A branch ending in `return` or `exit(..)`
-                // never reaches the code after the `if`, so its moves are
-                // discarded (CS-6). `break`/`continue` branches keep theirs:
-                // their state flows past the loop.
-                self.bindings = snapshot;
-                let exit_local = self.bindings.contains_key("exit");
+                let after_else = std::mem::replace(&mut self.bindings, snapshot);
+                let exit_local = self.exit_bound > 0 || self.bindings.contains_key("exit");
                 let then_live = !branch_diverges(then, exit_local);
                 let else_live = !else_
                     .as_deref()
@@ -420,6 +426,37 @@ impl OwnershipGraph {
                     then_live.then_some(&after_then),
                     else_live.then_some(&after_else),
                 ];
+                // Re-bind join (CS4-1, like the match join): a name moved
+                // before the `if` that every live branch re-binds is re-bound
+                // after it. Not when a `break`/`continue` leaves a branch
+                // before its end: that path carries the moved state past the
+                // loop (O-AF-02). A final jump leaves with the branch's end
+                // state, so it joins. A name a branch no longer holds (a
+                // popped shadowing `let`) keeps its state from before the
+                // `if`: `Moved`. With no live branch nothing is joined.
+                let blocks_join = |b: &Expr| has_escaping_jump(b) && !jump_is_final(b);
+                if !blocks_join(then) && !else_.as_deref().is_some_and(blocks_join) {
+                    for (name, state) in self.bindings.iter_mut() {
+                        if *state != BindingState::Moved {
+                            continue;
+                        }
+                        let joined = live
+                            .into_iter()
+                            .flatten()
+                            .map(|end| end.get(name).cloned().unwrap_or(BindingState::Moved))
+                            .reduce(|a, b| join_state(&a, b));
+                        if let Some(j) = joined.filter(|j| *j != BindingState::Moved) {
+                            *state = j;
+                        }
+                    }
+                }
+                // Union: any binding moved in a branch that falls through is
+                // moved afterwards. A branch ending in `return` or `exit(..)`
+                // never reaches the code after the `if`, so its moves are
+                // discarded (CS-6). `break`/`continue` branches keep theirs:
+                // their state flows past the loop. (A name the join above
+                // re-bound is `Moved` in no live branch, so the order of the
+                // two steps does not matter.)
                 for (name, state) in live.into_iter().flatten().flatten() {
                     if *state == BindingState::Moved {
                         self.bindings.insert(name.clone(), BindingState::Moved);

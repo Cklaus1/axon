@@ -3925,6 +3925,15 @@ ATTACK_MARKERS.update({
     'M4625': r'ATTACK: a name re-bound in every arm refused \[rj\]',
 })
 
+# checker-soundness-4 CS4-1: the if join (ids M4700-M4704)
+ATTACK_MARKERS.update({
+    'M4700': r'ATTACK: a re-bind in every if branch was refused \[rjif\]',
+    'M4701': r'ATTACK: an if join dropped a move \[ibrk\]',
+    'M4702': r'ATTACK: an if join dropped a move \[shi\]',
+    'M4703': r'ATTACK: a re-bind in every if branch was refused \[ifbrk_ok\]',
+    'M4704': r'ATTACK: a re-bind in every if branch was refused \[rjdif\]',
+})
+
 # asi-fixes AF-5 acid gate (id M4623)
 ATTACK_MARKERS.update({
     'M4623': r'ATTACK: acid test passed without running: a crashing axon \(rc 101\)',

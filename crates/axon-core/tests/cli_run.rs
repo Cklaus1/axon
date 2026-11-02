@@ -46692,3 +46692,312 @@ fn ai_cost_spent_counts_extracts() {
     assert!(spent > 0, "ATTACK: extract cost uncounted: {out:?}");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ── CS4-1 (checker-soundness-4): the `if` rule joins live branches like the
+// `match` rule (O-AF-07). The programs are the spec's probes
+// (tasks/checker-soundness-4-spec.md, CS4-1 table); keep rows assert the code
+// AND the line the table records.
+
+const CS4_RJIF: &str = r#"fn f(k: i64, s: str) -> str {
+    let mut s = s
+    let t = s
+    if k == 0 { s = "zero" } else { s = "other" }
+    s + t
+}
+fn main() { println(f(1, "a")) println(f(0, "a")) }
+"#;
+const CS4_RJDIF: &str = r#"fn f(k: i64, s: str) -> str {
+    let t = s
+    if k == 0 { return t } else { s = "other" }
+    s + t
+}
+fn main() { println(f(1, "a")) println(f(0, "a")) }
+"#;
+const CS4_RJXIF: &str = r#"fn f(k: i64, s: str) -> str {
+    let t = s
+    if k == 0 { println(t) exit(0) } else { s = "other" }
+    s + t
+}
+fn main() { println(f(1, "a")) println(f(0, "a")) }
+"#;
+const CS4_RJELIF: &str = r#"fn f(k: i64, s: str) -> str {
+    let t = s
+    if k == 0 { s = "zero" } else if k == 1 { s = "one" } else { s = "other" }
+    s + t
+}
+fn main() { println(f(0, "a")) println(f(1, "a")) println(f(2, "a")) }
+"#;
+const CS4_RJVAL: &str = r#"fn f(k: i64, s: str) -> str {
+    let t = s
+    let u = if k == 0 { s = "zero"; 1 } else { s = "other"; 2 }
+    s + t + to_str(u)
+}
+fn main() { println(f(0, "a")) println(f(1, "a")) }
+"#;
+const CS4_RJSTRUCT: &str = r#"type P = { x: i64 }
+fn f(k: i64, p: P) -> i64 {
+    let q = p
+    if k == 0 { p = P { x: 1 } } else { p = P { x: 2 } }
+    p.x + q.x
+}
+fn main() { println(to_str(f(0, P { x: 7 }))) println(to_str(f(1, P { x: 7 }))) }
+"#;
+const CS4_RJNEST: &str = r#"fn f(k: i64, s: str) -> str {
+    let t = s
+    if k > 0 { if k == 1 { s = "one" } else { s = "many" } } else { s = "none" }
+    s + t
+}
+fn main() { println(f(0, "a")) println(f(1, "a")) println(f(2, "a")) }
+"#;
+const CS4_IFBRK_OK: &str = r#"fn f(k: i64, s: str) -> str {
+    let mut s = s
+    let t = s
+    let mut i = 0
+    while i < 3 {
+        if i == k { s = "a"; break } else { s = "b" }
+        println(s)
+        i = i + 1
+    }
+    s + t
+}
+fn main() { println(f(1, "x")) }
+"#;
+const CS4_RJNOELSE: &str = r#"fn f(k: i64, s: str) -> str {
+    let t = s
+    if k == 0 { s = "zero" }
+    s + t
+}
+fn main() { println(f(0, "a")) println(f(1, "a")) }
+"#;
+const CS4_RJELIF_NOELSE: &str = r#"fn f(k: i64, s: str) -> str {
+    let t = s
+    if k == 0 { s = "zero" } else if k == 1 { s = "one" }
+    s + t
+}
+fn main() { println(f(0, "a")) println(f(2, "a")) }
+"#;
+const CS4_RJONE: &str = r#"fn f(k: i64, s: str) -> str {
+    let t = s
+    if k == 0 { s = "zero" } else { println("x") }
+    s + t
+}
+fn main() { println(f(0, "a")) println(f(1, "a")) }
+"#;
+const CS4_RJREF: &str = r#"fn f(k: i64, s: str) -> str {
+    let t = s
+    if k == 0 { s = "zero" } else { let u = t; s = u }
+    s + t
+}
+fn main() { println(f(0, "a")) }
+"#;
+const CS4_SHI: &str = r#"fn f(k: i64, s: str) -> str {
+    let t = s
+    if k == 0 { let s = "x" println(s) } else { let s = "y" println(s) }
+    s + t
+}
+fn main() { println(f(0, "a")) }
+"#;
+const CS4_IBRK: &str = r#"fn f(c: bool, s: str) -> str {
+    let t = s
+    let mut i = 0
+    while i < 3 {
+        if c { if i == 0 { break } s = "a" } else { s = "b" }
+        i = i + 1
+    }
+    s + t
+}
+fn main() { println(f(true, "x")) }
+"#;
+const CS4_BRRB: &str = r#"type P = { x: i64 }
+fn f(p: P, c: bool) -> i64 {
+    let t = p
+    let mut i = 0
+    while i < 3 {
+        if c {
+            if i == 0 { break }
+            return 1
+        } else {
+            p = P { x: 9 }
+        }
+        i = i + 1
+    }
+    p.x + t.x
+}
+fn main() { println(to_str(f(P { x: 7 }, true))) println(to_str(f(P { x: 7 }, false))) }
+"#;
+const CS4_EXLOCIF: &str = r#"fn f(k: i64, name: str) -> str {
+    let exit = |c: i64| c + 1
+    let z = if k == 0 { let t = name; exit(3) } else { 0 }
+    println(to_str(z))
+    name
+}
+fn main() { println(f(0, "a")) }
+"#;
+const CS4_EXFORIF: &str = r#"fn f(k: i64, name: str, fs: [(i64) -> i64]) -> str {
+    for exit in fs {
+        let z = if k == 0 { let t = name; exit(3) } else { 0 }
+        println(to_str(z))
+    }
+    name
+}
+fn main() { println(f(0, "a", [|c: i64| c + 1])) }
+"#;
+const CS4_EXARMIF: &str = r#"fn f(k: i64, name: str) -> str {
+    let o = Some(|c: i64| c + 1)
+    match o {
+        Some(exit) => {
+            let z = if k == 0 { let t = name; exit(3) } else { 0 }
+            println("arm " + to_str(z))
+        }
+        None => {}
+    }
+    name
+}
+fn main() { println(f(0, "a")) }
+"#;
+const CS4_BR1: &str = r#"type P = { x: i64 }
+fn f(p: P, c: bool) -> i64 {
+    let mut i = 0
+    while i < 3 {
+        if i == 0 {
+            if c {
+                let t = p
+                break
+            }
+            return 1
+        }
+        i = i + 1
+    }
+    p.x
+}
+fn main() { println(to_str(f(P { x: 7 }, true))) }
+"#;
+const CS4_LOOPMOVE: &str = r#"type P = { x: i64 }
+fn f(p: P, xs: [i64]) -> i64 {
+    let mut s = 0
+    for x in xs {
+        s = s + p.x
+        let t = p
+    }
+    s
+}
+fn main() { println(to_str(f(P { x: 7 }, [0, 2]))) }
+"#;
+const CS4_HMCONT_IF: &str = r#"type P = { x: i64 }
+fn f(p: P, xs: [i64]) -> i64 {
+    let mut s = 0
+    for x in xs {
+        if x == 0 {
+            let t = p
+            s = 1
+        } else {
+            s = s + p.x
+        }
+    }
+    s
+}
+fn main() { println(to_str(f(P { x: 7 }, [0, 2]))) }
+"#;
+const CS4_RJLOOP: &str = r#"fn f(xs: [i64], s: str) -> str {
+    let t = s
+    for x in xs {
+        if x == 0 { s = "zero" } else { s = "other" }
+    }
+    s + t
+}
+fn main() { println(f([1], "a")) println(f([], "a")) }
+"#;
+const CS4_LOOPINIF: &str = r#"fn f(k: i64, xs: [i64], s: str) -> str {
+    let mut s = s
+    let t = s
+    if k == 0 { for x in xs { s = "z" } } else { s = "o" }
+    s + t
+}
+fn main() { println(f(0, [], "a")) }
+"#;
+
+/// CS4-1: a name moved before an `if` and re-bound in every live branch is
+/// re-bound after it, as in the `match` twin; a branch that returns or exits
+/// is not live, and a branch whose final statement is `break` joins with its
+/// end state (ifbrk_ok, the twin of `mbrk_ok`).
+#[test]
+fn if_branches_are_alternatives_for_moves() {
+    let attack = "ATTACK: a re-bind in every if branch was refused";
+    for (tag, src, want) in [
+        ("rjif", CS4_RJIF, "othera\nzeroa\n"),
+        ("rjdif", CS4_RJDIF, "othera\na\n"),
+        ("rjxif", CS4_RJXIF, "othera\n"),
+        ("rjelif", CS4_RJELIF, "zeroa\nonea\nothera\n"),
+        ("rjval", CS4_RJVAL, "zeroa1\nothera2\n"),
+        ("rjstruct", CS4_RJSTRUCT, "8\n9\n"),
+        ("rjnest", CS4_RJNEST, "nonea\nonea\nmanya\n"),
+        ("ifbrk_ok", CS4_IFBRK_OK, "b\nax\n"),
+    ] {
+        let (rc, errors, text) = af2_check(&format!("cs4_{tag}"), src);
+        assert_eq!((rc, errors), (Some(0), vec![]), "{attack} [{tag}]: {text}");
+        let (rc, out) = af2_run(&format!("cs4_{tag}"), src);
+        if tag == "rjxif" {
+            // The k=0 call exits; only the k=1 call's line is asserted.
+            assert_eq!(
+                out.lines().next(),
+                want.lines().next(),
+                "[{tag}]: run rc {rc:?}"
+            );
+        } else {
+            assert_eq!((rc, out.as_str()), (Some(0), want), "[{tag}]: run");
+        }
+    }
+}
+
+/// CS4-1: the `if` join keeps every move a path out of the `if` still holds:
+/// no `else`, one branch only, a shadowing `let` (O-CS4-01 not copied), a
+/// `break` before the branch's end (O-AF-02 not widened), and an `exit` that
+/// is not provably the builtin (exarmif, D9).
+#[test]
+fn if_join_keeps_real_moves() {
+    let attack = "ATTACK: an if join dropped a move";
+    for (tag, src, line) in [
+        ("rjnoelse", CS4_RJNOELSE, 4),
+        ("rjelif_noelse", CS4_RJELIF_NOELSE, 4),
+        ("rjone", CS4_RJONE, 4),
+        ("rjref", CS4_RJREF, 4),
+        ("shi", CS4_SHI, 4),
+        ("ibrk", CS4_IBRK, 8),
+        ("brrb", CS4_BRRB, 14),
+        ("exlocif", CS4_EXLOCIF, 5),
+        ("exforif", CS4_EXFORIF, 6),
+        ("exarmif", CS4_EXARMIF, 10),
+    ] {
+        let (rc, errors, text) = af2_check(&format!("cs4_{tag}"), src);
+        assert!(
+            rc == Some(2)
+                && !errors.is_empty()
+                && errors.iter().all(|(c, l)| c == "E0601" && *l == line),
+            "{attack} [{tag}]: want E0601:{line}, got rc {rc:?} {errors:?}: {text}"
+        );
+    }
+}
+
+/// CS4-1 leaves the decided holes as they are: O-AF-01 (loopmove,
+/// hmcont_if) and O-AF-02 (br1) stay rc 0 (human decision 2026-11-02, asi-fixes
+/// §6.11), and rjloop / loopinif now follow the loop rule's zero-iteration
+/// acceptance (D8, O-CS4-03).
+#[test]
+fn if_join_leaves_o_af_01_and_o_af_02_open() {
+    for (tag, src, want) in [
+        ("br1", CS4_BR1, "7\n"),
+        ("loopmove", CS4_LOOPMOVE, "14\n"),
+        ("hmcont_if", CS4_HMCONT_IF, "8\n"),
+        ("rjloop", CS4_RJLOOP, "othera\naa\n"),
+        ("loopinif", CS4_LOOPINIF, "aa\n"),
+    ] {
+        let (rc, errors, text) = af2_check(&format!("cs4_{tag}"), src);
+        assert_eq!(
+            (rc, errors),
+            (Some(0), vec![]),
+            "[{tag}]: a pinned decision (O-AF-01 / O-AF-02 / D8) changed: {text}"
+        );
+        let (rc, out) = af2_run(&format!("cs4_{tag}"), src);
+        assert_eq!((rc, out.as_str()), (Some(0), want), "[{tag}]: run");
+    }
+}
