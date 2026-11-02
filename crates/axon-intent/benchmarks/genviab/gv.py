@@ -339,18 +339,29 @@ PY_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTH
 # The runner of every Python run (spec GV-3 step 2; B3-1 for arm c): a raised
 # exception is a FAULT that fails the run whatever the exit status, reported
 # through a file the harness reads, never through stderr. SystemExit is the
-# program's own exit.
-PY_RUNNER = '''import runpy, sys, traceback
+# program's own exit. IGP-3: every name the handler uses (the marker writer,
+# the exception classes, print_exc) is bound before the program runs, so a
+# program that rebinds `builtins.open`, `sys.stderr`, `traceback` or a builtin
+# exception class and then raises is still a fault. (Not fault-by-default: a
+# marker made before the run would turn `os._exit(n)` into a fault.)
+PY_RUNNER = '''import os, runpy, sys, traceback
+_open, _close, _flags = os.open, os.close, os.O_WRONLY | os.O_CREAT
+_print_exc, _SystemExit, _BaseException = traceback.print_exc, SystemExit, BaseException
 sys.argv = ["/w/main.py"]
 sys.path.insert(0, "/w")
 try:
     runpy.run_path("/w/main.py", run_name="__main__")
-except SystemExit:
+except _SystemExit:
     raise
-except BaseException:
-    traceback.print_exc()
-    open("/gv/fault/raised", "w").close()
-    sys.exit(1)
+except _BaseException:
+    try:
+        _close(_open("/gv/fault/raised", _flags, 0o644))
+    finally:
+        try:
+            _print_exc()
+        except _BaseException:
+            pass
+    raise _SystemExit(1)
 '''
 PY_DENIAL = re.compile(r"PermissionError|Read-only file system|Errno (13|30|101)|"
                        r"Network is unreachable|Temporary failure in name resolution|"

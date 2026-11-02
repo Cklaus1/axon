@@ -416,7 +416,15 @@ def arm_c_runner():
             ("arm c: raise ValueError on an example expecting exit 1 FAILS (\"raised an exception\")",
              'raise ValueError("bad input")\n', False),
             ("arm c: sys.exit(1) on that example passes", "import sys\nsys.exit(1)\n", True),
-            ("arm c: KeyboardInterrupt is a fault, not exit 130", "raise KeyboardInterrupt\n", False)):
+            ("arm c: KeyboardInterrupt is a fault, not exit 130", "raise KeyboardInterrupt\n", False),
+            # IGP-3: the handler's names are bound before the program runs.
+            ("arm c: builtins.open=None; raise is a fault",
+             "import builtins\nbuiltins.open = None\nraise ValueError\n", False),
+            ("arm c: sys.stderr=None, traceback.print_exc=None; raise is a fault",
+             "import sys, traceback\nsys.stderr = None\ntraceback.print_exc = None\nraise ValueError\n", False),
+            ("arm c: builtins.SystemExit=None, os.open=None; raise is a fault",
+             "import builtins, os\nbuiltins.SystemExit = None\nos.open = None\nraise ValueError\n", False),
+            ("arm c: os._exit(1) on that example passes (no fault marker)", "import os\nos._exit(1)\n", True)):
         r = gv.grade_python(task, src, ("visible",))
         ended = [e["ended"] for e in r["examples"]]
         fault = bool(ended) and ended[0].startswith("raised an exception")

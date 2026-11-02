@@ -122,6 +122,18 @@ otherwise inflate arm c.
 stated arm c's `-I -B`, which B3-1 makes false; it now names `-B -s -P /gv/run.py` (`gv.PY_RUNNER`, `gv.PY_ENV`). No
 filled pin changed. The selftest also checks that a run over arm c's 64 KiB bound fails and names it (step 2).
 
+`[REVISED: build IGP-3]` The first runner's handler looked up `traceback`, `open`, `SystemExit` and `sys.exit`
+only after the program had run. A program that ran `builtins.open = None; raise ValueError` therefore exited 1
+with no marker and passed an example that expected exit 1. `gv.PY_RUNNER` now binds `os.open`, `os.close`,
+`traceback.print_exc`, `SystemExit` and `BaseException` before `run_path`. The handler writes the marker first and
+prints the traceback only after that, inside a `try`. I chose this over fault-by-default because a marker created
+before the run would turn `os._exit(n)` (and the `os._exit` that multiprocessing children run) into a fault: a
+false refusal of a valid program. The selftest now pins the `os._exit(1)` pass. It also adds three fail-first
+cases: `builtins.open=None`, `sys.stderr`/`traceback.print_exc=None`, and `builtins.SystemExit`/`os.open=None`,
+each followed by a raise. Not closed: a program that deliberately deletes or blocks `/gv/fault/raised` (the
+directory is writable to it), or that reaches the runner's frame. All 97 recorded dev arm c candidates were
+re-graded with the 128abc14 `gv.py` and with this one, on visible and on visible+hidden examples: 0 grade changes.
+
 **Fail-first tests** (`selftest.py`, a new block beside the GV-3 reference checks at `selftest.py:231-260`; it needs bwrap, which is
 already a hard dependency of `forged_grades`):
 - `arm c: raise ValueError on an example expecting exit 1 FAILS ("raised an exception")`. It fails today, because it passes.
