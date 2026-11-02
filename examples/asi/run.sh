@@ -129,11 +129,18 @@ case "$cmd" in
         cache="$(mktemp -d)"; export XDG_CACHE_HOME="$cache"
         export AXON_AI_MOCK="${AXON_AI_MOCK:-1}"
         say() { printf '\n\033[1m── %s\033[0m\n' "$1"; }
+        # Every `$bin run` step must exit 0 (gate passed) or 3 (the @[verify]
+        # deploy gate refused: VERIFY_FAILED_EXIT_CODE). Anything else -- a panic
+        # (101), a crash, a refusal -- fails the acid test: a crash must never read
+        # as the safety catch.
+        step_ok() { [[ $1 -eq 0 || $1 -eq 3 ]]; }
+        fail() { echo "✗ ACID TEST FAILED: $1" >&2; rm -rf "$cache"; exit 1; }
         echo "═══ Hello Goal — engineering-v1 acid test (define → run → improve → safety-catch → deploy → replay) ═══"
         echo "    Goal source: $DEMO"
         say "1. RUN — goal_run hill-climbs the metric, then the @[verify] deploy gate runs"
         rc=0; "$bin" run "$DEMO" || rc=$?
-        if [[ $rc -ne 0 ]]; then
+        step_ok "$rc" || fail "step 1 (run) exited $rc, expected 0 or 3"
+        if [[ $rc -eq 3 ]]; then
             echo "  → DEPLOY GATE FIRED (exit $rc): a sub-threshold result is REFUSED before deploy — the SAFETY CATCH."
         else
             echo "  → deploy gate passed: the result cleared the confidence floor."
@@ -143,17 +150,24 @@ case "$cmd" in
         say "3. AUDIT — every ai_complete: routed model, mode, metered cost, and the goal it served"
         "$bin" trace --ai 2>/dev/null || true
         say "4. IMPROVE — one more optimization cycle, resuming from the provenance log"
-        AXON_GOAL_CONTINUE=1 "$bin" run "$DEMO" >/dev/null 2>&1 || true
+        rc4=0; AXON_GOAL_CONTINUE=1 "$bin" run "$DEMO" >/dev/null 2>&1 || rc4=$?
+        step_ok "$rc4" || fail "step 4 (improve) exited $rc4, expected 0 or 3"
         echo "  → search continued (the provenance log was extended)."
         say "5. REPLAY — re-run from the LLM-call cache: deterministic, the model is never called"
         rcache="$(mktemp)"
-        a="$(AXON_AI_REPLAY="$rcache" "$bin" run "$DEMO" 2>&1)" || true   # record
-        b="$(unset AXON_AI_MOCK; AXON_AI_REPLAY="$rcache" "$bin" run "$DEMO" 2>&1)" || true  # replay, no mock
+        rca=0; a="$(AXON_AI_REPLAY="$rcache" "$bin" run "$DEMO" 2>&1)" || rca=$?   # record
+        rcb=0; b="$(unset AXON_AI_MOCK; AXON_AI_REPLAY="$rcache" "$bin" run "$DEMO" 2>&1)" || rcb=$?  # replay, no mock
         rm -f "$rcache"
+        # The demo's deploy gate is designed to fire: record and replay must both
+        # exit 3, so two identical crashes cannot pass as "reproducible".
+        [[ $rca -eq 3 ]] || fail "step 5 record exited $rca, expected 3"
+        [[ $rcb -eq 3 ]] || fail "step 5 replay exited $rcb, expected 3 (record exited $rca)"
         if [[ "$a" == "$b" ]]; then
             echo "  ✓ reproducible — the replayed run matches byte-for-byte (the model was never called)."
         else
             echo "  ✗ replay diverged" >&2
+            diff <(printf '%s' "$a") <(printf '%s' "$b") | head -20 >&2
+            fail "step 5 replay output differs from the record"
         fi
         echo
         echo "═══ Engineering-v1 loop complete: defined → ran → improved → safety-caught → (deploy gate) → replayed. ═══"

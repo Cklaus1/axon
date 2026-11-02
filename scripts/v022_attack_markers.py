@@ -3909,3 +3909,8 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M4570': r'ATTACK: a model call audited outside the AI class: `ai_extract_uncertain_i64`',
 })
+
+# asi-fixes AF-5 acid gate (id M4623)
+ATTACK_MARKERS.update({
+    'M4623': r'ATTACK: acid test passed without running: a crashing axon \(rc 101\)',
+})

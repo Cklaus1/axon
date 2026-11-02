@@ -14213,5 +14213,13 @@ MUTATIONS += [
      'axon-core', '--test cli_run', 'every_model_call_audits_as_ai'),
 ]
 
+# asi-fixes AF-5: the Hello Goal acid gate fails closed (tasks/asi-fixes-spec.md; id M4623)
+MUTATIONS += [
+    ('M4623', 'AF-5: run.sh hello-goal accepts any step-1 exit code, so a crashing axon reads as the safety catch', 'examples/asi/run.sh',
+     '        step_ok "$rc" || fail "step 1 (run) exited $rc, expected 0 or 3"\n',
+     '        true\n',
+     'axon-core', '--no-default-features --test cli_run', 'run_sh_hello_goal_fails_on_crashing_binary'),
+]
+
 if __name__ == "__main__":
     main()
