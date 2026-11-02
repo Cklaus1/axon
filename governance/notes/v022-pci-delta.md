@@ -16,61 +16,63 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 9e9671bb256c0c8484f06b4b677fe6e8ca27adb3
+generated-at: d4286fe5f82dfca4512d10cb2d3888061d65dc0d
 
-`git diff --numstat 31413ca7..9e9671bb -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..d4286fe5 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
-| `crates/axon-core/src/ai_routing.rs` | 63 | 5 |
+| `crates/axon-core/src/ai_routing.rs` | 78 | 5 |
 | `crates/axon-core/src/ast.rs` | 355 | 81 |
 | `crates/axon-core/src/bin/axon-run.rs` | 19 | 0 |
 | `crates/axon-core/src/borrow.rs` | 272 | 45 |
-| `crates/axon-core/src/builtins.rs` | 365 | 44 |
+| `crates/axon-core/src/builtins.rs` | 423 | 44 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 1177 | 346 |
 | `crates/axon-core/src/card.rs` | 736 | 0 |
+| `crates/axon-core/src/ceiling.rs` | 548 | 0 |
 | `crates/axon-core/src/checker.rs` | 3044 | 792 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
 | `crates/axon-core/src/codegen/asi.rs` | 237 | 49 |
 | `crates/axon-core/src/codegen/build_wrappers.rs` | 25 | 55 |
 | `crates/axon-core/src/codegen/builtin_externs.rs` | 8 | 0 |
-| `crates/axon-core/src/codegen/builtins.rs` | 25 | 6 |
+| `crates/axon-core/src/codegen/builtins.rs` | 69 | 13 |
 | `crates/axon-core/src/codegen/display.rs` | 514 | 0 |
 | `crates/axon-core/src/codegen/enum_layout.rs` | 451 | 0 |
 | `crates/axon-core/src/codegen/escape.rs` | 509 | 0 |
-| `crates/axon-core/src/codegen/expr.rs` | 2564 | 712 |
+| `crates/axon-core/src/codegen/expr.rs` | 2583 | 714 |
 | `crates/axon-core/src/codegen/link.rs` | 1620 | 337 |
 | `crates/axon-core/src/codegen/match_pat.rs` | 558 | 162 |
-| `crates/axon-core/src/codegen/mod.rs` | 527 | 148 |
+| `crates/axon-core/src/codegen/mod.rs` | 555 | 154 |
 | `crates/axon-core/src/codegen/option_result.rs` | 11 | 6 |
 | `crates/axon-core/src/codegen/output.rs` | 118 | 69 |
 | `crates/axon-core/src/codegen/types.rs` | 18 | 6 |
 | `crates/axon-core/src/complexity.rs` | 1 | 0 |
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
 | `crates/axon-core/src/effects.rs` | 757 | 126 |
-| `crates/axon-core/src/env_registry.rs` | 21 | 10 |
-| `crates/axon-core/src/error.rs` | 41 | 15 |
+| `crates/axon-core/src/env_registry.rs` | 25 | 11 |
+| `crates/axon-core/src/error.rs` | 52 | 19 |
 | `crates/axon-core/src/fmt.rs` | 355 | 33 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 2389 | 492 |
-| `crates/axon-core/src/interp.rs` | 7787 | 2882 |
-| `crates/axon-core/src/interp/builtins.rs` | 1207 | 849 |
+| `crates/axon-core/src/interp.rs` | 8129 | 2866 |
+| `crates/axon-core/src/interp/builtins.rs` | 1306 | 851 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
 | `crates/axon-core/src/interp/dispatch_tests.rs` | 639 | 0 |
 | `crates/axon-core/src/interp/env.rs` | 1230 | 0 |
-| `crates/axon-core/src/interp/eval.rs` | 2290 | 613 |
+| `crates/axon-core/src/interp/eval.rs` | 2293 | 613 |
 | `crates/axon-core/src/interp/goal.rs` | 87 | 42 |
 | `crates/axon-core/src/interp/kernel_tests.rs` | 363 | 0 |
 | `crates/axon-core/src/interp/pick_tests.rs` | 395 | 0 |
 | `crates/axon-core/src/interp/pin.rs` | 967 | 0 |
 | `crates/axon-core/src/interp/proptest.rs` | 99 | 63 |
+| `crates/axon-core/src/interp/provenance.rs` | 11 | 1 |
 | `crates/axon-core/src/interp/sink_tests.rs` | 1099 | 0 |
-| `crates/axon-core/src/interp/sym.rs` | 1234 | 0 |
+| `crates/axon-core/src/interp/sym.rs` | 1243 | 0 |
 | `crates/axon-core/src/interp/taint.rs` | 1676 | 0 |
 | `crates/axon-core/src/interp/taint_tests.rs` | 4379 | 0 |
 | `crates/axon-core/src/interp/tests_v022_a.rs` | 1184 | 0 |
@@ -78,17 +80,17 @@ generated-at: 9e9671bb256c0c8484f06b4b677fe6e8ca27adb3
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 577 | 530 |
-| `crates/axon-core/src/interp/vm/compile.rs` | 1782 | 0 |
-| `crates/axon-core/src/interp/vm/mod.rs` | 3587 | 0 |
+| `crates/axon-core/src/interp/vm/compile.rs` | 1801 | 0 |
+| `crates/axon-core/src/interp/vm/mod.rs` | 3596 | 0 |
 | `crates/axon-core/src/interp/vm/pure.rs` | 1840 | 0 |
-| `crates/axon-core/src/interp/vm/purefn.rs` | 860 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 2755 | 0 |
+| `crates/axon-core/src/interp/vm/purefn.rs` | 871 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 2756 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 204 | 0 |
-| `crates/axon-core/src/lib.rs` | 444 | 102 |
+| `crates/axon-core/src/lib.rs` | 445 | 102 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 215 | 60 |
-| `crates/axon-core/src/main.rs` | 1820 | 487 |
+| `crates/axon-core/src/main.rs` | 1887 | 488 |
 | `crates/axon-core/src/mono.rs` | 71 | 17 |
 | `crates/axon-core/src/mut_borrow.rs` | 944 | 0 |
 | `crates/axon-core/src/parse_help.rs` | 125 | 2 |
@@ -100,9 +102,9 @@ generated-at: 9e9671bb256c0c8484f06b4b677fe6e8ca27adb3
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 66682 | 9531 |
+| total | 67981 | 9539 |
 
-`git log --reverse 31413ca7..9e9671bb -- crates/axon-core/src`:
+`git log --reverse 31413ca7..d4286fe5 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -499,14 +501,23 @@ generated-at: 9e9671bb256c0c8484f06b4b677fe6e8ca27adb3
 | dd6c6dd3 | AF-1/AF-4 ai_extract::<T> runs and extracts are audited | CHECKER + INTERPRETER + CODEGEN: `ai_extract::<T>(prompt)` with T in i64, f64, bool, Uncertain<i64>, Uncertain<f64> now runs on `axon run` (tree and VM; it checked clean and then panicked 'not callable', exit 101) with the same answers as a native build; one mapping (builtins::ai_extract_target) gives the T set to infer, interpreter, effects and codegen. Any other T is the new E1304 at check (it checked clean, panicked in the interpreter and was dropped natively), also when the call is never reached. With no asi-runtime build, no AXON_AI_MOCK and no AXON_AI_REPLAY recording, every extract is E1300 exit 5 (ai_extract_uncertain_* was a 101 panic). RUNTIME/AUDIT: every extract on every path (mock, replay, live) appends one ai_call provenance record at the decision model's tier (cheap / claude-haiku-5-5 with no AXON_AI_MODEL_* override) and is added to ai_cost_spent(); live tokens come from the response usage (they were stored as 0), a 0-token replay entry is charged at the prompt estimate, and a call's micro-dollar cost rounds up so a call that reached a model never costs 0. |
 | a4accbe1 | asi/next merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 1ccab0d5 | asi-fixes merge (asi/next into af/a) | merge commit (Merge branch 'asi/next' into af/a); joins AF-3 (E0409) onto AF-1/AF-4; error.rs's `error_codes_are_unique` array conflicted only on the line both sides extended and keeps both E0409 and E1304; no change beyond the commits it joins |
+| d9ad9086 | ceilings CE-1 operator net scope pins the AI endpoint | INTERPRETER, asi-runtime builds only: the AI endpoint pin handed to axon-ai is now (the program's declared @[contained(net: ..)] hosts, or the implicit host api.anthropic.com if none) intersected with AXON_ALLOWED_NET when that variable is set (`*` or unset does not narrow). Before, an unannotated program under AXON_ALLOWED_NET was not pinned and a declared program was pinned to its own hosts only, so an AXON_AI_BASE_URL outside the operator's scope was dialled. A call outside the pin returns the existing catchable Err and sends nothing. The default build (no live AI) has no observable change; no pass/fail of any tracked program changes. |
+| d93f5d0d | ceilings CE-7 goal_* dispatch row is IO | INTERPRETER (tree and VM, every sandbox kind): the runtime sandbox effect check for goal_run, goal_run_constrained, goal_run_categorical, goal_run_random, goal_run_multistart, goal_continue and goal_eval tests the row [IO] instead of the static [AI, Net, IO]. A goal_* call whose @[adaptive] metric makes no model call now runs (exit 0) under an AI-less sandbox where it exited 8; a metric that calls a model is still refused (exit 8) at its own ai_complete dispatch. Static reporting (axon caps, effect rows, E1310) and the audit kind are unchanged. Loosens a refusal only; no run that passed before changes outcome. |
+| d5e8aa21 | ceilings CE-8 native no-key AI mirrors the interpreter | NATIVE CODEGEN + axon-ai bridges (default build): with no API key and no AXON_AI_MOCK, a natively built ai_complete in a fn declaring @[ai(policy(fallback: ..))] returns that fallback (codegen passes it to __axon_ai_complete, a new ABI argument), and every other native AI bridge prints the interpreter's E1300 line and exits 5, where it used to return the missing-key text as a catchable Err. The interpreter's behaviour is unchanged (its fallback rule moved to ai_routing::fallback_from_attrs, shared with codegen). A native program that matched the missing-key Err now exits 5; mock and the keyed exit-2 refusal are unchanged. |
+| d71e5c56 | ceilings CE-2/CE-10 operator ceiling file | INTERPRETER (run/session/goal/test): a new operator ceiling, `--ceiling FILE` or `AXON_CEILING=FILE` (`axon-ceiling/1` JSON, every key required). When set it narrows AXON_ALLOWED_EFFECTS, AXON_ALLOWED_FS_READ/WRITE, AXON_ALLOWED_NET, AXON_BUDGET_TOKENS and AXON_MAX_DEPTH (narrower wins), records its sha256 in run_start, and turns R45 (--require-contained) on; a bad file is E1007 exit 2 before program code runs. NATIVE: `axon build` refuses AXON_CEILING (E0910) and a native binary under it exits 2. A run with no ceiling is unchanged: no pass/fail of any tracked program changes unless AXON_CEILING is set. |
+| 38474a58 | ceilings CE-4 AI budget covers callees | INTERPRETER (tree and VM): an @[ai(policy(budget: N))] budget now bounds every model call made while the fn's activation is on the stack, callees included, and counts ai_extract::<T> calls as well as ai_complete. Each call is checked against every live budget frame, innermost first; the first exhausted one stops the run with E1301 (exit 5) naming that fn. A program whose budgeted fn reached AI through an un-budgeted helper, through a callee with a larger budget, or through extracts, and exited 0 past its budget, now exits 5. Programs without budget: are unchanged; native builds already refused every budgeted fn (E0910). |
+| 832ae9d8 | ceilings CE-6 token cap counts the reply; O-AF-09 billed unusable replies charged | INTERPRETER (tree and VM): the run token cap (AXON_BUDGET_TOKENS, a ceiling's ai_tokens) now reserves prompt bytes + 16 + the 1024-token reply cap before every model call, ai_extract::<T> included, and refuses with E1303 (exit 5) before dispatch when that does not fit; after the call it charges what was used (live: provider usage; mock/replay: prompt + reply length estimate). Before, each ai_complete was charged a prompt-length estimate only and extracts were not charged, so a cap below ~1100 that used to admit a call now refuses it. In an asi-runtime build a billed live reply the code cannot use is now recorded as an ai_call (reason 'unusable reply'), costed and charged before the program gets its Err; before, it returned Err with nothing recorded or charged. Runs without AXON_BUDGET_TOKENS or a ceiling ai_tokens see no pass/fail change. |
+| a27c7622 | ceilings CE-6 ai_calls ceiling key | INTERPRETER (tree and VM): axon-ceiling/1 gains the required key `ai_calls`; under a ceiling with a whole number there, the model call past that count (ai_complete and every ai_extract::<T> alike) stops the run with E1303 (exit 5) before dispatch. A ceiling file without the key is now refused with E1007 (exit 2). Runs with no ceiling are unchanged. |
 | 92190f82 | CS4-2 fmt keeps brace escapes | FORMATTER (axon fmt): fmt no longer changes what a program prints. A literal brace in a string is written doubled ({{ / }}), a raw string keeps its meaning, and slot text is written with \ and " escaped so the output re-parses; pattern strings stay single. Programs are unchanged; only fmt output differs. |
 | 954dfca3 | CS4-4 infer_call extraction | REFACTOR (infer.rs): the Call and MethodCall arms move into infer_call / infer_method_call with no logic change; the 712 tracked .ax files give byte-identical diagnostics before and after; no behaviour change. |
 | 652f2714 | CS4-1 if join | CHECKER (borrow.rs If rule, all engines): a name moved before an if and re-bound in every live branch is re-bound after it, like the match rule; a branch that leaves by a non-final break/continue still keeps the move (O-AF-02 unchanged), a final one joins; a name popped by a shadowing let reads as Moved; an exit bound by an enclosing match-arm pattern is no longer read as the diverging builtin (exarmif is now E0601). The 712 tracked .ax files check with the same exit codes before and after. |
+| ed5324c6 | ceilings CE-5 step and wall-clock ceilings | INTERPRETER (tree and VM): AXON_MAX_STEPS / a ceiling's `steps` and AXON_WALL_MS / a ceiling's `wall_ms` bound a run; a step is one loop-body entry (while, while let, for) or one fn-body entry, and the step past the cap (or the first checkpoint past the wall budget, read every 4096 steps) stops the run with E1006, exit 9, at the same step on both engines. Under either ceiling the VM's fused pure loops, pure-fn tier and leaf-call shortcuts are off; with neither set the behaviour is unchanged. axon-ceiling/1 gains the required keys `steps` and `wall_ms` (a file without them is E1007). Native builds refuse (E0910) and native binaries exit 2 under either variable. |
 | d4ea99f2 | CS4-3/CS4-4 tuple patterns and wrapper-lambda kinds | CHECKER (infer.rs, all engines): a tuple pattern on a subject whose type is already known is type-checked - a tuple of another length or a non-tuple subject is E0102 and the components take the element types; untyped lambda params, generics and the unit pattern () are unchanged. A wrapper lambda's call nested in another call's arguments or in a method receiver now derives its param kind in run order, so a kind mismatch that panicked at run is E0102 at check; a call after a sibling argument's call or an earlier statement's call derives nothing. New refusals are dead tuple arms on non-tuple subjects (t_iflet, t_mixed_arity, t_struct_subj). The 712 tracked .ax files check with identical diagnostics before and after. |
 | fe1e54e3 | b2/s4c merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | b6c355c5 | CS4-2 string literal inside an interpolation slot | LEXER/PARSER (all engines): a string literal may sit inside an interpolation slot after an operator or opener ("hi {name + "!"}", "{str_join(xs, ", ")}"), as grammar 6.12 states; a slot that starts with a quote lexes as before. A string read this way is a SlotStr token only expressions accept; a match pattern made of one is E0000 with help instead of silently re-reading the arms after it (patswallow, the one refusal of a running program, listed in the spec). The W0007/W0008 scanners and fmt's comment check skip slot strings. The 712 tracked .ax files check with the same exit codes before and after. |
 | 9e9671bb | b2/s4b merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 400 commits | | |
+| d4286fe5 | b2/ce merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 409 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -665,7 +676,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 712 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4679, M4700-M4718
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 738 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4740-M4749
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
