@@ -100,6 +100,83 @@ enum ArrReduce<'ctx> {
     IndexOf(inkwell::values::IntValue<'ctx>),
 }
 
+/// AX-75: identifies a function's shared `__axon_arith_panic` block: the
+/// function, the fault kind (0 overflow / 1 div0 / 2 rem0), the operator
+/// glyph and the operand bit width.
+pub(super) type ArithPanicKey<'ctx> = (FunctionValue<'ctx>, i64, &'static str, u32);
+
+/// AX-75: a shared `__axon_arith_panic` block and, for an overflow block, the
+/// phis that carry the faulting operands `a` and `b` in from each check.
+#[derive(Clone, Copy)]
+pub(super) struct ArithPanicBlock<'ctx> {
+    block: inkwell::basic_block::BasicBlock<'ctx>,
+    operands: Option<(inkwell::values::PhiValue<'ctx>, inkwell::values::PhiValue<'ctx>)>,
+}
+
+/// AX-70: how `emit_arith_guard` treats a checked op's fault predicate.
+pub(super) enum ArithMode<'ctx> {
+    /// Branch to the shared panic block (every op outside a speculated `if`).
+    Checked,
+    /// Speculating an `if` arm (`emit_if_speculated`): record the fault and
+    /// fall through with the wrapped value; the caller selects the arms'
+    /// faults and re-runs the arm checked if the selected one is set.
+    Collect(Speculation<'ctx>),
+}
+
+/// AX-70: the faults of one speculated `if` arm, ORed by `fault`.
+#[derive(Default)]
+pub(super) struct Speculation<'ctx> {
+    /// Overflow flags of ops lowered through an intrinsic.
+    flags: Vec<inkwell::values::IntValue<'ctx>>,
+    /// `(root, lo, hi)`: the arm faults unless `lo <= root <= hi`.
+    domains: Vec<(inkwell::values::IntValue<'ctx>, i128, i128)>,
+    /// `(value, root, a, c)`: `value == a * root + c` while `root` is in its
+    /// domain.
+    affine: Vec<(inkwell::values::IntValue<'ctx>, inkwell::values::IntValue<'ctx>, i128, i128)>,
+}
+
+impl<'ctx> Speculation<'ctx> {
+    /// The i1 "some op of the arm overflowed", `None` when none can.
+    fn fault(
+        self,
+        b: &inkwell::builder::Builder<'ctx>,
+        i64_ty: inkwell::types::IntType<'ctx>,
+    ) -> Option<inkwell::values::IntValue<'ctx>> {
+        const MIN: i128 = i64::MIN as i128;
+        const MAX: i128 = i64::MAX as i128;
+        let ranges = self.domains.into_iter().filter_map(|(root, lo, hi)| {
+            if lo == MIN && hi == MAX {
+                return None;
+            }
+            if lo > hi {
+                return Some(i64_ty.get_context().bool_type().const_all_ones());
+            }
+            // lo <= root <= hi  <=>  (root - lo) <=u (hi - lo)
+            let lo_c = i64_ty.const_int(lo as i64 as u64, true);
+            let off = build_wrappers::w_int_sub(b, root, lo_c, "spec_off");
+            let span = i64_ty.const_int((hi - lo) as u64, false);
+            Some(build_wrappers::w_int_compare(b, IntPredicate::UGT, off, span, "spec_range"))
+        });
+        let all: Vec<_> = self.flags.into_iter().chain(ranges).collect();
+        all.into_iter().reduce(|x, y| build_wrappers::w_or(b, x, y, "spec_ovf"))
+    }
+}
+
+/// `floor(n / d)` for `d != 0`.
+fn floor_div(n: i128, d: i128) -> i128 {
+    let q = n / d;
+    if n % d != 0 && ((n < 0) != (d < 0)) {
+        q - 1
+    } else {
+        q
+    }
+}
+
+/// `ceil(n / d)` for `d != 0`.
+fn ceil_div(n: i128, d: i128) -> i128 {
+    -floor_div(-n, d)
+}
+
 impl<'ctx> super::Codegen<'ctx> {
     // ── Expression emission ───────────────────────────────────────────────────
 
@@ -1354,25 +1431,33 @@ impl<'ctx> super::Codegen<'ctx> {
 
     // ── Binary operation emission ─────────────────────────────────────────────
 
-    /// Emit a guarded call to `__axon_arith_panic` on the *current* block's
-    /// failure branch, then leave the builder positioned at a fresh "ok" block
+    /// Emit a guarded branch to `__axon_arith_panic` on the *current* block's
+    /// failure edge, then leave the builder positioned at a fresh "ok" block
     /// so the caller can continue emitting the success value. `cond_fail` is the
     /// i1 "the fault happened" predicate. `kind` selects the runtime message (0
     /// overflow / 1 div0 / 2 rem0); `a`/`b` are the operands passed through for
-    /// the overflow message (ignored by the runtime for kinds 1/2). This mirrors
-    /// the `__axon_verify_panic` emission shape in `asi.rs`.
+    /// the overflow message (the runtime ignores them for kinds 1/2, which pass
+    /// 0).
+    ///
+    /// AX-75: the failure edge goes to the function's shared panic block for
+    /// this kind, glyph and width (`arith_panic_block`); an overflow check
+    /// adds its operands to that block's phis. A check costs its predicate
+    /// and one branch, not a block, a call and a string global of its own.
     fn emit_arith_guard(
         &mut self,
         cond_fail: inkwell::values::IntValue<'ctx>,
         kind: i64,
-        op_glyph: &str,
+        op_glyph: &'static str,
         a: inkwell::values::IntValue<'ctx>,
         b: inkwell::values::IntValue<'ctx>,
     ) {
-        let panic_fn = match self.ir.module.get_function("__axon_arith_panic") {
-            Some(f) => f,
-            None => return, // runtime extern absent — leave the raw op (defensive)
-        };
+        if let ArithMode::Collect(spec) = &mut self.arith_mode {
+            // Only overflow is speculated: a div/rem guard protects the
+            // instruction after it (`is_speculable` admits no such guard).
+            debug_assert_eq!(kind, 0, "a speculated arm reached a div/rem guard");
+            spec.flags.push(cond_fail);
+            return;
+        }
         let cur_block = match self.ir.builder.get_insert_block() {
             Some(b) if b.get_terminator().is_none() => b,
             _ => return,
@@ -1381,25 +1466,67 @@ impl<'ctx> super::Codegen<'ctx> {
             Some(f) => f,
             None => return,
         };
-        let panic_bb = self.ir.context.append_basic_block(llvm_fn, "arith_panic");
+        let Some(shared) = self.arith_panic_block(llvm_fn, kind, op_glyph, a.get_type()) else {
+            return; // runtime extern absent — leave the raw op (defensive)
+        };
         let ok_bb = self.ir.context.append_basic_block(llvm_fn, "arith_ok");
         // cond_fail ? panic : ok
-        build_wrappers::w_cond_br(&self.ir.builder, cond_fail, panic_bb, ok_bb);
+        build_wrappers::w_cond_br(&self.ir.builder, cond_fail, shared.block, ok_bb);
+        if let Some((pa, pb)) = shared.operands {
+            pa.add_incoming(&[(&a, cur_block)]);
+            pb.add_incoming(&[(&b, cur_block)]);
+        }
+        self.ir.builder.position_at_end(ok_bb);
+    }
 
-        // Panic path: call the runtime trap, then `unreachable`.
-        self.ir.builder.position_at_end(panic_bb);
+    /// AX-75: the function's shared `__axon_arith_panic` block for `kind`,
+    /// `op_glyph` and operand type `ty`, built on first use: phis for the
+    /// operands (overflow only; sign-extended to i64 as the runtime expects),
+    /// the call with the module's one glyph global, `unreachable`. `None` when
+    /// the runtime extern is not declared.
+    fn arith_panic_block(
+        &mut self,
+        llvm_fn: FunctionValue<'ctx>,
+        kind: i64,
+        op_glyph: &'static str,
+        ty: inkwell::types::IntType<'ctx>,
+    ) -> Option<ArithPanicBlock<'ctx>> {
+        let key = (llvm_fn, kind, op_glyph, ty.get_bit_width());
+        if let Some(shared) = self.arith_panic_blocks.get(&key) {
+            return Some(*shared);
+        }
+        let panic_fn = self.ir.module.get_function("__axon_arith_panic")?;
+        let resume = self.ir.builder.get_insert_block()?;
+        let block = self.ir.context.append_basic_block(llvm_fn, "arith_panic");
+        self.ir.builder.position_at_end(block);
         let i64_ty = self.ir.context.i64_type();
-        let op_g = build_wrappers::w_global_string_ptr(&self.ir.builder, op_glyph, "arith_op");
-        // __axon_arith_panic expects i64 for `a` and `b`; sign-extend narrower values.
-        let a_i64 = if a.get_type().get_bit_width() < 64 {
-            build_wrappers::w_int_s_extend(&self.ir.builder, a, i64_ty, "a_ext").into()
+        let (operands, a_i64, b_i64) = if kind == 0 {
+            let pa = build_wrappers::w_phi(&self.ir.builder, ty.into(), "arith_a");
+            let pb = build_wrappers::w_phi(&self.ir.builder, ty.into(), "arith_b");
+            let (a, b) = (
+                pa.as_basic_value().into_int_value(),
+                pb.as_basic_value().into_int_value(),
+            );
+            // __axon_arith_panic expects i64 for `a` and `b`; sign-extend narrower values.
+            let (a, b) = if ty.get_bit_width() < 64 {
+                (
+                    build_wrappers::w_int_s_extend(&self.ir.builder, a, i64_ty, "a_ext"),
+                    build_wrappers::w_int_s_extend(&self.ir.builder, b, i64_ty, "b_ext"),
+                )
+            } else {
+                (a, b)
+            };
+            (Some((pa, pb)), a, b)
         } else {
-            a.into()
+            (None, i64_ty.const_zero(), i64_ty.const_zero())
         };
-        let b_i64 = if b.get_type().get_bit_width() < 64 {
-            build_wrappers::w_int_s_extend(&self.ir.builder, b, i64_ty, "b_ext").into()
-        } else {
-            b.into()
+        let op_g = match self.arith_op_globals.get(op_glyph) {
+            Some(g) => *g,
+            None => {
+                let g = build_wrappers::w_global_string_ptr(&self.ir.builder, op_glyph, "arith_op");
+                self.arith_op_globals.insert(op_glyph, g);
+                g
+            }
         };
         let _ = build_wrappers::w_call(
             &self.ir.builder,
@@ -1408,15 +1535,16 @@ impl<'ctx> super::Codegen<'ctx> {
                 i64_ty.const_int(kind as u64, true).into(),
                 op_g.into(),
                 i64_ty.const_int(op_glyph.len() as u64, false).into(),
-                a_i64,
-                b_i64,
+                a_i64.into(),
+                b_i64.into(),
             ],
             "",
         );
         build_wrappers::w_unreachable(&self.ir.builder);
-
-        // Continue at the ok block.
-        self.ir.builder.position_at_end(ok_bb);
+        self.ir.builder.position_at_end(resume);
+        let shared = ArithPanicBlock { block, operands };
+        self.arith_panic_blocks.insert(key, shared);
+        Some(shared)
     }
 
     /// Constant-fold a checked signed-i64 op when BOTH operands are compile-time
@@ -1522,10 +1650,19 @@ impl<'ctx> super::Codegen<'ctx> {
     fn emit_checked_overflow_op(
         &mut self,
         intrinsic_name: &str,
-        op_glyph: &str,
+        op_glyph: &'static str,
         l: inkwell::values::IntValue<'ctx>,
         r: inkwell::values::IntValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
+        // AX-70: in a speculated `if` arm, an op with a constant operand
+        // checks overflow as a range test on the value it derives from, so
+        // the value stays a plain `add`/`mul` the backend folds into `lea`
+        // (the intrinsic's `imul`/`seto` would carry it).
+        if matches!(self.arith_mode, ArithMode::Collect(_)) {
+            if let Some(v) = self.speculate_const_operand_op(op_glyph, l, r) {
+                return Some(v.into());
+            }
+        }
         let i64_ty = self.ir.context.i64_type();
         let intr = inkwell::intrinsics::Intrinsic::find(intrinsic_name)?;
         let decl = intr.get_declaration(&self.ir.module, &[i64_ty.into()])?;
@@ -1539,6 +1676,87 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(result)
     }
 
+    /// The two's-complement `+`/`-`/`*` for `op_glyph`.
+    fn emit_wrapping_arith(
+        &self,
+        op_glyph: &str,
+        l: inkwell::values::IntValue<'ctx>,
+        r: inkwell::values::IntValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        let b = &self.ir.builder;
+        match op_glyph {
+            "+" => build_wrappers::w_int_add(b, l, r, "add").into(),
+            "-" => build_wrappers::w_int_sub(b, l, r, "sub").into(),
+            _ => build_wrappers::w_int_mul(b, l, r, "mul").into(),
+        }
+    }
+
+    /// AX-70: `l op r` with one constant operand `k`, in a speculated arm.
+    /// The other operand `v` is `a * root + c` for some `root` (itself when
+    /// it was not made this way), exact while every op on the way stayed in
+    /// i64. This op stays in i64 iff `v` lies in an interval, i.e. iff `root`
+    /// does, so the arm's checks on one root merge into one interval, and
+    /// `3 * x + 1` faults iff `x` leaves `[MIN / 3, (MAX - 1) / 3]`: one
+    /// compare. ORing the per-root tests gives exactly the OR of the ops'
+    /// overflow flags: the first op to overflow moves `root` out of its
+    /// interval. `None` (emit the intrinsic) when neither operand is constant.
+    fn speculate_const_operand_op(
+        &mut self,
+        op_glyph: &str,
+        l: inkwell::values::IntValue<'ctx>,
+        r: inkwell::values::IntValue<'ctx>,
+    ) -> Option<inkwell::values::IntValue<'ctx>> {
+        const MIN: i128 = i64::MIN as i128;
+        const MAX: i128 = i64::MAX as i128;
+        let (v, k, k_left) = match (l.get_sign_extended_constant(), r.get_sign_extended_constant()) {
+            (None, Some(k)) => (l, k as i128, false),
+            (Some(k), None) => (r, k as i128, true),
+            _ => return None,
+        };
+        // The op stays in i64 iff `v` is in `[vlo, vhi]`; it yields `s * v + t`.
+        let ((vlo, vhi), (s, t)) = match (op_glyph, k_left) {
+            ("+", _) => ((MIN - k, MAX - k), (1, k)),
+            ("-", false) => ((MIN + k, MAX + k), (1, -k)),
+            ("-", true) => ((k - MAX, k - MIN), (-1, k)),
+            ("*", _) if k > 0 => ((ceil_div(MIN, k), floor_div(MAX, k)), (k, 0)),
+            ("*", _) if k < 0 => ((ceil_div(MAX, k), floor_div(MIN, k)), (k, 0)),
+            ("*", _) => ((MIN, MAX), (0, 0)),
+            _ => return None,
+        };
+        let value = self.emit_wrapping_arith(op_glyph, l, r).into_int_value();
+        let ArithMode::Collect(spec) = &mut self.arith_mode else {
+            return None;
+        };
+        let (root, a, c) = spec
+            .affine
+            .iter()
+            .find(|e| e.0 == v)
+            .map_or((v, 1, 0), |e| (e.1, e.2, e.3));
+        // The interval of `root` that keeps `a * root + c` in `[vlo, vhi]`.
+        let (rlo, rhi) = match a {
+            a if a > 0 => (ceil_div(vlo - c, a), floor_div(vhi - c, a)),
+            a if a < 0 => (ceil_div(vhi - c, a), floor_div(vlo - c, a)),
+            _ if (vlo..=vhi).contains(&c) => (MIN, MAX),
+            _ => (MAX, MIN), // `v` is a constant out of range: always faults
+        };
+        match spec.domains.iter_mut().find(|d| d.0 == root) {
+            Some(d) => {
+                d.1 = d.1.max(rlo);
+                d.2 = d.2.min(rhi);
+            }
+            None => spec.domains.push((root, rlo.max(MIN), rhi.min(MAX))),
+        }
+        // `value = s * (a * root + c) + t`; past 2^64 the interval math could
+        // overflow i128, so such a value starts its own chain instead.
+        let lim = 1i128 << 64;
+        if let (Some(a2), Some(c2)) = (s.checked_mul(a), s.checked_mul(c).map(|x| x + t)) {
+            if a2.abs() <= lim && c2.abs() <= lim {
+                spec.affine.push((value, root, a2, c2));
+            }
+        }
+        Some(value)
+    }
+
     /// Width-parametric variant of `emit_checked_overflow_op` for narrow integer
     /// types (8/16/32-bit signed or unsigned). Uses the LLVM intrinsic on the
     /// operand's native width — byte-identical overflow semantics to the
@@ -1547,7 +1765,7 @@ impl<'ctx> super::Codegen<'ctx> {
     fn emit_checked_overflow_op_narrow(
         &mut self,
         intrinsic_name: &str,
-        op_glyph: &str,
+        op_glyph: &'static str,
         l: inkwell::values::IntValue<'ctx>,
         r: inkwell::values::IntValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
@@ -1574,15 +1792,23 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> BasicValueEnum<'ctx> {
         let int_ty = l.get_type();
         let zero = int_ty.const_zero();
-        let is_zero =
-            build_wrappers::w_int_compare(&self.ir.builder, IntPredicate::EQ, r, zero, "udivzero");
-        self.emit_arith_guard(
-            is_zero,
-            if is_rem { 2 } else { 1 },
-            if is_rem { "%" } else { "/" },
-            l,
-            r,
-        );
+        // AX-74: a non-zero constant divisor needs no zero check.
+        if !matches!(r.get_zero_extended_constant(), Some(c) if c != 0) {
+            let is_zero = build_wrappers::w_int_compare(
+                &self.ir.builder,
+                IntPredicate::EQ,
+                r,
+                zero,
+                "udivzero",
+            );
+            self.emit_arith_guard(
+                is_zero,
+                if is_rem { 2 } else { 1 },
+                if is_rem { "%" } else { "/" },
+                l,
+                r,
+            );
+        }
         if is_rem {
             build_wrappers::w_int_unsigned_rem(&self.ir.builder, l, r, "uremn").into()
         } else {
@@ -1601,15 +1827,23 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> BasicValueEnum<'ctx> {
         let int_ty = l.get_type();
         let zero = int_ty.const_zero();
-        let is_zero =
-            build_wrappers::w_int_compare(&self.ir.builder, IntPredicate::EQ, r, zero, "sdivzero");
-        self.emit_arith_guard(
-            is_zero,
-            if is_rem { 2 } else { 1 },
-            if is_rem { "%" } else { "/" },
-            l,
-            r,
-        );
+        // AX-74: a non-zero constant divisor needs no zero check.
+        if !matches!(r.get_zero_extended_constant(), Some(c) if c != 0) {
+            let is_zero = build_wrappers::w_int_compare(
+                &self.ir.builder,
+                IntPredicate::EQ,
+                r,
+                zero,
+                "sdivzero",
+            );
+            self.emit_arith_guard(
+                is_zero,
+                if is_rem { 2 } else { 1 },
+                if is_rem { "%" } else { "/" },
+                l,
+                r,
+            );
+        }
         if is_rem {
             build_wrappers::w_int_signed_rem(&self.ir.builder, l, r, "sremn").into()
         } else {
@@ -1622,6 +1856,10 @@ impl<'ctx> super::Codegen<'ctx> {
     /// reproduces the interpreter's `wrapping_div`/`wrapping_rem` (INT_MIN for
     /// div, 0 for rem) — so native never SIGFPEs (exit 136) where the
     /// interpreter returns a defined value or a clean panic.
+    ///
+    /// AX-74: a constant divisor drops the guards it cannot trip. Neither 0 nor
+    /// -1 → a plain `sdiv`/`srem`; -1 → no zero check, `% -1` is 0 and `/ -1`
+    /// keeps only the `INT_MIN` overflow guard.
     fn emit_checked_div_rem(
         &mut self,
         is_rem: bool,
@@ -1630,6 +1868,32 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> BasicValueEnum<'ctx> {
         let i64_ty = self.ir.context.i64_type();
         let zero = i64_ty.const_zero();
+        let int_min = i64_ty.const_int(i64::MIN as u64, false);
+        match r.get_sign_extended_constant() {
+            Some(0) | None => {}
+            Some(-1) => {
+                if is_rem {
+                    return zero.into();
+                }
+                let l_is_min = build_wrappers::w_int_compare(
+                    &self.ir.builder,
+                    IntPredicate::EQ,
+                    l,
+                    int_min,
+                    "l_is_min",
+                );
+                self.emit_arith_guard(l_is_min, 0, "/", l, r);
+                return build_wrappers::w_int_sub(&self.ir.builder, zero, l, "neg").into();
+            }
+            Some(_) => {
+                let q = if is_rem {
+                    build_wrappers::w_int_signed_rem(&self.ir.builder, l, r, "rem")
+                } else {
+                    build_wrappers::w_int_signed_div(&self.ir.builder, l, r, "div")
+                };
+                return q.into();
+            }
+        }
         // divisor == 0 → trap (kind 1 div0 / 2 rem0).
         let is_zero =
             build_wrappers::w_int_compare(&self.ir.builder, IntPredicate::EQ, r, zero, "divzero");
@@ -1644,7 +1908,6 @@ impl<'ctx> super::Codegen<'ctx> {
         // Guard INT_MIN / -1 (the one signed-division case that traps in
         // hardware). Replace the divisor with 1 on that path and patch the
         // result via select, matching wrapping_div/wrapping_rem.
-        let int_min = i64_ty.const_int(i64::MIN as u64, false);
         let neg_one = i64_ty.const_int((-1i64) as u64, true);
         let l_is_min = build_wrappers::w_int_compare(
             &self.ir.builder,
@@ -1987,6 +2250,8 @@ impl<'ctx> super::Codegen<'ctx> {
         if body.is_none() {
             // SAFETY: `f` was added above and nothing outside this call
             // references it yet, except the recursive calls inside its own body.
+            // Its shared arith-panic blocks (AX-75) go with it.
+            self.arith_panic_blocks.retain(|k, _| k.0 != f);
             unsafe { f.delete() };
             return None;
         }
@@ -2618,6 +2883,9 @@ impl<'ctx> super::Codegen<'ctx> {
             BasicValueEnum::IntValue(i) => i,
             _ => return None,
         };
+        if let Some(done) = self.emit_if_speculated(cond_int, then_expr, else_expr, fn_val) {
+            return done;
+        }
 
         let then_bb = self.ir.context.append_basic_block(fn_val, "if_then");
         let else_bb = self.ir.context.append_basic_block(fn_val, "if_else");
@@ -2684,6 +2952,199 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// AX-70: an `if` whose arms are side-effect-free i64 arithmetic with at
+    /// least one checked `+`/`-`/`*` (`if c { a } else { b }`, or arms that
+    /// assign one i64 local: `if c { n = n + 1 }`) evaluates both arms with
+    /// the wrapping ops and `select`s the value. A fault in either arm goes
+    /// to a cold path: if the taken arm faulted, it re-runs that arm checked,
+    /// which panics with the same message as the branchy lowering; a fault
+    /// in the other arm returns to the selected value. A checked op in an
+    /// arm is an exit LLVM cannot speculate, so the branchy form kept a
+    /// data-dependent branch; this one leaves a `select` the backend turns
+    /// into `cmov`, and a fault branch that is never taken.
+    ///
+    /// `None`: not this shape, emit the branchy `if`. `Some(v)`: done, `v`
+    /// is the `if`'s value.
+    fn emit_if_speculated(
+        &mut self,
+        cond: inkwell::values::IntValue<'ctx>,
+        then_expr: &ast::Expr,
+        else_expr: Option<&ast::Expr>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<Option<BasicValueEnum<'ctx>>> {
+        if !matches!(self.arith_mode, ArithMode::Checked) || cond.get_type().get_bit_width() != 1 {
+            return None;
+        }
+        let i64_ty = self.ir.context.i64_type();
+        let then_e = Self::single_expr(then_expr);
+        let else_e = else_expr.map(Self::single_expr);
+        // `target`: the local both arms assign (a missing else keeps it).
+        let (target, then_v, else_v) = match (then_e, else_e) {
+            (ast::Expr::Assign { name, value }, None) => (Some(name), &**value, None),
+            (
+                ast::Expr::Assign { name, value },
+                Some(ast::Expr::Assign {
+                    name: n2,
+                    value: v2,
+                }),
+            ) if name == n2 => (Some(name), &**value, Some(&**v2)),
+            (t, Some(e)) => (None, t, Some(e)),
+            _ => return None,
+        };
+        let target_ptr = match target {
+            Some(name) if self.is_i64_local(name) => Some(self.locals.get(name)?.0),
+            Some(_) => return None,
+            None => None,
+        };
+        let arms_ok = self.is_speculable(then_v)
+            && else_v.is_none_or(|e| self.is_speculable(e))
+            && (Self::has_overflow_op(then_v) || else_v.is_some_and(Self::has_overflow_op));
+        if !arms_ok {
+            return None;
+        }
+
+        let fresh = || ArithMode::Collect(Speculation::default());
+        let saved = std::mem::replace(&mut self.arith_mode, fresh());
+        let tv = self.emit_expr(then_v, fn_val);
+        let t_spec = std::mem::replace(&mut self.arith_mode, fresh());
+        let ev = match (else_v, target_ptr) {
+            (Some(e), _) => self.emit_expr(e, fn_val),
+            (None, Some(ptr)) => Some(build_wrappers::w_load(
+                &self.ir.builder,
+                i64_ty.into(),
+                ptr,
+                "spec_keep",
+            )),
+            (None, None) => None,
+        };
+        let e_spec = std::mem::replace(&mut self.arith_mode, saved);
+        let (
+            Some(BasicValueEnum::IntValue(tv)),
+            Some(BasicValueEnum::IntValue(ev)),
+            ArithMode::Collect(t_spec),
+            ArithMode::Collect(e_spec),
+        ) = (tv, ev, t_spec, e_spec)
+        else {
+            // Unexpected lowering: what was emitted is pure and dead; fall
+            // back to the branchy `if`.
+            return None;
+        };
+        if tv.get_type() != i64_ty || ev.get_type() != i64_ty {
+            return None;
+        }
+        let b = &self.ir.builder;
+        let (t_flag, e_flag) = (t_spec.fault(b, i64_ty), e_spec.fault(b, i64_ty));
+        let value = build_wrappers::w_select(b, cond, tv.into(), ev.into(), "spec_val");
+        // The fast path tests the OR of both arms' faults, not the taken
+        // arm's: `cond && fault` is split back into a branch on `cond` by the
+        // backend, the very branch this lowering removes.
+        let fault = match (t_flag, e_flag) {
+            (Some(t), Some(e)) => Some(build_wrappers::w_or(b, t, e, "spec_fault")),
+            (f, None) | (None, f) => f,
+        };
+        if let Some(fault) = fault {
+            let slow_bb = self.ir.context.append_basic_block(fn_val, "spec_slow");
+            let rerun_bb = self.ir.context.append_basic_block(fn_val, "spec_rerun");
+            let cont_bb = self.ir.context.append_basic_block(fn_val, "spec_cont");
+            build_wrappers::w_cond_br(b, fault, slow_bb, cont_bb);
+            // Some arm overflowed. If it is not the taken one, `value` is
+            // right; else re-run the taken arm checked: its first faulting op
+            // panics with its own operands (the wrapped values before it
+            // equal the checked ones).
+            b.position_at_end(slow_bb);
+            let no = self.ir.context.bool_type().const_zero();
+            let taken = build_wrappers::w_select(
+                b,
+                cond,
+                t_flag.unwrap_or(no).into(),
+                e_flag.unwrap_or(no).into(),
+                "spec_taken_fault",
+            )
+            .into_int_value();
+            build_wrappers::w_cond_br(b, taken, rerun_bb, cont_bb);
+            b.position_at_end(rerun_bb);
+            let rerun_arm = |bb, arm: Option<&ast::Expr>, this: &mut Self| {
+                this.ir.builder.position_at_end(bb);
+                if let Some(arm) = arm {
+                    let _ = this.emit_expr(arm, fn_val);
+                }
+                build_wrappers::w_unreachable(&this.ir.builder);
+            };
+            match (t_flag.is_some(), e_flag.is_some()) {
+                (true, true) => {
+                    let rt = self.ir.context.append_basic_block(fn_val, "spec_rerun_then");
+                    let re = self.ir.context.append_basic_block(fn_val, "spec_rerun_else");
+                    build_wrappers::w_cond_br(&self.ir.builder, cond, rt, re);
+                    rerun_arm(rt, Some(then_v), self);
+                    rerun_arm(re, else_v, self);
+                }
+                (true, false) => rerun_arm(rerun_bb, Some(then_v), self),
+                _ => rerun_arm(rerun_bb, else_v, self),
+            }
+            self.ir.builder.position_at_end(cont_bb);
+        }
+        match target_ptr {
+            Some(ptr) => {
+                build_wrappers::w_store(&self.ir.builder, ptr, value);
+                Some(None)
+            }
+            None => Some(Some(value)),
+        }
+    }
+
+    /// The expression a block of exactly one statement evaluates (a block
+    /// opens no scope native code lowers), else `e`.
+    fn single_expr(e: &ast::Expr) -> &ast::Expr {
+        match e {
+            ast::Expr::Block(stmts) if stmts.len() == 1 => Self::single_expr(&stmts[0].expr),
+            _ => e,
+        }
+    }
+
+    /// A local whose native slot is a signed (or untyped) i64.
+    fn is_i64_local(&self, name: &str) -> bool {
+        self.locals
+            .get(name)
+            .is_some_and(|(_, ty)| *ty == self.ir.context.i64_type().into())
+            && matches!(self.local_types.get(name), None | Some(Type::I64))
+    }
+
+    /// AX-70: `e` is i64 arithmetic that may run when its `if` arm is not
+    /// taken: literals, i64 locals, `+`/`-`/`*` (checked: its fault is
+    /// collected, not raised) and `/`/`%` by a constant other than 0 and -1
+    /// (AX-74: no guard at all). Anything else may trap or have an effect.
+    fn is_speculable(&self, e: &ast::Expr) -> bool {
+        match e {
+            ast::Expr::Literal(ast::Literal::Int(_)) => true,
+            ast::Expr::Ident(name) => self.is_i64_local(name),
+            ast::Expr::BinOp { op, left, right } => match op {
+                ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul => {
+                    self.is_speculable(left) && self.is_speculable(right)
+                }
+                ast::BinOp::Div | ast::BinOp::Rem => {
+                    self.is_speculable(left)
+                        && matches!(**right, ast::Expr::Literal(ast::Literal::Int(k)) if k != 0 && k != -1)
+                }
+                _ => false,
+            },
+            ast::Expr::Block(stmts) if stmts.len() == 1 => self.is_speculable(&stmts[0].expr),
+            _ => false,
+        }
+    }
+
+    /// `e` contains a `+`/`-`/`*` (the ops whose check blocks if-conversion).
+    fn has_overflow_op(e: &ast::Expr) -> bool {
+        match e {
+            ast::Expr::BinOp { op, left, right } => {
+                matches!(op, ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul)
+                    || Self::has_overflow_op(left)
+                    || Self::has_overflow_op(right)
+            }
+            ast::Expr::Block(stmts) => stmts.iter().any(|s| Self::has_overflow_op(&s.expr)),
+            _ => false,
         }
     }
     // ── Phase 3 decomposition: per-Expr-variant helper methods ────────
@@ -12549,6 +13010,163 @@ mod tests {
                 .any(|e| e.contains("E0910") && e.contains("ghost")),
             "ATTACK: a call to an unresolved fn was dropped silently natively [ghost]: errors {:?}",
             cg.codegen_errors()
+        );
+    }
+}
+
+#[cfg(test)]
+mod checked_arith_ir_tests {
+    use crate::codegen::Codegen;
+    use inkwell::context::Context;
+
+    /// Lower `src` (checker bypassed) and return the module IR text.
+    fn module_ir(src: &str) -> String {
+        let prog = crate::parse_source(src).expect("fixture must parse");
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx, "checked_arith");
+        cg.declare_functions(&prog);
+        cg.emit_program(&prog);
+        assert!(
+            cg.codegen_errors().is_empty(),
+            "fixture failed to lower: {:?}",
+            cg.codegen_errors()
+        );
+        let ir = cg.emit_llvm_ir();
+        cg.ir
+            .module
+            .verify()
+            .unwrap_or_else(|e| panic!("IR verification failed: {}\n{ir}", e.to_string()));
+        ir
+    }
+
+    /// The IR text of `define ... @<name>(` up to its closing brace.
+    fn fn_ir(module: &str, name: &str) -> String {
+        let pat = format!(" @{name}(");
+        let body = module
+            .split("\ndefine ")
+            .find(|d| d.lines().next().is_some_and(|l| l.contains(&pat)))
+            .unwrap_or_else(|| panic!("fn {name} defined:\n{module}"));
+        body[..body.find("\n}").expect("fn closes")].to_string()
+    }
+
+    /// AX-74: a constant divisor that is neither 0 nor -1 can neither divide
+    /// by zero nor hit `i64::MIN / -1`, so it lowers to a bare `sdiv`/`srem`
+    /// with no zero check, no MIN/-1 guard and no panic block. `-1` keeps
+    /// only the `i64::MIN / -1` overflow guard (and `% -1` folds to 0); a
+    /// variable divisor keeps both checks.
+    #[test]
+    fn constant_divisor_emits_no_zero_check() {
+        let ir = module_ir(
+            "fn d(a: i64) -> i64 {\n  a / 7\n}\n\
+             fn r(a: i64) -> i64 {\n  a % 1000003\n}\n\
+             fn dm(a: i64) -> i64 {\n  a / -1\n}\n\
+             fn rm(a: i64) -> i64 {\n  a % -1\n}\n\
+             fn v(a: i64, b: i64) -> i64 {\n  a / b\n}\n\
+             fn main() -> i64 {\n  d(1) + r(2) + dm(3) + rm(4) + v(5, 6)\n}\n",
+        );
+        for (name, op) in [("d", "sdiv i64 %"), ("r", "srem i64 %")] {
+            let f = fn_ir(&ir, name);
+            assert!(f.contains(op), "fn {name} lost its {op}:\n{f}");
+            for absent in ["divzero", "l_is_min", "safe_div", "divrem_fix", "arith_panic"] {
+                assert!(
+                    !f.contains(absent),
+                    "fn {name}: a constant divisor still emits `{absent}`:\n{f}"
+                );
+            }
+        }
+        let dm = fn_ir(&ir, "dm");
+        assert!(!dm.contains("divzero"), "`/ -1` kept a zero check:\n{dm}");
+        assert!(dm.contains("l_is_min"), "`/ -1` lost its MIN guard:\n{dm}");
+        let rm = fn_ir(&ir, "rm");
+        assert!(
+            !rm.contains("srem") && !rm.contains("arith_panic"),
+            "`% -1` is always 0:\n{rm}"
+        );
+        let v = fn_ir(&ir, "v");
+        assert!(
+            v.contains("divzero") && v.contains("minneg1"),
+            "a variable divisor lost a check:\n{v}"
+        );
+    }
+
+    /// AX-75: checked ops share one private glyph global per operator per
+    /// module and one `__axon_arith_panic` call per function and fault kind;
+    /// each overflow check feeds its operands to that call through phis.
+    #[test]
+    fn checked_ops_share_glyph_globals_and_panic_blocks() {
+        let ir = module_ir(
+            "fn f(a: i64, b: i64) -> i64 {\n  a + b + a * b + a - b + a * a + b / a + a / b\n}\n\
+             fn g(a: i64, b: i64) -> i64 {\n  a + b + a + b * b\n}\n\
+             fn main() -> i64 {\n  f(1, 2) + g(3, 4)\n}\n",
+        );
+        for glyph in ["+", "-", "*", "/"] {
+            let decl = format!("c\"{glyph}\\00\"");
+            let globals = ir
+                .lines()
+                .filter(|l| l.starts_with("@arith_op") && l.contains(&decl))
+                .count();
+            assert_eq!(globals, 1, "want one `{glyph}` glyph global per module:\n{ir}");
+        }
+        let f = fn_ir(&ir, "f");
+        // f's faults: overflow of + - * /, and division by zero.
+        let calls = f.matches("call void @__axon_arith_panic(").count();
+        assert_eq!(calls, 5, "want one panic call per kind and glyph in f:\n{f}");
+        let add_phi = f
+            .lines()
+            .find(|l| l.contains("%arith_a = phi i64"))
+            .unwrap_or_else(|| panic!("no shared operand phi:\n{f}"));
+        assert!(
+            add_phi.matches('[').count() >= 4,
+            "the four `+` checks do not share one block: {add_phi}"
+        );
+        let g = fn_ir(&ir, "g");
+        assert_eq!(
+            g.matches("call void @__axon_arith_panic(").count(),
+            2,
+            "want one panic call per kind and glyph in g:\n{g}"
+        );
+    }
+
+    /// AX-70: an `if` whose arms are checked i64 arithmetic evaluates both
+    /// arms, `select`s the value and the arms' faults, and branches only on
+    /// the selected fault. `3 * x + 1` faults through one range test on `x`,
+    /// not a `smul`/`sadd` intrinsic per op. The cold path re-runs the arm
+    /// checked so the panic names the faulting op. An arm that can trap
+    /// (a variable divisor) or has an effect (a call) keeps the branches.
+    #[test]
+    fn checked_op_in_if_arm_lowers_to_select() {
+        let ir = module_ir(
+            "fn step(x: i64) -> i64 {\n  if x % 2 == 0 { x / 2 } else { 3 * x + 1 }\n}\n\
+             fn count(c: bool, n: i64) -> i64 {\n  let k = n\n  if c { k = k + 1 }\n  k\n}\n\
+             fn div(x: i64, d: i64) -> i64 {\n  if d != 0 { x / d } else { x + 1 }\n}\n\
+             fn main() -> i64 {\n  step(7) + count(true, 1) + div(4, 2)\n}\n",
+        );
+        let step = fn_ir(&ir, "step");
+        assert!(step.contains("%spec_val = select i1"), "no value select:\n{step}");
+        assert!(
+            step.contains("br i1 %spec_range, label %spec_slow"),
+            "the fault branch is not on the arm's range test alone:\n{step}"
+        );
+        assert_eq!(
+            step.matches("icmp ugt").count(),
+            1,
+            "`3 * x + 1` must fault through one range test on x:\n{step}"
+        );
+        assert!(!step.contains("if_then"), "the arms still branch:\n{step}");
+        let fast = &step[..step.find("spec_slow:").expect("cold re-run path")];
+        assert!(
+            !fast.contains("with.overflow"),
+            "the speculated arms still use the intrinsics:\n{step}"
+        );
+        let count = fn_ir(&ir, "count");
+        assert!(
+            count.contains("%spec_val = select i1") && !count.contains("if_then"),
+            "`if c {{ k = k + 1 }}` did not become a select:\n{count}"
+        );
+        let div = fn_ir(&ir, "div");
+        assert!(
+            div.contains("if_then") && !div.contains("spec_val"),
+            "a variable divisor was speculated:\n{div}"
         );
     }
 }
