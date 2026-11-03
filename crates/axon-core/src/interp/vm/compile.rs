@@ -1171,7 +1171,9 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
     /// at the loop body's top level, `top`), `x = <pure>` to a local,
     /// `xs[<pure>] = <pure>` to a local array, and `if <pure> { .. } else
     /// { .. }` (`else if` included) over such statements, nested at most
-    /// [`PURE_DEPTH`] deep (`d`).
+    /// [`PURE_DEPTH`] deep (`d`). `let x = if ..` / `x = if ..` with pure
+    /// arms is the `if` statement setting `x` in each arm
+    /// ([`Compiler::pure_if_set`]).
     fn pure_stmts(&self, body: &'p [Stmt], top: bool, d: u32) -> Option<Vec<PureStmt<'p>>> {
         if d == PURE_DEPTH {
             return None;
@@ -1185,16 +1187,28 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
                     name,
                     value,
                     ty: None,
-                } if top => PureStmt::Set {
-                    var: self.local(e, name)?,
-                    is_let: true,
-                    value: self.pure_at(value, n, 0, true)?,
-                },
-                Expr::Assign { name, value } => PureStmt::Set {
-                    var: self.local(e, name)?,
-                    is_let: false,
-                    value: self.pure_at(value, n, 0, true)?,
-                },
+                } if top => {
+                    let var = self.local(e, name)?;
+                    match &**value {
+                        v @ Expr::If { .. } => self.pure_if_set(var, true, v, d)?,
+                        v => PureStmt::Set {
+                            var,
+                            is_let: true,
+                            value: self.pure_at(v, n, 0, true)?,
+                        },
+                    }
+                }
+                Expr::Assign { name, value } => {
+                    let var = self.local(e, name)?;
+                    match &**value {
+                        v @ Expr::If { .. } => self.pure_if_set(var, false, v, d)?,
+                        v => PureStmt::Set {
+                            var,
+                            is_let: false,
+                            value: self.pure_at(v, n, 0, true)?,
+                        },
+                    }
+                }
                 Expr::AssignTo { place, value } => {
                     let Expr::Index { receiver, index } = &**place else {
                         return None;
@@ -1230,6 +1244,54 @@ impl<'r, 'p> Compiler<'r, '_, 'p> {
             cond: self.pure_at(cond, &mut 0, 0, true)?,
             then: self.pure_stmts(then, false, d + 1)?.into_boxed_slice(),
             else_: else_.into_boxed_slice(),
+        })
+    }
+
+    /// `var = if cond { a } else { b }` (`let var = ..` with `is_let`) at
+    /// nesting `d` as the statement `if cond { var = a } else { var = b }`
+    /// (AX-69): the arms evaluate exactly as the statement's do, so the
+    /// checks and their errors are the same. Each arm is a block of one pure
+    /// expression or of such an `if`, or an `else if` of the same form; an
+    /// `if` without `else` (a unit value) is not one.
+    fn pure_if_set(&self, var: Var<'p>, is_let: bool, e: &'p Expr, d: u32) -> Option<PureStmt<'p>> {
+        if d == PURE_DEPTH {
+            return None;
+        }
+        let Expr::If {
+            cond,
+            then,
+            else_: Some(else_),
+        } = e
+        else {
+            return None;
+        };
+        let arm = |a: &'p Expr| -> Option<Box<[PureStmt<'p>]>> {
+            let v = match a {
+                Expr::Block(b) => match &b[..] {
+                    [s] => &s.expr,
+                    _ => return None,
+                },
+                Expr::If { .. } => a,
+                _ => return None,
+            };
+            let st = match v {
+                Expr::If { .. } => self.pure_if_set(var, is_let, v, d + 1)?,
+                v => PureStmt::Set {
+                    var,
+                    is_let,
+                    value: self.pure_at(v, &mut 0, 0, true)?,
+                },
+            };
+            Some(Box::new([st]))
+        };
+        let then = match &**then {
+            b @ Expr::Block(_) => arm(b)?,
+            _ => return None,
+        };
+        Some(PureStmt::If {
+            cond: self.pure_at(cond, &mut 0, 0, true)?,
+            then,
+            else_: arm(else_)?,
         })
     }
 
