@@ -118,6 +118,36 @@ CASES[arr_in_bounds]='let a = [10, 20, 30]
     let i = 2
     println(to_str(a[i]))'
 
+# AX-74: a constant divisor drops the zero check and the MIN/-1 guard it
+# cannot trip; the quotient, the remainder and `MIN / -1` stay the same.
+CASES[const_divisor]='let m = 0 - 9223372036854775807
+    let mm = m - 1
+    println(to_str(mm / 7))
+    println(to_str(mm % 7))
+    println(to_str(mm % -1))'
+CASES[const_divisor_neg1]='let m = 0 - 9223372036854775807
+    let mm = m - 1
+    println(to_str(mm / -1))'
+# AX-70: an `if` with checked arithmetic in its arms computes both arms and
+# selects; the selected arm overflowing must panic with the SAME operands
+# (the first faulting op of that arm), and the other arm overflowing must not.
+CASES[if_arm_mul_ovf]='let x = 3074457345618258603
+    let y = if x % 2 == 0 { x / 2 } else { 3 * x + 1 }
+    println(to_str(y))'
+CASES[if_arm_second_op_ovf]='let x = 4611686018427387903
+    let y = if x < 0 { x } else { x * 2 + 2 }
+    println(to_str(y))'
+CASES[if_untaken_arm_ovf]='let x = 9223372036854775807
+    let y = if x > 0 { x - 1 } else { x * 3 }
+    println(to_str(y))'
+CASES[if_count_ovf]='let c = 9223372036854775806
+    let i = 0
+    while i < 3 {
+        if i != 1 { c = c + 1 }
+        i = i + 1
+    }
+    println(to_str(c))'
+
 fail=0
 for label in "${!CASES[@]}"; do
   PROG="$WORK/$label.ax"

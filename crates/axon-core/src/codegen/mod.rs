@@ -232,6 +232,9 @@ pub struct Codegen<'ctx> {
     /// the function branches to it; an overflow block takes the operands
     /// through its two phis.
     arith_panic_blocks: HashMap<expr::ArithPanicKey<'ctx>, expr::ArithPanicBlock<'ctx>>,
+    /// AX-70: how checked arithmetic is lowered right now. `Checked` outside
+    /// the speculated `if` of `emit_if_speculated`.
+    arith_mode: expr::ArithMode<'ctx>,
     /// Maps enum name → its variants' native layout (name, tag, payload
     /// fields with offsets). Used by StructLit and Pattern::Struct for enum
     /// variant codegen; filled by `enum_layout::declare_enum_types`.
@@ -519,6 +522,7 @@ impl<'ctx> Codegen<'ctx> {
             fmtstr_counter: 0,
             arith_op_globals: HashMap::new(),
             arith_panic_blocks: HashMap::new(),
+            arith_mode: expr::ArithMode::Checked,
             enum_variants: HashMap::new(),
             enum_names: std::collections::HashSet::new(),
             display_fns: HashMap::new(),
