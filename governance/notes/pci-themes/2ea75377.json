@@ -1,0 +1,4 @@
+{
+  "theme": "genviab-b3 B3-3 outcome nonce pipe",
+  "text": "INTERPRETER + CLI (interp.rs, builtins.rs, main.rs, outcome.rs, env_registry.rs): under a supervisor the outcome nonce arrives on fd 4 (AXON_OUTCOME_NONCE_FD), never in the environment; the interpreter reads and closes it and goes non-dumpable; completion is the record class (exit only from main outside every sandbox_run). AXON_OUTCOME_NONCE is refused (exit 2). Without a supervisor axon run output is byte-identical: not PCI-reviewed"
+}

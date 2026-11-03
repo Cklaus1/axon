@@ -1,0 +1,4 @@
+{
+  "theme": "genviab-b3 implementation-audit fixes",
+  "text": "INTERPRETER + CHECKER (capabilities.rs, interp.rs, builtins.rs, main.rs, env_registry.rs): IRS-1..3 and the B3-3 exit class: module-let initialisers are walked off main, a module let is followed only where its name is free, the nonce fd is read non-blocking (an open writer is refused at once), the exit class is set outside the Pure exit arm: not PCI-reviewed"
+}

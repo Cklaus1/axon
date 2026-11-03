@@ -1,0 +1,4 @@
+{
+  "theme": "genviab-b3 B3-7 contained module lets",
+  "text": "CHECKER (capabilities.rs, error.rs): a @[contained] / --require-contained main is checked over its non-lambda module-level let initialisers (E1001/E1005 name the let) and follows module lambdas it calls. Narrows what --require-contained accepts; plain run unchanged"
+}

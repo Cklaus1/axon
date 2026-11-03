@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "CLI + NATIVE (main.rs, codegen/link.rs): axon build --release means --opt-level 3 (AX-72). The interpreter is untouched"
+}

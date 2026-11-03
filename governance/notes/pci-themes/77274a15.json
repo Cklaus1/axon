@@ -1,0 +1,4 @@
+{
+  "theme": "guest-fs GF-5 seccomp hint removed",
+  "text": "CLI (main.rs): deletes the manifest syscall_hint -> seccomp path (syscalls_for_effects); .axmeta carries capabilities. No interpreter evaluation change"
+}

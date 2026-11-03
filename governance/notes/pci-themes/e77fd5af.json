@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/expr.rs): checked ops share one operator-glyph global per module and one panic block per function, kind, glyph and width (AX-75); panic text, operands and exit code unchanged. The interpreter is untouched"
+}

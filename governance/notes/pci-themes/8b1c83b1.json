@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/*): codegen links LLVM 23 through inkwell 0.11 (AX-73); --opt-level s|z run default<O2> plus size attributes. The interpreter is untouched"
+}

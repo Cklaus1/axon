@@ -1,0 +1,4 @@
+{
+  "theme": "genviab-b3 B3-5 ceiling spelling",
+  "text": "CLI (main.rs): a --ceiling / AXON_CEILING spelling that does not resolve gets the loader E1007 cannot read, not two different ceilings. Error text only"
+}

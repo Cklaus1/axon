@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/mod.rs): a &mut [T] parameter is declared ptr noalias captures(none) (AX-71). The interpreter is untouched"
+}

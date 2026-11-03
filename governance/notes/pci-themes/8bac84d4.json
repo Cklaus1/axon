@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/expr.rs, codegen/mod.rs): an if whose arms are side-effect-free i64 arithmetic computes both arms wrapping and selects the value; a fault re-runs the taken arm checked, so panics are unchanged (AX-70). The interpreter is untouched"
+}

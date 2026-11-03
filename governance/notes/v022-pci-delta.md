@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 05aefe5b2f68bc2b8ed659924004420053424b2b
+generated-at: 0e8ad325eec54976c847c107dce2aa219e6a98b5
 
-`git diff --numstat 31413ca7..05aefe5b -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..0e8ad325 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -35,20 +35,21 @@ generated-at: 05aefe5b2f68bc2b8ed659924004420053424b2b
 | `crates/axon-core/src/checker.rs` | 3044 | 792 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
-| `crates/axon-core/src/codegen/asi.rs` | 237 | 49 |
+| `crates/axon-core/src/codegen/asi.rs` | 238 | 54 |
+| `crates/axon-core/src/codegen/bpf.rs` | 9 | 5 |
 | `crates/axon-core/src/codegen/build_wrappers.rs` | 25 | 55 |
-| `crates/axon-core/src/codegen/builtin_externs.rs` | 8 | 0 |
-| `crates/axon-core/src/codegen/builtins.rs` | 69 | 13 |
+| `crates/axon-core/src/codegen/builtin_externs.rs` | 16 | 11 |
+| `crates/axon-core/src/codegen/builtins.rs` | 284 | 129 |
 | `crates/axon-core/src/codegen/display.rs` | 514 | 0 |
 | `crates/axon-core/src/codegen/enum_layout.rs` | 451 | 0 |
-| `crates/axon-core/src/codegen/escape.rs` | 509 | 0 |
-| `crates/axon-core/src/codegen/expr.rs` | 2583 | 714 |
-| `crates/axon-core/src/codegen/link.rs` | 1620 | 337 |
-| `crates/axon-core/src/codegen/match_pat.rs` | 558 | 162 |
-| `crates/axon-core/src/codegen/mod.rs` | 555 | 154 |
-| `crates/axon-core/src/codegen/option_result.rs` | 11 | 6 |
+| `crates/axon-core/src/codegen/escape.rs` | 511 | 0 |
+| `crates/axon-core/src/codegen/expr.rs` | 3399 | 913 |
+| `crates/axon-core/src/codegen/link.rs` | 1622 | 337 |
+| `crates/axon-core/src/codegen/match_pat.rs` | 561 | 168 |
+| `crates/axon-core/src/codegen/mod.rs` | 642 | 162 |
+| `crates/axon-core/src/codegen/option_result.rs` | 14 | 9 |
 | `crates/axon-core/src/codegen/output.rs` | 118 | 69 |
-| `crates/axon-core/src/codegen/types.rs` | 18 | 6 |
+| `crates/axon-core/src/codegen/types.rs` | 24 | 21 |
 | `crates/axon-core/src/complexity.rs` | 1 | 0 |
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
 | `crates/axon-core/src/effects.rs` | 757 | 126 |
@@ -81,11 +82,11 @@ generated-at: 05aefe5b2f68bc2b8ed659924004420053424b2b
 | `crates/axon-core/src/interp/tests_v022_c.rs` | 152 | 0 |
 | `crates/axon-core/src/interp/tests_v022_s4.rs` | 600 | 0 |
 | `crates/axon-core/src/interp/value.rs` | 577 | 530 |
-| `crates/axon-core/src/interp/vm/compile.rs` | 1801 | 0 |
+| `crates/axon-core/src/interp/vm/compile.rs` | 1863 | 0 |
 | `crates/axon-core/src/interp/vm/mod.rs` | 3596 | 0 |
-| `crates/axon-core/src/interp/vm/pure.rs` | 1842 | 0 |
+| `crates/axon-core/src/interp/vm/pure.rs` | 1864 | 0 |
 | `crates/axon-core/src/interp/vm/purefn.rs` | 871 | 0 |
-| `crates/axon-core/src/interp/vm/tests.rs` | 2756 | 0 |
+| `crates/axon-core/src/interp/vm/tests.rs` | 2827 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 204 | 0 |
 | `crates/axon-core/src/lib.rs` | 447 | 102 |
@@ -104,9 +105,9 @@ generated-at: 05aefe5b2f68bc2b8ed659924004420053424b2b
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 69019 | 9684 |
+| total | 70326 | 10052 |
 
-`git log --reverse 31413ca7..05aefe5b -- crates/axon-core/src`:
+`git log --reverse 31413ca7..0e8ad325 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -526,13 +527,22 @@ generated-at: 05aefe5b2f68bc2b8ed659924004420053424b2b
 | 50b02709 | GV-1 outcome reason | INTERPRETER (main.rs): the outcome record's compile reason is the first entry of the errors-only list; only the supervisor record's reason text changes. No program's output or exit code changes. |
 | 5454b4fb | b2/gvos merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | f95a53d3 | merge b2/ce (ICE-3 + GV-1) | INTERPRETER CLI (main.rs): the merge keeps both sides of apply_ceiling: --ceiling and AXON_CEILING naming one file in two spellings is one ceiling (ICE-3), and a real two-ceiling refusal is E1007 exit 2 that also writes the GV-1 outcome record under a supervisor. No other behaviour changes. |
-| e149e969 | GF-1 axon run --source-fd | INTERPRETER CLI (main.rs): `axon run --source-fd N FILE` reads the program from inherited fd N (N >= 3); FILE stays the entry directory and label, and run_start hashes the fd bytes. Without the flag, axon run is unchanged. |
-| 77274a15 | GF-5 syscall_hint removed | CODEGEN MANIFEST (main.rs, codegen feature): the .axmeta manifest carries the program's capabilities instead of a derived syscall_hint; the unenforced manifest -> seccomp derivation is deleted. The interpreter and every program's output are unchanged. |
-| 2ea75377 | B3-3 outcome nonce on its own pipe | INTERPRETER + AXON-OS: under a supervisor the outcome nonce arrives on its own pipe (fd 4, AXON_OUTCOME_NONCE_FD), never in the environment; the interpreter reads and closes it and becomes non-dumpable. A run is Completed only from the record's class (an exit from main outside every sandbox_run); the stdout completion marker is gone. The old AXON_OUTCOME_NONCE variable is refused (exit 2). Without a supervisor, axon run output and exit codes are unchanged. |
-| 3df245d0 | B3-7 contained covers module-level lets | CHECKER (capabilities.rs): a @[contained] / --require-contained main is checked over its non-lambda module-level let initialisers (E1001/E1005 name the let), and a module lambda counts only where it is called. Programs whose module-level lets are pure, and unused module lambdas, check as before (717 tracked .ax files: same exit codes). |
-| 99806953 | B3-5 ceiling spelling | INTERPRETER CLI (main.rs): a --ceiling / AXON_CEILING spelling that does not resolve gets the loader's E1007 'cannot read' (exit 2) instead of 'two different ceilings'. Exit code and outcome record unchanged; only the reason text. |
-| a31bbd08 | B3 audit fixes (IRS-1..3) | CHECKER (capabilities.rs): a non-main @[contained] walk reads a plain-value module let as data (its initialiser ran before main and is charged there), and a local or parameter that shadows a module let no longer pulls in its initialiser. INTERPRETER (main.rs): a nonce fd whose writer is still open is refused with exit 2 instead of blocking. The exit builtin stays Pure; the inner-exit class is set where an exit leaves sandbox_run or a module-level initialiser. 717 tracked .ax files: same exit codes for check, check --require-contained and run as the base binary. |
-| 422 commits | | |
+| e149e969 | guest-fs GF-1 source fd | INTERPRETER CLI (main.rs, interp/provenance.rs): `axon run --source-fd N FILE` reads the program from an inherited descriptor; FILE stays the entry dir and label, and run_start hashes the fd bytes. A run without the flag is unchanged: not PCI-reviewed |
+| 77274a15 | guest-fs GF-5 seccomp hint removed | CLI (main.rs): deletes the manifest syscall_hint -> seccomp path (syscalls_for_effects); .axmeta carries capabilities. No interpreter evaluation change |
+| 2ea75377 | genviab-b3 B3-3 outcome nonce pipe | INTERPRETER + CLI (interp.rs, builtins.rs, main.rs, outcome.rs, env_registry.rs): under a supervisor the outcome nonce arrives on fd 4 (AXON_OUTCOME_NONCE_FD), never in the environment; the interpreter reads and closes it and goes non-dumpable; completion is the record class (exit only from main outside every sandbox_run). AXON_OUTCOME_NONCE is refused (exit 2). Without a supervisor axon run output is byte-identical: not PCI-reviewed |
+| 3df245d0 | genviab-b3 B3-7 contained module lets | CHECKER (capabilities.rs, error.rs): a @[contained] / --require-contained main is checked over its non-lambda module-level let initialisers (E1001/E1005 name the let) and follows module lambdas it calls. Narrows what --require-contained accepts; plain run unchanged |
+| 99806953 | genviab-b3 B3-5 ceiling spelling | CLI (main.rs): a --ceiling / AXON_CEILING spelling that does not resolve gets the loader E1007 cannot read, not two different ceilings. Error text only |
+| a31bbd08 | genviab-b3 implementation-audit fixes | INTERPRETER + CHECKER (capabilities.rs, interp.rs, builtins.rs, main.rs, env_registry.rs): IRS-1..3 and the B3-3 exit class: module-let initialisers are walked off main, a module let is followed only where its name is free, the nonce fd is read non-blocking (an open writer is refused at once), the exit class is set outside the Pure exit arm: not PCI-reviewed |
+| 8b08b7d2 | compilebench AX findings (native) | CLI + NATIVE (main.rs, codegen/link.rs): axon build --release means --opt-level 3 (AX-72). The interpreter is untouched |
+| 8b1c83b1 | compilebench AX findings (native) | NATIVE (codegen/*): codegen links LLVM 23 through inkwell 0.11 (AX-73); --opt-level s|z run default<O2> plus size attributes. The interpreter is untouched |
+| 002df548 | compilebench AX findings (native) | NATIVE (codegen/mod.rs): a &mut [T] parameter is declared ptr noalias captures(none) (AX-71). The interpreter is untouched |
+| 3bfc6f0c | compilebench AX findings (interpreter) | INTERPRETER (interp/vm/compile.rs, vm/pure.rs): x = if c { a } else { b } and let x = if .. in a loop lower to the if statement that sets x in each arm, so the loop stays on R50 register code (AX-69). Same values, same overflow/division panics, decline into the op loop unchanged; vm tests compare with the tree-walker: not PCI-reviewed |
+| 130340f9 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| c36aa46b | compilebench AX findings (native) | NATIVE (codegen/expr.rs): a signed i64 / or % by a constant other than 0 and -1 lowers without the zero check and MIN/-1 guard (AX-74); panic text unchanged. The interpreter is untouched |
+| e77fd5af | compilebench AX findings (native) | NATIVE (codegen/expr.rs): checked ops share one operator-glyph global per module and one panic block per function, kind, glyph and width (AX-75); panic text, operands and exit code unchanged. The interpreter is untouched |
+| 8bac84d4 | compilebench AX findings (native) | NATIVE (codegen/expr.rs, codegen/mod.rs): an if whose arms are side-effect-free i64 arithmetic computes both arms wrapping and selects the value; a fault re-runs the taken arm checked, so panics are unchanged (AX-70). The interpreter is untouched |
+| 0e8ad325 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 431 commits | | |
 <!-- END MECHANICAL -->
 
 

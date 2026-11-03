@@ -1,0 +1,4 @@
+{
+  "theme": "guest-fs GF-1 source fd",
+  "text": "INTERPRETER CLI (main.rs, interp/provenance.rs): `axon run --source-fd N FILE` reads the program from an inherited descriptor; FILE stays the entry dir and label, and run_start hashes the fd bytes. A run without the flag is unchanged: not PCI-reviewed"
+}

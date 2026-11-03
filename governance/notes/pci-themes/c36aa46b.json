@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/expr.rs): a signed i64 / or % by a constant other than 0 and -1 lowers without the zero check and MIN/-1 guard (AX-74); panic text unchanged. The interpreter is untouched"
+}

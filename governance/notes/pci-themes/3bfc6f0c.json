@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (interpreter)",
+  "text": "INTERPRETER (interp/vm/compile.rs, vm/pure.rs): x = if c { a } else { b } and let x = if .. in a loop lower to the if statement that sets x in each arm, so the loop stays on R50 register code (AX-69). Same values, same overflow/division panics, decline into the op loop unchanged; vm tests compare with the tree-walker: not PCI-reviewed"
+}
