@@ -10,7 +10,8 @@
 //!   declines. The reads are pure, so running them twice is unobservable.
 //! - [`Op::PureLoop`] / [`Op::PureFor`]: a `while` or a `for` over an
 //!   integer range whose body is pure statements (assignments to scalar
-//!   locals, element writes to local arrays, `if`s over them; spec §4 S10),
+//!   locals, element writes to local arrays, `if`s over them, and `x = if
+//!   c { a } else { b }` as such an `if`; spec §4 S10),
 //!   run in registers, placed before the generic loop, which takes over on
 //!   a decline. Inside a loop `xs[i]` on a local array is a leaf too.
 //! - [`Interp::fold_leaf`]: `arr_fold` over a closure whose body is one pure
@@ -681,7 +682,8 @@ fn pure_arrays(p: &Pure<'_>, out: &mut Vec<(Sym, u32)>) {
 
 /// One statement of a [`PureLoop`] body (`Compiler::pure_stmts`).
 pub(super) enum PureStmt<'p> {
-    /// `let var = value` (`is_let`, top level only) or `var = value`.
+    /// `let var = value` (`is_let`: at the top level, or in both arms of the
+    /// `if` a top-level `let var = if ..` lowers to) or `var = value`.
     Set {
         var: Var<'p>,
         is_let: bool,
@@ -1191,6 +1193,13 @@ impl<'p> PureLoop<'p> {
         }
     }
 
+    /// Test builds: whether a run built this loop's register code
+    /// (`Some(false)`: it declined at build, `None`: never entered).
+    #[cfg(test)]
+    pub(super) fn has_code(&self) -> Option<bool> {
+        self.code.get().map(Option::is_some)
+    }
+
     /// Run the `while` loop against `env`: `true` when its condition went
     /// false (the loop is done), `false` when the generic loop must run from
     /// its condition (the env holds the current iteration's start).
@@ -1327,7 +1336,7 @@ impl<'p> PureLoop<'p> {
         if let Some((v, _)) = &self.for_ {
             lets.push((v.s, v.slot));
         }
-        for st in &self.body[..] {
+        each_stmt(&self.body, &mut |st| {
             if let PureStmt::Set {
                 var, is_let: true, ..
             } = st
@@ -1336,7 +1345,7 @@ impl<'p> PureLoop<'p> {
                     lets.push((var.s, var.slot));
                 }
             }
-        }
+        });
         let mut reads = Vec::new();
         let mut arr_reads = Vec::new();
         let mut assigned = Vec::new();
@@ -1520,7 +1529,12 @@ impl LoopBuilder<'_> {
                         b: 0,
                         dst: 0,
                     });
+                    // A `let` bound in one arm is bound after the `if` only
+                    // when the other arm binds it too, with the same kind;
+                    // neither arm sees the other's.
+                    let before = self.bound.len();
                     self.lower_stmts(then, out)?;
+                    let in_then = self.bound.split_off(before);
                     if else_.is_empty() {
                         out[br].op = TOp::Br((out.len() - br - 1) as u32);
                     } else {
@@ -1533,6 +1547,14 @@ impl LoopBuilder<'_> {
                         });
                         out[br].op = TOp::Br((jmp - br) as u32);
                         self.lower_stmts(else_, out)?;
+                        let in_else = self.bound.split_off(before);
+                        for l in in_then {
+                            match in_else.iter().find(|x| x.0 == l.0) {
+                                Some(x) if x.1 != l.1 => return None,
+                                Some(_) => self.bound.push(l),
+                                None => {}
+                            }
+                        }
                         out[jmp].op = TOp::Jmp((out.len() - jmp - 1) as u32);
                     }
                 }

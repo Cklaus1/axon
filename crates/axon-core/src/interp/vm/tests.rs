@@ -2754,3 +2754,74 @@ fn vm_bool_panics_without_check() {
         }
     }
 }
+
+/// AX-69: `x = if c { a } else { b }` and a body-top `let t = if ..` (an
+/// `else if` chain included) whose arms are pure expressions keep their loop
+/// on R50's register tier: the `PureLoop` is compiled and its register code
+/// built on the first run, as for the statement form `if c { x = a } else {
+/// x = b }`. The value is the tree's, an overflow in an arm is the tree's
+/// panic, and an arm with a call keeps the loop on the op loop.
+#[test]
+fn vm_if_expr_assign_loop_is_register_tier() {
+    let prog = crate::parse_source(
+        "fn expr() -> i64 {\n    let steps = 0\n    let n = 1\n    while n < 300 {\n        let x = n\n        while x != 1 {\n            x = if x % 2 == 0 { x / 2 } else { 3 * x + 1 }\n            steps = steps + 1\n        }\n        n = n + 1\n    }\n    steps\n}\n\
+         fn stmt() -> i64 {\n    let steps = 0\n    let n = 1\n    while n < 300 {\n        let x = n\n        while x != 1 {\n            if x % 2 == 0 { x = x / 2 } else { x = 3 * x + 1 }\n            steps = steps + 1\n        }\n        n = n + 1\n    }\n    steps\n}\n\
+         fn lets() -> i64 {\n    let s = 0\n    let i = 0\n    while i < 10 {\n        let t = if i < 5 { i * 2 } else if i < 8 { i + 100 } else { 0 - i }\n        s = s + t\n        i = i + 1\n    }\n    s\n}\n\
+         fn over() -> i64 {\n    let x = 3\n    let i = 0\n    while i < 100 {\n        x = if i % 2 == 0 { x * 1000 } else { x + 1 }\n        i = i + 1\n    }\n    x\n}\n\
+         fn g(v: i64) -> i64 { v + 1 }\n\
+         fn called() -> i64 {\n    let x = 0\n    let i = 0\n    while i < 10 {\n        x = if i % 2 == 0 { g(x) } else { x }\n        i = i + 1\n    }\n    x\n}\n",
+    )
+    .expect("parses");
+    let mut want = Vec::new();
+    for engine in [Engine::Tree, Engine::Vm] {
+        let mut interp = Interp::build_with(&prog, &[], engine);
+        interp.vm_eager = true;
+        interp.vm_trace = false;
+        let index = |name: &str| {
+            interp
+                .fn_table
+                .iter()
+                .position(|e| e.def.name == name)
+                .unwrap_or_else(|| panic!("{name} is in the fn table"))
+        };
+        let mut got = Vec::new();
+        for name in ["expr", "stmt", "lets", "over", "called"] {
+            let r = interp.call_fn_entry(&interp.fn_table[index(name)], vec![]);
+            got.push(format!("{name}: {r:?}"));
+        }
+        assert!(got[3].contains("Panic"), "{engine:?}: {got:?}");
+        if engine == Engine::Tree {
+            want = got;
+            continue;
+        }
+        assert_eq!(got, want, "the VM's values and panics are the tree's");
+        // The register code each body's `PureLoop`s built on their run.
+        let built = |name: &str| -> Vec<Option<bool>> {
+            let body = interp.fn_table[index(name)]
+                .compiled
+                .as_ref()
+                .and_then(|c| c.get())
+                .unwrap_or_else(|| panic!("{name} is compiled"));
+            body.ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::PureLoop { lp, .. } | Op::PureFor { lp, .. } => Some(lp.has_code()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(built("stmt"), [Some(true)]);
+        assert_eq!(
+            built("expr"),
+            [Some(true)],
+            "x = if .. off the register tier"
+        );
+        assert_eq!(
+            built("lets"),
+            [Some(true)],
+            "let t = if .. off the register tier"
+        );
+        assert_eq!(built("over"), [Some(true)]);
+        assert_eq!(built("called"), [], "an arm with a call is not pure");
+    }
+}

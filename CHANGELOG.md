@@ -1,5 +1,10 @@
 # Axon Changelog
 
+## AX-69: `x = if c { a } else { b }` in a loop runs on the register tier
+
+- **If-expression assignments are pure statements** (compilebench AX-69): in a `while`/`for` body, `x = if c { a } else { b }` and a top-level `let x = if ..` (an `else if` chain included) whose arms are each one pure expression lower to the `if` statement that sets `x` in each arm, so the loop stays an R50 `PureLoop`/`PureFor` with register code. The arms evaluate as the statement's do, so overflow and division checks, their panics and the decline into the op loop are unchanged. An arm that is not pure (a call, more than one statement, an `if` without `else`) keeps the loop on the op loop. A `let` bound in an `if`'s arms is bound after it only when both arms bind it with the same kind.
+- **Measured** (`axon run`, `taskset -c 5 perf stat -e instructions:u`, median of 5, output = golden): `collatz` 18.23 G → 7.29 G instructions, equal to the statement form `if x % 2 == 0 { x = x / 2 } else { x = 3 * x + 1 }` (7.29 G). The other eight compilebench benchmarks are unchanged (within 0.08 %).
+
 ## AX-73: codegen on LLVM 23
 
 - **Codegen links LLVM 23** (compilebench AX-73): `inkwell` 0.11 with the `llvm23-1` feature (`llvm-sys` 231), up from `inkwell` 0.4 on LLVM 17. Ubuntu's archive has no LLVM 23, so codegen builds need `llvm-23-dev` and `libpolly-23-dev` from apt.llvm.org (`ENVIRONMENTS.md`). `scripts/setup-environments.sh` checks for `llvm-config-23`. The harness skip probe `llvm_present` and CI look for LLVM 23. On the same unoptimised Axon IR for compilebench's `big-compile` (probe 2026-11-03), LLVM 23's `opt -O2` retires 0.66× LLVM 17's instructions and `opt` + `llc -O2` together 0.84×. On `collatz` the cycles drop to 0.84×.
