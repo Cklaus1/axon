@@ -1,5 +1,10 @@
 # Axon Changelog
 
+## AX-71: a `&mut [T]` parameter is `noalias captures(none)`
+
+- **The callee keeps `len`/`data` in registers** (compilebench AX-71): a `&mut [T]` parameter, the address of the caller's `{len, data}` slot, is now declared `ptr noalias captures(none)`. The `&mut` rules (`mut_borrow.rs`) make it the only path to that slot for the whole call: E0605 limits the operand to a whole local of the caller (no global, field, element, closure capture or temporary) and makes `&mut` legal only as the argument of a `&mut [T]` parameter, so the callee can hand the pointer on but never keep it; E0606 forbids a second argument of the call that mentions the same variable. LLVM used to reload both header fields and redo the bounds check after every element store. Now it loads them once per call. `noalias` alone did not help: the recursive call captured the pointer. A `&[T]` parameter is already a `{ i64, ptr }` value, so it is unchanged.
+- **Measured** (`--release`, `taskset -c 7 perf stat`, median of 5, compilebench run `20261103T152725Z` sources): `qsort` drops from 548 M to 383 M instructions (0.70×; clang-21 `-O3` retires 259 M, so the ratio falls from 2.11× to 1.48×), and cycles from 321 M to 285 M (clang 289 M). `fib-recursive`, `collatz`, `mandelbrot`, `arr-sum` and `sieve` are within 150 instructions of before. All six outputs match golden.
+
 ## AX-69: `x = if c { a } else { b }` in a loop runs on the register tier
 
 - **If-expression assignments are pure statements** (compilebench AX-69): in a `while`/`for` body, `x = if c { a } else { b }` and a top-level `let x = if ..` (an `else if` chain included) whose arms are each one pure expression lower to the `if` statement that sets `x` in each arm, so the loop stays an R50 `PureLoop`/`PureFor` with register code. The arms evaluate as the statement's do, so overflow and division checks, their panics and the decline into the op loop are unchanged. An arm that is not pure (a call, more than one statement, an `if` without `else`) keeps the loop on the op loop. A `let` bound in an `if`'s arms is bound after it only when both arms bind it with the same kind.

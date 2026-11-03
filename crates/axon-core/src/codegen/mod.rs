@@ -1152,6 +1152,32 @@ impl<'ctx> Codegen<'ctx> {
         self.fn_return_types.insert(name.to_string(), ret_sem);
         self.functions.insert(name.to_string(), fn_val);
 
+        // AX-71: a `&mut [T]` param is the address of the caller's `{len, data}`
+        // slot. The `&mut` rules (`mut_borrow.rs`) make it the only path to that
+        // slot for the whole call: the operand is a whole local of the caller,
+        // never a global, field, element, closure capture or temporary (E0605),
+        // and no other argument of the call mentions it (E0606). `&mut` is legal
+        // only as the argument of a `&mut [T]` param (E0605), so the callee can
+        // hand the pointer on but never keep it. Native code runs no caller code
+        // during the call (an intercepting effect handler is refused, E0910). So
+        // the param is `noalias` and `captures(none)`, and LLVM keeps `len`/`data`
+        // in registers across element stores instead of reloading the header
+        // (and redoing the bounds check) after each one.
+        if fn_val.count_params() as usize == f.params.len() {
+            use inkwell::attributes::{Attribute, AttributeLoc};
+            for (i, p) in f.params.iter().enumerate() {
+                if !matches!(p.ty, ast::AxonType::RefMut(_)) {
+                    continue;
+                }
+                let loc = AttributeLoc::Param(i as u32);
+                // `captures(none)` is the `captures` int attribute with value 0.
+                for name in ["noalias", "captures"] {
+                    let kind = Attribute::get_named_enum_kind_id(name);
+                    fn_val.add_attribute(loc, self.ir.context.create_enum_attribute(kind, 0));
+                }
+            }
+        }
+
         // R17 Slice 1: @[naked] → LLVM "naked" attribute (no prologue/epilogue).
         if f.attrs.iter().any(|a| a.name == "naked") {
             let kind = inkwell::attributes::Attribute::get_named_enum_kind_id("naked");
@@ -2783,5 +2809,46 @@ mod walk_expr_tests {
             saw_root,
             "walk_expr must call the visitor on the root itself"
         );
+    }
+}
+
+#[cfg(test)]
+mod mut_slice_param_tests {
+    use super::*;
+
+    /// AX-71: a `&mut [T]` param (the caller's `{len, data}` slot) is declared
+    /// `noalias captures(none)`, so an element store cannot clobber the header
+    /// as far as LLVM knows and `len`/`data` stay in registers across the loop.
+    /// Without it every `xs[i] = v` reloaded both fields and redid the bounds
+    /// check. A by-value `&[T]` param is a `{ i64, ptr }` value and gets nothing.
+    #[test]
+    fn a_mut_slice_param_is_noalias_and_not_captured() {
+        let src = "fn bump(n: i64, xs: &mut [i64], ys: &[i64]) {\n  \
+                   for i in 0..n {\n    xs[i] = xs[i] + ys[i]\n  }\n}\n\
+                   fn main() -> i64 {\n  let a = [1, 2]\n  let b = [3, 4]\n  \
+                   bump(2, &mut a, &b)\n  a[0]\n}\n";
+        let program = crate::parse_source(src).expect("parses");
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx, "ax71_mut_slice_param");
+        cg.declare_functions(&program);
+        cg.emit_program(&program);
+        assert!(
+            cg.codegen_errors().is_empty(),
+            "failed to lower: {:?}",
+            cg.codegen_errors()
+        );
+        let ir = cg.emit_llvm_ir();
+        let define = ir
+            .lines()
+            .find(|l| l.starts_with("define ") && l.contains(" @bump("))
+            .expect("fn bump defined");
+        assert!(
+            define.contains("(i64 %0, ptr noalias captures(none) %1, { i64, ptr } %2)"),
+            "the `&mut [i64]` param must be `ptr noalias captures(none)` and only it: {define}"
+        );
+        cg.ir
+            .module
+            .verify()
+            .unwrap_or_else(|e| panic!("IR verification failed: {}\n{ir}", e.to_string()));
     }
 }
