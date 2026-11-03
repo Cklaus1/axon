@@ -100,6 +100,19 @@ enum ArrReduce<'ctx> {
     IndexOf(inkwell::values::IntValue<'ctx>),
 }
 
+/// AX-75: identifies a function's shared `__axon_arith_panic` block: the
+/// function, the fault kind (0 overflow / 1 div0 / 2 rem0), the operator
+/// glyph and the operand bit width.
+pub(super) type ArithPanicKey<'ctx> = (FunctionValue<'ctx>, i64, &'static str, u32);
+
+/// AX-75: a shared `__axon_arith_panic` block and, for an overflow block, the
+/// phis that carry the faulting operands `a` and `b` in from each check.
+#[derive(Clone, Copy)]
+pub(super) struct ArithPanicBlock<'ctx> {
+    block: inkwell::basic_block::BasicBlock<'ctx>,
+    operands: Option<(inkwell::values::PhiValue<'ctx>, inkwell::values::PhiValue<'ctx>)>,
+}
+
 impl<'ctx> super::Codegen<'ctx> {
     // ── Expression emission ───────────────────────────────────────────────────
 
@@ -1354,25 +1367,26 @@ impl<'ctx> super::Codegen<'ctx> {
 
     // ── Binary operation emission ─────────────────────────────────────────────
 
-    /// Emit a guarded call to `__axon_arith_panic` on the *current* block's
-    /// failure branch, then leave the builder positioned at a fresh "ok" block
+    /// Emit a guarded branch to `__axon_arith_panic` on the *current* block's
+    /// failure edge, then leave the builder positioned at a fresh "ok" block
     /// so the caller can continue emitting the success value. `cond_fail` is the
     /// i1 "the fault happened" predicate. `kind` selects the runtime message (0
     /// overflow / 1 div0 / 2 rem0); `a`/`b` are the operands passed through for
-    /// the overflow message (ignored by the runtime for kinds 1/2). This mirrors
-    /// the `__axon_verify_panic` emission shape in `asi.rs`.
+    /// the overflow message (the runtime ignores them for kinds 1/2, which pass
+    /// 0).
+    ///
+    /// AX-75: the failure edge goes to the function's shared panic block for
+    /// this kind, glyph and width (`arith_panic_block`); an overflow check
+    /// adds its operands to that block's phis. A check costs its predicate
+    /// and one branch, not a block, a call and a string global of its own.
     fn emit_arith_guard(
         &mut self,
         cond_fail: inkwell::values::IntValue<'ctx>,
         kind: i64,
-        op_glyph: &str,
+        op_glyph: &'static str,
         a: inkwell::values::IntValue<'ctx>,
         b: inkwell::values::IntValue<'ctx>,
     ) {
-        let panic_fn = match self.ir.module.get_function("__axon_arith_panic") {
-            Some(f) => f,
-            None => return, // runtime extern absent — leave the raw op (defensive)
-        };
         let cur_block = match self.ir.builder.get_insert_block() {
             Some(b) if b.get_terminator().is_none() => b,
             _ => return,
@@ -1381,25 +1395,67 @@ impl<'ctx> super::Codegen<'ctx> {
             Some(f) => f,
             None => return,
         };
-        let panic_bb = self.ir.context.append_basic_block(llvm_fn, "arith_panic");
+        let Some(shared) = self.arith_panic_block(llvm_fn, kind, op_glyph, a.get_type()) else {
+            return; // runtime extern absent — leave the raw op (defensive)
+        };
         let ok_bb = self.ir.context.append_basic_block(llvm_fn, "arith_ok");
         // cond_fail ? panic : ok
-        build_wrappers::w_cond_br(&self.ir.builder, cond_fail, panic_bb, ok_bb);
+        build_wrappers::w_cond_br(&self.ir.builder, cond_fail, shared.block, ok_bb);
+        if let Some((pa, pb)) = shared.operands {
+            pa.add_incoming(&[(&a, cur_block)]);
+            pb.add_incoming(&[(&b, cur_block)]);
+        }
+        self.ir.builder.position_at_end(ok_bb);
+    }
 
-        // Panic path: call the runtime trap, then `unreachable`.
-        self.ir.builder.position_at_end(panic_bb);
+    /// AX-75: the function's shared `__axon_arith_panic` block for `kind`,
+    /// `op_glyph` and operand type `ty`, built on first use: phis for the
+    /// operands (overflow only; sign-extended to i64 as the runtime expects),
+    /// the call with the module's one glyph global, `unreachable`. `None` when
+    /// the runtime extern is not declared.
+    fn arith_panic_block(
+        &mut self,
+        llvm_fn: FunctionValue<'ctx>,
+        kind: i64,
+        op_glyph: &'static str,
+        ty: inkwell::types::IntType<'ctx>,
+    ) -> Option<ArithPanicBlock<'ctx>> {
+        let key = (llvm_fn, kind, op_glyph, ty.get_bit_width());
+        if let Some(shared) = self.arith_panic_blocks.get(&key) {
+            return Some(*shared);
+        }
+        let panic_fn = self.ir.module.get_function("__axon_arith_panic")?;
+        let resume = self.ir.builder.get_insert_block()?;
+        let block = self.ir.context.append_basic_block(llvm_fn, "arith_panic");
+        self.ir.builder.position_at_end(block);
         let i64_ty = self.ir.context.i64_type();
-        let op_g = build_wrappers::w_global_string_ptr(&self.ir.builder, op_glyph, "arith_op");
-        // __axon_arith_panic expects i64 for `a` and `b`; sign-extend narrower values.
-        let a_i64 = if a.get_type().get_bit_width() < 64 {
-            build_wrappers::w_int_s_extend(&self.ir.builder, a, i64_ty, "a_ext").into()
+        let (operands, a_i64, b_i64) = if kind == 0 {
+            let pa = build_wrappers::w_phi(&self.ir.builder, ty.into(), "arith_a");
+            let pb = build_wrappers::w_phi(&self.ir.builder, ty.into(), "arith_b");
+            let (a, b) = (
+                pa.as_basic_value().into_int_value(),
+                pb.as_basic_value().into_int_value(),
+            );
+            // __axon_arith_panic expects i64 for `a` and `b`; sign-extend narrower values.
+            let (a, b) = if ty.get_bit_width() < 64 {
+                (
+                    build_wrappers::w_int_s_extend(&self.ir.builder, a, i64_ty, "a_ext"),
+                    build_wrappers::w_int_s_extend(&self.ir.builder, b, i64_ty, "b_ext"),
+                )
+            } else {
+                (a, b)
+            };
+            (Some((pa, pb)), a, b)
         } else {
-            a.into()
+            (None, i64_ty.const_zero(), i64_ty.const_zero())
         };
-        let b_i64 = if b.get_type().get_bit_width() < 64 {
-            build_wrappers::w_int_s_extend(&self.ir.builder, b, i64_ty, "b_ext").into()
-        } else {
-            b.into()
+        let op_g = match self.arith_op_globals.get(op_glyph) {
+            Some(g) => *g,
+            None => {
+                let g = build_wrappers::w_global_string_ptr(&self.ir.builder, op_glyph, "arith_op");
+                self.arith_op_globals.insert(op_glyph, g);
+                g
+            }
         };
         let _ = build_wrappers::w_call(
             &self.ir.builder,
@@ -1408,15 +1464,16 @@ impl<'ctx> super::Codegen<'ctx> {
                 i64_ty.const_int(kind as u64, true).into(),
                 op_g.into(),
                 i64_ty.const_int(op_glyph.len() as u64, false).into(),
-                a_i64,
-                b_i64,
+                a_i64.into(),
+                b_i64.into(),
             ],
             "",
         );
         build_wrappers::w_unreachable(&self.ir.builder);
-
-        // Continue at the ok block.
-        self.ir.builder.position_at_end(ok_bb);
+        self.ir.builder.position_at_end(resume);
+        let shared = ArithPanicBlock { block, operands };
+        self.arith_panic_blocks.insert(key, shared);
+        Some(shared)
     }
 
     /// Constant-fold a checked signed-i64 op when BOTH operands are compile-time
@@ -1522,7 +1579,7 @@ impl<'ctx> super::Codegen<'ctx> {
     fn emit_checked_overflow_op(
         &mut self,
         intrinsic_name: &str,
-        op_glyph: &str,
+        op_glyph: &'static str,
         l: inkwell::values::IntValue<'ctx>,
         r: inkwell::values::IntValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
@@ -1547,7 +1604,7 @@ impl<'ctx> super::Codegen<'ctx> {
     fn emit_checked_overflow_op_narrow(
         &mut self,
         intrinsic_name: &str,
-        op_glyph: &str,
+        op_glyph: &'static str,
         l: inkwell::values::IntValue<'ctx>,
         r: inkwell::values::IntValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
@@ -2032,6 +2089,8 @@ impl<'ctx> super::Codegen<'ctx> {
         if body.is_none() {
             // SAFETY: `f` was added above and nothing outside this call
             // references it yet, except the recursive calls inside its own body.
+            // Its shared arith-panic blocks (AX-75) go with it.
+            self.arith_panic_blocks.retain(|k, _| k.0 != f);
             unsafe { f.delete() };
             return None;
         }
@@ -12670,6 +12729,44 @@ mod checked_arith_ir_tests {
         assert!(
             v.contains("divzero") && v.contains("minneg1"),
             "a variable divisor lost a check:\n{v}"
+        );
+    }
+
+    /// AX-75: checked ops share one private glyph global per operator per
+    /// module and one `__axon_arith_panic` call per function and fault kind;
+    /// each overflow check feeds its operands to that call through phis.
+    #[test]
+    fn checked_ops_share_glyph_globals_and_panic_blocks() {
+        let ir = module_ir(
+            "fn f(a: i64, b: i64) -> i64 {\n  a + b + a * b + a - b + a * a + b / a + a / b\n}\n\
+             fn g(a: i64, b: i64) -> i64 {\n  a + b + a + b * b\n}\n\
+             fn main() -> i64 {\n  f(1, 2) + g(3, 4)\n}\n",
+        );
+        for glyph in ["+", "-", "*", "/"] {
+            let decl = format!("c\"{glyph}\\00\"");
+            let globals = ir
+                .lines()
+                .filter(|l| l.starts_with("@arith_op") && l.contains(&decl))
+                .count();
+            assert_eq!(globals, 1, "want one `{glyph}` glyph global per module:\n{ir}");
+        }
+        let f = fn_ir(&ir, "f");
+        // f's faults: overflow of + - * /, and division by zero.
+        let calls = f.matches("call void @__axon_arith_panic(").count();
+        assert_eq!(calls, 5, "want one panic call per kind and glyph in f:\n{f}");
+        let add_phi = f
+            .lines()
+            .find(|l| l.contains("%arith_a = phi i64"))
+            .unwrap_or_else(|| panic!("no shared operand phi:\n{f}"));
+        assert!(
+            add_phi.matches('[').count() >= 4,
+            "the four `+` checks do not share one block: {add_phi}"
+        );
+        let g = fn_ir(&ir, "g");
+        assert_eq!(
+            g.matches("call void @__axon_arith_panic(").count(),
+            2,
+            "want one panic call per kind and glyph in g:\n{g}"
         );
     }
 }

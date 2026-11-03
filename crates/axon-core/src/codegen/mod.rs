@@ -224,6 +224,14 @@ pub struct Codegen<'ctx> {
     lambda_counter: u32,
     /// Counter for generating unique global names in format strings.
     fmtstr_counter: u32,
+    /// AX-75: the operator-glyph string `__axon_arith_panic` receives, one
+    /// private global per glyph per module.
+    arith_op_globals: HashMap<&'static str, PointerValue<'ctx>>,
+    /// AX-75: the shared `__axon_arith_panic` call block of a function, per
+    /// fault kind, glyph and operand width. Every checked op of that kind in
+    /// the function branches to it; an overflow block takes the operands
+    /// through its two phis.
+    arith_panic_blocks: HashMap<expr::ArithPanicKey<'ctx>, expr::ArithPanicBlock<'ctx>>,
     /// Maps enum name → its variants' native layout (name, tag, payload
     /// fields with offsets). Used by StructLit and Pattern::Struct for enum
     /// variant codegen; filled by `enum_layout::declare_enum_types`.
@@ -509,6 +517,8 @@ impl<'ctx> Codegen<'ctx> {
             current_option_inner: None,
             lambda_counter: 0,
             fmtstr_counter: 0,
+            arith_op_globals: HashMap::new(),
+            arith_panic_blocks: HashMap::new(),
             enum_variants: HashMap::new(),
             enum_names: std::collections::HashSet::new(),
             display_fns: HashMap::new(),

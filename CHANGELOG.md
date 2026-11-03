@@ -1,5 +1,11 @@
 # Axon Changelog
 
+## AX-75: checked ops share their glyph strings and panic blocks
+
+- **Shared panic paths** (compilebench AX-75): every checked `+`/`-`/`*`/`/`/`%` used to get its own `__axon_arith_panic` block and its own private operator-string global. A module now holds one global per glyph, and a function one panic block per fault kind, glyph and operand width; an overflow check passes its operands to that block through two phis. The panic message, operands and exit code are unchanged. On `big-compile` the unoptimised IR goes from 31,107 to 13 globals and from 68,337 to 40,203 blocks (after AX-74); `llc -O0` retires 6.68 G instructions instead of 9.30 G, `opt -O2` 28.46 G instead of 29.31 G and `llc -O2` 67.78 G instead of 68.24 G.
+- `axon build --no-cache` on `big-compile`, AX-74 → AX-75 (instructions): `--opt-level 0` 8.80 G → 6.63 G, `1` 72.67 G → 70.58 G, `2` 82.89 G → 81.69 G, `--release` 89.96 G → 88.75 G, `s` 64.41 G → 63.16 G. Stripped binaries: 3,310,552 → 2,786,264 bytes at `0`, 1,709,016 → 1,659,864 at `1`, 1,643,480 → 1,614,808 at `2`, 1,778,648 → 1,762,264 at `--release`, 1,225,688 → 1,205,208 at `s`.
+- Test: `checked_ops_share_glyph_globals_and_panic_blocks` (IR shape).
+
 ## AX-74: a constant divisor drops the checks it cannot trip
 
 - **Constant divisors** (compilebench AX-74): a signed i64 `/`/`%` by a constant other than 0 and -1 lowers to a bare `sdiv`/`srem`, with no zero check, no `MIN / -1` guard and no panic block. `/ -1` keeps only the `MIN / -1` overflow guard; `% -1` folds to 0. A variable divisor is unchanged. On compilebench's `big-compile` (14,054 such sites) the unoptimised IR drops from 96,445 to 68,337 blocks; `llc -O0` retires 9.30 G instructions instead of 13.04 G and `opt -O2` 29.31 G instead of 30.71 G. `axon build --no-cache` retires 8.80 G instead of 11.72 G at `--opt-level 0` and 89.96 G instead of 90.85 G at `--release`; the stripped debug binary shrinks from 4,547,544 to 3,310,552 bytes.
