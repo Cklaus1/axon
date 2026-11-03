@@ -79,11 +79,12 @@ impl OptLevel {
         }
     }
 
-    /// The level implied by `--release` alone: `O2` for a release build, `O0`
+    /// The level implied by `--release` alone: `O3` for a release build, as
+    /// Cargo's release profile and CMake/Meson `release` use (AX-72), `O0`
     /// otherwise.
     pub fn from_release(release: bool) -> Self {
         if release {
-            Self::O2
+            Self::O3
         } else {
             Self::O0
         }

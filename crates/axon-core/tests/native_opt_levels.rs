@@ -256,9 +256,9 @@ fn optimised_unbounded_recursion_still_overflows_gracefully() {
 #[test]
 fn release_ir_is_optimised_and_program_functions_are_internal() {
     let src = write_src("fib_ir", FIB);
-    let o2 = tmp("fib_o2.ll");
+    let rel = tmp("fib_release.ll");
     let o0 = tmp("fib_o0.ll");
-    let b2 = build(&["--release", "--no-cache", "--emit-llvm"], &src, &o2);
+    let b2 = build(&["--release", "--no-cache", "--emit-llvm"], &src, &rel);
     if codegen_absent(&b2) {
         let _ = std::fs::remove_file(&src);
         return;
@@ -267,9 +267,9 @@ fn release_ir_is_optimised_and_program_functions_are_internal() {
     let _ = std::fs::remove_file(&src);
     assert_eq!(b2.status.code(), Some(0), "{}", stderr_of(&b2));
     assert_eq!(b0.status.code(), Some(0), "{}", stderr_of(&b0));
-    let ir2 = std::fs::read_to_string(&o2).expect("O2 IR");
+    let ir2 = std::fs::read_to_string(&rel).expect("release IR");
     let ir0 = std::fs::read_to_string(&o0).expect("O0 IR");
-    let _ = std::fs::remove_file(&o2);
+    let _ = std::fs::remove_file(&rel);
     let _ = std::fs::remove_file(&o0);
 
     let fib_body = |ir: &str| -> String {
@@ -285,7 +285,7 @@ fn release_ir_is_optimised_and_program_functions_are_internal() {
     };
     let fib2 = fib_body(&ir2);
     let fib0 = fib_body(&ir0);
-    // AX-21: O0 spills the parameter to a stack slot; the O2 pipeline
+    // AX-21: O0 spills the parameter to a stack slot; the release pipeline
     // (mem2reg/SROA) removes it.
     assert!(
         fib0.contains("alloca"),
@@ -470,7 +470,7 @@ fn o0_object_keeps_only_reachable_functions_and_links_against_the_base_runtime()
 /// AX-38: `--opt-level s|z` mark every function definition `optsize` /
 /// `optsize minsize`, as clang's `-Os`/`-Oz` do. LLVM's size heuristics read
 /// those attributes, not the pipeline name: without them `s` emitted IR and a
-/// binary byte-identical to `--release`. `O2` must carry neither.
+/// binary byte-identical to `--opt-level 2`. `O2` must carry neither.
 #[test]
 fn size_levels_mark_every_definition_optsize_and_o2_does_not() {
     let src = write_src("sizeattr", MIXED);

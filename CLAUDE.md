@@ -135,7 +135,7 @@ axon replay a.journal --diff b.journal    # where did two runs depart? Reports t
 axon trace                                # summarize the provenance log: per-@[adaptive]-fn score trajectory (--fn NAME, --json)
 axon trace --ai                           # AI-call audit trail: per-fn ai_complete calls, tier→model, mode (live/mock/replay/fallback), metered cost, and the goal each served (--json → axon-ai-audit/1)
 axon build examples/hello.ax              # native AOT binary   (codegen is now DEFAULT; builds in ~3s — see BUILD_RESOLVED.md)
-axon build f.ax --release                 # optimised: LLVM `default<O2>` IR pipeline + O2 backend (default without flags: O0 = `globaldce` only)
+axon build f.ax --release                 # optimised: LLVM `default<O3>` IR pipeline + O3 backend, as Cargo's release profile (default without flags: O0 = `globaldce` only)
 axon build f.ax --opt-level 3             # pick the level: 0|1|2|3|s|z (`s`/`z` = size pipelines + `optsize`/`minsize` fn attrs); overrides --release; part of the cache key
 axon build f.ax --emit-obj -o f.o         # write the program's relocatable object only (no link; hosted or --freestanding); links against libaxon_rt.a when no AI builtin is called
 axon build f.ax --release --emit-llvm -o f.ll  # dump the IR AFTER the selected level's pipeline (what the backend compiles); stdout unless -o names a .ll

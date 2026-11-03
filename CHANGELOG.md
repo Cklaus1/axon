@@ -1,5 +1,9 @@
 # Axon Changelog
 
+## AX-72: `axon build --release` means `--opt-level 3`
+
+- **`--release` is O3** (compilebench AX-72). It was O2. Cargo's release profile, CMake `Release` and Meson `release` all use level 3. In compilebench run `20261103T070151Z`, O3 cuts the geomean cycles of the six compute benchmarks to 0.87× (arr-sum 0.45×: the unrolled outer loop turns `x % m` into a multiply and shift; the other five 0.97-1.02×). On the 20,071-line `big-compile`, the build retires 1.22× the instructions (gcc's O2 → O3 step is 1.58×, clang's 1.11×) and the program's `.text` is 1.29× larger; on the other benchmarks build time and binary size are unchanged. **Behaviour change:** a `--release` build now misses a cache entry written by an older `--release` build, and `--opt-level 2` keeps the old output.
+
 ## genviab-b3 B3-1..B3-7 and guest-fs GF-1..GF-5: a supervisor grades a run only through a channel the program cannot read; a grant covers code before `main`; a microVM program with `fs: none` cannot open files
 
 Items B3-1..B3-7 of `tasks/genviab-b3-spec.md` and GF-1..GF-5 of `tasks/guest-fs-spec.md` (human decisions NH-F4 A and NH-F5 A, 2026-11-02).

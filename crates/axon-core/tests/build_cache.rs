@@ -150,7 +150,7 @@ fn a_cache_hit_links_the_stored_object_without_recompiling() {
 }
 
 /// The opt level changes the object, so it is part of the key: a build at
-/// another level misses, and `--release` hits the `--opt-level 2` entry.
+/// another level misses, and `--release` hits the `--opt-level 3` entry.
 #[test]
 fn changing_the_opt_level_misses_the_cache() {
     let dir = scratch("optlevel");
@@ -165,14 +165,14 @@ fn changing_the_opt_level_misses_the_cache() {
     assert_eq!(o1.status.code(), Some(0), "{}", all_output(&o1));
     assert_eq!(entries(&cache).len(), 1);
 
-    let o2 = build(&src, &bin, &cache, &["--opt-level", "2"]);
-    assert_eq!(o2.status.code(), Some(0), "{}", all_output(&o2));
-    assert_eq!(entries(&cache).len(), 2, "O2 must not reuse the O1 entry");
+    let o3 = build(&src, &bin, &cache, &["--opt-level", "3"]);
+    assert_eq!(o3.status.code(), Some(0), "{}", all_output(&o3));
+    assert_eq!(entries(&cache).len(), 2, "O3 must not reuse the O1 entry");
     assert_eq!(run(&bin), "hi\n");
 
     let release = build(&src, &bin, &cache, &["--release"]);
     assert_eq!(release.status.code(), Some(0), "{}", all_output(&release));
-    assert_eq!(entries(&cache).len(), 2, "--release is O2: same entry");
+    assert_eq!(entries(&cache).len(), 2, "--release is O3: same entry");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

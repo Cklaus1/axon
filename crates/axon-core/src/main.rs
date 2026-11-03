@@ -141,9 +141,9 @@ enum Command {
         #[arg(long, short, help = "Output binary path")]
         out: Option<PathBuf>,
 
-        /// Optimised release build: `--opt-level 2` unless `--opt-level` is
+        /// Optimised release build: `--opt-level 3` unless `--opt-level` is
         /// given (default without either: O0 / debug).
-        #[arg(long, help = "Optimized release build (= --opt-level 2)")]
+        #[arg(long, help = "Optimized release build (= --opt-level 3)")]
         release: bool,
 
         /// Optimisation level: runs LLVM's `default<O1|O2|O3|Os|Oz>` IR
@@ -4101,7 +4101,7 @@ fn cmd_build(
     for f in &files {
         validate_ax_extension(f);
     }
-    // AX-17: `--opt-level` wins; otherwise `--release` = O2, debug = O0.
+    // AX-17/AX-72: `--opt-level` wins; otherwise `--release` = O3, debug = O0.
     let opt = match opt_level.as_deref() {
         Some(level) => axon_core::codegen::OptLevel::parse(level).unwrap_or_else(|e| {
             eprintln!("error: --opt-level: {e}");
@@ -4417,7 +4417,7 @@ fn cmd_build_bpf(
 
 #[cfg(feature = "codegen")]
 struct BuildOptions {
-    /// AX-17: optimisation level (`--opt-level`, or `--release` → O2).
+    /// AX-17: optimisation level (`--opt-level`, or `--release` → O3).
     opt: axon_core::codegen::OptLevel,
     target_triple: Option<String>,
     no_cache: bool,
