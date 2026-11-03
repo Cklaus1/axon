@@ -10,7 +10,7 @@ name: iOS (R14 mobile — REMOTE macOS verification)
 #   1. install the iOS rust targets (aarch64-apple-ios + the simulator triples)
 #   2. build the Axon mobile runtime staticlib (axon-rt --features ios) for the
 #      iOS simulator triple — the real cross-build the Linux gate cannot do
-#   3. build the axon compiler (interp build — LLVM 17 codegen is not assumed on
+#   3. build the axon compiler (interp build — LLVM 23 codegen is not assumed on
 #      the runner) and emit the byte-stable Swift wrapper via `--host mobile`
 #   4. compute-parity oracle: run examples/mobile/ios_compute_parity.ax under the
 #      interpreter (the oracle) AND on a booted iOS Simulator, then diff stdout
@@ -102,7 +102,7 @@ jobs:
             || { echo "iOS bridge symbols not exported"; exit 1; }
 
       # ── Build the axon compiler (interp) + run its lib tests on macOS ──────
-      # The codegen feature needs LLVM 17, not assumed on the runner; the interp
+      # The codegen feature needs LLVM 23, not assumed on the runner; the interp
       # build is enough for the wrapper generator + the parity oracle.
       - name: Build axon (interp) + run mobile lib tests
         run: |

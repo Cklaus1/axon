@@ -1111,11 +1111,7 @@ impl<'ctx> super::Codegen<'ctx> {
             return;
         }
         let i64_ty = self.ir.context.i64_type();
-        let i8_ptr = self
-            .ir
-            .context
-            .i8_type()
-            .ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(inkwell::AddressSpace::default());
         let targets = self.adaptive_registry_targets.clone();
         for name in &targets {
             let target_fn = match self.functions.get(name).copied() {

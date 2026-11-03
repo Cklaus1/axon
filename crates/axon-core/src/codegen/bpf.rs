@@ -157,7 +157,7 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
     /// Lower the `@[bpf]` fn into a BPF function in `section`.
     fn lower_program_fn(&mut self, f: &crate::ast::FnDef, section: &str) -> Result<(), String> {
         let i64_ty = self.ctx.i64_type();
-        let ptr_ty = self.ctx.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ctx.ptr_type(AddressSpace::default());
         // BPF program signature: i64 prog(ptr ctx). The single param (ctx) is a
         // pointer; we keep the body's view of it as an i64 for uniformity.
         let fn_ty = i64_ty.fn_type(&[ptr_ty.into()], false);
@@ -443,7 +443,7 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
             _ => return Err(e2301(func, "indirect / method call")),
         };
         let i64_ty = self.ctx.i64_type();
-        let ptr_ty = self.ctx.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ctx.ptr_type(AddressSpace::default());
 
         match name {
             // bpf_map_lookup_elem(map_handle, key) -> value ptr (as i64).
@@ -490,7 +490,7 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
                     .unwrap();
                 let vptr = call
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .unwrap()
                     .into_pointer_value();
                 let as_i64 = self
@@ -512,7 +512,11 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
                     .ok_or_else(|| e2301(func, "bpf_map_value_add delta has no value"))?;
                 let vptr = self
                     .builder
-                    .build_int_to_ptr(ptr_int, i64_ty.ptr_type(AddressSpace::default()), "vptr")
+                    .build_int_to_ptr(
+                        ptr_int,
+                        i64_ty.get_context().ptr_type(AddressSpace::default()),
+                        "vptr",
+                    )
                     .unwrap();
                 self.builder
                     .build_atomicrmw(
@@ -537,7 +541,7 @@ impl<'ctx, 'a> BpfLowerer<'ctx, 'a> {
                     .build_indirect_call(helper_ty, helper, &[], name)
                     .unwrap();
                 Ok(Some(
-                    call.try_as_basic_value().left().unwrap().into_int_value(),
+                    call.try_as_basic_value().basic().unwrap().into_int_value(),
                 ))
             }
             other => Err(e2301(func, &format!("call to `{other}`"))),

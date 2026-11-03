@@ -536,8 +536,8 @@ assert(expr, "message")        custom failure message
 ## Dependencies (Cargo additions for Phase 1)
 
 ```toml
-inkwell   = { version = "0.4", features = ["llvm17-0"] }   # LLVM bindings
-# LLVM 17 must be installed on the system (apt/brew install llvm-17)
+inkwell   = { version = "0.11", features = ["llvm23-1"] }   # LLVM bindings
+# LLVM 23 must be installed on the system (llvm-23-dev + libpolly-23-dev from apt.llvm.org)
 ```
 
 ---

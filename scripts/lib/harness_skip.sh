@@ -226,9 +226,9 @@ harness_skip_reason() { # <output>
 # the one `native_build_unavailable` applies to `axon build`: a skip must PROVE
 # its reason. <prereq> names the one thing whose absence may excuse a failure:
 #
-#   llvm             LLVM 17 (codegen links llvm-sys 170): skip only when no
-#                    $LLVM_SYS_170_PREFIX/bin/llvm-config, llvm-config-17 or
-#                    llvm-config reports a 17.x version.
+#   llvm             LLVM 23 (codegen links llvm-sys 231): skip only when no
+#                    $LLVM_SYS_231_PREFIX/bin/llvm-config, llvm-config-23 or
+#                    llvm-config reports a 23.x version.
 #   target:<triple>  rustup reports <triple> not installed (rust_target_installed;
 #                    a probe that cannot run is a FAIL).
 #   z3               libz3 cannot be linked (the `smt` feature needs it).
@@ -238,12 +238,12 @@ harness_skip_reason() { # <output>
 # Success → returns 0 silently. Proven-missing prerequisite → harness_skip (exit
 # 0). Anything else → prints a FAIL with the build's stderr and exits 1. Runs in
 # the caller's shell (never inside `$(…)`), so the exit ends the harness.
-llvm17_present() {
+llvm_present() {
   local c v
-  for c in ${LLVM_SYS_170_PREFIX:+"$LLVM_SYS_170_PREFIX/bin/llvm-config"} llvm-config-17 llvm-config; do
+  for c in ${LLVM_SYS_231_PREFIX:+"$LLVM_SYS_231_PREFIX/bin/llvm-config"} llvm-config-23 llvm-config; do
     command -v "$c" >/dev/null 2>&1 || continue
     v="$("$c" --version 2>/dev/null)" || continue
-    case "$v" in 17.*) return 0 ;; esac
+    case "$v" in 23.*) return 0 ;; esac
   done
   return 1
 }
@@ -257,9 +257,9 @@ cargo_build_or_skip() {
   err="$("$@" 2>&1)" && return 0
   case "$prereq" in
     llvm)
-      llvm17_present || harness_skip "$name" \
-        "\`$*\` failed and no LLVM 17 llvm-config was found (\$LLVM_SYS_170_PREFIX, llvm-config-17, llvm-config)" \
-        "codegen build unavailable (LLVM 17 absent)"
+      llvm_present || harness_skip "$name" \
+        "\`$*\` failed and no LLVM 23 llvm-config was found (\$LLVM_SYS_231_PREFIX, llvm-config-23, llvm-config)" \
+        "codegen build unavailable (LLVM 23 absent)"
       ;;
     target:*)
       rc=0; rust_target_installed "${prereq#target:}" 2>/dev/null || rc=$?

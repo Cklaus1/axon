@@ -26,13 +26,18 @@ exception (Apple toolchain is macOS-only) and is verified in CI instead.
 | **TEE — Gramine sim / CI attest** | `scripts/tee_sim_run.sh`, `.github/workflows/tee.yml` (R24) | **attestation: TEE hardware only** → cloud CI | `axon check examples/tee/*.ax` (E1810 rule) |
 | **Formal methods — TLC + Coq** | `scripts/r32_acceptance_gate.sh` (R32) | No | `bash scripts/r32_acceptance_gate.sh` (20/20 PASS, 0 SKIPPED) |
 
-> ⚠️ **LLVM pin (read before installing eBPF tooling):** Axon codegen requires **LLVM 17**
-> (`llvm-sys` 170). Installing the `llvm`/`clang` apt *metapackage* on Ubuntu 24.04 pulls
-> **LLVM 18** and repoints `/usr/bin/llvm-config`, which breaks fresh codegen builds with
-> `could not find native static library 'Polly'`. Install **`clang-18`** for the bpf target
-> (it's independent of `llvm-config`) but keep `llvm-config` → 17:
-> `sudo ln -sf /usr/bin/llvm-config-17 /usr/bin/llvm-config` (and/or
-> `export LLVM_SYS_170_PREFIX=/usr/lib/llvm-17`). The setup script does this for you.
+> ⚠️ **Codegen LLVM:** Axon codegen requires **LLVM 23** (inkwell `llvm23-1`, `llvm-sys`
+> 231). Ubuntu's archive has no LLVM 23, so install it from apt.llvm.org:
+> ```bash
+> curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/apt.llvm.org.gpg
+> echo "deb [signed-by=/usr/share/keyrings/apt.llvm.org.gpg] http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-23 main" \
+>   | sudo tee /etc/apt/sources.list.d/llvm-23.list
+> sudo apt-get update && sudo apt-get install -y llvm-23-dev libpolly-23-dev
+> ```
+> Without `libpolly-23-dev` the build fails with `could not find native static library 'Polly'`.
+> `llvm-sys` looks for `llvm-config-23` before the unversioned `llvm-config` and checks the
+> version of each, so other LLVM installs (e.g. `clang-18` for the bpf target) do not affect
+> codegen. `LLVM_SYS_231_PREFIX=/usr/lib/llvm-23` forces the location.
 
 ---
 
@@ -174,8 +179,7 @@ verifier loads. Verification is fully local: the **in-kernel verifier** accepts 
 (or the userspace `rbpf` VM runs the bytecode).
 
 ```bash
-sudo apt-get install -y clang-18 libbpf-dev linux-tools-common   # clang-18, NOT the llvm metapackage (see LLVM pin above)
-sudo ln -sf /usr/bin/llvm-config-17 /usr/bin/llvm-config          # keep codegen on LLVM 17
+sudo apt-get install -y clang-18 libbpf-dev linux-tools-common   # clang-18 for the bpf target; codegen stays on LLVM 23
 ```
 
 Verify:

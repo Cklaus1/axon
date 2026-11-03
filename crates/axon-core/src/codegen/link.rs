@@ -117,7 +117,10 @@ impl OptLevel {
         }
     }
 
-    /// The new-pass-manager pipeline for this level.
+    /// The new-pass-manager pipeline for this level. `s`/`z` run
+    /// `default<O2>`: LLVM 23 removed `default<Os>`/`default<Oz>`, and clang's
+    /// `-Os`/`-Oz` now mean O2 plus the [`Self::size_attributes`], which the
+    /// size heuristics read.
     fn pipeline(self) -> &'static str {
         match self {
             // Dead internal definitions only: the unoptimised code that remains
@@ -126,10 +129,8 @@ impl OptLevel {
             // runtime code they reference (AX-37).
             Self::O0 => "globaldce",
             Self::O1 => "default<O1>",
-            Self::O2 => "default<O2>",
+            Self::O2 | Self::Os | Self::Oz => "default<O2>",
             Self::O3 => "default<O3>",
-            Self::Os => "default<Os>",
-            Self::Oz => "default<Oz>",
         }
     }
 

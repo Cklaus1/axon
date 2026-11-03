@@ -8568,7 +8568,7 @@ def host_identity():
             "hostname": os.uname().nodename, "kernel": f"{os.uname().sysname} {os.uname().release}",
             "nproc": os.cpu_count(), "mem_total": mem,
             "toolchain": {"rustc": out("rustc -vV"), "cargo": out("cargo -V"),
-                          "llvm_system": out("llvm-config-17 --version || llvm-config --version")},
+                          "llvm_system": out("llvm-config-23 --version || llvm-config --version")},
         })
     return dict(_HOST)
 

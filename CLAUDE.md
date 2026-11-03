@@ -1,6 +1,6 @@
 # Axon Language
 
-AI-optimized, statically-typed systems language. Compiles to native via LLVM 17.
+AI-optimized, statically-typed systems language. Compiles to native via LLVM 23.
 
 ## Capability policy — easy by default, explicit lockdown when needed
 
@@ -299,8 +299,8 @@ Pinned by `rust-toolchain.toml` to `nightly-2026-07-11` — the toolchain the fu
 suite is verified green on. **Nightly is required only for two cargo flags**, not
 for any language feature (there is no `#![feature(...)]` in the workspace):
 `scripts/build-guest-image.sh` builds the freestanding guest kernel with
-`-Z build-std` + `-Z json-target-spec`. LLVM 17 is orthogonal — `inkwell`'s
-`llvm17-0` resolves through `llvm-sys` to the **system** LLVM, independent of the
+`-Z build-std` + `-Z json-target-spec`. LLVM 23 is orthogonal — `inkwell`'s
+`llvm23-1` resolves through `llvm-sys` to the **system** LLVM, independent of the
 one rustc bundles.
 
 **If you have a `rustup override` on this directory, remove it** —
@@ -319,7 +319,7 @@ shadowing override is present.
   → Resolver (resolver.rs)              name resolution, scope building
   → Infer    (infer.rs / types.rs)      Hindley-Milner type inference
   → Checker  (checker.rs)               semantic validation, diagnostics
-  → Codegen  (codegen/mod.rs + codegen/*) LLVM IR via inkwell 0.4
+  → Codegen  (codegen/mod.rs + codegen/*) LLVM IR via inkwell 0.11
   → Link     (main.rs)                  cc linker → native binary
 ```
 

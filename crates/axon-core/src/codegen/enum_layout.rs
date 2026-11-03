@@ -371,7 +371,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let llvm_ty = self.llvm_type(&field.ty)?;
         let mut slot = self.enum_field_slot(payload, field);
         if field.boxed {
-            let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+            let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
             slot = super::build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), slot, "box")
                 .into_pointer_value();
         }

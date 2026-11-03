@@ -1,6 +1,6 @@
 # Axon
 
-A statically-typed, AI-first systems language that compiles to native code via LLVM 17 —
+A statically-typed, AI-first systems language that compiles to native code via LLVM 23 —
 where **AI-written code is sandboxed by the compiler**, not by trust.
 
 ## The point: AI code, sandboxed by the compiler

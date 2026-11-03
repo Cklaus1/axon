@@ -71,8 +71,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # Fast type-check — the codegen feature requires LLVM 17 which is not
-      # available on the GitHub-hosted runner, so we skip it here.
+      # Fast type-check — the codegen feature requires LLVM 23, which this job
+      # does not install (the `codegen` job below does), so we skip it here.
       - name: cargo check (no codegen)
         run: cargo check --no-default-features -p axon-core
 
@@ -165,11 +165,11 @@ jobs:
 
   # AUDIT T7. The native/interp parity harnesses are the I-2 invariant this
   # project rests on, and NONE of them ran in CI — the codegen feature needs
-  # LLVM 17, so it was skipped entirely and parity was only ever checked
+  # LLVM, so it was skipped entirely and parity was only ever checked
   # locally. A parity invariant that no automation enforces is an aspiration.
   #
-  # LLVM must be pinned to 17: the apt `llvm` metapackage resolves to 18, which
-  # does not match inkwell 0.4's `llvm17-0` feature and fails to link.
+  # LLVM must be pinned to 23 from apt.llvm.org: inkwell's `llvm23-1` feature
+  # links only LLVM 23, and the runner's Ubuntu archive does not carry it.
   codegen:
     # NAME CORRECTED 2026-09-17. It read "Codegen + native/interp parity" and
     # ran `cargo build` + `cargo test` — it has never invoked parity_all.sh or
@@ -189,7 +189,7 @@ jobs:
     #     wasmtime and wasm-bindgen-test-runner (scripts/setup-environments.sh).
     #   - the first CI run IS the verification: these 38 pass on this box, and
     #     nobody has yet observed them on a GitHub runner.
-    name: Codegen build + tests (LLVM 17) — NOT the parity suite
+    name: Codegen build + tests (LLVM 23) — NOT the parity suite
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: ""
@@ -197,13 +197,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install LLVM 17
+      - name: Install LLVM 23
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          codename="$(lsb_release -cs)"
+          echo "deb http://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-23 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-23.list
           sudo apt-get update
-          sudo apt-get install -y llvm-17 llvm-17-dev libpolly-17-dev
-          echo "LLVM_SYS_170_PREFIX=/usr/lib/llvm-17" >> "$GITHUB_ENV"
+          sudo apt-get install -y llvm-23 llvm-23-dev libpolly-23-dev
+          echo "LLVM_SYS_231_PREFIX=/usr/lib/llvm-23" >> "$GITHUB_ENV"
 
       # No toolchain is named here on purpose. `rust-toolchain.toml` is the one
       # place that says which toolchain this repo builds with, and `rustup

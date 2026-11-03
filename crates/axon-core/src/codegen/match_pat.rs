@@ -213,11 +213,8 @@ impl<'ctx> super::Codegen<'ctx> {
                         // Both are { i64, ptr } str structs. Extract data pointers and call strcmp.
                         let strcmp_fn =
                             self.ir.module.get_function("strcmp").unwrap_or_else(|| {
-                                let i8_ptr = self
-                                    .ir
-                                    .context
-                                    .i8_type()
-                                    .ptr_type(inkwell::AddressSpace::default());
+                                let i8_ptr =
+                                    self.ir.context.ptr_type(inkwell::AddressSpace::default());
                                 let strcmp_ty = self
                                     .ir
                                     .context
@@ -242,7 +239,7 @@ impl<'ctx> super::Codegen<'ctx> {
                             "strcmp_res",
                         )
                         .try_as_basic_value()
-                        .left()
+                        .basic()
                         .unwrap()
                         .into_int_value();
                         self.ir

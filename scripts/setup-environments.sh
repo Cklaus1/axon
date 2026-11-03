@@ -83,18 +83,22 @@ setup_android() {
   echo "  → boot:  \$ANDROID_HOME/emulator/emulator -avd axon_test -no-window -gpu swiftshader_indirect -accel on &"
 }
 
-# Keep Axon codegen on LLVM 17 even after a clang/llvm install repoints llvm-config to 18.
-pin_llvm17() {
-  if [ -x /usr/bin/llvm-config-17 ]; then
-    sudo ln -sf /usr/bin/llvm-config-17 /usr/bin/llvm-config 2>/dev/null || true
-    ok "llvm-config pinned to 17 (codegen needs LLVM 17; LLVM_SYS_170_PREFIX=/usr/lib/llvm-17)"
+# Axon codegen links LLVM 23 (inkwell `llvm23-1`). llvm-sys looks for
+# `llvm-config-23` first and checks the version of every candidate, so a
+# clang/llvm install that repoints the unversioned `llvm-config` cannot pull
+# codegen onto another LLVM. Report whether the codegen LLVM is installed.
+check_llvm23() {
+  if command -v llvm-config-23 >/dev/null; then
+    ok "codegen LLVM present (llvm-config-23 $(llvm-config-23 --version))"
+  else
+    echo "  • llvm-config-23 not found — codegen needs llvm-23-dev + libpolly-23-dev from apt.llvm.org (see ENVIRONMENTS.md)"
   fi
 }
 
 setup_ebpf() {
   step "eBPF — clang-bpf + kernel verifier"
   command -v clang-18 >/dev/null || sudo apt-get install -y -q clang-18 libbpf-dev linux-tools-common
-  pin_llvm17   # IMPORTANT: clang-18 is fine for the bpf target, but keep llvm-config → 17 for codegen
+  check_llvm23   # clang-18 is only the bpf target compiler; codegen stays on LLVM 23
   if clang-18 -target bpf -O2 -c -x c /dev/null -o /tmp/_probe.bpf.o 2>/dev/null; then
     ok "clang bpf target OK"
   else

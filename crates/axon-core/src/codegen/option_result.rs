@@ -8,7 +8,7 @@
 //! All methods declared `pub(super)` so the parent `codegen::mod` can
 //! call them from within `emit_expr` and elsewhere.
 
-use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValueEnum, FunctionValue};
 use inkwell::AddressSpace;
 
@@ -131,7 +131,7 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder, tag_ptr, tag_val.into());
             // Cast the payload pointer to the value's typed pointer before storing,
             // so the store type matches the pointer's element type.
-            let val_ptr_ty = val.get_type().ptr_type(inkwell::AddressSpace::default());
+            let val_ptr_ty = self.ir.context.ptr_type(inkwell::AddressSpace::default());
             let typed_pay_ptr =
                 build_wrappers::w_pointer_cast(&self.ir.builder, pay_ptr, val_ptr_ty, "pay_typed");
             build_wrappers::w_store(&self.ir.builder, typed_pay_ptr, val);
@@ -173,7 +173,7 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let llvm_ty = self.llvm_type(typed_ty)?;
         let arr_ty = payload.get_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let arr_alloca = build_wrappers::w_alloca(&self.ir.builder, arr_ty, "payloadalc");
         build_wrappers::w_store(&self.ir.builder, arr_alloca, payload);
         let typed_ptr =

@@ -13,7 +13,7 @@ Superseded build-diagnosis and one-off goal docs are archived under
 
 ## What Axon Is
 
-AI-optimized, statically-typed systems language. Compiles to native via LLVM 17
+AI-optimized, statically-typed systems language. Compiles to native via LLVM 23
 (`inkwell`), with a codegen-free tree-walking interpreter as the primary execution
 path. Thesis: **safety as language features** — capabilities, effects, refinement
 types, and corrigibility are first-class, not libraries. The interpreter is the

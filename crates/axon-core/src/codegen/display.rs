@@ -145,7 +145,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let f = cg.functions.get(name).copied()?;
             build_wrappers::w_call(&cg.ir.builder, f, &[arg.into()], "disp")
                 .try_as_basic_value()
-                .left()
+                .basic()
         };
         match ty {
             Type::Str => Some(v),
@@ -184,7 +184,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let f = self.display_fn(ty)?;
                 build_wrappers::w_call(&self.ir.builder, f, &[v.into()], "disp")
                     .try_as_basic_value()
-                    .left()
+                    .basic()
             }
         }
     }
@@ -447,7 +447,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let f = self.functions.get("axon_concat").copied()?;
         build_wrappers::w_call(&self.ir.builder, f, &[a.into(), b.into()], "dcat")
             .try_as_basic_value()
-            .left()
+            .basic()
     }
 
     /// `*slot = *slot ++ s`.

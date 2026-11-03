@@ -40,11 +40,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// Declare all Axon built-in functions as either extern C declarations or
     /// thin wrappers, so calls resolve during emit.
     pub fn declare_builtins(&mut self) {
-        let i8_ptr = self
-            .ir
-            .context
-            .i8_type()
-            .ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(inkwell::AddressSpace::default());
         let i32_ty = self.ir.context.i32_type();
         let i64_ty = self.ir.context.i64_type();
         let bool_ty = self.ir.context.bool_type();
@@ -352,8 +348,12 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry);
             let n = fn_val.get_nth_param(0).unwrap().into_int_value();
 
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let rt_ty = self.ir.context.void_type().fn_type(
                 &[
                     i64_ty.into(),
@@ -429,8 +429,12 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry);
             let x = fn_val.get_nth_param(0).unwrap().into_float_value();
 
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let rt_ty = self
                 .ir
                 .context
@@ -610,8 +614,12 @@ impl<'ctx> super::Codegen<'ctx> {
 
             let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
             let base = i64_ty.const_int(10, false);
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let rt_ty = void_ty.fn_type(
                 &[
                     str_ty.into(),
@@ -764,7 +772,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let payload_str_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_ptr_err,
-                err_str_ty.ptr_type(inkwell::AddressSpace::default()),
+                err_str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "pi_paystr",
             );
             let err_str_alloca =
@@ -832,8 +842,12 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Runtime: void __axon_parse_int_radix(AxonStr s, i64 base,
             //   i64* out_ok, i64* out_val, i64* out_len, i8** out_ptr)
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let rt_ty = void_ty.fn_type(
                 &[
                     str_ty.into(),
@@ -922,7 +936,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let payload_i64_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_ptr_ok,
-                i64_ty.ptr_type(inkwell::AddressSpace::default()),
+                i64_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "pir_payi64",
             );
             build_wrappers::w_store(&self.ir.builder, payload_i64_ptr, parsed.into());
@@ -963,7 +979,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let payload_str_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_ptr_err,
-                err_str_ty.ptr_type(inkwell::AddressSpace::default()),
+                err_str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "pir_paystr",
             );
             let err_str_alloca =
@@ -1067,7 +1085,7 @@ impl<'ctx> super::Codegen<'ctx> {
             );
             let buf_ptr = buf
                 .try_as_basic_value()
-                .left()
+                .basic()
                 .unwrap()
                 .into_pointer_value();
 
@@ -1196,7 +1214,10 @@ impl<'ctx> super::Codegen<'ctx> {
         // Returns the index of the first ready channel arm.
         let select_ty = i64_ty.fn_type(
             &[
-                i8_ptr.ptr_type(AddressSpace::default()).into(),
+                i8_ptr
+                    .get_context()
+                    .ptr_type(AddressSpace::default())
+                    .into(),
                 i64_ty.into(),
             ],
             false,
@@ -1239,7 +1260,9 @@ impl<'ctx> super::Codegen<'ctx> {
             .ir
             .context
             .struct_type(&[i64_ty.into(), i8_ptr.into()], false);
-        let i64_ptr_d = i64_ty.ptr_type(inkwell::AddressSpace::default());
+        let i64_ptr_d = i64_ty
+            .get_context()
+            .ptr_type(inkwell::AddressSpace::default());
         // __axon_dict_new / _has / _len / _inc — now registry rows (R1d slice 1).
         // The bespoke out-param entries (_set / _get / _remove / _keys) stay here.
         // void __axon_dict_set(d:i8*, key:str, tag:i64, payload:i64, pstr:i8*, plen:i64)
@@ -1282,7 +1305,9 @@ impl<'ctx> super::Codegen<'ctx> {
             .module
             .add_function("__axon_dict_remove", dr_ty, None);
         // void __axon_dict_keys(d:i8*, out_len:i64*, out_data:i8**)
-        let i8_ptr_ptr_d = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr_ptr_d = i8_ptr
+            .get_context()
+            .ptr_type(inkwell::AddressSpace::default());
         let dk_ty = void_ty.fn_type(
             &[i8_ptr.into(), i64_ptr_d.into(), i8_ptr_ptr_d.into()],
             false,
@@ -1390,11 +1415,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // ── format(template: str) -> str — identity wrapper ───────────────────
         {
             let i64_ty = self.ir.context.i64_type();
-            let i8_ptr = self
-                .ir
-                .context
-                .i8_type()
-                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr = self.ir.context.ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -1545,7 +1566,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 "cmp",
             )
             .try_as_basic_value()
-            .left()
+            .basic()
             .unwrap()
             .into_int_value();
             let zero32 = i32_ty.const_zero();
@@ -1811,7 +1832,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let decay = fn_val.get_nth_param(2).unwrap().into_float_value();
                 let now = build_wrappers::w_call(&self.ir.builder, now_fn, &[], "tn_now")
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .unwrap()
                     .into_int_value();
                 let valid_until =
@@ -1920,7 +1941,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     "ta_pow",
                 )
                 .try_as_basic_value()
-                .left()
+                .basic()
                 .unwrap()
                 .into_float_value();
                 let decayed =
@@ -1993,7 +2014,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     .into_int_value();
                 let now = build_wrappers::w_call(&self.ir.builder, now_fn, &[], "tiv_now")
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .unwrap()
                     .into_int_value();
                 let cmp = build_wrappers::w_int_compare(
@@ -2066,7 +2087,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.ir.builder.position_at_end(bb);
                 let n = build_wrappers::w_call(&self.ir.builder, now_fn, &[], "tnow")
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .unwrap()
                     .into_int_value();
                 build_wrappers::w_ret(&self.ir.builder, n.into());
@@ -2086,13 +2107,13 @@ impl<'ctx> super::Codegen<'ctx> {
         // packages the result into the Axon `{ i64, i8* }` str struct.
         {
             let i64_ty = self.ir.context.i64_type();
-            let i8_ptr = self
-                .ir
-                .context
-                .i8_type()
+            let i8_ptr = self.ir.context.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
                 .ptr_type(inkwell::AddressSpace::default());
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -2144,8 +2165,12 @@ impl<'ctx> super::Codegen<'ctx> {
         // Result<str,str> = { i1 tag, [16 x i8] payload }
         // tag=1 → Ok; payload = str{len, ptr}. tag=0 → Err; payload = str{|len|, ptr}.
         {
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -2248,7 +2273,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let str_ok_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_ok,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "rf_str_ok_ptr",
             );
             let str_ok_slot =
@@ -2301,7 +2328,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let str_err_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_err,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "rf_str_err_ptr",
             );
             let str_err_slot =
@@ -2343,8 +2372,12 @@ impl<'ctx> super::Codegen<'ctx> {
         // the runtime signals Err via a negative out_len. Only the arg differs
         // (an i8* dict handle instead of a str path).
         {
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -2429,7 +2462,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let str_ok_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_ok,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "dts_str_ok_ptr",
             );
             let str_ok_slot =
@@ -2481,7 +2516,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let str_err_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_err,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "dts_str_err_ptr",
             );
             let str_err_slot =
@@ -2527,8 +2564,12 @@ impl<'ctx> super::Codegen<'ctx> {
         // Same ±len Ok/Err convention as read_file. The `[str]` array is
         // {i64 len, ptr→[str struct]}; we pass its data ptr + len through.
         {
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -2636,7 +2677,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let str_ok_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_ok,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "ex_str_ok_ptr",
             );
             let str_ok_slot =
@@ -2688,7 +2731,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let str_err_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_err,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "ex_str_err_ptr",
             );
             let str_err_slot =
@@ -2732,8 +2777,12 @@ impl<'ctx> super::Codegen<'ctx> {
         // Runtime: __axon_write_file(path_ptr, path_len, content_ptr, content_len, out_err_len: *i64, out_err_ptr: **u8)
         // err_len==0 → Ok(()); err_len>0 → Err(str{err_len, err_ptr})
         {
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -2894,7 +2943,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let str_err_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_err,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "wf_str_err_ptr",
             );
             let str_err_slot =
@@ -2982,8 +3033,12 @@ impl<'ctx> super::Codegen<'ctx> {
             // Err message ("could not parse `<s>` as a bool …"), not "invalid
             // bool". out_val is i64 (0/1); the i1 payload is `out_val != 0`.
             let void_ty = self.ir.context.void_type();
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
 
             let fn_ty = result_ty.fn_type(&[str_ty.into()], false);
             let fn_val = self.ir.module.add_function("parse_bool", fn_ty, None);
@@ -3089,7 +3144,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let bool_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_ok,
-                i1_ty.ptr_type(inkwell::AddressSpace::default()),
+                i1_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "pb_ot_bptr",
             );
             build_wrappers::w_store(&self.ir.builder, bool_ptr, val_i1.into());
@@ -3128,7 +3185,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let str_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_err,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "pb_err_sptr",
             );
             let err_str_alloca =
@@ -3248,7 +3307,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(gen_bb);
             let r_i32 = build_wrappers::w_call(&self.ir.builder, rand_fn, &[], "ri_rand")
                 .try_as_basic_value()
-                .left()
+                .basic()
                 .unwrap()
                 .into_int_value();
             let r = build_wrappers::w_int_s_extend(&self.ir.builder, r_i32, i64_ty, "ri_r64");
@@ -3281,7 +3340,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry_bb);
             let r_i32 = build_wrappers::w_call(&self.ir.builder, rand_fn, &[], "rf_rand")
                 .try_as_basic_value()
-                .left()
+                .basic()
                 .unwrap()
                 .into_int_value();
             // Convert to f64
@@ -3317,9 +3376,15 @@ impl<'ctx> super::Codegen<'ctx> {
                 .ir
                 .context
                 .struct_type(&[i64_ty.into(), i8_ptr.into()], false);
-            let str_ptr = str_ty.ptr_type(inkwell::AddressSpace::default());
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let str_ptr = str_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let sj_ty = self.ir.context.void_type().fn_type(
                 &[
                     i64_ty.into(),
@@ -3339,8 +3404,12 @@ impl<'ctx> super::Codegen<'ctx> {
         // Convert n to string in given base (2-36). Negative n gets '-' prefix.
         // Delegates to __axon_i64_to_str_radix in the runtime via out-params.
         {
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -3445,11 +3514,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// Auto-extracted from `declare_builtins` (Phase 3.2 decomposition).
     /// Declares ASI runtime ABI: provenance log, @[verify] panic, adaptive registry, goal_run.
     pub(super) fn declare_asi_runtime_builtins(&mut self) {
-        let i8_ptr = self
-            .ir
-            .context
-            .i8_type()
-            .ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(inkwell::AddressSpace::default());
         let i32_ty = self.ir.context.i32_type();
         let i64_ty = self.ir.context.i64_type();
         let bool_ty = self.ir.context.bool_type();
@@ -3540,7 +3605,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 .ir
                 .module
                 .add_function("__axon_verify_panic", vp_ty, None);
-            // (No attribute setting on inkwell 0.4 stable API — codegen still
+            // (No noreturn attribute is set here — codegen still
             // emits an `unreachable` on the failure path so semantic
             // correctness doesn't depend on the noreturn attribute.)
             let _ = vp_fn;
@@ -3744,7 +3809,9 @@ impl<'ctx> super::Codegen<'ctx> {
         // (preserves Layer-1 stub behaviour for adaptive_basic.ax and similar).
         {
             let f64_ty = self.ir.context.f64_type();
-            let f64_ptr = f64_ty.ptr_type(inkwell::AddressSpace::default());
+            let f64_ptr = f64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -3813,11 +3880,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// Auto-extracted from `declare_builtins` (Phase 3.2 decomposition).
     /// Declares ai_complete, ai_extract_uncertain_{i64,f64}, ai_extract::<T> flat helpers.
     pub(super) fn declare_ai_builtins(&mut self) {
-        let i8_ptr = self
-            .ir
-            .context
-            .i8_type()
-            .ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(inkwell::AddressSpace::default());
         let i32_ty = self.ir.context.i32_type();
         let i64_ty = self.ir.context.i64_type();
         let bool_ty = self.ir.context.bool_type();
@@ -3832,8 +3895,12 @@ impl<'ctx> super::Codegen<'ctx> {
         // `AI_COMPLETE_FALLBACK_FN(prompt, fallback)` passes the calling fn's
         // fallback (the call is redirected in `emit_call`).
         for (wrapper, with_fb) in [("ai_complete", false), (AI_COMPLETE_FALLBACK_FN, true)] {
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -3963,7 +4030,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let str_ok_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_ok,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "aic_str_ok_ptr",
             );
             let str_ok_slot =
@@ -4016,7 +4085,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let str_err_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_err,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "aic_str_err_ptr",
             );
             let str_err_slot =
@@ -4077,9 +4148,15 @@ impl<'ctx> super::Codegen<'ctx> {
         // source_tag = 1 (`from AI`); 0 is reserved for user-constructed.
         {
             let f64_ty = self.ir.context.f64_type();
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let f64_ptr = f64_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let f64_ptr = f64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -4173,7 +4250,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 );
                 let rc = rc_call
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .unwrap()
                     .into_int_value();
                 let zero_i32 = i32_ty.const_int(0, false);
@@ -4255,7 +4332,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 let unc_payload_ptr = build_wrappers::w_pointer_cast(
                     &self.ir.builder,
                     payload_ok,
-                    unc_i64_ty.ptr_type(inkwell::AddressSpace::default()),
+                    unc_i64_ty
+                        .get_context()
+                        .ptr_type(inkwell::AddressSpace::default()),
                     "aei_unc_pp",
                 );
                 build_wrappers::w_store(&self.ir.builder, unc_payload_ptr, unc_sv.into());
@@ -4310,7 +4389,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 let str_err_ptr = build_wrappers::w_pointer_cast(
                     &self.ir.builder,
                     payload_err,
-                    str_ty.ptr_type(inkwell::AddressSpace::default()),
+                    str_ty
+                        .get_context()
+                        .ptr_type(inkwell::AddressSpace::default()),
                     "aei_str_err_pp",
                 );
                 let str_err_slot =
@@ -4424,7 +4505,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 );
                 let rc = rc_call
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .unwrap()
                     .into_int_value();
                 let zero_i32 = i32_ty.const_int(0, false);
@@ -4505,7 +4586,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 let unc_payload_ptr = build_wrappers::w_pointer_cast(
                     &self.ir.builder,
                     payload_ok,
-                    unc_f64_ty.ptr_type(inkwell::AddressSpace::default()),
+                    unc_f64_ty
+                        .get_context()
+                        .ptr_type(inkwell::AddressSpace::default()),
                     "aef_unc_pp",
                 );
                 build_wrappers::w_store(&self.ir.builder, unc_payload_ptr, unc_sv.into());
@@ -4560,7 +4643,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 let str_err_ptr = build_wrappers::w_pointer_cast(
                     &self.ir.builder,
                     payload_err,
-                    str_ty.ptr_type(inkwell::AddressSpace::default()),
+                    str_ty
+                        .get_context()
+                        .ptr_type(inkwell::AddressSpace::default()),
                     "aef_str_err_pp",
                 );
                 let str_err_slot =
@@ -4637,10 +4722,18 @@ impl<'ctx> super::Codegen<'ctx> {
         // is 16).  source_tag is *not* present here because T is a flat scalar.
         {
             let f64_ty = self.ir.context.f64_type();
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let f64_ptr = f64_ty.ptr_type(inkwell::AddressSpace::default());
-            let bool_ptr = bool_ty.ptr_type(inkwell::AddressSpace::default());
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let f64_ptr = f64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let bool_ptr = bool_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -4738,7 +4831,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 );
                 let rc = rc_call
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .unwrap()
                     .into_int_value();
                 let zero_i32 = i32_ty.const_int(0, false);
@@ -4838,7 +4931,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 let str_err_ptr = build_wrappers::w_pointer_cast(
                     &self.ir.builder,
                     payload_err,
-                    str_ty.ptr_type(inkwell::AddressSpace::default()),
+                    str_ty
+                        .get_context()
+                        .ptr_type(inkwell::AddressSpace::default()),
                     "aex_str_err_pp",
                 );
                 let str_err_slot =
@@ -4914,11 +5009,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// Auto-extracted from `declare_builtins` (Phase 3.2 decomposition).
     /// Declares Phase 9 numeric/math: i64<->f64 casts, abs_*, sign_i64, pow_i64, sqrt/floor/ceil/round_f64.
     pub(super) fn declare_phase9_math_builtins(&mut self) {
-        let i8_ptr = self
-            .ir
-            .context
-            .i8_type()
-            .ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(inkwell::AddressSpace::default());
         let i32_ty = self.ir.context.i32_type();
         let i64_ty = self.ir.context.i64_type();
         let bool_ty = self.ir.context.bool_type();
@@ -4993,7 +5084,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let x = fn_val.get_nth_param(0).unwrap().into_float_value();
                 let r = build_wrappers::w_call(&self.ir.builder, libm_fn, &[x.into()], "r")
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .unwrap()
                     .into_float_value();
                 build_wrappers::w_ret(&self.ir.builder, r.into());
@@ -5010,11 +5101,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// Auto-extracted from `declare_builtins` (Phase 3.2 decomposition).
     /// Declares Phase 5/6/7 string + adjacent builtins: str_*, parse_float, abs/min/max_i64, env_var, exit.
     pub(super) fn declare_string_builtins(&mut self) {
-        let i8_ptr = self
-            .ir
-            .context
-            .i8_type()
-            .ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(inkwell::AddressSpace::default());
         let i32_ty = self.ir.context.i32_type();
         let i64_ty = self.ir.context.i64_type();
         let bool_ty = self.ir.context.bool_type();
@@ -5075,7 +5162,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 "se_cmp",
             )
             .try_as_basic_value()
-            .left()
+            .basic()
             .unwrap()
             .into_int_value();
             let is_zero = build_wrappers::w_int_compare(
@@ -5225,7 +5312,9 @@ impl<'ctx> super::Codegen<'ctx> {
         // Result<f64, str> = { i1, [16 x i8] } (f64=8 bytes, str=16 bytes → max=16)
         {
             let f64_ty = self.ir.context.f64_type();
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let str_ty = self
                 .ir
                 .context
@@ -5251,8 +5340,12 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry_bb);
 
             let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-            let f64_ptr_ty = f64_ty.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
+            let f64_ptr_ty = f64_ty
+                .get_context()
+                .ptr_type(inkwell::AddressSpace::default());
             let rt_ty = void_ty.fn_type(
                 &[
                     str_ty.into(),
@@ -5381,7 +5474,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let err_str_ptr = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_err,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "pf_str_err_ptr",
             );
             let err_str_slot =
@@ -5465,7 +5560,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 // r = parser(s)
                 let r = build_wrappers::w_call(&slf.ir.builder, parser, &[s_arg.into()], "po_r")
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .unwrap();
                 // Store to an alloca so we can read the tag and the payload slot.
                 let r_slot = build_wrappers::w_alloca(&slf.ir.builder, result_ty, "po_rslot");
@@ -5491,7 +5586,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let pay_val_ptr = build_wrappers::w_pointer_cast(
                     &slf.ir.builder,
                     pay_ptr,
-                    val_ty.ptr_type(inkwell::AddressSpace::default()),
+                    slf.ir.context.ptr_type(inkwell::AddressSpace::default()),
                     "po_payvp",
                 );
                 let ok_val = build_wrappers::w_load(&slf.ir.builder, val_ty, pay_val_ptr, "po_okv");
@@ -5569,7 +5664,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let val_ptr =
                 build_wrappers::w_call(&self.ir.builder, getenv_fn, &[name_ptr.into()], "ev_val")
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .unwrap()
                     .into_pointer_value();
 
@@ -5588,7 +5683,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let val_len_raw =
                 build_wrappers::w_call(&self.ir.builder, strlen_fn, &[val_ptr.into()], "ev_vlen")
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .unwrap()
                     .into_int_value();
             // strlen returns size_t (i32 on wasm32); the AxonStr len field is
@@ -5618,7 +5713,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let payload_as_str = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_gep,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "ev_str_ptr",
             );
             let ok_str = {
@@ -5690,7 +5787,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let payload_as_str2 = build_wrappers::w_pointer_cast(
                 &self.ir.builder,
                 payload_gep2,
-                str_ty.ptr_type(inkwell::AddressSpace::default()),
+                str_ty
+                    .get_context()
+                    .ptr_type(inkwell::AddressSpace::default()),
                 "ev_str_ptr2",
             );
             let err_str = {
@@ -5762,7 +5861,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let mapped =
                 build_wrappers::w_call(&self.ir.builder, status_fn, &[code.into()], "ex_status")
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .map(|v| v.into_int_value())
                     .unwrap_or(code);
             let code_i32 = build_wrappers::w_int_truncate(

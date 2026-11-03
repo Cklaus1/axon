@@ -62,7 +62,7 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
-inkwell = { version = "0.4", features = ["llvm17-0"], optional = true }
+inkwell = { version = "0.11", features = ["llvm23-1"], optional = true }
 which = { version = "6", optional = true }
 sha2  = "0.10"
 # SMT solver bindings (R9, `smt` feature only). Links the system libz3.

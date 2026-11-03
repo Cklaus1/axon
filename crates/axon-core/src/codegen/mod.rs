@@ -1,4 +1,4 @@
-//! LLVM IR emission for Axon via inkwell (LLVM 17).
+//! LLVM IR emission for Axon via inkwell (LLVM 23).
 //!
 //! # Two-pass design
 //! 1. `declare_functions` — forward-declare every top-level fn so mutual recursion works.
@@ -475,7 +475,7 @@ impl<'ctx> Codegen<'ctx> {
         };
         build_wrappers::w_call(&self.ir.builder, f, &[iv.into()], "main_status")
             .try_as_basic_value()
-            .left()
+            .basic()
             .unwrap_or(v)
     }
 
@@ -722,7 +722,7 @@ impl<'ctx> Codegen<'ctx> {
                 .module
                 .get_function("__axon_msg_panic")
                 .unwrap_or_else(|| {
-                    let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                    let i8_ptr = self.ir.context.ptr_type(AddressSpace::default());
                     let mp_ty = self
                         .ir
                         .context
@@ -746,7 +746,7 @@ impl<'ctx> Codegen<'ctx> {
         byte_count: inkwell::values::IntValue<'ctx>,
         name: &str,
     ) -> inkwell::values::PointerValue<'ctx> {
-        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(AddressSpace::default());
         let size_ty = self.size_ty();
         let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
             let malloc_ty = i8_ptr.fn_type(&[size_ty.into()], false);
@@ -767,7 +767,7 @@ impl<'ctx> Codegen<'ctx> {
             .build_call(malloc_fn, &[size_arg.into()], name)
             .unwrap();
         call.try_as_basic_value()
-            .left()
+            .basic()
             .unwrap()
             .into_pointer_value()
     }
@@ -873,7 +873,7 @@ impl<'ctx> Codegen<'ctx> {
     /// For each `impl Trait for Type`, declare a thunk function per trait method.
     /// The thunk takes `ptr` as self (for uniform vtable ABI) and calls the concrete impl.
     fn declare_vtable_thunks(&mut self, program: &ast::Program) {
-        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(AddressSpace::default());
 
         // Collect all impl blocks first (avoid borrow issues with trait_defs).
         let impls: Vec<ast::ImplBlock> = program
@@ -1068,13 +1068,9 @@ impl<'ctx> Codegen<'ctx> {
         for p in &f.params {
             match self.llvm_type_from_axon(&p.ty) {
                 // AX-08: a `&mut [T]` param is the address of the caller's slot.
-                Some(_) if matches!(p.ty, ast::AxonType::RefMut(_)) => param_tys.push(
-                    self.ir
-                        .context
-                        .i8_type()
-                        .ptr_type(AddressSpace::default())
-                        .into(),
-                ),
+                Some(_) if matches!(p.ty, ast::AxonType::RefMut(_)) => {
+                    param_tys.push(self.ir.context.ptr_type(AddressSpace::default()).into())
+                }
                 Some(t) => param_tys.push(t.into()),
                 None => {
                     let msg = format!(
@@ -1492,7 +1488,7 @@ impl<'ctx> Codegen<'ctx> {
 
                 if matches!(ret_sem, crate::types::Type::Unit) {
                     build_wrappers::w_ret_void(&self.ir.builder);
-                } else if let Some(ret_val) = call.try_as_basic_value().left() {
+                } else if let Some(ret_val) = call.try_as_basic_value().basic() {
                     build_wrappers::w_ret(&self.ir.builder, ret_val);
                 } else {
                     build_wrappers::w_ret_void(&self.ir.builder);
@@ -1507,7 +1503,7 @@ impl<'ctx> Codegen<'ctx> {
 
     /// Emit one `@vtable_Trait_Type = constant [N x ptr] [...]` global per impl block.
     fn emit_vtable_globals(&mut self, program: &ast::Program) {
-        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(AddressSpace::default());
 
         let impls: Vec<ast::ImplBlock> = program
             .items
@@ -2281,7 +2277,9 @@ impl<'ctx> Codegen<'ctx> {
             BasicValueEnum::StructValue(_) => Type::Unknown,
             BasicValueEnum::PointerValue(_) => Type::Unknown,
             BasicValueEnum::ArrayValue(_) => Type::Unknown,
-            BasicValueEnum::VectorValue(_) => Type::Unknown,
+            BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
+                Type::Unknown
+            }
         }
     }
 

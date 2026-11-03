@@ -1187,7 +1187,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let global =
                     build_wrappers::w_global_string_ptr(&self.ir.builder, s, "comptime_str");
                 let i64_ty = self.ir.context.i64_type();
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let str_ty = self
                     .ir
                     .context
@@ -1261,7 +1261,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 global.set_initializer(&i8_ty.const_array(&byte_vals));
                 global.set_constant(true);
 
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let ptr = global.as_pointer_value();
                 let cast_ptr = self
                     .ir
@@ -1530,7 +1530,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let intr = inkwell::intrinsics::Intrinsic::find(intrinsic_name)?;
         let decl = intr.get_declaration(&self.ir.module, &[i64_ty.into()])?;
         let call = build_wrappers::w_call(&self.ir.builder, decl, &[l.into(), r.into()], "ovf");
-        let agg = call.try_as_basic_value().left()?.into_struct_value();
+        let agg = call.try_as_basic_value().basic()?.into_struct_value();
         // Field 0 = result, field 1 = i1 overflow flag.
         let result = build_wrappers::w_extract_value(&self.ir.builder, agg, 0, "ovf_res");
         let flag =
@@ -1555,7 +1555,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let intr = inkwell::intrinsics::Intrinsic::find(intrinsic_name)?;
         let decl = intr.get_declaration(&self.ir.module, &[int_ty.into()])?;
         let call = build_wrappers::w_call(&self.ir.builder, decl, &[l.into(), r.into()], "ovfn");
-        let agg = call.try_as_basic_value().left()?.into_struct_value();
+        let agg = call.try_as_basic_value().basic()?.into_struct_value();
         let result = build_wrappers::w_extract_value(&self.ir.builder, agg, 0, "ovfn_res");
         let flag =
             build_wrappers::w_extract_value(&self.ir.builder, agg, 1, "ovfn_flag").into_int_value();
@@ -1750,9 +1750,9 @@ impl<'ctx> super::Codegen<'ctx> {
         v: inkwell::values::IntValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-        let i64_ptr = i64_ty.ptr_type(AddressSpace::default());
-        let i8_ptr_ptr = i8_ptr.ptr_type(AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(AddressSpace::default());
+        let i64_ptr = i64_ty.get_context().ptr_type(AddressSpace::default());
+        let i8_ptr_ptr = i8_ptr.get_context().ptr_type(AddressSpace::default());
         let f = self
             .ir
             .module
@@ -1840,7 +1840,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let f = self.ir.module.get_function("str_eq")?;
                 build_wrappers::w_call(&self.ir.builder, f, &[lhs.into(), rhs.into()], "feq_s")
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .map(|v| v.into_int_value())
             }
             // Arrays of fixed-size SCALARS: length + memcmp over len*stride.
@@ -1893,7 +1893,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let f = self.enum_eq_fn(name)?;
                 build_wrappers::w_call(&self.ir.builder, f, &[lhs.into(), rhs.into()], "feq_e")
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     .map(|v| v.into_int_value())
             }
             _ => None,
@@ -2093,7 +2093,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let stride = elem_ty.size_of()?;
         let i64_ty = self.ir.context.i64_type();
         let i32_ty = self.ir.context.i32_type();
-        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(AddressSpace::default());
 
         let a_len =
             build_wrappers::w_extract_value(&self.ir.builder, a, 0, "ae_alen").into_int_value();
@@ -2130,7 +2130,7 @@ impl<'ctx> super::Codegen<'ctx> {
             "ae_cmp",
         )
         .try_as_basic_value()
-        .left()?
+        .basic()?
         .into_int_value();
         let bytes_eq = build_wrappers::w_int_compare(
             &self.ir.builder,
@@ -2173,7 +2173,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         "strcat",
                     )
                     .try_as_basic_value()
-                    .left()
+                    .basic()
                     {
                         return v;
                     }
@@ -2577,7 +2577,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         .build_call(eq_fn, &[l.into(), r.into()], "seq")
                         .unwrap()
                         .try_as_basic_value()
-                        .left()
+                        .basic()
                         .unwrap()
                         .into_int_value();
                     if matches!(op, ast::BinOp::NotEq) {
@@ -2667,7 +2667,10 @@ impl<'ctx> super::Codegen<'ctx> {
                     .get_terminator()
                     .map(|t| {
                         // It's a branch, not unreachable/return
-                        t.get_opcode() == InstructionOpcode::Br
+                        matches!(
+                            t.get_opcode(),
+                            InstructionOpcode::UncondBr | InstructionOpcode::CondBr
+                        )
                     })
                     .unwrap_or(false);
                 if then_flows_to_merge {
@@ -2694,11 +2697,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // We build the result left-to-right:
         //   acc = ""
         //   for each part: acc = axon_concat(acc, part_value)
-        let i8_ptr = self
-            .ir
-            .context
-            .i8_type()
-            .ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(inkwell::AddressSpace::default());
         let i64_ty = self.ir.context.i64_type();
         let str_ty = self
             .ir
@@ -2869,7 +2868,7 @@ impl<'ctx> super::Codegen<'ctx> {
                                             "fmtb",
                                         )
                                         .try_as_basic_value()
-                                        .left()?
+                                        .basic()?
                                     } else {
                                         v
                                     }
@@ -2883,7 +2882,7 @@ impl<'ctx> super::Codegen<'ctx> {
                                             "fmti",
                                         )
                                         .try_as_basic_value()
-                                        .left()?
+                                        .basic()?
                                     } else {
                                         v
                                     }
@@ -2899,7 +2898,7 @@ impl<'ctx> super::Codegen<'ctx> {
                                         "fmtf",
                                     )
                                     .try_as_basic_value()
-                                    .left()?
+                                    .basic()?
                                 } else {
                                     v
                                 }
@@ -2916,7 +2915,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 &[acc.into(), part_val.into()],
                 "fmtcat",
             );
-            acc = res.try_as_basic_value().left()?;
+            acc = res.try_as_basic_value().basic()?;
         }
 
         Some(acc)
@@ -3204,7 +3203,7 @@ impl<'ctx> super::Codegen<'ctx> {
         arms: &[ast::SelectArm],
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
-        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let i8_ptr = self.ir.context.ptr_type(AddressSpace::default());
         let i64_ty = self.ir.context.i64_type();
         let n = arms.len() as u64;
 
@@ -3250,7 +3249,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let chans_ptr = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             chans_alloca,
-            i8_ptr.ptr_type(AddressSpace::default()),
+            i8_ptr.get_context().ptr_type(AddressSpace::default()),
             "chans_ptr",
         );
 
@@ -3263,7 +3262,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 "select_idx",
             )
             .try_as_basic_value()
-            .left()
+            .basic()
         } else {
             None
         };
@@ -3352,7 +3351,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// `|a0, ..| name(a0, ..)`; the thunk is that lambda's native form.
     fn emit_fn_value(&mut self, name: &str) -> Option<BasicValueEnum<'ctx>> {
         let thunk = self.fn_value_thunk(name)?;
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let closure_ty = self
             .ir
             .context
@@ -3441,7 +3440,7 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let target_params = target.get_type().get_param_types();
         let mut thunk_params: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
         thunk_params.extend(
@@ -3463,7 +3462,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let call = build_wrappers::w_call(&self.ir.builder, target, &fwd, "fnval_call");
         call.set_call_convention(target.get_call_conventions());
         let unsigned = matches!(ret_sem, Type::U8 | Type::U16 | Type::U32 | Type::U64);
-        let ret: BasicValueEnum<'ctx> = match call.try_as_basic_value().left() {
+        let ret: BasicValueEnum<'ctx> = match call.try_as_basic_value().basic() {
             None => i64_ty.const_zero().into(),
             Some(BasicValueEnum::IntValue(iv)) => match iv.get_type().get_bit_width() {
                 64 => iv.into(),
@@ -3479,7 +3478,7 @@ impl<'ctx> super::Codegen<'ctx> {
             Some(BasicValueEnum::FloatValue(fv)) => self
                 .ir
                 .builder
-                .build_bitcast(fv, i64_ty, "fnval_f2i")
+                .build_bit_cast(fv, i64_ty, "fnval_f2i")
                 .unwrap(),
             Some(other) => unreachable!(
                 "fn `{name}` returns {ret_sem:?} (checked closure-ABI-representable) but lowered \
@@ -3507,7 +3506,7 @@ impl<'ctx> super::Codegen<'ctx> {
         args: &[ast::Expr],
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let i64_ty = self.ir.context.i64_type();
         let fp = build_wrappers::w_extract_value(&self.ir.builder, fat, 0, "cfp");
         let ep = build_wrappers::w_extract_value(&self.ir.builder, fat, 1, "cep");
@@ -3576,7 +3575,7 @@ impl<'ctx> super::Codegen<'ctx> {
             .builder
             .build_indirect_call(indirect_ty, fn_ptr, &call_args, "icall")
             .unwrap();
-        let raw = call.try_as_basic_value().left();
+        let raw = call.try_as_basic_value().basic();
         // The closure ABI returns i64 for every lambda. An f64 body
         // is TRANSPORTED as its bit pattern (see the return site in
         // emit_lambda), so the caller must bitcast it back — reading
@@ -3586,7 +3585,7 @@ impl<'ctx> super::Codegen<'ctx> {
             (Some(v), Some(Type::F64)) => Some(
                 self.ir
                     .builder
-                    .build_bitcast(
+                    .build_bit_cast(
                         v.into_int_value(),
                         self.ir.context.f64_type(),
                         "lam_ret_i2f",
@@ -3686,7 +3685,7 @@ impl<'ctx> super::Codegen<'ctx> {
         self.lambda_counter += 1;
 
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let closure_ty = self
             .ir
             .context
@@ -3915,7 +3914,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         BasicValueEnum::FloatValue(fv) => self
                             .ir
                             .builder
-                            .build_bitcast(fv, i64_ty, "lam_ret_f2i")
+                            .build_bit_cast(fv, i64_ty, "lam_ret_f2i")
                             .unwrap(),
                         other => other,
                     };
@@ -4008,7 +4007,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 )
                 .unwrap()
                 .try_as_basic_value()
-                .left()
+                .basic()
                 .unwrap()
                 .into_pointer_value();
 
@@ -4090,7 +4089,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let global =
                     build_wrappers::w_global_string_ptr(&self.ir.builder, &s, "comptime_str");
                 let i64_ty = self.ir.context.i64_type();
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let str_ty = self
                     .ir
                     .context
@@ -4129,7 +4128,7 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         // inner must be a lambda expression. Compile it to get the fat ptr.
         let fat = self.emit_expr(inner, fn_val)?;
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
 
         // If we got a struct back, extract fn_ptr and env_ptr.
         let (fn_ptr_val, env_ptr_val) = match fat {
@@ -4195,7 +4194,7 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // Slice struct { i64, ptr }: extract the data pointer (field 1).
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -4632,7 +4631,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 };
                 let elem_ty = self.llvm_type(&inner).ok_or(Some(NOT_ARRAY))?;
                 let i64_ty = self.ir.context.i64_type();
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let slice_ty = self
                     .ir
                     .context
@@ -4689,7 +4688,7 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
         let i1_ty = self.ir.context.bool_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -4721,7 +4720,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let i64_data = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             data_ptr,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "arr_i64p",
         );
 
@@ -5061,7 +5060,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -5093,7 +5092,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "rev_srci",
         );
 
@@ -5104,7 +5103,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dst_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "rev_dsti",
         );
 
@@ -5195,7 +5194,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -5226,7 +5225,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "td_srci",
         );
 
@@ -5275,7 +5274,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dst_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "td_dsti",
         );
 
@@ -5357,7 +5356,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -5388,7 +5387,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "ps_srci",
         );
 
@@ -5401,7 +5400,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dst_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "ps_dsti",
         );
 
@@ -5592,7 +5591,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// cascade of secondary type errors (the build aborts on the E0910).
     fn empty_slice_value(&self) -> BasicValueEnum<'ctx> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         self.ir
             .context
             .struct_type(&[i64_ty.into(), ptr_ty.into()], false)
@@ -5652,7 +5651,7 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
         let f64_ty = self.ir.context.f64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -5690,7 +5689,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "mb_srci",
         );
 
@@ -5743,12 +5742,12 @@ impl<'ctx> super::Codegen<'ctx> {
             .build_indirect_call(indirect_ty, fn_ptr, &[env_ptr.into(), e0.into()], "mb_k0c")
             .unwrap()
             .try_as_basic_value()
-            .left()?
+            .basic()?
             .into_int_value();
         let k0 = self
             .ir
             .builder
-            .build_bitcast(k0_i, f64_ty, "mb_k0")
+            .build_bit_cast(k0_i, f64_ty, "mb_k0")
             .unwrap()
             .into_float_value();
         build_wrappers::w_store(&self.ir.builder, best_val_slot, e0.into());
@@ -5793,12 +5792,12 @@ impl<'ctx> super::Codegen<'ctx> {
             .build_indirect_call(indirect_ty, fn_ptr, &[env_ptr.into(), elem.into()], "mb_kc")
             .unwrap()
             .try_as_basic_value()
-            .left()?
+            .basic()?
             .into_int_value();
         let k = self
             .ir
             .builder
-            .build_bitcast(k_i, f64_ty, "mb_k")
+            .build_bit_cast(k_i, f64_ty, "mb_k")
             .unwrap()
             .into_float_value();
         let best_key =
@@ -5859,7 +5858,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -5904,7 +5903,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "cl_srci",
         );
 
@@ -5915,7 +5914,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dst_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "cl_dsti",
         );
 
@@ -5968,7 +5967,7 @@ impl<'ctx> super::Codegen<'ctx> {
             )
             .unwrap()
             .try_as_basic_value()
-            .left()?
+            .basic()?
             .into_int_value();
         let w_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "cl_wc")
             .into_int_value();
@@ -6104,7 +6103,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -6143,7 +6142,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "fd_srci",
         );
 
@@ -6191,7 +6190,7 @@ impl<'ctx> super::Codegen<'ctx> {
             )
             .unwrap()
             .try_as_basic_value()
-            .left()?
+            .basic()?
             .into_int_value();
         build_wrappers::w_store(&self.ir.builder, acc_slot, r.into());
         let i_next =
@@ -6219,7 +6218,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -6259,7 +6258,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let di = build_wrappers::w_pointer_cast(
                 &slf.ir.builder,
                 d,
-                i64_ty.ptr_type(AddressSpace::default()),
+                i64_ty.get_context().ptr_type(AddressSpace::default()),
                 "zw_di",
             );
             (l, di)
@@ -6288,7 +6287,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dst_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "zw_dsti",
         );
 
@@ -6339,7 +6338,7 @@ impl<'ctx> super::Codegen<'ctx> {
             )
             .unwrap()
             .try_as_basic_value()
-            .left()?
+            .basic()?
             .into_int_value();
         let dp = unsafe {
             self.ir
@@ -6390,7 +6389,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -6433,7 +6432,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "pt_si",
         );
 
@@ -6443,14 +6442,14 @@ impl<'ctx> super::Codegen<'ctx> {
         let yes = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             yes_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "pt_yi",
         );
         let no_raw = self.emit_malloc(bytes, "pt_no");
         let no = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             no_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "pt_ni",
         );
         let yc = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pt_yc");
@@ -6495,7 +6494,7 @@ impl<'ctx> super::Codegen<'ctx> {
             )
             .unwrap()
             .try_as_basic_value()
-            .left()?
+            .basic()?
             .into_int_value();
         let yes_bb = self.ir.context.append_basic_block(fn_val, "pt.yes");
         let no_bb = self.ir.context.append_basic_block(fn_val, "pt.no");
@@ -6616,7 +6615,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -6651,7 +6650,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "en_si",
         );
 
@@ -6662,7 +6661,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dst = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            tup_ty.ptr_type(AddressSpace::default()),
+            tup_ty.get_context().ptr_type(AddressSpace::default()),
             "en_dt",
         );
 
@@ -6755,7 +6754,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -6788,7 +6787,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "ck_si",
         );
 
@@ -6838,7 +6837,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let outer = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             outer_raw,
-            slice_ty.ptr_type(AddressSpace::default()),
+            slice_ty.get_context().ptr_type(AddressSpace::default()),
             "ck_od",
         );
 
@@ -6882,7 +6881,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let cbuf = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             cbuf_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "ck_cb",
         );
         // inner copy j in 0..clen: cbuf[j] = src[start+j].
@@ -6989,7 +6988,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -7022,7 +7021,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let odata = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             odata_raw,
-            slice_ty.ptr_type(AddressSpace::default()),
+            slice_ty.get_context().ptr_type(AddressSpace::default()),
             "ft_od",
         );
 
@@ -7082,7 +7081,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dst = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "ft_di",
         );
 
@@ -7137,7 +7136,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let indat = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             indat_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "ft_ind",
         );
         // Inner copy loop j in 0..inlen: dst[w]=inner[j]; w++.
@@ -7224,7 +7223,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -7260,7 +7259,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let di = build_wrappers::w_pointer_cast(
                 &slf.ir.builder,
                 d,
-                i64_ty.ptr_type(AddressSpace::default()),
+                i64_ty.get_context().ptr_type(AddressSpace::default()),
                 "zp_di",
             );
             (l, di)
@@ -7287,7 +7286,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dst = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            tup_ty.ptr_type(AddressSpace::default()),
+            tup_ty.get_context().ptr_type(AddressSpace::default()),
             "zp_dt",
         );
 
@@ -7388,7 +7387,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -7426,7 +7425,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "fd2_si",
         );
 
@@ -7476,7 +7475,7 @@ impl<'ctx> super::Codegen<'ctx> {
             )
             .unwrap()
             .try_as_basic_value()
-            .left()?
+            .basic()?
             .into_int_value();
         let truthy = build_wrappers::w_int_compare(
             &self.ir.builder,
@@ -7549,7 +7548,7 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -7581,7 +7580,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "uq_si",
         );
 
@@ -7591,7 +7590,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dst = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "uq_di",
         );
         let cnt_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "uq_cnt");
@@ -7801,7 +7800,7 @@ impl<'ctx> super::Codegen<'ctx> {
         ),
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -7850,7 +7849,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let dst = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             dst_raw,
-            elem_ty.ptr_type(AddressSpace::default()),
+            self.ir.context.ptr_type(AddressSpace::default()),
             "ab_di",
         );
 
@@ -8214,7 +8213,7 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
         let f64_ty = self.ir.context.f64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -8245,7 +8244,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let data = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             data_raw,
-            f64_ty.ptr_type(AddressSpace::default()),
+            f64_ty.get_context().ptr_type(AddressSpace::default()),
             "sd_fd",
         );
 
@@ -8379,7 +8378,7 @@ impl<'ctx> super::Codegen<'ctx> {
             .build_call(sqrt_fn, &[variance.into()], "sd_sqrt")
             .unwrap()
             .try_as_basic_value()
-            .left()?
+            .basic()?
             .into_float_value();
         build_wrappers::w_store(&self.ir.builder, result_slot, std.into());
         build_wrappers::w_br(&self.ir.builder, done_bb);
@@ -8404,7 +8403,7 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
         let f64_ty = self.ir.context.f64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -8435,7 +8434,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let f64_data = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             data_raw,
-            f64_ty.ptr_type(AddressSpace::default()),
+            f64_ty.get_context().ptr_type(AddressSpace::default()),
             "af_fd",
         );
 
@@ -8637,7 +8636,7 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
         let i1_ty = self.ir.context.bool_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -8675,7 +8674,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let src_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder,
             src_raw,
-            i64_ty.ptr_type(AddressSpace::default()),
+            i64_ty.get_context().ptr_type(AddressSpace::default()),
             "pr_si",
         );
 
@@ -8730,7 +8729,7 @@ impl<'ctx> super::Codegen<'ctx> {
             )
             .unwrap()
             .try_as_basic_value()
-            .left()?
+            .basic()?
             .into_int_value();
         // truthy = (r != 0) as i64 0/1.
         let truthy = build_wrappers::w_int_compare(
@@ -8789,8 +8788,8 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-        let i64_ptr_ty = i64_ty.ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
+        let i64_ptr_ty = i64_ty.get_context().ptr_type(AddressSpace::default());
         let slice_ty = self
             .ir
             .context
@@ -8992,7 +8991,7 @@ impl<'ctx> super::Codegen<'ctx> {
             )
             .unwrap()
             .try_as_basic_value()
-            .left()?
+            .basic()?
             .into_int_value();
         let neg = build_wrappers::w_int_compare(
             &self.ir.builder,
@@ -9443,7 +9442,7 @@ impl<'ctx> super::Codegen<'ctx> {
         if elems.is_empty() {
             // Return a zero-length slice struct.
             let i64_ty = self.ir.context.i64_type();
-            let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+            let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
             let slice_ty = self
                 .ir
                 .context
@@ -9473,7 +9472,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let n = vals.len() as u32;
 
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         // AX-12: a site the escape analysis proved frame-local with a single
         // live value (`escape.rs`, spec/runtime.md §3) gets a fixed entry-block
         // slot that every evaluation of this emission reuses - nothing to free,
@@ -9502,7 +9501,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.emit_malloc(total_bytes, "arrdata")
         };
         // Cast to typed element pointer for GEP.
-        let elem_ptr_ty = elem_ty.ptr_type(AddressSpace::default());
+        let elem_ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let elem_data_ptr = self
             .ir
             .builder
@@ -9628,7 +9627,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let method_idx = trait_def.methods.iter().position(|m| m.name == *method)?;
 
             // GEP into vtable array to get the function pointer slot.
-            let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+            let i8_ptr = self.ir.context.ptr_type(AddressSpace::default());
             let arr_ty = i8_ptr.array_type(trait_def.methods.len() as u32);
             let idx_zero = self.ir.context.i64_type().const_zero();
             let idx_m = self
@@ -9671,7 +9670,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 &call_args,
                 "vtbl_call",
             );
-            return call.try_as_basic_value().left();
+            return call.try_as_basic_value().basic();
         }
 
         // --- Static dispatch (struct/enum method) ---
@@ -9698,7 +9697,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let is_chan_method = matches!(method, "send" | "recv" | "clone");
                 let rv = if is_chan_method {
                     if let BasicValueEnum::PointerValue(pv) = rv {
-                        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                        let i8_ptr = self.ir.context.ptr_type(AddressSpace::default());
                         build_wrappers::w_pointer_cast(&self.ir.builder, pv, i8_ptr, "chan_cast")
                             .into()
                     } else {
@@ -9723,7 +9722,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 .builder
                 .build_call(fn_v, &arg_vals, "mcall")
                 .unwrap();
-            return call.try_as_basic_value().left();
+            return call.try_as_basic_value().basic();
         }
         None
     }
@@ -9758,7 +9757,7 @@ impl<'ctx> super::Codegen<'ctx> {
             return Some(self.refuse_native(qualified, "domain-interop module (interp-only)"));
         }
         let i64_ty = self.ir.context.i64_type();
-        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         // The frozen `str`/`[scalar]`/`Handle` aggregate is `{i64, X}`.
         let str_ty = self
             .ir
@@ -9836,7 +9835,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // Unit return → a placeholder i64 0 (the call's value is never used —
         // a native `clear`/`present`/`*_close` is a statement). A value/handle
         // return flows out as the call's basic value.
-        match call.try_as_basic_value().left() {
+        match call.try_as_basic_value().basic() {
             Some(v) => Some(v),
             None => Some(i64_ty.const_zero().into()),
         }
@@ -10129,7 +10128,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some((f, arg)) = dispatched {
                     return build_wrappers::w_call(&self.ir.builder, f, &[arg], "to_str_call")
                         .try_as_basic_value()
-                        .left();
+                        .basic();
                 }
             }
         }
@@ -10155,7 +10154,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         "pbo_r",
                     )
                     .try_as_basic_value()
-                    .left()?;
+                    .basic()?;
                     let r_slot = build_wrappers::w_alloca(&self.ir.builder, result_ty, "pbo_rslot");
                     build_wrappers::w_store(&self.ir.builder, r_slot, r);
                     // tag (field 0, i1): Ok=1.
@@ -10184,10 +10183,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     let pay_i1_ptr = build_wrappers::w_pointer_cast(
                         &self.ir.builder,
                         pay_ptr,
-                        self.ir
-                            .context
-                            .bool_type()
-                            .ptr_type(AddressSpace::default()),
+                        self.ir.context.ptr_type(AddressSpace::default()),
                         "pbo_payvp",
                     );
                     let ok_val = build_wrappers::w_load(
@@ -10365,14 +10361,14 @@ impl<'ctx> super::Codegen<'ctx> {
                     .build_call(f, &[], "dict_new")
                     .unwrap()
                     .try_as_basic_value()
-                    .left();
+                    .basic();
             }
             if name == "dict_set" && args.len() == 3 {
                 let d = self.emit_expr(&args[0], fn_val)?;
                 let key = self.emit_expr(&args[1], fn_val)?;
                 let v = self.emit_expr(&args[2], fn_val)?;
                 let i64_ty = self.ir.context.i64_type();
-                let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let i8_ptr = self.ir.context.ptr_type(AddressSpace::default());
                 let str_ty = self
                     .ir
                     .context
@@ -10384,7 +10380,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         let bits = self
                             .ir
                             .builder
-                            .build_bitcast(fv, i64_ty, "ds_fbits")
+                            .build_bit_cast(fv, i64_ty, "ds_fbits")
                             .unwrap()
                             .into_int_value();
                         (1i64, bits, i8_ptr.const_null(), i64_ty.const_zero())
@@ -10453,7 +10449,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     .build_call(f, &[d.into(), key.into()], "dict_has")
                     .unwrap()
                     .try_as_basic_value()
-                    .left();
+                    .basic();
             }
             // dict_get(d, k) → Option<i64>. v1: the value is reinterpreted as i64
             // (the int-valued case — the common state-counter shape). Str-valued
@@ -10488,7 +10484,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     )
                     .unwrap()
                     .try_as_basic_value()
-                    .left()?
+                    .basic()?
                     .into_int_value();
                 // Soundness guard (I-2): the v1 native dict is INT-valued. If the
                 // found value is a STR (tag 2), codegen cannot reconstruct an
@@ -10567,7 +10563,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     .build_call(f, &[v.into()], "len")
                     .unwrap()
                     .try_as_basic_value()
-                    .left();
+                    .basic();
             }
             if name == "dict_len" && args.len() == 1 {
                 let d = self.emit_expr(&args[0], fn_val)?;
@@ -10582,14 +10578,14 @@ impl<'ctx> super::Codegen<'ctx> {
                     .build_call(f, &[d.into()], "dict_len")
                     .unwrap()
                     .try_as_basic_value()
-                    .left();
+                    .basic();
             }
             // dict_keys(d) → [str]: the runtime mallocs an array of AxonStr +
             // each key's bytes; codegen wraps it in a {len, ptr} slice struct.
             if name == "dict_keys" && args.len() == 1 {
                 let d = self.emit_expr(&args[0], fn_val)?;
                 let i64_ty = self.ir.context.i64_type();
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let slice_ty = self
                     .ir
                     .context
@@ -10642,7 +10638,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let s = self.emit_expr(&args[0], fn_val)?;
                 let sep = self.emit_expr(&args[1], fn_val)?;
                 let i64_ty = self.ir.context.i64_type();
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let slice_ty = self
                     .ir
                     .context
@@ -10699,12 +10695,12 @@ impl<'ctx> super::Codegen<'ctx> {
                 let parts = self.emit_expr(&args[0], fn_val)?;
                 let sep = self.emit_expr(&args[1], fn_val)?;
                 let i64_ty = self.ir.context.i64_type();
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let str_ty = self
                     .ir
                     .context
                     .struct_type(&[i64_ty.into(), ptr_ty.into()], false);
-                let str_ptr_ty = str_ty.ptr_type(AddressSpace::default());
+                let str_ptr_ty = str_ty.get_context().ptr_type(AddressSpace::default());
                 // Spill the slice to extract its {len, data} fields.
                 let parts_slot =
                     build_wrappers::w_alloca(&self.ir.builder, str_ty.into(), "sj_parts");
@@ -10811,7 +10807,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
                 let pairs = self.emit_expr(&args[0], fn_val)?;
                 let i64_ty = self.ir.context.i64_type();
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let slice_ty = self
                     .ir
                     .context
@@ -10849,7 +10845,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     .build_call(f, &[len.into(), data.into()], "dfp_call")
                     .unwrap()
                     .try_as_basic_value()
-                    .left();
+                    .basic();
             }
             // dict_values(d) → [i64] (v1 int-valued): the runtime mallocs an
             // i64 array in key-sorted order; codegen wraps it in a {len, ptr}
@@ -10859,7 +10855,7 @@ impl<'ctx> super::Codegen<'ctx> {
             if name == "dict_values" && args.len() == 1 {
                 let d = self.emit_expr(&args[0], fn_val)?;
                 let i64_ty = self.ir.context.i64_type();
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let slice_ty = self
                     .ir
                     .context
@@ -10912,7 +10908,7 @@ impl<'ctx> super::Codegen<'ctx> {
             if name == "dict_to_pairs" && args.len() == 1 {
                 let d = self.emit_expr(&args[0], fn_val)?;
                 let i64_ty = self.ir.context.i64_type();
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let slice_ty = self
                     .ir
                     .context
@@ -10973,7 +10969,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     BasicValueEnum::StructValue(s) => s,
                     _ => return None,
                 };
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "dmv_fn")
                     .into_pointer_value();
                 let env_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "dmv_env")
@@ -10993,7 +10989,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     .build_call(f, &[d.into(), fn_p.into(), env_p.into()], "dmv_call")
                     .unwrap()
                     .try_as_basic_value()
-                    .left();
+                    .basic();
             }
             // dict_filter(d, pred) → Dict: same runtime-callback lowering as
             // dict_map_values, but the predicate is `fn(str key, i64 val) -> bool`
@@ -11005,7 +11001,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 // param types so an inline `|k, v|` (no annotations) types `k` as
                 // the str struct and `v` as i64.
                 let i64_ty = self.ir.context.i64_type();
-                let i8p = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let i8p = self.ir.context.ptr_type(AddressSpace::default());
                 let str_ty = self
                     .ir
                     .context
@@ -11018,7 +11014,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         return None;
                     }
                 };
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "dfl_fn")
                     .into_pointer_value();
                 let env_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "dfl_env")
@@ -11038,7 +11034,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     .build_call(f, &[d.into(), fn_p.into(), env_p.into()], "dfl_call")
                     .unwrap()
                     .try_as_basic_value()
-                    .left();
+                    .basic();
             }
             // dict_each(d, f) → (): same runtime-callback as dict_filter but the
             // result is discarded and nothing is returned (side effects only).
@@ -11046,7 +11042,7 @@ impl<'ctx> super::Codegen<'ctx> {
             if name == "dict_each" && args.len() == 2 {
                 let d = self.emit_expr(&args[0], fn_val)?;
                 let i64_ty = self.ir.context.i64_type();
-                let i8p = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let i8p = self.ir.context.ptr_type(AddressSpace::default());
                 let str_ty = self
                     .ir
                     .context
@@ -11095,7 +11091,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     .build_call(f, &[d.into(), key.into()], "dict_inc")
                     .unwrap()
                     .try_as_basic_value()
-                    .left();
+                    .basic();
             }
             // dict_remove(d, k) → Option<i64> (v1 int-valued): remove + return
             // the prior value. Same out-param + emit_option shape as dict_get.
@@ -11127,7 +11123,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     )
                     .unwrap()
                     .try_as_basic_value()
-                    .left()?
+                    .basic()?
                     .into_int_value();
                 // Same I-2 soundness guard as dict_get: a removed STR value can't
                 // be read back as i64 here — abort loudly rather than miscompute.
@@ -11185,7 +11181,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     )
                     .unwrap()
                     .try_as_basic_value()
-                    .left()?
+                    .basic()?
                     .into_int_value();
                 // Same I-2 soundness guard as dict_get: a str value can't be read
                 // back as i64 here — abort loudly rather than miscompute.
@@ -11774,7 +11770,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // inline asm intrinsics.  They are inserted here (before the E0910
         // honest-error gate) so maybe_fn_v.is_none() doesn't fire for them.
         if let ast::Expr::Ident(name) = callee {
-            let ptr_ty_opaque = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+            let ptr_ty_opaque = self.ir.context.ptr_type(AddressSpace::default());
             match name.as_str() {
                 "ptr_from_addr" if args.len() == 1 => {
                     // ptr_from_addr(addr: u64) -> opaque ptr (u64)
@@ -11800,11 +11796,11 @@ impl<'ctx> super::Codegen<'ctx> {
                 | "volatile_load_u64"
                     if args.len() == 1 =>
                 {
-                    let bits: u32 = match name.as_str() {
-                        "volatile_load_u8" => 8,
-                        "volatile_load_u16" => 16,
-                        "volatile_load_u32" => 32,
-                        _ => 64,
+                    let elem_ty = match name.as_str() {
+                        "volatile_load_u8" => self.ir.context.i8_type(),
+                        "volatile_load_u16" => self.ir.context.i16_type(),
+                        "volatile_load_u32" => self.ir.context.i32_type(),
+                        _ => self.ir.context.i64_type(),
                     };
                     if let Some(addr_val) = self.emit_expr(&args[0], fn_val) {
                         let addr_int = addr_val.into_int_value();
@@ -11813,7 +11809,6 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_int_to_ptr(addr_int, ptr_ty_opaque, "vl_ptr")
                             .unwrap();
-                        let elem_ty = self.ir.context.custom_width_int_type(bits);
                         let load = self.ir.builder.build_load(elem_ty, ptr, "vload").unwrap();
                         if let Some(i) = load.as_instruction_value() {
                             i.set_volatile(true).unwrap();
@@ -11835,11 +11830,11 @@ impl<'ctx> super::Codegen<'ctx> {
                 | "volatile_store_u64"
                     if args.len() == 2 =>
                 {
-                    let bits: u32 = match name.as_str() {
-                        "volatile_store_u8" => 8,
-                        "volatile_store_u16" => 16,
-                        "volatile_store_u32" => 32,
-                        _ => 64,
+                    let elem_ty = match name.as_str() {
+                        "volatile_store_u8" => self.ir.context.i8_type(),
+                        "volatile_store_u16" => self.ir.context.i16_type(),
+                        "volatile_store_u32" => self.ir.context.i32_type(),
+                        _ => self.ir.context.i64_type(),
                     };
                     if let (Some(addr_val), Some(data_val)) = (
                         self.emit_expr(&args[0], fn_val),
@@ -11851,7 +11846,6 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_int_to_ptr(addr_int, ptr_ty_opaque, "vs_ptr")
                             .unwrap();
-                        let elem_ty = self.ir.context.custom_width_int_type(bits);
                         // Truncate the i64 data value to the target width.
                         let trunc = self
                             .ir
@@ -11943,7 +11937,7 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_indirect_call(fn_ty, asm_ptr, &[port_t.into()], "inb")
                             .unwrap();
-                        let i8_result = call.try_as_basic_value().left().unwrap().into_int_value();
+                        let i8_result = call.try_as_basic_value().basic().unwrap().into_int_value();
                         let ext = self
                             .ir
                             .builder
@@ -12050,7 +12044,7 @@ impl<'ctx> super::Codegen<'ctx> {
                                 .builder
                                 .build_int_to_ptr(
                                     addr_val.into_int_value(),
-                                    i64_ty.ptr_type(AddressSpace::default()),
+                                    i64_ty.get_context().ptr_type(AddressSpace::default()),
                                     "atomic_ptr",
                                 )
                                 .unwrap();
@@ -12080,7 +12074,7 @@ impl<'ctx> super::Codegen<'ctx> {
                                 .builder
                                 .build_int_to_ptr(
                                     addr_val.into_int_value(),
-                                    i64_ty.ptr_type(AddressSpace::default()),
+                                    i64_ty.get_context().ptr_type(AddressSpace::default()),
                                     "atomic_ptr",
                                 )
                                 .unwrap();
@@ -12107,7 +12101,7 @@ impl<'ctx> super::Codegen<'ctx> {
                                 .builder
                                 .build_int_to_ptr(
                                     addr_val.into_int_value(),
-                                    i64_ty.ptr_type(AddressSpace::default()),
+                                    i64_ty.get_context().ptr_type(AddressSpace::default()),
                                     "atomic_ptr",
                                 )
                                 .unwrap();
@@ -12139,7 +12133,7 @@ impl<'ctx> super::Codegen<'ctx> {
                                 .builder
                                 .build_int_to_ptr(
                                     addr_val.into_int_value(),
-                                    i64_ty.ptr_type(AddressSpace::default()),
+                                    i64_ty.get_context().ptr_type(AddressSpace::default()),
                                     "atomic_ptr",
                                 )
                                 .unwrap();
@@ -12217,7 +12211,13 @@ impl<'ctx> super::Codegen<'ctx> {
         let fn_v = maybe_fn_v?;
 
         // Get declared parameter types to coerce mismatched integer widths.
-        let param_tys: Vec<BasicTypeEnum<'ctx>> = fn_v.get_type().get_param_types();
+        // `None` marks a metadata parameter, which no Axon or runtime fn has.
+        let param_tys: Vec<Option<BasicTypeEnum<'ctx>>> = fn_v
+            .get_type()
+            .get_param_types()
+            .into_iter()
+            .map(|t| BasicTypeEnum::try_from(t).ok())
+            .collect();
 
         // Get Axon-level param types for DynTrait coercion.
         let axon_params: Vec<ast::AxonType> = if let ast::Expr::Ident(name) = callee {
@@ -12274,8 +12274,7 @@ impl<'ctx> super::Codegen<'ctx> {
                             build_wrappers::w_store(&self.ir.builder, data_alloca, val);
 
                             // Build fat pointer { data_ptr, vtable_ptr }.
-                            let i8_ptr =
-                                self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                            let i8_ptr = self.ir.context.ptr_type(AddressSpace::default());
                             let fat_ty = self
                                 .ir
                                 .context
@@ -12392,7 +12391,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             };
             // Coerce argument types to match declared parameter types.
-            let expected_ty = param_tys.get(i).copied();
+            let expected_ty = param_tys.get(i).copied().flatten();
             let coerced = match (expected_ty, val) {
                 // int width mismatch: truncate or extend (zext for unsigned, sext for signed)
                 (Some(BasicTypeEnum::IntType(exp_int)), BasicValueEnum::IntValue(iv)) => {
@@ -12456,7 +12455,7 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         let call = self.ir.builder.build_call(fn_v, &arg_vals, "call").unwrap();
-        call.try_as_basic_value().left()
+        call.try_as_basic_value().basic()
     }
 }
 

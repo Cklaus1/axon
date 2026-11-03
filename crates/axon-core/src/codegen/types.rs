@@ -49,7 +49,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // Str → struct { i64, ptr }
             Type::Str => {
                 let i64_ty = self.ir.context.i64_type();
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let str_ty = self
                     .ir
                     .context
@@ -98,7 +98,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // Slice<T> → struct { i64, ptr }
             Type::Slice(_inner) => {
                 let i64_ty = self.ir.context.i64_type();
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 let slice_ty = self
                     .ir
                     .context
@@ -126,7 +126,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 Some(tuple_ty.into())
             }
 
-            // Fn<params, ret> → opaque pointer (function pointers in LLVM 17
+            // Fn<params, ret> → opaque pointer (function pointers in LLVM 15+
             // use the opaque pointer representation; typed fn pointers are gone).
             // A function value (closure) is a `{ fn_ptr, env_ptr }` fat pointer
             // — see `emit_lambda` (expr.rs), which always builds a 2-field
@@ -137,7 +137,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // (BUG_HUNT #41). The interpreter treats a closure as a fat value
             // (fn + captured env), so this is the faithful lowering.
             Type::Fn(_, _) => {
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 Some(
                     self.ir
                         .context
@@ -163,14 +163,12 @@ impl<'ctx> super::Codegen<'ctx> {
             Type::Dict(_) => Some(
                 self.ir
                     .context
-                    .i8_type()
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
             ),
             Type::Deferred(name) if name == "Dict" => Some(
                 self.ir
                     .context
-                    .i8_type()
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
             ),
@@ -196,7 +194,7 @@ impl<'ctx> super::Codegen<'ctx> {
             Type::TypeParam(_) => None,
             // DynTrait → fat pointer { ptr data, ptr vtable }
             Type::DynTrait(_) => {
-                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
                 Some(
                     self.ir
                         .context
@@ -205,13 +203,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 )
             }
             // Chan<T> → opaque pointer to axon-rt channel object
-            Type::Chan(_) => Some(
-                self.ir
-                    .context
-                    .i8_type()
-                    .ptr_type(AddressSpace::default())
-                    .into(),
-            ),
+            Type::Chan(_) => Some(self.ir.context.ptr_type(AddressSpace::default()).into()),
             // Uncertain<T> → struct { T value, f64 confidence, i64 source_tag }
             // V1 simplification: omits `alternatives` and `interval` slots from
             // the full PRD (AI_Language_Plan.md lines 1360-1410). Layer-1 only.
@@ -226,12 +218,11 @@ impl<'ctx> super::Codegen<'ctx> {
                         .into(),
                 )
             }
-            // R17 HAL: `*T` → opaque LLVM `ptr` (LLVM 17 typed-pointer-free model).
+            // R17 HAL: `*T` → opaque LLVM `ptr` (LLVM 15+ typed-pointer-free model).
             // The element type is tracked at load/store call sites, not in the pointer.
             Type::RawPtr(_) => Some(
                 self.ir
                     .context
-                    .i8_type()
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
             ),

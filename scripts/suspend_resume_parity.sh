@@ -139,14 +139,14 @@ if cg_err="$(cargo build -q -p axon-core --bin axon 2>&1)"; then
     echo "$msg" | head -3
     fail=1
   fi
-elif llvm17_present; then
-  # LLVM 17 is installed, so the build had what it needs: a failure is a
+elif llvm_present; then
+  # LLVM 23 is installed, so the build had what it needs: a failure is a
   # broken tree, never "codegen unavailable".
-  echo "suspend_resume_parity: FAIL [codegen_refuses_host_await_val]: codegen build failed with LLVM 17 present:"
+  echo "suspend_resume_parity: FAIL [codegen_refuses_host_await_val]: codegen build failed with LLVM 23 present:"
   printf '%s\n' "$cg_err" | head -10 | sed 's/^/        /'
   fail=1
 else
-  echo "  skip [codegen_refuses_host_await_val] (codegen build unavailable — no LLVM 17 llvm-config)"
+  echo "  skip [codegen_refuses_host_await_val] (codegen build unavailable — no LLVM 23 llvm-config)"
 fi
 
 # ── vacuous-pass guard + verdict ──────────────────────────────────────────────

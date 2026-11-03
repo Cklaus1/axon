@@ -1,5 +1,11 @@
 # Axon Changelog
 
+## AX-73: codegen on LLVM 23
+
+- **Codegen links LLVM 23** (compilebench AX-73): `inkwell` 0.11 with the `llvm23-1` feature (`llvm-sys` 231), up from `inkwell` 0.4 on LLVM 17. Ubuntu's archive has no LLVM 23, so codegen builds need `llvm-23-dev` and `libpolly-23-dev` from apt.llvm.org (`ENVIRONMENTS.md`). `scripts/setup-environments.sh` checks for `llvm-config-23`. The harness skip probe `llvm_present` and CI look for LLVM 23. On the same unoptimised Axon IR for compilebench's `big-compile` (probe 2026-11-03), LLVM 23's `opt -O2` retires 0.66× LLVM 17's instructions and `opt` + `llc -O2` together 0.84×. On `collatz` the cycles drop to 0.84×.
+- **`--opt-level s|z` run the O2 pipeline:** LLVM 23 removed `default<Os>`/`default<Oz>`. As in clang, size levels are O2 plus the `optsize` / `optsize minsize` attributes, which Axon already sets on every definition (AX-38).
+- **API port:** `Either`'s `left()` is `ValueKind::basic()`, `<type>.ptr_type(..)` is `Context::ptr_type(..)` (opaque pointers), and the new scalable-vector variants get the same treatment as vectors (`Type::Unknown`; never stack-slotted).
+
 ## AX-72: `axon build --release` means `--opt-level 3`
 
 - **`--release` is O3** (compilebench AX-72). It was O2. Cargo's release profile, CMake `Release` and Meson `release` all use level 3. In compilebench run `20261103T070151Z`, O3 cuts the geomean cycles of the six compute benchmarks to 0.87× (arr-sum 0.45×: the unrolled outer loop turns `x % m` into a multiply and shift; the other five 0.97-1.02×). On the 20,071-line `big-compile`, the build retires 1.22× the instructions (gcc's O2 → O3 step is 1.58×, clang's 1.11×) and the program's `.text` is 1.29× larger; on the other benchmarks build time and binary size are unchanged. **Behaviour change:** a `--release` build now misses a cache entry written by an older `--release` build, and `--opt-level 2` keeps the old output.

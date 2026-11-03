@@ -70,14 +70,14 @@ echo "decimal_parity: building codegen axon binary…"
 if ! cargo build -q -p axon-core --bin axon 2>"$WORK/codegen_build.err"; then
   # Distinguish "LLVM absent" (legit interp-only CI skip) from "codegen build
   # broken" (a real failure that must not silently pass as interp-only green).
-  # The probe is llvm17_present (scripts/lib/harness_skip.sh), the one
-  # definition of "LLVM 17 is installed" every harness uses.
-  if llvm17_present; then
+  # The probe is llvm_present (scripts/lib/harness_skip.sh), the one
+  # definition of "LLVM 23 is installed" every harness uses.
+  if llvm_present; then
     echo "decimal_parity: codegen build FAILED with LLVM present — NOT a skip:"
     sed 's/^/    /' "$WORK/codegen_build.err" | tail -30
     fail=1
   else
-    echo "decimal_parity: codegen build unavailable (no LLVM 17 llvm-config) — skipping refusal check"
+    echo "decimal_parity: codegen build unavailable (no LLVM 23 llvm-config) — skipping refusal check"
   fi
 else
   . scripts/lib/axon_bin.sh

@@ -454,12 +454,9 @@ impl<'ctx> super::Codegen<'ctx> {
             L::I32 => ctx.i32_type().into(),
             L::F64 => ctx.f64_type().into(),
             L::I1 => ctx.bool_type().into(),
-            L::Ptr => ctx
-                .i8_type()
-                .ptr_type(inkwell::AddressSpace::default())
-                .into(),
+            L::Ptr => ctx.ptr_type(inkwell::AddressSpace::default()).into(),
             L::Str => {
-                let i8_ptr = ctx.i8_type().ptr_type(inkwell::AddressSpace::default());
+                let i8_ptr = ctx.ptr_type(inkwell::AddressSpace::default());
                 ctx.struct_type(&[ctx.i64_type().into(), i8_ptr.into()], false)
                     .into()
             }
@@ -529,13 +526,13 @@ impl<'ctx> super::Codegen<'ctx> {
     /// see [`StrOutSig`]'s own doc comment for why it's a separate table, not a new field).
     pub(super) fn synthesize_str_out_wrapper(&mut self, row: &StrOutSig) {
         let i64_ty = self.ir.context.i64_type();
-        let i8_ptr = self
-            .ir
-            .context
-            .i8_type()
+        let i8_ptr = self.ir.context.ptr_type(inkwell::AddressSpace::default());
+        let i64_ptr = i64_ty
+            .get_context()
             .ptr_type(inkwell::AddressSpace::default());
-        let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
-        let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr_ptr = i8_ptr
+            .get_context()
+            .ptr_type(inkwell::AddressSpace::default());
         let str_ty = self
             .ir
             .context

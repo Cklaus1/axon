@@ -30,8 +30,8 @@
 # more consistent. (CI never builds the guest kernel, so CI could run stable — but
 # "CI and local differ" is the bug, not a design.)
 #
-# LLVM 17 does NOT constrain this choice. `inkwell`'s `llvm17-0` feature resolves
-# through `llvm-sys` to the SYSTEM LLVM (`/usr/lib/llvm-17`), which is independent
+# LLVM 23 does NOT constrain this choice. `inkwell`'s `llvm23-1` feature resolves
+# through `llvm-sys` to the SYSTEM LLVM (`/usr/lib/llvm-23`), which is independent
 # of the LLVM rustc bundles. An earlier note claimed the codegen LLVM pin limited
 # the Rust version; that was wrong and should not be repeated.
 #

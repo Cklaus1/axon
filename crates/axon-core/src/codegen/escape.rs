@@ -66,6 +66,8 @@ pub(super) fn fits_stack_slot(elem: BasicTypeEnum<'_>, n: u32) -> bool {
                 u64::from(a.len()).saturating_mul(upper(a.get_element_type()))
             }
             BasicTypeEnum::VectorType(v) => u64::from(v.get_size()).saturating_mul(16),
+            // Size is a runtime multiple of vscale: never admit it.
+            BasicTypeEnum::ScalableVectorType(_) => u64::MAX,
         }
     }
     u64::from(n).saturating_mul(upper(elem)) <= STACK_SLOT_MAX_BYTES
