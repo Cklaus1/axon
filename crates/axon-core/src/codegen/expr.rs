@@ -1574,15 +1574,23 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> BasicValueEnum<'ctx> {
         let int_ty = l.get_type();
         let zero = int_ty.const_zero();
-        let is_zero =
-            build_wrappers::w_int_compare(&self.ir.builder, IntPredicate::EQ, r, zero, "udivzero");
-        self.emit_arith_guard(
-            is_zero,
-            if is_rem { 2 } else { 1 },
-            if is_rem { "%" } else { "/" },
-            l,
-            r,
-        );
+        // AX-74: a non-zero constant divisor needs no zero check.
+        if !matches!(r.get_zero_extended_constant(), Some(c) if c != 0) {
+            let is_zero = build_wrappers::w_int_compare(
+                &self.ir.builder,
+                IntPredicate::EQ,
+                r,
+                zero,
+                "udivzero",
+            );
+            self.emit_arith_guard(
+                is_zero,
+                if is_rem { 2 } else { 1 },
+                if is_rem { "%" } else { "/" },
+                l,
+                r,
+            );
+        }
         if is_rem {
             build_wrappers::w_int_unsigned_rem(&self.ir.builder, l, r, "uremn").into()
         } else {
@@ -1601,15 +1609,23 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> BasicValueEnum<'ctx> {
         let int_ty = l.get_type();
         let zero = int_ty.const_zero();
-        let is_zero =
-            build_wrappers::w_int_compare(&self.ir.builder, IntPredicate::EQ, r, zero, "sdivzero");
-        self.emit_arith_guard(
-            is_zero,
-            if is_rem { 2 } else { 1 },
-            if is_rem { "%" } else { "/" },
-            l,
-            r,
-        );
+        // AX-74: a non-zero constant divisor needs no zero check.
+        if !matches!(r.get_zero_extended_constant(), Some(c) if c != 0) {
+            let is_zero = build_wrappers::w_int_compare(
+                &self.ir.builder,
+                IntPredicate::EQ,
+                r,
+                zero,
+                "sdivzero",
+            );
+            self.emit_arith_guard(
+                is_zero,
+                if is_rem { 2 } else { 1 },
+                if is_rem { "%" } else { "/" },
+                l,
+                r,
+            );
+        }
         if is_rem {
             build_wrappers::w_int_signed_rem(&self.ir.builder, l, r, "sremn").into()
         } else {
@@ -1622,6 +1638,10 @@ impl<'ctx> super::Codegen<'ctx> {
     /// reproduces the interpreter's `wrapping_div`/`wrapping_rem` (INT_MIN for
     /// div, 0 for rem) — so native never SIGFPEs (exit 136) where the
     /// interpreter returns a defined value or a clean panic.
+    ///
+    /// AX-74: a constant divisor drops the guards it cannot trip. Neither 0 nor
+    /// -1 → a plain `sdiv`/`srem`; -1 → no zero check, `% -1` is 0 and `/ -1`
+    /// keeps only the `INT_MIN` overflow guard.
     fn emit_checked_div_rem(
         &mut self,
         is_rem: bool,
@@ -1630,6 +1650,32 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> BasicValueEnum<'ctx> {
         let i64_ty = self.ir.context.i64_type();
         let zero = i64_ty.const_zero();
+        let int_min = i64_ty.const_int(i64::MIN as u64, false);
+        match r.get_sign_extended_constant() {
+            Some(0) | None => {}
+            Some(-1) => {
+                if is_rem {
+                    return zero.into();
+                }
+                let l_is_min = build_wrappers::w_int_compare(
+                    &self.ir.builder,
+                    IntPredicate::EQ,
+                    l,
+                    int_min,
+                    "l_is_min",
+                );
+                self.emit_arith_guard(l_is_min, 0, "/", l, r);
+                return build_wrappers::w_int_sub(&self.ir.builder, zero, l, "neg").into();
+            }
+            Some(_) => {
+                let q = if is_rem {
+                    build_wrappers::w_int_signed_rem(&self.ir.builder, l, r, "rem")
+                } else {
+                    build_wrappers::w_int_signed_div(&self.ir.builder, l, r, "div")
+                };
+                return q.into();
+            }
+        }
         // divisor == 0 → trap (kind 1 div0 / 2 rem0).
         let is_zero =
             build_wrappers::w_int_compare(&self.ir.builder, IntPredicate::EQ, r, zero, "divzero");
@@ -1644,7 +1690,6 @@ impl<'ctx> super::Codegen<'ctx> {
         // Guard INT_MIN / -1 (the one signed-division case that traps in
         // hardware). Replace the divisor with 1 on that path and patch the
         // result via select, matching wrapping_div/wrapping_rem.
-        let int_min = i64_ty.const_int(i64::MIN as u64, false);
         let neg_one = i64_ty.const_int((-1i64) as u64, true);
         let l_is_min = build_wrappers::w_int_compare(
             &self.ir.builder,
@@ -12549,6 +12594,82 @@ mod tests {
                 .any(|e| e.contains("E0910") && e.contains("ghost")),
             "ATTACK: a call to an unresolved fn was dropped silently natively [ghost]: errors {:?}",
             cg.codegen_errors()
+        );
+    }
+}
+
+#[cfg(test)]
+mod checked_arith_ir_tests {
+    use crate::codegen::Codegen;
+    use inkwell::context::Context;
+
+    /// Lower `src` (checker bypassed) and return the module IR text.
+    fn module_ir(src: &str) -> String {
+        let prog = crate::parse_source(src).expect("fixture must parse");
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx, "checked_arith");
+        cg.declare_functions(&prog);
+        cg.emit_program(&prog);
+        assert!(
+            cg.codegen_errors().is_empty(),
+            "fixture failed to lower: {:?}",
+            cg.codegen_errors()
+        );
+        let ir = cg.emit_llvm_ir();
+        cg.ir
+            .module
+            .verify()
+            .unwrap_or_else(|e| panic!("IR verification failed: {}\n{ir}", e.to_string()));
+        ir
+    }
+
+    /// The IR text of `define ... @<name>(` up to its closing brace.
+    fn fn_ir(module: &str, name: &str) -> String {
+        let pat = format!(" @{name}(");
+        let body = module
+            .split("\ndefine ")
+            .find(|d| d.lines().next().is_some_and(|l| l.contains(&pat)))
+            .unwrap_or_else(|| panic!("fn {name} defined:\n{module}"));
+        body[..body.find("\n}").expect("fn closes")].to_string()
+    }
+
+    /// AX-74: a constant divisor that is neither 0 nor -1 can neither divide
+    /// by zero nor hit `i64::MIN / -1`, so it lowers to a bare `sdiv`/`srem`
+    /// with no zero check, no MIN/-1 guard and no panic block. `-1` keeps
+    /// only the `i64::MIN / -1` overflow guard (and `% -1` folds to 0); a
+    /// variable divisor keeps both checks.
+    #[test]
+    fn constant_divisor_emits_no_zero_check() {
+        let ir = module_ir(
+            "fn d(a: i64) -> i64 {\n  a / 7\n}\n\
+             fn r(a: i64) -> i64 {\n  a % 1000003\n}\n\
+             fn dm(a: i64) -> i64 {\n  a / -1\n}\n\
+             fn rm(a: i64) -> i64 {\n  a % -1\n}\n\
+             fn v(a: i64, b: i64) -> i64 {\n  a / b\n}\n\
+             fn main() -> i64 {\n  d(1) + r(2) + dm(3) + rm(4) + v(5, 6)\n}\n",
+        );
+        for (name, op) in [("d", "sdiv i64 %"), ("r", "srem i64 %")] {
+            let f = fn_ir(&ir, name);
+            assert!(f.contains(op), "fn {name} lost its {op}:\n{f}");
+            for absent in ["divzero", "l_is_min", "safe_div", "divrem_fix", "arith_panic"] {
+                assert!(
+                    !f.contains(absent),
+                    "fn {name}: a constant divisor still emits `{absent}`:\n{f}"
+                );
+            }
+        }
+        let dm = fn_ir(&ir, "dm");
+        assert!(!dm.contains("divzero"), "`/ -1` kept a zero check:\n{dm}");
+        assert!(dm.contains("l_is_min"), "`/ -1` lost its MIN guard:\n{dm}");
+        let rm = fn_ir(&ir, "rm");
+        assert!(
+            !rm.contains("srem") && !rm.contains("arith_panic"),
+            "`% -1` is always 0:\n{rm}"
+        );
+        let v = fn_ir(&ir, "v");
+        assert!(
+            v.contains("divzero") && v.contains("minneg1"),
+            "a variable divisor lost a check:\n{v}"
         );
     }
 }

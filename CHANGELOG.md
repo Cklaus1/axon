@@ -1,5 +1,10 @@
 # Axon Changelog
 
+## AX-74: a constant divisor drops the checks it cannot trip
+
+- **Constant divisors** (compilebench AX-74): a signed i64 `/`/`%` by a constant other than 0 and -1 lowers to a bare `sdiv`/`srem`, with no zero check, no `MIN / -1` guard and no panic block. `/ -1` keeps only the `MIN / -1` overflow guard; `% -1` folds to 0. A variable divisor is unchanged. On compilebench's `big-compile` (14,054 such sites) the unoptimised IR drops from 96,445 to 68,337 blocks; `llc -O0` retires 9.30 G instructions instead of 13.04 G and `opt -O2` 29.31 G instead of 30.71 G. `axon build --no-cache` retires 8.80 G instead of 11.72 G at `--opt-level 0` and 89.96 G instead of 90.85 G at `--release`; the stripped debug binary shrinks from 4,547,544 to 3,310,552 bytes.
+- Test: `constant_divisor_emits_no_zero_check` (IR shape).
+
 ## AX-73: codegen on LLVM 23
 
 - **Codegen links LLVM 23** (compilebench AX-73): `inkwell` 0.11 with the `llvm23-1` feature (`llvm-sys` 231), up from `inkwell` 0.4 on LLVM 17. Ubuntu's archive has no LLVM 23, so codegen builds need `llvm-23-dev` and `libpolly-23-dev` from apt.llvm.org (`ENVIRONMENTS.md`). `scripts/setup-environments.sh` checks for `llvm-config-23`. The harness skip probe `llvm_present` and CI look for LLVM 23. On the same unoptimised Axon IR for compilebench's `big-compile` (probe 2026-11-03), LLVM 23's `opt -O2` retires 0.66× LLVM 17's instructions and `opt` + `llc -O2` together 0.84×. On `collatz` the cycles drop to 0.84×.
