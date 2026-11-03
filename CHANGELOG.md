@@ -1,5 +1,10 @@
 # Axon Changelog
 
+## AX-71: a `&mut [T]` parameter is `noalias captures(none)`
+
+- **The callee keeps `len`/`data` in registers** (compilebench AX-71): a `&mut [T]` parameter, the address of the caller's `{len, data}` slot, is now declared `ptr noalias captures(none)`. The `&mut` rules (`mut_borrow.rs`) make it the only path to that slot for the whole call: E0605 limits the operand to a whole local of the caller (no global, field, element, closure capture or temporary) and makes `&mut` legal only as the argument of a `&mut [T]` parameter, so the callee can hand the pointer on but never keep it; E0606 forbids a second argument of the call that mentions the same variable. LLVM used to reload both header fields and redo the bounds check after every element store. Now it loads them once per call. `noalias` alone did not help: the recursive call captured the pointer. A `&[T]` parameter is already a `{ i64, ptr }` value, so it is unchanged.
+- **Measured** (`--release`, `taskset -c 7 perf stat`, median of 5, compilebench run `20261103T152725Z` sources): `qsort` drops from 548 M to 383 M instructions (0.70×; clang-21 `-O3` retires 259 M, so the ratio falls from 2.11× to 1.48×), and cycles from 321 M to 285 M (clang 289 M). `fib-recursive`, `collatz`, `mandelbrot`, `arr-sum` and `sieve` are within 150 instructions of before. All six outputs match golden.
+
 ## AX-73: codegen on LLVM 23
 
 - **Codegen links LLVM 23** (compilebench AX-73): `inkwell` 0.11 with the `llvm23-1` feature (`llvm-sys` 231), up from `inkwell` 0.4 on LLVM 17. Ubuntu's archive has no LLVM 23, so codegen builds need `llvm-23-dev` and `libpolly-23-dev` from apt.llvm.org (`ENVIRONMENTS.md`). `scripts/setup-environments.sh` checks for `llvm-config-23`. The harness skip probe `llvm_present` and CI look for LLVM 23. On the same unoptimised Axon IR for compilebench's `big-compile` (probe 2026-11-03), LLVM 23's `opt -O2` retires 0.66× LLVM 17's instructions and `opt` + `llc -O2` together 0.84×. On `collatz` the cycles drop to 0.84×.
