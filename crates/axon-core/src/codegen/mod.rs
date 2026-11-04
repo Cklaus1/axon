@@ -393,6 +393,12 @@ pub struct Codegen<'ctx> {
     /// (`couldn't allocate input reg for constraint '{dx}'`). Set by
     /// `set_target_triple` BEFORE `emit_program`.
     pub(super) target_triple: String,
+    /// AX-80: the opt level the module will be compiled at. Emission keeps
+    /// shapes only a pass pipeline cleans up (a speculated `if`'s diamond,
+    /// which SimplifyCFG folds into a `select`) to optimising levels, and
+    /// emits the folded form at O0. Set by `set_opt_level` BEFORE
+    /// `emit_program`; defaults to O0. The build cache keys on the level.
+    pub(super) opt_level: OptLevel,
     /// Hard codegen errors collected during emission (e.g. a known builtin that
     /// has no native lowering). emit_program does not return a Result, so these
     /// accumulate here; the build pipeline checks `codegen_errors()` after
@@ -557,6 +563,7 @@ impl<'ctx> Codegen<'ctx> {
             target_is_wasi: false,
             freestanding: false,
             target_triple: String::new(),
+            opt_level: OptLevel::O0,
             codegen_errors: Vec::new(),
             errors_reported: 0,
             poisoned: HashMap::new(),
@@ -649,6 +656,12 @@ impl<'ctx> Codegen<'ctx> {
     /// x86_64 assumption).
     pub fn set_target_triple(&mut self, triple: &str) {
         self.target_triple = triple.to_string();
+    }
+
+    /// AX-80: record the opt level the module will be compiled at. Call
+    /// BEFORE `emit_program`; defaults to O0.
+    pub fn set_opt_level(&mut self, opt: OptLevel) {
+        self.opt_level = opt;
     }
 
     /// True when the current target triple is an ARM/thumb one. Mirrors the

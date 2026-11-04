@@ -8540,6 +8540,9 @@ fn build_ir_and_link(
     // assembly) needs the resolved triple BEFORE emit_program, not just at
     // object-write time. `None` = the historical x86_64 default.
     cg.set_target_triple(target_triple.unwrap_or_default());
+    // AX-80: emission picks some shapes by the level the pipeline below runs
+    // at (the cache key already includes it).
+    cg.set_opt_level(opt);
     laps.lap("ir_gen");
     // Phase 5 §4: elide the runtime refinement-return / scalar-`@[verify]` checks
     // the SMT prover discharged ∀-inputs (empty set without the `smt` feature, so

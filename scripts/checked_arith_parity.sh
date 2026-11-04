@@ -169,6 +169,29 @@ CASES[bool_repeat]='let f = arr_repeat(true, 5)
     }
     println(to_str(n))'
 
+# AX-80: at O0 (this harness's level) a `/`/`%` by a constant ±2^k lowers to
+# shifts; a negative dividend must still truncate toward zero, and the
+# remainder keep the dividend's sign.
+CASES[pow2_divisor]='let a = 0 - 7
+    let b = 0 - 8
+    let m = 0 - 9223372036854775807
+    let mm = m - 1
+    let big = 9223372036854775807
+    println(to_str(a / 2))
+    println(to_str(a % 2))
+    println(to_str(b / 4))
+    println(to_str(b % 4))
+    println(to_str(mm / 2))
+    println(to_str(mm % 4))
+    println(to_str(mm / 4611686018427387904))
+    println(to_str(big / 4611686018427387904))
+    println(to_str(big % 8))
+    println(to_str(a / -2))
+    println(to_str(a % -2))
+    println(to_str(mm / -4))
+    println(to_str(mm % -16))
+    println(to_str(21 / 2 + a / 1))'
+
 fail=0
 for label in "${!CASES[@]}"; do
   PROG="$WORK/$label.ax"
