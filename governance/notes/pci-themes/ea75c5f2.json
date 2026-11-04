@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/expr.rs): merge of AX-79 into the AX-80 line; the conflict resolution keeps both sides' IR-shape tests (AX-79's panic-operand test, AX-80's speculated-if doc). No behaviour beyond the two branches. The interpreter is untouched"
+}

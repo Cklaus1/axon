@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/mod.rs, main.rs): merge of AX-78 into the AX-77/79/80 line; the resolution keeps both Codegen fields and setters and computes AX-77's no-overflow set around both body paths (source body and AX-78 accumulator body). No behaviour beyond the branches. The interpreter is untouched"
+}

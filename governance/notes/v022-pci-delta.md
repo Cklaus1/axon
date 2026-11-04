@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 6420ffe6997c188f7b855832bbc459b3d6eab4fe
+generated-at: 3eefa59346e06d90dcdf87399cd91af74110110e
 
-`git diff --numstat 31413ca7..6420ffe6 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..3eefa593 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -35,6 +35,7 @@ generated-at: 6420ffe6997c188f7b855832bbc459b3d6eab4fe
 | `crates/axon-core/src/checker.rs` | 3044 | 792 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
+| `crates/axon-core/src/codegen/accum.rs` | 600 | 0 |
 | `crates/axon-core/src/codegen/asi.rs` | 238 | 54 |
 | `crates/axon-core/src/codegen/bpf.rs` | 9 | 5 |
 | `crates/axon-core/src/codegen/build_wrappers.rs` | 25 | 55 |
@@ -43,12 +44,13 @@ generated-at: 6420ffe6997c188f7b855832bbc459b3d6eab4fe
 | `crates/axon-core/src/codegen/display.rs` | 514 | 0 |
 | `crates/axon-core/src/codegen/enum_layout.rs` | 451 | 0 |
 | `crates/axon-core/src/codegen/escape.rs` | 511 | 0 |
-| `crates/axon-core/src/codegen/expr.rs` | 3782 | 969 |
-| `crates/axon-core/src/codegen/link.rs` | 1622 | 337 |
+| `crates/axon-core/src/codegen/expr.rs` | 4068 | 931 |
+| `crates/axon-core/src/codegen/link.rs` | 1726 | 337 |
 | `crates/axon-core/src/codegen/match_pat.rs` | 561 | 168 |
-| `crates/axon-core/src/codegen/mod.rs` | 648 | 162 |
+| `crates/axon-core/src/codegen/mod.rs` | 699 | 164 |
 | `crates/axon-core/src/codegen/option_result.rs` | 14 | 9 |
 | `crates/axon-core/src/codegen/output.rs` | 118 | 69 |
+| `crates/axon-core/src/codegen/ranges.rs` | 493 | 0 |
 | `crates/axon-core/src/codegen/types.rs` | 24 | 21 |
 | `crates/axon-core/src/complexity.rs` | 1 | 0 |
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
@@ -92,7 +94,7 @@ generated-at: 6420ffe6997c188f7b855832bbc459b3d6eab4fe
 | `crates/axon-core/src/lib.rs` | 447 | 102 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 215 | 60 |
-| `crates/axon-core/src/main.rs` | 2241 | 620 |
+| `crates/axon-core/src/main.rs` | 2248 | 620 |
 | `crates/axon-core/src/mono.rs` | 71 | 17 |
 | `crates/axon-core/src/mut_borrow.rs` | 944 | 0 |
 | `crates/axon-core/src/outcome.rs` | 248 | 0 |
@@ -105,9 +107,9 @@ generated-at: 6420ffe6997c188f7b855832bbc459b3d6eab4fe
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 70715 | 10108 |
+| total | 72256 | 10072 |
 
-`git log --reverse 31413ca7..6420ffe6 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..3eefa593 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -543,7 +545,15 @@ generated-at: 6420ffe6997c188f7b855832bbc459b3d6eab4fe
 | 8bac84d4 | compilebench AX findings (native) | NATIVE (codegen/expr.rs, codegen/mod.rs): an if whose arms are side-effect-free i64 arithmetic computes both arms wrapping and selects the value; a fault re-runs the taken arm checked, so panics are unchanged (AX-70). The interpreter is untouched |
 | 0e8ad325 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 6420ffe6 | compilebench AX findings (native) | NATIVE (codegen/expr.rs, codegen/mod.rs): a speculated if tests both arms' faults before the value diamond; a counter bumped once per trip of a for range from a literal start <= lo lowers to add nsw; arr_repeat of a bool stores i8 so the fill is a memset (AX-76). Panics and outputs are unchanged. The interpreter is untouched |
-| 432 commits | | |
+| e0c09c50 | compilebench AX findings (native) | NATIVE (codegen/ranges.rs, codegen/expr.rs, codegen/mod.rs, codegen/link.rs): a checked i64 +/-/* whose operand ranges (interval analysis of a fn's locals) keep the result in i64 lowers to an nsw op; an internal fn whose only use is one direct call is alwaysinline in optimised builds (AX-77). Panics and outputs are unchanged. The interpreter is untouched |
+| bb2f7c59 | compilebench AX findings (native) | NATIVE (codegen/expr.rs, codegen/mod.rs, main.rs): at O0 a speculated if's value is a select, and a signed / or % by a constant +-2^k lowers to the shift sequence; optimising levels unchanged (AX-80). Panics and outputs are unchanged. The interpreter is untouched |
+| 0246ef14 | compilebench AX findings (native) | NATIVE (codegen/expr.rs): a +/- overflow check passes the wrapped result to the panic block, which recovers the left operand as r - b / r + b; message, operands and exit code unchanged (AX-79). The interpreter is untouched |
+| 77aec801 | compilebench AX findings (native) | NATIVE (codegen/expr.rs): the first checked op of a fn places its continuation before the shared panic block, so the hot path falls through (AX-77). Block order only. The interpreter is untouched |
+| ea75c5f2 | compilebench AX findings (native) | NATIVE (codegen/expr.rs): merge of AX-79 into the AX-80 line; the conflict resolution keeps both sides' IR-shape tests (AX-79's panic-operand test, AX-80's speculated-if doc). No behaviour beyond the two branches. The interpreter is untouched |
+| 13576b01 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 199db6c6 | compilebench AX findings (native) | NATIVE (codegen/accum.rs, codegen/mod.rs, codegen/link.rs, main.rs): at O1-O3 a fn of the form if C { B } else { L + f(A) } runs as a loop summing the left operands while every term is non-negative and the sum fits, else finishes in source order; an overflow re-runs the original body so the panic is the source's own (AX-78). The interpreter is untouched |
+| 2c2893e5 | compilebench AX findings (native) | NATIVE (codegen/mod.rs, main.rs): merge of AX-78 into the AX-77/79/80 line; the resolution keeps both Codegen fields and setters and computes AX-77's no-overflow set around both body paths (source body and AX-78 accumulator body). No behaviour beyond the branches. The interpreter is untouched |
+| 440 commits | | |
 <!-- END MECHANICAL -->
 
 
