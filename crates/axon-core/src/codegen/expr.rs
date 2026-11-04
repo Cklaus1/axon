@@ -1867,6 +1867,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 r,
             );
         }
+        if let Some(q) = self.emit_pow2_div_rem(is_rem, l, r) {
+            return q;
+        }
         if is_rem {
             build_wrappers::w_int_signed_rem(&self.ir.builder, l, r, "sremn").into()
         } else {
@@ -1881,8 +1884,9 @@ impl<'ctx> super::Codegen<'ctx> {
     /// interpreter returns a defined value or a clean panic.
     ///
     /// AX-74: a constant divisor drops the guards it cannot trip. Neither 0 nor
-    /// -1 → a plain `sdiv`/`srem`; -1 → no zero check, `% -1` is 0 and `/ -1`
-    /// keeps only the `INT_MIN` overflow guard.
+    /// -1 → a plain `sdiv`/`srem` (AX-80: shifts for `±2^k` at O0); -1 → no
+    /// zero check, `% -1` is 0 and `/ -1` keeps only the `INT_MIN` overflow
+    /// guard.
     fn emit_checked_div_rem(
         &mut self,
         is_rem: bool,
@@ -1909,6 +1913,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 return build_wrappers::w_int_sub(&self.ir.builder, zero, l, "neg").into();
             }
             Some(_) => {
+                if let Some(q) = self.emit_pow2_div_rem(is_rem, l, r) {
+                    return q;
+                }
                 let q = if is_rem {
                     build_wrappers::w_int_signed_rem(&self.ir.builder, l, r, "rem")
                 } else {
@@ -1984,6 +1991,49 @@ impl<'ctx> super::Codegen<'ctx> {
             .builder
             .build_select(is_trap, patched, raw, "divrem_fix")
             .unwrap()
+    }
+
+    /// AX-80: at O0, a signed `/`/`%` by a constant `±2^k` (`1 <= k <=
+    /// width - 2`) as the shift sequence LLVM's optimiser emits, since O0's
+    /// instruction selector lowers `sdiv`/`srem` by a constant to `idiv`.
+    /// `q = (x + ((x ashr (w-1)) lshr (w-k))) ashr k` adds `2^k - 1` to a
+    /// negative dividend, so the shift truncates toward zero as `sdiv`
+    /// does; `x % 2^k = x - (q shl k)`. For `-2^k`, `x / -d = -(x / d)`
+    /// (`|x / d| <= 2^(w-2)`, so the negation cannot wrap) and `x % -d =
+    /// x % d` (the sign follows the dividend). No such divisor is 0 or -1,
+    /// so nothing can fault. `None`: not this case, or an optimising level
+    /// (whose pipeline does this itself; release IR stays `sdiv`/`srem`).
+    fn emit_pow2_div_rem(
+        &mut self,
+        is_rem: bool,
+        l: inkwell::values::IntValue<'ctx>,
+        r: inkwell::values::IntValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        if self.opt_level.is_optimized() {
+            return None;
+        }
+        let ty = l.get_type();
+        let width = ty.get_bit_width();
+        let d = r.get_sign_extended_constant()?;
+        let mag = d.unsigned_abs();
+        let k = mag.trailing_zeros();
+        if !mag.is_power_of_two() || k == 0 || k > width.checked_sub(2)? {
+            return None;
+        }
+        let b = &self.ir.builder;
+        let c = |n: u32| ty.const_int(u64::from(n), false);
+        let sign = build_wrappers::w_right_shift(b, l, c(width - 1), true, "pow2_sign");
+        let bias = build_wrappers::w_right_shift(b, sign, c(width - k), false, "pow2_bias");
+        let biased = build_wrappers::w_int_add(b, l, bias, "pow2_biased");
+        let q = build_wrappers::w_right_shift(b, biased, c(k), true, "pow2_q");
+        Some(if is_rem {
+            let back = build_wrappers::w_left_shift(b, q, c(k), "pow2_back");
+            build_wrappers::w_int_sub(b, l, back, "pow2_rem").into()
+        } else if d < 0 {
+            build_wrappers::w_int_sub(b, ty.const_zero(), q, "pow2_neg").into()
+        } else {
+            q.into()
+        })
     }
 
     /// The statically-known `(enum, variant)` of an enum literal, if this
@@ -3030,24 +3080,25 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         // Two passes over the arms. The first, here, computes each arm's
-        // fault bit; the fast path branches on their OR before the `if`, so
-        // the test depends on neither the condition nor a phi that jump
-        // threading could push back into an arm. The second emits the value
-        // as a diamond of wrapping arms meeting in a phi: every arm op stays
-        // under its condition, so `x / 2` in `if x % 2 == 0 { x / 2 }`
-        // becomes an exact `ashr` (AX-76), which a `select` built here would
-        // hide. The arms hold no call and no branch, so SimplifyCFG folds
-        // the diamond into a `select`, the if-conversion clang's C gets.
+        // wrapped value and fault bit; the fast path branches on the faults'
+        // OR before the `if`, so the test depends on neither the condition
+        // nor a phi that jump threading could push back into an arm. At an
+        // optimising level the second pass emits the value as a diamond of
+        // wrapping arms meeting in a phi: every arm op stays under its
+        // condition, so `x / 2` in `if x % 2 == 0 { x / 2 }` becomes an exact
+        // `ashr` (AX-76), which a `select` built here would hide. The arms
+        // hold no call and no branch, so SimplifyCFG folds the diamond into a
+        // `select`, the if-conversion clang's C gets. O0 runs no SimplifyCFG,
+        // so the diamond would stay a data-dependent branch there (AX-80):
+        // it `select`s the first pass's values instead.
         let fresh = || ArithMode::Collect(Speculation::default());
         let saved = std::mem::replace(&mut self.arith_mode, fresh());
-        let _ = self.emit_expr(then_v, fn_val);
+        let spec_tv = self.emit_expr(then_v, fn_val);
         let ArithMode::Collect(t_spec) = std::mem::replace(&mut self.arith_mode, fresh()) else {
             unreachable!("AX-70: arith mode left Collect inside a speculated arm");
         };
         let t_flag = t_spec.fault(&self.ir.builder, i64_ty);
-        if let Some(e) = else_v {
-            let _ = self.emit_expr(e, fn_val);
-        }
+        let spec_ev = else_v.and_then(|e| self.emit_expr(e, fn_val));
         let ArithMode::Collect(e_spec) = std::mem::replace(&mut self.arith_mode, saved) else {
             unreachable!("AX-70: arith mode left Collect inside a speculated arm");
         };
@@ -3105,12 +3156,63 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_br(&self.ir.builder, head_bb);
         }
 
+        self.ir.builder.position_at_end(head_bb);
+        let value = if self.opt_level.is_optimized() {
+            self.emit_spec_diamond(cond, then_v, else_v, target_ptr, fn_val)
+        } else {
+            // Both values were computed before the fault branch, whose block
+            // dominates `head_bb`. A missing else keeps the target, which no
+            // speculable arm writes.
+            let ev = match (spec_ev, target_ptr) {
+                (Some(ev), _) => Some(ev),
+                (None, Some(ptr)) if else_v.is_none() => Some(build_wrappers::w_load(
+                    &self.ir.builder,
+                    i64_ty.into(),
+                    ptr,
+                    "spec_keep",
+                )),
+                _ => None,
+            };
+            let (Some(BasicValueEnum::IntValue(tv)), Some(BasicValueEnum::IntValue(ev))) =
+                (spec_tv, ev)
+            else {
+                unreachable!("AX-70: a speculable if arm did not lower to an i64");
+            };
+            assert!(
+                tv.get_type() == i64_ty && ev.get_type() == i64_ty,
+                "AX-70: a speculable if arm is not i64"
+            );
+            build_wrappers::w_select(&self.ir.builder, cond, tv.into(), ev.into(), "spec_val")
+        };
+        match target_ptr {
+            Some(ptr) => {
+                build_wrappers::w_store(&self.ir.builder, ptr, value);
+                Some(None)
+            }
+            None => Some(Some(value)),
+        }
+    }
+
+    /// AX-76: the speculated `if`'s value as a diamond of wrapping arms
+    /// meeting in a phi, emitted from `head_bb` (the builder's block); the
+    /// builder ends in the merge block.
+    fn emit_spec_diamond(
+        &mut self,
+        cond: inkwell::values::IntValue<'ctx>,
+        then_v: &ast::Expr,
+        else_v: Option<&ast::Expr>,
+        target_ptr: Option<inkwell::values::PointerValue<'ctx>>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        let i64_ty = self.ir.context.i64_type();
         let then_bb = self.ir.context.append_basic_block(fn_val, "spec_then");
         let else_bb = self.ir.context.append_basic_block(fn_val, "spec_else");
         let merge_bb = self.ir.context.append_basic_block(fn_val, "spec_merge");
-        self.ir.builder.position_at_end(head_bb);
         build_wrappers::w_cond_br(&self.ir.builder, cond, then_bb, else_bb);
-        let saved = std::mem::replace(&mut self.arith_mode, fresh());
+        let saved = std::mem::replace(
+            &mut self.arith_mode,
+            ArithMode::Collect(Speculation::default()),
+        );
         self.ir.builder.position_at_end(then_bb);
         let tv = self.emit_expr(then_v, fn_val);
         let then_end = self
@@ -3151,14 +3253,7 @@ impl<'ctx> super::Codegen<'ctx> {
         );
         let value = build_wrappers::w_phi(&self.ir.builder, i64_ty.into(), "spec_val");
         value.add_incoming(&[(&tv, then_end), (&ev, else_end)]);
-        let value = value.as_basic_value();
-        match target_ptr {
-            Some(ptr) => {
-                build_wrappers::w_store(&self.ir.builder, ptr, value);
-                Some(None)
-            }
-            None => Some(Some(value)),
-        }
+        value.as_basic_value()
     }
 
     /// The expression a block of exactly one statement evaluates (a block
@@ -13305,9 +13400,15 @@ mod checked_arith_ir_tests {
 
     /// Lower `src` (checker bypassed) and return the module IR text.
     fn module_ir(src: &str) -> String {
+        module_ir_at(src, crate::codegen::OptLevel::O0)
+    }
+
+    /// `module_ir`, emitting for a build at `opt` (before its pipeline).
+    fn module_ir_at(src: &str, opt: crate::codegen::OptLevel) -> String {
         let prog = crate::parse_source(src).expect("fixture must parse");
         let ctx = Context::create();
         let mut cg = Codegen::new(&ctx, "checked_arith");
+        cg.set_opt_level(opt);
         cg.declare_functions(&prog);
         cg.emit_program(&prog);
         assert!(
@@ -13331,6 +13432,45 @@ mod checked_arith_ir_tests {
             .find(|d| d.lines().next().is_some_and(|l| l.contains(&pat)))
             .unwrap_or_else(|| panic!("fn {name} defined:\n{module}"));
         body[..body.find("\n}").expect("fn closes")].to_string()
+    }
+
+    /// AX-80: at O0 a signed `/`/`%` by `±2^k` lowers to shifts (O0's
+    /// instruction selector turns `sdiv`/`srem` by a constant into `idiv`);
+    /// an optimising level keeps `sdiv`/`srem` for its pipeline, and a
+    /// divisor that is not a power of two keeps them at O0.
+    #[test]
+    fn pow2_divisor_lowers_to_shifts_at_o0() {
+        use crate::codegen::OptLevel;
+        let src = "fn d(a: i64) -> i64 {\n  a / 8\n}\n\
+             fn r(a: i64) -> i64 {\n  a % 2\n}\n\
+             fn nd(a: i64) -> i64 {\n  a / -4\n}\n\
+             fn nr(a: i64) -> i64 {\n  a % -16\n}\n\
+             fn s(a: i64) -> i64 {\n  a / 6\n}\n\
+             fn main() -> i64 {\n  d(1) + r(2) + nd(3) + nr(4) + s(5)\n}\n";
+        let o0 = module_ir_at(src, OptLevel::O0);
+        for name in ["d", "r", "nd", "nr"] {
+            let f = fn_ir(&o0, name);
+            assert!(
+                !f.contains("sdiv") && !f.contains("srem") && f.contains("%pow2_q = ashr i64"),
+                "O0: fn {name} still divides:\n{f}"
+            );
+        }
+        assert!(
+            fn_ir(&o0, "nd").contains("%pow2_neg"),
+            "O0: `/ -4` lost its negation"
+        );
+        assert!(
+            fn_ir(&o0, "s").contains("sdiv i64"),
+            "O0: `/ 6` is not a power of two"
+        );
+        let o3 = module_ir_at(src, OptLevel::O3);
+        for (name, op) in [("d", "sdiv"), ("r", "srem"), ("nd", "sdiv"), ("nr", "srem")] {
+            let f = fn_ir(&o3, name);
+            assert!(
+                f.contains(op) && !f.contains("pow2_"),
+                "O3: fn {name} must keep its {op} for the pipeline:\n{f}"
+            );
+        }
     }
 
     /// AX-74: a constant divisor that is neither 0 nor -1 can neither divide
@@ -13423,51 +13563,68 @@ mod checked_arith_ir_tests {
         );
     }
 
-    /// AX-70/AX-76: an `if` whose arms are checked i64 arithmetic computes
-    /// both arms' faults up front, branches once on their OR, and lowers the
-    /// value as wrapping arms meeting in a phi (which SimplifyCFG folds into
-    /// a `select`). `3 * x + 1` faults through one range test on `x`, not a
-    /// `smul`/`sadd` intrinsic per op. The cold path re-runs the taken arm
-    /// checked so the panic names the faulting op. An arm that can trap
-    /// (a variable divisor) or has an effect (a call) keeps the branches.
+    /// AX-70/AX-76/AX-80: an `if` whose arms are checked i64 arithmetic
+    /// computes both arms' faults up front and branches once on their OR.
+    /// At an optimising level the value is wrapping arms meeting in a phi
+    /// (which SimplifyCFG folds into a `select`); at O0, which runs no
+    /// SimplifyCFG, it is a `select` of the arms' wrapped values, so no
+    /// branch on the condition is left. `3 * x + 1` faults through one range
+    /// test on `x`, not a `smul`/`sadd` intrinsic per op. The cold path
+    /// re-runs the taken arm checked so the panic names the faulting op. An
+    /// arm that can trap (a variable divisor) or has an effect (a call)
+    /// keeps the branches.
     #[test]
     fn checked_op_in_if_arm_is_speculated() {
-        let ir = module_ir(
-            "fn step(x: i64) -> i64 {\n  if x % 2 == 0 { x / 2 } else { 3 * x + 1 }\n}\n\
+        use crate::codegen::OptLevel;
+        let src = "fn step(x: i64) -> i64 {\n  if x % 2 == 0 { x / 2 } else { 3 * x + 1 }\n}\n\
              fn count(c: bool, n: i64) -> i64 {\n  let k = n\n  if c { k = k + 1 }\n  k\n}\n\
              fn div(x: i64, d: i64) -> i64 {\n  if d != 0 { x / d } else { x + 1 }\n}\n\
-             fn main() -> i64 {\n  step(7) + count(true, 1) + div(4, 2)\n}\n",
-        );
-        let step = fn_ir(&ir, "step");
-        assert!(
-            step.contains("%spec_val"),
-            "the if was not speculated:\n{step}"
-        );
-        assert!(
-            step.contains("br i1 %spec_range, label %spec_slow"),
-            "the fault branch is not on the arm's range test alone:\n{step}"
-        );
-        assert_eq!(
-            step.matches("icmp ugt").count(),
-            1,
-            "`3 * x + 1` must fault through one range test on x:\n{step}"
-        );
-        assert!(!step.contains("if_then"), "the arms still branch:\n{step}");
-        let fast = &step[..step.find("spec_slow:").expect("cold re-run path")];
-        assert!(
-            !fast.contains("with.overflow"),
-            "the speculated arms still use the intrinsics:\n{step}"
-        );
-        let count = fn_ir(&ir, "count");
-        assert!(
-            count.contains("%spec_val") && !count.contains("if_then"),
-            "`if c {{ k = k + 1 }}` was not speculated:\n{count}"
-        );
-        let div = fn_ir(&ir, "div");
-        assert!(
-            div.contains("if_then") && !div.contains("spec_val"),
-            "a variable divisor was speculated:\n{div}"
-        );
+             fn main() -> i64 {\n  step(7) + count(true, 1) + div(4, 2)\n}\n";
+        for opt in [OptLevel::O0, OptLevel::O3] {
+            let ir = module_ir_at(src, opt);
+            let step = fn_ir(&ir, "step");
+            assert!(
+                step.contains("br i1 %spec_range, label %spec_slow"),
+                "{opt:?}: the fault branch is not on the arm's range test alone:\n{step}"
+            );
+            assert_eq!(
+                step.matches("icmp ugt").count(),
+                1,
+                "{opt:?}: `3 * x + 1` must fault through one range test on x:\n{step}"
+            );
+            assert!(
+                !step.contains("if_then"),
+                "{opt:?}: the arms still branch:\n{step}"
+            );
+            let fast = &step[..step.find("spec_slow:").expect("cold re-run path")];
+            assert!(
+                !fast.contains("with.overflow"),
+                "{opt:?}: the speculated arms still use the intrinsics:\n{step}"
+            );
+            let count = fn_ir(&ir, "count");
+            assert!(
+                !count.contains("if_then"),
+                "{opt:?}: `if c {{ k = k + 1 }}` was not speculated:\n{count}"
+            );
+            for (name, f) in [("step", &step), ("count", &count)] {
+                if opt == OptLevel::O0 {
+                    assert!(
+                        f.contains("%spec_val = select i1") && !f.contains("spec_then"),
+                        "O0: {name}'s value must be a select, not a branch on the condition:\n{f}"
+                    );
+                } else {
+                    assert!(
+                        f.contains("%spec_val = phi i64") && f.contains("spec_then:"),
+                        "{opt:?}: {name}'s value must be the wrapping-arm diamond:\n{f}"
+                    );
+                }
+            }
+            let div = fn_ir(&ir, "div");
+            assert!(
+                div.contains("if_then") && !div.contains("spec_val"),
+                "{opt:?}: a variable divisor was speculated:\n{div}"
+            );
+        }
     }
 
     /// AX-76: a counter started at a literal `c0 <= lo` and bumped once per
