@@ -107,6 +107,8 @@ pub(super) type ArithPanicKey<'ctx> = (FunctionValue<'ctx>, i64, &'static str, u
 
 /// AX-75: a shared `__axon_arith_panic` block and, for an overflow block, the
 /// phis that carry the faulting operands `a` and `b` in from each check.
+/// AX-79: for `+`/`-` the first phi carries the op's WRAPPED result instead
+/// of `a` (see [`lhs_from_wrapped`]); the block recovers `a` from it.
 #[derive(Clone, Copy)]
 pub(super) struct ArithPanicBlock<'ctx> {
     block: inkwell::basic_block::BasicBlock<'ctx>,
@@ -114,6 +116,20 @@ pub(super) struct ArithPanicBlock<'ctx> {
         inkwell::values::PhiValue<'ctx>,
         inkwell::values::PhiValue<'ctx>,
     )>,
+}
+
+/// AX-79: whether an overflow check of `op_glyph` hands its shared panic
+/// block the op's wrapped result `r` rather than its left operand `a`. For
+/// `+` and `-` the block recovers `a` exactly as `r - b` / `r + b` (two's
+/// complement at the operand width: `r = a ± b mod 2^w`, so `r ∓ b = a mod
+/// 2^w`, and `a` fits the width), so the message is unchanged. The point is
+/// the hot path: `r` is live past the check anyway (it is the op's value),
+/// while `a` is usually dead there, so passing `a` kept a copy of it alive
+/// across every check. In a reduction `acc = acc + v` that copy is one `mov`
+/// per element (the `add` overwrites `acc`'s register). `*` has no such
+/// inverse (`r / b` is not `a` once the product wrapped), so it passes `a`.
+fn lhs_from_wrapped(op_glyph: &str) -> bool {
+    matches!(op_glyph, "+" | "-")
 }
 
 /// AX-70: how `emit_arith_guard` treats a checked op's fault predicate.
@@ -1457,7 +1473,9 @@ impl<'ctx> super::Codegen<'ctx> {
     /// i1 "the fault happened" predicate. `kind` selects the runtime message (0
     /// overflow / 1 div0 / 2 rem0); `a`/`b` are the operands passed through for
     /// the overflow message (the runtime ignores them for kinds 1/2, which pass
-    /// 0).
+    /// 0). AX-79: an overflow check of `+`/`-` passes the op's wrapped result
+    /// as `a` instead ([`lhs_from_wrapped`]); the panic block recovers the
+    /// left operand from it.
     ///
     /// AX-75: the failure edge goes to the function's shared panic block for
     /// this kind, glyph and width (`arith_panic_block`); an overflow check
@@ -1503,7 +1521,9 @@ impl<'ctx> super::Codegen<'ctx> {
     /// `op_glyph` and operand type `ty`, built on first use: phis for the
     /// operands (overflow only; sign-extended to i64 as the runtime expects),
     /// the call with the module's one glyph global, `unreachable`. `None` when
-    /// the runtime extern is not declared.
+    /// the runtime extern is not declared. AX-79: for `+`/`-` the first phi
+    /// is the wrapped result `r` and the left operand passed on is `r - b` /
+    /// `r + b` at the operand width ([`lhs_from_wrapped`]).
     fn arith_panic_block(
         &mut self,
         llvm_fn: FunctionValue<'ctx>,
@@ -1521,12 +1541,22 @@ impl<'ctx> super::Codegen<'ctx> {
         self.ir.builder.position_at_end(block);
         let i64_ty = self.ir.context.i64_type();
         let (operands, a_i64, b_i64) = if kind == 0 {
-            let pa = build_wrappers::w_phi(&self.ir.builder, ty.into(), "arith_a");
+            let wrapped = lhs_from_wrapped(op_glyph);
+            let pa = build_wrappers::w_phi(
+                &self.ir.builder,
+                ty.into(),
+                if wrapped { "arith_r" } else { "arith_a" },
+            );
             let pb = build_wrappers::w_phi(&self.ir.builder, ty.into(), "arith_b");
             let (a, b) = (
                 pa.as_basic_value().into_int_value(),
                 pb.as_basic_value().into_int_value(),
             );
+            let a = match op_glyph {
+                "+" => build_wrappers::w_int_sub(&self.ir.builder, a, b, "arith_a"),
+                "-" => build_wrappers::w_int_add(&self.ir.builder, a, b, "arith_a"),
+                _ => a,
+            };
             // __axon_arith_panic expects i64 for `a` and `b`; sign-extend narrower values.
             let (a, b) = if ty.get_bit_width() < 64 {
                 (
@@ -1692,7 +1722,8 @@ impl<'ctx> super::Codegen<'ctx> {
         let result = build_wrappers::w_extract_value(&self.ir.builder, agg, 0, "ovf_res");
         let flag =
             build_wrappers::w_extract_value(&self.ir.builder, agg, 1, "ovf_flag").into_int_value();
-        self.emit_arith_guard(flag, 0, op_glyph, l, r);
+        let a = if lhs_from_wrapped(op_glyph) { result.into_int_value() } else { l };
+        self.emit_arith_guard(flag, 0, op_glyph, a, r);
         Some(result)
     }
 
@@ -1800,7 +1831,8 @@ impl<'ctx> super::Codegen<'ctx> {
         let result = build_wrappers::w_extract_value(&self.ir.builder, agg, 0, "ovfn_res");
         let flag =
             build_wrappers::w_extract_value(&self.ir.builder, agg, 1, "ovfn_flag").into_int_value();
-        self.emit_arith_guard(flag, 0, op_glyph, l, r);
+        let a = if lhs_from_wrapped(op_glyph) { result.into_int_value() } else { l };
+        self.emit_arith_guard(flag, 0, op_glyph, a, r);
         Some(result)
     }
 
@@ -13547,9 +13579,10 @@ mod checked_arith_ir_tests {
             calls, 5,
             "want one panic call per kind and glyph in f:\n{f}"
         );
+        // AX-79: the `+` block's first phi carries the wrapped results.
         let add_phi = f
             .lines()
-            .find(|l| l.contains("%arith_a = phi i64"))
+            .find(|l| l.contains("%arith_r = phi i64"))
             .unwrap_or_else(|| panic!("no shared operand phi:\n{f}"));
         assert!(
             add_phi.matches('[').count() >= 4,
@@ -13560,6 +13593,47 @@ mod checked_arith_ir_tests {
             g.matches("call void @__axon_arith_panic(").count(),
             2,
             "want one panic call per kind and glyph in g:\n{g}"
+        );
+    }
+
+    /// AX-79: an i64 `+`/`-` overflow check hands its panic block the op's
+    /// wrapped result, which is live past the check anyway, and the block
+    /// recovers the left operand as `r - b` / `r + b`; passing the left
+    /// operand itself kept it alive across the check (a `mov` per element of
+    /// an `acc = acc + v` reduction). `*` has no such inverse and still
+    /// passes its left operand.
+    #[test]
+    fn add_sub_overflow_panic_recovers_lhs_from_wrapped_result() {
+        let ir = module_ir(
+            "fn add(a: i64, b: i64) -> i64 {\n  a + b\n}\n\
+             fn sub(a: i64, b: i64) -> i64 {\n  a - b\n}\n\
+             fn mul(a: i64, b: i64) -> i64 {\n  a * b\n}\n\
+             fn main() -> i64 {\n  add(1, 2) + sub(3, 4) + mul(5, 6)\n}\n",
+        );
+        for (name, intr, recover) in [
+            ("add", "sadd", "%arith_a = sub i64 %arith_r, %arith_b"),
+            ("sub", "ssub", "%arith_a = add i64 %arith_r, %arith_b"),
+        ] {
+            let f = fn_ir(&ir, name);
+            let res = format!("%ovf = call {{ i64, i1 }} @llvm.{intr}.with.overflow.i64");
+            assert!(f.contains(&res), "fn {name} lost its checked op:\n{f}");
+            assert!(
+                f.contains("%arith_r = phi i64 [ %ovf_res, %entry ]"),
+                "fn {name}: the panic block is not fed the wrapped result:\n{f}"
+            );
+            assert!(
+                f.contains(recover),
+                "fn {name}: the panic block does not recover the left operand:\n{f}"
+            );
+            assert!(
+                f.contains("i64 %arith_a, i64 %arith_b)"),
+                "fn {name}: the panic call lost its operands:\n{f}"
+            );
+        }
+        let mul = fn_ir(&ir, "mul");
+        assert!(
+            mul.contains("%arith_a = phi i64") && !mul.contains("%arith_r"),
+            "`*` must pass its left operand:\n{mul}"
         );
     }
 

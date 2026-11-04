@@ -168,6 +168,19 @@ CASES[bool_repeat]='let f = arr_repeat(true, 5)
         if f[k] { n = n + 1 }
     }
     println(to_str(n))'
+# AX-79: a `+`/`-` overflow panic recovers its left operand from the wrapped
+# result (`r - b` / `r + b`); the message must still name the original
+# operands, upward and downward, also from a fold accumulator.
+CASES[fold_add_ovf]='let xs = [100, 500, 300, 7]
+    println(to_str(arr_fold(xs, 9223372036854775000, |acc: i64, x: i64| acc + x * 2)))'
+CASES[fold_sub_ovf]='let xs = [100, 500, 300, 7]
+    println(to_str(arr_fold(xs, 0 - 9223372036854775000, |acc: i64, x: i64| acc - x * 2)))'
+CASES[add_neg_ovf]='let m = 0 - 9223372036854775807
+    let k = 0 - 5
+    println(to_str(m + k))'
+CASES[sub_pos_ovf]='let m = 9223372036854775800
+    let k = 0 - 9
+    println(to_str(m - k))'
 
 # AX-80: at O0 (this harness's level) a `/`/`%` by a constant ±2^k lowers to
 # shifts; a negative dividend must still truncate toward zero, and the
