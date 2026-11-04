@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/accum.rs, codegen/mod.rs, codegen/link.rs, main.rs): at O1-O3 a fn of the form if C { B } else { L + f(A) } runs as a loop summing the left operands while every term is non-negative and the sum fits, else finishes in source order; an overflow re-runs the original body so the panic is the source's own (AX-78). The interpreter is untouched"
+}

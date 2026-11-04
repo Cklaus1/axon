@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/expr.rs, codegen/mod.rs, main.rs): at O0 a speculated if's value is a select, and a signed / or % by a constant +-2^k lowers to the shift sequence; optimising levels unchanged (AX-80). Panics and outputs are unchanged. The interpreter is untouched"
+}

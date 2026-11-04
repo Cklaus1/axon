@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/expr.rs): a +/- overflow check passes the wrapped result to the panic block, which recovers the left operand as r - b / r + b; message, operands and exit code unchanged (AX-79). The interpreter is untouched"
+}

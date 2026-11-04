@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/ranges.rs, codegen/expr.rs, codegen/mod.rs, codegen/link.rs): a checked i64 +/-/* whose operand ranges (interval analysis of a fn's locals) keep the result in i64 lowers to an nsw op; an internal fn whose only use is one direct call is alwaysinline in optimised builds (AX-77). Panics and outputs are unchanged. The interpreter is untouched"
+}

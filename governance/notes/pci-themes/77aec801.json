@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/expr.rs): the first checked op of a fn places its continuation before the shared panic block, so the hot path falls through (AX-77). Block order only. The interpreter is untouched"
+}
