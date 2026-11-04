@@ -50,6 +50,7 @@ pub mod link;
 pub mod match_pat;
 pub mod option_result;
 pub mod output;
+pub mod ranges;
 pub mod types;
 
 // Re-export TestResult so backward-compatible path
@@ -239,6 +240,10 @@ pub struct Codegen<'ctx> {
     /// to overflow; they lower to an unchecked `add nsw`. Filled per fn
     /// body by `collect_bounded_bumps` before the body is emitted.
     bounded_bumps: std::collections::HashSet<*const ast::Expr>,
+    /// AX-77: the checked `+`/`-`/`*` nodes (by address) of the fn body
+    /// being emitted whose operand ranges keep the result in i64
+    /// (`ranges::no_overflow_ops`); they lower to a plain `nsw` op.
+    no_overflow_ops: std::collections::HashSet<*const ast::Expr>,
     /// Maps enum name → its variants' native layout (name, tag, payload
     /// fields with offsets). Used by StructLit and Pattern::Struct for enum
     /// variant codegen; filled by `enum_layout::declare_enum_types`.
@@ -528,6 +533,7 @@ impl<'ctx> Codegen<'ctx> {
             arith_panic_blocks: HashMap::new(),
             arith_mode: expr::ArithMode::Checked,
             bounded_bumps: std::collections::HashSet::new(),
+            no_overflow_ops: std::collections::HashSet::new(),
             enum_variants: HashMap::new(),
             enum_names: std::collections::HashSet::new(),
             display_fns: HashMap::new(),
@@ -1871,7 +1877,14 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         Self::collect_bounded_bumps(&f.body, &mut self.bounded_bumps);
+        let proven = ranges::no_overflow_ops(
+            f.params.iter().map(|p| p.name.as_str()),
+            &f.body,
+            |n| self.comptime_env.contains_key(n) || self.fndefs.contains_key(n),
+        );
+        let outer_proven = std::mem::replace(&mut self.no_overflow_ops, proven);
         let body_val = self.emit_expr(&f.body, llvm_fn);
+        self.no_overflow_ops = outer_proven;
         // AX-08: a value that IS a `&mut` param shares the caller's buffer;
         // returned as-is, the caller would get a second name for its array.
         let body_val = match body_val {
