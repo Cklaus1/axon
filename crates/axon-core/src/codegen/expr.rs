@@ -1725,7 +1725,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// the runtime trap (exit 101), matching the interpreter's checked arithmetic
     /// (I-9). Returns `None` if the intrinsic can't be resolved, so the caller
     /// falls back to the raw (unchecked) op rather than miscompiling.
-    fn emit_checked_overflow_op(
+    pub(super) fn emit_checked_overflow_op(
         &mut self,
         intrinsic_name: &str,
         op_glyph: &'static str,
@@ -1750,7 +1750,11 @@ impl<'ctx> super::Codegen<'ctx> {
         let result = build_wrappers::w_extract_value(&self.ir.builder, agg, 0, "ovf_res");
         let flag =
             build_wrappers::w_extract_value(&self.ir.builder, agg, 1, "ovf_flag").into_int_value();
-        let a = if lhs_from_wrapped(op_glyph) { result.into_int_value() } else { l };
+        let a = if lhs_from_wrapped(op_glyph) {
+            result.into_int_value()
+        } else {
+            l
+        };
         self.emit_arith_guard(flag, 0, op_glyph, a, r);
         Some(result)
     }
@@ -1859,7 +1863,11 @@ impl<'ctx> super::Codegen<'ctx> {
         let result = build_wrappers::w_extract_value(&self.ir.builder, agg, 0, "ovfn_res");
         let flag =
             build_wrappers::w_extract_value(&self.ir.builder, agg, 1, "ovfn_flag").into_int_value();
-        let a = if lhs_from_wrapped(op_glyph) { result.into_int_value() } else { l };
+        let a = if lhs_from_wrapped(op_glyph) {
+            result.into_int_value()
+        } else {
+            l
+        };
         self.emit_arith_guard(flag, 0, op_glyph, a, r);
         Some(result)
     }

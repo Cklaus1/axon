@@ -36,6 +36,7 @@ use crate::types::Type;
 // this file pending Phase 2.3+ which requires faster-machine validation
 // because the bigger remaining splits will involve cross-cutting field-access
 // pub(super) decisions.
+mod accum;
 pub mod asi;
 pub mod bpf;
 pub mod build_wrappers;
@@ -244,6 +245,12 @@ pub struct Codegen<'ctx> {
     /// being emitted whose operand ranges keep the result in i64
     /// (`ranges::no_overflow_ops`); they lower to a plain `nsw` op.
     no_overflow_ops: std::collections::HashSet<*const ast::Expr>,
+    /// AX-78: lower a recursion through a checked `+` as a loop with an
+    /// accumulator (`accum`). Off unless `set_accumulate` (`O1`..`O3`).
+    accumulate: bool,
+    /// AX-78: which accumulator body the `emit_fn` in progress emits in
+    /// place of the source body; taken by that `emit_fn`.
+    accum_role: Option<accum::Role<'ctx>>,
     /// Maps enum name → its variants' native layout (name, tag, payload
     /// fields with offsets). Used by StructLit and Pattern::Struct for enum
     /// variant codegen; filled by `enum_layout::declare_enum_types`.
@@ -540,6 +547,8 @@ impl<'ctx> Codegen<'ctx> {
             arith_mode: expr::ArithMode::Checked,
             bounded_bumps: std::collections::HashSet::new(),
             no_overflow_ops: std::collections::HashSet::new(),
+            accumulate: false,
+            accum_role: None,
             enum_variants: HashMap::new(),
             enum_names: std::collections::HashSet::new(),
             display_fns: HashMap::new(),
@@ -635,6 +644,13 @@ impl<'ctx> Codegen<'ctx> {
     /// output is unchanged unless an `smt`-feature pipeline supplies a set.
     pub fn set_discharged(&mut self, discharged: crate::verify::Discharged) {
         self.discharged = discharged;
+    }
+
+    /// AX-78: lower a recursion through a checked `+` of the `accum` shape
+    /// as a loop with an accumulator. Call BEFORE `emit_program`; the native
+    /// build turns it on at `O1`..`O3`.
+    pub fn set_accumulate(&mut self, on: bool) {
+        self.accumulate = on;
     }
 
     /// R7: declare the target as wasm32 (ILP32) so the malloc-family runtime
@@ -1463,7 +1479,9 @@ impl<'ctx> Codegen<'ctx> {
                 Some(v) => v,
                 None => self.declare_one_fn_named(f, name),
             };
-            self.emit_fn(f, llvm_fn);
+            if !self.emit_accum_fn(name, f, llvm_fn) {
+                self.emit_fn(f, llvm_fn);
+            }
         }
     }
 
@@ -1889,14 +1907,19 @@ impl<'ctx> Codegen<'ctx> {
             self.emit_refine_preconditions(&f.name, &params, llvm_fn);
         }
 
-        Self::collect_bounded_bumps(&f.body, &mut self.bounded_bumps);
-        let proven = ranges::no_overflow_ops(
-            f.params.iter().map(|p| p.name.as_str()),
-            &f.body,
-            |n| self.comptime_env.contains_key(n) || self.fndefs.contains_key(n),
-        );
+        let proven =
+            ranges::no_overflow_ops(f.params.iter().map(|p| p.name.as_str()), &f.body, |n| {
+                self.comptime_env.contains_key(n) || self.fndefs.contains_key(n)
+            });
         let outer_proven = std::mem::replace(&mut self.no_overflow_ops, proven);
-        let body_val = self.emit_expr(&f.body, llvm_fn);
+        // AX-78: an accumulator body ends every block it leaves in a `ret`.
+        let body_val = if let Some(role) = self.accum_role.take() {
+            self.emit_accum_body(role, f, llvm_fn);
+            None
+        } else {
+            Self::collect_bounded_bumps(&f.body, &mut self.bounded_bumps);
+            self.emit_expr(&f.body, llvm_fn)
+        };
         self.no_overflow_ops = outer_proven;
         // AX-08: a value that IS a `&mut` param shares the caller's buffer;
         // returned as-is, the caller would get a second name for its array.

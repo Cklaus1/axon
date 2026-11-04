@@ -108,6 +108,11 @@ impl OptLevel {
         self != Self::O0
     }
 
+    /// `O1`..`O3`: the levels that trade code size for speed (`s`/`z` do not).
+    pub fn optimizes_for_speed(self) -> bool {
+        matches!(self, Self::O1 | Self::O2 | Self::O3)
+    }
+
     fn backend(self) -> OptimizationLevel {
         match self {
             Self::O0 => OptimizationLevel::None,
@@ -264,14 +269,17 @@ fn mark_definitions(module: &Module<'_>, attr: Attribute) {
 /// uses itself) never does, and every call still runs the callee's code.
 fn inline_single_call_functions(module: &Module<'_>) {
     let context = module.get_context();
-    let always = context.create_enum_attribute(Attribute::get_named_enum_kind_id("alwaysinline"), 0);
+    let always =
+        context.create_enum_attribute(Attribute::get_named_enum_kind_id("alwaysinline"), 0);
     let noinline = Attribute::get_named_enum_kind_id("noinline");
     let mut next = module.get_first_function();
     while let Some(func) = next {
         next = func.get_next_function();
         if func.count_basic_blocks() == 0
             || !matches!(func.get_linkage(), Linkage::Internal | Linkage::Private)
-            || func.get_enum_attribute(AttributeLoc::Function, noinline).is_some()
+            || func
+                .get_enum_attribute(AttributeLoc::Function, noinline)
+                .is_some()
         {
             continue;
         }

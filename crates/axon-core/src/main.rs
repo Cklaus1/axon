@@ -8543,6 +8543,10 @@ fn build_ir_and_link(
     // AX-80: emission picks some shapes by the level the pipeline below runs
     // at (the cache key already includes it).
     cg.set_opt_level(opt);
+    // AX-78: at O1..O3 a recursion through a checked `+` runs as a loop with
+    // an accumulator; O0 keeps one frame per source call, and `s`/`z` the
+    // single body.
+    cg.set_accumulate(opt.optimizes_for_speed());
     laps.lap("ir_gen");
     // Phase 5 §4: elide the runtime refinement-return / scalar-`@[verify]` checks
     // the SMT prover discharged ∀-inputs (empty set without the `smt` feature, so
