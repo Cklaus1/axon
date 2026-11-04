@@ -36,7 +36,7 @@ use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
-use inkwell::values::{AnyValueEnum, BasicValue, BasicValueEnum};
+use inkwell::values::{AnyValueEnum, BasicValue, BasicValueEnum, CallSiteValue, InstructionOpcode};
 use inkwell::OptimizationLevel;
 
 // ── Optimisation levels (AX-17 / AX-21) ──────────────────────────────────────
@@ -162,7 +162,9 @@ impl OptLevel {
 /// `fn rec(n: i64) -> i64 { rec(n + 1) }` into a loop spinning ~2^63 times,
 /// and backend sibling calls would do the same to mutual recursion. The
 /// attribute switches off both. The size levels also get their
-/// `optsize`/`minsize` attributes here (AX-38).
+/// `optsize`/`minsize` attributes here (AX-38), and an optimised build marks
+/// its single-call functions `alwaysinline` (AX-77,
+/// [`inline_single_call_functions`]).
 fn optimize_module(
     module: &Module<'_>,
     machine: &TargetMachine,
@@ -183,6 +185,7 @@ fn optimize_module(
         module.set_data_layout(&machine.get_target_data().get_data_layout());
         let verify = opt.is_optimized();
         if verify {
+            inline_single_call_functions(module);
             module.verify().map_err(|e| {
                 format!(
                     "IR verification failed before `{pipeline}`: {}",
@@ -243,6 +246,54 @@ fn mark_definitions(module: &Module<'_>, attr: Attribute) {
         next = func.get_next_function();
         if func.count_basic_blocks() > 0 {
             func.add_attribute(AttributeLoc::Function, attr);
+        }
+    }
+}
+
+/// AX-77: mark `alwaysinline` every internal function definition whose one
+/// use is a direct call from another function, e.g. a fn named only as a
+/// value, called solely from its closure thunk (`fn_value_thunk`).
+///
+/// The default pipeline inlines such a call anyway (the last call of a local
+/// function is nearly free to inline), but in the CGSCC inliner: bottom-up,
+/// the callee is simplified on its own first, then simplified again as part of
+/// its caller. The module-level `always-inline` pass that precedes the CGSCC
+/// walk merges it into the caller up front, so its body is simplified once
+/// (`big-compile`: `ir_opt` -0.6 s). Only a function with one use and no other
+/// caller qualifies, so no body is duplicated, a recursive function (which
+/// uses itself) never does, and every call still runs the callee's code.
+fn inline_single_call_functions(module: &Module<'_>) {
+    let context = module.get_context();
+    let always = context.create_enum_attribute(Attribute::get_named_enum_kind_id("alwaysinline"), 0);
+    let noinline = Attribute::get_named_enum_kind_id("noinline");
+    let mut next = module.get_first_function();
+    while let Some(func) = next {
+        next = func.get_next_function();
+        if func.count_basic_blocks() == 0
+            || !matches!(func.get_linkage(), Linkage::Internal | Linkage::Private)
+            || func.get_enum_attribute(AttributeLoc::Function, noinline).is_some()
+        {
+            continue;
+        }
+        let Some(only) = func.as_global_value().get_first_use() else {
+            continue;
+        };
+        if only.get_next_use().is_some() {
+            continue;
+        }
+        let inst = match only.get_user() {
+            AnyValueEnum::InstructionValue(i) => Some(i),
+            user => BasicValueEnum::try_from(user)
+                .ok()
+                .and_then(|v| v.as_instruction_value()),
+        };
+        let direct_call = inst.is_some_and(|i| {
+            i.get_opcode() == InstructionOpcode::Call
+                && i.get_parent().and_then(|b| b.get_parent()) != Some(func)
+                && CallSiteValue::try_from(i).is_ok_and(|c| c.get_called_fn_value() == Some(func))
+        });
+        if direct_call {
+            func.add_attribute(AttributeLoc::Function, always);
         }
     }
 }
@@ -2130,6 +2181,51 @@ mod runtime_lookup_tests {
             "PATH",
         ] {
             assert!(!redirects_runtime_toolchain(var), "{var} must be kept");
+        }
+    }
+}
+
+#[cfg(test)]
+mod single_call_inline_tests {
+    use super::*;
+    use crate::codegen::Codegen;
+    use inkwell::context::Context;
+
+    /// AX-77: a fn named only as a value is called once, from its thunk, and
+    /// is marked `alwaysinline`; a fn called twice, a self-recursive fn and
+    /// `main` (external) are not.
+    #[test]
+    fn only_single_call_functions_are_always_inlined() {
+        let prog = crate::parse_source(
+            "fn v(x: i64) -> i64 {\n  x % 7\n}\n\
+             fn twice(x: i64) -> i64 {\n  x % 5\n}\n\
+             fn rec(n: i64) -> i64 {\n  if n <= 0 { 0 } else { rec(n - 1) % 3 }\n}\n\
+             fn main() -> i64 {\n  let t = [v]\n  t[0](1) % 2 + twice(2) % 2 + twice(3) % 2 + rec(4) % 2\n}\n",
+        )
+        .expect("fixture must parse");
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx, "single_call_inline");
+        cg.declare_functions(&prog);
+        cg.emit_program(&prog);
+        assert!(
+            cg.codegen_errors().is_empty(),
+            "fixture failed to lower: {:?}",
+            cg.codegen_errors()
+        );
+        let module = &cg.ir.module;
+        internalize_program_functions(module);
+        inline_single_call_functions(module);
+        let always = Attribute::get_named_enum_kind_id("alwaysinline");
+        let marked = |name: &str| {
+            module
+                .get_function(name)
+                .unwrap_or_else(|| panic!("fn {name} defined"))
+                .get_enum_attribute(AttributeLoc::Function, always)
+                .is_some()
+        };
+        assert!(marked("v"), "the thunk's only callee is not always-inlined");
+        for name in ["twice", "rec", "main"] {
+            assert!(!marked(name), "fn {name} must not be always-inlined");
         }
     }
 }

@@ -205,6 +205,26 @@ CASES[pow2_divisor]='let a = 0 - 7
     println(to_str(mm % -16))
     println(to_str(21 / 2 + a / 1))'
 
+# AX-77: an op whose operand ranges keep it inside i64 drops its check. A
+# remainder bounds the ops after it; a product that can leave i64, a local
+# reassigned past its first bound and a local doubled in a loop keep theirs.
+CASES[range_bounded_ok]='let a = 9223372036854775807 % 1000003
+    let b = 0 - 9223372036854775807 % 1000003
+    for k in 0..5 {
+        a = (a * 999999 + b * 7 - k) % 1000003
+    }
+    println(to_str(a * a - b * 1000003))'
+CASES[range_wide_mul_ovf]='let a = 9223372036854775807 % 4000000000
+    println(to_str(a * a * a))'
+CASES[range_reassigned_escape_ovf]='let a = 5 % 3
+    a = a * 4611686018427387904
+    println(to_str(a))'
+CASES[range_loop_growth_ovf]='let s = 1
+    for k in 0..70 {
+        s = s * 2
+    }
+    println(to_str(s))'
+
 fail=0
 for label in "${!CASES[@]}"; do
   PROG="$WORK/$label.ax"

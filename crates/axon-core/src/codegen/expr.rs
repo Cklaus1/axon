@@ -614,6 +614,27 @@ impl<'ctx> super::Codegen<'ctx> {
                         }
                     }
                 }
+                // AX-77: an i64 op whose operand ranges keep the result in i64
+                // (`ranges::no_overflow_ops`) cannot overflow: no intrinsic,
+                // fault branch or continuation block. Only when inference
+                // says i64: a u64 op wraps, so its ranges mean nothing here.
+                let inferred_i64 = matches!(lt_sem.as_ref().or(rt_sem.as_ref()), Some(Type::I64));
+                if let (true, BasicValueEnum::IntValue(l), BasicValueEnum::IntValue(r)) =
+                    (inferred_i64, lhs, rhs)
+                {
+                    if l.get_type().get_bit_width() == 64
+                        && r.get_type().get_bit_width() == 64
+                        && self.no_overflow_ops.contains(&(expr as *const ast::Expr))
+                    {
+                        let b = &self.ir.builder;
+                        let v = match op {
+                            ast::BinOp::Add => b.build_int_nsw_add(l, r, "add"),
+                            ast::BinOp::Sub => b.build_int_nsw_sub(l, r, "sub"),
+                            _ => b.build_int_nsw_mul(l, r, "mul"),
+                        };
+                        return v.ok().map(Into::into);
+                    }
+                }
                 // Prefer the semantic type from inference (distinguishes u32/u64
                 // from i32/i64) then fall back to the LLVM-level value hint.
                 let ty = lt_sem
@@ -1508,6 +1529,13 @@ impl<'ctx> super::Codegen<'ctx> {
             return; // runtime extern absent — leave the raw op (defensive)
         };
         let ok_bb = self.ir.context.append_basic_block(llvm_fn, "arith_ok");
+        // The first guard to use the shared block appended it just before
+        // `ok_bb`: put the continuation first so it stays the fall-through
+        // (an unoptimised build lays blocks out in order, and the hot path
+        // would otherwise take an extra `jmp` per op).
+        if shared.block.get_next_basic_block() == Some(ok_bb) {
+            let _ = ok_bb.move_before(shared.block);
+        }
         // cond_fail ? panic : ok
         build_wrappers::w_cond_br(&self.ir.builder, cond_fail, shared.block, ok_bb);
         if let Some((pa, pb)) = shared.operands {
@@ -13548,6 +13576,63 @@ mod checked_arith_ir_tests {
         assert!(
             v.contains("divzero") && v.contains("minneg1"),
             "a variable divisor lost a check:\n{v}"
+        );
+    }
+
+    /// AX-77: an op whose operand ranges keep the result in i64 lowers to a
+    /// plain `nsw` op: `x % 1000003` is within ±1000002, so `a * 7 + 1`
+    /// cannot overflow and gets no intrinsic, branch or panic block, while
+    /// `x * 3` on the unbounded parameter keeps its check. A product that
+    /// can leave i64 (`a * a` for `|a| < 4e9`) stays checked, and so does
+    /// a local doubled in a loop (its hull has no bound).
+    #[test]
+    fn bounded_operands_emit_no_overflow_check() {
+        let ir = module_ir(
+            "fn f(x: i64) -> i64 {\n  let a = x % 1000003\n  for i in 0..7 {\n    a = (a * 7 + i) % 1000003\n  }\n  a * 7 + 1\n}\n\
+             fn p(x: i64) -> i64 {\n  x * 3\n}\n\
+             fn g(x: i64) -> i64 {\n  let a = x % 4000000000\n  a * a\n}\n\
+             fn d(n: i64) -> i64 {\n  let s = 1\n  for i in 0..n {\n    s = s * 2\n  }\n  s\n}\n\
+             fn main() -> i64 {\n  f(1) % 2 + p(2) % 2 + g(3) % 2 + d(4) % 2\n}\n",
+        );
+        let f = fn_ir(&ir, "f");
+        assert!(
+            !f.contains("with.overflow") && !f.contains("arith_panic"),
+            "bounded ops kept a check:\n{f}"
+        );
+        assert!(
+            f.contains("mul nsw i64") && f.contains("add nsw i64"),
+            "bounded ops lost their nsw op:\n{f}"
+        );
+        for (name, check) in [
+            ("p", "llvm.smul.with.overflow.i64"),
+            ("g", "llvm.smul.with.overflow.i64"),
+            ("d", "llvm.smul.with.overflow.i64"),
+        ] {
+            let body = fn_ir(&ir, name);
+            assert!(body.contains(check), "fn {name} lost its {check}:\n{body}");
+        }
+    }
+
+    /// AX-77: the first checked op of a function creates the shared panic
+    /// block; its continuation still directly follows the guarded block, so
+    /// an unoptimised build falls through on the hot path instead of jumping
+    /// over the cold call.
+    #[test]
+    fn first_checked_op_falls_through_to_its_continuation() {
+        let ir = module_ir(
+            "fn f(a: i64, b: i64) -> i64 {\n  a + b\n}\n\
+             fn main() -> i64 {\n  f(1, 2)\n}\n",
+        );
+        let f = fn_ir(&ir, "f");
+        let labels: Vec<&str> = f
+            .lines()
+            .filter_map(|l| l.split_once(':').map(|(name, _)| name))
+            .filter(|name| !name.starts_with(' ') && !name.is_empty())
+            .collect();
+        assert_eq!(
+            labels,
+            ["entry", "arith_ok", "arith_panic"],
+            "continuation must follow the guarded block:\n{f}"
         );
     }
 
