@@ -1,0 +1,4 @@
+{
+  "theme": "compilebench AX findings (native)",
+  "text": "NATIVE (codegen/expr.rs, codegen/mod.rs): a speculated if tests both arms' faults before the value diamond; a counter bumped once per trip of a for range from a literal start <= lo lowers to add nsw; arr_repeat of a bool stores i8 so the fill is a memset (AX-76). Panics and outputs are unchanged. The interpreter is untouched"
+}

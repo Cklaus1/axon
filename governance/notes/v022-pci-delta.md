@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 0e8ad325eec54976c847c107dce2aa219e6a98b5
+generated-at: 6420ffe6997c188f7b855832bbc459b3d6eab4fe
 
-`git diff --numstat 31413ca7..0e8ad325 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..6420ffe6 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -43,10 +43,10 @@ generated-at: 0e8ad325eec54976c847c107dce2aa219e6a98b5
 | `crates/axon-core/src/codegen/display.rs` | 514 | 0 |
 | `crates/axon-core/src/codegen/enum_layout.rs` | 451 | 0 |
 | `crates/axon-core/src/codegen/escape.rs` | 511 | 0 |
-| `crates/axon-core/src/codegen/expr.rs` | 3399 | 913 |
+| `crates/axon-core/src/codegen/expr.rs` | 3782 | 969 |
 | `crates/axon-core/src/codegen/link.rs` | 1622 | 337 |
 | `crates/axon-core/src/codegen/match_pat.rs` | 561 | 168 |
-| `crates/axon-core/src/codegen/mod.rs` | 642 | 162 |
+| `crates/axon-core/src/codegen/mod.rs` | 648 | 162 |
 | `crates/axon-core/src/codegen/option_result.rs` | 14 | 9 |
 | `crates/axon-core/src/codegen/output.rs` | 118 | 69 |
 | `crates/axon-core/src/codegen/types.rs` | 24 | 21 |
@@ -105,9 +105,9 @@ generated-at: 0e8ad325eec54976c847c107dce2aa219e6a98b5
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 70326 | 10052 |
+| total | 70715 | 10108 |
 
-`git log --reverse 31413ca7..0e8ad325 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..6420ffe6 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -542,7 +542,8 @@ generated-at: 0e8ad325eec54976c847c107dce2aa219e6a98b5
 | e77fd5af | compilebench AX findings (native) | NATIVE (codegen/expr.rs): checked ops share one operator-glyph global per module and one panic block per function, kind, glyph and width (AX-75); panic text, operands and exit code unchanged. The interpreter is untouched |
 | 8bac84d4 | compilebench AX findings (native) | NATIVE (codegen/expr.rs, codegen/mod.rs): an if whose arms are side-effect-free i64 arithmetic computes both arms wrapping and selects the value; a fault re-runs the taken arm checked, so panics are unchanged (AX-70). The interpreter is untouched |
 | 0e8ad325 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 431 commits | | |
+| 6420ffe6 | compilebench AX findings (native) | NATIVE (codegen/expr.rs, codegen/mod.rs): a speculated if tests both arms' faults before the value diamond; a counter bumped once per trip of a for range from a literal start <= lo lowers to add nsw; arr_repeat of a bool stores i8 so the fill is a memset (AX-76). Panics and outputs are unchanged. The interpreter is untouched |
+| 432 commits | | |
 <!-- END MECHANICAL -->
 
 
