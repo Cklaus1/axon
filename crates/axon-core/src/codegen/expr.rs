@@ -1511,6 +1511,13 @@ impl<'ctx> super::Codegen<'ctx> {
             return; // runtime extern absent — leave the raw op (defensive)
         };
         let ok_bb = self.ir.context.append_basic_block(llvm_fn, "arith_ok");
+        // The first guard to use the shared block appended it just before
+        // `ok_bb`: put the continuation first so it stays the fall-through
+        // (an unoptimised build lays blocks out in order, and the hot path
+        // would otherwise take an extra `jmp` per op).
+        if shared.block.get_next_basic_block() == Some(ok_bb) {
+            let _ = ok_bb.move_before(shared.block);
+        }
         // cond_fail ? panic : ok
         build_wrappers::w_cond_br(&self.ir.builder, cond_fail, shared.block, ok_bb);
         if let Some((pa, pb)) = shared.operands {
@@ -13432,6 +13439,29 @@ mod checked_arith_ir_tests {
             let body = fn_ir(&ir, name);
             assert!(body.contains(check), "fn {name} lost its {check}:\n{body}");
         }
+    }
+
+    /// AX-77: the first checked op of a function creates the shared panic
+    /// block; its continuation still directly follows the guarded block, so
+    /// an unoptimised build falls through on the hot path instead of jumping
+    /// over the cold call.
+    #[test]
+    fn first_checked_op_falls_through_to_its_continuation() {
+        let ir = module_ir(
+            "fn f(a: i64, b: i64) -> i64 {\n  a + b\n}\n\
+             fn main() -> i64 {\n  f(1, 2)\n}\n",
+        );
+        let f = fn_ir(&ir, "f");
+        let labels: Vec<&str> = f
+            .lines()
+            .filter_map(|l| l.split_once(':').map(|(name, _)| name))
+            .filter(|name| !name.starts_with(' ') && !name.is_empty())
+            .collect();
+        assert_eq!(
+            labels,
+            ["entry", "arith_ok", "arith_panic"],
+            "continuation must follow the guarded block:\n{f}"
+        );
     }
 
     /// AX-75: checked ops share one private glyph global per operator per
