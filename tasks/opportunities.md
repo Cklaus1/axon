@@ -3189,6 +3189,8 @@ then opens the path, following symlinks. With `data/link -> /etc/hostname` and `
 guest-fs NH-F4 declined. Fix direction: resolve beneath the granted directory (`openat2` `RESOLVE_BENEATH`/`RESOLVE_NO_MAGICLINKS`,
 or canonicalize and re-check, with the TOCTOU stated), and refuse `/proc` prefixes in a grant. genviab-b3 B3-3/B3-4 are designed not
 to depend on it. Found by DraftB3.
+`[SPECCED 2026-11-04: tasks/containment-b4-spec.md C-1 (resolved-path scope, /proc grants narrowed) and C-4 (nested
+sandbox_run escape, found in its Step 1 review). DRAFT after Step 1; not authorized for build.]`
 
 ### O-GV-09 - [high] A module-level `let` initialiser runs outside the sandbox, `@[contained]` and `--require-contained`
 In an axon-os job granted only `./data/`, `let X = early()` at module level read `/etc/hostname` and wrote `./out/leak.txt`
@@ -3218,6 +3220,7 @@ If `axon run --source-fd N` names that same fd, `read_source_fd` reads the empty
 ("not a regular file" / EBADF after the nonce fd is closed). Needs an already miswired supervisor. Fix direction: refuse a
 `--source-fd` equal to the installed outcome fd, or require the outcome fd to be a pipe. Probe `/var/tmp/r51-tmp/SweepB3/probe.py`.
 Found by SweepB3 (batch 3 integrated sweep).
+`[SPECCED 2026-11-04: tasks/containment-b4-spec.md C-2. DRAFT after Step 1; not authorized for build.]`
 
 ## hx3 author quirks, 2026-10-31 (QuirkRepro triage of the hx3 N5a authors' notes, `/var/tmp/r51-tmp/QuirkRepro/REPORT.md`; fixes NOT in this batch)
 
@@ -3309,16 +3312,19 @@ When the R6 started record cannot be appended after the envelope is spent, `cort
 envelope `<id>.unrecorded` and exits 29 (R6 L2). No test drives it: the lane tests run as root, so a
 permission-based append failure cannot be induced. Fix direction: an injectable sink failure (or a non-root test
 run) that asserts the marker, exit 29 and no workspace write.
+`[SPECCED 2026-11-04: tasks/nhr-evidence-spec.md NE-3. DRAFT after Step 1; not authorized for build.]`
 
 ### O-NHR-02 - [medium] The terminal record on the E3 watchdog path has no test
 The watchdog exit (exit 20, outcome `budget_exhausted`) writes a terminal run record, but no test stalls a run to
 the hard deadline and reads the record back (a stall test adds wall time). Fix direction: a short-deadline stall
 fixture asserting the terminal record and its write journal.
+`[SPECCED 2026-11-04: tasks/nhr-evidence-spec.md NE-4.]`
 
 ### O-NHR-03 - [low] S12's axon-os `require_approval` half is untested
 S12 is asserted inside cortex's `s8_an_admitted_run_spends_once_and_reports_its_authorization` (no axon-approval/3
 token, no `.approved` file). That an `axon-approval/4` envelope is not accepted by the axon-os `require_approval`
 job path is not tested in either lane.
+`[SPECCED 2026-11-04: tasks/nhr-evidence-spec.md NE-5.]`
 
 ### O-NHR-04 - [medium] Refusal coverage does not scan `crates/axon-intent`
 Reported by IgIntent: `scripts/v022_refusal_coverage.py` does not include `crates/axon-intent`, so the new
@@ -3329,12 +3335,15 @@ Sized by NhrFixCrates on the merged security fixes (be47b23e): adding `axon-inte
 throwaway copy yields 172 uncovered sites (50 `authorize.rs`, 16 `audit_runs.rs`, the rest in synth / intent /
 confidence / policy and more) and pulls axon-cortex and axon-loop-contracts sites into scope, which widens the
 protected-path rule rather than adding one include. Still open after the security fixes.
+`[SPECCED 2026-11-04: tasks/containment-b4-spec.md C-3 (the crate joins the scanned set; sites not yet judged go in
+NOT_YET_SCANNED, so the next PSV --freeze refuses until a judging batch runs - that spec's NH-1).]`
 
 ### O-NHR-05 - [low] R6 L2 terminal-record choices made in the lane, not in the spec
 Terminal `accepted_refusal` is always null (an R5 refusal turns the exit into 22, outside {0,27}); an early exit's
 `outcome` is the exit's kind (`usage`, `no_target`, `unauthorized`, `blocked`, `check_already_passes`); pinned
 tree roots are the effective write prefixes plus the envelope's fs_write scopes. Confirm or revise these in
 `tasks/r6-ledger-spec.md` before enabling.
+`[SPECCED 2026-11-04: tasks/nhr-evidence-spec.md NE-9 (classification; needs-human Q2 confirms the three choices).]`
 
 ### O-NHR-06 - [low] Residuals the security fixes (F1-F12, re-review N1-N6) state and do not close
 All twelve NhrSecurity findings (F1-F12) were fixed on nhr/fix-a and nhr/fix-b and merged into nhr/int. What remains,
@@ -3369,6 +3378,8 @@ by design or not yet done:
     only if the envelope grants `exec`].
   - Every finding is covered by S-tests/unit tests and the N1 local-listener probe; there is still no independent
     end-to-end probe of F2-F4. That is §9 evidence to collect before any enabling decision.
+`[SPECCED 2026-11-04: tasks/nhr-evidence-spec.md NE-6 (N8 probes), NE-8 (security review + F2-F4 end-to-end probe), NE-9
+(classify the rest).]`
 
 ## WIP snapshot salvage, 2026-11-01 (triage of four `worktree-agent-*` branches against main 03d60cfc)
 
@@ -3461,3 +3472,74 @@ not T, so the token count is dropped. The interpreter's live extract arm (`inter
 the cost, which leaves `ai_cost_spent()` and budget ceilings low. The f64 and bool paths have the same shape, and so does `ai_complete`
 (`:6355`, older than this batch). This only affects `--features asi-runtime`, which no gate stage builds [INFERENCE: not run]. Fix
 direction: return the tokens with the parse error and record the call before returning `Err`. Found by ImplAuditASI.
+
+## Product gaps, 2026-11-04 (PM review of the specced and not-specced inventories)
+
+Logged on the human's approval of 2026-11-04; the human picks which to draft. Recommended order: O-PM-01, O-PM-02 now (they
+measure the product), O-PM-04 next, O-PM-03 and O-PM-05 after the once verdict, O-PM-06 is a product-direction decision. Not
+recommended now: more CX/Forge specs before the core claim is measured once. Prior art: the 2026-09-29 Product Review
+(`AI_Language_Plan.md:2009-2170`, PM1-PM14) covers O-PM-01 (PM12) and O-PM-05 (PM1-PM4, specced as R46); only PM1-PM4 reached a
+spec, and its stage-1 exit ("a design partner runs one real agent in production", `:2163`) has not started.
+
+### O-PM-01 - [high] No standing measure of how well models write Axon
+The language's users are models, and nothing tracks the per-release, per-model rate at which they write it: first-try `axon check`
+pass rate, repair rounds to green, false-success rate, against a Python baseline. The genviab arm a/c comparison is one gated run and
+its once set is empty (`crates/axon-intent/benchmarks/genviab/once/manifest.json` `"n": 0`); hx2, hx3 and the genviab dev set all
+saturated, so there is no current number. ROADMAP §9.5 lists authoring friction with no metric. Direction: a standing authoring eval
+on the genviab harness, a fixed task set, several models, run per release, with a trend file like `benchmarks/scorecard/history.jsonl`.
+Same metric as PM12 (`AI_Language_Plan.md:2127-2131`, "make it a standing product metric"), never specced. Size M [INFERENCE].
+
+### O-PM-02 - [high] The non-expert journey (VISION success criterion 4) is demonstrated but not measured with a person
+`VISION.md:86-87`: "A non-expert states a goal, reviews and approves the plan, and ships an agent". The parts exist (`axon intent`,
+`axon ast` approve, `axon deploy`) and the ROADMAP "Hello Goal" acid test is marked demonstrable. No spec measures whether a
+non-programmer completes it, how long it takes, or whether they understood what they approved. Direction: a moderated usability test
+with a recorded protocol (time-to-first-agent, approval-comprehension questions), repeatable per release. Size M [INFERENCE].
+
+### O-PM-03 - [medium] Dependencies sit outside the capability model
+`axon lock` / `axon verify-lock` pin module content hashes (R6), but there is no fetch/add verb and no rule that a dependency's
+effects appear and can be narrowed in `axon caps` at the import edge, and no signing. Containment stops at the program's own code; a
+reused module is the next escape. Direction: a dependency manifest with declared capabilities, checked at import, signed or pinned.
+Size L [INFERENCE].
+
+### O-PM-04 - [medium] No release and stability contract
+Workflows are `ci.yml`, `ios.yml`, `tee.yml`; none builds a release. The version is `0.1.0`. There is no edition/deprecation policy
+and the language card (`axon card`) is not versioned against one, so syntax drift silently breaks models that write from the card or
+from training data. CI is red on every run (303/303; `tasks/ci-hygiene-spec.md` fixes that). Direction: installable versioned
+releases, an edition policy, a card version a program can declare. Size M [INFERENCE].
+
+### O-PM-05 - [medium] Operating deployed agents is specced (R46, Draft) but not reviewed or built
+"Ships an agent" has no day-2 surface in code. `governance/specs/R46-in-flight-operations.md` (Draft, 73b6fac8, from PM1-PM4)
+designs it: a deployment as a versioned pointer with rollback (§3-4), a human inbox on `host_await` (§5), secrets by host-side
+substitution at the HTTP seam (§6), monitoring and alerts (§7). It has had no build-loop Step 1 review. Its named follow-on
+`R47-mcp-bridge` (PM5) was never written. Parts exist (`axon-jobctl`, `axon-os` records, `axon replay`, budgets). The audit/quorum
+key decision (S1b/H4) is still open. Size M-L [INFERENCE].
+
+### O-PM-06 - [medium, needs-human] No fenced bridge to outside ecosystems
+Models reach for Python libraries and HTTP APIs first. R13 native FFI is COMPLETE (capability-gated native modules,
+`governance/specs/R13-native-ffi.md:4`); `R41-polyglot-runtime.md` is a Draft whose Slice 0 is a kill-gated spike behind its §12 Q1.
+A bridge to Python/HTTP-tool ecosystems where each foreign call declares its effects is not built. Whether Axon offers fenced
+interop at all (R41 Q1) is a product-direction decision. Size L [INFERENCE].
+
+## Batch 4 spec drafting, 2026-11-04 (found while drafting or reviewing the four DRAFT specs)
+
+### O-CI-01 - [high] CI has never passed
+The `CI` workflow concluded `failure` on all 303 runs (2026-04-30 → 2026-11-04); the iOS workflow never passed either. The
+newest 7 runs fail the same five tests. `[SPECCED 2026-11-04: tasks/ci-hygiene-spec.md CH-1..CH-9. DRAFT after Step 1; not
+authorized for build.]`
+
+### O-C-01 - [low] The fs scope's resolve-then-open window
+After containment-b4 C-1, the scope checks a resolved path and `DefaultHost` (`crates/axon-core/src/host.rs:189-247`) opens the
+path again, so a concurrent same-uid writer can swap a path component between the check and the open. Closing it means opening
+through the fd the check resolved, which changes the host seam and `RecordingHost`/`ReplayHost` (`replay.rs:334`, `:610`). Out of
+scope of tasks/containment-b4-spec.md (its Out-of-scope 1).
+
+### O-NHR-07 - [low] The unattended terminal walk is unbounded in time and memory
+`tree()` (`crates/axon-cortex/src/auth.rs:833-857`) reads each pinned file whole (`std::fs::read`, `:852`), and the terminal
+walk runs after `w.disarm()` (`bin/cortex.rs:1619-1621`, record at `:1882-1899`). A huge file a check wrote under a write root
+makes the end of the run unbounded, outside E3's deadline [INFERENCE: from the code; not run]. Fix direction: a bounded or
+streaming walk (a change to R6's tree). Out of scope of tasks/nhr-evidence-spec.md, which removes only the FIFO block (NE-2).
+
+### O-NP-01 - [info] Neural programs stopped at NP-0: no consumer for a learned ranker
+tasks/neural-programs-spec.md NP-0 ran the free profiling pass: one eligible function (cortex's candidate ranker), with a +7/22
+oracle ceiling on the pool, but no keyless consumer (`--unattended` requires `--symbol`, CI never runs `cortex`, the examples
+pin the spectrum order). STOP-1v is in force until the human names a consumer and how often it runs (that spec's H6).
