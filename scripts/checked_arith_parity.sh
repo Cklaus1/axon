@@ -147,6 +147,27 @@ CASES[if_count_ovf]='let c = 9223372036854775806
         i = i + 1
     }
     println(to_str(c))'
+# AX-76: a counter bumped once per trip of `for k in lo..end` and started
+# at c0 <= lo cannot overflow, so its bump is unchecked. At c0 = lo it
+# reaches i64::MAX exactly; at c0 > lo the bump stays checked and panics.
+CASES[for_count_at_max]='let c = 9223372036854775805
+    for k in 9223372036854775805..9223372036854775807 {
+        if k > 0 { c = c + 1 }
+    }
+    println(to_str(c))'
+CASES[for_count_start_above_lo_ovf]='let c = 9223372036854775806
+    for k in 0..3 {
+        c = c + 1
+    }
+    println(to_str(c))'
+# AX-76: `arr_repeat` of a bool fills bytes (a memset); elements read back.
+CASES[bool_repeat]='let f = arr_repeat(true, 5)
+    f[1] = false
+    let n = 0
+    for k in 0..5 {
+        if f[k] { n = n + 1 }
+    }
+    println(to_str(n))'
 
 fail=0
 for label in "${!CASES[@]}"; do

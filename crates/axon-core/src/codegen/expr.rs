@@ -110,7 +110,10 @@ pub(super) type ArithPanicKey<'ctx> = (FunctionValue<'ctx>, i64, &'static str, u
 #[derive(Clone, Copy)]
 pub(super) struct ArithPanicBlock<'ctx> {
     block: inkwell::basic_block::BasicBlock<'ctx>,
-    operands: Option<(inkwell::values::PhiValue<'ctx>, inkwell::values::PhiValue<'ctx>)>,
+    operands: Option<(
+        inkwell::values::PhiValue<'ctx>,
+        inkwell::values::PhiValue<'ctx>,
+    )>,
 }
 
 /// AX-70: how `emit_arith_guard` treats a checked op's fault predicate.
@@ -132,7 +135,12 @@ pub(super) struct Speculation<'ctx> {
     domains: Vec<(inkwell::values::IntValue<'ctx>, i128, i128)>,
     /// `(value, root, a, c)`: `value == a * root + c` while `root` is in its
     /// domain.
-    affine: Vec<(inkwell::values::IntValue<'ctx>, inkwell::values::IntValue<'ctx>, i128, i128)>,
+    affine: Vec<(
+        inkwell::values::IntValue<'ctx>,
+        inkwell::values::IntValue<'ctx>,
+        i128,
+        i128,
+    )>,
 }
 
 impl<'ctx> Speculation<'ctx> {
@@ -155,10 +163,17 @@ impl<'ctx> Speculation<'ctx> {
             let lo_c = i64_ty.const_int(lo as i64 as u64, true);
             let off = build_wrappers::w_int_sub(b, root, lo_c, "spec_off");
             let span = i64_ty.const_int((hi - lo) as u64, false);
-            Some(build_wrappers::w_int_compare(b, IntPredicate::UGT, off, span, "spec_range"))
+            Some(build_wrappers::w_int_compare(
+                b,
+                IntPredicate::UGT,
+                off,
+                span,
+                "spec_range",
+            ))
         });
         let all: Vec<_> = self.flags.into_iter().chain(ranges).collect();
-        all.into_iter().reduce(|x, y| build_wrappers::w_or(b, x, y, "spec_ovf"))
+        all.into_iter()
+            .reduce(|x, y| build_wrappers::w_or(b, x, y, "spec_ovf"))
     }
 }
 
@@ -445,6 +460,11 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // ── Binary operation ─────────────────────────────────────────────
             ast::Expr::BinOp { op, left, right } => {
+                if self.bounded_bumps.contains(&(expr as *const ast::Expr)) {
+                    if let Some(v) = self.emit_bounded_bump(left, right, fn_val) {
+                        return Some(v);
+                    }
+                }
                 // Layer-2 ASI: if either operand is `Uncertain<T>`, route through
                 // the dedicated emitter that propagates `min(c1, c2)` confidence.
                 let lt_sem = self.infer_expr_sem_type(left);
@@ -1708,7 +1728,10 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<inkwell::values::IntValue<'ctx>> {
         const MIN: i128 = i64::MIN as i128;
         const MAX: i128 = i64::MAX as i128;
-        let (v, k, k_left) = match (l.get_sign_extended_constant(), r.get_sign_extended_constant()) {
+        let (v, k, k_left) = match (
+            l.get_sign_extended_constant(),
+            r.get_sign_extended_constant(),
+        ) {
             (None, Some(k)) => (l, k as i128, false),
             (Some(k), None) => (r, k as i128, true),
             _ => return None,
@@ -3006,10 +3029,97 @@ impl<'ctx> super::Codegen<'ctx> {
             return None;
         }
 
+        // Two passes over the arms. The first, here, computes each arm's
+        // fault bit; the fast path branches on their OR before the `if`, so
+        // the test depends on neither the condition nor a phi that jump
+        // threading could push back into an arm. The second emits the value
+        // as a diamond of wrapping arms meeting in a phi: every arm op stays
+        // under its condition, so `x / 2` in `if x % 2 == 0 { x / 2 }`
+        // becomes an exact `ashr` (AX-76), which a `select` built here would
+        // hide. The arms hold no call and no branch, so SimplifyCFG folds
+        // the diamond into a `select`, the if-conversion clang's C gets.
         let fresh = || ArithMode::Collect(Speculation::default());
         let saved = std::mem::replace(&mut self.arith_mode, fresh());
+        let _ = self.emit_expr(then_v, fn_val);
+        let ArithMode::Collect(t_spec) = std::mem::replace(&mut self.arith_mode, fresh()) else {
+            unreachable!("AX-70: arith mode left Collect inside a speculated arm");
+        };
+        let t_flag = t_spec.fault(&self.ir.builder, i64_ty);
+        if let Some(e) = else_v {
+            let _ = self.emit_expr(e, fn_val);
+        }
+        let ArithMode::Collect(e_spec) = std::mem::replace(&mut self.arith_mode, saved) else {
+            unreachable!("AX-70: arith mode left Collect inside a speculated arm");
+        };
+        let e_flag = e_spec.fault(&self.ir.builder, i64_ty);
+        let fault = match (t_flag, e_flag) {
+            (Some(t), Some(e)) => Some(build_wrappers::w_or(&self.ir.builder, t, e, "spec_fault")),
+            (f, None) | (None, f) => f,
+        };
+        let head_bb = self.ir.context.append_basic_block(fn_val, "spec_head");
+        if let Some(fault) = fault {
+            let slow_bb = self.ir.context.append_basic_block(fn_val, "spec_slow");
+            let rerun_bb = self.ir.context.append_basic_block(fn_val, "spec_rerun");
+            build_wrappers::w_cond_br(&self.ir.builder, fault, slow_bb, head_bb);
+            // Some arm overflowed. If it is not the taken one, the fast
+            // path's value is right; else re-run the taken arm checked: its
+            // first faulting op panics with its own operands (the wrapped
+            // values before it equal the checked ones).
+            self.ir.builder.position_at_end(slow_bb);
+            let no = self.ir.context.bool_type().const_zero();
+            let taken = build_wrappers::w_select(
+                &self.ir.builder,
+                cond,
+                t_flag.unwrap_or(no).into(),
+                e_flag.unwrap_or(no).into(),
+                "spec_taken_fault",
+            )
+            .into_int_value();
+            build_wrappers::w_cond_br(&self.ir.builder, taken, rerun_bb, head_bb);
+            let rerun_arm = |bb, arm: Option<&ast::Expr>, this: &mut Self| {
+                this.ir.builder.position_at_end(bb);
+                if let Some(arm) = arm {
+                    let _ = this.emit_expr(arm, fn_val);
+                }
+                build_wrappers::w_unreachable(&this.ir.builder);
+            };
+            match (t_flag.is_some(), e_flag.is_some()) {
+                (true, true) => {
+                    let rt = self
+                        .ir
+                        .context
+                        .append_basic_block(fn_val, "spec_rerun_then");
+                    let re = self
+                        .ir
+                        .context
+                        .append_basic_block(fn_val, "spec_rerun_else");
+                    self.ir.builder.position_at_end(rerun_bb);
+                    build_wrappers::w_cond_br(&self.ir.builder, cond, rt, re);
+                    rerun_arm(rt, Some(then_v), self);
+                    rerun_arm(re, else_v, self);
+                }
+                (true, false) => rerun_arm(rerun_bb, Some(then_v), self),
+                _ => rerun_arm(rerun_bb, else_v, self),
+            }
+        } else {
+            build_wrappers::w_br(&self.ir.builder, head_bb);
+        }
+
+        let then_bb = self.ir.context.append_basic_block(fn_val, "spec_then");
+        let else_bb = self.ir.context.append_basic_block(fn_val, "spec_else");
+        let merge_bb = self.ir.context.append_basic_block(fn_val, "spec_merge");
+        self.ir.builder.position_at_end(head_bb);
+        build_wrappers::w_cond_br(&self.ir.builder, cond, then_bb, else_bb);
+        let saved = std::mem::replace(&mut self.arith_mode, fresh());
+        self.ir.builder.position_at_end(then_bb);
         let tv = self.emit_expr(then_v, fn_val);
-        let t_spec = std::mem::replace(&mut self.arith_mode, fresh());
+        let then_end = self
+            .ir
+            .builder
+            .get_insert_block()
+            .expect("builder is positioned");
+        build_wrappers::w_br(&self.ir.builder, merge_bb);
+        self.ir.builder.position_at_end(else_bb);
         let ev = match (else_v, target_ptr) {
             (Some(e), _) => self.emit_expr(e, fn_val),
             (None, Some(ptr)) => Some(build_wrappers::w_load(
@@ -3020,72 +3130,28 @@ impl<'ctx> super::Codegen<'ctx> {
             )),
             (None, None) => None,
         };
-        let e_spec = std::mem::replace(&mut self.arith_mode, saved);
-        let (
-            Some(BasicValueEnum::IntValue(tv)),
-            Some(BasicValueEnum::IntValue(ev)),
-            ArithMode::Collect(t_spec),
-            ArithMode::Collect(e_spec),
-        ) = (tv, ev, t_spec, e_spec)
+        let else_end = self
+            .ir
+            .builder
+            .get_insert_block()
+            .expect("builder is positioned");
+        build_wrappers::w_br(&self.ir.builder, merge_bb);
+        // The faults were taken above; this pass's collected bits are dead.
+        self.arith_mode = saved;
+        self.ir.builder.position_at_end(merge_bb);
+        // `is_speculable` admits only i64 arithmetic, so both arms lower to
+        // an i64; anything else is a lowering bug.
+        let (Some(BasicValueEnum::IntValue(tv)), Some(BasicValueEnum::IntValue(ev))) = (tv, ev)
         else {
-            // Unexpected lowering: what was emitted is pure and dead; fall
-            // back to the branchy `if`.
-            return None;
+            unreachable!("AX-70: a speculable if arm did not lower to an i64");
         };
-        if tv.get_type() != i64_ty || ev.get_type() != i64_ty {
-            return None;
-        }
-        let b = &self.ir.builder;
-        let (t_flag, e_flag) = (t_spec.fault(b, i64_ty), e_spec.fault(b, i64_ty));
-        let value = build_wrappers::w_select(b, cond, tv.into(), ev.into(), "spec_val");
-        // The fast path tests the OR of both arms' faults, not the taken
-        // arm's: `cond && fault` is split back into a branch on `cond` by the
-        // backend, the very branch this lowering removes.
-        let fault = match (t_flag, e_flag) {
-            (Some(t), Some(e)) => Some(build_wrappers::w_or(b, t, e, "spec_fault")),
-            (f, None) | (None, f) => f,
-        };
-        if let Some(fault) = fault {
-            let slow_bb = self.ir.context.append_basic_block(fn_val, "spec_slow");
-            let rerun_bb = self.ir.context.append_basic_block(fn_val, "spec_rerun");
-            let cont_bb = self.ir.context.append_basic_block(fn_val, "spec_cont");
-            build_wrappers::w_cond_br(b, fault, slow_bb, cont_bb);
-            // Some arm overflowed. If it is not the taken one, `value` is
-            // right; else re-run the taken arm checked: its first faulting op
-            // panics with its own operands (the wrapped values before it
-            // equal the checked ones).
-            b.position_at_end(slow_bb);
-            let no = self.ir.context.bool_type().const_zero();
-            let taken = build_wrappers::w_select(
-                b,
-                cond,
-                t_flag.unwrap_or(no).into(),
-                e_flag.unwrap_or(no).into(),
-                "spec_taken_fault",
-            )
-            .into_int_value();
-            build_wrappers::w_cond_br(b, taken, rerun_bb, cont_bb);
-            b.position_at_end(rerun_bb);
-            let rerun_arm = |bb, arm: Option<&ast::Expr>, this: &mut Self| {
-                this.ir.builder.position_at_end(bb);
-                if let Some(arm) = arm {
-                    let _ = this.emit_expr(arm, fn_val);
-                }
-                build_wrappers::w_unreachable(&this.ir.builder);
-            };
-            match (t_flag.is_some(), e_flag.is_some()) {
-                (true, true) => {
-                    let rt = self.ir.context.append_basic_block(fn_val, "spec_rerun_then");
-                    let re = self.ir.context.append_basic_block(fn_val, "spec_rerun_else");
-                    build_wrappers::w_cond_br(&self.ir.builder, cond, rt, re);
-                    rerun_arm(rt, Some(then_v), self);
-                    rerun_arm(re, else_v, self);
-                }
-                (true, false) => rerun_arm(rerun_bb, Some(then_v), self),
-                _ => rerun_arm(rerun_bb, else_v, self),
-            }
-            self.ir.builder.position_at_end(cont_bb);
-        }
+        assert!(
+            tv.get_type() == i64_ty && ev.get_type() == i64_ty,
+            "AX-70: a speculable if arm is not i64"
+        );
+        let value = build_wrappers::w_phi(&self.ir.builder, i64_ty.into(), "spec_val");
+        value.add_incoming(&[(&tv, then_end), (&ev, else_end)]);
+        let value = value.as_basic_value();
         match target_ptr {
             Some(ptr) => {
                 build_wrappers::w_store(&self.ir.builder, ptr, value);
@@ -3146,6 +3212,209 @@ impl<'ctx> super::Codegen<'ctx> {
             ast::Expr::Block(stmts) => stmts.iter().any(|s| Self::has_overflow_op(&s.expr)),
             _ => false,
         }
+    }
+
+    /// AX-76: collect into `out` the `n + 1` value of every `n = n + 1` that
+    /// cannot overflow, because it is a counter bumped at most once per trip
+    /// of an exclusive range loop `for k in lo..end` with a literal `lo`
+    /// and `n` starts at a literal `c0 <= lo`. The loop runs at most
+    /// `end - lo <= i64::MAX - lo` trips, so `n` stays at most
+    /// `c0 + i64::MAX - lo <= i64::MAX`. The proof is syntactic and bails
+    /// on anything it cannot see through: the bump must be the only write
+    /// to `n` in the body and outside every nested loop; the body must not
+    /// rebind `n`, borrow it, write the loop variable, or hold a closure,
+    /// `match`, `while let`, handler, `spawn`, `select`, `comptime` or
+    /// inline asm; and `let n = c0` must be an earlier statement of the
+    /// loop's own statement list, with no statement between them (nor the
+    /// range bounds) mentioning `n`.
+    pub(super) fn collect_bounded_bumps(
+        root: &ast::Expr,
+        out: &mut std::collections::HashSet<*const ast::Expr>,
+    ) {
+        ast::walk_expr(root, &mut |e| {
+            let stmts: &[ast::Stmt] = match e {
+                ast::Expr::Block(s) => s,
+                ast::Expr::While { body, .. }
+                | ast::Expr::WhileLet { body, .. }
+                | ast::Expr::For { body, .. } => body,
+                _ => return,
+            };
+            for (i, s) in stmts.iter().enumerate() {
+                if let ast::Expr::For {
+                    var,
+                    start,
+                    end,
+                    body,
+                    inclusive: false,
+                } = &s.expr
+                {
+                    if let ast::Expr::Literal(ast::Literal::Int(lo)) = **start {
+                        Self::loop_bounded_bumps(var, lo, end, body, &stmts[..i], out);
+                    }
+                }
+            }
+        });
+    }
+
+    fn loop_bounded_bumps(
+        var: &str,
+        lo: i64,
+        end: &ast::Expr,
+        body: &[ast::Stmt],
+        before: &[ast::Stmt],
+        out: &mut std::collections::HashSet<*const ast::Expr>,
+    ) {
+        use ast::Expr as E;
+        let mut nodes: Vec<&ast::Expr> = Vec::new();
+        for s in body {
+            ast::walk_expr(&s.expr, &mut |e| nodes.push(e));
+        }
+        if nodes.iter().any(|e| {
+            matches!(
+                e,
+                E::Lambda { .. }
+                    | E::Spawn(_)
+                    | E::InlineAsm { .. }
+                    | E::WithHandler { .. }
+                    | E::Match { .. }
+                    | E::WhileLet { .. }
+                    | E::Select(_)
+                    | E::Comptime(_)
+                    | E::Own { .. }
+                    | E::RefBind { .. }
+            )
+        }) {
+            return;
+        }
+        let writes = |n: &str| {
+            nodes
+                .iter()
+                .filter(|e| matches!(e, E::Assign { name, .. } if name == n))
+                .count()
+        };
+        let binds = |n: &str| {
+            nodes.iter().any(|e| match e {
+                E::Let { name, .. } => name == n,
+                E::For { var, .. } => var == n,
+                E::UnaryOp {
+                    op: ast::UnaryOp::Ref | ast::UnaryOp::RefMut,
+                    operand,
+                } => matches!(&**operand, E::Ident(x) if x == n),
+                E::AssignTo { place, .. } => Self::mentions(place, n),
+                _ => false,
+            })
+        };
+        if writes(var) > 0 || binds(var) {
+            return;
+        }
+        // Names written inside a loop nested in the body: such a write can
+        // run many times per trip.
+        let mut looped: Vec<&str> = Vec::new();
+        for e in &nodes {
+            if matches!(e, E::While { .. } | E::For { .. }) {
+                ast::walk_expr(e, &mut |w| {
+                    if let E::Assign { name, .. } = w {
+                        looped.push(name);
+                    }
+                });
+            }
+        }
+        for e in &nodes {
+            let E::Assign { name: n, value } = e else {
+                continue;
+            };
+            let E::BinOp {
+                op: ast::BinOp::Add,
+                left,
+                right,
+            } = &**value
+            else {
+                continue;
+            };
+            let is_n = |x: &ast::Expr| matches!(x, E::Ident(id) if id == n);
+            let is_one = |x: &ast::Expr| matches!(x, E::Literal(ast::Literal::Int(1)));
+            if !(is_n(left) && is_one(right) || is_one(left) && is_n(right))
+                || n == var
+                || writes(n) != 1
+                || binds(n)
+                || looped.contains(&n.as_str())
+                || Self::mentions(end, n)
+            {
+                continue;
+            }
+            if Self::literal_start(n, before).is_some_and(|c0| c0 <= lo) {
+                out.insert(&**value as *const ast::Expr);
+            }
+        }
+    }
+
+    /// The literal `c0` of the last `let n = c0` in `before`, if no later
+    /// statement there mentions `n`.
+    fn literal_start(n: &str, before: &[ast::Stmt]) -> Option<i64> {
+        for s in before.iter().rev() {
+            match &s.expr {
+                ast::Expr::Let { name, value, .. } if name == n => {
+                    return match **value {
+                        ast::Expr::Literal(ast::Literal::Int(c0)) => Some(c0),
+                        _ => None,
+                    };
+                }
+                e if Self::mentions(e, n) => return None,
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// `e` reads, writes, binds or captures the name `n` anywhere.
+    fn mentions(e: &ast::Expr, n: &str) -> bool {
+        let mut hit = false;
+        ast::walk_expr(e, &mut |x| {
+            hit |= match x {
+                ast::Expr::Ident(id) => id == n,
+                ast::Expr::Assign { name, .. }
+                | ast::Expr::Let { name, .. }
+                | ast::Expr::Own { name, .. }
+                | ast::Expr::RefBind { name, .. } => name == n,
+                ast::Expr::For { var, .. } => var == n,
+                ast::Expr::Lambda { captures, .. } => captures.iter().any(|(c, _)| c == n),
+                _ => false,
+            };
+        });
+        hit
+    }
+
+    /// AX-76: a bump [`Self::collect_bounded_bumps`] proved cannot
+    /// overflow, as an unchecked `add nsw`. `None` (emit it checked) when
+    /// the counter's slot is not a signed i64.
+    fn emit_bounded_bump(
+        &mut self,
+        left: &ast::Expr,
+        right: &ast::Expr,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let id = if matches!(left, ast::Expr::Ident(_)) {
+            left
+        } else {
+            right
+        };
+        let ast::Expr::Ident(n) = id else {
+            return None;
+        };
+        if !self.is_i64_local(n) {
+            return None;
+        }
+        let BasicValueEnum::IntValue(v) = self.emit_expr(id, fn_val)? else {
+            return None;
+        };
+        let one = v.get_type().const_int(1, false);
+        Some(
+            self.ir
+                .builder
+                .build_int_nsw_add(v, one, "bump")
+                .ok()?
+                .into(),
+        )
     }
     // ── Phase 3 decomposition: per-Expr-variant helper methods ────────
 
@@ -8436,8 +8705,23 @@ impl<'ctx> super::Codegen<'ctx> {
         } else {
             i64_ty.into()
         };
+        // A bool is stored as the byte it occupies: LLVM turns a loop of
+        // `i8` stores of one value into `memset`, but not a loop of `i1`
+        // stores (their bit width is not their store size), and sieve's
+        // `arr_repeat(true, n)` then filled byte by byte (AX-76).
+        let stored: BasicValueEnum<'ctx> = if v.get_type().get_bit_width() == 1 {
+            build_wrappers::w_int_z_extend(
+                &self.ir.builder,
+                v,
+                self.ir.context.i8_type(),
+                "rp_byte",
+            )
+            .into()
+        } else {
+            v.into()
+        };
         self.emit_arr_build_elem("arr_repeat", elem_ty, count, fn_val, move |slf, dp, _i| {
-            build_wrappers::w_store(&slf.ir.builder, dp, v.into());
+            build_wrappers::w_store(&slf.ir.builder, dp, stored);
         })
     }
 
@@ -13067,7 +13351,13 @@ mod checked_arith_ir_tests {
         for (name, op) in [("d", "sdiv i64 %"), ("r", "srem i64 %")] {
             let f = fn_ir(&ir, name);
             assert!(f.contains(op), "fn {name} lost its {op}:\n{f}");
-            for absent in ["divzero", "l_is_min", "safe_div", "divrem_fix", "arith_panic"] {
+            for absent in [
+                "divzero",
+                "l_is_min",
+                "safe_div",
+                "divrem_fix",
+                "arith_panic",
+            ] {
                 assert!(
                     !f.contains(absent),
                     "fn {name}: a constant divisor still emits `{absent}`:\n{f}"
@@ -13105,12 +13395,18 @@ mod checked_arith_ir_tests {
                 .lines()
                 .filter(|l| l.starts_with("@arith_op") && l.contains(&decl))
                 .count();
-            assert_eq!(globals, 1, "want one `{glyph}` glyph global per module:\n{ir}");
+            assert_eq!(
+                globals, 1,
+                "want one `{glyph}` glyph global per module:\n{ir}"
+            );
         }
         let f = fn_ir(&ir, "f");
         // f's faults: overflow of + - * /, and division by zero.
         let calls = f.matches("call void @__axon_arith_panic(").count();
-        assert_eq!(calls, 5, "want one panic call per kind and glyph in f:\n{f}");
+        assert_eq!(
+            calls, 5,
+            "want one panic call per kind and glyph in f:\n{f}"
+        );
         let add_phi = f
             .lines()
             .find(|l| l.contains("%arith_a = phi i64"))
@@ -13127,14 +13423,15 @@ mod checked_arith_ir_tests {
         );
     }
 
-    /// AX-70: an `if` whose arms are checked i64 arithmetic evaluates both
-    /// arms, `select`s the value and the arms' faults, and branches only on
-    /// the selected fault. `3 * x + 1` faults through one range test on `x`,
-    /// not a `smul`/`sadd` intrinsic per op. The cold path re-runs the arm
+    /// AX-70/AX-76: an `if` whose arms are checked i64 arithmetic computes
+    /// both arms' faults up front, branches once on their OR, and lowers the
+    /// value as wrapping arms meeting in a phi (which SimplifyCFG folds into
+    /// a `select`). `3 * x + 1` faults through one range test on `x`, not a
+    /// `smul`/`sadd` intrinsic per op. The cold path re-runs the taken arm
     /// checked so the panic names the faulting op. An arm that can trap
     /// (a variable divisor) or has an effect (a call) keeps the branches.
     #[test]
-    fn checked_op_in_if_arm_lowers_to_select() {
+    fn checked_op_in_if_arm_is_speculated() {
         let ir = module_ir(
             "fn step(x: i64) -> i64 {\n  if x % 2 == 0 { x / 2 } else { 3 * x + 1 }\n}\n\
              fn count(c: bool, n: i64) -> i64 {\n  let k = n\n  if c { k = k + 1 }\n  k\n}\n\
@@ -13142,7 +13439,10 @@ mod checked_arith_ir_tests {
              fn main() -> i64 {\n  step(7) + count(true, 1) + div(4, 2)\n}\n",
         );
         let step = fn_ir(&ir, "step");
-        assert!(step.contains("%spec_val = select i1"), "no value select:\n{step}");
+        assert!(
+            step.contains("%spec_val"),
+            "the if was not speculated:\n{step}"
+        );
         assert!(
             step.contains("br i1 %spec_range, label %spec_slow"),
             "the fault branch is not on the arm's range test alone:\n{step}"
@@ -13160,13 +13460,40 @@ mod checked_arith_ir_tests {
         );
         let count = fn_ir(&ir, "count");
         assert!(
-            count.contains("%spec_val = select i1") && !count.contains("if_then"),
-            "`if c {{ k = k + 1 }}` did not become a select:\n{count}"
+            count.contains("%spec_val") && !count.contains("if_then"),
+            "`if c {{ k = k + 1 }}` was not speculated:\n{count}"
         );
         let div = fn_ir(&ir, "div");
         assert!(
             div.contains("if_then") && !div.contains("spec_val"),
             "a variable divisor was speculated:\n{div}"
         );
+    }
+
+    /// AX-76: a counter started at a literal `c0 <= lo` and bumped once per
+    /// trip of `for k in lo..end` cannot overflow, so the bump is a plain
+    /// `add nsw`. A start above `lo`, a write between the `let` and the
+    /// loop, or a bump inside a nested loop keeps it checked.
+    #[test]
+    fn bounded_counter_bump_is_unchecked() {
+        let ir = module_ir(
+            "fn tally(n: i64) -> i64 {\n  let c = 0\n  for k in 0..n {\n    if k % 3 == 0 { c = c + 1 }\n  }\n  c\n}\n\
+             fn above(n: i64) -> i64 {\n  let c = 1\n  for k in 0..n {\n    c = c + 1\n  }\n  c\n}\n\
+             fn between(n: i64) -> i64 {\n  let c = 0\n  c = c + 5\n  for k in 0..n {\n    c = c + 1\n  }\n  c\n}\n\
+             fn nested(n: i64) -> i64 {\n  let c = 0\n  for k in 0..n {\n    let j = 0\n    while j < 2 {\n      c = c + 1\n      j = j + 1\n    }\n  }\n  c\n}\n\
+             fn main() -> i64 {\n  tally(9) + above(2) + between(2) + nested(2)\n}\n",
+        );
+        let tally = fn_ir(&ir, "tally");
+        assert!(
+            tally.contains("%bump = add nsw i64") && !tally.contains("with.overflow"),
+            "the bounded bump is still checked:\n{tally}"
+        );
+        for name in ["above", "between", "nested"] {
+            let f = fn_ir(&ir, name);
+            assert!(
+                !f.contains("%bump") && f.contains("sadd.with.overflow"),
+                "{name}: an unproven bump lost its check:\n{f}"
+            );
+        }
     }
 }

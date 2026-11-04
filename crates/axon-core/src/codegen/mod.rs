@@ -235,6 +235,10 @@ pub struct Codegen<'ctx> {
     /// AX-70: how checked arithmetic is lowered right now. `Checked` outside
     /// the speculated `if` of `emit_if_speculated`.
     arith_mode: expr::ArithMode<'ctx>,
+    /// AX-76: the `n + 1` nodes (by address) of counter bumps proven not
+    /// to overflow; they lower to an unchecked `add nsw`. Filled per fn
+    /// body by `collect_bounded_bumps` before the body is emitted.
+    bounded_bumps: std::collections::HashSet<*const ast::Expr>,
     /// Maps enum name → its variants' native layout (name, tag, payload
     /// fields with offsets). Used by StructLit and Pattern::Struct for enum
     /// variant codegen; filled by `enum_layout::declare_enum_types`.
@@ -523,6 +527,7 @@ impl<'ctx> Codegen<'ctx> {
             arith_op_globals: HashMap::new(),
             arith_panic_blocks: HashMap::new(),
             arith_mode: expr::ArithMode::Checked,
+            bounded_bumps: std::collections::HashSet::new(),
             enum_variants: HashMap::new(),
             enum_names: std::collections::HashSet::new(),
             display_fns: HashMap::new(),
@@ -1865,6 +1870,7 @@ impl<'ctx> Codegen<'ctx> {
             self.emit_refine_preconditions(&f.name, &params, llvm_fn);
         }
 
+        Self::collect_bounded_bumps(&f.body, &mut self.bounded_bumps);
         let body_val = self.emit_expr(&f.body, llvm_fn);
         // AX-08: a value that IS a `&mut` param shares the caller's buffer;
         // returned as-is, the caller would get a second name for its array.

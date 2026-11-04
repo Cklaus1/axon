@@ -1,5 +1,13 @@
 # Axon Changelog
 
+## AX-76: speculated if arms test their faults first; bounded counters skip the check
+
+- **Fault test before the arms** (compilebench AX-76): an `if` lowered by AX-70 now computes both arms' fault bits first and branches once on their OR to the cold re-run, then lowers the value as wrapping arms meeting in a phi. SimplifyCFG folds that diamond into a `select`, and the fault test no longer sits on the value's dependency chain.
+- **Bounded counter bumps:** inside `for k in lo..end`, a local started at an integer literal `c0 <= lo` and bumped by `n = n + 1` at most once per trip cannot pass `end`, so the bump lowers to `add nsw` with no overflow check. The check stays when `c0 > lo`, when the local is written between its `let` and the loop, or when the bump sits in a nested loop.
+- **`arr_repeat` of a `bool`** stores the value as the `i8` it occupies, so LLVM turns the fill loop into `memset`.
+- `--release`, `perf stat`, `taskset -c 2`, min of 3, cbfee112 -> this change (best of gcc/clang/rustc O3 for reference): `collatz` 151 M -> 118 M cycles (114 M), 713 M -> 570 M instructions; `sieve` 282 M -> 233 M cycles (231 M), 1,024 M -> 741 M instructions. The other seven compilebench programs are within 0.01 % on instructions, and all nine outputs match golden.
+- Tests: `checked_op_in_if_arm_is_speculated` (renamed from `..._lowers_to_select`, now pins the fault branch), `bounded_counter_bump_is_unchecked` (IR shape), and `checked_arith_parity.sh` cases `for_count_at_max` (reaches `i64::MAX` exactly), `for_count_start_above_lo_ovf` (panics) and `bool_repeat`.
+
 ## AX-70: an if with checked arithmetic in its arms selects instead of branching
 
 - **If-conversion past overflow checks** (compilebench AX-70): an `if` whose arms are side-effect-free i64 arithmetic (literals, i64 locals, `+`/`-`/`*`, `/`/`%` by a constant other than 0 and -1), either as a value or as arms assigning one i64 local (`if c { n = n + 1 }`), computes both arms with wrapping ops and `select`s the value. Each arm's overflow becomes one fault bit; ops with a constant operand fold into one range test per source value (`3 * x + 1` faults iff `x` leaves `[MIN / 3, (MAX - 1) / 3]`). The fast path branches on the OR of both arms' faults, which is never taken in practice; the cold path re-runs the taken arm checked when its fault is set, so the panic names the same op and operands as before. Arms that can trap or have effects keep the branchy lowering.
