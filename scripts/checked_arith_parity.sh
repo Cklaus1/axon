@@ -33,10 +33,13 @@ else
 fi
 require_codegen_axon checked_arith_parity
 
-# (label, body) — each body is a `fn main()` body. The interesting cases are the
-# faults (must panic exit 101 with a matching message) and the boundary cases
-# that must NOT panic (INT_MIN/-1 div+rem, max value that just fits).
+# (label, body) — each body is a `fn main()` body, after the label's DEFS (fn
+# definitions), if any. The interesting cases are the faults (must panic exit
+# 101 with a matching message) and the boundary cases that must NOT panic
+# (INT_MIN/-1 div+rem, max value that just fits). Every case is built at O0 and
+# at O3, where the optimised lowerings (AX-78's accumulator loop) apply.
 declare -A CASES
+declare -A DEFS
 CASES[div_zero]='let a = 5
     let b = 0
     println(to_str(a / b))'
@@ -168,11 +171,45 @@ CASES[bool_repeat]='let f = arr_repeat(true, 5)
         if f[k] { n = n + 1 }
     }
     println(to_str(n))'
+# AX-78: above O0 `fn f(..) -> i64 { if C { B } else { L + f(A) } }` runs as
+# a loop summing the left operands. Each sum must overflow exactly when one of
+# the source's adds does, with that add's operands: deep in a binary recursion
+# (`fibk`), past `MIN` reached exactly (`fibneg`), in the inner add after the
+# loop stops reordering (`sumk`), only in an outer add after a negative term
+# (`dip`, re-run in source order), past the 64-trip frame budget (`long`); a
+# fault in `L` is the source's own (`div3`). Panicking cases print nothing
+# first, so stdout buffering cannot reorder the combined output.
+ACCUM_FNS='fn fib(n: i64) -> i64 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+fn fibk(n: i64) -> i64 { if n < 2 { n * 1000000000000000 } else { fibk(n - 1) + fibk(n - 2) } }
+fn fibneg(n: i64) -> i64 { if n < 2 { 0 - n * 4611686018427387904 } else { fibneg(n - 1) + fibneg(n - 2) } }
+fn sumk(n: i64, k: i64) -> i64 { if n == 0 { 0 } else { k + sumk(n - 1, k) } }
+fn dip(n: i64) -> i64 { if n == 0 { 4611686018427387904 } else { (if n == 1 { 0 - 1 } else { 4611686018427387904 }) + dip(n - 1) } }
+fn long(n: i64) -> i64 { if n == 0 { 9223372036854775000 } else { (if n == 1 { 0 - 1000 } else { 1 }) + long(n - 1) } }
+fn div3(n: i64) -> i64 { if n < 1 { 0 } else { 100 / (n - 3) + div3(n - 1) } }'
+CASES[accum_values]='println(to_str(fib(25)))
+    println(to_str(fibk(20)))
+    println(to_str(fibneg(3)))
+    println(to_str(sumk(2, 4611686018427387903)))
+    println(to_str(sumk(5000, 1)))
+    println(to_str(dip(2)))
+    println(to_str(long(200)))
+    println(to_str(div3(2)))'
+CASES[accum_fib_ovf]='println(to_str(fibk(23)))'
+CASES[accum_fib_neg_ovf]='println(to_str(fibneg(4)))'
+CASES[accum_inner_add_ovf]='println(to_str(sumk(3, 4611686018427387904)))'
+CASES[accum_outer_add_ovf]='println(to_str(dip(3)))'
+CASES[accum_budget_ovf]='println(to_str(long(2000)))'
+CASES[accum_left_div_zero]='println(to_str(div3(5)))'
+for label in accum_values accum_fib_ovf accum_fib_neg_ovf accum_inner_add_ovf \
+  accum_outer_add_ovf accum_budget_ovf accum_left_div_zero; do
+  DEFS[$label]="$ACCUM_FNS"
+done
 
 fail=0
 for label in "${!CASES[@]}"; do
   PROG="$WORK/$label.ax"
   {
+    if [ -n "${DEFS[$label]:-}" ]; then echo "${DEFS[$label]}"; fi
     echo "fn main() {"
     echo "    ${CASES[$label]}"
     echo "}"
@@ -182,25 +219,27 @@ for label in "${!CASES[@]}"; do
   iout="$("$AXON" run "$PROG" 2>&1)"
   iexit=$?
 
-  # Native.
-  BIN="$WORK/${label}_bin"
-  if ! berr="$("$AXON" build "$PROG" -o "$BIN" --no-cache 2>&1)"; then
-    # A build that FAILED is a RESULT, not an absence. This used to discard
-    # stderr and report a codegen regression in the feature under test as
-    # "skipping" — see scripts/lib/harness_skip.sh.
-    native_build_failed checked_arith_parity "$label" "$berr" || exit 1
-  fi
-  nout="$("$BIN" 2>&1)"
-  nexit=$?
+  # Native, unoptimised and optimised.
+  for level in 0 3; do
+    BIN="$WORK/${label}_O${level}_bin"
+    if ! berr="$("$AXON" build "$PROG" -o "$BIN" --no-cache --opt-level "$level" 2>&1)"; then
+      # A build that FAILED is a RESULT, not an absence. This used to discard
+      # stderr and report a codegen regression in the feature under test as
+      # "skipping" — see scripts/lib/harness_skip.sh.
+      native_build_failed checked_arith_parity "$label O$level" "$berr" || exit 1
+    fi
+    nout="$("$BIN" 2>&1)"
+    nexit=$?
 
-  if [ "$iexit" -ne "$nexit" ] || [ "$iout" != "$nout" ]; then
-    echo "checked_arith_parity: FAIL — $label diverged"
-    echo "  interp: exit=$iexit out=[$iout]"
-    echo "  native: exit=$nexit out=[$nout]"
-    fail=1
-  else
-    echo "  $label: interp==native (exit $iexit) ✓"
-  fi
+    if [ "$iexit" -ne "$nexit" ] || [ "$iout" != "$nout" ]; then
+      echo "checked_arith_parity: FAIL — $label O$level diverged"
+      echo "  interp: exit=$iexit out=[$iout]"
+      echo "  native: exit=$nexit out=[$nout]"
+      fail=1
+    else
+      echo "  $label O$level: interp==native (exit $iexit) ✓"
+    fi
+  done
 done
 
 if [ "$fail" -ne 0 ]; then

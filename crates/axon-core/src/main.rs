@@ -8540,6 +8540,10 @@ fn build_ir_and_link(
     // assembly) needs the resolved triple BEFORE emit_program, not just at
     // object-write time. `None` = the historical x86_64 default.
     cg.set_target_triple(target_triple.unwrap_or_default());
+    // AX-78: at O1..O3 a recursion through a checked `+` runs as a loop with
+    // an accumulator; O0 keeps one frame per source call, and `s`/`z` the
+    // single body.
+    cg.set_accumulate(opt.optimizes_for_speed());
     laps.lap("ir_gen");
     // Phase 5 §4: elide the runtime refinement-return / scalar-`@[verify]` checks
     // the SMT prover discharged ∀-inputs (empty set without the `smt` feature, so

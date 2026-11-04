@@ -199,58 +199,70 @@ fn every_opt_level_prints_what_the_interpreter_prints() {
 /// Unbounded recursion must stay a graceful exit 101 at every level, like the
 /// interpreter's recursion-limit panic. With tail-recursion elimination the
 /// optimiser turned this into a loop spinning ~2^63 times (a hang), so the
-/// native run is bounded by a deadline here.
+/// native run is bounded by a deadline here. `acc` has the AX-78 accumulator
+/// shape: at O1..O3 it runs as a loop that recurses for real every 64 trips,
+/// so it must still exhaust the stack instead of spinning.
 #[test]
 fn optimised_unbounded_recursion_still_overflows_gracefully() {
-    let src = write_src(
-        "rec",
-        "fn rec(n: i64) -> i64 { rec(n + 1) }\nfn main() -> i64 { rec(0) }\n",
-    );
-    let interp = axon().arg("run").arg(&src).output().expect("spawn run");
-    assert_eq!(interp.status.code(), Some(101), "{}", stderr_of(&interp));
+    let programs = [
+        (
+            "rec",
+            "fn rec(n: i64) -> i64 { rec(n + 1) }\nfn main() -> i64 { rec(0) }\n",
+        ),
+        (
+            "acc",
+            "fn acc(n: i64) -> i64 { if n < 0 { 0 } else { 1 + acc(n + 1) } }\n\
+             fn main() -> i64 { acc(0) }\n",
+        ),
+    ];
+    for (name, program) in programs {
+        let src = write_src(name, program);
+        let interp = axon().arg("run").arg(&src).output().expect("spawn run");
+        assert_eq!(interp.status.code(), Some(101), "{}", stderr_of(&interp));
 
-    for level in ["0", "1", "2", "3", "s", "z"] {
-        let bin = tmp(&format!("rec_bin_{level}"));
-        let _ = std::fs::remove_file(&bin);
-        let b = build(&["--no-cache", "--opt-level", level], &src, &bin);
-        if codegen_absent(&b) {
-            let _ = std::fs::remove_file(&src);
-            return;
-        }
-        assert_eq!(
-            b.status.code(),
-            Some(0),
-            "build O{level}:\n{}",
-            stderr_of(&b)
-        );
-        let mut child = Command::new(&bin)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("run native");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while child.try_wait().expect("poll native").is_none() {
-            if std::time::Instant::now() > deadline {
-                let _ = child.kill();
-                panic!("O{level}: unbounded recursion hung instead of overflowing");
+        for level in ["0", "1", "2", "3", "s", "z"] {
+            let bin = tmp(&format!("{name}_bin_{level}"));
+            let _ = std::fs::remove_file(&bin);
+            let b = build(&["--no-cache", "--opt-level", level], &src, &bin);
+            if codegen_absent(&b) {
+                let _ = std::fs::remove_file(&src);
+                return;
             }
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            assert_eq!(
+                b.status.code(),
+                Some(0),
+                "build {name} O{level}:\n{}",
+                stderr_of(&b)
+            );
+            let mut child = Command::new(&bin)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("run native");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while child.try_wait().expect("poll native").is_none() {
+                if std::time::Instant::now() > deadline {
+                    let _ = child.kill();
+                    panic!("{name} O{level}: unbounded recursion hung instead of overflowing");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            let out = child.wait_with_output().expect("collect native");
+            let _ = std::fs::remove_file(&bin);
+            assert_eq!(
+                out.status.code(),
+                Some(101),
+                "{name} O{level}: {}",
+                stderr_of(&out)
+            );
+            assert!(
+                String::from_utf8_lossy(&out.stderr).contains("stack overflow"),
+                "{name} O{level}: {}",
+                stderr_of(&out)
+            );
         }
-        let out = child.wait_with_output().expect("collect native");
-        let _ = std::fs::remove_file(&bin);
-        assert_eq!(
-            out.status.code(),
-            Some(101),
-            "O{level}: {}",
-            stderr_of(&out)
-        );
-        assert!(
-            String::from_utf8_lossy(&out.stderr).contains("stack overflow"),
-            "O{level}: {}",
-            stderr_of(&out)
-        );
+        let _ = std::fs::remove_file(&src);
     }
-    let _ = std::fs::remove_file(&src);
 }
 
 #[test]
@@ -272,19 +284,21 @@ fn release_ir_is_optimised_and_program_functions_are_internal() {
     let _ = std::fs::remove_file(&rel);
     let _ = std::fs::remove_file(&o0);
 
-    let fib_body = |ir: &str| -> String {
+    let fn_body = |ir: &str, name: &str| -> String {
         let start = ir
             .lines()
-            .position(|l| l.starts_with("define") && l.contains("@fib("))
-            .unwrap_or_else(|| panic!("no fib definition in IR:\n{ir}"));
+            .position(|l| l.starts_with("define") && l.contains(&format!("@{name}(")))
+            .unwrap_or_else(|| panic!("no {name} definition in IR:\n{ir}"));
         ir.lines()
             .skip(start)
             .take_while(|l| *l != "}")
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let fib2 = fib_body(&ir2);
-    let fib0 = fib_body(&ir0);
+    // AX-78: at release `fib` is a test of `n < 2` in front of `fib.loop`,
+    // the recursion, and inlines into its callers.
+    let fib2 = fn_body(&ir2, "fib.loop");
+    let fib0 = fn_body(&ir0, "fib");
     // AX-21: O0 spills the parameter to a stack slot; the release pipeline
     // (mem2reg/SROA) removes it.
     assert!(
@@ -311,6 +325,47 @@ fn release_ir_is_optimised_and_program_functions_are_internal() {
         !ir2.contains("@str_reverse("),
         "unused internal helpers must be dropped at O2"
     );
+}
+
+/// AX-78: at O1..O3 `fib`, a recursion through a checked `+`, runs as a loop
+/// summing the left operands (`@fib.loop`, a `phi` carrying the trip's
+/// argument and sum), with the source lowering kept as the cold re-run
+/// `@fib.orig` that raises the source's panic when the sum overflows. O0
+/// keeps the source lowering alone, one frame per call, and `s`/`z` the single
+/// body.
+#[test]
+fn speed_levels_run_a_checked_add_recursion_as_a_loop() {
+    let src = write_src("fib_accum", FIB);
+    for (level, looped) in [
+        ("0", false),
+        ("1", true),
+        ("2", true),
+        ("3", true),
+        ("s", false),
+        ("z", false),
+    ] {
+        let ll = tmp(&format!("fib_accum_{level}.ll"));
+        let b = build(&["--no-cache", "--opt-level", level, "--emit-llvm"], &src, &ll);
+        if codegen_absent(&b) {
+            let _ = std::fs::remove_file(&src);
+            return;
+        }
+        assert_eq!(b.status.code(), Some(0), "O{level}: {}", stderr_of(&b));
+        let ir = std::fs::read_to_string(&ll).expect("IR");
+        let _ = std::fs::remove_file(&ll);
+        let body = |name: &str| {
+            ir.split("\ndefine ")
+                .find(|d| d.lines().next().is_some_and(|l| l.contains(&format!(" @{name}("))))
+                .map(|d| d[..d.find("\n}").expect("fn closes")].to_string())
+        };
+        let lp = body("fib.loop");
+        assert_eq!(lp.is_some(), looped, "O{level}:\n{ir}");
+        assert_eq!(body("fib.orig").is_some(), looped, "O{level}:\n{ir}");
+        if let Some(lp) = lp {
+            assert!(lp.contains(" = phi i64 "), "O{level}: no loop in\n{lp}");
+        }
+    }
+    let _ = std::fs::remove_file(&src);
 }
 
 #[test]

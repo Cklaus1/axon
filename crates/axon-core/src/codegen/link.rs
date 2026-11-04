@@ -108,6 +108,11 @@ impl OptLevel {
         self != Self::O0
     }
 
+    /// `O1`..`O3`: the levels that trade code size for speed (`s`/`z` do not).
+    pub fn optimizes_for_speed(self) -> bool {
+        matches!(self, Self::O1 | Self::O2 | Self::O3)
+    }
+
     fn backend(self) -> OptimizationLevel {
         match self {
             Self::O0 => OptimizationLevel::None,

@@ -1667,7 +1667,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// the runtime trap (exit 101), matching the interpreter's checked arithmetic
     /// (I-9). Returns `None` if the intrinsic can't be resolved, so the caller
     /// falls back to the raw (unchecked) op rather than miscompiling.
-    fn emit_checked_overflow_op(
+    pub(super) fn emit_checked_overflow_op(
         &mut self,
         intrinsic_name: &str,
         op_glyph: &'static str,
