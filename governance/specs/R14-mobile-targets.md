@@ -543,7 +543,7 @@ order as x86-64 native; no mobile-specific hot path). Wrapper generation is buil
      which suspends/re-enters Axon across lifecycle events via the **landed Phase-6 `host_await` resume
      runtime**. Verified headless two ways (`scripts/android_lifecycle.sh`): (A) the
      `examples/mobile/lifecycle.ax` resume round-trip (init→tick→suspend→resume→teardown as one linear Axon fn,
-     deterministic transcript + exit=frames) on the host substrate the bridge drives; (B) the on-device
+     deterministic transcript, witness `frames=3 suspends=1`, exit 0) on the host substrate the bridge drives; (B) the on-device
      load→bind→invoke boundary — the Axon `.so` is `dlopen`+`dlsym("main")`+called on the emulator, returning
      the interp-oracle value (the AxonRuntime→native path minus the JVM). **MANUAL tier (not run headless):** a
      full NativeActivity GUI app + a JVM `kotlinc` frame loop.

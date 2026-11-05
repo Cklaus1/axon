@@ -5,10 +5,15 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Runs any branch on demand: `gh workflow run ci.yml --ref <branch>`.
+  workflow_dispatch: {}
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
+  # Host-scoped, the way gate.sh scopes its flags: a set RUSTFLAGS (even "")
+  # replaces `[target.wasm32-*].rustflags` in .cargo/config.toml (the 64 MiB wasm
+  # stack) and would turn wasm32-only warnings into errors.
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -D warnings
 
 jobs:
   # Pure-text hygiene gates: ~1s, no build, no toolchain beyond bash+jq.
@@ -43,8 +48,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Full history: pci_delta_note and spec_ledger resolve real commits and
+      # ancestry (a depth-1 clone fails them with "unknown revision").
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # No toolchain is named here on purpose. `rust-toolchain.toml` is the one
       # place that says which toolchain this repo builds with, and `rustup
@@ -79,13 +88,17 @@ jobs:
       # Run the full unit + integration test suite.  Anything that lives
       # outside the codegen feature gate is exercised here, which covers
       # the lexer, parser, type-checker, and interpreter/evaluator.
+      # --no-fail-fast: one failing test binary must not hide the rest.
       - name: cargo test (no codegen)
-        run: cargo test --no-default-features -p axon-core
+        run: cargo test --no-default-features -p axon-core --no-fail-fast
 
       # Format check — fails the build if any file needs reformatting. --all, not
       # -p axon-core: the per-crate scoping here is why 37 files of drift in the
       # other crates went unseen until 2980206 swept them.
+      # Every step below runs even when the tests fail (`!cancelled()`), so fmt,
+      # clippy and claims report on every run.
       - name: CLAUDE.md claims are true (binary exists by now)
+        if: ${{ !cancelled() }}
         env:
           CLAIMS_GATE_REQUIRE: "1"
           # The binary THIS job built (claims_gate never falls back to target/).
@@ -93,10 +106,12 @@ jobs:
         run: bash scripts/claims_gate.sh
 
       - name: cargo fmt check
+        if: ${{ !cancelled() }}
         run: cargo fmt --all -- --check
 
-      # Lint — only flag things that are also blocked by RUSTFLAGS=-D warnings.
+      # Lint — only flag things that are also blocked by the host -D warnings.
       - name: cargo clippy (no codegen)
+        if: ${{ !cancelled() }}
         run: cargo clippy --no-default-features -p axon-core -- -D warnings
 
       # The runtime crates. CI linted ONLY axon-core, so a clippy error in
@@ -107,6 +122,7 @@ jobs:
       # axon-guest-kernel is excluded: freestanding no_std, unlintable on the
       # host target (built by scripts/build-guest-image.sh with -Z build-std).
       - name: cargo clippy (runtime crates)
+        if: ${{ !cancelled() }}
         run: |
           cargo clippy -p axon-rt -p axon-rt-ai -p axon-ai -p axon-surface -p axon-gfx \
             -p axon-gfx-mock -p axon-domain -p axon-vm -p axon-attest \
@@ -119,7 +135,9 @@ jobs:
   # axon-web, axon-guest-kernel and the rest were never built or tested by CI —
   # including the crates that hold the capability-enforcement code.
   #
-  # RUSTFLAGS is deliberately cleared for this job. The workspace-wide
+  # The host rustflags are deliberately cleared for this job
+  # (CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "", not RUSTFLAGS: "",
+  # which would also drop the committed wasm32 flags). The workspace-wide
   # `-D warnings` from the top-level env would fail on pre-existing warnings in
   # crates that have never been lint-gated (unused imports in axon-os tests,
   # dead_code in axon-vm), turning a useful TEST signal into a lint failure.
@@ -132,10 +150,12 @@ jobs:
     name: Test the whole workspace (no LLVM)
     runs-on: ubuntu-latest
     env:
-      RUSTFLAGS: ""
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ""
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # No toolchain is named here on purpose. `rust-toolchain.toml` is the one
       # place that says which toolchain this repo builds with, and `rustup
@@ -161,7 +181,7 @@ jobs:
       # --no-default-features keeps LLVM out of this job; the codegen half is
       # covered by the `codegen` job below.
       - name: cargo test --workspace (no codegen)
-        run: cargo test --workspace --no-default-features
+        run: cargo test --workspace --no-default-features --no-fail-fast
 
   # AUDIT T7. The native/interp parity harnesses are the I-2 invariant this
   # project rests on, and NONE of them ran in CI — the codegen feature needs
@@ -192,20 +212,34 @@ jobs:
     name: Codegen build + tests (LLVM 23) — NOT the parity suite
     runs-on: ubuntu-latest
     env:
-      RUSTFLAGS: ""
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ""
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      # Three attempts, 20 s apart, under pipefail (`shell: bash`): a DNS
+      # failure inside `apt-get update` prints only W: lines and exits 0, so the
+      # install is inside the loop too. The third failure fails the job.
       - name: Install LLVM 23
+        shell: bash
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
-          codename="$(lsb_release -cs)"
-          echo "deb http://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-23 main" \
-            | sudo tee /etc/apt/sources.list.d/llvm-23.list
-          sudo apt-get update
-          sudo apt-get install -y llvm-23 llvm-23-dev libpolly-23-dev
+          install_llvm() {
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+              | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null &&
+            codename="$(lsb_release -cs)" &&
+            echo "deb http://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-23 main" \
+              | sudo tee /etc/apt/sources.list.d/llvm-23.list &&
+            sudo apt-get update &&
+            sudo apt-get install -y llvm-23 llvm-23-dev libpolly-23-dev
+          }
+          for k in 1 2 3; do
+            if install_llvm; then break; fi
+            echo "apt attempt $k failed"
+            if [ "$k" = 3 ]; then exit 1; fi
+            sleep 20
+          done
           echo "LLVM_SYS_231_PREFIX=/usr/lib/llvm-23" >> "$GITHUB_ENV"
 
       # No toolchain is named here on purpose. `rust-toolchain.toml` is the one
@@ -232,7 +266,12 @@ jobs:
       - name: cargo build (codegen)
         run: cargo build -p axon-core
 
+      # The wasm32 runtime the wasm runnable-label test links against
+      # (target/wasm32-unknown-unknown/debug/libaxon_rt.a, the first path searched).
+      - name: cargo build axon-rt (wasm32-unknown-unknown)
+        run: cargo build -p axon-rt --target wasm32-unknown-unknown
+
       # The parity + capability integration tests. This is the job that would
       # have caught the sandbox-escape defects this audit found by hand.
       - name: cargo test (codegen)
-        run: cargo test -p axon-core
+        run: cargo test -p axon-core --no-fail-fast

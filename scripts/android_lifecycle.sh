@@ -10,9 +10,10 @@
 #      teardown as ONE linear Axon fn, suspending at each `host_await` and
 #      resuming with the next OS event. Driven on stdin (the same substrate the
 #      AxonRuntime bridge drives on-device), it must produce the deterministic
-#      transcript + exit code = frames rendered. `host_await` is the LANDED
-#      Phase-6 resume runtime (interp-only, codegen-refused) — so this is the
-#      genuine suspend/resume the bridge depends on.
+#      transcript (witness: `frames=3 suspends=1` on teardown) and exit 0.
+#      `host_await` is the LANDED Phase-6 resume runtime (interp-only,
+#      codegen-refused) — so this is the genuine suspend/resume the bridge
+#      depends on.
 #
 #  (B) THE ON-DEVICE NATIVE BOUNDARY (emulator, gate-verified here): the
 #      AxonRuntime bridge loads the Axon `.so` via `System.loadLibrary` and
@@ -53,7 +54,6 @@ ndk_bin() {
   return 1
 }
 
-NDKBIN="$(ndk_bin)" || skip "Android NDK not found"
 ADB="${ADB:-adb}"
 command -v "$ADB" >/dev/null 2>&1 || ADB="${ANDROID_HOME:-}/platform-tools/adb"
 
@@ -64,7 +64,6 @@ else
   cargo_build_or_skip android_lifecycle llvm cargo build -q -p axon-core --bin axon
   use_built AXON axon
 fi
-require_codegen_axon android_lifecycle
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"; "$ADB" shell rm -rf /data/local/tmp/axon_lc 2>/dev/null' EXIT
@@ -73,23 +72,29 @@ ran_a=0
 ran_b=0
 
 # ── (A) host resume round-trip ────────────────────────────────────────────────
+# Runs before the NDK/codegen skips below: it needs neither, so a host with no
+# NDK still measures it.
 echo "android_lifecycle: (A) host_await lifecycle round-trip…"
 EVENTS=$'tick\ntick\nsuspend\nresume\ntick\nteardown\n'
-printf '%s' "$EVENTS" | "$AXON" run examples/mobile/lifecycle.ax >"$WORK/lc.out" 2>/dev/null
+printf '%s' "$EVENTS" | "$AXON" run examples/mobile/lifecycle.ax >"$WORK/lc.out" 2>"$WORK/lc.err"
 lc_exit=$?
 ran_a=1
-# Expected transcript markers + exit = 3 frames rendered.
+# Expected transcript markers (witness: `frames=3 suspends=1`) + exit 0.
 if ! grep -q "on_start (init)" "$WORK/lc.out" \
    || ! grep -q "on_pause: app backgrounded" "$WORK/lc.out" \
    || ! grep -q "on_resume: app foregrounded" "$WORK/lc.out" \
    || ! grep -q "on_destroy: teardown; frames=3 suspends=1" "$WORK/lc.out"; then
-  echo "--- transcript ---"; cat "$WORK/lc.out"
+  echo "--- transcript ---"; cat "$WORK/lc.out"; echo "--- stderr ---"; cat "$WORK/lc.err"
   fail "(A) lifecycle transcript missing an expected init/suspend/resume/teardown marker"
 fi
-if [ "$lc_exit" != "3" ]; then
-  fail "(A) lifecycle exit = $lc_exit, expected 3 (frames rendered round-trip witness)"
+if [ "$lc_exit" != "0" ]; then
+  echo "--- stderr ---"; cat "$WORK/lc.err"
+  fail "(A) lifecycle exit = $lc_exit, expected 0 (the teardown transcript line is the witness)"
 fi
-echo "  OK (A) init→tick→suspend→resume→tick→teardown, exit=3 (3 frames)"
+echo "  OK (A) init→tick→suspend→resume→tick→teardown, frames=3 suspends=1, exit=0"
+
+NDKBIN="$(ndk_bin)" || skip "Android NDK not found ((A) passed above)"
+require_codegen_axon android_lifecycle
 
 # ── device discovery for (B) ──────────────────────────────────────────────────
 EMU_OK=0; ABILIST=""
