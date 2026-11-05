@@ -4212,3 +4212,12 @@ ATTACK_MARKERS.update({
     'M4818': r'ATTACK: a repair envelope (was not refused by name on the job path|authorized the replay of a job)',
     'M4819': r'ATTACK: a special file in a pinned tree failed the walk',
 })
+
+# nhr-evidence b4 Lane B, NE-2 refusal coverage (ids M4820-M4824, block M4810-M4829)
+ATTACK_MARKERS.update({
+    'M4820': r'ATTACK: a special file at or under a write root was admitted',
+    'M4821': r'ATTACK: a special file at or under a write root was admitted',
+    'M4822': r'ATTACK: a special file at or under a write root was admitted',
+    'M4823': r'ATTACK: a special file at or under a write root was admitted',
+    'M4824': r'ATTACK: a special file at or under a write root was admitted',
+})

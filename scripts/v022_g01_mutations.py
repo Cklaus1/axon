@@ -15231,5 +15231,33 @@ MUTATIONS += [
      'axon-cortex', '--features unattended --lib', 'cas::tests::a_special_file_read_is_valued_by_its_kind'),
 ]
 
+# nhr-evidence b4 Lane B, refusal coverage of NE-2's E1s special-file refusal (ids M4820-M4824, block
+# M4810-M4829): each arm of unattended::special_kind and the write-root refusal's Err arm. Before the new
+# unit test, the socket and block-device arms were killed by NO test (both disabled together, the whole
+# `cargo test -p axon-cortex --features unattended` stayed green); the fifo arm by s6 and the pinned-tree
+# tests, the char-device arm only by cas's valuation test (/dev/null), never as a refusal.
+MUTATIONS += [
+    ('M4820', 'NE-2: special_kind does not name a fifo (a FIFO under a write root is admitted)', 'crates/axon-cortex/src/unattended.rs',
+     '    if t.is_fifo() {',
+     '    if false {',
+     'axon-cortex', '--features unattended --lib', 'unattended::tests::a_special_file_at_or_under_a_write_root_is_refused_by_kind'),
+    ('M4821', 'NE-2: special_kind does not name a socket', 'crates/axon-cortex/src/unattended.rs',
+     '    } else if t.is_socket() {',
+     '    } else if false {',
+     'axon-cortex', '--features unattended --lib', 'unattended::tests::a_special_file_at_or_under_a_write_root_is_refused_by_kind'),
+    ('M4822', 'NE-2: special_kind does not name a char device', 'crates/axon-cortex/src/unattended.rs',
+     '    } else if t.is_char_device() {',
+     '    } else if false {',
+     'axon-cortex', '--features unattended --lib', 'unattended::tests::a_special_file_at_or_under_a_write_root_is_refused_by_kind'),
+    ('M4823', 'NE-2: special_kind does not name a block device', 'crates/axon-cortex/src/unattended.rs',
+     '    } else if t.is_block_device() {',
+     '    } else if false {',
+     'axon-cortex', '--features unattended --lib', 'unattended::tests::a_special_file_at_or_under_a_write_root_is_refused_by_kind'),
+    ('M4824', 'NE-2: a write root that is itself a special file is admitted', 'crates/axon-cortex/src/unattended.rs',
+     '                Some(kind) => Err(special(&root, kind)),',
+     '                Some(_) => Ok(()),',
+     'axon-cortex', '--features unattended --lib', 'unattended::tests::a_special_file_at_or_under_a_write_root_is_refused_by_kind'),
+]
+
 if __name__ == "__main__":
     main()
