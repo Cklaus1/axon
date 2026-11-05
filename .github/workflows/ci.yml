@@ -48,8 +48,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Full history: pci_delta_note and spec_ledger resolve real commits and
+      # ancestry (a depth-1 clone fails them with "unknown revision").
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # No toolchain is named here on purpose. `rust-toolchain.toml` is the one
       # place that says which toolchain this repo builds with, and `rustup
@@ -150,6 +154,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # No toolchain is named here on purpose. `rust-toolchain.toml` is the one
       # place that says which toolchain this repo builds with, and `rustup
@@ -210,6 +216,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Three attempts, 20 s apart, under pipefail (`shell: bash`): a DNS
       # failure inside `apt-get update` prints only W: lines and exits 0, so the
