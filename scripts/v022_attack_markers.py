@@ -4178,3 +4178,37 @@ ATTACK_MARKERS.update({
     'M4785': r'ATTACK: a contained helper called a closure a module let built',
     'M4786': r'ATTACK: a contained helper called a fn value a module let holds',
 })
+
+# containment-b4 C-1/C-2/C-4 (ids M4790-M4805, block M4790-M4809)
+ATTACK_MARKERS.update({
+    'M4790': r'ATTACK: a read through an in-prefix symlink reached a file outside the grant',
+    'M4791': r'ATTACK: a write through an in-prefix symlink landed outside the grant',
+    'M4792': r'ATTACK: a /proc magic link was followed under a scope',
+    'M4793': r'ATTACK: a renamed symlink re-pointed the grant',
+    'M4794': r'FALSE REFUSAL: renaming an in-prefix link was refused',
+    'M4795': r'ATTACK: a dangling link created a file outside the grant',
+    'M4796': r'ATTACK: /proc/self/root reached outside the grant',
+    'M4797': r'ATTACK: a non-path link text matched a relative grant',
+    'M4798': r'FALSE REFUSAL: a missing in-prefix file exited 8',
+    'M4799': r'FALSE REFUSAL: a link between granted prefixes was refused',
+    'M4800': r'ATTACK: the durable store wrote through a symlinked dir',
+    'M4801': r'ATTACK: the outcome file was read as the program',
+    'M4802': r'FALSE REFUSAL: the grant root itself was refused',
+    'M4803': r'ATTACK: a write through /proc/self/root created a file outside the grant',
+    'M4804': r'ATTACK: a nested sandbox widened the fs scope',
+    'M4805': r'FALSE REFUSAL: a returned sandbox still scoped its caller',
+})
+
+# nhr-evidence b4 Lane B (ids M4810-M4819, block M4810-M4829)
+ATTACK_MARKERS.update({
+    'M4810': r'ATTACK: NH-R1 a FIFO under a write root spent the envelope',
+    'M4811': r'ATTACK: NH-R1 a FIFO under a write root spent the envelope \(a write prefix that is a FIFO\)',
+    'M4812': r'ATTACK: the pinned tree blocked on a FIFO',
+    'M4813': r'ATTACK: a failed started append left no \.unrecorded marker',
+    'M4814': r'ATTACK: a run went on after its started append failed',
+    'M4815': r"ATTACK: R6 the watchdog's terminal record names another exit code",
+    'M4816': r"ATTACK: R6 the watchdog's terminal record names another outcome",
+    'M4817': r'ATTACK: R6 the watchdog path wrote no terminal record',
+    'M4818': r'ATTACK: a repair envelope (was not refused by name on the job path|authorized the replay of a job)',
+    'M4819': r'ATTACK: a special file in a pinned tree failed the walk',
+})

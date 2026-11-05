@@ -15105,5 +15105,131 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'a_contained_helper_reading_a_module_let_value_is_not_charged_its_initialiser'),
 ]
 
+# containment-b4 (tasks/containment-b4-spec.md §3, ids M4790-M4805, block
+# M4790-M4809; M4806-M4809 unused): the fs scope resolves symlinks and refuses
+# /proc magic links, with grant roots pinned at scope creation (C-1, O-GV-08);
+# every enclosing program sandbox's scope binds a nested one (C-4); a
+# --source-fd equal to the outcome fd is refused (C-2, O-GV-12).
+_SR = '--no-default-features --test scope_resolution'
+MUTATIONS += [
+    ('M4790', 'C-1: the resolved check is skipped for FsRead', 'crates/axon-core/src/interp/builtins.rs',
+     '                    caps::IoKind::FsRead => sb.scope.fs_read_roots.as_deref(),',
+     '                    caps::IoKind::FsRead => None,',
+     'axon-core', _SR, 'a_symlink_under_the_read_prefix_cannot_reach_outside'),
+    ('M4791', 'C-1: the resolved check is skipped for FsWrite', 'crates/axon-core/src/interp/builtins.rs',
+     '                    caps::IoKind::FsWrite => sb.scope.fs_write_roots.as_deref(),',
+     '                    caps::IoKind::FsWrite => None,',
+     'axon-core', _SR, 'a_dir_symlink_under_the_write_prefix_cannot_write_outside'),
+    ('M4792', 'C-1: openat2 resolves without RESOLVE_NO_MAGICLINKS', 'crates/axon-core/src/path_scope.rs',
+     '        how.resolve = if no_magic {\n            libc::RESOLVE_NO_MAGICLINKS\n        } else {',
+     '        how.resolve = if no_magic {\n            0\n        } else {',
+     'axon-core', _SR, 'a_magic_link_into_the_grant_is_still_refused'),
+    ('M4793', 'C-1: the read roots are re-resolved per call, not pinned at scope creation', 'crates/axon-core/src/interp/builtins.rs',
+     '                    caps::IoKind::FsRead => sb.scope.fs_read_roots.as_deref(),',
+     '                    caps::IoKind::FsRead => Some(&*Box::leak(crate::interp::pin_roots(sb.scope.fs_read.as_deref()).unwrap_or_default().into_boxed_slice())),',
+     'axon-core', _SR, 'a_grant_root_swapped_for_a_symlink_mid_run_stays_pinned'),
+    ('M4794', 'C-1: file_rename follows its final name', 'crates/axon-core/src/interp/builtins.rs',
+     '                let follow = !matches!(name, "file_rename" | "dir_create");',
+     '                let follow = !matches!(name, "dir_create");',
+     'axon-core', _SR, 'renaming_a_symlink_inside_the_write_prefix_still_works'),
+    ('M4795', 'C-1: the dangling-link splice is skipped', 'crates/axon-core/src/path_scope.rs',
+     '            if is_symlink(&next) {',
+     '            if false && is_symlink(&next) {',
+     'axon-core', _SR, 'a_dangling_symlink_under_the_write_prefix_cannot_create_outside'),
+    ('M4796', 'C-1: ELOOP on the full path is Opaque without the unflagged retry', 'crates/axon-core/src/path_scope.rs',
+     '                Open::Errno(libc::ELOOP) => return Some(eloop_retry(&cur)),',
+     '                Open::Errno(libc::ELOOP) => return Some(Resolution::Opaque),',
+     'axon-core', _SR, 'a_proc_grant_does_not_reach_the_root_through_a_magic_link'),
+    ('M4797', 'C-1: the absolute-path guard of admits is removed', 'crates/axon-core/src/path_scope.rs',
+     "    if r.first() != Some(&b'/') {\n        return false;",
+     "    if false && r.first() != Some(&b'/') {\n        return false;",
+     'axon-core', '--no-default-features --lib', 'path_scope::tests::a_non_absolute_resolution_never_matches'),
+    ('M4798', 'C-1: ENOENT on the full path is a magic link', 'crates/axon-core/src/path_scope.rs',
+     '                Open::Errno(libc::ENOENT) => {}',
+     '                Open::Errno(libc::ENOENT) => return Some(Resolution::MagicLink),',
+     'axon-core', _SR, 'a_missing_file_under_the_prefix_is_an_err_not_a_refusal'),
+    ('M4799', 'C-1: only the first grant root (the one the text matched) admits the resolved path', 'crates/axon-core/src/interp/builtins.rs',
+     '        Resolution::Real(r) if admits(roots, &r) => None,',
+     '        Resolution::Real(r) if admits(&roots[..roots.len().min(1)], &r) => None,',
+     'axon-core', _SR, 'a_symlink_into_another_granted_prefix_still_reads'),
+    ('M4800', 'C-1: the durable store directory is not resolved', 'crates/axon-core/src/interp/builtins.rs',
+     '            if let Some(why) = resolved_escape(_roots, &dir, true) {',
+     '            if let Some(why) = resolved_escape(None, &dir, true) {',
+     'axon-core', _SR, 'a_symlinked_store_dir_outside_the_write_prefix_is_refused'),
+    ('M4801', 'C-2: --source-fd equal to the installed outcome fd is read as the program', 'crates/axon-core/src/main.rs',
+     '    if outcome::installed_fd() == Some(fd) {',
+     '    if false && outcome::installed_fd() == Some(fd) {',
+     'axon-core', '--no-default-features --test cli_run', 'run_source_fd_equal_to_the_outcome_fd_is_refused'),
+    ('M4802', "C-1: a grant root's trailing / is kept in the component match", 'crates/axon-core/src/path_scope.rs',
+     '            t.strip_suffix(b"/").unwrap_or(t)',
+     '            t',
+     'axon-core', _SR, 'a_trailing_slash_grant_root_argument_still_works'),
+    ('M4803', 'C-1: an unflagged retry that is not ELOOP is Opaque', 'crates/axon-core/src/path_scope.rs',
+     '            Open::Errno(_) => Resolution::MagicLink,',
+     '            Open::Errno(_) => Resolution::Opaque,',
+     'axon-core', _SR, 'a_write_through_proc_root_to_a_new_file_is_refused'),
+    ('M4804', 'C-4: the scope_chain loop in pre_effect_gate checks nothing', 'crates/axon-core/src/interp/builtins.rs',
+     '                            for outer in self.k().scope_chain.borrow().iter() {',
+     '                            for outer in self.k().scope_chain.borrow().iter().take(0) {',
+     'axon-core', _SR, 'an_inner_sandbox_cannot_widen_an_outer_fs_scope'),
+    ('M4805', 'C-4: sandbox_run does not pop the enclosing scope on return', 'crates/axon-core/src/interp/builtins.rs',
+     '                self.k().scope_chain.borrow_mut().truncate(chain_len);',
+     '                let _ = chain_len;',
+     'axon-core', _SR, 'a_sandbox_run_returning_restores_the_outer_scope'),
+]
+
+# nhr-evidence b4 Lane B (tasks/nhr-evidence-spec.md §5, ids M4810-M4819, block M4810-M4829;
+# M4820-M4829 unused). NE-2: a special file under a write root is refused at phase A, before
+# consume, and the R6 pinned tree values a special file by its kind (fd-valued cas::read_plain,
+# O_PATH + fstat) instead of blocking on it. NE-3: a failed started append marks the envelope
+# `.unrecorded` and refuses the run. NE-4: the E3 watchdog path writes its terminal record.
+# NE-5: S12's axon-os half (a repair envelope is not a job approval, on the job path).
+MUTATIONS += [
+    ('M4810', 'NE-2: only_plain_entries_at_or_under admits every non-dir entry', 'crates/axon-cortex/src/unattended.rs',
+     '            } else if let Some(kind) = special_kind(t) {',
+     '            } else if let Some(kind) = special_kind(t).filter(|_| false) {',
+     'axon-cortex', '--features unattended --test unattended', 's6_a_special_file_under_a_write_root_is_refused'),
+    ('M4811', 'NE-2: the write root itself is not type-checked', 'crates/axon-cortex/src/unattended.rs',
+     '            return match special_kind(m.file_type()) {',
+     '            return match None::<&str> {',
+     'axon-cortex', '--features unattended --test unattended', 's6_a_special_file_under_a_write_root_is_refused'),
+    ('M4812', "NE-2: read_plain's O_PATH open becomes O_RDONLY (a FIFO open blocks)", 'crates/axon-cortex/src/cas.rs',
+     '        .custom_flags(libc::O_PATH | libc::O_NOFOLLOW)',
+     '        .custom_flags(libc::O_RDONLY | libc::O_NOFOLLOW)',
+     'axon-cortex', '--features unattended --lib', 'auth::tests::the_pinned_tree_never_blocks_on_a_special_file'),
+    ('M4813', 'NE-3: a failed started append leaves no .unrecorded marker', 'crates/axon-cortex/src/auth.rs',
+     '            match rl::mark_unrecorded(&a.store, a.euid, &e.envelope_id, &why, now_unix()) {',
+     '            match Ok::<(), String>(()) {',
+     'axon-cortex', '--features unattended --test unattended', 'r6_a_failed_started_append_marks_the_envelope_unrecorded'),
+    ('M4814', 'NE-3: a run goes on after its started append failed', 'crates/axon-cortex/src/bin/cortex.rs',
+     '            axon_cortex::auth::record_started(a, &b).unwrap_or_else(|why| unauthorized(&why));',
+     '            axon_cortex::auth::record_started(a, &b).unwrap_or_else(|why| eprintln!("{why}"));',
+     'axon-cortex', '--features unattended --test unattended', 'r6_a_failed_started_append_marks_the_envelope_unrecorded'),
+    ('M4815', "NE-4: the watchdog's terminal record names another exit code", 'crates/axon-cortex/src/bin/cortex.rs',
+     '                        exit_code: axon_cortex::watchdog::EXIT_DEADLINE,',
+     '                        exit_code: axon_cortex::auth::EXIT_UNAUTHORIZED,',
+     'axon-cortex', '--features unattended --test unattended', 's10_a_witness_run_stalled_past_the_deadline_is_stopped_by_the_grace'),
+    ('M4816', "NE-4: the watchdog's terminal record names another outcome", 'crates/axon-cortex/src/bin/cortex.rs',
+     '                        outcome: "budget_exhausted".into(),',
+     '                        outcome: "done".into(),',
+     'axon-cortex', '--features unattended --test unattended', 's10_a_witness_run_stalled_past_the_deadline_is_stopped_by_the_grace'),
+    ('M4817', 'NE-4: the watchdog path writes no terminal record', 'crates/axon-cortex/src/bin/cortex.rs',
+     '                axon_cortex::auth::record_terminal(\n'
+     '                    axon_cortex::auth::Ending {\n'
+     '                        exit_code: axon_cortex::watchdog::EXIT_DEADLINE,',
+     '                let _ = (\n'
+     '                    axon_cortex::auth::Ending {\n'
+     '                        exit_code: axon_cortex::watchdog::EXIT_DEADLINE,',
+     'axon-cortex', '--features unattended --test unattended', 's10_a_witness_run_stalled_past_the_deadline_is_stopped_by_the_grace'),
+    ('M4818', 'NE-5 (S12 axon-os half): a repair envelope is read as a job approval', 'crates/axon-os/src/approval.rs',
+     '.is_ok_and(|s| s.schema == crate::repair_envelope::ENVELOPE_SCHEMA)',
+     '.is_ok_and(|s| s.schema.is_empty())',
+     'axon-os', '--test acceptance', 's12_a_repair_envelope_is_not_a_job_approval'),
+    ('M4819', 'NE-2: read_plain returns Err for a non-regular fd instead of its kind', 'crates/axon-cortex/src/cas.rs',
+     '        return Ok(Plain::Kind(kind));',
+     '        return Err(std::io::Error::other(kind));',
+     'axon-cortex', '--features unattended --lib', 'cas::tests::a_special_file_read_is_valued_by_its_kind'),
+]
+
 if __name__ == "__main__":
     main()
