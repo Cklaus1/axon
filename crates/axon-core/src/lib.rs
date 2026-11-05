@@ -42,6 +42,10 @@ pub mod native;
 pub mod outcome;
 pub mod parse_help;
 pub mod parser;
+/// C-1 (O-GV-08): the fs scope's resolved half (symlinks followed, `/proc`
+/// magic links refused). wasm keeps the lexical test.
+#[cfg(unix)]
+pub(crate) mod path_scope;
 pub mod preflight;
 pub mod replay;
 pub mod resolver;
