@@ -3543,3 +3543,37 @@ streaming walk (a change to R6's tree). Out of scope of tasks/nhr-evidence-spec.
 tasks/neural-programs-spec.md NP-0 ran the free profiling pass: one eligible function (cortex's candidate ranker), with a +7/22
 oracle ceiling on the pool, but no keyless consumer (`--unattended` requires `--symbol`, CI never runs `cortex`, the examples
 pin the spectrum order). STOP-1v is in force until the human names a consumer and how often it runs (that spec's H6).
+
+## Product ideas, 2026-11-05 (raised by the human; not specced)
+
+### O-PM-07 - [medium, needs-human] Interpret first, compile to native in the background ("zero upfront compile time")
+The idea: `axon run` starts interpreting at once, `axon build` runs in the background, and later runs (or the running program)
+switch to the native binary, so the language feels interpreted but runs compiled. No spec, opportunity entry or research note
+covered it before this entry (searched `governance/`, `tasks/`, `spec/`, ROADMAP/VISION, the docs packs, the compilebench wiki
+and the prompt history on 2026-11-05). What exists covers only part of it:
+- R50 S9 (`governance/specs/R50-register-vm.md` §4 S9, `db2d2eee`): the default `vm` engine compiles a fn body to bytecode on its
+  second entry, or on its first if it is hot on entry; `AXON_VM_EAGER=1` turns the deferral off
+  (`crates/axon-core/src/env_registry.rs:31-33`, `interp/vm/mod.rs:202-206`). In-process lazy tiering, no native code, no
+  background thread. R50 S11 (`2627dad7`) adds a pure-`i64` register tier, also in-process.
+- The `axon build` cache (`crates/axon-core/src/cache.rs`, `.axc` keyed on source + compiler digest) stores the optimised object
+  since compilebench AX-34 (`37ff592f`), so a hit is `check` + link (big-compile × `release`: 7972.5 ms cold, 98.8 ms warm,
+  `aicoding/compilebench/compiler-wiki/incremental-caching.md:194-214`). That is the piece a "next run uses native" design
+  would reuse.
+- CX-18 "staged native promotion" (the Cortex docs packs) promotes learned capabilities to tools or native code. Same words,
+  unrelated to execution tiering.
+Constraints any design must meet:
+- The interpreter is the reference semantics (`AGENTS.md`). Native refuses some programs and env (E0910; `axon-rt` exits 2
+  under interpreter-only env such as `AXON_ALLOWED_FS_READ/WRITE`, `AXON_CEILING`, `AXON_WALL_MS`), so those must stay
+  interpreted, and the swap must be invisible: same stdout, stderr, exit code, audit ledger and provenance.
+- Effects must never run twice: a program that already did I/O in the interpreter cannot be restarted natively.
+- Capability/sandbox checks that only the interpreter enforces must not be bypassed by the swap.
+Shapes, cheapest first [INFERENCE: sizes from the architecture; nothing prototyped]:
+1. Per process (S-M): `axon run` interprets now and starts a background `axon build` keyed by the cache key; the *next* run of
+   unchanged source, under env native accepts, execs the cached binary. No state transfer.
+2. Per call at a safe point (L): hand a pure, effect-free hot function to native code inside a running process (needs a
+   value ABI between interpreter `Value` and native layouts).
+3. Mid-run on-stack replacement (XL): transfer live state into native code. Not recommended.
+Open questions for the human: whether the target is perceived latency (`axon run` start-up) or throughput of long runs; and
+whether shape 1's "second run is native" behaviour is acceptable given that a run's engine then depends on cache state
+(reproducibility of `axon run` across machines). Recommendation: shape 1 only, as a DRAFT spec with a parity gate
+(`scripts/parity_all.sh` already diffs interpreter vs native on 54 programs) and an opt-in env var before any default flip.
