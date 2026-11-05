@@ -294,12 +294,27 @@ fn run_full(
     opt: &OptIn,
     cwd: Option<&Path>,
 ) -> Out {
-    run_unshared(s, axon, extra, envs, opt, cwd, None)
+    run_unshared(s, axon, extra, envs, opt, cwd, &Wrap::default())
 }
 
-/// [`run_full`]; with `userns` set, inside a user namespace (`unshare --user
-/// --map-root-user`) running the cortex binary copied to `userns` (the
-/// namespace's root cannot reach a build directory under a 0750 home).
+/// How [`run_unshared`] wraps the cortex run.
+#[derive(Default)]
+struct Wrap<'a> {
+    /// Inside a user namespace (`unshare --user --map-root-user`) running the
+    /// cortex binary copied here (the namespace's root cannot reach a build
+    /// directory under a 0750 home).
+    userns: Option<&'a Path>,
+    /// A wall limit in seconds: `timeout -s KILL` before the cortex argv, so
+    /// a run that hangs fails its test instead of hanging it (NE-2).
+    wall_s: Option<u32>,
+    /// A shell snippet run inside the private mount namespace after the
+    /// `/etc/axon` mount, before the cortex (NE-3).
+    pre: Option<&'a str>,
+}
+
+/// [`run_full`], wrapped as `wrap` says. After the cortex exits, the size of
+/// the run ledger's `ledger.jsonl` as the namespace saw it is written to
+/// `s.root/ledger-size` (a `pre` snippet may have mounted another ledger).
 fn run_unshared(
     s: &Setup,
     axon: &Path,
@@ -307,7 +322,7 @@ fn run_unshared(
     envs: &[(&str, &str)],
     opt: &OptIn,
     cwd: Option<&Path>,
-    userns: Option<&Path>,
+    wrap: &Wrap,
 ) -> Out {
     assert!(
         euid() == 0 && Path::new("/etc/axon").is_dir(),
@@ -316,7 +331,7 @@ fn run_unshared(
     );
     let none = s.root.join("no-opt-in");
     let mut c = std::process::Command::new("unshare");
-    if userns.is_some() {
+    if wrap.userns.is_some() {
         c.args(["--user", "--map-root-user"]);
     }
     c.args(["-m", "--propagation", "private", "sh", "-c"])
@@ -324,12 +339,21 @@ fn run_unshared(
             "set -e; mount -t tmpfs -o \"$4\" tmpfs /etc/axon; o=/etc/axon/unattended-repair; \
              if [ -d \"$1\" ]; then mkdir -m 0700 \"$o\"; \
              elif [ -e \"$1\" ]; then cp \"$1\" \"$o\"; chown \"$3\" \"$o\"; chmod \"$2\" \"$o\"; fi; \
-             shift 4; exec \"$@\"",
+             eval \"$5\"; size=\"$6\"; ledger=\"$7\"; shift 7; rc=0; \"$@\" || rc=$?; \
+             wc -c < \"$ledger/ledger.jsonl\" > \"$size\" || true; exit \"$rc\"",
         )
         .arg("sh")
         .arg(opt.src.unwrap_or(&none))
-        .args([opt.mode, opt.owner, opt.dir])
-        .arg(userns.unwrap_or(Path::new(env!("CARGO_BIN_EXE_cortex"))));
+        .args([opt.mode, opt.owner, opt.dir, wrap.pre.unwrap_or(":")])
+        .arg(s.root.join("ledger-size"))
+        .arg(&s.ledger);
+    if let Some(secs) = wrap.wall_s {
+        c.args(["timeout", "-s", "KILL", &secs.to_string()]);
+    }
+    c.arg(
+        wrap.userns
+            .unwrap_or(Path::new(env!("CARGO_BIN_EXE_cortex"))),
+    );
     c.env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("AXON_AI_PROVIDER", "anthropic")
@@ -427,6 +451,15 @@ fn use_fs(s: &Setup) -> Vec<u8> {
     src.into_bytes()
 }
 
+/// A FIFO at `p` (NE-2).
+fn mkfifo(p: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(p.as_os_str().as_bytes()).unwrap();
+    // SAFETY: a valid NUL-terminated path.
+    let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o600) };
+    assert_eq!(rc, 0, "mkfifo {}", p.display());
+}
+
 /// A run that got past consume: never 29, and the envelope is `.used`.
 fn spent(s: &Setup, o: &Out, e: &RepairEnvelope) {
     assert_ne!(
@@ -493,6 +526,7 @@ fn s8_an_admitted_run_spends_once_and_reports_its_authorization() {
         "ATTACK: R6 L2 the terminal record names another exit code\n{}",
         o.stderr
     );
+    c1_is(&s, &e, &[]);
     let _ = std::fs::remove_dir_all(&s.root);
 }
 
@@ -504,6 +538,36 @@ fn run_records(s: &Setup) -> Vec<rl::RunRecord> {
         .lines()
         .map(|l| rl::parse_record(l, &key).expect(l).0)
         .collect()
+}
+
+/// R6 C1 (`rl::audit`) over `s`'s run ledger and spent store, with `e`'s
+/// digest (from the envelope file `mint` wrote): the findings.
+fn c1_findings(s: &Setup, e: &RepairEnvelope) -> Vec<rl::Finding> {
+    let text = std::fs::read_to_string(&s.envelope).unwrap();
+    let vk = MintKey::derive(OP_KEY).unwrap().verify_key();
+    let digest = env::verify(&text, &vk, now()).unwrap().digest;
+    let envelopes = [(e.envelope_id.clone(), digest)].into_iter().collect();
+    let key = rl::SealKey::derive(OP_KEY).unwrap();
+    rl::audit(&s.ledger, &s.store, euid(), &key, &envelopes)
+        .unwrap()
+        .findings
+}
+
+/// [`c1_findings`]' names (NE-7.1).
+fn c1(s: &Setup, e: &RepairEnvelope) -> Vec<&'static str> {
+    c1_findings(s, e).iter().map(|f| f.finding).collect()
+}
+
+/// NE-7.1: C1 over an S-test run finds exactly `want`.
+fn c1_is(s: &Setup, e: &RepairEnvelope, want: &[&str]) {
+    let got = c1(s, e);
+    if let Some(f) = got.iter().find(|f| !want.contains(f)) {
+        panic!(
+            "ATTACK: R6 C1 found {f} over an S-test run: {:?}",
+            c1_findings(s, e)
+        );
+    }
+    assert_eq!(got, want, "C1 over the S-test run");
 }
 
 #[test]
@@ -521,6 +585,91 @@ fn r6_a_refusal_before_consume_writes_no_record() {
     let _ = std::fs::remove_dir_all(&s.root);
 }
 
+/// R6 §3 (NE-3, O-NHR-01): a started append that fails after consume marks
+/// the spent envelope `<id>.unrecorded` and refuses the run (exit 29) before
+/// any check runs, so C1 reports the failed append, not a truncation. Root
+/// makes the append fail with no source hook: the run ledger is a copy on a
+/// full 64 KiB tmpfs, bound over the real one inside the run's private mount
+/// namespace (reads still work; the append gets ENOSPC).
+#[test]
+fn r6_a_failed_started_append_marks_the_envelope_unrecorded() {
+    let s = setup("r6_enospc");
+    let ran = s.root.join("ops/check-ran");
+    let wrapper = s.root.join("ops/axon-check-marker");
+    common::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = test ]; then touch '{r}'; fi\nexec '{a}' \"$@\"\n",
+            r = ran.display(),
+            a = s.axon.display()
+        ),
+        0o755,
+    );
+    let s = Setup {
+        axon: wrapper.clone(),
+        ..setup_clone(&s)
+    };
+    let e = envelope_for(&s);
+    mint(&s, &e);
+    let lfs = s.root.join("lfs");
+    std::fs::create_dir_all(&lfs).unwrap();
+    let pre = format!(
+        "mount -t tmpfs -o size=64k tmpfs '{l}'; cp -a '{d}' '{l}/ledger'; \
+         mount --bind '{l}/ledger' '{d}'; cat /dev/zero > '{l}/fill' 2>/dev/null || true",
+        l = lfs.display(),
+        d = s.ledger.display()
+    );
+    let wrap = Wrap {
+        pre: Some(&pre),
+        ..Wrap::default()
+    };
+    let o = run_unshared(&s, &wrapper, &[], &[], &s.opted_in(), None, &wrap);
+    assert!(
+        o.code == 29 && !ran.exists(),
+        "ATTACK: a run went on after its started append failed (exit {}, check ran: {})\n{}{}",
+        o.code,
+        ran.exists(),
+        o.stdout,
+        o.stderr
+    );
+    for want in [
+        "the run ledger's started record could not be written",
+        "No space left on device",
+    ] {
+        assert!(
+            o.stderr.contains(want),
+            "stderr lacks {want:?}: {}",
+            o.stderr
+        );
+    }
+    assert_eq!(records(&s), vec![format!("{}.used", e.envelope_id)]);
+    let marker = std::fs::read_to_string(s.store.join(format!("{}.unrecorded", e.envelope_id)))
+        .unwrap_or_else(|err| {
+            panic!("ATTACK: a failed started append left no .unrecorded marker: {err}")
+        });
+    let reason: serde_json::Value = serde_json::from_str(marker.trim_end()).expect(&marker);
+    assert!(
+        reason["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("No space left on device")),
+        "the marker does not name ENOSPC: {marker}"
+    );
+    let size = std::fs::read_to_string(s.root.join("ledger-size")).unwrap();
+    assert_eq!(size.trim(), "0", "the failed append wrote to the ledger");
+    assert_eq!(
+        std::fs::read(s.ws.join("broken.ax")).unwrap(),
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax")).unwrap(),
+        "the refused run changed the file"
+    );
+    c1_is(&s, &e, &["consumed-no-record"]);
+    let detail = &c1_findings(&s, &e)[0].detail;
+    assert!(
+        detail.contains("started append failed"),
+        "C1 reads the failed append as {detail:?}"
+    );
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
 #[test]
 fn s5_a_second_use_is_refused() {
     let s = setup("replay");
@@ -534,6 +683,7 @@ fn s5_a_second_use_is_refused() {
         o.stderr
     );
     assert_eq!(records(&s), vec![format!("{}.used", e.envelope_id)]);
+    c1_is(&s, &e, &[]);
     let _ = std::fs::remove_dir_all(&s.root);
 }
 
@@ -707,6 +857,7 @@ fn s13_an_import_changed_by_a_check_stops_the_next_dispatch() {
         o.stderr
     );
     assert_eq!(std::fs::read(s.ws.join("broken.ax")).unwrap(), pristine);
+    c1_is(&s, &e, &[]);
     let _ = std::fs::remove_dir_all(&s.root);
 }
 
@@ -725,6 +876,7 @@ fn s5_of_concurrent_runs_exactly_one_proceeds() {
         "ATTACK: NH-R1 S5 concurrent runs spent one envelope {admitted} times: {codes:?}"
     );
     assert_eq!(records(&s), vec![format!("{}.used", e.envelope_id)]);
+    c1_is(&s, &e, &[]);
     let _ = std::fs::remove_dir_all(&s.root);
 }
 
@@ -905,6 +1057,7 @@ fn s6_a_dotenv_steers_nothing() {
             o.stdout,
             o.stderr
         );
+        c1_is(&s, &e, &[]);
         let _ = std::fs::remove_dir_all(&s.root);
     }
 }
@@ -1303,6 +1456,62 @@ fn s6_a_pin_reaching_the_ledger_or_store_through_a_symlink_is_refused() {
     }
 }
 
+/// NE-2: a special file under a write root - a FIFO under an `fs_write`
+/// pin, or a write prefix that is itself a FIFO - is refused at phase A,
+/// before consume. Admitted, the pinned tree's read of it (R6 `started`)
+/// blocked after the envelope was spent and before the E3 watchdog was
+/// armed: no record and no exit. Each run has a 60 s wall limit, so that
+/// hang fails here instead of hanging the test.
+#[test]
+fn s6_a_special_file_under_a_write_root_is_refused() {
+    let cases = [
+        "a FIFO under the fs_write pin",
+        "a write prefix that is a FIFO",
+    ];
+    for (i, case) in cases.into_iter().enumerate() {
+        let s = setup(&format!("s6_fifo_{i}"));
+        let (e, pristine) = if i == 0 {
+            let pristine = use_fs(&s);
+            let scratch = s.root.join("scratch");
+            std::fs::create_dir_all(&scratch).unwrap();
+            let scratch = std::fs::canonicalize(scratch).unwrap();
+            mkfifo(&scratch.join("pipe"));
+            let read = s.root.join("read");
+            std::fs::create_dir_all(&read).unwrap();
+            let read = std::fs::canonicalize(read).unwrap();
+            let e = envelope_pinned(
+                &s,
+                ScopePins {
+                    fs_read: vec![read.to_string_lossy().into_owned()],
+                    fs_write: vec![scratch.to_string_lossy().into_owned()],
+                    net: vec![],
+                },
+            );
+            (e, pristine)
+        } else {
+            mkfifo(&s.ws.join("pipe"));
+            let mut e = envelope_for(&s);
+            e.write_prefixes.push("pipe".into());
+            (e, std::fs::read(s.ws.join("broken.ax")).unwrap())
+        };
+        mint(&s, &e);
+        let wrap = Wrap {
+            wall_s: Some(60),
+            ..Wrap::default()
+        };
+        let o = run_unshared(&s, &s.axon, &[], &[], &s.opted_in(), None, &wrap);
+        refused_over(
+            &s,
+            &o,
+            &e,
+            "not a regular file",
+            &format!("ATTACK: NH-R1 a FIFO under a write root spent the envelope ({case})"),
+            &pristine,
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
 /// Security review F7: the interpreter the check digest binds is the one
 /// that runs. A bare `--axon axon` was hashed from the cwd (here the genuine
 /// interpreter) and then resolved through `PATH` (here another one) for
@@ -1471,7 +1680,11 @@ fn s14_a_run_in_a_user_namespace_refuses() {
     mint(&s, &e);
     let bin = s.root.join("ops/cortex-userns");
     std::fs::copy(env!("CARGO_BIN_EXE_cortex"), &bin).unwrap();
-    let o = run_unshared(&s, &s.axon, &[], &[], &s.opted_in(), None, Some(&bin));
+    let wrap = Wrap {
+        userns: Some(&bin),
+        ..Wrap::default()
+    };
+    let o = run_unshared(&s, &s.axon, &[], &[], &s.opted_in(), None, &wrap);
     refused(
         &s,
         &o,
@@ -1590,6 +1803,9 @@ fn s13_a_checker_that_rewrites_the_entry_file_during_the_witness_run_refuses() {
             "ATTACK: NH-R1 S13 a file changed during the witness run was graded ({name})\n{}",
             o.stderr
         );
+        // The check child's rewrite of broken.ax is under the write prefix
+        // and no journalled write explains it: C1 shows the tamper.
+        c1_is(&s, &e, &["unattributed-change"]);
         let _ = std::fs::remove_dir_all(&s.root);
     }
 }
@@ -1640,6 +1856,34 @@ fn s10_a_witness_run_stalled_past_the_deadline_is_stopped_by_the_grace() {
         std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/broken.ax")).unwrap(),
         "the stopped run left the file changed"
     );
+    // R6 §3 (NE-4, O-NHR-02): the watchdog's `fire` wrote the terminal
+    // record under the write lock before `_exit(20)`. The witness stall comes
+    // before any write, so the journal is empty and the tree as found.
+    let ledger = run_records(&s);
+    let kinds: Vec<String> = ledger.iter().map(|r| format!("{:?}", r.kind)).collect();
+    assert_eq!(
+        kinds,
+        ["Started", "Terminal"],
+        "ATTACK: R6 the watchdog path wrote no terminal record\n{}",
+        o.stderr
+    );
+    let (started, terminal) = (&ledger[0], &ledger[1]);
+    assert_eq!(
+        terminal.exit_code,
+        Some(i64::from(axon_cortex::watchdog::EXIT_DEADLINE)),
+        "ATTACK: R6 the watchdog's terminal record names another exit code"
+    );
+    assert_eq!(
+        terminal.outcome.as_deref(),
+        Some("budget_exhausted"),
+        "ATTACK: R6 the watchdog's terminal record names another outcome"
+    );
+    assert_eq!(terminal.writes, Some(vec![]), "{terminal:?}");
+    assert_eq!(
+        terminal.pinned_tree_after, started.pinned_tree_before,
+        "the stalled run's tree changed"
+    );
+    c1_is(&s, &e, &[]);
     let _ = std::fs::remove_dir_all(&s.root);
 }
 

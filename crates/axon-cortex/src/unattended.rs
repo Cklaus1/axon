@@ -233,6 +233,60 @@ pub fn no_symlink_at_or_under(workspace: &Path, rel: &str) -> Result<(), String>
     Ok(())
 }
 
+/// The kind of a special file: a fifo, a socket or a device. `None` for a
+/// regular file, a dir or a symlink.
+pub fn special_kind(t: std::fs::FileType) -> Option<&'static str> {
+    use std::os::unix::fs::FileTypeExt;
+    if t.is_fifo() {
+        Some("fifo")
+    } else if t.is_socket() {
+        Some("socket")
+    } else if t.is_char_device() {
+        Some("char device")
+    } else if t.is_block_device() {
+        Some("block device")
+    } else {
+        None
+    }
+}
+
+/// E1s (NE-2): nothing at `rel` or under it but regular files, dirs and
+/// symlinks (which [`no_symlink_at_or_under`] refuses). A special file under
+/// a write root hung the run: the R6 pinned tree, read after consume and
+/// before the E3 watchdog is armed, blocked opening a FIFO with no writer.
+pub fn only_plain_entries_at_or_under(workspace: &Path, rel: &str) -> Result<(), String> {
+    let root = workspace.join(normalize_rel(rel)?);
+    let special =
+        |p: &Path, kind: &str| format!("E1s: `{}` is a {kind}, not a regular file", p.display());
+    let mut stack: Vec<PathBuf> = match std::fs::symlink_metadata(&root) {
+        Ok(m) if m.is_dir() => vec![root],
+        Ok(m) => {
+            return match special_kind(m.file_type()) {
+                Some(kind) => Err(special(&root, kind)),
+                None => Ok(()),
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("E1s: `{}` cannot be examined: {e}", root.display())),
+    };
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir)
+            .map_err(|e| format!("E1s: `{}` cannot be listed: {e}", dir.display()))?;
+        for e in entries {
+            let e = e.map_err(|e| format!("E1s: `{}` cannot be listed: {e}", dir.display()))?;
+            let t = e
+                .file_type()
+                .map_err(|err| format!("E1s: `{}`: {err}", e.path().display()))?;
+            if t.is_dir() {
+                stack.push(e.path());
+            } else if let Some(kind) = special_kind(t) {
+                return Err(special(&e.path(), kind));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The gate rows read from the pristine `axon caps` answer: E4 (native
 /// modules) and E11 (process spawn). Unknown (the walker could not classify
 /// everything) refuses both: a limit nobody can see is not enforced.

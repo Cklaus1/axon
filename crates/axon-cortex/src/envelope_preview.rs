@@ -72,10 +72,17 @@ pub fn envelope_preview(
     un::no_symlink_on_path(&workspace, &file, true)?;
     for p in &write_prefixes {
         un::no_symlink_at_or_under(&workspace, p)?;
+        un::only_plain_entries_at_or_under(&workspace, p)?;
     }
     // Security F4: a relative pin would skip the walk below; refused first.
     un::absolute_fs_pins(&r.pins.fs_read, &r.pins.fs_write)?;
     un::no_symlink_in_fs_pins(&r.pins.fs_read, &r.pins.fs_write)?;
+    // NE-2: phase A's special-file refusal over the fs_write pins.
+    for p in &r.pins.fs_write {
+        if let Some(rel) = p.strip_prefix('/') {
+            un::only_plain_entries_at_or_under(Path::new("/"), rel)?;
+        }
+    }
     let (imports_digest, modules) = auth::imports_closure(axon, &workspace, &file, wall)?;
     auth::fs_write_disjoint(&r.pins.fs_write, &workspace, &file, &modules)?;
     let canonical_file = workspace.join(&file);

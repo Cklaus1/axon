@@ -230,6 +230,19 @@ run by the pinned axon on the UNPATCHED file:
   applied for it, said in one stderr line. --json reports `grant`
   {capabilities, effects, basis, applied, fence_env, fence_sha256, targets};
   the Fabric executor does not take the fence (`applied: false`).
+
+UNATTENDED. `cortex repair --unattended` (a run authorized by a signed repair
+envelope instead of a person) is NOT enabled: a default build refuses it with
+exit 29, and a build with feature `unattended` refuses it on any host without
+its own `/etc/axon/unattended-repair` opt-in. Its accepted limits: (1) the AI
+endpoint and key still come from the environment (`AXON_AI_PROVIDER`,
+`AXON_AI_BASE_URL`, the API keys): a run checks only that the provider and
+endpoint host are the envelope's and that the endpoint is `https`; (2) Linux
+only (it needs `renameat2(RENAME_EXCHANGE)` and `/proc/self/{uid,gid}_map`);
+(3) one spent store per host: the run lock is per store and file, so
+envelopes for one file minted into two stores can run at once; (4) a check
+child that survives its process-group kill (`setsid`) can race a write's path
+lookup, which is unreachable while envelopes may not grant `exec`.
 ";
 
 fn usage(msg: &str) -> ! {

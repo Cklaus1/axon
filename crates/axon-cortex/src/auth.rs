@@ -500,9 +500,16 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
     un::no_symlink_on_path(&workspace, &file, true)?;
     for p in &effective.write_prefixes {
         un::no_symlink_at_or_under(&workspace, p)?;
+        un::only_plain_entries_at_or_under(&workspace, p)?;
     }
     // Security re-review N4: every pin, inside the workspace or not.
     un::no_symlink_in_fs_pins(&e.scopes.fs_read, &e.scopes.fs_write)?;
+    // NE-2: the pinned tree walks the fs_write pins too (never fs_read).
+    for p in &e.scopes.fs_write {
+        if let Some(rel) = p.strip_prefix('/') {
+            un::only_plain_entries_at_or_under(Path::new("/"), rel)?;
+        }
+    }
     if store.starts_with(&workspace) {
         return Err(format!(
             "the spent store {} lies inside the workspace: the repaired code could reach it",
@@ -828,8 +835,10 @@ pub fn authorization_json(a: &PhaseA, b: &PhaseB) -> serde_json::Value {
 /// prefixes (workspace-relative) and its `scopes.fs_write` pins (absolute),
 /// keyed like the E5 journal's paths (workspace-relative where possible),
 /// valued by the hex sha256 of its bytes. A symlink is never followed: its
-/// value is the sha256 of `link:<target>`. A check child's write shows as a
-/// difference that the journal does not explain.
+/// value is the sha256 of `link:<target>`. Anything else (a FIFO, a socket,
+/// a device) is never opened for reading: its value is the sha256 of
+/// `type:<kind>` (NE-2, [`crate::cas::read_plain`]). A check child's write
+/// shows as a difference that the journal does not explain.
 fn tree(workspace: &Path, roots: &[PathBuf]) -> Result<rl::Tree, String> {
     let mut out = rl::Tree::new();
     let mut todo: Vec<PathBuf> = roots.to_vec();
@@ -849,7 +858,15 @@ fn tree(workspace: &Path, roots: &[PathBuf]) -> Result<rl::Tree, String> {
                 }
                 continue;
             }
-            Ok(_) => crate::label::sha256_hex(&std::fs::read(&p).map_err(err)?),
+            Ok(_) => match crate::cas::read_plain(&p) {
+                // Removed between the lstat and the open: as if never seen.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(err(e)),
+                Ok(crate::cas::Plain::Bytes(b)) => crate::label::sha256_hex(&b),
+                Ok(crate::cas::Plain::Kind(k)) => {
+                    crate::label::sha256_hex(format!("type:{k}").as_bytes())
+                }
+            },
         };
         out.insert(key, value);
     }
@@ -1013,6 +1030,42 @@ mod tests {
             added,
             t(),
             "ATTACK: R6 a file a check child rewrote is not in the pinned tree"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// NE-2: `tree()` runs after consume and before the E3 watchdog is armed
+    /// (and again at the run's end, after it is disarmed), so a FIFO under a
+    /// pinned root that it opened for reading hung a spent run with no record.
+    /// The FIFO is valued by its kind, `sha256("type:fifo")`, never opened.
+    #[test]
+    fn the_pinned_tree_never_blocks_on_a_special_file() {
+        use std::os::unix::ffi::OsStrExt;
+        let d = std::env::temp_dir().join(format!("cortex-tree-fifo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("w")).unwrap();
+        let c = std::ffi::CString::new(d.join("w/pipe").as_os_str().as_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (ws, root) = (d.clone(), d.join("w"));
+        std::thread::spawn(move || {
+            let _ = tx.send(tree(&ws, &[root]));
+        });
+        let got = rx.recv_timeout(std::time::Duration::from_secs(5));
+        if got.is_err() {
+            // Release the stalled reader: a writer end, opened and closed.
+            // SAFETY: as above.
+            let fd = unsafe { libc::open(c.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK) };
+            if fd >= 0 {
+                // SAFETY: fd was just opened here.
+                unsafe { libc::close(fd) };
+            }
+        }
+        let want = crate::label::sha256_hex(b"type:fifo");
+        assert!(
+            matches!(&got, Ok(Ok(t)) if t.get("w/pipe") == Some(&want)),
+            "ATTACK: the pinned tree blocked on a FIFO: {got:?}"
         );
         let _ = std::fs::remove_dir_all(&d);
     }
