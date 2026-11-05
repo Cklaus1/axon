@@ -8668,6 +8668,16 @@ fn read_source_fd(fd: i32) -> String {
         Ok(_) => refuse(format!("error: --source-fd {fd}: not a regular file")),
         Err(e) => refuse(format!("error reading --source-fd {fd}: {e}")),
     }
+    // C-2 (O-GV-12): the outcome fd is the supervisor's channel, not a
+    // program. When it is a regular file, the read below would take the
+    // record file as the source and the run would write no record at all.
+    // Checked after `fstat` so a non-file outcome fd keeps its refusal text.
+    if outcome::installed_fd() == Some(fd) {
+        refuse(format!(
+            "error: --source-fd {fd} is the outcome fd named by AXON_OUTCOME_FD; \
+             the program cannot be read from it"
+        ));
+    }
     let mut s = String::new();
     if let Err(e) = f.read_to_string(&mut s) {
         refuse(format!("error reading --source-fd {fd}: {e}"));

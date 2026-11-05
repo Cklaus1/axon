@@ -327,7 +327,9 @@ its prompt plus a 1024-token reply stops with E1303 (exit 5) before dispatch.
 @[contained(fs: [write("./out/")], net: ["api.example.com"], exec: none)]
 fn worker() -> i64 { /* may only write under ./out/ and reach that host */ 0 }
 ```
-- `fs`: allowlist of path prefixes — `read("…")` / `write("…")`.
+- `fs`: allowlist of path prefixes — `read("…")` / `write("…")`. This static check is lexical:
+  it judges the path text at check time. At run time the scope (`AXON_ALLOWED_FS_*`,
+  `sandbox_create_scoped`) also resolves symlinks, so a link out of the grant exits 8.
 - `net`: allowlist of hosts (leading `*` glob).
 - `exec`: `none` | `any` (process spawning).
 - `never: [...]`: hard deny, overrides the allowlist.

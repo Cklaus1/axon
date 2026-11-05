@@ -1676,7 +1676,13 @@ pub const BUILTINS: &[BuiltinFn] = &[
               means every path/host must match an entry. Matches the \
               `AXON_ALLOWED_EFFECTS` convention, where an empty value denies. \
               Broad authority is stated explicitly (`\"*\"`) rather than implied \
-              by an empty list — see the capability-profile policy. Interp-only."
+              by an empty list — see the capability-profile policy. A path must \
+              match by text and its resolved target (symlinks followed; `/proc` \
+              magic links refused) must lie under a granted prefix's target, \
+              pinned when the sandbox is created (unix; wasm keeps the text \
+              match). An inner sandbox's fs/net scope is checked together with \
+              every enclosing sandbox's: a call must be inside all of them. \
+              Interp-only."
     },
     BuiltinFn {
         name: "sandbox_run",
