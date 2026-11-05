@@ -1,9 +1,9 @@
-# neural-programs - spec (NP-0..NP-5): the first learned-function slice
+# neural-programs - spec (NR-0..NR-5): the first learned-function slice
 
 **Status: DRAFT (after Step 1 review). Not authorized for build.**
 
-**Stop in force at NP-0: STOP-1v (value) fires.** `[REVISED: NPD-2]` The repo names no keyless consumer of `cortex repair`'s ranker
-(§2 consumer search). Until the human names one with a frequency (H6), NP-1..NP-5 are **conditional** and written for that case.
+**Stop in force at NR-0: STOP-1v (value) fires.** `[REVISED: NPD-2]` The repo names no keyless consumer of `cortex repair`'s ranker
+(§2 consumer search). Until the human names one with a frequency (H6), NR-1..NR-5 are **conditional** and written for that case.
 The NPD-3 oracle ceiling does **not** fire: a perfect tie-break gains +7/22 on the pool, and the floor is 3.
 
 ### Step 1 review
@@ -13,22 +13,22 @@ scripts in `/var/tmp/r51-tmp/NeuralPrograms/` (`oracle.py`, plus inline checks o
 
 | id | sev | finding | disposition | where |
 |---|---|---|---|---|
-| NPA-1 | blocker | the reproduction check compared against `ranked_top` (the spectrum top), so it would abort on every run | accepted; re-verified: `order` ≠ `ranked_top` as sets on 20/68 (9b5) and 22/69 (1d8, f26) | §3 NP-1.3, §1 |
+| NPA-1 | blocker | the reproduction check compared against `ranked_top` (the spectrum top), so it would abort on every run | accepted; re-verified: `order` ≠ `ranked_top` as sets on 20/68 (9b5) and 22/69 (1d8, f26) | §3 NR-1.3, §1 |
 | NPA-2 | blocker | the reordered sets are 68/69/69 tasks (intersection 67, union 70) | accepted; H_r = the 68 9b5 ids, sha256 `17214f55…4ead`; per-run denominators 68/67/67 | §2, §3, §4 |
 | NPA-3 | major | N0 looked at H (LocRank ⊂ receipt, 60/60), and that shaped the candidates | accepted; disclosed, and the features and C1 variants are frozen in this text | §2, §4 |
 | NPA-4 | major | the 22 pool tasks come from 8 files; the `other` stratum has 0 dev tasks | accepted; re-verified sizes [1,1,2,2,2,4,5,5]; `other` on H is report-only | §2, §4 |
 | NPA-5 | major | the C2-vs-C1 margin of ≥ 2/22 selects on noise; leftover train/dev wording | accepted; nested leave-one-cluster-out (LOCO) + exact sign test p ≤ 0.10 AND net ≥ 2 (p ≤ 0.10 already implies net ≥ 4 for d ≤ 22, computed) | §3, §4 |
 | NPA-6 | major | STOP-1 could be read two ways | accepted; ordered integer rule, net ≥ 3 | §2 |
-| NPA-7 | major | no readiness state or g01 row for "offline" | accepted; `verify` → `ready|partial`, M4867/M4868; NP-5 adds a mismatch row each for base, tokenizer and template | §3, §5 |
+| NPA-7 | major | no readiness state or g01 row for "offline" | accepted; `verify` → `ready|partial`, M4867/M4868; NR-5 adds a mismatch row each for base, tokenizer and template | §3, §5 |
 | NPA-8 | minor | stale anchors | accepted; `MAX_PROMPT_CHARS` is `rank.rs:46`; the hidden-name refusal is at `:628-631`/`:710` | §3, §4 |
 | NPD-1 | major | costs were guessed; the capped run is a subset | accepted; measured rows, per-iteration column | §6 |
 | NPD-2 | blocker | no stop rule tied to value | accepted; STOP-1v; repo search finds no consumer, so **it fires now** | status, §2 |
 | NPD-3 | major | the cheapest kill was not first | accepted; order is value → oracle → C1 → C2 → PREREG; oracle +7 ≥ 3, does not fire | §2, §7 |
-| NPD-4 | major | the NP-5 GPU text left out binding cere rules | accepted; H3 rewritten (owner approval, probe ticket, ≤ 3 attempts) | §9 |
-| NPD-5 | major | lane 1's ownership contradicted the S23 wiring | accepted; selftest is run by hand; `gate.sh` untouched unless NP-2 starts | §6, §7 |
-| NPD-6 | major | no strict gate is needed if the work stops at NP-0/NP-1 | accepted; `GLOBAL_INPUTS` = Cargo.toml/Cargo.lock/rust-toolchain.toml (`gate_lane.py:846`, observed) | §6 |
+| NPD-4 | major | the NR-5 GPU text left out binding cere rules | accepted; H3 rewritten (owner approval, probe ticket, ≤ 3 attempts) | §9 |
+| NPD-5 | major | lane 1's ownership contradicted the S23 wiring | accepted; selftest is run by hand; `gate.sh` untouched unless NR-2 starts | §6, §7 |
+| NPD-6 | major | no strict gate is needed if the work stops at NR-0/NR-1 | accepted; `GLOBAL_INPUTS` = Cargo.toml/Cargo.lock/rust-toolchain.toml (`gate_lane.py:846`, observed) | §6 |
 | NPD-7 | minor | no need for an `axon-reflex` dependency | accepted; `StateHandle` is cited as a pattern only | §3, §7 |
-| NPD-8 | minor | Lane B's NE-2 edits four `axon-cortex/src` files (`nhr-evidence-spec.md:316`) | accepted; NP-4 runs after Lane B merges and pins the cortex sha256 | §3, §7 |
+| NPD-8 | minor | Lane B's NE-2 edits four `axon-cortex/src` files (`nhr-evidence-spec.md:316`) | accepted; NR-4 runs after Lane B merges and pins the cortex sha256 | §3, §7 |
 
 Subject: the first vertical slice of Axon neural programs (CX-23/CX-36 "typed learned-function artifacts"). It adds a NEW crate,
 `crates/axon-neural`, reached only through a host/library adapter. It adds no language syntax and does not edit `crates/axon-cortex`
@@ -42,27 +42,27 @@ Its labels are mechanical: the injected defect's symbol. The paid default ranker
 The **keyless fallback, the spectrum order, gets 29/68**, so headroom exists only over the keyless path. That path has no named
 consumer `[REVISED: NPD-2]`, and the clean training pool has only 22 multi-candidate tasks from 8 files `[REVISED: NPA-4]`. The
 expected outcome is therefore a stop: STOP-1v now, or "C1 rule sufficient" at STOP-1 `[INFERENCE]`. The candidates come simplest
-first (COGNITIVE_SPECIALIZATION.md:16): C1 a deterministic tie-break, C2 a ≤ 4-weight linear scorer, NP-5 a human-gated LM adapter.
+first (COGNITIVE_SPECIALIZATION.md:16): C1 a deterministic tie-break, C2 a ≤ 4-weight linear scorer, NR-5 a human-gated LM adapter.
 
 ## 0. Source entries
 
 | item | source | sev |
 |---|---|---|
-| NP-0 | N0 profiling (task brief); CX-22 §4 eligibility (`docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-22-cognitive-specialization-compiler.md:69-85`); COGNITIVE_SPECIALIZATION.md loop steps 1-4, authority exclusion `:23` | P0 |
-| NP-1 | PREREG and frozen splits: CX-36 §10 (freeze before protected evaluation), CX-22 §6 | P0 |
-| NP-2 | CX-36 §4-§8 (`/home/cklaus/projects/axon/docs/axon_cortex_v0_23/axon-cortex-build-v0_23/parent/axon-cortex-build-v0_22/specs/CX-36-neural-program-artifact-contract.md:39-166`); D42 (`DECISIONS.md:81`); G23-artifact (`build/ACCEPTANCE_GATES.md:203`) | P1 |
-| NP-3 | CX-36 §12 (`:223-247`), §17 (`:281-285`); D43/D44 (`DECISIONS.md:82-83`); G23-typed-output/-no-fallback/-authority/-offline (`ACCEPTANCE_GATES.md:204-207`); G22-applicability/-fallback (`:199`, `:202`); NEURAL_PROGRAMS.md:32-34 | P1 |
-| NP-4 | NEURAL_PROGRAMS.md first slice, steps 3, 7, 9-11 (`build/NEURAL_PROGRAMS.md:13-27`); G22-comparison/-roi (`:198`, `:200`); CX-23 §11 | P1 |
-| NP-5 | CX-23 §5 adapter mode; CX-36 §5 LoRA binding (`:115-117`) | P2, human-gated |
+| NR-0 | N0 profiling (task brief); CX-22 §4 eligibility (`docs/axon_cortex_v0_15/axon-cortex-build-v0_15/specs/CX-22-cognitive-specialization-compiler.md:69-85`); COGNITIVE_SPECIALIZATION.md loop steps 1-4, authority exclusion `:23` | P0 |
+| NR-1 | PREREG and frozen splits: CX-36 §10 (freeze before protected evaluation), CX-22 §6 | P0 |
+| NR-2 | CX-36 §4-§8 (`/home/cklaus/projects/axon/docs/axon_cortex_v0_23/axon-cortex-build-v0_23/parent/axon-cortex-build-v0_22/specs/CX-36-neural-program-artifact-contract.md:39-166`); D42 (`DECISIONS.md:81`); G23-artifact (`build/ACCEPTANCE_GATES.md:203`) | P1 |
+| NR-3 | CX-36 §12 (`:223-247`), §17 (`:281-285`); D43/D44 (`DECISIONS.md:82-83`); G23-typed-output/-no-fallback/-authority/-offline (`ACCEPTANCE_GATES.md:204-207`); G22-applicability/-fallback (`:199`, `:202`); NEURAL_PROGRAMS.md:32-34 | P1 |
+| NR-4 | NEURAL_PROGRAMS.md first slice, steps 3, 7, 9-11 (`build/NEURAL_PROGRAMS.md:13-27`); G22-comparison/-roi (`:198`, `:200`); CX-23 §11 | P1 |
+| NR-5 | CX-23 §5 adapter mode; CX-36 §5 LoRA binding (`:115-117`) | P2, human-gated |
 
 ### Out of scope (logged, not dropped)
 
 | what | why not here | where it goes |
 |---|---|---|
 | Language syntax (`neural fn`, `np://`, `axon neural`) | CX-36 §2 (`:31`): these are sketches; initial use is a host/library adapter | H4 |
-| Wiring `cortex repair --ranker np:<digest>` | needs `axon-cortex/src` edits plus a receipt regress (≈ $0.14) | integration spec after NP-4; integrator O-entry |
+| Wiring `cortex repair --ranker np:<digest>` | needs `axon-cortex/src` edits plus a receipt regress (≈ $0.14) | integration spec after NR-4; integrator O-entry |
 | `.np` ZIP container (G36-container) | the directory store keeps the same identity (§8 decision 2) | O-entry "np ZIP container reader" |
-| Shared-base cache, G23-cache | no base model for C2; reported `not-applicable` | NP-5 or later |
+| Shared-base cache, G23-cache | no base model for C2; reported `not-applicable` | NR-5 or later |
 | Sidecar/remote modes, ProgramAsWeights import, CX-11 activation, drift loop | step 11 asks for evidence, not activation | later specs |
 | `route55` advice (n=60, majority 0.600, best 0.933; `axon-reflex/benchmarks/decisions/results/usecases.md:119-123`) | labels come from one noisy run; no deterministic incumbent measured | O-entry for the CX-22 registry |
 | Unused C2 features (body lines, operator/literal counts, called-by-another-eligible) | STOP-0(e) allows ≤ 4 weights | a later spec with more data |
@@ -71,16 +71,16 @@ first (COGNITIVE_SPECIALIZATION.md:16): C1 a deterministic tie-break, C2 a ≤ 4
 
 | tier | items | why |
 |---|---|---|
-| P0 | NP-0 (done), NP-1 (**conditional on H6**) | free, CPU only; both stop before any crate code. **NP-0 has stopped the slice at STOP-1v** `[REVISED: NPD-2]` |
-| P1 | NP-2, NP-3, NP-4 (conditional) | built only if STOP-1 selects C2 AND STOP-1v passes. No shipped binary changes |
-| P2 | NP-5 (conditional) | only under STOP-3 |
+| P0 | NR-0 (done), NR-1 (**conditional on H6**) | free, CPU only; both stop before any crate code. **NR-0 has stopped the slice at STOP-1v** `[REVISED: NPD-2]` |
+| P1 | NR-2, NR-3, NR-4 (conditional) | built only if STOP-1 selects C2 AND STOP-1v passes. No shipped binary changes |
+| P2 | NR-5 (conditional) | only under STOP-3 |
 
 **Risk to existing programs:** none by construction. No shipped crate is edited, no valid program can be falsely refused, and no
-`axon` sha256 pin moves. The silent-wrong-answer risk lives in the harness. The NP-1.3 identity check guards it: fresh eligible
+`axon` sha256 pin moves. The silent-wrong-answer risk lives in the harness. The NR-1.3 identity check guards it: fresh eligible
 lists against the recorded `ranker.order` as a set `[REVISED: NPA-1]`, not the earlier "= `ranked_top`", which is the spectrum
 top list and would have aborted every run.
 
-## 2. NP-0: N0 first cut (done; the build commits the scripts)
+## 2. NR-0: N0 first cut (done; the build commits the scripts)
 
 Commands (`cwd = crates/axon-cortex/benchmarks`; scripts in `/var/tmp/r51-tmp/NeuralPrograms/`):
 - `n0_rank.py`: truth-first per receipt task.
@@ -103,8 +103,8 @@ Commands (`cwd = crates/axon-cortex/benchmarks`; scripts in `/var/tmp/r51-tmp/Ne
 **Statistics already computed on H (disclosed; PREREG repeats them)** `[REVISED: NPA-3]`. Spectrum 74/115 overall and 29/68 on
 H_r. Haiku as above. On the LocRank subset (60/60 receipt ids): spectrum 25, truth in the top score tie 47, uniform-random
 tie-break 25.3, truth strictly below the top 13. The corpus field `visible_calls_symbol_directly` was seen (as a field name, not
-tabulated). These looks motivated C1's tie-break, which is why the features and variants are frozen in §4 now, before NP-1. Apart
-from the NP-1.3 identity check, NP-1 computes nothing on H, and that check is logged in `heldout-spent.jsonl`.
+tabulated). These looks motivated C1's tie-break, which is why the features and variants are frozen in §4 now, before NR-1. Apart
+from the NR-1.3 identity check, NR-1 computes nothing on H, and that check is logged in `heldout-spent.jsonl`.
 
 **Protected-partition hygiene (observed).** 13 pool files are `hard-once` sources (`protected.py:39-42`) and 1 is a `hard-dev`
 source; they are dropped with their basename twins. `headroom/programs*` (134 files, feeding hx-dev/hx-test, `protected.py:44-48`)
@@ -143,25 +143,25 @@ non-`ai` build or no `OPENROUTER_API_KEY` running `--generator cmd:`/`ai:` witho
   (c) an incumbent measured on a frozen held-out set;
   (d) power ≥ 0.80 at α = 0.05 for an effect inside the incumbent's error.
   Against the paid incumbent (≤ 1/67 error), (d) fails.
-- **STOP-0(e) (data floor).** Learned parameters ≤ n_multi/5: 22 tasks → ≤ 4 weights. NP-5 needs ≥ 200 multi-candidate training
+- **STOP-0(e) (data floor).** Learned parameters ≤ n_multi/5: 22 tasks → ≤ 4 weights. NR-5 needs ≥ 200 multi-candidate training
   tasks.
-- **STOP-1v (value; FIRES NOW)** `[REVISED: NPD-2]`. Work past NP-0 needs (i) a named keyless consumer (CI without a key, an offline
-  user, or an unattended mode) with a stated repair frequency f per week. NP-2 also needs (ii) f × (CV Δ top-1 of C2 over C0) ×
+- **STOP-1v (value; FIRES NOW)** `[REVISED: NPD-2]`. Work past NR-0 needs (i) a named keyless consumer (CI without a key, an offline
+  user, or an unattended mode) with a stated repair frequency f per week. NR-2 also needs (ii) f × (CV Δ top-1 of C2 over C0) ×
   68/115 ≥ 5 extra truth-first answers per week. A saving on the paid default (≤ $0.04 per run) never counts. When this fires,
-  the report is "no consumer", and if NP-1 ran, `results/dev.json` is committed.
+  the report is "no consumer", and if NR-1 ran, `results/dev.json` is committed.
 - **STOP-1o (oracle ceiling; does not fire, +7).** A perfect tie-break gaining < 3/22 → "rejected" before any harness exists.
 - **STOP-1 (nested-LOCO CV, before any `crates/axon-neural/Cargo.toml` exists)** `[REVISED: NPA-6]`:
   (1) compute net-vs-spectrum (wins − losses) for C1 and C2; a candidate qualifies at net ≥ 3;
   (2) neither qualifies → "rejected";
   (3) apply the §4 selection rule among the qualifiers;
   (4) C1 selected → stop the neural slice ("deterministic rule sufficient"), hand C1 to a cortex spec, build no crate;
-  (5) only C2 selected (and STOP-1v(ii)) starts NP-2.
-- **STOP-2 (NP-4).** P1 fails → rejected; recorded in the evidence bundle (CX-36 §10).
-- **STOP-3 (NP-5).** Requires P1 passed, S1 failed, STOP-0(e)'s 200-task floor met, and H1-H3 answered.
+  (5) only C2 selected (and STOP-1v(ii)) starts NR-2.
+- **STOP-2 (NR-4).** P1 fails → rejected; recorded in the evidence bundle (CX-36 §10).
+- **STOP-3 (NR-5).** Requires P1 passed, S1 failed, STOP-0(e)'s 200-task floor met, and H1-H3 answered.
 
 ## 3. Items
 
-### NP-1 (P0, conditional on H6) Pool, nested LOCO, C0/C1/C2, PREREG
+### NR-1 (P0, conditional on H6) Pool, nested LOCO, C0/C1/C2, PREREG
 
 Location: `crates/axon-neural/benchmarks/locrank-np/` (stdlib Python; no Cargo files).
 1. `pool.py`: the N0 pool rules and the uncapped `ab/corpus.py` run, writing `pool.json` with the generator/axon/cortex sha256s.
@@ -185,7 +185,7 @@ Location: `crates/axon-neural/benchmarks/locrank-np/` (stdlib Python; no Cargo f
 **Acceptance:** `results/dev.json` holds the nested-LOCO table (C0/C1/C2 top-1/top-3/MRR), the sign-test p, and the STOP-1 and
 STOP-1v verdicts. H is touched only by step 3.
 
-### NP-2 (P1, conditional) `axon-neural`: source, manifest, identity, strict loader
+### NR-2 (P1, conditional) `axon-neural`: source, manifest, identity, strict loader
 
 1. **Source** `axon.nps/1`: parsed by `axon_canonical::parse_value` (`axon-canonical/src/lib.rs:125`: duplicate keys refused, no
    floats, depth ≤ 32, ≤ 1 MiB). Unknown keys are refused, and `schema` must be `axon.nps/1`.
@@ -206,7 +206,7 @@ STOP-1v verdicts. H is touched only by step 3.
 
 **Fail-first** (`tests/artifact.rs`): M4850-M4856, M4861, M4862, M4865, M4866. **Acceptance:** G23-artifact.
 
-### NP-3 (P1, conditional) Runtime: typed invocation, readiness, applicability, no fallback, offline
+### NR-3 (P1, conditional) Runtime: typed invocation, readiness, applicability, no fallback, offline
 
 1. `load(digest, &PrincipalScope) -> Handle`, with the principal bound to the handle. The `axon_reflex::StateHandle` pattern
    (`axon-reflex/src/lib.rs:109-119`) is copied as a pattern, not a dependency `[REVISED: NPD-7]`. Another principal gets
@@ -231,7 +231,7 @@ STOP-1v verdicts. H is touched only by step 3.
 - M4868 `invoke_under_unshare_net_succeeds_and_missing_asset_refuses` (`bwrap --unshare-net`) `[REVISED: NPA-7]`.
 **Acceptance:** G23-typed-output/-no-fallback/-authority/-offline, G22-applicability; G23-cache `not-applicable`.
 
-### NP-4 (P1, conditional) Held-out evaluation and evidence bundle
+### NR-4 (P1, conditional) Held-out evaluation and evidence bundle
 
 1. Rust `features` matches the Python byte for byte on the pool, and the CV table re-run through `axon-np` equals `dev.json`.
 2. Runs **after Lane B merges** (NE-2 edits `axon-cortex/src`), with the `cortex` sha256 pinned in the ledger row `[REVISED: NPD-8]`.
@@ -239,7 +239,7 @@ STOP-1v verdicts. H is touched only by step 3.
 3. `results/evidence.json`: digest, PREREG sha256, per-claim verdicts, the CX-22 §6 matrix, and `decision: candidate-for-CX-11 |
    rejected | inconclusive`. No activation.
 
-### NP-5 (P2, conditional, human-gated) Small-LM listwise adapter
+### NR-5 (P2, conditional, human-gated) Small-LM listwise adapter
 
 Only under STOP-3. The base, tokenizer, LoRA adapter and template are pinned as CX-36 §5 dependencies. CPU inference is the
 default; training is H3. A bare base is `Refused`. Its spec amendment must add a g01 mismatch row each for base, tokenizer and
@@ -302,18 +302,18 @@ Format as `v022_g01_mutations.py`. The find strings are post-build `[INFERENCE]`
 
 | phase | what | CPU h | per iteration | paid $ | GPU h |
 |---|---|---|---|---|---|
-| NP-0 (done) | uncapped generator 4 m 4 s + locate 4 s + scripts, measured | 0.07 | — | 0 | 0 |
-| NP-1 | pool rebuild 4 m (measured); locate on pool + H ≈ 30 s `[INFERENCE: 0.2 s/task]`; nested LOCO < 1 min `[INFERENCE]` | ≈ 0.1 | < 1 min (reusing `pool.json`) | 0 | 0 |
-| NP-2/3 | lane build + `cargo test -p axon-neural` | ≈ 2-3 `[INFERENCE]` | minutes, deps cached `[INFERENCE]` | 0 | 0 |
-| NP-4 | parity + one H run + 3 repeats | < 0.5 `[INFERENCE]` | — | 0 | 0 |
-| strict gate | **only with NP-2/3**; none if the slice stops at NP-0/NP-1 | 0.73 (2663 s) | — | 0 | 0 |
+| NR-0 (done) | uncapped generator 4 m 4 s + locate 4 s + scripts, measured | 0.07 | — | 0 | 0 |
+| NR-1 | pool rebuild 4 m (measured); locate on pool + H ≈ 30 s `[INFERENCE: 0.2 s/task]`; nested LOCO < 1 min `[INFERENCE]` | ≈ 0.1 | < 1 min (reusing `pool.json`) | 0 | 0 |
+| NR-2/3 | lane build + `cargo test -p axon-neural` | ≈ 2-3 `[INFERENCE]` | minutes, deps cached `[INFERENCE]` | 0 | 0 |
+| NR-4 | parity + one H run + 3 repeats | < 0.5 `[INFERENCE]` | — | 0 | 0 |
+| strict gate | **only with NR-2/3**; none if the slice stops at NR-0/NR-1 | 0.73 (2663 s) | — | 0 | 0 |
 | g01 | M4850-M4868 (19 rows) | ≈ 1-2 `[INFERENCE]` | 3-7 min/row | 0 | 0 |
 | receipt regress | none: NP reads `axon_cortex::rank` as a library and edits nothing in `REPAIR_SOURCES` (`scorecard.py:89-91`) | 0 | — | 0 | 0 |
-| NP-5 | probe ticket ≤ 10 min, then training; inference on CPU | `[INFERENCE]` | — | 0 | probe ≤ 0.17, then measured |
+| NR-5 | probe ticket ≤ 10 min, then training; inference on CPU | `[INFERENCE]` | — | 0 | probe ≤ 0.17, then measured |
 
-**Stop at NP-0/NP-1:** no strict gate. Verification is `python3 -B selftest.py` plus the identity check, and the commit rides the
+**Stop at NR-0/NR-1:** no strict gate. Verification is `python3 -B selftest.py` plus the identity check, and the commit rides the
 next batch gate. The lane adds only stdlib Python outside every Cargo member, and `GLOBAL_INPUTS` = `Cargo.toml`, `Cargo.lock`,
-`rust-toolchain.toml` (`gate_lane.py:846`) `[INFERENCE: lane selection runs no Rust stage for these paths]`. **With NP-2/3:** S14
+`rust-toolchain.toml` (`gate_lane.py:846`) `[INFERENCE: lane selection runs no Rust stage for these paths]`. **With NR-2/3:** S14
 clippy list (`gate.sh:1031-1036`), S20 manifest command (`:1165-1177`), and S15 coverage (`:1047`); the S23 selftest line is
 added by the integrator only then `[REVISED: NPD-5]`.
 
@@ -322,11 +322,11 @@ added by the integrator only then `[REVISED: NPD-5]`.
 | order | lane | items | files owned |
 |---|---|---|---|
 | 0 | human | H6 answer (consumer + f) | — |
-| 1 | b4/np-data | oracle (done), then C1, C2, PREREG (NP-1) | `crates/axon-neural/benchmarks/locrank-np/**` only; no `gate.sh`/Cargo edits |
-| 2 (STOP-1 → C2 and STOP-1v(ii)) | b4/np-rs | NP-2, NP-3 | `crates/axon-neural/**`; `v022_{g01_mutations,attack_markers}.py` tails |
+| 1 | b4/np-data | oracle (done), then C1, C2, PREREG (NR-1) | `crates/axon-neural/benchmarks/locrank-np/**` only; no `gate.sh`/Cargo edits |
+| 2 (STOP-1 → C2 and STOP-1v(ii)) | b4/np-rs | NR-2, NR-3 | `crates/axon-neural/**`; `v022_{g01_mutations,attack_markers}.py` tails |
 | 3 | integrator | workspace member + `Cargo.lock` (no new external crates; deps `serde_json`, `sha2`, `axon-canonical`, `axon-cortex`; **no `axon-reflex`** `[REVISED: NPD-7]`); S14/S20/S23 lines after CiHygiene and NE-1 land in `gate.sh`; strict gate; g01; CHANGELOG; O-entries | integrator-owned |
-| 4 | b4/np-rs | NP-4, after Lane B merges | as above |
-| 5 | — | NP-5 only via H3 | amendment |
+| 4 | b4/np-rs | NR-4, after Lane B merges | as above |
+| 5 | — | NR-5 only via H3 | amendment |
 
 ## 8. Engineering decisions (canon after Step 2)
 
@@ -343,9 +343,9 @@ added by the integrator only then `[REVISED: NPD-5]`.
 11. STOP-1 is ordered and integer (net ≥ 3) `[REVISED: NPA-6]`.
 12. Stops are evaluated value → oracle → C1 → C2 → PREREG `[REVISED: NPD-3]`.
 13. Readiness is explicit, with M4867/M4868 `[REVISED: NPA-7]`.
-14. No strict gate for a stop at NP-0/NP-1 `[REVISED: NPD-6]`.
+14. No strict gate for a stop at NR-0/NR-1 `[REVISED: NPD-6]`.
 15. `axon-reflex` is not a dependency `[REVISED: NPD-7]`.
-16. NP-4 runs after Lane B and pins cortex `[REVISED: NPD-8]`.
+16. NR-4 runs after Lane B and pins cortex `[REVISED: NPD-8]`.
 17. `other` is report-only and S1 uses the mutation stratum `[REVISED: NPA-4]`.
 
 ## 9. Needs-human (Step 2: product questions only)
@@ -354,11 +354,11 @@ added by the integrator only then `[REVISED: NPD-5]`.
   CI job without a key, a non-`ai` deployment) and its repairs per week, or accept the stop. **Recommend: accept the stop.** The
   repo shows none (§2), the paid default is ≤ $0.04 per run, and the artifact contract can be revisited when a second neural
   candidate with data appears.
-- **H1 base model + license (NP-5 only).** Recommend an Apache-2.0 code model ≤ 1.5 B parameters, CPU-servable `[INFERENCE: license
+- **H1 base model + license (NR-5 only).** Recommend an Apache-2.0 code model ≤ 1.5 B parameters, CPU-servable `[INFERENCE: license
   verified at selection]`. No research-only licenses.
 - **H2 training data.** (a) Paid-model outputs as distillation targets: recommend **no**. (b) `headroom/programs*` and the
   hard-once/hard-dev sources: recommend **no** (protected).
-- **H3 GPU (NP-5)** `[REVISED: NPD-4]`. Needs the ai-cere owner's approval to run axon NP-5 through ai-cere
+- **H3 GPU (NR-5)** `[REVISED: NPD-4]`. Needs the ai-cere owner's approval to run axon NR-5 through ai-cere
   `scripts/live/gpu_queue.py`, class default, on the GPU0 `gpu0-dev.lock` only while `wt/gpu1.production` exists (observed).
   - First, a ≤ 10-min probe ticket measures step time and peak memory, with GPU0 free ≥ 10,240 MiB at peak.
   - Then one training ticket, timeout = 1.25-1.5× the projected time, inside the command.
@@ -368,7 +368,7 @@ added by the integrator only then `[REVISED: NPD-5]`.
   - Never GPU1, `prod-cere-t4`, `sglang-t4` or their ports.
   Recommend: ask only if STOP-3 is met.
 - **H4 syntax later.** Recommend not before ≥ 2 admitted artifacts.
-- **H5 budget.** Recommend $0 paid for NP-0..NP-4, and a $1 cap for any fresh Haiku comparison.
+- **H5 budget.** Recommend $0 paid for NR-0..NR-4, and a $1 cap for any fresh Haiku comparison.
 
 ## 9a. Fail-closed summary
 
@@ -393,4 +393,4 @@ Observed 2026-11-04 (draft binaries `axon 0.1.0 (9300d9fd)`):
   - the sign-test minimum net (4) and the Clopper-Pearson bounds (51/52 → 0.912, 50/52 → 0.884);
 - the consumer grep (workflows, `auth.rs:423`, `run.sh:48`, `CORTEX.md:43-49`) and `gate_lane.py:846`.
 
-Not observed: `[INFERENCE]` items, all post-build behaviour, the NP-1 CV numbers, and model licenses.
+Not observed: `[INFERENCE]` items, all post-build behaviour, the NR-1 CV numbers, and model licenses.

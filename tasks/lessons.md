@@ -899,3 +899,7 @@ lines, instead of guessing where literals are.
 - **`$?` after a command substitution is the substitution's status** (checker+capability run): two probe loops printed `run=$?` after `$(basename …)` / `$(… | cut)`, so they reported 0 for a run that returned 101. No claim was published from them. Capture `rc=$?` on the line right after the command.
 - **Check a sweep's line count before diffing** (checker+capability run): `cs-sweep.sh` called with the wrong arity wrote a 1-line error, and the diff against the 290-line baseline was all deletions. A diff of an empty or short output is not evidence.
 - **A per-predicate pass over a program-wide structure needs a scaling probe** (checker+capability run): CS-1's `check_refinement_predicates` resolved each refinement's type through the whole alias chain, so a 20 000-link chain took 169 s natively and wasm `refine 50000` timed out. Only the full suite's wasm harness found it; fixed by flattening chains once in `collect_sigs` (`fbc365d3`). Add an N = 5k / 20k probe at lane exit for any such pass.
+
+## Batch 4 (containment-b4, nhr-evidence, ci-hygiene)
+
+- **Run `scripts/spec_ledger.py` before committing a new spec** (batch 4 Step 0): 792478e6 committed `neural-programs-spec.md` with items NP-0..NP-5 and entry O-NP-01, both already used by native-parity, and `main` was red at the gate's `spec ledger` stage until the integrator renamed them NR-* / O-NR-01. Only `verify_all_specs.sh` had been run, and it does not check item-id uniqueness. Rule: a spec commit runs both checks.
