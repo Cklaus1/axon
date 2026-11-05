@@ -355,7 +355,9 @@ Receipts under amendment 2 (the dev corpus alone, dated on or before 2026-10-13;
 
 Waivers (a digest declared to change no behaviour, with the reason):
 
-None.
+| date | repair digest | reason |
+|---|---|---|
+| 2026-11-05 | `d8c6eccef05e054b` | cere-loopback: NH-R1 2-N1 admits plain http:// to a loopback IP literal. The only caller (axon_ai::endpoint_is_private) is auth.rs phase A, reached only by cortex repair --unattended, which the default (receipt) build refuses before parsing; the cortex.rs edit is USAGE text. Attended propose/accept/report paths are unchanged. |
 
 ## Held-out and once-set use
 
