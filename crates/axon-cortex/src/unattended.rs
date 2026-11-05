@@ -456,6 +456,63 @@ mod tests {
         }
     }
 
+    /// NE-2: every special kind - a fifo, a socket, a char device, a block
+    /// device - is refused by name, both as the write root itself and under
+    /// it; a tree of regular files and dirs is admitted. The nodes are made
+    /// with `mknod` (root, as every unattended test; a device node is never
+    /// opened, so `nodev` does not matter).
+    #[test]
+    fn a_special_file_at_or_under_a_write_root_is_refused_by_kind() {
+        use std::os::unix::ffi::OsStrExt;
+        let d = std::env::temp_dir().join(format!("cortex-special-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("plain/sub")).unwrap();
+        std::fs::write(d.join("plain/sub/a"), b"1").unwrap();
+        let node = |p: &Path, kind: libc::mode_t, dev: libc::dev_t| {
+            let c = std::ffi::CString::new(p.as_os_str().as_bytes()).unwrap();
+            // SAFETY: a valid NUL-terminated path.
+            let rc = unsafe { libc::mknod(c.as_ptr(), kind | 0o600, dev) };
+            assert_eq!(
+                rc,
+                0,
+                "mknod {}: {}",
+                p.display(),
+                std::io::Error::last_os_error()
+            );
+        };
+        let kinds = [
+            ("fifo", libc::S_IFIFO, 0),
+            ("socket", libc::S_IFSOCK, 0),
+            ("char device", libc::S_IFCHR, libc::makedev(1, 3)),
+            ("block device", libc::S_IFBLK, libc::makedev(7, 200)),
+        ];
+        let (mut got, mut want) = (vec![], vec![]);
+        for (i, (kind, mode, dev)) in kinds.into_iter().enumerate() {
+            let root = d.join(format!("root{i}"));
+            let under = d.join(format!("under{i}/sub"));
+            std::fs::create_dir_all(&under).unwrap();
+            node(&root, mode, dev);
+            node(&under.join("n"), mode, dev);
+            for (rel, at) in [
+                (format!("root{i}"), root),
+                (format!("under{i}"), under.join("n")),
+            ] {
+                got.push(only_plain_entries_at_or_under(&d, &rel));
+                want.push(Err(format!(
+                    "E1s: `{}` is a {kind}, not a regular file",
+                    at.display()
+                )));
+            }
+        }
+        got.push(only_plain_entries_at_or_under(&d, "plain"));
+        want.push(Ok(()));
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(
+            got, want,
+            "ATTACK: a special file at or under a write root was admitted"
+        );
+    }
+
     #[test]
     fn env_selectors_refuse() {
         assert!(check_env(|_| None).is_ok());

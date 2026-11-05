@@ -2176,6 +2176,16 @@ EXEMPT += [
      "with_scope_pins (E1, rows M4096-M4100)"),
 ]
 
+# nhr-evidence NE-2 (tasks/nhr-evidence-spec.md): the E1s special-file
+# refusal's one site no row mutates. special_kind's arms (M4820-M4823), the
+# root refusal (M4811, M4824) and the walk refusal (M4810) have rows; this is
+# an OS error that fails closed.
+EXEMPT += [
+    (_UNA, 'Err(e) => return Err(format!("E1s: `{}` cannot be examined: {e}", root.display())),',
+     _CTX + "; E1s (NE-2): a write root whose lstat fails for another reason than NotFound is an "
+     "OS error; refused, never admitted (as no_symlink_on_path's `at.display()` arm)"),
+]
+
 # ── C9 round 4c, workstream GATE (amendment 74): the sites the predicate-
 # primitive rule (a function that decides by bool/Option is a site), the
 # changed-lines coverage rule, the `let .. else` opener and the function-
