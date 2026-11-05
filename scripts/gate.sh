@@ -944,26 +944,24 @@ fi
 # env var because a trailing `-- --nocapture` would break lane narrowing), and a
 # `SKIP ` line fails the stage: s14 returns early on one when `unshare --user`
 # fails, so green means the N7 S-test really ran.
-if lane_runs S09u; then
-stage_begin S09u "cortex unattended lint + S-tests"
+if lane_runs S09U; then
+stage_begin S09U "cortex unattended lint + S-tests"
 [ "$(id -u)" = 0 ] || fail "cortex unattended S-tests need uid 0 (run the gate as root)"
 [ -d /etc/axon ] || fail "cortex unattended S-tests need an existing /etc/axon directory (mount point only)"
-lane_cargo S09u:lint cargo clippy --locked -p axon-cortex --all-targets --features unattended -- -D warnings \
+lane_cargo S09U:lint cargo clippy --locked -p axon-cortex --all-targets --features unattended -- -D warnings \
   || fail "cortex unattended lint"
 S09U_LOG="$(mktemp "${TMPDIR:-/tmp}/gate-s09u.XXXXXX")"
 S09U_RC=0
 export RUST_TEST_NOCAPTURE=1
 exec 3>&1 4>&2 >"$S09U_LOG" 2>&1
-lane_cargo S09u cargo test --locked -p axon-cortex --features unattended || S09U_RC=$?
+lane_cargo S09U cargo test --locked -p axon-cortex --features unattended || S09U_RC=$?
 exec 1>&3 2>&4 3>&- 4>&-
 unset RUST_TEST_NOCAPTURE
 cat "$S09U_LOG"
 if [ "$S09U_RC" != 0 ]; then rm -f "$S09U_LOG"; fail "cortex unattended S-tests"; fi
-if grep -q '^SKIP ' "$S09U_LOG"; then
-  grep '^SKIP ' "$S09U_LOG"; rm -f "$S09U_LOG"
-  fail "cortex unattended S-tests printed a SKIP line (an S-test did not run)"
-fi
+S09U_SKIPS="$(grep '^SKIP ' "$S09U_LOG")"
 rm -f "$S09U_LOG"
+[ -z "$S09U_SKIPS" ] || fail "cortex unattended S-tests printed a SKIP line (an S-test did not run): $S09U_SKIPS"
 stage_end
 fi
 
