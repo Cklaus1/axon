@@ -1,9 +1,9 @@
 # nhr-evidence - batch 4 Lane B: the NH-R1 §9 enabling evidence (NE-1..NE-9)
 
-**Status: PARTIAL 2026-11-05: NE-1 (S09U), NE-2..NE-5, NE-7.1 and the Q3 USAGE paragraph built (lane `b4/nhr` 75181583) and
-merged on `b4/merge`; NE-2's refusal coverage, NE-6 probes, NE-7.2, NE-8 review, NE-9 classification and the integrated strict
-gate are pending. Build authorized by the human 2026-11-05 ("use recommendations, build batch 4"). Enabling `--unattended` is
-still NOT authorized (§10 Q3 of `unattended-auth-spec.md`).**
+**Status: PARTIAL 2026-11-05 (O-NHR-06 stays open; built on `b4/nhr` 75181583, merged on `b4/merge`): NE-1 (S09U),
+NE-2..NE-5, NE-7.1 and the Q3 USAGE paragraph. Pending: NE-2's refusal coverage, NE-6 probes, NE-7.2, NE-8 review, NE-9
+classification (O-NHR-06) and the integrated strict gate. Build authorized by the human 2026-11-05 ("use recommendations,
+build batch 4"). Enabling `--unattended` is still NOT authorized (§10 Q3 of `unattended-auth-spec.md`).**
 
 **Step 1 review** (2026-11-04; `AuditNhr` NEA-1..6, `DevloopNhr` NED-1..7; each re-checked by the drafter, markers inline):
 

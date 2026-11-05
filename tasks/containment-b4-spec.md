@@ -1,7 +1,8 @@
 # containment-b4 - spec (batch 4 Lane A: C-1..C-4)
 
-**Status: PARTIAL 2026-11-05: C-1..C-4 built (lane `b4/containment` c423aa8d) and merged on `b4/merge`; the integrated strict
-gate is pending. Build authorized by the human 2026-11-05 ("use recommendations, build batch 4").**
+**Status: PARTIAL 2026-11-05 (O-NHR-04 stays open; C-1..C-4 built on `b4/containment` c423aa8d, merged on `b4/merge`).
+The integrated strict gate is pending. O-NHR-04: 17 axon-intent files are NOT YET SCANNED, by NH-1 = A. Build authorized by
+the human 2026-11-05 ("use recommendations, build batch 4").**
 
 Subject: the interpreter's fs path scope (`AXON_ALLOWED_FS_READ/WRITE`, the `axon-ceiling/1` `fs_*` keys, `sandbox_create_scoped`, the
 axon-os job grant that becomes both), the `--source-fd` / outcome-fd pairing, and the refusal-coverage scan set. Base: `b4/specs`

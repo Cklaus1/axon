@@ -3356,7 +3356,7 @@ Terminal `accepted_refusal` is always null (an R5 refusal turns the exit into 22
 tree roots are the effective write prefixes plus the envelope's fs_write scopes. Confirm or revise these in
 `tasks/r6-ledger-spec.md` before enabling.
 `[SPECCED 2026-11-04: tasks/nhr-evidence-spec.md NE-9 (classification; needs-human Q2 confirms the three choices).]`
-`[DECIDED by human 2026-11-05: the three choices are confirmed as built (tasks/r6-ledger-spec.md §3).]`
+`[CLOSED 2026-11-05: DECIDED by human - the three choices are confirmed as built (tasks/r6-ledger-spec.md §3).]`
 
 ### O-NHR-06 - [low] Residuals the security fixes (F1-F12, re-review N1-N6) state and do not close
 All twelve NhrSecurity findings (F1-F12) were fixed on nhr/fix-a and nhr/fix-b and merged into nhr/int. What remains,
