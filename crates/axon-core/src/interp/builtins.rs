@@ -210,6 +210,30 @@ pub(super) fn first_effect_outside_ceiling<'a>(
     effects.iter().copied().find(|e| !sb.allows(e))
 }
 
+/// C-1 (O-GV-08): the RESOLVED half of an fs scope check, run after the
+/// lexical test admitted `path`. `roots` are the scope's pinned grant roots
+/// (`None` = that kind is unscoped: nothing is resolved, no syscall). The
+/// answer is the reason the path escapes, or `None` when it stays inside or
+/// cannot be traversed (the op then returns its own `Err`: a missing file or
+/// a link loop is not a violation).
+#[cfg(unix)]
+pub(super) fn resolved_escape(
+    roots: Option<&[std::path::PathBuf]>,
+    path: &str,
+    follow: bool,
+) -> Option<&'static str> {
+    use crate::path_scope::{admits, resolve_for_scope, Resolution};
+    let roots = roots?;
+    match resolve_for_scope(path, follow) {
+        Resolution::MagicLink => Some("through a /proc magic link"),
+        // Any grant's root, not only the one that matched by text: a link
+        // from one granted prefix into another stays inside the scope.
+        Resolution::Real(r) if admits(roots, &r) => None,
+        Resolution::Real(_) => Some("through a symbolic link"),
+        Resolution::Opaque => None,
+    }
+}
+
 fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<String> {
     use crate::capabilities as caps;
     let deny = |what: &str, val: &str, list: &[String]| {
@@ -218,6 +242,11 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
              restricts it to {list:?} (principal handle {})",
             sb.principal
         ))
+    };
+    #[cfg(unix)]
+    let deny_resolved = |what: &str, val: &str, list: &[String], why: &str| {
+        deny(what, val, list)
+            .map(|m| format!("{m}: it resolves outside every granted prefix ({why})"))
     };
     // Net: either the first arg IS the host/URL (http_*), or the host is
     // implicit and fixed (the AI builtins reach the Anthropic endpoint).
@@ -279,13 +308,27 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
         // `dstore_open` replays the log (read) and the other two mutate it;
         // every one of the three is checked against BOTH scopes, because a
         // handle-taking call cannot be told apart by its arguments.
-        for (what, allow) in [
-            ("read path", sb.scope.fs_read.as_deref()),
-            ("write path", sb.scope.fs_write.as_deref()),
+        for (what, allow, _roots) in [
+            (
+                "read path",
+                sb.scope.fs_read.as_deref(),
+                sb.scope.fs_read_roots.as_deref(),
+            ),
+            (
+                "write path",
+                sb.scope.fs_write.as_deref(),
+                sb.scope.fs_write_roots.as_deref(),
+            ),
         ] {
             let Some(allow) = allow else { continue };
             if !allow.iter().any(|p| caps::path_is_under(&dir, p)) {
                 return deny(what, &dir, allow);
+            }
+            // C-1: the store directory itself may be a symlink out of the
+            // grant (`$XDG_CACHE_HOME/axon/stores -> elsewhere`).
+            #[cfg(unix)]
+            if let Some(why) = resolved_escape(_roots, &dir, true) {
+                return deny_resolved(what, &dir, allow, why);
             }
         }
     }
@@ -324,6 +367,22 @@ fn scope_violation(name: &str, args: &[Value], sb: &SandboxEntry) -> Option<Stri
             };
             if !allow.iter().any(|p| caps::path_is_under(&path, p)) {
                 return deny(what, &path, allow);
+            }
+            // C-1 (O-GV-08): the text is inside a grant; the path must also
+            // RESOLVE inside one, since the host follows every link.
+            // rename(2) and mkdir(2) do not follow the final name, so those
+            // two resolve the parent only; every other op follows.
+            #[cfg(unix)]
+            {
+                let roots = match kind {
+                    caps::IoKind::FsRead => sb.scope.fs_read_roots.as_deref(),
+                    caps::IoKind::FsWrite => sb.scope.fs_write_roots.as_deref(),
+                    _ => None,
+                };
+                let follow = !matches!(name, "file_rename" | "dir_create");
+                if let Some(why) = resolved_escape(roots, &path, follow) {
+                    return deny_resolved(what, &path, allow, why);
+                }
             }
         }
     }
@@ -4852,11 +4911,13 @@ impl<'p> Interp<'p> {
                 let list = |v: &Value| -> Result<Option<Vec<String>>, Flow> {
                     Ok(crate::interp::parse_scope_list(as_str(v)?))
                 };
-                let scope = crate::interp::SandboxScope {
-                    fs_read: list(&args[2])?,
-                    fs_write: list(&args[3])?,
-                    net: list(&args[4])?,
-                };
+                // C-1: `new` pins each fs grant's resolved root here, at
+                // creation, so the program cannot re-point it later.
+                let scope = crate::interp::SandboxScope::new(
+                    list(&args[2])?,
+                    list(&args[3])?,
+                    list(&args[4])?,
+                );
                 {
                     let active = self.k().active_sandbox.get();
                     if active >= 0 {

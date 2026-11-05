@@ -1581,11 +1581,67 @@ impl SandboxEntry {
 /// Path/host restrictions attached to a sandbox. `None` = unscoped (grant the
 /// effect with no argument restriction); `Some(v)` = the call argument must
 /// match an entry, or it is a SandboxViolation.
+///
+/// C-1 (O-GV-08): each fs list also carries its grants' RESOLVED roots,
+/// pinned when the scope is built ([`SandboxScope::new`]). A path that
+/// matches a grant by text must also resolve under one of them. Pinned, not
+/// re-resolved per call: a program can `file_rename` an existing symlink over
+/// its own grant directory, and re-resolving would follow it.
 #[derive(Default, Clone)]
 struct SandboxScope {
     fs_read: Option<Vec<String>>,
     fs_write: Option<Vec<String>>,
     net: Option<Vec<String>>,
+    /// `None` when the list is `None`, and always `None` on non-unix.
+    fs_read_roots: Option<Vec<std::path::PathBuf>>,
+    fs_write_roots: Option<Vec<std::path::PathBuf>>,
+}
+
+impl SandboxScope {
+    fn new(
+        fs_read: Option<Vec<String>>,
+        fs_write: Option<Vec<String>>,
+        net: Option<Vec<String>>,
+    ) -> SandboxScope {
+        SandboxScope {
+            fs_read_roots: pin_roots(fs_read.as_deref()),
+            fs_write_roots: pin_roots(fs_write.as_deref()),
+            fs_read,
+            fs_write,
+            net,
+        }
+    }
+}
+
+/// C-1: the resolved root of every grant, in grant order. A grant that
+/// resolves through a magic link or not at all gets no root, so it admits
+/// nothing by resolution. A root keeps its grant's directory spelling (a
+/// trailing `/`); `path_scope::admits` matches by component, so the spelling
+/// cannot change a verdict (CBA-1). Unscoped (`None`) resolves nothing.
+#[cfg(unix)]
+pub(crate) fn pin_roots(grants: Option<&[String]>) -> Option<Vec<std::path::PathBuf>> {
+    use crate::path_scope::{resolve_for_scope, Resolution};
+    let grants = grants?;
+    Some(
+        grants
+            .iter()
+            .filter_map(|g| match resolve_for_scope(g, true) {
+                Resolution::Real(mut r) if r.is_absolute() => {
+                    if g.ends_with('/') {
+                        r.push("");
+                    }
+                    Some(r)
+                }
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
+/// Non-unix (wasm): the scope stays lexical, inside the WASI preopens.
+#[cfg(not(unix))]
+pub(crate) fn pin_roots(_grants: Option<&[String]>) -> Option<Vec<std::path::PathBuf>> {
+    None
 }
 
 /// One scope dimension in the `sandbox_create_scoped` /
@@ -5946,11 +6002,25 @@ impl<'p> Interp<'p> {
         let sbs = self.k().sandboxes.borrow();
         let log = crate::interp::provenance::provenance_log_path()
             .map(|p| p.to_string_lossy().into_owned());
+        #[cfg(unix)]
+        fn resolved_log_admitted(sb: &SandboxEntry, path: &str) -> bool {
+            crate::interp::builtins::resolved_escape(sb.scope.fs_write_roots.as_deref(), path, true)
+                .is_none()
+        }
+        #[cfg(not(unix))]
+        fn resolved_log_admitted(_sb: &SandboxEntry, _path: &str) -> bool {
+            true
+        }
         let scope_admits = |sb: &SandboxEntry| match (sb.scope.fs_write.as_deref(), &log) {
             (None, _) => true,
-            (Some(allow), Some(path)) => allow
-                .iter()
-                .any(|p| crate::capabilities::path_is_under(path, p)),
+            (Some(allow), Some(path)) => {
+                allow
+                    .iter()
+                    .any(|p| crate::capabilities::path_is_under(path, p))
+                    // C-1: the log's directory may be a symlink out of the
+                    // grant; the row is suppressed as `write_file` is refused.
+                    && resolved_log_admitted(sb, path)
+            }
             // No resolvable log path under a write scope: nothing to admit.
             (Some(_), None) => false,
         };
@@ -8068,23 +8138,24 @@ fn ambient_sandbox() -> Vec<SandboxEntry> {
     // ceilings CE-2: an operator's `axon-ceiling/1` file narrows every one of
     // these the same way; the narrower of the variable and the ceiling wins.
     let ceiling = crate::ceiling::active();
-    let scope = SandboxScope {
-        fs_read: crate::ceiling::meet_paths(
+    // C-1: `new` pins each grant's resolved root, after the ceiling meet.
+    let scope = SandboxScope::new(
+        crate::ceiling::meet_paths(
             ambient_scope_var(
                 "AXON_ALLOWED_FS_READ",
                 std::env::var_os("AXON_ALLOWED_FS_READ"),
             ),
             ceiling.and_then(|c| c.fs_read.as_ref()),
         ),
-        fs_write: crate::ceiling::meet_paths(
+        crate::ceiling::meet_paths(
             ambient_scope_var(
                 "AXON_ALLOWED_FS_WRITE",
                 std::env::var_os("AXON_ALLOWED_FS_WRITE"),
             ),
             ceiling.and_then(|c| c.fs_write.as_ref()),
         ),
-        net: effective_net_scope(),
-    };
+        effective_net_scope(),
+    );
     let scoped = scope.fs_read.is_some() || scope.fs_write.is_some() || scope.net.is_some();
     let env_effects: Option<std::collections::HashSet<String>> =
         match std::env::var("AXON_ALLOWED_EFFECTS") {
