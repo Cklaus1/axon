@@ -1,6 +1,7 @@
 # containment-b4 - spec (batch 4 Lane A: C-1..C-4)
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: DRAFT (after Step 1 review). Build authorized by the human 2026-11-05 ("use recommendations, build batch 4"); built on
+`b4/containment`, integrated on `b4/int`.**
 
 Subject: the interpreter's fs path scope (`AXON_ALLOWED_FS_READ/WRITE`, the `axon-ceiling/1` `fs_*` keys, `sandbox_create_scoped`, the
 axon-os job grant that becomes both), the `--source-fd` / outcome-fd pairing, and the refusal-coverage scan set. Base: `b4/specs`
@@ -489,6 +490,7 @@ Every other open question is engineering and is decided in ยง6 (former NH-1 is ย
   process decision. (A) accept: C-3 lands as specified, and the 244-site judging batch becomes a prerequisite of the next PSV
   freeze. (B) land only steps 2-3 and log, which leaves the entry's "no mechanism" defect open. **Recommend A**: the freeze would
   otherwise bind evidence over decision code no rule has read, and nothing is scheduled to break.
+  `[DECIDED by human 2026-11-05: A - C-3 lands as specified; the 244-site judging batch is a prerequisite of the next PSV freeze.]`
 
 ## 8. Verification log (2026-11-04, 9300d9fd)
 

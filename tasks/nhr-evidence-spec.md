@@ -1,6 +1,7 @@
 # nhr-evidence - batch 4 Lane B: the NH-R1 §9 enabling evidence (NE-1..NE-9)
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: DRAFT (after Step 1 review). Build authorized by the human 2026-11-05 ("use recommendations, build batch 4"); built on
+`b4/nhr`, integrated on `b4/int`. Enabling `--unattended` is still NOT authorized (§10 Q3 of `unattended-auth-spec.md`).**
 
 **Step 1 review** (2026-11-04; `AuditNhr` NEA-1..6, `DevloopNhr` NED-1..7; each re-checked by the drafter, markers inline):
 
@@ -379,6 +380,8 @@ row: no deterministic test reaches it. M4819 pins its end state (a special file 
 | Q1 | Must §9's "dry-run series" include accepted repairs (needs a paid `ai:` model)? | Yes `[REVISED: NED-5]`: 3 runs of `ai:<policy model, haiku-5.5>` on `fixtures/broken.ax`, each inside `unshare -m` with a private tmpfs `/etc/axon` holding the opt-in (never the host's `/etc/axon`: a host opt-in would be a partial enable). Spend is capped externally: an OpenRouter key with a $0.10 credit limit, checked after the runs (no `--cap-usd` exists on the `ai:` repair path: `grep cap_usd\|max_cost` in `crates/axon-cortex/src`, `crates/axon-ai/src` finds none). Expected ≈ $0.005 (receipt `cost_per_verified` $0.0013). Then `audit-runs` over those records with NE-7.2's 10 $0 runs. Without them C1 never audits an `accepted` terminal record or the `accepted-mismatch` path |
 | Q2 | Confirm O-NHR-05's three L2 choices in `r6-ledger-spec.md` §3 | Confirm all three as built. The integrator adds one `[DECIDED]` line |
 | Q3 | Accept the stated limits: F2 env (host+https pinned), Linux-only, N5 one spent store per host, N6 unreachable under Q2 | Accept, with one USAGE paragraph naming the four limits before enabling |
+
+`[DECIDED by human 2026-11-05: Q1 yes, Q2 confirm (recorded in r6-ledger-spec.md §3), Q3 accept with the USAGE paragraph.]`
 
 ## 8. Verification log (draft 9300d9fd, 2026-11-04)
 

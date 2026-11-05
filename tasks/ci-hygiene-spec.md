@@ -1,6 +1,7 @@
 # ci-hygiene - spec (CH-1..CH-9, batch 4 Lane C)
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: DRAFT (after Step 1 review). Build authorized by the human 2026-11-05 ("use recommendations, build batch 4"); built on
+`b4/ci-hygiene`, integrated on `b4/int`.**
 
 **Step 1 review** (`history://AuditCI` CIA-1..5, `history://DevloopCI` CID-1..7; every finding re-checked at 9300d9fd by the drafter):
 
@@ -363,6 +364,10 @@ by a logged `apt attempt k failed` followed by success, not by the streak.
 fixes it (CI goes green; that test then measures nothing). **B (recommended): leave the test failing, file the O-entry, and hold
 the NH-1 count until it is fixed**, since an ignored test is a skip the "a failure is never a skip" rule forbids. C: per-test
 choice by the integrator.
+
+`[DECIDED by human 2026-11-05: NH-1 not yet - require the three Linux jobs plus Docs & spec hygiene (never iOS) only after 10
+consecutive green push runs on main; NH-2 B - drop the simulator step and rename the job; NH-3 B - leave unmasked out-of-lane
+failures failing, file the O-entry, hold the NH-1 count. Ruleset 26386102 is not changed by this batch.]`
 
 ## 10. Verification log (all at 9300d9fd, 2026-11-04)
 

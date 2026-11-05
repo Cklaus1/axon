@@ -50,6 +50,11 @@ Schema `cortex-run-record/1`. Records are JSONL, two per run `[REVISED: R-F4 —
 | `episode_digest`, `budget`, `generator`, `recorded_unix` | |
 | `seal` | `"axrun1:" + HMAC(run-record subkey, canonical without seal)` |
 
+`[DECIDED by human 2026-11-05 (nhr-evidence-spec.md §7 Q2, O-NHR-05): the three L2 choices are confirmed as built. (1) The
+terminal `accepted_refusal` is always null, because an R5 refusal turns the exit into 22, outside {0, 27}. (2) An early exit's
+`outcome` is the exit's kind (`usage`, `no_target`, `unauthorized`, `blocked`, `check_already_passes`). (3) The pinned tree's
+roots are the effective write prefixes plus the envelope's `fs_write` scopes.]`
+
 ## 4. Key and sink
 
 **Subkey.** The domain is `"axon-approval repair-run-record v1"`. It is distinct from the axon-os record subkey
