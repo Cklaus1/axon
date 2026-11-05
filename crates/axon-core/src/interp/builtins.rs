@@ -1147,6 +1147,17 @@ impl<'p> Interp<'p> {
                                 audit(self, true);
                                 return Err(crate::interp::Flow::SandboxViolation(v.into()));
                             }
+                            // C-4: every ENCLOSING program sandbox's scope
+                            // binds too. Without this a sandbox created
+                            // inside another (`sandbox_create_scoped(q, "IO",
+                            // "*", ..)`) read outside the outer grant: the
+                            // creation and entry checks compare effects only.
+                            for outer in self.k().scope_chain.borrow().iter() {
+                                if let Some(v) = scope_violation(op_name, args, outer) {
+                                    audit(self, true);
+                                    return Err(crate::interp::Flow::SandboxViolation(v.into()));
+                                }
+                            }
                             // The AMBIENT scope (AXON_ALLOWED_FS_READ /
                             // _FS_WRITE / _NET) is a ceiling, not a default a
                             // program can replace: under a sandbox the program
@@ -5021,6 +5032,25 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
+                // C-4: the outgoing program sandbox still binds the call's
+                // scope (`pre_effect_gate` checks every `scope_chain` entry).
+                // The ambient entry is checked on its own already.
+                let chain_len = self.k().scope_chain.borrow().len();
+                {
+                    let active = self.k().active_sandbox.get();
+                    if active >= 0 && active != sb_handle {
+                        let outgoing = self
+                            .k()
+                            .sandboxes
+                            .borrow()
+                            .get(active as usize)
+                            .filter(|e| !e.ambient)
+                            .cloned();
+                        if let Some(e) = outgoing {
+                            self.k().scope_chain.borrow_mut().push(e);
+                        }
+                    }
+                }
                 // Set the active sandbox, save the previous value for restore.
                 let prev_sandbox = self.k().active_sandbox.replace(sb_handle);
                 // The ceiling is a property of the CALL, not of one kernel
@@ -5041,7 +5071,14 @@ impl<'p> Interp<'p> {
                         let mut sb1 = self.kernels[1].sandboxes.borrow_mut();
                         let idx = sb1.len();
                         sb1.push(e);
-                        (idx, self.kernels[1].active_sandbox.replace(idx as i64))
+                        // C-4: the enclosing chain travels with the entry.
+                        let chain = self.kernels[0].scope_chain.borrow().clone();
+                        let prev_chain = self.kernels[1].scope_chain.replace(chain);
+                        (
+                            idx,
+                            self.kernels[1].active_sandbox.replace(idx as i64),
+                            prev_chain,
+                        )
                     })
                 } else {
                     None
@@ -5053,10 +5090,12 @@ impl<'p> Interp<'p> {
                 if matches!(result, Err(Flow::Exit(_))) {
                     self.exit_inner.set(true);
                 }
-                if let Some((idx, prev)) = sealed_ceiling {
+                if let Some((idx, prev, prev_chain)) = sealed_ceiling {
                     self.kernels[1].active_sandbox.set(prev);
                     self.kernels[1].sandboxes.borrow_mut().truncate(idx);
+                    self.kernels[1].scope_chain.replace(prev_chain);
                 }
+                self.k().scope_chain.borrow_mut().truncate(chain_len);
                 self.k().active_sandbox.set(prev_sandbox);
                 match result {
                     Ok(Value::Int(n)) => ok!(Value::Int(n)),

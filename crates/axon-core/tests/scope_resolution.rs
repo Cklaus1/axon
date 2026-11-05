@@ -635,3 +635,158 @@ fn a_trailing_slash_grant_root_argument_still_works() {
     );
     assert_ok(&o, "MADE\n", what);
 }
+
+// ── C-4: nested program sandboxes ───────────────────────────────────────────
+
+/// `main` runs `outer` in sandbox A (read `a_read`, net `a_net`); `outer`
+/// creates B (read `b_read`, net `b_net`) and runs `inner` with `body`.
+fn nested(a_read: &str, a_net: &str, b_read: &str, b_net: &str, body: &str) -> String {
+    format!(
+        "fn inner(n: i64) -> i64 {{\n    {body}\n    n\n}}\n\
+         fn outer(n: i64) -> i64 {{\n    \
+         let q = principal_root(\"q\", false, false, false, 100)\n    \
+         let b = sandbox_create_scoped(q, \"IO,Net\", \"{b_read}\", \"*\", \"{b_net}\")\n    \
+         sandbox_run(b, \"inner\", n)\n}}\n\
+         fn main() {{\n    \
+         let p = principal_root(\"p\", false, false, false, 100)\n    \
+         let a = sandbox_create_scoped(p, \"IO,Net\", \"{a_read}\", \"*\", \"{a_net}\")\n    \
+         println(to_str(sandbox_run(a, \"outer\", 1)))\n}}\n"
+    )
+}
+
+#[test]
+fn an_inner_sandbox_cannot_widen_an_outer_fs_scope() {
+    let w = tmp("nest");
+    std::fs::create_dir_all(w.join("data")).unwrap();
+    std::fs::create_dir_all(w.join("outside")).unwrap();
+    std::fs::write(w.join("outside/secret.txt"), SECRET).unwrap();
+    let secret = lit(&w.join("outside/secret.txt"));
+    let attack = "ATTACK: a nested sandbox widened the fs scope";
+    let o = run(&w, &nested("./data/", "*", "*", "*", &rd(&secret)), &[]);
+    let t = text(&o);
+    assert!(
+        o.status.code() == Some(8) && !t.contains(SECRET),
+        "{attack} (inner `*`):\n{t}"
+    );
+    assert!(
+        t.contains("read_file") && t.contains("[\"./data/\"]"),
+        "{t}"
+    );
+
+    // The inner grant passes the text test and pins its root outside.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(w.join("outside"), w.join("data/etcdir")).unwrap();
+        let o = run(
+            &w,
+            &nested(
+                "./data/",
+                "*",
+                "./data/etcdir/",
+                "*",
+                &rd("./data/etcdir/secret.txt"),
+            ),
+            &[],
+        );
+        let t = text(&o);
+        assert!(
+            o.status.code() == Some(8) && !t.contains(SECRET),
+            "{attack} (inner `./data/etcdir/`):\n{t}"
+        );
+        assert!(
+            t.contains("read_file") && t.contains("[\"./data/\"]"),
+            "{t}"
+        );
+    }
+
+    // The net scope too, refused before any connect.
+    let o = run(
+        &w,
+        &nested(
+            "*",
+            "api.x.com",
+            "*",
+            "*",
+            "let _ = http_get(\"http://127.0.0.1:9/x\", \"\")",
+        ),
+        &[],
+    );
+    let t = text(&o);
+    assert!(
+        o.status.code() == Some(8) && t.contains("reach host `127.0.0.1`"),
+        "ATTACK: a nested sandbox widened the net scope:\n{t}"
+    );
+}
+
+#[test]
+fn a_narrower_nested_sandbox_still_reads() {
+    let w = tmp("nest_narrow");
+    std::fs::create_dir_all(w.join("data/sub")).unwrap();
+    std::fs::write(w.join("data/sub/x"), "x\n").unwrap();
+    let o = run(
+        &w,
+        &nested("./data/", "*", "./data/sub/", "*", &rd("./data/sub/x")),
+        &[],
+    );
+    assert!(
+        o.status.code() == Some(0) && stdout(&o) == "READ:x\n1\n",
+        "FALSE REFUSAL: a narrower nested sandbox was refused:\n{}",
+        text(&o)
+    );
+}
+
+#[test]
+fn an_unscoped_inner_sandbox_reads_inside_the_outer_scope() {
+    let w = tmp("nest_unscoped");
+    std::fs::create_dir_all(w.join("data")).unwrap();
+    std::fs::write(w.join("data/a.txt"), "a\n").unwrap();
+    let src = format!(
+        "fn inner(n: i64) -> i64 {{\n    {}\n    n\n}}\n\
+         fn outer(n: i64) -> i64 {{\n    \
+         let q = principal_root(\"q\", false, false, false, 100)\n    \
+         let b = sandbox_create(q, \"IO\")\n    \
+         sandbox_run(b, \"inner\", n)\n}}\n\
+         fn main() {{\n    \
+         let p = principal_root(\"p\", false, false, false, 100)\n    \
+         let a = sandbox_create_scoped(p, \"IO\", \"./data/\", \"\", \"\")\n    \
+         println(to_str(sandbox_run(a, \"outer\", 1)))\n}}\n",
+        rd("./data/a.txt")
+    );
+    let o = run(&w, &src, &[]);
+    assert!(
+        o.status.code() == Some(0) && stdout(&o) == "READ:a\n1\n",
+        "FALSE REFUSAL: an unscoped inner sandbox was refused inside the outer scope:\n{}",
+        text(&o)
+    );
+}
+
+/// `main` runs under the ambient read scope `./` (as an axon-os job does), so
+/// its own calls are gated; after the nested `sandbox_run`s return, A's
+/// `./data/` scope must no longer apply to `main`.
+#[test]
+fn a_sandbox_run_returning_restores_the_outer_scope() {
+    let w = tmp("nest_restore");
+    std::fs::create_dir_all(w.join("data")).unwrap();
+    std::fs::write(w.join("data/a.txt"), "a\n").unwrap();
+    std::fs::write(w.join("other.txt"), "other\n").unwrap();
+    let src = format!(
+        "fn inner(n: i64) -> i64 {{\n    {}\n    n\n}}\n\
+         fn outer(n: i64) -> i64 {{\n    \
+         let q = principal_root(\"q\", false, false, false, 100)\n    \
+         let b = sandbox_create_scoped(q, \"IO\", \"./data/\", \"\", \"\")\n    \
+         sandbox_run(b, \"inner\", n)\n}}\n\
+         fn main() {{\n    \
+         let p = principal_root(\"p\", false, false, false, 100)\n    \
+         let a = sandbox_create_scoped(p, \"IO\", \"./data/\", \"\", \"\")\n    \
+         println(to_str(sandbox_run(a, \"outer\", 1)))\n    \
+         {}\n}}\n",
+        rd("./data/a.txt"),
+        rd("./other.txt")
+    );
+    let o = run(&w, &src, &[("AXON_ALLOWED_FS_READ", "./")]);
+    assert!(
+        o.status.code() == Some(0) && stdout(&o) == "READ:a\n1\nREAD:other\n",
+        "FALSE REFUSAL: a returned sandbox still scoped its caller:\n{}",
+        text(&o)
+    );
+}

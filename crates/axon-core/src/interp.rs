@@ -1887,6 +1887,14 @@ struct Kernel {
     /// `sandbox_run` sets this before calling the user fn and restores it after.
     /// `call_builtin` reads it to gate effectful builtins.
     active_sandbox: Cell<i64>,
+    /// C-4 (O-GV-08 follow-up): a clone of every ENCLOSING non-ambient
+    /// sandbox, outermost first. `sandbox_run` pushes the outgoing active
+    /// entry and pops it on return; `pre_effect_gate` checks a call's scope
+    /// against each of them as well as the active one, so a nested
+    /// `sandbox_create_scoped` cannot widen (or re-root) the fs/net scope of
+    /// the sandbox it runs inside. Clones, not handles: the sealed kernel has
+    /// its own handle space.
+    scope_chain: RefCell<Vec<SandboxEntry>>,
     /// The SEALED kernel's xorshift64 RNG state (`0` = not yet seeded). EVERY
     /// draw — `random_*`, the distribution samplers, `srand`, the `goal_*`
     /// searches and `@[forall]` input generation — goes through
@@ -1936,6 +1944,7 @@ impl Kernel {
             llm_gateways: RefCell::new(Vec::new()),
             goals: RefCell::new(Vec::new()),
             active_sandbox: Cell::new(if ambient.is_empty() { -1 } else { 0 }),
+            scope_chain: RefCell::new(Vec::new()),
             sandboxes: RefCell::new(ambient),
             rng: Cell::new(0),
             rng_sealed: sealed,
