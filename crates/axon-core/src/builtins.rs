@@ -1680,7 +1680,9 @@ pub const BUILTINS: &[BuiltinFn] = &[
               match by text and its resolved target (symlinks followed; `/proc` \
               magic links refused) must lie under a granted prefix's target, \
               pinned when the sandbox is created (unix; wasm keeps the text \
-              match). Interp-only."
+              match). An inner sandbox's fs/net scope is checked together with \
+              every enclosing sandbox's: a call must be inside all of them. \
+              Interp-only."
     },
     BuiltinFn {
         name: "sandbox_run",
