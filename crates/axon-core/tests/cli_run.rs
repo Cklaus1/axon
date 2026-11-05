@@ -35191,11 +35191,24 @@ fn a_wasm_runnable_label_is_only_printed_for_a_module_that_runs() {
             .output()
             .expect("axon target build");
         let err = String::from_utf8_lossy(&out.stderr).to_string();
-        if !err.contains("wasm:") {
-            eprintln!(
-                "[{tag}] skipped: no linked module (wasm codegen, rust-lld or the \
-                 wasm32-unknown-unknown axon-rt is absent): {err}"
-            );
+        // Linked iff a line STARTS `wasm: ` (main.rs's linked labels); a bare
+        // `wasm:` substring also matches a linker path like `…/println.wasm:`.
+        if !err.lines().any(|l| l.starts_with("wasm: ")) {
+            // A named missing prerequisite is a countable non-result; any other
+            // non-link is a failure.
+            if codegen_absent(&err)
+                || err.contains("wasm link unavailable:")
+                || err.contains("wasm runtime not found:")
+            {
+                note_harness_skip(&format!(
+                    "wasm runnable label [{tag}]: prerequisite missing: {}",
+                    err.lines().next().unwrap_or("")
+                ));
+            } else {
+                fails.push(format!(
+                    "[{tag}] the module did not link with its prerequisites present: {err}"
+                ));
+            }
             continue;
         }
         let linked = dir.join(format!("{tag}.linked.wasm"));
@@ -35225,6 +35238,8 @@ fn a_wasm_runnable_label_is_only_printed_for_a_module_that_runs() {
                         "[{tag}] the printed host command did not print {want}: {r:?}"
                     ));
                 }
+            } else if has("node") {
+                eprintln!("[{tag}] host command not run: the label printed no host command");
             } else {
                 eprintln!("[{tag}] host command not run: node is not on PATH");
             }
