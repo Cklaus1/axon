@@ -85,7 +85,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #
 # A new dependency of a protected crate, or a new package the guest image
 # builds, is in scope the day it appears.
-ROOT_CRATES = ("axon-fabric", "axon-loop", "axon-loop-contracts", "axon-psv")
+# containment-b4 C-3 (O-NHR-04): axon-intent is a root too. authorize-repair,
+# audit-runs and the intent compiler decide what a repair or job may do.
+ROOT_CRATES = ("axon-fabric", "axon-loop", "axon-loop-contracts", "axon-psv", "axon-intent")
 GUEST_BUILD = "scripts/build-guest-image.sh"
 LANGUAGE_CRATE = "axon-core"
 SCOPE_FILES = (
@@ -335,9 +337,28 @@ OUT_OF_SCOPE = {
 }
 # (file -> sites with neither a row nor an exemption, as last measured). The
 # gate re-measures each count and refuses a stale one, in both directions.
-# Amendment 76: EMPTY. Every site amendments 71-76 exposed has a row or an exemption
-# stating a checkable fact; a new unscanned file is listed here again, never exempted in bulk.
+# Amendment 76 emptied it (every site amendments 71-76 exposed has a row or an exemption
+# stating a checkable fact); a new unscanned file is listed here again, never exempted in bulk.
 NOT_YET_SCANNED = {
+    # containment-b4 C-3 (O-NHR-04; NH-1 decided A): axon-intent joined ROOT_CRATES and its sites are not
+    # judged yet. Counts measured on the lane tree; a freeze refuses until a judging batch empties this.
+    "crates/axon-intent/src/admit.rs": 1,
+    "crates/axon-intent/src/approval.rs": 1,
+    "crates/axon-intent/src/audit_runs.rs": 16,
+    "crates/axon-intent/src/authorize.rs": 49,
+    "crates/axon-intent/src/cli.rs": 16,
+    "crates/axon-intent/src/confidence.rs": 21,
+    "crates/axon-intent/src/emit.rs": 3,
+    "crates/axon-intent/src/generator.rs": 16,
+    "crates/axon-intent/src/genloop.rs": 42,
+    "crates/axon-intent/src/grant_infer.rs": 4,
+    "crates/axon-intent/src/intent.rs": 58,
+    "crates/axon-intent/src/lib.rs": 0,
+    "crates/axon-intent/src/main.rs": 0,
+    "crates/axon-intent/src/pipeline.rs": 1,
+    "crates/axon-intent/src/policy.rs": 12,
+    "crates/axon-intent/src/refusal.rs": 1,
+    "crates/axon-intent/src/synth.rs": 3,
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 # Amendment 74: a `let .. else {` is the opener of its refusal too.
@@ -4924,6 +4945,28 @@ EXEMPT += [
      "nothing. The run's own read refusal is supervisor.rs (`cannot read program`, rowed)"),
 ]
 
+# ── containment-b4 C-3: spill-over of scanning axon-intent ──────────────────
+# axon-intent defines verdict types named `Refusal` and `Error` (and returns std::io::Error), so
+# these error-value helpers of already-scanned crates now match by return-type NAME. Each builds an
+# error value and decides nothing; every use of it is its own site. Anchored on the head line.
+EXEMPT += [
+    ('crates/axon-cortex/src/runner.rs', "    fn output(max: usize) -> std::io::Error {",
+     "NOT A SITE: BoundExceeded::output builds the capture-bound io::Error; the caller that hit the bound "
+     "already decided (not a protected route)"),
+    ('crates/axon-cortex/src/runner.rs', "    fn unread() -> std::io::Error {",
+     "NOT A SITE: BoundExceeded::unread builds the drain-grace io::Error; the caller that timed out the "
+     "drain already decided (not a protected route)"),
+    ('crates/axon-loop-contracts/src/error.rs', "    fn from(r: axon_canonical::CanonError) -> Refusal {",
+     "NOT A SITE: From<CanonError> for Refusal maps one refusal variant to another, total and 1:1; the "
+     "canonical parser that returned the CanonError decided"),
+    ('crates/axon-loop-contracts/src/error.rs', "pub(crate) fn shape(msg: impl Into<String>) -> Refusal {",
+     "NOT A SITE: the body of the `shape` refusal constructor; each use is its own site"),
+    ('crates/axon-loop-contracts/src/error.rs', "pub(crate) fn semantic(msg: impl Into<String>) -> Refusal {",
+     "NOT A SITE: the body of the `semantic` refusal constructor; each use is its own site"),
+    ('crates/axon-loop-contracts/src/schema.rs', "fn fail(path: &str, msg: impl std::fmt::Display) -> Refusal {",
+     "NOT A SITE: the body of schema.rs's `fail` constructor (a path-prefixed `shape`); each use is its own site"),
+]
+
 
 
 ERR = re.compile(r"\bErr\(")
@@ -6227,6 +6270,12 @@ EXEC_CONSTRUCTORS = {
     ("crates/axon-core/src/main.rs", "run_quorum_gate"): "OUT OF SCOPE: the language CLI",
     ("crates/axon-os/src/runtime.rs", "job_child_command"): "builder: own .env/.current_dir sites; callers (run_sandboxed, query_imports_digest) add .arg/.env sites (axon-os, not a protected route)",
     ("crates/axon-vm/src/firecracker.rs", "run_in_firecracker"): "builder: own .arg sites (axon-vm, not a protected route)",
+    # containment-b4 C-3: axon-intent's four Command builders (each body checked at build time: argv and env are
+    # the fn's own literal .arg/.args/.env/.env_remove sites; none takes an argv/env vector from its caller).
+    ("crates/axon-intent/src/authorize.rs", "mint"): "builder: own .args/.env_remove/.stdin sites (`cortex grant --envelope-preview` plus the operator's own `--preview` tail, parsed from authorize-repair's argv; the --cortex binary is canonicalized and hashed before and after)",
+    ("crates/axon-intent/src/generator.rs", "generate"): "builder: no .arg/.env sites (CmdGenerator runs the operator's `--generator cmd:<path>` with the prompt on stdin, bounded by axon_os::run_bounded_job)",
+    ("crates/axon-intent/src/genloop.rs", "check_source"): "builder: own .arg/.env sites (`axon check --json candidate.ax`, env_clear + PATH, bounded by run_bounded_job)",
+    ("crates/axon-intent/src/genloop.rs", "load_card"): "builder: own .arg/.env sites (`axon card`, env_clear + PATH, bounded by run_bounded_job)",
 }
 _FLOW_LOCAL = re.compile(
     r"^&?\s*(?:mut\s+)?([a-z_]\w*)\s*(?:\.(?:clone|into|as_str|as_slice|to_vec|as_os_str|to_os_string|to_string|as_ref)\(\s*\)|\[\s*\.\.\s*\])*$")
