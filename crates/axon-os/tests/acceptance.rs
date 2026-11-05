@@ -245,6 +245,197 @@ fn approval_policy_and_evidence_are_independent() {
     let _ = std::fs::remove_file(&token);
 }
 
+/// NH-R1 S12, the axon-os half (NE-5): a valid, signed `axon-approval/4`
+/// repair envelope is an authority for one unattended cortex run, never a
+/// program approval. Written as a `require_approval = true` job's
+/// `.approval`, it is refused by name (exit 8) with and without
+/// `AXON_APPROVAL_KEY`, and the program never runs (its side-effect file is
+/// absent). The positive control - a valid `/1` token - runs and writes the
+/// file. The same envelope in place of the archived token makes `replay`
+/// refuse (the job is denied, so the run is not the recorded one) and run
+/// nothing.
+#[test]
+fn s12_a_repair_envelope_is_not_a_job_approval() {
+    let axon = axon_bin().expect("S12 needs the interpreter; it never skips");
+    let d = tmp("s12-envelope");
+    let _ = std::fs::remove_dir_all(&d);
+    let out = d.join("out");
+    let store = d.join("store");
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::create_dir_all(&store).unwrap();
+    let side = out.join("side.txt");
+    let prog = d.join("p.ax");
+    let prog_src = format!(
+        "fn main() -> i64 {{\n  match write_file(\"{}\", \"ran\") {{\n    Ok(_) => 0\n    Err(_) => 1\n  }}\n}}\n",
+        side.display()
+    );
+    std::fs::write(&prog, &prog_src).unwrap();
+    let job = d.join("j.axjob");
+    let job_src = format!(
+        "program = \"{}\"\nintent = \"t\"\nseed = 1\nrequire_approval = true\n[grant]\nfs_read = []\n\
+         fs_write = [\"{}/\"]\nnet = []\nexec = \"none\"\nmax_label = \"internal\"\n\
+         [grant.budget]\ncalls = 5\n",
+        prog.display(),
+        out.display()
+    );
+    std::fs::write(&job, &job_src).unwrap();
+    let token = d.join("j.approval");
+
+    // A valid, signed `/4` envelope (it passes the minter's intrinsic checks).
+    const OPERATOR_KEY: &str = "000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f";
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let id = || axon_os::repair_envelope::new_id().unwrap();
+    let envelope = axon_os::repair_envelope::RepairEnvelope {
+        schema: axon_os::repair_envelope::ENVELOPE_SCHEMA.into(),
+        envelope_id: id(),
+        spent_store_id: id(),
+        run_ledger_id: id(),
+        issued_by: "operator".into(),
+        issued_unix: now,
+        expires_unix: now + 600,
+        task: axon_os::repair_envelope::Task {
+            workspace: d.to_string_lossy().into_owned(),
+            file: "p.ax".into(),
+            symbol: "main".into(),
+            pristine_sha256: sha256_hex(prog_src.as_bytes()),
+            imports_digest: axon_os::EMPTY_IMPORTS_DIGEST.into(),
+        },
+        write_prefixes: vec!["p.ax".into()],
+        scopes: axon_os::repair_envelope::Scopes {
+            fs_read: vec![],
+            fs_write: vec![],
+            net: vec![],
+        },
+        capabilities: axon_os::repair_envelope::Capabilities {
+            fence_sha256: "a".repeat(64),
+            target_grant: serde_json::json!({}),
+        },
+        check: axon_os::repair_envelope::Check {
+            name: "hidden".into(),
+            digest: "b".repeat(64),
+        },
+        budget: axon_os::repair_envelope::Budget {
+            max_proposals: 1,
+            deadline_ms: 60_000,
+            check_timeout_ms: 30_000,
+            candidates: 1,
+            max_steps: 2,
+        },
+        generator: axon_os::repair_envelope::Generator {
+            kind: axon_os::repair_envelope::GENERATOR_KIND.into(),
+            model: "m".into(),
+            provider: "anthropic".into(),
+            endpoint_host: "127.0.0.1".into(),
+        },
+        decision: axon_os::repair_envelope::DECISION.into(),
+        sig: String::new(),
+    };
+    let key_bytes: Vec<u8> = (0..OPERATOR_KEY.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&OPERATOR_KEY[i..i + 2], 16).unwrap())
+        .collect();
+    let signed = axon_os::repair_envelope::MintKey::derive(&key_bytes)
+        .unwrap()
+        .sign(&envelope)
+        .expect("the envelope is a valid /4 envelope");
+
+    // 1. The envelope as the job's approval: refused by name, nothing runs.
+    std::fs::write(&token, &signed).unwrap();
+    let run = |run_id: &str, env: &[(&str, &str)]| {
+        os(
+            &[
+                "run",
+                job.to_str().unwrap(),
+                "--run-id",
+                run_id,
+                "--out",
+                store.to_str().unwrap(),
+            ],
+            &axon,
+            env,
+        )
+    };
+    for (run_id, env) in [
+        ("keyless", vec![]),
+        ("keyed", vec![("AXON_APPROVAL_KEY", OPERATOR_KEY)]),
+    ] {
+        let o = run(run_id, &env);
+        assert!(
+            o.code == 8
+                && o.stdout
+                    .contains("axon-approval/4 repair envelope is not a program approval"),
+            "ATTACK: a repair envelope was not refused by name on the job path ({run_id}): \
+             exit {}\n{}",
+            o.code,
+            o.stdout
+        );
+        assert!(
+            !side.exists(),
+            "ATTACK: a repair envelope ran a job ({run_id})"
+        );
+    }
+
+    // 2. The positive control: a valid `/1` token runs the same job, and the
+    //    program writes its side-effect file.
+    let grant = axon_os::manifest::parse(&job_src, &d).unwrap().grant;
+    let unit = '\u{1f}';
+    let pd = format!("axsha256:{}", sha256_hex(prog_src.as_bytes()));
+    let gd = format!(
+        "axsha256:{}",
+        sha256_hex(axon_os::approval::canonical_grant(&grant).as_bytes())
+    );
+    let canon = format!("{pd}{unit}{gd}{unit}auditor{unit}approved{unit}low");
+    let td = format!("axtok1:{}", sha256_hex(canon.as_bytes()));
+    std::fs::write(
+        &token,
+        format!(
+            "{{\"schema\":\"axon-approval/1\",\"program_digest\":\"{pd}\",\
+             \"grant_digest\":\"{gd}\",\"approved_by\":\"auditor\",\
+             \"decision\":\"approved\",\"risk\":\"low\",\"token_digest\":\"{td}\"}}"
+        ),
+    )
+    .unwrap();
+    let o = run("control", &[]);
+    assert!(
+        o.code == 0 && o.stdout.contains("required and verified") && side.exists(),
+        "the positive control must run and write its file: exit {}\n{}",
+        o.code,
+        o.stdout
+    );
+
+    // 3. Replay of the archived job: with its archived token it re-runs (the
+    //    control); with the envelope in the token's place it refuses and runs
+    //    nothing.
+    let replay = || {
+        os(
+            &["replay", "control", "--store", store.to_str().unwrap()],
+            &axon,
+            &[],
+        )
+    };
+    std::fs::remove_file(&side).unwrap();
+    let o = replay();
+    assert!(
+        o.code == 0 && side.exists(),
+        "the archived approved job must replay: exit {}\n{}",
+        o.code,
+        o.stdout
+    );
+    std::fs::remove_file(&side).unwrap();
+    std::fs::write(store.join("control.approval"), &signed).unwrap();
+    let o = replay();
+    assert!(
+        o.code == 11 && !o.stdout.contains("identical") && !side.exists(),
+        "ATTACK: a repair envelope authorized the replay of a job: exit {}\n{}",
+        o.code,
+        o.stdout
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 /// `hermetic` must be meaningfully stricter than `restricted`.
 ///
 /// They were byte-identical — same empty fs/net, same `ExecPolicy::None` — so
