@@ -7971,6 +7971,7 @@ fn installed_run_meters() -> Option<std::sync::Arc<RunMeters>> {
 }
 
 /// Run `f` under `meters` when some, else as is.
+#[cfg(not(target_arch = "wasm32"))]
 fn with_run_meters_opt<T>(meters: Option<std::sync::Arc<RunMeters>>, f: impl FnOnce() -> T) -> T {
     match meters {
         Some(m) => with_run_meters(&m, f),
