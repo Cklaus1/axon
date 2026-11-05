@@ -4236,3 +4236,9 @@ ATTACK_MARKERS.update({
     'M4874': r'ATTACK: NE-8 NRV-2 a fifo at the envelope path was not refused at phase A',
     'M4875': r'ATTACK: NE-8 NRV-2 a fifo at the task file path was not refused at phase A',
 })
+
+# cere-loopback (ids M4880-M4881, block M4880-M4889). M4546/M4547's markers are unchanged.
+ATTACK_MARKERS.update({
+    'M4880': r'ATTACK: NH-R1 2-N1 the wire privacy of http://10\.0\.0\.5/v1 was judged wrong',
+    'M4881': r'ATTACK: NH-R1 security N1 AXON_AI_BASE_URL=http:// ',
+})

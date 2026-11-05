@@ -237,8 +237,9 @@ exit 29, and a build with feature `unattended` refuses it on any host without
 its own `/etc/axon/unattended-repair` opt-in. Its accepted limits: (1) the AI
 endpoint and key still come from the environment (`AXON_AI_PROVIDER`,
 `AXON_AI_BASE_URL`, the API keys): a run checks only that the provider and
-endpoint host are the envelope's and that the endpoint is `https`; (2) Linux
-only (it needs `renameat2(RENAME_EXCHANGE)` and `/proc/self/{uid,gid}_map`);
+endpoint host are the envelope's and that the endpoint is `https` or plain
+`http` to a loopback IP literal (a local server such as CERE on 127.0.0.1);
+(2) Linux only (it needs `renameat2(RENAME_EXCHANGE)` and `/proc/self/{uid,gid}_map`);
 (3) one spent store per host: the run lock is per store and file, so
 envelopes for one file minted into two stores can run at once; (4) a check
 child that survives its process-group kill (`setsid`) can race a write's path

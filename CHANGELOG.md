@@ -1,5 +1,12 @@
 # Axon Changelog
 
+## Unattended repair: a loopback AI endpoint may be plain HTTP (NH-R1 2-N1 amendment, decided 2026-11-05)
+
+- **`cortex repair --unattended` admits `http://` to a loopback IP literal** (`127.0.0.0/8`, `[::1]`) besides
+  `https://`, so a local OpenAI-compatible server that serves only plain HTTP (CERE on `127.0.0.1:18307`) can be the
+  `ai:` generator. A host name (`localhost` included), any other address and any other scheme stay refused (exit 29).
+  `axon_ai::endpoint_is_https` is now `endpoint_is_private`. g01 M4546/M4547 amended, M4880/M4881 new.
+
 ## Batch 4: containment-b4, nhr-evidence, ci-hygiene (tasks/containment-b4-spec.md, tasks/nhr-evidence-spec.md, tasks/ci-hygiene-spec.md)
 
 - **fs scopes resolve symlinks and refuse /proc magic links** (containment-b4 C-1, O-GV-08): a read, write, copy, rename or durable-store dir whose resolved path leaves the grant, or crosses a `/proc` magic link, now exits 8. Before, a symlink under a granted prefix, or a `/proc/self/root` grant, reached any file. Grant roots are pinned when the scope is created, so swapping a root for a symlink mid-run changes nothing. A missing file under the prefix stays an `Err`, not a refusal. g01 M4790-M4800, M4802-M4803.

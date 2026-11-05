@@ -477,10 +477,12 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
     e.check_generator("ai", model, &provider, &host)?;
     // Security re-review 2 N1: the envelope pins the host, not the scheme;
     // a plain-HTTP base URL on the pinned host sent the key in the clear.
-    if !axon_ai::endpoint_is_https(axon_ai::provider()) {
+    // Plain HTTP to a loopback IP literal never leaves the host (CERE).
+    if !axon_ai::endpoint_is_private(axon_ai::provider()) {
         return Err(
-            "the AI endpoint (AXON_AI_BASE_URL / ANTHROPIC_BASE_URL) is not https://: a \
-             plaintext call would carry the request and its API key in the clear"
+            "the AI endpoint (AXON_AI_BASE_URL / ANTHROPIC_BASE_URL) is neither https:// nor \
+             http:// to a loopback IP literal: a plaintext call would carry the request and its \
+             API key in the clear"
                 .into(),
         );
     }

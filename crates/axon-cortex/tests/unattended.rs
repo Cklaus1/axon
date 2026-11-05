@@ -1207,18 +1207,20 @@ fn s6_a_proxy_variable_is_refused() {
 /// Security re-review 2 N1: the envelope pins the endpoint HOST, not the
 /// scheme, so `AXON_AI_BASE_URL=http://<pinned host>` sent the model call
 /// and its API key in plaintext to anyone on the path. An unattended run
-/// refuses a base URL that is not `https://`. Here the pinned host is
-/// `127.0.0.1`, a plain-HTTP listener on it records what reaches it, and the
-/// key is a dummy one: the listener must get nothing.
+/// refuses a base URL that is neither `https://` nor plain `http://` to a
+/// loopback IP literal. Here the pinned host is the NAME `localhost` (where
+/// a name goes is up to `/etc/hosts` or DNS, so it is never loopback), a
+/// plain-HTTP listener on 127.0.0.1 records what reaches it, and the key is
+/// a dummy one: the listener must get nothing.
 #[test]
 fn s6_a_plain_http_endpoint_is_refused() {
     for var in ["AXON_AI_BASE_URL", "ANTHROPIC_BASE_URL"] {
         let rec = Recorder::start();
         let s = setup(&format!("s6_plainhttp_{var}"));
-        let e = envelope_for(&s);
-        assert_eq!(e.generator.endpoint_host, "127.0.0.1");
+        let mut e = envelope_for(&s);
+        e.generator.endpoint_host = "localhost".into();
         mint(&s, &e);
-        let base = format!("http://{}", rec.addr);
+        let base = format!("http://localhost:{}", rec.addr.port());
         let o = run_with(
             &s,
             &s.axon,
@@ -1252,6 +1254,30 @@ fn s6_a_plain_http_endpoint_is_refused() {
         );
         let _ = std::fs::remove_dir_all(&s.root);
     }
+}
+
+/// The 2-N1 loopback exception: plain `http://` to a loopback IP literal
+/// never leaves the host, so a local server that serves only plain HTTP
+/// (CERE on 127.0.0.1) can be an unattended run's generator. The run passes
+/// phase A and its model call reaches the listener on the pinned host.
+#[test]
+fn s6_plain_http_to_a_loopback_literal_reaches_the_pinned_host() {
+    let rec = Recorder::start();
+    let s = setup("s6_plainhttp_loopback");
+    let e = envelope_for(&s);
+    assert_eq!(e.generator.endpoint_host, "127.0.0.1");
+    mint(&s, &e);
+    let base = format!("http://{}", rec.addr);
+    let o = run_with(&s, &s.axon, &[], &[("AXON_AI_BASE_URL", &base)]);
+    let got = rec.finish();
+    assert!(
+        got.first()
+            .is_some_and(|l| l.starts_with("POST /v1/messages ")),
+        "a plain-HTTP loopback endpoint was refused or never called: {got:?}\n{}{}",
+        o.stdout,
+        o.stderr
+    );
+    let _ = std::fs::remove_dir_all(&s.root);
 }
 
 /// NE-8 NRV-1: the envelope pins the host `axon-ai` reads from the base URL,

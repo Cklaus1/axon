@@ -310,13 +310,38 @@ pub fn endpoint_host(p: Provider) -> Result<String, String> {
     endpoint(p).map(|u| host_of(&u))
 }
 
-/// Whether every call for provider `p` goes over `https://`, judged from the
-/// parsed scheme (an endpoint that does not parse is not). NH-R1 refuses an
-/// unattended run otherwise (security re-review 2 N1): the envelope pins the
-/// endpoint's host, and a plain-HTTP base URL on that host would carry the
-/// request and its API key in the clear.
-pub fn endpoint_is_https(p: Provider) -> bool {
-    endpoint(p).is_ok_and(|u| u.scheme() == "https")
+/// Whether every call for provider `p` stays private on the wire, judged
+/// from the parsed endpoint (one that does not parse is not). NH-R1 refuses
+/// an unattended run otherwise (security re-review 2 N1): the envelope pins
+/// the endpoint's host, and a plain-HTTP base URL on that host would carry
+/// the request and its API key in the clear.
+pub fn endpoint_is_private(p: Provider) -> bool {
+    endpoint(p).is_ok_and(|u| wire_is_private(&u))
+}
+
+/// `https://` to any host, or plain `http://` to a loopback IP literal
+/// (`127.0.0.0/8`, `[::1]`): loopback traffic never leaves the host, so a
+/// local OpenAI-compatible server that only serves plain HTTP (CERE on
+/// `127.0.0.1`) is admitted. A host NAME is never loopback here, `localhost`
+/// included: `/etc/hosts` or DNS decides where it goes. An IPv4-mapped
+/// `[::ffff:127.0.0.1]` is not loopback either (`Ipv6Addr::is_loopback`).
+/// A proxy could still carry loopback traffic off the host; an unattended
+/// run refuses every proxy variable (`unattended::REFUSED_ENV`).
+fn wire_is_private(u: &reqwest::Url) -> bool {
+    match u.scheme() {
+        "https" => true,
+        "http" => {
+            let host = host_of(u);
+            let literal = host
+                .strip_prefix('[')
+                .and_then(|h| h.strip_suffix(']'))
+                .unwrap_or(&host);
+            literal
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+        }
+        _ => false,
+    }
 }
 
 /// The API key for the active provider. Neutral `AXON_AI_API_KEY` wins, then the
@@ -2317,7 +2342,7 @@ NOEQUALS\n\
 
 #[cfg(test)]
 mod host_of_url_tests {
-    use super::{host_allowed, parse_endpoint};
+    use super::{host_allowed, parse_endpoint, wire_is_private};
 
     /// The host of an endpoint `parse_endpoint` admits.
     fn host_of(s: &str) -> String {
@@ -2420,6 +2445,35 @@ mod host_of_url_tests {
     fn ipv6_literal_is_not_chopped_at_an_inner_colon() {
         assert_eq!(host_of("http://[::1]:8080/v1"), "[::1]");
         assert_eq!(host_of("http://[::1]/v1"), "[::1]");
+    }
+
+    /// NH-R1 2-N1 with the loopback exception: `https://` anywhere, plain
+    /// `http://` only to a loopback IP literal. A name (`localhost`), a
+    /// private or unspecified address, an IPv4-mapped loopback and any other
+    /// scheme stay refused.
+    #[test]
+    fn only_https_or_plain_http_to_a_loopback_literal_is_private() {
+        for (s, want) in [
+            ("https://api.anthropic.com/v1/messages", true),
+            ("https://10.0.0.5/v1", true),
+            ("http://127.0.0.1:18307/v1/chat/completions", true),
+            ("http://127.9.9.9/v1", true),
+            ("http://0x7f.1/v1", true),
+            ("http://[::1]:8080/v1", true),
+            ("http://localhost:18307/v1", false),
+            ("http://10.0.0.5/v1", false),
+            ("http://0.0.0.0:18307/v1", false),
+            ("http://128.0.0.1/v1", false),
+            ("http://[::ffff:127.0.0.1]/v1", false),
+            ("http://api.anthropic.com/v1/messages", false),
+            ("ftp://127.0.0.1/v1", false),
+        ] {
+            assert_eq!(
+                wire_is_private(&parse_endpoint(s).unwrap()),
+                want,
+                "ATTACK: NH-R1 2-N1 the wire privacy of {s} was judged wrong"
+            );
+        }
     }
 
     /// ceilings CE-1 guard: the CE-1 pin (declared ∩ `AXON_ALLOWED_NET`) is

@@ -14154,13 +14154,13 @@ MUTATIONS += [
      '        .map(|l| l.split_whitespace().count() == 3);',
      'axon-cortex', '--features unattended --lib', 'auth::tests::only_the_initial_user_namespace_map_admits'),
     ('M4546', 'NH-R1 security re-review 2 N1: phase A admits a plain-HTTP endpoint', _NHA,
-     '    if !axon_ai::endpoint_is_https(axon_ai::provider()) {',
-     '    if false && !axon_ai::endpoint_is_https(axon_ai::provider()) {',
+     '    if !axon_ai::endpoint_is_private(axon_ai::provider()) {',
+     '    if false && !axon_ai::endpoint_is_private(axon_ai::provider()) {',
      'axon-cortex', _NHT, 's6_a_plain_http_endpoint_is_refused'),
-    ('M4547', 'NH-R1 security re-review 2 N1: any scheme counts as https',
+    ('M4547', 'NH-R1 security re-review 2 N1: any scheme counts as private on the wire',
      'crates/axon-ai/src/lib.rs',
-     '    endpoint(p).is_ok_and(|u| u.scheme() == "https")',
-     '    endpoint(p).is_ok()',
+     '    match u.scheme() {\n        "https" => true,',
+     '    match u.scheme() {\n        _ if true => true,\n        "https" => true,',
      'axon-cortex', _NHT, 's6_a_plain_http_endpoint_is_refused'),
     # Implementation audit: the default build refuses before any parse.
     ('M4551', 'NH-R1 A3 (implementation audit): a usage error answers --unattended in the default build',
@@ -15301,6 +15301,21 @@ MUTATIONS += [
      '        Ok(crate::cas::Plain::Kind(kind)) => Err(format!(',
      '        Ok(crate::cas::Plain::Kind(_)) if true => Ok(Vec::new()),\n        Ok(crate::cas::Plain::Kind(kind)) => Err(format!(',
      'axon-cortex', _NHT, 's6_a_special_file_at_the_task_or_envelope_path_is_refused'),
+]
+
+# cere-loopback (ids M4880-M4881, block M4880-M4889): NH-R1 2-N1's https rule gains one exception, plain
+# http:// to a loopback IP literal (127.0.0.0/8, [::1]), so a local server serving only plain HTTP (CERE on
+# 127.0.0.1:18307) can be an unattended generator. M4546/M4547 above are amended to the renamed check
+# (endpoint_is_private / wire_is_private); their S-test now pins the NAME localhost, which stays refused.
+MUTATIONS += [
+    ('M4880', 'cere-loopback: plain http to any IP literal counts as private', 'crates/axon-ai/src/lib.rs',
+     '                .is_ok_and(|ip| ip.is_loopback())',
+     '                .is_ok()',
+     'axon-ai', '--lib', 'host_of_url_tests::only_https_or_plain_http_to_a_loopback_literal_is_private'),
+    ('M4881', 'cere-loopback: plain http to the host name localhost counts as private', 'crates/axon-ai/src/lib.rs',
+     '            literal\n                .parse::<std::net::IpAddr>()',
+     '            literal == "localhost" || literal\n                .parse::<std::net::IpAddr>()',
+     'axon-cortex', _NHT, 's6_a_plain_http_endpoint_is_refused'),
 ]
 
 if __name__ == "__main__":
