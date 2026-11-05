@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 3eefa59346e06d90dcdf87399cd91af74110110e
+generated-at: a4030af7291c67e300ab04cbf3be6dd429c1bd2c
 
-`git diff --numstat 31413ca7..3eefa593 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..a4030af7 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -26,7 +26,7 @@ generated-at: 3eefa59346e06d90dcdf87399cd91af74110110e
 | `crates/axon-core/src/ast.rs` | 355 | 81 |
 | `crates/axon-core/src/bin/axon-run.rs` | 19 | 0 |
 | `crates/axon-core/src/borrow.rs` | 272 | 45 |
-| `crates/axon-core/src/builtins.rs` | 423 | 44 |
+| `crates/axon-core/src/builtins.rs` | 430 | 45 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 1335 | 345 |
 | `crates/axon-core/src/card.rs` | 736 | 0 |
@@ -61,8 +61,8 @@ generated-at: 3eefa59346e06d90dcdf87399cd91af74110110e
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
 | `crates/axon-core/src/infer.rs` | 2381 | 487 |
-| `crates/axon-core/src/interp.rs` | 8372 | 2875 |
-| `crates/axon-core/src/interp/builtins.rs` | 1313 | 851 |
+| `crates/axon-core/src/interp.rs` | 8455 | 2877 |
+| `crates/axon-core/src/interp/builtins.rs` | 1421 | 859 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
 | `crates/axon-core/src/interp/conform_tests.rs` | 1364 | 0 |
 | `crates/axon-core/src/interp/crossing_tests.rs` | 438 | 0 |
@@ -91,15 +91,16 @@ generated-at: 3eefa59346e06d90dcdf87399cd91af74110110e
 | `crates/axon-core/src/interp/vm/tests.rs` | 2827 | 0 |
 | `crates/axon-core/src/kernel.rs` | 96 | 23 |
 | `crates/axon-core/src/lexer.rs` | 204 | 0 |
-| `crates/axon-core/src/lib.rs` | 447 | 102 |
+| `crates/axon-core/src/lib.rs` | 452 | 102 |
 | `crates/axon-core/src/lockfile.rs` | 55 | 0 |
 | `crates/axon-core/src/lsp.rs` | 215 | 60 |
-| `crates/axon-core/src/main.rs` | 2248 | 620 |
+| `crates/axon-core/src/main.rs` | 2258 | 620 |
 | `crates/axon-core/src/mono.rs` | 71 | 17 |
 | `crates/axon-core/src/mut_borrow.rs` | 944 | 0 |
-| `crates/axon-core/src/outcome.rs` | 248 | 0 |
+| `crates/axon-core/src/outcome.rs` | 256 | 0 |
 | `crates/axon-core/src/parse_help.rs` | 125 | 2 |
 | `crates/axon-core/src/parser.rs` | 766 | 64 |
+| `crates/axon-core/src/path_scope.rs` | 467 | 0 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
 | `crates/axon-core/src/resolver.rs` | 961 | 122 |
 | `crates/axon-core/src/seal_split.rs` | 85 | 0 |
@@ -107,9 +108,9 @@ generated-at: 3eefa59346e06d90dcdf87399cd91af74110110e
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 72256 | 10072 |
+| total | 72944 | 10083 |
 
-`git log --reverse 31413ca7..3eefa593 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..a4030af7 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -553,7 +554,14 @@ generated-at: 3eefa59346e06d90dcdf87399cd91af74110110e
 | 13576b01 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | 199db6c6 | compilebench AX findings (native) | NATIVE (codegen/accum.rs, codegen/mod.rs, codegen/link.rs, main.rs): at O1-O3 a fn of the form if C { B } else { L + f(A) } runs as a loop summing the left operands while every term is non-negative and the sum fits, else finishes in source order; an overflow re-runs the original body so the panic is the source's own (AX-78). The interpreter is untouched |
 | 2c2893e5 | compilebench AX findings (native) | NATIVE (codegen/mod.rs, main.rs): merge of AX-78 into the AX-77/79/80 line; the resolution keeps both Codegen fields and setters and computes AX-77's no-overflow set around both body paths (source body and AX-78 accumulator body). No behaviour beyond the branches. The interpreter is untouched |
-| 440 commits | | |
+| b2c639d8 | ci-hygiene CH-8 wasm32 cfgs | BUILD CONFIG ONLY (ci-hygiene CH-8): `#[cfg]` attributes so a wasm32 build stops warning on dead code (lib.rs WRITABLE, outcome.rs Channel.fd, interp.rs with_run_meters_opt). No behaviour change on any host target; the interpreter's semantics are untouched |
+| fd6d33b5 | containment-b4 C-1 fs scope resolution | INTERPRETER (containment-b4 C-1, O-GV-08): the fs scope check resolves the path (new path_scope.rs: openat2 with RESOLVE_NO_MAGICLINKS, a dangling-link splice, an ELOOP retry) and refuses (exit 8) a read, write, copy, rename or store dir whose resolved path leaves the grant or crosses a /proc magic link. Grant roots are resolved and pinned when the scope is created, so a root swapped for a symlink mid-run keeps its old target. The lexical check still runs first; a missing in-prefix file stays an Err, not a refusal. g01 M4790-M4800, M4802-M4803 |
+| d814d649 | containment-b4 C-1 fs scope resolution | DOCS ONLY (containment-b4 C-1): doc comments state that fs scopes resolve symlinks and refuse /proc magic links, and that @[contained]'s static check stays lexical. No behaviour change |
+| b88c1f03 | containment-b4 C-4 nested scope chain | INTERPRETER (containment-b4 C-4): a nested sandbox_run no longer widens the fs/net scope: the kernel keeps a scope_chain of every enclosing program sandbox's scope, pre_effect_gate checks each one, and sandbox_run pops its entry on return. A nested escape now exits 8; a returned sandbox no longer scopes its caller. g01 M4804-M4805 |
+| 639ff505 | containment-b4 C-4 nested scope chain | DOCS ONLY (containment-b4 C-4): sandbox_create_scoped's doc states that every enclosing sandbox's scope binds. No behaviour change |
+| e19ad80d | containment-b4 C-2 source fd | CLI (containment-b4 C-2, O-GV-12): `axon run --source-fd N` with N equal to the installed outcome fd is refused with a compile/source record instead of reading the outcome file as the program. The check sits after the regular-file test, so only that probe's message changes. g01 M4801 |
+| 399d673d | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 447 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -712,7 +720,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 770 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4723-M4727, M4730, M4732, M4740-M4756, M4760-M4763, M4771-M4774, M4779-M4786
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 786 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4723-M4727, M4730, M4732, M4740-M4756, M4760-M4763, M4771-M4774, M4779-M4786, M4790-M4805
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
