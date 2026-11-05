@@ -354,6 +354,51 @@ fn read_regular(path: &Path) -> std::io::Result<Vec<u8>> {
     Ok(b)
 }
 
+/// What [`read_plain`] found at a path (NE-2).
+#[cfg(feature = "unattended")]
+#[derive(Debug, PartialEq, Eq)]
+pub enum Plain {
+    /// A regular file's bytes.
+    Bytes(Vec<u8>),
+    /// Anything else: `fifo`, `socket`, `char device`, `block device`,
+    /// `symlink` or `dir`.
+    Kind(&'static str),
+}
+
+/// The R6 pinned tree's read of `path` (NE-2): never blocks, and never fails
+/// on a special file. `O_PATH` opens the path itself (no driver `open`, no
+/// FIFO wait, a symlink not followed) and its `fstat` names the type: a
+/// regular file is reopened through `/proc/self/fd/<n>` (the same inode, no
+/// second path lookup) and read; any other type is its kind. So a FIFO a
+/// check created, or a swap between the walk's lstat and this open, is
+/// valued, and the terminal record is still written.
+#[cfg(feature = "unattended")]
+pub fn read_plain(path: &Path) -> std::io::Result<Plain> {
+    use std::io::Read as _;
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::fs::OpenOptionsExt;
+    let at = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_PATH | libc::O_NOFOLLOW)
+        .open(path)?;
+    let t = at.metadata()?.file_type();
+    if !t.is_file() {
+        let kind = match crate::unattended::special_kind(t) {
+            Some(kind) => kind,
+            None if t.is_symlink() => "symlink",
+            None => "dir",
+        };
+        return Ok(Plain::Kind(kind));
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(format!("/proc/self/fd/{}", at.as_raw_fd()))?;
+    let mut b = Vec::new();
+    f.read_to_end(&mut b)?;
+    Ok(Plain::Bytes(b))
+}
+
 /// The digest of the file at `path` now; `None` when it does not exist.
 fn digest_now(path: &Path) -> Result<Option<String>, CasError> {
     match read_regular(path) {
@@ -1443,6 +1488,52 @@ mod tests {
         assert!(
             matches!(got, Ok(Err(CasError::Io(_)))),
             "ATTACK: E3 a FIFO in the target's place stalled a CAS read: {got:?}"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// NE-2 (NEA-4): the pinned tree's read of a special file is valued by
+    /// its kind, never an error - a FIFO, and `/dev/null` (the end state of a
+    /// swap between the walk's lstat and its open, reached without the race).
+    /// A regular file still gives its bytes.
+    #[cfg(feature = "unattended")]
+    #[test]
+    fn a_special_file_read_is_valued_by_its_kind() {
+        use std::os::unix::ffi::OsStrExt;
+        let d = dir("plain");
+        let fifo = d.join("pipe");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let file = d.join("f.ax");
+        std::fs::write(&file, b"one").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (f, n) = (fifo.clone(), file.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send([
+                read_plain(&f).map_err(|e| e.to_string()),
+                read_plain(Path::new("/dev/null")).map_err(|e| e.to_string()),
+                read_plain(&n).map_err(|e| e.to_string()),
+            ]);
+        });
+        let got = rx.recv_timeout(std::time::Duration::from_secs(5));
+        if got.is_err() {
+            // Release a stalled reader: a writer end, opened and closed.
+            // SAFETY: as above.
+            let fd = unsafe { libc::open(c.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK) };
+            if fd >= 0 {
+                // SAFETY: fd was just opened here.
+                unsafe { libc::close(fd) };
+            }
+        }
+        assert_eq!(
+            got,
+            Ok([
+                Ok(Plain::Kind("fifo")),
+                Ok(Plain::Kind("char device")),
+                Ok(Plain::Bytes(b"one".to_vec())),
+            ]),
+            "ATTACK: a special file in a pinned tree failed the walk"
         );
         let _ = std::fs::remove_dir_all(&d);
     }
