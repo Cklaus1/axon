@@ -35195,8 +35195,9 @@ fn a_wasm_runnable_label_is_only_printed_for_a_module_that_runs() {
         // `wasm:` substring also matches a linker path like `…/println.wasm:`.
         if !err.lines().any(|l| l.starts_with("wasm: ")) {
             // A named missing prerequisite is a countable non-result; any other
-            // non-link is a failure.
+            // non-link is a failure. An interp-only axon refuses with E0907.
             if codegen_absent(&err)
+                || err.contains("AOT wasm build needs the native codegen backend")
                 || err.contains("wasm link unavailable:")
                 || err.contains("wasm runtime not found:")
             {
