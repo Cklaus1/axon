@@ -4226,3 +4226,13 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M4830': r'ATTACK: android_lifecycle skipped before the host half \(A\) ran',
 })
+
+# nhr-evidence b4 NE-8 NRV-1 / NRV-2 (ids M4870-M4875, block M4870-M4879). M4547's marker is unchanged.
+ATTACK_MARKERS.update({
+    'M4870': r'ATTACK: NE-8 NRV-1 an AI endpoint with a backslash was admitted',
+    'M4871': r'ATTACK: NE-8 NRV-1 an AI endpoint with userinfo was admitted',
+    'M4872': r'ATTACK: NE-8 NRV-1 a `.` in the authority checked "a\.trusted\.io", the client dials "evil\.example"',
+    'M4873': r'ATTACK: NE-8 NRV-2 a fifo at the task file path was not refused at phase A',
+    'M4874': r'ATTACK: NE-8 NRV-2 a fifo at the envelope path was not refused at phase A',
+    'M4875': r'ATTACK: NE-8 NRV-2 a fifo at the task file path was not refused at phase A',
+})

@@ -457,3 +457,19 @@ budget_exhausted`, `writes 0`, `accepted null`. JSON: `/var/tmp/r51-tmp/b4-probe
 
 Not observed: the unattended `RENAME_EXCHANGE` refusal end to end (needs a proposal: a paid or stubbed model); an accepted repair in
 the dry-run series (Q1, paid).
+
+### NE-8 security review at ab2a650a, fixes at 379a4ea9 (2026-11-05)
+Reviewer `history://NhrReview` (`security-reviewer`, read-only; it had no shell, so the integrator ran its probe script
+`/var/tmp/r51-tmp/b4-review/ne8-probes.sh` with the ab2a650a binaries: rc 0, 79.7 s, transcript
+`/var/tmp/r51-tmp/b4-review/transcript.txt`; host `/etc/axon` 0 entries after). $0: `ai:m` at `https://127.0.0.1:9`, `cmd:` generators.
+
+| id | sev | finding | disposition |
+|---|---|---|---|
+| NRV-1 | major | The envelope and the T35 net pin checked a hand-split host; reqwest dials the WHATWG host, for which `\` ends an https authority: `https://evil.example\@api.anthropic.com` was pinned as `api.anthropic.com` and dialled at `evil.example` with the API key (also in attended runs). Confirmed by a throwaway program with axon-ai's `host_of` and `reqwest::Url::parse` side by side. | **fixed** bef0ab14 (LaneNrv): one `parse_endpoint` (reqwest's parser) feeds the host pin, the https check and the preview; `\`, userinfo and unparsable URLs are refused; `capabilities::host_of` ends the authority at `\`. Tests: 2 axon-ai units, 1 axon-core, `s6_an_endpoint_whose_host_parsers_disagree_on_is_refused` (pre-fix a TLS ClientHello reached the other host). g01 M4870-M4872, M4547 amended. Probe after the fix: mint refused rc 2; a run with the backslash URL exits 29, envelope `.issued`, listener saw no connection. |
+| NRV-2 | minor | A FIFO at the task path (or the `--envelope` path) hung phase A before the watchdog: probe rc 124 after 20 s. | **fixed** bef0ab14: both reads go through `cas::read_plain` (`O_NONBLOCK`, `O_NOFOLLOW`, fstat) and a special file exits 29 naming its kind. Test `s6_a_special_file_at_the_task_or_envelope_path_is_refused`; g01 M4873-M4875. Probe after the fix: rc 29 after 0 s. |
+| NRV-3 | info | The envelope pins the endpoint host, not its port. | **logged** O-NHR-08 for the §9 decision; the spec pins "host". |
+| NRV-4 | blocker (evidence) | F2-F4 end-to-end probes not observed by the reviewer. | **closed** by the integrator's run: F2 `.env` in the workspace and named by `AXON_DOTENV` steer nothing (rc 20, no proposal, no label log, audit clean); the same variables in the real env refuse (rc 29, nothing spent). F3: deterministic foreign append kept and the patch applied; 30 racer trials, 0 lost foreign tokens (each rc 22 "changed by another writer"). F4: a relative `fs_write` pin is refused at mint (rc 2), at preview (rc 2), and re-signed `fs_write`/`fs_read` pins are refused by the runner (rc 29, `.issued`, ledger 0 bytes). |
+
+Read and found correct by the reviewer (not probed): replay (renameat2 `.issued`→`.used`), opt-in (`O_NOFOLLOW`, root-held dirs,
+initial userns), env refusals, checker re-hash (F7), a terminal record on every exit, watchdog cut, mint judging the preview. Not
+reviewed line by line: `run_ledger.rs`, `audit_runs.rs`, `fence.rs`, `approval.rs`, R6 L1-L3 seal/append.

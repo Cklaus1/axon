@@ -3560,6 +3560,11 @@ walk runs after `w.disarm()` (`bin/cortex.rs:1619-1621`, record at `:1882-1899`)
 makes the end of the run unbounded, outside E3's deadline [INFERENCE: from the code; not run]. Fix direction: a bounded or
 streaming walk (a change to R6's tree). Out of scope of tasks/nhr-evidence-spec.md, which removes only the FIFO block (NE-2).
 
+### O-NHR-08 - [info] The envelope pins the AI endpoint's host, not its port
+NE-8 NRV-3 (`history://NhrReview`): `endpoint_host` drops the port, so `https://<pinned-host>:8443` is admitted. Stated scope
+(NH-R1 pins "host"); TLS still authenticates the host name. Raised for the §9 enabling decision; fix direction: pin
+`host:port` in the envelope (a schema change to `axon-approval`).
+
 ### O-NR-01 - [info] Neural programs stopped at NR-0: no consumer for a learned ranker
 tasks/neural-programs-spec.md NR-0 ran the free profiling pass: one eligible function (cortex's candidate ranker), with a +7/22
 oracle ceiling on the pool, but no keyless consumer (`--unattended` requires `--symbol`, CI never runs `cortex`, the examples

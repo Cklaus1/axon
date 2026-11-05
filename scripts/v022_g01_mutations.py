@@ -14159,8 +14159,8 @@ MUTATIONS += [
      'axon-cortex', _NHT, 's6_a_plain_http_endpoint_is_refused'),
     ('M4547', 'NH-R1 security re-review 2 N1: any scheme counts as https',
      'crates/axon-ai/src/lib.rs',
-     '        .is_some_and(|s| s.eq_ignore_ascii_case("https://"))',
-     '        .is_some()',
+     '    endpoint(p).is_ok_and(|u| u.scheme() == "https")',
+     '    endpoint(p).is_ok()',
      'axon-cortex', _NHT, 's6_a_plain_http_endpoint_is_refused'),
     # Implementation audit: the default build refuses before any parse.
     ('M4551', 'NH-R1 A3 (implementation audit): a usage error answers --unattended in the default build',
@@ -15266,6 +15266,41 @@ MUTATIONS += [
      'echo "android_lifecycle: (A) host_await lifecycle round-trip…"',
      'skip "Android NDK not found"',
      'axon-core', '--no-default-features --test cli_run', 'android_lifecycle_adapter_r14'),
+]
+
+# nhr-evidence b4 NE-8 NRV-1 / NRV-2 (ids M4870-M4875, block M4870-M4879). NRV-1: axon-ai's endpoint host
+# was a hand split (cut at / ? #, text after the last @) while reqwest dials the WHATWG host, for which `\`
+# also ends an http(s) authority: `https://evil.example\@api.anthropic.com` was pinned and previewed as
+# api.anthropic.com and dialled at evil.example with the API key. The host is now read from
+# reqwest::Url::parse of the endpoint that is posted, and a `\`, userinfo or an unparsable URL is refused;
+# axon-core's capabilities::host_of (the static net pin) ends the authority at `\` too. NRV-2: phase A's
+# blocking reads of the task file and the --envelope file ran before the watchdog, so a FIFO there hung
+# the run past its hard deadline; both now go through cas::read_plain and a special file is refused by kind.
+MUTATIONS += [
+    ('M4870', 'NE-8 NRV-1: an AI endpoint containing a backslash is admitted', 'crates/axon-ai/src/lib.rs',
+     "    if s.contains('\\\\') {",
+     '    if false {',
+     'axon-ai', '--lib', 'host_of_url_tests::an_endpoint_whose_host_parsers_disagree_on_is_refused'),
+    ('M4871', 'NE-8 NRV-1: an AI endpoint carrying userinfo is admitted', 'crates/axon-ai/src/lib.rs',
+     '    if !u.username().is_empty() || u.password().is_some() {',
+     '    if false {',
+     'axon-ai', '--lib', 'host_of_url_tests::an_endpoint_whose_host_parsers_disagree_on_is_refused'),
+    ('M4872', 'NE-8 NRV-1: the static net pin host_of does not end the authority at a backslash', 'crates/axon-core/src/capabilities.rs',
+     "        .split(['/', '\\\\', '?', '#'])",
+     "        .split(['/', '?', '#'])",
+     'axon-core', '--lib', 'capabilities::host_of_tests::a_backslash_ends_the_authority_as_the_client_parses_it'),
+    ('M4873', 'NE-8 NRV-2: phase A reads the task file with a blocking read (a FIFO hangs it past the deadline)', 'crates/axon-cortex/src/auth.rs',
+     '    let pristine = read_regular_file(&canonical_file)?;',
+     '    let pristine = std::fs::read(&canonical_file).map_err(|e| e.to_string())?;',
+     'axon-cortex', _NHT, 's6_a_special_file_at_the_task_or_envelope_path_is_refused'),
+    ('M4874', 'NE-8 NRV-2: phase A reads the --envelope file with a blocking read', 'crates/axon-cortex/src/auth.rs',
+     '        read_regular_file(&envelope_real).map_err(|why| format!("--envelope {why}"))?,',
+     '        std::fs::read(&envelope_real).map_err(|e| e.to_string())?,',
+     'axon-cortex', _NHT, 's6_a_special_file_at_the_task_or_envelope_path_is_refused'),
+    ('M4875', 'NE-8 NRV-2: a special file at the task or envelope path is read as empty instead of refused by kind', 'crates/axon-cortex/src/auth.rs',
+     '        Ok(crate::cas::Plain::Kind(kind)) => Err(format!(',
+     '        Ok(crate::cas::Plain::Kind(_)) if true => Ok(Vec::new()),\n        Ok(crate::cas::Plain::Kind(kind)) => Err(format!(',
+     'axon-cortex', _NHT, 's6_a_special_file_at_the_task_or_envelope_path_is_refused'),
 ]
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@
 - **NH-R1 tests** (NE-3/NE-4/NE-5, closing O-NHR-01/02/03): a started append failing with ENOSPC marks `<id>.unrecorded` and exits 29 with no check run; the E3 watchdog path's terminal record is asserted (exit 20, `budget_exhausted`); a signed `axon-approval/4` envelope is refused as a job approval by `axon-os run` and `replay`. Every S-test that reaches consume asserts a C1 audit (NE-7.1). g01 M4813-M4818.
 - **Gate stage S09U** (NE-1): `scripts/gate.sh` runs the NH-R1 S-tests (`--features unattended`, lint + tests). It fails when not root, without `/etc/axon`, or when any S-test prints a `SKIP` line.
 - **cortex USAGE** names `--unattended`'s four accepted limits (F2 env, Linux-only, one spent store per host, N6).
+- **AI endpoint host is read by the client's own URL parser** (NE-8 NRV-1): `AXON_AI_BASE_URL=https://evil\@api.anthropic.com` was pinned and previewed as `api.anthropic.com` but dialled at `evil`; a `\`, userinfo or an unparsable endpoint is now refused, and the net pin, https check and envelope preview all read one `reqwest::Url` parse. Affected attended runs too.
+- **Unattended phase A refuses a special file at the task or `--envelope` path** (NE-8 NRV-2) instead of blocking on a FIFO before the watchdog.
 - **ci:** host-scope `-D warnings` (CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS) so wasm builds keep their committed rustflags (CH-1)
 - **ci:** `--no-fail-fast` on all test steps, fmt/clippy/claims run under `!cancelled()`, `workflow_dispatch` (CH-2)
 - **tests:** harness_integrity's orphan commit carries its own git identity (CH-3)

@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: a4030af7291c67e300ab04cbf3be6dd429c1bd2c
+generated-at: 22fa6dadc7499b7f84e0a07af1f17e668a93e854
 
-`git diff --numstat 31413ca7..a4030af7 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..22fa6dad -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -28,7 +28,7 @@ generated-at: a4030af7291c67e300ab04cbf3be6dd429c1bd2c
 | `crates/axon-core/src/borrow.rs` | 272 | 45 |
 | `crates/axon-core/src/builtins.rs` | 430 | 45 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
-| `crates/axon-core/src/capabilities.rs` | 1335 | 345 |
+| `crates/axon-core/src/capabilities.rs` | 1367 | 346 |
 | `crates/axon-core/src/card.rs` | 736 | 0 |
 | `crates/axon-core/src/ceiling.rs` | 554 | 0 |
 | `crates/axon-core/src/cert_gate.rs` | 5 | 2 |
@@ -108,9 +108,9 @@ generated-at: a4030af7291c67e300ab04cbf3be6dd429c1bd2c
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 72944 | 10083 |
+| total | 72976 | 10084 |
 
-`git log --reverse 31413ca7..a4030af7 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..22fa6dad -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -561,7 +561,8 @@ generated-at: a4030af7291c67e300ab04cbf3be6dd429c1bd2c
 | 639ff505 | containment-b4 C-4 nested scope chain | DOCS ONLY (containment-b4 C-4): sandbox_create_scoped's doc states that every enclosing sandbox's scope binds. No behaviour change |
 | e19ad80d | containment-b4 C-2 source fd | CLI (containment-b4 C-2, O-GV-12): `axon run --source-fd N` with N equal to the installed outcome fd is refused with a compile/source record instead of reading the outcome file as the program. The check sits after the regular-file test, so only that probe's message changes. g01 M4801 |
 | 399d673d | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 447 commits | | |
+| bef0ab14 | nhr-evidence NE-8 NRV-1 endpoint host | CHECKER (nhr-evidence NE-8 NRV-1): capabilities::host_of, the host a static `@[contained(net: [...])]` pin is checked against, also ends the authority at `\`, as the WHATWG parser the HTTP client dials with does: `https://evil.example\@a.trusted.io` is now checked as evil.example (refused unless granted) instead of a.trusted.io. Hosts without a backslash are unchanged. g01 M4872 |
+| 448 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -720,7 +721,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 786 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4723-M4727, M4730, M4732, M4740-M4756, M4760-M4763, M4771-M4774, M4779-M4786, M4790-M4805
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 787 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4723-M4727, M4730, M4732, M4740-M4756, M4760-M4763, M4771-M4774, M4779-M4786, M4790-M4805, M4872
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
