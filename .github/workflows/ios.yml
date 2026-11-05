@@ -13,9 +13,10 @@ name: iOS (R14 mobile — REMOTE macOS verification)
 #   3. build the axon compiler (interp build — LLVM 23 codegen is not assumed on
 #      the runner) and emit the byte-stable Swift wrapper via `--host mobile`
 #   4. compute-parity oracle: run examples/mobile/ios_compute_parity.ax under the
-#      interpreter (the oracle) AND on a booted iOS Simulator, then diff stdout
-#      (invariant I-2) — the spec §8 "Parity (compute)" + §9
-#      `android_so_compute_parity` iOS twin
+#      interpreter (the oracle). The on-Simulator half of the parity diff is NOT
+#      run: tools/ios-parity-harness/run_on_sim.sh was never authored (its README,
+#      "Honest status"). That remainder is the "R14 iOS remainder" O-entry in
+#      tasks/opportunities.md (ci-hygiene CH-6).
 #   5. (manual/CI tier) the `ios_sim_window_clear` Metal frame journey (§8/§9)
 #
 # Triggered on pushes to the r14-ios branch + manual dispatch. It does NOT gate
@@ -38,7 +39,7 @@ env:
 
 jobs:
   ios:
-    name: iOS cross-build + simulator parity (macOS)
+    name: iOS cross-build + oracle + Swift wrapper (macOS) — simulator parity NOT run (run_on_sim.sh not authored)
     runs-on: macos-14 # Apple-silicon macOS runner with Xcode preinstalled.
 
     steps:
@@ -142,27 +143,6 @@ jobs:
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b || true
-
-      # Build the parity oracle as a tiny iOS-simulator test harness: a Swift
-      # SwiftPM/XCTest target that links the Axon-compiled compute object and
-      # asserts its stdout equals $EXPECTED. The harness scaffold lives in
-      # tools/ios-parity-harness/ (committed). This is the step that REQUIRES a
-      # macOS host and therefore cannot run on the Linux gate.
-      - name: Run compute parity on the iOS Simulator
-        run: |
-          HARNESS=tools/ios-parity-harness
-          if [ -d "$HARNESS" ]; then
-            cd "$HARNESS"
-            # The harness Package.swift / xcodeproj builds the Axon static object
-            # + a thin Swift main that runs the program and prints its line; the
-            # test diffs it against $EXPECTED. See the harness README for the
-            # exact `xcrun simctl spawn`/`xcodebuild test` invocation.
-            bash run_on_sim.sh "$SIM_UDID" "$EXPECTED"
-          else
-            echo "::warning::iOS parity harness scaffold not present; the simulator parity"
-            echo "::warning::run is the macOS-host-authored remainder (R14 §11 slice 2 iOS"
-            echo "::warning::tier). The oracle + the cross-build + the wrapper are verified above."
-          fi
 
       # ── Slice 5 (manual/CI tier): the Metal window_clear frame journey ─────
       - name: Metal window_clear journey (ios_sim_window_clear)
