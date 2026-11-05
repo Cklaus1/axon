@@ -114,7 +114,7 @@ pub fn envelope_preview(
         &fence_sha256,
         &imports_digest,
     );
-    let (provider, endpoint_host) = auth::resolved_generator();
+    let (provider, endpoint_host) = auth::resolved_generator()?;
     Ok(serde_json::json!({
         "schema": PREVIEW_SCHEMA,
         "task": {

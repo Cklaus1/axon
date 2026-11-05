@@ -1254,6 +1254,47 @@ fn s6_a_plain_http_endpoint_is_refused() {
     }
 }
 
+/// NE-8 NRV-1: the envelope pins the host `axon-ai` reads from the base URL,
+/// and reqwest dials the host its WHATWG parser reads. The hand split took
+/// the text after the last `@` and never ended the authority at `\`, so
+/// `https://localhost:<port>\@127.0.0.1:9` matched the envelope's
+/// `127.0.0.1` while the call, with its API key, went to `localhost:<port>`.
+/// Userinfo is refused too: it names credentials, never the host. A local
+/// listener on that port records what reaches it: it must get nothing.
+#[test]
+fn s6_an_endpoint_whose_host_parsers_disagree_on_is_refused() {
+    for (i, what) in ["a backslash", "userinfo"].into_iter().enumerate() {
+        let rec = Recorder::start();
+        let s = setup(&format!("s6_nrv1_{i}"));
+        let e = envelope_for(&s);
+        assert_eq!(e.generator.endpoint_host, "127.0.0.1");
+        mint(&s, &e);
+        let port = rec.addr.port();
+        let base = if i == 0 {
+            format!("https://localhost:{port}\\@127.0.0.1:9")
+        } else {
+            format!("https://op:secret@127.0.0.1:{port}")
+        };
+        let o = run_with(&s, &s.axon, &[], &[("AXON_AI_BASE_URL", &base)]);
+        let got = rec.finish();
+        assert!(
+            got.is_empty(),
+            "ATTACK: NE-8 NRV-1 an endpoint with {what} ({base}) sent an unattended run's model \
+             call past the envelope's host pin: {got:?}\n{}{}",
+            o.stdout,
+            o.stderr
+        );
+        refused(
+            &s,
+            &o,
+            &e,
+            "the AI endpoint",
+            &format!("ATTACK: NE-8 NRV-1 an endpoint with {what} ({base}) ran unattended"),
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
 /// Security review F4: a relative `fs_read` / `fs_write` pin is refused. The
 /// check child's cwd is the workspace, so `out` resolves to `ws/out` - here a
 /// symlink to the operator's key directory - and a relative pin passed the
@@ -1508,6 +1549,67 @@ fn s6_a_special_file_under_a_write_root_is_refused() {
             &format!("ATTACK: NH-R1 a FIFO under a write root spent the envelope ({case})"),
             &pristine,
         );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
+}
+
+/// NE-8 NRV-2: phase A reads the task file and the envelope before the E3
+/// watchdog is armed. A FIFO at either path (the task file outside every
+/// write prefix, so the E1s walk never sees it) blocked that read with no
+/// writer: no exit, nothing spent, no record, past the hard deadline. Each is
+/// opened without blocking and refused by its kind; a socket is the other
+/// special kind here. Each run has a 30 s wall limit, so a hang fails here.
+#[test]
+fn s6_a_special_file_at_the_task_or_envelope_path_is_refused() {
+    let cases = [
+        ("task file", "fifo"),
+        ("task file", "socket"),
+        ("envelope", "fifo"),
+        ("envelope", "socket"),
+    ];
+    for (i, (at, kind)) in cases.into_iter().enumerate() {
+        let s = setup(&format!("s6_nrv2_{i}"));
+        let mut e = envelope_for(&s);
+        e.write_prefixes = vec!["out".into()];
+        mint(&s, &e);
+        let p = if at == "task file" {
+            s.ws.join("broken.ax")
+        } else {
+            s.envelope.clone()
+        };
+        std::fs::remove_file(&p).unwrap();
+        let _socket = if kind == "fifo" {
+            mkfifo(&p);
+            None
+        } else {
+            Some(std::os::unix::net::UnixListener::bind(&p).unwrap())
+        };
+        let wrap = Wrap {
+            wall_s: Some(30),
+            ..Wrap::default()
+        };
+        let t0 = std::time::Instant::now();
+        let o = run_unshared(&s, &s.axon, &[], &[], &s.opted_in(), None, &wrap);
+        let attack = format!(
+            "ATTACK: NE-8 NRV-2 a {kind} at the {at} path was not refused at phase A (rc {} \
+             after {:?})",
+            o.code,
+            t0.elapsed()
+        );
+        assert_eq!(o.code, 29, "{attack}: {}{}", o.stdout, o.stderr);
+        let why = format!("is a {kind}, not a regular file");
+        assert!(
+            o.stderr.contains(&why),
+            "{attack}: stderr {:?} lacks {why:?}",
+            o.stderr
+        );
+        assert_eq!(
+            records(&s),
+            vec![format!("{}.issued", e.envelope_id)],
+            "{attack}: the envelope was spent"
+        );
+        let size = std::fs::read_to_string(s.root.join("ledger-size")).unwrap();
+        assert_eq!(size.trim(), "0", "{attack}: the run ledger was written");
         let _ = std::fs::remove_dir_all(&s.root);
     }
 }
