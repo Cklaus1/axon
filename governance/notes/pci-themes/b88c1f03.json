@@ -1,0 +1,4 @@
+{
+  "theme": "containment-b4 C-4 nested scope chain",
+  "text": "INTERPRETER (containment-b4 C-4): a nested sandbox_run no longer widens the fs/net scope: the kernel keeps a scope_chain of every enclosing program sandbox's scope, pre_effect_gate checks each one, and sandbox_run pops its entry on return. A nested escape now exits 8; a returned sandbox no longer scopes its caller. g01 M4804-M4805"
+}

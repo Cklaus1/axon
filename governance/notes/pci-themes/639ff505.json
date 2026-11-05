@@ -1,0 +1,4 @@
+{
+  "theme": "containment-b4 C-4 nested scope chain",
+  "text": "DOCS ONLY (containment-b4 C-4): sandbox_create_scoped's doc states that every enclosing sandbox's scope binds. No behaviour change"
+}

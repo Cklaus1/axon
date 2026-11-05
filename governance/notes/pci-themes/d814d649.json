@@ -1,0 +1,4 @@
+{
+  "theme": "containment-b4 C-1 fs scope resolution",
+  "text": "DOCS ONLY (containment-b4 C-1): doc comments state that fs scopes resolve symlinks and refuse /proc magic links, and that @[contained]'s static check stays lexical. No behaviour change"
+}

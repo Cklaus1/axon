@@ -1,0 +1,4 @@
+{
+  "theme": "containment-b4 C-2 source fd",
+  "text": "CLI (containment-b4 C-2, O-GV-12): `axon run --source-fd N` with N equal to the installed outcome fd is refused with a compile/source record instead of reading the outcome file as the program. The check sits after the regular-file test, so only that probe's message changes. g01 M4801"
+}

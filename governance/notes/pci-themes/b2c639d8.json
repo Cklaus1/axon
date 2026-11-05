@@ -1,0 +1,4 @@
+{
+  "theme": "ci-hygiene CH-8 wasm32 cfgs",
+  "text": "BUILD CONFIG ONLY (ci-hygiene CH-8): `#[cfg]` attributes so a wasm32 build stops warning on dead code (lib.rs WRITABLE, outcome.rs Channel.fd, interp.rs with_run_meters_opt). No behaviour change on any host target; the interpreter's semantics are untouched"
+}

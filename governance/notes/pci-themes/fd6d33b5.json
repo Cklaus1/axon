@@ -1,0 +1,4 @@
+{
+  "theme": "containment-b4 C-1 fs scope resolution",
+  "text": "INTERPRETER (containment-b4 C-1, O-GV-08): the fs scope check resolves the path (new path_scope.rs: openat2 with RESOLVE_NO_MAGICLINKS, a dangling-link splice, an ELOOP retry) and refuses (exit 8) a read, write, copy, rename or store dir whose resolved path leaves the grant or crosses a /proc magic link. Grant roots are resolved and pinned when the scope is created, so a root swapped for a symlink mid-run keeps its old target. The lexical check still runs first; a missing in-prefix file stays an Err, not a refusal. g01 M4790-M4800, M4802-M4803"
+}

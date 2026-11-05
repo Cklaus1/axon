@@ -1,5 +1,16 @@
 # Axon Changelog
 
+## Batch 4: containment-b4, nhr-evidence (tasks/containment-b4-spec.md, tasks/nhr-evidence-spec.md)
+
+- **fs scopes resolve symlinks and refuse /proc magic links** (containment-b4 C-1, O-GV-08): a read, write, copy, rename or durable-store dir whose resolved path leaves the grant, or crosses a `/proc` magic link, now exits 8. Before, a symlink under a granted prefix, or a `/proc/self/root` grant, reached any file. Grant roots are pinned when the scope is created, so swapping a root for a symlink mid-run changes nothing. A missing file under the prefix stays an `Err`, not a refusal. g01 M4790-M4800, M4802-M4803.
+- **Nested sandboxes no longer widen the scope** (C-4): every enclosing program sandbox's fs/net scope binds a nested `sandbox_run`, so an inner `*` grant escapes nothing (exit 8). g01 M4804-M4805.
+- **`--source-fd` equal to the outcome fd is refused** (C-2, O-GV-12) with a compile/source record, instead of reading the outcome file as the program. g01 M4801.
+- **Refusal coverage scans `crates/axon-intent`** (C-3, O-NHR-04, NH-1 = A): the crate joined `ROOT_CRATES`; 17 of its files are listed NOT YET SCANNED, so the next PSV `--freeze` refuses until a judging batch covers them.
+- **NH-R1: a special file under a write root is refused at phase A** (nhr-evidence NE-2): a FIFO, socket or device under an unattended run's write prefix or `fs_write` pin exits 29 with the envelope unspent (`E1s: ... is a fifo, not a regular file`). Before, the run spent its envelope and hung reading the R6 pinned tree before the E3 watchdog was armed. The pinned tree values a special file by its kind (`cas::read_plain`: `O_PATH` + `fstat`). g01 M4810-M4812, M4819.
+- **NH-R1 tests** (NE-3/NE-4/NE-5, closing O-NHR-01/02/03): a started append failing with ENOSPC marks `<id>.unrecorded` and exits 29 with no check run; the E3 watchdog path's terminal record is asserted (exit 20, `budget_exhausted`); a signed `axon-approval/4` envelope is refused as a job approval by `axon-os run` and `replay`. Every S-test that reaches consume asserts a C1 audit (NE-7.1). g01 M4813-M4818.
+- **Gate stage S09U** (NE-1): `scripts/gate.sh` runs the NH-R1 S-tests (`--features unattended`, lint + tests). It fails when not root, without `/etc/axon`, or when any S-test prints a `SKIP` line.
+- **cortex USAGE** names `--unattended`'s four accepted limits (F2 env, Linux-only, one spent store per host, N6).
+
 ## AX-80: debug builds select a speculated if's value and divide by 2^k with shifts
 
 - **O0 speculated `if` is a `select`** (compilebench AX-80): AX-76 lowers a speculated `if`'s value as wrapping arms meeting in a phi, which SimplifyCFG folds into a `select` at `--opt-level 1|2|3|s|z`. O0 runs no SimplifyCFG, so in debug builds it stayed a branch on the data-dependent condition. At O0 the value is now a `select` of the arms' wrapped values, computed before the fault branch (the AX-70 form); the fault-first branch to the cold checked re-run is unchanged. `Codegen::set_opt_level` passes the build's level to emission (default O0); the build cache already keys on it. Optimising levels keep the diamond: `--release --emit-llvm` for `collatz` and `sieve` is byte-identical to before.

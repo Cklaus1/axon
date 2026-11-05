@@ -3191,6 +3191,9 @@ or canonicalize and re-check, with the TOCTOU stated), and refuse `/proc` prefix
 to depend on it. Found by DraftB3.
 `[SPECCED 2026-11-04: tasks/containment-b4-spec.md C-1 (resolved-path scope, /proc grants narrowed) and C-4 (nested
 sandbox_run escape, found in its Step 1 review). DRAFT after Step 1; not authorized for build.]`
+`[FIXED 2026-11-05: containment-b4 C-1 (fd6d33b5, tests c0ff02b6) and C-4 (b88c1f03). A read, write, copy, rename or store dir
+whose resolved path leaves the grant or crosses a /proc magic link exits 8; grant roots are pinned at scope creation; a nested
+sandbox_run is bound by every enclosing scope. g01 M4790-M4800, M4802-M4805. The resolve-then-open window stays open: O-C-01.]`
 
 ### O-GV-09 - [high] A module-level `let` initialiser runs outside the sandbox, `@[contained]` and `--require-contained`
 In an axon-os job granted only `./data/`, `let X = early()` at module level read `/etc/hostname` and wrote `./out/leak.txt`
@@ -3221,6 +3224,8 @@ If `axon run --source-fd N` names that same fd, `read_source_fd` reads the empty
 `--source-fd` equal to the installed outcome fd, or require the outcome fd to be a pipe. Probe `/var/tmp/r51-tmp/SweepB3/probe.py`.
 Found by SweepB3 (batch 3 integrated sweep).
 `[SPECCED 2026-11-04: tasks/containment-b4-spec.md C-2. DRAFT after Step 1; not authorized for build.]`
+`[FIXED 2026-11-05: containment-b4 C-2 (e19ad80d): a --source-fd equal to the installed outcome fd is refused with a
+compile/source record. g01 M4801.]`
 
 ## hx3 author quirks, 2026-10-31 (QuirkRepro triage of the hx3 N5a authors' notes, `/var/tmp/r51-tmp/QuirkRepro/REPORT.md`; fixes NOT in this batch)
 
@@ -3313,18 +3318,23 @@ envelope `<id>.unrecorded` and exits 29 (R6 L2). No test drives it: the lane tes
 permission-based append failure cannot be induced. Fix direction: an injectable sink failure (or a non-root test
 run) that asserts the marker, exit 29 and no workspace write.
 `[SPECCED 2026-11-04: tasks/nhr-evidence-spec.md NE-3. DRAFT after Step 1; not authorized for build.]`
+`[FIXED 2026-11-05: nhr-evidence NE-3 (a5c1d30f): r6_a_failed_started_append_marks_the_envelope_unrecorded (ENOSPC on a private
+64 KiB tmpfs) asserts the marker, exit 29 and no check run. g01 M4813-M4814.]`
 
 ### O-NHR-02 - [medium] The terminal record on the E3 watchdog path has no test
 The watchdog exit (exit 20, outcome `budget_exhausted`) writes a terminal run record, but no test stalls a run to
 the hard deadline and reads the record back (a stall test adds wall time). Fix direction: a short-deadline stall
 fixture asserting the terminal record and its write journal.
 `[SPECCED 2026-11-04: tasks/nhr-evidence-spec.md NE-4.]`
+`[FIXED 2026-11-05: nhr-evidence NE-4 (a5c1d30f): s10's stall asserts the terminal record (exit 20, budget_exhausted, pinned
+trees). g01 M4815-M4817.]`
 
 ### O-NHR-03 - [low] S12's axon-os `require_approval` half is untested
 S12 is asserted inside cortex's `s8_an_admitted_run_spends_once_and_reports_its_authorization` (no axon-approval/3
 token, no `.approved` file). That an `axon-approval/4` envelope is not accepted by the axon-os `require_approval`
 job path is not tested in either lane.
 `[SPECCED 2026-11-04: tasks/nhr-evidence-spec.md NE-5.]`
+`[FIXED 2026-11-05: nhr-evidence NE-5 (294096ae): axon-os acceptance s12_a_repair_envelope_is_not_a_job_approval. g01 M4818.]`
 
 ### O-NHR-04 - [medium] Refusal coverage does not scan `crates/axon-intent`
 Reported by IgIntent: `scripts/v022_refusal_coverage.py` does not include `crates/axon-intent`, so the new
@@ -3337,6 +3347,8 @@ confidence / policy and more) and pulls axon-cortex and axon-loop-contracts site
 protected-path rule rather than adding one include. Still open after the security fixes.
 `[SPECCED 2026-11-04: tasks/containment-b4-spec.md C-3 (the crate joins the scanned set; sites not yet judged go in
 NOT_YET_SCANNED, so the next PSV --freeze refuses until a judging batch runs - that spec's NH-1).]`
+`[PARTLY FIXED 2026-11-05: containment-b4 C-3 (c423aa8d): axon-intent is in ROOT_CRATES; 4 exec builders and 6 spill-over
+exemptions; 17 files NOT_YET_SCANNED, so the next PSV --freeze refuses until a judging batch covers them (NH-1 = A).]`
 
 ### O-NHR-05 - [low] R6 L2 terminal-record choices made in the lane, not in the spec
 Terminal `accepted_refusal` is always null (an R5 refusal turns the exit into 22, outside {0,27}); an early exit's
@@ -3344,6 +3356,7 @@ Terminal `accepted_refusal` is always null (an R5 refusal turns the exit into 22
 tree roots are the effective write prefixes plus the envelope's fs_write scopes. Confirm or revise these in
 `tasks/r6-ledger-spec.md` before enabling.
 `[SPECCED 2026-11-04: tasks/nhr-evidence-spec.md NE-9 (classification; needs-human Q2 confirms the three choices).]`
+`[DECIDED by human 2026-11-05: the three choices are confirmed as built (tasks/r6-ledger-spec.md §3).]`
 
 ### O-NHR-06 - [low] Residuals the security fixes (F1-F12, re-review N1-N6) state and do not close
 All twelve NhrSecurity findings (F1-F12) were fixed on nhr/fix-a and nhr/fix-b and merged into nhr/int. What remains,
