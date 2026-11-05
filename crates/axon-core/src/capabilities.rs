@@ -2242,8 +2242,15 @@ pub(crate) fn host_of(s: &str) -> String {
     // and `http://evil.com#.trusted.io` both satisfied `net: ["*.trusted.io"]`
     // while a real client sends the request to evil.com. Measured: both passed
     // `axon check` where the bare `http://evil.com` is E1001-refused.
+    //
+    // NE-8 NRV-1: the WHATWG parser the runtime's HTTP client (reqwest) dials
+    // with ALSO ends an http(s) authority at `\`. Cut at `/ ? #` only,
+    // `https://evil.example\@api.trusted.io` was checked as `api.trusted.io`
+    // and dialled at `evil.example`. Cut at `\` too, the host checked is the
+    // host dialled; a bare host with a `\` (a native connect) is checked by
+    // the part before it, and the whole name resolves nowhere.
     let authority = after_scheme
-        .split(['/', '?', '#'])
+        .split(['/', '\\', '?', '#'])
         .next()
         .unwrap_or(after_scheme);
     // Userinfo (`user:pass@host`) is not the host. Take everything after the
@@ -3621,6 +3628,30 @@ mod host_of_tests {
             &host_of("http://a.trusted.io@evil.com"),
             "*.trusted.io"
         ));
+    }
+
+    /// NE-8 NRV-1: the WHATWG parser reqwest dials with ends an http(s)
+    /// authority at `\` as well, so `https://evil.example\@a.trusted.io` is a
+    /// request to evil.example (measured with reqwest 0.12.28 / url 2.5.8). Cut
+    /// at `/ ? #` only, the host checked was `a.trusted.io`: a `net:
+    /// ["*.trusted.io"]` grant admitted a dial of any host.
+    #[test]
+    fn a_backslash_ends_the_authority_as_the_client_parses_it() {
+        for (s, dialed) in [
+            ("https://evil.example\\@a.trusted.io/p", "evil.example"),
+            ("http://evil.example\\@a.trusted.io", "evil.example"),
+            (
+                "https://evil.example:443\\@a.trusted.io:443/p",
+                "evil.example",
+            ),
+        ] {
+            let host = host_of(s);
+            assert!(
+                host == dialed && !host_matches_glob(&host, "*.trusted.io"),
+                "ATTACK: NE-8 NRV-1 a `\\` in the authority checked {host:?}, the client dials \
+                 {dialed:?}: {s}"
+            );
+        }
     }
 
     /// The ordinary shapes must keep working — a fix that refused every real

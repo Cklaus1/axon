@@ -148,30 +148,53 @@ fn host_allowed(host: &str, allow: &[String]) -> bool {
     })
 }
 
-/// The host part of a base URL, lowercased and without port or credentials.
-fn host_of(base: &str) -> String {
-    let after_scheme = base.split("://").nth(1).unwrap_or(base);
-    // The authority ends at the first `/`, `?` OR `#` (RFC 3986). Splitting on
-    // `/` alone leaves the query and fragment inside the host, and `host_allowed`
-    // is a suffix match — so `AXON_AI_BASE_URL=http://evil.com?x=.trusted.io`
-    // satisfied a `net: ["*.trusted.io"]` pin, which is precisely the widening
-    // this check exists to refuse. Same defect as `capabilities::host_of`.
-    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
-    let authority = authority.rsplit('@').next().unwrap_or(authority);
-    // Strip a port, but only a real one — an IPv6 literal (`[::1]`) is all
-    // colons and chopping at the last would yield a different host entirely.
-    match authority.rsplit_once(':') {
-        Some((h, port)) if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => h,
-        _ => authority,
+/// The endpoint string `s`, parsed by the URL parser `reqwest` dials with,
+/// so the host every check reads is by construction the host the request
+/// goes to. NE-8 NRV-1: `host_of` split the string by hand (authority cut at
+/// `/ ? #`, the host after the last `@`), while the WHATWG parser also ends
+/// a special scheme's authority at `\`: for
+/// `https://evil.example\@api.anthropic.com` the pin, the preview and the
+/// net check saw `api.anthropic.com` and reqwest sent the request and its
+/// API key to `evil.example`. A string that does not parse, holds a `\`
+/// anywhere, or carries userinfo (a username or a password) is refused, not
+/// reinterpreted. The URL itself is never echoed: its userinfo may be a
+/// secret.
+fn parse_endpoint(s: &str) -> Result<reqwest::Url, String> {
+    const WHICH: &str = "the AI endpoint (AXON_AI_BASE_URL / ANTHROPIC_BASE_URL)";
+    if s.contains('\\') {
+        return Err(format!(
+            "{WHICH} contains a `\\`: URL parsers disagree on where its host ends"
+        ));
     }
-    .to_ascii_lowercase()
+    let u = reqwest::Url::parse(s).map_err(|e| format!("{WHICH} is not a URL: {e}"))?;
+    if !u.username().is_empty() || u.password().is_some() {
+        return Err(format!(
+            "{WHICH} carries userinfo (a username or password before an `@`)"
+        ));
+    }
+    if u.host_str().is_none_or(str::is_empty) {
+        return Err(format!("{WHICH} names no host"));
+    }
+    Ok(u)
 }
 
-/// `endpoint_url`, refusing a host the program was never granted.
-fn checked_endpoint_url(p: Provider) -> Result<String, String> {
-    let url = endpoint_url(p);
+/// The host a parsed endpoint dials, lowercased and without port: an IPv6
+/// literal keeps its brackets (`[::1]`).
+fn host_of(u: &reqwest::Url) -> String {
+    u.host_str().unwrap_or_default().to_ascii_lowercase()
+}
+
+/// The parsed endpoint every call for provider `p` posts to.
+fn endpoint(p: Provider) -> Result<reqwest::Url, String> {
+    parse_endpoint(&endpoint_url(p))
+}
+
+/// [`endpoint`], refusing a host the program was never granted. The URL
+/// returned is the one checked, and the one posted.
+fn checked_endpoint_url(p: Provider) -> Result<reqwest::Url, String> {
+    let url = endpoint(p)?;
     if let Some(allow) = NET_PIN.get() {
-        let host = host_of(&base_url(p));
+        let host = host_of(&url);
         if !host_allowed(&host, allow) {
             return Err(format!(
                 "AI endpoint host `{host}` is not in this program's net allowlist \
@@ -280,21 +303,20 @@ fn endpoint_url(p: Provider) -> String {
     }
 }
 
-/// The bare host every call for provider `p` goes to - the same `host_of`
-/// the endpoint check uses. NH-R1 §5.2 compares it with the host a repair
-/// envelope names.
-pub fn endpoint_host(p: Provider) -> String {
-    host_of(&endpoint_url(p))
+/// The bare host every call for provider `p` goes to - the same parse the
+/// endpoint check and the post use. NH-R1 §5.2 compares it with the host a
+/// repair envelope names. `Err` for an endpoint [`parse_endpoint`] refuses.
+pub fn endpoint_host(p: Provider) -> Result<String, String> {
+    endpoint(p).map(|u| host_of(&u))
 }
 
-/// Whether every call for provider `p` goes over `https://`. NH-R1 refuses
-/// an unattended run otherwise (security re-review 2 N1): the envelope pins
-/// the endpoint's host, and a plain-HTTP base URL on that host would carry
-/// the request and its API key in the clear.
+/// Whether every call for provider `p` goes over `https://`, judged from the
+/// parsed scheme (an endpoint that does not parse is not). NH-R1 refuses an
+/// unattended run otherwise (security re-review 2 N1): the envelope pins the
+/// endpoint's host, and a plain-HTTP base URL on that host would carry the
+/// request and its API key in the clear.
 pub fn endpoint_is_https(p: Provider) -> bool {
-    endpoint_url(p)
-        .get(..8)
-        .is_some_and(|s| s.eq_ignore_ascii_case("https://"))
+    endpoint(p).is_ok_and(|u| u.scheme() == "https")
 }
 
 /// The API key for the active provider. Neutral `AXON_AI_API_KEY` wins, then the
@@ -1497,13 +1519,11 @@ mod tests {
 
     #[test]
     fn host_of_extracts_the_bare_host() {
-        assert_eq!(host_of("https://api.anthropic.com"), "api.anthropic.com");
-        assert_eq!(host_of("http://127.0.0.1:8931"), "127.0.0.1");
-        assert_eq!(
-            host_of("https://user:pw@evil.example:8443/v1"),
-            "evil.example"
-        );
-        assert_eq!(host_of("https://API.Anthropic.COM/"), "api.anthropic.com");
+        let host = |s: &str| host_of(&parse_endpoint(s).unwrap());
+        assert_eq!(host("https://api.anthropic.com"), "api.anthropic.com");
+        assert_eq!(host("http://127.0.0.1:8931"), "127.0.0.1");
+        assert_eq!(host("https://evil.example:8443/v1"), "evil.example");
+        assert_eq!(host("https://API.Anthropic.COM/"), "api.anthropic.com");
     }
 
     /// The `@[contained]` checker's own leading-`*` glob rule, so a grant means
@@ -2297,7 +2317,12 @@ NOEQUALS\n\
 
 #[cfg(test)]
 mod host_of_url_tests {
-    use super::{host_allowed, host_of};
+    use super::{host_allowed, parse_endpoint};
+
+    /// The host of an endpoint `parse_endpoint` admits.
+    fn host_of(s: &str) -> String {
+        super::host_of(&parse_endpoint(s).unwrap())
+    }
 
     fn allow() -> Vec<String> {
         vec!["*.trusted.io".to_string()]
@@ -2326,7 +2351,6 @@ mod host_of_url_tests {
     fn granted_hosts_still_resolve_and_are_allowed() {
         assert_eq!(host_of("https://api.trusted.io/v1"), "api.trusted.io");
         assert_eq!(host_of("https://API.Trusted.IO:8443/v1"), "api.trusted.io");
-        assert_eq!(host_of("https://user:pw@api.trusted.io"), "api.trusted.io");
         assert!(host_allowed(
             &host_of("https://api.trusted.io/v1"),
             &allow()
@@ -2337,13 +2361,59 @@ mod host_of_url_tests {
         ));
     }
 
+    /// NE-8 NRV-1: the checked host is the host reqwest dials. `host_of` cut
+    /// the authority by hand at `/ ? #` and took the text after the last `@`,
+    /// while the WHATWG parser reqwest dials with also ends a special
+    /// scheme's authority at `\`: `https://evil.example\@api.anthropic.com`
+    /// passed an `api.anthropic.com` pin and sent the API key to
+    /// `evil.example`. A `\`, userinfo (which names credentials, never the
+    /// host) or a string that does not parse is refused.
     #[test]
-    fn userinfo_names_the_credentials_not_the_host() {
-        assert_eq!(host_of("http://api.trusted.io@evil.com"), "evil.com");
-        assert!(!host_allowed(
-            &host_of("http://api.trusted.io@evil.com"),
-            &allow()
-        ));
+    fn an_endpoint_whose_host_parsers_disagree_on_is_refused() {
+        for (s, what) in [
+            (
+                "https://evil.example\\@api.anthropic.com/v1/messages",
+                "a backslash",
+            ),
+            ("https://127.0.0.2\\@127.0.0.1:9/v1/messages", "a backslash"),
+            ("https://api.anthropic.com\\/v1/messages", "a backslash"),
+            ("http://api.trusted.io@evil.com/v1", "userinfo"),
+            ("https://user:pw@api.trusted.io/v1", "userinfo"),
+            ("https://:pw@api.anthropic.com/v1", "a password"),
+            ("https://evil.example@api.anthropic.com/v1", "a username"),
+            ("api.anthropic.com/v1/messages", "no scheme"),
+            ("https://", "no host"),
+        ] {
+            let got = parse_endpoint(s).map(|u| super::host_of(&u));
+            assert!(
+                got.is_err(),
+                "ATTACK: NE-8 NRV-1 an AI endpoint with {what} was admitted: {s} -> host {got:?}"
+            );
+        }
+        // The URL parser reqwest dials with names another host for the first.
+        let dialed = reqwest::Url::parse("https://evil.example\\@api.anthropic.com/v1/messages");
+        assert_eq!(dialed.unwrap().host_str(), Some("evil.example"));
+    }
+
+    /// Accepted endpoints keep their host, and it is the host reqwest's
+    /// parser dials, including where a hand split read another string.
+    #[test]
+    fn an_accepted_endpoint_names_the_host_reqwest_dials() {
+        for (s, want) in [
+            ("https://api.anthropic.com/v1/messages", "api.anthropic.com"),
+            (
+                "https://API.Anthropic.COM:8443/v1/messages",
+                "api.anthropic.com",
+            ),
+            ("https://127.0.0.1:9/v1/messages", "127.0.0.1"),
+            ("http://[::1]:8080/v1", "[::1]"),
+            ("https://0x7f.1/v1", "127.0.0.1"),
+            ("https://%61pi.anthropic.com/v1", "api.anthropic.com"),
+        ] {
+            assert_eq!(host_of(s), want, "{s}");
+            let dialed = reqwest::Url::parse(s).unwrap();
+            assert_eq!(dialed.host_str(), Some(want), "{s}");
+        }
     }
 
     #[test]

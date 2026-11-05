@@ -194,14 +194,15 @@ pub fn imports_closure(
 }
 
 /// The provider name and endpoint host the `ai:` generator will reach, as
-/// `axon-ai` resolves them (§5.2 generator rule).
-pub fn resolved_generator() -> (String, String) {
+/// `axon-ai` resolves them (§5.2 generator rule). `Err` for an endpoint
+/// `axon-ai` refuses to parse (NE-8 NRV-1: a `\` or userinfo in the base URL).
+pub fn resolved_generator() -> Result<(String, String), String> {
     let p = axon_ai::provider();
     let provider = match p {
         axon_ai::Provider::Anthropic => "anthropic",
         axon_ai::Provider::OpenAi => "openai",
     };
-    (provider.to_string(), axon_ai::endpoint_host(p))
+    Ok((provider.to_string(), axon_ai::endpoint_host(p)?))
 }
 
 fn now_unix() -> u64 {
@@ -400,6 +401,24 @@ fn open_root_held(path: &Path) -> Result<std::fs::File, String> {
     )
 }
 
+/// NE-8 NRV-2: the bytes of the regular file at `path`, read without blocking
+/// and without following a symlink in its last component
+/// ([`crate::cas::read_plain`]: an `O_PATH` open, whose `fstat` names the
+/// type, then the read). A fifo, socket, device, symlink or dir is refused by
+/// its kind. Phase A runs before the watchdog is armed, and its blocking read
+/// of a FIFO (at the task file or the envelope path) hung the run past its
+/// hard deadline.
+fn read_regular_file(path: &Path) -> Result<Vec<u8>, String> {
+    match crate::cas::read_plain(path) {
+        Ok(crate::cas::Plain::Bytes(b)) => Ok(b),
+        Ok(crate::cas::Plain::Kind(kind)) => Err(format!(
+            "{} is a {kind}, not a regular file",
+            path.display()
+        )),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
 /// Phase A (§5.3 steps 1-8). `axon` is the resolved `--axon` path; nothing
 /// is spawned here.
 pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, String> {
@@ -439,8 +458,14 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
         .map_err(|e| format!("--run-ledger {}: {e}", ledger.display()))?;
     // 2-4. parse + schema, the verify key's file, signature; 5 (part): time.
     let key = env::VerifyKey::load(&key_path, euid, std::slice::from_ref(&workspace))?;
-    let text = std::fs::read_to_string(&envelope_path)
+    // NE-8 NRV-2: phase A runs before the watchdog is armed, so no read here
+    // may block: a FIFO at the envelope path hung the run.
+    let envelope_real = std::fs::canonicalize(&envelope_path)
         .map_err(|e| format!("--envelope {}: {e}", envelope_path.display()))?;
+    let text = String::from_utf8(
+        read_regular_file(&envelope_real).map_err(|why| format!("--envelope {why}"))?,
+    )
+    .map_err(|e| format!("--envelope {}: {e}", envelope_path.display()))?;
     let now = now_unix();
     let verified = env::verify(&text, &key, now)?;
     let e = &verified.envelope;
@@ -448,7 +473,7 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
     let effective = e.narrow(&cli.requested)?;
     // 5 (rest): the run ends before the envelope expires.
     e.fits_before_expiry(now, effective.deadline_ms, hard_grace_ms)?;
-    let (provider, host) = resolved_generator();
+    let (provider, host) = resolved_generator()?;
     e.check_generator("ai", model, &provider, &host)?;
     // Security re-review 2 N1: the envelope pins the host, not the scheme;
     // a plain-HTTP base URL on the pinned host sent the key in the clear.
@@ -536,8 +561,7 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
     }
     let seal = rl::SealKey::load(&seal_path, euid, std::slice::from_ref(&workspace))?;
     let canonical_file = workspace.join(&file);
-    let pristine =
-        std::fs::read(&canonical_file).map_err(|e| format!("{}: {e}", canonical_file.display()))?;
+    let pristine = read_regular_file(&canonical_file)?;
     let found = crate::label::sha256_hex(&pristine);
     if found != e.task.pristine_sha256 {
         return Err(format!(

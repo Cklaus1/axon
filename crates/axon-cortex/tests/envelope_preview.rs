@@ -88,7 +88,7 @@ fn the_preview_pins_what_the_runner_recomputes() {
         axon_cortex::auth::check_digest("hidden_completion", &checker, None, &sha, &imports);
     let grant =
         axon_cortex::auth::target_grant(&axon, &ws, "src/broken.ax", "double", wall).unwrap();
-    let (provider, host) = axon_cortex::auth::resolved_generator();
+    let (provider, host) = axon_cortex::auth::resolved_generator().unwrap();
     let pristine = axon_cortex::label::sha256_hex(&std::fs::read(&file).unwrap());
 
     assert_eq!(

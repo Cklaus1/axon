@@ -1,0 +1,4 @@
+{
+  "theme": "nhr-evidence NE-8 NRV-1 endpoint host",
+  "text": "CHECKER (nhr-evidence NE-8 NRV-1): capabilities::host_of, the host a static `@[contained(net: [...])]` pin is checked against, also ends the authority at `\\`, as the WHATWG parser the HTTP client dials with does: `https://evil.example\\@a.trusted.io` is now checked as evil.example (refused unless granted) instead of a.trusted.io. Hosts without a backslash are unchanged. g01 M4872"
+}
