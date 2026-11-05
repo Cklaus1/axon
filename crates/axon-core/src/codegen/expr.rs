@@ -4336,11 +4336,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let ptr_ty = self.ir.context.ptr_type(AddressSpace::default());
         let target_params = target.get_type().get_param_types();
         let mut thunk_params: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
-        thunk_params.extend(
-            target_params
-                .iter()
-                .map(|t| BasicMetadataTypeEnum::from(*t)),
-        );
+        thunk_params.extend(target_params.iter().copied());
         let thunk = self.ir.module.add_function(
             &format!("__axon_fnval_{name}"),
             i64_ty.fn_type(&thunk_params, false),

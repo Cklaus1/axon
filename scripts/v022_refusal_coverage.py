@@ -7560,7 +7560,8 @@ def main():
     if NOT_YET_SCANNED:
         print(f"refusal coverage: every refusal site in the scanned files has a row, a checkable "
               f"exemption or a counted REMAINDER entry; {len(NOT_YET_SCANNED)} in-scope file(s) NOT YET SCANNED (a freeze "
-              f"refuses until none is)")
+              f"refuses until none is); REMAINDER is NOT claimed covered: "
+              f"`python3 scripts/v022_refusal_coverage.py --remainder`")
     else:
         print("refusal coverage: every refusal site in every in-scope file has a row, a checkable "
               "exemption, or is on the counted REMAINDER list (guards no test observes alone; REMAINDER "
