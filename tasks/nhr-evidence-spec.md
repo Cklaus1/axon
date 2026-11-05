@@ -2,8 +2,8 @@
 
 **Status: PARTIAL 2026-11-05 (O-NHR-06 stays open as classified by NE-9; built on `b4/nhr` 75181583, `b4/nrv` 379a4ea9, merged
 on `b4/merge`): NE-1..NE-9 and the Q3 USAGE paragraph done; the NE-8 NRV-1/NRV-2 fixes landed; NRV-3 is O-NHR-08. The integrated
-strict gate passed at 98d41ce7 (rc 0, 54m28s); cortex receipt PASS at 43dda51d; g01 67/67 + 8/8 killed. Not done: the Q1 paid
-dry-run series (needs a $0.10-credit key). Build authorized by the human 2026-11-05 ("use recommendations, build batch 4").
+strict gate passed at 98d41ce7 (rc 0, 54m28s); cortex receipt PASS at 43dda51d; g01 67/67 + 8/8 killed. The Q1 dry-run series ran
+2026-11-05 on CERE at 19c277eb (§8, `[DECIDED by human 2026-11-05: CERE, loopback exception]`). Build authorized by the human 2026-11-05 ("use recommendations, build batch 4").
 Enabling `--unattended` is still NOT authorized (§10 Q3 of `unattended-auth-spec.md`).**
 
 **Step 1 review** (2026-11-04; `AuditNhr` NEA-1..6, `DevloopNhr` NED-1..7; each re-checked by the drafter, markers inline):
@@ -386,6 +386,10 @@ row: no deterministic test reaches it. M4819 pins its end state (a special file 
 
 `[DECIDED by human 2026-11-05: Q1 yes, Q2 confirm (recorded in r6-ledger-spec.md §3), Q3 accept with the USAGE paragraph.]`
 
+`[DECIDED by human 2026-11-05: Q1 runs on CERE instead of OpenRouter]` CERE (`Qwen3.8-Flash-Next`, production
+`127.0.0.1:18307`) costs $0 in tokens, so no external credit cap is needed. CERE serves only plain HTTP, so 2-N1 gained
+the loopback exception (`unattended-auth-spec.md` §4 `generator`). Log: §8 "Q1 dry-run series on CERE".
+
 ## 8. Verification log (draft 9300d9fd, 2026-11-04)
 
 Observed: the reference `cortex` refuses `--unattended` (built without the feature); NE-2 FIFO block (2.0 s, cut); NE-3 ENOSPC as
@@ -474,3 +478,22 @@ Reviewer `history://NhrReview` (`security-reviewer`, read-only; it had no shell,
 Read and found correct by the reviewer (not probed): replay (renameat2 `.issued`→`.used`), opt-in (`O_NOFOLLOW`, root-held dirs,
 initial userns), env refusals, checker re-hash (F7), a terminal record on every exit, watchdog cut, mint judging the preview. Not
 reviewed line by line: `run_ledger.rs`, `audit_runs.rs`, `fence.rs`, `approval.rs`, R6 L1-L3 seal/append.
+
+### Q1 dry-run series on CERE at 19c277eb (2026-11-05)
+
+Binaries built at 19c277eb into `/var/tmp/r51-tmp/b5-bin/` (cortex `--features unattended` 2a03ef57…, axon 
+`--no-default-features` f237abd5…, axon-intent 790dafbd…). Scripts and records: `/var/tmp/r51-tmp/b5-cere/{q1,q1b}.sh`,
+`q1.transcript`, `q1b.transcript`, `q1/`. Every run sat inside `unshare -m` with a private tmpfs `/etc/axon` holding the
+opt-in; the host's `/etc/axon` stayed empty. The bearer token came from `/etc/cere/cere-t4.env`
+(`CERE_TOKEN_TRAINLOOP`, the only one `/v1/models` accepts) and occurs in no output file.
+
+| step | observed |
+|---|---|
+| 3 runs, `AXON_AI_PROVIDER=openai`, `AXON_AI_BASE_URL=http://127.0.0.1:18307`, `ai:Qwen3.8-Flash-Next`, max 3 proposals, deadline 90 s | each mint rc 0, cortex rc 0 `verified_done` in ≈1 s, 3 steps; `broken.ax` fixed (`n + 2` → `n * 2`) with three different byte layouts (sha256 d64f8381…, 6689247f…, 970feec0…), so the model was sampled live, not a fixed reply |
+| NE-7.2's 10 $0 runs into the SAME store and ledger | each rc 20 `budget_exhausted`, file unchanged |
+| store / ledger | 13 `.used`, 0 `.issued`, 0 `.unrecorded`; 26 ledger lines |
+| `audit-runs --json` over all 13 | rc 0, 13 runs, 13 consumed, `findings: []`; 3 `accepted` terminal records (exit 0) and 10 with `accepted: null` (exit 20). C1 has now audited `accepted` records and their `accepted-mismatch` join |
+| `ws1/broken.ax` edited after its run, audit re-run | rc 0, `findings: []`. As specified: `accepted-mismatch` compares the record's `accepted.sha256` with the ledger's last `after_sha256` (`r6-ledger-spec.md:106`), not the live file; a mismatching ledger is covered by `run_ledger::tests::c1_accepted_mismatch` |
+
+Spend: $0 (CERE tokens are not billed; no OpenRouter call). The 3 requests count against the trainloop token's
+scope on the production server (`/v1/cere/stats` counters).
