@@ -954,7 +954,8 @@ S09U_LOG="$(mktemp "${TMPDIR:-/tmp}/gate-s09u.XXXXXX")"
 S09U_RC=0
 export RUST_TEST_NOCAPTURE=1
 exec 3>&1 4>&2 >"$S09U_LOG" 2>&1
-lane_cargo S09U cargo test --locked -p axon-cortex --features unattended || S09U_RC=$?
+lane_cargo S09U cargo test --locked -p axon-cortex --features unattended \
+  || S09U_RC=$?
 exec 1>&3 2>&4 3>&- 4>&-
 unset RUST_TEST_NOCAPTURE
 cat "$S09U_LOG"
