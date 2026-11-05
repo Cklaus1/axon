@@ -404,3 +404,56 @@ Step 1 review, re-checked by the drafter 2026-11-04:
 
 Not observed: post-fix behaviour, the NE-3/NE-4 tests, the NE-6 unattended probes, and everything marked `[INFERENCE]`. No model
 call, nothing spent.
+
+### Verification at the integrated head ab2a650a (2026-11-05), NE-6 / NE-7.2
+
+Binaries: `/var/tmp/r51-tmp/b4-bin/{cortex (--features unattended), axon (--no-default-features), axon-intent}` built at
+ab2a650a. $0: every unattended run used `ai:m` at `AXON_AI_BASE_URL=https://127.0.0.1:9`; `OPENROUTER_API_KEY`/`ANTHROPIC_API_KEY`
+unset. Every opt-in was a private tmpfs `/etc/axon` inside `unshare -m`; the host `/etc/axon` was empty before and after (0 entries).
+Envelopes minted with `axon-intent authorize-repair --cortex <b4 cortex>` and a throwaway operator key. Scripts and transcripts:
+`/var/tmp/r51-tmp/b4-probe/{pn0,pn1,pn2,pn3,pn4,ne72}.{sh,transcript}`.
+
+**g01** (`privtmp.sh python3 -B scripts/v022_g01_mutations.py --only=<67 ids> b4-g01.json`, detached worktree at ab2a650a, own
+target dir, 06:59:45Z-07:12:14Z, 749 s): rc 0, "Active mutants: 67/67 KILLED by their own attack", REFUSED_ELSEWHERE 0,
+unexpected survivors 0, stale/unapplied 0; JSON `commit` ab2a650a9c34, `tree_clean` true, `all_killed` true. Rows: M4216-M4218,
+M4520-M4552, M4790-M4805, M4810-M4824 (none retired, all present). Log `/var/tmp/r51-tmp/b4-probe/g01.log`, result
+`/var/tmp/r51-tmp/b4-probe/b4-g01.json`.
+
+**Control** (pn0): a correctly opted-in unattended run: mint rc 0, cortex rc 20 (`budget_exhausted`), `.issued` -> `.used`, file
+unchanged, ledger 2972 bytes, `audit-runs` clean rc 0.
+
+**P-N1** (pn1): `nc -l 127.0.0.1 18931` listening (`ss` LISTEN 1); `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `ALL_PROXY` =
+`http://127.0.0.1:18931` each: rc 29, ``unauthorized: `HTTPS_PROXY` is set; it is refused with --unattended`` (and the same for each
+name); listener 0 bytes; store still `<id>.issued`; broken.ax unchanged; ledger 0 bytes.
+
+**P-N2** (pn2): (a) `/etc/axon` tmpfs `mode=0777`, valid opt-in 0600 root: rc 29, "this host has not opted in to unattended repair:
+/etc/axon has mode 0777: a user other than root can put a file there". (b) `/etc` a private overlay (lower = host `/etc`, upper on a
+private tmpfs), `/etc/axon -> /etc/axon-real` (0755 root, valid opt-in): rc 29, "this host has not opted in to unattended repair:
+/etc/axon: Not a directory (os error 20)". Both: store still `.issued`, file unchanged, ledger 0 bytes.
+
+**P-N4** (pn4; broken.ax with one `read_file` and one `write_file`, `--read-prefix <dir> --fs-write-scope <scratch>`):
+`scratch/l -> <run ledger>` present at mint: `authorize-repair` rc 2, "the cortex preview failed (exit 2): grant
+--envelope-preview: E1s: `.../scratch/l` is a symlink". Symlink made after minting (mint rc 0): cortex rc 29, "unauthorized: E1s:
+`.../scratch/l` is a symlink", store still `.issued`, file unchanged, ledger 0 bytes.
+
+**P-N3** (pn3; 16 MiB image, `mkfs.ntfs -F -Q`, `mount -t ntfs3 -o loop` inside `unshare -m`, kernel 7.0.0-43-generic).
+Attended (`--generator "literal:\n    n * 2\n"` with real newlines): rc 0, `verified_done after 3 step(s) — repaired \`double\``,
+`grep -c "n \* 2"` = 1, `ls -A ws` = `broken.ax`; stderr only `audit openrouter:... unavailable: OPENROUTER_API_KEY not set`.
+Unattended (envelope minted over the ntfs3 workspace, mint rc 0): rc 20, `outcome budget_exhausted`, `writes 0`, `.issued` ->
+`.used`, file unchanged, `ls -A ws` = `broken.ax`, `audit-runs` clean rc 0. The run made no write (the `ai:` generator never
+proposes at $0), so the `RENAME_EXCHANGE` refusal (exit 22) is NOT observed end to end. Its evidence is g01 M4532-M4535 and M4537
+killed at ab2a650a (`cas::tests::a_filesystem_without_exchange_refuses_clearly`,
+`an_attended_run_without_exchange_takes_the_q4_rename`), with M4538 (`cli n3_an_attended_repair_on_ntfs3_repairs_the_file`).
+
+**P-N8**: g01 M4540, M4541, M4542/M4548, M4549, M4550 KILLED at ab2a650a (`cas::tests::a_file_created_at_the_q4_placement_is_not_clobbered`,
+`a_file_created_at_the_q4_rename_back_is_not_clobbered`, `a_filesystem_without_hard_links_refuses_the_q4_placement`,
+`a_q4_create_leaves_no_temp_file`), plus the attended ntfs3 repair above.
+
+**NE-7.2** (ne72): 10 envelopes over 10 copies of `crates/axon-cortex/fixtures/broken.ax`, ONE spent store and ONE run ledger,
+each run in its own `unshare -m`: 10/10 mint rc 0, cortex rc 20 `budget_exhausted`, file unchanged; store 10 `.used`, 0 `.issued`,
+0 `.unrecorded`; ledger 20 lines (30375 bytes). `axon-intent audit-runs --spent-store ... --run-ledger ... --envelopes ... --json`:
+rc 0, `schema axon-intent-audit-runs/1`, `findings: []`, 10 runs, 10 consumed; every run `exit_code 20`, `outcome
+budget_exhausted`, `writes 0`, `accepted null`. JSON: `/var/tmp/r51-tmp/b4-probe/ne72/audit.json`.
+
+Not observed: the unattended `RENAME_EXCHANGE` refusal end to end (needs a proposal: a paid or stubbed model); an accepted repair in
+the dry-run series (Q1, paid).
