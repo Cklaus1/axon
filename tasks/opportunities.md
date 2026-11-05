@@ -3580,6 +3580,10 @@ lost on copy), `one_read` (`fanotify_init` EPERM), `protected_host` (EPERM), `ch
 `inputs_holding_what_the_digest_cannot_see_are_refused` (`/tmp/.tmp*/cand` Permission denied). Fix direction per owner: a counted
 `requires root` skip with the reason (like S09U's precondition), or a privileged CI job. `check_effects` looks like a real result
 mismatch, not a privilege gap [INFERENCE: not reproduced locally].
+On the integrated head (b4/merge 43dda51d, run 41992018913): Docs, Check & Test and Codegen are green; the workspace job fails
+74 tests in 11 suites, the ones above plus batch 4's own `axon-cortex` lib test
+`unattended::tests::a_special_file_at_or_under_a_write_root_is_refused_by_kind` (`mknod` of a device: EPERM unprivileged; it
+passes as root in the gate's S09U, like every unattended test, which asserts root rather than skip).
 
 ### O-CI-03 - [low] CI hygiene residue (ci-hygiene §0 out of scope)
 - Interpreter stdout (e.g. the REDTEAM line from `examples/goals/redteam-goal.ax:49`) leaks past libtest capture into CI logs.

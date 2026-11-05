@@ -1,9 +1,9 @@
 # ci-hygiene - spec (CH-1..CH-9, batch 4 Lane C)
 
 **Status: PARTIAL 2026-11-05 on b4/ci-hygiene 1a34c386 (O-CI-01 stays open: CI is not green yet; O-CI-02 stays open): CH-1..CH-8
-built and merged on `b4/merge`, CH-9 stamps applied. Draft PR #9 run 41983378347: Check & Test and Codegen fail only on
-`pci_delta_note` (cleared by the integrator's pci regen, not yet re-run in CI); the workspace job fails on the out-of-lane suites in
-O-CI-02 (NH-3 B). Build authorized by the human 2026-11-05 ("use recommendations, build batch 4").**
+built and merged on `b4/merge`, CH-9 stamps applied. Integrated run 41992018913 at 43dda51d: Docs, Check & Test and Codegen
+pass; the workspace job fails only on the privilege suites in O-CI-02 (NH-3 B). Build authorized by the human 2026-11-05
+("use recommendations, build batch 4").**
 
 **Step 1 review** (`history://AuditCI` CIA-1..5, `history://DevloopCI` CID-1..7; every finding re-checked at 9300d9fd by the drafter):
 
