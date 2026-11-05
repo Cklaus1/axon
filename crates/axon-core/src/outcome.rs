@@ -109,6 +109,13 @@ pub fn installed() -> bool {
     CHANNEL.get().is_some()
 }
 
+/// C-2 (O-GV-12): the fd the installed outcome channel writes to, so
+/// `--source-fd` can refuse to read the program from it.
+#[cfg(unix)]
+pub fn installed_fd() -> Option<i32> {
+    CHANNEL.get().map(|c| c.fd)
+}
+
 /// The interpreter states how the program ended. The last call wins: the
 /// outermost run finishes last.
 pub fn record_run(kind: Kind, class: &'static str, reason: &str) {

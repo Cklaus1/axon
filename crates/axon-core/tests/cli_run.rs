@@ -47984,6 +47984,72 @@ fn run_source_fd_provenance_hashes_fd_bytes() {
     );
 }
 
+/// C-2 (O-GV-12): a supervisor that points `AXON_OUTCOME_FD` at a regular
+/// file and passes the SAME fd as `--source-fd` handed the outcome file over
+/// as the program: the run read it (rc 2, "no `main`") and wrote no record.
+/// The equality is refused like every other `--source-fd` refusal: rc 1 and
+/// one `compile`/`source` record on the outcome fd.
+#[cfg(target_os = "linux")]
+#[test]
+fn run_source_fd_equal_to_the_outcome_fd_is_refused() {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+    let d = gf1_dir("outfd");
+    let rec = d.join("outcome.json");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&rec)
+        .unwrap();
+    let (nonce_reader, mut nonce_writer) = std::io::pipe().unwrap();
+    nonce_writer
+        .write_all(format!("{GV_NONCE}\n").as_bytes())
+        .unwrap();
+    drop(nonce_writer);
+    let ffd = file.as_raw_fd();
+    let nfd = nonce_reader.as_raw_fd();
+    let mut cmd = axon();
+    cmd.current_dir(&d)
+        .env("XDG_CACHE_HOME", d.join("cache"))
+        .env("AXON_OUTCOME_FD", "3")
+        .env("AXON_OUTCOME_NONCE_FD", "4")
+        .stdin(std::process::Stdio::null())
+        .args(["run", "--source-fd", "3", "x.ax"]);
+    // SAFETY: only async-signal-safe `fcntl`/`dup2` between fork and exec.
+    unsafe {
+        cmd.pre_exec(move || {
+            let f = libc::fcntl(ffd, libc::F_DUPFD_CLOEXEC, 10);
+            let n = libc::fcntl(nfd, libc::F_DUPFD_CLOEXEC, 10);
+            if f == -1 || n == -1 || libc::dup2(f, 3) == -1 || libc::dup2(n, 4) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let out = cmd.output().unwrap();
+    drop(file);
+    drop(nonce_reader);
+    let record = std::fs::read_to_string(&rec).unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+    let err = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<&str> = record.lines().collect();
+    assert!(
+        out.status.code() == Some(1)
+            && err.contains(
+                "error: --source-fd 3 is the outcome fd named by AXON_OUTCOME_FD; \
+                 the program cannot be read from it"
+            )
+            && lines.len() == 1
+            && lines[0].contains("\"schema\":\"axon-outcome/1\"")
+            && lines[0].contains("\"kind\":\"compile\"")
+            && lines[0].contains("\"class\":\"source\""),
+        "ATTACK: the outcome file was read as the program: {out:?}\nrecord: {record:?}"
+    );
+}
+
 // ---- genviab-b3 B3-3: the outcome nonce travels on fd 4, never in env -----
 
 /// The nonce is read from `AXON_OUTCOME_NONCE_FD` (fd 4) and echoed in the
