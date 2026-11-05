@@ -619,6 +619,7 @@ pub fn entry_dir_of(source_path: &std::path::Path) -> Option<&std::path::Path> {
 /// group- or world-writable, or it is the system temp directory.
 pub fn entry_dir_skip_reason(dir: &std::path::Path) -> Option<&'static str> {
     const UNREADABLE: &str = "cannot read its permissions";
+    #[cfg(unix)]
     const WRITABLE: &str = "group- or world-writable directory";
     const TEMP: &str = "the system temp directory";
     let Ok(meta) = std::fs::metadata(dir) else {

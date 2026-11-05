@@ -79,6 +79,7 @@ impl Kind {
 }
 
 struct Channel {
+    #[cfg_attr(not(unix), allow(dead_code))]
     fd: i32,
     nonce: String,
 }
