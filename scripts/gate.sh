@@ -936,6 +936,37 @@ lane_cargo S09 cargo test --locked -p axon-cortex --features ai \
 stage_end
 fi
 
+# nhr-evidence NE-1: the NH-R1 S-tests (`--features unattended`) are the §9
+# "S-tests green" evidence, and before this stage they ran only inside g01 rows.
+# Host prerequisite: uid 0 and an existing /etc/axon (a mount point only: the
+# tests mount a private tmpfs over it inside `unshare -m`). Missing either FAILS
+# by name; it never skips green. Output is uncaptured (RUST_TEST_NOCAPTURE, an
+# env var because a trailing `-- --nocapture` would break lane narrowing), and a
+# `SKIP ` line fails the stage: s14 returns early on one when `unshare --user`
+# fails, so green means the N7 S-test really ran.
+if lane_runs S09u; then
+stage_begin S09u "cortex unattended lint + S-tests"
+[ "$(id -u)" = 0 ] || fail "cortex unattended S-tests need uid 0 (run the gate as root)"
+[ -d /etc/axon ] || fail "cortex unattended S-tests need an existing /etc/axon directory (mount point only)"
+lane_cargo S09u:lint cargo clippy --locked -p axon-cortex --all-targets --features unattended -- -D warnings \
+  || fail "cortex unattended lint"
+S09U_LOG="$(mktemp "${TMPDIR:-/tmp}/gate-s09u.XXXXXX")"
+S09U_RC=0
+export RUST_TEST_NOCAPTURE=1
+exec 3>&1 4>&2 >"$S09U_LOG" 2>&1
+lane_cargo S09u cargo test --locked -p axon-cortex --features unattended || S09U_RC=$?
+exec 1>&3 2>&4 3>&- 4>&-
+unset RUST_TEST_NOCAPTURE
+cat "$S09U_LOG"
+if [ "$S09U_RC" != 0 ]; then rm -f "$S09U_LOG"; fail "cortex unattended S-tests"; fi
+if grep -q '^SKIP ' "$S09U_LOG"; then
+  grep '^SKIP ' "$S09U_LOG"; rm -f "$S09U_LOG"
+  fail "cortex unattended S-tests printed a SKIP line (an S-test did not run)"
+fi
+rm -f "$S09U_LOG"
+stage_end
+fi
+
 
 # A gate function that produced no readable verdict must not be scored as a
 # pass. Landed RED and deliberately unwired; wired here now that it is green,

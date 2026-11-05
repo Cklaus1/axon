@@ -903,3 +903,4 @@ lines, instead of guessing where literals are.
 ## Batch 4 (containment-b4, nhr-evidence, ci-hygiene)
 
 - **Run `scripts/spec_ledger.py` before committing a new spec** (batch 4 Step 0): 792478e6 committed `neural-programs-spec.md` with items NP-0..NP-5 and entry O-NP-01, both already used by native-parity, and `main` was red at the gate's `spec ledger` stage until the integrator renamed them NR-* / O-NR-01. Only `verify_all_specs.sh` had been run, and it does not check item-id uniqueness. Rule: a spec commit runs both checks.
+- **Never edit a script a running gate is executing** (batch 4 Step 0): bash reads `scripts/gate.sh` incrementally through fd 255, and the edit tool rewrites in place (same inode), so adding S09u while the baseline ran shifted every byte offset under it; the run was killed and restarted. Rule: no edits in the integration worktree while its gate runs; edit in a lane or wait.

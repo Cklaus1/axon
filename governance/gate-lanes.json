@@ -46,6 +46,8 @@
     {"id": "S25", "banner": "axon kernel gate (Linux microVM good/evil)", "class": "selectable", "split": "none"},
     {"id": "S09", "banner": "cortex ai-generator lint + tests", "class": "selectable", "split": "per-target",
      "split_cmd": "cargo test --locked -p axon-cortex --features ai", "lint_unit": true},
+    {"id": "S09u", "banner": "cortex unattended lint + S-tests", "class": "selectable", "split": "per-target",
+     "split_cmd": "cargo test --locked -p axon-cortex --features unattended", "lint_unit": true},
     {"id": "S10", "banner": "gate_verdict_is_read", "class": "selectable", "split": "none"},
     {"id": "S11", "banner": "native codegen build", "class": "selectable", "split": "none"},
     {"id": "S12", "banner": "feature builds + tests (serde-json, asi-runtime)", "class": "selectable", "split": "none"},
