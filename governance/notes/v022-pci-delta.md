@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 22fa6dadc7499b7f84e0a07af1f17e668a93e854
+generated-at: 59ea6f2bcdfec0c4a0e39bdc0ce9c034d63391f5
 
-`git diff --numstat 31413ca7..22fa6dad -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..59ea6f2b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -44,7 +44,7 @@ generated-at: 22fa6dadc7499b7f84e0a07af1f17e668a93e854
 | `crates/axon-core/src/codegen/display.rs` | 514 | 0 |
 | `crates/axon-core/src/codegen/enum_layout.rs` | 451 | 0 |
 | `crates/axon-core/src/codegen/escape.rs` | 511 | 0 |
-| `crates/axon-core/src/codegen/expr.rs` | 4068 | 931 |
+| `crates/axon-core/src/codegen/expr.rs` | 4064 | 931 |
 | `crates/axon-core/src/codegen/link.rs` | 1726 | 337 |
 | `crates/axon-core/src/codegen/match_pat.rs` | 561 | 168 |
 | `crates/axon-core/src/codegen/mod.rs` | 699 | 164 |
@@ -108,9 +108,9 @@ generated-at: 22fa6dadc7499b7f84e0a07af1f17e668a93e854
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 72976 | 10084 |
+| total | 72972 | 10084 |
 
-`git log --reverse 31413ca7..22fa6dad -- crates/axon-core/src`:
+`git log --reverse 31413ca7..59ea6f2b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -562,7 +562,8 @@ generated-at: 22fa6dadc7499b7f84e0a07af1f17e668a93e854
 | e19ad80d | containment-b4 C-2 source fd | CLI (containment-b4 C-2, O-GV-12): `axon run --source-fd N` with N equal to the installed outcome fd is refused with a compile/source record instead of reading the outcome file as the program. The check sits after the regular-file test, so only that probe's message changes. g01 M4801 |
 | 399d673d | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | bef0ab14 | nhr-evidence NE-8 NRV-1 endpoint host | CHECKER (nhr-evidence NE-8 NRV-1): capabilities::host_of, the host a static `@[contained(net: [...])]` pin is checked against, also ends the authority at `\`, as the WHATWG parser the HTTP client dials with does: `https://evil.example\@a.trusted.io` is now checked as evil.example (refused unless granted) instead of a.trusted.io. Hosts without a backslash are unchanged. g01 M4872 |
-| 448 commits | | |
+| 59ea6f2b | batch 4 codegen clippy | NATIVE (codegen/expr.rs, fn-value thunk): `target_params.iter().map(|t| BasicMetadataTypeEnum::from(*t))` becomes `.iter().copied()`; the parameter types are already `BasicMetadataTypeEnum`, so the conversion was the identity (clippy useless_conversion under --strict's codegen-feature clippy). No IR or behaviour change. The interpreter is untouched. |
+| 449 commits | | |
 <!-- END MECHANICAL -->
 
 

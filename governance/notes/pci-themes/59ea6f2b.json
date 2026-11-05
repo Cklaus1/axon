@@ -1,0 +1,4 @@
+{
+  "theme": "batch 4 codegen clippy",
+  "text": "NATIVE (codegen/expr.rs, fn-value thunk): `target_params.iter().map(|t| BasicMetadataTypeEnum::from(*t))` becomes `.iter().copied()`; the parameter types are already `BasicMetadataTypeEnum`, so the conversion was the identity (clippy useless_conversion under --strict's codegen-feature clippy). No IR or behaviour change. The interpreter is untouched."
+}
