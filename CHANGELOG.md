@@ -1,6 +1,6 @@
 # Axon Changelog
 
-## Batch 4: containment-b4, nhr-evidence (tasks/containment-b4-spec.md, tasks/nhr-evidence-spec.md)
+## Batch 4: containment-b4, nhr-evidence, ci-hygiene (tasks/containment-b4-spec.md, tasks/nhr-evidence-spec.md, tasks/ci-hygiene-spec.md)
 
 - **fs scopes resolve symlinks and refuse /proc magic links** (containment-b4 C-1, O-GV-08): a read, write, copy, rename or durable-store dir whose resolved path leaves the grant, or crosses a `/proc` magic link, now exits 8. Before, a symlink under a granted prefix, or a `/proc/self/root` grant, reached any file. Grant roots are pinned when the scope is created, so swapping a root for a symlink mid-run changes nothing. A missing file under the prefix stays an `Err`, not a refusal. g01 M4790-M4800, M4802-M4803.
 - **Nested sandboxes no longer widen the scope** (C-4): every enclosing program sandbox's fs/net scope binds a nested `sandbox_run`, so an inner `*` grant escapes nothing (exit 8). g01 M4804-M4805.
@@ -10,6 +10,14 @@
 - **NH-R1 tests** (NE-3/NE-4/NE-5, closing O-NHR-01/02/03): a started append failing with ENOSPC marks `<id>.unrecorded` and exits 29 with no check run; the E3 watchdog path's terminal record is asserted (exit 20, `budget_exhausted`); a signed `axon-approval/4` envelope is refused as a job approval by `axon-os run` and `replay`. Every S-test that reaches consume asserts a C1 audit (NE-7.1). g01 M4813-M4818.
 - **Gate stage S09U** (NE-1): `scripts/gate.sh` runs the NH-R1 S-tests (`--features unattended`, lint + tests). It fails when not root, without `/etc/axon`, or when any S-test prints a `SKIP` line.
 - **cortex USAGE** names `--unattended`'s four accepted limits (F2 env, Linux-only, one spent store per host, N6).
+- **ci:** host-scope `-D warnings` (CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS) so wasm builds keep their committed rustflags (CH-1)
+- **ci:** `--no-fail-fast` on all test steps, fmt/clippy/claims run under `!cancelled()`, `workflow_dispatch` (CH-2)
+- **tests:** harness_integrity's orphan commit carries its own git identity (CH-3)
+- **android_lifecycle:** host half (A) runs before the NDK/codegen skips; lifecycle.ax exits 0 and its teardown line is the witness (CH-4)
+- **tests:** the wasm runnable-label test counts a missing prerequisite as a skip and fails any other non-link; CI builds the wasm32 axon-rt (CH-5)
+- **ios.yml:** the never-authored simulator-parity step is dropped and the job is named for what it verifies (CH-6)
+- **ci:** LLVM apt install retries 3x under pipefail (CH-7)
+- **axon-core:** wasm32 dead-code cfgs (CH-8)
 
 ## AX-80: debug builds select a speculated if's value and divide by 2^k with shifts
 

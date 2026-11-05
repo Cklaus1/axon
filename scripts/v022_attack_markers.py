@@ -4221,3 +4221,8 @@ ATTACK_MARKERS.update({
     'M4823': r'ATTACK: a special file at or under a write root was admitted',
     'M4824': r'ATTACK: a special file at or under a write root was admitted',
 })
+
+# ci-hygiene CH-4 (ids M4830, b4 Lane C block M4830-M4849)
+ATTACK_MARKERS.update({
+    'M4830': r'ATTACK: android_lifecycle skipped before the host half \(A\) ran',
+})

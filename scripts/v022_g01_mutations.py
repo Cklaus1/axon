@@ -15259,5 +15259,14 @@ MUTATIONS += [
      'axon-cortex', '--features unattended --lib', 'unattended::tests::a_special_file_at_or_under_a_write_root_is_refused_by_kind'),
 ]
 
+
+# ci-hygiene b4 Lane C, CH-4 (id M4830, block M4830-M4849; M4831-M4849 unused)
+MUTATIONS += [
+    ('M4830', 'CH-4: android_lifecycle runs the host half (A) before the NDK skip', 'scripts/android_lifecycle.sh',
+     'echo "android_lifecycle: (A) host_await lifecycle round-trip…"',
+     'skip "Android NDK not found"',
+     'axon-core', '--no-default-features --test cli_run', 'android_lifecycle_adapter_r14'),
+]
+
 if __name__ == "__main__":
     main()

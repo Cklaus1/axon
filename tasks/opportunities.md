@@ -115,6 +115,8 @@ Consequence for this loop: the recorded baseline (`cargo test --workspace`) does
 **not** include fmt. "Green" for this run remains test-only. T7 must account for
 this — turning on more CI does not help while an existing CI job is already red.
 
+`[FIXED 29802068 (fmt sweep) + 9520726f (fmt in gate.sh at --all): ci.yml:95-96 runs `cargo fmt --all -- --check`; it exits 0 with no output on 9300d9fd (2.6 s, nightly-2026-07-11). Open - CI has never reached that step: it follows `cargo test` (ci.yml:82-83), which fails every run; ci-hygiene CH-2]` Reached since CH-2: CI run 41978668226 ran `cargo fmt --all -- --check` and it passed (b4/ci-hygiene 33b9f2ea).
+
 ### O006 — [high] Audit every `*_parity.sh` gate for the same vacuous-skip pattern
 
 Found while fixing T11. `codegen_str_reverse_replace_match_interp_on_utf8`
@@ -230,6 +232,8 @@ Correct sequencing, which is why this is not a one-line fix:
 
 Doing (2) without (1) means no agent can run in a microVM at all. Doing (1)
 alone is already an improvement and is independently testable.
+
+`[FIXED 2cdb481a (T48) + 25b7dea1: every miss path denies - mmds.rs:59-61 no boot_params, :71-73 no cmdline ptr, :111-113 axon.policy= absent, :137-139 base64 decodes to nothing, read_policy :173-179 !POLICY_READY, mmds_parse.rs:186-191 absent/non-array allowed_effects, :215-217 unterminated array (all EffectSet(0)); statics mmds.rs:47 EffectSet(0), enforce.rs:47 0; prerequisite (1) delivered: axon-vm firecracker.rs:802-807 appends axon.policy=<base64>; tests crates/axon-vm/tests/guest_policy_parse.rs:46,167. Nit - mmds.rs:58 comment still says "open policy"]` `[INFERENCE: not booted in a guest]`
 
 ### O008 — [medium] Rebuilding the guest kernel invalidates the local attestation baseline
 
@@ -352,6 +356,8 @@ Fix: add a generic `walk_expr(&Expr, &mut impl FnMut(&Expr))` to codegen/mod.rs,
 re-express `expr_calls` in terms of it, then push the same E0910 for any
 `Some(t)` where `t != "balanced"` — arguably for ANY `Some(t)`, since an unknown
 tier is E1302 in the interpreter and native cannot replicate that.
+
+`[FIXED 17f2be9b (T46): ast::walk_expr (ast.rs:702, moved from codegen/mod.rs); per-call tier refusal codegen/mod.rs:1391-1412 (E0910); tests cli_run.rs:703 native_guard_tier_e0910, :10997 build_refuses_per_call_ai_tier_e0910_f062]`
 
 ### O013 — [medium] `wasm_aot_runs_and_matches_interp_on_pure_int` fails under full-suite parallelism
 
@@ -3539,6 +3545,8 @@ interop at all (R41 Q1) is a product-direction decision. Size L [INFERENCE].
 The `CI` workflow concluded `failure` on all 303 runs (2026-04-30 → 2026-11-04); the iOS workflow never passed either. The
 newest 7 runs fail the same five tests. `[SPECCED 2026-11-04: tasks/ci-hygiene-spec.md CH-1..CH-9. DRAFT after Step 1; not
 authorized for build.]`
+`[PARTIAL 2026-11-05: CH-1..CH-8 merged on b4/merge. PR #9 run 41983378347 left only pci_delta_note (Check & Test, Codegen) and the
+O-CI-02 privilege suites (workspace). Stays open until a CI run on main is green.]`
 
 ### O-C-01 - [low] The fs scope's resolve-then-open window
 After containment-b4 C-1, the scope checks a resolved path and `DefaultHost` (`crates/axon-core/src/host.rs:189-247`) opens the
@@ -3556,6 +3564,27 @@ streaming walk (a change to R6's tree). Out of scope of tasks/nhr-evidence-spec.
 tasks/neural-programs-spec.md NR-0 ran the free profiling pass: one eligible function (cortex's candidate ranker), with a +7/22
 oracle ceiling on the pool, but no keyless consumer (`--unattended` requires `--symbol`, CI never runs `cortex`, the examples
 pin the spectrum order). STOP-1v is in force until the human names a consumer and how often it runs (that spec's H6).
+
+### O-CI-02 - [medium] Workspace tests CH-2 unmasks that need root or privileges the CI runner lacks
+Found by LaneCi (ci-hygiene CH-2, draft PR #9 run 41983378347, b4/ci-hygiene 1a34c386): with `--no-fail-fast` the workspace job reaches
+suites that `cargo test` as an unprivileged runner cannot pass. Left failing per ci-hygiene NH-3 B (never `#[ignore]`d):
+`axon-cortex --test cli` `n3_an_attended_repair_on_ntfs3_repairs_the_file` (needs root, mkfs.ntfs); `axon-fabric` `freeze_manifest` (root +
+`/etc/axon`), `guest_build_env` and `guest_build_env_guards` (PermissionDenied on `/var/lib/axon-gbe-scratch-*`), `launcher_isolation` (exec bit
+lost on copy), `one_read` (`fanotify_init` EPERM), `protected_host` (EPERM), `check_effects` (`suite: None`, Passed vs Unknown);
+`axon-os --test sandbox_capture` `the_kernels_environ_copy_holds_no_outcome_nonce` (Permission denied); `axon-psv --test protocol`
+`inputs_holding_what_the_digest_cannot_see_are_refused` (`/tmp/.tmp*/cand` Permission denied). Fix direction per owner: a counted
+`requires root` skip with the reason (like S09U's precondition), or a privileged CI job. `check_effects` looks like a real result
+mismatch, not a privilege gap [INFERENCE: not reproduced locally].
+
+### O-CI-03 - [low] CI hygiene residue (ci-hygiene §0 out of scope)
+- Interpreter stdout (e.g. the REDTEAM line from `examples/goals/redteam-goal.ax:49`) leaks past libtest capture into CI logs.
+- `scripts/wasm_unknown_interp_builds.sh:44` writes a fixed `/tmp/wasm_unknown_check.err` (gate runs use `privtmp.sh`; CI does not).
+- No `wasmtime` on the CI runner: the pure-module RUNNABLE command in `a_wasm_runnable_label_is_only_printed_for_a_module_that_runs` stays unrun in CI.
+- A whole-crate wasm32 check of the `axon` binary warns "unused variable `vsock_port`" at `crates/axon-core/src/main.rs:6697` (a warning since CH-1).
+
+### R14 iOS remainder - [low] simulator parity harness never authored
+`tools/ios-parity-harness/run_on_sim.sh` (+ `Package.swift`) must be authored on a macOS host; CH-6 dropped the step that called it, and
+the `ios.yml` header points at this entry by name.
 
 ## Product ideas, 2026-11-05 (raised by the human; not specced)
 
