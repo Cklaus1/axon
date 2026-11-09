@@ -183,7 +183,12 @@ fn no_program_and_no_generator_exits_2_naming_the_flag() {
     let d = Dir::new("noflag");
     let intent = d.write_intent(HEAD);
     let o = d.intent_cli(&["compile", intent.to_str().unwrap(), "--out", "o"]);
-    assert_eq!(o.status.code(), Some(2), "{}", text(&o));
+    assert_eq!(
+        o.status.code(),
+        Some(2),
+        "ATTACK: compile without a program source fell back to another source: {}",
+        text(&o)
+    );
     assert!(
         String::from_utf8_lossy(&o.stderr).contains("--generator"),
         "ATTACK: compile without a program source did not name --generator: {}",
@@ -388,4 +393,90 @@ fn a_generator_overreaching_twice_is_refused_with_no_program() {
         text(&o)
     );
     assert!(!d.path().join("o/job.ax").exists(), "no triple");
+}
+
+#[test]
+fn an_unrecognized_invocation_exits_2() {
+    let d = Dir::new("unknown");
+    let o = d.intent_cli(&["frobnicate", "x"]);
+    assert_eq!(
+        o.status.code(),
+        Some(2),
+        "ATTACK: an unrecognized invocation did not exit 2: {}",
+        text(&o)
+    );
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("unrecognized invocation"),
+        "{}",
+        text(&o)
+    );
+}
+
+/// `approve --reject` records the rejection: exit 3 and no token.
+#[test]
+fn approve_reject_writes_no_approval_and_exits_3() {
+    let d = Dir::new("reject");
+    let intent = d.write_intent(&with_program(GOOD));
+    let o = d.intent_cli(&["compile", intent.to_str().unwrap(), "--out", "o"]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    let a = d.intent_cli(&["approve", "o/job.axjob", "--by", "alice", "--reject"]);
+    assert!(
+        a.status.code() == Some(3) && !d.path().join("o/job.approval").exists(),
+        "ATTACK: approve --reject wrote an approval: {}",
+        text(&a)
+    );
+}
+
+/// A transcript that cannot be written is a usage error on the lift path:
+/// exit 2 and no triple, never a compile without the report asked for.
+#[test]
+fn an_unwritable_lift_transcript_exits_2_with_no_triple() {
+    let d = Dir::new("lift-unw");
+    let intent = d.write_intent(&with_program(GOOD));
+    let o = d.intent_cli(&[
+        "compile",
+        intent.to_str().unwrap(),
+        "--out",
+        "o",
+        "--transcript",
+        "missing/lift.json",
+    ]);
+    assert!(
+        o.status.code() == Some(2) && !d.path().join("o/job.ax").exists(),
+        "ATTACK: the lift report could not be written and compile went on: {}",
+        text(&o)
+    );
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("cannot write the transcript"),
+        "{}",
+        text(&o)
+    );
+}
+
+/// The same on the generator path.
+#[test]
+fn an_unwritable_generation_transcript_exits_2_with_no_triple() {
+    let d = Dir::new("gen-unw");
+    let intent = d.write_intent(HEAD);
+    let gen = d.generator(&[GOOD]);
+    let o = d.intent_cli(&[
+        "compile",
+        intent.to_str().unwrap(),
+        "--out",
+        "o",
+        "--generator",
+        &gen,
+        "--transcript",
+        "missing/t.json",
+    ]);
+    assert!(
+        o.status.code() == Some(2) && !d.path().join("o/job.ax").exists(),
+        "ATTACK: the generation transcript could not be written and compile went on: {}",
+        text(&o)
+    );
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("cannot write the transcript"),
+        "{}",
+        text(&o)
+    );
 }
