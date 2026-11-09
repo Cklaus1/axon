@@ -3473,6 +3473,9 @@ tuple-pattern components with no subject type. `if let (a, b) = t` inherits this
 known type is shape-checked (wrong length and non-tuple are E0102). Components stay untyped, so component misuse (`(a, b)` on
 `(i64, str)` with `b + 1`) still checks clean and panics at run: typing them refused running programs (a component used as `u8`/`f64`).
 A tuple pattern on a still-unresolved subject (untyped lambda param, generic) stays unchecked, so l1-shaped programs keep running.]`
+`[SPECCED 2026-11-09: tasks/tuple-patterns-spec.md TP-1..TP-4, DRAFT after Step 1 review (AuditTP 7, DevloopTP 7 findings, all
+accepted). NH-1 (refuse the running class whose `let` twin is refused) and NH-2 (TP-4 in batch) are needs-human. O-LF-02 stays
+out (LF-3 documents it as intended).]`
 
 ### O-LF-02 - [low] Fewer names than tuple elements is accepted in `let` (and so in `for (a, b)`)
 `let (a, b) = p` with `p: (i64, i64, i64)` checks rc 0 and prints `3` (`parser.rs:2350-2387` emits one `.i` per name). LF-3 inherits
