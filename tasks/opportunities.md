@@ -3356,6 +3356,7 @@ NOT_YET_SCANNED, so the next PSV --freeze refuses until a judging batch runs - t
 `[PARTLY FIXED 2026-11-05: containment-b4 C-3 (c423aa8d): axon-intent is in ROOT_CRATES; 4 exec builders and 6 spill-over
 exemptions; 17 files NOT_YET_SCANNED, so the next PSV --freeze refuses until a judging batch covers them (NH-1 = A).]`
 `[SPECCED 2026-11-08: tasks/enable-gaps-spec.md EG-4 (judging batch, lanes I-A..I-E; build authorized 2026-11-08).]`
+`[BUILT 2026-11-09: eg/int lanes I-A..I-E + splice c1a16e90 (M4910-M5170); NOT_YET_SCANNED empty, --freeze rc 0.]`
 
 ### O-NHR-05 - [low] R6 L2 terminal-record choices made in the lane, not in the spec
 Terminal `accepted_refusal` is always null (an R5 refusal turns the exit into 22, outside {0,27}); an early exit's
@@ -3562,12 +3563,23 @@ makes the end of the run unbounded, outside E3's deadline [INFERENCE: from the c
 streaming walk (a change to R6's tree). Out of scope of tasks/nhr-evidence-spec.md, which removes only the FIFO block (NE-2).
 `[SPECCED 2026-11-08: tasks/enable-gaps-spec.md EG-2 (streaming hash under byte/manifest/time caps; a terminal record on every
 exit, including the 20,000-file case found while drafting).]`
+`[BUILT 2026-11-09: eg/n 1f087fc4 + review fixes e34809d8 (EGR-1 listing cap, EGR-3); g01 M4900-M4909, M5210-M5211 killed.
+A started walk over a cap refuses before any check, so it has no terminal record (enable-gaps §8 item 6). Residual: O-NHR-09.]`
 
 ### O-NHR-08 - [info] The envelope pins the AI endpoint's host, not its port
 NE-8 NRV-3 (`history://NhrReview`): `endpoint_host` drops the port, so `https://<pinned-host>:8443` is admitted. Stated scope
 (NH-R1 pins "host"); TLS still authenticates the host name. Raised for the §9 enabling decision; fix direction: pin
 `host:port` in the envelope (a schema change to `axon-approval`).
 `[SPECCED 2026-11-08: tasks/enable-gaps-spec.md EG-1 (`endpoint_host` = `host:port`, schema `axon-approval/5`).]`
+`[BUILT 2026-11-09: eg/n 1f087fc4; a port mismatch exits 29 (probe eg1, CERE q1n). g01 M4890-M4899 killed.]`
+
+### O-NHR-09 - [low] A stopped terminal walk attributes no deletion anywhere in its tree
+Found by ReviewEG12 (EGR-2, the enable-gaps §5 item 4 review at b8b7e6ea). When the terminal walk stops (`"" ->
+over-cap:manifest|time`), C1's join skips every path that `before` has and `after` lacks (`run_ledger.rs`, the `stopped &&
+a.is_none()` arm). That includes paths the walk passed before it stopped, because the walk order is not recorded. A check child
+that forces the stop (many late files) hides a foreign deletion from the precise join. The run still gets a `tree-over-cap`
+finding, and its text now says that no deletion is attributed (e34809d8). Fix direction: record the last key the walk reached
+(e.g. `over-cap:time:<key>`, a tree-grammar change) and skip only the paths after it in the walk's component order.
 
 ### O-NR-01 - [info] Neural programs stopped at NR-0: no consumer for a learned ranker
 tasks/neural-programs-spec.md NR-0 ran the free profiling pass: one eligible function (cortex's candidate ranker), with a +7/22
@@ -3590,6 +3602,8 @@ On the integrated head (b4/merge 43dda51d, run 41992018913): Docs, Check & Test 
 passes as root in the gate's S09U, like every unattended test, which asserts root rather than skip).
 `[SPECCED 2026-11-08: tasks/enable-gaps-spec.md EG-3 (the workspace job runs its tests as root with each suite's setup; nothing
 skipped, per NH-3 B).]`
+`[BUILT 2026-11-09: eg/c 3531da13 (opkit_ns.sh `mount -n --move` for libmount 2.39); dispatch run 42569660634 green on all
+four jobs.]`
 
 ### O-CI-03 - [low] CI hygiene residue (ci-hygiene §0 out of scope)
 - Interpreter stdout (e.g. the REDTEAM line from `examples/goals/redteam-goal.ax:49`) leaks past libtest capture into CI logs.

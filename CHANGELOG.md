@@ -1,5 +1,12 @@
 # Axon Changelog
 
+## Batch 5: enable-gaps EG-1..EG-4 (tasks/enable-gaps-spec.md)
+
+- **Unattended envelopes pin the AI endpoint's port** (EG-1, O-NHR-08): `generator.endpoint_host` is now `host:port` with the scheme's default port filled in (`axon_ai::endpoint_authority`), and the schema is `axon-approval/5`. An envelope minted for `127.0.0.1:18307` refuses `:18308` at phase A (exit 29). `cortex repair --unattended`, `axon-os run`/`replay` and the minter refuse `/4` by name; `axon-intent audit-runs` still reads `/4` records (`verify_for_audit`). The preview schema is `cortex-envelope-preview/2`. g01 M4890-M4897, plus amended rows.
+- **The R6 pinned-tree walk is bounded** (EG-2, O-NHR-07): a file is hashed as a stream under 256 MiB of hash bytes per walk (`TREE_HASH_BYTES`), the manifest is capped at 256 KiB (`TREE_MANIFEST_BYTES`, which also counts every directory entry listed), and a terminal walk has 500 ms (`TREE_WALK_TIME`). A capped terminal tree is still recorded: an over-cap file is valued `over-cap:<len>` and a stopped walk carries `"" -> over-cap:manifest|time`. C1 reports `tree-over-cap`. A started walk over a cap refuses before any check (exit 29, `.unrecorded`). Before, a check that wrote a 12 GiB sparse file held the run for 8.8 s at 12.6 GB RSS, and 20000 written files left no terminal record. g01 M4898-M4909, M5210-M5211.
+- **ci: the workspace job runs its tests as root** (EG-3, O-CI-02, ci-hygiene NH-3 B), with each root suite's setup; `scripts/lib/opkit_ns.sh` uses `mount -n --move` (libmount 2.39 on ubuntu-24.04).
+- **Refusal coverage judges `crates/axon-intent`** (EG-4, O-NHR-04): every refusal site in its 17 files has a row, an exemption or a counted REMAINDER entry, and `NOT_YET_SCANNED` is empty, so `v022_refusal_coverage.py --freeze` passes again. g01 M4910-M5170 (lanes I-A..I-E).
+
 ## Unattended repair: a loopback AI endpoint may be plain HTTP (NH-R1 2-N1 amendment, decided 2026-11-05)
 
 - **`cortex repair --unattended` admits `http://` to a loopback IP literal** (`127.0.0.0/8`, `[::1]`) besides

@@ -1,7 +1,8 @@
 # enable-gaps - the gaps before the unattended enabling decision (EG-1..EG-4)
 
-**Status: DRAFT (after Step 1 review). Build authorized by the human 2026-11-08 ("fix both; do your recommendations"). Enabling
---unattended is NOT authorized by this spec (§10 Q3 of unattended-auth-spec.md).**
+**Status: BUILT 2026-11-09 on `main` (eg/int 557e746c; strict gate rc 0, g01 all killed, §5 evidence re-collected in §8). Build
+authorized by the human 2026-11-08 ("fix both; do your recommendations"). Enabling --unattended is NOT authorized by this spec
+(§10 Q3 of unattended-auth-spec.md).**
 
 ### Step 1 review (2026-11-08: AuditEG EGA-1..11, DevloopEG EGD-1..11)
 
@@ -479,6 +480,39 @@ sparse and many-file trees were deleted.
 authorize.rs and audit_runs.rs (sampled). The 500 ms / 256 MiB cap timing under gate load: a load-induced `over-cap:time` on a
 terminal walk turns a §5 item 3 run's audit to exit 1 (EGA-11; such a run is re-collected). The EG-1/EG-2 find strings
 (post-fix code). The 20 s/row g01 figure is DevloopEG's; I found no recorded source (cs3 says 15 s) `[INFERENCE]`.
+
+## 8. Build record and §5 evidence (2026-11-09)
+
+**Lanes** (merged into `eg/int` with `--no-ff`): N `1f087fc4` (EG-1 + EG-2, M4890-M4909), I-A `79527e67` (M4910-M4925),
+I-B `f3368731` (M4970-M5010), I-C `51a9dccc` (M5030-M5065), I-D1 `6f56a365` (M5090-M5112), I-D2 `c6ce1b57` (M5130-M5137),
+I-E `6d1f4e39` (M5150-M5170), C `b8b7e6ea` (EG-3). The snippet splice is `c1a16e90` (11 amended rows, `NOT_YET_SCANNED` emptied).
+Receipt: waived, because every cortex hunk is `cfg(feature = "unattended")` (EGD-3). The waived digest is `7e4b94bd72fdb846`
+(`557e746c`).
+
+**§5 item 4 review** (ReviewEG12, read-only, at b8b7e6ea): no blocker.
+
+| id | sev | finding | disposition |
+|---|---|---|---|
+| EGR-1 | major | the terminal walk's `read_dir` collected and sorted a whole directory before any cap; empty subdirectories never entered the manifest, so listing had no bound | **fixed** e34809d8: names listed are counted against `TREE_MANIFEST_BYTES` (stop on a terminal walk, refuse on a started one). Fail-first `auth::tests::a_tree_of_empty_directories_is_capped_by_its_listing` (failed with the guard disabled). g01 M5210; M4903/M4904 amended (the manifest stop moved into `manifest_cap`). A per-entry deadline check inside the listing was dropped: no test can reach it ahead of the per-entry check, and the listing cap bounds one listing |
+| EGR-2 | minor | a stopped walk skips every deletion, including paths it passed before the stop | the `tree-over-cap` text now says no deletion in the tree is attributed (e34809d8); the precise fix (record the last key) is logged as O-NHR-09 |
+| EGR-3 | minor | a journaled write to a path valued `over-cap:<len>` was always also `unattributed-change` | **fixed** e34809d8: the join skips it (`tree-over-cap` reports the path). Fail-first `run_ledger::tests::c1_a_journaled_write_to_an_over_cap_path_is_not_unattributed`. g01 M5211 |
+
+**§5 items** (binaries built at 557e746c into `/var/tmp/r51-tmp/eg-bin/`: cortex `--features unattended` `62d84829…`,
+axon `af0bd979…`, axon-intent `c593c900…`):
+
+| # | evidence | observed |
+|---|---|---|
+| 1 | `gate.sh --strict` at 557e746c, tee'd to `/var/tmp/r51-tmp/eg-gate2.log` | rc 0, 2634 s; 8287 passed, 0 failed, 17 ignored. S09U exit 0 (49.0 s): `tests/unattended.rs` 34 passed. The earlier gate at 1e9e5164 was also rc 0 (8285/0/17, 3273 s) |
+| 2 | C1 over the S-test runs | the `c1_is` asserts (10 in `unattended.rs`) are inside those 34 passing S-tests. The gate log prints test names only, so the evidence is the pass, not a string in the log |
+| 3 | Q1 series on CERE (`/var/tmp/r51-tmp/eg-cere/q1.sh`, `q1b.sh`, `q1n.sh`; `Qwen3.8-Flash-Next` at `http://127.0.0.1:18307`) | envelopes `axon-approval/5`, `endpoint_host` `127.0.0.1:18307`. 3 runs `verified_done` (rc 0, ≈ 1 s each; `n + 2` -> `n * 2`, three byte layouts); 10 `$0` runs `budget_exhausted` (rc 20, file unchanged); 13 `.used`, 0 `.issued`/`.unrecorded`, 26 ledger lines; `audit-runs` rc 0, `findings: []`, also after ws1 was edited (as specified: the join is against the ledger). Negative: an envelope pinned to `:18307` and run at `:18308` exits 29, envelope stays `.issued`, ledger empty. The token is in no output file |
+| 4 | the review above | 0 blockers; EGR-1/EGR-3 fixed, EGR-2 answered and logged |
+| 5 | g01 `--only` (records under `/var/tmp/r51-tmp/eg-g01-*.json`, all `tree_clean`) | 178/178 killed at 1e9e5164 (every new and amended batch row); 48/48 at b8b7e6ea (M4520-M4552, M4810-M4819, M4870-M4881 that exist: M4876-M4879 were never used); 12/12 at 557e746c (M4900-M4909, M5210, M5211). `g01_anchors` 3274 rows, 0 bad |
+| 6 | `/var/tmp/r51-tmp/eg-probe/{eg1,eg2,eg2b}.sh` | eg1: rc 29 for `:8443`, `http://…:18308` and `127.0.0.2:9`, envelope stays `.issued`, ledger empty. eg2 (2 GiB / 20000 files already under `out`): the started walk refuses, rc 29 in 0.27 s / 0.31 s, `.unrecorded`, C1 `consumed-no-record` for both (audit rc 1). eg2b, 12 GiB written by the check: rc 20 in 0.22 s, max RSS 21488 KiB, terminal record, C1 `tree-over-cap` + `unattributed-change out/big`. eg2b, 20000 files written by the check: rc 20 in 0.43 s, max RSS 21248 KiB, terminal record stopped at `over-cap:manifest`, C1 `tree-over-cap` + `unattributed-change` for each new file listed before the stop. §5 item 6's "a terminal record in all four cases" is wrong for the two eg2 cases. No run starts there, so EG-2's started-walk refusal (no terminal record, `consumed-no-record`) is the specified result |
+| 7 | `v022_refusal_coverage.py --freeze` at 557e746c | rc 0; default rc 0 |
+
+CI: EG-3's acceptance was dispatch run 42569660634 on `eg/c` 3531da13, green on all four jobs (LaneC). Every probe ran in a
+private mount namespace with its own tmpfs `/etc/axon`. Afterwards `ls -A /etc/axon` gave 0. **Not measured:** the 500 ms and
+256 MiB caps under gate load (the probes ran on a quiet host; EGA-11).
 
 ## Appendix A. EG-4 lane table (from `eg4-coverage.md` §4-5)
 
