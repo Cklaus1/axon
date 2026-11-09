@@ -147,8 +147,11 @@ jobs:
     # No count in the name: it ran `cargo test --workspace`, which DISCOVERS
     # members, while the name asserted "19 crates" — a number nothing checks and
     # that goes wrong the moment a crate is added. The discovery is the truth.
-    name: Test the whole workspace (no LLVM)
-    runs-on: ubuntu-latest
+    name: Test the whole workspace as root (no LLVM)
+    # Pinned, not ubuntu-latest: the root suites depend on the kernel's ntfs3
+    # module and on apt package names, and the runner's own annotation announces
+    # the ubuntu-latest -> 26 migration.
+    runs-on: ubuntu-24.04
     env:
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ""
     steps:
@@ -178,10 +181,70 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-ws-
 
+      # O-CI-02 (ci-hygiene NH-3 B): scripts/gate.sh runs every suite as root,
+      # and these suites assert root rather than skip: mknod (cortex lib), the
+      # ntfs3 loop mount (cortex cli N3), /etc/axon + chown (freeze_manifest),
+      # /var/lib + mksquashfs (guest_build_env), fanotify (one_read), chown
+      # (protected_host, launcher_isolation), DAC override (psv protocol).
+      # Nothing is skipped or ignored; this job gives them what the gate gives.
+      # apt retried as in the codegen job: a DNS failure in `apt-get update`
+      # prints only W: lines and exits 0, so the install is inside the loop.
+      - name: Host prerequisites for the root suites
+        shell: bash
+        run: |
+          install_pkgs() {
+            sudo apt-get update &&
+            sudo apt-get install -y squashfs-tools ntfs-3g e2fsprogs
+          }
+          for k in 1 2 3; do
+            if install_pkgs; then break; fi
+            echo "apt attempt $k failed"
+            if [ "$k" = 3 ]; then exit 1; fi
+            sleep 20
+          done
+          sudo modprobe ntfs3 || { sudo apt-get install -y "linux-modules-extra-$(uname -r)" && sudo modprobe ntfs3; }
+          # Empty and root-owned: the freeze and unattended tests mount a private
+          # tmpfs over it inside `unshare -m` (scripts/gate.sh S09U requires it).
+          sudo mkdir -p /etc/axon
+          # root runs git against this runner-owned checkout.
+          sudo git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      # scripts/guest_build_env.py resolves rustup from the euid's home
+      # (/root/.cargo/bin/rustup) and refuses a toolchain tree that is not
+      # root-owned or is group/other-writable; the controlled guest build also
+      # needs the musl target, which rust-toolchain.toml does not list.
+      - name: Root's own copy of the pinned toolchain (+ musl)
+        shell: bash
+        run: |
+          sudo mkdir -p /root/.cargo
+          sudo cp -a "$HOME/.cargo/bin" /root/.cargo/
+          sudo cp -a "$HOME/.rustup" /root/
+          sudo chown -R root:root /root/.cargo /root/.rustup
+          sudo chmod -R go-w /root/.cargo /root/.rustup
+          for k in 1 2 3; do
+            if sudo env HOME=/root PATH=/root/.cargo/bin:/usr/bin:/bin rustup target add x86_64-unknown-linux-musl; then break; fi
+            echo "rustup attempt $k failed"
+            if [ "$k" = 3 ]; then exit 1; fi
+            sleep 20
+          done
+
       # --no-default-features keeps LLVM out of this job; the codegen half is
-      # covered by the `codegen` job below.
-      - name: cargo test --workspace (no codegen)
-        run: cargo test --workspace --no-default-features --no-fail-fast
+      # covered by the `codegen` job below. As root, with root's home: the
+      # freeze and guest-build suites key off the euid's home, so `sudo -E`
+      # (which keeps HOME=/home/runner) is wrong. CARGO_HOME stays the runner's
+      # so the cached registry is used; sudo's env_reset drops the job env, so
+      # the empty host RUSTFLAGS is passed explicitly (empty and unset differ).
+      - name: cargo test --workspace as root (no codegen)
+        run: |
+          sudo env HOME=/root PATH="/root/.cargo/bin:$PATH" CARGO_HOME="$HOME/.cargo" \
+            CARGO_TERM_COLOR=always CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS= \
+            cargo test --workspace --no-default-features --no-fail-fast
+
+      # Root wrote target/ and the registry; hand them back so the runner-user
+      # cache save (only on a green job) can read them.
+      - name: Hand the checkout and cargo home back to the runner user
+        if: ${{ always() }}
+        run: sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE" "$HOME/.cargo"
 
   # AUDIT T7. The native/interp parity harnesses are the I-2 invariant this
   # project rests on, and NONE of them ran in CI — the codegen feature needs
