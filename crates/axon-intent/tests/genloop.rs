@@ -187,10 +187,16 @@ fn a_failed_example_fed_back_and_fixed_is_accepted() {
         "ATTACK: a candidate that failed an example was accepted: {}",
         out.transcript.to_json()
     );
+    assert_eq!(
+        r0.refusal_class,
+        None,
+        "ATTACK: a candidate that merely failed its example was classed as a sandbox scope refusal: {}",
+        out.transcript.to_json()
+    );
     let fb = r0.feedback.as_deref().unwrap();
     assert!(
         fb.contains("output ./out/copy.txt: expected \"alpha\\nbeta\\n\", got \"nope\""),
-        "{fb}"
+        "ATTACK: the failed example's diff was not fed back: {fb}"
     );
     assert!(gen.prompts()[1].contains(fb.lines().nth(1).unwrap()));
     assert_eq!(out.transcript.outcome, LoopOutcome::Accepted);
@@ -276,7 +282,7 @@ fn a_static_overreach_refused_twice_ends_the_loop() {
     assert_eq!(gen.prompts().len(), 2);
     assert!(
         gen.prompts()[1].contains("never widens"),
-        "the refusal is fed back once"
+        "ATTACK: the gates' refusal was not fed back to the generator"
     );
     assert!(refused(&out.resolved), "exit 5, no program");
 }
@@ -373,7 +379,10 @@ fn four_bad_candidates_exhaust_the_loop_with_a_transcript_and_no_program() {
     assert_eq!(t.rounds.len(), 4, "round 0 + 3 repair rounds");
     assert!(refused(&out.resolved));
     let json: serde_json::Value = serde_json::from_str(&t.to_json()).unwrap();
-    assert_eq!(json["schema"], "axon-intent-gen/1");
+    assert_eq!(
+        json["schema"], "axon-intent-gen/1",
+        "ATTACK: the transcript is not tagged axon-intent-gen/1"
+    );
     assert_eq!(json["outcome"], "exhausted");
     assert_eq!(json["generator"], "scripted");
     assert_eq!(json["rounds"].as_array().unwrap().len(), 4);
@@ -618,4 +627,283 @@ fn arm_b_is_round_zero_of_the_loop() {
     assert_eq!(again.stage, Stage::Examples);
     assert!(resolved.is_none());
     let _: &dyn Generator = &gen;
+}
+
+#[test]
+fn the_loop_repairs_max_repair_rounds_times_and_never_more() {
+    let bad = [TYPE_ERROR; 6];
+    let gen = ScriptedGenerator::new(bad);
+    let out = genloop::run(&without_examples(), &gen, &cfg());
+    assert_eq!(
+        gen.prompts().len(),
+        4,
+        "ATTACK: a default LoopConfig did not allow exactly MAX_REPAIR_ROUNDS (3) repair rounds: {}",
+        out.transcript.to_json()
+    );
+    assert!(
+        refused(&out.resolved),
+        "ATTACK: an exhausted loop's refusal is not exit 5 (low confidence): {:?}",
+        out.resolved.as_ref().err()
+    );
+
+    let mut wide = cfg();
+    wide.max_repair_rounds = 10;
+    let gen = ScriptedGenerator::new(bad);
+    let out = genloop::run(&without_examples(), &gen, &wide);
+    assert_eq!(
+        (gen.prompts().len(), out.transcript.max_repair_rounds),
+        (4, 3),
+        "ATTACK: max_repair_rounds above MAX_REPAIR_ROUNDS was not clamped: {}",
+        out.transcript.to_json()
+    );
+}
+
+#[test]
+fn the_default_deadlines_let_a_good_candidate_through() {
+    // The real checker and sandbox under `LoopConfig::new`'s CHECK_TIMEOUT and
+    // EXAMPLE_TIMEOUT: neither deadline may cut a quick, correct run short.
+    let gen = ScriptedGenerator::new([GOOD]);
+    let out = genloop::run(&with_examples(), &gen, &cfg());
+    assert_eq!(
+        out.transcript.outcome,
+        LoopOutcome::Accepted,
+        "ATTACK: a default deadline (CHECK_TIMEOUT 60 s, EXAMPLE_TIMEOUT 20 s) cut a good candidate short: {}",
+        out.transcript.to_json()
+    );
+}
+
+#[test]
+fn a_lifted_program_the_gates_refuse_keeps_the_gates_own_refusal() {
+    let (rep, resolved) = genloop::evaluate_lifted(&without_examples(), NET, &cfg());
+    assert!(resolved.is_none());
+    assert_eq!(rep.stage, Stage::Gates, "{rep:?}");
+    let gate = rep.gate_error.clone().expect("the gates' refusal");
+    assert_eq!(gate.exit_code(), 8, "{gate:?}");
+    let r = rep.refusal();
+    assert_eq!(
+        (r.exit_code(), r.legible()),
+        (gate.exit_code(), gate.legible()),
+        "ATTACK: a lifted program the gates refused was reported without the gates' own refusal"
+    );
+}
+
+// -- a fake `axon`: the checker's and the card's failure paths -----------------
+
+/// A fake `axon` (a `/bin/sh` script) in its own directory: (directory, binary).
+/// It runs under `env_clear`, so every tool it calls is named absolutely.
+fn fake_axon(tag: &str, body: &str) -> (PathBuf, PathBuf) {
+    let dir = std::env::temp_dir().join(format!(
+        "axon-intent-genloop-fake-{tag}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let bin = dir.join("axon");
+    common::write_executable(&bin, format!("#!/bin/sh\n{body}"), 0o755);
+    (dir, bin)
+}
+
+fn fake_cfg(bin: PathBuf) -> LoopConfig {
+    LoopConfig::new(bin, "CARD: the Axon language card (test stand-in)".into())
+}
+
+/// This process's environment names a child of `env_clear` must not see
+/// (`/bin/sh` adds PWD itself).
+fn ambient_names() -> Vec<String> {
+    let names: Vec<String> = std::env::vars_os()
+        .filter_map(|(k, _)| k.into_string().ok())
+        .filter(|k| !matches!(k.as_str(), "PATH" | "PWD" | "OLDPWD" | "SHLVL" | "_"))
+        .collect();
+    assert!(
+        !names.is_empty(),
+        "the test process has an environment to leak"
+    );
+    names
+}
+
+fn leaked<'a>(lines: &str, names: &'a [String]) -> Vec<&'a str> {
+    names
+        .iter()
+        .filter(|n| lines.lines().any(|l| l.starts_with(&format!("{n}="))))
+        .map(String::as_str)
+        .collect()
+}
+
+#[test]
+fn axon_card_runs_with_a_cleared_environment_and_any_failure_is_an_error() {
+    let t = Duration::from_secs(20);
+    let path = std::env::var("PATH").expect("the test process has a PATH");
+    let ambient = ambient_names();
+    let mut dirs = Vec::new();
+
+    let (dir, bin) = fake_axon("card-env", "echo \"argv: $*\"\n/usr/bin/env\n");
+    dirs.push(dir);
+    let card = genloop::load_card(&bin, t).expect("a card");
+    assert!(
+        card.lines().any(|l| l == "argv: card"),
+        "ATTACK: the language card was asked for with another argv: {card}"
+    );
+    let leak = leaked(&card, &ambient);
+    assert!(
+        leak.is_empty(),
+        "ATTACK: `axon card` inherited the caller's environment: {leak:?}"
+    );
+    assert!(
+        card.lines().any(|l| l == format!("PATH={path}")),
+        "ATTACK: `axon card` ran without the caller's PATH: {card}"
+    );
+
+    let (dir, bin) = fake_axon(
+        "card-exit",
+        "echo 'a card'\necho 'card: broken' >&2\nexit 3\n",
+    );
+    dirs.push(dir);
+    let e = genloop::load_card(&bin, t)
+        .expect_err("ATTACK: a failed `axon card` was taken as the card");
+    assert!(e.contains("exited Some(3): card: broken"), "{e}");
+
+    let (dir, bin) = fake_axon("card-empty", "exit 0\n");
+    dirs.push(dir);
+    let e = genloop::load_card(&bin, t)
+        .expect_err("ATTACK: an empty `axon card` answer was taken as the card");
+    assert!(e.contains("printed no card"), "{e}");
+
+    let (dir, bin) = fake_axon(
+        "card-big",
+        "/usr/bin/head -c 1100000 /dev/zero | /usr/bin/tr '\\0' a\n",
+    );
+    dirs.push(dir);
+    let e = genloop::load_card(&bin, t)
+        .expect_err("ATTACK: an `axon card` answer over 1 MiB was taken, truncated, as the card");
+    assert!(e.contains("printed no card (or more than 1 MiB)"), "{e}");
+
+    let (dir, bin) = fake_axon("card-hang", "exec /usr/bin/sleep 10\n");
+    dirs.push(dir);
+    let e = genloop::load_card(&bin, Duration::from_millis(300)).expect_err("a hung card");
+    assert!(
+        e.contains("timed out after 300 ms"),
+        "ATTACK: a hung `axon card` was not reported as timed out: {e}"
+    );
+    for d in dirs {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}
+
+#[test]
+fn axon_check_runs_on_the_staged_candidate_with_a_cleared_environment() {
+    let path = std::env::var("PATH").expect("the test process has a PATH");
+    let ambient = ambient_names();
+    let (dir, bin) = fake_axon(
+        "check-env",
+        "echo \"argv: $*\"\necho \"staged: $(/usr/bin/cat main.ax)\"\n/usr/bin/env\nexit 1\n",
+    );
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let src = "fn main() -> i64 { 0 }";
+    let rep =
+        genloop::check_source(&bin, src, &work, Duration::from_secs(20)).expect("the checker ran");
+    assert!(!rep.ok, "exit 1 is a rejection");
+    let out = rep.errors.join("\n");
+    assert!(
+        rep.errors.iter().any(|l| l == "argv: check --json main.ax"),
+        "ATTACK: the candidate was checked with another argv: {out}"
+    );
+    assert!(
+        rep.errors.iter().any(|l| *l == format!("staged: {src}")),
+        "ATTACK: `axon check` did not run in the candidate's directory: {out}"
+    );
+    let leak = leaked(&out, &ambient);
+    assert!(
+        leak.is_empty(),
+        "ATTACK: `axon check` inherited the caller's environment: {leak:?}"
+    );
+    assert!(
+        rep.errors.iter().any(|l| *l == format!("PATH={path}")),
+        "ATTACK: `axon check` ran without the caller's PATH: {out}"
+    );
+
+    let (hang, bin) = fake_axon("check-hang", "exec /usr/bin/sleep 10\n");
+    match genloop::check_source(&bin, src, &work, Duration::from_millis(300)) {
+        Err(e) => assert!(
+            e.contains("timed out after 300 ms"),
+            "ATTACK: a hung `axon check` was not reported as timed out: {e}"
+        ),
+        Ok(r) => panic!("ATTACK: a hung `axon check` was not reported as timed out: {r:?}"),
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&hang);
+}
+
+#[test]
+fn the_check_scratch_dir_is_private_and_the_checker_s_feedback_is_capped() {
+    // 200 error diagnostics of about 100 bytes; the first names the mode of
+    // the directory the candidate is checked in.
+    let (dir, bin) = fake_axon(
+        "check-cap",
+        "m=$(/usr/bin/stat -c %a .)\n\
+         echo '{\"schema\":\"axon-diag/1\",\"severity\":\"error\",\"message\":\"scratch mode '$m'\"}'\n\
+         i=0\nwhile [ $i -lt 200 ]; do\n\
+         echo '{\"schema\":\"axon-diag/1\",\"severity\":\"error\",\"message\":\"padding padding padding padding padding\"}'\n\
+         i=$((i + 1))\ndone\nexit 1\n",
+    );
+    let (rep, resolved) = genloop::evaluate_candidate(&without_examples(), GOOD, &fake_cfg(bin));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(resolved.is_none());
+    assert_eq!(rep.stage, Stage::Check, "{rep:?}");
+    assert!(
+        rep.diagnostics[0].contains("scratch mode 700"),
+        "ATTACK: the candidate's scratch dir is not private (0700): {}",
+        rep.diagnostics[0]
+    );
+    let fb = rep.feedback.as_deref().unwrap();
+    assert!(
+        fb.len() <= 2048 + 64 && fb.contains("more line(s) omitted"),
+        "ATTACK: the checker's feedback was not capped at 2048 bytes: {} bytes",
+        fb.len()
+    );
+}
+
+#[test]
+fn a_sandbox_that_cannot_start_is_an_infrastructure_failure() {
+    // The fake checker passes the candidate and deletes itself, so the
+    // example's sandbox run cannot be spawned.
+    let (dir, bin) = fake_axon("not-run", "/usr/bin/rm -f \"$0\"\nexit 0\n");
+    let (rep, resolved) = genloop::evaluate_candidate(&with_examples(), GOOD, &fake_cfg(bin));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(resolved.is_none());
+    assert!(
+        rep.stage == Stage::Infrastructure
+            && rep
+                .infrastructure
+                .as_deref()
+                .is_some_and(|i| i.contains("the sandbox could not start the run")),
+        "ATTACK: a sandbox that could not start a run was graded as the program's own failure: {rep:?}"
+    );
+}
+
+#[test]
+fn a_fixture_with_an_absolute_path_is_never_staged() {
+    let escape =
+        std::env::temp_dir().join(format!("axon-intent-genloop-escape-{}", std::process::id()));
+    let _ = std::fs::remove_file(&escape);
+    let mut it = with_examples();
+    it.examples[0].runs[0].inputs[0].path = escape.display().to_string();
+    let (dir, bin) = fake_axon("abs-fixture", "exit 0\n");
+    let (rep, resolved) = genloop::evaluate_candidate(&it, GOOD, &fake_cfg(bin));
+    let _ = std::fs::remove_dir_all(&dir);
+    let written = escape.exists();
+    let _ = std::fs::remove_file(&escape);
+    assert!(
+        !written,
+        "ATTACK: a fixture with an absolute path was written outside the example's directory: {}",
+        escape.display()
+    );
+    assert_eq!(rep.stage, Stage::Infrastructure, "{rep:?}");
+    assert!(resolved.is_none());
+    assert!(
+        rep.infrastructure
+            .as_deref()
+            .is_some_and(|i| i.contains("is not relative")),
+        "{rep:?}"
+    );
 }
