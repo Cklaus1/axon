@@ -364,6 +364,51 @@ fn a_supplied_envelope_the_records_do_not_name_is_a_finding() {
     );
 }
 
+/// EG-4: a symlink in `--envelopes` is refused, never followed, even when it
+/// points at a valid envelope of this operator.
+#[test]
+fn a_symlink_in_envelopes_is_refused() {
+    let f = fx("symlink");
+    let v = f.envelope("parse");
+    f.run(&v, &key());
+    let name = format!("{}.envelope", v.envelope.envelope_id);
+    let real = f.dir.join(&name);
+    std::fs::rename(f.envelopes.join(&name), &real).unwrap();
+    std::os::unix::fs::symlink(&real, f.envelopes.join(&name)).unwrap();
+    let o = f.audit();
+    assert_eq!(
+        o.code, 2,
+        "ATTACK: a symlink in --envelopes was followed: stdout {} stderr {}",
+        o.stdout, o.stderr
+    );
+    assert!(o.stderr.contains("is not a regular file"), "{}", o.stderr);
+}
+
+/// EG-4: two signed envelopes sharing one id are refused. The other one is
+/// named to sort first, so a last-wins read would keep the envelope the
+/// records name and audit clean.
+#[test]
+fn two_different_envelopes_with_one_id_are_refused() {
+    let f = fx("dupid");
+    let v = f.envelope("parse");
+    f.run(&v, &key());
+    let mut env = v.envelope.clone();
+    env.issued_by = "operator-b".into();
+    let text = MintKey::derive(OP_KEY).unwrap().sign(&env).unwrap();
+    std::fs::write(f.envelopes.join("0-other.envelope"), text).unwrap();
+    let o = f.audit();
+    assert_eq!(
+        o.code, 2,
+        "ATTACK: two different envelopes with one id were audited: stdout {} stderr {}",
+        o.stdout, o.stderr
+    );
+    assert!(
+        o.stderr.contains("two different envelopes with id"),
+        "{}",
+        o.stderr
+    );
+}
+
 #[test]
 fn json_output_carries_runs_and_findings() {
     let f = fx("json");
