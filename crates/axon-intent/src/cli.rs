@@ -735,4 +735,57 @@ mod tests {
     fn short_truncates_a_digest() {
         assert_eq!(short("axsha256:abcdef0123456789").len(), 12);
     }
+
+    /// A runtime that reads the program from disk and resolves no imports;
+    /// it never runs anything.
+    struct NoImports;
+
+    impl Runtime for NoImports {
+        fn declared_effects(&self, p: &axon_os::ProgramSource) -> axon_os::DeclaredEffects {
+            axon_os::runtime::scan_effects(p.text)
+        }
+        fn mint_principal(&self, _g: &axon_os::Grant) -> axon_os::PrincipalHandle {
+            axon_os::PrincipalHandle(0)
+        }
+        fn imports_digest(&self, _p: &Path, _g: &axon_os::Grant) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn run_sandboxed(
+            &self,
+            _p: &axon_os::ProgramSource,
+            _h: &axon_os::PrincipalHandle,
+            _g: &axon_os::Grant,
+            _b: &axon_os::Budget,
+            _s: u64,
+            _i: Option<&str>,
+        ) -> axon_os::RunOutcome {
+            unreachable!("verify_triple runs nothing")
+        }
+    }
+
+    /// R22 §3.5: a triple is verified only through its token. A job that does
+    /// not require approval and has no token passes axon-os's `authorize`
+    /// (status NotRequired), so `verify_triple` refuses it on its own.
+    #[test]
+    fn a_triple_with_no_approval_token_is_refused() {
+        let d =
+            std::env::temp_dir().join(format!("axon-intent-cli-notoken-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("p.ax"), "fn main() -> i64 { 0 }\n").unwrap();
+        let job = d.join("p.axjob");
+        std::fs::write(
+            &job,
+            "program = \"p.ax\"\nintent = \"t\"\nseed = 1\nrequire_approval = false\n\
+             [grant]\nmax_label = \"internal\"\n\
+             [grant.budget]\ncalls = 1\ntokens = 1\ncost_micro = 0\n",
+        )
+        .unwrap();
+        let r = verify_triple_with(&job, &NoImports);
+        let _ = std::fs::remove_dir_all(&d);
+        let err = r
+            .err()
+            .unwrap_or_else(|| panic!("ATTACK: a triple with no approval token verified"));
+        assert!(err.contains("approval token"), "{err}");
+    }
 }

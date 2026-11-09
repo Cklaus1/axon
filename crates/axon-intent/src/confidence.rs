@@ -221,41 +221,159 @@ Summarize ./data/report.txt into ./out/summary.txt.
         };
         match score(&d, &it()) {
             Confidence::Ship { score, deductions } => {
-                assert_eq!(score, CONFIDENCE_FLOOR);
+                assert_eq!(
+                    score, CONFIDENCE_FLOOR,
+                    "ATTACK: typecheck + entry alone do not score exactly the floor"
+                );
                 assert!(
                     deductions.contains(&DEDUCT_NO_EXAMPLES),
                     "ATTACK: the no-examples deduction is not recorded: {deductions:?}"
                 );
             }
-            other => panic!("the floor ships: {other:?}"),
+            other => panic!(
+                "ATTACK: a deduction refused a draft on its own (the weakest shippable draft did not ship): {other:?}"
+            ),
         }
+    }
+
+    /// The weakest shippable draft: typechecks, has an entry, writes none of
+    /// the wanted outputs, carries an uncertainty note, and the intent has no
+    /// examples (40 + 20 = the floor).
+    fn weakest() -> ProgramDraft {
+        let src = "fn main() -> i64 { let x = 1 x }";
+        let mut m = meta_from_source(src, true, vec!["n".into()]);
+        m.resolved_outputs = vec![];
+        ProgramDraft {
+            source: src.into(),
+            generated: true,
+            fences_stripped: false,
+            meta: m,
+        }
+    }
+
+    fn shipped(c: Confidence) -> (u8, Vec<&'static str>) {
+        match c {
+            Confidence::Ship { score, deductions } => (score, deductions),
+            other => panic!("expected Ship, got {other:?}"),
+        }
+    }
+
+    /// R22 §4.3: each weight a draft does not earn costs exactly its
+    /// documented points, and the four rubric weights a draft can earn sum to
+    /// 100 with typecheck + entry.
+    #[test]
+    fn each_rubric_weight_is_the_documented_one() {
+        let mut with_examples = it();
+        with_examples.examples = vec![intent::Example {
+            name: "e".into(),
+            runs: vec![intent::ExampleRun::default()],
+        }];
+        let full = shipped(score(&draft(GOOD, true, vec![]), &with_examples)).0;
+        let mut unmatched = draft(GOOD, true, vec![]);
+        unmatched.meta.resolved_outputs = vec![];
+        let cases = [
+            (
+                "W_OUTPUTS_MATCH",
+                15,
+                shipped(score(&unmatched, &with_examples)).0,
+            ),
+            (
+                "W_NO_UNCERTAINTY",
+                15,
+                shipped(score(&draft(GOOD, true, vec!["?".into()]), &with_examples)).0,
+            ),
+            (
+                "W_EXAMPLES",
+                10,
+                shipped(score(&draft(GOOD, true, vec![]), &it())).0,
+            ),
+        ];
+        for (name, weight, without) in cases {
+            assert_eq!(
+                full - without,
+                weight,
+                "ATTACK: the rubric weight {name} is not {weight}"
+            );
+        }
+        assert_eq!(
+            full, 100,
+            "ATTACK: a draft earning every weight does not score 100"
+        );
+    }
+
+    /// The deductions are shown to the human by name (approval.rs, IG1); the
+    /// names are the documented ones, in rubric order.
+    #[test]
+    fn the_deductions_carry_their_documented_names() {
+        let (_, deductions) = shipped(score(&weakest(), &it()));
+        let names = [
+            ("unmatched outputs", "outputs-not-matched"),
+            ("uncertainty notes", "uncertainty-notes"),
+            ("missing examples", "no-examples"),
+        ];
+        assert_eq!(deductions.len(), names.len(), "{deductions:?}");
+        for ((what, name), got) in names.iter().zip(&deductions) {
+            assert_eq!(
+                got, name,
+                "ATTACK: the deduction for {what} is not named {name}"
+            );
+        }
+    }
+
+    /// Scope-expansion guard: writing an asked output does not license an
+    /// unasked one beside it.
+    #[test]
+    fn an_unasked_output_beside_an_asked_one_is_refused() {
+        let both = "fn main() -> i64 {\n  write_file(\"./out/summary.txt\", \"x\")\n  write_file(\"./out/SECRET.txt\", \"y\")\n  0\n}";
+        let c = score(&draft(both, true, vec![]), &it());
+        assert!(
+            matches!(c, Confidence::Refuse { ref reason } if reason == "outputs-mismatch"),
+            "ATTACK: a program writing an unasked output beside the asked one shipped: {c:?}"
+        );
+    }
+
+    /// A program writing only some of the intent's outputs does not earn the
+    /// outputs match.
+    #[test]
+    fn a_program_writing_part_of_the_asked_outputs_is_not_a_match() {
+        let mut i = it();
+        i.outputs.push("./out/second.txt".into());
+        let (_, deductions) = shipped(score(&draft(GOOD, true, vec![]), &i));
+        assert!(
+            deductions.contains(&DEDUCT_OUTPUTS),
+            "ATTACK: a program writing only part of the asked outputs earned the outputs match: {deductions:?}"
+        );
     }
 
     // R22 §7 `low_confidence_synthesis_refused` — one assertion per refuse reason.
     #[test]
     fn low_confidence_synthesis_refused() {
         // does-not-typecheck
-        assert!(matches!(
-            score(&draft(GOOD, false, vec![]), &it()),
-            Confidence::Refuse { ref reason } if reason == "does-not-typecheck"
-        ));
+        let c = score(&draft(GOOD, false, vec![]), &it());
+        assert!(
+            matches!(c, Confidence::Refuse { ref reason } if reason == "does-not-typecheck"),
+            "ATTACK: a draft that does not typecheck was not refused as does-not-typecheck: {c:?}"
+        );
         // no-entry-point
         let no_entry = "fn helper() -> i64 { write_file(\"./out/summary.txt\", \"x\") 0 }";
-        assert!(matches!(
-            score(&draft(no_entry, true, vec![]), &it()),
-            Confidence::Refuse { ref reason } if reason == "no-entry-point"
-        ));
+        let c = score(&draft(no_entry, true, vec![]), &it());
+        assert!(
+            matches!(c, Confidence::Refuse { ref reason } if reason == "no-entry-point"),
+            "ATTACK: a draft with no entry point was not refused as no-entry-point: {c:?}"
+        );
         // empty-or-stub-body (an empty body; a `TODO` comment is no stub, IG0)
-        assert!(matches!(
-            score(&draft("fn main() -> i64 {}", true, vec![]), &it()),
-            Confidence::Refuse { ref reason } if reason == "empty-or-stub-body"
-        ));
+        let c = score(&draft("fn main() -> i64 {}", true, vec![]), &it());
+        assert!(
+            matches!(c, Confidence::Refuse { ref reason } if reason == "empty-or-stub-body"),
+            "ATTACK: an empty body was not refused as empty-or-stub-body: {c:?}"
+        );
         // outputs-mismatch (writes a file the intent didn't list)
         let smuggle = "fn main() -> i64 { write_file(\"./out/SECRET.txt\", \"x\") 0 }";
-        assert!(matches!(
-            score(&draft(smuggle, true, vec![]), &it()),
-            Confidence::Refuse { ref reason } if reason == "outputs-mismatch"
-        ));
+        let c = score(&draft(smuggle, true, vec![]), &it());
+        assert!(
+            matches!(c, Confidence::Refuse { ref reason } if reason == "outputs-mismatch"),
+            "ATTACK: a draft writing an unasked output was not refused as outputs-mismatch: {c:?}"
+        );
         // below-threshold: a typechecking program with an entry but with
         // uncertainty notes AND not matching outputs would drop below 60. Force a
         // skew: it typechecks + entry (=60) but resolved outputs empty while the
