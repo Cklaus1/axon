@@ -135,12 +135,19 @@ mod tests {
         )
         .expect("admissible");
         assert_eq!(g.fs_read, vec!["./data/".to_string()]);
-        assert!(g.fs_write.is_empty(), "fs_write unused ⇒ empty");
+        assert!(
+            g.fs_write.is_empty(),
+            "ATTACK: an axis the program does not use was granted (fs_write unused ⇒ empty)"
+        );
         assert!(
             g.net.is_empty(),
-            "net unused ⇒ empty even though ceiling permits it"
+            "ATTACK: an axis the program does not use was granted (net unused ⇒ empty even though ceiling permits it)"
         );
-        assert_eq!(g.exec, ExecPolicy::None, "exec unused ⇒ none");
+        assert_eq!(
+            g.exec,
+            ExecPolicy::None,
+            "ATTACK: an axis the program does not use was granted (exec unused ⇒ none)"
+        );
         // label clamps to min(program, ceiling).
         assert_eq!(g.max_label, Label::Internal);
         // budget is the human's stated cap, not inflated.
@@ -173,10 +180,13 @@ mod tests {
             &narrow,
             &budget(),
         );
-        assert!(matches!(
-            r,
-            Err(Refusal::GrantExceedsCeiling { ref axis }) if axis == "net"
-        ));
+        assert!(
+            matches!(
+                r,
+                Err(Refusal::GrantExceedsCeiling { ref axis }) if axis == "net"
+            ),
+            "ATTACK: a program needing net was granted it under a ceiling with no net hosts: {r:?}"
+        );
     }
 
     #[test]
@@ -190,10 +200,13 @@ mod tests {
             &no_exec,
             &budget(),
         );
-        assert!(matches!(
-            r,
-            Err(Refusal::GrantExceedsCeiling { ref axis }) if axis == "exec"
-        ));
+        assert!(
+            matches!(
+                r,
+                Err(Refusal::GrantExceedsCeiling { ref axis }) if axis == "exec"
+            ),
+            "ATTACK: a program needing exec was granted it under a ceiling with exec none: {r:?}"
+        );
     }
 
     #[test]
@@ -207,9 +220,12 @@ mod tests {
             &internal_ceiling,
             &budget(),
         );
-        assert!(matches!(
-            r,
-            Err(Refusal::GrantExceedsCeiling { ref axis }) if axis == "label"
-        ));
+        assert!(
+            matches!(
+                r,
+                Err(Refusal::GrantExceedsCeiling { ref axis }) if axis == "label"
+            ),
+            "ATTACK: a program above the ceiling's label was granted: {r:?}"
+        );
     }
 }

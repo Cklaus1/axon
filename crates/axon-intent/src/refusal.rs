@@ -94,14 +94,16 @@ mod tests {
                 reason: "x".into()
             }
             .exit_code(),
-            8
+            8,
+            "ATTACK: a NotAdmissible refusal does not exit 8"
         );
         assert_eq!(
             Refusal::GrantExceedsCeiling {
                 axis: "fs_read".into()
             }
             .exit_code(),
-            8
+            8,
+            "ATTACK: a GrantExceedsCeiling refusal does not exit 8"
         );
     }
 }

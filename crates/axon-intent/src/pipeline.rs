@@ -215,7 +215,11 @@ Summarize ./data/report.txt into ./out/summary.txt.
         // An empty body is a stub (IG0: a `TODO` comment is not).
         let stub = MockSynth::with_source("fn main() -> i64 {}");
         let r = resolve(&it(), &stub, GenMode::Auto, None);
-        assert!(matches!(r, Err(Refusal::LowConfidence { .. })));
+        assert!(
+            matches!(r, Err(Refusal::LowConfidence { .. })),
+            "ATTACK: a stub program the confidence gate refuses was resolved: {:?}",
+            r.as_ref().map(|r| &r.draft.source)
+        );
         assert_eq!(r.unwrap_err().exit_code(), 5);
     }
 

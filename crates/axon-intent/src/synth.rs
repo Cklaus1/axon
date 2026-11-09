@@ -340,6 +340,35 @@ Summarize ./data/report.txt into ./out/summary.txt.
     }
 
     #[test]
+    fn a_source_that_does_not_parse_declares_every_effect() {
+        let m = meta_from_source("fn main( { write_file(\"./out/x\", \"y\")", true, vec![]);
+        assert_eq!(
+            m.declared,
+            DeclaredEffects::unknown(),
+            "ATTACK: a source that does not parse declared fewer than every effect"
+        );
+    }
+
+    #[test]
+    fn a_program_without_fn_main_has_no_entry() {
+        assert!(has_entry("fn main() -> i64 { 0 }\n"));
+        assert!(
+            !has_entry("fn helper() -> i64 { 1 }\n"),
+            "ATTACK: a program with no `fn main` was read as having an entry"
+        );
+    }
+
+    #[test]
+    fn the_mock_type_check_refuses_unbalanced_braces() {
+        assert!(braces_balanced("fn main() -> i64 { 0 }"));
+        let src = "fn main() -> i64 { match 1 { _ => 0 }";
+        assert!(
+            !braces_balanced(src) && !MockSynth::with_source(src).typecheck(src).typechecks,
+            "ATTACK: a program with an unclosed brace type-checked under the mock"
+        );
+    }
+
+    #[test]
     fn strip_fences_removes_an_axon_fence() {
         let (s, did) = strip_fences("```axon\nfn main() -> i64 { 0 }\n```");
         assert!(did);
