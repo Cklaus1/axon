@@ -342,23 +342,6 @@ OUT_OF_SCOPE = {
 NOT_YET_SCANNED = {
     # containment-b4 C-3 (O-NHR-04; NH-1 decided A): axon-intent joined ROOT_CRATES and its sites are not
     # judged yet. Counts measured on the lane tree; a freeze refuses until a judging batch empties this.
-    "crates/axon-intent/src/admit.rs": 1,
-    "crates/axon-intent/src/approval.rs": 1,
-    "crates/axon-intent/src/audit_runs.rs": 16,
-    "crates/axon-intent/src/authorize.rs": 49,
-    "crates/axon-intent/src/cli.rs": 16,
-    "crates/axon-intent/src/confidence.rs": 21,
-    "crates/axon-intent/src/emit.rs": 3,
-    "crates/axon-intent/src/generator.rs": 16,
-    "crates/axon-intent/src/genloop.rs": 42,
-    "crates/axon-intent/src/grant_infer.rs": 4,
-    "crates/axon-intent/src/intent.rs": 58,
-    "crates/axon-intent/src/lib.rs": 0,
-    "crates/axon-intent/src/main.rs": 0,
-    "crates/axon-intent/src/pipeline.rs": 1,
-    "crates/axon-intent/src/policy.rs": 12,
-    "crates/axon-intent/src/refusal.rs": 1,
-    "crates/axon-intent/src/synth.rs": 3,
 }
 SITE = re.compile(r"return Err\(|\bErr\(format!|\brefuse\(|\bErr\(bad\(|TEST_TRUST_BUILD")
 # Amendment 74: a `let .. else {` is the opener of its refusal too.
@@ -4684,6 +4667,283 @@ VALUE_EXEMPT += [
 VALUE_EXEMPT += [
     ('crates/axon-cortex/src/label.rs', 'append', 1, '0o600', 'NOTROUTE', _LBL),
 ]
+
+# enable-gaps lane N (EG-1, EG-2): the new refusal sites no row of M4890-M4909 changes.
+EXEMPT += [
+    ('crates/axon-cortex/src/cas.rs', '    pub fn expired(&self) -> bool {',
+     "NAMED ROW (checkable): WalkBudget::expired has two callers and each is rowed: tree()'s check between "
+     "paths (M4902, killed by auth::tests::a_spent_walk_budget_caps_the_terminal_tree) and hash_plain's check "
+     "before every chunk (M4908, killed by hash_plain_tests::an_expired_budget_stops_hash_plain_inside_a_file); "
+     "a predicate that answers false is exactly those rows' mutation"),
+    ('crates/axon-cortex/src/cas.rs', 'pub const HASH_CHUNK: usize = 64 * 1024;',
+     "REMAINDER (const_bound): hash_plain's read size. The byte cap is the fstat length before any read (M4900) "
+     "and the deadline is checked before every chunk (M4908) whatever the size; only how far one read can run "
+     "past the deadline scales with it, which no test measures"),
+    ('crates/axon-cortex/src/cas.rs', 'Err(e) => return Err(e),\n        };\n        read += n as u64;',
+     "OS ERROR (checkable): a read error on hash_plain's reopened fd is returned as is; tree() maps every Err "
+     "but NotFound to `pinned tree: <key>: <e>` (auth.rs `Err(e) => return Err(err(e))`), so a started walk "
+     "refuses the run and a terminal walk's error is the existing terminal-record failure path"),
+    ('crates/axon-os/src/repair_envelope.rs', 'pub const RETIRED_ENVELOPE_SCHEMAS: &[&str] = &["axon-approval/4"];',
+     "NAMED ROW (checkable): every reader is rowed: verify_schemas' by-name refusal (M4895), the "
+     "program-approval path (M4896), and audit-runs' verify_for_audit (M4894); an empty list makes "
+     "repair_envelope::tests::an_axon_approval_4_envelope_is_refused_by_name fail (the /4 refusal loses its port text)"),
+    ('crates/axon-os/src/run_ledger.rs', 'pub const OVER_CAP: &str = "over-cap:";',
+     "NAMED ROW (checkable): check_tree's grammar row M4906 and M4899; the cortex walk writes rl::OVER_CAP and "
+     "the tests spell `over-cap:<len>` literally (run_ledger::tests::a_tree_value_is_a_sha256_or_an_over_cap_marker, "
+     "unattended r6_a_huge_file_a_check_writes_is_valued_by_its_size), so another spelling fails both"),
+    ('crates/axon-os/src/run_ledger.rs', 'pub const TREE_STOP_KEY: &str = "";',
+     "NAMED ROW (checkable): check_tree's grammar row M4906, tree_cap M4898 and the join skip M4907 read it; "
+     "the tests spell the stop key as `\"\"` literally (a_tree_value_is_a_sha256_or_an_over_cap_marker, "
+     "r6_a_check_that_writes_many_files_still_gets_a_terminal_record), so another key fails both"),
+]
+
+
+# enable-gaps EG-4 lane I-A: authorize.rs's sites that carry no row (rows M4910-M4925).
+_EG4IA_AR = 'crates/axon-intent/src/authorize.rs'
+_EG4IA_NTA = _NTA + "; authorize-repair then prints the refusal and exits 2: nothing is exported, initialised, signed, issued or written"
+EXEMPT += [
+    # run
+    (_EG4IA_AR, 'pub fn run(rest: &[&str]) -> ExitCode {',
+     "NOT A SITE: authorize-repair's argv dispatch (`--help`, the four one-path forms, else parse_args then mint); "
+     "each target is judged at its own sites (rows M4912-M4925, the exemptions below)"),
+    (_EG4IA_AR, '            Err(e) => fail(2, &e),\n        },',
+     _EG4IA_NTA + " (parse_args refused the command line: there are no Args, so mint cannot run)"),
+    # export_verify_key / export_run_record_key
+    (_EG4IA_AR, '        Err(e) => return fail(2, &e),\n    };\n    let hex = key.verify_key().to_hex();',
+     _EG4IA_NTA + " (MintKey::from_env refused AXON_APPROVAL_KEY: there is no key to export; "
+     "export_verify_key_without_the_operator_key_writes_nothing)"),
+    (_EG4IA_AR, '        Err(e) => return fail(2, &e),\n    };\n    if let Err(e) = write_new(path, format!("{}\\n", key.to_hex())',
+     _EG4IA_NTA + " (SealKey::from_env refused AXON_APPROVAL_KEY: there is no run-record key to export; "
+     "export_run_record_key_writes_the_subkey_private_and_once's no-key half)"),
+    # init_private_dir and its two wrappers
+    (_EG4IA_AR, '    if let Err(e) = std::fs::DirBuilder::new().mode(0o700).create(dir) {',
+     "ENSURE-EXISTS (checkable): makes the spent store or run ledger directory when absent and tolerates "
+     "AlreadyExists; the decision is `init(dir, euid())` on the lines below (repair_envelope::init_store, "
+     "run_ledger::init_ledger), whose private_path::check_private refuses a path that is a symlink, not a "
+     "directory, not owned by the euid or open to group/other (`m.mode() & 0o077 != 0`), and which refuses "
+     "a directory that already has an id (M4914)"),
+    (_EG4IA_AR, '        if e.kind() != std::io::ErrorKind::AlreadyExists {',
+     "DOMINATED (checkable): `init(dir, euid())` runs next in every case, and check_private's "
+     "`symlink_metadata(path)` refuses a directory that does not exist (\"(it must exist)\"); a create failure "
+     "that left a directory behind is judged by check_private like any existing one, so ignoring this error "
+     "changes the message, never the outcome"),
+    (_EG4IA_AR, 'fn init_spent_store(dir: &Path) -> ExitCode {',
+     "NOT A SITE: a one-line wrapper, init_private_dir(dir, repair_envelope::init_store, ..); judged at "
+     "init_private_dir's sites (M4914 and the two exemptions above)"),
+    (_EG4IA_AR, 'fn init_run_ledger(dir: &Path) -> ExitCode {',
+     "NOT A SITE: a one-line wrapper, init_private_dir(dir, run_ledger::init_ledger, ..); judged at "
+     "init_private_dir's sites (M4914 and the two exemptions above)"),
+    # parse_args
+    (_EG4IA_AR, '            return Err(format!("`{flag}` needs a value (see --help)"));', _USE),
+    (_EG4IA_AR, '                None => return Err(format!("unknown argument `{f}` (see --help)")),', _USE),
+    (_EG4IA_AR, '            return Err(format!("{b} is required (see --help)"));',
+     "DOMINATED (checkable), a pair with authorize.rs mint's `a budget flag is missing` let-else: that "
+     "let-else (`let [Some(max_proposals), .., Some(max_steps)] = a.budget else { return fail(2, ..) }`) "
+     "refuses the same missing budget flag before anything is signed, issued or written, and a zero budget "
+     "is refused again by repair_envelope::validate (\"every limit is at least 1\"); the pair is shown "
+     "refusing by authorize_repair `a_missing_budget_flag_mints_nothing`"),
+    # mint
+    (_EG4IA_AR, '        Err(e) => return fail(2, &e),\n    };\n    let (Some(cortex), Some(store)',
+     _EG4IA_NTA + " (MintKey::from_env refused AXON_APPROVAL_KEY: there is no key to sign with; "
+     "minting_without_the_operator_key_mints_nothing)"),
+    (_EG4IA_AR, '        return fail(\n            2,\n            "missing --cortex, --spent-store',
+     "DOMINATED (checkable): mint is called only from run's `Ok(a) => mint(&a)`, and parse_args's "
+     "required-flag loop (`if missing {`, rowed: M4915) refuses each of these six flags first, so the "
+     "let-else is reached only if that loop is removed"),
+    (_EG4IA_AR, '        Err(e) => return fail(2, &e),\n    };\n    let ledger_id = match run_ledger::ledger_id(ledger, me) {',
+     _EG4IA_NTA + " (repair_envelope::store_id refused --spent-store: there is no store id to bind or issue into)"),
+    (_EG4IA_AR, '        Err(e) => return fail(2, &e),\n    };\n    // Security F6: what the check pins may never reach, canonical.',
+     _EG4IA_NTA + " (run_ledger::ledger_id refused --run-ledger: there is no ledger id to bind; "
+     "a_mint_into_an_uninitialised_run_ledger_mints_nothing)"),
+    (_EG4IA_AR, '            Err(e) => return fail(2, &format!("{flag} {}: {e}", p.display())),',
+     _EG4IA_NTA + " (the guarded path does not resolve, so there is no canonical path for the F6 overlap check)"),
+    (_EG4IA_AR, '        Err(e) => return fail(2, &format!("--cortex {}: {e}", cortex.display())),',
+     _EG4IA_NTA + " (--cortex does not resolve: there is no binary to run and record)"),
+    (_EG4IA_AR, '        Err(e) => return fail(2, &format!("cannot read {}: {e}", cortex.display())),',
+     _EG4IA_NTA + " (the cortex binary cannot be read: there is no sha256 to record)"),
+    (_EG4IA_AR, '        Err(e) => return fail(2, &format!("cannot run {}: {e}", cortex.display())),',
+     _EG4IA_NTA + " (the preview could not be spawned: there is no output to judge)"),
+    (_EG4IA_AR, '        Err(_) => return fail(2, "cortex preview: output is not UTF-8"),',
+     _EG4IA_NTA + " (the preview's stdout is not text: there is no document to parse)"),
+    (_EG4IA_AR, '        Err(e) => return fail(2, &e),\n    };\n    let envelope_id = match repair_envelope::new_id() {',
+     _EG4IA_NTA + " (parse_preview refused the document: there is no Preview to judge; a_malformed_preview_mints_nothing)"),
+    (_EG4IA_AR, '        Err(e) => return fail(2, &e),\n    };\n    let [Some(max_proposals)',
+     _IO + " (repair_envelope::new_id: the OS random source failed; there is no envelope id)"),
+    (_EG4IA_AR, '        return fail(2, "a budget flag is missing");',
+     "DOMINATED (checkable), a pair with authorize.rs parse_args's `{b} is required` loop over BUDGET_FLAGS: "
+     "that loop refuses every missing budget flag, and mint is called only from run's `Ok(a) => mint(&a)`, "
+     "so this let-else is reached only if the loop is removed; the pair is shown refusing by "
+     "authorize_repair `a_missing_budget_flag_mints_nothing`"),
+    (_EG4IA_AR, '        Err(e) => return fail(2, &e),\n    };\n    let verified = match repair_envelope::verify(',
+     _EG4IA_NTA + " (MintKey::sign failed: there is no signed envelope)"),
+    (_EG4IA_AR, '        Err(e) => return fail(2, &format!("the minted envelope does not verify: {e}")),',
+     _EG4IA_NTA + " (the just-signed envelope does not verify: there is no verified digest to record)"),
+    (_EG4IA_AR, '    if let Err(e) = write_new(out, format!("{json}\\n").as_bytes()) {',
+     _IO + " (reached only when `<out>.mint`, in the same directory, was just written (M4923) and `out`, found "
+     "absent above (M4313), cannot be created: a race or an OS error; the issued envelope has no file and "
+     "cannot be used, and the refusal names its id)"),
+    # constants
+    (_EG4IA_AR, 'pub const PREVIEW_SCHEMA: &str = ', _A95['const_tag']),
+    (_EG4IA_AR, 'pub const ARGV_SHAPE: &str = "axon-test-local/1";', _A95['const_tag']),
+]
+VALUE_EXEMPT += [
+    (_EG4IA_AR, 'init_private_dir', 1, '0o700', 'DOMINATED',
+     "DOMINATED (checkable): the directory this mode creates is judged by `init(dir, euid())` next "
+     "(repair_envelope::init_store, run_ledger::init_ledger -> private_path::check_private), which refuses "
+     "any group/other bit (`m.mode() & 0o077 != 0`): a wider mode makes init refuse, never admit"),
+]
+
+
+# enable-gaps EG-4 lane I-B: intent.rs sites no row can kill alone.
+EXEMPT += [
+    ('crates/axon-intent/src/intent.rs', 'return Err(bad("missing `# Intent` header"));',
+     "DOMINATED (checkable): the goal is only filled after a `# Intent` header sets in_intent_prose "
+     "(split_sections :168-170, :177-188), so a source without the header always has an empty goal and "
+     "parse_with_base refuses it at `# Intent` body is empty (:313, row M4978); "
+     "intent::tests::intent_rejects_malformed's first case shows the pair refuses"),
+    ('crates/axon-intent/src/intent.rs', 'if meta.len() > FIXTURE_CAP_BYTES as u64 {',
+     "DOMINATED (checkable): read_fixture_file's text goes through cap_check (:539) before it is "
+     "returned, so a file over the cap is refused there (row M4985); this length check only avoids "
+     "reading it; intent::tests::fixture_files_resolve_only_inside_the_intent_directory (fx/big.txt) "
+     "shows the pair refuses"),
+    ('crates/axon-intent/src/intent.rs', 'return Err(line_bad(line, "an example needs a name"));',
+     "UNREACHABLE (checkable): t is raw.trim() (:590), so after a `### ` prefix the rest ends in a "
+     "non-whitespace character and name.trim() is never empty; a bare `###` is not `### ` and falls to "
+     "the item refusal (:676, row M4998)"),
+]
+
+
+# enable-gaps EG-4 lane I-C: genloop.rs's sites that carry no row (rows M5030-M5065).
+EXEMPT += [
+    ('crates/axon-intent/src/genloop.rs', 'std::fs::create_dir_all(dir.path().join(rel))',
+     "OS ERROR (checkable): creates a ceiling write directory inside the example's fresh private scratch dir "
+     "(`Scratch::new`, 0700, rowed: M5050) from a prefix that passed `intent::normalized_example_path` "
+     "(relative, no `..`); only an OS failure errs, and the candidate then ends as an infrastructure failure "
+     "with no program accepted"),
+    ('crates/axon-intent/src/genloop.rs', 'std::fs::create_dir_all(parent)',
+     "OS ERROR (checkable): creates a fixture's parent inside the example's private scratch dir from a path "
+     "that passed `intent::normalized_example_path` (relative, no `..`; rowed: M5048); only an OS failure "
+     "errs, and the candidate then ends as an infrastructure failure with no program accepted"),
+]
+
+
+# enable-gaps EG-4 lane I-D1 (O-NHR-04): the confidence.rs and cli.rs sites no row covers. Rows M5090-M5112.
+_CONF = "crates/axon-intent/src/confidence.rs"
+_ICLI = "crates/axon-intent/src/cli.rs"
+EXEMPT += [
+    (_CONF, "    if s < CONFIDENCE_FLOOR {",
+     "UNREACHABLE (checkable): after the four hard refusals the rubric adds W_TYPECHECKS + W_ENTRY "
+     "(40 + 20 = 60 = CONFIDENCE_FLOOR) unconditionally and the other weights only add, so `s < "
+     "CONFIDENCE_FLOOR` holds on no path. The weakest shippable draft scores exactly the floor "
+     "(confidence::tests::no_examples_is_a_named_deduction_that_never_refuses); a lower weight or a "
+     "higher floor makes it refuse there (M5096, M5097, M5098)"),
+    (_CONF, "fn refuse(reason: &str) -> Confidence {",
+     "NOT A SITE (checkable): the body of the refusal constructor `refuse`; each of its four calls in "
+     "`score` is a site of its own, rowed (M5090, M5091, M5092, M5093)"),
+    (_ICLI, "                _ => Err(format!(",
+     "USAGE (checkable): `--max-rounds` above genloop::MAX_REPAIR_ROUNDS (3) or not a u32; compile/emit "
+     "exit 2 before an intent is read, so nothing is generated, run or written. Admitted, it could not "
+     "widen the loop either: genloop::run takes `cfg.max_repair_rounds.min(MAX_REPAIR_ROUNDS)` "
+     "(genloop.rs:249)"),
+    (_ICLI, "    if mock && flags.generator.is_some() {",
+     "USAGE (checkable): `--generator` together with AXON_AI_MOCK is a contradictory invocation, refused "
+     "before any source is produced (exit 2; nothing generated, run or written). Without it the "
+     "operator's own AXON_AI_MOCK opt-in selects the deterministic offline MockSynth, whose draft "
+     "passes the same pipeline::resolve gates (check, grant, admissible, confidence); no generator is "
+     "spawned"),
+    (_ICLI, "            .map_err(Produce::Refused);",
+     "NOTHING TO ADMIT (checkable): pipeline::resolve (the AXON_AI_MOCK path) returned a Refusal and no "
+     "Resolved; the map_err only re-wraps it for produce_failed, which prints it and exits with "
+     "Refusal::exit_code (refusal.rs, never 0; M5110). Admitting here would have to invent the program"),
+    (_ICLI, "            pipeline::resolve_draft(intent, resolved.draft, risk_floor).map_err(Produce::Refused)",
+     "NOTHING TO ADMIT (checkable): pipeline::resolve_draft (re-gating the produced draft under the "
+     "--risk floor) returned a Refusal and no Resolved; the map_err only re-wraps it for "
+     "produce_failed (exit Refusal::exit_code, never 0; M5110). Admitting here would have to invent "
+     "the program"),
+    (_ICLI, "fn help(line: &str) -> ExitCode {",
+     "NOT A SITE (checkable): prints one usage line and returns ExitCode 0; its only callers are the "
+     "`<cmd> --help` arms of `run`, which run, approve and write nothing"),
+    (_ICLI, "fn cmd_review(rest: &[&str]) -> ExitCode {",
+     "NOTHING TO ADMIT (checkable): `review` prints the legible approval request and returns; its body "
+     "writes, spawns and signs nothing (load_job reads the .axjob and the program). Each non-zero exit "
+     "is a missing or malformed argument or an unreadable/invalid .axjob (USAGE). The decision is "
+     "`approve`'s (M5112) and the token check verify_triple's (M5108, M3625)"),
+]
+
+
+# enable-gaps EG-4 lane I-D2 (O-NHR-04): the audit_runs.rs sites no row covers. Rows M5130-M5137.
+_AUR = "crates/axon-intent/src/audit_runs.rs"
+EXEMPT += [
+    (_AUR, '            return Err(format!("`{flag}` needs a value (see --help)"));', _USE),
+    (_AUR, '            f => return Err(format!("unknown argument `{f}` (see --help)")),', _USE),
+    (_AUR, "        if schema != repair_envelope::ENVELOPE_SCHEMA",
+     "DOMINATED (checkable): the next statement verifies the file with repair_envelope::verify_for_audit, "
+     "whose verify_schemas refuses any schema outside AUDIT_ENVELOPE_SCHEMAS = [ENVELOPE_SCHEMA, "
+     "\"axon-approval/4\"], the same two schemas this guard admits (ENVELOPE_SCHEMA and "
+     "RETIRED_ENVELOPE_SCHEMAS); that Err is mapped to `not an envelope this operator signed` and returned, "
+     "so audit-runs exits 2 either way. A verify_for_audit that read past it is rowed: M4894, M4390"),
+    (_AUR, "        Err(e) => return fail(&e),\n    };\n    let (Some(spent), Some(ledger))",
+     "NOTHING TO ADMIT (checkable): parse_args returned an Err and no Args; without the directories there "
+     "is no ledger or store to audit (exit 2 by fail, M5136)"),
+    (_AUR, '        return fail("--spent-store and --run-ledger are required");',
+     "DOMINATED (checkable): parse_args returned Ok, and it refuses an Args with no --spent-store (M5131) or "
+     "no --run-ledger (M5132), so both are Some here and this let-else never takes its else"),
+    (_AUR, "        Err(e) => return fail(&e),\n    };\n    let envelopes = match",
+     "NOTHING TO ADMIT (checkable): SealKey::from_env failed (AXON_APPROVAL_KEY absent or malformed), so "
+     "there is no run-record key to check a seal with; tests/audit_runs.rs usage_and_unreadable_inputs_exit_2 "
+     "shows the keyless audit exits 2 with no output (M5136)"),
+    (_AUR, "                Err(e) => return fail(&e),\n            };\n            match load_envelopes",
+     "NOTHING TO ADMIT (checkable): MintKey::from_env failed, so there is no verify key and no supplied "
+     "envelope can be verified; reachable only after SealKey::from_env read the same AXON_APPROVAL_KEY"),
+    (_AUR, "        Err(e) => return fail(&e),\n    };\n    print(",
+     "NOTHING TO ADMIT (checkable): run_ledger::audit returned an Err and no Audit (axon-os run_ledger.rs "
+     "`pub struct Audit` derives no Default); tests/audit_runs.rs usage_and_unreadable_inputs_exit_2 shows a "
+     "missing directory and a ledger others can reach exit 2"),
+]
+
+
+# enable-gaps EG-4 lane I-E: the sites of its files no row covers.
+_IGEN = "crates/axon-intent/src/generator.rs"
+_IEMIT = "crates/axon-intent/src/emit.rs"
+_IPOL = "crates/axon-intent/src/policy.rs"
+EXEMPT += [
+    (_IGEN, "            None => Err(GenFailure::Failed {",
+     "DOMINATED (checkable): run_bounded_job's `code` is None only for End::TimedOut, refused by the "
+     "`run.timed_out` return above (M4036), or End::Signal, a termination signal to THIS process "
+     "(axon-os runtime.rs:682-686). axon-intent's main installs OnSignal::Die (main.rs:10): the handler kills the "
+     "job's group and the process dies by the same signal, so no caller reads this arm's result. A job that dies by "
+     "its own signal is an exit, `status.code().unwrap_or(-1)` (runtime.rs:683), refused by the Some(code) arm "
+     "(M5156; generator::tests::a_generator_killed_by_a_signal_is_a_failure_not_a_candidate)"),
+    (_IEMIT, "    std::fs::create_dir_all(out_dir)?;\n    let program = out_dir.join(",
+     "OS ERROR (checkable): the `?` returns the io error and write_compiled writes nothing; both callers "
+     "(cli.rs:338 `compile`, cli.rs:610 `emit`) print `cannot write triple` and exit 2 (cli.rs:354-355, 613-614)"),
+    (_IEMIT, "    std::fs::create_dir_all(out_dir)?;\n    let path = out_dir.join(",
+     "OS ERROR (checkable): the `?` returns the io error and no approval token is written; the one caller "
+     "(cli.rs:649 `emit`) prints `cannot write approval` and exits 2 (cli.rs:663-664)"),
+]
+_IPOL_NR = ("NOT ON THE PROTECTED ROUTE (checkable): `grep -rn 'policy_for' crates/ --include=*.rs` finds no caller "
+            "outside policy.rs (only its own tests); the §3.3 friction ladder is derived, not enforced: "
+            "`it does not yet enforce anything (S3)` (policy.rs:8)")
+VALUE_EXEMPT += [
+    (_IPOL, 'policy_for', 1, '1', 'NOTROUTE', _IPOL_NR),
+    (_IPOL, 'policy_for', 2, '0', 'NOTROUTE', _IPOL_NR),
+    (_IPOL, 'policy_for', 3, '0', 'NOTROUTE', _IPOL_NR),
+    (_IPOL, 'policy_for', 4, '1', 'NOTROUTE', _IPOL_NR),
+    (_IPOL, 'policy_for', 5, '10_000', 'NOTROUTE', _IPOL_NR),
+    (_IPOL, 'policy_for', 6, '100', 'NOTROUTE', _IPOL_NR),
+    (_IPOL, 'policy_for', 7, '2', 'NOTROUTE', _IPOL_NR),
+    (_IPOL, 'policy_for', 8, '1_000', 'NOTROUTE', _IPOL_NR),
+    (_IPOL, 'policy_for', 9, '10', 'NOTROUTE', _IPOL_NR),
+    (_IPOL, 'policy_for', 10, '3', 'NOTROUTE', _IPOL_NR),
+    (_IPOL, 'policy_for', 11, '100', 'NOTROUTE', _IPOL_NR),
+    (_IPOL, 'policy_for', 12, '1', 'NOTROUTE', _IPOL_NR),
+    (_IEMIT, 'build_manifest', 1, 'false', 'DOMINATED',
+     "DOMINATED (checkable): false is the manifest's own default (axon-os manifest.rs:251 "
+     "`require_approval.unwrap_or(false)`), and the one other value, true, adds a refusal (axon-os approval.rs:843) "
+     "and admits nothing. A job policy is the operator's to state (emit.rs:28-29); axon-intent's own verify refuses "
+     "a triple with no approval token whatever this value (cli.rs:698-702)"),
+]
+
 
 
 def load_rows():
