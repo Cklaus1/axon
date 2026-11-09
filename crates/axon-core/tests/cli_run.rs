@@ -48262,8 +48262,10 @@ fn a_spawned_process_cannot_open_the_interpreters_proc_files() {
     // may sit under a home directory 65534 cannot traverse).
     let mut cmd = if as_root {
         let bin = d.join("axon");
-        std::fs::copy(env!("CARGO_BIN_EXE_axon"), &bin).unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Copied by a separate process: an in-process copy holds a write fd a
+        // sibling test thread's fork can inherit, and the exec then fails with
+        // ETXTBSY (seen in CI run 42580457975, root job).
+        common::copy_executable(env!("CARGO_BIN_EXE_axon"), &bin, 0o755);
         let mut c = Command::new(bin);
         c.uid(65534).gid(65534);
         c

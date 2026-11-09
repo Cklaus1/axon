@@ -1840,7 +1840,9 @@ fn s14_a_run_in_a_user_namespace_refuses() {
     let e = envelope_for(&s);
     mint(&s, &e);
     let bin = s.root.join("ops/cortex-userns");
-    std::fs::copy(env!("CARGO_BIN_EXE_cortex"), &bin).unwrap();
+    // A separate-process copy: an in-process one can leave a write fd in a
+    // sibling test's fork, and the exec then fails with ETXTBSY.
+    common::copy_executable(env!("CARGO_BIN_EXE_cortex"), &bin, 0o755);
     let wrap = Wrap {
         userns: Some(&bin),
         ..Wrap::default()

@@ -1242,24 +1242,21 @@ fn a_narrowing_list_the_verifier_cannot_stat_is_not_read_as_absent() {
 fn production_verdict_with_git_failing(c: &Certified, fail: &str) -> Value {
     let d = c._d.path();
     let bin = d.join("axon-fabric");
-    std::fs::copy(env!("CARGO_BIN_EXE_axon-fabric"), &bin).unwrap();
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Every executable here is written by a separate process: an in-process
+    // write fd can be inherited by a sibling test thread's fork, and the exec
+    // then fails with ETXTBSY.
+    exec::copy_executable(env!("CARGO_BIN_EXE_axon-fabric"), &bin, 0o755);
     bind_to_system_clock_and(c, &bin);
-    std::fs::copy("/usr/bin/git", d.join("real-git")).unwrap();
-    std::fs::write(
-        d.join("failing-git"),
+    exec::copy_executable("/usr/bin/git", d.join("real-git"), 0o755);
+    exec::write_executable(
+        &d.join("failing-git"),
         format!(
             "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = \"{fail}\" ] && exit 1; done\n\
              exec \"{}\" \"$@\"\n",
             d.join("real-git").display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        d.join("failing-git"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
+        0o755,
+    );
     let script = "set -e\n\
          mount -t tmpfs -o mode=0755 tmpfs /etc/axon\n\
          cp -a \"$1/trust\" /etc/axon/trust\n\
