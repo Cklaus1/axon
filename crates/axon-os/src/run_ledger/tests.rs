@@ -763,6 +763,27 @@ fn c1_tree_over_cap() {
     assert!(f[1].detail.starts_with("src/big"), "{}", f[1].detail);
 }
 
+/// EGR-3: a path the journal wrote that the terminal tree values
+/// `over-cap:<len>` is reported once, as `tree-over-cap`. Its digest
+/// cannot be compared with the journal's, so the join skips it.
+#[test]
+fn c1_a_journaled_write_to_an_over_cap_path_is_not_unattributed() {
+    let fx = Fx::new("overcap-written");
+    let v = fx.run();
+    fx.append(&v, started(tree(&[("src/a", '1'), ("src/big", '2')])))
+        .unwrap();
+    let mut after = tree(&[("src/a", '1')]);
+    after.insert("src/big".into(), "over-cap:8589934592".into());
+    let writes = vec![write("src/big", Some('2'), Some('3'))];
+    fx.append(&v, terminal(1, None, writes, after)).unwrap();
+    let f = fx.audit();
+    assert_eq!(
+        names(&f),
+        vec!["tree-over-cap"],
+        "EGR-3: a journaled write to an over-cap path was also reported as unattributed-change: {f:?}"
+    );
+}
+
 /// EG-2: the widened tree grammar. A path maps to 64-hex or
 /// `over-cap:<decimal len>`; the reserved key `""` maps to
 /// `over-cap:manifest` or `over-cap:time`; nothing else.

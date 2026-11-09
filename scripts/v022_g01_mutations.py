@@ -15383,13 +15383,14 @@ MUTATIONS += [
      '        if budget.expired() {\n            out.insert(rl::TREE_STOP_KEY.into(), TIME.into());',
      '        if false && budget.expired() {\n            out.insert(rl::TREE_STOP_KEY.into(), TIME.into());',
      'axon-cortex', '--features unattended --lib', 'auth::tests::a_spent_walk_budget_caps_the_terminal_tree'),
+    # M4903/M4904 amended (EGR-1): the manifest stop moved into `manifest_cap`, shared with the listing cap.
     ('M4903', 'EG-2: a capped terminal tree drops its "" marker', 'crates/axon-cortex/src/auth.rs',
-     '            out.insert(rl::TREE_STOP_KEY.into(), MANIFEST.into());',
-     '            let _ = MANIFEST;',
+     '        out.insert(rl::TREE_STOP_KEY.into(), MANIFEST.into());',
+     '        let _ = MANIFEST;',
      'axon-cortex', _NHT, 'r6_a_check_that_writes_many_files_still_gets_a_terminal_record'),
     ('M4904', 'EG-2: a started tree over a cap is recorded and the run proceeds', 'crates/axon-cortex/src/auth.rs',
-     '        if grown + MANIFEST.len() > TREE_MANIFEST_BYTES {\n            if walk == Walk::Started {',
-     '        if grown + MANIFEST.len() > TREE_MANIFEST_BYTES {\n            if false && walk == Walk::Started {',
+     '        if walk == Walk::Started {\n            return Err(format!(\n                "pinned tree: the write roots hold',
+     '        if false && walk == Walk::Started {\n            return Err(format!(\n                "pinned tree: the write roots hold',
      'axon-cortex', _NHT, 'r6_a_write_root_over_the_tree_cap_refuses_before_any_check'),
     ('M4905', 'EG-2: C1 does not report tree-over-cap', 'crates/axon-os/src/run_ledger.rs',
      '            if let Some(why) = tree_cap(tree) {',
@@ -16028,6 +16029,19 @@ MUTATIONS += [
      '            Refusal::NotAdmissible { .. } | Refusal::GrantExceedsCeiling { .. } => 8,',
      '            Refusal::NotAdmissible { .. } | Refusal::GrantExceedsCeiling { .. } => 0,',
      'axon-intent', '--lib', 'refusal::tests::exit_codes_are_the_carved_scheme'),
+]
+
+# enable-gaps EG-2 review fixes (ids M5210-M5211, block M5210-M5219): ReviewEG12 EGR-1 (a directory
+# listing counts its names against TREE_MANIFEST_BYTES) and EGR-3 (C1 skips a journaled over-cap path).
+MUTATIONS += [
+    ('M5210', 'EGR-1: a directory listing is not counted against the manifest cap', 'crates/axon-cortex/src/auth.rs',
+     '                    if listed + MANIFEST.len() > TREE_MANIFEST_BYTES {',
+     '                    if false && listed + MANIFEST.len() > TREE_MANIFEST_BYTES {',
+     'axon-cortex', '--features unattended --lib', 'auth::tests::a_tree_of_empty_directories_is_capped_by_its_listing'),
+    ('M5211', 'EGR-3: a journaled over-cap path is joined as unattributed-change', 'crates/axon-os/src/run_ledger.rs',
+     '                if a.is_some_and(|v| v.starts_with(OVER_CAP)) && last_after.contains_key(p.as_str())',
+     '                if false && a.is_some_and(|v| v.starts_with(OVER_CAP)) && last_after.contains_key(p.as_str())',
+     'axon-os', '--lib', 'run_ledger::tests::c1_a_journaled_write_to_an_over_cap_path_is_not_unattributed'),
 ]
 
 

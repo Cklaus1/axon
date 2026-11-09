@@ -381,7 +381,11 @@ fn tree_cap(t: &Tree) -> Option<String> {
     Some(format!(
         "{}; {over} over-cap path(s)",
         match stop {
-            Some(v) => format!("the walk stopped ({v}): later paths are absent"),
+            // EGR-2: the walk order is not recorded, so no path a stopped
+            // `after` lacks is joined, wherever it sorts.
+            Some(v) => format!(
+                "the walk stopped ({v}): later paths are absent and no deletion in this tree is attributed"
+            ),
             None => "the walk completed".into(),
         }
     ))
@@ -1077,7 +1081,9 @@ pub fn audit(
             // EG-2 (EGA-4): a stopped walk's `after` lacks every later path,
             // so a path `before` has and a stopped `after` lacks is no
             // deletion; the stop marker itself is never joined. A path
-            // valued `over-cap:<len>` is still joined.
+            // valued `over-cap:<len>` is still joined, unless the journal
+            // wrote it (EGR-3): its digest cannot be compared, and
+            // `tree-over-cap` already reports the path.
             let stopped = after.contains_key(TREE_STOP_KEY);
             let paths: BTreeSet<&String> = before
                 .keys()
@@ -1087,6 +1093,10 @@ pub fn audit(
             for p in paths {
                 let (b, a) = (before.get(p), after.get(p));
                 if stopped && a.is_none() {
+                    continue;
+                }
+                if a.is_some_and(|v| v.starts_with(OVER_CAP)) && last_after.contains_key(p.as_str())
+                {
                     continue;
                 }
                 if b != a && last_after.get(p.as_str()) != Some(&a.map(String::as_str)) {

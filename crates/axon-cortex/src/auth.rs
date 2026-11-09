@@ -903,6 +903,10 @@ fn walk_budget(walk: Walk) -> crate::cas::WalkBudget {
 /// (terminal walks) past the budget's deadline, the walk stops with the
 /// reserved key `""` valued `over-cap:manifest` / `over-cap:time`. A started
 /// walk refuses (`Err`) any cap instead: its baseline is complete.
+/// A directory is listed one entry at a time, every name listed so far
+/// counted against [`TREE_MANIFEST_BYTES`] (EGR-1): a directory's own name
+/// never enters the manifest, so a tree of empty directories is capped by
+/// its listing, and no single listing reads more than the cap.
 fn tree(
     workspace: &Path,
     roots: &[PathBuf],
@@ -917,6 +921,17 @@ fn tree(
     }
     let mut out = rl::Tree::new();
     let mut size = 0usize;
+    let mut listed = 0usize;
+    let manifest_cap = |mut out: rl::Tree| {
+        if walk == Walk::Started {
+            return Err(format!(
+                "pinned tree: the write roots hold more than TREE_MANIFEST_BYTES \
+                 ({TREE_MANIFEST_BYTES}) bytes of manifest; narrow the write prefixes"
+            ));
+        }
+        out.insert(rl::TREE_STOP_KEY.into(), MANIFEST.into());
+        Ok(out)
+    };
     let mut todo: Vec<PathBuf> = roots.iter().rev().cloned().collect();
     while let Some(p) = todo.pop() {
         if budget.expired() {
@@ -934,11 +949,15 @@ fn tree(
                 crate::label::sha256_hex(format!("link:{}", t.to_string_lossy()).as_bytes())
             }
             Ok(m) if m.is_dir() => {
-                let mut kids = std::fs::read_dir(&p)
-                    .map_err(err)?
-                    .map(|e| e.map(|e| e.path()))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(err)?;
+                let mut kids = Vec::new();
+                for e in std::fs::read_dir(&p).map_err(err)? {
+                    let e = e.map_err(err)?;
+                    listed += e.file_name().len();
+                    if listed + MANIFEST.len() > TREE_MANIFEST_BYTES {
+                        return manifest_cap(out);
+                    }
+                    kids.push(e.path());
+                }
                 kids.sort_unstable();
                 todo.extend(kids.into_iter().rev());
                 continue;
@@ -965,14 +984,7 @@ fn tree(
         };
         let grown = size + key.len() + value.len();
         if grown + MANIFEST.len() > TREE_MANIFEST_BYTES {
-            if walk == Walk::Started {
-                return Err(format!(
-                    "pinned tree: the write roots hold more than TREE_MANIFEST_BYTES \
-                     ({TREE_MANIFEST_BYTES}) bytes of manifest; narrow the write prefixes"
-                ));
-            }
-            out.insert(rl::TREE_STOP_KEY.into(), MANIFEST.into());
-            return Ok(out);
+            return manifest_cap(out);
         }
         size = grown;
         out.insert(key, value);
@@ -1232,6 +1244,34 @@ mod tests {
             full.keys().collect::<Vec<_>>(),
             ["w/a", "w/b"],
             "ATTACK: EGA-5 a started walk was time-capped (it would spend the envelope at random)"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// EGR-1: listing a directory is capped too. Empty subdirectories never
+    /// enter the manifest, so a tree of them with more than
+    /// [`TREE_MANIFEST_BYTES`] of names used to be listed in full with no
+    /// stop. A terminal walk now stops with `"" -> over-cap:manifest`, and a
+    /// started walk refuses.
+    #[test]
+    fn a_tree_of_empty_directories_is_capped_by_its_listing() {
+        let d = std::env::temp_dir().join(format!("cortex-tree-list-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let name = "d".repeat(200);
+        for i in 0..TREE_MANIFEST_BYTES / 200 + 1 {
+            std::fs::create_dir_all(d.join(format!("w/{i:05}{name}"))).unwrap();
+        }
+        let roots = [d.join("w")];
+        let capped = tree(&d, &roots, Walk::Terminal, walk_budget(Walk::Terminal)).unwrap();
+        let want: rl::Tree = [("".to_string(), "over-cap:manifest".to_string())].into();
+        assert_eq!(
+            capped, want,
+            "ATTACK: EGR-1 a terminal walk listed more than TREE_MANIFEST_BYTES of names with no stop"
+        );
+        let started = tree(&d, &roots, Walk::Started, walk_budget(Walk::Started));
+        assert!(
+            started.as_ref().is_err_and(|e| e.contains("TREE_MANIFEST_BYTES")),
+            "ATTACK: EGR-1 a started walk listed more than TREE_MANIFEST_BYTES of names: {started:?}"
         );
         let _ = std::fs::remove_dir_all(&d);
     }

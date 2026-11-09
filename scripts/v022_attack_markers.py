@@ -4442,3 +4442,10 @@ ATTACK_MARKERS.update({
     'M5170': r'ATTACK: a NotAdmissible refusal does not exit 8',
 })
 
+# enable-gaps EG-2 review fixes (ids M5210-M5211, block M5210-M5219). M5211 matches its test's own
+# assertion text (a false finding, not an attack getting through; precedent M02/M03/M5054).
+ATTACK_MARKERS.update({
+    'M5210': r'ATTACK: EGR-1 a terminal walk listed more than TREE_MANIFEST_BYTES of names with no stop',
+    'M5211': r'EGR-3: a journaled write to an over-cap path was also reported as unattributed-change',
+})
+
