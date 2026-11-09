@@ -510,7 +510,10 @@ axon `af0bd979…`, axon-intent `c593c900…`):
 | 6 | `/var/tmp/r51-tmp/eg-probe/{eg1,eg2,eg2b}.sh` | eg1: rc 29 for `:8443`, `http://…:18308` and `127.0.0.2:9`, envelope stays `.issued`, ledger empty. eg2 (2 GiB / 20000 files already under `out`): the started walk refuses, rc 29 in 0.27 s / 0.31 s, `.unrecorded`, C1 `consumed-no-record` for both (audit rc 1). eg2b, 12 GiB written by the check: rc 20 in 0.22 s, max RSS 21488 KiB, terminal record, C1 `tree-over-cap` + `unattributed-change out/big`. eg2b, 20000 files written by the check: rc 20 in 0.43 s, max RSS 21248 KiB, terminal record stopped at `over-cap:manifest`, C1 `tree-over-cap` + `unattributed-change` for each new file listed before the stop. §5 item 6's "a terminal record in all four cases" is wrong for the two eg2 cases. No run starts there, so EG-2's started-walk refusal (no terminal record, `consumed-no-record`) is the specified result |
 | 7 | `v022_refusal_coverage.py --freeze` at 557e746c | rc 0; default rc 0 |
 
-CI: EG-3's acceptance was dispatch run 42569660634 on `eg/c` 3531da13, green on all four jobs (LaneC). Every probe ran in a
+CI: EG-3's acceptance was dispatch run 42569660634 on `eg/c` 3531da13, green on all four jobs (LaneC). On `main`, push run
+42580457975 (8d13c902) failed one root-only test with ETXTBSY: `a_spawned_process_cannot_open_the_interpreters_proc_files`
+copied the binary in-process before exec. 1fda5a5e moved that site and two others (cortex s14, fabric readiness) to the
+separate-process `copy_executable`/`write_executable`. Push run 42585745444 (1fda5a5e) is green on all four jobs. Every probe ran in a
 private mount namespace with its own tmpfs `/etc/axon`. Afterwards `ls -A /etc/axon` gave 0. **Not measured:** the 500 ms and
 256 MiB caps under gate load (the probes ran on a quiet host; EGA-11).
 

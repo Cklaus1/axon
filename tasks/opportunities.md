@@ -3549,6 +3549,8 @@ newest 7 runs fail the same five tests. `[SPECCED 2026-11-04: tasks/ci-hygiene-s
 authorized for build.]`
 `[PARTIAL 2026-11-05: CH-1..CH-8 merged on b4/merge. PR #9 run 41983378347 left only pci_delta_note (Check & Test, Codegen) and the
 O-CI-02 privilege suites (workspace). Stays open until a CI run on main is green.]`
+`[2026-11-09: first green CI run on main: push run 42585745444 at 1fda5a5e, all four jobs (enable-gaps EG-3 + the ETXTBSY test fix).
+ci-hygiene NH-1 asks for 10 consecutive green push runs on main before the Linux jobs are required; this is 1. Close when that holds.]`
 
 ### O-C-01 - [low] The fs scope's resolve-then-open window
 After containment-b4 C-1, the scope checks a resolved path and `DefaultHost` (`crates/axon-core/src/host.rs:189-247`) opens the
