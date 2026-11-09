@@ -3355,6 +3355,7 @@ protected-path rule rather than adding one include. Still open after the securit
 NOT_YET_SCANNED, so the next PSV --freeze refuses until a judging batch runs - that spec's NH-1).]`
 `[PARTLY FIXED 2026-11-05: containment-b4 C-3 (c423aa8d): axon-intent is in ROOT_CRATES; 4 exec builders and 6 spill-over
 exemptions; 17 files NOT_YET_SCANNED, so the next PSV --freeze refuses until a judging batch covers them (NH-1 = A).]`
+`[SPECCED 2026-11-08: tasks/enable-gaps-spec.md EG-4 (judging batch, lanes I-A..I-E; build authorized 2026-11-08).]`
 
 ### O-NHR-05 - [low] R6 L2 terminal-record choices made in the lane, not in the spec
 Terminal `accepted_refusal` is always null (an R5 refusal turns the exit into 22, outside {0,27}); an early exit's
@@ -3559,11 +3560,14 @@ scope of tasks/containment-b4-spec.md (its Out-of-scope 1).
 walk runs after `w.disarm()` (`bin/cortex.rs:1619-1621`, record at `:1882-1899`). A huge file a check wrote under a write root
 makes the end of the run unbounded, outside E3's deadline [INFERENCE: from the code; not run]. Fix direction: a bounded or
 streaming walk (a change to R6's tree). Out of scope of tasks/nhr-evidence-spec.md, which removes only the FIFO block (NE-2).
+`[SPECCED 2026-11-08: tasks/enable-gaps-spec.md EG-2 (streaming hash under byte/manifest/time caps; a terminal record on every
+exit, including the 20,000-file case found while drafting).]`
 
 ### O-NHR-08 - [info] The envelope pins the AI endpoint's host, not its port
 NE-8 NRV-3 (`history://NhrReview`): `endpoint_host` drops the port, so `https://<pinned-host>:8443` is admitted. Stated scope
 (NH-R1 pins "host"); TLS still authenticates the host name. Raised for the §9 enabling decision; fix direction: pin
 `host:port` in the envelope (a schema change to `axon-approval`).
+`[SPECCED 2026-11-08: tasks/enable-gaps-spec.md EG-1 (`endpoint_host` = `host:port`, schema `axon-approval/5`).]`
 
 ### O-NR-01 - [info] Neural programs stopped at NR-0: no consumer for a learned ranker
 tasks/neural-programs-spec.md NR-0 ran the free profiling pass: one eligible function (cortex's candidate ranker), with a +7/22
@@ -3584,6 +3588,8 @@ On the integrated head (b4/merge 43dda51d, run 41992018913): Docs, Check & Test 
 74 tests in 11 suites, the ones above plus batch 4's own `axon-cortex` lib test
 `unattended::tests::a_special_file_at_or_under_a_write_root_is_refused_by_kind` (`mknod` of a device: EPERM unprivileged; it
 passes as root in the gate's S09U, like every unattended test, which asserts root rather than skip).
+`[SPECCED 2026-11-08: tasks/enable-gaps-spec.md EG-3 (the workspace job runs its tests as root with each suite's setup; nothing
+skipped, per NH-3 B).]`
 
 ### O-CI-03 - [low] CI hygiene residue (ci-hygiene §0 out of scope)
 - Interpreter stdout (e.g. the REDTEAM line from `examples/goals/redteam-goal.ax:49`) leaks past libtest capture into CI logs.
