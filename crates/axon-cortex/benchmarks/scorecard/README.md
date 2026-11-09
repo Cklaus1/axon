@@ -358,6 +358,7 @@ Waivers (a digest declared to change no behaviour, with the reason):
 | date | repair digest | reason |
 |---|---|---|
 | 2026-11-05 | `d8c6eccef05e054b` | cere-loopback: NH-R1 2-N1 admits plain http:// to a loopback IP literal. The only caller (axon_ai::endpoint_is_private) is auth.rs phase A, reached only by cortex repair --unattended, which the default (receipt) build refuses before parsing; the cortex.rs edit is USAGE text. Attended propose/accept/report paths are unchanged. |
+| 2026-11-09 | `0c7c1f96d9397a2d` | EG-1/EG-2: unattended-only (auth, envelope_preview, cas::hash_plain/WalkBudget, all cfg(feature = "unattended"); axon_ai::endpoint_authority's only caller is auth.rs; cortex.rs is one doc line); the receipt build is --features ai (scorecard.py:481-484) and compiles none of it |
 
 ## Held-out and once-set use
 
