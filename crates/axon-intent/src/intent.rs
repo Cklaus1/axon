@@ -1150,7 +1150,11 @@ b
             ("### e\n#### step\n", "#### run"),
         ] {
             let r = malformed_reason(&with_examples(&format!("\n## Examples\n{body}")));
-            assert!(r.contains(needle) && r.contains("line "), "{body:?} → {r}");
+            assert!(r.contains(needle), "{body:?} → {r}");
+            assert!(
+                r.contains("line "),
+                "ATTACK: a malformed example was refused without naming its line: {body:?} → {r}"
+            );
         }
         for (body, needle) in [
             ("### e\n", "has no runs"),
@@ -1163,5 +1167,287 @@ b
             let r = malformed_reason(&with_examples(&format!("\n## Examples\n{body}")));
             assert!(r.contains(needle), "{body:?} → {r}");
         }
+    }
+
+    // EG-4 (O-NHR-04): one case per refusal site of `parse`/`parse_with_base`.
+    // Today each case is refused for its own reason. Under the site's g01 row it
+    // parses clean, and the `ATTACK:` panic names the case. A refusal for another
+    // reason panics without `ATTACK:` (refused elsewhere, never a kill).
+    #[test]
+    fn every_intent_refusal_site_refuses_its_own_case() {
+        let dir = std::env::temp_dir().join(format!("eg4-ib-cases-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("fx")).unwrap();
+        std::fs::write(dir.join("fx/in.txt"), "inside\n").unwrap();
+        let fifo = dir.join("fx/pipe");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path; mkfifo only creates the node.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo");
+
+        let ex = |body: &str| with_examples(&format!("\n## Examples\n{body}"));
+        let over_cap = format!(
+            "### e\n- input ./data/a: \"{}\"\n",
+            "x".repeat(64 * 1024 + 1)
+        );
+        let no_allowed = VALID.replace(
+            "## Allowed\n- fs_read: ./data/\n- fs_write: ./out/\n- net: none\n- exec: none\n- max_label: internal\n",
+            "",
+        );
+        let abs_prefix = format!(
+            "{}\n## Examples\n### e\n- input ./elsewhere/x: \"x\"\n",
+            VALID.replace("- fs_read: ./data/", "- fs_read: /srv/")
+        );
+        // (case, source, parse under the temp dir?, the reason's own words)
+        let cases: Vec<(&str, String, bool, &str)> = vec![
+            (
+                "second-examples",
+                ex("### e\n- exit: 0\n## Examples\n### f\n- exit: 0\n"),
+                false,
+                "second `## Examples`",
+            ),
+            (
+                "empty-goal",
+                "# Intent\n\n## Allowed\n- exec: none\n".to_string(),
+                false,
+                "body is empty",
+            ),
+            ("no-allowed", no_allowed, false, "missing `## Allowed`"),
+            (
+                "allowed-no-colon",
+                VALID.replace("- exec: none", "- exec: none\n- fs_read"),
+                false,
+                "`## Allowed`: expected `key: value`",
+            ),
+            (
+                "allowed-bad-exec",
+                VALID.replace("exec: none", "exec: root"),
+                false,
+                "exec must be",
+            ),
+            (
+                "allowed-bad-max-label",
+                VALID.replace("max_label: internal", "max_label: ultra"),
+                false,
+                "max_label must be",
+            ),
+            (
+                "allowed-unknown-key",
+                VALID.replace("- exec: none", "- exec: none\n- frob: x"),
+                false,
+                "unknown key `frob`",
+            ),
+            (
+                "allowed-dotdot",
+                VALID.replace("fs_read: ./data/", "fs_read: ../etc/"),
+                false,
+                "traversal denied",
+            ),
+            (
+                "budget-no-colon",
+                VALID.replace("- calls: 100", "- calls"),
+                false,
+                "`## Budget`: expected `key: value`",
+            ),
+            (
+                "budget-not-integer",
+                VALID.replace("- calls: 100", "- calls: many"),
+                false,
+                "is not an integer",
+            ),
+            (
+                "budget-unknown-key",
+                VALID.replace("- calls: 100", "- calls: 100\n- frob: 1"),
+                false,
+                "unknown key `frob`",
+            ),
+            (
+                "budget-negative",
+                VALID.replace("50000", "-1"),
+                false,
+                "must be \u{2265} 0",
+            ),
+            (
+                "seed-not-u64",
+                VALID.replace("## Seed\n- 42", "## Seed\n- abc"),
+                false,
+                "is not a u64",
+            ),
+            (
+                "fixture-head-no-colon",
+                ex("### e\n- input ./data/a\n```fixture\nx\n```\n"),
+                false,
+                "expected `<path>:`",
+            ),
+            (
+                "path-dotdot-under-prefix",
+                ex("### e\n- input ./data/../secret: \"x\"\n"),
+                false,
+                "relative path without `..`",
+            ),
+            (
+                "path-under-absolute-prefix",
+                abs_prefix,
+                false,
+                "is not under any",
+            ),
+            ("inline-over-cap", ex(&over_cap), false, "fixture cap"),
+            (
+                "from-without-base",
+                ex("### e\n- input ./data/a from Cargo.toml\n"),
+                false,
+                "intent file's directory",
+            ),
+            (
+                "from-dotdot",
+                ex("### e\n- input ./data/a from ../fx/in.txt\n"),
+                true,
+                "relative path inside the intent's directory",
+            ),
+            (
+                "from-fifo",
+                ex("### e\n- input ./data/a from fx/pipe\n"),
+                true,
+                "not a regular file",
+            ),
+            (
+                "item-before-example",
+                ex("- exit: 0\n### e\n- exit: 0\n"),
+                false,
+                "before the first",
+            ),
+            (
+                "stray-fence",
+                ex("### e\n- exit: 0\n```fixture\nx\n```\n"),
+                false,
+                "a fence with no",
+            ),
+            (
+                "fence-not-fixture",
+                ex("### e\n- input ./data/a:\n```axon\nfn main() -> i64 { 0 }\n```\n"),
+                false,
+                "go in a ```fixture fence",
+            ),
+            (
+                "unclosed-fence",
+                ex("### e\n- input ./data/a:\n```fixture\nx\n"),
+                false,
+                "unclosed",
+            ),
+            (
+                "colon-then-item",
+                ex("### e\n- input ./data/a:\n- exit: 0\n```fixture\nx\n```\n"),
+                false,
+                "not followed by",
+            ),
+            (
+                "run-header-not-run",
+                ex("### e\n#### step\n- exit: 0\n"),
+                false,
+                "expected `#### run",
+            ),
+            (
+                "duplicate-example-name",
+                ex("### e\n- exit: 0\n### e\n- exit: 1\n"),
+                false,
+                "duplicate example name",
+            ),
+            (
+                "example-without-runs",
+                ex("### e\n### f\n- exit: 0\n"),
+                false,
+                "example `e` has no runs",
+            ),
+            (
+                "not-an-item",
+                ex("### e\nexit: 0\n"),
+                false,
+                "expected `### <name>`",
+            ),
+            (
+                "stdout-bad-form",
+                ex("### e\n- stdout hi\n"),
+                false,
+                "expected `- stdout:`",
+            ),
+            (
+                "exit-out-of-range",
+                ex("### e\n- exit: 300\n"),
+                false,
+                "0..=255",
+            ),
+            (
+                "second-exit",
+                ex("### e\n- exit: 1\n- exit: 2\n"),
+                false,
+                "second `exit:`",
+            ),
+            (
+                "unknown-item",
+                ex("### e\n- exit: 0\n- frobnicate x\n"),
+                false,
+                "unknown example item",
+            ),
+            (
+                "repeated-item",
+                ex("### e\n- input ./data/a: \"1\"\n- input ./data/a: \"2\"\n"),
+                false,
+                "repeats",
+            ),
+            (
+                "repeated-item-spelled-apart",
+                ex("### e\n- input ./data/a: \"1\"\n- input data//a: \"2\"\n"),
+                false,
+                "repeats",
+            ),
+            (
+                "trailing-colon",
+                ex("### e\n- input ./data/a:\n"),
+                false,
+                "no ```fixture fence follows",
+            ),
+            (
+                "last-example-without-runs",
+                ex("### e\n"),
+                false,
+                "example `e` has no runs",
+            ),
+            ("examples-empty", ex(""), false, "states no"),
+        ];
+        for (case, src, with_base, needle) in cases {
+            if case == "from-fifo" {
+                // Feeds the fifo only if a parse opens it (a refusal never does).
+                let fifo = fifo.clone();
+                std::thread::spawn(move || {
+                    use std::io::Write;
+                    if let Ok(mut w) = std::fs::OpenOptions::new().write(true).open(&fifo) {
+                        let _ = w.write_all(b"x\n");
+                    }
+                });
+            }
+            let base = if with_base { Some(dir.as_path()) } else { None };
+            match parse_with_base(&src, base) {
+                Ok(_) => panic!("ATTACK: intent case `{case}` parsed clean"),
+                Err(Refusal::Malformed { reason }) => assert!(
+                    reason.contains(needle),
+                    "case `{case}` was refused for another reason: {reason}"
+                ),
+                Err(other) => panic!("case `{case}`: not Malformed: {other:?}"),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_normalized_example_path_never_leaves_the_staging_directory() {
+        for p in ["/etc/passwd", "../x", "out/../../x", "out\\x", ""] {
+            assert!(
+                normalized_example_path(p).is_none(),
+                "ATTACK: normalized_example_path admitted `{p}`, which a join would place outside the staging directory"
+            );
+        }
+        assert_eq!(
+            normalized_example_path("./out//x").as_deref(),
+            Some("out/x")
+        );
     }
 }
