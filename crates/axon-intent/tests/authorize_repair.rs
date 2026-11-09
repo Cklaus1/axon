@@ -171,53 +171,60 @@ fn mint(s: &Setup, ttl: &str, symbol: &str) -> Out {
 }
 
 fn mint_check(s: &Setup, ttl: &str, symbol: &str, check: &str) -> Out {
-    intent(
-        &[
-            "--cortex",
-            s.cortex.to_str().unwrap(),
-            "--workspace",
-            s.ws.to_str().unwrap(),
-            "--file",
-            "src/main.axon",
-            "--symbol",
-            symbol,
-            "--check",
-            check,
-            "--write-prefix",
-            "src",
-            "--read-prefix",
-            s.ws.join("data").to_str().unwrap(),
-            "--axon",
-            "/usr/local/bin/axon",
-            "--generator",
-            "ai:m-1",
-            "--spent-store",
-            s.store.to_str().unwrap(),
-            "--run-ledger",
-            s.ledger.to_str().unwrap(),
-            "--verify-key",
-            s.vkey.to_str().unwrap(),
-            "--run-record-key",
-            s.rkey.to_str().unwrap(),
-            "--by",
-            "operator-a",
-            "--ttl-s",
-            ttl,
-            "--max-proposals",
-            "3",
-            "--deadline-ms",
-            "60000",
-            "--check-timeout-ms",
-            "5000",
-            "--candidates",
-            "2",
-            "--max-steps",
-            "100000",
-            "--out",
-            s.out.to_str().unwrap(),
-        ],
-        true,
-    )
+    let argv = mint_argv(s, ttl, symbol, check);
+    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+    intent(&argv, true)
+}
+
+/// The full mint command line, as `--flag value` pairs in order.
+fn mint_argv(s: &Setup, ttl: &str, symbol: &str, check: &str) -> Vec<String> {
+    [
+        "--cortex",
+        s.cortex.to_str().unwrap(),
+        "--workspace",
+        s.ws.to_str().unwrap(),
+        "--file",
+        "src/main.axon",
+        "--symbol",
+        symbol,
+        "--check",
+        check,
+        "--write-prefix",
+        "src",
+        "--read-prefix",
+        s.ws.join("data").to_str().unwrap(),
+        "--axon",
+        "/usr/local/bin/axon",
+        "--generator",
+        "ai:m-1",
+        "--spent-store",
+        s.store.to_str().unwrap(),
+        "--run-ledger",
+        s.ledger.to_str().unwrap(),
+        "--verify-key",
+        s.vkey.to_str().unwrap(),
+        "--run-record-key",
+        s.rkey.to_str().unwrap(),
+        "--by",
+        "operator-a",
+        "--ttl-s",
+        ttl,
+        "--max-proposals",
+        "3",
+        "--deadline-ms",
+        "60000",
+        "--check-timeout-ms",
+        "5000",
+        "--candidates",
+        "2",
+        "--max-steps",
+        "100000",
+        "--out",
+        s.out.to_str().unwrap(),
+    ]
+    .iter()
+    .map(|a| a.to_string())
+    .collect()
 }
 
 /// The store's entries other than `store-id`.
@@ -386,7 +393,11 @@ fn authorize_repair_mints_a_verifiable_issued_envelope_from_the_preview() {
     // Step 1: the preview was exec'd with the operator's task.
     let argv = std::fs::read_to_string(s.dir.join("argv.txt")).unwrap();
     let argv: Vec<&str> = argv.lines().collect();
-    assert_eq!(&argv[..2], &["grant", "--envelope-preview"]);
+    assert_eq!(
+        &argv[..2],
+        &["grant", "--envelope-preview"],
+        "ATTACK: the preview was not asked of `cortex grant --envelope-preview`"
+    );
     for pair in [
         ["--file", "src/main.axon"],
         ["--symbol", "parse"],
@@ -450,6 +461,23 @@ fn authorize_repair_mints_a_verifiable_issued_envelope_from_the_preview() {
     );
     assert_eq!(rec["envelope_digest"], json!(v.digest));
     assert_eq!(rec["envelope_id"], json!(e.envelope_id));
+    assert_eq!(
+        rec["schema"],
+        json!("axon-intent-mint/1"),
+        "ATTACK: the mint record does not name its schema axon-intent-mint/1"
+    );
+    let b = &e.budget;
+    assert_eq!(
+        (
+            b.max_proposals,
+            b.deadline_ms,
+            b.check_timeout_ms,
+            b.candidates,
+            b.max_steps
+        ),
+        (3, 60_000, 5_000, 2, 100_000),
+        "ATTACK: a budget flag's value was bound to another budget field"
+    );
     // The envelope is spendable exactly once.
     repair_envelope::consume(&s.store, euid, &v, now()).expect("first use");
     assert!(repair_envelope::consume(&s.store, euid, &v, now()).is_err());
@@ -772,6 +800,132 @@ fn minting_without_the_operator_key_mints_nothing() {
     assert!(
         !s.dir.join("argv.txt").exists(),
         "the preview ran before the key was checked"
+    );
+}
+
+// -- refusal coverage (enable-gaps EG-4 lane I-A) -------------------------------
+
+/// The mint command line with `flag` and its value left out.
+fn mint_argv_without(s: &Setup, flag: &str) -> Vec<String> {
+    let argv = mint_argv(s, "3600", "parse", "check_parse");
+    let at = argv.iter().position(|a| a == flag).unwrap();
+    [&argv[..at], &argv[at + 2..]].concat()
+}
+
+/// Every check that needs no preview runs before the preview does: a
+/// missing `--by` or `--ttl-s` is refused by parse_args before the cortex
+/// preview is exec'd. Nothing else refuses them earlier (an empty
+/// `issued_by` and a zero TTL are refused only after the preview ran).
+#[test]
+fn a_mint_missing_a_required_flag_runs_no_preview() {
+    for flag in ["--by", "--ttl-s"] {
+        let s = setup("noflag", None, 0);
+        let argv = mint_argv_without(&s, flag);
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let o = intent(&argv, true);
+        assert!(
+            !s.dir.join("argv.txt").exists(),
+            "ATTACK: the cortex preview ran for a mint command line without {flag}: {}",
+            o.stderr
+        );
+        refused_mints_nothing(
+            &s,
+            &o,
+            2,
+            &format!("{flag} is required"),
+            &format!("ATTACK: an envelope was minted without {flag}"),
+        );
+    }
+}
+
+/// parse_args's `{b} is required` and mint's `a budget flag is missing`
+/// guard the same missing budget flag (a DOMINATED pair): with each budget
+/// flag left out in turn, the pair refuses and nothing is minted or issued.
+#[test]
+fn a_missing_budget_flag_mints_nothing() {
+    for flag in [
+        "--max-proposals",
+        "--deadline-ms",
+        "--check-timeout-ms",
+        "--candidates",
+        "--max-steps",
+    ] {
+        let s = setup("nobudget", None, 0);
+        let argv = mint_argv_without(&s, flag);
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let o = intent(&argv, true);
+        let attack = format!("ATTACK: an envelope was minted without {flag}");
+        assert_eq!(
+            o.code, 2,
+            "{attack}: stdout {} stderr {}",
+            o.stdout, o.stderr
+        );
+        assert!(!s.out.exists(), "{attack}");
+        assert!(store_records(&s).is_empty(), "{attack}");
+    }
+}
+
+/// The cortex preview child reads nothing from the minter's stdin (the
+/// operator's terminal or pipe): its stdin is /dev/null.
+#[test]
+fn the_preview_child_gets_no_stdin() {
+    use std::io::Write as _;
+    let s = setup("stdin", None, 0);
+    let got = s.dir.join("stdin.txt");
+    let script = std::fs::read_to_string(&s.cortex).unwrap().replacen(
+        "cat '",
+        &format!("cat > '{}'\ncat '", got.display()),
+        1,
+    );
+    common::write_executable(&s.cortex, script, 0o700);
+    let argv = mint_argv(&s, "3600", "parse", "check_parse");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_axon-intent"))
+        .arg("authorize-repair")
+        .args(&argv)
+        .env("AXON_APPROVAL_KEY", op_key_hex())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The minter never reads its stdin; a write after it exited is EPIPE.
+    let _ = child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"the operator's stdin\n");
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "control: the mint succeeds: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&got).unwrap(),
+        "",
+        "ATTACK: the cortex preview child read the minter's stdin"
+    );
+}
+
+/// `<out>.mint` is written before the envelope is issued, so an `--out`
+/// that cannot be written (its directory does not exist) issues nothing.
+#[test]
+fn an_out_that_cannot_be_written_issues_nothing() {
+    let mut s = setup("out-absent", None, 0);
+    s.out = s.dir.join("absent").join("repair.envelope");
+    let o = mint(&s, "3600", "parse");
+    assert!(
+        store_records(&s).is_empty(),
+        "ATTACK: an envelope was issued for an --out that cannot be written: {}",
+        o.stderr
+    );
+    refused_mints_nothing(
+        &s,
+        &o,
+        2,
+        "cannot write",
+        "ATTACK: an envelope was minted for an --out that cannot be written",
     );
 }
 
