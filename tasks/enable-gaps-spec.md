@@ -514,8 +514,16 @@ CI: EG-3's acceptance was dispatch run 42569660634 on `eg/c` 3531da13, green on 
 42580457975 (8d13c902) failed one root-only test with ETXTBSY: `a_spawned_process_cannot_open_the_interpreters_proc_files`
 copied the binary in-process before exec. 1fda5a5e moved that site and two others (cortex s14, fabric readiness) to the
 separate-process `copy_executable`/`write_executable`. Push run 42585745444 (1fda5a5e) is green on all four jobs. Every probe ran in a
-private mount namespace with its own tmpfs `/etc/axon`. Afterwards `ls -A /etc/axon` gave 0. **Not measured:** the 500 ms and
-256 MiB caps under gate load (the probes ran on a quiet host; EGA-11).
+private mount namespace with its own tmpfs `/etc/axon`. Afterwards `ls -A /etc/axon` gave 0. `[REVISED 2026-11-09: was "Not
+measured: the 500 ms and 256 MiB caps under gate load (EGA-11)"]` **Measured under gate load 2026-11-09** (CapLoad,
+`/var/tmp/r51-tmp/cap-load/RESULTS.md`; binaries `eg-bin` = main 4199c91c; load = one `gate.sh --strict` at 4199c91c, rc 0,
+3038 s; 1-min load 2.46-21.65 on 32 cores; 1 quiet + 14 loaded rounds). A legitimate walk near the byte cap (1300 files,
+242.8 MB = 92.5% of `TREE_HASH_BYTES`, warm page cache) took 115-120 ms quiet and p50 125 / p95 135 / max 170 ms loaded (n=28),
+34% of `TREE_WALK_TIME`; all 60 loaded started/terminal trees completed with no stop key. eg1/eg2/eg2b and the CERE q1/q1b/q1n
+series gave the same outcomes in every round as quiet. Not measured: a cold page cache, and load from several lanes at once
+(the 2026-10-19 receipt flip happened under 3-lane load). Decision: `TREE_WALK_TIME` stays 500 ms. (q1b's "accepted file
+edited after the run" step reports no finding in every round, quiet included: `accepted-mismatch` joins the records only,
+`run_ledger.rs:1048-1059`, and R6 is record-only by design, so the probe's expectation was wrong, not the audit.)
 
 ## Appendix A. EG-4 lane table (from `eg4-coverage.md` §4-5)
 

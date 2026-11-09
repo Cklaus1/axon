@@ -314,6 +314,12 @@ Rules for the gate as a whole:
 - `HARD_GRACE` bounds lock wait + restore + report. `[DECIDED by human 2026-10-19 (§10 Q4): not fixed in advance —
   set from S10's measured tail (p99 of lock wait + restore + report over the stall cases, run under the host's real
   load, not on an idle machine) plus a stated margin; the measured value and its load are recorded with S10.]`
+  `[MEASURED 2026-11-09 (CapLoad, enable-gaps §8): `watchdog.rs::s10_e3_measure_hard_grace` (overshoot past the deadline:
+  lock wait + kill + restore + report + exit, cases model/check/writing). Quiet n=60: p50 1 / p99 3 / max 3 ms. Under one
+  strict gate (1-min load up to 21.65 on 32 cores), 420 samples: per-round p99 3-65 ms, max 65 ms (`writing`). The stop
+  window `STALL_AT` = 3/4 `HARD_GRACE` must also hold a terminal walk (`TREE_WALK_TIME` 500 ms) and the append: 65 + 500 =
+  565 ms needed vs 1500 ms available, 2.6x margin. Decision: `HARD_GRACE` stays 2000 ms (`watchdog.rs:43`). Not measured:
+  several lanes of load at once.]`
 - Every child (checks, per-proposal `axon caps`) is also bounded by `min(configured, remaining)`.
 - `[REVISED: security F8 - built]` The watchdog is armed right after phase B (`bin/cortex.rs`, before the
   fence-conflict and witness runs, which execute workspace code); every static child before it (`derive_fence`'s and
