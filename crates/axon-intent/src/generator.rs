@@ -335,9 +335,88 @@ mod tests {
                     "{reason}"
                 )
             }
-            other => panic!("expected Failed, got {other:?}"),
+            other => panic!(
+                "ATTACK: a failing generator's output became a candidate: expected Failed, got {other:?}"
+            ),
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_generator_killed_by_a_signal_is_a_failure_not_a_candidate() {
+        // A job that dies by a signal of its own is an exit (`run_bounded_capped`:
+        // `End::Exited` -> `status.code().unwrap_or(-1)`), refused by the
+        // `Some(code)` arm; `code` is `None` only for a deadline (refused above)
+        // or a termination signal to this process under `OnSignal::Continue`.
+        let (dir, path) = script(
+            "killed",
+            "#!/bin/sh\necho 'fn main() -> i64 { 0 }'\nkill -9 $$\n",
+        );
+        let g = CmdGenerator::new(path, Duration::from_secs(20));
+        let r = g.generate("p");
+        assert!(
+            matches!(&r, Err(GenFailure::Failed { reason }) if reason.starts_with("exit -1")),
+            "ATTACK: a generator killed by a signal yielded a candidate: {r:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_answer_over_the_candidate_cap_is_a_failure_not_a_truncated_candidate() {
+        // 300000 bytes: over the 256 KiB cap, and under 1 MiB, so a widened
+        // cap is caught as well as a dropped check.
+        let (dir, path) = script("big", "#!/bin/sh\nhead -c 300000 /dev/zero | tr '\\0' x\n");
+        let g = CmdGenerator::new(path, Duration::from_secs(20));
+        let r = g.generate("p");
+        assert!(
+            matches!(&r, Err(GenFailure::Failed { reason }) if reason.contains("exceeds")),
+            "ATTACK: an answer over the candidate cap became a candidate: {:?}",
+            r.as_ref().map(|g| g.text.len())
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_last_tokens_line_a_generator_prints_is_its_count() {
+        let stderr = "axon-intent-tokens: 5\nnoise\n  axon-intent-tokens: 7 \ntrailing\n";
+        assert_eq!(
+            reported_tokens(stderr),
+            Some(7),
+            "ATTACK: a generator's reported tokens were not counted as reported"
+        );
+        assert_eq!(reported_tokens("no tokens line\n"), None);
+    }
+
+    #[test]
+    fn an_empty_or_unknown_generator_spec_is_refused() {
+        let cmd = parse_spec("cmd:", DEFAULT_TIMEOUT).err();
+        assert!(
+            cmd.as_deref().is_some_and(|e| e.contains("needs a path")),
+            "ATTACK: `--generator cmd:` with no path was accepted: {cmd:?}"
+        );
+        let ai = parse_spec("ai:", DEFAULT_TIMEOUT).err();
+        assert!(
+            ai.as_deref()
+                .is_some_and(|e| e.contains("needs a model name")),
+            "ATTACK: `--generator ai:` with no model was accepted: {ai:?}"
+        );
+        let unknown = parse_spec("gpt-4", DEFAULT_TIMEOUT).err();
+        assert!(
+            unknown
+                .as_deref()
+                .is_some_and(|e| e.contains("unknown generator")),
+            "ATTACK: an unknown generator spec was accepted: {unknown:?}"
+        );
+    }
+
+    #[cfg(not(feature = "ai"))]
+    #[test]
+    fn an_ai_generator_in_a_build_without_the_ai_feature_is_refused() {
+        let e = parse_spec("ai:some-model", DEFAULT_TIMEOUT).err();
+        assert!(
+            e.as_deref().is_some_and(|e| e.contains("--features ai")),
+            "ATTACK: an `ai:` generator was accepted by a build without the ai feature: {e:?}"
+        );
     }
 
     #[test]

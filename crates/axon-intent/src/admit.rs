@@ -69,10 +69,13 @@ mod tests {
     #[test]
     fn non_admissible_refused() {
         let r = prove_admissible(&declares(true, true), &grant(true, false));
-        assert!(matches!(
-            r,
-            Err(Refusal::NotAdmissible { ref axis, .. }) if axis == "net"
-        ));
+        assert!(
+            matches!(
+                r,
+                Err(Refusal::NotAdmissible { ref axis, .. }) if axis == "net"
+            ),
+            "ATTACK: a program declaring more than its grant was admitted: {r:?}"
+        );
         assert_eq!(r.unwrap_err().exit_code(), 8);
     }
 }

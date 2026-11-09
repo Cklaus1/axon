@@ -468,6 +468,18 @@ Summarize ./data/report.txt into ./out/summary.txt.
         assert_eq!(derive_risk(&pure), Risk::Low);
     }
 
+    #[test]
+    fn an_unknown_risk_word_is_refused_not_read_as_a_tier() {
+        assert_eq!(Risk::parse("CRITICAL"), Some(Risk::Critical));
+        for w in ["severe", "", "lowest", "crit"] {
+            assert_eq!(
+                Risk::parse(w),
+                None,
+                "ATTACK: an unknown --risk word {w:?} was read as a risk tier"
+            );
+        }
+    }
+
     const IMP: &str = axon_os::EMPTY_IMPORTS_DIGEST;
 
     // R22 §7 `acc_a6_approval_token_binds_and_tamper_detected` (pure half).
