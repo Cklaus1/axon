@@ -576,7 +576,9 @@ opkit_ns_private_dev() { # MOUNTPOINT
   mount -t tmpfs -o mode=1777,nosuid,nodev,noexec tmpfs "$nd/shm" || return 1
   mount -o remount,ro,bind "$nd" "$nd" 2>/dev/null || mount -o remount,ro "$nd" || return 1
   umount -l -R /dev || { opkit_say "REFUSE(opkit_ns): cannot detach the host's /dev"; return 1; }
-  mount --move "$nd" /dev || { opkit_say "REFUSE(opkit_ns): cannot install the private /dev"; return 1; }
+  # -n: libmount 2.39 (util-linux 2.39.3, Ubuntu 24.04; 2.41.3 does not) rewrites /run/mount/utab after a move;
+  # the root is read-only by now, so the move lands and mount still exits 1 (EROFS). Nothing reads a utab entry.
+  mount -n --move "$nd" /dev || { opkit_say "REFUSE(opkit_ns): cannot install the private /dev"; return 1; }
 }
 
 opkit_ns_isolate() {
