@@ -67,7 +67,7 @@ fn the_preview_pins_what_the_runner_recomputes() {
         "ATTACK: the envelope preview was not produced: {err}"
     );
     let v: Value = serde_json::from_str(out.trim()).unwrap();
-    assert_eq!(v["schema"], "cortex-envelope-preview/1", "{v}");
+    assert_eq!(v["schema"], "cortex-envelope-preview/2", "{v}");
 
     let axon = axon_bin();
     let wall = Duration::from_secs(60);
@@ -88,7 +88,14 @@ fn the_preview_pins_what_the_runner_recomputes() {
         axon_cortex::auth::check_digest("hidden_completion", &checker, None, &sha, &imports);
     let grant =
         axon_cortex::auth::target_grant(&axon, &ws, "src/broken.ax", "double", wall).unwrap();
-    let (provider, host) = axon_cortex::auth::resolved_generator().unwrap();
+    let (provider, endpoint) = axon_cortex::auth::resolved_generator().unwrap();
+    // EG-1: the pinned endpoint is `host:port`.
+    assert!(
+        endpoint
+            .rsplit_once(':')
+            .is_some_and(|(h, p)| !h.is_empty() && p.parse::<u16>().is_ok_and(|p| p > 0)),
+        "ATTACK: O-NHR-08 the preview's endpoint {endpoint:?} carries no port"
+    );
     let pristine = axon_cortex::label::sha256_hex(&std::fs::read(&file).unwrap());
 
     assert_eq!(
@@ -138,7 +145,7 @@ fn the_preview_pins_what_the_runner_recomputes() {
     assert_eq!(
         v["generator"],
         serde_json::json!({
-            "kind": "ai", "model": "claude-x", "provider": provider, "endpoint_host": host,
+            "kind": "ai", "model": "claude-x", "provider": provider, "endpoint_host": endpoint,
         })
     );
     let _ = std::fs::remove_dir_all(&ws);

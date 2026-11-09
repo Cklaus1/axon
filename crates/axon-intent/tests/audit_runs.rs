@@ -137,7 +137,7 @@ impl Fx {
             "budget": {"max_proposals": 4, "deadline_ms": 60_000, "check_timeout_ms": 10_000,
                        "candidates": 3, "max_steps": 8},
             "generator": {"kind": "ai", "model": "claude-x", "provider": "anthropic",
-                          "endpoint_host": "api.anthropic.com"},
+                          "endpoint_host": "api.anthropic.com:443"},
             "decision": re::DECISION,
             "sig": "",
         }))
@@ -240,6 +240,67 @@ fn an_empty_ledger_and_store_audit_clean() {
     let f = fx("empty");
     let o = f.audit();
     assert_eq!(o.code, 0, "{} {}", o.stdout, o.stderr);
+}
+
+/// The signature of the retired `axon-approval/4` envelope below, computed
+/// independently (Python `hmac` + `cryptography` Ed25519 + sorted compact
+/// `json.dumps`) under `OP_KEY`: the minter refuses to sign a `/4` today.
+const RETIRED_V4_SIG: &str = "axenv1:6bf701aa82b4c567725810594a1de9b60821592e9c17da030984c166da17cc9e52b980449a8fea7a3690ad6199724b23c0c46f65407357fd1cbe1def9d6c550d";
+
+/// EG-1: the runner refuses an `axon-approval/4` envelope by name, but an
+/// existing ledger made under one stays auditable (`verify_for_audit`).
+#[test]
+fn an_audit_still_reads_a_retired_axon_approval_4_envelope() {
+    let f = fx("retired4");
+    let (store_id, ledger_id) = ("5".repeat(32), "6".repeat(32));
+    // The /4 envelope was signed with fixed ids: the store and the ledger
+    // take them (the files keep their private modes).
+    std::fs::write(f.spent.join(re::STORE_ID_FILE), format!("{store_id}\n")).unwrap();
+    std::fs::write(
+        f.ledger.join(run_ledger::LEDGER_ID_FILE),
+        format!("{ledger_id}\n"),
+    )
+    .unwrap();
+    let t = 1_800_000_000u64;
+    let v4 = json!({
+        "schema": "axon-approval/4",
+        "envelope_id": "4".repeat(32),
+        "spent_store_id": store_id,
+        "run_ledger_id": ledger_id,
+        "issued_by": "operator",
+        "issued_unix": t - 10,
+        "expires_unix": t + 3_600,
+        "task": {"workspace": "/srv/ws", "file": "src/main.axon", "symbol": "retired",
+                 "pristine_sha256": "a".repeat(64),
+                 "imports_digest": format!("axsha256:{}", "b".repeat(64))},
+        "write_prefixes": ["src"],
+        "scopes": {"fs_read": [], "fs_write": [], "net": []},
+        "capabilities": {"fence_sha256": "c".repeat(64), "target_grant": {"symbol": "retired"}},
+        "check": {"name": "test_parse", "digest": "d".repeat(64)},
+        "budget": {"max_proposals": 4, "deadline_ms": 60_000, "check_timeout_ms": 10_000,
+                   "candidates": 3, "max_steps": 8},
+        "generator": {"kind": "ai", "model": "claude-x", "provider": "anthropic",
+                      "endpoint_host": "api.anthropic.com"},
+        "decision": re::DECISION,
+        "sig": RETIRED_V4_SIG,
+    });
+    let text = String::from_utf8(axon_canonical::canonical_bytes(&v4).unwrap()).unwrap();
+    let vk = MintKey::derive(OP_KEY).unwrap().verify_key();
+    re::verify(&text, &vk, t).expect_err("setup: the runner refuses a /4 envelope");
+    let v = re::verify_for_audit(&text, &vk, t).expect("setup: the /4 fixture verifies");
+    std::fs::write(f.envelopes.join("retired.envelope"), &text).unwrap();
+    re::issue(&f.spent, me(), &store_id, &v.envelope.envelope_id, t).unwrap();
+    re::consume(&f.spent, me(), &v, t).unwrap();
+    f.run(&v, &key());
+    let o = f.audit();
+    assert_eq!(
+        o.code, 0,
+        "ATTACK: EG-1 the audit no longer reads a retired axon-approval/4 envelope: stdout {} \
+         stderr {}",
+        o.stdout, o.stderr
+    );
+    assert!(o.stdout.contains("clean: no findings"), "{}", o.stdout);
+    assert!(o.stdout.contains(&"4".repeat(32)), "{}", o.stdout);
 }
 
 #[test]

@@ -1,5 +1,5 @@
 //! NH-R1 §5.1: `cortex grant --envelope-preview`, the minter's source for
-//! every value an `axon-approval/4` repair envelope pins.
+//! every value an `axon-approval/5` repair envelope pins.
 //!
 //! The operator's `axon-intent authorize-repair` execs this and signs what it
 //! prints. Each value is computed with the SAME function the unattended runner
@@ -20,9 +20,10 @@ use crate::auth;
 use crate::unattended as un;
 use std::path::{Path, PathBuf};
 
-/// `cortex-envelope-preview/1`: the preview's schema id (axon-intent's
-/// `PREVIEW_SCHEMA` reads it).
-pub const PREVIEW_SCHEMA: &str = "cortex-envelope-preview/1";
+/// `cortex-envelope-preview/2`: the preview's schema id (axon-intent's
+/// `PREVIEW_SCHEMA` reads it). `/2` (EG-1): `generator.endpoint_host` is the
+/// endpoint's `host:port`.
+pub const PREVIEW_SCHEMA: &str = "cortex-envelope-preview/2";
 
 /// The operator's request, as `cortex grant --envelope-preview` parsed it.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -2212,7 +2212,7 @@ fn locate_only(mut args: impl Iterator<Item = String>) {
 /// `cortex grant --envelope-preview --workspace W --file F --symbol S
 /// --check C --write-prefix P… [--read-prefix R…] [--fs-write-scope X…]
 /// [--net-host H…] --axon A --generator ai:M` (NH-R1 §5.1): the values an
-/// `axon-approval/4` repair envelope pins, from the functions the
+/// `axon-approval/5` repair envelope pins, from the functions the
 /// unattended runner verifies them with (`axon_cortex::envelope_preview`).
 fn grant_only(args: impl Iterator<Item = String>) {
     let argv: Vec<String> = args.collect();

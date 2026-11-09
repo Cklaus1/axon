@@ -283,18 +283,20 @@ pub fn verify_approval(
     key: Option<&ApprovalKey>,
 ) -> Result<VerifiedToken, String> {
     // NH-R1 §4: a repair envelope is an authority for an unattended run, never
-    // a program approval; it is refused by name before its shape is read.
+    // a program approval; it is refused by name before its shape is read. A
+    // retired envelope schema (EG-1: `/4`) is refused the same way.
     #[derive(Deserialize)]
     struct SchemaOnly {
         schema: String,
     }
-    if serde_json::from_str::<SchemaOnly>(token_json)
-        .is_ok_and(|s| s.schema == crate::repair_envelope::ENVELOPE_SCHEMA)
-    {
-        return Err(format!(
-            "an {} repair envelope is not a program approval",
-            crate::repair_envelope::ENVELOPE_SCHEMA
-        ));
+    if let Ok(SchemaOnly { schema }) = serde_json::from_str::<SchemaOnly>(token_json) {
+        if schema == crate::repair_envelope::ENVELOPE_SCHEMA
+            || crate::repair_envelope::RETIRED_ENVELOPE_SCHEMAS.contains(&schema.as_str())
+        {
+            return Err(format!(
+                "an {schema} repair envelope is not a program approval"
+            ));
+        }
     }
     let t: TokenView =
         serde_json::from_str(token_json).map_err(|e| format!("malformed approval token: {e}"))?;
@@ -578,27 +580,33 @@ mod tests {
         );
     }
 
-    // NH-R1 §4 / S7: an `axon-approval/4` repair envelope is an AUTHORITY for
-    // an unattended run, never a program approval, whatever its shape.
+    // NH-R1 §4 / S7: an `axon-approval/5` repair envelope (or a retired `/4`
+    // one, EG-1) is an AUTHORITY for an unattended run, never a program
+    // approval, whatever its shape.
     #[test]
     fn a_repair_envelope_is_not_a_program_approval() {
-        let want = "an axon-approval/4 repair envelope is not a program approval";
-        let envelope = r#"{"schema":"axon-approval/4","envelope_id":"00","decision":"authorize-operate","sig":"axenv1:00"}"#;
-        let e = verify_approval(envelope, SRC, &grant(), None)
-            .expect_err("ATTACK: a repair envelope verified as a program approval");
-        assert_eq!(
-            e, want,
-            "ATTACK: a repair envelope was read as a program approval token"
-        );
-        // A /3 token relabelled /4 carries every token field: still refused, by name.
-        let tok = token_for(SRC, &grant(), LIB_IMPORTS, None)
-            .replace("axon-approval/3", "axon-approval/4");
-        let e = verify_approval(&tok, SRC, &grant(), None)
-            .expect_err("ATTACK: a token relabelled as a repair envelope was verified");
-        assert_eq!(
-            e, want,
-            "ATTACK: a repair envelope was read as a program approval token"
-        );
+        for schema in ["axon-approval/5", "axon-approval/4"] {
+            let want = format!("an {schema} repair envelope is not a program approval");
+            let envelope = format!(
+                r#"{{"schema":"{schema}","envelope_id":"00","decision":"authorize-operate","sig":"axenv1:00"}}"#
+            );
+            let e = verify_approval(&envelope, SRC, &grant(), None)
+                .expect_err("ATTACK: a repair envelope verified as a program approval");
+            assert_eq!(
+                e, want,
+                "ATTACK: a repair envelope was read as a program approval token"
+            );
+            // A /3 token relabelled as an envelope carries every token field:
+            // still refused, by name.
+            let tok =
+                token_for(SRC, &grant(), LIB_IMPORTS, None).replace("axon-approval/3", schema);
+            let e = verify_approval(&tok, SRC, &grant(), None)
+                .expect_err("ATTACK: a token relabelled as a repair envelope was verified");
+            assert_eq!(
+                e, want,
+                "ATTACK: a repair envelope was read as a program approval token"
+            );
+        }
     }
 
     // Known answer for the token formula, computed independently with

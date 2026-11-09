@@ -303,11 +303,31 @@ fn endpoint_url(p: Provider) -> String {
     }
 }
 
-/// The bare host every call for provider `p` goes to - the same parse the
-/// endpoint check and the post use. NH-R1 §5.2 compares it with the host a
-/// repair envelope names. `Err` for an endpoint [`parse_endpoint`] refuses.
-pub fn endpoint_host(p: Provider) -> Result<String, String> {
-    endpoint(p).map(|u| host_of(&u))
+/// The authority every call for provider `p` goes to, `host:port` with the
+/// effective port - the same parse the endpoint check and the post use.
+/// NH-R1 §5.2 compares it with the endpoint a repair envelope pins
+/// (EG-1, O-NHR-08: the bare host admitted any port on it). `Err` for an
+/// endpoint [`parse_endpoint`] refuses.
+pub fn endpoint_authority(p: Provider) -> Result<String, String> {
+    endpoint(p).and_then(|u| authority_of(&u))
+}
+
+/// [`host_of`] + `:` + the effective port (`Url::port_or_known_default`), so
+/// `https://h` and `https://h:443` name the same authority. `Err` for any
+/// scheme but http/https (the only ones the AI call speaks; the URL crate
+/// knows a default for `ftp` and `ws` too).
+fn authority_of(u: &reqwest::Url) -> Result<String, String> {
+    let port = match u.scheme() {
+        "http" | "https" => u.port_or_known_default(),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        format!(
+            "the AI endpoint scheme `{}` is not http or https: it has no endpoint authority",
+            u.scheme()
+        )
+    })?;
+    Ok(format!("{}:{port}", host_of(u)))
 }
 
 /// Whether every call for provider `p` stays private on the wire, judged
@@ -2347,6 +2367,31 @@ mod host_of_url_tests {
     /// The host of an endpoint `parse_endpoint` admits.
     fn host_of(s: &str) -> String {
         super::host_of(&parse_endpoint(s).unwrap())
+    }
+
+    /// EG-1 (O-NHR-08): the pinned endpoint is `host:port` with the effective
+    /// port, so an envelope pinned to one port refuses another on the same host.
+    #[test]
+    fn the_endpoint_authority_carries_the_effective_port() {
+        let auth = |s: &str| super::authority_of(&parse_endpoint(s).unwrap());
+        for (url, want) in [
+            ("https://API.anthropic.com", "api.anthropic.com:443"),
+            ("http://127.0.0.1:18307", "127.0.0.1:18307"),
+            ("https://h:443", "h:443"),
+            ("https://h", "h:443"),
+            ("http://h", "h:80"),
+            ("https://[::1]", "[::1]:443"),
+        ] {
+            assert_eq!(
+                auth(url).as_deref(),
+                Ok(want),
+                "ATTACK: O-NHR-08 the endpoint authority of {url} dropped or changed its port"
+            );
+        }
+        assert!(
+            auth("ftp://h/x").is_err(),
+            "ATTACK: O-NHR-08 a scheme with no known default port got an authority"
+        );
     }
 
     fn allow() -> Vec<String> {

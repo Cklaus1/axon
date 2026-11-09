@@ -399,6 +399,119 @@ pub fn read_plain(path: &Path) -> std::io::Result<Plain> {
     Ok(Plain::Bytes(b))
 }
 
+/// The bounds one pinned-tree walk shares across its files (EG-2): the
+/// file bytes it may still hash, and, on a terminal walk only, the instant
+/// it must stop by.
+#[cfg(feature = "unattended")]
+#[derive(Debug, Clone)]
+pub struct WalkBudget {
+    pub bytes_left: u64,
+    pub deadline: Option<std::time::Instant>,
+}
+
+#[cfg(feature = "unattended")]
+impl WalkBudget {
+    /// Whether the deadline (if any) has passed.
+    pub fn expired(&self) -> bool {
+        self.deadline
+            .is_some_and(|d| std::time::Instant::now() >= d)
+    }
+}
+
+/// What [`hash_plain`] found at a path (EG-2).
+#[cfg(feature = "unattended")]
+#[derive(Debug, PartialEq, Eq)]
+pub enum Hashed {
+    /// A regular file's hex sha256.
+    Digest(String),
+    /// Anything else, as [`Plain::Kind`].
+    Kind(&'static str),
+    /// A regular file not hashed: its `fstat` length exceeds the bytes left,
+    /// or it changed length while read. Valued `over-cap:<len>`.
+    OverCap(u64),
+    /// The deadline passed before a chunk: valued `over-cap:<len>`, and the
+    /// walk stops (`"" -> over-cap:time`).
+    Expired(u64),
+}
+
+/// The chunk [`hash_plain`] reads at a time, and checks the deadline before.
+#[cfg(feature = "unattended")]
+pub const HASH_CHUNK: usize = 64 * 1024;
+
+// A test's slow disk: a pause after each chunk `hash_plain` reads.
+#[cfg(all(test, feature = "unattended"))]
+thread_local! {
+    static CHUNK_PAUSE: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// [`read_plain`] streamed (EG-2, O-NHR-07): the same `O_PATH` open, kind
+/// check and `/proc/self/fd` reopen, then the file hashed in
+/// [`HASH_CHUNK`] pieces into one `Sha256`, so memory is constant per file.
+/// A file longer than `budget.bytes_left` is never read; the bytes read are
+/// charged to the budget; the deadline is checked before every chunk.
+#[cfg(feature = "unattended")]
+pub fn hash_plain(path: &Path, budget: &mut WalkBudget) -> std::io::Result<Hashed> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read as _;
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::fs::OpenOptionsExt;
+    let at = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_PATH | libc::O_NOFOLLOW)
+        .open(path)?;
+    let m = at.metadata()?;
+    let t = m.file_type();
+    if !t.is_file() {
+        let kind = match crate::unattended::special_kind(t) {
+            Some(kind) => kind,
+            None if t.is_symlink() => "symlink",
+            None => "dir",
+        };
+        return Ok(Hashed::Kind(kind));
+    }
+    let len = m.len();
+    if len > budget.bytes_left {
+        return Ok(Hashed::OverCap(len));
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(format!("/proc/self/fd/{}", at.as_raw_fd()))?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; HASH_CHUNK];
+    let mut read: u64 = 0;
+    loop {
+        if budget.expired() {
+            return Ok(Hashed::Expired(len));
+        }
+        // At most one byte past `len`: enough to see the file grew.
+        let want = usize::try_from((len + 1 - read).min(HASH_CHUNK as u64)).unwrap_or(HASH_CHUNK);
+        let n = match f.read(&mut buf[..want]) {
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        read += n as u64;
+        budget.bytes_left = budget.bytes_left.saturating_sub(n as u64);
+        if n == 0 {
+            break;
+        }
+        if read > len {
+            return Ok(Hashed::OverCap(len));
+        }
+        h.update(&buf[..n]);
+        #[cfg(test)]
+        if let Some(d) = CHUNK_PAUSE.with(std::cell::Cell::get) {
+            std::thread::sleep(d);
+        }
+    }
+    if read != len {
+        return Ok(Hashed::OverCap(len));
+    }
+    Ok(Hashed::Digest(format!("{:x}", h.finalize())))
+}
+
 /// The digest of the file at `path` now; `None` when it does not exist.
 fn digest_now(path: &Path) -> Result<Option<String>, CasError> {
     match read_regular(path) {
@@ -1537,4 +1650,97 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&d);
     }
+}
+
+#[cfg(all(test, feature = "unattended"))]
+mod hash_plain_tests {
+    use super::*;
+
+    fn dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("cortex-hash-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn open(bytes: u64) -> WalkBudget {
+        WalkBudget {
+            bytes_left: bytes,
+            deadline: None,
+        }
+    }
+
+    /// EG-2: the streamed hash is the whole file's sha256 (empty, small,
+    /// several chunks, exactly the bytes left), a FIFO is its kind, and a
+    /// file one byte over the budget is `OverCap` and charges nothing.
+    #[test]
+    fn hash_plain_equals_the_whole_file_digest() {
+        use std::os::unix::ffi::OsStrExt;
+        let d = dir("eq");
+        for (name, len) in [
+            ("empty", 0usize),
+            ("small", 5),
+            ("chunks", 3 * HASH_CHUNK + 7),
+        ] {
+            let p = d.join(name);
+            let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+            std::fs::write(&p, &bytes).unwrap();
+            let mut b = open(len as u64);
+            assert_eq!(
+                hash_plain(&p, &mut b).unwrap(),
+                Hashed::Digest(crate::label::sha256_hex(&bytes)),
+                "ATTACK: O-NHR-07 the streamed hash of {name} is not its sha256"
+            );
+            assert_eq!(b.bytes_left, 0, "{name}: the bytes read were not charged");
+            let mut short = open(len as u64 - u64::from(len > 0));
+            if len > 0 {
+                assert_eq!(
+                    hash_plain(&p, &mut short).unwrap(),
+                    Hashed::OverCap(len as u64),
+                    "ATTACK: O-NHR-07 a file over the bytes left was hashed"
+                );
+                assert_eq!(
+                    short.bytes_left,
+                    len as u64 - 1,
+                    "an over-cap file was read"
+                );
+            }
+        }
+        let fifo = d.join("pipe");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert_eq!(
+            hash_plain(&fifo, &mut open(0)).unwrap(),
+            Hashed::Kind("fifo")
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// EG-2 (EGA-6): the deadline is checked before every chunk, so a file
+    /// under the byte cap cannot run the walk past its deadline by more than
+    /// one chunk read: a 3-chunk file whose budget expires during the first
+    /// chunk is `over-cap:<len>`, not a digest.
+    #[test]
+    fn an_expired_budget_stops_hash_plain_inside_a_file() {
+        let d = dir("expire");
+        let p = d.join("f");
+        let len = 3 * HASH_CHUNK;
+        std::fs::write(&p, vec![7u8; len]).unwrap();
+        CHUNK_PAUSE.with(|c| c.set(Some(std::time::Duration::from_millis(200))));
+        let mut b = WalkBudget {
+            bytes_left: TREE_TEST_BYTES,
+            deadline: Some(std::time::Instant::now() + std::time::Duration::from_millis(100)),
+        };
+        let got = hash_plain(&p, &mut b);
+        CHUNK_PAUSE.with(|c| c.set(None));
+        assert_eq!(
+            got.unwrap(),
+            Hashed::Expired(len as u64),
+            "ATTACK: O-NHR-07 an expired walk budget hashed the rest of the file"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    const TREE_TEST_BYTES: u64 = 1 << 30;
 }

@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// The preview document `cortex grant --envelope-preview` prints.
-pub const PREVIEW_SCHEMA: &str = "cortex-envelope-preview/1";
+pub const PREVIEW_SCHEMA: &str = "cortex-envelope-preview/2";
 /// The check-digest argv shape (§4.1): the local interpreter executor only.
 pub const ARGV_SHAPE: &str = "axon-test-local/1";
 /// The minter's record next to the envelope (`<out>.mint`).
@@ -61,7 +61,7 @@ pub struct GateRow {
     pub basis: String,
 }
 
-/// `cortex-envelope-preview/1`.
+/// `cortex-envelope-preview/2`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preview {
@@ -232,7 +232,7 @@ pub fn build_envelope(
 
 // ── the CLI ──────────────────────────────────────────────────────────────────
 
-pub const HELP: &str = "authorize-repair — mint one axon-approval/4 repair envelope (NH-R1 §5.1)
+pub const HELP: &str = "authorize-repair — mint one axon-approval/5 repair envelope (NH-R1 §5.1)
     authorize-repair --export-verify-key PATH
     authorize-repair --init-spent-store DIR
     authorize-repair --init-run-ledger DIR

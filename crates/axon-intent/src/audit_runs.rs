@@ -20,10 +20,11 @@ use std::process::ExitCode;
 pub const HELP: &str = "audit-runs — the C1 audit of unattended repair runs (R6 §5); read-only
     audit-runs --spent-store DIR --run-ledger DIR [--envelopes DIR] [--json]
   Verifies the run ledger's chain, seals and head, every record's envelope
-  digest against the envelopes in --envelopes (every axon-approval/4 file there;
-  axon-intent-mint/1 records are skipped), and joins the records with the spent
-  store. Needs AXON_APPROVAL_KEY (hex). Exit 0 clean, 1 findings, 2 usage or
-  an unreadable input.";
+  digest against the envelopes in --envelopes (every axon-approval/5 file there
+  and every retired axon-approval/4 one; axon-intent-mint/1 records are
+  skipped), and joins the records with the spent store. Needs
+  AXON_APPROVAL_KEY (hex). Exit 0 clean, 1 findings, 2 usage or an unreadable
+  input.";
 
 /// The mint record schema `authorize-repair` writes next to an envelope.
 const MINT_RECORD_SCHEMA: &str = crate::authorize::MINT_RECORD_SCHEMA;
@@ -108,7 +109,9 @@ pub fn load_envelopes(
         if schema == MINT_RECORD_SCHEMA {
             continue;
         }
-        if schema != repair_envelope::ENVELOPE_SCHEMA {
+        if schema != repair_envelope::ENVELOPE_SCHEMA
+            && !repair_envelope::RETIRED_ENVELOPE_SCHEMAS.contains(&schema)
+        {
             return Err(format!(
                 "{} is neither an {} envelope nor an {MINT_RECORD_SCHEMA} record",
                 p.display(),
@@ -116,7 +119,8 @@ pub fn load_envelopes(
             ));
         }
         let at = v.get("issued_unix").and_then(Value::as_u64).unwrap_or(0);
-        let ve = repair_envelope::verify(text, vk, at)
+        // EG-1: a retired `/4` envelope is still audited under its own grammar.
+        let ve = repair_envelope::verify_for_audit(text, vk, at)
             .map_err(|e| format!("{}: not an envelope this operator signed: {e}", p.display()))?;
         if let Some(old) = out.insert(ve.envelope.envelope_id.clone(), ve.digest.clone()) {
             if old != ve.digest {

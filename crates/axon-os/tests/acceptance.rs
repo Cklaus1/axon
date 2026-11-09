@@ -328,7 +328,7 @@ fn s12_a_repair_envelope_is_not_a_job_approval() {
             kind: axon_os::repair_envelope::GENERATOR_KIND.into(),
             model: "m".into(),
             provider: "anthropic".into(),
-            endpoint_host: "127.0.0.1".into(),
+            endpoint_host: "127.0.0.1:9".into(),
         },
         decision: axon_os::repair_envelope::DECISION.into(),
         sig: String::new(),
@@ -340,7 +340,7 @@ fn s12_a_repair_envelope_is_not_a_job_approval() {
     let signed = axon_os::repair_envelope::MintKey::derive(&key_bytes)
         .unwrap()
         .sign(&envelope)
-        .expect("the envelope is a valid /4 envelope");
+        .expect("the envelope is a valid /5 envelope");
 
     // 1. The envelope as the job's approval: refused by name, nothing runs.
     std::fs::write(&token, &signed).unwrap();
@@ -366,7 +366,7 @@ fn s12_a_repair_envelope_is_not_a_job_approval() {
         assert!(
             o.code == 8
                 && o.stdout
-                    .contains("axon-approval/4 repair envelope is not a program approval"),
+                    .contains("axon-approval/5 repair envelope is not a program approval"),
             "ATTACK: a repair envelope was not refused by name on the job path ({run_id}): \
              exit {}\n{}",
             o.code,

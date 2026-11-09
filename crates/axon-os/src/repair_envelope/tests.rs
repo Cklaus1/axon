@@ -54,7 +54,7 @@ fn sample() -> RepairEnvelope {
             kind: "ai".into(),
             model: "claude-x".into(),
             provider: "anthropic".into(),
-            endpoint_host: "api.anthropic.com".into(),
+            endpoint_host: "api.anthropic.com:443".into(),
         },
         decision: DECISION.into(),
         sig: String::new(),
@@ -132,11 +132,12 @@ fn s1_seed_public_key_and_signature_known_answers() {
 }
 
 // Computed independently (Python `hmac` + `cryptography` Ed25519 + `json.dumps(sort_keys=True,
-// separators=(',', ':'), ensure_ascii=False)`) from the same fixture (absolute pins since security F4).
+// separators=(',', ':'), ensure_ascii=False)`) from the same fixture (absolute pins since security F4;
+// regenerated for EG-1: schema `axon-approval/5`, endpoint `api.anthropic.com:443`).
 const KAT_SEED: &str = "b73c9e09b4c8941b5d5a34cc772396ee467235a588b81bf6556c72e153edbbcd";
 const KAT_PUBLIC: &str = "7817267170d04cbb2259f5a63ee290e1d6d494a28a0c9bf75f0e7f270aec4aed";
-const KAT_SIG: &str = "axenv1:8f07c460326dbb730be31ee76d2e7b0458d257800dd6febf23fb43cd5fa161fd5baf4f28ddcaca9425cbb4f36f381e1d691f2b0e0ae409352d0fd111dd4a2a03";
-const KAT_DIGEST: &str = "cl22:59622d322f13429875a9713e95736d30eec6ed4f7e0ba3f11f14ecb20a61ee85";
+const KAT_SIG: &str = "axenv1:f4f97dfccb1ba0a2a65de1b4d46bdfcd72c7e394edc5709dec5938cfc002f2aa38a32a0c59598fe5fa49ac8f7271b93584668a7dd45e3eb65616ed940c94610c";
+const KAT_DIGEST: &str = "cl22:7de43154067dad1bdcbbbeb34293fe9e5b08dc37a81bc9af7e1577d2fd45288a";
 
 #[test]
 fn s1_the_envelope_is_written_in_its_canonical_form() {
@@ -256,7 +257,7 @@ fn s2_signed_but_intrinsically_invalid_envelopes_are_refused() {
         ("decision", json!({"decision": "approve"})),
         (
             "generator kind",
-            json!({"generator": {"kind": "cmd", "model": "m", "provider": "p", "endpoint_host": "h"}}),
+            json!({"generator": {"kind": "cmd", "model": "m", "provider": "p", "endpoint_host": "h:443"}}),
         ),
         ("envelope id", json!({"envelope_id": "ABC"})),
         ("store id", json!({"spent_store_id": "x"})),
@@ -446,7 +447,7 @@ fn s2_a_malformed_sig_or_schema_is_refused() {
     v["schema"] = json!("axon-envelope/4");
     let e = verify(&v.to_string(), &key, NOW).expect_err("ATTACK: another schema verified");
     assert!(
-        e.contains("not axon-approval/4"),
+        e.contains("not axon-approval/5"),
         "ATTACK: another schema was refused only by a later check: {e}"
     );
     // The minter judges the schema itself (verify judged it before validate).
@@ -463,7 +464,7 @@ fn the_envelope_constants_are_the_documented_ones() {
     // Literal pins (NH-R1 §4, §5.5): a consistent edit of a constant is
     // invisible to every test that reads it through the const.
     assert_eq!(
-        ENVELOPE_SCHEMA, "axon-approval/4",
+        ENVELOPE_SCHEMA, "axon-approval/5",
         "ATTACK: ENVELOPE_SCHEMA changed"
     );
     assert_eq!(SIG_PREFIX, "axenv1:", "ATTACK: SIG_PREFIX changed");
@@ -573,7 +574,7 @@ fn s7_a_program_token_is_not_an_envelope_and_the_reverse() {
             verify(&tok.to_string(), &k, NOW).expect_err("ATTACK: a token verified as an envelope");
         assert_eq!(
             e,
-            format!("an {schema} approval token is not a repair envelope (want axon-approval/4)"),
+            format!("an {schema} approval token is not a repair envelope (want axon-approval/5)"),
             "ATTACK: a program token was read as an envelope (refused only by a later check)"
         );
     }
@@ -904,16 +905,81 @@ fn s6_cli_limits_only_narrow() {
 #[test]
 fn s6_the_generator_must_equal_the_envelopes() {
     let env = sample();
-    env.check_generator("ai", "claude-x", "anthropic", "api.anthropic.com")
+    env.check_generator("ai", "claude-x", "anthropic", "api.anthropic.com:443")
         .unwrap();
     for (k, m, p, h) in [
-        ("cmd", "claude-x", "anthropic", "api.anthropic.com"),
-        ("ai", "claude-y", "anthropic", "api.anthropic.com"),
-        ("ai", "claude-x", "openai", "api.anthropic.com"),
-        ("ai", "claude-x", "anthropic", "evil.example.com"),
+        ("cmd", "claude-x", "anthropic", "api.anthropic.com:443"),
+        ("ai", "claude-y", "anthropic", "api.anthropic.com:443"),
+        ("ai", "claude-x", "openai", "api.anthropic.com:443"),
+        ("ai", "claude-x", "anthropic", "evil.example.com:443"),
+        ("ai", "claude-x", "anthropic", "api.anthropic.com:8443"),
+        ("ai", "claude-x", "anthropic", "api.anthropic.com"),
     ] {
         env.check_generator(k, m, p, h)
             .expect_err("ATTACK: another generator was admitted");
     }
     assert_eq!(env.principal(), "envelope:0123456789abcdef0123456789abcdef");
+}
+
+/// EG-1 (O-NHR-08): `/4` pinned the bare host, so any port on it was
+/// admitted. A validly signed `/4` envelope is refused by name, never re-read
+/// as `/5`; `verify_for_audit` still reads it under its own grammar.
+#[test]
+fn an_axon_approval_4_envelope_is_refused_by_name() {
+    let key = mint().verify_key();
+    let mut v = serde_json::to_value(sample()).unwrap();
+    v["schema"] = json!("axon-approval/4");
+    v["generator"]["endpoint_host"] = json!("api.anthropic.com");
+    let env = sign_raw(v);
+    let e = verify(&env, &key, NOW)
+        .expect_err("ATTACK: O-NHR-08 an axon-approval/4 envelope verified for a run");
+    assert!(
+        e.contains("axon-approval/4") && e.contains("port"),
+        "ATTACK: O-NHR-08 an axon-approval/4 envelope was not refused by name: {e}"
+    );
+    let audit = verify_for_audit(&env, &key, NOW).expect("the audit reads a retired /4");
+    assert_eq!(audit.envelope.generator.endpoint_host, "api.anthropic.com");
+    // The minter never signs a retired schema.
+    let mut s = sample();
+    s.schema = "axon-approval/4".into();
+    mint()
+        .sign(&s)
+        .expect_err("ATTACK: O-NHR-08 the minter signed an axon-approval/4 envelope");
+}
+
+/// EG-1 (O-NHR-08): a `/5` endpoint is `host:port`; anything else is refused
+/// at verify (signed) and at mint.
+#[test]
+fn an_endpoint_without_its_port_is_refused() {
+    let key = mint().verify_key();
+    for bad in [
+        "api.anthropic.com",
+        "h:0",
+        "h:080",
+        "h:65536",
+        "h:",
+        ":443",
+        "H:443",
+        "h h:443",
+        "::1:443",
+        "h:+443",
+    ] {
+        let mut v = serde_json::to_value(sample()).unwrap();
+        v["generator"]["endpoint_host"] = json!(bad);
+        let e = verify(&sign_raw(v), &key, NOW).expect_err(&format!(
+            "ATTACK: O-NHR-08 the endpoint {bad:?} without a valid port verified"
+        ));
+        assert!(e.contains("host:port"), "{bad:?}: {e}");
+        let mut s = sample();
+        s.generator.endpoint_host = bad.into();
+        mint().sign(&s).expect_err(&format!(
+            "ATTACK: O-NHR-08 the endpoint {bad:?} without a valid port was minted"
+        ));
+    }
+    for good in ["h:1", "h:65535", "[::1]:443", "127.0.0.1:18307"] {
+        let mut s = sample();
+        s.generator.endpoint_host = good.into();
+        let env = mint().sign(&s).expect(good);
+        verify(&env, &key, NOW).expect(good);
+    }
 }
