@@ -1,4 +1,4 @@
-//! `axon-approval/4`: the repair envelope (NH-R1, `tasks/unattended-auth-spec.md` §4-§5).
+//! `axon-approval/5`: the repair envelope (NH-R1, `tasks/unattended-auth-spec.md` §4-§5).
 //!
 //! An operator-signed AUTHORITY for one unattended `cortex repair` run. It
 //! accepts nothing: a repair made under it still needs the existing
@@ -43,8 +43,16 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 /// The envelope schema. `/2` is reserved (R24) and `/3` is the program
-/// approval token, so the envelope is `/4`.
-pub const ENVELOPE_SCHEMA: &str = "axon-approval/4";
+/// approval token. `/4` pinned the endpoint host without its port and is
+/// retired (EG-1, O-NHR-08), so the envelope is `/5`.
+pub const ENVELOPE_SCHEMA: &str = "axon-approval/5";
+
+/// Envelope schemas the runner refuses by name and only `audit-runs` still
+/// reads ([`verify_for_audit`]), each under its own grammar.
+pub const RETIRED_ENVELOPE_SCHEMAS: &[&str] = &["axon-approval/4"];
+
+/// The schemas [`verify_for_audit`] admits: the current one and the retired.
+const AUDIT_ENVELOPE_SCHEMAS: &[&str] = &[ENVELOPE_SCHEMA, "axon-approval/4"];
 
 /// The G5 derivation label of the envelope's Ed25519 seed:
 /// `seed = HMAC-SHA256(operator_key, ENVELOPE_SEED_DOMAIN)`.
@@ -153,7 +161,9 @@ pub struct Budget {
 }
 
 /// The patch generator; `provider` and `endpoint_host` are compared against
-/// what axon-ai resolves.
+/// what axon-ai resolves. Under `/5`, `endpoint_host` is the endpoint's
+/// authority `host:port` with the effective port (EG-1); a retired `/4`
+/// envelope holds the bare host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Generator {
@@ -163,7 +173,7 @@ pub struct Generator {
     pub endpoint_host: String,
 }
 
-/// An `axon-approval/4` repair envelope.
+/// An `axon-approval/5` repair envelope.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepairEnvelope {
@@ -377,12 +387,38 @@ fn signed_message(unsigned: &Value) -> Result<Vec<u8>, String> {
 
 /// Verify an envelope's bytes under the runner's key at `now_unix` (§4, §5.3
 /// steps 2, 4 and the first three rules of 5). Every refusal is an `Err`;
-/// nothing here touches the filesystem.
+/// nothing here touches the filesystem. A retired schema is refused by name.
 pub fn verify(json: &str, key: &VerifyKey, now_unix: u64) -> Result<VerifiedEnvelope, String> {
+    verify_schemas(json, key, now_unix, &[ENVELOPE_SCHEMA])
+}
+
+/// [`verify`] for `audit-runs` only: it also admits a retired schema
+/// ([`RETIRED_ENVELOPE_SCHEMAS`]), validated under that schema's grammar, so
+/// an existing ledger stays auditable. Never an authority to run.
+pub fn verify_for_audit(
+    json: &str,
+    key: &VerifyKey,
+    now_unix: u64,
+) -> Result<VerifiedEnvelope, String> {
+    verify_schemas(json, key, now_unix, AUDIT_ENVELOPE_SCHEMAS)
+}
+
+fn verify_schemas(
+    json: &str,
+    key: &VerifyKey,
+    now_unix: u64,
+    accept: &[&str],
+) -> Result<VerifiedEnvelope, String> {
     // 1. strict parse
     let mut v = axon_canonical::parse_value(json).map_err(|e| format!("repair envelope: {e}"))?;
     let schema = v.get("schema").and_then(Value::as_str).unwrap_or("");
-    if schema != ENVELOPE_SCHEMA {
+    if !accept.contains(&schema) {
+        if RETIRED_ENVELOPE_SCHEMAS.contains(&schema) {
+            return Err(format!(
+                "an {schema} envelope pins the endpoint host without its port (O-NHR-08); mint \
+                 an {ENVELOPE_SCHEMA} envelope"
+            ));
+        }
         if schema.starts_with("axon-approval/") {
             return Err(format!(
                 "an {schema} approval token is not a repair envelope (want {ENVELOPE_SCHEMA})"
@@ -421,7 +457,7 @@ pub fn verify(json: &str, key: &VerifyKey, now_unix: u64) -> Result<VerifiedEnve
     }
     let envelope: RepairEnvelope =
         serde_json::from_value(v).map_err(|e| format!("repair envelope: {e}"))?;
-    validate(&envelope)?;
+    validate_as(&envelope, accept)?;
     check_time(&envelope, now_unix)?;
     Ok(VerifiedEnvelope { envelope, digest })
 }
@@ -518,20 +554,21 @@ impl RepairEnvelope {
         })
     }
 
-    /// §5.2 generator rule: equal, including the resolved provider and endpoint host.
+    /// §5.2 generator rule: equal, including the resolved provider and the
+    /// endpoint's `host:port` (EG-1).
     pub fn check_generator(
         &self,
         kind: &str,
         model: &str,
         provider: &str,
-        endpoint_host: &str,
+        endpoint: &str,
     ) -> Result<(), String> {
         let g = &self.generator;
         for (what, want, got) in [
             ("kind", g.kind.as_str(), kind),
             ("model", g.model.as_str(), model),
             ("provider", g.provider.as_str(), provider),
-            ("endpoint host", g.endpoint_host.as_str(), endpoint_host),
+            ("endpoint", g.endpoint_host.as_str(), endpoint),
         ] {
             if want != got {
                 return Err(format!(
@@ -568,7 +605,13 @@ pub struct Effective {
 /// The intrinsic (no-I/O) checks: every field's shape, and the relations
 /// between fields that need no filesystem.
 pub fn validate(e: &RepairEnvelope) -> Result<(), String> {
-    if e.schema != ENVELOPE_SCHEMA {
+    validate_as(e, &[ENVELOPE_SCHEMA])
+}
+
+/// [`validate`] admitting the schemas in `accept`; a retired schema keeps
+/// its own grammar (`/4`: the endpoint is a bare, non-empty host).
+fn validate_as(e: &RepairEnvelope, accept: &[&str]) -> Result<(), String> {
+    if !accept.contains(&e.schema.as_str()) {
         return Err(format!(
             "repair envelope schema is {:?}, not {ENVELOPE_SCHEMA}",
             e.schema
@@ -713,8 +756,45 @@ pub fn validate(e: &RepairEnvelope) -> Result<(), String> {
             return Err(format!("generator.{name} is empty"));
         }
     }
+    if e.schema == ENVELOPE_SCHEMA {
+        check_endpoint_authority(&g.endpoint_host)?;
+    }
     if e.decision != DECISION {
         return Err(format!("decision {:?} is not {DECISION:?}", e.decision));
+    }
+    Ok(())
+}
+
+/// EG-1 (O-NHR-08): a `/5` endpoint is `host ":" port`. The host is
+/// non-empty, lowercase, holds no whitespace, and an IPv6 literal is
+/// bracketed; the port is decimal 1-65535 with no leading zero.
+fn check_endpoint_authority(s: &str) -> Result<(), String> {
+    let bad = |why: &str| {
+        Err(format!(
+            "generator.endpoint_host {s:?} is not host:port ({why}): an {ENVELOPE_SCHEMA} envelope \
+             pins the endpoint's port (O-NHR-08)"
+        ))
+    };
+    let Some((host, port)) = s.rsplit_once(':') else {
+        return bad("no port");
+    };
+    if host.is_empty() {
+        return bad("no host");
+    }
+    if host.chars().any(|c| c.is_whitespace() || c.is_uppercase()) {
+        return bad("the host is not lowercase or holds whitespace");
+    }
+    let bracketed = host.len() > 2 && host.starts_with('[') && host.ends_with(']');
+    if (host.contains(':') || host.contains('[') || host.contains(']')) && !bracketed {
+        return bad("an IPv6 host is not bracketed");
+    }
+    if port.is_empty()
+        || port.len() > 5
+        || port.starts_with('0')
+        || !port.bytes().all(|b| b.is_ascii_digit())
+        || !port.parse::<u32>().is_ok_and(|p| p <= 65_535)
+    {
+        return bad("the port is not decimal 1-65535 without a leading zero");
     }
     Ok(())
 }

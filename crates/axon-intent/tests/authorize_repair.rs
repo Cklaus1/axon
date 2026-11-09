@@ -3,7 +3,7 @@
 //! forms, driven as an operator would (subprocess).
 //!
 //! The cortex preview is a FAKE here: a shell script that records its
-//! arguments and prints a fixed `cortex-envelope-preview/1` document. That
+//! arguments and prints a fixed `cortex-envelope-preview/2` document. That
 //! is the point of the test: the minter must judge the preview it is handed
 //! (gate rows, check-digest consistency, symbol and check echo), never trust
 //! it. The operator key is a TEST key derived from a fixed, public string.
@@ -80,7 +80,7 @@ fn check_input() -> (Value, String) {
 fn preview(ws: &Path) -> Value {
     let (input, digest) = check_input();
     json!({
-        "schema": "cortex-envelope-preview/1",
+        "schema": "cortex-envelope-preview/2",
         "task": {
             "workspace": ws.display().to_string(),
             "file": "src/main.axon",
@@ -96,7 +96,7 @@ fn preview(ws: &Path) -> Value {
         "fence": {"env": {"AXON_FS_READ": "data"}},
         "fence_sha256": "f".repeat(64),
         "target_grant": {"fs_read": ["data"]},
-        "generator": {"kind": "ai", "model": "m-1", "provider": "openrouter", "endpoint_host": "openrouter.ai"},
+        "generator": {"kind": "ai", "model": "m-1", "provider": "openrouter", "endpoint_host": "openrouter.ai:443"},
         "gate": [
             {"id": "E1", "status": "admit", "basis": "used kinds pinned"},
             {"id": "E4", "status": "admit", "basis": "no native: capability"},
@@ -418,7 +418,7 @@ fn authorize_repair_mints_a_verifiable_issued_envelope_from_the_preview() {
     assert_eq!(e.check.digest, check_digest);
     assert_eq!(e.capabilities.fence_sha256, "f".repeat(64));
     assert_eq!(e.capabilities.target_grant, json!({"fs_read": ["data"]}));
-    assert_eq!(e.generator.endpoint_host, "openrouter.ai");
+    assert_eq!(e.generator.endpoint_host, "openrouter.ai:443");
     assert_eq!(e.budget.max_steps, 100_000);
     assert_eq!(e.issued_by, "operator-a");
     assert_eq!(e.expires_unix - e.issued_unix, 3600);

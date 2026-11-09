@@ -110,8 +110,9 @@ pub const RUN_RECORD_KEY: Private = Private {
 
 /// The C1 finding names (§5), each distinct. `terminal-no-started`,
 /// `envelope-mismatch` and `used-unreadable` are the build's additions (see
-/// the spec's `[REVISED: ...]` notes).
-pub const FINDINGS: [&str; 13] = [
+/// the spec's `[REVISED: ...]` notes); `tree-over-cap` is EG-2's (a pinned
+/// tree the walk capped: the operator has to look).
+pub const FINDINGS: [&str; 14] = [
     "consumed-no-record",
     "started-no-terminal",
     "terminal-no-started",
@@ -125,7 +126,17 @@ pub const FINDINGS: [&str; 13] = [
     "unattributed-change",
     "envelope-mismatch",
     "used-unreadable",
+    "tree-over-cap",
 ];
+
+/// EG-2: the value of a regular file the walk did not hash (its length over
+/// the hash bytes left, or a length change while read): `over-cap:<len>`.
+pub const OVER_CAP: &str = "over-cap:";
+
+/// EG-2: the reserved tree key (never a path) of a walk that stopped early;
+/// its value is `over-cap:manifest` or `over-cap:time`, and later entries
+/// are absent.
+pub const TREE_STOP_KEY: &str = "";
 
 // ── the subkey ───────────────────────────────────────────────────────────────
 
@@ -327,15 +338,53 @@ fn is_cl22(s: &str) -> bool {
     s.strip_prefix("cl22:").is_some_and(|h| is_lower_hex(h, 64))
 }
 
+/// The pinned-tree grammar (R6 §3, widened by EG-2): a path maps to a
+/// 64-hex sha256 or `over-cap:<len>` (decimal, no leading zero); the
+/// reserved key `""` maps to `over-cap:manifest` or `over-cap:time`.
 fn check_tree(name: &str, t: &Tree) -> Result<(), String> {
     for (p, d) in t {
-        if p.is_empty() || !is_lower_hex(d, 64) {
+        let ok = if p == TREE_STOP_KEY {
+            d == "over-cap:manifest" || d == "over-cap:time"
+        } else {
+            is_lower_hex(d, 64) || d.strip_prefix(OVER_CAP).is_some_and(is_decimal_len)
+        };
+        if !ok {
             return Err(format!(
-                "{name}: entry {p:?} is not a path and a 64-hex sha256"
+                "{name}: entry {p:?} is not a path and a 64-hex sha256 or over-cap:<len>, nor \
+                 the stop marker \"\" and over-cap:manifest|time"
             ));
         }
     }
     Ok(())
+}
+
+/// A decimal byte length: digits only, no leading zero (`0` itself is one).
+fn is_decimal_len(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes().all(|b| b.is_ascii_digit())
+        && (s == "0" || !s.starts_with('0'))
+        && s.parse::<u64>().is_ok()
+}
+
+/// EG-2: why a pinned tree is capped, or `None` for a complete walk whose
+/// every file was hashed: the stop marker's value and the count of
+/// `over-cap:` paths.
+fn tree_cap(t: &Tree) -> Option<String> {
+    let over = t
+        .iter()
+        .filter(|(p, d)| p.as_str() != TREE_STOP_KEY && d.starts_with(OVER_CAP))
+        .count();
+    let stop = t.get(TREE_STOP_KEY);
+    if stop.is_none() && over == 0 {
+        return None;
+    }
+    Some(format!(
+        "{}; {over} over-cap path(s)",
+        match stop {
+            Some(v) => format!("the walk stopped ({v}): later paths are absent"),
+            None => "the walk completed".into(),
+        }
+    ))
 }
 
 /// The intrinsic record checks (no I/O).
@@ -978,6 +1027,22 @@ pub fn audit(
                 ));
             }
         }
+        // EG-2: a capped pinned tree is a finding of its own, one per tree.
+        for r in started.iter().chain(&terminal) {
+            let (name, tree) = match (&r.pinned_tree_before, &r.pinned_tree_after) {
+                (Some(t), _) => ("pinned_tree_before", t),
+                (None, Some(t)) => ("pinned_tree_after", t),
+                (None, None) => continue,
+            };
+            if let Some(why) = tree_cap(tree) {
+                out.push(finding(
+                    "tree-over-cap",
+                    Some(r.seq),
+                    eid_s,
+                    format!("{name}: {why}"),
+                ));
+            }
+        }
         for t in &terminal {
             let writes = t.writes.as_deref().unwrap_or_default();
             if let Some(a) = &t.accepted {
@@ -1009,9 +1074,21 @@ pub fn audit(
             for w in writes {
                 last_after.insert(w.path.as_str(), w.after_sha256.as_deref());
             }
-            let paths: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+            // EG-2 (EGA-4): a stopped walk's `after` lacks every later path,
+            // so a path `before` has and a stopped `after` lacks is no
+            // deletion; the stop marker itself is never joined. A path
+            // valued `over-cap:<len>` is still joined.
+            let stopped = after.contains_key(TREE_STOP_KEY);
+            let paths: BTreeSet<&String> = before
+                .keys()
+                .chain(after.keys())
+                .filter(|p| p.as_str() != TREE_STOP_KEY)
+                .collect();
             for p in paths {
                 let (b, a) = (before.get(p), after.get(p));
+                if stopped && a.is_none() {
+                    continue;
+                }
                 if b != a && last_after.get(p.as_str()) != Some(&a.map(String::as_str)) {
                     out.push(finding(
                         "unattributed-change",

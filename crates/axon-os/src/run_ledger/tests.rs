@@ -735,6 +735,72 @@ fn c1_an_unreadable_used_record_is_a_finding() {
     }
 }
 
+/// EG-2: a capped pinned tree (a stopped walk, or a path valued
+/// `over-cap:<len>`) is one `tree-over-cap` finding per tree; a stopped
+/// `after` that lacks a path `before` had is no deletion, while an
+/// `over-cap:` path is still joined.
+#[test]
+fn c1_tree_over_cap() {
+    let fx = Fx::new("overcap");
+    let v = fx.run();
+    fx.append(&v, started(tree(&[("src/a", '1'), ("src/z", '5')])))
+        .unwrap();
+    let mut after = tree(&[("src/a", '1')]);
+    after.insert("src/big".into(), "over-cap:8589934592".into());
+    after.insert(TREE_STOP_KEY.into(), "over-cap:manifest".into());
+    fx.append(&v, terminal(1, None, vec![], after)).unwrap();
+    let f = fx.audit();
+    assert_eq!(
+        names(&f),
+        vec!["tree-over-cap", "unattributed-change"],
+        "ATTACK: O-NHR-07 a capped pinned tree went unreported (or a cut path read as deleted): {f:?}"
+    );
+    assert!(
+        f[0].detail.contains("over-cap:manifest") && f[0].detail.contains("1 over-cap path"),
+        "{}",
+        f[0].detail
+    );
+    assert!(f[1].detail.starts_with("src/big"), "{}", f[1].detail);
+}
+
+/// EG-2: the widened tree grammar. A path maps to 64-hex or
+/// `over-cap:<decimal len>`; the reserved key `""` maps to
+/// `over-cap:manifest` or `over-cap:time`; nothing else.
+#[test]
+fn a_tree_value_is_a_sha256_or_an_over_cap_marker() {
+    let t = |entries: &[(&str, &str)]| -> Tree {
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let hex = "a".repeat(64);
+    for ok in [
+        t(&[("p", &hex)]),
+        t(&[("p", "over-cap:0"), ("q", "over-cap:8589934592")]),
+        t(&[("", "over-cap:manifest"), ("p", &hex)]),
+        t(&[("", "over-cap:time")]),
+    ] {
+        assert_eq!(check_tree("t", &ok), Ok(()), "{ok:?}");
+    }
+    for bad in [
+        t(&[("p", "over-cap")]),
+        t(&[("p", "over-cap:")]),
+        t(&[("p", "over-cap:12x")]),
+        t(&[("p", "over-cap:012")]),
+        t(&[("p", "over-cap:-1")]),
+        t(&[("p", "over-cap:manifest")]),
+        t(&[("", "over-cap:12")]),
+        t(&[("", &hex)]),
+        t(&[("", "over-cap:other")]),
+    ] {
+        assert!(
+            check_tree("t", &bad).is_err(),
+            "ATTACK: O-NHR-07 a malformed pinned-tree entry was admitted: {bad:?}"
+        );
+    }
+}
+
 #[test]
 fn every_finding_name_is_distinct() {
     let set: BTreeSet<&str> = FINDINGS.iter().copied().collect();

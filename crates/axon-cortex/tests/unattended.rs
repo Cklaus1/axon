@@ -198,7 +198,9 @@ fn envelope_pinned(s: &Setup, pins: ScopePins) -> RepairEnvelope {
             kind: "ai".into(),
             model: "m".into(),
             provider: "anthropic".into(),
-            endpoint_host: "127.0.0.1".into(),
+            // EG-1: the endpoint's host:port, matching `run_unshared`'s
+            // `AXON_AI_BASE_URL=https://127.0.0.1:9`.
+            endpoint_host: "127.0.0.1:9".into(),
         },
         decision: env::DECISION.into(),
         sig: String::new(),
@@ -913,8 +915,8 @@ fn s6_an_envelope_for_anything_else_is_refused() {
         ),
         (
             "endpoint",
-            |e| e.generator.endpoint_host = "api.example.com".into(),
-            "generator endpoint host",
+            |e| e.generator.endpoint_host = "api.example.com:443".into(),
+            "generator endpoint",
         ),
         (
             "fence",
@@ -1176,7 +1178,9 @@ fn s6_a_proxy_variable_is_refused() {
         let proxy = format!("http://{}", rec.addr);
         let s = setup(&format!("s6_proxy_{var}"));
         let mut e = envelope_for(&s);
-        e.generator.endpoint_host = "api.anthropic.com".into();
+        // EG-1: pin the base's own host:port, so the run reaches the proxy rule.
+        let port = if scheme == "https" { 443 } else { 80 };
+        e.generator.endpoint_host = format!("api.anthropic.com:{port}");
         mint(&s, &e);
         let base = format!("{scheme}://api.anthropic.com");
         let o = run_with(
@@ -1218,7 +1222,9 @@ fn s6_a_plain_http_endpoint_is_refused() {
         let rec = Recorder::start();
         let s = setup(&format!("s6_plainhttp_{var}"));
         let mut e = envelope_for(&s);
-        e.generator.endpoint_host = "localhost".into();
+        // EG-1: the pin is the base's host:port, so the run reaches the
+        // `https` rule, not the endpoint pin.
+        e.generator.endpoint_host = format!("localhost:{}", rec.addr.port());
         mint(&s, &e);
         let base = format!("http://localhost:{}", rec.addr.port());
         let o = run_with(
@@ -1264,8 +1270,9 @@ fn s6_a_plain_http_endpoint_is_refused() {
 fn s6_plain_http_to_a_loopback_literal_reaches_the_pinned_host() {
     let rec = Recorder::start();
     let s = setup("s6_plainhttp_loopback");
-    let e = envelope_for(&s);
-    assert_eq!(e.generator.endpoint_host, "127.0.0.1");
+    let mut e = envelope_for(&s);
+    // EG-1: the envelope pins the listener's own host:port.
+    e.generator.endpoint_host = format!("127.0.0.1:{}", rec.addr.port());
     mint(&s, &e);
     let base = format!("http://{}", rec.addr);
     let o = run_with(&s, &s.axon, &[], &[("AXON_AI_BASE_URL", &base)]);
@@ -1278,6 +1285,32 @@ fn s6_plain_http_to_a_loopback_literal_reaches_the_pinned_host() {
         o.stderr
     );
     let _ = std::fs::remove_dir_all(&s.root);
+}
+
+/// EG-1 (O-NHR-08): the envelope pinned the endpoint's bare host, so a run
+/// at any port on it was admitted - with the loopback exception, plain
+/// `http://` to any local listener on the pinned address. The envelope now
+/// pins `host:port`: a run at another port is refused before anything runs.
+#[test]
+fn s6_an_envelope_pinned_to_one_port_refuses_another() {
+    for (i, base) in ["https://127.0.0.1:8443", "http://127.0.0.1:18308"]
+        .into_iter()
+        .enumerate()
+    {
+        let s = setup(&format!("s6_port_pin_{i}"));
+        let e = envelope_for(&s);
+        assert_eq!(e.generator.endpoint_host, "127.0.0.1:9");
+        mint(&s, &e);
+        let o = run_with(&s, &s.axon, &[], &[("AXON_AI_BASE_URL", base)]);
+        refused(
+            &s,
+            &o,
+            &e,
+            "generator endpoint",
+            &format!("ATTACK: O-NHR-08 an envelope pinned to 127.0.0.1:9 ran at {base}"),
+        );
+        let _ = std::fs::remove_dir_all(&s.root);
+    }
 }
 
 /// NE-8 NRV-1: the envelope pins the host `axon-ai` reads from the base URL,
@@ -1293,7 +1326,7 @@ fn s6_an_endpoint_whose_host_parsers_disagree_on_is_refused() {
         let rec = Recorder::start();
         let s = setup(&format!("s6_nrv1_{i}"));
         let e = envelope_for(&s);
-        assert_eq!(e.generator.endpoint_host, "127.0.0.1");
+        assert_eq!(e.generator.endpoint_host, "127.0.0.1:9");
         mint(&s, &e);
         let port = rec.addr.port();
         let base = if i == 0 {
@@ -2061,5 +2094,157 @@ fn s10_a_static_child_stalled_before_phase_b_is_bounded_by_the_deadline() {
     assert_eq!(o.code, 22, "{}{}", o.stdout, o.stderr);
     assert!(o.stderr.contains("wall-clock limit"), "{}", o.stderr);
     assert_eq!(records(&s), vec![format!("{}.issued", e.envelope_id)]);
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
+// ── EG-2 (O-NHR-07): the bounded pinned-tree walk ───────────────────────────
+
+/// A setup whose envelope also pins the write prefix `out` (created empty),
+/// and whose `axon` is a wrapper that runs `body` once, on the first
+/// `axon test` (the witness check), touching `ran` first.
+fn with_out_check(name: &str, body: &str) -> (Setup, RepairEnvelope, PathBuf) {
+    let s = setup(name);
+    std::fs::create_dir_all(s.ws.join("out")).unwrap();
+    let wrapper = s.root.join("ops/axon-out");
+    let ran = s.root.join("ops/check-ran");
+    let body = body.replace("{out}", &s.ws.join("out").display().to_string());
+    common::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = test ] && [ ! -e '{r}' ]; then touch '{r}'; {body}; fi\nexec '{a}' \"$@\"\n",
+            r = ran.display(),
+            a = s.axon.display()
+        ),
+        0o755,
+    );
+    let s = Setup {
+        axon: wrapper,
+        ..setup_clone(&s)
+    };
+    let mut e = envelope_for(&s);
+    e.write_prefixes.push("out".into());
+    mint(&s, &e);
+    (s, e, ran)
+}
+
+/// The run's terminal record's `pinned_tree_after`, or a panic naming `why`.
+fn terminal_tree(s: &Setup, o: &Out, why: &str) -> rl::Tree {
+    run_records(s)
+        .into_iter()
+        .find(|r| r.kind == rl::Kind::Terminal)
+        .and_then(|r| r.pinned_tree_after)
+        .unwrap_or_else(|| {
+            panic!(
+                "ATTACK: {why}: no terminal record\n{}{}",
+                o.stdout, o.stderr
+            )
+        })
+}
+
+/// EG-2: a check that makes an 8 GiB sparse file under a write root. The
+/// terminal walk read it whole (time and memory with the file's size); it
+/// is now valued by its size, never read, and C1 reports the capped tree.
+#[test]
+fn r6_a_huge_file_a_check_writes_is_valued_by_its_size() {
+    let (s, e, ran) = with_out_check("r6_huge", "truncate -s 8G '{out}/big'");
+    let t0 = std::time::Instant::now();
+    let o = run_with(&s, &s.axon, &[], &[]);
+    let took = t0.elapsed();
+    assert!(ran.exists(), "the witness check never ran\n{}", o.stderr);
+    let after = terminal_tree(&s, &o, "O-NHR-07 the 8 GiB run");
+    assert_eq!(
+        after.get("out/big").map(String::as_str),
+        Some("over-cap:8589934592"),
+        "ATTACK: O-NHR-07 a file over the walk's hash bytes was read and hashed"
+    );
+    // Never read: the walk completes (no stop marker), the file valued by
+    // its `fstat` length alone, not stopped by the time cap mid-read.
+    assert_eq!(
+        after.get(""),
+        None,
+        "ATTACK: O-NHR-07 a file over the walk's hash bytes was read until the walk stopped"
+    );
+    assert!(
+        took < Duration::from_secs(4),
+        "ATTACK: O-NHR-07 the terminal walk's time grew with the file's size ({took:?})"
+    );
+    c1_is(&s, &e, &["tree-over-cap", "unattributed-change"]);
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
+/// EG-2: a check that creates 20000 empty files under a write root. The
+/// terminal record's manifest went over the canonical byte limit, so the
+/// run had no terminal record and C1 called it killed or crashed. The walk
+/// now stops at `TREE_MANIFEST_BYTES` with `"" -> over-cap:manifest`; a
+/// file that sorts after the cut (`out/zz-keep`) is no deletion (EGA-4).
+#[test]
+fn r6_a_check_that_writes_many_files_still_gets_a_terminal_record() {
+    let (s, e, ran) = with_out_check(
+        "r6_many",
+        "i=0; while [ $i -lt 20000 ]; do : > '{out}'/$i; i=$((i+1)); done",
+    );
+    std::fs::write(s.ws.join("out/zz-keep"), b"kept").unwrap();
+    let o = run_with(&s, &s.axon, &[], &[]);
+    assert!(ran.exists(), "the witness check never ran\n{}", o.stderr);
+    let after = terminal_tree(
+        &s,
+        &o,
+        "O-NHR-07 a check that wrote 20000 files left the run",
+    );
+    assert_eq!(
+        after.get("").map(String::as_str),
+        Some("over-cap:manifest"),
+        "ATTACK: O-NHR-07 a capped terminal tree carries no stop marker"
+    );
+    let size: usize = after.iter().map(|(k, v)| k.len() + v.len()).sum();
+    assert!(
+        size <= auth::TREE_MANIFEST_BYTES,
+        "ATTACK: O-NHR-07 the terminal tree holds {size} manifest bytes"
+    );
+    let f = c1_findings(&s, &e);
+    let names: Vec<&str> = f.iter().map(|f| f.finding).collect();
+    assert!(
+        names.contains(&"tree-over-cap") && !names.contains(&"started-no-terminal"),
+        "ATTACK: O-NHR-07 C1 over the 20000-file run: {f:?}"
+    );
+    assert!(
+        !f.iter()
+            .any(|f| f.finding == "unattributed-change" && f.detail.starts_with("out/zz-keep")),
+        "ATTACK: EGA-4 a path cut from a stopped tree read as deleted: {f:?}"
+    );
+    let _ = std::fs::remove_dir_all(&s.root);
+}
+
+/// EG-2: a write root whose tree is over `TREE_MANIFEST_BYTES` before the
+/// run (5000 files: under the record's 1 MiB, over the manifest cap). A
+/// baseline is never capped: the started append is refused, the envelope
+/// marked `.unrecorded`, exit 29, and no check runs.
+#[test]
+fn r6_a_write_root_over_the_tree_cap_refuses_before_any_check() {
+    let (s, e, ran) = with_out_check("r6_overcap", ":");
+    for i in 0..5000 {
+        std::fs::write(s.ws.join(format!("out/{i}")), b"").unwrap();
+    }
+    let o = run_with(&s, &s.axon, &[], &[]);
+    assert!(
+        o.code == 29 && !ran.exists(),
+        "ATTACK: O-NHR-07 a run over the tree cap went on (exit {}, check ran: {})\n{}{}",
+        o.code,
+        ran.exists(),
+        o.stdout,
+        o.stderr
+    );
+    assert!(
+        o.stderr.contains("TREE_MANIFEST_BYTES"),
+        "the refusal does not name the cap: {}",
+        o.stderr
+    );
+    assert!(
+        s.store
+            .join(format!("{}.unrecorded", e.envelope_id))
+            .is_file(),
+        "ATTACK: O-NHR-07 a refused started walk left no .unrecorded marker"
+    );
+    assert!(run_records(&s).is_empty(), "a capped baseline was recorded");
     let _ = std::fs::remove_dir_all(&s.root);
 }

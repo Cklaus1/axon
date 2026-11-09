@@ -193,16 +193,17 @@ pub fn imports_closure(
     ))
 }
 
-/// The provider name and endpoint host the `ai:` generator will reach, as
-/// `axon-ai` resolves them (§5.2 generator rule). `Err` for an endpoint
-/// `axon-ai` refuses to parse (NE-8 NRV-1: a `\` or userinfo in the base URL).
+/// The provider name and endpoint authority (`host:port`, EG-1) the `ai:`
+/// generator will reach, as `axon-ai` resolves them (§5.2 generator rule).
+/// `Err` for an endpoint `axon-ai` refuses to parse (NE-8 NRV-1: a `\` or
+/// userinfo in the base URL) or one with no known default port.
 pub fn resolved_generator() -> Result<(String, String), String> {
     let p = axon_ai::provider();
     let provider = match p {
         axon_ai::Provider::Anthropic => "anthropic",
         axon_ai::Provider::OpenAi => "openai",
     };
-    Ok((provider.to_string(), axon_ai::endpoint_host(p)?))
+    Ok((provider.to_string(), axon_ai::endpoint_authority(p)?))
 }
 
 fn now_unix() -> u64 {
@@ -473,11 +474,12 @@ pub fn phase_a(cli: &Cli, axon: &Path, hard_grace_ms: u64) -> Result<PhaseA, Str
     let effective = e.narrow(&cli.requested)?;
     // 5 (rest): the run ends before the envelope expires.
     e.fits_before_expiry(now, effective.deadline_ms, hard_grace_ms)?;
-    let (provider, host) = resolved_generator()?;
-    e.check_generator("ai", model, &provider, &host)?;
-    // Security re-review 2 N1: the envelope pins the host, not the scheme;
-    // a plain-HTTP base URL on the pinned host sent the key in the clear.
-    // Plain HTTP to a loopback IP literal never leaves the host (CERE).
+    let (provider, endpoint) = resolved_generator()?;
+    e.check_generator("ai", model, &provider, &endpoint)?;
+    // Security re-review 2 N1: the envelope pins the endpoint, not the
+    // scheme; a plain-HTTP base URL on the pinned endpoint sent the key in
+    // the clear. Plain HTTP to a loopback IP literal never leaves the host
+    // (CERE).
     if !axon_ai::endpoint_is_private(axon_ai::provider()) {
         return Err(
             "the AI endpoint (AXON_AI_BASE_URL / ANTHROPIC_BASE_URL) is neither https:// nor \
@@ -857,20 +859,73 @@ pub fn authorization_json(a: &PhaseA, b: &PhaseB) -> serde_json::Value {
     })
 }
 
+/// EG-2 (O-NHR-07): the file bytes one pinned-tree walk may hash.
+pub const TREE_HASH_BYTES: u64 = 256 * 1024 * 1024;
+/// EG-2: the manifest bytes (Σ key + value, the stop marker included) one
+/// pinned tree may hold, well under the canonical `MAX_BYTES` of a record.
+pub const TREE_MANIFEST_BYTES: usize = 256 * 1024;
+/// EG-2: a terminal walk's time (it fits inside the watchdog's `STALL_AT`
+/// with the restore and the append). The started walk has no time cap: it
+/// runs after consume, so a timing-dependent refusal would spend the
+/// envelope at random.
+pub const TREE_WALK_TIME: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Which record a pinned-tree walk is for (EG-2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Walk {
+    /// `pinned_tree_before`: complete or `Err` (a baseline is never capped).
+    Started,
+    /// `pinned_tree_after`: capped, never `Err` for a cap.
+    Terminal,
+}
+
+/// A fresh budget for one walk: [`TREE_HASH_BYTES`], and on a terminal walk
+/// a deadline [`TREE_WALK_TIME`] from now.
+fn walk_budget(walk: Walk) -> crate::cas::WalkBudget {
+    crate::cas::WalkBudget {
+        bytes_left: TREE_HASH_BYTES,
+        deadline: (walk == Walk::Terminal).then(|| std::time::Instant::now() + TREE_WALK_TIME),
+    }
+}
+
 /// R6 §3 `pinned_tree_before` / `_after`: every file under the run's write
 /// prefixes (workspace-relative) and its `scopes.fs_write` pins (absolute),
 /// keyed like the E5 journal's paths (workspace-relative where possible),
 /// valued by the hex sha256 of its bytes. A symlink is never followed: its
 /// value is the sha256 of `link:<target>`. Anything else (a FIFO, a socket,
 /// a device) is never opened for reading: its value is the sha256 of
-/// `type:<kind>` (NE-2, [`crate::cas::read_plain`]). A check child's write
+/// `type:<kind>` (NE-2, [`crate::cas::hash_plain`]). A check child's write
 /// shows as a difference that the journal does not explain.
-fn tree(workspace: &Path, roots: &[PathBuf]) -> Result<rl::Tree, String> {
+///
+/// EG-2: the walk is in sorted path order and bounded. A regular file
+/// longer than the hash bytes left (or one that changed length while read)
+/// is valued `over-cap:<len>`, never read. Past [`TREE_MANIFEST_BYTES`], or
+/// (terminal walks) past the budget's deadline, the walk stops with the
+/// reserved key `""` valued `over-cap:manifest` / `over-cap:time`. A started
+/// walk refuses (`Err`) any cap instead: its baseline is complete.
+fn tree(
+    workspace: &Path,
+    roots: &[PathBuf],
+    walk: Walk,
+    mut budget: crate::cas::WalkBudget,
+) -> Result<rl::Tree, String> {
+    use crate::cas::Hashed;
+    const MANIFEST: &str = "over-cap:manifest";
+    const TIME: &str = "over-cap:time";
+    if walk == Walk::Started {
+        budget.deadline = None;
+    }
     let mut out = rl::Tree::new();
-    let mut todo: Vec<PathBuf> = roots.to_vec();
+    let mut size = 0usize;
+    let mut todo: Vec<PathBuf> = roots.iter().rev().cloned().collect();
     while let Some(p) = todo.pop() {
+        if budget.expired() {
+            out.insert(rl::TREE_STOP_KEY.into(), TIME.into());
+            return Ok(out);
+        }
         let key = rel(workspace, &p);
         let err = |e: std::io::Error| format!("pinned tree: {key}: {e}");
+        let mut stop = false;
         let value = match std::fs::symlink_metadata(&p) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => return Err(err(e)),
@@ -879,22 +934,52 @@ fn tree(workspace: &Path, roots: &[PathBuf]) -> Result<rl::Tree, String> {
                 crate::label::sha256_hex(format!("link:{}", t.to_string_lossy()).as_bytes())
             }
             Ok(m) if m.is_dir() => {
-                for e in std::fs::read_dir(&p).map_err(err)? {
-                    todo.push(e.map_err(err)?.path());
-                }
+                let mut kids = std::fs::read_dir(&p)
+                    .map_err(err)?
+                    .map(|e| e.map(|e| e.path()))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(err)?;
+                kids.sort_unstable();
+                todo.extend(kids.into_iter().rev());
                 continue;
             }
-            Ok(_) => match crate::cas::read_plain(&p) {
+            Ok(_) => match crate::cas::hash_plain(&p, &mut budget) {
                 // Removed between the lstat and the open: as if never seen.
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(err(e)),
-                Ok(crate::cas::Plain::Bytes(b)) => crate::label::sha256_hex(&b),
-                Ok(crate::cas::Plain::Kind(k)) => {
-                    crate::label::sha256_hex(format!("type:{k}").as_bytes())
+                Ok(Hashed::Digest(d)) => d,
+                Ok(Hashed::Kind(k)) => crate::label::sha256_hex(format!("type:{k}").as_bytes()),
+                Ok(Hashed::OverCap(len)) if walk == Walk::Started => {
+                    return Err(format!(
+                        "pinned tree: {key}: {len} bytes is over the walk's TREE_HASH_BYTES \
+                         ({TREE_HASH_BYTES}) left, or changed length while read; narrow the \
+                         write prefixes"
+                    ))
+                }
+                Ok(Hashed::OverCap(len)) => format!("{}{len}", rl::OVER_CAP),
+                Ok(Hashed::Expired(len)) => {
+                    stop = true;
+                    format!("{}{len}", rl::OVER_CAP)
                 }
             },
         };
+        let grown = size + key.len() + value.len();
+        if grown + MANIFEST.len() > TREE_MANIFEST_BYTES {
+            if walk == Walk::Started {
+                return Err(format!(
+                    "pinned tree: the write roots hold more than TREE_MANIFEST_BYTES \
+                     ({TREE_MANIFEST_BYTES}) bytes of manifest; narrow the write prefixes"
+                ));
+            }
+            out.insert(rl::TREE_STOP_KEY.into(), MANIFEST.into());
+            return Ok(out);
+        }
+        size = grown;
         out.insert(key, value);
+        if stop {
+            out.insert(rl::TREE_STOP_KEY.into(), TIME.into());
+            return Ok(out);
+        }
     }
     Ok(out)
 }
@@ -942,7 +1027,13 @@ pub fn record_started(a: &PhaseA, b: &PhaseB) -> Result<(), String> {
         candidates: f.candidates,
         max_steps: f.max_steps,
     };
-    let appended = tree(&a.workspace, &roots).and_then(|before| {
+    let appended = tree(
+        &a.workspace,
+        &roots,
+        Walk::Started,
+        walk_budget(Walk::Started),
+    )
+    .and_then(|before| {
         let body = rl::Body::Started(rl::Started {
             enforcement: serde_json::Value::Array(b.rows.iter().map(Row::to_json).collect()),
             pinned_tree_before: before,
@@ -1003,7 +1094,13 @@ pub fn record_terminal(end: Ending, writes: &[crate::cas::WriteRecord]) {
             after_sha256: w.after_sha256.clone(),
         })
         .collect();
-    let appended = tree(&r.workspace, &r.roots).and_then(|after| {
+    let appended = tree(
+        &r.workspace,
+        &r.roots,
+        Walk::Terminal,
+        walk_budget(Walk::Terminal),
+    )
+    .and_then(|after| {
         let body = rl::Body::Terminal(rl::Terminal {
             outcome: end.outcome,
             exit_code: i64::from(end.exit_code),
@@ -1038,7 +1135,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("w/sub")).unwrap();
         std::fs::write(d.join("w/sub/a"), b"1").unwrap();
-        let t = || tree(&d, &[d.join("w"), d.join("gone")]).unwrap();
+        let t = || {
+            tree(
+                &d,
+                &[d.join("w"), d.join("gone")],
+                Walk::Started,
+                walk_budget(Walk::Started),
+            )
+            .unwrap()
+        };
         let before = t();
         assert_eq!(
             before.keys().collect::<Vec<_>>(),
@@ -1076,7 +1181,12 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let (ws, root) = (d.clone(), d.join("w"));
         std::thread::spawn(move || {
-            let _ = tx.send(tree(&ws, &[root]));
+            let _ = tx.send(tree(
+                &ws,
+                &[root],
+                Walk::Terminal,
+                walk_budget(Walk::Terminal),
+            ));
         });
         let got = rx.recv_timeout(std::time::Duration::from_secs(5));
         if got.is_err() {
@@ -1092,6 +1202,36 @@ mod tests {
         assert!(
             matches!(&got, Ok(Ok(t)) if t.get("w/pipe") == Some(&want)),
             "ATTACK: the pinned tree blocked on a FIFO: {got:?}"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// EG-2 (EGA-5): a terminal walk whose deadline has passed stops with
+    /// `"" -> over-cap:time` and no later path; the same tree walked for a
+    /// started record ignores the deadline and is complete.
+    #[test]
+    fn a_spent_walk_budget_caps_the_terminal_tree() {
+        let d = std::env::temp_dir().join(format!("cortex-tree-time-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("w")).unwrap();
+        std::fs::write(d.join("w/a"), b"1").unwrap();
+        std::fs::write(d.join("w/b"), b"2").unwrap();
+        let spent = || crate::cas::WalkBudget {
+            bytes_left: TREE_HASH_BYTES,
+            deadline: Some(std::time::Instant::now()),
+        };
+        let roots = [d.join("w")];
+        let capped = tree(&d, &roots, Walk::Terminal, spent()).unwrap();
+        let want: rl::Tree = [("".to_string(), "over-cap:time".to_string())].into();
+        assert_eq!(
+            capped, want,
+            "ATTACK: O-NHR-07 a terminal walk past its deadline went on"
+        );
+        let full = tree(&d, &roots, Walk::Started, spent()).unwrap();
+        assert_eq!(
+            full.keys().collect::<Vec<_>>(),
+            ["w/a", "w/b"],
+            "ATTACK: EGA-5 a started walk was time-capped (it would spend the envelope at random)"
         );
         let _ = std::fs::remove_dir_all(&d);
     }

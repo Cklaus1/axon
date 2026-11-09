@@ -135,7 +135,7 @@ fn domains() -> Vec<(&'static str, &'static str, &'static str)> {
             "axon-guest-completion/1",
         ),
         // NH-R1 (§4 domains): the repair envelope and the G5 subkey labels
-        ("ENVELOPE_SCHEMA", ENVELOPE_SCHEMA, "axon-approval/4"),
+        ("ENVELOPE_SCHEMA", ENVELOPE_SCHEMA, "axon-approval/5"),
         (
             "ENVELOPE_SEED_DOMAIN",
             ENVELOPE_SEED_DOMAIN,
@@ -200,7 +200,7 @@ fn envelope_sample() -> RepairEnvelope {
         "budget": {"max_proposals": 4, "deadline_ms": 60_000, "check_timeout_ms": 10_000,
                    "candidates": 3, "max_steps": 8},
         "generator": {"kind": "ai", "model": "claude-x", "provider": "anthropic",
-                      "endpoint_host": "api.anthropic.com"},
+                      "endpoint_host": "api.anthropic.com:443"},
         "decision": "authorize-operate",
         "sig": "",
     }))
@@ -571,10 +571,11 @@ const KAT_PASS_TOKEN: &str = "a875b3413a17359d72e634a6f4fe07f2de3e20de9d4d2359b3
 const KAT_FAIL_TOKEN: &str = "c9ed37e39e339072d5c5984526379387efc65131001b8da55dd17dd69a67f5bd";
 const KAT_LEDGER_MAC: &str = "bdda876a50e9d7514e92b4e6cf0f5108a69092bb68f855e0aa3185206f9660c5";
 // NH-R1: computed independently (Python `hmac` + `cryptography` Ed25519 + sorted compact JSON);
-// the fixture's pins are absolute since security F4.
+// the fixture's pins are absolute since security F4. EG-1 regenerated the signature (schema
+// `axon-approval/5`, endpoint `api.anthropic.com:443`); the key and both domains are unchanged.
 const KAT_ENVELOPE_PUBLIC: &str =
     "7817267170d04cbb2259f5a63ee290e1d6d494a28a0c9bf75f0e7f270aec4aed";
-const KAT_ENVELOPE_SIG: &str = "axenv1:8f07c460326dbb730be31ee76d2e7b0458d257800dd6febf23fb43cd5fa161fd5baf4f28ddcaca9425cbb4f36f381e1d691f2b0e0ae409352d0fd111dd4a2a03";
+const KAT_ENVELOPE_SIG: &str = "axenv1:f4f97dfccb1ba0a2a65de1b4d46bdfcd72c7e394edc5709dec5938cfc002f2aa38a32a0c59598fe5fa49ac8f7271b93584668a7dd45e3eb65616ed940c94610c";
 // R6: computed independently (Python `hmac` + sorted-key compact `json.dumps`).
 const KAT_RUN_RECORD_SUBKEY: &str =
     "a21dd6a4cf2e986bb2ac1f9b84475e7647d007b1494b7ddfd795643dcff13e7e";
