@@ -261,8 +261,14 @@ mod tests {
 
     #[test]
     fn audit_runs_needs_both_directories() {
-        assert!(parse_args(&["--spent-store", "s"]).is_err());
-        assert!(parse_args(&["--run-ledger", "l"]).is_err());
+        assert!(
+            parse_args(&["--spent-store", "s"]).is_err(),
+            "ATTACK: an audit-runs without --run-ledger was parsed"
+        );
+        assert!(
+            parse_args(&["--run-ledger", "l"]).is_err(),
+            "ATTACK: an audit-runs without --spent-store was parsed"
+        );
         assert!(parse_args(&["--spent-store", "s", "--run-ledger", "l", "--bogus", "x"]).is_err());
         assert!(
             parse_args(&[
