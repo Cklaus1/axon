@@ -1,9 +1,9 @@
 # Unattended repair authorization (NH-R1) — DRAFT spec (after Step 1 review)
 
-**Status: PARTIAL 2026-10-31 on nhr/int: security fixes merged (F1-F12 fixed in 91114bcc..dcd60815 and be47b23e; A0-A4 and the §7 S-tests: 1093c268, 9a825ace, c4f4c12c, 219e1360, 9ed0ad16, 60651b37). Re-review N1-N4 fixed (nhr/fix-c 5e453868, `[REVISED: security re-review N#]` markers; N3 per the human ruling: attended runs take the §10 Q4 rename, unattended runs refuse); N5/N6 and N3 portability are recorded in O-NHR-06. Re-review 2 fixed on nhr/fix-d (`[REVISED: security re-review 2 N#]` markers): N1 scheme pin (https only), N7 initial user namespace, N8 exclusive Q4 placement. N1-N4 verified 2026-11-05 at ab2a650a (g01 M4216-M4218 and M4520-M4552 all killed, `/var/tmp/r51-tmp/b4-probe/b4-g01.json`; probes in `tasks/nhr-evidence-spec.md` §8). It stays PARTIAL in the sense that enabling is not authorized: `--unattended` refuses by default (exit 29); enabling needs the §9 evidence and a separate human decision.**
+**Status: BUILT 2026-10-31 on nhr/int: security fixes merged (F1-F12 fixed in 91114bcc..dcd60815 and be47b23e; A0-A4 and the §7 S-tests: 1093c268, 9a825ace, c4f4c12c, 219e1360, 9ed0ad16, 60651b37). Re-review N1-N4 fixed (nhr/fix-c 5e453868, `[REVISED: security re-review N#]` markers; N3 per the human ruling: attended runs take the §10 Q4 rename, unattended runs refuse); N5/N6 and N3 portability are recorded in O-NHR-06. Re-review 2 fixed on nhr/fix-d (`[REVISED: security re-review 2 N#]` markers): N1 scheme pin (https only), N7 initial user namespace, N8 exclusive Q4 placement. N1-N4 verified 2026-11-05 at ab2a650a (g01 M4216-M4218 and M4520-M4552 all killed, `/var/tmp/r51-tmp/b4-probe/b4-g01.json`; probes in `tasks/nhr-evidence-spec.md` §8). ENABLED 2026-11-10 on this host only (§9, §10 Q3 decision), at main 9ccf5542; every other host still refuses (exit 29) until it holds its own opt-in.**
 - `[DECIDED by human 2026-10-31: build go-ahead.]` Building it (A0-A4, E1-E7, §7 S-tests) is authorized.
-- Enabling it after the build (§9) still needs the §9 evidence (S-tests and full gate green, a read-only adversarial
-  security review, R6 L1-L3 built with a clean C1 audit) and then a second, separate human decision made on that evidence.
+- Enabling it after the build (§9) needed the §9 evidence and a second, separate human decision.
+  `[DECIDED by human 2026-11-10: yes - enable unattended repair.]` Recorded in §9 and §10 Q3.
 
 **Source decisions:**
 - `tasks/repair-spec.md:211-222` — NH-R1: `[DECIDED by human 2026-10-18: A — build a new axon-approval schema, specified separately before unattended repair is enabled]`.
@@ -471,6 +471,33 @@ All of the following must hold, and then a human records the enabling decision (
 - R6 L1–L3 built, and its C1 audit is clean over the S-test runs and a dry-run series of unattended runs
   `[REVISED: F-R6, D17 — this makes C1's consumer real]`.
 
+**Enabled 2026-11-10** `[DECIDED by human 2026-11-10: yes - enable unattended repair]`, on the evidence below. The scope is
+this host only, against CERE (`ai:Qwen3.8-Flash-Next` at `http://127.0.0.1:18307`, the 2-N1 loopback exception).
+- **Evidence at decision time:** strict gate at a3a79f6c rc 0 (8291 passed, 0 failed; S09U unattended S-tests stage exit
+  0); security review F1-F12 and re-reviews N1-N8 dispositioned, enable-gaps review EGR-1..3 fixed; R6 L1-L3 BUILT; C1
+  audit-runs over the CERE dry-run series 0 findings (3 runs); scan caps and `HARD_GRACE` measured under strict-gate load
+  (§6 E3, `tasks/enable-gaps-spec.md` §8).
+- **Host state:**
+  - binaries `/opt/axon-unattended/9ccf5542/bin/{cortex,axon,axon-intent}`, release build at main 9ccf5542 with
+    `--features unattended`, root 0755, `current` symlink;
+  - opt-in `/etc/axon/unattended-repair`, root 0600, naming this decision;
+  - ops state `/var/lib/axon-unattended/` (0700): spent store, run ledger, verify and run-record keys;
+  - the operator (minting) key `operator.key`, root 0400, generated on the host, never printed or committed.
+- **First real runs** (`/var/tmp/r51-tmp/enable/first-runs.sh`):
+  - before the opt-in existed: exit 29, "this host has not opted in", file unchanged, ledger empty;
+  - after: 3 runs over copies of `fixtures/broken.ax`, each `verified_done` in about 1 s (`n + 2` -> `n * 2`, its tests
+    3/3), each reporting `authorization.host_opt_in` with this decision;
+  - `audit-runs` rc 0, 0 findings, 3 consumed; neither the CERE token nor the operator key appears in any output file;
+  - the 4 envelopes refused at phase A (1 before the opt-in, 3 minted without the provider pin) stay `.issued`, never
+    spent.
+- **Accepted limits on this host:**
+  - the operator and the runner are both root, so "the runner cannot mint" holds by process discipline only. The runner
+    gets `env -i` without `AXON_APPROVAL_KEY`, but root can read `operator.key`;
+  - the CERE credential is `CERE_TOKEN_TRAINLOOP`, shared with another lane. A dedicated token needs a production CERE
+    restart, which is the operator's call;
+  - widening (another host, another provider, a real workspace rather than a copy) is a new decision. Audit the run
+    ledger first.
+
 ## 10. needs-human
 
 | Q | Question | Default in this DRAFT |
@@ -486,6 +513,8 @@ design questions only. Building NH-R1 still needs a separate human go-ahead, and
   choice.
 - **Q2 → the v1 admission set as stated.** Each refused item is a confinement escape this spec has no defence for
   (E4, E9, E11). Widening later is cheap; narrowing after an incident is not.
+- **Enabling (§9) → `[DECIDED by human 2026-11-10: yes - enable unattended repair]`.** It is enabled on this host only,
+  through its opt-in. The host state, first runs and accepted limits are in §9 "Enabled 2026-11-10".
 - **Q3 → a human records the enabling decision, AND each host needs its own opt-in file.** The decision says the
   build is fit; the host file says this machine agrees. The host is shared (other users' jobs held load ≈ 48 during
   the follow-up run), so one repo decision must not enable every checkout on every host. The opt-in file's path,

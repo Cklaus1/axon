@@ -1,6 +1,6 @@
 # R6 — record-only repair run ledger — DRAFT spec (designed against NH-R1; after Step 1 review)
 
-**Status: BUILT 2026-10-31 on nhr/int (L1 6ce5994e, L2 f0b6d520, L3 9832cd76). Records only; unattended execution is not enabled.**
+**Status: BUILT 2026-10-31 on nhr/int (L1 6ce5994e, L2 f0b6d520, L3 9832cd76). Records only. Unattended execution was enabled on one host 2026-11-10 (NH-R1 §9); its ledger is `/var/lib/axon-unattended/ops/ledger`, and C1 found nothing over the first 3 runs.**
 - It depends on `tasks/unattended-auth-spec.md` (NH-R1) A0–A4.
 - R6 writes records only. It grants nothing, gates nothing and changes no exit code.
 

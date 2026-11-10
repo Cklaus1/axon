@@ -1,5 +1,9 @@
 # Axon Changelog
 
+## Unattended repair enabled on this host (NH-R1 §9, §10 Q3, decided 2026-11-10)
+
+- **`cortex repair --unattended` is enabled on this host only,** on the human's decision of 2026-11-10 and the §9 evidence. The host holds `/etc/axon/unattended-repair` (root 0600, naming the decision) and runs release binaries from `/opt/axon-unattended/9ccf5542`; its ops state and operator key are in `/var/lib/axon-unattended` (0700). The first 3 runs against CERE (`127.0.0.1:18307`) repaired copies of `fixtures/broken.ax`, and `audit-runs` found nothing. No code changed: every other host still refuses with exit 29 until it has its own opt-in. Accepted limits, including that operator and runner are both root here, are listed in `tasks/unattended-auth-spec.md` §9.
+
 ## Batch 6: tuple-patterns TP-1..TP-4 (tasks/tuple-patterns-spec.md)
 
 - **Tuple-pattern components are typed (TP-1, O-LF-01 remainder):** on a subject whose type is known, `(a, b)` binds each component to the element type, except that every number inside it may be used at any width (an int component used as `u8`, `f64`, `Decimal` or `Uncertain<i64>` still checks, ICS-1). `match (1, "s") { (a, b) => to_str(b + 1) }` and `str_len(a)` on an int component are E0102 at check instead of a run panic; a component given to a fn value is checked as its element (CS2-6), and a component that is a fn value (`(f, b)` on `(inc, 2)`) is checked in its params and return (`f("s")`, `f(1) + "s"`), with numbers still at any width. **Behaviour change (NH-1 (a)):** a component used as another kind is refused even where the run printed the value (`println(a)` with `a: i64`, `let s: str = a`, `b == 1` with `b: str`), as its `let (a, b) = t` twin already was; the CS4-3 controls `ics_q4`, `q5`, `q7`, `q11`, `q18`, `q19` are now refusals. A number used as `dyn Trait` stays legal (its twin is). g01 M5220, M5221, M5226-M5231; M4714 re-pointed.
