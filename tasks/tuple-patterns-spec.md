@@ -1,7 +1,8 @@
 # tuple-patterns - spec (TP-1..TP-4)
 
-**Status: BUILT 2026-11-10 on `tp/build` (TP-1+TP-2 00dbca5b, TP-3 6fb5c873, TP-4 a82f13a9; lane head 16dbcfac). Build
-authorized by the human 2026-11-10 ("go", on the recommendations: NH-1 (a), NH-2 (a)).**
+**Status: BUILT 2026-11-10 on `tp/build` (TP-1+TP-2 00dbca5b, TP-3 6fb5c873, TP-4 a82f13a9; implementation-review fixes
+TPI-1/TPI-2 d479be2f; lane head cafa3cb8). Build authorized by the human 2026-11-10 ("go", on the recommendations: NH-1 (a),
+NH-2 (a)).**
 
 ### Step 1 review
 
