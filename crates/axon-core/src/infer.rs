@@ -335,6 +335,16 @@ fn has_unresolved(ty: &Type) -> bool {
     found
 }
 
+/// TP-1 (D7): `ty` without its `Uncertain`/`Temporal` wrappers. `unify`
+/// binds a var to `Uncertain<i64>` before its soft wrapper rule applies, so a
+/// number used as an `Uncertain<i64>` resolves to the wrapper.
+fn strip_soft_wrappers(ty: Type) -> Type {
+    match ty {
+        Type::Uncertain(inner) | Type::Temporal(inner) => strip_soft_wrappers(*inner),
+        ty => ty,
+    }
+}
+
 /// CS2-6: true when `param` and `arg` are certainly different types: two
 /// scalars of different kinds (number / `str` / `bool` / unit), compared
 /// through `[T]`, `Option`, `Result` and same-length tuples. Any other shape,
@@ -922,6 +932,11 @@ pub struct InferCtx {
     /// CS2-3a: the `Num` variable of each call to a numeric-key builtin, which
     /// `solve()` requires to be an int or a float.
     num_obligations: Vec<(Type, crate::span::Span)>,
+    /// TP-1: one entry per numeric leaf of a tuple pattern component bound
+    /// against a known element type: (the element's leaf type, the free var
+    /// that stands for it, the component's name, the pattern's statement).
+    /// `solve()` requires each var to resolve to a number, if it resolves.
+    tuple_component_obligations: Vec<(Type, Type, String, crate::span::Span)>,
     /// CS2-6: calls whose callee is not a fn name with a signature. Checked
     /// by `solve()` against the callee's resolved fn type.
     call_obligations: Vec<CallObligation>,
@@ -1058,6 +1073,7 @@ impl InferCtx {
             call_instantiations: Vec::new(),
             len_obligations: Vec::new(),
             num_obligations: Vec::new(),
+            tuple_component_obligations: Vec::new(),
             call_obligations: Vec::new(),
             struct_fields: HashMap::new(),
             struct_generic_params: HashMap::new(),
@@ -3082,9 +3098,13 @@ impl InferCtx {
             // of another arity that runs (`|p| match p { (a, b) => 2, (a, b,
             // c) => 3 }`). The unit pattern `()` is left unchecked too: `()`
             // has type `Unit`, not an empty `Tuple`, and `match 5 { () => 1,
-            // _ => 2 }` runs today. [REVISED: ICS-1] The sub-patterns are
-            // bound without the component types, as before: an int literal's
-            // component used as `u8` or `f64` runs today.
+            // _ => 2 }` runs today. [REVISED: ICS-1, TP-1] A component binds
+            // the element's skeleton: each numeric leaf is a free var that
+            // `solve()` requires to be a number (an int literal's component
+            // used as `u8` or `f64` runs today), every other leaf is exact, as
+            // the `let (a, b) = t` twin's `.i` read. TP-2: a nested tuple
+            // pattern is bound against its element. Other sub-patterns keep
+            // no type (O-TP-02).
             Pattern::Tuple(pats) => {
                 let concrete = subj_ty.filter(|st| {
                     !pats.is_empty()
@@ -3097,15 +3117,49 @@ impl InferCtx {
                                 | Type::DynTrait(_)
                         )
                 });
+                let mut elems: Option<&[Type]> = None;
                 if let Some(st) = concrete {
                     let vars: Vec<Type> = pats.iter().map(|_| self.fresh()).collect();
                     self.constrain(st.clone(), Type::Tuple(vars), "tuple pattern");
+                    // A shape mismatch is reported by the constraint above;
+                    // its components then stay untyped.
+                    if let Type::Tuple(ts) = st {
+                        elems = Some(ts.as_slice()).filter(|ts| ts.len() == pats.len());
+                    }
                 }
-                for pat in pats {
-                    self.bind_pattern_with_subj(pat, scope, None);
+                for (i, pat) in pats.iter().enumerate() {
+                    match (pat, elems.map(|ts| &ts[i])) {
+                        (Pattern::Ident(name), Some(elem)) => {
+                            let ty = self.tuple_component_skeleton(elem, name);
+                            scope.bind(name.clone(), ty);
+                        }
+                        (Pattern::Tuple(_), Some(elem)) => {
+                            self.bind_pattern_with_subj(pat, scope, Some(elem));
+                        }
+                        _ => self.bind_pattern_with_subj(pat, scope, None),
+                    }
                 }
             }
         }
+    }
+
+    /// TP-1: the type a tuple pattern component binds for element type
+    /// `elem`: `elem` with each numeric leaf replaced by a fresh var, which
+    /// `solve()` requires to resolve to a number (any width: the interpreter
+    /// runs an int component used as `u8`). Every other leaf, a var or type
+    /// param included (D8), is kept exactly.
+    fn tuple_component_skeleton(&mut self, elem: &Type, name: &str) -> Type {
+        let span = self.current_stmt_span;
+        elem.clone().map_leaves(&mut |leaf| {
+            if leaf.is_numeric() {
+                let var = self.fresh();
+                self.tuple_component_obligations
+                    .push((leaf, var.clone(), name.to_string(), span));
+                var
+            } else {
+                leaf
+            }
+        })
     }
 
     // ── Program-level inference ───────────────────────────────────────────────
@@ -3437,6 +3491,17 @@ impl InferCtx {
         // `g(5)` is checked as `f(5)` is (h24). Kinds only: nothing is bound.
         let obligations = std::mem::take(&mut self.call_obligations);
         let derived = derive_param_kinds(&obligations, &self.all_lambda_params, &subst);
+        // TP-1 (D6): an argument still resolved to a tuple pattern
+        // component's var is compared as the element leaf it stands for, as
+        // the `let (a, b) = t` twin's argument is. Keyed by representative.
+        let comp: HashMap<u32, Type> = self
+            .tuple_component_obligations
+            .iter()
+            .filter_map(|(leaf, var, ..)| match subst.apply(var) {
+                Type::Var(r) => Some((r, leaf.clone())),
+                _ => None,
+            })
+            .collect();
         for ob in obligations {
             let Type::Fn(params, ret) = subst.apply(&ob.callee) else {
                 continue;
@@ -3460,7 +3525,10 @@ impl InferCtx {
                 continue;
             }
             for (i, (param, arg)) in params.iter().zip(&ob.args).enumerate() {
-                let arg = subst.apply(arg);
+                let arg = match subst.apply(arg) {
+                    Type::Var(r) if comp.contains_key(&r) => comp[&r].clone(),
+                    arg => arg,
+                };
                 let param = with_derived(param, &derived);
                 if kinds_conflict(&param, &arg) {
                     let span = ob.span;
@@ -3495,6 +3563,23 @@ impl InferCtx {
                     InferError::new(
                         E0306,
                         format!("key fn must return a number, got `{}`", ty.display()),
+                    )
+                    .with_span(span),
+                );
+            }
+        }
+        // TP-1: a numeric leaf of a tuple pattern component may be used as
+        // any number (D2), but not as another kind: `(a, b)` on `(1, "s")`
+        // with `str_len(a)` panics at run time. `Uncertain`/`Temporal` around
+        // a number are accepted, as for the `let` twin (D7).
+        for (leaf, var, name, span) in std::mem::take(&mut self.tuple_component_obligations) {
+            let used = strip_soft_wrappers(subst.apply(&var));
+            if !type_is_unresolved(&used) && !used.is_numeric() && used != Type::Never {
+                self.errors.push(
+                    InferError::mismatch(
+                        &format!("use of tuple pattern component `{name}`"),
+                        &leaf,
+                        &used,
                     )
                     .with_span(span),
                 );

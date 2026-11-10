@@ -4449,3 +4449,13 @@ ATTACK_MARKERS.update({
     'M5211': r'EGR-3: a journaled write to an over-cap path was also reported as unattributed-change',
 })
 
+# tuple-patterns TP-1..TP-4 (ids M5220-M5228, block M5220-M5239)
+ATTACK_MARKERS.update({
+    'M5220': r'ATTACK: a tuple pattern component of the wrong type checked clean',
+    'M5221': r'ATTACK: a tuple pattern component of the wrong type checked clean',
+    'M5222': r'ATTACK: a nested tuple pattern of the wrong shape checked clean',
+    'M5226': r'ATTACK: a tuple pattern component of the wrong type checked clean',
+    'M5227': r'ATTACK: a tuple pattern component of the wrong type checked clean',
+    'M5228': r'ATTACK: a valid tuple match was refused \[tp_w2\]',
+})
+

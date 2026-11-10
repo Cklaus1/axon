@@ -47118,11 +47118,13 @@ fn tuple_pattern_is_type_checked() {
 /// match with arms of two arities that both run stays legal (`l1`, `g3`).
 /// Literal sub-patterns are not type-checked (`t_lit_ty`, O-CS4-04), nor is
 /// the unit pattern `()`, whose type is `Unit` (`unit`, `unit_on_int`).
-/// `[REVISED: ICS-1]` A component is a fresh var, not the subject's
-/// element type, so a use the interpreter accepts stays legal: an int
-/// literal's component used as `u8`/`i32`/`f64` (`ics_w4`..`ics_v3`), or
-/// used where a `str`/`bool` is declared (`ics_q*`; the value passes
-/// through and prints).
+/// `[REVISED: ICS-1, TP-1]` A component binds the element's skeleton: every
+/// non-numeric leaf exactly, every numeric leaf as a free var that may
+/// resolve to any number. So an int literal's component used as
+/// `u8`/`i32`/`f64` stays legal (`ics_w4`..`ics_v3`, `ics_v1`), as do numeric
+/// leaves inside a structure (`tp_w3`, `tp_w5`), wrappers (`tp_w2`, `tp_w7`,
+/// D7) and generic var leaves (`tp_w1`, `tp_y*`, D8). A component used as
+/// another kind is refused (`tuple_pattern_component_misuse_that_runs_is_refused`).
 #[test]
 fn tuple_pattern_controls_stay_legal() {
     let attack = "ATTACK: a valid tuple match was refused";
@@ -47228,12 +47230,68 @@ fn tuple_pattern_controls_stay_legal() {
             "fn sh(x: u8) -> i64 { 1 }\nfn f(t: (i64, i64)) -> i64 { match t { (a, b) => sh(a) } }\nfn main() { println(to_str(f((1, 2)))) }\n",
             "1\n",
         ),
-        ("ics_q4", "fn main() {\n    match (1, 2) { (a, b) => { let s: str = a; println(s) } }\n}\n", "1\n"),
-        ("ics_q5", "fn sh(x: str) -> i64 { 1 }\nfn main() {\n    match (1, 2) { (a, b) => println(to_str(sh(a))) }\n}\n", "1\n"),
-        ("ics_q7", "type R = { s: str }\nfn main() {\n    match (1, 2) { (a, b) => { let r = R { s: a }; println(r.s) } }\n}\n", "1\n"),
-        ("ics_q11", "fn ni(x: i64) -> i64 { x }\nfn main() {\n    match (true, 2) { (a, b) => println(to_str(ni(a))) }\n}\n", "true\n"),
-        ("ics_q18", "fn main() {\n    match (\"s\", 2) { (a, b) => { let x: i64 = a; println(to_str(x)) } }\n}\n", "s\n"),
-        ("ics_q19", "fn main() {\n    match (1.5, 2) { (a, b) => { let x: str = a; println(x) } }\n}\n", "1.5\n"),
+        // tuple-patterns TP-1..TP-4 controls (probes LFT/p, LFT/r2, ICS/p9, review-TP/tpa).
+        (
+            "ics_v1",
+            "fn sh(x: u8) -> i64 { 1 }\nfn main() {\n    match Some((1, 2)) { Some((a, b)) => println(to_str(sh(a) + b)), None => println(\"n\") }\n}\n",
+            "3\n",
+        ),
+        ("tp_d1", "fn main() {\n    match (1, \"s\") { (a, b) => println(to_str(b)) }\n}\n", "s\n"),
+        ("tp_d3", "fn main() {\n    match (1, \"s\") { (a, b) => println(\"{a}{b}\") }\n}\n", "1s\n"),
+        ("tp_d5", "fn main() {\n    match (1, 2.5) { (a, b) => println(to_str(b * 2.0)) }\n}\n", "5\n"),
+        ("tp_k2", "fn main() {\n    match (1, 2) { (a, b) => { let x: u8 = a as u8; println(to_str(x)) } }\n}\n", "1\n"),
+        ("tp_k4", "fn main() {\n    match (1, 2) { (a, b) => { let x: f64 = a as f64; println(to_str(x + 0.5)) } }\n}\n", "1.5\n"),
+        ("tp_k5", "fn sh(x: u8) -> i64 { x as i64 }\nfn main() {\n    match (300, 2) { (a, b) => println(to_str(sh(a))) }\n}\n", "300\n"),
+        (
+            "tp_r1",
+            "type P = { y: i64 }\nfn mk() -> Result<(i64, P), str> { Ok((2, P { y: 3 })) }\nfn main() {\n    match mk() { Ok((a, pp)) => println(to_str(a * pp.y)), Err(e) => println(e) }\n}\n",
+            "6\n",
+        ),
+        (
+            "tp_w1",
+            "fn swap<A, B>(p: (A, B)) -> (B, A) { match p { (a, b) => (b, a) } }\nfn main() {\n    match swap((1, 2)) { (a, b) => { let x: u8 = a; println(to_str(x)) } }\n}\n",
+            "2\n",
+        ),
+        (
+            "tp_y1",
+            "fn two<T>(x: T) -> (T, i64) { (x, 2) }\nfn main() {\n    match two(1) { (a, b) => { let x: u8 = a; println(to_str(x)) } }\n}\n",
+            "1\n",
+        ),
+        (
+            "tp_y2",
+            "fn two<T>(x: T) -> (T, i64) { (x, 2) }\nfn sh(x: u8) -> i64 { 1 }\nfn main() {\n    match two(1) { (a, b) => println(to_str(sh(a) + b)) }\n}\n",
+            "3\n",
+        ),
+        (
+            "tp_y3",
+            "fn two<T>(x: T) -> (T, i64) { (x, 2) }\nfn main() {\n    let k = 1\n    match two(k) { (a, b) => { let x: f64 = a; println(to_str(x)) } }\n}\n",
+            "1\n",
+        ),
+        (
+            "tp_w2",
+            "fn f(x: Uncertain<i64>) -> i64 { 1 }\nfn main() {\n    match (1, 2) { (a, b) => println(to_str(f(a) + b)) }\n}\n",
+            "3\n",
+        ),
+        ("tp_w7", "fn main() {\n    match (1, 2) { (a, b) => { let x: Uncertain<i64> = a; println(\"k\") } }\n}\n", "k\n"),
+        ("tp_w8", "fn main() {\n    match (1, 2) { (a, b) => { let x: Decimal = a; println(\"k\") } }\n}\n", "k\n"),
+        ("tp_w3", "fn main() {\n    match ([1], 2) { (a, b) => { let x: [u8] = a; println(to_str(len(x))) } }\n}\n", "1\n"),
+        ("tp_w5", "fn main() {\n    match (Some(1), 2) { (a, b) => { let x: Option<u8> = a; println(\"k\") } }\n}\n", "k\n"),
+        (
+            "tp_z2",
+            "fn main() {\n    match (1, 2) { (a, b) => { let g = |x| x + 1; let y: u8 = 3; println(to_str(g(a) + b)) } }\n}\n",
+            "4\n",
+        ),
+        ("tp_n4", "fn main() {\n    match ((1, \"s\"), 2) { ((a, b), c) => println(b + to_str(a + c)) }\n}\n", "s3\n"),
+        (
+            "tp_s4",
+            "fn main() {\n    match Some((1, \"s\")) { Some((a, b)) => println(b + to_str(a)), None => println(\"n\") }\n}\n",
+            "s1\n",
+        ),
+        (
+            "tp_e_ok",
+            "enum W { P { t: (i64, str) }, N }\nfn main() {\n    let w = W::P { t: (1, \"s\") }\n    match w { W::P { t: (a, b) } => println(b + to_str(a)), W::N => println(\"n\") }\n}\n",
+            "s1\n",
+        ),
     ];
     for (tag, src, out) in cases {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs4tc_{tag}"), src);
@@ -48415,4 +48473,115 @@ fn a_shadowed_module_lambda_is_not_followed() {
         rc != 0 && err.contains("E1001"),
         "ATTACK: a module lambda used after an inner shadow ended was not followed: rc={rc} {err}"
     );
+}
+
+// -- tuple-patterns TP-1..TP-4 --
+
+/// tuple-patterns: `src` must be refused by `axon check` (rc 2, first error
+/// E0102 at `line`) and `axon run` must stop at the same refusal (rc 2, empty
+/// stdout). With `shape`, the diagnostics must also name the tuple pattern.
+fn tp_assert_refused(attack: &str, tag: &str, src: &str, line: u32, shape: bool) {
+    let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("tp_{tag}"), src);
+    let first = cs4_first_error(&cmsg);
+    assert!(
+        crc == Some(2) && first == Some(("E0102".to_string(), line)),
+        "{attack} [{tag}]: want rc 2, first error E0102 at line {line}, got rc {crc:?} {first:?}: {cmsg}"
+    );
+    if shape {
+        assert!(
+            cmsg.contains("tuple pattern"),
+            "{attack} [{tag}]: the E0102 must name the tuple pattern: {cmsg}"
+        );
+    }
+    assert!(
+        rrc == Some(2) && rout.is_empty(),
+        "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+    );
+}
+
+/// TP-1 (O-LF-01): a tuple pattern's components take the subject's element
+/// types: every non-numeric leaf exactly, every numeric leaf as a free var
+/// that must resolve to a number. Each case checked rc 0 and then panicked at
+/// run (`cannot apply Add to str / i64`, `expected str, got i64`, ...). `u4`
+/// is caught by the CS2-6 extension (D6): a component var given to a fn value
+/// is compared as its element leaf.
+#[test]
+fn tuple_pattern_components_are_typed() {
+    let attack = "ATTACK: a tuple pattern component of the wrong type checked clean";
+    let cases = [
+        ("c1", "fn main() {\n    match (1, \"s\") { (a, b) => println(to_str(b + 1)) }\n}\n", 2),
+        ("c2", "fn main() {\n    let t = (1, \"s\")\n    if let (a, b) = t { println(to_str(b + 1)) }\n}\n", 3),
+        ("c3", "fn f(t: (i64, str)) -> i64 {\n    match t { (a, b) => b + 1 }\n}\nfn main() { println(to_str(f((1, \"s\")))) }\n", 2),
+        ("c4", "fn mk() -> (i64, str) { (1, \"s\") }\nfn main() {\n    match mk() { (a, b) => println(to_str(b + 1)) }\n}\n", 3),
+        ("c5", "fn main() {\n    let ps = arr_enumerate([\"a\", \"b\"])\n    match ps[0] { (i, s) => println(to_str(s + 1)) }\n}\n", 3),
+        ("c7", "fn h(x: i64) -> i64 { x * 2 }\nfn main() {\n    match (1, \"s\") { (a, b) => println(to_str(h(b))) }\n}\n", 3),
+        ("c8", "fn main() {\n    match (1, \"s\") { (a, b) => println(to_str(len(a))) }\n}\n", 2),
+        ("g1", "fn main() {\n    match (1, \"s\") { (a, b) => println(to_str(a + b)) }\n}\n", 2),
+        (
+            "a3",
+            "type R = { t: (i64, str) }\nfn main() {\n    let r = R { t: (1, \"s\") }\n    match r.t { (a, b) => println(to_str(b + 1)) }\n}\n",
+            4,
+        ),
+        ("a6", "fn main() {\n    for p in [(1, \"s\")] { match p { (a, b) => println(to_str(b + 1)) } }\n}\n", 2),
+        ("a8", "fn main() {\n    let ps = [(1, \"s\")]\n    match ps[0] { (a, b) => println(to_str(b + 1)) }\n}\n", 3),
+        ("r2", "fn main() {\n    match (1, \"s\") { (a, b) => println(to_str(str_len(a))) }\n}\n", 2),
+        ("u1", "fn main() {\n    match ([1, 2], \"s\") { (a, b) => println(to_str(str_len(a))) }\n}\n", 2),
+        ("u2", "fn main() {\n    match (Some(1), 2) { (a, b) => { let x: i64 = a; println(to_str(x + b)) } }\n}\n", 2),
+        ("u3", "fn first<T>(xs: [T]) -> T { xs[0] }\nfn main() {\n    match (1, 2) { (a, b) => println(to_str(first(a))) }\n}\n", 3),
+        ("u4", "fn main() {\n    match (1, \"s\") { (a, b) => { let f = |x| str_len(x); println(to_str(f(a))) } }\n}\n", 2),
+        ("v1", "fn main() {\n    match (Some(\"x\"), 1) { (a, b) => println(to_str(a)) }\n}\n", 2),
+        ("v2", "fn main() {\n    match ([\"x\"], 1) { (a, b) => println(to_str(a)) }\n}\n", 2),
+        ("v3", "type P = { y: i64 }\nfn main() {\n    match (P { y: 1 }, \"s\") { (a, b) => println(to_str(a)) }\n}\n", 3),
+        ("v5", "fn main() {\n    match (\"s\", [1]) { (a, b) => println(to_str(b)) }\n}\n", 2),
+        ("w4", "fn main() {\n    match (1, 2) { (a, b) => if a { println(\"y\") } else { println(\"n\") } }\n}\n", 2),
+    ];
+    for (tag, src, line) in cases {
+        tp_assert_refused(attack, tag, src, line, false);
+    }
+}
+
+/// TP-1, NH-1 (a): a component used as another kind is refused even where
+/// the interpreter passes the value through and prints. Each case's `let
+/// (a, b) = t` twin is refused today. `q4`..`q19` were CS4-3 controls
+/// (`ics_q*`), pinned legal only because components were untyped.
+#[test]
+fn tuple_pattern_component_misuse_that_runs_is_refused() {
+    let attack = "ATTACK: a tuple pattern component used as another kind checked clean";
+    let cases = [
+        ("d2", "fn main() {\n    match (1, \"s\") { (a, b) => println(a) }\n}\n", 2),
+        ("d4", "fn main() {\n    match (1, \"s\") { (a, b) => if b == 1 { println(\"y\") } else { println(\"n\") } }\n}\n", 2),
+        ("q4", "fn main() {\n    match (1, 2) { (a, b) => { let s: str = a; println(s) } }\n}\n", 2),
+        ("q5", "fn sh(x: str) -> i64 { 1 }\nfn main() {\n    match (1, 2) { (a, b) => println(to_str(sh(a))) }\n}\n", 3),
+        ("q7", "type R = { s: str }\nfn main() {\n    match (1, 2) { (a, b) => { let r = R { s: a }; println(r.s) } }\n}\n", 3),
+        ("q11", "fn ni(x: i64) -> i64 { x }\nfn main() {\n    match (true, 2) { (a, b) => println(to_str(ni(a))) }\n}\n", 3),
+        ("q18", "fn main() {\n    match (\"s\", 2) { (a, b) => { let x: i64 = a; println(to_str(x)) } }\n}\n", 2),
+        ("q19", "fn main() {\n    match (1.5, 2) { (a, b) => { let x: str = a; println(x) } }\n}\n", 2),
+        ("v4", "fn main() {\n    match (true, 1) { (a, b) => println(a) }\n}\n", 2),
+        ("v6", "fn main() {\n    match (Some(\"x\"), 1) { (a, b) => if a == \"x\" { println(\"y\") } else { println(\"n\") } }\n}\n", 2),
+        (
+            "z1",
+            "fn sh(x: str) -> i64 { 1 }\nfn main() {\n    match (1, 2) { (a, b) => { let g = |x| sh(x); println(to_str(g(a))) } }\n}\n",
+            3,
+        ),
+    ];
+    for (tag, src, line) in cases {
+        tp_assert_refused(attack, tag, src, line, false);
+    }
+}
+
+/// TP-2: a nested tuple pattern is checked against its element type. `n1`
+/// checked rc 0 and panicked; `n2` panicked `no match arm matched`; `n3` ran
+/// a dead arm (refused, D3). Only the shape cases must name the tuple
+/// pattern; `n1` refuses at the use.
+#[test]
+fn tuple_pattern_nested_and_payload_shapes_are_checked() {
+    let attack = "ATTACK: a nested tuple pattern of the wrong shape checked clean";
+    let cases = [
+        ("n1", "fn main() {\n    match ((1, \"s\"), 2) { ((a, b), c) => println(to_str(b + c)) }\n}\n", 2, false),
+        ("n2", "fn main() {\n    match ((1, 2, 3), 4) { ((a, b), c) => println(to_str(a + c)) }\n}\n", 2, true),
+        ("n3", "fn main() {\n    match (5, 4) { ((a, b), c) => println(\"t\"), _ => println(\"o\") }\n}\n", 2, true),
+    ];
+    for (tag, src, line, shape) in cases {
+        tp_assert_refused(attack, tag, src, line, shape);
+    }
 }

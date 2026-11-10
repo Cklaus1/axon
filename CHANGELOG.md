@@ -1,5 +1,10 @@
 # Axon Changelog
 
+## Batch 6: tuple-patterns TP-1..TP-4 (tasks/tuple-patterns-spec.md)
+
+- **Tuple-pattern components are typed (TP-1, O-LF-01 remainder):** on a subject whose type is known, `(a, b)` binds each component to the element type, except that every number inside it may be used at any width (an int component used as `u8`, `f64`, `Decimal` or `Uncertain<i64>` still checks, ICS-1). `match (1, "s") { (a, b) => to_str(b + 1) }` and `str_len(a)` on an int component are E0102 at check instead of a run panic; a component given to a fn value is checked as its element (CS2-6). **Behaviour change (NH-1 (a)):** a component used as another kind is refused even where the run printed the value (`println(a)` with `a: i64`, `let s: str = a`, `b == 1` with `b: str`), as its `let (a, b) = t` twin already was; the CS4-3 controls `ics_q4`, `q5`, `q7`, `q11`, `q18`, `q19` are now refusals. g01 M5220, M5221, M5226-M5228; M4714 re-pointed.
+- **Nested tuple patterns are checked (TP-2):** `((a, b), c)` is checked against the element's tuple type, so a wrong length (`((1, 2, 3), 4)`, was `no match arm matched` at run) or a wrong component type is E0102. **Behaviour change:** a dead nested tuple arm on a non-tuple element (`n3`) is E0102. g01 M5222.
+
 ## Batch 5: enable-gaps EG-1..EG-4 (tasks/enable-gaps-spec.md)
 
 - **Unattended envelopes pin the AI endpoint's port** (EG-1, O-NHR-08): `generator.endpoint_host` is now `host:port` with the scheme's default port filled in (`axon_ai::endpoint_authority`), and the schema is `axon-approval/5`. An envelope minted for `127.0.0.1:18307` refuses `:18308` at phase A (exit 29). `cortex repair --unattended`, `axon-os run`/`replay` and the minter refuse `/4` by name; `axon-intent audit-runs` still reads `/4` records (`verify_for_audit`). The preview schema is `cortex-envelope-preview/2`. g01 M4890-M4897, plus amended rows.

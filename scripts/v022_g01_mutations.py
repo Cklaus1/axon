@@ -14591,9 +14591,12 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_is_type_checked'),
     # [REVISED: ICS-1] M4714 is the regression ICS-1 found: the sub-patterns
     # bound with the component types refuse `let x: u8 = a` on `(1, 2)`.
-    ('M4714', 'CS4-3: tuple sub-patterns are bound with the component types (ics_w4 `let x: u8 = a` refused)', 'crates/axon-core/src/infer.rs',
-     '                    self.constrain(st.clone(), Type::Tuple(vars), "tuple pattern");\n                }\n                for pat in pats {\n                    self.bind_pattern_with_subj(pat, scope, None);\n                }\n',
-     '                    self.constrain(st.clone(), Type::Tuple(vars.clone()), "tuple pattern");\n                    for (pat, var) in pats.iter().zip(&vars) {\n                        self.bind_pattern_with_subj(pat, scope, Some(var));\n                    }\n                } else {\n                for pat in pats {\n                    self.bind_pattern_with_subj(pat, scope, None);\n                }\n                }\n',
+    # [REVISED: tuple-patterns TP-1] Re-pointed: components now bind the
+    # element's skeleton, and the guard is the numeric-leaf replacement; the
+    # mutant keeps a numeric leaf, so an int component binds `i64` exactly.
+    ('M4714', 'TP-1: a numeric leaf of a tuple component binds the element type exactly (ics_w4 `let x: u8 = a` refused)', 'crates/axon-core/src/infer.rs',
+     'if leaf.is_numeric() {',
+     'if false && leaf.is_numeric() {',
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_controls_stay_legal'),
     ('M4715', 'CS4-3: a tuple pattern constrains an unresolved subject too (l1, arms of two arities, refused)', 'crates/axon-core/src/infer.rs',
      'if let Some(st) = concrete {',
@@ -16042,6 +16045,36 @@ MUTATIONS += [
      '                if a.is_some_and(|v| v.starts_with(OVER_CAP)) && last_after.contains_key(p.as_str())',
      '                if false && a.is_some_and(|v| v.starts_with(OVER_CAP)) && last_after.contains_key(p.as_str())',
      'axon-os', '--lib', 'run_ledger::tests::c1_a_journaled_write_to_an_over_cap_path_is_not_unattributed'),
+]
+
+# tuple-patterns TP-1..TP-4 (ids M5220-M5228, block M5220-M5239; tasks/tuple-patterns-spec.md §4):
+# a tuple pattern's components bind the element's skeleton (numeric leaves free, checked by kind in
+# solve), nested tuple patterns and tuple payloads of Some/Ok and of struct fields are checked.
+MUTATIONS += [
+    ('M5220', 'TP-1: a tuple pattern component is bound untyped (g1_cross `a + b` on (1, "s") checks clean)', 'crates/axon-core/src/infer.rs',
+     'let ty = self.tuple_component_skeleton(elem, name);',
+     'let ty = self.fresh();',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_components_are_typed'),
+    ('M5221', 'TP-1: a numeric component used as another kind is not refused (c8 `len(a)` on an int checks clean)', 'crates/axon-core/src/infer.rs',
+     '            if !type_is_unresolved(&used) && !used.is_numeric() && used != Type::Never {',
+     '            if false {',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_components_are_typed'),
+    ('M5222', 'TP-2: a nested tuple pattern is bound untyped (n2 `((a, b), c)` on ((1, 2, 3), 4) checks clean)', 'crates/axon-core/src/infer.rs',
+     'self.bind_pattern_with_subj(pat, scope, Some(elem));',
+     'self.bind_pattern_with_subj(pat, scope, None);',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_nested_and_payload_shapes_are_checked'),
+    ('M5226', 'TP-1: a numeric component is checked by scalar kind only (u3 `first(a)` resolving to [T] checks clean)', 'crates/axon-core/src/infer.rs',
+     '            if !type_is_unresolved(&used) && !used.is_numeric() && used != Type::Never {',
+     '            if !type_is_unresolved(&used) && kinds_conflict(&leaf, &used) && used != Type::Never {',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_components_are_typed'),
+    ('M5227', 'TP-1 D6: a component var given to a fn value is not compared as its element (u4 checks clean)', 'crates/axon-core/src/infer.rs',
+     'Type::Var(r) if comp.contains_key(&r) => comp[&r].clone(),',
+     'Type::Var(r) if false && comp.contains_key(&r) => comp[&r].clone(),',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_components_are_typed'),
+    ('M5228', 'TP-1 D7: Uncertain/Temporal are not stripped (tp_w2, an int component to an Uncertain<i64> param, refused)', 'crates/axon-core/src/infer.rs',
+     'let used = strip_soft_wrappers(subst.apply(&var));',
+     'let used = subst.apply(&var);',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_controls_stay_legal'),
 ]
 
 
