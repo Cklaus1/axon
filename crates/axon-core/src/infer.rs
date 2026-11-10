@@ -3050,6 +3050,9 @@ impl InferCtx {
                 scope.bind(name.clone(), var);
             }
             // Fix #8: for Ok/Err/Some patterns, constrain the subject type.
+            // TP-3: a tuple pattern inside is bound against the subject's own
+            // payload type when it is known now, so its shape and components
+            // are checked as a top-level tuple pattern's are.
             Pattern::Ok(inner) => {
                 let inner_var = self.fresh();
                 let err_var = self.fresh();
@@ -3060,7 +3063,11 @@ impl InferCtx {
                         "Ok pattern",
                     );
                 }
-                self.bind_pattern_with_subj(inner, scope, Some(&inner_var));
+                let payload = match (subj_ty, &**inner) {
+                    (Some(Type::Result(ok, _)), Pattern::Tuple(_)) => &**ok,
+                    _ => &inner_var,
+                };
+                self.bind_pattern_with_subj(inner, scope, Some(payload));
             }
             Pattern::Err(inner) => {
                 let ok_var = self.fresh();
@@ -3072,7 +3079,11 @@ impl InferCtx {
                         "Err pattern",
                     );
                 }
-                self.bind_pattern_with_subj(inner, scope, Some(&err_var));
+                let payload = match (subj_ty, &**inner) {
+                    (Some(Type::Result(_, err)), Pattern::Tuple(_)) => &**err,
+                    _ => &err_var,
+                };
+                self.bind_pattern_with_subj(inner, scope, Some(payload));
             }
             Pattern::Some(inner) => {
                 let inner_var = self.fresh();
@@ -3083,7 +3094,11 @@ impl InferCtx {
                         "Some pattern",
                     );
                 }
-                self.bind_pattern_with_subj(inner, scope, Some(&inner_var));
+                let payload = match (subj_ty, &**inner) {
+                    (Some(Type::Option(t)), Pattern::Tuple(_)) => &**t,
+                    _ => &inner_var,
+                };
+                self.bind_pattern_with_subj(inner, scope, Some(payload));
             }
             Pattern::Struct { fields, .. } => {
                 for (_, pat) in fields {

@@ -16075,6 +16075,14 @@ MUTATIONS += [
      'let used = strip_soft_wrappers(subst.apply(&var));',
      'let used = subst.apply(&var);',
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_controls_stay_legal'),
+    ('M5223', 'TP-3: a tuple pattern inside Some is bound to a fresh payload var (s1 `b + 1` on Some((1, "s")) checks clean)', 'crates/axon-core/src/infer.rs',
+     '(Some(Type::Option(t)), Pattern::Tuple(_)) => &**t,',
+     '(Some(Type::Option(t)), Pattern::Tuple(_)) => { let _ = t; &inner_var }',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_nested_and_payload_shapes_are_checked'),
+    ('M5224', 'TP-3: a tuple pattern inside Ok is bound to a fresh payload var (s3 `b + 1` on Result<(i64, str), str> checks clean)', 'crates/axon-core/src/infer.rs',
+     '(Some(Type::Result(ok, _)), Pattern::Tuple(_)) => &**ok,',
+     '(Some(Type::Result(ok, _)), Pattern::Tuple(_)) => { let _ = ok; &inner_var }',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_nested_and_payload_shapes_are_checked'),
 ]
 
 

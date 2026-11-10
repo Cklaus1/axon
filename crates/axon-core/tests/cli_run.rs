@@ -48569,10 +48569,11 @@ fn tuple_pattern_component_misuse_that_runs_is_refused() {
     }
 }
 
-/// TP-2: a nested tuple pattern is checked against its element type. `n1`
-/// checked rc 0 and panicked; `n2` panicked `no match arm matched`; `n3` ran
-/// a dead arm (refused, D3). Only the shape cases must name the tuple
-/// pattern; `n1` refuses at the use.
+/// TP-2, TP-3: a nested tuple pattern is checked against its element type,
+/// and a tuple pattern inside `Some`/`Ok` against the payload type. `n1`,
+/// `s1`, `s3` checked rc 0 and panicked; `n2` panicked `no match arm
+/// matched`; `n3`, `s2`, `h4` ran a dead arm (refused, D3). Only the shape
+/// cases must name the tuple pattern; the others refuse at the use.
 #[test]
 fn tuple_pattern_nested_and_payload_shapes_are_checked() {
     let attack = "ATTACK: a nested tuple pattern of the wrong shape checked clean";
@@ -48580,6 +48581,30 @@ fn tuple_pattern_nested_and_payload_shapes_are_checked() {
         ("n1", "fn main() {\n    match ((1, \"s\"), 2) { ((a, b), c) => println(to_str(b + c)) }\n}\n", 2, false),
         ("n2", "fn main() {\n    match ((1, 2, 3), 4) { ((a, b), c) => println(to_str(a + c)) }\n}\n", 2, true),
         ("n3", "fn main() {\n    match (5, 4) { ((a, b), c) => println(\"t\"), _ => println(\"o\") }\n}\n", 2, true),
+        (
+            "s1",
+            "fn main() {\n    match Some((1, \"s\")) { Some((a, b)) => println(to_str(b + 1)), None => println(\"n\") }\n}\n",
+            2,
+            false,
+        ),
+        (
+            "s3",
+            "fn mk() -> Result<(i64, str), str> { Ok((1, \"s\")) }\nfn main() {\n    match mk() { Ok((a, b)) => println(to_str(b + 1)), Err(e) => println(e) }\n}\n",
+            3,
+            false,
+        ),
+        (
+            "s2",
+            "fn main() {\n    match Some((1, 2, 3)) { Some((a, b)) => println(\"two\"), _ => println(\"other\") }\n}\n",
+            2,
+            true,
+        ),
+        (
+            "h4",
+            "fn mk() -> Result<(i64, i64, i64), str> { Ok((1, 2, 3)) }\nfn main() {\n    match mk() { Ok((a, b)) => println(\"2\"), _ => println(\"o\") }\n}\n",
+            3,
+            true,
+        ),
     ];
     for (tag, src, line, shape) in cases {
         tp_assert_refused(attack, tag, src, line, shape);
