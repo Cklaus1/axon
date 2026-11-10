@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 59ea6f2bcdfec0c4a0e39bdc0ce9c034d63391f5
+generated-at: 00dbca5bf49bc60af04dcbeb7f5a7e9961bb5b66
 
-`git diff --numstat 31413ca7..59ea6f2b -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..00dbca5b -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -60,7 +60,7 @@ generated-at: 59ea6f2bcdfec0c4a0e39bdc0ce9c034d63391f5
 | `crates/axon-core/src/fmt.rs` | 355 | 33 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 2381 | 487 |
+| `crates/axon-core/src/infer.rs` | 2494 | 515 |
 | `crates/axon-core/src/interp.rs` | 8455 | 2877 |
 | `crates/axon-core/src/interp/builtins.rs` | 1421 | 859 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
@@ -108,9 +108,9 @@ generated-at: 59ea6f2bcdfec0c4a0e39bdc0ce9c034d63391f5
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 72972 | 10084 |
+| total | 73085 | 10112 |
 
-`git log --reverse 31413ca7..59ea6f2b -- crates/axon-core/src`:
+`git log --reverse 31413ca7..00dbca5b -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -563,7 +563,8 @@ generated-at: 59ea6f2bcdfec0c4a0e39bdc0ce9c034d63391f5
 | 399d673d | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
 | bef0ab14 | nhr-evidence NE-8 NRV-1 endpoint host | CHECKER (nhr-evidence NE-8 NRV-1): capabilities::host_of, the host a static `@[contained(net: [...])]` pin is checked against, also ends the authority at `\`, as the WHATWG parser the HTTP client dials with does: `https://evil.example\@a.trusted.io` is now checked as evil.example (refused unless granted) instead of a.trusted.io. Hosts without a backslash are unchanged. g01 M4872 |
 | 59ea6f2b | batch 4 codegen clippy | NATIVE (codegen/expr.rs, fn-value thunk): `target_params.iter().map(|t| BasicMetadataTypeEnum::from(*t))` becomes `.iter().copied()`; the parameter types are already `BasicMetadataTypeEnum`, so the conversion was the identity (clippy useless_conversion under --strict's codegen-feature clippy). No IR or behaviour change. The interpreter is untouched. |
-| 449 commits | | |
+| 00dbca5b | TP-1/TP-2 tuple pattern components typed | CHECKER (infer.rs, all engines): a tuple pattern on a subject whose type is already known binds each component to the element's type, with every numeric leaf a free var that must resolve to some number (any width; Uncertain/Temporal around a number accepted), and checks a nested tuple pattern against its element; a component var given to a fn value is compared as its element leaf (CS2-6). Check-clean run panics such as (a, b) on (1, "s") with b + 1 or str_len(a) are E0102. New refusals of programs that run: a component used as another kind where the value passed through (println of an int component, let s: str = a, a str component == 1; the CS4-3 controls q4, q5, q7, q11, q18, q19; NH-1 (a)), and a dead nested tuple arm on a non-tuple element. Untyped/generic subjects, non-tuple sub-patterns and let/for destructuring are unchanged. The 717 tracked .ax files check with the same exit codes as the base binary. |
+| 450 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -722,7 +723,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 787 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4723-M4727, M4730, M4732, M4740-M4756, M4760-M4763, M4771-M4774, M4779-M4786, M4790-M4805, M4872
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 793 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4723-M4727, M4730, M4732, M4740-M4756, M4760-M4763, M4771-M4774, M4779-M4786, M4790-M4805, M4872, M5220-M5222, M5226-M5228
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
