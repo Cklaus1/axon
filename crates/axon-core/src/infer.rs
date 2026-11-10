@@ -3529,6 +3529,9 @@ impl InferCtx {
         // TP-1 (D6): an argument still resolved to a tuple pattern
         // component's var is compared as the element leaf it stands for, as
         // the `let (a, b) = t` twin's argument is. Keyed by representative.
+        // `[REVISED: TPI-1]` So is a callee param that is one (a fn-valued
+        // component, `(f, b)` on `(inc, 2)`), and a return that is one is
+        // bound to the call's use, which its obligation then checks by kind.
         let comp: HashMap<u32, Type> = self
             .tuple_component_obligations
             .iter()
@@ -3564,7 +3567,10 @@ impl InferCtx {
                     Type::Var(r) if comp.contains_key(&r) => comp[&r].clone(),
                     arg => arg,
                 };
-                let param = with_derived(param, &derived);
+                let param = match param {
+                    Type::Var(r) if comp.contains_key(r) => comp[r].clone(),
+                    param => with_derived(param, &derived),
+                };
                 if kinds_conflict(&param, &arg) {
                     let span = ob.span;
                     self.errors.push(
@@ -3578,7 +3584,7 @@ impl InferCtx {
                 }
             }
             let ret = subst.apply(&ret);
-            if !has_unresolved(&ret) {
+            if !has_unresolved(&ret) || matches!(ret, Type::Var(r) if comp.contains_key(&r)) {
                 self.unify(
                     ob.ret,
                     ret,
@@ -3606,10 +3612,15 @@ impl InferCtx {
         // TP-1: a numeric leaf of a tuple pattern component may be used as
         // any number (D2), but not as another kind: `(a, b)` on `(1, "s")`
         // with `str_len(a)` panics at run time. `Uncertain`/`Temporal` around
-        // a number are accepted, as for the `let` twin (D7).
+        // a number are accepted, as for the `let` twin (D7). `[REVISED:
+        // TPI-2]` So is `dyn Trait`, which `unify` lets anything through.
         for (leaf, var, name, span) in std::mem::take(&mut self.tuple_component_obligations) {
             let used = strip_soft_wrappers(subst.apply(&var));
-            if !type_is_unresolved(&used) && !used.is_numeric() && used != Type::Never {
+            if !type_is_unresolved(&used)
+                && !used.is_numeric()
+                && used != Type::Never
+                && !matches!(used, Type::DynTrait(_))
+            {
                 self.errors.push(
                     InferError::mismatch(
                         &format!("use of tuple pattern component `{name}`"),

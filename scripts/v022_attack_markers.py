@@ -4460,5 +4460,8 @@ ATTACK_MARKERS.update({
     'M5224': r'ATTACK: a nested tuple pattern of the wrong shape checked clean',
     'M5225': r'ATTACK: a tuple pattern in a struct field checked clean',
     'M5228': r'ATTACK: a valid tuple match was refused \[tp_w2\]',
+    'M5229': r'ATTACK: a tuple pattern component of the wrong type checked clean',
+    'M5230': r'ATTACK: a tuple pattern component of the wrong type checked clean',
+    'M5231': r'ATTACK: a valid tuple match was refused \[tp_k20\]',
 })
 

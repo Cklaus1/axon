@@ -47125,6 +47125,10 @@ fn tuple_pattern_is_type_checked() {
 /// leaves inside a structure (`tp_w3`, `tp_w5`), wrappers (`tp_w2`, `tp_w7`,
 /// D7) and generic var leaves (`tp_w1`, `tp_y*`, D8). A component used as
 /// another kind is refused (`tuple_pattern_component_misuse_that_runs_is_refused`).
+/// `[REVISED: TPI-1, TPI-2]` A fn-valued component keeps the width
+/// leniency in its params and return (`tp_f1` an int literal and a `u8`
+/// arg, `tp_f2` its return as `u8`), and a number used as `dyn Trait` stays
+/// legal, as its `let` twin is (`tp_k20`).
 #[test]
 fn tuple_pattern_controls_stay_legal() {
     let attack = "ATTACK: a valid tuple match was refused";
@@ -47291,6 +47295,21 @@ fn tuple_pattern_controls_stay_legal() {
             "tp_e_ok",
             "enum W { P { t: (i64, str) }, N }\nfn main() {\n    let w = W::P { t: (1, \"s\") }\n    match w { W::P { t: (a, b) } => println(b + to_str(a)), W::N => println(\"n\") }\n}\n",
             "s1\n",
+        ),
+        (
+            "tp_f1",
+            "fn inc(x: i64) -> i64 { x + 1 }\nfn main() {\n    match (inc, 2) { (f, b) => { let y: u8 = 3; println(to_str(f(1) + f(y) + b)) } }\n}\n",
+            "8\n",
+        ),
+        (
+            "tp_f2",
+            "fn inc(x: i64) -> i64 { x + 1 }\nfn main() {\n    match (inc, 2) { (f, b) => { let x: u8 = f(1); println(to_str(x)) } }\n}\n",
+            "2\n",
+        ),
+        (
+            "tp_k20",
+            "trait Greet {\n    fn greet(self) -> str\n}\ntype Dog = { name: str }\nimpl Greet for Dog {\n    fn greet(self: Dog) -> str { \"woof\" }\n}\nfn main() {\n    match (1, 2) { (a, b) => { let d: dyn Greet = a; println(\"k\") } }\n}\n",
+            "k\n",
         ),
     ];
     for (tag, src, out) in cases {
@@ -48504,7 +48523,10 @@ fn tp_assert_refused(attack: &str, tag: &str, src: &str, line: u32, shape: bool)
 /// that must resolve to a number. Each case checked rc 0 and then panicked at
 /// run (`cannot apply Add to str / i64`, `expected str, got i64`, ...). `u4`
 /// is caught by the CS2-6 extension (D6): a component var given to a fn value
-/// is compared as its element leaf.
+/// is compared as its element leaf. `[REVISED: TPI-1]` A component that is
+/// itself a fn value is called with its params and return compared the same
+/// way (`f01` a str arg, `f03` from an annotated param, `f05` its int return
+/// used as `str`); each `let` twin is refused.
 #[test]
 fn tuple_pattern_components_are_typed() {
     let attack = "ATTACK: a tuple pattern component of the wrong type checked clean";
@@ -48534,6 +48556,13 @@ fn tuple_pattern_components_are_typed() {
         ("v3", "type P = { y: i64 }\nfn main() {\n    match (P { y: 1 }, \"s\") { (a, b) => println(to_str(a)) }\n}\n", 3),
         ("v5", "fn main() {\n    match (\"s\", [1]) { (a, b) => println(to_str(b)) }\n}\n", 2),
         ("w4", "fn main() {\n    match (1, 2) { (a, b) => if a { println(\"y\") } else { println(\"n\") } }\n}\n", 2),
+        ("f01", "fn inc(x: i64) -> i64 { x + 1 }\nfn main() {\n    match (inc, 2) { (f, b) => println(to_str(f(\"s\"))) }\n}\n", 3),
+        (
+            "f03",
+            "fn run(t: (fn(i64) -> i64, str)) -> i64 { match t { (f, s) => f(s) } }\nfn inc(x: i64) -> i64 { x + 1 }\nfn main() { println(to_str(run((inc, \"s\")))) }\n",
+            1,
+        ),
+        ("f05", "fn inc(x: i64) -> i64 { x + 1 }\nfn main() {\n    match (inc, 2) { (f, b) => println(f(1) + \"s\") }\n}\n", 3),
     ];
     for (tag, src, line) in cases {
         tp_assert_refused(attack, tag, src, line, false);

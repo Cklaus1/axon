@@ -16087,6 +16087,19 @@ MUTATIONS += [
      'self.bind_pattern_with_subj(pat, scope, declared.as_ref());',
      'self.bind_pattern_with_subj(pat, scope, declared.as_ref().filter(|_| false));',
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_in_a_struct_field_is_checked'),
+    # [REVISED: TPI-1, TPI-2] implementation review 2026-11-10 (ids M5229-M5231)
+    ('M5229', 'TPI-1: a fn-valued component\'s param is not compared as its leaf (f01 `f("s")` with f from (inc, 2) checks clean)', 'crates/axon-core/src/infer.rs',
+     'Type::Var(r) if comp.contains_key(r) => comp[r].clone(),',
+     'Type::Var(r) if false && comp.contains_key(r) => comp[r].clone(),',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_components_are_typed'),
+    ('M5230', 'TPI-1: a fn-valued component\'s return is never bound to its use (f05 `f(1) + "s"` checks clean)', 'crates/axon-core/src/infer.rs',
+     'if !has_unresolved(&ret) || matches!(ret, Type::Var(r) if comp.contains_key(&r)) {',
+     'if !has_unresolved(&ret) || matches!(ret, Type::Var(r) if false && comp.contains_key(&r)) {',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_components_are_typed'),
+    ('M5231', 'TPI-2: a number component used as dyn Trait is refused (tp_k20, whose let twin checks clean)', 'crates/axon-core/src/infer.rs',
+     '&& !matches!(used, Type::DynTrait(_))',
+     '&& !matches!(used, Type::DynTrait(_) if false)',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_controls_stay_legal'),
 ]
 
 

@@ -421,6 +421,9 @@ Target `axon-core --no-default-features --test cli_run`. The builder writes the 
 | M5228 | TP-1 / D7 | `[REVISED: TPA-1]` `strip` of `Uncertain`/`Temporal` (mutant: no strip) | infer.rs | `tuple_pattern_controls_stay_legal` (`tp_w2`) | `ATTACK: a valid tuple match was refused \[tp_w2\]` |
 | M4713 (re-pointed) | CS4-3 | `constrain(st, Tuple(vars..), "tuple pattern")` (mutant: dropped). The `old` text changes to `vars.clone()` | infer.rs | `tuple_pattern_is_type_checked` | unchanged |
 | M4714 (re-pointed) | CS4-3 / TP-1 | **the numeric-leaf replacement** (mutant: `map_leaves` keeps numeric leaves, so int components bind `i64` exactly, which is the ICS-1 regression) | infer.rs | `tuple_pattern_controls_stay_legal` (`ics_w4`, the first case to fail) | `ATTACK: a valid tuple match was refused \[ics_w4\]` (unchanged) |
+| M5229 | TP-1 / D6 | `[REVISED: TPI-1]` the CS2-6 callee-param map (mutant: a component var param is not replaced by its leaf) | infer.rs | `tuple_pattern_components_are_typed` (`f01`) | `ATTACK: a tuple pattern component of the wrong type checked clean` |
+| M5230 | TP-1 / D6 | `[REVISED: TPI-1]` the CS2-6 return bind of a component var (mutant: an unresolved return is never bound) | infer.rs | `tuple_pattern_components_are_typed` (`f05`) | same as M5229 |
+| M5231 | TP-1 | `[REVISED: TPI-2]` the `DynTrait` exemption of the obligation (mutant: a number used as `dyn Trait` is refused) | infer.rs | `tuple_pattern_controls_stay_legal` (`tp_k20`) | `ATTACK: a valid tuple match was refused \[tp_k20\]` |
 
 M4715 (the concrete-subject guard) should keep its `old` text `if let Some(st) = concrete {`. The builder checks that. The `Err`
 twin of M5224 gets no row (same code shape as `Ok`).
@@ -483,6 +486,16 @@ programs of a class already decided (D3). NH-1 and NH-2 (§8) are the language-b
    than logged as a residual. It is one map plus one row (M5227), and it binds nothing. Each refusal it adds has a refused `let`
    twin, because CS2-6 already compares the twin's `i64` the same way (`u4t`, `z1t` E0102). So it stays inside the NH-1 class and
    needs no separate human question. The residual alternative would leave `u4`, a known check-clean panic, open.
+   `[REVISED: TPI-1, TPI-2 (implementation review 2026-11-10)]` (1) `map_leaves` enters `Fn` types, so a component taken from a
+   `fn(i64) -> i64` element binds `Fn(?c1, ?c2)`, and CS2-6 bound neither: `f01` (`f("s")`), `f03`, `f05` (`f(1) + "s"`) checked
+   clean and panicked while each twin is refused (E0102/E0306). D6 now also replaces a callee param that is a component var by its
+   leaf, and unifies a return that is a component var with the call's use, which the obligation then checks by kind (M5229,
+   M5230). Width stays lenient: `tp_f1` (`f(1)`, `f(y)` with `y: u8`) and `tp_f2` (`let x: u8 = f(1)`, its twin is E0102) are
+   legal. (2) `unify` lets anything through `dyn Trait`, so a number used as `dyn Trait` resolved the component var to `dyn ..`
+   and the obligation refused `k20` (`let d: dyn Greet = a`), whose twin checks 0 and runs: a refusal outside the NH-1 class. The
+   obligation now exempts `DynTrait` (M5231). That also makes `k01` (a `dyn` param) and `k22` (a `dyn` return) check 0 and run
+   again, as on the base binary; their twins are refused by the checker (E0306, E0307), so these two stay lenient where the
+   twin is not (the class bounds refusals, not acceptances).
 7. **D7 - `[REVISED: TPA-1]` `Uncertain<..>`/`Temporal<..>` wrappers are stripped before the "is a number" test.** `unify` binds
    `c` to the wrapper (Var first, `:3517`), and the `let` twin is accepted through the soft wrapper rule (`:3601-3604`; `w2t` check
    0). Without the strip, `w2_unc` and `w7_unc_let`, which run today, would be refused (M5228).
@@ -517,6 +530,9 @@ programs of a class already decided (D3). NH-1 and NH-2 (§8) are the language-b
 
 `[DECIDED by human 2026-11-10: NH-1 (a) - TP-1 as designed (skeleton binding + obligations + D6); the six CS4-3 controls move to
 `tuple_pattern_component_misuse_that_runs_is_refused`. NH-2 (a) - TP-4 is in this batch (M5225).]`
+`[REVISED: TPI-1, TPI-2 (implementation review 2026-11-10)]` The built refusals stay inside this class: a number used as
+`dyn Trait` (`k20`, twin legal) is no longer refused, and fn-valued components are checked through CS2-6 (`f01`, `f03`, `f05`,
+twins refused). See D6.
 
 For the human's information (canon under D3, not open): this batch also refuses `n3`, `s2`, `h4` (and `e3` with TP-4), all dead arms
 in untracked probes. No tracked file is expected to change (§3).
