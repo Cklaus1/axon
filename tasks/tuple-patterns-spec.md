@@ -1,6 +1,7 @@
 # tuple-patterns - spec (TP-1..TP-4)
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: DRAFT (after Step 1 review). Build authorized by the human 2026-11-10 ("go", on the recommendations: NH-1 (a), NH-2
+(a)). Not yet built.**
 
 ### Step 1 review
 
@@ -513,6 +514,9 @@ programs of a class already decided (D3). NH-1 and NH-2 (§8) are the language-b
 2. **NH-2 - Is TP-4 (P3, optional) in this batch?** It adds one refusal of a running program (`e3`, a dead arm, D3). Options: (a) yes:
    ~15 lines, one test, one row (M5225); (b) no, and the struct-field case joins O-TP-03. **Recommend (a)**: same mechanism, and
    `e1` is a check-clean panic. (Classified like CS4's NH-4: an optional item whose only cost is a running-program refusal.)
+
+`[DECIDED by human 2026-11-10: NH-1 (a) - TP-1 as designed (skeleton binding + obligations + D6); the six CS4-3 controls move to
+`tuple_pattern_component_misuse_that_runs_is_refused`. NH-2 (a) - TP-4 is in this batch (M5225).]`
 
 For the human's information (canon under D3, not open): this batch also refuses `n3`, `s2`, `h4` (and `e3` with TP-4), all dead arms
 in untracked probes. No tracked file is expected to change (§3).
