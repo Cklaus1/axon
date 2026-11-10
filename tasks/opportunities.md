@@ -3531,6 +3531,8 @@ its once set is empty (`crates/axon-intent/benchmarks/genviab/once/manifest.json
 saturated, so there is no current number. ROADMAP §9.5 lists authoring friction with no metric. Direction: a standing authoring eval
 on the genviab harness, a fixed task set, several models, run per release, with a trend file like `benchmarks/scorecard/history.jsonl`.
 Same metric as PM12 (`AI_Language_Plan.md:2127-2131`, "make it a standing product metric"), never specced. Size M [INFERENCE].
+`[SPECCED 2026-11-10: tasks/authoring-eval-spec.md AE-1..AE-7, DRAFT after Step 1 review (AuditAE 24, DevloopAE 15 findings, all
+accepted). NH-1..NH-6 (model set, paid budget, task mix/authorship, private storage, gating, CERE credential) are needs-human.]`
 
 ### O-PM-02 - [high] The non-expert journey (VISION success criterion 4) is demonstrated but not measured with a person
 `VISION.md:86-87`: "A non-expert states a goal, reviews and approves the plan, and ships an agent". The parts exist (`axon intent`,
