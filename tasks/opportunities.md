@@ -3476,10 +3476,29 @@ A tuple pattern on a still-unresolved subject (untyped lambda param, generic) st
 `[SPECCED 2026-11-09: tasks/tuple-patterns-spec.md TP-1..TP-4, DRAFT after Step 1 review (AuditTP 7, DevloopTP 7 findings, all
 accepted). NH-1 (refuse the running class whose `let` twin is refused) and NH-2 (TP-4 in batch) are needs-human. O-LF-02 stays
 out (LF-3 documents it as intended).]`
+`[FIXED 2026-11-10 for concrete subjects: tuple-patterns TP-1..TP-4 (00dbca5b, 6fb5c873, a82f13a9). Components bind the element
+skeleton: numeric leaves are free and checked by kind, every other leaf binds exactly (E0102); nested tuples, tuples inside
+`Some`/`Ok`/`Err` and tuple sub-patterns of declared struct/variant fields are checked. NH-1 (a): uses whose `let (a, b)` twin is
+refused are refused too. Residuals, still open: unresolved subjects (untyped lambda param, generic `T`, generic call result);
+numbers mixed across widths/kinds (`(1, 2.5)` then `a + b`, needs R19 Slice B); non-tuple sub-patterns of a tuple (O-TP-02);
+var leaves of a generic result (`y5`).]`
 
 ### O-LF-02 - [low] Fewer names than tuple elements is accepted in `let` (and so in `for (a, b)`)
 `let (a, b) = p` with `p: (i64, i64, i64)` checks rc 0 and prints `3` (`parser.rs:2350-2387` emits one `.i` per name). LF-3 inherits
 this and documents it.
+
+### O-TP-01 - [low] A typed lambda param is untyped in inference
+`|p: (i64, str)| match p { (a, b, c) => 3, _ => 0 }` checks rc 0 and prints `0` (`LFT/p/a2_lambda_typed_arity.ax`);
+`p/u4_lambda_typed.ax` panics. `Expr::Lambda` binds every param to a fresh var and ignores its annotation (`infer.rs:2422`,
+`:2429-2431` at 4199c91c). A lambda typing gap, not a pattern gap. From tuple-patterns §0.
+
+### O-TP-02 - [low] A non-tuple sub-pattern of a tuple pattern stays unbound
+`(Some(a), b)` on `(Some("x"), 2)` then misuse of `a` checks clean and panics (`LFT/p/r3_nested_some_in_tuple.ax`). Typing the
+payload fully would bring back the ICS-1 width refusals one level down; needs a kind-only payload rule. tuple-patterns D5.
+
+### O-TP-03 - [medium] A struct or variant pattern's plain field is unbound
+`S::C { r } => to_str(r + 1)` with `r: str` checks clean and panics (`LFT/p/e2_variant_field.ax`). `Pattern::Struct` binds every
+field with `None` (`infer.rs:3072-3076` at 4199c91c); TP-4 types only tuple sub-patterns of declared tuple fields.
 
 ### O-LF-03 - [low] axon-os jobs get no sibling-module search
 A job runs a wrapper `{stem}.wrap.ax` from a fresh 0700 `StagingDir` (`axon-os/src/runtime.rs:244-273`, `:1261-1271`), so its entry
