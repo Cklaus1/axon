@@ -16083,6 +16083,10 @@ MUTATIONS += [
      '(Some(Type::Result(ok, _)), Pattern::Tuple(_)) => &**ok,',
      '(Some(Type::Result(ok, _)), Pattern::Tuple(_)) => { let _ = ok; &inner_var }',
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_nested_and_payload_shapes_are_checked'),
+    ('M5225', 'TP-4: a tuple pattern in a struct field is bound untyped (e3 `W::P { t: (a, b) }` on a 3-tuple field checks clean)', 'crates/axon-core/src/infer.rs',
+     'self.bind_pattern_with_subj(pat, scope, declared.as_ref());',
+     'self.bind_pattern_with_subj(pat, scope, declared.as_ref().filter(|_| false));',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_in_a_struct_field_is_checked'),
 ]
 
 

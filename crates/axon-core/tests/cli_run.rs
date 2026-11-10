@@ -48610,3 +48610,26 @@ fn tuple_pattern_nested_and_payload_shapes_are_checked() {
         tp_assert_refused(attack, tag, src, line, shape);
     }
 }
+
+/// TP-4: a tuple pattern in a struct or variant pattern's field is checked
+/// against the declared field type. `e1` checked rc 0 and panicked; `e3` ran
+/// a dead arm (refused, D3).
+#[test]
+fn tuple_pattern_in_a_struct_field_is_checked() {
+    let attack = "ATTACK: a tuple pattern in a struct field checked clean";
+    let cases = [
+        (
+            "e1",
+            "enum W { P { t: (i64, str) }, N }\nfn main() {\n    let w = W::P { t: (1, \"s\") }\n    match w { W::P { t: (a, b) } => println(to_str(b + 1)), W::N => println(\"n\") }\n}\n",
+            4,
+        ),
+        (
+            "e3",
+            "enum W { P { t: (i64, i64, i64) }, N }\nfn main() {\n    let w = W::P { t: (1, 2, 3) }\n    match w { W::P { t: (a, b) } => println(\"two\"), _ => println(\"other\") }\n}\n",
+            4,
+        ),
+    ];
+    for (tag, src, line) in cases {
+        tp_assert_refused(attack, tag, src, line, false);
+    }
+}

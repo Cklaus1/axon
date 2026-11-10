@@ -3100,9 +3100,17 @@ impl InferCtx {
                 };
                 self.bind_pattern_with_subj(inner, scope, Some(payload));
             }
-            Pattern::Struct { fields, .. } => {
-                for (_, pat) in fields {
-                    self.bind_pattern_with_subj(pat, scope, None);
+            // TP-4: a tuple sub-pattern of a field declared as a tuple with
+            // no unresolved part (generic fields are skipped) is bound against
+            // that declared type. Every other field pattern keeps no type
+            // (O-TP-03); an unknown name or field is the checker's to report.
+            Pattern::Struct { name, fields } => {
+                for (fname, pat) in fields {
+                    let declared = match pat {
+                        Pattern::Tuple(_) => self.declared_tuple_field(name, fname),
+                        _ => None,
+                    };
+                    self.bind_pattern_with_subj(pat, scope, declared.as_ref());
                 }
             }
             // CS4-3 (O-LF-01): a tuple pattern on a subject whose type is
@@ -3175,6 +3183,18 @@ impl InferCtx {
                 leaf
             }
         })
+    }
+
+    /// TP-4: the declared type of field `field` of the struct or the
+    /// `Enum::Variant` named `name` (resolved as `Expr::StructLit` does),
+    /// when it is a tuple with no unresolved part.
+    fn declared_tuple_field(&self, name: &str, field: &str) -> Option<Type> {
+        let declared = match name.split_once("::") {
+            Some((enum_name, variant)) => self.enum_variant_fields.get(enum_name)?.get(variant)?,
+            None => self.struct_fields.get(name)?,
+        };
+        let (_, ty) = declared.iter().find(|(n, _)| n == field)?;
+        (matches!(ty, Type::Tuple(_)) && !has_unresolved(ty)).then(|| ty.clone())
     }
 
     // ── Program-level inference ───────────────────────────────────────────────
