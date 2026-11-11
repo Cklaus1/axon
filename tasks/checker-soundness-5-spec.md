@@ -1,10 +1,12 @@
 # checker-soundness-5 - spec (CS5-1..CS5-5)
 
-**Status: AUTHORIZED 2026-11-11 (after Step 1 review: AuditCS5 6, DevloopCS5 7 findings, all accepted). Build authorized by the
-human 2026-11-11 ("yes, build it"); NH-1 (a), NH-2 (a), NH-3 (a) decided the same day (§8).**
+**Status: BUILT 2026-11-11 on `cs5/l` (CS5-5 1881d489, CS5-1 8c7cf1b0 + doc 1fd4a9a1, CS5-2 9286a0b7, CS5-3 957134fd + alias fix
+44950819/988c63cb, CS5-4 7b0457d5; NH-1 (a), NH-2 (a), NH-3 (a) decided 2026-11-11, §8). g01: the 11 new rows, M5250 and the 17
+touched rows all KILLED; sweep byte-identical to the lane's own a01db50c build after every item. `gate.sh --strict` is the
+integrator's.**
 
 Authorized for specification by the human 2026-11-11 ("do it", item #2: fix "checks clean, then panics at run" gaps). The Step 1
-review (below) is folded in; build authorized and NH-1..NH-3 answered 2026-11-11. Nothing here is implemented yet.
+review (below) is folded in; build authorized and NH-1..NH-3 answered 2026-11-11. Built 2026-11-11 (status line above).
 
 ### Step 1 review
 
@@ -188,6 +190,11 @@ if NH-1 is (a).
 **Acceptance.** The three tests pass. Sweep: no tracked file changes rc or diagnostic hash (§3). Probe re-run: every reproduction row
 is rc 2/rc 2, every control row unchanged. `axon-for-llms.md:87` gains "a struct or variant pattern's fields take the declared field
 types (numbers at any width)" in the same comment style (doc_snippets keeps passing).
+`[REVISED: build 2026-11-11]` Two further NH-1-class rows, each with a refused `let` twin (E0306), are refused and added to
+`pattern_binding_misuse_that_runs_is_refused`: `q/s09_field_of_struct_type` (`println(p)` of a struct field) and
+`q/s15_bool_println` (`println(b)` of a bool field). All refusals are E0102 (inference reports first), not the twins' E0306/E0301.
+Unnamed probes that also move to E0102 because a struct pattern is now typed: `p/f09_opt_field_some` (was run 101),
+`p/g06_variant_in_tuple` (CS5-2's row, already rc 2), `q/l27_typed_variant_param`, `w/w09_untyped_lambda_variant` (rc 2 both).
 
 ### CS5-2 (P1) A non-tuple sub-pattern of a tuple pattern is bound against its element
 
@@ -239,6 +246,9 @@ tracked changes: none.
 **g01 rows**: M5242, M5243.
 
 **Acceptance.** Tests pass; the probes re-run as predicted; sweep shows no tracked change.
+`[REVISED: build 2026-11-11]` `p/g10_param_subject` (`(Some(a), b)` on a typed fn param `(Option<str>, i64)`, `a + b`; run 101)
+is refused by the same rule (E0102:1) and added to `tuple_sub_patterns_are_typed`. `g04`'s message names the binding ("use of
+pattern binding `a`", the skeleton var pinned to `Option` by the `Some` arm); `g05`'s names the `Some` pattern.
 
 ### CS5-3 (P2) A typed lambda param is bound to its annotation
 
@@ -265,6 +275,14 @@ without an annotation keeps `self.fresh()`. A numeric annotation therefore stays
 which keeps `p/l02_typed_lambda_u8_lit` (`2`), `p/l12_typed_lambda_arr_map_u8` (`3`), `p/l13_typed_lambda_u8_as_i64` (`2`, a `u8` param
 used as `i64`; the fn twin `t/l13t_fn_twin` is E0102:1) legal. A non-numeric annotation binds exactly. The `match p` subject is then
 concrete, so TP-1..TP-3 apply to it.
+`[REVISED: build 2026-11-11]` An annotation whose resolved type has an unresolved part (`has_unresolved`, e.g. a generic param)
+keeps `self.fresh()` (the D3 analogue, conservative). Probes already refused change only their diagnostic list (rc 2 both):
+`l01`, `l23` lose the E0102 at the call (E0301 stays); `l09`, `l20` report E0102 at the lambda line; `l21` gains one.
+`[REVISED: build 2026-11-11]` The lane-end full `cli_run` caught a false refusal the probes did not cover: `snd_lambda_alias`
+(`a_call_through_a_matching_fn_value_still_runs`, `type Name = str` then `|n: Name| println("hi " + n)`, rc 0 `hi bob`) became
+E0102, because `type Name = str` parses as a one-variant enum. An annotation with such an enum leaf (one fieldless variant, the
+shape the checker's `lambda_param_type` already reads as an alias) now stays fresh, as before CS5-3. g01 M5250 (mutant: drop that
+condition; killer that test).
 
 **Behaviour change.** `p/l15_typed_lambda_println_int` (`println(a)` on a `(i64, str)` param; rc 0, `1`) becomes E0102: NH-1.
 `LFT/p/a2_lambda_typed_arity.ax` becomes E0102 (CS4-3 arity): D4.
@@ -364,6 +382,11 @@ is on `C`, but `D::Up` is a variant of `D` - it can never match",
 help "use a `C::` variant". Compare the enum NAME only (a generic enum has no type args here). Broaden E0405's description at
 `error.rs:51` and `:475` to "a pattern's type can't match the match subject" and regenerate `AXON_REFERENCE.md` (`axon reference`;
 `axon_reference_is_in_sync_with_the_binary`, `cli_run.rs:26475`, enforces it).
+`[REVISED: build 2026-11-11]` Placement: a separate walker `check_foreign_variant_patterns` (called from `Expr::Match`, hence `if
+let`, and from `Expr::WhileLet`) instead of a check inside `check_match_exhaustiveness`, because NH-2 (a) needs `while let` (which
+never reaches `check_match_exhaustiveness`) and nested `Some`/`Ok`/`Err`/tuple sub-patterns. It runs whether or not a `_` arm
+follows. The probe `p/f11_foreign_enum_bind` (`D::C { r }` on an `S`, a dead arm) is refused E0405:5 too (same class, unnamed).
+`v2q_noall` itself has no `_` arm (every `C` arm is listed); `v01` and `en` carry the `_` arm, so the test pins placement through them.
 
 **Behaviour change (decided).** Refuses `v2q_noall`, `en`, and the `v0x` dead-arm probes above (`v01`, `v02`, `v04`, `v05`, `v06`,
 `v11`). Not refused (NH-2): `v10` (`while let`), `v03` (`Some(D::Up)`), `v07` (`(D::Up, n)`), `v12` (a struct pattern on an `Option`

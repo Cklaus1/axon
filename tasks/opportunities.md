@@ -3445,6 +3445,8 @@ semantics of `return` in `spawn` are unspecified; AF-2 does not treat `Spawn` as
 `match c { D::Up => 2, _ => 1 }` with `c: C` (`bv/v2q.ax`) checks rc 0 and prints `1`. This is a pattern/subject type mismatch, outside
 AF-3's bare-name rule.
 `[OPEN 2026-11-02: checker-soundness-4 CS4-5 is specced, not built - NH-4 (whether to refuse v2q_noall/en) is with the human.]`
+`[FIXED 2026-11-11: checker-soundness-5 CS5-5 (= CS4-5, NH-4 (a); 1881d489): a qualified pattern of another enum is E0405 in match,
+if let, while let and nested Some/Ok/Err/tuple sub-patterns (NH-2 (a)); v2q_noall and en are refused. Unknown variants keep E0001.]`
 
 ### O-AF-05 - [low] `cli_run.rs` tests that return early with "skipping" are invisible to strict mode
 About 52 tests return early when a script or toolchain is missing (`cli_run.rs:298, :812, :849, :888, :924, :961, :998, :19321, :19365,
@@ -3482,6 +3484,10 @@ skeleton: numeric leaves are free and checked by kind, every other leaf binds ex
 refused are refused too. Residuals, still open: unresolved subjects (untyped lambda param, generic `T`, generic call result);
 numbers mixed across widths/kinds (`(1, 2.5)` then `a + b`, needs R19 Slice B); non-tuple sub-patterns of a tuple (O-TP-02);
 var leaves of a generic result (`y5`).]`
+`[FIXED 2026-11-11 (remainder): checker-soundness-5 CS5-2 (9286a0b7, O-TP-02) and CS5-4 (7b0457d5): non-tuple sub-patterns of a
+tuple bind against the resolved element; a tuple pattern on a subject resolved only by solve (generic call result, `arr_find`
+payload) is checked by kind. Still open: a subject that never resolves (untyped lambda param: `u01`, `w09`, `w16`); numbers mixed
+across widths/kinds (R19 Slice B); generic declared field types (`v: T`, D3).]`
 
 ### O-LF-02 - [low] Fewer names than tuple elements is accepted in `let` (and so in `for (a, b)`)
 `let (a, b) = p` with `p: (i64, i64, i64)` checks rc 0 and prints `3` (`parser.rs:2350-2387` emits one `.i` per name). LF-3 inherits
@@ -3491,14 +3497,20 @@ this and documents it.
 `|p: (i64, str)| match p { (a, b, c) => 3, _ => 0 }` checks rc 0 and prints `0` (`LFT/p/a2_lambda_typed_arity.ax`);
 `p/u4_lambda_typed.ax` panics. `Expr::Lambda` binds every param to a fresh var and ignores its annotation (`infer.rs:2422`,
 `:2429-2431` at 4199c91c). A lambda typing gap, not a pattern gap. From tuple-patterns §0.
+`[FIXED 2026-11-11: checker-soundness-5 CS5-3 (957134fd): an annotated lambda param binds its annotation's skeleton; u4 and a2 are
+E0102. An annotation with a generic part stays a fresh var.]`
 
 ### O-TP-02 - [low] A non-tuple sub-pattern of a tuple pattern stays unbound
 `(Some(a), b)` on `(Some("x"), 2)` then misuse of `a` checks clean and panics (`LFT/p/r3_nested_some_in_tuple.ax`). Typing the
 payload fully would bring back the ICS-1 width refusals one level down; needs a kind-only payload rule. tuple-patterns D5.
+`[FIXED 2026-11-11: checker-soundness-5 CS5-2 (9286a0b7): Some/Ok/Err/struct sub-patterns of a tuple pattern bind against the
+resolved element's skeleton (numbers at any width); r3 is E0102. An element unresolved at bind time stays untyped (a15).]`
 
 ### O-TP-03 - [medium] A struct or variant pattern's plain field is unbound
 `S::C { r } => to_str(r + 1)` with `r: str` checks clean and panics (`LFT/p/e2_variant_field.ax`). `Pattern::Struct` binds every
 field with `None` (`infer.rs:3072-3076` at 4199c91c); TP-4 types only tuple sub-patterns of declared tuple fields.
+`[FIXED 2026-11-11: checker-soundness-5 CS5-1 (8c7cf1b0): every struct/variant pattern field binds its declared type's skeleton;
+e2 is E0102. A field whose declared type is generic (v: T) stays untyped (D3).]`
 
 ### O-LF-03 - [low] axon-os jobs get no sibling-module search
 A job runs a wrapper `{stem}.wrap.ax` from a fresh 0700 `StagingDir` (`axon-os/src/runtime.rs:244-273`, `:1261-1271`), so its entry
