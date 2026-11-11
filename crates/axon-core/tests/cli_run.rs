@@ -48795,6 +48795,11 @@ fn tuple_pattern_on_a_late_resolved_subject_is_checked() {
         ("u03", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, \"s\")) { (a, b) => println(to_str(b + 1)) }\n}\n", 3),
         ("u04", "fn id<T>(x: T) -> T { x }\nfn main() {\n    let t = id((1, \"s\"))\n    match t { (a, b) => println(to_str(b + 1)) }\n}\n", 4),
         ("b02", "fn main() {\n    let xs = [(1, \"s\")]\n    match arr_find(xs, |p| true) { Some((a, b)) => println(to_str(b + 1)), None => println(\"n\") }\n}\n", 3),
+        // [REVISED: impl audit 2026-11-11] a container element used as a
+        // scalar: `c3` (a tuple element given to `str_len`) panicked
+        // `expected str, got tuple`. Residual: a use that leaves the binding
+        // unresolved (`o + n` on an `Option` element) stays unchecked (D5).
+        ("c3", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id(((1, \"s\"), 2)) { (p, n) => println(to_str(str_len(p))) }\n}\n", 3),
     ];
     for (tag, src, line) in cases {
         cs5_assert_refused(attack, tag, src, "E0102", line);
@@ -48811,7 +48816,8 @@ fn tuple_pattern_on_a_late_resolved_subject_is_checked() {
 /// an `i64`/`str` element, a dead arm). CS5-3: `l15` (`println` of a typed
 /// lambda's int component), `a2` (a 3-tuple pattern on a `(i64, str)` param,
 /// a dead arm). CS5-4: `u12` (`println` of an int component of `id((1,
-/// "s"))`).
+/// "s"))`); `[REVISED: impl audit 2026-11-11]` `c3p` (`println` of a tuple
+/// component of `id(((1, "s"), 2))`; its concrete twin is E0102 today).
 #[test]
 fn pattern_binding_misuse_that_runs_is_refused() {
     let attack = "ATTACK: a pattern binding used as another kind checked clean";
@@ -48829,6 +48835,7 @@ fn pattern_binding_misuse_that_runs_is_refused() {
         ("l15", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b) => println(a) }\n    f((1, \"s\"))\n}\n", 3),
         ("a2", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b, c) => 3, _ => 0 }\n    println(to_str(f((1, \"s\"))))\n}\n", 2),
         ("u12", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, \"s\")) { (a, b) => println(a) }\n}\n", 3),
+        ("c3p", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id(((1, \"s\"), 2)) { (p, n) => println(p) }\n}\n", 3),
     ];
     for (tag, src, line) in cases {
         cs5_assert_refused(attack, tag, src, "E0102", line);
@@ -48896,6 +48903,8 @@ fn pattern_binding_controls_stay_legal() {
         ("u15", "fn main() {\n    let xs = [(1, \"s\")]\n    match arr_find(xs, |p| true) { Some((a, b)) => println(b + to_str(a)), None => println(\"n\") }\n}\n", "s1\n"),
         ("u16", "fn main() {\n    let xs = [(1, \"s\")]\n    match arr_find(xs, |p| true) { Some((a, b)) => { let x: u8 = a\n println(to_str(x)) }, None => println(\"n\") }\n}\n", "1\n"),
         ("a26", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, \"s\", 3)) { (a, b) => println(to_str(str_len(a))), _ => println(\"o\") }\n}\n", "o\n"),
+        // [REVISED: impl audit 2026-11-11] a container element used as a container stays legal.
+        ("c3r", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id(([1, 2], Some(3))) { (p, o) => println(to_str(p[0] + 1)) }\n}\n", "2\n"),
     ];
     for (tag, src, out) in cases {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs5c_{tag}"), src);
@@ -48990,6 +48999,34 @@ fn foreign_enum_variant_pattern_is_refused() {
         ),
         ("v09", "enum C { Red, Green }\nfn main() {\n    let c = C::Green\n    match c { C::Red => println(\"r\"), _ => println(\"g\") }\n}\n", "g\n"),
         ("v12", "enum D { Up, Down }\nfn main() {\n    let o = Some(1)\n    match o { D::Up => println(\"up\"), _ => println(\"no\") }\n}\n", "no\n"),
+        // [REVISED: impl audit 2026-11-11] A `let` inside an if/else, while or
+        // match-arm block is local to it: the outer `c` after the block is still
+        // a `C` (k1, w1, w2 were a false E0405; w3, w4 a false E0304 on base).
+        (
+            "k1",
+            "enum C { Red, Green }\nenum D { Up, Down }\nfn main() {\n    let c = C::Red\n    if true {\n        let c = D::Up\n        match c { D::Up => println(\"u\"), _ => println(\"d\") }\n    }\n    match c { C::Red => println(\"r\"), _ => println(\"g\") }\n}\n",
+            "u\nr\n",
+        ),
+        (
+            "w1",
+            "enum C { Red, Green }\nenum D { Up, Down }\nfn main() {\n    let c = C::Red\n    let mut i = 0\n    while i < 1 {\n        let c = D::Up\n        i = i + 1\n    }\n    match c { C::Red => println(\"r\"), _ => println(\"g\") }\n}\n",
+            "r\n",
+        ),
+        (
+            "w2",
+            "enum C { Red, Green }\nenum D { Up, Down }\nfn main() {\n    let c = C::Red\n    match 1 { 1 => { let c = D::Up\n println(\"a\") }, _ => println(\"b\") }\n    if let C::Red = c { println(\"r\") }\n}\n",
+            "a\nr\n",
+        ),
+        (
+            "w3",
+            "enum C { Red, Green }\nenum D { Up, Down }\nfn main() {\n    let c = C::Red\n    if false { println(\"x\") } else { let c = D::Down\n println(\"e\") }\n    match c { C::Red => println(\"r\"), C::Green => println(\"g\") }\n}\n",
+            "e\nr\n",
+        ),
+        (
+            "w4",
+            "enum C { Red, Green }\nenum D { Up, Down }\nfn f(c: C) -> i64 {\n    if true { let c = D::Up }\n    match c { C::Red => 1, C::Green => 2 }\n}\nfn main() { println(to_str(f(C::Green))) }\n",
+            "2\n",
+        ),
     ];
     for (tag, src, out) in controls {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs5_{tag}"), src);
