@@ -1,14 +1,40 @@
 # checker-soundness-5 - spec (CS5-1..CS5-5)
 
-**Status: DRAFT. Not authorized for build.**
+**Status: DRAFT (after Step 1 review: AuditCS5 6, DevloopCS5 7 findings, all accepted). Not authorized for build.**
 
-Authorized for specification by the human 2026-11-11 ("do it", item #2: fix "checks clean, then panics at run" gaps). A Step 1 review
-(an adversarial conformance audit plus a dev-loop/cost review) comes before any build. Nothing here is implemented.
+Authorized for specification by the human 2026-11-11 ("do it", item #2: fix "checks clean, then panics at run" gaps). The Step 1
+review (below) is folded in; the build still needs the human's authorization and answers to NH-1..NH-3. Nothing here is implemented.
+
+### Step 1 review
+
+Reviews: `agent://AuditCS5` (CS5A-1..6, conformance) and `agent://DevloopCS5` (CS5D-1..7, dev loop and cost). Before accepting each
+finding I checked it at f14bc25f: I re-ran the auditor's probes `a15`, `a15t`, `a25`, `a26` with the reference binary (copied into
+`CheckerSoundness5/r/` and `t/`, results in §9), re-read `infer.rs:3089-3096`, `:3113`, `:3192-3195`, `:3527-3543`, confirmed M5225's
+`old` text (`v022_g01_mutations.py:16086-16089`) occurs once at `infer.rs:3113`, listed every active g01 row anchored in the edited
+regions (§4), read `g01_anchors.py:2`, `gate.sh:718`, `v022_g01_mutations.py:49`, `gate.sh:1125-1131`, and diffed the reviewer's
+copied-binary sweep against `base.tsv` (the same 6 rows change hash, rc unchanged). **Accepted 13, rejected 0.**
+
+| finding | sev | disposition | where |
+|---|---|---|---|
+| CS5A-1: CS5-2 as drafted constrains an element that is still a `Var`; `a15` (`\|p\| match (p, 1) { (Some(a), _) => 1, (Ok(b), _) => 2, _ => 3 }`, both arms run) is rc 0 `3` today and would be refused | major | accepted: the `(_, Some(elem))` arm is guarded by `!type_is_unresolved(elem)`; `a15` is a control | CS5-2 fix, controls, D1 |
+| CS5A-2: the M5247 killer `u07` never uses `a`/`b`, so the arity-guard mutant survives | major | accepted: killer is `r/a26_m5247_killer` (`(a, b)` on `id((1, "s", 3))`, `str_len(a)`; rc 0 `o`); `u07` stays a control | §4 |
+| CS5A-3: `u11` is fixed by CS5-1 (`declared_field` resolves by the pattern's name, `infer.rs:3192-3195`), not a generic-field residual | minor | accepted: `u11` moves to the CS5-1 reproduction; D3 names only `f06` | §0, CS5-1, D3 |
+| CS5A-4: one helper, two nouns; CS5-2 would name a component index | minor | accepted: the helper takes the noun; CS5-2 passes the payload's bound name; CS5-3 says "lambda param" | CS5-1 step 3, CS5-2, CS5-3, D2 |
+| CS5A-5: CS5-4's place in `solve` and its push were ambiguous | minor | accepted: after the CS2-6 call-obligation pass (`:3527-3595`), before the TP-1 loop (`:3617`); non-numeric leaves get their own `kinds_conflict` loop | CS5-4 fix |
+| CS5A-6: CS5-5 would add E0405 to `a25` (`D::Nope`, already E0001:5) and change its hash | minor | accepted: also require `V` to be a variant of `X`; `a25` is a control (E0001 only) | CS5-5 |
+| CS5D-1: CS5-1 removes M5225's anchor (`infer.rs:3113`); `g01_anchors.py` runs in every strict gate (`gate.sh:718`) | major | accepted: re-anchor M5225 in the CS5-1 commit; run `g01_anchors.py` per item; lane-end `--only` covers the rows anchored in edited code | §4, §6 |
+| CS5D-2: diagnostic hashes include the binary's path (E0901 names `<bin>/../lib/axon/...`); 6 tracked rows change hash with a byte-identical copy | major | accepted: the baseline is the lane's own build of f14bc25f swept from the fixed lane path; rc is compared separately | §3 |
+| CS5D-3: `v022_g01_mutations.py` refuses an uncommitted tree (`:49`) | minor | accepted: g01 `--only` runs after the item's commit | §6 |
+| CS5D-4: the probe re-run defaults to the reference binary (`run.sh:3`) and shares one stderr file | minor | accepted: explicit `AXON=` command, one run at a time, diff against `final.txt` | §3 |
+| CS5D-5: acceptance depends on untracked `/var/tmp` tooling with no compare command | minor | accepted: acceptance is `diff` rc 0 with recorded commands; a missing `/var/tmp/r51-tmp` stops the build | §3 |
+| CS5D-6: cost rows were `[INFERENCE]`; strict already runs the native test | minor | accepted: TP lane figures quoted (the reviewer's file-timestamp estimates are marked as such) | §5 |
+| CS5D-7: gate stages unnamed; the sweep does not cover inline `cli_run` sources | minor | accepted | §3, §5 |
 
 Base: `main` f14bc25f (worktree `axon-lanes/specs-next2`, branch `specs/next2`). Reference binary: `/var/tmp/r51-tmp/sn2-bin/axon`
 (`axon 0.1.0 (f14bc25f)`, interpreter build). Probes: `/var/tmp/r51-tmp/CheckerSoundness5/{p,q,r,t,w}/*.ax`, run by
 `CheckerSoundness5/run.sh` (`axon check F`, then `axon run F`; it prints check rc, first error code:line, run rc, stdout, the panic
-line). The full table of 197 probes is `CheckerSoundness5/final.txt` (2.46 s wall). Every check/run result below was observed with
+line). The full table of 201 probes is `CheckerSoundness5/final.txt` (2.24 s wall; 197 at draft, `final-v1.txt`, plus the review's
+`r/a15`, `r/a25`, `r/a26`, `t/a15t_toplevel_twin`). Every check/run result below was observed with
 that binary at f14bc25f unless it is marked `[INFERENCE]`.
 
 The theme: programs that `axon check` accepts (rc 0) and that then panic at run (rc 101). Every gap here is one fact: a pattern binds a
@@ -33,7 +59,7 @@ closure stamp (FIXED/BUILT/...). The open ones are O-TP-01, O-TP-02 and O-TP-03,
 | candidate | probe (observed) | disposition |
 |---|---|---|
 | O-AF-01, loop-carried moves | not probed: no new evidence sought | **Out of scope by human decision** (2026-11-02, asi-fixes §6.11; reconfirmed 2026-11-11 via Main). Not specced, no question |
-| Generic enum / generic struct field (`B::H { v }` with `v: T`) | `p/f06_generic_enum` check 0, run 101; `p/u11_generic_struct_field` check 0, run 101 | out (D3): the subject is `Type::Enum("B")` with no type arguments, so there is no declared field type to bind. Generic instantiation work |
+| Generic enum field (`B::H { v }` with `v: T`) | `p/f06_generic_enum` check 0, run 101 | out (D3): the field's declared type is `Deferred("T")` (unresolved), so there is no concrete type to bind. Generic instantiation work. `[REVISED: CS5A-3]` `p/u11_generic_struct_field` was listed here; it is a generic-returning subject with a non-generic field and moves to CS5-1 |
 | A tuple pattern inside a generic fn's body on a `T` param | `p/u02_generic_t` check 0, run 101 | out: the param is a `TypeParam` in the body and never resolves (instantiation work, as tuple-patterns §0) |
 | `let (a, b) = e` / `for (a, b) in e` / `t.1` on a late-resolved `e` | `p/u05_generic_ret_twin`, `w/w15_for_tuple_generic`, `p/u13_field_read_generic`, `w/w01_generic_struct_read`: check 0, run 101 | out: these desugar to field reads (`parser.rs:2460` `__tup_`), not patterns; `Expr::FieldAccess` on an unresolved receiver returns a fresh var (`infer.rs:2380-2381`). Logged for a later batch |
 | Mixed int/float numeric leaves (`a + b`, `a` int, `b` f64) | `p/g15_some_float_int_mix`, `w/w02_tp1_float_hole`, `w/w06_field_f64_hole`: check 0, run 101 `cannot apply Add to i64 / f64` | out: the numeric residual of tuple-patterns D2; a width-correct rule needs R19 Slice B |
@@ -88,6 +114,7 @@ closure stamp (FIXED/BUILT/...). The open ones are O-TP-01, O-TP-02 and O-TP-03,
 | `p/f33_sum_type` | `type S = A { r: str } \| B { n: i64 }` | `cannot apply Add to str / i64` |
 | `p/f37_field_ok_payload` | `S::C { o: Ok(x) }`, `o: Result<str, i64>`, `x + 1` | `cannot apply Add to str / i64` |
 | `q/s08_nested_struct_in_some` | `Some(W::P { r })` on `Option<W>` | `cannot apply Add to str / i64` |
+| `p/u11_generic_struct_field` `[REVISED: CS5A-3]` | `match id(S::C { r: "a" }) { S::C { r } => .. r + 1 }`, `S` not generic, subject a late-resolved `id(..)` return; `declared_field` resolves by the pattern's name, so the subject's type does not matter | `cannot apply Add to str / i64` |
 
 The let/field-read twins are refused today, so the checker already has the rule; only the pattern binding loses the type:
 `p/f02t_struct_read` (E0306:4), `t/f08t_opt_twin` (E0301:4), `t/f16t_bool_twin` (E0301:4), `p/f18t_struct_read` (E0306:5),
@@ -98,7 +125,9 @@ The let/field-read twins are refused today, so the checker already has the rule;
    declared field type whenever that type has no unresolved part (`!has_unresolved`). A generic field (`v: T`) still yields `None`
    (D3).
 2. In the `Pattern::Struct` arm, for each `(fname, pat)` with `Some(decl)` from `declared_field(name, fname)`, call a new helper
-   `bind_sub_pattern(pat, &decl, fname, scope)` (shared with CS5-2):
+   `bind_sub_pattern(pat, &decl, name, noun, scope)` (shared with CS5-2; `[REVISED: CS5A-4]` it takes the obligation's noun). This
+   replaces the TP-4 call at `:3113`, which is M5225's g01 anchor: `[REVISED: CS5D-1]` M5225 is re-anchored in the same commit (§4).
+   For a field pattern the name is `fname` and the noun is "pattern field":
    - `Pattern::Ident(n)` binds `tuple_component_skeleton(decl, n)` (TP-1's rule: numeric leaves free, checked by kind in `solve`;
      every other leaf exact);
    - `Pattern::Tuple(_)` keeps TP-4's call, `bind_pattern_with_subj(pat, scope, Some(decl))`;
@@ -108,8 +137,9 @@ The let/field-read twins are refused today, so the checker already has the rule;
      var for a number: `p/f30_opt_int_some_u8` `let y: u8 = x` on `Option<i64>` stays legal);
    - `Wildcard`/`Literal`/`None` bind nothing, as today (literal sub-patterns stay unchecked: O-CS4-04, control `q/s12`).
    With no declared type (`None`), the field pattern is bound with `None`, as today.
-3. The obligation entry gains its origin noun (D2): TP's tuples keep "use of tuple pattern component `{name}`"; CS5-1 entries say
-   "use of pattern field `{name}`".
+3. The obligation entry gains its origin noun (D2): `tuple_component_obligations` becomes `(leaf, var, name, noun, span)`
+   (`[REVISED: CS5A-4]`). TP's entries keep "tuple pattern component", so their text "use of tuple pattern component `{name}`" is
+   unchanged; CS5-1 entries say "use of pattern field `{name}`".
 
 **After CS5-1** (prediction, `[INFERENCE]` until built): every reproduction row is refused by `axon check` (rc 2) at the use line,
 and `axon run` stops at the same refusal (rc 2, empty stdout). An exactly-bound leaf (`str`, `bool`, `[T]`, `Option<..>`, a struct,
@@ -142,7 +172,7 @@ as its own type. A heuristic scan for a field name used against its kind found 0
 `[INFERENCE: text emulation, not a checker run]`.
 
 **Fail-first test.** `cli_run.rs`, appended after `tuple_pattern_in_a_struct_field_is_checked` (`:48647-48664`, the end of the
-tuple-patterns block that starts at `:48497`): `struct_pattern_fields_are_typed`. Cases: every reproduction row above (16 sources,
+tuple-patterns block that starts at `:48497`): `struct_pattern_fields_are_typed`. Cases: every reproduction row above (17 sources,
 inlined). Each must give check rc 2 with its first error at the use line, and `run` rc 2 with empty stdout. The existing helper
 `tp_assert_refused` (`:48502`) pins E0102; add `cs5_assert_refused(attack, tag, src, code, line)` beside it on top of
 `sf6_check_and_run` (`:42297`) and `cs4_first_error` (`:47059`), and pin each case's code to the value observed after the fix (the
@@ -179,17 +209,24 @@ O-TP-02.
 Twin refused today: `t/g01t_twin` (E0102:4). `p/g08_some_int_misuse` (`println(a)` on a `Some(1)` component) is already E0306:2;
 `p/g08b_some_int_misuse` (`str_len(a)` behind a `to_str`) checks 0 and panics `expected str, got i64` and is fixed by the same rule.
 
-**Fix design.** Replace the `_` fallback at `:3162` with `(_, Some(elem)) => self.bind_sub_pattern(pat, elem, &i.to_string(),
-scope)` (CS5-1's helper; the obligation name is the component index), keeping `(_, None) => bind_pattern_with_subj(pat, scope, None)`.
-This is the kind-only payload rule O-TP-02 asks for: a payload's numeric leaves are free vars, so the ICS-1 width cases one level
-down stay legal (`p/g03_some_u8_control` `let x: u8 = a` on `Some(1)`, rc 0 `1`).
+**Fix design.** `[REVISED: CS5A-1, CS5A-4]` Replace the `_` fallback at `:3162` with
+`(_, Some(elem)) if !type_is_unresolved(elem) => self.bind_sub_pattern(pat, elem, name, "pattern binding", scope)` (CS5-1's helper),
+keeping every other case on `bind_pattern_with_subj(pat, scope, None)`. The guard matters: `concrete` (`:3132-3142`) accepts a tuple
+subject whose element is still a `Var`, and the `Some`/`Ok`/`Err` arms constrain whatever subject type they are given
+(`:3089-3096`), so an unguarded element var would be pinned to `Option` by one arm and to `Result` by the next, refusing `r/a15`,
+which runs (control below). `name` is the payload's bound name when the sub-pattern binds exactly one `Ident` (`Some(a)` -> `a`),
+else the component index (`#0`), so the message reads "use of pattern binding `a`". This is the kind-only payload rule O-TP-02 asks
+for: a payload's numeric leaves are free vars, so the ICS-1 width cases one level down stay legal (`p/g03_some_u8_control`
+`let x: u8 = a` on `Some(1)`, rc 0 `1`).
 
 **Behaviour change.** `p/g09_some_int_println` (`println(a)` on `Some(1)`; rc 0, `1`; twin `g09t` E0102:3) becomes E0102: NH-1.
 `p/g04_some_on_int_dead` (`(Some(a), b)` on `(5, 2)`) and `p/g05_some_on_str_dead` (on `("s", 2)`) run a dead arm (rc 0, `o`) and
 become E0102 "type mismatch in Some pattern" (twin `t/g04t_some_on_int_twin` E0102:3): D4.
 
-**Controls.** `p/g03_some_u8_control` (`1`), `p/g07_some_ok_control` (`x2`), `p/g19_some_dyn` (`k`), and every case of
-`tuple_pattern_controls_stay_legal`.
+**Controls.** `p/g03_some_u8_control` (`1`), `p/g07_some_ok_control` (`x2`), `p/g19_some_dyn` (`k`), `r/a15_var_elem_multi` (`3`;
+`[REVISED: CS5A-1]` an element var matched as `Some` in one arm and `Ok` in another, both called; its top-level twin
+`t/a15t_toplevel_twin`, which matches the var itself, is already E0102:2 "type mismatch in Ok pattern" and stays so), and every case
+of `tuple_pattern_controls_stay_legal`.
 
 **Corpus.** A scan of every tracked `.ax` for a tuple-pattern arm holding `Some(`/`Ok(`/`Err(`/`X::Y` found 0 sites. Expected
 tracked changes: none.
@@ -221,7 +258,8 @@ Twins: `t/u4t_fn_twin` (the same body as a `fn` with a typed param) E0102:1; `t/
 pattern"; `t/l17t_fn_twin` E0102:1. Direct misuse of a typed scalar param is already caught through CS2-6 at the call
 (`p/l01_typed_lambda_direct` E0102:3, `p/l05` E0102:3), which is why only pattern subjects show the gap.
 
-**Fix design.** At `:2438`, a param with `ty: Some(t)` gets `tuple_component_skeleton(&self.resolve_ast_type(t), &p.name)`; a param
+**Fix design.** At `:2438`, a param with `ty: Some(t)` gets the skeleton of `self.resolve_ast_type(t)` with name `p.name` and
+`[REVISED: CS5A-4]` noun "lambda param" (TP-1's `tuple_component_skeleton`, extended with the noun as in CS5-1 step 3); a param
 without an annotation keeps `self.fresh()`. A numeric annotation therefore stays a free var (it stays in `own`, CS2-6/CS3-2 unchanged),
 which keeps `p/l02_typed_lambda_u8_lit` (`2`), `p/l12_typed_lambda_arr_map_u8` (`3`), `p/l13_typed_lambda_u8_as_i64` (`2`, a `u8` param
 used as `i64`; the fn twin `t/l13t_fn_twin` is E0102:1) legal. A non-numeric annotation binds exactly. The `match p` subject is then
@@ -263,11 +301,17 @@ arities). `solve` already resolves late types before its obligation loops (`:350
 | `p/u01_lambda`, `w/w09_untyped_lambda_variant`, `w/w16_untyped_lambda_let_destr` | an untyped lambda param |
 
 **Fix design.** In the `Pattern::Tuple` arm, when `concrete` is `None` and `subj_ty` is `Some(Var)`, record a deferred entry
-`(subject, arity, [(i, name, var)])` with a fresh var bound per `Ident` component. In `solve`, after the unify loop and before the
-TP-1 loop, apply `subst` to each deferred subject; if it is a `Tuple` of the same arity, push, for each component, every leaf of
-`tuple_component_skeleton`'s shape as an obligation on that component's var (numeric leaf: used must be a number; other leaf: used must
-not conflict in kind, `kinds_conflict`, `:353`). An arity mismatch, a subject still unresolved, or a non-tuple is skipped: nothing is
-refused that the bind-time rule would not refuse (D5). Nothing is bound or unified by this step, so the l1 control is untouched.
+`(subject, arity, [(i, name, var)])` with a fresh var bound per `Ident` component. In `solve`, `[REVISED: CS5A-5]` after the CS2-6
+call-obligation pass (`:3527-3595`, which binds a component-return var to the call's use) and before the TP-1 loop (`:3617`), apply
+`subst` to each deferred subject; if it is a `Tuple` of the same arity, take each component's element skeleton leaf by leaf:
+- a numeric leaf is pushed to `tuple_component_obligations` (`(leaf, var, name, "pattern binding", span)`), so the TP-1 loop checks it
+  (used must be a number);
+- every other leaf goes to a new loop right after: `kinds_conflict(leaf, subst.apply(var))` (`:353`) gives E0102 "use of pattern
+  binding `{name}`".
+
+An arity mismatch, a subject still unresolved, or a non-tuple is skipped: nothing is refused that the bind-time rule would not refuse
+(D5). Nothing is bound or unified by this step, so the l1 control is untouched. Because the pass runs after CS2-6 built its `comp` map
+(`:3535-3542`), a deferred component passed to a fn value is not mapped to its element (the same residual as `x01`, §0).
 
 **Behaviour change.** `p/u12_generic_ret_println` (`println(a)` on `id((1, "s"))`, rc 0 `1`) becomes E0102: NH-1. No dead-arm
 refusals (`p/u07_generic_ret_arity` stays rc 0, `o`).
@@ -277,7 +321,8 @@ derivation, `:3526`): `u01`/`w09`/`w16` may stay unchecked `[INFERENCE]`. The te
 are recorded as observed after the build.
 
 **Controls.** `p/u06_generic_ret_ok` (`s1`), `p/u07_generic_ret_arity` (`o`), `p/u10_generic_ret_u8` (`1`), `r/u15_arr_find_ok`
-(`s1`), `r/u16_arr_find_u8` (`1`), TP controls `l1`, `g2`, `g3`.
+(`s1`), `r/u16_arr_find_u8` (`1`), `r/a26_m5247_killer` (`o`; `[REVISED: CS5A-2]` `(a, b)` on `id((1, "s", 3))` with `str_len(a)`,
+the M5247 killer: with the arity guard removed `a` maps to `i64` and is refused), TP controls `l1`, `g2`, `g3`.
 
 **Corpus.** Not emulated (needs the solved types). The sweep at build time decides; any tracked rc change stops the item.
 
@@ -310,9 +355,11 @@ recorded at `checker-soundness-4-spec.md:711-712`). The design below is CS4-5's 
 `p/v06_generic_enum_foreign` (`no`), `p/v11_guarded_foreign` (`no`): all check 0, run 0, dead arm. `p/v09_same_enum_ok` (`g`) control;
 `p/v08_unknown_enum_qual` is already E0001:4.
 
-**Fix design (CS4-5's, unchanged).** In `check_match_exhaustiveness`, before the wildcard `return` (`:6817`): hoist `enum_name`
-(`:6825-6829`) above it; when it is `Some(e)` and a top-level arm pattern is `Pattern::Struct { name }` with `name = "X::V"`, `X != e`
-and `X` a known enum (`self.enum_variants`), emit E0405 "this match is on `C`, but `D::Up` is a variant of `D` - it can never match",
+**Fix design (CS4-5's, plus one condition).** In `check_match_exhaustiveness`, before the wildcard `return` (`:6817`): hoist
+`enum_name` (`:6825-6829`) above it; when it is `Some(e)` and a top-level arm pattern is `Pattern::Struct { name }` with
+`name = "X::V"`, `X != e`, `X` a known enum and `[REVISED: CS5A-6]` `V` one of its variants (`self.enum_variants[X].contains(V)`;
+an unknown variant keeps its E0001 alone, control `r/a25_foreign_unknown_variant`, check 2 E0001:5 today), emit E0405 "this match
+is on `C`, but `D::Up` is a variant of `D` - it can never match",
 help "use a `C::` variant". Compare the enum NAME only (a generic enum has no type args here). Broaden E0405's description at
 `error.rs:51` and `:475` to "a pattern's type can't match the match subject" and regenerate `AXON_REFERENCE.md` (`axon reference`;
 `axon_reference_is_in_sync_with_the_binary`, `cli_run.rs:26475`, enforces it).
@@ -325,8 +372,8 @@ subject: `enum_name` is `None`).
 none.
 
 **Fail-first test.** cli_run `foreign_enum_variant_pattern_is_refused` (CS4-5's name and cases): `v2q_noall` E0405 (its `_` arm pins
-the placement), `en` E0405, `v2q_ok` rc 0; add `v04` (sum type) and `v11` (guarded) as E0405 cases. Marker `ATTACK: a pattern of
-another enum checked clean`.
+the placement), `en` E0405, `v2q_ok` rc 0; add `v04` (sum type) and `v11` (guarded) as E0405 cases, and `a25` as a case whose
+diagnostics hold E0001 and no E0405. Marker `ATTACK: a pattern of another enum checked clean`.
 
 **g01 row**: M4719 (reserved by checker-soundness-4 §4, outside this block; `grep` finds no `M4719` in `scripts/` at f14bc25f).
 
@@ -336,16 +383,35 @@ another enum checked clean`.
 
 - **Corpus sweep** (fail-first gate step, before and after every item): `/var/tmp/r51-tmp/Soundness4/sweep.sh <repo> <bin> <ABSOLUTE
   out.tsv>` runs `axon check` on every `git ls-files '*.ax'` from the file's directory and records path, rc and sha256 of the
-  diagnostics. The script `cd`s into the repo, so the out path must be absolute. Baseline at f14bc25f with the reference binary:
+  diagnostics. The script `cd`s into the repo, so the out path must be absolute. Reference at f14bc25f with `sn2-bin/axon`:
   **717 files, 626 rc 0, 91 rc 2**; two runs byte-identical (`CheckerSoundness5/base.tsv`, `base3.tsv`, sha256 prefix
-  `c34a7a5fcc613d1f`); 1.4 s real (`-P 12`). Rule: no tracked file goes from rc 0 to nonzero, and no diagnostic hash changes, unless
-  this spec names it (it names none). Any such change stops the item and goes to the integrator.
-- **Probe re-run:** `CheckerSoundness5/run.sh p/*.ax q/*.ax r/*.ax t/*.ax w/*.ax` (197 probes, 2.46 s) with the lane's binary;
-  compare with `final.txt` row by row against the "after" columns here.
+  `c34a7a5fcc613d1f`); 1.4 s real (`-P 12`).
+  `[REVISED: CS5D-2]` A diagnostic can name the binary's own path (E0901 prints `<bin>/../lib/axon/...`): a byte-identical copy of
+  the reference binary at another path changes the hash of 6 tracked rows (`examples/asi/{bandit_ucb,persistent_bandit,safe_bandit,
+  safe_self_improve}.ax`, `examples/sealed/suite/accept.ax`, `tasks/r51-s6/q1/suite/accept.ax`) with every rc equal
+  (`review-CS5/CS5D/sweep-copied.tsv` vs `base.tsv`, re-diffed by me). So `base.tsv` is for reference only. The lane's baseline is
+  its own build of f14bc25f, copied to one fixed path (`$LANE/bin/axon`) and swept as `$LANE/sweep-base.tsv`; every later build is
+  copied to the same path. Rule: `diff $LANE/sweep-base.tsv $LANE/sweep-<item>.tsv` must exit 0 (no rc and no hash change), unless
+  this spec names the file (it names none); `diff <(cut -f1,2 A) <(cut -f1,2 B)` reports rc changes on their own. Any difference
+  stops the item and goes to the integrator. The sweep covers tracked `.ax` files only (CS5D-7); the inline sources of the ~1014
+  `cli_run` tests are covered by the full `cli_run` run at lane end and by strict's S16.
+- **Probe re-run** `[REVISED: CS5D-4]`: `cd /var/tmp/r51-tmp/CheckerSoundness5 && AXON=$LANE/bin/axon ./run.sh p/*.ax q/*.ax r/*.ax
+  t/*.ax w/*.ax > $LANE/probes-<item>.txt` (201 probes, ~2.5 s), formatted as `final.txt` was (the `sed` in §9), then
+  `diff final.txt $LANE/probes-<item>.txt`. The only differences allowed are the reproduction and behaviour-change rows the item
+  names. Without `AXON=` the script silently uses the reference binary (`run.sh:3`), and it writes one fixed `.runerr`, so only one
+  re-run at a time.
+- **Acceptance tooling** `[REVISED: CS5D-5]`: "sweep shows no tracked change" in each item means the sweep `diff` above exits 0, and
+  "probes as predicted" means the probe `diff` holds only the named rows; both commands go in the lane notes. If `/var/tmp/r51-tmp`
+  (sweep.sh, run.sh, the probes) is gone, the build stops; it does not skip the check.
 - **Tests:** all new tests live in `crates/axon-core/tests/cli_run.rs` after `:48664` (the end of the tuple-patterns block), run as
-  `cargo test -p axon-core --no-default-features --test cli_run <name>`. No `.ax` fixture is added; sources are inlined.
-- **Native:** no codegen change. `integration_fixtures.rs:2855` (`tuple_patterns_test_every_component_natively`, codegen feature)
-  runs once at the end as a regression guard.
+  `cargo test --locked -p axon-core --no-default-features --test cli_run <name>`. No `.ax` fixture is added; sources are inlined.
+- **Native:** no codegen change. `integration_fixtures.rs:2855` (`tuple_patterns_test_every_component_natively`, codegen feature) is
+  run by `gate.sh --strict` (the TP strict log shows it at `tp-gate.log:13657`), so the lane runs it only if it wants an early
+  signal (CS5D-6).
+- **Gate stages** `[REVISED: CS5D-7]`: an `axon-core/src` change runs S16 (`gate.sh:1125-1131`, `cargo test --locked -p axon-core
+  --no-default-features`, which holds every new test), S17 (codegen rebuild), S22 (`vm_parity.sh`), the `G01 mutation anchors` stage
+  (`gate.sh:718`), and strict's codegen clippy, `integration_fixtures`, and parity stages. Under `--strict` every stage runs. One
+  `gate.sh --strict` covers all five items.
 
 ## 4. g01 rows (block M5240-M5259)
 
@@ -353,7 +419,7 @@ The block is free at f14bc25f: `grep -rn 'M524[0-9]\|M525[0-9]'` over `scripts/`
 `tuple-patterns-spec.md:409`, which says a new block starts at M5240). Rows go after the tuple-patterns block
 (`v022_g01_mutations.py:16050-16053` comment, rows from `:16054`) in the same 8-tuple form (`id, why, file, old, new, crate, args,
 test`); markers go in `v022_attack_markers.py` after the tuple-patterns `ATTACK_MARKERS.update` (near `:4452`). The builder writes the
-exact `old` text after the fix lands (it must occur once in the file).
+exact `old` text after the fix lands (it must occur once in the file). Rows M5248 and M5249 were added by the Step 1 review.
 
 | id | item | guard removed by the mutant | file | killer | marker |
 |---|---|---|---|---|---|
@@ -361,34 +427,54 @@ exact `old` text after the fix lands (it must occur once in the file).
 | M5241 | CS5-1 | `declared_field` returns non-tuple types (mutant: restore the `Type::Tuple` filter) | infer.rs | same (`f16`, `f32`) | same |
 | M5242 | CS5-2 | the `(_, Some(elem))` arm in `Pattern::Tuple` (mutant: `None`) | infer.rs | `tuple_sub_patterns_are_typed` (`g01_r3`) | `ATTACK: a sub-pattern of a tuple pattern of the wrong type checked clean` |
 | M5243 | CS5-2 | the payload skeleton (mutant: pass `elem` exactly instead of its skeleton) | infer.rs | `pattern_binding_controls_stay_legal` (`g03`, `f30`, `s07`) | `ATTACK: a valid pattern match was refused \[cs5_g03\]` |
+| M5248 | CS5-2 | `[REVISED: CS5A-1]` the `!type_is_unresolved(elem)` guard (mutant: `true`) | infer.rs | `pattern_binding_controls_stay_legal` (`a15`) | `ATTACK: a valid pattern match was refused \[cs5_a15\]` |
 | M5244 | CS5-3 | the annotated-param binding at `Expr::Lambda` (mutant: `self.fresh()`) | infer.rs | `typed_lambda_params_are_typed` (`u4`) | `ATTACK: a typed lambda param of the wrong type checked clean` |
 | M5245 | CS5-3 | the skeleton on an annotated param (mutant: bind the resolved annotation exactly) | infer.rs | `pattern_binding_controls_stay_legal` (`l13`) | `ATTACK: a valid pattern match was refused \[cs5_l13\]` |
 | M5246 | CS5-4 | the deferred-subject push in `solve` (mutant: `if false`) | infer.rs | `tuple_pattern_on_a_late_resolved_subject_is_checked` (`u03`) | `ATTACK: a tuple pattern on a late-resolved subject checked clean` |
-| M5247 | CS5-4 | the arity guard on a deferred subject (mutant: `true`) | infer.rs | `pattern_binding_controls_stay_legal` (`u07`) | `ATTACK: a valid pattern match was refused \[cs5_u07\]` |
+| M5247 | CS5-4 | the arity guard on a deferred subject (mutant: `true`) | infer.rs | `pattern_binding_controls_stay_legal` (`a26`; `[REVISED: CS5A-2]` was `u07`, which binds nothing it uses, so the mutant survived) | `ATTACK: a valid pattern match was refused \[cs5_a26\]` |
 | M4719 | CS5-5 | the foreign-enum E0405 emit (mutant: `if false`) | checker.rs | `foreign_enum_variant_pattern_is_refused` (`v2q_noall`) | `ATTACK: a pattern of another enum checked clean` |
+| M5249 | CS5-5 | `[REVISED: CS5A-6]` the "`V` is a variant of `X`" condition (mutant: `true`) | checker.rs | `foreign_enum_variant_pattern_is_refused` (`a25`: E0001, no E0405) | `ATTACK: a pattern of another enum checked clean` |
 
-M5248-M5259 stay free for the Step 1 review and implementation-review fixes. A CS5-4 drop (NH-3 (b)) drops M5246/M5247.
+M5250-M5259 stay free for implementation-review fixes. A CS5-4 drop (NH-3 (b)) drops M5246/M5247.
+
+**Existing rows the edits touch** `[REVISED: CS5D-1]`. `g01_anchors.py` ("every ACTIVE G01 mutation row still anchors exactly
+once", `:2`) runs in every gate (`gate.sh:718`, `par "G01 mutation anchors"`), so a removed anchor fails strict. I loaded every
+active row whose file is `infer.rs` and searched its `old` text at f14bc25f; these anchor once inside code CS5-1..CS5-4 edit:
+- removed: **M5225** (`infer.rs:3113`, `self.bind_pattern_with_subj(pat, scope, declared.as_ref());`, `v022_g01_mutations.py:16086-16089`),
+  replaced by CS5-1's `bind_sub_pattern` call. Re-anchor it in the CS5-1 commit onto `bind_sub_pattern`'s `Pattern::Tuple` branch
+  (mutant: `Some(decl)` -> `None`), killer unchanged (`tuple_pattern_in_a_struct_field_is_checked`).
+- in the `Pattern::Tuple` arm CS5-2 edits: M4713 (`:3146`), M4715 (`:3144`), M5220 (`:3156`), M5222 (`:3160`); in the `Some`/`Ok`
+  payload code next to it: M5223 (`:3098`), M5224 (`:3067`); in `tuple_component_skeleton`, which gains the noun: M4714 (`:3177`).
+- in `solve`, where the obligation tuple gains its noun (CS5-1) and CS5-4 adds its pass: M5227 (`:3567`), M5229 (`:3571`), M5230
+  (`:3587`), M5228 (`:3618`), M5221 (`:3619`), M5226 (`:3620`), M5231 (`:3622`), M3919 (`:3574`), M3904 (`:3602`).
+
+Each item runs `python3 -B scripts/g01_anchors.py` after its commit (rc 0 required) and repoints any row whose text it changed, as
+the TP lane did (`cafa3cb8`, "g01 repoint M5221/M5226"). The lane-end g01 `--only` runs the new rows plus every row listed here.
 
 ## 5. Gates and cost budget (no paid spend: no AI path is touched)
 
 | step | when | cost (this host) | basis |
 |---|---|---|---|
-| Baseline sweep + probe run | lane start | ~5 s | measured: sweep 1.4 s real, probes 2.46 s |
-| Write tests, run on base (fail-first) | per item | build of `cli_run` (no-default-features) + seconds per test | `[INFERENCE]` not measured here |
-| Targeted tests + sweep + probe re-run | per item | same build + ~5 s | measured part: sweep, probes |
-| g01 `--only` | per row (9 rows) | one `cli_run` rebuild + one test run per row | `[INFERENCE]` |
+| Lane baseline: build f14bc25f to `$LANE/bin/axon`, sweep + probes | lane start | one interpreter build + ~5 s | sweep 1.4 s, probes 2.24 s measured |
+| `[REVISED: CS5D-6]` targeted `cargo test --locked -p axon-core --no-default-features --test cli_run <name>`, fail-first and after the fix | per item | ~5-10 s warm; ~12-16 s after touching `infer.rs`; minutes if the target dir is cold | `tuple-patterns-spec.md:440`; the reviewer's estimate from TP g01 file timestamps `[INFERENCE]` |
+| sweep + probe diff + `g01_anchors.py` | per item, after its commit | ~5 s | sweep, probes measured; `g01_anchors.py` not timed |
+| g01 `--only` (11 new rows + the 17 touched rows above) | lane end, committed tree | ~12-16 s per row, about 6-8 min | TP lane: 15 rows in <= 174 s (`tp-sweep-tpi.tsv` 01:36:22 -> `tp-g01-tpi.json` 01:39:16, file times I read) `[INFERENCE: per-row]` |
 | doc_snippets, spec_ledger, fmt, clippy | lane end | minutes; `spec_ledger` 1.11 s | spec_ledger measured |
-| Full `--no-default-features` `cli_run` once, native test once | lane end | `[INFERENCE]` tens of minutes | |
-| `scripts/gate.sh --strict` | integrator, once | **~50 min** | measured on this host 2026-11-10/11 (Main's figure) |
+| Full `--no-default-features` `cli_run` | lane end, once | 276.6-488 s | `tuple-patterns-spec.md:441` |
+| Native `integration_fixtures` test | optional (strict runs it) | 3-13 s warm; ~10 min if LLVM is cold | `tuple-patterns-spec.md:443` |
+| strict stages: S16 axon-core tests / S17 codegen rebuild / S22 vm parity | inside strict | 633.6 s / 2.3 s / 86.4 s | `tp-gate.log:8241,8243,8251` (read) |
+| `scripts/gate.sh --strict` | integrator, once | **~50 min** idle (44-55), ~84 min under 3-lane load | Main's 2026-11-10/11 figure; `tuple-patterns-spec.md:446` |
 | Budget | | 1 strict run + 1 retry | a second failure goes back to the lane |
 
 ## 6. Sequencing and lanes
 
 One lane (all items touch `infer.rs` except CS5-5, which touches `checker.rs`, `error.rs`, `AXON_REFERENCE.md`). Order: CS5-5 (independent,
 decided), CS5-1 (adds `declared_field`, `bind_sub_pattern`, the obligation noun), CS5-2 (reuses the helper), CS5-3, then CS5-4 if
-NH-3 is (a). One commit per item. Per item: (1) write its tests and run them on base (every refusal case fails, every control passes);
-(2) the fix; (3) targeted tests, sweep (absolute path), probe re-run, g01 `--only` for its rows. Lane end: doc_snippets, spec_ledger,
-fmt, clippy, the full `cli_run` once, the native test once; then hand over to the integrator for `gate.sh --strict`. CHANGELOG and the
+NH-3 is (a). One commit per item. `[REVISED: CS5D-3]` Per item: (1) write its tests and run them on base (every refusal case fails,
+every control passes); (2) the fix (CS5-1 also re-anchors M5225); (3) targeted tests, sweep diff, probe diff; (4) commit; (5)
+`g01_anchors.py` on the committed tree (`v022_g01_mutations.py:49` refuses an uncommitted tree, and so the per-item g01 runs move to
+lane end). Lane end: one g01 `--only` over every row in §4, doc_snippets, spec_ledger,
+fmt, clippy, the full `cli_run` once (the native test is optional: strict runs it); then hand over to the integrator for `gate.sh --strict`. CHANGELOG and the
 `opportunities.md` stamps (O-TP-01/02/03, O-LF-01's remainder, O-AF-04) are written in the build, not before.
 
 ## 7. Engineering decisions (decided here; canon for the build)
@@ -399,12 +485,15 @@ language-behaviour questions.
 1. **D1 - one binding rule.** Every pattern binding whose declared or element type is known binds that type's skeleton
    (`tuple_component_skeleton`): numeric leaves are free vars checked by kind in `solve`, every other leaf is exact. This is ICS-1's
    leniency (a number may be used at any width) and tuple-patterns D2, applied to struct fields, tuple sub-patterns and typed lambda
-   params. It keeps every TP control legal, since TP's own bindings are unchanged.
+   params. It keeps every TP control legal, since TP's own bindings are unchanged. `[REVISED: CS5A-1]` A known type means one with no
+   unresolved top-level part: an element or field that is still a `Var`/`Deferred`/`Unknown`/`TypeParam`/`DynTrait` at bind time
+   keeps today's untyped binding, as CS4-3 leaves an unresolved subject unchecked (control `a15`).
 2. **D2 - diagnostics.** An exact leaf refuses at the use with the existing diagnostic (the let twin's). A numeric leaf's obligation
-   refuses with E0102; the obligation entry gains an origin noun so CS5-1 reads "use of pattern field `{name}`", CS5-2..CS5-4 "use of
-   pattern binding `{name}`", and TP's text "use of tuple pattern component `{name}`" is unchanged (no TP test text changes).
+   refuses with E0102; `[REVISED: CS5A-4]` the obligation entry carries its origin noun, so CS5-1 reads "use of pattern field
+   `{name}`", CS5-2 and CS5-4 "use of pattern binding `{name}`" (`name` the bound payload name, else the component index), CS5-3
+   "use of lambda param `{name}`", and TP's text "use of tuple pattern component `{name}`" is unchanged (no TP test text changes).
 3. **D3 - generic declared types stay unbound.** A field whose declared type has an unresolved part (`v: T`) binds `None`, as TP-4
-   did. `f06`/`u11` stay panics (§0).
+   did. `f06` stays a panic (§0). `[REVISED: CS5A-3]` `u11` is not this case (its field `r: str` is concrete) and is fixed by CS5-1.
 4. **D4 - refuse, do not warn, dead arms.** A sub-pattern that cannot match its declared type (`f36`, `g04`, `g05`, `a2`) is refused,
    the class decided by checker-soundness-4 D9 and tuple-patterns D3.
 5. **D5 - CS5-4 checks kinds only.** No binding, no unification, no arity refusal at solve time; an unresolved subject is skipped.
@@ -437,7 +526,12 @@ language-behaviour questions.
 | what | result |
 |---|---|
 | `axon --version` | `axon 0.1.0 (f14bc25f)` |
-| `run.sh` over 197 probes (`final.txt`) | every check/run figure quoted in §2 |
+| `run.sh` over 197 probes (`final-v1.txt`), then 201 with the review's four (`final.txt`, 2.24 s; rows unchanged except order, `diff` checked) | every check/run figure quoted in §2 |
+| `final.txt` format | `./run.sh p/*.ax q/*.ax r/*.ax t/*.ax w/*.ax 2>&1 \| sed -E 's/err=\[\{"schema"[^]]*"code":"([A-Z0-9]+)".*"message":"([^"]{0,50}).*$/err=[\1 \2]/' \| sed -E 's/^([^ ]+)\.ax/\1/' \| cut -c1-150` |
+| Step 1 review probes: `r/a15_var_elem_multi`, `t/a15t_toplevel_twin`, `r/a26_m5247_killer`, `r/a25_foreign_unknown_variant` | 0/0 `3`; 2 E0102:2 "type mismatch in Ok pattern"; 0/0 `o`; 2 E0001:5 |
+| review checks: `infer.rs:3113` holds M5225's `old` text once; active `infer.rs` g01 rows anchored in the edited regions (script over `v022_g01_mutations.py`) | 17 rows, listed in §4 |
+| `diff` of `review-CS5/CS5D/sweep-copied.tsv` (copied binary) against `base.tsv`, hash column | 6 rows differ (§3), rc column identical |
+| `tp-gate.log` stage lines | S16 633.6 s, S17 2.3 s, S22 86.4 s; native TP test `ok` at `:13657` |
 | `/var/tmp/r51-tmp/tp03.ax` | check rc 0; run `axon: panic: cannot apply Add to str / i64` |
 | `run.sh Soundness4/lf/v2q_noall.ax Soundness4/lf/v2q_ok.ax CS4A/en.ax`; `AXON_ENGINE=vm axon run CS4A/en.ax` | 0/0 `1`; 0/0 `6`; 0/0 `1\|1`; rc 0 `1\|1` |
 | sweep x2 (`base.tsv`, `base3.tsv`) | 717 files, 626 rc 0, 91 rc 2, identical |
