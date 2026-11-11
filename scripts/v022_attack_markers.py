@@ -4469,6 +4469,10 @@ ATTACK_MARKERS.update({
 ATTACK_MARKERS.update({
     'M5240': r'ATTACK: a struct or variant pattern field of the wrong type checked clean',
     'M5241': r'ATTACK: a struct or variant pattern field of the wrong type checked clean',
+    'M5242': r'ATTACK: a sub-pattern of a tuple pattern of the wrong type checked clean',
+    # f30 (`S::C { o: Some(x) }`, `let y: u8 = x`) precedes g03 in the controls.
+    'M5243': r'ATTACK: a valid pattern match was refused \[cs5_(f30|g03)\]',
+    'M5248': r'ATTACK: a valid pattern match was refused \[cs5_a15\]',
     'M4719': r'ATTACK: a pattern of another enum checked clean',
     'M5249': r'ATTACK: a pattern of another enum checked clean',
 })

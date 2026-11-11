@@ -3131,8 +3131,11 @@ impl InferCtx {
             // `solve()` requires to be a number (an int literal's component
             // used as `u8` or `f64` runs today), every other leaf is exact, as
             // the `let (a, b) = t` twin's `.i` read. TP-2: a nested tuple
-            // pattern is bound against its element. Other sub-patterns keep
-            // no type (O-TP-02).
+            // pattern is bound against its element. CS5-2 (O-TP-02): any other
+            // sub-pattern (`Some`/`Ok`/`Err`/a struct) is bound against its
+            // element through `bind_sub_pattern` when the element is resolved;
+            // an element still a var keeps no type, since the `Some`/`Ok` arms
+            // would pin it to `Option` in one arm and `Result` in the next.
             Pattern::Tuple(pats) => {
                 let concrete = subj_ty.filter(|st| {
                     !pats.is_empty()
@@ -3168,6 +3171,15 @@ impl InferCtx {
                         (Pattern::Tuple(_), Some(elem)) => {
                             self.bind_pattern_with_subj(pat, scope, Some(elem));
                         }
+                        (_, Some(elem)) if !type_is_unresolved(elem) => {
+                            let mut names = Vec::new();
+                            crate::resolver::collect_pattern_binding_names(pat, &mut names);
+                            let name = match names.as_slice() {
+                                [one] => one.clone(),
+                                _ => format!("#{i}"),
+                            };
+                            self.bind_sub_pattern(pat, elem, &name, "pattern binding", scope);
+                        }
                         _ => self.bind_pattern_with_subj(pat, scope, None),
                     }
                 }
@@ -3175,12 +3187,13 @@ impl InferCtx {
         }
     }
 
-    /// CS5-1: bind the sub-pattern `pat` whose type is known to be `decl`
-    /// (a struct field's declared type). An `Ident` binds `decl`'s skeleton
-    /// (TP-1's rule: numeric leaves free, checked by kind in `solve`; every
-    /// other leaf exact); a tuple pattern is bound against `decl` itself
-    /// (TP-2..TP-4); `Some`/`Ok`/`Err` and a nested struct pattern are bound
-    /// against the skeleton, so a payload `Ident` gets the skeleton's leaf and
+    /// CS5-1, CS5-2: bind the sub-pattern `pat` whose type is known to be
+    /// `decl` (a struct field's declared type, a tuple pattern's element). An
+    /// `Ident` binds `decl`'s skeleton (TP-1's rule: numeric leaves free,
+    /// checked by kind in `solve`; every other leaf exact); a tuple pattern
+    /// is bound against `decl` itself (TP-2..TP-4); `Some`/`Ok`/`Err` and a
+    /// nested struct pattern are bound against the skeleton, so a payload
+    /// `Ident` gets the skeleton's leaf and
     /// a payload of the wrong shape is refused. `name` and `noun` name a
     /// numeric leaf's obligation for any form but `Ident`, which uses its own.
     fn bind_sub_pattern(

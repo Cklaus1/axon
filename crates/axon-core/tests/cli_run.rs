@@ -48715,12 +48715,39 @@ fn struct_pattern_fields_are_typed() {
     }
 }
 
+/// CS5-2 (O-TP-02): a `Some`/`Ok`/`Err`/struct sub-pattern of a tuple
+/// pattern is bound against its (resolved) element: a payload binding takes
+/// the element's skeleton (numbers at any width, everything else exact).
+/// Each case checked rc 0 and then panicked at run; the `let` twin is
+/// refused. `g06` (a struct sub-pattern) is already caught by CS5-1's field
+/// rule; `[REVISED: build 2026-11-11]` `g10` (the tuple a typed fn param)
+/// is fixed by the same rule.
+#[test]
+fn tuple_sub_patterns_are_typed() {
+    let attack = "ATTACK: a sub-pattern of a tuple pattern of the wrong type checked clean";
+    let cases = [
+        ("g01", "fn main() {\n    match (Some(\"x\"), 2) { (Some(a), b) => println(to_str(a + 1)), _ => println(\"o\") }\n}\n", 2),
+        ("g02", "fn main() {\n    let t: (Result<str, i64>, i64) = (Ok(\"x\"), 1)\n    match t { (Ok(a), b) => println(to_str(a + b)), _ => println(\"o\") }\n}\n", 3),
+        ("g06", "enum W { P { r: str }, N }\nfn main() {\n    match (W::P { r: \"a\" }, 2) { (W::P { r }, b) => println(to_str(r + b)), _ => println(\"o\") }\n}\n", 3),
+        ("g13", "fn main() {\n    match (Some(Some(\"x\")), 2) { (Some(Some(a)), b) => println(to_str(a + b)), _ => println(\"o\") }\n}\n", 2),
+        ("g14", "fn main() {\n    match (Some((1, \"s\")), 2) { (Some((a, s)), b) => println(to_str(s + b)), _ => println(\"o\") }\n}\n", 2),
+        ("g18", "fn mk() -> (Result<i64, str>, i64) { (Err(\"e\"), 1) }\nfn main() {\n    match mk() { (Err(e), b) => println(to_str(e + b)), _ => println(\"o\") }\n}\n", 3),
+        ("g08b", "fn main() {\n    match (Some(1), 2) { (Some(a), b) => println(to_str(str_len(a))), _ => println(\"o\") }\n}\n", 2),
+        ("g10", "fn f(t: (Option<str>, i64)) -> i64 { match t { (Some(a), b) => a + b, _ => 0 } }\nfn main() { println(to_str(f((Some(\"x\"), 1)))) }\n", 1),
+    ];
+    for (tag, src, line) in cases {
+        cs5_assert_refused(attack, tag, src, "E0102", line);
+    }
+}
+
 /// CS5-1..CS5-4, NH-1 (a): a pattern binding used as another kind is refused
 /// even where the interpreter passes the value through and prints (`println`,
 /// `==`, an arm join); each concrete twin is refused today. A sub-pattern
 /// that can never match its declared type is refused too (D4, `f36` ran a
 /// dead arm). `[REVISED: build 2026-11-11]` `s09` (`println` of a struct
 /// field) and `s15` (of a bool field) are the same class (twins E0306).
+/// CS5-2: `g09` (`println` of a `Some(1)` payload), `g04`/`g05` (`Some` on
+/// an `i64`/`str` element, a dead arm).
 #[test]
 fn pattern_binding_misuse_that_runs_is_refused() {
     let attack = "ATTACK: a pattern binding used as another kind checked clean";
@@ -48732,6 +48759,9 @@ fn pattern_binding_misuse_that_runs_is_refused() {
         ("f36", "enum S { C { r: str }, N }\nfn main() {\n    let v = S::C { r: \"a\" }\n    match v { S::C { r: Some(x) } => println(\"s\"), _ => println(\"o\") }\n}\n", 4),
         ("s09", "type P = { x: i64 }\nenum S { C { p: P }, N }\nfn main() {\n    let v = S::C { p: P { x: 2 } }\n    match v { S::C { p } => println(p), S::N => println(\"n\") }\n}\n", 5),
         ("s15", "enum S { C { b: bool }, N }\nfn main() {\n    let v = S::C { b: true }\n    match v { S::C { b } => println(b), S::N => println(\"n\") }\n}\n", 4),
+        ("g09", "fn main() {\n    match (Some(1), 2) { (Some(a), b) => println(a), _ => println(\"o\") }\n}\n", 2),
+        ("g04", "fn main() {\n    match (5, 2) { (Some(a), b) => println(\"s\"), _ => println(\"o\") }\n}\n", 2),
+        ("g05", "fn main() {\n    match (\"s\", 2) { (Some(a), b) => println(\"s\"), _ => println(\"o\") }\n}\n", 2),
     ];
     for (tag, src, line) in cases {
         cs5_assert_refused(attack, tag, src, "E0102", line);
@@ -48743,7 +48773,9 @@ fn pattern_binding_misuse_that_runs_is_refused() {
 /// `f05`, `f30`, `s07`: arms join `i64` and `u8` only because both leaves are
 /// free), as `Decimal`/`Uncertain`/`dyn` (`f28`, `f29`); literal sub-patterns
 /// stay unchecked (`s12`, O-CS4-04); a generic struct's concrete field binds
-/// (`f49`).
+/// (`f49`). CS5-2: a tuple's payload number at any width (`g03`, `g19`); an
+/// element still unresolved at bind time stays unbound, so one element var
+/// matched as `Some` in one arm and `Ok` in the next runs (`a15`).
 #[test]
 fn pattern_binding_controls_stay_legal() {
     let attack = "ATTACK: a valid pattern match was refused";
@@ -48772,6 +48804,10 @@ fn pattern_binding_controls_stay_legal() {
         ("f49", "type Box<T> = { v: T }\nenum S { C { b: Box<str> }, N }\nfn main() {\n    let v = S::C { b: Box { v: \"a\" } }\n    match v { S::C { b } => println(b.v + \"!\"), S::N => println(\"n\") }\n}\n", "a!\n"),
         ("w17", "enum S { C { o: Option<i64> }, N }\nfn main() {\n    let v = S::C { o: Some(4) }\n    match v { S::C { o } => match o { Some(x) => println(to_str(x)), None => println(\"n\") }, S::N => println(\"n\") }\n}\n", "4\n"),
         ("w18", "enum S { C { b: bool }, N }\nfn main() {\n    let v = S::C { b: true }\n    match v { S::C { b } => println(to_str(b)), S::N => println(\"n\") }\n}\n", "true\n"),
+        ("g03", "fn main() {\n    match (Some(1), 2) { (Some(a), b) => { let x: u8 = a\n println(to_str(x)) }, _ => println(\"o\") }\n}\n", "1\n"),
+        ("g07", "fn main() {\n    match (Some(\"x\"), 2) { (Some(a), b) => println(a + to_str(b)), _ => println(\"o\") }\n}\n", "x2\n"),
+        ("g19", "fn main() {\n    match (Some(1), 2) { (Some(a), b) => { let y: Decimal = a\n println(\"k\") }, _ => println(\"o\") }\n}\n", "k\n"),
+        ("a15", "fn main() {\n    let f = |p| match (p, 1) { (Some(a), _) => 1, (Ok(b), _) => 2, _ => 3 }\n    println(to_str(f(Some(1)) + f(Ok(1))))\n}\n", "3\n"),
     ];
     for (tag, src, out) in cases {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs5c_{tag}"), src);
