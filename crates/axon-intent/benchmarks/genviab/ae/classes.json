@@ -1,0 +1,20 @@
+{
+ "schema": "axon-ae-classes/1",
+ "doc": "ae.py classes (spec AE-5): first matching rule wins. Facts: code (axon-diag/1), code_prefix, name_in_card (the first quoted name of the message appears in `axon card`; null when unknown), kind (m2, m2s, m2f), panic_kind, ended. Unmatched -> unassigned.",
+ "rules": [
+  {"class": "E0001 on a name not in the card", "area": "card/docs", "code": "E0001", "name_in_card": false},
+  {"class": "E0001 on a real builtin", "area": "naming/stdlib", "code": "E0001", "name_in_card": true},
+  {"class": "E0001 (card not consulted)", "area": "card/docs or naming/stdlib", "code": "E0001"},
+  {"class": "E0000", "area": "syntax, or the card's grammar", "code": "E0000"},
+  {"class": "type codes", "area": "checker or diagnostics", "code_prefix": "E01"},
+  {"class": "type codes", "area": "checker or diagnostics", "code_prefix": "E03"},
+  {"class": "type codes", "area": "checker or diagnostics", "code_prefix": "E04"},
+  {"class": "type codes", "area": "checker or diagnostics", "code_prefix": "E05"},
+  {"class": "type codes", "area": "checker or diagnostics", "code_prefix": "E06"},
+  {"class": "M2s", "area": "checker soundness", "kind": "m2s"},
+  {"class": "partial-op", "area": "stdlib totality", "panic_kind": "partial-op"},
+  {"class": "M2 other panic", "area": "stdlib or runtime", "kind": "m2"},
+  {"class": "M2f runtime failure", "area": "runtime limits or stdlib", "kind": "m2f"},
+  {"class": "wrong output", "area": "task or model, no action", "ended": "wrong-output"}
+ ]
+}

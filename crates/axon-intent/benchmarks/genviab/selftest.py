@@ -63,7 +63,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-COPY = ("gv.py", "build.py", "genviab.py", "rejected-ideas.json", "drivers", "dev", "once")
+COPY = ("gv.py", "build.py", "genviab.py", "ae.py", "ae", "rejected-ideas.json", "drivers", "dev",
+        "once")
 FAILS = []
 REQUIRE_BINS = os.environ.get("GENVIAB_REQUIRE_BINS") == "1"
 
@@ -1242,6 +1243,8 @@ class FakeCere:
         prompt = body["messages"][0]["content"]
         text = (f"```python\n{AE_PY}```\n" if "Python 3 program" in prompt
                 else f"```axon\n{SYN_AX}```\n")
+        if self.mode == "e0001" and "Python 3 program" not in prompt:
+            text = "```axon\nfn main() -> i64 {\n    let v = arr_new()\n    0\n}\n```\n"
         if self.mode == "changed":
             text += "\n"
         cap = body["max_tokens"]
@@ -1370,6 +1373,193 @@ def http_route():
         shutil.rmtree(root)
 
 
+AE_FX_GOALS = (" (one)", " (two)", " (three)", " (four)", " (five)", " (six)")
+FIXTURE_BIN = """#!/bin/sh
+if [ "$1" = "--version" ]; then echo "axon 0.1.0 (fixture-{tag})"; exit 0; fi
+echo "$1" >> {log}
+exec {real} "$@"
+"""
+
+
+def fixture_bins(root, tag, gv):
+    """A binary dir whose `axon` differs from the real one only in a --version
+    marker and logs every call (AE-4: a base row is graded with the base binary)."""
+    d = os.path.join(root, f"bin-{tag}")
+    os.makedirs(d)
+    log = os.path.join(root, f"{tag}.log")
+    for name, text in (("axon", FIXTURE_BIN.format(tag=tag, log=log, real=gv.AXON)),
+                       ("axon-intent", f'#!/bin/sh\nexec {gv.AXON_INTENT} "$@"\n')):
+        p = os.path.join(d, name)
+        with open(p, "w") as fh:
+            fh.write(text)
+        os.chmod(p, 0o755)
+    return d, log
+
+
+def ae_set(root, name, n):
+    set_dir = os.path.join(root, name)
+    for i in range(n):
+        ae_task(set_dir, f"t{i + 1}", goal_tag=AE_FX_GOALS[i], tier=("T1", "T2", "T3")[i % 3])
+    return set_dir
+
+
+def ae_runner():
+    """AE-4/AE-5/AE-6: ae.py over a 6-task fixture set with oracle and empty
+    generators on two marker-only fixture binaries, the statistics calls, the
+    schema, rows_sha256, the canary check, and --confirm + classes through the
+    fake CERE."""
+    sys.path.insert(0, HERE)
+    import gv
+    if not have_binaries("ae4", gv):
+        return
+    d = scratch()
+    root = tempfile.mkdtemp(prefix="ae-selftest-")
+    fake = FakeCere()
+    try:
+        set_dir = ae_set(root, "ae-fx", 6)
+        rc, out = py(d, "build.py", "--set-dir", set_dir)
+        man_sha = gv.sha256_file(os.path.join(set_dir, "manifest.json"))
+        base, base_log = fixture_bins(root, "base", gv)
+        cand, cand_log = fixture_bins(root, "cand", gv)
+        prereg = os.path.join(root, "PREREG-ae.md")
+        with open(prereg, "w") as fh:
+            fh.write(f"# PREREG\n\n**Status: FROZEN (selftest)**\n\n- set version: `ae-fx-1.0`\n"
+                     f"- manifest sha256: `{man_sha}`\n")
+        pub = os.path.join(root, "pub")
+        os.makedirs(pub)
+        subprocess.run(["git", "init", "-q", pub], check=True)
+        runs, hist = os.path.join(root, "runs"), os.path.join(root, "history.jsonl")
+        env = dict(os.environ, GENVIAB_SELFTEST="1", AE_PUBLIC_ROOT=pub)
+
+        def ae(*args, e=env):
+            return py(d, "ae.py", *args, env=e)
+
+        def run(gen, label, *extra, e=env):
+            return ae("run", "--set-dir", set_dir, "--label", label, "--base-bin", base,
+                      "--cand-bin", cand, "--seeds", "0", "--generator", gen, "--runs-dir", runs,
+                      "--history", hist, "--prereg", prereg, "--parallel", "6", *extra, e=e)
+
+        hrows = lambda: [json.loads(l) for l in open(hist)] if os.path.exists(hist) else []
+        with open(prereg + ".bad", "w") as fh:
+            fh.write(open(prereg).read().replace(man_sha, "0" * 64))
+        rc, out = ae("run", "--set-dir", set_dir, "--label", "x", "--base-bin", base, "--cand-bin",
+                     cand, "--generator", "oracle", "--runs-dir", runs, "--prereg", prereg + ".bad")
+        expect("ae4: a manifest sha other than PREREG's is refused", rc == 1 and "not PREREG" in out,
+               out[-300:])
+        rc_o, out_o = run("oracle", "fx-oracle")
+        rc_e, out_e = run("empty", "fx-empty")
+        h = hrows()
+        o = next((r for r in h if r["label"] == "fx-oracle"), None)
+        em = next((r for r in h if r["label"] == "fx-empty"), None)
+        sys.path.insert(0, d)
+        import ae as AE
+        expect("ae4: oracle and empty runs each append one trend row that validates",
+               rc_o == 0 and rc_e == 0 and len(h) == 2 and not any(AE.validate_row(r) for r in h),
+               (out_o[-600:], out_e[-600:], [AE.validate_row(r) for r in h]))
+        if o and em:
+            expect("ae4: Δ is exactly 0 and paired_mode is regrade (two copies of one binary)",
+                   o["paired"]["delta_ft_pass"] == 0 and o["paired_mode"] == "regrade"
+                   and em["paired"]["delta_ft_pass"] == 0, (o["paired"], o["paired_mode"]))
+            expect("ae4: oracle FT-pass is 1.0 and empty 0",
+                   o["metrics"]["cand"]["ft_pass"] == 1.0 and o["metrics"]["base"]["ft_pass"] == 1.0
+                   and em["metrics"]["cand"]["ft_pass"] == 0.0,
+                   (o["metrics"]["cand"]["ft_pass"], em["metrics"]["cand"]["ft_pass"]))
+            hist_row = {"set": {"version": "v"}, "model": {"series": "s"}, "python": {"ft_pass": 0.25}}
+            drift = AE.python_block([{"id": "x", "b_verified": True, "verified": True}], [],
+                                    [hist_row], "v", "s")["drift_vs_last"]
+            expect("ae6: the row carries python (arm c once per run) and drift_vs_last",
+                   o["python"] and o["python"]["ft_pass"] == 1.0 and o["python"]["gap_ft"] == 0.0
+                   and em["python"]["ft_pass"] == 0.0 and drift == 0.75, (o["python"], drift))
+            calls = lambda p: open(p).read().split().count("check") if os.path.exists(p) else 0
+            expect("ae4: each binary's rows are graded with that binary (version markers pinned)",
+                   o["base"]["git_head"] == "fixture-base" and o["cand"]["git_head"] == "fixture-cand"
+                   and calls(base_log) > 0 and calls(base_log) == calls(cand_log),
+                   (o["base"]["git_head"], calls(base_log), calls(cand_log)))
+            rc, rep = ae("report", o["run_id"], "--runs-dir", runs, "--history", hist)
+            expect("ae4: the report names the set and drafter, then the flag and the Python gap",
+                   rc == 0 and rep.startswith("ae-fx-1.0, drafted by human")
+                   and "-> NO CHANGE" in rep and "(advisory: never blocks)" in rep
+                   and "Python (arm c, M5)" in rep and "top failure classes" in rep, rep[:900])
+            with open(os.path.join(runs, o["run_id"], "base", "rows.jsonl"), "a") as fh:
+                fh.write("{}\n")
+            rc, rep = ae("report", o["run_id"], "--runs-dir", runs, "--history", hist)
+            expect("ae4: a row whose rows_sha256 mismatches is refused",
+                   rc == 1 and "rows_sha256" in rep, rep[-300:])
+        bad = dict(o or {}, schema="axon-ae/0", extra=1)
+        expect("ae4: the schema check refuses a malformed row",
+               len(AE.validate_row(bad)) >= 2 and AE.validate_row({}) != [], AE.validate_row(bad))
+        seen = []
+        real_ci = AE.stats.SignFlip.ci
+        AE.stats.SignFlip.ci = lambda self, alpha=0.05, **k: seen.append(alpha) or real_ci(self, alpha, **k)
+        try:
+            sf = AE.signflip({"a": 1.0, "b": 1.0, "c": 1.0}, {"a": "f1", "b": "f2", "c": "f3"})
+        finally:
+            AE.stats.SignFlip.ci = real_ci
+        expect("ae4: the CI call passes alpha=0.025 and p is two-sided (3 families, exact: 2 x 1/8)",
+               seen == [0.025] and sf["method"] == "exact" and abs(sf["p_two_sided"] - 0.25) < 1e-9,
+               (seen, sf))
+        r0 = {"run_id": "r1", "design": "paired", "flag": "REGRESSION-UNCONFIRMED"}
+        conf = lambda hi: {"run_id": "r2", "design": "confirm", "confirms": "r1",
+                           "paired": {"ci95": [-0.3, hi]}}
+        expect("ae4: the report resolves a fixture pair to REGRESSION / NOT CONFIRMED",
+               AE.resolve_flag(r0, []) == "REGRESSION-UNCONFIRMED"
+               and AE.resolve_flag(r0, [conf(-0.05)]) == "REGRESSION"
+               and AE.resolve_flag(r0, [conf(0.0)]) == "NOT CONFIRMED"
+               and AE.flag_of({"ci95": [-0.3, -0.1]}, "paired") == "REGRESSION-UNCONFIRMED"
+               and AE.flag_of({"ci95": [0.1, 0.3]}, "paired") == "IMPROVED")
+        import datetime as dt
+        try:
+            AE.window_end(dt.datetime(2026, 11, 10, 3, 0), None, True)
+            blackout = False
+        except AE.Refused:
+            blackout = True
+        expect("ae4: a CERE run never starts 01:30-08:00 and stops dispatching at 01:30",
+               blackout and AE.window_end(dt.datetime(2026, 11, 10, 22, 0), None, True)
+               == dt.datetime(2026, 11, 11, 1, 30))
+        with open(os.path.join(pub, "fixture.txt"), "w") as fh:
+            fh.write(f"canary {AE_CANARY}\n")
+        subprocess.run(["git", "-C", pub, "add", "fixture.txt"], check=True)
+        rc, out = ae("check-canaries", "--set-dir", set_dir)
+        expect("ae4: a canary in a fixture file under git ls-files fails the check",
+               rc == 1 and "fixture.txt" in out, out[-300:])
+        subprocess.run(["git", "-C", pub, "rm", "-q", "--cached", "fixture.txt"], check=True)
+
+        # --confirm and classes through the fake CERE (a check error in every round).
+        hset = ae_set(root, "ae-http", 2)
+        py(d, "build.py", "--set-dir", hset)
+        envf = os.path.join(root, "cere.env")
+        with open(envf, "w") as fh:
+            fh.write("CERE_TOKEN_AE=selftest-token\n")
+        he = dict(env, GENVIAB_HTTP_BASE_URL=fake.base, GENVIAB_HTTP_ENV_FILE=envf,
+                  GENVIAB_REPLAY_MIN="0", GENVIAB_REPLAY_FRACTION="0")
+        fake.mode = "e0001"
+        hrun = lambda *x: ae("run", "--set-dir", hset, "--label", "fx-http", "--runs-dir", runs,
+                             "--prereg", os.path.join(root, "unfrozen.md"), "--pilot", "--parallel", "4",
+                             "--cache-dir", os.path.join(root, "cache"), *x, e=he)
+        rc1, out1 = hrun("--base-bin", base, "--cand-bin", cand, "--seeds", "0")
+        first = sorted(os.listdir(runs))
+        rid1 = next((x for x in first if x.endswith("fx-http")), None)
+        rc2, out2 = hrun("--confirm", rid1 or "none")
+        rid2 = next((x for x in sorted(os.listdir(runs)) if x not in first), None)
+        r2 = json.load(open(os.path.join(runs, rid2, "row.json"))) if rid2 else {}
+        expect("ae4: a --confirm run uses none of the first run's seeds and makes 0 cache hits",
+               rc1 == 0 and rc2 == 0 and r2.get("design") == "confirm" and r2.get("confirms") == rid1
+               and r2["model"]["seeds"] == [1] and r2["cache"]["hits"] == 0
+               and r2["cost"]["calls"] > 0 and not AE.validate_row(r2),
+               (out1[-400:], out2[-400:], r2.get("model"), r2.get("cache")))
+        rc, out = ae("classes", rid1 or "none", rid2 or "none", "--runs-dir", runs, "--history", hist)
+        task_text = gv.goal(open(os.path.join(hset, "t1", "intent.md")).read())
+        stanza = out.split("## draft opportunities stanzas", 1)[-1]
+        expect("ae5: classes prints the class table, stall rates and a draft stanza without task text",
+               rc == 0 and "| E0001 cannot find name `arr_new`" in out
+               and "card/docs" in out and "| E0001 | " in out and "### (draft)" in stanza
+               and task_text not in stanza and "t1" not in stanza, out[-1500:])
+    finally:
+        fake.close()
+        shutil.rmtree(d)
+        shutil.rmtree(root)
+
+
 def main():
     build_args_and_tamper()
     build_mechanical()
@@ -1382,6 +1572,7 @@ def main():
     ae_loader()
     http_route()
     failure_class_fixtures()
+    ae_runner()
     if FAILS:
         print(f"{len(FAILS)} failure(s): {FAILS}")
         return 1

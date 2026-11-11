@@ -688,8 +688,10 @@ def run_arm_c(a, task, out):
                 break
             text = r.stdout
             used += reported_tokens(r.stderr)
+        elif a.generator == "oracle" and task.get("reference_py"):
+            text = task["reference_py"]     # an ae task's reference.py (AE-4 fixtures)
         else:
-            raise Refused("arm c has no oracle generator")
+            raise Refused("arm c's oracle answers reference.py: this task has none")
         src = strip_python(text)
         res = gv.grade_python(task, src, ("visible",))
         rec = {"round": rnd, "candidate": text, "source": src, "stage": res["stage"],
@@ -811,6 +813,24 @@ def resolve_model(a):
         a.model = providers[a.provider]["model"] if a.generator == "http" else DEFAULT_MODEL
 
 
+def task_row(a, t, out, set_name, bins=None):
+    """One task-trial's full row: the arm's row plus identity, the call summary
+    and the model-substitution rule. Shared by cmd_run and ae.py (AE-4)."""
+    row = run_arm_a(a, t, out, bins) if a.arm == "a" else run_arm_c(a, t, out)
+    calls = summarize_calls(call_rows(os.path.join(out, "calls", f"{t['id']}.jsonl")))
+    row = {"id": t["id"], "set": set_name, "arm": a.arm, "generator": a.generator,
+           "category": t.get("category", "transform"),
+           "tempting": t.get("category") == "tempting", **row, **calls}
+    if t.get("set_mode") == "ae":
+        row.update(family=t.get("family"), tier=t.get("tier"))
+    # A provider that served another model than the one requested: unscored
+    # (PREREG section 3; no model substitution). Every model generator (AE-1).
+    row["model_substituted"] = a.generator in MODEL_GENERATORS and any(
+        m != a.model for m in calls["served_models"])
+    row["infra"] = row["infra"] or row["model_substituted"]
+    return row
+
+
 def cmd_run(a):
     if bool(a.set) == bool(a.set_dir):
         raise Refused("pass exactly one of --set and --set-dir")
@@ -824,9 +844,9 @@ def cmd_run(a):
             raise Refused(f"--only names tasks not in the manifest: {unknown}")
         tasks = [t for t in tasks if t["id"] in want]
     paid = a.generator == "micode"
-    if a.generator == "oracle" and a.arm == "c":
-        raise Refused("arm c has no oracle generator")
-    if a.generator == "oracle":
+    if a.generator == "oracle" and a.arm == "c" and any(not t.get("reference_py") for t in tasks):
+        raise Refused("arm c's oracle answers reference.py: only an ae set has one")
+    if a.generator == "oracle" and a.arm == "a":
         py_ref = [t["id"] for t in tasks if t["reference_lang"] != "axon"]
         if py_ref:
             raise Refused(f"the oracle generator needs reference.ax: {py_ref} have none")
@@ -907,22 +927,11 @@ def cmd_run(a):
                     return
                 in_flight[0] += 1
         try:
-            row = run_arm_a(a, t, out) if a.arm == "a" else run_arm_c(a, t, out)
+            row = task_row(a, t, out, set_name)
         finally:
             if paid:
                 with lock:
                     in_flight[0] -= 1
-        calls = summarize_calls(call_rows(os.path.join(out, "calls", f"{t['id']}.jsonl")))
-        row = {"id": t["id"], "set": set_name, "arm": a.arm, "generator": a.generator,
-               "category": t.get("category", "transform"),
-               "tempting": t.get("category") == "tempting", **row, **calls}
-        if t.get("set_mode") == "ae":
-            row.update(family=t.get("family"), tier=t.get("tier"))
-        # A provider that served another model than the one requested: unscored
-        # (PREREG section 3; no model substitution). Every model generator (AE-1).
-        row["model_substituted"] = model_gen and any(
-            m != a.model for m in calls["served_models"])
-        row["infra"] = row["infra"] or row["model_substituted"]
         with lock:
             with open(rows_path, "a") as fh:
                 fh.write(json.dumps(row) + "\n")
