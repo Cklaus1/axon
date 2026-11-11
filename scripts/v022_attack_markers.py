@@ -4465,3 +4465,9 @@ ATTACK_MARKERS.update({
     'M5231': r'ATTACK: a valid tuple match was refused \[tp_k20\]',
 })
 
+# release-contract RC-2..RC-5 (ids M5260-M5268, block M5260-M5279)
+ATTACK_MARKERS.update({
+    'M5260': r'ATTACK: the card text changed without a card version bump',
+    'M5261': r'ATTACK: axon card does not print its card version',
+})
+

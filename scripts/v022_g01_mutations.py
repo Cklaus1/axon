@@ -16102,6 +16102,21 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_controls_stay_legal'),
 ]
 
+# release-contract RC-2..RC-5 (ids M5260-M5268, block M5260-M5279; tasks/release-contract-spec.md §4):
+# the card version is pinned to the card text, `axon card --card-version` prints it, the release
+# ledger holds every behaviour/card change to a MINOR bump, and the compat diff reports newly
+# refused tracked programs.
+MUTATIONS += [
+    ('M5260', 'RC-2: a curated card line is reworded with CARD_VERSION unchanged', 'crates/axon-core/src/card.rs',
+     '- `main` returns the process exit code: `0` for success, non-zero for failure. Never call `exit()`.',
+     '- `main` returns the process exit code: `0` for success, nonzero for failure. Never call `exit()`.',
+     'axon-core', '--no-default-features --lib', 'card::tests::the_card_hash_is_pinned_to_its_version'),
+    ('M5261', 'RC-2: `axon card --card-version` prints 0, not CARD_VERSION', 'crates/axon-core/src/main.rs',
+     'println!("{}", axon_core::card::CARD_VERSION);',
+     'println!("{}", 0);',
+     'axon-core', '--no-default-features --test cli_run', 'axon_card_prints_its_version_number'),
+]
+
 
 
 if __name__ == "__main__":

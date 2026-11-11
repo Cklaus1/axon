@@ -10,9 +10,15 @@
 //!
 //! The card is a pure function of this binary's tables: no clock, no
 //! environment, no version string, so its sha256 changes only when its text
-//! does.
+//! does. Its version, [`CARD_VERSION`], lives beside the text, not in it.
 
 use crate::builtins::{BuiltinFn, BUILTINS};
+
+/// The card version `axon card --card-version` prints (`spec/stability.md`
+/// rule 4). It increases by 1 whenever [`card`]'s text changes, and
+/// `crates/axon-core/card-versions.txt` gets one appended line
+/// `<N> <sha256 of the card>`; a test holds the last line to this card.
+pub const CARD_VERSION: u32 = 1;
 
 /// Sections 1 and 2: syntax and program rules. Every ```` ```axon ```` block
 /// is a whole program that `axon check` accepts (tested).
@@ -716,6 +722,57 @@ mod tests {
         assert!(
             !a.contains("@[contained("),
             "the card teaches no ceiling syntax"
+        );
+    }
+
+    /// RC-2: `card-versions.txt` lists `<N> <sha256>` per card version; the
+    /// last line is `CARD_VERSION` and the sha of today's `card()`. A card
+    /// text change without a bump and an appended line fails here.
+    #[test]
+    fn the_card_hash_is_pinned_to_its_version() {
+        use sha2::Digest;
+        let file = include_str!("../card-versions.txt");
+        let mut shas: Vec<&str> = Vec::new();
+        for (i, line) in file.lines().enumerate() {
+            let (n, sha) = line.split_once(' ').unwrap_or_else(|| {
+                panic!("card-versions.txt:{}: not `<N> <sha256>`: {line:?}", i + 1)
+            });
+            assert_eq!(
+                n.parse::<usize>().ok(),
+                Some(i + 1),
+                "card-versions.txt:{}: versions must run 1, 2, ... with no gap",
+                i + 1
+            );
+            assert!(
+                sha.len() == 64
+                    && sha
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+                "card-versions.txt:{}: not a lowercase 64-hex sha256: {sha:?}",
+                i + 1
+            );
+            assert!(
+                !shas.contains(&sha),
+                "card-versions.txt:{}: sha repeats an earlier card version",
+                i + 1
+            );
+            shas.push(sha);
+        }
+        assert!(!shas.is_empty(), "card-versions.txt is empty");
+        assert_eq!(
+            shas.len(),
+            CARD_VERSION as usize,
+            "the last line of card-versions.txt is not CARD_VERSION"
+        );
+        let now: String = sha2::Sha256::digest(card().as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let pinned = shas[shas.len() - 1];
+        assert_eq!(
+            now, pinned,
+            "ATTACK: the card text changed without a card version bump: card {CARD_VERSION} is pinned to {pinned}, \
+             the card now hashes to {now}; bump CARD_VERSION and append a line to card-versions.txt"
         );
     }
 
