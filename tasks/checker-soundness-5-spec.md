@@ -352,6 +352,13 @@ a late-resolved subject checked clean`.
 
 **Acceptance.** Test passes; controls stay; sweep no tracked change.
 
+`[REVISED: impl audit 2026-11-11]` `kinds_conflict` compares only scalar kinds, so a container element (tuple, `[T]`, `Option`,
+`Result`) used as a scalar passed: `c3` (`(p, n)` on `id(((1, "s"), 2))`, `str_len(p)`) checked 0 and panicked `expected str, got
+tuple`. The deferred check now also refuses a container element against a scalar use and a scalar element against a container use
+(`elem_use_conflicts`), E0102 at the pattern line; `c3p` (`println(p)` of that component, its concrete twin E0102) is in the misuse
+test (NH-1 (a)) and `c3r` (a `[i64]` element indexed) in the controls. Residual (D5, kinds only): a use that leaves the binding
+unresolved (`o + n` on an `Option` element) is not checked and still panics at run. g01 M5253.
+
 ### CS5-5 (P3, decided) A qualified pattern of a different enum is refused (carries CS4-5)
 
 Decided by the human 2026-11-11: NH-4 of `tasks/checker-soundness-4-spec.md` is (a), CS4-5 is built in this batch (Main's message;
@@ -402,6 +409,13 @@ diagnostics hold E0001 and no E0405. Marker `ATTACK: a pattern of another enum c
 **g01 row**: M4719 (reserved by checker-soundness-4 §4, outside this block; `grep` finds no `M4719` in `scripts/` at f14bc25f).
 
 **Acceptance.** Test passes; sweep no tracked change; `axon reference` diff is the E0405 line only; O-AF-04 closes.
+
+`[REVISED: impl audit 2026-11-11]` The checker's `if`/`else`, `while` and match-arm blocks leaked a `let` into the enclosing scope,
+which before this item only cost a false E0304 on an exhaustive match; with E0405 it refused valid programs (`let c = C::Red`, then
+`if true { let c = D::Up }`, then `match c { C::Red => .. }` was E0405, base check 0). A block whose own statements declare a local
+is now checked in a copy of the scope (`check_branch`, and the `while`/`while let` body), so the outer binding keeps its type. Controls
+`k1`, `w1`..`w4` in `foreign_enum_variant_pattern_is_refused`. Measured: all 717 tracked files byte-identical; across ~48,700 probe
+files under `/var/tmp/r51-tmp` the only check-rc changes are those controls going 2 -> 0. g01 M5251, M5252.
 
 ## 3. Shared mechanics
 
@@ -458,8 +472,12 @@ exact `old` text after the fix lands (it must occur once in the file). Rows M524
 | M5247 | CS5-4 | the arity guard on a deferred subject (mutant: `true`) | infer.rs | `pattern_binding_controls_stay_legal` (`a26`; `[REVISED: CS5A-2]` was `u07`, which binds nothing it uses, so the mutant survived) | `ATTACK: a valid pattern match was refused \[cs5_a26\]` |
 | M4719 | CS5-5 | the foreign-enum E0405 emit (mutant: `if false`) | checker.rs | `foreign_enum_variant_pattern_is_refused` (`v2q_noall`) | `ATTACK: a pattern of another enum checked clean` |
 | M5249 | CS5-5 | `[REVISED: CS5A-6]` the "`V` is a variant of `X`" condition (mutant: `true`) | checker.rs | `foreign_enum_variant_pattern_is_refused` (`a25`: E0001, no E0405) | `ATTACK: a pattern of another enum checked clean` |
+| M5250 | CS5-3 | `[REVISED: build 2026-11-11]` the alias condition `self.names_alias_enum(&ty)` on an annotated param (mutant: `false`) | infer.rs | `a_call_through_a_matching_fn_value_still_runs` (`snd_lambda_alias`) | `ATTACK: a valid call through a fn value was refused \[snd_lambda_alias\]` |
+| M5251 | CS5-5 | `[REVISED: impl audit 2026-11-11]` `check_branch`'s scope for a block that declares a local (mutant: `false && ..`) | checker.rs | `foreign_enum_variant_pattern_is_refused` (controls `k1`, `w2`, `w3`, `w4`) | `ATTACK: a pattern of another enum checked clean \[(k1\|w2\|w3\|w4)\]: a valid match was refused` |
+| M5252 | CS5-5 | `[REVISED: impl audit 2026-11-11]` the while body's own scope (mutant: check the body in the outer scope) | checker.rs | same (control `w1`) | `ATTACK: a pattern of another enum checked clean \[w1\]: a valid match was refused` |
+| M5253 | CS5-4 | `[REVISED: impl audit 2026-11-11]` a container element against a scalar use in `elem_use_conflicts` (mutant: `false && ..`) | infer.rs | `tuple_pattern_on_a_late_resolved_subject_is_checked` (`c3`) | `ATTACK: a tuple pattern on a late-resolved subject checked clean \[c3\]` |
 
-M5250-M5259 stay free for implementation-review fixes. A CS5-4 drop (NH-3 (b)) drops M5246/M5247.
+M5254-M5259 stay free. A CS5-4 drop (NH-3 (b)) drops M5246/M5247 and M5253.
 
 **Existing rows the edits touch** `[REVISED: CS5D-1]`. `g01_anchors.py` ("every ACTIVE G01 mutation row still anchors exactly
 once", `:2`) runs in every gate (`gate.sh:718`, `par "G01 mutation anchors"`), so a removed anchor fails strict. I loaded every
