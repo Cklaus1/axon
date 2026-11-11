@@ -16052,8 +16052,8 @@ MUTATIONS += [
 # solve), nested tuple patterns and tuple payloads of Some/Ok and of struct fields are checked.
 MUTATIONS += [
     ('M5220', 'TP-1: a tuple pattern component is bound untyped (g1_cross `a + b` on (1, "s") checks clean)', 'crates/axon-core/src/infer.rs',
-     'let ty = self.tuple_component_skeleton(elem, name);',
-     'let ty = self.fresh();',
+     'let ty = self.tuple_component_skeleton(\n                                elem,',
+     'let ty = self.fresh();\n                            let _ = self.tuple_component_skeleton(\n                                elem,',
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_components_are_typed'),
     ('M5221', 'TP-1: a numeric component used as another kind is not refused (c8 `len(a)` on an int checks clean)', 'crates/axon-core/src/infer.rs',
      '            if !type_is_unresolved(&used)',
@@ -16084,8 +16084,8 @@ MUTATIONS += [
      '(Some(Type::Result(ok, _)), Pattern::Tuple(_)) => { let _ = ok; &inner_var }',
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_nested_and_payload_shapes_are_checked'),
     ('M5225', 'TP-4: a tuple pattern in a struct field is bound untyped (e3 `W::P { t: (a, b) }` on a 3-tuple field checks clean)', 'crates/axon-core/src/infer.rs',
-     'self.bind_pattern_with_subj(pat, scope, declared.as_ref());',
-     'self.bind_pattern_with_subj(pat, scope, declared.as_ref().filter(|_| false));',
+     'Pattern::Tuple(_) => self.bind_pattern_with_subj(pat, scope, Some(decl)),',
+     'Pattern::Tuple(_) => self.bind_pattern_with_subj(pat, scope, None),',
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_in_a_struct_field_is_checked'),
     # [REVISED: TPI-1, TPI-2] implementation review 2026-11-10 (ids M5229-M5231)
     ('M5229', 'TPI-1: a fn-valued component\'s param is not compared as its leaf (f01 `f("s")` with f from (inc, 2) checks clean)', 'crates/axon-core/src/infer.rs',
@@ -16106,6 +16106,14 @@ MUTATIONS += [
 # reserved CS4-5 row; tasks/checker-soundness-5-spec.md §4): a pattern binding takes its declared or
 # element type's skeleton, and a qualified pattern of another enum is E0405.
 MUTATIONS += [
+    ('M5240', 'CS5-1: a struct pattern field is bound untyped (f01 `S::C { r } => r + 1` with r: str checks clean)', 'crates/axon-core/src/infer.rs',
+     'let ty = self.tuple_component_skeleton(decl, n, noun);',
+     'let ty = self.fresh();',
+     'axon-core', '--no-default-features --test cli_run', 'struct_pattern_fields_are_typed'),
+    ('M5241', 'CS5-1: only a tuple-typed field is bound (TP-4 filter restored: f16 bool field `b + 1` checks clean)', 'crates/axon-core/src/infer.rs',
+     '(!has_unresolved(ty)).then(|| ty.clone())',
+     '(matches!(ty, Type::Tuple(_)) && !has_unresolved(ty)).then(|| ty.clone())',
+     'axon-core', '--no-default-features --test cli_run', 'struct_pattern_fields_are_typed'),
     ('M4719', 'CS5-5: a pattern of another enum is not refused (v2q_noall `D::Up` on a `C` checks clean)', 'crates/axon-core/src/checker.rs',
      'if pat_enum != subject_enum && known_variant {',
      'if false && pat_enum != subject_enum && known_variant {',

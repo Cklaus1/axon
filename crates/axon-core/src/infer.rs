@@ -932,11 +932,13 @@ pub struct InferCtx {
     /// CS2-3a: the `Num` variable of each call to a numeric-key builtin, which
     /// `solve()` requires to be an int or a float.
     num_obligations: Vec<(Type, crate::span::Span)>,
-    /// TP-1: one entry per numeric leaf of a tuple pattern component bound
-    /// against a known element type: (the element's leaf type, the free var
-    /// that stands for it, the component's name, the pattern's statement).
-    /// `solve()` requires each var to resolve to a number, if it resolves.
-    tuple_component_obligations: Vec<(Type, Type, String, crate::span::Span)>,
+    /// TP-1: one entry per numeric leaf of a pattern binding bound against a
+    /// known element or declared type: (the leaf type, the free var that
+    /// stands for it, the binding's name, its origin noun, the pattern's
+    /// statement). `solve()` requires each var to resolve to a number, if it
+    /// resolves. The noun (CS5 D2) names the binding in the refusal: "tuple
+    /// pattern component", "pattern field", "pattern binding", "lambda param".
+    tuple_component_obligations: Vec<(Type, Type, String, &'static str, crate::span::Span)>,
     /// CS2-6: calls whose callee is not a fn name with a signature. Checked
     /// by `solve()` against the callee's resolved fn type.
     call_obligations: Vec<CallObligation>,
@@ -3100,17 +3102,20 @@ impl InferCtx {
                 };
                 self.bind_pattern_with_subj(inner, scope, Some(payload));
             }
-            // TP-4: a tuple sub-pattern of a field declared as a tuple with
-            // no unresolved part (generic fields are skipped) is bound against
-            // that declared type. Every other field pattern keeps no type
-            // (O-TP-03); an unknown name or field is the checker's to report.
+            // TP-4, CS5-1 (O-TP-03): each field pattern of a struct or variant
+            // pattern is bound against the field's declared type when that
+            // type has no unresolved part (`bind_sub_pattern`: an `Ident` takes
+            // its skeleton, as a tuple component does). A generic field (`v:
+            // T`), an unknown name or field keeps no type; an unknown one is
+            // the checker's to report.
             Pattern::Struct { name, fields } => {
                 for (fname, pat) in fields {
-                    let declared = match pat {
-                        Pattern::Tuple(_) => self.declared_tuple_field(name, fname),
-                        _ => None,
-                    };
-                    self.bind_pattern_with_subj(pat, scope, declared.as_ref());
+                    match self.declared_field(name, fname) {
+                        Some(decl) => {
+                            self.bind_sub_pattern(pat, &decl, fname, "pattern field", scope)
+                        }
+                        None => self.bind_pattern_with_subj(pat, scope, None),
+                    }
                 }
             }
             // CS4-3 (O-LF-01): a tuple pattern on a subject whose type is
@@ -3153,7 +3158,11 @@ impl InferCtx {
                 for (i, pat) in pats.iter().enumerate() {
                     match (pat, elems.map(|ts| &ts[i])) {
                         (Pattern::Ident(name), Some(elem)) => {
-                            let ty = self.tuple_component_skeleton(elem, name);
+                            let ty = self.tuple_component_skeleton(
+                                elem,
+                                name,
+                                "tuple pattern component",
+                            );
                             scope.bind(name.clone(), ty);
                         }
                         (Pattern::Tuple(_), Some(elem)) => {
@@ -3166,18 +3175,54 @@ impl InferCtx {
         }
     }
 
-    /// TP-1: the type a tuple pattern component binds for element type
-    /// `elem`: `elem` with each numeric leaf replaced by a fresh var, which
-    /// `solve()` requires to resolve to a number (any width: the interpreter
-    /// runs an int component used as `u8`). Every other leaf, a var or type
-    /// param included (D8), is kept exactly.
-    fn tuple_component_skeleton(&mut self, elem: &Type, name: &str) -> Type {
+    /// CS5-1: bind the sub-pattern `pat` whose type is known to be `decl`
+    /// (a struct field's declared type). An `Ident` binds `decl`'s skeleton
+    /// (TP-1's rule: numeric leaves free, checked by kind in `solve`; every
+    /// other leaf exact); a tuple pattern is bound against `decl` itself
+    /// (TP-2..TP-4); `Some`/`Ok`/`Err` and a nested struct pattern are bound
+    /// against the skeleton, so a payload `Ident` gets the skeleton's leaf and
+    /// a payload of the wrong shape is refused. `name` and `noun` name a
+    /// numeric leaf's obligation for any form but `Ident`, which uses its own.
+    fn bind_sub_pattern(
+        &mut self,
+        pat: &Pattern,
+        decl: &Type,
+        name: &str,
+        noun: &'static str,
+        scope: &mut Scope,
+    ) {
+        match pat {
+            Pattern::Ident(n) => {
+                let ty = self.tuple_component_skeleton(decl, n, noun);
+                scope.bind(n.clone(), ty);
+            }
+            Pattern::Tuple(_) => self.bind_pattern_with_subj(pat, scope, Some(decl)),
+            Pattern::Some(_) | Pattern::Ok(_) | Pattern::Err(_) | Pattern::Struct { .. } => {
+                let skel = self.tuple_component_skeleton(decl, name, noun);
+                self.bind_pattern_with_subj(pat, scope, Some(&skel));
+            }
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::None => {}
+        }
+    }
+
+    /// TP-1: the type a pattern binding takes for element type `elem`:
+    /// `elem` with each numeric leaf replaced by a fresh var, which `solve()`
+    /// requires to resolve to a number (any width: the interpreter runs an
+    /// int component used as `u8`). Every other leaf, a var or type param
+    /// included (D8), is kept exactly. `noun` names the binding's origin in
+    /// the refusal (CS5 D2).
+    fn tuple_component_skeleton(&mut self, elem: &Type, name: &str, noun: &'static str) -> Type {
         let span = self.current_stmt_span;
         elem.clone().map_leaves(&mut |leaf| {
             if leaf.is_numeric() {
                 let var = self.fresh();
-                self.tuple_component_obligations
-                    .push((leaf, var.clone(), name.to_string(), span));
+                self.tuple_component_obligations.push((
+                    leaf,
+                    var.clone(),
+                    name.to_string(),
+                    noun,
+                    span,
+                ));
                 var
             } else {
                 leaf
@@ -3185,16 +3230,16 @@ impl InferCtx {
         })
     }
 
-    /// TP-4: the declared type of field `field` of the struct or the
+    /// TP-4, CS5-1: the declared type of field `field` of the struct or the
     /// `Enum::Variant` named `name` (resolved as `Expr::StructLit` does),
-    /// when it is a tuple with no unresolved part.
-    fn declared_tuple_field(&self, name: &str, field: &str) -> Option<Type> {
+    /// when it has no unresolved part (a generic field is skipped, D3).
+    fn declared_field(&self, name: &str, field: &str) -> Option<Type> {
         let declared = match name.split_once("::") {
             Some((enum_name, variant)) => self.enum_variant_fields.get(enum_name)?.get(variant)?,
             None => self.struct_fields.get(name)?,
         };
         let (_, ty) = declared.iter().find(|(n, _)| n == field)?;
-        (matches!(ty, Type::Tuple(_)) && !has_unresolved(ty)).then(|| ty.clone())
+        (!has_unresolved(ty)).then(|| ty.clone())
     }
 
     // ── Program-level inference ───────────────────────────────────────────────
@@ -3609,12 +3654,12 @@ impl InferCtx {
                 );
             }
         }
-        // TP-1: a numeric leaf of a tuple pattern component may be used as
-        // any number (D2), but not as another kind: `(a, b)` on `(1, "s")`
-        // with `str_len(a)` panics at run time. `Uncertain`/`Temporal` around
-        // a number are accepted, as for the `let` twin (D7). `[REVISED:
+        // TP-1: a numeric leaf of a pattern binding may be used as any
+        // number (D2), but not as another kind: `(a, b)` on `(1, "s")` with
+        // `str_len(a)` panics at run time. `Uncertain`/`Temporal` around a
+        // number are accepted, as for the `let` twin (D7). `[REVISED:
         // TPI-2]` So is `dyn Trait`, which `unify` lets anything through.
-        for (leaf, var, name, span) in std::mem::take(&mut self.tuple_component_obligations) {
+        for (leaf, var, name, noun, span) in std::mem::take(&mut self.tuple_component_obligations) {
             let used = strip_soft_wrappers(subst.apply(&var));
             if !type_is_unresolved(&used)
                 && !used.is_numeric()
@@ -3622,12 +3667,8 @@ impl InferCtx {
                 && !matches!(used, Type::DynTrait(_))
             {
                 self.errors.push(
-                    InferError::mismatch(
-                        &format!("use of tuple pattern component `{name}`"),
-                        &leaf,
-                        &used,
-                    )
-                    .with_span(span),
+                    InferError::mismatch(&format!("use of {noun} `{name}`"), &leaf, &used)
+                        .with_span(span),
                 );
             }
         }

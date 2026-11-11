@@ -4467,6 +4467,8 @@ ATTACK_MARKERS.update({
 
 # checker-soundness-5 CS5-1..CS5-5 (ids M5240-M5249 and checker-soundness-4's M4719)
 ATTACK_MARKERS.update({
+    'M5240': r'ATTACK: a struct or variant pattern field of the wrong type checked clean',
+    'M5241': r'ATTACK: a struct or variant pattern field of the wrong type checked clean',
     'M4719': r'ATTACK: a pattern of another enum checked clean',
     'M5249': r'ATTACK: a pattern of another enum checked clean',
 })
