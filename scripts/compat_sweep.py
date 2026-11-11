@@ -13,10 +13,11 @@ Diagnostic text is never recorded: E0901's search list embeds the binary's direc
 (spec/stability.md section 7).
 
 Diff: files in both sweeps whose rc went 0 -> nonzero (NEWLY REFUSED) or whose first code
-changed (CODE CHANGED), and files whose rc went nonzero -> 0 (NEWLY ACCEPTED, informational).
-Exit 1 when a file is newly refused and --section-has-behaviour-change is 0 (the release's
-CHANGELOG section records no behaviour change: `release_ledger.py
---section-has-behaviour-change vX.Y.Z`); otherwise exit 0.
+changed (CODE CHANGED), files whose rc went nonzero -> 0 (NEWLY ACCEPTED, informational), and
+files in one sweep only (ADDED, REMOVED, informational). Exit 1 when a file is newly refused
+and --section-has-behaviour-change is 0 (the release's CHANGELOG section records no behaviour
+change: `release_ledger.py --section-has-behaviour-change vX.Y.Z`), or when NEW has fewer than
+90% of OLD's rows (ROW_FLOOR_PCT: an empty or truncated sweep is no evidence); otherwise exit 0.
 """
 
 import argparse
@@ -31,6 +32,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TIMEOUT_S = 60
+# --diff fails when NEW holds fewer than this percentage of OLD's rows (spec/stability.md section 7).
+ROW_FLOOR_PCT = 90
 
 
 def first_error(text):
@@ -103,7 +106,13 @@ def load(path):
 def diff(old_path, new_path, behaviour_change):
     old, new = load(old_path), load(new_path)
     refused = accepted = changed = 0
-    for path in sorted(old.keys() & new.keys()):
+    for path in sorted(old.keys() | new.keys()):
+        if path not in new:
+            print("REMOVED\t%s\trc %s %s" % ((path,) + old[path]))
+            continue
+        if path not in old:
+            print("ADDED\t%s\trc %s %s" % ((path,) + new[path]))
+            continue
         (o_rc, o_code), (n_rc, n_code) = old[path], new[path]
         if o_rc == "0" and n_rc != "0":
             refused += 1
@@ -115,18 +124,36 @@ def diff(old_path, new_path, behaviour_change):
             changed += 1
             print("CODE CHANGED\t%s\trc %s %s -> %s %s" % (path, o_rc, o_code, n_rc, n_code))
     print(
-        "compat_sweep: %d newly refused, %d newly accepted, %d first code changed (%d files in both)"
-        % (refused, accepted, changed, len(old.keys() & new.keys())),
+        "compat_sweep: %d newly refused, %d newly accepted, %d first code changed, %d added, %d removed "
+        "(%d files in both; OLD %d rows, NEW %d rows)"
+        % (
+            refused,
+            accepted,
+            changed,
+            len(new.keys() - old.keys()),
+            len(old.keys() - new.keys()),
+            len(old.keys() & new.keys()),
+            len(old),
+            len(new),
+        ),
         file=sys.stderr,
     )
+    rc = 0
+    if len(new) * 100 < len(old) * ROW_FLOOR_PCT:
+        print(
+            "compat_sweep: FAIL: NEW has %d rows, fewer than %d%% of OLD's %d (an empty or truncated sweep)"
+            % (len(new), ROW_FLOOR_PCT, len(old)),
+            file=sys.stderr,
+        )
+        rc = 1
     if refused and not behaviour_change:
         print(
             "compat_sweep: FAIL: %d tracked program(s) newly refused, and the release's CHANGELOG section records "
             "no `**Behaviour change`" % refused,
             file=sys.stderr,
         )
-        return 1
-    return 0
+        rc = 1
+    return rc
 
 
 def main():

@@ -4476,6 +4476,13 @@ ATTACK_MARKERS.update({
     'M5266': r'ATTACK: a newly refused tracked program shipped without a behaviour change',
     'M5267': r"ATTACK: a released card version's sha was rewritten",
     'M5268': r'ATTACK: the release ledger hides a behaviour change from the compat diff',
+    # [REVISED: impl audit 2026-11-11] M5269-M5274
+    'M5269': r'ATTACK: a near-miss behaviour marker',
+    'M5270': r'ATTACK: a malformed release heading',
+    'M5271': r'ATTACK: a card change was not named in the CHANGELOG \(released\)',
+    'M5272': r'ATTACK: a card change was not named in the CHANGELOG \(unreleased\)',
+    'M5273': r'ATTACK: a card change was not named in the CHANGELOG \(`card 30`\)',
+    'M5274': r'ATTACK: a truncated compat sweep was accepted',
 })
 
 # checker-soundness-5 CS5-1..CS5-5 (ids M5240-M5249 and checker-soundness-4's M4719)
