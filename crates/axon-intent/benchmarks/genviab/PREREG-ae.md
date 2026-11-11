@@ -8,6 +8,7 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
 ## Pins (filled at freeze)
 
 - set version: `<ae-1.0>`
+- A/A null SD: `<headline FT-pass Δ SD of the pilot's A/A run>` (the weekly screen's rerun trigger, |Δ| ≥ 2.5 × this)
 - manifest sha256: `<sha256 of <private>/ae-1/manifest.json>`
 - model series: `<cere:Qwen3.8-Flash-Next:<models-entry sha16>>` (genviab `http_series`)
 

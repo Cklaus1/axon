@@ -1554,13 +1554,115 @@ def ae_runner():
                rc == 0 and "| E0001 cannot find name `arr_new`" in out
                and "card/docs" in out and "| E0001 | " in out and "### (draft)" in stanza
                and task_text not in stanza and "t1" not in stanza, out[-1500:])
+        ae_weekly_screen(d, root, hset, he, gv)
     finally:
         fake.close()
         shutil.rmtree(d)
         shutil.rmtree(root)
 
 
+FAKE_CARGO = """#!/bin/sh
+s=$(git -c safe.directory='*' rev-parse HEAD | cut -c1-8)
+mkdir -p "$CARGO_TARGET_DIR/debug"
+printf '#!/bin/sh\\nif [ "$1" = "--version" ]; then echo "axon 0.1.0 (%s)"; exit 0; fi\\nexec {axon} "$@"\\n' "$s" \\
+    > "$CARGO_TARGET_DIR/debug/axon"
+printf '#!/bin/sh\\nexec {intent} "$@"\\n' > "$CARGO_TARGET_DIR/debug/axon-intent"
+chmod +x "$CARGO_TARGET_DIR/debug/axon" "$CARGO_TARGET_DIR/debug/axon-intent"
+"""
+
+
+def ae_weekly_screen(d, root, hset, he, gv):
+    """AE-7: scripts/ae_weekly.py over the fake CERE and a scratch git repo. A
+    release run, then a week with no merged change (same binaries: NO CHANGE,
+    0 cache-miss calls) and a week with one (the candidate is built once by a
+    fake cargo from a clean worktree); two consecutive weekly rows. The unit
+    files are checked, never installed."""
+    import ae as AE
+    repo_root = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
+    script = os.path.join(repo_root, "scripts", "ae_weekly.py")
+    unit_dir = os.path.join(repo_root, "scripts", "systemd")
+    timer = open(os.path.join(unit_dir, "ae-weekly.timer")).read()
+    service = open(os.path.join(unit_dir, "ae-weekly.service")).read()
+    expect("ae7: the timer fires Saturday 12:00, not Persistent; the service runs ae_weekly.py as root, no token",
+           "OnCalendar=Sat *-*-* 12:00:00" in timer and "Persistent=false" in timer
+           and "scripts/ae_weekly.py run" in service and "User=root" in service
+           and "CERE_TOKEN_AE=" not in service and "selftest-token" not in service)
+    sys.path.insert(0, os.path.dirname(script))
+    import ae_weekly as W
+    import datetime as dt
+    refused = []
+    for when in (dt.datetime(2026, 11, 10, 13, 0), dt.datetime(2026, 11, 14, 11, 59),
+                 dt.datetime(2026, 11, 14, 20, 0)):
+        try:
+            W.check_window(when)
+        except W.Refused:
+            refused.append(when)
+    W.check_window(dt.datetime(2026, 11, 14, 12, 0))
+    expect("ae7: the screen starts only Saturday 12:00-20:00", len(refused) == 3, refused)
+    expect("ae7: the rerun trigger: CI excludes 0, |Δ| >= 2.5 A/A SD, a new M2s pair",
+           W.rerun_triggers({"paired": {"ci95": [-0.1, 0.1], "delta_ft_pass": 0.0}}, 0.02, set()) == []
+           and len(W.rerun_triggers({"paired": {"ci95": [0.01, 0.2], "delta_ft_pass": 0.06}}, 0.02,
+                                    {("f", "type-class")})) == 3)
+    wrepo, priv = os.path.join(root, "wrepo"), os.path.join(root, "priv")
+    g = lambda *x: subprocess.run(["git", "-C", wrepo, *x], check=True, capture_output=True,
+                                  text=True).stdout.strip()
+    os.makedirs(wrepo)
+    g("init", "-q")
+    commit = lambda n: (open(os.path.join(wrepo, "f.txt"), "w").write(n),
+                        g("add", "f.txt"), g("-c", "user.name=s", "-c", "user.email=s@s", "commit", "-qm", n),
+                        g("rev-parse", "HEAD"))[-1]
+    c1 = commit("one")
+    bdir = os.path.join(priv, "bins", c1[:8])
+    os.makedirs(bdir)
+    for name, text in (("axon", FIXTURE_BIN.replace("fixture-{tag}", c1[:8]).format(
+            log=os.devnull, real=gv.AXON)), ("axon-intent", f'#!/bin/sh\nexec {gv.AXON_INTENT} "$@"\n')):
+        with open(os.path.join(bdir, name), "w") as fh:
+            fh.write(text)
+        os.chmod(os.path.join(bdir, name), 0o755)
+    cargo = os.path.join(root, "fake-cargo")
+    with open(cargo, "w") as fh:
+        fh.write(FAKE_CARGO.replace("{axon}", gv.AXON).replace("{intent}", gv.AXON_INTENT))
+    os.chmod(cargo, 0o755)
+    prereg, hist = os.path.join(root, "PREREG-weekly.md"), os.path.join(root, "history-weekly.jsonl")
+    with open(prereg, "w") as fh:
+        fh.write(f"**Status: FROZEN (selftest)**\n\n- set version: `ae-http-1.0`\n- manifest sha256: "
+                 f"`{gv.sha256_file(os.path.join(hset, 'manifest.json'))}`\n- A/A null SD: `0.1`\n")
+    we = dict(he, AE_PRIVATE=priv, AE_WEEKLY_CARGO=cargo)
+    week = lambda date, h=hist: subprocess.run(
+        [sys.executable, "-B", script, "run", "--date", date, "--no-window", "--repo", wrepo, "--ref", "HEAD",
+         "--no-fetch", "--set-dir", hset, "--seeds", "0", "--parallel", "4", "--history", h,
+         "--prereg", prereg, "--genviab", d], env=we, capture_output=True, text=True, timeout=900)
+    r = week("2026-11-07", os.path.join(root, "empty.jsonl"))
+    expect("ae7: no labelled release in history.jsonl is a refusal", r.returncode == 2
+           and "no labelled release" in r.stderr, r.stderr[-300:])
+    rc, out = py(d, "ae.py", "run", "--set-dir", hset, "--label", "rel-1", "--base-bin", bdir, "--cand-bin",
+                 bdir, "--seeds", "0", "--parallel", "4", "--history", hist, "--prereg", prereg,
+                 "--runs-dir", os.path.join(priv, "runs"), "--cache-dir", os.path.join(priv, "cache"), env=we)
+    w1 = week("2026-11-14")
+    c2 = commit("two")
+    w2 = week("2026-11-21")
+    h = [json.loads(l) for l in open(hist)] if os.path.exists(hist) else []
+    wk = [x for x in h if x["label"].startswith("weekly-")]
+    dg = os.path.join(priv, "weekly", "2026-11-14.md")
+    digest = open(dg).read() if os.path.exists(dg) else ""
+    expect("ae7: a week with no merged change: NO CHANGE and 0 cache-miss calls (digest written)",
+           rc == 0 and w1.returncode == 0 and len(wk) >= 1 and wk[0]["flag"] == "NO CHANGE"
+           and wk[0]["cache"]["misses"] == 0 and wk[0]["advisory"] and "NO CHANGE" in digest
+           and "cache-miss calls 0" in digest and "rerun trigger: none" in digest,
+           (out[-300:], w1.stdout[-400:], w1.stderr[-400:]))
+    expect("ae7: a merged change builds the candidate once from a clean worktree; two consecutive weekly rows",
+           w2.returncode == 0 and len(wk) == 2 and wk[1]["cand"]["git_head"] == c2[:8]
+           and wk[1]["base"]["git_head"] == c1[:8] and os.path.isdir(os.path.join(priv, "bins", c2[:8]))
+           and not any(AE.validate_row(x) for x in wk),
+           (w2.stdout[-400:], w2.stderr[-400:]))
+
+
 def main():
+    # AE-2's fixtures wait ~20 s on the step-budget fixture's example timeout; they
+    # run beside the rest (own scratch dirs) to keep S23's added time near 60 s.
+    import threading
+    slow = threading.Thread(target=failure_class_fixtures)
+    slow.start()
     build_args_and_tamper()
     build_mechanical()
     arm_c_runner()
@@ -1571,8 +1673,8 @@ def main():
     driver()
     ae_loader()
     http_route()
-    failure_class_fixtures()
     ae_runner()
+    slow.join()
     if FAILS:
         print(f"{len(FAILS)} failure(s): {FAILS}")
         return 1
