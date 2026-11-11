@@ -1,7 +1,7 @@
 # release-contract - spec (RC-1..RC-6)
 
-**Status: PARTIAL 2026-11-11 on rc/l 70f7e900 (RC-1 98fda905; RC-2 2fb3649c; RC-3 0901465b; RC-5 0012dff6; RC-4 664f8f1c,
-70f7e900; g01 M5260-M5268 killed). RC-6 is not built (NH-1 (a): it waits on the 10-green streak), so O-CI-01 stays open. Not yet
+**Status: PARTIAL 2026-11-11 on rc/l a7074c4e (RC-1 98fda905; RC-2 2fb3649c, PCI note a7074c4e; RC-3 0901465b; RC-5 0012dff6;
+RC-4 664f8f1c, 70f7e900; g01 M5260-M5268 killed; `gate.sh --lane` 458 units passed at a7074c4e). RC-6 is not built (NH-1 (a): it waits on the 10-green streak), so O-CI-01 stays open. Not yet
 observed: the `release-dry/<sha8>` run (the integrator's push) and the first tag (NH-4 (a), the human's go).** AUTHORIZED 2026-11-11
 for RC-1..RC-5 (after Step 1 review: AuditRelease 13, DevloopRelease 7 findings, all accepted). Build authorized by the human
 2026-11-11; NH-1..NH-4 decided the same day (§8). RC-6 waits on the 10-green streak (NH-1 (a)); no tag is published without the
@@ -594,3 +594,6 @@ workflow linter exists here (§9 r4), so the first real observation is the integ
   script; in a dry run its flag is the query for the Cargo version, `1` when that heading does not exist yet.
 - `workflow_dispatch` publishes only when `dry_run` is false AND the ref is a tag; any branch is a dry run.
 - The CHANGELOG batch heading is unnumbered (`## Batch: release-contract ...`); the integrator numbers it at merge.
+- RC-2 touches `crates/axon-core/src`, so it needs a PCI theme (`governance/notes/pci-themes/2fb3649c.json`, CLI only, no
+  pass/fail moves) and a regenerated `v022-pci-delta.md` (row list +M5260-M5261); the first `gate.sh --lane` failed at S06
+  (`pci_delta_note`) until that landed.
