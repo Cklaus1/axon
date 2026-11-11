@@ -2,6 +2,13 @@
 # (as root the two terms of the guard coincide, and removing one is unobservable).
 ME = int(os.environ["GBE_UID"]); OTHER = ME + 1
 assert os.geteuid() == ME, os.geteuid()
+# Service-account discovery points at an absent directory, never the host's deployment: these cases are about the uid
+# VALUE, and a host's root-only /etc/axon file (the NH-R1 opt-in is mode 0600 by design) is unreadable to this claimed
+# uid, so discovery would fail closed here. Discovery itself is covered by service_ids.py's fixtures.
+import tempfile
+_NONE = os.path.join(tempfile.mkdtemp(), "absent")
+g.SERVICE_ETC, g.SERVICE_UNITS, g.SERVICE_USERS = _NONE, _NONE, ()
+g.SERVICE_UNIT_EXTRA_DIRS, g.SERVICE_UNIT_VENDOR_DIRS = (_NONE,), (_NONE,)
 def ids(v):
     if v is None:
         os.environ.pop("AXON_GUEST_BUILD_UID", None)
