@@ -1,0 +1,175 @@
+name: Release
+
+# release-contract RC-4 (tasks/release-contract-spec.md, spec/stability.md section 1).
+# A `v*.*.*` tag publishes the static x86_64 Linux interpreter with checksums, after the
+# preconditions below. A push to `release-dry/**` is ALWAYS a dry run (a push runs the
+# workflow file of the pushed commit, so it works before this file is on main);
+# `workflow_dispatch` defaults to a dry run. A dry run uploads an artifact and publishes
+# nothing; its ancestry and CI checks print `SKIPPED (dry run)`.
+on:
+  push:
+    tags: ['v*.*.*']
+    branches: ['release-dry/**']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and upload an artifact only; publish nothing'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Release (x86_64 Linux interpreter, musl)
+    runs-on: ubuntu-24.04
+    steps:
+      # Full history: the ancestry check and build.rs's commit identity.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A tag run publishes; everything else is a dry run. A dispatch publishes only when
+      # dry_run is false AND the ref is a tag.
+      - name: Mode
+        id: mode
+        shell: bash
+        env:
+          DISPATCH_DRY: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$DISPATCH_DRY" != true ]; then
+            echo "dry=false" >> "$GITHUB_OUTPUT"
+            echo "mode: release of $GITHUB_REF_NAME at $GITHUB_SHA"
+          else
+            echo "dry=true" >> "$GITHUB_OUTPUT"
+            echo "mode: dry run of $GITHUB_REF_NAME at $GITHUB_SHA"
+          fi
+
+      - name: Precondition - the commit is on main
+        shell: bash
+        env:
+          DRY: ${{ steps.mode.outputs.dry }}
+        run: |
+          if [ "$DRY" = true ]; then echo "SKIPPED (dry run): $GITHUB_SHA is an ancestor of origin/main"; exit 0; fi
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+            { echo "::error::$GITHUB_SHA is not on main"; exit 1; }
+
+      - name: Precondition - the commit's ci.yml push run on main succeeded
+        shell: bash
+        env:
+          DRY: ${{ steps.mode.outputs.dry }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$DRY" = true ]; then echo "SKIPPED (dry run): ci.yml push run on main succeeded for $GITHUB_SHA"; exit 0; fi
+          n="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&status=success" --jq .total_count)"
+          echo "successful ci.yml push runs on main for $GITHUB_SHA: $n"
+          [ "$n" -ge 1 ] || { echo "::error::no green ci.yml push run on main for $GITHUB_SHA"; exit 1; }
+
+      - name: Precondition - release ledger
+        shell: bash
+        env:
+          DRY: ${{ steps.mode.outputs.dry }}
+        run: |
+          if [ "$DRY" = true ]; then python3 -B scripts/release_ledger.py; else python3 -B scripts/release_ledger.py --tag "$GITHUB_REF_NAME"; fi
+
+      # rust-toolchain.toml names the toolchain; the musl target is added here (with
+      # retries, as ci.yml), and ring's build needs a musl C compiler.
+      - name: Install the pinned toolchain (rust-toolchain.toml) + musl target
+        shell: bash
+        run: |
+          rustup toolchain install --profile minimal
+          for k in 1 2 3; do
+            if rustup target add x86_64-unknown-linux-musl; then break; fi
+            echo "rustup attempt $k failed"
+            if [ "$k" = 3 ]; then exit 1; fi
+            sleep 20
+          done
+
+      # apt retried as in ci.yml: a DNS failure in `apt-get update` prints only W: lines
+      # and exits 0, so the install is inside the loop.
+      - name: Install musl-tools
+        shell: bash
+        run: |
+          install_pkgs() {
+            sudo apt-get update &&
+            sudo apt-get install -y musl-tools
+          }
+          for k in 1 2 3; do
+            if install_pkgs; then break; fi
+            echo "apt attempt $k failed"
+            if [ "$k" = 3 ]; then exit 1; fi
+            sleep 20
+          done
+
+      # Never --keep-env: AXON_GIT_SHA is never set here, so the binary names this commit.
+      - name: Build, smoke-test and package
+        shell: bash
+        run: scripts/release_package.sh "$RUNNER_TEMP/dist"
+
+      # RC-5: diff against the previous release's compat.tsv (none before the first release).
+      - name: Compatibility diff against the previous release
+        shell: bash
+        env:
+          DRY: ${{ steps.mode.outputs.dry }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev="$(git tag --list 'v*.*.*' --sort=-v:refname --merged HEAD | grep -vx "$GITHUB_REF_NAME" | head -n 1 || true)"
+          if [ -z "$prev" ]; then echo "no previous release tag: compat diff skipped (first release)"; exit 0; fi
+          mkdir -p "$RUNNER_TEMP/prev"
+          gh release download "$prev" -p compat.tsv -D "$RUNNER_TEMP/prev"
+          if [ "$DRY" = true ]; then
+            flag="$(python3 -B scripts/release_ledger.py --section-has-behaviour-change "v$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"])')" || echo 1)"
+          else
+            flag="$(python3 -B scripts/release_ledger.py --section-has-behaviour-change "$GITHUB_REF_NAME")"
+          fi
+          echo "compat diff against $prev (behaviour change recorded: $flag)"
+          python3 -B scripts/compat_sweep.py --diff "$RUNNER_TEMP/prev/compat.tsv" "$RUNNER_TEMP/dist/compat.tsv" \
+            --section-has-behaviour-change "$flag"
+
+      - name: Verify checksums
+        shell: bash
+        run: cd "$RUNNER_TEMP/dist" && sha256sum -c SHA256SUMS && cat SHA256SUMS
+
+      - name: Upload artifact (dry run)
+        if: steps.mode.outputs.dry == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/dist/*.tar.gz
+            ${{ runner.temp }}/dist/compat.tsv
+            ${{ runner.temp }}/dist/SHA256SUMS
+
+      - name: Publish the release
+        if: steps.mode.outputs.dry == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The notes are the CHANGELOG section of this tag (its heading to the next release heading).
+          python3 - "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md" <<'PY'
+          import re, sys
+          tag = sys.argv[1]
+          head = re.compile(r"^## v\d+\.\d+\.\d+ - ")
+          out, inside = [], False
+          for line in open("CHANGELOG.md").read().splitlines():
+              if head.match(line):
+                  if inside:
+                      break
+                  inside = line.startswith("## %s - " % tag)
+              if inside:
+                  out.append(line)
+          if not out:
+              sys.exit("no CHANGELOG section for %s" % tag)
+          print("\n".join(out))
+          print("\nSHA256SUMS detects corruption, not tampering: releases are not signed (spec/stability.md).")
+          PY
+          gh release create "$GITHUB_REF_NAME" --verify-tag --notes-file "$RUNNER_TEMP/notes.md" \
+            "$RUNNER_TEMP"/dist/*.tar.gz "$RUNNER_TEMP/dist/compat.tsv" "$RUNNER_TEMP/dist/SHA256SUMS"
