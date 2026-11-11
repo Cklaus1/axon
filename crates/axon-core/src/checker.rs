@@ -4052,6 +4052,26 @@ impl CheckCtx {
     // Expression
     // ─────────────────────────────────────────────────────────────────────────
 
+    /// The body of an `if`/`else` branch or a match arm. A `let` in its block
+    /// is local to it (the interpreter scopes it so), so the block is checked
+    /// in a copy of `scope` and the binding does not shadow the outer local
+    /// for the statements after it (impl audit CS5: a block-local `let c =
+    /// D::Up` made `match c` after the block resolve `c` to `D`).
+    fn check_branch(
+        &mut self,
+        expr: &Expr,
+        node_path: &NodePath,
+        scope: &mut HashMap<String, Type>,
+    ) {
+        match expr {
+            Expr::Block(stmts) if declares_local(stmts) => {
+                let mut inner = scope.clone();
+                self.check_expr(expr, node_path, &mut inner);
+            }
+            _ => self.check_expr(expr, node_path, scope),
+        }
+    }
+
     fn check_expr(&mut self, expr: &Expr, node_path: &NodePath, scope: &mut HashMap<String, Type>) {
         match expr {
             // ── Block ────────────────────────────────────────────────────────
@@ -4776,16 +4796,16 @@ impl CheckCtx {
                     if let Option::Some(guard) = &arm.guard {
                         self.check_expr(guard, &node_path.idx("arm", i).child("guard"), arm_scope);
                     }
-                    self.check_expr(&arm.body, &node_path.idx("arm", i).child("body"), arm_scope);
+                    self.check_branch(&arm.body, &node_path.idx("arm", i).child("body"), arm_scope);
                 }
             }
 
             // ── If ───────────────────────────────────────────────────────────
             Expr::If { cond, then, else_ } => {
                 self.check_expr(cond, &node_path.child("cond"), scope);
-                self.check_expr(then, &node_path.child("then"), scope);
+                self.check_branch(then, &node_path.child("then"), scope);
                 if let Option::Some(e) = else_ {
-                    self.check_expr(e, &node_path.child("else"), scope);
+                    self.check_branch(e, &node_path.child("else"), scope);
                 }
             }
 
@@ -5034,8 +5054,15 @@ impl CheckCtx {
             // ── While ────────────────────────────────────────────────────────
             Expr::While { cond, body } => {
                 self.check_expr(cond, &node_path.child("cond"), scope);
+                let mut inner;
+                let body_scope = if declares_local(body) {
+                    inner = scope.clone();
+                    &mut inner
+                } else {
+                    &mut *scope
+                };
                 for (i, stmt) in body.iter().enumerate() {
-                    self.check_stmt(stmt, &node_path.idx("body_stmt", i), scope);
+                    self.check_stmt(stmt, &node_path.idx("body_stmt", i), body_scope);
                 }
             }
             Expr::WhileLet {
@@ -5048,8 +5075,15 @@ impl CheckCtx {
                 let expr_ty = self.resolve_expr_type(expr, &expr_path, scope);
                 self.check_bare_variant_patterns(pattern, &expr_ty, node_path);
                 self.check_foreign_variant_patterns(pattern, &expr_ty, node_path);
+                let mut inner;
+                let body_scope = if declares_local(body) {
+                    inner = scope.clone();
+                    &mut inner
+                } else {
+                    &mut *scope
+                };
                 for (i, stmt) in body.iter().enumerate() {
-                    self.check_stmt(stmt, &node_path.idx("while_let_body", i), scope);
+                    self.check_stmt(stmt, &node_path.idx("while_let_body", i), body_scope);
                 }
             }
             Expr::For {
@@ -8811,6 +8845,12 @@ fn literal_scalar_kind(lit: &crate::ast::Literal) -> &'static str {
 /// analysis); this catches the common straight-line dead-code case.
 fn is_terminator(e: &Expr) -> bool {
     matches!(e, Expr::Return(_) | Expr::Break | Expr::Continue)
+}
+
+/// True when a block's own statements bind a local with `let`, which then
+/// goes out of scope at the block's end (see `check_branch`).
+fn declares_local(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|s| matches!(s.expr, Expr::Let { .. }))
 }
 
 /// Best-effort constant folder for INTEGER expressions, used to catch a

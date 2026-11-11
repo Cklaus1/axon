@@ -16154,6 +16154,15 @@ MUTATIONS += [
      '.is_some_and(|vs| vs.iter().any(|v| v == variant));',
      '.is_some_and(|vs| true || vs.iter().any(|v| v == variant));',
      'axon-core', '--no-default-features --test cli_run', 'foreign_enum_variant_pattern_is_refused'),
+    # [REVISED: impl audit 2026-11-11] the checker scopes a block-local `let` (ids M5251-M5252)
+    ('M5251', 'CS5-5 (impl audit): a `let` in an if/else or match-arm block leaks past the block (k1 `match c` after `let c = D::Up` in an if block refused E0405)', 'crates/axon-core/src/checker.rs',
+     'Expr::Block(stmts) if declares_local(stmts) => {',
+     'Expr::Block(stmts) if false && declares_local(stmts) => {',
+     'axon-core', '--no-default-features --test cli_run', 'foreign_enum_variant_pattern_is_refused'),
+    ('M5252', 'CS5-5 (impl audit): a `let` in a while body leaks past the loop (w1 refused E0405)', 'crates/axon-core/src/checker.rs',
+     'self.check_stmt(stmt, &node_path.idx("body_stmt", i), body_scope);',
+     'self.check_stmt(stmt, &node_path.idx("body_stmt", i), scope);',
+     'axon-core', '--no-default-features --test cli_run', 'foreign_enum_variant_pattern_is_refused'),
 ]
 
 

@@ -48963,6 +48963,34 @@ fn foreign_enum_variant_pattern_is_refused() {
         ),
         ("v09", "enum C { Red, Green }\nfn main() {\n    let c = C::Green\n    match c { C::Red => println(\"r\"), _ => println(\"g\") }\n}\n", "g\n"),
         ("v12", "enum D { Up, Down }\nfn main() {\n    let o = Some(1)\n    match o { D::Up => println(\"up\"), _ => println(\"no\") }\n}\n", "no\n"),
+        // [REVISED: impl audit 2026-11-11] A `let` inside an if/else, while or
+        // match-arm block is local to it: the outer `c` after the block is still
+        // a `C` (k1, w1, w2 were a false E0405; w3, w4 a false E0304 on base).
+        (
+            "k1",
+            "enum C { Red, Green }\nenum D { Up, Down }\nfn main() {\n    let c = C::Red\n    if true {\n        let c = D::Up\n        match c { D::Up => println(\"u\"), _ => println(\"d\") }\n    }\n    match c { C::Red => println(\"r\"), _ => println(\"g\") }\n}\n",
+            "u\nr\n",
+        ),
+        (
+            "w1",
+            "enum C { Red, Green }\nenum D { Up, Down }\nfn main() {\n    let c = C::Red\n    let mut i = 0\n    while i < 1 {\n        let c = D::Up\n        i = i + 1\n    }\n    match c { C::Red => println(\"r\"), _ => println(\"g\") }\n}\n",
+            "r\n",
+        ),
+        (
+            "w2",
+            "enum C { Red, Green }\nenum D { Up, Down }\nfn main() {\n    let c = C::Red\n    match 1 { 1 => { let c = D::Up\n println(\"a\") }, _ => println(\"b\") }\n    if let C::Red = c { println(\"r\") }\n}\n",
+            "a\nr\n",
+        ),
+        (
+            "w3",
+            "enum C { Red, Green }\nenum D { Up, Down }\nfn main() {\n    let c = C::Red\n    if false { println(\"x\") } else { let c = D::Down\n println(\"e\") }\n    match c { C::Red => println(\"r\"), C::Green => println(\"g\") }\n}\n",
+            "e\nr\n",
+        ),
+        (
+            "w4",
+            "enum C { Red, Green }\nenum D { Up, Down }\nfn f(c: C) -> i64 {\n    if true { let c = D::Up }\n    match c { C::Red => 1, C::Green => 2 }\n}\nfn main() { println(to_str(f(C::Green))) }\n",
+            "2\n",
+        ),
     ];
     for (tag, src, out) in controls {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs5_{tag}"), src);
