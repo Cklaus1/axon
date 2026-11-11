@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: d479be2fd9b8c98906df8f7e50088270d97182c0
+generated-at: 84965d047284960d8fe2c3a6a2e4c6175e6ef48a
 
-`git diff --numstat 31413ca7..d479be2f -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..84965d04 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -32,7 +32,7 @@ generated-at: d479be2fd9b8c98906df8f7e50088270d97182c0
 | `crates/axon-core/src/card.rs` | 736 | 0 |
 | `crates/axon-core/src/ceiling.rs` | 554 | 0 |
 | `crates/axon-core/src/cert_gate.rs` | 5 | 2 |
-| `crates/axon-core/src/checker.rs` | 3044 | 792 |
+| `crates/axon-core/src/checker.rs` | 3118 | 793 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
 | `crates/axon-core/src/codegen/accum.rs` | 600 | 0 |
@@ -56,11 +56,11 @@ generated-at: d479be2fd9b8c98906df8f7e50088270d97182c0
 | `crates/axon-core/src/doc.rs` | 1 | 0 |
 | `crates/axon-core/src/effects.rs` | 757 | 126 |
 | `crates/axon-core/src/env_registry.rs` | 28 | 11 |
-| `crates/axon-core/src/error.rs` | 54 | 21 |
+| `crates/axon-core/src/error.rs` | 56 | 23 |
 | `crates/axon-core/src/fmt.rs` | 355 | 33 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 2546 | 521 |
+| `crates/axon-core/src/infer.rs` | 2717 | 524 |
 | `crates/axon-core/src/interp.rs` | 8455 | 2877 |
 | `crates/axon-core/src/interp/builtins.rs` | 1421 | 859 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
@@ -108,9 +108,9 @@ generated-at: d479be2fd9b8c98906df8f7e50088270d97182c0
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 73137 | 10118 |
+| total | 73384 | 10124 |
 
-`git log --reverse 31413ca7..d479be2f -- crates/axon-core/src`:
+`git log --reverse 31413ca7..84965d04 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -567,7 +567,13 @@ generated-at: d479be2fd9b8c98906df8f7e50088270d97182c0
 | 6fb5c873 | TP-3 tuple payloads of Some/Ok/Err typed | CHECKER (infer.rs, all engines): a tuple pattern inside Some/Ok/Err is bound against the subject's payload type when that type is already known (Option<(..)>, Result<(..), E>), so its shape and its components are checked as a top-level tuple pattern's are (numeric leaves stay free: an int component used as u8 still checks). Check-clean run panics such as Some((a, b)) on Some((1, "s")) with b + 1 are E0102. New refusals of programs that run: a dead arm whose payload tuple has another length (Some((a, b)) on Some((1, 2, 3)), Ok((a, b)) on Result<(i64, i64, i64), str>). Other inner patterns are unchanged. The 717 tracked .ax files check with the same exit codes as the base binary. |
 | a82f13a9 | TP-4 tuple patterns in struct/variant fields typed | CHECKER (infer.rs, all engines): in a struct or Enum::Variant pattern, a tuple sub-pattern of a field whose declared type is a tuple with no generic part is bound against that declared type, so its shape and components are checked as a top-level tuple pattern's are (numeric leaves stay free). A check-clean run panic such as W::P { t: (a, b) } with b + 1 on a (i64, str) field is E0102. New refusal of a program that runs: a dead arm whose field tuple has another length (W::P { t: (a, b) } on a 3-tuple field). Plain field patterns, generic fields and unknown names or fields are unchanged. The 717 tracked .ax files check with the same exit codes as the base binary. |
 | d479be2f | TPI-1/TPI-2 fn-valued tuple components; dyn Trait | CHECKER (infer.rs, all engines): a tuple pattern component that is a fn value (its element is fn(i64) -> i64, so its numeric param and return are free vars) is now checked when called through CS2-6: a param that is a component var is compared as its element leaf, and a return that is one is bound to the call's use, which the component's obligation checks by kind. So f("s") or f(1) + "s" with (f, b) on (inc, 2) is E0102 at check instead of a run panic (each let twin is refused); numbers stay at any width (f(y) with y: u8, let x: u8 = f(1) check clean). A numeric component used as dyn Trait is no longer refused (its let twin checks clean): let d: dyn Greet = a, a dyn param or a dyn return check and run as on the base binary. The 717 tracked .ax files check with the same exit codes as the base binary. |
-| 453 commits | | |
+| 1881d489 | CS5-5 (= CS4-5) qualified pattern of another enum is E0405 | CHECKER (checker.rs, all engines): a qualified pattern naming a variant of another known enum (D::Up, or a struct-form D::P { .. }) on a subject whose type is enum C is refused with E0405 ("this match is on C, but D::Up is a variant of D"), in match, if let and while let, and nested in Some/Ok/Err/tuple sub-patterns (NH-2 (a)). Such an arm could never match. New refusals of programs that run: dead arms of another enum's variant (v2q_noall, en), with or without a _ arm. An unknown variant keeps its E0001 alone; same-enum and non-enum subjects are unchanged. No interpreter or runtime change. The 717 tracked .ax files check with the same exit codes and diagnostics as the base binary. |
+| 8c7cf1b0 | CS5-1 struct/variant pattern fields typed | CHECKER (infer.rs, all engines): a struct or Enum::Variant pattern's field binding is bound to the declared field type's skeleton (numeric leaves free vars that must resolve to a number, every other leaf exact); a generic field stays untyped. Check-clean run panics such as S::C { r } => r + 1 with r: str are E0102 ("use of pattern field r"). New refusals of programs that run: a field used as another kind where the value passed through (println of an i64 field, r == 1 on a str field, arms joining str and i64; NH-1 (a)). No interpreter or runtime change. The 717 tracked .ax files check with the same exit codes and diagnostics as the base binary. |
+| 9286a0b7 | CS5-2 tuple sub-patterns bound against their element | CHECKER (infer.rs, all engines): a Some/Ok/Err/struct/nested sub-pattern of a tuple pattern on a known subject is bound against its resolved element, so a misused payload such as (Some(a), b) on (Some("x"), 2) with a + 1 is E0102 instead of a run panic; an element still unresolved at bind time stays unbound. New refusals of programs that run: a sub-pattern that cannot match its element (Some(a) on an i64 or str element, a dead arm; D4). No interpreter or runtime change. The 717 tracked .ax files check with the same exit codes and diagnostics as the base binary. |
+| 957134fd | CS5-3 typed lambda params bound to their annotation | CHECKER (infer.rs, all engines): a lambda param with a type annotation binds the annotation's skeleton (numeric leaves free, other leaves exact); an annotation with an unresolved part stays a fresh var. So |p: (i64, str)| match p { (a, b) => to_str(b + 1) } is E0102 at check instead of a run panic, and a wrong-arity tuple pattern on such a param is E0102. New refusal of a program that runs: println of a typed lambda's int component (l15; NH-1 (a)). No interpreter or runtime change. The 717 tracked .ax files check with the same exit codes and diagnostics as the base binary. |
+| 7b0457d5 | CS5-4 tuple patterns on late-resolved subjects checked by kind | CHECKER (infer.rs, all engines): a tuple pattern whose subject is still a type var at bind time (a generic fn's return, arr_find's payload) is recorded, and solve() checks each Ident component by kind against its element once the subject resolves to a tuple of the pattern's arity; nothing is bound or unified and another arity is skipped. So (a, b) on id((1, "s")) with b + 1 is E0102 instead of a run panic. New refusal of a program that runs: println(a) of an int component of such a subject (u12; NH-1 (a)). No interpreter or runtime change. The 717 tracked .ax files check with the same exit codes and diagnostics as the base binary. |
+| 44950819 | CS5-3 fix: alias-typed lambda params stay fresh | CHECKER (infer.rs, all engines): a lambda param annotated with an alias (type Name = str, which parses as a one-variant fieldless enum) stays a fresh var as before CS5-3, so a call through a matching fn value with such a lambda checks clean again (snd_lambda_alias). Narrows CS5-3 only; no interpreter or runtime change. The 717 tracked .ax files check with the same exit codes and diagnostics as the base binary. |
+| 459 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -726,7 +732,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 799 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4718, M4723-M4727, M4730, M4732, M4740-M4756, M4760-M4763, M4771-M4774, M4779-M4786, M4790-M4805, M4872, M5220-M5231
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 811 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4719, M4723-M4727, M4730, M4732, M4740-M4756, M4760-M4763, M4771-M4774, M4779-M4786, M4790-M4805, M4872, M5220-M5231, M5240-M5250
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
