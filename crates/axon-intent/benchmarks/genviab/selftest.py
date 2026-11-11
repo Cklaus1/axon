@@ -1798,6 +1798,10 @@ def ae_draft_stages():
     expect("ae_draft review: one line per kept candidate, refs agree on the earned one",
            sorted(tsv) == sorted([f"{ids['good']}\tT1\tT1-toy-good\tagree\tearned",
                                   f"{ids['lower']}\tT1\tT1-toy-lower\tpy-only\tneeds-human"]), str(tsv))
+    readme = open(os.path.join(store, "ae-1", "review", "README.md")).read() if rc == 0 else ""
+    expect("ae_draft review: the README records the candidates check (exit 0, 2 PASS) and the spend",
+           "--check --candidates --set-dir ae-1/candidates` at generation: exit 0, 2 PASS, 0 FAIL" in readme
+           and "Drafting spend: $" in readme, readme[-600:])
     shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(store_root, ignore_errors=True)
 
