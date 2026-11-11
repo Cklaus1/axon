@@ -363,7 +363,7 @@ def failed_examples(report):
 ENDED_CLASSES = ("ok", "wrong-output", "exit-mismatch", "panic", "resource", "refine", "halted",
                  "other-fault", "timeout", "sandbox-refused", "no-outcome-record",
                  "compile-failed")
-FAULTED = re.compile(r"^faulted \(status [^)]*\): (.*)$", re.S)
+FAULTED = re.compile(r"^faulted \(status .*?\): (.*)$", re.S)  # status `Some(101)` nests parens
 AXIS = re.compile(r"\(axis: ([\w-]+)\)\s*$")
 RESOURCE_AXES = ("steps", "wall", "budget")
 # The panic reason's kind (spec AE-2), from the interpreter's panic strings
@@ -466,6 +466,7 @@ def grade_axon(task, program, which=("visible", "hidden"), bins=None):
         "no_outcome_record_runs": no_outcome_record_runs(rep),
         "gate_refusal": (rep or {}).get("gate_refusal"),
         "runs": graded_runs(task, rep),
+        "program_sha256": sha256_bytes(program.encode()),
         "tail": "" if rc == 0 else tail[-600:],
     }
 

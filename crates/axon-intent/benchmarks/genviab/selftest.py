@@ -1103,6 +1103,104 @@ def ae_loader():
         shutil.rmtree(root)
 
 
+# AE-2's four probe fixtures (spec AE-2 "Fail-first"). `ccp-type` pins the
+# known-open numeric-leaf residual current at this build (tuple-patterns-spec
+# O-LF-01 shape with an i64 / f64 pair: check rc 0, `cannot apply Add`).
+# `steps` loops on one hidden run only, so the selftest pays one example
+# timeout: no step budget reaches a graded run through the lift path at this
+# build (genloop grants none; the sandbox forwards no AXON_MAX_STEPS), so the
+# loop ends `timed out` (class `timeout`, an M2f failure), not `resource`.
+AE2_FIXTURES = {
+    "ccp-type": '''fn main() -> i64 {
+    let s = match (1, 2.5) {
+        (a, b) => to_str(a + b)
+    }
+    println(s)
+    0
+}
+''',
+    "partial": '''fn main() -> i64 {
+    let v = [1, 2]
+    println(to_str(v[len(v) + 3]))
+    0
+}
+''',
+    "steps": '''fn main() -> i64 {
+    let text = match read_file("./data/in.txt") {
+        Ok(t) => str_trim(t)
+        Err(_) => ""
+    }
+    let n = 0
+    while text == "x" {
+        n = n + 1
+    }
+    println("done " + to_str(n))
+    0
+}
+''',
+    "wrong": '''fn main() -> i64 {
+    println("nope")
+    0
+}
+''',
+}
+
+
+def failure_class_fixtures():
+    """AE-2: the four fixtures graded through the real binaries (arm a, oracle
+    generator answering with the fixture, round 0 only), plus the ended-class
+    parser on the strings genloop writes, and the report's M-lines."""
+    sys.path.insert(0, HERE)
+    import gv
+    for ended, cls in (("faulted (status Some(3)): ⚠ DENIED: out of steps (axis: steps)", "resource"),
+                       ("faulted (status Some(3)): ⚠ DENIED: x (axis: wall)", "resource"),
+                       ("faulted (status Some(3)): ⚠ DENIED: x (axis: verify)", "other-fault"),
+                       ("faulted (status None): 🛑 HALTED: the run was killed by SIGKILL", "halted"),
+                       ("timed out after 20000 ms", "timeout"),
+                       ("did not compile: x", "compile-failed")):
+        expect(f"ae2: ended {ended[:40]!r} -> {cls}", gv.ended_class({"ended": ended}) == cls,
+               gv.ended_class({"ended": ended}))
+    if not have_binaries("ae2", gv):
+        return
+    d = scratch()
+    root = tempfile.mkdtemp(prefix="ae-selftest-")
+    try:
+        for i, (name, src) in enumerate(AE2_FIXTURES.items()):
+            ae_task(os.path.join(root, "fx"), name, ax=src, goal_tag=f" ({i})")
+        o = os.path.join(root, "o")
+        rc, out = py(d, "genviab.py", "run", "--set-dir", os.path.join(root, "fx"), "--candidates",
+                     "--arm", "a", "--generator", "oracle", "--max-rounds", "0", "--parallel", "4",
+                     "--out", o)
+        rows = ({r["id"]: r for r in map(json.loads, open(os.path.join(o, "rows.jsonl")))}
+                if rc == 0 else {})
+        g = lambda tid, k: rows.get(tid, {}).get(k)
+        expect("ae2: ccp-type: b_ccp, kind type-class", g("ccp-type", "b_ccp") is True
+               and g("ccp-type", "b_ccp_kind") == "type-class", (out[-400:], rows.get("ccp-type")))
+        expect("ae2: partial: b_ccp, kind partial-op", g("partial", "b_ccp") is True
+               and g("partial", "b_ccp_kind") == "partial-op", rows.get("partial"))
+        expect("ae2: steps: no CCP, b_runtime_fail (ends `timeout`, see AE2_FIXTURES)",
+               g("steps", "b_ccp") is False and g("steps", "b_runtime_fail") is True
+               and "timeout" in (g("steps", "b_ended_classes") or []), rows.get("steps"))
+        expect("ae2: wrong: wrong-output, no CCP", g("wrong", "b_ccp") is False
+               and g("wrong", "b_ended_classes") == ["wrong-output"]
+               and g("wrong", "b_runtime_fail") is False, rows.get("wrong"))
+        expect("ae2: rows carry the per-round fields",
+               len(rows) == 4 and all(
+                   r["check_ok_per_round"] == [True] and r["gates_ok_per_round"] == [True]
+                   and r["first_green_round"] is None and r["truncated_rounds"] == []
+                   and r["budget_stop"] is False and r["ccp_any_round"][1] == 1
+                   for r in rows.values()), list(rows.values())[:1])
+        rc, rep = py(d, "genviab.py", "report", o)
+        expect("ae2: report prints the M1-M5 lines and the ended-class table",
+               rc == 0 and all(s in rep for s in (
+                   "M1 FT-pass: 0/4", "M2 CCP: 2/4", "M2s CCP-soundness: 1/4",
+                   "M2f check-clean runtime failure: 3/4", "M3 Solve@0..3", "M4 false acceptance",
+                   "| panic | 6 |", "| timeout | 1 |", "panic kinds: partial-op 3, type-class 3")), rep)
+    finally:
+        shutil.rmtree(d)
+        shutil.rmtree(root)
+
+
 class FakeCere:
     """A loopback OpenAI-compatible server (stdlib http.server): canned replies
     by `mode`, every chat request recorded (AE-1)."""
@@ -1283,6 +1381,7 @@ def main():
     driver()
     ae_loader()
     http_route()
+    failure_class_fixtures()
     if FAILS:
         print(f"{len(FAILS)} failure(s): {FAILS}")
         return 1
