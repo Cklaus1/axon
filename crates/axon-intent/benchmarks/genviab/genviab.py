@@ -688,8 +688,10 @@ def run_arm_c(a, task, out):
                 break
             text = r.stdout
             used += reported_tokens(r.stderr)
+        elif a.generator == "oracle" and task.get("reference_py"):
+            text = task["reference_py"]     # an ae task's reference.py (AE-4 fixtures)
         else:
-            raise Refused("arm c has no oracle generator")
+            raise Refused("arm c's oracle answers reference.py: this task has none")
         src = strip_python(text)
         res = gv.grade_python(task, src, ("visible",))
         rec = {"round": rnd, "candidate": text, "source": src, "stage": res["stage"],
@@ -811,6 +813,24 @@ def resolve_model(a):
         a.model = providers[a.provider]["model"] if a.generator == "http" else DEFAULT_MODEL
 
 
+def task_row(a, t, out, set_name, bins=None):
+    """One task-trial's full row: the arm's row plus identity, the call summary
+    and the model-substitution rule. Shared by cmd_run and ae.py (AE-4)."""
+    row = run_arm_a(a, t, out, bins) if a.arm == "a" else run_arm_c(a, t, out)
+    calls = summarize_calls(call_rows(os.path.join(out, "calls", f"{t['id']}.jsonl")))
+    row = {"id": t["id"], "set": set_name, "arm": a.arm, "generator": a.generator,
+           "category": t.get("category", "transform"),
+           "tempting": t.get("category") == "tempting", **row, **calls}
+    if t.get("set_mode") == "ae":
+        row.update(family=t.get("family"), tier=t.get("tier"))
+    # A provider that served another model than the one requested: unscored
+    # (PREREG section 3; no model substitution). Every model generator (AE-1).
+    row["model_substituted"] = a.generator in MODEL_GENERATORS and any(
+        m != a.model for m in calls["served_models"])
+    row["infra"] = row["infra"] or row["model_substituted"]
+    return row
+
+
 def cmd_run(a):
     if bool(a.set) == bool(a.set_dir):
         raise Refused("pass exactly one of --set and --set-dir")
@@ -824,9 +844,9 @@ def cmd_run(a):
             raise Refused(f"--only names tasks not in the manifest: {unknown}")
         tasks = [t for t in tasks if t["id"] in want]
     paid = a.generator == "micode"
-    if a.generator == "oracle" and a.arm == "c":
-        raise Refused("arm c has no oracle generator")
-    if a.generator == "oracle":
+    if a.generator == "oracle" and a.arm == "c" and any(not t.get("reference_py") for t in tasks):
+        raise Refused("arm c's oracle answers reference.py: only an ae set has one")
+    if a.generator == "oracle" and a.arm == "a":
         py_ref = [t["id"] for t in tasks if t["reference_lang"] != "axon"]
         if py_ref:
             raise Refused(f"the oracle generator needs reference.ax: {py_ref} have none")
@@ -907,22 +927,11 @@ def cmd_run(a):
                     return
                 in_flight[0] += 1
         try:
-            row = run_arm_a(a, t, out) if a.arm == "a" else run_arm_c(a, t, out)
+            row = task_row(a, t, out, set_name)
         finally:
             if paid:
                 with lock:
                     in_flight[0] -= 1
-        calls = summarize_calls(call_rows(os.path.join(out, "calls", f"{t['id']}.jsonl")))
-        row = {"id": t["id"], "set": set_name, "arm": a.arm, "generator": a.generator,
-               "category": t.get("category", "transform"),
-               "tempting": t.get("category") == "tempting", **row, **calls}
-        if t.get("set_mode") == "ae":
-            row.update(family=t.get("family"), tier=t.get("tier"))
-        # A provider that served another model than the one requested: unscored
-        # (PREREG section 3; no model substitution). Every model generator (AE-1).
-        row["model_substituted"] = model_gen and any(
-            m != a.model for m in calls["served_models"])
-        row["infra"] = row["infra"] or row["model_substituted"]
         with lock:
             with open(rows_path, "a") as fh:
                 fh.write(json.dumps(row) + "\n")
@@ -1009,6 +1018,120 @@ def verdict(a_rows, n_eligible, c_rows=None):
     return out
 
 
+def kn(k, n):
+    return [int(k), int(n)]
+
+
+def rate(k, n):
+    return round(k / n, 6) if n else None
+
+
+def scored_rows(rows):
+    """Rows in every §2 denominator: not tempting, not infra."""
+    return [r for r in rows if not r.get("tempting") and not r.get("infra")]
+
+
+def metrics(rows):
+    """The §2 metrics of one arm's rows (spec AE-2/AE-4; canon: §2). Arm a:
+    M1/M1c/M2/M2s/M2f/M2a/M3/M3t/M4, truncation and budget stops; arm c: the
+    Python FT-pass and Solve@3 that M5 compares. Rates and [k, n] pairs."""
+    s = scored_rows(rows)
+    n = len(s)
+    solved = lambda r, rnd: bool(r["verified"]) and (r.get("first_green_round") is not None
+                                                     and r["first_green_round"] <= rnd)
+    out = {"n": n, "ft_pass": rate(sum(bool(r["b_verified"]) for r in s), n),
+           "ft_pass_kn": kn(sum(bool(r["b_verified"]) for r in s), n),
+           "solve_at": [rate(sum(solved(r, i) for r in s), n) for i in range(MAX_REPAIR_ROUNDS + 1)],
+           "truncated": kn(sum(bool(r.get("truncated_rounds")) for r in s), n),
+           "budget_stop": kn(sum(bool(r.get("budget_stop")) for r in s), n),
+           "false_acceptance": kn(sum(bool(r["false_acceptance"]) for r in s),
+                                  sum(bool(r["accepted"]) for r in s)),
+           "infra": kn(sum(bool(r.get("infra")) for r in rows), len(rows))}
+    green = [r["first_green_round"] for r in s if r["verified"] and r.get("first_green_round") is not None]
+    out["turns_mean"] = round(sum(green) / len(green), 4) if green else None
+    if rows and rows[0]["arm"] == "a":
+        elig = [r for r in s if r.get("b_ccp_eligible")]
+        anyr = [r.get("ccp_any_round") or [0, 0] for r in s]
+        out.update(
+            ft_check=rate(sum(bool(r.get("b_check_ok")) for r in s), n),
+            ccp=kn(sum(bool(r.get("b_ccp")) for r in elig), len(elig)),
+            ccp_soundness=kn(sum(bool(r.get("b_ccp")) and r.get("b_ccp_kind") == "type-class"
+                                 for r in elig), len(elig)),
+            runtime_fail=kn(sum(bool(r.get("b_runtime_fail")) for r in elig), len(elig)),
+            ccp_any_round=kn(sum(x[0] for x in anyr), sum(x[1] for x in anyr)))
+    tiers = sorted({r["tier"] for r in s if r.get("tier")})
+    out["per_tier"] = {t: {"n": len(ts), "ft_pass": rate(sum(bool(r["b_verified"]) for r in ts), len(ts)),
+                           "solve3": rate(sum(bool(r["verified"]) for r in ts), len(ts))}
+                       for t in tiers for ts in [[r for r in s if r.get("tier") == t]]}
+    return out
+
+
+def class_counts(rows):
+    """Failure classes of the scored round-0 candidates (AE-2/AE-5): check
+    codes, panic kinds, ended classes over every graded run."""
+    check, panic, ended = {}, {}, {}
+    bump = lambda d, k: d.__setitem__(k, d.get(k, 0) + 1)
+    for r in scored_rows(rows):
+        for c in (r.get("diag_codes_per_round") or [[]])[0]:
+            bump(check, c)
+        for run in (r.get("b_grade") or {}).get("runs") or []:
+            bump(ended, run["ended_class"])
+            if run.get("panic_kind"):
+                bump(panic, run["panic_kind"])
+    return {"check": check, "panic": panic, "ended": ended}
+
+
+def instance_ci(k, n):
+    lo, hi = clopper_pearson(k, n)
+    return f"{k}/{n}" + (f" [{lo:.3f}, {hi:.3f}] (Clopper-Pearson)" if n else "")
+
+
+def metric_lines(rows):
+    """The §2 M-lines of one run directory (AE-2 acceptance)."""
+    m = metrics(rows)
+    s, n, out = scored_rows(rows), m["n"], []
+    inf = m["infra"]
+    out.append(f"- infra: {inf[0]}/{inf[1]}" + (" -> INVALID (> 5%)" if inf[1] and inf[0] / inf[1] > 0.05
+                                                else ""))
+    if rows[0]["arm"] == "a":
+        out.append(f"- M1 FT-pass: {pct(m['ft_pass_kn'][0], n)}")
+        out.append(f"- M1c FT-check: {pct(sum(bool(r.get('b_check_ok')) for r in s), n)}")
+        for key, name in (("ccp", "M2 CCP"), ("ccp_soundness", "M2s CCP-soundness"),
+                          ("runtime_fail", "M2f check-clean runtime failure"),
+                          ("ccp_any_round", "M2a CCP-any-round")):
+            out.append(f"- {name}: {instance_ci(*m[key])}")
+        for r in s:
+            if r.get("b_ccp"):
+                prog = ((r.get("b_grade") or {}).get("program_sha256") or "?")[:12]
+                out.append(f"  - CCP {r['id']} family {r.get('family') or '-'} kind {r.get('b_ccp_kind')} "
+                           f"program {prog}: {'; '.join(r.get('b_ccp_reasons') or [])[:160]}")
+    out.append("- M3 Solve@0..3: " + ", ".join(
+        f"{v:.3f}" if v is not None else "-" for v in m["solve_at"]) + f" (n {n})")
+    out.append(f"- M3t turns to green: {m['turns_mean'] if m['turns_mean'] is not None else '-'}")
+    fa = m["false_acceptance"]
+    out.append(f"- M4 false acceptance: {instance_ci(*fa)}")
+    tr, bs = m["truncated"], m["budget_stop"]
+    out.append(f"- truncated: {tr[0]}/{tr[1]}; budget stops: {bs[0]}/{bs[1]}"
+               + (" (WARNING: budget stops above 2%)" if bs[1] and bs[0] / bs[1] > 0.02 else ""))
+    if rows[0]["arm"] == "c":
+        out.append(f"- M5 (Python side): FT-pass {pct(m['ft_pass_kn'][0], n)}, Solve@3 "
+                   f"{pct(sum(bool(r['verified']) for r in s), n)}")
+    if rows[0]["arm"] == "a":
+        cc = class_counts(rows)
+        out.append("- ended class (round-0 graded runs, scored rows):")
+        out.append("  | class | runs |")
+        out.append("  |---|---|")
+        for c in gv.ENDED_CLASSES:
+            out.append(f"  | {c} | {cc['ended'].get(c, 0)} |")
+        out.append("- panic kinds: " + (", ".join(f"{k} {v}" for k, v in sorted(cc["panic"].items()))
+                                        or "none"))
+        out.append("- check codes (round 0): " + (", ".join(
+            f"{k} {v}" for k, v in sorted(cc["check"].items(), key=lambda x: (-x[1], x[0])))
+            or "none"))
+    return out
+
+
+
 def report(dirs):
     out = []
     for d in dirs:
@@ -1047,6 +1170,7 @@ def report(dirs):
         out.append(f"- calls {sum(r['calls'] for r in rows)}, tokens in "
                    f"{sum(r['input_tokens'] for r in rows)} / out {sum(r['output_tokens'] for r in rows)}, "
                    f"nominal ${sum(r['cost_usd_estimated'] for r in rows):.4f} (calls/*.jsonl)")
+        out.extend(metric_lines(rows))
         if os.path.exists(os.path.join(d, "STOPPED")):
             out.append("- STOPPED: " + open(os.path.join(d, "STOPPED")).read().strip())
     return "\n".join(out)

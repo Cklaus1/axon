@@ -12,9 +12,13 @@ examples through the same `axon check`, gates and ceiling-scoped sandbox.
 | `genviab.py` | runs arm a (+ b) and arm c; spend, rate-limit stop, once-ledger; `report`, `verdict` (the IG7 decision rule), `spent` |
 | `drivers/micode-program.sh` | the model behind `cmd:` through `micode` (tool-less mode, scratch dir, one log row per call) |
 | `drivers/oracle.sh` | the zero-cost generator: the task's reference, or an empty program |
-| `selftest.py` | no model, no spend: build.py (incl. `reference.py`), the once guard against a bare origin, the spend sum, the grader on two-run/exit/stdout fixtures, the driver against a fake `micode`; `GENVIAB_REQUIRE_BINS=1` turns a missing binary into a FAIL (the gate's `genviab-selftest` stage, S23) |
+| `drivers/http-program.py` | the CERE generator behind `cmd:` (authoring-eval AE-1): one OpenAI-compatible call, explicit limits, the reply cache |
+| `ae.py` | the authoring-eval runner (AE-4/AE-5/AE-6): paired base/candidate runs on a private `ae` set, the `axon-ae/1` trend row, `report`, `classes`, `check-canaries` |
+| `ae/history.jsonl`, `ae/classes.json` | the public trend file (aggregates only) and the AE-5 class table |
+| `selftest.py` | no model, no spend: build.py (incl. `reference.py`), the once guard against a bare origin, the spend sum, the grader on two-run/exit/stdout fixtures, the driver against a fake `micode`, the AE-1..AE-7 paths against a loopback fake CERE; `GENVIAB_REQUIRE_BINS=1` turns a missing binary into a FAIL (the gate's `genviab-selftest` stage, S23) |
 | `rejected-ideas.json` | sources not ported (`author`) and tasks build.py excluded (`mechanical`) |
 | `PREREG-genviab.md` | the protocol, **DRAFT** (not frozen) |
+| `PREREG-ae.md` | the authoring-eval protocol, **DRAFT** skeleton (frozen by the integrator after the pilot) |
 | `results/` | `dryrun/` (oracle, empty), `dev/` (paid Haiku runs); `calls/*.jsonl` are the spend source |
 
 ```sh
@@ -132,3 +136,46 @@ paragraph, and arm c's prompt uses the same goal (`gv.goal`). Run 1 is kept as r
 
 Haiku 5.5 is diagnostic only (owner decision Q2). Opus 5.5 is the gating model, and only the once run
 uses it.
+
+## authoring-eval (`ae`, tasks/authoring-eval-spec.md AE-1..AE-7)
+
+One number per model per release: how well CERE Qwen (`Qwen3.8-Flash-Next`, NH-1) writes Axon. The set, rows,
+transcripts, programs and the reply cache are private (`/root/axon-ae`, D8); this directory holds the harness, the
+aggregate trend file `ae/history.jsonl` and no task text or canary.
+
+- **Generator (AE-1).** `genviab.py run ... --generator http --provider cere [--model M] [--temperature 0.7]
+  [--seed 0] [--max-tokens 8192] [--cache-dir DIR]`. `drivers/http-program.py` makes one `/chat/completions` call
+  with the bearer `CERE_TOKEN_AE` read from `/etc/cere/cere-t4.env` (a missing key is a refusal, never a fallback);
+  `--provider` takes only `cere`. A `length` stop at the declared `max_tokens` is a model failure (`truncated`); a
+  cut below it, a served model other than the requested one (`model_substituted`) or a transport error is infra.
+  The reply cache key is (prompt sha, model series, temperature, seed, max_tokens, driver sha); a seeded replay
+  sample re-queries hits and a mismatch turns the cache off for the rest of the run (D4). Haiku stays on
+  `micode-program.sh` for drafting only (D12).
+- **Failure classes (AE-2).** Every arm-a row carries `round_stages`, `diag_codes_per_round`, `b_check_ok`,
+  `b_ccp`/`b_ccp_kind`, `b_runtime_fail`, `b_ended_classes`, `ccp_any_round`, `first_green_round`; `gv.grade_axon`
+  returns per-run `ended_class` and `panic_kind` (`gv.PANIC_KINDS`). `genviab.py report` prints M1-M5 and the
+  ended-class table.
+- **Set loader (AE-3).** `build.py --check --set-dir DIR` checks an `ae` set (both references, refs-agree,
+  family/tier/canary/drafted_by, tokens >= 120000) and writes `DIR/manifest.json` / `DIR/rejected.json`, never the
+  public files; `--candidates` checks a drafting pool before it has `reference.ax`. `genviab.py run --set-dir DIR
+  [--candidates]` runs arm a/c on it and saves an accepted program under `<out>/programs/` (D12).
+- **Runner (AE-4/AE-6).** `ae.py run --set-dir <private>/ae-1 --label L --base-bin DIR --cand-bin DIR [--seeds 0,1,2]`
+  runs arm a under both binaries (alternating which goes first), `regrade` when every round-0 prompt is byte-equal
+  (one reply graded under both), else `resample`, and arm c once; Δ FT-pass is the family-clustered sign-flip of
+  `headroom/stats.py` (95% CI = `ci(alpha=0.025)`, two-sided p). `--confirm RUN_ID` reruns on seeds never used for
+  the set version with the cache off. Refused: an unfrozen PREREG (unless `--pilot`, no trend row), a manifest or
+  series other than PREREG's, a start 01:30-08:00. `report RUN_ID` resolves the flag; `check-canaries` greps the
+  content of `git ls-files` for every set canary.
+- **Classes (AE-5).** `ae.py classes RUN_ID...` ranks round-0 failure classes by `ae/classes.json`, prints stall
+  rates per check code, every M2s instance and draft opportunities stanzas (printed only).
+- **Weekly screen (AE-7).** `scripts/ae_weekly.py run` (unit files `scripts/systemd/ae-weekly.{service,timer}`,
+  Saturday 12:00, **not installed**): last labelled release vs `origin/main` HEAD, label `weekly-<date>`, advisory,
+  binaries cached by commit under `<private>/bins/<sha8>/` (the base is never rebuilt: `ae_weekly.py cache-bins DIR`),
+  digest with the rerun trigger in `<private>/weekly/<date>.md`; it never starts a confirm run.
+
+S23 cost: the AE selftests add ≈ 42 s (`selftest.py` 51.5 s at 8916f045 against 9.2 s at 1f71623d); AE-2's fixtures
+wait ~20 s on one example timeout and run in a thread beside the rest.
+
+AE-1 acceptance, CERE dev runs (2026-11-10, rows private under `/root/axon-ae/runs/`): arm a on the 28 dev tasks through
+`CERE_TOKEN_AE`, 0/28 infra, 35 calls all `finish_reason: stop`, served model = requested; verified 21/24 non-tempting, M1
+(round 0) 18/24; the earlier dev-only run through the trainloop token gave the same headline, and arm c 0/28 infra (23/24).

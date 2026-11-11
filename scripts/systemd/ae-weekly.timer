@@ -1,0 +1,14 @@
+# Starts ae-weekly.service Saturday 12:00 local (tasks/authoring-eval-spec.md AE-7, the weekly CERE screen of the
+# authoring-eval). Not Persistent: a missed Saturday is skipped, never started later (the screen's window is
+# Saturday 12:00-20:00 and CERE is never used 01:30-08:00). NOT installed or enabled by the build: the integrator
+# enables it after two hand release runs (spec §7).
+[Unit]
+Description=authoring-eval weekly CERE screen, Saturday 12:00 local
+
+[Timer]
+OnCalendar=Sat *-*-* 12:00:00
+Persistent=false
+Unit=ae-weekly.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,23 @@
+# The authoring-eval weekly CERE screen (tasks/authoring-eval-spec.md AE-7): scripts/ae_weekly.py run in the
+# checkout AE_REPO. It compares the last labelled release with origin/main HEAD on the frozen private set
+# (/root/axon-ae/ae-1), --parallel 3, --advisory, label weekly-<date>, and stops dispatching at 20:00 (INCOMPLETE,
+# no trend row). The CERE bearer is CERE_TOKEN_AE, read by drivers/http-program.py from /etc/cere/cere-t4.env (never
+# from this unit, argv or a log). Root: the private store /root/axon-ae is 0700. Started by ae-weekly.timer.
+[Unit]
+Description=authoring-eval weekly CERE screen (ae_weekly.py run)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=AE_PRIVATE=/root/axon-ae
+Environment=TMPDIR=/var/tmp
+Environment=AE_REPO=/home/cklaus/projects/axon
+ExecStart=/usr/bin/python3 -B ${AE_REPO}/scripts/ae_weekly.py run --repo ${AE_REPO}
+# Exit 1 is a run that wrote no trend row (INCOMPLETE/INVALID, in the digest): not a unit failure
+SuccessExitStatus=1
+Nice=10
+# 12:00-20:00 window plus a candidate build
+TimeoutStartSec=9h
