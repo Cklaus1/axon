@@ -1,6 +1,6 @@
 # checker-soundness-4 - spec (CS4-1..CS4-5)
 
-**Status: PARTIAL 2026-11-02 on b2/int 9e9671bb (CS4-1 652f2714; CS4-2 92190f82, b6c355c5; CS4-3 + CS4-4 954dfca3, d4ea99f2). CS4-5 is not built (NH-4), so O-AF-04 stays open; O-LF-01 stays open for unresolved subjects.**
+**Status: BUILT 2026-11-11 (CS4-1..CS4-4 on b2/int 9e9671bb 2026-11-02: CS4-1 652f2714; CS4-2 92190f82, b6c355c5; CS4-3 + CS4-4 954dfca3, d4ea99f2. CS4-5 built 2026-11-11 on `cs5/l` 1881d489 as checker-soundness-5 CS5-5 after NH-4 (a), row M4719, extended to `while let` and nested sub-patterns by CS5 NH-2 (a)). O-AF-04 is fixed; O-LF-01's remainder is fixed by checker-soundness-5 except a subject that never resolves.**
 
 ### Step 1 review
 

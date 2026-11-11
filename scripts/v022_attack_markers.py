@@ -4478,3 +4478,21 @@ ATTACK_MARKERS.update({
     'M5268': r'ATTACK: the release ledger hides a behaviour change from the compat diff',
 })
 
+# checker-soundness-5 CS5-1..CS5-5 (ids M5240-M5249 and checker-soundness-4's M4719)
+ATTACK_MARKERS.update({
+    'M5240': r'ATTACK: a struct or variant pattern field of the wrong type checked clean',
+    'M5241': r'ATTACK: a struct or variant pattern field of the wrong type checked clean',
+    'M5242': r'ATTACK: a sub-pattern of a tuple pattern of the wrong type checked clean',
+    # f30 (`S::C { o: Some(x) }`, `let y: u8 = x`) precedes g03 in the controls.
+    'M5243': r'ATTACK: a valid pattern match was refused \[cs5_(f30|g03)\]',
+    'M5248': r'ATTACK: a valid pattern match was refused \[cs5_a15\]',
+    'M5244': r'ATTACK: a typed lambda param of the wrong type checked clean',
+    # l02/l12 (`|x: u8|` given an int literal) precede l13 in the controls.
+    'M5245': r'ATTACK: a valid pattern match was refused \[cs5_l(02|12|13|16|19)\]',
+    'M5246': r'ATTACK: a tuple pattern on a late-resolved subject checked clean',
+    'M5247': r'ATTACK: a valid pattern match was refused \[cs5_a26\]',
+    'M5250': r'ATTACK: a valid call through a fn value was refused \[snd_lambda_alias\]',
+    'M4719': r'ATTACK: a pattern of another enum checked clean',
+    'M5249': r'ATTACK: a pattern of another enum checked clean',
+})
+

@@ -888,6 +888,16 @@ struct CallObligation {
     derives_for: Vec<u32>,
 }
 
+/// CS5-4: a tuple pattern on a subject still unresolved at bind time,
+/// checked by kind in `solve()` once the subject resolves.
+struct DeferredTupleSubject {
+    subject: Type,
+    arity: usize,
+    /// Each `Ident` component: (index, name, the var it is bound to).
+    components: Vec<(usize, String, Type)>,
+    span: crate::span::Span,
+}
+
 /// CS3-2: the kind the calls in a lambda's body require of one of its params.
 #[derive(Clone, PartialEq)]
 enum Derived {
@@ -932,11 +942,16 @@ pub struct InferCtx {
     /// CS2-3a: the `Num` variable of each call to a numeric-key builtin, which
     /// `solve()` requires to be an int or a float.
     num_obligations: Vec<(Type, crate::span::Span)>,
-    /// TP-1: one entry per numeric leaf of a tuple pattern component bound
-    /// against a known element type: (the element's leaf type, the free var
-    /// that stands for it, the component's name, the pattern's statement).
-    /// `solve()` requires each var to resolve to a number, if it resolves.
-    tuple_component_obligations: Vec<(Type, Type, String, crate::span::Span)>,
+    /// TP-1: one entry per numeric leaf of a pattern binding bound against a
+    /// known element or declared type: (the leaf type, the free var that
+    /// stands for it, the binding's name, its origin noun, the pattern's
+    /// statement). `solve()` requires each var to resolve to a number, if it
+    /// resolves. The noun (CS5 D2) names the binding in the refusal: "tuple
+    /// pattern component", "pattern field", "pattern binding", "lambda param".
+    tuple_component_obligations: Vec<(Type, Type, String, &'static str, crate::span::Span)>,
+    /// CS5-4: tuple patterns whose subject was still a var at bind time,
+    /// checked by kind in `solve()`; nothing is bound or unified.
+    deferred_tuple_subjects: Vec<DeferredTupleSubject>,
     /// CS2-6: calls whose callee is not a fn name with a signature. Checked
     /// by `solve()` against the callee's resolved fn type.
     call_obligations: Vec<CallObligation>,
@@ -1074,6 +1089,7 @@ impl InferCtx {
             len_obligations: Vec::new(),
             num_obligations: Vec::new(),
             tuple_component_obligations: Vec::new(),
+            deferred_tuple_subjects: Vec::new(),
             call_obligations: Vec::new(),
             struct_fields: HashMap::new(),
             struct_generic_params: HashMap::new(),
@@ -1342,6 +1358,26 @@ impl InferCtx {
                 self.refinement_base.insert(name, t);
             }
         }
+    }
+
+    /// CS5-3: `ty` has an enum leaf of one fieldless variant, the shape
+    /// `type Name = str` parses to (an alias the interpreter erases).
+    fn names_alias_enum(&self, ty: &Type) -> bool {
+        let mut found = false;
+        ty.clone().map_leaves(&mut |t| {
+            if let Type::Enum(name) = &t {
+                found |= matches!(
+                    self.enum_variants.get(name).map(Vec::as_slice),
+                    Some([variant]) if self
+                        .enum_variant_fields
+                        .get(name)
+                        .and_then(|fields| fields.get(variant))
+                        .is_none_or(Vec::is_empty)
+                );
+            }
+            t
+        });
+        found
     }
 
     /// Convert an AST `AxonType` to a semantic `Type`.
@@ -2435,7 +2471,30 @@ impl InferCtx {
                 body,
                 captures: _,
             } => {
-                let param_types: Vec<Type> = params.iter().map(|_| self.fresh()).collect();
+                // CS5-3 (O-TP-01): an annotated param binds its annotation's
+                // skeleton (TP-1's rule: a numeric leaf is a free var that must
+                // be a number, so `|x: u8|` still takes an int literal and
+                // stays one of the lambda's own vars below; every other leaf
+                // is exact). An unannotated param, or an annotation with an
+                // unresolved part (a type param, an unknown name), stays fresh.
+                // So does one naming an alias (`type Name = str` parses as an
+                // enum whose one fieldless variant is named `str`, which the
+                // interpreter erases; the checker's `lambda_param_type` reads
+                // it the same way, `snd_lambda_alias`).
+                let param_types: Vec<Type> = params
+                    .iter()
+                    .map(|p| match &p.ty {
+                        Some(t) => {
+                            let ty = self.resolve_ast_type(t);
+                            if has_unresolved(&ty) || self.names_alias_enum(&ty) {
+                                self.fresh()
+                            } else {
+                                self.tuple_component_skeleton(&ty, &p.name, "lambda param")
+                            }
+                        }
+                        None => self.fresh(),
+                    })
+                    .collect();
                 // Fix #6: create a fresh return-type variable for the lambda
                 // instead of reusing the enclosing function's ret_ty. This
                 // prevents `?` and `return` inside the lambda from bleeding
@@ -3100,17 +3159,20 @@ impl InferCtx {
                 };
                 self.bind_pattern_with_subj(inner, scope, Some(payload));
             }
-            // TP-4: a tuple sub-pattern of a field declared as a tuple with
-            // no unresolved part (generic fields are skipped) is bound against
-            // that declared type. Every other field pattern keeps no type
-            // (O-TP-03); an unknown name or field is the checker's to report.
+            // TP-4, CS5-1 (O-TP-03): each field pattern of a struct or variant
+            // pattern is bound against the field's declared type when that
+            // type has no unresolved part (`bind_sub_pattern`: an `Ident` takes
+            // its skeleton, as a tuple component does). A generic field (`v:
+            // T`), an unknown name or field keeps no type; an unknown one is
+            // the checker's to report.
             Pattern::Struct { name, fields } => {
                 for (fname, pat) in fields {
-                    let declared = match pat {
-                        Pattern::Tuple(_) => self.declared_tuple_field(name, fname),
-                        _ => None,
-                    };
-                    self.bind_pattern_with_subj(pat, scope, declared.as_ref());
+                    match self.declared_field(name, fname) {
+                        Some(decl) => {
+                            self.bind_sub_pattern(pat, &decl, fname, "pattern field", scope)
+                        }
+                        None => self.bind_pattern_with_subj(pat, scope, None),
+                    }
                 }
             }
             // CS4-3 (O-LF-01): a tuple pattern on a subject whose type is
@@ -3126,8 +3188,11 @@ impl InferCtx {
             // `solve()` requires to be a number (an int literal's component
             // used as `u8` or `f64` runs today), every other leaf is exact, as
             // the `let (a, b) = t` twin's `.i` read. TP-2: a nested tuple
-            // pattern is bound against its element. Other sub-patterns keep
-            // no type (O-TP-02).
+            // pattern is bound against its element. CS5-2 (O-TP-02): any other
+            // sub-pattern (`Some`/`Ok`/`Err`/a struct) is bound against its
+            // element through `bind_sub_pattern` when the element is resolved;
+            // an element still a var keeps no type, since the `Some`/`Ok` arms
+            // would pin it to `Option` in one arm and `Result` in the next.
             Pattern::Tuple(pats) => {
                 let concrete = subj_ty.filter(|st| {
                     !pats.is_empty()
@@ -3150,34 +3215,103 @@ impl InferCtx {
                         elems = Some(ts.as_slice()).filter(|ts| ts.len() == pats.len());
                     }
                 }
+                // CS5-4: on a subject still a var, each `Ident` component's
+                // var is recorded so `solve()` can check it by kind once the
+                // subject resolves (a generic fn's return, `arr_find`'s
+                // payload). It is bound exactly as before.
+                let defer = !pats.is_empty() && matches!(subj_ty, Some(Type::Var(_)));
+                let mut components = Vec::new();
                 for (i, pat) in pats.iter().enumerate() {
                     match (pat, elems.map(|ts| &ts[i])) {
                         (Pattern::Ident(name), Some(elem)) => {
-                            let ty = self.tuple_component_skeleton(elem, name);
+                            let ty = self.tuple_component_skeleton(
+                                elem,
+                                name,
+                                "tuple pattern component",
+                            );
                             scope.bind(name.clone(), ty);
                         }
                         (Pattern::Tuple(_), Some(elem)) => {
                             self.bind_pattern_with_subj(pat, scope, Some(elem));
                         }
+                        (_, Some(elem)) if !type_is_unresolved(elem) => {
+                            let mut names = Vec::new();
+                            crate::resolver::collect_pattern_binding_names(pat, &mut names);
+                            let name = match names.as_slice() {
+                                [one] => one.clone(),
+                                _ => format!("#{i}"),
+                            };
+                            self.bind_sub_pattern(pat, elem, &name, "pattern binding", scope);
+                        }
+                        (Pattern::Ident(name), None) if defer => {
+                            let var = self.fresh();
+                            scope.bind(name.clone(), var.clone());
+                            components.push((i, name.clone(), var));
+                        }
                         _ => self.bind_pattern_with_subj(pat, scope, None),
                     }
+                }
+                if let (Some(subject), false) = (subj_ty, components.is_empty()) {
+                    self.deferred_tuple_subjects.push(DeferredTupleSubject {
+                        subject: subject.clone(),
+                        arity: pats.len(),
+                        components,
+                        span: self.current_stmt_span,
+                    });
                 }
             }
         }
     }
 
-    /// TP-1: the type a tuple pattern component binds for element type
-    /// `elem`: `elem` with each numeric leaf replaced by a fresh var, which
-    /// `solve()` requires to resolve to a number (any width: the interpreter
-    /// runs an int component used as `u8`). Every other leaf, a var or type
-    /// param included (D8), is kept exactly.
-    fn tuple_component_skeleton(&mut self, elem: &Type, name: &str) -> Type {
+    /// CS5-1, CS5-2: bind the sub-pattern `pat` whose type is known to be
+    /// `decl` (a struct field's declared type, a tuple pattern's element). An
+    /// `Ident` binds `decl`'s skeleton (TP-1's rule: numeric leaves free,
+    /// checked by kind in `solve`; every other leaf exact); a tuple pattern
+    /// is bound against `decl` itself (TP-2..TP-4); `Some`/`Ok`/`Err` and a
+    /// nested struct pattern are bound against the skeleton, so a payload
+    /// `Ident` gets the skeleton's leaf and
+    /// a payload of the wrong shape is refused. `name` and `noun` name a
+    /// numeric leaf's obligation for any form but `Ident`, which uses its own.
+    fn bind_sub_pattern(
+        &mut self,
+        pat: &Pattern,
+        decl: &Type,
+        name: &str,
+        noun: &'static str,
+        scope: &mut Scope,
+    ) {
+        match pat {
+            Pattern::Ident(n) => {
+                let ty = self.tuple_component_skeleton(decl, n, noun);
+                scope.bind(n.clone(), ty);
+            }
+            Pattern::Tuple(_) => self.bind_pattern_with_subj(pat, scope, Some(decl)),
+            Pattern::Some(_) | Pattern::Ok(_) | Pattern::Err(_) | Pattern::Struct { .. } => {
+                let skel = self.tuple_component_skeleton(decl, name, noun);
+                self.bind_pattern_with_subj(pat, scope, Some(&skel));
+            }
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::None => {}
+        }
+    }
+
+    /// TP-1: the type a pattern binding takes for element type `elem`:
+    /// `elem` with each numeric leaf replaced by a fresh var, which `solve()`
+    /// requires to resolve to a number (any width: the interpreter runs an
+    /// int component used as `u8`). Every other leaf, a var or type param
+    /// included (D8), is kept exactly. `noun` names the binding's origin in
+    /// the refusal (CS5 D2).
+    fn tuple_component_skeleton(&mut self, elem: &Type, name: &str, noun: &'static str) -> Type {
         let span = self.current_stmt_span;
         elem.clone().map_leaves(&mut |leaf| {
             if leaf.is_numeric() {
                 let var = self.fresh();
-                self.tuple_component_obligations
-                    .push((leaf, var.clone(), name.to_string(), span));
+                self.tuple_component_obligations.push((
+                    leaf,
+                    var.clone(),
+                    name.to_string(),
+                    noun,
+                    span,
+                ));
                 var
             } else {
                 leaf
@@ -3185,16 +3319,16 @@ impl InferCtx {
         })
     }
 
-    /// TP-4: the declared type of field `field` of the struct or the
+    /// TP-4, CS5-1: the declared type of field `field` of the struct or the
     /// `Enum::Variant` named `name` (resolved as `Expr::StructLit` does),
-    /// when it is a tuple with no unresolved part.
-    fn declared_tuple_field(&self, name: &str, field: &str) -> Option<Type> {
+    /// when it has no unresolved part (a generic field is skipped, D3).
+    fn declared_field(&self, name: &str, field: &str) -> Option<Type> {
         let declared = match name.split_once("::") {
             Some((enum_name, variant)) => self.enum_variant_fields.get(enum_name)?.get(variant)?,
             None => self.struct_fields.get(name)?,
         };
         let (_, ty) = declared.iter().find(|(n, _)| n == field)?;
-        (matches!(ty, Type::Tuple(_)) && !has_unresolved(ty)).then(|| ty.clone())
+        (!has_unresolved(ty)).then(|| ty.clone())
     }
 
     // ── Program-level inference ───────────────────────────────────────────────
@@ -3593,6 +3727,44 @@ impl InferCtx {
                 );
             }
         }
+        // CS5-4: a tuple pattern on a subject unresolved at bind time is
+        // checked by kind now that the subject may be a tuple of the
+        // pattern's arity (D5: another arity, a non-tuple or a subject still
+        // unresolved is skipped; nothing is bound). A numeric element goes to
+        // the TP-1 loop below (used as any number); any other element must
+        // not conflict in kind with the component's use.
+        for d in std::mem::take(&mut self.deferred_tuple_subjects) {
+            let Type::Tuple(elems) = subst.apply(&d.subject) else {
+                continue;
+            };
+            if elems.len() != d.arity {
+                continue;
+            }
+            for (i, name, var) in d.components {
+                let elem = &elems[i];
+                if elem.is_numeric() {
+                    self.tuple_component_obligations.push((
+                        elem.clone(),
+                        var,
+                        name,
+                        "pattern binding",
+                        d.span,
+                    ));
+                } else {
+                    let used = subst.apply(&var);
+                    if kinds_conflict(elem, &used) {
+                        self.errors.push(
+                            InferError::mismatch(
+                                &format!("use of pattern binding `{name}`"),
+                                elem,
+                                &used,
+                            )
+                            .with_span(d.span),
+                        );
+                    }
+                }
+            }
+        }
         // CS2-3a: a numeric key fn (`arr_max_by`, `arr_min_by`,
         // `arr_sum_by_f64`) returns an int or a float; anything else panics
         // `key fn must return numeric` at run time. A return still unresolved
@@ -3609,12 +3781,12 @@ impl InferCtx {
                 );
             }
         }
-        // TP-1: a numeric leaf of a tuple pattern component may be used as
-        // any number (D2), but not as another kind: `(a, b)` on `(1, "s")`
-        // with `str_len(a)` panics at run time. `Uncertain`/`Temporal` around
-        // a number are accepted, as for the `let` twin (D7). `[REVISED:
+        // TP-1: a numeric leaf of a pattern binding may be used as any
+        // number (D2), but not as another kind: `(a, b)` on `(1, "s")` with
+        // `str_len(a)` panics at run time. `Uncertain`/`Temporal` around a
+        // number are accepted, as for the `let` twin (D7). `[REVISED:
         // TPI-2]` So is `dyn Trait`, which `unify` lets anything through.
-        for (leaf, var, name, span) in std::mem::take(&mut self.tuple_component_obligations) {
+        for (leaf, var, name, noun, span) in std::mem::take(&mut self.tuple_component_obligations) {
             let used = strip_soft_wrappers(subst.apply(&var));
             if !type_is_unresolved(&used)
                 && !used.is_numeric()
@@ -3622,12 +3794,8 @@ impl InferCtx {
                 && !matches!(used, Type::DynTrait(_))
             {
                 self.errors.push(
-                    InferError::mismatch(
-                        &format!("use of tuple pattern component `{name}`"),
-                        &leaf,
-                        &used,
-                    )
-                    .with_span(span),
+                    InferError::mismatch(&format!("use of {noun} `{name}`"), &leaf, &used)
+                        .with_span(span),
                 );
             }
         }

@@ -48689,3 +48689,319 @@ fn tuple_pattern_in_a_struct_field_is_checked() {
         tp_assert_refused(attack, tag, src, line, false);
     }
 }
+
+// -- checker-soundness-5 CS5-1..CS5-5 --
+
+/// checker-soundness-5: `src` must be refused by `axon check` (rc 2, first
+/// error `code` at `line`) and `axon run` must stop at the same refusal (rc 2,
+/// empty stdout).
+fn cs5_assert_refused(attack: &str, tag: &str, src: &str, code: &str, line: u32) {
+    let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs5_{tag}"), src);
+    let first = cs4_first_error(&cmsg);
+    assert!(
+        crc == Some(2) && first == Some((code.to_string(), line)),
+        "{attack} [{tag}]: want rc 2, first error {code} at line {line}, got rc {crc:?} {first:?}: {cmsg}"
+    );
+    assert!(
+        rrc == Some(2) && rout.is_empty(),
+        "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+    );
+}
+
+/// CS5-1 (O-TP-03): a struct or variant pattern's fields take the declared
+/// field types: every non-numeric leaf exactly, every numeric leaf as a free
+/// var that must resolve to a number (TP-1's rule, D1). Each case checked
+/// rc 0 and then panicked at run (`cannot apply Add to str / i64`, ...); each
+/// `let`/field-read twin is refused. A field of a generic type (`v: T`) stays
+/// unbound (D3).
+#[test]
+fn struct_pattern_fields_are_typed() {
+    let attack = "ATTACK: a struct or variant pattern field of the wrong type checked clean";
+    let cases = [
+        ("f01", "enum S { C { r: str } }\nfn main() {\n    let v = S::C { r: \"a\" }\n    match v { S::C { r } => println(to_str(r + 1)) }\n}\n", 4),
+        ("f03", "enum S { C { r: str }, N }\nfn main() {\n    let v = S::C { r: \"a\" }\n    match v { S::C { r: x } => println(to_str(x + 1)), S::N => println(\"n\") }\n}\n", 4),
+        ("f07", "type P = { x: str }\nenum S { C { p: P }, N }\nfn main() {\n    let v = S::C { p: P { x: \"a\" } }\n    match v { S::C { p } => println(to_str(p.x + 1)), S::N => println(\"n\") }\n}\n", 5),
+        ("f08", "enum S { C { o: Option<str> }, N }\nfn main() {\n    let v = S::C { o: Some(\"a\") }\n    match v { S::C { o } => println(to_str(o + 1)), S::N => println(\"n\") }\n}\n", 4),
+        ("f12c", "enum S { C { xs: [str] }, N }\nfn main() {\n    let v = S::C { xs: [\"a\"] }\n    match v { S::C { xs } => println(to_str(str_len(xs))), S::N => println(\"n\") }\n}\n", 4),
+        ("f13", "enum S { C { r: str }, N }\nfn main() {\n    let v = S::C { r: \"a\" }\n    if let S::C { r } = v { println(to_str(r + 1)) }\n}\n", 4),
+        ("f14", "enum S { C { r: str }, N }\nfn main() {\n    let v = S::C { r: \"a\" }\n    while let S::C { r } = v { println(to_str(r + 1))\n v = S::N }\n}\n", 4),
+        ("f16", "enum S { C { b: bool }, N }\nfn main() {\n    let v = S::C { b: true }\n    match v { S::C { b } => println(to_str(b + 1)), S::N => println(\"n\") }\n}\n", 4),
+        ("f19", "enum S { C { r: str }, N }\nfn h(x: i64) -> i64 { x * 2 }\nfn main() {\n    let v = S::C { r: \"a\" }\n    match v { S::C { r } => println(to_str(h(r))), S::N => println(\"n\") }\n}\n", 5),
+        ("f23", "enum S { C { r: str }, N }\nfn f(v: S) -> i64 {\n    match v { S::C { r } => r + 1, S::N => 0 }\n}\nfn main() { println(to_str(f(S::C { r: \"a\" }))) }\n", 3),
+        ("f24", "enum S { C { n: i64 }, N }\nfn main() {\n    let v = S::C { n: 5 }\n    let g = |x| str_len(x)\n    match v { S::C { n } => println(to_str(g(n))), S::N => println(\"n\") }\n}\n", 5),
+        ("f27", "enum W { P { r: str } }\nenum S { C { w: W }, N }\nfn main() {\n    let v = S::C { w: W::P { r: \"a\" } }\n    match v { S::C { w: W::P { r } } => println(to_str(r + 1)), S::N => println(\"n\") }\n}\n", 5),
+        ("f31", "enum S { C { f: fn(i64) -> i64 }, N }\nfn inc(x: i64) -> i64 { x + 1 }\nfn main() {\n    let v = S::C { f: inc }\n    match v { S::C { f } => println(to_str(f(\"s\"))), S::N => println(\"n\") }\n}\n", 5),
+        ("f32", "enum S { C { xs: [i64] }, N }\nfn main() {\n    let v = S::C { xs: [1] }\n    match v { S::C { xs } => println(to_str(xs)), S::N => println(\"n\") }\n}\n", 4),
+        ("f33", "type S = A { r: str } | B { n: i64 }\nfn main() {\n    let v = S::A { r: \"a\" }\n    match v { S::A { r } => println(to_str(r + 1)), S::B { n } => println(to_str(n)) }\n}\n", 4),
+        ("f37", "enum S { C { o: Result<str, i64> }, N }\nfn main() {\n    let v = S::C { o: Ok(\"a\") }\n    match v { S::C { o: Ok(x) } => println(to_str(x + 1)), _ => println(\"o\") }\n}\n", 4),
+        ("s08", "enum W { P { r: str }, N }\nfn main() {\n    let o = Some(W::P { r: \"a\" })\n    match o { Some(W::P { r }) => println(to_str(r + 1)), _ => println(\"o\") }\n}\n", 4),
+        ("u11", "fn id<T>(x: T) -> T { x }\nenum S { C { r: str }, N }\nfn main() {\n    match id(S::C { r: \"a\" }) { S::C { r } => println(to_str(r + 1)), S::N => println(\"n\") }\n}\n", 4),
+    ];
+    for (tag, src, line) in cases {
+        cs5_assert_refused(attack, tag, src, "E0102", line);
+    }
+}
+
+/// CS5-2 (O-TP-02): a `Some`/`Ok`/`Err`/struct sub-pattern of a tuple
+/// pattern is bound against its (resolved) element: a payload binding takes
+/// the element's skeleton (numbers at any width, everything else exact).
+/// Each case checked rc 0 and then panicked at run; the `let` twin is
+/// refused. `g06` (a struct sub-pattern) is already caught by CS5-1's field
+/// rule; `[REVISED: build 2026-11-11]` `g10` (the tuple a typed fn param)
+/// is fixed by the same rule.
+#[test]
+fn tuple_sub_patterns_are_typed() {
+    let attack = "ATTACK: a sub-pattern of a tuple pattern of the wrong type checked clean";
+    let cases = [
+        ("g01", "fn main() {\n    match (Some(\"x\"), 2) { (Some(a), b) => println(to_str(a + 1)), _ => println(\"o\") }\n}\n", 2),
+        ("g02", "fn main() {\n    let t: (Result<str, i64>, i64) = (Ok(\"x\"), 1)\n    match t { (Ok(a), b) => println(to_str(a + b)), _ => println(\"o\") }\n}\n", 3),
+        ("g06", "enum W { P { r: str }, N }\nfn main() {\n    match (W::P { r: \"a\" }, 2) { (W::P { r }, b) => println(to_str(r + b)), _ => println(\"o\") }\n}\n", 3),
+        ("g13", "fn main() {\n    match (Some(Some(\"x\")), 2) { (Some(Some(a)), b) => println(to_str(a + b)), _ => println(\"o\") }\n}\n", 2),
+        ("g14", "fn main() {\n    match (Some((1, \"s\")), 2) { (Some((a, s)), b) => println(to_str(s + b)), _ => println(\"o\") }\n}\n", 2),
+        ("g18", "fn mk() -> (Result<i64, str>, i64) { (Err(\"e\"), 1) }\nfn main() {\n    match mk() { (Err(e), b) => println(to_str(e + b)), _ => println(\"o\") }\n}\n", 3),
+        ("g08b", "fn main() {\n    match (Some(1), 2) { (Some(a), b) => println(to_str(str_len(a))), _ => println(\"o\") }\n}\n", 2),
+        ("g10", "fn f(t: (Option<str>, i64)) -> i64 { match t { (Some(a), b) => a + b, _ => 0 } }\nfn main() { println(to_str(f((Some(\"x\"), 1)))) }\n", 1),
+    ];
+    for (tag, src, line) in cases {
+        cs5_assert_refused(attack, tag, src, "E0102", line);
+    }
+}
+
+/// CS5-3 (O-TP-01): a typed lambda param is bound to its annotation's
+/// skeleton (a numeric annotation stays a free var that must be a number, so
+/// a `u8` param still takes an int literal), so a `match` on it is checked
+/// like a fn param's. Each case checked rc 0 and panicked at run; the `fn`
+/// twin is refused.
+#[test]
+fn typed_lambda_params_are_typed() {
+    let attack = "ATTACK: a typed lambda param of the wrong type checked clean";
+    let cases = [
+        ("u4", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b) => to_str(b + 1) }\n    println(f((1, \"s\")))\n}\n", 2),
+        ("l17", "fn main() {\n    let f = |o: Option<(i64, str)>| match o { Some((a, b)) => b + 1, None => 0 }\n    println(to_str(f(Some((1, \"s\")))))\n}\n", 2),
+    ];
+    for (tag, src, line) in cases {
+        cs5_assert_refused(attack, tag, src, "E0102", line);
+    }
+}
+
+/// CS5-4: a tuple pattern on a subject resolved only by `solve` (a generic
+/// fn's return, `arr_find`'s payload) is checked by kind once the subject
+/// resolves to a tuple of the pattern's arity (D5: nothing is bound, no
+/// arity refusal). Each case checked rc 0 and then panicked at run.
+#[test]
+fn tuple_pattern_on_a_late_resolved_subject_is_checked() {
+    let attack = "ATTACK: a tuple pattern on a late-resolved subject checked clean";
+    let cases = [
+        ("u03", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, \"s\")) { (a, b) => println(to_str(b + 1)) }\n}\n", 3),
+        ("u04", "fn id<T>(x: T) -> T { x }\nfn main() {\n    let t = id((1, \"s\"))\n    match t { (a, b) => println(to_str(b + 1)) }\n}\n", 4),
+        ("b02", "fn main() {\n    let xs = [(1, \"s\")]\n    match arr_find(xs, |p| true) { Some((a, b)) => println(to_str(b + 1)), None => println(\"n\") }\n}\n", 3),
+    ];
+    for (tag, src, line) in cases {
+        cs5_assert_refused(attack, tag, src, "E0102", line);
+    }
+}
+
+/// CS5-1..CS5-4, NH-1 (a): a pattern binding used as another kind is refused
+/// even where the interpreter passes the value through and prints (`println`,
+/// `==`, an arm join); each concrete twin is refused today. A sub-pattern
+/// that can never match its declared type is refused too (D4, `f36` ran a
+/// dead arm). `[REVISED: build 2026-11-11]` `s09` (`println` of a struct
+/// field) and `s15` (of a bool field) are the same class (twins E0306).
+/// CS5-2: `g09` (`println` of a `Some(1)` payload), `g04`/`g05` (`Some` on
+/// an `i64`/`str` element, a dead arm). CS5-3: `l15` (`println` of a typed
+/// lambda's int component), `a2` (a 3-tuple pattern on a `(i64, str)` param,
+/// a dead arm). CS5-4: `u12` (`println` of an int component of `id((1,
+/// "s"))`).
+#[test]
+fn pattern_binding_misuse_that_runs_is_refused() {
+    let attack = "ATTACK: a pattern binding used as another kind checked clean";
+    let cases = [
+        ("f02", "enum S { C { n: i64 }, N }\nfn main() {\n    let v = S::C { n: 5 }\n    match v { S::C { n } => println(n), S::N => println(\"n\") }\n}\n", 4),
+        ("f18", "enum S { C { n: i64 }, N }\nfn sh(x: str) -> i64 { 1 }\nfn main() {\n    let v = S::C { n: 5 }\n    match v { S::C { n } => println(to_str(sh(n))), S::N => println(\"n\") }\n}\n", 5),
+        ("f25", "enum S { C { r: str }, N }\nfn main() {\n    let v = S::C { r: \"a\" }\n    match v { S::C { r } => if r == 1 { println(\"y\") } else { println(\"n\") }, S::N => println(\"n\") }\n}\n", 4),
+        ("s02", "enum S { A { v: str }, B { w: i64 } }\nfn main() {\n    let s = S::A { v: \"a\" }\n    let r = match s { S::A { v } => v, S::B { w } => w }\n    println(r)\n}\n", 4),
+        ("f36", "enum S { C { r: str }, N }\nfn main() {\n    let v = S::C { r: \"a\" }\n    match v { S::C { r: Some(x) } => println(\"s\"), _ => println(\"o\") }\n}\n", 4),
+        ("s09", "type P = { x: i64 }\nenum S { C { p: P }, N }\nfn main() {\n    let v = S::C { p: P { x: 2 } }\n    match v { S::C { p } => println(p), S::N => println(\"n\") }\n}\n", 5),
+        ("s15", "enum S { C { b: bool }, N }\nfn main() {\n    let v = S::C { b: true }\n    match v { S::C { b } => println(b), S::N => println(\"n\") }\n}\n", 4),
+        ("g09", "fn main() {\n    match (Some(1), 2) { (Some(a), b) => println(a), _ => println(\"o\") }\n}\n", 2),
+        ("g04", "fn main() {\n    match (5, 2) { (Some(a), b) => println(\"s\"), _ => println(\"o\") }\n}\n", 2),
+        ("g05", "fn main() {\n    match (\"s\", 2) { (Some(a), b) => println(\"s\"), _ => println(\"o\") }\n}\n", 2),
+        ("l15", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b) => println(a) }\n    f((1, \"s\"))\n}\n", 3),
+        ("a2", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b, c) => 3, _ => 0 }\n    println(to_str(f((1, \"s\"))))\n}\n", 2),
+        ("u12", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, \"s\")) { (a, b) => println(a) }\n}\n", 3),
+    ];
+    for (tag, src, line) in cases {
+        cs5_assert_refused(attack, tag, src, "E0102", line);
+    }
+}
+
+/// CS5-1..CS5-4 false-refusal guard: valid pattern bindings still check rc 0
+/// and print the same. A numeric field may be used at any width (`f04b`,
+/// `f05`, `f30`, `s07`: arms join `i64` and `u8` only because both leaves are
+/// free), as `Decimal`/`Uncertain`/`dyn` (`f28`, `f29`); literal sub-patterns
+/// stay unchecked (`s12`, O-CS4-04); a generic struct's concrete field binds
+/// (`f49`). CS5-2: a tuple's payload number at any width (`g03`, `g19`); an
+/// element still unresolved at bind time stays unbound, so one element var
+/// matched as `Some` in one arm and `Ok` in the next runs (`a15`). CS5-3: a
+/// numeric lambda annotation stays a free number (`l02`, `l12`, `l13`, `l16`,
+/// `l19`), an untyped one stays a var (`l25`). CS5-4: a late-resolved
+/// subject's number at any width (`u10`, `u16`); another arity is skipped,
+/// not refused (`u07`, `a26`).
+#[test]
+fn pattern_binding_controls_stay_legal() {
+    let attack = "ATTACK: a valid pattern match was refused";
+    let cases = [
+        ("f04b", "enum S { C { n: u8 }, N }\nfn mk(n: u8) -> S { S::C { n: n } }\nfn main() {\n    let v = mk(7)\n    match v { S::C { n } => { let x: i64 = n\n println(to_str(x + 1)) }, S::N => println(\"n\") }\n}\n", "8\n"),
+        ("f05", "enum S { C { n: i64 }, N }\nfn main() {\n    let v = S::C { n: 7 }\n    match v { S::C { n } => { let x: f64 = n\n println(to_str(x)) }, S::N => println(\"n\") }\n}\n", "7\n"),
+        ("f12", "enum S { C { xs: [str] }, N }\nfn main() {\n    let v = S::C { xs: [\"a\"] }\n    match v { S::C { xs } => println(to_str(len(xs) + 1)), S::N => println(\"n\") }\n}\n", "2\n"),
+        ("f15", "enum S { C { r: str, n: i64 }, N }\nfn main() {\n    let v = S::C { r: \"a\", n: 2 }\n    match v { S::C { r, n } => println(r + to_str(n + 1)), S::N => println(\"n\") }\n}\n", "a3\n"),
+        ("f17", "enum S { C { b: bool }, N }\nfn main() {\n    let v = S::C { b: true }\n    match v { S::C { b } => if b { println(\"t\") } else { println(\"f\") }, S::N => println(\"n\") }\n}\n", "t\n"),
+        ("f26", "enum S { C { r: str, n: i64 }, N }\nfn main() {\n    let v = S::C { r: \"a\", n: 1 }\n    match v { S::C { r: _, n: 1 } => println(\"one\"), _ => println(\"o\") }\n}\n", "one\n"),
+        ("f28", "enum S { C { n: i64 }, N }\nfn main() {\n    let v = S::C { n: 5 }\n    match v { S::C { n } => { let d: Decimal = n\n println(\"k\") }, S::N => println(\"n\") }\n}\n", "k\n"),
+        ("f29", "enum S { C { n: i64 }, N }\nfn u(x: Uncertain<i64>) -> i64 { 3 }\nfn main() {\n    let v = S::C { n: 5 }\n    match v { S::C { n } => println(to_str(u(n))), S::N => println(\"n\") }\n}\n", "3\n"),
+        ("f30", "enum S { C { o: Option<i64> }, N }\nfn main() {\n    let v = S::C { o: Some(4) }\n    match v { S::C { o: Some(x) } => { let y: u8 = x\n println(to_str(y)) }, _ => println(\"n\") }\n}\n", "4\n"),
+        ("f35", "enum S { A { v: str }, B { v: i64 } }\nfn main() {\n    let s = S::B { v: 2 }\n    let r = match s { S::A { v } => str_len(v), S::B { v } => v + 1 }\n    println(to_str(r))\n}\n", "3\n"),
+        ("f38", "enum S { C { n: i64 }, N }\nfn sh(x: u8) -> i64 { 1 }\nfn main() {\n    let v = S::C { n: 5 }\n    if let S::C { n } = v { println(to_str(sh(n))) }\n}\n", "1\n"),
+        ("f39", "enum S { C { r: str }, N }\nfn g<T>(x: T, s: S) -> i64 { match s { S::C { r } => str_len(r), S::N => 0 } }\nfn main() { println(to_str(g(1, S::C { r: \"ab\" }))) }\n", "2\n"),
+        ("f40", "enum S { C { n: i64 }, N }\nfn main() {\n    let v = S::C { n: 5 }\n    match v { S::C { n } => println(\"n={n}\"), S::N => println(\"n\") }\n}\n", "n=5\n"),
+        ("f41", "enum S { C { n: i64 }, N }\nfn main() {\n    let v = S::C { n: 5 }\n    match v { S::C { n } => println(to_str(n)), S::N => println(\"n\") }\n}\n", "5\n"),
+        ("f42", "type P = { x: i64 }\nenum S { C { p: P }, N }\nfn main() {\n    let v = S::C { p: P { x: 2 } }\n    match v { S::C { p } => println(to_str(p.x * 3)), S::N => println(\"n\") }\n}\n", "6\n"),
+        ("s07", "enum S { A { v: i64 }, B { w: u8 } }\nfn mk(w: u8) -> S { S::B { w: w } }\nfn main() {\n    let s = mk(3)\n    let r = match s { S::A { v } => v, S::B { w } => w }\n    println(to_str(r + 1))\n}\n", "4\n"),
+        ("s12", "enum S { C { r: str }, N }\nfn main() {\n    let v = S::C { r: \"a\" }\n    match v { S::C { r: 1 } => println(\"one\"), _ => println(\"o\") }\n}\n", "o\n"),
+        ("s13", "enum S { C { d: Dict<str, i64> }, N }\nfn main() {\n    let v = S::C { d: dict_new() }\n    match v { S::C { d } => println(to_str(dict_len(d))), S::N => println(\"n\") }\n}\n", "0\n"),
+        ("f45", "enum S { C { r: f64 }, N }\nfn main() {\n    let v = S::C { r: 2.0 }\n    match v { S::C { r } => println(to_str(r * 3.0)), S::N => println(\"n\") }\n}\n", "6\n"),
+        ("f46", "enum S { C { r: str }, N }\nfn main() {\n    let r = 5\n    let v = S::C { r: \"a\" }\n    match v { S::C { r } => println(r + \"!\"), S::N => println(\"n\") }\n    println(to_str(r + 1))\n}\n", "a!\n6\n"),
+        ("f47", "enum E { A, B }\nenum S { C { e: E }, N }\nfn main() {\n    let v = S::C { e: E::B }\n    match v { S::C { e } => match e { E::A => println(\"a\"), E::B => println(\"b\") }, S::N => println(\"n\") }\n}\n", "b\n"),
+        ("f49", "type Box<T> = { v: T }\nenum S { C { b: Box<str> }, N }\nfn main() {\n    let v = S::C { b: Box { v: \"a\" } }\n    match v { S::C { b } => println(b.v + \"!\"), S::N => println(\"n\") }\n}\n", "a!\n"),
+        ("w17", "enum S { C { o: Option<i64> }, N }\nfn main() {\n    let v = S::C { o: Some(4) }\n    match v { S::C { o } => match o { Some(x) => println(to_str(x)), None => println(\"n\") }, S::N => println(\"n\") }\n}\n", "4\n"),
+        ("w18", "enum S { C { b: bool }, N }\nfn main() {\n    let v = S::C { b: true }\n    match v { S::C { b } => println(to_str(b)), S::N => println(\"n\") }\n}\n", "true\n"),
+        ("g03", "fn main() {\n    match (Some(1), 2) { (Some(a), b) => { let x: u8 = a\n println(to_str(x)) }, _ => println(\"o\") }\n}\n", "1\n"),
+        ("g07", "fn main() {\n    match (Some(\"x\"), 2) { (Some(a), b) => println(a + to_str(b)), _ => println(\"o\") }\n}\n", "x2\n"),
+        ("g19", "fn main() {\n    match (Some(1), 2) { (Some(a), b) => { let y: Decimal = a\n println(\"k\") }, _ => println(\"o\") }\n}\n", "k\n"),
+        ("a15", "fn main() {\n    let f = |p| match (p, 1) { (Some(a), _) => 1, (Ok(b), _) => 2, _ => 3 }\n    println(to_str(f(Some(1)) + f(Ok(1))))\n}\n", "3\n"),
+        ("l02", "fn main() {\n    let f = |x: u8| x + 1\n    println(to_str(f(1)))\n}\n", "2\n"),
+        ("l07", "fn main() {\n    let xs = arr_map([1, 2], |x: i64| x * 2)\n    println(to_str(xs[1]))\n}\n", "4\n"),
+        ("l12", "fn main() {\n    let xs = arr_map([1, 2], |x: u8| x + 1)\n    println(to_str(xs[1]))\n}\n", "3\n"),
+        ("l13", "fn main() {\n    let f = |x: u8| { let y: i64 = x\n y + 1 }\n    println(to_str(f(1)))\n}\n", "2\n"),
+        ("l14", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b) => { let x: u8 = a\n b + to_str(x) } }\n    println(f((1, \"s\")))\n}\n", "s1\n"),
+        ("l16", "fn ap(f: fn(i64) -> i64) -> i64 { f(2) }\nfn main() {\n    println(to_str(ap(|x: u8| x + 1)))\n}\n", "3\n"),
+        ("l18", "fn main() {\n    let f = |x: i64| { let d: Decimal = x\n \"k\" }\n    println(f(1))\n}\n", "k\n"),
+        ("l19", "fn ap<T>(f: fn(T) -> T, x: T) -> T { f(x) }\nfn main() {\n    println(to_str(ap(|x: u8| x + 1, 5)))\n}\n", "6\n"),
+        ("l25", "fn main() {\n    let f = |x| x\n    let y: str = f(1)\n    println(y)\n}\n", "1\n"),
+        ("l28", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b) => b + to_str(a) }\n    println(f((1, \"s\")))\n}\n", "s1\n"),
+        ("l32", "fn main() {\n    let f = |x: i64| to_str(x) + \"!\"\n    println(f(3))\n}\n", "3!\n"),
+        ("u06", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, \"s\")) { (a, b) => println(b + to_str(a)) }\n}\n", "s1\n"),
+        ("u07", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, 2, 3)) { (a, b) => println(\"2\"), _ => println(\"o\") }\n}\n", "o\n"),
+        ("u10", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, 2)) { (a, b) => { let x: u8 = a\n println(to_str(x)) } }\n}\n", "1\n"),
+        ("u15", "fn main() {\n    let xs = [(1, \"s\")]\n    match arr_find(xs, |p| true) { Some((a, b)) => println(b + to_str(a)), None => println(\"n\") }\n}\n", "s1\n"),
+        ("u16", "fn main() {\n    let xs = [(1, \"s\")]\n    match arr_find(xs, |p| true) { Some((a, b)) => { let x: u8 = a\n println(to_str(x)) }, None => println(\"n\") }\n}\n", "1\n"),
+        ("a26", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, \"s\", 3)) { (a, b) => println(to_str(str_len(a))), _ => println(\"o\") }\n}\n", "o\n"),
+    ];
+    for (tag, src, out) in cases {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs5c_{tag}"), src);
+        assert_eq!(crc, Some(0), "{attack} [cs5_{tag}]: {cmsg}");
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [cs5_{tag}]: {rerr}"
+        );
+    }
+}
+
+/// CS5-5 (CS4-5, O-AF-04): a qualified pattern `D::Up` matched against a
+/// value of another enum `C` can never match; it is E0405, whether or not a
+/// `_` arm follows (`v01`, `en`), in an `if let` (`v02`), guarded (`v11`), on
+/// a sum type (`v04`) or a generic enum (`v06`), and (NH-2 (a)) in a
+/// `while let` (`v10`) or nested in `Some`/a tuple (`v03`, `v07`). Each
+/// checked rc 0 and ran a dead arm. An unknown variant of a known enum keeps
+/// its E0001 alone (`a25`); same-enum and non-enum subjects stay legal.
+#[test]
+fn foreign_enum_variant_pattern_is_refused() {
+    let attack = "ATTACK: a pattern of another enum checked clean";
+    let cd = "enum C { Red, Green }\nenum D { Up, Down }\n";
+    let cases = [
+        (
+            "v2q_noall",
+            format!("{cd}fn f(c: C) -> i64 {{\n    match c {{ D::Up => 2, C::Red => 1, C::Green => 3 }}\n}}\nfn main() {{ println(to_str(f(C::Red))) }}\n"),
+            4,
+        ),
+        (
+            "en",
+            "enum C { Up, Green }\nenum D { Up, Down }\nfn f(c: C) -> i64 { match c { D::Up => 2, _ => 1 } }\nfn main() { println(to_str(f(C::Up))) println(to_str(f(C::Green))) }\n".to_string(),
+            3,
+        ),
+        ("v01", format!("{cd}fn f(c: C) -> i64 {{ match c {{ D::Up => 2, _ => 1 }} }}\nfn main() {{ println(to_str(f(C::Red))) }}\n"), 3),
+        (
+            "v02",
+            format!("{cd}fn main() {{\n    let c = C::Red\n    if let D::Up = c {{ println(\"up\") }} else {{ println(\"no\") }}\n}}\n"),
+            5,
+        ),
+        (
+            "v04",
+            "type S = A { v: i64 } | B { w: i64 }\nenum D { Up, Down }\nfn main() {\n    let s = S::A { v: 1 }\n    match s { D::Up => println(\"up\"), _ => println(\"no\") }\n}\n".to_string(),
+            5,
+        ),
+        (
+            "v05",
+            "enum C { P { x: i64 }, Q }\nenum D { P { x: i64 }, R }\nfn main() {\n    let c = C::P { x: 1 }\n    match c { D::P { x } => println(to_str(x)), _ => println(\"no\") }\n}\n".to_string(),
+            5,
+        ),
+        (
+            "v06",
+            "enum B<T> { H { v: T }, N }\nenum D { Up, Down }\nfn main() {\n    let b = B::H { v: 1 }\n    match b { D::Up => println(\"up\"), _ => println(\"no\") }\n}\n".to_string(),
+            5,
+        ),
+        (
+            "v11",
+            format!("{cd}fn main() {{\n    let c = C::Red\n    let k = 1\n    match c {{ D::Up if k == 1 => println(\"up\"), _ => println(\"no\") }}\n}}\n"),
+            6,
+        ),
+        (
+            "v10",
+            format!("{cd}fn main() {{\n    let c = C::Red\n    while let D::Up = c {{ println(\"up\")\n break }}\n    println(\"done\")\n}}\n"),
+            5,
+        ),
+        (
+            "v03",
+            format!("{cd}fn main() {{\n    let o = Some(C::Red)\n    match o {{ Some(D::Up) => println(\"up\"), _ => println(\"no\") }}\n}}\n"),
+            5,
+        ),
+        (
+            "v07",
+            format!("{cd}fn main() {{\n    match (C::Red, 1) {{ (D::Up, n) => println(\"up\"), _ => println(\"no\") }}\n}}\n"),
+            4,
+        ),
+    ];
+    for (tag, src, line) in cases {
+        cs5_assert_refused(attack, tag, &src, "E0405", line);
+    }
+    // An unknown variant of a known enum is E0001 only.
+    let a25 = "enum C { Red, Blue }\nenum D { Up, Down }\nfn main() {\n    let c = C::Red\n    match c { D::Nope => println(\"x\"), _ => println(\"o\") }\n}\n";
+    let (crc, cmsg, ..) = sf6_check_and_run("cs5_a25", a25);
+    assert!(
+        crc == Some(2) && cmsg.contains("E0001") && !cmsg.contains("E0405"),
+        "{attack} [a25]: want E0001 and no E0405, got rc {crc:?}: {cmsg}"
+    );
+    let controls = [
+        (
+            "v2q_ok",
+            "enum C { Red, Green }\nfn f(o: Option<C>, t: (C, i64)) -> i64 {\n    let a = match o { Some(C::Red) => 1, _ => 0 }\n    let b = match t { (C::Green, n) => n, _ => 0 }\n    a + b\n}\nfn main() { println(to_str(f(Some(C::Red), (C::Green, 5)))) }\n",
+            "6\n",
+        ),
+        ("v09", "enum C { Red, Green }\nfn main() {\n    let c = C::Green\n    match c { C::Red => println(\"r\"), _ => println(\"g\") }\n}\n", "g\n"),
+        ("v12", "enum D { Up, Down }\nfn main() {\n    let o = Some(1)\n    match o { D::Up => println(\"up\"), _ => println(\"no\") }\n}\n", "no\n"),
+    ];
+    for (tag, src, out) in controls {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs5_{tag}"), src);
+        assert_eq!(
+            crc,
+            Some(0),
+            "{attack} [{tag}]: a valid match was refused: {cmsg}"
+        );
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: {rerr}"
+        );
+    }
+}

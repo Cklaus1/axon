@@ -46,7 +46,7 @@ pub const E0401: &str = "E0401"; // struct has no field (Phase 3 canonical code)
 pub const E0402: &str = "E0402"; // indexing a non-indexable (non-array) type
 pub const E0403: &str = "E0403"; // calling a data field as a method (`p.x()`)
 pub const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant
-pub const E0405: &str = "E0405"; // literal pattern's type can't match the match subject
+pub const E0405: &str = "E0405"; // a pattern's type can't match the match subject
 pub const E0406: &str = "E0406"; // a field is set more than once in a struct literal
 pub const E0407: &str = "E0407"; // integer division/remainder by a literal zero
 
@@ -4750,8 +4750,10 @@ impl CheckCtx {
                 let subj_ty = self.resolve_expr_type(subject, &subj_path, scope);
                 self.check_match_exhaustiveness(&subj_ty, arms, node_path);
                 // E0409: a bare variant name in any arm, the last included.
+                // E0405 (CS5-5): a variant of another enum, `_` arm or not.
                 for arm in arms {
                     self.check_bare_variant_patterns(&arm.pattern, &subj_ty, node_path);
+                    self.check_foreign_variant_patterns(&arm.pattern, &subj_ty, node_path);
                 }
 
                 for (i, arm) in arms.iter().enumerate() {
@@ -5045,6 +5047,7 @@ impl CheckCtx {
                 self.check_expr(expr, &expr_path, scope);
                 let expr_ty = self.resolve_expr_type(expr, &expr_path, scope);
                 self.check_bare_variant_patterns(pattern, &expr_ty, node_path);
+                self.check_foreign_variant_patterns(pattern, &expr_ty, node_path);
                 for (i, stmt) in body.iter().enumerate() {
                     self.check_stmt(stmt, &node_path.idx("while_let_body", i), scope);
                 }
@@ -6711,6 +6714,76 @@ impl CheckCtx {
                 }
             }
             Pattern::Wildcard | Pattern::Literal(_) | Pattern::None => {}
+        }
+    }
+
+    /// E0405 (CS5-5, carries CS4-5; O-AF-04): a qualified pattern `D::Up`
+    /// matched against a value of another enum `C` can never match, so its arm
+    /// is dead (the interpreter and VM compare the full `D::Up` name; `en`,
+    /// where `C` also has an `Up`, runs the catch-all). Walks `pat` with its
+    /// expected type through `Some`/`Ok`/`Err` and tuples (NH-2 (a)); called
+    /// from `match` (and so `if let`) and `while let`. Only a known variant of a
+    /// known enum other than the subject's is refused: an unknown one keeps its
+    /// E0001 alone. Enum NAMES are compared (no type args).
+    fn check_foreign_variant_patterns(&mut self, pat: &Pattern, ty: &Type, node_path: &NodePath) {
+        match pat {
+            Pattern::Some(inner) => {
+                if let Type::Option(t) = ty {
+                    self.check_foreign_variant_patterns(inner, t, node_path);
+                }
+            }
+            Pattern::Ok(inner) => {
+                if let Type::Result(t, _) = ty {
+                    self.check_foreign_variant_patterns(inner, t, node_path);
+                }
+            }
+            Pattern::Err(inner) => {
+                if let Type::Result(_, e) = ty {
+                    self.check_foreign_variant_patterns(inner, e, node_path);
+                }
+            }
+            Pattern::Tuple(elems) => {
+                if let Type::Tuple(tys) = ty {
+                    if tys.len() == elems.len() {
+                        for (p, t) in elems.iter().zip(tys) {
+                            self.check_foreign_variant_patterns(p, t, node_path);
+                        }
+                    }
+                }
+            }
+            Pattern::Struct { name, .. } => {
+                let subject_enum = match ty {
+                    Type::Enum(e) => e,
+                    Type::Struct(e) if self.enum_variants.contains_key(e) => e,
+                    _ => return,
+                };
+                let Some((pat_enum, variant)) = name.rsplit_once("::") else {
+                    return;
+                };
+                let known_variant = self
+                    .enum_variants
+                    .get(pat_enum)
+                    .is_some_and(|vs| vs.iter().any(|v| v == variant));
+                if pat_enum != subject_enum && known_variant {
+                    let file = self.file.clone();
+                    self.errors.push(
+                        CheckError::new(
+                            E0405,
+                            format!(
+                                "this match is on `{subject_enum}`, but `{name}` is a variant of \
+                                 `{pat_enum}` — it can never match"
+                            ),
+                        )
+                        .node(node_path)
+                        .at(&file, 0, 0)
+                        .with_span(self.current_span)
+                        .expected(subject_enum.clone())
+                        .found(pat_enum.to_string())
+                        .fix(format!("use a `{subject_enum}::` variant")),
+                    );
+                }
+            }
+            Pattern::Ident(_) | Pattern::Wildcard | Pattern::Literal(_) | Pattern::None => {}
         }
     }
 
