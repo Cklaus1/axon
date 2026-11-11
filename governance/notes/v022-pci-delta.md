@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 7a7912e9553b45780570281c94c129c628cb4088
+generated-at: 309454cc74aef32d8d9c082854a3a74d857e460f
 
-`git diff --numstat 31413ca7..7a7912e9 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..309454cc -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -32,7 +32,7 @@ generated-at: 7a7912e9553b45780570281c94c129c628cb4088
 | `crates/axon-core/src/card.rs` | 793 | 0 |
 | `crates/axon-core/src/ceiling.rs` | 554 | 0 |
 | `crates/axon-core/src/cert_gate.rs` | 5 | 2 |
-| `crates/axon-core/src/checker.rs` | 3118 | 793 |
+| `crates/axon-core/src/checker.rs` | 3159 | 794 |
 | `crates/axon-core/src/checker_path.rs` | 223 | 0 |
 | `crates/axon-core/src/clock.rs` | 58 | 3 |
 | `crates/axon-core/src/codegen/accum.rs` | 600 | 0 |
@@ -60,7 +60,7 @@ generated-at: 7a7912e9553b45780570281c94c129c628cb4088
 | `crates/axon-core/src/fmt.rs` | 355 | 33 |
 | `crates/axon-core/src/host.rs` | 54 | 0 |
 | `crates/axon-core/src/improve.rs` | 22 | 0 |
-| `crates/axon-core/src/infer.rs` | 2717 | 524 |
+| `crates/axon-core/src/infer.rs` | 2751 | 524 |
 | `crates/axon-core/src/interp.rs` | 8455 | 2877 |
 | `crates/axon-core/src/interp/builtins.rs` | 1421 | 859 |
 | `crates/axon-core/src/interp/conform.rs` | 1793 | 0 |
@@ -108,9 +108,9 @@ generated-at: 7a7912e9553b45780570281c94c129c628cb4088
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 73475 | 10146 |
+| total | 73550 | 10147 |
 
-`git log --reverse 31413ca7..7a7912e9 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..309454cc -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -575,7 +575,10 @@ generated-at: 7a7912e9553b45780570281c94c129c628cb4088
 | 7b0457d5 | CS5-4 tuple patterns on late-resolved subjects checked by kind | CHECKER (infer.rs, all engines): a tuple pattern whose subject is still a type var at bind time (a generic fn's return, arr_find's payload) is recorded, and solve() checks each Ident component by kind against its element once the subject resolves to a tuple of the pattern's arity; nothing is bound or unified and another arity is skipped. So (a, b) on id((1, "s")) with b + 1 is E0102 instead of a run panic. New refusal of a program that runs: println(a) of an int component of such a subject (u12; NH-1 (a)). No interpreter or runtime change. The 717 tracked .ax files check with the same exit codes and diagnostics as the base binary. |
 | 44950819 | CS5-3 fix: alias-typed lambda params stay fresh | CHECKER (infer.rs, all engines): a lambda param annotated with an alias (type Name = str, which parses as a one-variant fieldless enum) stays a fresh var as before CS5-3, so a call through a matching fn value with such a lambda checks clean again (snd_lambda_alias). Narrows CS5-3 only; no interpreter or runtime change. The 717 tracked .ax files check with the same exit codes and diagnostics as the base binary. |
 | 7a7912e9 | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
-| 461 commits | | |
+| 6af5831c | CS5 impl audit: block-local let is scoped in the checker | CHECKER (checker.rs, all engines): a let inside an if/else, while/while let body or match-arm block no longer leaks into the enclosing scope in the checker; the outer local keeps its type after the block, as the interpreter scopes it. Accepts only: false E0405 (and false E0304 on an exhaustive match) on a rebinding inside a block go away; all 717 tracked files check byte-identical. |
+| c42ec241 | CS5-4 container element used as a scalar is E0102 | CHECKER (infer.rs, all engines): on a tuple pattern whose subject resolves only at solve time, a component whose element is a container (tuple, [T], Option, Result) used as a scalar, or a scalar element used as a container, is E0102 (use of pattern binding). New refusals: c3 (str_len of a tuple component, was a run panic) and c3p (println of a tuple component, its concrete twin already E0102). A use that leaves the binding unresolved stays unchecked. |
+| 309454cc | merge | pure join: crates/axon-core/src equals `git merge-tree --write-tree` of its two parents, with no conflict under it; no change beyond the commits it joins |
+| 464 commits | | |
 <!-- END MECHANICAL -->
 
 
@@ -734,7 +737,7 @@ exit 0 (the earlier rows below were last run at 34 rows, c9r4c/claims3 at veto 1
 | am121 a live nonce's record survives another request's prune | axon-fabric/observer_service | PASS 1/1 |
 | am102 sweep (only the taint on: exactly the two static-only programs differ) | axon-core/lib (PSV1T_TAINT_ONLY) | PASS |
 
-Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 814 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4719, M4723-M4727, M4730, M4732, M4740-M4756, M4760-M4763, M4771-M4774, M4779-M4786, M4790-M4805, M4872, M5220-M5231, M5240-M5253
+Mutation rows whose target is `crates/axon-core/src` and which are not retired (`MUTATIONS` minus `RETIRED`, 816 rows at this head, recomputed from the script): M59-M62, M65, M67-M70, M72-M79, M82-M83, M85-M97, M219, M243, M246-M248, M250-M251, M260, M270-M272, M436, M560-M566, M651-M667, M920-M939, M1140-M1157, M1660-M1681, M1730-M1731, M1734, M1764-M1765, M1840-M1845, M1847-M1848, M1936-M1938, M1975, M1990-M1997, M2171-M2178, M2370-M2376, M2461, M2470-M2480, M2600-M2602, M2606, M2608-M2624, M2700-M2767, M2910-M2928, M2930-M2946, M3030-M3037, M3039-M3042, M3230-M3250, M3253-M3259, M3267, M3269-M3270, M3300-M3307, M3309-M3323, M3325-M3349, M3351, M3450-M3453, M3455-M3458, M3460-M3479, M3483-M3498, M3640-M3642, M3660-M3664, M3681, M3720-M3723, M3727-M3731, M3760-M3767, M3800-M3839, M3848-M3850, M3852-M3854, M3856-M3861, M3870-M3880, M3890-M3899, M3901, M3903-M3929, M3940-M3941, M3970-M3990, M4000-M4004, M4012, M4015-M4019, M4027, M4120-M4136, M4152, M4155-M4158, M4506, M4515, M4517, M4570, M4600-M4621, M4624-M4629, M4640-M4656, M4658-M4670, M4672-M4682, M4685-M4689, M4691-M4698, M4700-M4719, M4723-M4727, M4730, M4732, M4740-M4756, M4760-M4763, M4771-M4774, M4779-M4786, M4790-M4805, M4872, M5220-M5231, M5240-M5253, M5260-M5261
 
 | delta | rows (named in the amendment's own text) |
 |---|---|
