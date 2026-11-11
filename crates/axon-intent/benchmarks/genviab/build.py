@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
-"""Build and check the genviab task sets (IG6): `dev/` and `once/`.
+"""Build and check the genviab task sets (IG6): `dev/` and `once/`, and an
+authoring-eval (`ae`) set directory (spec AE-3).
 
-    python3 -B build.py [--set dev|once]           build: check every task, write <set>/manifest.json
-    python3 -B build.py --check [--set dev|once]   verify; exit 0 ok, 1 FAIL, 2 bad arguments
+  python3 -B build.py [--set dev|once | --set-dir DIR]          build: check every task, write <set>/manifest.json
+  python3 -B build.py --check [--set dev|once | --set-dir DIR]  verify; exit 0 ok, 1 FAIL, 2 bad arguments
+  python3 -B build.py --check --candidates --set-dir DIR         drafting candidates (no reference.ax yet)
 
-Without --set both sets are processed. The binaries are AXON_BIN (default
+Without --set/--set-dir both genviab sets are processed. The binaries are AXON_BIN (default
 target/debug/axon) and AXON_INTENT_BIN (default: next to AXON_BIN).
+
+`ae` set mode (--set-dir; refused inside the public repo): task.json carries
+`family`, `tier` (T1/T2/T3/TS), a `canary` GUID and `drafted_by`
+(haiku-5-5/human); exactly reference.ax and reference.py; `## Budget` tokens
+>= 120000; at least one visible example; no tempting task. `refs-agree`
+grades both references on every example (reference.py under the GV-3 runner,
+reference.ax through the lift); `once` and `human-value` are skipped; path-lint
+and v1-scope run on both references. Defects go to DIR/rejected.json, never
+the public rejected-ideas.json. `--candidates` loads with require_ax=False and
+runs every check that needs no reference.ax.
 
 Mechanical checks, per task (gv.py has the task format):
   schema       the fields, a known category, exactly one reference (reference.py
@@ -82,7 +94,7 @@ def in_once(t):
 
 
 def manifest_path(set_):
-    return os.path.join(HERE, set_, "manifest.json")
+    return os.path.join(root_of(set_), "manifest.json")
 
 
 def binaries():
@@ -102,19 +114,22 @@ def card_sha256():
 # ------------------------------------------------------------------ checks
 
 def check_schema(t):
-    bad = [k for k in REQUIRED if k not in t]
+    ae = t.get("set_mode") == "ae"
+    bad = [k for k in (("id", "examples") if ae else REQUIRED) if k not in t]
     if bad:
         return f"task.json lacks {bad}"
     if t["id"] != os.path.basename(t["dir"]):
         return f"id {t['id']!r} is not the directory name"
-    if t["category"] not in gv.CATEGORIES:
+    if t.get("category", "transform") not in gv.CATEGORIES:
         return f"unknown category {t['category']!r}"
-    if len(t["references"]) > 1:
-        return f"two references ({', '.join(t['references'])}): a task has exactly one"
-    if t["reference"] is None:
-        return "no reference.ax (or, in once/, reference.py)"
-    if t["reference_lang"] == "python" and not in_once(t):
-        return "reference.py is once-only (the dev oracle generator needs reference.ax)"
+    if not ae:
+        # `ae` mode: gv.load_task already required reference.py (+ .ax unless a candidate)
+        if len(t["references"]) > 1:
+            return f"two references ({', '.join(t['references'])}): a task has exactly one"
+        if t["reference"] is None:
+            return "no reference.ax (or, in once/, reference.py)"
+        if t["reference_lang"] == "python" and not in_once(t):
+            return "reference.py is once-only (the dev oracle generator needs reference.ax)"
     extra = sorted(set(os.listdir(t["dir"])) - set(gv.TASK_FILES))
     if extra:
         return f"unexpected files {extra}"
@@ -319,8 +334,87 @@ def check_once(t):
     return None
 
 
+AE_REQUIRED = ("id", "family", "tier", "canary", "drafted_by", "examples")
+AE_TIERS = ("T1", "T2", "T3", "TS")
+AE_DRAFTERS = ("haiku-5-5", "human")
+AE_MIN_TOKENS = 120000
+CANARY = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def py_view(t):
+    """An `ae` task seen through its reference.py (the Python-side checks)."""
+    return dict(t, reference=t["reference_py"], reference_lang="python")
+
+
+def check_ae_schema(t):
+    """`ae` set mode (spec AE-3): genviab's format plus family/tier/canary/
+    drafted_by, both references, no tempting task, `tokens` >= 120000."""
+    bad = [k for k in AE_REQUIRED if k not in t]
+    if bad:
+        return f"task.json lacks {bad}"
+    if t["id"] != os.path.basename(t["dir"]):
+        return f"id {t['id']!r} is not the directory name"
+    if t["tier"] not in AE_TIERS:
+        return f"tier {t['tier']!r} is not one of {AE_TIERS}"
+    if not isinstance(t["family"], str) or not t["family"]:
+        return "family must be a non-empty string"
+    if not isinstance(t["canary"], str) or not CANARY.fullmatch(t["canary"]):
+        return "canary must be a lowercase GUID"
+    if t["drafted_by"] not in AE_DRAFTERS:
+        return f"drafted_by {t['drafted_by']!r} is not one of {AE_DRAFTERS}"
+    if t.get("category", "transform") not in gv.CATEGORIES or t.get("category") == "tempting":
+        return f"category {t.get('category')!r}: the ae set has no tempting task"
+    if t["canary"] in t["intent_md"]:
+        return "the canary is in intent.md (it is never rendered into a prompt)"
+    tokens = gv.budget_tokens(t["intent_md"])
+    if tokens is None or tokens < AE_MIN_TOKENS:
+        return f"`## Budget` tokens is {tokens}, below {AE_MIN_TOKENS} (spec §2: the round cap binds)"
+    if not t["examples"].get("visible"):
+        return "an ae task needs at least one visible example"
+    return check_schema(t)
+
+
+def check_refs_agree(t):
+    """Both references pass every visible and hidden example. The expected
+    outputs come from reference.py (D12), so reference.ax must reproduce them."""
+    py = gv.grade_python_reference(t, t["reference_py"])
+    if not py["passed"]:
+        return f"reference.py fails ({py['stage']}, {py['failed_examples']}) {py['tail'][:300]}"
+    if t["reference"] is None:
+        return None   # a drafting candidate (require_ax=False): reference.ax not earned yet
+    ax = gv.grade_axon(t, t["reference"])
+    if not ax["passed"]:
+        return (f"reference.ax disagrees with reference.py ({ax['stage']}, "
+                f"{ax['failed_examples']}) {ax['tail'][-300:]}")
+    return None
+
+
+def check_ae_task(t):
+    """(checks dict, first defect or None) in `ae` set mode."""
+    checks = {}
+    pv = py_view(t)
+    steps = [("schema", check_ae_schema), ("intent-text", check_intent_text),
+             ("hidden", check_hidden), ("path-lint-py", lambda _: check_path_lint(pv)),
+             ("v1-scope-py", lambda _: check_v1_python(pv))]
+    if t["reference"] is not None:
+        steps += [("path-lint", check_path_lint), ("v1-scope", check_v1)]
+    steps.append(("refs-agree", check_refs_agree))
+    for name, fn in steps:
+        why = fn(t)
+        checks[name] = "ok" if why is None else why
+        if why is not None:
+            return checks, f"{name}: {why}"
+    empty = gv.grade_axon(t, gv.EMPTY_PROGRAM, ("hidden",))
+    checks["empty-fails"] = "ok" if not empty["passed"] else "an empty main passes the hidden examples"
+    if empty["passed"]:
+        return checks, "empty-fails: an empty main passes the hidden examples"
+    return checks, None
+
+
 def check_task(t):
     """(checks dict, first defect or None)."""
+    if t.get("set_mode") == "ae":
+        return check_ae_task(t)
     checks = {}
     for name, fn in (("schema", check_schema), ("once", check_once),
                      ("intent-text", check_intent_text),
@@ -351,13 +445,27 @@ def norm_text(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
-def check_set(set_):
-    """(passing tasks with digests, rejected [(id, defect)])."""
-    set_dir = os.path.join(HERE, set_)
+def root_of(set_):
+    """A genviab set name (dev/once) or an `ae` set directory (--set-dir)."""
+    return os.path.join(HERE, set_) if set_ in SETS else os.path.abspath(set_)
+
+
+def name_of(set_):
+    return set_ if set_ in SETS else os.path.basename(root_of(set_))
+
+
+def hint(set_):
+    return f"--set {set_}" if set_ in SETS else f"--set-dir {set_}"
+
+
+def check_set(set_, candidates=False):
+    """(passing tasks with digests, rejected [(id, defect)]). `candidates`: an
+    `ae` drafting set, loaded with require_ax=False (spec E5)."""
+    set_dir = root_of(set_)
     tasks = []
     for d in gv.task_dirs(set_dir):
         try:
-            tasks.append(gv.load_task(d))
+            tasks.append(gv.load_task(d, require_ax=not candidates))
         except (OSError, ValueError) as e:
             tasks.append({"id": os.path.basename(d), "dir": d, "load_error": str(e)})
     ok, bad = [], []
@@ -382,18 +490,29 @@ def check_set(set_):
             bad.append((t["id"], why))
             continue
         files = {n: gv.sha256_file(os.path.join(t["dir"], n)) for n in gv.task_files(t)}
-        ok.append({"id": t["id"], "category": t["category"],
-                   "tempting": t["category"] == "tempting",
-                   "reference_author": t["reference_author"],
-                   "visible_examples": len(t["examples"]["visible"]),
-                   "hidden_examples": len(t["examples"]["hidden"]),
-                   "files": files,
-                   "task_sha256": gv.sha256_bytes(json.dumps(files, sort_keys=True).encode()),
-                   "checks": checks})
+        row = {"id": t["id"], "category": t.get("category", "transform"),
+               "tempting": t.get("category") == "tempting",
+               "visible_examples": len(t["examples"]["visible"]),
+               "hidden_examples": len(t["examples"]["hidden"]),
+               "files": files,
+               "task_sha256": gv.sha256_bytes(json.dumps(files, sort_keys=True).encode()),
+               "checks": checks}
+        if t.get("set_mode") == "ae":
+            row.update(family=t["family"], tier=t["tier"], drafted_by=t["drafted_by"])
+        else:
+            row["reference_author"] = t["reference_author"]
+        ok.append(row)
     return ok, bad
 
 
 def write_rejected(set_, bad):
+    """genviab sets: the public rejected-ideas.json. An `ae` set keeps its
+    defects in its own (private) directory: they quote task text (D8)."""
+    if set_ not in SETS:
+        with open(os.path.join(root_of(set_), "rejected.json"), "w") as fh:
+            fh.write(json.dumps({"mechanical": [{"id": i, "defect": w} for i, w in bad]},
+                                indent=1, ensure_ascii=False) + "\n")
+        return
     doc = json.load(open(REJECTED)) if os.path.exists(REJECTED) else {}
     doc.setdefault("mechanical", {})[set_] = [{"id": i, "defect": w} for i, w in bad]
     with open(REJECTED, "w") as fh:
@@ -404,43 +523,58 @@ def build(set_):
     bins = binaries()
     ok, bad = check_set(set_)
     counts = {c: sum(1 for t in ok if t["category"] == c) for c in gv.CATEGORIES}
-    doc = {"schema": SCHEMA, "set": set_,
+    doc = {"schema": SCHEMA, "set": name_of(set_),
            "built": datetime.date.today().isoformat(),
-           "corpus_sha256": gv.corpus_digest(os.path.join(HERE, set_)),
+           "corpus_sha256": gv.corpus_digest(root_of(set_)),
            **bins, "card_sha256": card_sha256(),
            "counts": counts, "n": len(ok), "excluded": [i for i, _ in bad], "tasks": ok}
+    if set_ not in SETS:
+        doc["mode"] = "ae"
+        doc["tiers"] = {k: sum(1 for t in ok if t["tier"] == k) for k in AE_TIERS}
     with open(manifest_path(set_), "w") as fh:
         fh.write(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
     write_rejected(set_, bad)
     for i, w in bad:
-        print(f"EXCLUDED {set_}/{i}: {w}", file=sys.stderr)
-    print(f"{set_}: {len(ok)} task(s) {counts}, {len(bad)} excluded; corpus "
-          f"{doc['corpus_sha256'][:16]}")
+        print(f"EXCLUDED {name_of(set_)}/{i}: {w}", file=sys.stderr)
+    print(f"{name_of(set_)}: {len(ok)} task(s) {doc.get('tiers', counts)}, {len(bad)} excluded; "
+          f"corpus {doc['corpus_sha256'][:16]}")
     return 0
 
 
+def check_candidates(set_):
+    """`--check --candidates`: every check a drafting candidate can pass before
+    its reference.ax is earned (D12); no manifest. Exit 0 all pass, else 1."""
+    ok, bad = check_set(set_, candidates=True)
+    for t in ok:
+        print(f"PASS {name_of(set_)}/{t['id']}")
+    for i, w in bad:
+        print(f"FAIL {name_of(set_)}/{i}: {w}")
+    return 1 if bad else 0
+
+
 def check(set_):
+    name = name_of(set_)
     mp = manifest_path(set_)
     if not os.path.exists(mp):
-        print(f"FAIL {set_}: no manifest.json (run build.py --set {set_})")
+        print(f"FAIL {name}: no manifest.json (run build.py {hint(set_)})")
         return 1
     man = json.load(open(mp))
-    corpus = gv.corpus_digest(os.path.join(HERE, set_))
-    if man.get("schema") != SCHEMA or man.get("set") != set_:
-        print(f"FAIL {set_}: manifest schema/set mismatch")
+    corpus = gv.corpus_digest(root_of(set_))
+    if man.get("schema") != SCHEMA or man.get("set") != name:
+        print(f"FAIL {name}: manifest schema/set mismatch")
         return 1
     if corpus != man["corpus_sha256"]:
-        print(f"FAIL {set_}: the corpus changed since the manifest ({corpus[:16]} != "
-              f"{man['corpus_sha256'][:16]}); rebuild with build.py --set {set_}")
+        print(f"FAIL {name}: the corpus changed since the manifest ({corpus[:16]} != "
+              f"{man['corpus_sha256'][:16]}); rebuild with build.py {hint(set_)}")
         return 1
     for t in man["tasks"]:
         for n, sha in t["files"].items():
-            if gv.sha256_file(os.path.join(HERE, set_, t["id"], n)) != sha:
-                print(f"FAIL {set_}/{t['id']}: {n} differs from the manifest")
+            if gv.sha256_file(os.path.join(root_of(set_), t["id"], n)) != sha:
+                print(f"FAIL {name}/{t['id']}: {n} differs from the manifest")
                 return 1
     bins = binaries()
     if all(man.get(k) == v for k, v in bins.items()):
-        print(f"{set_}: corpus and binaries unchanged since the manifest; checks skipped "
+        print(f"{name}: corpus and binaries unchanged since the manifest; checks skipped "
               f"({man['n']} task(s))")
         return 0
     ok, bad = check_set(set_)
@@ -449,25 +583,50 @@ def check(set_):
     gained = sorted(ids - {t["id"] for t in man["tasks"]})
     for i, w in bad:
         if i in lost:
-            print(f"FAIL {set_}/{i}: {w}")
+            print(f"FAIL {name}/{i}: {w}")
     if gained:
-        print(f"FAIL {set_}: {gained} pass now but the manifest excludes them; rebuild")
+        print(f"FAIL {name}: {gained} pass now but the manifest excludes them; rebuild")
     if lost or gained:
         return 1
-    print(f"{set_}: binaries changed since the manifest; all {len(ok)} task(s) re-checked PASS "
+    print(f"{name}: binaries changed since the manifest; all {len(ok)} task(s) re-checked PASS "
           "(the manifest keeps the build's binary pins)")
     return 0
+
+
+def inside_repo(path):
+    root = os.path.realpath(gv.ROOT) + os.sep
+    return (os.path.realpath(path) + os.sep).startswith(root)
 
 
 def main():
     ap = argparse.ArgumentParser(usage=__doc__.split("\n\n")[1])
     ap.add_argument("--check", action="store_true")
-    ap.add_argument("--set", choices=SETS)
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--set", choices=SETS)
+    g.add_argument("--set-dir")
+    ap.add_argument("--candidates", action="store_true")
     try:
         a = ap.parse_args()
     except SystemExit as e:
         return 0 if e.code == 0 else 2
-    sets = [a.set] if a.set else list(SETS)
+    if a.set_dir:
+        if not os.path.isdir(a.set_dir):
+            print(f"build.py: --set-dir {a.set_dir} is not a directory", file=sys.stderr)
+            return 2
+        if os.path.basename(os.path.abspath(a.set_dir)) in SETS:
+            print("build.py: --set-dir names a genviab set; use --set", file=sys.stderr)
+            return 2
+        if inside_repo(a.set_dir):
+            # spec AE-3 contamination rule 1: task text never enters the public repo
+            print(f"build.py: --set-dir {a.set_dir} is inside the public repo {gv.ROOT}; an ae "
+                  "set lives in the private store", file=sys.stderr)
+            return 2
+    if a.candidates and not (a.set_dir and a.check):
+        print("build.py: --candidates needs --check --set-dir", file=sys.stderr)
+        return 2
+    if a.candidates:
+        return check_candidates(a.set_dir)
+    sets = [a.set_dir] if a.set_dir else [a.set] if a.set else list(SETS)
     rc = 0
     for s in sets:
         rc = max(rc, check(s) if a.check else build(s))

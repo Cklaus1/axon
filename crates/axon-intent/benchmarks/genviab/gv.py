@@ -74,7 +74,23 @@ def task_dirs(set_dir):
                   if os.path.isdir(os.path.join(set_dir, d)))
 
 
-def load_task(d):
+# The genviab sets (IG7). A task directory under any other set root is an
+# authoring-eval (`ae`) task (spec AE-3): it holds BOTH references.
+GENVIAB_SETS = ("dev", "once")
+
+
+def set_mode(task_dir):
+    """`genviab` for a task under dev/ or once/, else `ae`."""
+    root = os.path.basename(os.path.dirname(os.path.abspath(task_dir)))
+    return "genviab" if root in GENVIAB_SETS else "ae"
+
+
+def load_task(d, require_ax=True):
+    """A task directory as a dict. genviab sets: one reference, `reference` its
+    text (None with zero or two). `ae` mode (spec AE-3): reference.py is
+    required (`reference_py`), and `reference` is reference.ax's text, required
+    unless `require_ax=False` (a drafting candidate, D12: None until earned);
+    anything else raises ValueError."""
     with open(os.path.join(d, "task.json")) as fh:
         t = json.load(fh)
     with open(os.path.join(d, "intent.md")) as fh:
@@ -82,15 +98,32 @@ def load_task(d):
     ceiling(t["intent_md"])   # a malformed `## Allowed` raises ValueError: the task is refused (B3-4)
     present = [n for n in REFERENCE_FILES if os.path.exists(os.path.join(d, n))]
     t["references"] = present
+    t["set_mode"] = set_mode(d)
+    t["dir"] = d
+    if t["set_mode"] == "ae":
+        if "reference.py" not in present:
+            raise ValueError("an ae task needs reference.py (the expected outputs come from it, D12)")
+        if "reference.ax" not in present and require_ax:
+            raise ValueError("an ae task needs reference.ax (only a drafting candidate, "
+                             "require_ax=False, may lack it)")
+        with open(os.path.join(d, "reference.py")) as fh:
+            t["reference_py"] = fh.read()
+        ax = "reference.ax" in present
+        t["reference_file"] = "reference.ax" if ax else None
+        t["reference_lang"] = "axon" if ax else None
+        t["reference"] = open(os.path.join(d, "reference.ax")).read() if ax else None
+        return t
     t["reference_file"] = present[0] if len(present) == 1 else None
     t["reference_lang"] = REFERENCE_FILES[present[0]] if len(present) == 1 else None
     t["reference"] = (open(os.path.join(d, present[0])).read() if len(present) == 1 else None)
-    t["dir"] = d
     return t
 
 
 def task_files(t):
-    """The files a task's manifest row hashes: intent.md, task.json, its reference."""
+    """The files a task's manifest row hashes: intent.md, task.json, its
+    reference (both references in `ae` mode)."""
+    if t.get("set_mode") == "ae":
+        return BASE_FILES + tuple(t["references"])
     return BASE_FILES + ((t["reference_file"],) if t.get("reference_file") else ())
 
 
@@ -179,6 +212,12 @@ def section(md, title):
     return "\n".join(found) if found is not None else ""
 
 
+def budget_tokens(md):
+    """The intent's `## Budget` `tokens` (a positive int), else None."""
+    m = re.search(r"^\s*-\s*tokens\s*:\s*(\d+)\s*$", section(md, "budget"), re.M)
+    return int(m.group(1)) if m and int(m.group(1)) > 0 else None
+
+
 def intent_paragraphs(md):
     """The prose paragraphs under `# Intent` (before the first `##`)."""
     m = re.search(r"^#\s+Intent\s*$(.*?)(?=^##\s|\Z)", md, re.M | re.S)
@@ -252,14 +291,21 @@ def grading_intent(task, program, which=("visible", "hidden")):
             + "\n## Program\n```axon\n" + body + "```\n")
 
 
-def intent_env():
-    env = dict(os.environ, AXON_BIN=AXON)
+def bins_or_default(bins=None):
+    """(axon, axon-intent): `bins` when given, else the env-selected globals
+    read at call time. AE-4 passes `bins` so one process alternates binaries
+    without mutating these globals under --parallel."""
+    return tuple(bins) if bins else (AXON, AXON_INTENT)
+
+
+def intent_env(bins=None):
+    env = dict(os.environ, AXON_BIN=bins_or_default(bins)[0])
     env.pop("AXON_AI_MOCK", None)
     env.pop("AXON_APPROVAL_KEY", None)
     return env
 
 
-def lift(intent_text, name="task"):
+def lift(intent_text, name="task", bins=None):
     """Lift a grading intent: (rc, lift report dict or None, stdout+stderr tail).
     rc 0 = `axon check`, the gates and every example passed."""
     if intent_text is None:
@@ -270,8 +316,9 @@ def lift(intent_text, name="task"):
         with open(p, "w") as fh:
             fh.write(intent_text)
         rep = os.path.join(ws, "lift.json")
-        r = subprocess.run([AXON_INTENT, "compile", p, "--out", os.path.join(ws, "o"),
-                            "--transcript", rep], cwd=ws, env=intent_env(),
+        axon_intent = bins_or_default(bins)[1]
+        r = subprocess.run([axon_intent, "compile", p, "--out", os.path.join(ws, "o"),
+                            "--transcript", rep], cwd=ws, env=intent_env(bins),
                            capture_output=True, text=True, timeout=LIFT_TIMEOUT)
         doc = None
         if os.path.exists(rep):
@@ -308,19 +355,132 @@ def failed_examples(report):
                    if not e.get("passed")})
 
 
-def grade_axon(task, program, which=("visible", "hidden")):
+# Authoring-eval AE-2: one class per graded run, parsed from genloop's `ended`
+# (`exit N` / `did not compile: ..` / `faulted (status ..): <Verdict::legible()>`
+# / `refused by the sandbox: ..` / `timed out after N ms`). Only `panic` (a
+# fault on axis `runtime`: fault_verdict's `_` arm, the interpreter's panics)
+# counts in M2; every class is its own column (spec §2).
+ENDED_CLASSES = ("ok", "wrong-output", "exit-mismatch", "panic", "resource", "refine", "halted",
+                 "other-fault", "timeout", "sandbox-refused", "no-outcome-record",
+                 "compile-failed")
+FAULTED = re.compile(r"^faulted \(status [^)]*\): (.*)$", re.S)
+AXIS = re.compile(r"\(axis: ([\w-]+)\)\s*$")
+RESOURCE_AXES = ("steps", "wall", "budget")
+# The panic reason's kind (spec AE-2), from the interpreter's panic strings
+# (axon-core interp/builtins at this commit). `type-class`: the checker should
+# have refused it (M2s). `partial-op`: a partial operation on a value the
+# checker cannot see (index, division, overflow, assert, a missing key).
+# Anything else is `other`, reported, never dropped.
+PANIC_KINDS = (
+    ("type-class", re.compile(
+        r"^cannot apply \S+ to |^(\S+: )?expected (bool|i64|f64|str|Decimal|array|a \w+), got |"
+        r"expected .+ found |no match arm|is not a runtime builtin|requires numeric index, got|"
+        r"cannot index into scalar|key fn must return numeric|expected \d+ args, got")),
+    ("partial-op", re.compile(
+        r"index -?\d+ out of bounds|negative index|division by zero|remainder by zero|"
+        r"integer overflow|^assertion failed|array is empty|key .+ not found|"
+        r"is not a valid Unicode code point|is not a multiple of 4|^panic\b")),
+)
+
+
+def panic_reason(ended):
+    """The interpreter's panic text inside a `runtime`-axis fault, without
+    `axon: panic: ` and the `(axis: runtime)` suffix."""
+    m = FAULTED.match(ended or "")
+    s = AXIS.sub("", m.group(1) if m else (ended or "")).strip()
+    s = re.sub(r"^\S*\s*DENIED: ", "", s)
+    return re.sub(r"^axon: panic: ", "", s).strip()
+
+
+def panic_kind(reason):
+    for kind, rx in PANIC_KINDS:
+        if rx.search(reason):
+            return kind
+    return "other"
+
+
+def ended_class(run):
+    """One graded run (a lift report `examples` entry) -> its §2 ended_class."""
+    if run.get("passed"):
+        return "ok"
+    ended = run.get("ended") or ""
+    if ended.startswith(NO_OUTCOME_RECORD):
+        return "no-outcome-record"
+    if ended.startswith(SANDBOX_REFUSAL):
+        return "sandbox-refused"
+    if ended.startswith("timed out"):
+        return "timeout"
+    if ended.startswith("did not compile"):
+        return "compile-failed"
+    if ended.startswith("exit "):
+        diffs = run.get("diffs") or []
+        return ("exit-mismatch" if diffs and all(d.startswith("exit: expected") for d in diffs)
+                else "wrong-output")
+    m = FAULTED.match(ended)
+    if not m:
+        return "other-fault"
+    v = m.group(1)
+    axis = AXIS.search(v)
+    if axis:
+        a = axis.group(1)
+        if a == "runtime":
+            return "panic"
+        return "resource" if a in RESOURCE_AXES else "other-fault"
+    if "HALTED" in v:
+        return "halted"
+    if v.startswith("refinement violated"):
+        return "refine"
+    if v.startswith("budget exhausted") or "RESOURCE BOUND" in v or "COALITION BOUND" in v:
+        return "resource"
+    return "other-fault"
+
+
+def graded_runs(task, report):
+    """Every graded run of a lift report: {example, run, which, ended_class,
+    panic_kind, passed}. The loop runs every example and stops an example at
+    its first failing run, so a failing example contributes that run."""
+    which_of = {e["name"]: w for w in ("visible", "hidden") for e in task["examples"][w]}
+    out = []
+    for e in (report or {}).get("examples", []):
+        cls = ended_class(e)
+        out.append({"example": e.get("example"), "run": e.get("run"),
+                    "which": which_of.get(e.get("example")), "ended_class": cls,
+                    "panic_kind": panic_kind(panic_reason(e.get("ended"))) if cls == "panic"
+                    else None,
+                    "panic_reason": panic_reason(e.get("ended"))[:200] if cls == "panic" else None,
+                    "passed": bool(e.get("passed"))})
+    return out
+
+
+def grade_axon(task, program, which=("visible", "hidden"), bins=None):
     """Grade an Axon program on the task's examples through the lift path."""
-    rc, rep, tail = lift(grading_intent(task, program, which), task["id"])
+    rc, rep, tail = lift(grading_intent(task, program, which), task["id"], bins)
     return {
         "rc": rc,
         "passed": rc == 0 and (rep or {}).get("stage") == "accepted",
         "stage": (rep or {}).get("stage"),
+        "check_ok": (rep or {}).get("check_ok"),
+        "diag_codes": diag_codes((rep or {}).get("diagnostics")),
         "failed_examples": failed_examples(rep),
         "sandbox_refused": sandbox_refused(rep),
         "no_outcome_record_runs": no_outcome_record_runs(rep),
         "gate_refusal": (rep or {}).get("gate_refusal"),
+        "runs": graded_runs(task, rep),
         "tail": "" if rc == 0 else tail[-600:],
     }
+
+
+def diag_codes(diagnostics):
+    """`axon-diag/1` error codes of a report's diagnostics, in order."""
+    out = []
+    for d in diagnostics or []:
+        try:
+            j = json.loads(d) if isinstance(d, str) else d
+        except ValueError:
+            continue
+        if isinstance(j, dict) and j.get("severity") == "error" and j.get("code"):
+            out.append(j["code"])
+    return out
 
 
 # ---------------------------------------------------------------- python (arm c, reference.py)
