@@ -37,6 +37,27 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
 - Recorded at freeze: tasks dropped for ambiguity (after the second human review), tiers re-piloted and the knob used, tiers
   shipped outside their band at their measured rate.
 
+## Pre-pilot record (appended 2026-11-11, before any pilot call)
+
+- **Pool:** 347 candidates (T1 89, T2 113, T3 86, TS 59; 179 families), private `ae-1/candidates` at private commit `59191d3`.
+  - pool manifest sha256: `84921beab583fd021b31349da979941892fc22a079a431a61ea85c03cc7f574f`
+- **HR-1 human review** (spec AE-3, reduced review decided 2026-11-11):
+  - reviewed: every flagged candidate (48), every `needs-human` candidate (7), and a seeded 10% sample of the other 299 (30);
+  - sample bad count **4 / 30**, which is > 2, so all 299 were reviewed;
+  - result: 7 dropped (the `needs-human` candidates, which had no reference), 37 intent wording fixes and 310 unchanged;
+  - no fix changed an expected output; `build.py --check` passes on all 347.
+- **Draw seed:** `9114123031242144058`, the first 16 hex digits of `sha256("ae-1-draw:" + pool manifest sha256)` read as an
+  integer.
+  - After the pilot, each tier is drawn from its survivors: order them by `sha256("<seed>:<id>")` and take the first n
+    (T1 60, T2 80, T3 60, TS 40).
+  - If a tier has fewer than n survivors, it ships with all of them.
+- **Pilot binaries** (both bins, so `regrade`): `axon 0.1.0 (a01db50c)`.
+  - sha256 prefix: `axon` `fa490a5cb59262c4`, `axon-intent` `47069ddb911d6ee4`.
+- **Pilot runs:**
+  - `ae.py run --pilot --seeds 0,1,2` (k = 3, arms a and c);
+  - then the A/A run `--seeds 3,4,5` with the same binaries.
+  - A task that fails all 6 trials goes to a second human review, for ambiguity only.
+
 ## Not in this file
 
 No task text, example, reference, family idea or canary (spec AE-3 contamination rules); those live only in the private store.
