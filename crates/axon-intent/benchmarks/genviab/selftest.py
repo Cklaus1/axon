@@ -1045,6 +1045,18 @@ def ae_task(root, tid, ax=SYN_AX, py=AE_PY, tokens=120000, goal_tag="", **meta):
     return d
 
 
+def path_lint_literals():
+    """build.py's path lint judges only literals that name a file: a lone "/" (a
+    separator) and "0/1" (a fraction) are not paths; a relative, absolute or
+    climbing file name still is."""
+    sys.path.insert(0, HERE)
+    import build
+    for s in ("/", "0/1", "12/31/2026", " / "):
+        expect(f"path lint: {s!r} is not a path", not build.is_pathlike(s))
+    for s in ("data/in.csv", "./out.txt", "/etc/passwd", "../x", "out/"):
+        expect(f"path lint: {s!r} is a path", build.is_pathlike(s))
+
+
 def ae_loader():
     """AE-3 loader: two references, refs-agree, family/tier/canary, require_ax,
     build.py --set-dir and genviab --set-dir/--candidates."""
@@ -1931,6 +1943,7 @@ def main():
     synthetic_categories()
     forged_grades()
     driver()
+    path_lint_literals()
     ae_loader()
     http_route()
     ae_runner()

@@ -89,6 +89,12 @@ PY_OPEN_MODES = ("r", "w", "a", "rt", "wt", "at")
 REQUIRED = ("id", "category", "source", "reference_author", "examples")
 
 
+def is_pathlike(s):
+    """A literal that names a file: path-shaped AND holding a letter, so a lone
+    "/" (a separator) or "0/1" (a fraction) is not judged as a path."""
+    return bool(PATHLIKE.match(s)) and any(c.isalpha() for c in s)
+
+
 def in_once(t):
     return os.path.basename(os.path.dirname(t["dir"])) == "once"
 
@@ -260,7 +266,7 @@ def check_path_lint(t):
     if why:
         return why
     for s in strings:
-        if (t["reference_lang"] != "python" and "{" in s) or not PATHLIKE.match(s):
+        if (t["reference_lang"] != "python" and "{" in s) or not is_pathlike(s):
             continue
         if s.startswith("/") or ".." in s.split("/"):
             return f"reference literal {s!r} is absolute or climbs out"
