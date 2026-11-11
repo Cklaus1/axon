@@ -31,8 +31,9 @@ Reply cache (D4): GENVIAB_CACHE_DIR (unset: off). Key = sha256 of (prompt
 sha256, GENVIAB_SERIES, temperature, seed, max_tokens, this driver's sha256);
 never a binary sha. A hit returns the stored reply (`cache_hit: true`). A
 seeded sample of hits is re-queried (GENVIAB_REPLAY_SEED; the first
-GENVIAB_REPLAY_MIN = 20 hits of a run, then GENVIAB_REPLAY_FRACTION = 0.02 of
-them by a hash of seed and key; the run counts them in GENVIAB_RUN_STATE); a
+REPLAY_MIN = 20 hits of a run, then REPLAY_FRACTION = 0.02 of them by a hash
+of seed and key; GENVIAB_REPLAY_MIN/_FRACTION override them only under
+GENVIAB_SELFTEST=1; the run counts them in GENVIAB_RUN_STATE); a
 replay whose reply_sha256 differs writes GENVIAB_RUN_STATE/cache-disabled and
 the cache is neither read nor written for the rest of that run.
 GENVIAB_SHARE_DIR (ae.py, `regrade`): replies generated in this run, keyed the
@@ -127,9 +128,12 @@ def store_entry(root, key, entry):
 
 def take_replay(state, key):
     """Should this cache hit be re-queried? The first REPLAY_MIN hits of the run,
-    then a seeded REPLAY_FRACTION of them (counted under a lock in `state`)."""
-    frac = float(E.get("GENVIAB_REPLAY_FRACTION", REPLAY_FRACTION))
-    least = int(E.get("GENVIAB_REPLAY_MIN", REPLAY_MIN))
+    then a seeded REPLAY_FRACTION of them (counted under a lock in `state`).
+    GENVIAB_REPLAY_MIN / GENVIAB_REPLAY_FRACTION are honoured only under
+    GENVIAB_SELFTEST=1: an operator's shell never turns the D4 replay off."""
+    st = E.get("GENVIAB_SELFTEST") == "1"
+    frac = float(E.get("GENVIAB_REPLAY_FRACTION", REPLAY_FRACTION)) if st else REPLAY_FRACTION
+    least = int(E.get("GENVIAB_REPLAY_MIN", REPLAY_MIN)) if st else REPLAY_MIN
     seed = E.get("GENVIAB_REPLAY_SEED", "0")
     sampled = int(sha256(f"{seed}:{key}".encode())[:8], 16) / 0xFFFFFFFF < frac
     if not state:
@@ -145,13 +149,13 @@ def take_replay(state, key):
         return take
 
 
-def call(base, token, body):
+def call(base, token, body, timeout=TIMEOUT_S):
     """POST /chat/completions: (status, parsed json or None, error text or None)."""
     req = urllib.request.Request(base + "/chat/completions", data=json.dumps(body).encode(),
                                  headers={"Authorization": "Bearer " + token,
                                           "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, json.loads(r.read()), None
     except urllib.error.HTTPError as e:
         return e.code, None, f"HTTP {e.code}: {e.read()[:300].decode('utf-8', 'replace')}"
@@ -225,11 +229,23 @@ def main():
                 live = True
         else:
             live = True
+        # GENVIAB_DEADLINE (epoch s, ae.py's window end): no request starts at
+        # or after it, and none outlives it. A replay past it is not made (the
+        # hit stands); a miss past it is infra, and ae.py marks the run INCOMPLETE.
+        deadline = float(E["GENVIAB_DEADLINE"]) if E.get("GENVIAB_DEADLINE") else None
+        left = None if deadline is None else deadline - time.time()
+        if live and left is not None and left < 1:
+            live = False
+            if row["replayed"]:
+                row["replayed"] = False
+            else:
+                why, code = "the run's window ended (GENVIAB_DEADLINE): no request made", 1
         if live:
             body = {"model": model, "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": max_tokens, "temperature": temperature, "seed": seed}
             began = time.time()
-            status, doc, err = call(cfg[0], token, body)
+            status, doc, err = call(cfg[0], token, body,
+                                    TIMEOUT_S if left is None else min(TIMEOUT_S, left))
             row["duration_api_ms"] = int((time.time() - began) * 1000)
             row["turns"] = 1
             if err or doc is None:

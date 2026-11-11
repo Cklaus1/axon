@@ -1011,6 +1011,7 @@ def driver():
 # Synthetic ae fixtures: SYN's grader task under an ae set root, canaries all
 # zero (obviously synthetic, spec AE-3 contamination rule 3).
 AE_CANARY = "00000000-0000-0000-0000-000000000000"
+AE_CANARY2 = "00000000-0000-0000-0000-000000000002"    # F1: a second task's canary
 AE_VISIBLE = [{"name": "one run", "runs": [
     {"inputs": {"./data/in.txt": "a\n"}, "outputs": {"./out/count.txt": "1"},
      "stdout": "run 1: a\n", "exit": 0}]}]
@@ -1211,14 +1212,15 @@ def failure_class_fixtures():
 
 class FakeCere:
     """A loopback OpenAI-compatible server (stdlib http.server): canned replies
-    by `mode`, every chat request recorded (AE-1)."""
+    by `mode`, a `cere` block naming the server `build`, every chat request
+    recorded (AE-1); the series' build probe is recorded apart in `probes`."""
     MODEL = "Qwen3.8-Flash-Next"
 
     def __init__(self):
         import http.server
         import threading
         fake = self
-        self.mode, self.requests, self.auth = "ok", [], []
+        self.mode, self.requests, self.auth, self.probes, self.build = "ok", [], [], [], "fx-lock-1"
 
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
@@ -1238,8 +1240,10 @@ class FakeCere:
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                fake.requests.append(body)
-                fake.auth.append(self.headers.get("Authorization"))
+                probe = body["messages"][0]["content"] == "genviab server-build probe: reply ok"
+                (fake.probes if probe else fake.requests).append(body)
+                if not probe:
+                    fake.auth.append(self.headers.get("Authorization"))
                 self.reply(fake.completion(body))
 
         self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
@@ -1254,6 +1258,8 @@ class FakeCere:
             text = "```axon\nfn main() -> i64 {\n    let v = arr_new()\n    0\n}\n```\n"
         if self.mode == "changed":
             text += "\n"
+        if self.mode == "canary":     # every reply quotes task t2's (synthetic) canary
+            text += f"\nsee {AE_CANARY2}\n"
         cap = body["max_tokens"]
         finish, out_tok = "stop", 50
         if self.mode == "length-at-cap":
@@ -1265,7 +1271,9 @@ class FakeCere:
                 "choices": [{"index": 0, "finish_reason": finish,
                              "message": {"role": "assistant", "content": text}}],
                 "usage": {"prompt_tokens": 100, "completion_tokens": out_tok,
-                          "prompt_tokens_details": {"cached_tokens": 7}}}
+                          "prompt_tokens_details": {"cached_tokens": 7}},
+                "cere": {"recipe_id": "fx-recipe", "lock_sha256": self.build,
+                         "config_hash": "fx-config", "profile_id": "fx-profile"}}
 
     def close(self):
         self.httpd.shutdown()
@@ -1344,7 +1352,9 @@ def http_route():
         rc, out, rows, calls, _ = run()
         expect("ae1: finish_reason length at the declared cap is truncated: a failed round, not infra",
                rc == 0 and len(rows) == 1 and rows[0]["truncated_rounds"] == [0]
-               and not rows[0]["b_verified"] and not rows[0]["verified"] and not rows[0]["infra"],
+               and not rows[0]["b_verified"] and not rows[0]["verified"] and not rows[0]["infra"]
+               # F7: an accepted final cut at the cap is accepted and not verified (M4)
+               and rows[0]["accepted"] and rows[0]["false_acceptance"],
                (out[-300:], rows))
         fake.mode = "length-below"
         rc, out, rows, calls, _ = run()
@@ -1364,6 +1374,14 @@ def http_route():
                first == 1 and len(fake.requests) - before == 1 and len(rows) == 1
                and rows[0]["cache_hits"] == 1 and rows[0]["verified"],
                (first, len(fake.requests) - before, rows))
+        # F5: a re-deployed server (new lock in the `cere` block) is a new series: a cache miss.
+        fake.build = "fx-lock-2"
+        before = len(fake.requests)
+        rc, out, rows, calls, _ = run("--cache-dir", cache)
+        fake.build = "fx-lock-1"
+        expect("ae1: a new server build is a new series and misses the reply cache",
+               len(fake.requests) - before == 1 and len(rows) == 1 and rows[0]["cache_hits"] == 0
+               and bool(fake.probes), (len(fake.requests) - before, rows, len(fake.probes)))
         fake.mode = "changed"
         rc, out, rows, calls, o = run("--cache-dir", cache, e=dict(env, GENVIAB_REPLAY_MIN="5"))
         expect("ae1: a forced replay with a different reply disables the cache and records it",
@@ -1374,6 +1392,55 @@ def http_route():
                   for dp, _, fs in os.walk(top) for f in fs
                   if f != "cere.env" and token in open(os.path.join(dp, f), errors="replace").read()]
         expect("ae1: the token never appears in a file under the out dirs", not leaked, leaked)
+        # F6: the replay knobs bind only under GENVIAB_SELFTEST=1 (a subprocess: this
+        # process's environment is shared with the AE-2 fixture thread).
+        probe = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('h', sys.argv[1]); "
+                 "m = importlib.util.module_from_spec(s); s.loader.exec_module(m); "
+                 "print(m.take_replay(sys.argv[2], 'k' * 64))")
+        knobs = dict(os.environ, GENVIAB_REPLAY_MIN="0", GENVIAB_REPLAY_FRACTION="0")
+        knobs.pop("GENVIAB_SELFTEST", None)
+        take = lambda e, st: subprocess.run(
+            [sys.executable, "-B", "-c", probe, os.path.join(d, "drivers", "http-program.py"),
+             os.path.join(root, st)], env=e, capture_output=True, text=True).stdout.strip()
+        prod, st = take(knobs, "f6-a"), take(dict(knobs, GENVIAB_SELFTEST="1"), "f6-b")
+        expect("ae1: GENVIAB_REPLAY_MIN/_FRACTION are ignored outside the selftest (D4 replay stays on)",
+               prod == "True" and st == "False", (prod, st))
+        # F8: every cache-key component changes the key (a dropped one would hit).
+        import importlib.util
+        ks = importlib.util.spec_from_file_location("http_program_keys",
+                                                    os.path.join(d, "drivers", "http-program.py"))
+        km = importlib.util.module_from_spec(ks)
+        ks.loader.exec_module(km)
+        k0 = ("p" * 64, "cere:m:s", 0.7, 0, 8192, "d" * 64)
+        keys = {km.cache_key(*k0)} | {km.cache_key(*(k0[:i] + (v,) + k0[i + 1:])) for i, v in
+                                      enumerate(("q" * 64, "cere:m:t", 0.3, 1, 4096, "e" * 64))}
+        expect("ae1: a changed prompt, series, temperature, seed, max_tokens or driver misses the cache",
+               len(keys) == 7, len(keys))
+        import time
+        drv = os.path.join(d, "drivers", "http-program.py")
+
+        def direct(prompt, **kw):
+            e = dict(env, GENVIAB_MODEL=FakeCere.MODEL,
+                     GENVIAB_MODEL_LOG=os.path.join(root, "direct.jsonl"), **kw)
+            n0 = len(fake.requests)
+            r = subprocess.run([sys.executable, "-B", drv], input=prompt, env=e,
+                               capture_output=True, text=True)
+            return r.returncode, len(fake.requests) - n0, r.stderr
+        cache2, fresh = os.path.join(root, "cache2"), os.path.join(root, "rs-fresh")
+        os.makedirs(fresh)
+        stored = lambda: sum(len(fs) for _, _, fs in os.walk(cache2))
+        live = dict(GENVIAB_CACHE_DIR=cache2, GENVIAB_RUN_STATE=fresh)
+        dead = dict(GENVIAB_CACHE_DIR=cache2, GENVIAB_RUN_STATE=os.path.join(o, "run-state"))
+        seq = [direct("p-direct", **live)[1], direct("p-direct", **live)[1]]
+        n_stored = stored()
+        seq += [direct("p-direct", **dead)[1], direct("p-new", **dead)[1]]
+        expect("ae1: after a replay mismatch the run neither reads nor writes the cache",
+               seq == [1, 0, 1, 1] and n_stored > 0 and stored() == n_stored, (seq, n_stored, stored()))
+        late = direct("p-late", GENVIAB_DEADLINE=str(time.time() - 5))
+        ontime = direct("p-late", GENVIAB_DEADLINE=str(time.time() + 600))
+        expect("ae4: no request starts past the run's window end (GENVIAB_DEADLINE): infra, not a call",
+               late[:2] == (1, 0) and "window ended" in late[2] and ontime[:2] == (0, 1),
+               (late, ontime))
     finally:
         fake.close()
         shutil.rmtree(d)
@@ -1477,6 +1544,12 @@ def ae_runner():
             expect("ae6: the row carries python (arm c once per run) and drift_vs_last",
                    o["python"] and o["python"]["ft_pass"] == 1.0 and o["python"]["gap_ft"] == 0.0
                    and em["python"]["ft_pass"] == 0.0 and drift == 0.75, (o["python"], drift))
+            # F3: §2 M5 is arm c - arm a: oracle Python (1.0) against empty Axon (0.0) is +1.
+            rr = lambda run_id, b: [json.loads(l) for l in
+                                    open(os.path.join(runs, run_id, b, "rows.jsonl")) if l.strip()]
+            gap = AE.python_block(rr(o["run_id"], "python"), rr(em["run_id"], "cand"), [], "v", "s")
+            expect("ae6: the Python gap is arm c - arm a (spec §2 M5)",
+                   gap["gap_ft"] == 1.0 and gap["gap_solve3"] == 1.0, gap)
             calls = lambda p: open(p).read().split().count("check") if os.path.exists(p) else 0
             expect("ae4: each binary's rows are graded with that binary (version markers pinned)",
                    o["base"]["git_head"] == "fixture-base" and o["cand"]["git_head"] == "fixture-cand"
@@ -1505,6 +1578,24 @@ def ae_runner():
         expect("ae4: the CI call passes alpha=0.025 and p is two-sided (3 families, exact: 2 x 1/8)",
                seen == [0.025] and sf["method"] == "exact" and abs(sf["p_two_sided"] - 0.25) < 1e-9,
                (seen, sf))
+        # F8: a negative, unequal-magnitude Δ tells 2*min(p+, p-) (= 2 x 2/8) from 2*p+ (= 1).
+        mixed = AE.signflip({"a": -1.0, "b": -0.5, "c": 0.25}, {"a": "f1", "b": "f2", "c": "f3"})
+        expect("ae4: p is 2*min(p_greater, p_less) on mixed-sign Δs (exact: 0.5, not 1.0)",
+               abs(mixed["p_two_sided"] - 0.5) < 1e-9, mixed)
+        import argparse
+        dn = argparse.Namespace(generator="http", model="m", effort=None, provider="cere",
+                                temperature=0.7, seed=0, max_tokens=8, cache_dir=None, deadline=123.5)
+        expect("ae4: ae.py's window end reaches the http driver (GENVIAB_DEADLINE)",
+               AE.G.driver_env(dn, {"id": "t"}, "a", os.devnull).get("GENVIAB_DEADLINE") == "123.5")
+        # F4: a class key keeps the construct, never a key or value from an example.
+        keys = (AE.construct_of('map_get: key "q-secret-7" not found'),
+                AE.construct_of("index 5 out of bounds (len 2) at 'q secret'"),
+                AE.construct_of("panic: q-secret text"), AE.construct_of("q-secret free text"),
+                AE.normalise('type mismatch: found "q-secret"', ""))
+        expect("ae5: panic and diagnostic class keys drop quoted spans and free text (no task data)",
+               keys == ('map_get: key "_" not found', "index N out of bounds (len N) at '_'",
+                        "panic(_)", "other", 'type mismatch: found "_"')
+               and not any("secret" in k for k in keys), keys)
         r0 = {"run_id": "r1", "design": "paired", "flag": "REGRESSION-UNCONFIRMED"}
         conf = lambda hi: {"run_id": "r2", "design": "confirm", "confirms": "r1",
                            "paired": {"ci95": [-0.3, hi]}}
@@ -1561,6 +1652,26 @@ def ae_runner():
                rc == 0 and "| E0001 cannot find name `arr_new`" in out
                and "card/docs" in out and "| E0001 | " in out and "### (draft)" in stanza
                and task_text not in stanza and "t1" not in stanza, out[-1500:])
+        # F1: a reply quoting another task's canary is flagged (spec AE-3 rule 3).
+        cset = os.path.join(root, "ae-can")
+        ae_task(cset, "t1", goal_tag=" (one)")
+        ae_task(cset, "t2", goal_tag=" (two)", canary=AE_CANARY2)
+        py(d, "build.py", "--set-dir", cset)
+        fake.mode = "canary"
+        rc, out = ae("run", "--set-dir", cset, "--label", "fx-canary", "--runs-dir", runs,
+                     "--prereg", os.path.join(root, "unfrozen.md"), "--pilot", "--parallel", "4",
+                     "--cache-dir", os.path.join(root, "cache-can"), "--base-bin", base,
+                     "--cand-bin", cand, "--seeds", "0", e=he)
+        fake.mode = "e0001"
+        rid = next((x for x in sorted(os.listdir(runs)) if x.endswith("fx-canary")), None)
+        hp = os.path.join(runs, rid or "none", "canary-hits.json")
+        hits = json.load(open(hp)) if os.path.exists(hp) else None
+        crow = json.load(open(os.path.join(runs, rid, "row.json"))) if rid and os.path.exists(
+            os.path.join(runs, rid, "row.json")) else {}
+        expect("ae4: a reply holding another task's canary is flagged; its own task's is not",
+               rc == 0 and hits and {h["task"] for h in hits} == {"t1"}
+               and {h["canary_of"] for h in hits} == {"t2"} and len(hits) == 3
+               and "CANARY in replies: 3" in (crow.get("notes") or ""), (out[-600:], hits, crow.get("notes")))
         ae_weekly_screen(d, root, hset, he, gv)
     finally:
         fake.close()

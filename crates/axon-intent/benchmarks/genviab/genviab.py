@@ -422,7 +422,7 @@ def driver_for(a):
 # The http driver's knobs: set from the run's arguments, never inherited.
 HTTP_ENV = ("GENVIAB_PROVIDER", "GENVIAB_TEMPERATURE", "GENVIAB_SEED", "GENVIAB_MAX_TOKENS",
             "GENVIAB_SERIES", "GENVIAB_CACHE_DIR", "GENVIAB_RUN_STATE", "GENVIAB_REPLAY_SEED",
-            "GENVIAB_SHARE_DIR")
+            "GENVIAB_SHARE_DIR", "GENVIAB_DEADLINE")
 
 
 def driver_env(a, task, arm, calls_log, oracle=None, bins=None):
@@ -443,7 +443,8 @@ def driver_env(a, task, arm, calls_log, oracle=None, bins=None):
                  "GENVIAB_SERIES": getattr(a, "series", None),
                  "GENVIAB_CACHE_DIR": a.cache_dir, "GENVIAB_RUN_STATE": getattr(a, "run_state", None),
                  "GENVIAB_REPLAY_SEED": getattr(a, "replay_seed", None),
-                 "GENVIAB_SHARE_DIR": getattr(a, "share_dir", None)}
+                 "GENVIAB_SHARE_DIR": getattr(a, "share_dir", None),
+                 "GENVIAB_DEADLINE": getattr(a, "deadline", None)}
         env.update({k: str(v) for k, v in knobs.items() if v is not None})
     env["AXON_INTENT_TIMEOUT_MS"] = str(CALL_TIMEOUT_MS if a.generator in MODEL_GENERATORS
                                         else 60_000)
@@ -574,12 +575,13 @@ def run_arm_a(a, task, out, bins=None):
                                          row["outcome"])
         row.update(classes)
         # A reply cut at the declared max_tokens is the model's failure (spec
-        # §2): that round's candidate never counts as a pass.
+        # §2): that round's candidate never counts as a pass. An accepted final
+        # cut at the cap is accepted and not verified: M4 counts it (§2 M4).
         if trunc and trunc[0]:
             row["b_verified"] = False
         if accepted and trunc and trunc[-1]:
             row["verified"] = False
-            row["false_acceptance"] = False
+        row["false_acceptance"] = bool(accepted and not row["verified"])
         # M3 / M3t: the accepting round when the loop's program is verified.
         row["first_green_round"] = len(rounds) - 1 if row["verified"] else None
         gen_fail = next((x.get("generator_failure") for x in rounds if x.get("generator_failure")),
@@ -762,11 +764,21 @@ def http_driver_module():
     return mod
 
 
+# The one request genviab makes outside a task: a 1-token completion whose
+# `cere` block names the server build (no other endpoint exposes it).
+BUILD_PROBE_PROMPT = "genviab server-build probe: reply ok"
+BUILD_KEYS = ("recipe_id", "lock_sha256", "config_hash")
+
+
 def http_series(a):
-    """The model series (spec §3): provider, requested model and the sha256 of
-    its full `/v1/models` entry. Refused when the model is not served."""
+    """The model series (spec §3): provider, requested model, the sha256 of its
+    full `/v1/models` entry and of the server build (the `cere` block's recipe,
+    lock and config of one 1-token probe completion), so a re-deploy is a new
+    series and misses the reply cache. Refused when the model is not served or
+    the build cannot be read."""
     import urllib.request
-    cfg, why = http_driver_module().provider_config(a.provider)
+    hp = http_driver_module()
+    cfg, why = hp.provider_config(a.provider)
     if why:
         raise Refused(why)
     try:
@@ -779,8 +791,20 @@ def http_series(a):
         raise Refused(f"{a.provider} does not serve {a.model!r} "
                       f"(served: {[m.get('id') for m in doc.get('data') or []]})")
     entry_sha = gv.sha256_bytes(json.dumps(entry, sort_keys=True).encode())
-    return {"series": f"{a.provider}:{a.model}:{entry_sha[:16]}", "provider": a.provider,
-            "requested": a.model, "models_entry_sha256": entry_sha,
+    token = hp.read_token(cfg[1], cfg[2])
+    if token is None:
+        raise Refused(f"no {cfg[2]} in the provider's env file (no fallback to another key)")
+    status, reply, err = hp.call(cfg[0], token, {
+        "model": a.model, "messages": [{"role": "user", "content": BUILD_PROBE_PROMPT}],
+        "max_tokens": 1, "temperature": 0, "seed": 0}, timeout=60)
+    build = {k: (reply or {}).get("cere", {}).get(k) for k in BUILD_KEYS}
+    if err or not all(build.values()):
+        raise Refused(f"{a.provider}: the server build probe gave no {'/'.join(BUILD_KEYS)} "
+                      f"({err or 'missing in the cere block'}): the series cannot be pinned")
+    build_sha = gv.sha256_bytes(json.dumps(build, sort_keys=True).encode())
+    return {"series": f"{a.provider}:{a.model}:{entry_sha[:16]}:{build_sha[:16]}",
+            "provider": a.provider, "requested": a.model, "models_entry_sha256": entry_sha,
+            "server_build": build, "server_build_sha256": build_sha,
             "base_url_host": cfg[0].split("//", 1)[-1].split("/", 1)[0]}
 
 
