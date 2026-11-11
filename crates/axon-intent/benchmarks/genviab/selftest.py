@@ -1103,6 +1103,175 @@ def ae_loader():
         shutil.rmtree(root)
 
 
+class FakeCere:
+    """A loopback OpenAI-compatible server (stdlib http.server): canned replies
+    by `mode`, every chat request recorded (AE-1)."""
+    MODEL = "Qwen3.8-Flash-Next"
+
+    def __init__(self):
+        import http.server
+        import threading
+        fake = self
+        self.mode, self.requests, self.auth = "ok", [], []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def reply(self, doc):
+                b = json.dumps(doc).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+
+            def do_GET(self):
+                self.reply({"object": "list", "data": [{"id": FakeCere.MODEL, "object": "model",
+                                                        "max_model_len": 262144}]})
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                fake.requests.append(body)
+                fake.auth.append(self.headers.get("Authorization"))
+                self.reply(fake.completion(body))
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}/v1"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def completion(self, body):
+        prompt = body["messages"][0]["content"]
+        text = (f"```python\n{AE_PY}```\n" if "Python 3 program" in prompt
+                else f"```axon\n{SYN_AX}```\n")
+        if self.mode == "changed":
+            text += "\n"
+        cap = body["max_tokens"]
+        finish, out_tok = "stop", 50
+        if self.mode == "length-at-cap":
+            finish, out_tok = "length", cap
+        elif self.mode == "length-below":
+            finish, out_tok = "length", cap - 1
+        model = "other-model" if self.mode == "substitute" else body["model"]
+        return {"id": "x", "object": "chat.completion", "model": model,
+                "choices": [{"index": 0, "finish_reason": finish,
+                             "message": {"role": "assistant", "content": text}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": out_tok,
+                          "prompt_tokens_details": {"cached_tokens": 7}}}
+
+    def close(self):
+        self.httpd.shutdown()
+
+
+def http_route():
+    """AE-1 through a fake CERE: the provider rule, the token rule, `http` never
+    runs oracle.sh, limits reach the body, truncation vs a transport cut, model
+    substitution, an unpriced model, the token never on disk, the reply cache
+    and its replay."""
+    sys.path.insert(0, HERE)
+    import gv
+    if not have_binaries("ae1", gv):
+        return
+    d = scratch()
+    root = tempfile.mkdtemp(prefix="ae-selftest-")
+    fake = FakeCere()
+    token = "selftest-token-" + "7" * 24
+    try:
+        with open(os.path.join(d, "drivers", "oracle.sh"), "w") as fh:
+            fh.write(f"#!/bin/sh\ntouch {root}/oracle-ran\nexit 1\n")
+        envf = os.path.join(root, "cere.env")
+        with open(envf, "w") as fh:
+            fh.write(f"CERE_TOKEN_TRAINLOOP=other\nCERE_TOKEN_AE={token}\n")
+        nokey = os.path.join(root, "nokey.env")
+        with open(nokey, "w") as fh:
+            fh.write("CERE_TOKEN_TRAINLOOP=other\n")
+        env = dict(os.environ, GENVIAB_SELFTEST="1", GENVIAB_HTTP_BASE_URL=fake.base,
+                   GENVIAB_HTTP_ENV_FILE=envf, GENVIAB_REPLAY_MIN="0", GENVIAB_REPLAY_FRACTION="0")
+        env.pop("GENVIAB_CERE_TOKEN_KEY", None)
+        ae_task(os.path.join(root, "ae-1"), "ae-good")
+        py(d, "build.py", "--set-dir", os.path.join(root, "ae-1"))
+        n = [0]
+
+        def run(*extra, arm="a", e=env):
+            n[0] += 1
+            o = os.path.join(root, f"o{n[0]}")
+            rc, out = py(d, "genviab.py", "run", "--set-dir", os.path.join(root, "ae-1"),
+                         "--arm", arm, "--generator", "http", "--out", o, "--max-rounds", "0",
+                         *extra, env=e)
+            rp = os.path.join(o, "rows.jsonl")
+            rows = [json.loads(l) for l in open(rp)] if os.path.exists(rp) else []
+            calls = []
+            for dp, _, fs in os.walk(os.path.join(o, "calls")):
+                calls += [json.loads(l) for f in fs for l in open(os.path.join(dp, f))]
+            return rc, out, rows, calls, o
+
+        rc, out, rows, _, _ = run("--provider", "openrouter")
+        expect("ae1: --provider other than cere is refused",
+               rc == 1 and "only ['cere']" in out and not fake.requests, out[-300:])
+        r = subprocess.run([sys.executable, "-B", os.path.join(d, "drivers", "http-program.py")],
+                           input="x", capture_output=True, text=True,
+                           env=dict(env, GENVIAB_HTTP_ENV_FILE=nokey,
+                                    GENVIAB_MODEL_LOG=os.path.join(root, "nokey.jsonl")))
+        expect("ae1: no CERE_TOKEN_AE in the env file: refused before any request, no fallback",
+               r.returncode == 4 and "CERE_TOKEN_AE" in r.stderr and not fake.requests, r.stderr)
+        rc, out, rows, _, _ = run("--model", "unpriced-model")
+        expect("ae1: an unpriced model is refused before the first call",
+               rc == 1 and "no list price" in out and not fake.requests, out[-300:])
+        res = {arm: run("--seed", "5", "--temperature", "0.3", "--max-tokens", "1234", arm=arm)
+               for arm in ("a", "c")}
+        ok = all(x[0] == 0 and len(x[2]) == 1 and x[2][0]["verified"] for x in res.values())
+        expect("ae1: --generator http runs arms a and c and never runs oracle.sh",
+               ok and not os.path.exists(os.path.join(root, "oracle-ran")),
+               [(x[0], x[1][-300:]) for x in res.values()])
+        expect("ae1: seed/temperature/max_tokens reach the request body with the AE bearer",
+               bool(fake.requests) and all((b["seed"], b["temperature"], b["max_tokens"])
+                                           == (5, 0.3, 1234) for b in fake.requests)
+               and fake.auth[0] == "Bearer " + token, fake.requests[:1])
+        calls = res["a"][3] + res["c"][3]
+        expect("ae1: the call row records cached tokens, finish reason, reply sha",
+               bool(calls) and all(c["cached_tokens"] == 7 and c["finish_reason"] == "stop"
+                                   and c["reply_sha256"] and c["provider"] == "cere"
+                                   for c in calls), calls[:1])
+        fake.mode = "length-at-cap"
+        rc, out, rows, calls, _ = run()
+        expect("ae1: finish_reason length at the declared cap is truncated: a failed round, not infra",
+               rc == 0 and len(rows) == 1 and rows[0]["truncated_rounds"] == [0]
+               and not rows[0]["b_verified"] and not rows[0]["verified"] and not rows[0]["infra"],
+               (out[-300:], rows))
+        fake.mode = "length-below"
+        rc, out, rows, calls, _ = run()
+        expect("ae1: a cut below the declared max_tokens is infra",
+               rc == 0 and len(rows) == 1 and rows[0]["infra"], (out[-300:], rows))
+        fake.mode = "substitute"
+        rc, out, rows, calls, _ = run()
+        expect("ae1: a served model other than the requested one is infra (model_substituted)",
+               rc == 0 and len(rows) == 1 and rows[0]["model_substituted"] and rows[0]["infra"], rows)
+        fake.mode = "ok"
+        cache = os.path.join(root, "cache")
+        before = len(fake.requests)
+        run("--cache-dir", cache)
+        first = len(fake.requests) - before
+        rc, out, rows, calls, _ = run("--cache-dir", cache)
+        expect("ae1: a second identical call is a cache hit with zero requests",
+               first == 1 and len(fake.requests) - before == 1 and len(rows) == 1
+               and rows[0]["cache_hits"] == 1 and rows[0]["verified"],
+               (first, len(fake.requests) - before, rows))
+        fake.mode = "changed"
+        rc, out, rows, calls, o = run("--cache-dir", cache, e=dict(env, GENVIAB_REPLAY_MIN="5"))
+        expect("ae1: a forced replay with a different reply disables the cache and records it",
+               len(rows) == 1 and rows[0]["replay_mismatches"] == 1
+               and os.path.exists(os.path.join(o, "run-state", "cache-disabled"))
+               and "D4 violated" in out, (out[-300:], rows))
+        leaked = [os.path.join(dp, f) for top in (root, os.path.join(d, "results"))
+                  for dp, _, fs in os.walk(top) for f in fs
+                  if f != "cere.env" and token in open(os.path.join(dp, f), errors="replace").read()]
+        expect("ae1: the token never appears in a file under the out dirs", not leaked, leaked)
+    finally:
+        fake.close()
+        shutil.rmtree(d)
+        shutil.rmtree(root)
+
+
 def main():
     build_args_and_tamper()
     build_mechanical()
@@ -1113,6 +1282,7 @@ def main():
     forged_grades()
     driver()
     ae_loader()
+    http_route()
     if FAILS:
         print(f"{len(FAILS)} failure(s): {FAILS}")
         return 1
