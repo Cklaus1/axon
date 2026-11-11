@@ -175,8 +175,9 @@ aggregate trend file `ae/history.jsonl` and no task text or canary.
   binaries cached by commit under `<private>/bins/<sha8>/` (the base is never rebuilt: `ae_weekly.py cache-bins DIR`),
   digest with the rerun trigger in `<private>/weekly/<date>.md`; it never starts a confirm run.
 
-S23 cost: the AE selftests add ≈ 42 s (`selftest.py` 51.5 s at 8916f045 against 9.2 s at 1f71623d); AE-2's fixtures
-wait ~20 s on one example timeout and run in a thread beside the rest.
+S23 cost: the AE selftests add ≈ 53-57 s, inside the spec's ≤ 60 s added (`selftest.py` 62-66 s over three runs at
+9e27af32 on 2026-11-11, against 9.2 s at 1f71623d; 51.5 s at 8916f045 before the drafting and review-flag checks). AE-2's
+fixtures wait ~20 s on one example timeout and run in a thread beside the rest.
 
 AE-1 acceptance, CERE dev runs (2026-11-10, rows private under `/root/axon-ae/runs/`): arm a on the 28 dev tasks through
 `CERE_TOKEN_AE`, 0/28 infra, 35 calls all `finish_reason: stop`, served model = requested; verified 21/24 non-tempting, M1
