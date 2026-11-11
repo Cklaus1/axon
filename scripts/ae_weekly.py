@@ -125,7 +125,7 @@ def build_bins(repo, sha):
     if os.path.isfile(os.path.join(dst, "axon")) and os.path.isfile(os.path.join(dst, "axon-intent")):
         return dst, False
     build = os.path.join(PRIVATE, "bins", ".build")
-    wt, target = os.path.join(build, "wt"), os.path.join(build, "target")
+    wt = os.path.join(build, "wt")
     os.makedirs(build, exist_ok=True)
     if os.path.exists(wt):
         subprocess.run(["git", "-c", "safe.directory=*", "-C", repo, "worktree", "remove", "--force", wt],
@@ -133,7 +133,7 @@ def build_bins(repo, sha):
         shutil.rmtree(wt, ignore_errors=True)
     git(repo, "worktree", "prune")
     git(repo, "worktree", "add", "-q", "--detach", "--force", wt, sha)
-    env = dict(os.environ, CARGO_TARGET_DIR=target)
+    env = dict(os.environ, CARGO_TARGET_DIR=os.path.join(build, "target"))    # chosen here, so no guess below
     r = subprocess.run([CARGO, "build", "-q", "--locked", "-p", "axon-core", "--bin", "axon",
                         "-p", "axon-intent", "--bin", "axon-intent"], cwd=wt, env=env,
                        capture_output=True, text=True)
@@ -143,7 +143,7 @@ def build_bins(repo, sha):
     shutil.rmtree(tmp, ignore_errors=True)
     os.makedirs(tmp)
     for n in ("axon", "axon-intent"):
-        shutil.copy2(os.path.join(target, "debug", n), os.path.join(tmp, n))
+        shutil.copy2(os.path.join(env["CARGO_TARGET_DIR"], "debug", n), os.path.join(tmp, n))
     got = version_sha8(os.path.join(tmp, "axon"))
     if got != sha8:
         shutil.rmtree(tmp)
