@@ -217,8 +217,8 @@ METRIC_KEYS = ("ft_pass", "ft_check", "ccp", "ccp_soundness", "runtime_fail", "c
 NESTED = {
     "set": ("version", "manifest_sha256", "n", "drafted_by"),
     "base": BIN_KEYS, "cand": BIN_KEYS,
-    "model": ("series", "requested", "served", "provider", "models_entry_sha256", "temperature",
-              "seeds", "k"),
+    "model": ("series", "requested", "served", "provider", "models_entry_sha256",
+              "server_build_sha256", "temperature", "seeds", "k"),
     "paired": ("delta_ft_pass", "ci95", "p_two_sided", "n_tasks", "n_families", "delta_solve3"),
     "python": ("ft_pass", "solve3", "gap_ft", "gap_solve3", "drift_vs_last"),
     "classes": ("check", "panic", "ended"),
@@ -421,6 +421,24 @@ def set_canaries(tasks):
     return [json.load(open(os.path.join(t["dir"], "task.json"))).get("canary") for t in tasks]
 
 
+def reply_canary_hits(run_dir, canary_of):
+    """Spec AE-3 contamination rule 3: every reply of the run (the transcripts
+    under <run>/{base,cand,python}/s<seed>/transcripts/<id>.<arm>.json carry
+    each round's answer verbatim) grepped for every set canary. A hit is a
+    canary of a task other than the transcript's own: [(task, canary's task, file)]."""
+    hits = []
+    for b in BINS + ("python",):
+        for dp, _, files in os.walk(os.path.join(run_dir, b)):
+            if os.path.basename(dp) != "transcripts":
+                continue
+            for f in sorted(files):
+                tid = f.rsplit(".", 2)[0]
+                text = open(os.path.join(dp, f), errors="replace").read()
+                hits += [(tid, other, os.path.join(dp, f)) for other, c in sorted(canary_of.items())
+                         if c and other != tid and c in text]
+    return hits
+
+
 # ---------------------------------------------------------------- run
 
 def sub_out(run_dir, name, seed):
@@ -515,7 +533,8 @@ def cmd_run(a):
     ns = argparse.Namespace(generator=a.generator, model=a.model, provider=a.provider, effort=None,
                             max_rounds=None, temperature=a.temperature, seed=None,
                             max_tokens=a.max_tokens, replay_seed=None, share_dir=None, arm="a",
-                            cache_dir=None if a.confirm or not http else a.cache_dir)
+                            cache_dir=None if a.confirm or not http else a.cache_dir,
+                            deadline=end.timestamp() if end else None)
     if http:
         if ns.cache_dir:
             ns.cache_dir = private_path(ns.cache_dir, "--cache-dir")
@@ -569,6 +588,7 @@ def cmd_run(a):
         "model": {"series": series["series"], "requested": ns.model, "served": [],
                   "provider": series.get("provider"),
                   "models_entry_sha256": series.get("models_entry_sha256"),
+                  "server_build_sha256": series.get("server_build_sha256"),
                   "temperature": ns.temperature if http else None, "seeds": seeds, "k": len(seeds)},
         "max_tokens": ns.max_tokens if http else None, "cache": bool(ns.cache_dir),
         "replay_seed": ns.replay_seed,
@@ -605,12 +625,25 @@ def cmd_run(a):
     units = [(i, t, s) for s in seeds for i, t in enumerate(tasks)]
     with cf.ThreadPoolExecutor(max_workers=a.parallel) as ex:
         list(ex.map(unit, units))
+    # The driver makes no request past `end` (GENVIAB_DEADLINE); a unit still
+    # grading then is late too: a run not done by the window's end is INCOMPLETE.
+    if end and datetime.datetime.now() >= end:
+        incomplete.set()
     rows = {b: read_rows(p) for b, p in paths["rows"].items()}
     notes = []
     if a.pilot:
         notes.append("pilot: PREREG-ae.md not frozen")
     if os.path.exists(os.path.join(paths["dir"], "run-state", "cache-disabled")):
         notes.append("D4 violated: a cache replay mismatched; the cache was off for the rest of the run")
+    canary_of = {t["id"]: c for t, c in zip(tasks, set_canaries(tasks))}
+    hits = reply_canary_hits(paths["dir"], canary_of)
+    with open(os.path.join(paths["dir"], "canary-hits.json"), "w") as fh:   # private: names tasks
+        json.dump([{"task": h[0], "canary_of": h[1], "file": h[2]} for h in hits], fh, indent=1)
+    if hits:
+        notes.append(f"CANARY in replies: {len(hits)} reply transcript(s) hold another task's "
+                     "canary (memorisation signal, spec AE-3 rule 3; canary-hits.json in the run dir)")
+        print(f"ae: CANARY: {len(hits)} reply transcript(s) hold another task's canary",
+              file=sys.stderr)
     row = build_row(meta, rows, history, round(time.time() - t_start, 1), notes)
     row["rows_sha256"] = rows_digest(paths)
     why_not = []
@@ -642,6 +675,9 @@ def cmd_run(a):
 # ---------------------------------------------------------------- failure classes (AE-5)
 
 QUOTED = re.compile(r"(['`])([^'`\s]{1,60})\1")
+# A double-quoted span is a value (a string literal, a map key `{key:?}`), never
+# a name: it can come from a hidden example, so every key drops it (spec AE-5).
+DQUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')
 
 
 def own_name(name, src):
@@ -655,7 +691,7 @@ def normalise(msg, src):
     """The first 80 chars of a diagnostic message, the program's own names
     stripped to `_`, numbers to N: a class key, not a task's text."""
     s = QUOTED.sub(lambda m: f"{m.group(1)}_{m.group(1)}" if own_name(m.group(2), src)
-                   else m.group(0), msg[:80])
+                   else m.group(0), DQUOTED.sub('"_"', msg)[:80])
     return re.sub(r"\d+", "N", s)
 
 
@@ -681,7 +717,18 @@ def area_of(rules, **facts):
 
 
 def construct_of(reason):
-    return re.sub(r"\d+", "N", (reason or "").strip())[:80]
+    """A panic reason as a class key: only the construct, never data. Every
+    quoted span (', `, ") becomes `_` (a key or a value can come from a hidden
+    example), numbers N; a reason that matches no PANIC_KINDS pattern, or an
+    explicit panic's free text, is reduced to its kind word."""
+    s = (reason or "").strip()
+    kind = gv.panic_kind(s)
+    if kind == "other":
+        return "other"
+    if re.match(r"panic\b", s):
+        return "panic(_)"
+    s = re.sub(r"(['`])[^'`]*\1", r"\1_\1", DQUOTED.sub('"_"', s))
+    return re.sub(r"\d+", "N", s)[:80]
 
 
 def tally_run(run_dir, name, rows, card, rules):
