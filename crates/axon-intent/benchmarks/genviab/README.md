@@ -150,7 +150,9 @@ aggregate trend file `ae/history.jsonl` and no task text or canary.
   cut below it, a served model other than the requested one (`model_substituted`) or a transport error is infra.
   The reply cache key is (prompt sha, model series, temperature, seed, max_tokens, driver sha); the series is
   `cere:<model>:<sha16 of the /v1/models entry>:<sha16 of the server build>`, the build being the `cere` block's
-  `recipe_id`/`lock_sha256`/`config_hash` from one 1-token probe call, so a re-deploy misses the cache; a seeded replay
+  `recipe_id`/`lock_sha256`/`config_hash` from one 1-token probe call, so a re-deploy misses the cache. Every live
+  reply's `cere` block is hashed the same way: a reply from another build than the series pins (a re-deploy during
+  the run, `build_changed` in the call row) is infra and never cached. A seeded replay
   sample re-queries hits and a mismatch turns the cache off for the rest of the run (D4). Haiku stays on
   `micode-program.sh` for drafting only (D12).
 - **Failure classes (AE-2).** Every arm-a row carries `round_stages`, `diag_codes_per_round`, `b_check_ok`,

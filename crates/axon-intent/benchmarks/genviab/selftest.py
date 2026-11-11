@@ -756,6 +756,9 @@ def once_guard():
         expect("26/32 is PASS at cutoff 26 with the exact interval",
                v["verdict"] == "PASS" and v["cutoff"] == 26
                and v["clopper_pearson_95"] == [0.636, 0.928], v)
+        lo, hi = g.clopper_pearson(1041, 1041)
+        expect("the exact interval holds past n ~1030 (k = n: lower = (alpha/2)^(1/n))",
+               abs(lo - 0.025 ** (1 / 1041)) < 1e-6 and hi == 1.0, (lo, hi))
         expect("25/32 all scored is KILL", g.verdict(rows(25, 32), 32)["verdict"] == "KILL")
         expect("25/32 with one infra row is INCOMPLETE",
                g.verdict(rows(25, 32, infra=1), 32)["verdict"] == "INCOMPLETE")
@@ -1279,12 +1282,15 @@ class FakeCere:
         elif self.mode == "length-below":
             finish, out_tok = "length", cap - 1
         model = "other-model" if self.mode == "substitute" else body["model"]
+        # "redeploy": the series probe sees `build`, chat replies come from another one
+        probe = prompt == "genviab server-build probe: reply ok"
+        lock = self.build + "-redeployed" if self.mode == "redeploy" and not probe else self.build
         return {"id": "x", "object": "chat.completion", "model": model,
                 "choices": [{"index": 0, "finish_reason": finish,
                              "message": {"role": "assistant", "content": text}}],
                 "usage": {"prompt_tokens": 100, "completion_tokens": out_tok,
                           "prompt_tokens_details": {"cached_tokens": 7}},
-                "cere": {"recipe_id": "fx-recipe", "lock_sha256": self.build,
+                "cere": {"recipe_id": "fx-recipe", "lock_sha256": lock,
                          "config_hash": "fx-config", "profile_id": "fx-profile"}}
 
     def close(self):
@@ -1376,6 +1382,13 @@ def http_route():
         rc, out, rows, calls, _ = run()
         expect("ae1: a served model other than the requested one is infra (model_substituted)",
                rc == 0 and len(rows) == 1 and rows[0]["model_substituted"] and rows[0]["infra"], rows)
+        fake.mode = "redeploy"
+        cache = os.path.join(root, "cache-redeploy")
+        rc, out, rows, calls, _ = run("--cache-dir", cache)
+        expect("ae1: a reply from another server build than the series pins is infra and never cached",
+               rc == 0 and len(rows) == 1 and rows[0]["infra"] and not rows[0]["verified"]
+               and calls and all(c["build_changed"] and c["exit"] == 1 for c in calls)
+               and not (os.path.isdir(cache) and any(os.scandir(cache))), (rows, calls[:1]))
         fake.mode = "ok"
         cache = os.path.join(root, "cache")
         before = len(fake.requests)

@@ -60,10 +60,18 @@ DEFAULT_TEMPERATURE = 0.7
 REPLAY_MIN = 20
 REPLAY_FRACTION = 0.02
 TIMEOUT_S = 170       # under genviab's AXON_INTENT_TIMEOUT_MS (180 s)
+BUILD_KEYS = ("recipe_id", "lock_sha256", "config_hash")   # genviab.BUILD_KEYS
 
 
 def sha256(b):
     return hashlib.sha256(b).hexdigest()
+
+
+def build_sha16(server):
+    """The series' build segment for a reply's `cere` block, hashed as
+    genviab.http_series hashes its probe."""
+    build = {k: (server or {}).get(k) for k in BUILD_KEYS}
+    return sha256(json.dumps(build, sort_keys=True).encode())[:16]
 
 
 def driver_sha256():
@@ -205,6 +213,7 @@ def main():
         "max_tokens": max_tokens, "series": series, "finish_reason": None, "cached_tokens": 0,
         "reply_sha256": None, "cache_hit": False, "shared": False, "replayed": False,
         "replay_mismatch": None, "truncated": False, "cache_key": key, "server": None,
+        "build_changed": False,
     }
     disabled = bool(state) and os.path.exists(os.path.join(state, "cache-disabled"))
     cache_dir = None if disabled else (E.get("GENVIAB_CACHE_DIR") or None)
@@ -258,7 +267,18 @@ def main():
                     why, code = f"request failed: {row['session_errors'][0][:200]}", 1
             else:
                 fresh = outcome(doc, max_tokens)
-                if row["replayed"]:
+                # A reply from another server build than the series pins (a re-deploy
+                # during the run) is infra: never cached, never scored under the series.
+                pinned = series.rsplit(":", 1)[-1] if series.count(":") >= 3 else None
+                served = build_sha16(fresh["server"])
+                if pinned and served != pinned:
+                    row.update(server=fresh["server"], build_changed=True, replayed=False)
+                    why, code = (f"server build changed during the run: the series pins "
+                                 f"{pinned}, the reply came from {served}"), 1
+                    got, fresh = None, None
+                if fresh is None:
+                    pass
+                elif row["replayed"]:
                     row["replay_mismatch"] = fresh["reply_sha256"] != got["reply_sha256"]
                     if row["replay_mismatch"]:
                         os.makedirs(state or ".", exist_ok=True)

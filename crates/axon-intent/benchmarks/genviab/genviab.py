@@ -990,7 +990,15 @@ def pct(k, n):
 
 
 def binom_cdf(k, n, p):
-    return sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(k + 1))
+    """P(X <= k), X ~ Bin(n, p). Summed in log space: `math.comb(n, i)` exceeds the float
+    range once n passes ~1030 (a k = 3 run over a 347-task pool is 1041 trials)."""
+    if p <= 0.0:
+        return 1.0
+    if p >= 1.0:
+        return 1.0 if k >= n else 0.0
+    lp, lq, lf = math.log(p), math.log1p(-p), math.lgamma(n + 1)
+    return sum(math.exp(lf - math.lgamma(i + 1) - math.lgamma(n - i + 1) + i * lp + (n - i) * lq)
+               for i in range(k + 1))
 
 
 def clopper_pearson(k, n, alpha=0.05):

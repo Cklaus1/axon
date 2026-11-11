@@ -58,6 +58,20 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
   - then the A/A run `--seeds 3,4,5` with the same binaries.
   - A task that fails all 6 trials goes to a second human review, for ambiguity only.
 
+## Pilot attempt 1 (recorded 2026-11-11, before attempt 2): INVALID, not used
+
+- Run `20261111-132804-pilot-k3`, series `cere:Qwen3.8-Flash-Next:796f2f99a2fe5c02:b73b17648ae394fe`, 4 h 59 min.
+- **INVALID: infra 270 / 3123 > 5%.** 265 of the 270 infra rows are seed 2: production CERE was re-deployed during
+  it (240 `HTTP 503 not_ready: backend not ready: gpu1: probe`, 22 connection refused, 1 `shutting_down`; 7 more are
+  `finish_reason 'repetition'`).
+- Seed 2's other calls came from a new server build (`722357d5e54ae8d8`, 1407 calls; 168 still from `b73b17648ae394fe`).
+  The driver did not check this, so those rows mixed two series. Fixed before attempt 2: a reply from another build
+  than the series pins is infra (`build_changed`) and never cached (`drivers/http-program.py`, selftest `ae1`).
+- `ae.py report` overflowed in `binom_cdf` at n = 1041 (`math.comb` exceeds a float). Fixed: summed in log space,
+  equal to exact rational arithmetic within 6e-14 (selftest checks the n = 1041 interval).
+- No number from attempt 1 is used for tiers, ρ, the draw or the A/A SD. Attempt 2 repeats the pilot runs above
+  unchanged (same pool, binaries, seeds 0,1,2) on the series current at its start.
+
 ## Not in this file
 
 No task text, example, reference, family idea or canary (spec AE-3 contamination rules); those live only in the private store.
