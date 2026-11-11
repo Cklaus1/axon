@@ -1,9 +1,9 @@
 # checker-soundness-5 - spec (CS5-1..CS5-5)
 
 **Status: BUILT 2026-11-11 on `cs5/l` (CS5-5 1881d489, CS5-1 8c7cf1b0 + doc 1fd4a9a1, CS5-2 9286a0b7, CS5-3 957134fd + alias fix
-44950819/988c63cb, CS5-4 7b0457d5; NH-1 (a), NH-2 (a), NH-3 (a) decided 2026-11-11, §8). g01: the 11 new rows, M5250 and the 17
-touched rows all KILLED; sweep byte-identical to the lane's own a01db50c build after every item. `gate.sh --strict` is the
-integrator's.**
+44950819/988c63cb, CS5-4 7b0457d5; impl audit fixes 6af5831c (block-local `let` scoping), c42ec241 (CS5-4 container elements),
+827bf1d2; NH-1 (a), NH-2 (a), NH-3 (a) decided 2026-11-11, §8). g01: the 11 new rows, M5250-M5253 and the 17 touched rows all
+KILLED; sweep byte-identical to the lane's own a01db50c build after every item. `gate.sh --strict` is the integrator's.**
 
 Authorized for specification by the human 2026-11-11 ("do it", item #2: fix "checks clean, then panics at run" gaps). The Step 1
 review (below) is folded in; build authorized and NH-1..NH-3 answered 2026-11-11. Built 2026-11-11 (status line above).
