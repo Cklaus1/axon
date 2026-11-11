@@ -16102,6 +16102,20 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_controls_stay_legal'),
 ]
 
+# checker-soundness-5 CS5-1..CS5-5 (ids M5240-M5249, block M5240-M5259; M4719 is checker-soundness-4's
+# reserved CS4-5 row; tasks/checker-soundness-5-spec.md §4): a pattern binding takes its declared or
+# element type's skeleton, and a qualified pattern of another enum is E0405.
+MUTATIONS += [
+    ('M4719', 'CS5-5: a pattern of another enum is not refused (v2q_noall `D::Up` on a `C` checks clean)', 'crates/axon-core/src/checker.rs',
+     'if pat_enum != subject_enum && known_variant {',
+     'if false && pat_enum != subject_enum && known_variant {',
+     'axon-core', '--no-default-features --test cli_run', 'foreign_enum_variant_pattern_is_refused'),
+    ('M5249', 'CS5-5: an unknown variant of another enum also gets E0405 (a25 `D::Nope` must stay E0001 alone)', 'crates/axon-core/src/checker.rs',
+     '.is_some_and(|vs| vs.iter().any(|v| v == variant));',
+     '.is_some_and(|vs| true || vs.iter().any(|v| v == variant));',
+     'axon-core', '--no-default-features --test cli_run', 'foreign_enum_variant_pattern_is_refused'),
+]
+
 
 
 if __name__ == "__main__":

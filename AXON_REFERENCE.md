@@ -183,7 +183,7 @@ A code marked **reserved** is declared but emitted nowhere in this build. Listin
 | `E0402` | an index that cannot be valid — a non-array receiver, `for x in` over one, or a constant index proved out of range |
 | `E0403` | calling a data field as a method (`p.x()`) |
 | `E0404` | a path names something that does not exist, or is used as the wrong kind of thing — an unknown variant, an unknown type/module qualifier, a variant called like a function, a module/type/enum name used as a value or called, or a `M::f` path through a user module (its items are merged by `use`, not namespaced) |
-| `E0405` | literal pattern's type can't match the match subject |
+| `E0405` | a pattern's type can't match the match subject |
 | `E0406` | a field is set more than once in a struct literal |
 | `E0407` | integer division/remainder by a literal zero |
 | `E0409` | a bare variant name in a refutable pattern (`Green =>`, `Some(Green)`, `(Green, n)`) is a new binding that matches every value of the subject's enum; it does not compare against the variant — write the qualified `E::V` |

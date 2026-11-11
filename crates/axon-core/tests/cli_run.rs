@@ -48662,3 +48662,119 @@ fn tuple_pattern_in_a_struct_field_is_checked() {
         tp_assert_refused(attack, tag, src, line, false);
     }
 }
+
+// -- checker-soundness-5 CS5-1..CS5-5 --
+
+/// checker-soundness-5: `src` must be refused by `axon check` (rc 2, first
+/// error `code` at `line`) and `axon run` must stop at the same refusal (rc 2,
+/// empty stdout).
+fn cs5_assert_refused(attack: &str, tag: &str, src: &str, code: &str, line: u32) {
+    let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs5_{tag}"), src);
+    let first = cs4_first_error(&cmsg);
+    assert!(
+        crc == Some(2) && first == Some((code.to_string(), line)),
+        "{attack} [{tag}]: want rc 2, first error {code} at line {line}, got rc {crc:?} {first:?}: {cmsg}"
+    );
+    assert!(
+        rrc == Some(2) && rout.is_empty(),
+        "{attack} [{tag}]: `run` must stop at the same refusal, got rc {rrc:?}, stdout {rout:?}: {rerr}"
+    );
+}
+
+/// CS5-5 (CS4-5, O-AF-04): a qualified pattern `D::Up` matched against a
+/// value of another enum `C` can never match; it is E0405, whether or not a
+/// `_` arm follows (`v01`, `en`), in an `if let` (`v02`), guarded (`v11`), on
+/// a sum type (`v04`) or a generic enum (`v06`), and (NH-2 (a)) in a
+/// `while let` (`v10`) or nested in `Some`/a tuple (`v03`, `v07`). Each
+/// checked rc 0 and ran a dead arm. An unknown variant of a known enum keeps
+/// its E0001 alone (`a25`); same-enum and non-enum subjects stay legal.
+#[test]
+fn foreign_enum_variant_pattern_is_refused() {
+    let attack = "ATTACK: a pattern of another enum checked clean";
+    let cd = "enum C { Red, Green }\nenum D { Up, Down }\n";
+    let cases = [
+        (
+            "v2q_noall",
+            format!("{cd}fn f(c: C) -> i64 {{\n    match c {{ D::Up => 2, C::Red => 1, C::Green => 3 }}\n}}\nfn main() {{ println(to_str(f(C::Red))) }}\n"),
+            4,
+        ),
+        (
+            "en",
+            "enum C { Up, Green }\nenum D { Up, Down }\nfn f(c: C) -> i64 { match c { D::Up => 2, _ => 1 } }\nfn main() { println(to_str(f(C::Up))) println(to_str(f(C::Green))) }\n".to_string(),
+            3,
+        ),
+        ("v01", format!("{cd}fn f(c: C) -> i64 {{ match c {{ D::Up => 2, _ => 1 }} }}\nfn main() {{ println(to_str(f(C::Red))) }}\n"), 3),
+        (
+            "v02",
+            format!("{cd}fn main() {{\n    let c = C::Red\n    if let D::Up = c {{ println(\"up\") }} else {{ println(\"no\") }}\n}}\n"),
+            5,
+        ),
+        (
+            "v04",
+            "type S = A { v: i64 } | B { w: i64 }\nenum D { Up, Down }\nfn main() {\n    let s = S::A { v: 1 }\n    match s { D::Up => println(\"up\"), _ => println(\"no\") }\n}\n".to_string(),
+            5,
+        ),
+        (
+            "v05",
+            "enum C { P { x: i64 }, Q }\nenum D { P { x: i64 }, R }\nfn main() {\n    let c = C::P { x: 1 }\n    match c { D::P { x } => println(to_str(x)), _ => println(\"no\") }\n}\n".to_string(),
+            5,
+        ),
+        (
+            "v06",
+            "enum B<T> { H { v: T }, N }\nenum D { Up, Down }\nfn main() {\n    let b = B::H { v: 1 }\n    match b { D::Up => println(\"up\"), _ => println(\"no\") }\n}\n".to_string(),
+            5,
+        ),
+        (
+            "v11",
+            format!("{cd}fn main() {{\n    let c = C::Red\n    let k = 1\n    match c {{ D::Up if k == 1 => println(\"up\"), _ => println(\"no\") }}\n}}\n"),
+            6,
+        ),
+        (
+            "v10",
+            format!("{cd}fn main() {{\n    let c = C::Red\n    while let D::Up = c {{ println(\"up\")\n break }}\n    println(\"done\")\n}}\n"),
+            5,
+        ),
+        (
+            "v03",
+            format!("{cd}fn main() {{\n    let o = Some(C::Red)\n    match o {{ Some(D::Up) => println(\"up\"), _ => println(\"no\") }}\n}}\n"),
+            5,
+        ),
+        (
+            "v07",
+            format!("{cd}fn main() {{\n    match (C::Red, 1) {{ (D::Up, n) => println(\"up\"), _ => println(\"no\") }}\n}}\n"),
+            4,
+        ),
+    ];
+    for (tag, src, line) in cases {
+        cs5_assert_refused(attack, tag, &src, "E0405", line);
+    }
+    // An unknown variant of a known enum is E0001 only.
+    let a25 = "enum C { Red, Blue }\nenum D { Up, Down }\nfn main() {\n    let c = C::Red\n    match c { D::Nope => println(\"x\"), _ => println(\"o\") }\n}\n";
+    let (crc, cmsg, ..) = sf6_check_and_run("cs5_a25", a25);
+    assert!(
+        crc == Some(2) && cmsg.contains("E0001") && !cmsg.contains("E0405"),
+        "{attack} [a25]: want E0001 and no E0405, got rc {crc:?}: {cmsg}"
+    );
+    let controls = [
+        (
+            "v2q_ok",
+            "enum C { Red, Green }\nfn f(o: Option<C>, t: (C, i64)) -> i64 {\n    let a = match o { Some(C::Red) => 1, _ => 0 }\n    let b = match t { (C::Green, n) => n, _ => 0 }\n    a + b\n}\nfn main() { println(to_str(f(Some(C::Red), (C::Green, 5)))) }\n",
+            "6\n",
+        ),
+        ("v09", "enum C { Red, Green }\nfn main() {\n    let c = C::Green\n    match c { C::Red => println(\"r\"), _ => println(\"g\") }\n}\n", "g\n"),
+        ("v12", "enum D { Up, Down }\nfn main() {\n    let o = Some(1)\n    match o { D::Up => println(\"up\"), _ => println(\"no\") }\n}\n", "no\n"),
+    ];
+    for (tag, src, out) in controls {
+        let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs5_{tag}"), src);
+        assert_eq!(
+            crc,
+            Some(0),
+            "{attack} [{tag}]: a valid match was refused: {cmsg}"
+        );
+        assert_eq!(
+            (rrc, rout.as_str()),
+            (Some(0), out),
+            "{attack} [{tag}]: {rerr}"
+        );
+    }
+}

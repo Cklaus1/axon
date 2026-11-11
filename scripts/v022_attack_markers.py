@@ -4465,3 +4465,9 @@ ATTACK_MARKERS.update({
     'M5231': r'ATTACK: a valid tuple match was refused \[tp_k20\]',
 })
 
+# checker-soundness-5 CS5-1..CS5-5 (ids M5240-M5249 and checker-soundness-4's M4719)
+ATTACK_MARKERS.update({
+    'M4719': r'ATTACK: a pattern of another enum checked clean',
+    'M5249': r'ATTACK: a pattern of another enum checked clean',
+})
+

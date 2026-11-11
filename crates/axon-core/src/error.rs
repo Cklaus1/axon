@@ -48,7 +48,7 @@ pub const E0401: &str = "E0401"; // a field name that does not exist on the thin
 pub const E0402: &str = "E0402"; // an index that cannot be valid
 pub const E0403: &str = "E0403"; // calling a data field as a method (`p.x()`)
 pub const E0404: &str = "E0404"; // a path names something absent, or the wrong kind of thing
-pub const E0405: &str = "E0405"; // literal pattern's type can't match the match subject
+pub const E0405: &str = "E0405"; // a pattern's type can't match the match subject
 pub const E0406: &str = "E0406"; // a field is set more than once in a struct literal
 pub const E0407: &str = "E0407"; // integer division/remainder by a literal zero
 pub const E0409: &str = "E0409"; // a bare variant name in a pattern binds a catch-all instead of comparing
@@ -472,7 +472,7 @@ pub const ALL_CODES: &[(&str, &str)] = &[
     ("E0402", "an index that cannot be valid — a non-array receiver, `for x in` over one, or a constant index proved out of range"),
     ("E0403", "calling a data field as a method (`p.x()`)"),
     ("E0404", "a path names something that does not exist, or is used as the wrong kind of thing — an unknown variant, an unknown type/module qualifier, a variant called like a function, a module/type/enum name used as a value or called, or a `M::f` path through a user module (its items are merged by `use`, not namespaced)"),
-    ("E0405", "literal pattern's type can't match the match subject"),
+    ("E0405", "a pattern's type can't match the match subject"),
     ("E0406", "a field is set more than once in a struct literal"),
     ("E0407", "integer division/remainder by a literal zero"),
     ("E0409", "a bare variant name in a refutable pattern (`Green =>`, `Some(Green)`, `(Green, n)`) is a new binding that matches every value of the subject's enum; it does not compare against the variant — write the qualified `E::V`"),
