@@ -257,12 +257,117 @@ fn release_ledger_controls_pass() {
     let (rc, _, _) = ledger(&t.0, &["--tag", "v0.1.0"]);
     assert_eq!(rc, 1, "a tag with no release heading was accepted");
     // The self-versioned member (`axon-ai`, locked at 0.1.0) is not held to 0.2.0,
-    // and an unreleased last card line may be rewritten (nothing shipped it).
-    let t = tree(&minor, "0.2.0", "0.2.0", &[CARD1, CARD2, CARD3]);
+    // and an unreleased last card line may be rewritten (nothing shipped it); the
+    // unreleased text names it.
+    let unreleased = minor.replacen(
+        "# Axon Changelog\n\n",
+        "# Axon Changelog\n\n## Batch 9: later\n\n- card 3: a rule reworded.\n\n",
+        1,
+    );
+    let t = tree(&unreleased, "0.2.0", "0.2.0", &[CARD1, CARD2, CARD3]);
     let (rc, out, err) = ledger(&t.0, &[]);
     assert_eq!(
         rc, 0,
         "an unreleased card line or a self-versioned crate was refused:\n{out}{err}"
+    );
+    // US spelling or other wording in prose that is not an emphasised marker form
+    // stays legal (unbolded).
+    let prose = patch.replacen("- a fix.", "- a fix; behavior changes: none.", 1);
+    let t = tree(&prose, "0.1.1", "0.1.1", &[CARD1]);
+    let (rc, out, err) = ledger(&t.0, &[]);
+    assert_eq!(rc, 0, "unbolded prose was refused:\n{out}{err}");
+}
+
+/// impl audit 2026-11-11 (1): a marker typo must not ship a behaviour change as a PATCH.
+#[test]
+fn a_near_miss_behaviour_marker_is_refused() {
+    for marker in [
+        "**Behavior change:**",
+        "**behaviour change:**",
+        "**BEHAVIOUR CHANGE:**",
+        "__Behaviour change:__",
+        "*Behaviour change:*",
+        "** Behaviour change:**",
+    ] {
+        let cl = format!(
+            "# Axon Changelog\n\n{}\n\n- {marker} a program that ran is now refused.\n\n{}\n\n- first.\n",
+            heading("0.1.1", 1, CARD1),
+            heading("0.1.0", 1, CARD1)
+        );
+        let t = tree(&cl, "0.1.1", "0.1.1", &[CARD1]);
+        let (rc, out, err) = ledger(&t.0, &[]);
+        assert_eq!(
+            rc, 1,
+            "ATTACK: a near-miss behaviour marker {marker:?} was accepted\n{out}{err}"
+        );
+        assert!(
+            err.contains("CHANGELOG.md:5") && err.contains("near-miss"),
+            "the refusal does not name the line: {err}"
+        );
+    }
+}
+
+/// impl audit 2026-11-11 (2): a mistyped heading must not merge two releases silently.
+#[test]
+fn a_malformed_release_heading_is_refused() {
+    for bad in [
+        format!("{} ", heading("0.1.0", 1, CARD1)),
+        "## v0.1.0 - 2026-11-20 (card 1)".to_string(),
+        "## v0.1.0 (card 1, b70a0b56)".to_string(),
+    ] {
+        let cl = format!(
+            "# Axon Changelog\n\n{}\n\n- a fix.\n\n{bad}\n\n- first.\n",
+            heading("0.1.1", 1, CARD1)
+        );
+        let t = tree(&cl, "0.1.1", "0.1.1", &[CARD1]);
+        let (rc, out, err) = ledger(&t.0, &[]);
+        assert_eq!(
+            rc, 1,
+            "ATTACK: a malformed release heading {bad:?} was accepted\n{out}{err}"
+        );
+        assert!(
+            err.contains("CHANGELOG.md:7"),
+            "the refusal does not name the line: {err}"
+        );
+    }
+}
+
+/// impl audit 2026-11-11 (3), spec/stability.md rule 4: a card change says `card N`.
+#[test]
+fn a_card_change_not_named_in_the_changelog_is_refused() {
+    // Released: v0.2.0 moves to card 2 and its section never says so.
+    let cl = format!(
+        "# Axon Changelog\n\n{}\n\n- a rule reworded.\n\n{}\n\n- first.\n",
+        heading("0.2.0", 2, CARD2),
+        heading("0.1.0", 1, CARD1)
+    );
+    let t = tree(&cl, "0.2.0", "0.2.0", &[CARD1, CARD2]);
+    let (rc, out, err) = ledger(&t.0, &[]);
+    assert_eq!(
+        rc, 1,
+        "ATTACK: a card change was not named in the CHANGELOG (released)\n{out}{err}"
+    );
+    assert!(err.contains("card 2"), "{err}");
+    // Unreleased: card 3 is in card-versions.txt and nothing above the newest heading names it.
+    let named = cl.replacen("- a rule reworded.", "- card 2: a rule reworded.", 1);
+    let t = tree(&named, "0.2.0", "0.2.0", &[CARD1, CARD2, CARD3]);
+    let (rc, out, err) = ledger(&t.0, &[]);
+    assert_eq!(
+        rc, 1,
+        "ATTACK: a card change was not named in the CHANGELOG (unreleased)\n{out}{err}"
+    );
+    assert!(err.contains("card 3"), "{err}");
+    // `card 30` does not name card 3.
+    let thirty = named.replacen(
+        "# Axon Changelog\n\n",
+        "# Axon Changelog\n\n## Batch 9: later\n\n- card 30 is not this.\n\n",
+        1,
+    );
+    let t = tree(&thirty, "0.2.0", "0.2.0", &[CARD1, CARD2, CARD3]);
+    let (rc, out, err) = ledger(&t.0, &[]);
+    assert_eq!(
+        rc, 1,
+        "ATTACK: a card change was not named in the CHANGELOG (`card 30`)\n{out}{err}"
     );
 }
 
@@ -330,7 +435,8 @@ fn compat_diff_controls_pass() {
     assert_eq!(rc, 0, "{out}{err}");
     assert!(out.contains("NEWLY ACCEPTED"), "{out}");
     // Same rc and first code (only the diagnostic text moved, which the TSV never
-    // holds), a file only in one sweep, and a refusal whose code changed: rc 0.
+    // holds), a file only in one sweep (listed ADDED / REMOVED, informational, the
+    // row count within the floor), and a refusal whose code changed: rc 0.
     let (rc, out, err) = compat_diff(
         "a.ax\t2\tE0901\nc.ax\t2\tE0001\nold_only.ax\t0\t-\n",
         "a.ax\t2\tE0901\nc.ax\t2\tE0102\nnew_only.ax\t2\tE0001\n",
@@ -342,4 +448,28 @@ fn compat_diff_controls_pass() {
         out.contains("c.ax"),
         "a changed first code was not listed: {out}"
     );
+    assert!(
+        out.contains("REMOVED\told_only.ax") && out.contains("ADDED\tnew_only.ax\trc 2 E0001"),
+        "a file in one sweep only was not listed: {out}"
+    );
+    // 9 of 10 rows is the floor itself (90%): rc 0.
+    let ten: String = (0..10).map(|i| format!("f{i}.ax\t0\t-\n")).collect();
+    let nine: String = (0..9).map(|i| format!("f{i}.ax\t0\t-\n")).collect();
+    let (rc, out, err) = compat_diff(&ten, &nine, "0");
+    assert_eq!(rc, 0, "{out}{err}");
+}
+
+/// impl audit 2026-11-11 (4): an empty or truncated NEW sweep is no evidence.
+#[test]
+fn a_truncated_new_sweep_is_refused() {
+    let ten: String = (0..10).map(|i| format!("f{i}.ax\t0\t-\n")).collect();
+    let eight: String = (0..8).map(|i| format!("f{i}.ax\t0\t-\n")).collect();
+    for new in [eight.as_str(), ""] {
+        let (rc, out, err) = compat_diff(&ten, new, "1");
+        assert_eq!(
+            rc, 1,
+            "ATTACK: a truncated compat sweep was accepted\n{out}{err}"
+        );
+        assert!(err.contains("90%"), "{err}");
+    }
 }

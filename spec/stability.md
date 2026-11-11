@@ -11,9 +11,11 @@ A release is an annotated tag `vX.Y.Z` on a commit of `main` whose `ci.yml` push
 in `Cargo.toml`, the number `axon --version` prints. Only the newest release is supported: there are no backport branches
 while Axon is 0.x.
 
-Two keys release a commit. The release workflow (`.github/workflows/release.yml`) checks what GitHub can see: the tagged commit
-is on `main`, its `ci.yml` push run on `main` succeeded, and `scripts/release_ledger.py --tag` passes. The integrator checks what
-only the integrator host can see: `RELEASE-VERIFIED` from a strict gate receipt bound to the commit. Neither key alone publishes.
+Two keys release a commit. The release workflow (`.github/workflows/release.yml`) checks what GitHub can see: the tag is
+annotated, the tagged commit is on `main`, its `ci.yml` push run on `main` succeeded, and `scripts/release_ledger.py --tag`
+passes; only then does a separate job, the only one holding a write token, publish. The integrator's key, `RELEASE-VERIFIED` from
+a strict gate receipt bound to the commit, is procedural: the workflow cannot see the integrator host, so it does not check it.
+The integrator pushes a tag only after `scripts/release_check.sh` printed it.
 
 Cadence: the integrator tags at most weekly, on a `RELEASE-VERIFIED`, CI-green commit after a batch. The first public tag needs
 the human's explicit go. A release publishes one artifact, a static x86_64 Linux (musl) interpreter, with `SHA256SUMS`.
@@ -30,7 +32,9 @@ runtime error exit) now
 A program that checked clean and then panicked, and is now refused at check, gets a soundness fix: that is not breaking.
 
 Every breaking change gets a CHANGELOG bullet carrying the bold marker `**Behaviour change` in its batch, with any suffix
-(`**Behaviour change:**`, `**Behaviour change (axon-ai):**`, `**Behaviour change, arm c:**`). Unbolded text is not a marker.
+(`**Behaviour change:**`, `**Behaviour change (axon-ai):**`, `**Behaviour change, arm c:**`). Unbolded text is not a marker. An
+emphasised near miss (`**Behavior change`, `__Behaviour change__`, `*behaviour change*`, any case) is refused by
+`scripts/release_ledger.py`, naming its line, so a typo cannot ship a behaviour change as a PATCH release.
 
 ## 3. Version rule (0.x)
 
@@ -47,8 +51,10 @@ decision.
 `CARD_VERSION` in `crates/axon-core/src/card.rs`; it lives beside the card text, never in it, so the card's sha256 changes only
 when its text does. `crates/axon-core/card-versions.txt` lists one line per card version, `<N> <sha256 of the card>`; cards before
 versioning are card 0 and are not listed. A commit that changes the card text bumps `CARD_VERSION`, appends one line, and says
-`card N` in its CHANGELOG bullet; a test fails otherwise. A line that a release heading names is frozen; the unreleased last
-line may be rewritten.
+`card N` in its CHANGELOG bullet. A test holds the file's last line to `CARD_VERSION` and the card text;
+`scripts/release_ledger.py` checks the CHANGELOG at release granularity: every card newer than the newest release heading's card
+is named (`card N`, word-bounded) above that heading, and every card a release moves past is named in its section. A line that a
+release heading names is frozen; the unreleased last line may be rewritten.
 
 A program does not declare the card or edition it was written against (decided 2026-11-11): there is no edition attribute and
 no manifest. Rule 5 makes old syntax fail loudly with the new form named instead.
@@ -75,8 +81,9 @@ first release; the history below it is pre-release and exempt from rule 3.
 Each release runs `scripts/compat_sweep.py`: `axon check` of every tracked `.ax` file with the release binary (empty `HOME`, no
 `AXON_*` variables, the binary copied away from any `lib/axon`), recording each file's exit code and first error code in
 `compat.tsv`, which the release attaches. The sweep is diffed against the previous release's `compat.tsv`: a file that checked
-clean before and is refused now fails the release unless the release's CHANGELOG section holds a behaviour-change marker.
-Diagnostic text is never compared (it embeds install paths).
+clean before and is refused now fails the release unless the release's CHANGELOG section holds a behaviour-change marker. Files in
+one sweep only are listed (`ADDED`, `REMOVED`), and the diff fails when the new sweep has fewer than 90% of the previous one's
+rows (an empty or truncated sweep is no evidence). Diagnostic text is never compared (it embeds install paths).
 
 The sweep measures rule 2(a) on the tracked corpus only. Rule 2(b), changed run output, stays covered by the golden-output tests
 in `crates/axon-core/tests/cli_run.rs` and the batch `run` sweeps; a `run` sweep of the corpus is not mechanised, because many

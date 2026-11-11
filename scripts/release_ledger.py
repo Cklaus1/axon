@@ -13,6 +13,9 @@ in CHANGELOG.md is
 (spec/stability.md rule 6); a release's section runs from its heading to the next release
 heading. Refused, one stderr line per problem, exit 1:
 
+0. a line starting `## v<digit>` that is not a full release heading, and an emphasised
+   "behaviour change" (`**`, `__` or `*`, any case, either spelling, `changes`) that is not
+   exactly the marker `**Behaviour change` (a near-miss marker), each naming its line;
 1. release versions that do not strictly decrease top to bottom;
 2. a section with a line containing the bold marker `**Behaviour change` (any suffix), or a
    card number other than the next-older release's, whose version does not bump MINOR (or
@@ -20,13 +23,17 @@ heading. Refused, one stderr line per problem, exit 1:
    MINOR or PATCH is not 0;
 3. a heading card number that card-versions.txt does not list, or a heading <sha8> that is
    not the prefix of line N's sha (a released card line is frozen); with --tag, a newest
-   heading whose card number is not the file's last version;
+   heading whose card number is not the file's last version; a card change not named in the
+   CHANGELOG (spec/stability.md rule 4): a release whose card is newer than the next-older
+   release's must say `card K` in its section for every K it moves past, and with any release
+   heading, every card-versions.txt line newer than the newest heading's card must be named
+   (`card K`) above that heading (the unreleased text);
 4. with any release heading: the newest heading's version is not Cargo.toml's
    `[workspace.package] version`, or a member whose manifest says `version.workspace = true`
    has another version in Cargo.lock (self-versioned members are ignored);
 5. with --tag: the tag is not the newest heading's version or the Cargo version, or text
    sits above the newest heading (the release must cover every batch). With no release
-   heading, --tag refuses and the default mode passes (nothing released).
+   heading, --tag refuses and the default mode passes (nothing released; rule 0 still runs).
 
 Exit 0 prints `release_ledger: PASS (<n> releases)`.
 
@@ -42,9 +49,39 @@ import tomllib
 from pathlib import Path
 
 HEADING = re.compile(r"^## v(\d+)\.(\d+)\.(\d+) - \d{4}-\d{2}-\d{2} \(card (\d+), ([0-9a-f]{8})\)$")
+# A line starting `## v<digit>` is meant as a release heading; one HEADING does not match is refused
+# (rule 0), never folded into the section above it.
+HEADING_LIKE = re.compile(r"^## v\d")
 MARKER = "**Behaviour change"
+# Emphasis plus "behaviour change" in any case or spelling. Every such span must be the exact
+# MARKER (rule 0): a typo'd marker would otherwise ship a behaviour change as a PATCH.
+NEAR_MARKER = re.compile(r"(?i)(\*\*|__|\*)\s*behaviou?r changes?")
 TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 CARD_LINE = re.compile(r"^(\d+) ([0-9a-f]{64})$")
+
+
+def names_card(lines, n):
+    """True when a line says `card N` (word-bounded: `card 30` is not card 3)."""
+    pat = re.compile(r"\bcard %d\b" % n)
+    return any(pat.search(line) for line in lines)
+
+
+def malformed(changelog):
+    """Rule 0: near-miss marker spans and heading-like lines that are not a HEADING."""
+    problems = []
+    for i, line in enumerate(changelog.splitlines(), 1):
+        if HEADING_LIKE.match(line) and not HEADING.match(line):
+            problems.append(
+                "CHANGELOG.md:%d: a `## v` line that is not a release heading "
+                "`## vX.Y.Z - YYYY-MM-DD (card N, <sha8>)`: %r" % (i, line)
+            )
+        for m in NEAR_MARKER.finditer(line):
+            if not line.startswith(MARKER, m.start()):
+                problems.append(
+                    "CHANGELOG.md:%d: a near-miss behaviour-change marker %r (the marker is exactly `%s`)"
+                    % (i, m.group(0), MARKER)
+                )
+    return problems
 
 
 def vstr(v):
@@ -122,7 +159,8 @@ def main():
     ap.add_argument("--section-has-behaviour-change", dest="query", metavar="VERSION")
     a = ap.parse_args()
     root = Path(a.root)
-    rels, above = releases((root / "CHANGELOG.md").read_text())
+    changelog = (root / "CHANGELOG.md").read_text()
+    rels, above = releases(changelog)
 
     if a.query is not None:
         for v, _card, _sha8, _line, section in rels:
@@ -132,7 +170,7 @@ def main():
         print("release_ledger: no release heading %s in CHANGELOG.md" % a.query, file=sys.stderr)
         return 1
 
-    problems = []
+    problems = malformed(changelog)
     shas, last_card = card_lines((root / "crates/axon-core/card-versions.txt").read_text(), problems)
 
     for k, (v, card, sha8, line, section) in enumerate(rels):
@@ -168,10 +206,22 @@ def main():
                 problems.append(
                     "%s: %s, so it must bump MINOR over %s" % (where, " and ".join(why), vstr(older))
                 )
+        for n in range(older_card + 1, card + 1):
+            if not names_card(section, n):
+                problems.append(
+                    "%s: moves to card %d over %s's card %d, and its section never says `card %d` "
+                    "(spec/stability.md rule 4)" % (where, card, vstr(older), older_card, n)
+                )
 
     if rels:
         newest, newest_card = rels[0][0], rels[0][1]
         cargo_version = check_versions(root, newest, problems)
+        for n in range(newest_card + 1, last_card + 1):
+            if not names_card(above, n):
+                problems.append(
+                    "card-versions.txt lists card %d, newer than the newest release's card %d, and no unreleased "
+                    "CHANGELOG text above %s says `card %d` (spec/stability.md rule 4)" % (n, newest_card, vstr(newest), n)
+                )
     if a.tag is not None:
         if not TAG.match(a.tag):
             problems.append("--tag %s is not vX.Y.Z" % a.tag)
