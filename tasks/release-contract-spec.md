@@ -273,12 +273,18 @@ for the musl target (cargo tree, §9), so the runner needs a musl C compiler (`m
 1. `[REVISED: RCD-1]` Triggers: `push: tags: ['v*.*.*']`; `push: branches: ['release-dry/**']` (always a dry run: a push runs the
    workflow file of the pushed commit, so this works before `release.yml` is on `main`); `workflow_dispatch` with input `dry_run`
    (default `true`), usable once the file is on `main`. `permissions: contents: write, actions: read`. One job on `ubuntu-24.04`,
-   `actions/checkout@v4` with `fetch-depth: 0`.
+   `actions/checkout@v4` with `fetch-depth: 0`. `[REVISED: impl audit 2026-11-11 (AuditImplRC 5)]` Top-level `permissions:
+   contents: read, actions: read`; the build job (`release`) runs every check and uploads the artifact on every run; a separate
+   `publish` job (`needs: release`, `if:` tag ref and not dry) alone holds `contents: write` and publishes the downloaded artifact.
+   A dry run never gets a write token.
 2. Preconditions on a tag (fail the job, publish nothing): the tagged commit is an ancestor of `origin/main`; `[REVISED: RCA-1]`
    with `env: GH_TOKEN: ${{ github.token }}`, `gh api -X GET
    "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&status=success" --jq
    .total_count` is ≥ 1; `python3 -B scripts/release_ledger.py --tag $GITHUB_REF_NAME` passes. `[REVISED: RCD-2]` In a dry run the
    ancestry and CI checks print `SKIPPED (dry run): <check>` and do not fail, and the ledger runs in default mode.
+   `[REVISED: impl audit 2026-11-11 (AuditImplRC 3)]` A tag run also requires an annotated tag (`git cat-file -t
+   refs/tags/$GITHUB_REF_NAME` = `tag`, after re-fetching the tag ref); `SKIPPED (dry run)` otherwise. `RELEASE-VERIFIED` stays
+   the integrator's procedural key (`spec/stability.md` §1 says so).
 3. `release_package.sh`: `[REVISED: RCA-8]` refuses (rc 1, before building, naming the variable) when `AXON_GIT_SHA` is set, unless
    `--keep-env`; `[REVISED: RCA-12]` refuses an `<outdir>` inside the checkout unless it is under the ignored `/dist/`
    (`.gitignore:46`; otherwise `build.rs:83-86` sees an untracked file and embeds `-dirty`); CI uses `$RUNNER_TEMP/dist`. In CI the
@@ -597,3 +603,22 @@ workflow linter exists here (§9 r4), so the first real observation is the integ
 - RC-2 touches `crates/axon-core/src`, so it needs a PCI theme (`governance/notes/pci-themes/2fb3649c.json`, CLI only, no
   pass/fail moves) and a regenerated `v022-pci-delta.md` (row list +M5260-M5261); the first `gate.sh --lane` failed at S06
   (`pci_delta_note`) until that landed.
+
+`[REVISED: impl audit 2026-11-11]` `agent://AuditImplRC` (5 minor findings, all fixed on `rc/l`; every new test was observed
+failing against the scripts at c7d02de7 before the fix; g01 M5269-M5274 killed 6/6):
+- 1 (35039eee): `release_ledger.py` rule 0 refuses an emphasised near-miss marker
+  (`(?i)(\*\*|__|\*)\s*behaviou?r changes?` not at the exact `**Behaviour change`), naming its line, in the whole CHANGELOG
+  (the repo has none). Test `a_near_miss_behaviour_marker_is_refused`; g01 M5269.
+- 2 (35039eee): any `^## v\d` line that is not a full HEADING is refused, naming its line. Test
+  `a_malformed_release_heading_is_refused`; g01 M5270.
+- 3 (35039eee, cdd9b4b5): the ledger check was built (sound at release granularity, not per commit): a release whose card is newer
+  than the next-older release's names every card it moves past (`card K`, word-bounded) in its section, and with any release
+  heading every `card-versions.txt` line newer than the newest heading's card is named above it; with no release heading it does
+  not run (nothing released). Test `a_card_change_not_named_in_the_changelog_is_refused` (released, unreleased, `card 30` cases);
+  g01 M5271-M5273. `release_ledger_controls_pass`'s unreleased card 3 control now names `card 3`. `release.yml` checks the tag
+  is annotated; `stability.md` §1 calls `RELEASE-VERIFIED` procedural and §4 states what the ledger checks.
+- 4 (35039eee): `compat_sweep.py --diff` prints `ADDED`/`REMOVED` lines (informational) and fails when NEW has fewer than
+  `ROW_FLOOR_PCT` = 90% of OLD's rows (`stability.md` §7). Test `a_truncated_new_sweep_is_refused`; `compat_diff_controls_pass`
+  now asserts the ADDED/REMOVED lines (it failed first) and the 9-of-10 floor; g01 M5274.
+- 5 (cdd9b4b5): two jobs as in step 1 above. The release notes are written in the build job (tag runs) and travel in the artifact.
+  Not run on GitHub; YAML parsed and every `run:` passed `bash -n`.
