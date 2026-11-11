@@ -373,8 +373,14 @@ for CERE Qwen, the only measured model; T3 was "for the strong model"]`
 
 **Authorship and review** `[REVISED: NH-3 decision 2026-11-10]`. Drafted by Haiku 5.5 under D12 (Python-first; the Axon reference
 earned through the loop), or by the human reviewer where Haiku's Axon reference failed. Never drafted, reviewed or repaired by Qwen,
-the measured model. Each task is reviewed by a human for ambiguity before the pilot. Tasks Qwen fails on all 6 pilot trials get a
-second review. Every report on `ae-1.x` carries "set drafted by Haiku 5.5" (AE-4).
+the measured model. Each task is reviewed by a human for ambiguity before the pilot `[REVISED: decided by human 2026-11-11 -
+reduced review: every flagged candidate (48 ids, 49 flags), every `needs-human` candidate (7; the human writes `reference.ax` or
+drops it), and a uniform 10% random sample of the remaining 299 (30 ids; digest order of
+`sha256("hr1-sample:48e4fc9d056dfe0768671e03b67e2d00df14bbaa:" + id)`, the packet commit, drawn before any candidate was read).
+A sampled task is bad if the reviewer fixes or drops it for ambiguity. More than 2 bad of 30: all 299 are reviewed. The lists are
+in the private `ae-1/review/HR1-reduced.md`; PREREG-ae records the rule and the bad count.]`. Tasks Qwen fails on all 6 pilot
+trials get a second review, which is also the backstop for unsampled defects. Every report on `ae-1.x` carries "set drafted by
+Haiku 5.5" (AE-4).
 
 **Contamination.** The repo is public on GitHub (`https://github.com/Cklaus1/axon.git`, `genviab.py:92`). Anything committed there can
 enter a future model's training data, and the eval would then measure memory.

@@ -30,7 +30,8 @@ Spec: `tasks/authoring-eval-spec.md` (Step 1 reviewed 2026-11-10, 39 findings ac
 
 ## needs-human (excluded from the autonomous run)
 
-- **HR-1 human ambiguity review of every candidate** (spec AE-3 "Authorship and review"). The run prepares the review
+- **HR-1 human ambiguity review** (spec AE-3 "Authorship and review"; reduced by the human's decision of 2026-11-11 to the
+  flagged + `needs-human` candidates and a seeded 10% sample of the rest, escalating to all if > 2 of 30 sampled are bad). The run prepares the review
   packet (`/root/axon-ae/ae-1/review/`) and stops. Blocked behind it, transitively: the pilot (incl. A/A), the
   second review of all-6-fail tasks, the seeded draw, the PREREG freeze, the first release run, the second hand run,
   enabling AE-7. Pruned subtree: 7 nodes.

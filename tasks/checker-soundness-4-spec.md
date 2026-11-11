@@ -708,6 +708,8 @@ its own commit (pure move, no behaviour change) so the CS4-3/CS4-4 diffs stay re
 1. **NH-4 - Is CS4-5 (optional P3) in this batch?** It adds two refusals of programs that run today (`v2q_noall`, `en`: dead arms of
    another enum's variant, D9). Options: (a) yes, in S4c: ~30 lines, one test, one row (M4719); (b) no, and O-AF-04 stays open.
    **Recommend (a)**: `en` is a silent dead arm even when the two enums share a variant name.
+   `[DECIDED by human 2026-11-11: (a) - CS4-5 is built, carried into tasks/checker-soundness-5-spec.md's batch (row M4719 if still
+   free at build time).]`
 
 For the human's information (decided by ruling 5, not open): the batch refuses these programs that run today, none of them tracked -
 `exarmif` (D3/D9), `t_iflet`, `t_mixed_arity`, `t_struct_subj` (D9), `patswallow` (D11), and with CS4-5 `v2q_noall`, `en`. All but
