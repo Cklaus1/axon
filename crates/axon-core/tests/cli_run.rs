@@ -48740,6 +48740,23 @@ fn tuple_sub_patterns_are_typed() {
     }
 }
 
+/// CS5-3 (O-TP-01): a typed lambda param is bound to its annotation's
+/// skeleton (a numeric annotation stays a free var that must be a number, so
+/// a `u8` param still takes an int literal), so a `match` on it is checked
+/// like a fn param's. Each case checked rc 0 and panicked at run; the `fn`
+/// twin is refused.
+#[test]
+fn typed_lambda_params_are_typed() {
+    let attack = "ATTACK: a typed lambda param of the wrong type checked clean";
+    let cases = [
+        ("u4", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b) => to_str(b + 1) }\n    println(f((1, \"s\")))\n}\n", 2),
+        ("l17", "fn main() {\n    let f = |o: Option<(i64, str)>| match o { Some((a, b)) => b + 1, None => 0 }\n    println(to_str(f(Some((1, \"s\")))))\n}\n", 2),
+    ];
+    for (tag, src, line) in cases {
+        cs5_assert_refused(attack, tag, src, "E0102", line);
+    }
+}
+
 /// CS5-1..CS5-4, NH-1 (a): a pattern binding used as another kind is refused
 /// even where the interpreter passes the value through and prints (`println`,
 /// `==`, an arm join); each concrete twin is refused today. A sub-pattern
@@ -48747,7 +48764,9 @@ fn tuple_sub_patterns_are_typed() {
 /// dead arm). `[REVISED: build 2026-11-11]` `s09` (`println` of a struct
 /// field) and `s15` (of a bool field) are the same class (twins E0306).
 /// CS5-2: `g09` (`println` of a `Some(1)` payload), `g04`/`g05` (`Some` on
-/// an `i64`/`str` element, a dead arm).
+/// an `i64`/`str` element, a dead arm). CS5-3: `l15` (`println` of a typed
+/// lambda's int component), `a2` (a 3-tuple pattern on a `(i64, str)` param,
+/// a dead arm).
 #[test]
 fn pattern_binding_misuse_that_runs_is_refused() {
     let attack = "ATTACK: a pattern binding used as another kind checked clean";
@@ -48762,6 +48781,8 @@ fn pattern_binding_misuse_that_runs_is_refused() {
         ("g09", "fn main() {\n    match (Some(1), 2) { (Some(a), b) => println(a), _ => println(\"o\") }\n}\n", 2),
         ("g04", "fn main() {\n    match (5, 2) { (Some(a), b) => println(\"s\"), _ => println(\"o\") }\n}\n", 2),
         ("g05", "fn main() {\n    match (\"s\", 2) { (Some(a), b) => println(\"s\"), _ => println(\"o\") }\n}\n", 2),
+        ("l15", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b) => println(a) }\n    f((1, \"s\"))\n}\n", 3),
+        ("a2", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b, c) => 3, _ => 0 }\n    println(to_str(f((1, \"s\"))))\n}\n", 2),
     ];
     for (tag, src, line) in cases {
         cs5_assert_refused(attack, tag, src, "E0102", line);
@@ -48775,7 +48796,9 @@ fn pattern_binding_misuse_that_runs_is_refused() {
 /// stay unchecked (`s12`, O-CS4-04); a generic struct's concrete field binds
 /// (`f49`). CS5-2: a tuple's payload number at any width (`g03`, `g19`); an
 /// element still unresolved at bind time stays unbound, so one element var
-/// matched as `Some` in one arm and `Ok` in the next runs (`a15`).
+/// matched as `Some` in one arm and `Ok` in the next runs (`a15`). CS5-3: a
+/// numeric lambda annotation stays a free number (`l02`, `l12`, `l13`, `l16`,
+/// `l19`), an untyped one stays a var (`l25`).
 #[test]
 fn pattern_binding_controls_stay_legal() {
     let attack = "ATTACK: a valid pattern match was refused";
@@ -48808,6 +48831,17 @@ fn pattern_binding_controls_stay_legal() {
         ("g07", "fn main() {\n    match (Some(\"x\"), 2) { (Some(a), b) => println(a + to_str(b)), _ => println(\"o\") }\n}\n", "x2\n"),
         ("g19", "fn main() {\n    match (Some(1), 2) { (Some(a), b) => { let y: Decimal = a\n println(\"k\") }, _ => println(\"o\") }\n}\n", "k\n"),
         ("a15", "fn main() {\n    let f = |p| match (p, 1) { (Some(a), _) => 1, (Ok(b), _) => 2, _ => 3 }\n    println(to_str(f(Some(1)) + f(Ok(1))))\n}\n", "3\n"),
+        ("l02", "fn main() {\n    let f = |x: u8| x + 1\n    println(to_str(f(1)))\n}\n", "2\n"),
+        ("l07", "fn main() {\n    let xs = arr_map([1, 2], |x: i64| x * 2)\n    println(to_str(xs[1]))\n}\n", "4\n"),
+        ("l12", "fn main() {\n    let xs = arr_map([1, 2], |x: u8| x + 1)\n    println(to_str(xs[1]))\n}\n", "3\n"),
+        ("l13", "fn main() {\n    let f = |x: u8| { let y: i64 = x\n y + 1 }\n    println(to_str(f(1)))\n}\n", "2\n"),
+        ("l14", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b) => { let x: u8 = a\n b + to_str(x) } }\n    println(f((1, \"s\")))\n}\n", "s1\n"),
+        ("l16", "fn ap(f: fn(i64) -> i64) -> i64 { f(2) }\nfn main() {\n    println(to_str(ap(|x: u8| x + 1)))\n}\n", "3\n"),
+        ("l18", "fn main() {\n    let f = |x: i64| { let d: Decimal = x\n \"k\" }\n    println(f(1))\n}\n", "k\n"),
+        ("l19", "fn ap<T>(f: fn(T) -> T, x: T) -> T { f(x) }\nfn main() {\n    println(to_str(ap(|x: u8| x + 1, 5)))\n}\n", "6\n"),
+        ("l25", "fn main() {\n    let f = |x| x\n    let y: str = f(1)\n    println(y)\n}\n", "1\n"),
+        ("l28", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b) => b + to_str(a) }\n    println(f((1, \"s\")))\n}\n", "s1\n"),
+        ("l32", "fn main() {\n    let f = |x: i64| to_str(x) + \"!\"\n    println(f(3))\n}\n", "3!\n"),
     ];
     for (tag, src, out) in cases {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs5c_{tag}"), src);

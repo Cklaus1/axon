@@ -4473,6 +4473,9 @@ ATTACK_MARKERS.update({
     # f30 (`S::C { o: Some(x) }`, `let y: u8 = x`) precedes g03 in the controls.
     'M5243': r'ATTACK: a valid pattern match was refused \[cs5_(f30|g03)\]',
     'M5248': r'ATTACK: a valid pattern match was refused \[cs5_a15\]',
+    'M5244': r'ATTACK: a typed lambda param of the wrong type checked clean',
+    # l02/l12 (`|x: u8|` given an int literal) precede l13 in the controls.
+    'M5245': r'ATTACK: a valid pattern match was refused \[cs5_l(02|12|13|16|19)\]',
     'M4719': r'ATTACK: a pattern of another enum checked clean',
     'M5249': r'ATTACK: a pattern of another enum checked clean',
 })

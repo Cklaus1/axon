@@ -2437,7 +2437,26 @@ impl InferCtx {
                 body,
                 captures: _,
             } => {
-                let param_types: Vec<Type> = params.iter().map(|_| self.fresh()).collect();
+                // CS5-3 (O-TP-01): an annotated param binds its annotation's
+                // skeleton (TP-1's rule: a numeric leaf is a free var that must
+                // be a number, so `|x: u8|` still takes an int literal and
+                // stays one of the lambda's own vars below; every other leaf
+                // is exact). An unannotated param, or an annotation with an
+                // unresolved part (a type param, an unknown name), stays fresh.
+                let param_types: Vec<Type> = params
+                    .iter()
+                    .map(|p| match &p.ty {
+                        Some(t) => {
+                            let ty = self.resolve_ast_type(t);
+                            if has_unresolved(&ty) {
+                                self.fresh()
+                            } else {
+                                self.tuple_component_skeleton(&ty, &p.name, "lambda param")
+                            }
+                        }
+                        None => self.fresh(),
+                    })
+                    .collect();
                 // Fix #6: create a fresh return-type variable for the lambda
                 // instead of reusing the enclosing function's ret_ty. This
                 // prevents `?` and `return` inside the lambda from bleeding
