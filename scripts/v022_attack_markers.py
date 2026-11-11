@@ -4483,5 +4483,6 @@ ATTACK_MARKERS.update({
     'M5249': r'ATTACK: a pattern of another enum checked clean',
     'M5251': r'ATTACK: a pattern of another enum checked clean \[(k1|w2|w3|w4)\]: a valid match was refused',
     'M5252': r'ATTACK: a pattern of another enum checked clean \[w1\]: a valid match was refused',
+    'M5253': r'ATTACK: a tuple pattern on a late-resolved subject checked clean \[c3\]',
 })
 

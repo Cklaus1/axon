@@ -16163,6 +16163,10 @@ MUTATIONS += [
      'self.check_stmt(stmt, &node_path.idx("body_stmt", i), body_scope);',
      'self.check_stmt(stmt, &node_path.idx("body_stmt", i), scope);',
      'axon-core', '--no-default-features --test cli_run', 'foreign_enum_variant_pattern_is_refused'),
+    ('M5253', 'CS5-4 (impl audit): a container element used as a scalar is not refused (c3 tuple component given to `str_len` checks clean)', 'crates/axon-core/src/infer.rs',
+     '|| (container(elem) && scalar(used))',
+     '|| (false && container(elem) && scalar(used))',
+     'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_on_a_late_resolved_subject_is_checked'),
 ]
 
 

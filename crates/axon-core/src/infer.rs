@@ -374,6 +374,40 @@ fn kinds_conflict(param: &Type, arg: &Type) -> bool {
     }
 }
 
+/// CS5-4: `kinds_conflict`, plus a container (tuple, `[T]`, `Option`,
+/// `Result`) against a scalar kind at any depth, for a deferred tuple
+/// subject's element and its component's use (impl audit CS5: `(p, n)` on
+/// `id(((1, "s"), 2))` with `str_len(p)` panicked `expected str, got tuple`).
+/// Kinds only, as `kinds_conflict`; the fn-value check (CS2-6) keeps
+/// `kinds_conflict` alone.
+fn elem_use_conflicts(elem: &Type, used: &Type) -> bool {
+    fn container(t: &Type) -> bool {
+        matches!(
+            t,
+            Type::Tuple(_) | Type::Slice(_) | Type::Option(_) | Type::Result(_, _)
+        )
+    }
+    fn scalar(t: &Type) -> bool {
+        t.is_numeric() || matches!(t, Type::Str | Type::Bool | Type::Unit)
+    }
+    match (elem, used) {
+        (Type::Slice(e), Type::Slice(u)) | (Type::Option(e), Type::Option(u)) => {
+            elem_use_conflicts(e, u)
+        }
+        (Type::Result(eo, ee), Type::Result(uo, ue)) => {
+            elem_use_conflicts(eo, uo) || elem_use_conflicts(ee, ue)
+        }
+        (Type::Tuple(es), Type::Tuple(us)) if es.len() == us.len() => {
+            es.iter().zip(us).any(|(e, u)| elem_use_conflicts(e, u))
+        }
+        _ => {
+            kinds_conflict(elem, used)
+                || (container(elem) && scalar(used))
+                || (scalar(elem) && container(used))
+        }
+    }
+}
+
 /// CS3-2: `ty` with each var that has a derived kind replaced by it.
 fn with_derived(ty: &Type, derived: &HashMap<u32, Derived>) -> Type {
     if derived.is_empty() {
@@ -3752,7 +3786,7 @@ impl InferCtx {
                     ));
                 } else {
                     let used = subst.apply(&var);
-                    if kinds_conflict(elem, &used) {
+                    if elem_use_conflicts(elem, &used) {
                         self.errors.push(
                             InferError::mismatch(
                                 &format!("use of pattern binding `{name}`"),
