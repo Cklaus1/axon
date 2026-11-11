@@ -999,6 +999,110 @@ def driver():
         shutil.rmtree(d)
 
 
+# ---------------------------------------------------------------- authoring-eval (AE-1..AE-4)
+# Synthetic ae fixtures: SYN's grader task under an ae set root, canaries all
+# zero (obviously synthetic, spec AE-3 contamination rule 3).
+AE_CANARY = "00000000-0000-0000-0000-000000000000"
+AE_VISIBLE = [{"name": "one run", "runs": [
+    {"inputs": {"./data/in.txt": "a\n"}, "outputs": {"./out/count.txt": "1"},
+     "stdout": "run 1: a\n", "exit": 0}]}]
+AE_HIDDEN = [{"name": "two runs", "runs": [
+    {"inputs": {"./data/in.txt": "x\n"}, "outputs": {"./out/count.txt": "1"},
+     "stdout": "run 1: x\n", "exit": 0},
+    {"inputs": {"./data/in.txt": "y\n"}, "outputs": {"./out/count.txt": "2"},
+     "stdout": "run 2: y\n", "exit": 0}]},
+    {"name": "missing input", "runs": [{"inputs": {}, "outputs": {}, "stdout": "missing input\n",
+                                        "exit": 3}]}]
+AE_PY = SYN_PY.replace('"data/', '"./data/').replace('"out/', '"./out/')
+
+
+def ae_task(root, tid, ax=SYN_AX, py=AE_PY, tokens=120000, goal_tag="", **meta):
+    """Write one synthetic ae task under `root`; `ax=None` is a drafting
+    candidate; `meta` overrides task.json keys (value None drops the key)."""
+    d = os.path.join(root, tid)
+    os.makedirs(d)
+    intent = SYN_INTENT.replace("tokens: 50000", f"tokens: {tokens}")
+    intent = intent.replace("and echo", f"and echo{goal_tag}")
+    tj = {"id": tid, "family": "f-" + tid, "tier": "T1", "canary": AE_CANARY,
+          "drafted_by": "human", "category": "stateful",
+          "examples": {"visible": AE_VISIBLE, "hidden": AE_HIDDEN}}
+    tj.update(meta)
+    tj = {k: v for k, v in tj.items() if v is not None}
+    for name, text in (("intent.md", intent), ("task.json", json.dumps(tj, indent=1)),
+                       ("reference.py", py), ("reference.ax", ax)):
+        if text is not None:
+            with open(os.path.join(d, name), "w") as fh:
+                fh.write(text)
+    return d
+
+
+def ae_loader():
+    """AE-3 loader: two references, refs-agree, family/tier/canary, require_ax,
+    build.py --set-dir and genviab --set-dir/--candidates."""
+    sys.path.insert(0, HERE)
+    import gv
+    if not have_binaries("ae3", gv):
+        return
+    d = scratch()
+    root = tempfile.mkdtemp(prefix="ae-selftest-")
+    try:
+        good = ae_task(os.path.join(root, "ae-1"), "ae-good")
+        t = gv.load_task(good)
+        expect("ae3: a two-reference task loads with reference = the .ax text",
+               t["set_mode"] == "ae" and t["reference"] == SYN_AX and t["reference_py"] == AE_PY,
+               (t.get("set_mode"), t.get("reference_lang")))
+        ae_task(os.path.join(root, "ae-1"), "ae-disagree", goal_tag=" (b)",
+                ax=SYN_AX.replace("to_str(n + 1)", "to_str(1)"))
+        ae_task(os.path.join(root, "ae-1"), "ae-nocanary", goal_tag=" (c)", canary=None)
+        ae_task(os.path.join(root, "ae-1"), "ae-lowbudget", goal_tag=" (d)", tokens=50000)
+        cand = ae_task(os.path.join(root, "cand"), "ae-cand", ax=None)
+        try:
+            gv.load_task(cand)
+            strict = False
+        except ValueError:
+            strict = True
+        c = gv.load_task(cand, require_ax=False)
+        expect("ae3: a candidate without reference.ax loads only with require_ax=False",
+               strict and c["reference"] is None and c["reference_py"] == AE_PY)
+        rc, out = py(d, "build.py", "--set-dir", os.path.join(root, "ae-1"))
+        man = json.load(open(os.path.join(root, "ae-1", "manifest.json")))
+        rej = {r["id"]: r["defect"] for r in
+               json.load(open(os.path.join(root, "ae-1", "rejected.json")))["mechanical"]}
+        expect("ae3: build.py --set-dir keeps the agreeing pair, tier counts in the manifest",
+               rc == 0 and [x["id"] for x in man["tasks"]] == ["ae-good"]
+               and man["tiers"]["T1"] == 1 and man["tasks"][0]["family"] == "f-ae-good", out)
+        expect("ae3: a disagreeing pair fails refs-agree",
+               rej.get("ae-disagree", "").startswith("refs-agree: reference.ax disagrees"), rej)
+        expect("ae3: a missing canary fails", "canary" in rej.get("ae-nocanary", ""), rej)
+        expect("ae3: `tokens` below 120000 fails", "120000" in rej.get("ae-lowbudget", ""), rej)
+        expect("ae3: ae defects stay out of the public rejected-ideas.json",
+               "ae-1" not in json.load(open(os.path.join(d, "rejected-ideas.json")))
+               .get("mechanical", {}))
+        rc, out = py(d, "build.py", "--check", "--set-dir", os.path.join(root, "ae-1"))
+        expect("ae3: build.py --check --set-dir exits 0 on its manifest", rc == 0, out)
+        rc, out = py(d, "build.py", "--check", "--candidates", "--set-dir", os.path.join(root, "cand"))
+        expect("ae3: --check --candidates passes a candidate before its reference.ax",
+               rc == 0 and "PASS cand/ae-cand" in out, out)
+        inside = os.path.join(d, "ae-inside")
+        shutil.copytree(os.path.join(root, "cand"), inside)
+        rc, out = py(d, "build.py", "--check", "--set-dir", inside)
+        expect("ae3: an ae set inside the public repo is refused", rc == 2 and "public repo" in out, out)
+        o = os.path.join(root, "out-cand")
+        rc, out = py(d, "genviab.py", "run", "--set-dir", os.path.join(root, "cand"), "--candidates",
+                     "--arm", "a", "--generator", "empty", "--out", o)
+        rows = [json.loads(l) for l in open(os.path.join(o, "rows.jsonl"))] if rc == 0 else []
+        expect("ae3: genviab runs arm a on --set-dir --candidates (rows carry family/tier)",
+               rc == 0 and len(rows) == 1 and rows[0]["family"] == "f-ae-cand"
+               and rows[0]["set"] == "cand" and not rows[0]["verified"], out[-600:])
+        rc, out = py(d, "genviab.py", "run", "--set-dir", os.path.join(root, "ae-1"), "--arm", "a",
+                     "--generator", "oracle", "--out", os.path.join(d, "o-ae"))
+        expect("ae3: an ae run's --out inside the public repo is refused",
+               rc == 1 and "inside the public repo" in out, out[-300:])
+    finally:
+        shutil.rmtree(d)
+        shutil.rmtree(root)
+
+
 def main():
     build_args_and_tamper()
     build_mechanical()
@@ -1008,6 +1112,7 @@ def main():
     synthetic_categories()
     forged_grades()
     driver()
+    ae_loader()
     if FAILS:
         print(f"{len(FAILS)} failure(s): {FAILS}")
         return 1

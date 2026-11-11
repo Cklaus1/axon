@@ -91,6 +91,8 @@ PRICES_PER_MTOK = {
     "claude-haiku-5-5": (0.10, 0.50),
     "claude-opus-5-5": (4.00, 20.00),
     "claude-haiku-4-5-20251001": (1.00, 5.00),
+    # CERE Qwen on 127.0.0.1 (authoring-eval AE-1): local, $0.
+    "Qwen3.8-Flash-Next": (0.0, 0.0),
 }
 CACHE_READ_X, CACHE_WRITE_X = 0.1, 1.25
 PRICE_SOURCE = ("OpenRouter list prices recorded 2026-10-12; cache read 0.1x and "

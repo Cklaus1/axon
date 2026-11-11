@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """genviab: does the intent -> checked program loop work? (IG7)
 
-    python3 -B genviab.py run --set dev|once --arm a|c --generator oracle|empty|micode
+    python3 -B genviab.py run (--set dev|once | --set-dir DIR [--candidates]) --arm a|c
+                              --generator oracle|empty|micode|http
                               --out DIR [--model M] [--effort E] [--only ID,...]
                               [--parallel N] [--max-rounds N] [--cap-usd X --reserve-usd Y]
-                              [--resume] [--resume-of ROW_SHA]
+                              [--provider cere] [--temperature T] [--seed S] [--max-tokens N]
+                              [--cache-dir DIR] [--resume] [--resume-of ROW_SHA]
     python3 -B genviab.py report DIR [DIR ...]
     python3 -B genviab.py verdict A_DIR [--c-dir C_DIR]   IG7 decision rule, JSON
     python3 -B genviab.py spent
@@ -21,7 +23,17 @@ Arms (spec IG7, Step 2):
 
 Generators: `oracle` answers with the task's reference.ax (arm a only),
 `empty` with an empty program, `micode` calls a model through
-drivers/micode-program.sh (paid: needs --cap-usd and --reserve-usd).
+drivers/micode-program.sh (paid: needs --cap-usd and --reserve-usd), `http`
+one OpenAI-compatible call per round through drivers/http-program.py
+(authoring-eval AE-1; `--provider cere` only, $0, explicit max_tokens,
+temperature and seed, an optional reply cache under --cache-dir). Every
+generator resolves its driver through `driver_for`; only oracle/empty run
+oracle.sh.
+
+`--set-dir DIR` runs an authoring-eval (`ae`) task directory (gv.load_task's
+`ae` mode): its manifest.json (build.py --set-dir DIR) is verified like dev's;
+`--candidates` runs a directory without a manifest whose tasks may still lack
+reference.ax (drafting, spec D12).
 
 Spend: every model call appends a row to DIR/calls/<id>.jsonl; `spent` prices
 the tokens of every call row under results/ with ab/run_ab.py's
@@ -65,13 +77,16 @@ sys.path.insert(0, gv.CORTEX_BENCH)
 sys.path.insert(0, os.path.join(gv.CORTEX_BENCH, "ab"))
 from analyse import mcnemar_exact, wilson  # noqa: E402
 from protected import row_sha  # noqa: E402
-from run_ab import (PRICE_SOURCE, RATE_LIMIT, RATE_LIMIT_STOP,  # noqa: E402
-                    estimate_usd)
+from run_ab import (PRICE_SOURCE, PRICES_PER_MTOK, RATE_LIMIT,  # noqa: E402
+                    RATE_LIMIT_STOP, estimate_usd)
 
 RESULTS = os.path.join(HERE, "results")
 DRIVERS = os.path.join(HERE, "drivers")
 MICODE_DRIVER = os.path.join(DRIVERS, "micode-program.sh")
+HTTP_DRIVER = os.path.join(DRIVERS, "http-program.py")
 ORACLE_DRIVER = os.path.join(DRIVERS, "oracle.sh")
+MODEL_GENERATORS = ("micode", "http")
+GENERATORS = ("oracle", "empty") + MODEL_GENERATORS
 PREREG = os.path.join(HERE, "PREREG-genviab.md")
 ONCE_LEDGER = os.path.join(HERE, "once-ledger.jsonl")
 DEFAULT_MODEL = "claude-haiku-5-5"
@@ -136,6 +151,14 @@ def summarize_calls(rows):
         "call_errors": [r["error"] for r in rows if r.get("error")],
         "rate_limited": any(RATE_LIMIT.search(s) for r in rows
                             for s in (r.get("session_errors") or []) + (r.get("retries") or [])),
+        # http driver (AE-1): truncations at the declared max_tokens (a model
+        # failure) and the reply cache's work; absent keys count 0 (micode).
+        "truncated": sum(1 for r in rows if r.get("truncated")),
+        "cache_hits": sum(1 for r in rows if r.get("cache_hit")),
+        "shared_replies": sum(1 for r in rows if r.get("shared")),
+        "replayed": sum(1 for r in rows if r.get("replayed")),
+        "replay_mismatches": sum(1 for r in rows if r.get("replay_mismatch")),
+        "cached_tokens": sum(r.get("cached_tokens") or 0 for r in rows),
     }
 
 
@@ -146,8 +169,9 @@ def git_head():
     return r.stdout.strip() or None
 
 
-def card_sha256():
-    r = subprocess.run([gv.AXON, "card", "--sha256"], capture_output=True, text=True, timeout=60)
+def card_sha256(bins=None):
+    axon = gv.bins_or_default(bins)[0]
+    r = subprocess.run([axon, "card", "--sha256"], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise Refused(f"`axon card --sha256` failed: {r.stderr.strip()}")
     return r.stdout.strip()
@@ -161,15 +185,25 @@ def version(cmd):
         return None
 
 
-def load_set(set_):
-    """Tasks of the set's manifest, after verifying the corpus against it."""
-    d = os.path.join(HERE, set_)
+def load_set(set_, set_dir=None, candidates=False):
+    """Tasks of the set's manifest, after verifying the corpus against it.
+    `set_dir`: an `ae` task directory (build.py --set-dir) instead of HERE/<set_>;
+    `candidates`: that directory has no manifest yet (drafting): every task is
+    loaded with require_ax=False and the manifest sha is None."""
+    d = os.path.abspath(set_dir) if set_dir else os.path.join(HERE, set_)
     mp = os.path.join(d, "manifest.json")
+    if candidates:
+        if not set_dir:
+            raise Refused("--candidates needs --set-dir")
+        tasks = [gv.load_task(t, require_ax=False) for t in gv.task_dirs(d)]
+        return {"corpus_sha256": gv.corpus_digest(d), "tasks": []}, None, tasks
     if not os.path.exists(mp):
-        raise Refused(f"{mp} is missing: run build.py --set {set_}")
+        raise Refused(f"{mp} is missing: run build.py "
+                      + (f"--set-dir {d}" if set_dir else f"--set {set_}"))
     man = json.load(open(mp))
     if gv.corpus_digest(d) != man["corpus_sha256"]:
-        raise Refused(f"the {set_} corpus changed since its manifest: run build.py --set {set_}")
+        raise Refused(f"the {set_} corpus changed since its manifest: run build.py "
+                      + (f"--set-dir {d}" if set_dir else f"--set {set_}"))
     tasks = []
     for m in man["tasks"]:
         t = gv.load_task(os.path.join(d, m["id"]))
@@ -373,9 +407,27 @@ def once_gate(a, man_sha, n_tasks):
 
 # ---------------------------------------------------------------- arm a (+ b)
 
-def driver_env(a, task, arm, calls_log, oracle=None):
-    env = gv.intent_env()
-    env.update(GENVIAB_MODEL=a.model, GENVIAB_MODEL_LOG=calls_log, GENVIAB_TASK=task["id"],
+def driver_for(a):
+    """The one driver lookup of arms a and c (spec AE-1): oracle/empty run
+    oracle.sh and nothing else does."""
+    if a.generator in ("oracle", "empty"):
+        return ORACLE_DRIVER
+    if a.generator == "micode":
+        return MICODE_DRIVER
+    if a.generator == "http":
+        return HTTP_DRIVER
+    raise Refused(f"unknown generator {a.generator!r} (one of {GENERATORS})")
+
+
+# The http driver's knobs: set from the run's arguments, never inherited.
+HTTP_ENV = ("GENVIAB_PROVIDER", "GENVIAB_TEMPERATURE", "GENVIAB_SEED", "GENVIAB_MAX_TOKENS",
+            "GENVIAB_SERIES", "GENVIAB_CACHE_DIR", "GENVIAB_RUN_STATE", "GENVIAB_REPLAY_SEED",
+            "GENVIAB_SHARE_DIR")
+
+
+def driver_env(a, task, arm, calls_log, oracle=None, bins=None):
+    env = gv.intent_env(bins)
+    env.update(GENVIAB_MODEL=a.model or "", GENVIAB_MODEL_LOG=calls_log, GENVIAB_TASK=task["id"],
                GENVIAB_ARM=arm, TMPDIR=os.environ.get("TMPDIR", "/tmp"))
     if a.effort:
         env["GENVIAB_EFFORT"] = a.effort
@@ -383,13 +435,25 @@ def driver_env(a, task, arm, calls_log, oracle=None):
         env.pop("GENVIAB_EFFORT", None)
     if oracle:
         env["GENVIAB_ORACLE"] = oracle
-    env["AXON_INTENT_TIMEOUT_MS"] = str(CALL_TIMEOUT_MS if a.generator == "micode" else 60_000)
+    for k in HTTP_ENV:
+        env.pop(k, None)
+    if a.generator == "http":
+        knobs = {"GENVIAB_PROVIDER": a.provider, "GENVIAB_TEMPERATURE": a.temperature,
+                 "GENVIAB_SEED": a.seed, "GENVIAB_MAX_TOKENS": a.max_tokens,
+                 "GENVIAB_SERIES": getattr(a, "series", None),
+                 "GENVIAB_CACHE_DIR": a.cache_dir, "GENVIAB_RUN_STATE": getattr(a, "run_state", None),
+                 "GENVIAB_REPLAY_SEED": getattr(a, "replay_seed", None),
+                 "GENVIAB_SHARE_DIR": getattr(a, "share_dir", None)}
+        env.update({k: str(v) for k, v in knobs.items() if v is not None})
+    env["AXON_INTENT_TIMEOUT_MS"] = str(CALL_TIMEOUT_MS if a.generator in MODEL_GENERATORS
+                                        else 60_000)
     return env
 
 
 # A generator failure is the MODEL's (scored, unverified) when a reply came
 # back but was unusable; anything else (deadline, micode error, rate limit, a
-# driver that would not start) is infrastructure and leaves the task unscored.
+# driver that would not start, an http reply cut below the declared
+# max_tokens) is infrastructure and leaves the task unscored.
 MODEL_FAILURES = ("driver: the reply is empty", "its answer exceeds")
 
 
@@ -397,7 +461,53 @@ def infra_failure(reason):
     return reason is not None and not any(m in reason for m in MODEL_FAILURES)
 
 
-def run_arm_a(a, task, out):
+GATES_PASSED = ("examples", "accepted")   # stages past `axon check` and the gates
+RUNTIME_FAIL = ("panic", "resource", "refine", "halted", "other-fault", "timeout")
+
+
+def ccp_of(runs):
+    """(panicked?, kind) over graded runs: M2 counts a candidate once; the kind
+    is `type-class` when any panic is (M2s), else the first panic's."""
+    kinds = [r["panic_kind"] for r in runs if r["ended_class"] == "panic"]
+    if not kinds:
+        return False, None
+    return True, "type-class" if "type-class" in kinds else kinds[0]
+
+
+def failure_classes(task, rounds, gb, call_log_rows, outcome):
+    """Authoring-eval AE-2 row fields from the transcript's rounds, the round-0
+    grade (visible + hidden) and the call rows (one per round, in order)."""
+    reps = [x.get("report") or {} for x in rounds]
+    gen = [r for r in call_log_rows if r.get("arm") == "a"]
+    trunc = [bool(gen[i].get("truncated")) if i < len(gen) else False for i in range(len(rounds))]
+    out = {
+        "diag_codes_per_round": [gv.diag_codes(p.get("diagnostics")) for p in reps],
+        "check_ok_per_round": [p.get("check_ok") if p else None for p in reps],
+        "gates_ok_per_round": [(p.get("stage") in GATES_PASSED) if p else None for p in reps],
+        "truncated_rounds": [i for i, t in enumerate(trunc) if t],
+        "budget_stop": outcome == "token-budget-exhausted",
+    }
+    r0 = reps[0] if reps else {}
+    out["b_check_ok"] = bool(r0.get("check_ok"))
+    eligible = out["b_check_ok"] and r0.get("stage") in GATES_PASSED
+    runs = (gb or {}).get("runs") or []
+    ccp, kind = ccp_of(runs) if eligible else (False, None)
+    out.update(b_ccp_eligible=eligible, b_ccp=ccp, b_ccp_kind=kind,
+               b_ccp_reasons=sorted({r["panic_reason"] for r in runs
+                                     if r["ended_class"] == "panic"}) if eligible else [],
+               b_runtime_fail=eligible and any(r["ended_class"] in RUNTIME_FAIL for r in runs),
+               b_ended_classes=sorted({r["ended_class"] for r in runs}))
+    # M2a: every check-clean, gate-passing candidate of every round, on the
+    # visible runs the loop itself made (non-final rounds see no hidden example).
+    elig = [p for p in reps if p.get("check_ok") and p.get("stage") in GATES_PASSED]
+    out["ccp_any_round"] = [sum(ccp_of(gv.graded_runs(task, p))[0] for p in elig), len(elig)]
+    return out, trunc
+
+
+def run_arm_a(a, task, out, bins=None):
+    """One arm-a task-trial. `bins`: (axon, axon-intent) for the loop and every
+    grade (AE-4); default the env-selected globals."""
+    axon_intent = gv.bins_or_default(bins)[1]
     ws = tempfile.mkdtemp(prefix="genviab-a-")
     try:
         intent = os.path.join(ws, f"{task['id']}.intent.md")
@@ -408,15 +518,16 @@ def run_arm_a(a, task, out):
             oracle = os.path.join(ws, "oracle.ax")
             with open(oracle, "w") as fh:
                 fh.write(task["reference"] if a.generator == "oracle" else gv.EMPTY_PROGRAM)
-        driver = MICODE_DRIVER if a.generator == "micode" else ORACLE_DRIVER
+        driver = driver_for(a)
         transcript = os.path.join(out, "transcripts", f"{task['id']}.a.json")
         calls_log = os.path.join(out, "calls", f"{task['id']}.jsonl")
-        cmd = [gv.AXON_INTENT, "compile", intent, "--generate", "--generator", f"cmd:{driver}",
+        n_calls_before = len(call_rows(calls_log))
+        cmd = [axon_intent, "compile", intent, "--generate", "--generator", f"cmd:{driver}",
                "--out", os.path.join(ws, "o"), "--transcript", transcript]
         if a.max_rounds is not None:
             cmd += ["--max-rounds", str(a.max_rounds)]
         t0 = time.time()
-        r = subprocess.run(cmd, cwd=ws, env=driver_env(a, task, "a", calls_log, oracle),
+        r = subprocess.run(cmd, cwd=ws, env=driver_env(a, task, "a", calls_log, oracle, bins),
                            capture_output=True, text=True,
                            timeout=(MAX_REPAIR_ROUNDS + 1) * (CALL_TIMEOUT_MS / 1000 + 120))
         wall = round(time.time() - t0, 1)
@@ -430,10 +541,16 @@ def run_arm_a(a, task, out):
         row["round_stages"] = [((x.get("report") or {}).get("stage")
                                 or ("generator-failed" if x.get("generator_failure") else None))
                                for x in rounds]
+        row["round0_prompt_sha256"] = rounds[0].get("prompt_sha256") if rounds else None
         row["refusal_classes_per_round"] = [(x.get("report") or {}).get("refusal_class")
                                             for x in rounds]
         row["refused_attempts"] = len((tr or {}).get("refusal_classes", []))
-        g = gv.grade_axon(task, open(prog_path).read()) if accepted else None
+        g = gv.grade_axon(task, open(prog_path).read(), bins=bins) if accepted else None
+        if accepted and task.get("set_mode") == "ae":
+            # D12: the accepted program is a drafting candidate's reference.ax;
+            # the out dir of an ae run is private (cmd_run refuses one in the repo).
+            os.makedirs(os.path.join(out, "programs"), exist_ok=True)
+            shutil.copyfile(prog_path, os.path.join(out, "programs", f"{task['id']}.ax"))
         row["verified"] = bool(accepted and g["passed"])
         row["false_acceptance"] = bool(accepted and not row["verified"])
         row["grade"] = g
@@ -445,13 +562,26 @@ def run_arm_a(a, task, out):
         # Arm (b): round 0's candidate, as checked (fences stripped), graded
         # through the same lift. No generation call.
         r0 = (rounds[0].get("report") if rounds else None) or None
+        gb = None
         if r0 is not None:
-            gb = gv.grade_axon(task, r0["source"])
+            gb = gv.grade_axon(task, r0["source"], bins=bins)
             row.update(b_candidate=True, b_accepted=r0["stage"] == "accepted",
                        b_stage=r0["stage"], b_verified=gb["passed"], b_grade=gb)
         else:
             row.update(b_candidate=False, b_accepted=False, b_stage=None, b_verified=False,
                        b_grade=None)
+        classes, trunc = failure_classes(task, rounds, gb, call_rows(calls_log)[n_calls_before:],
+                                         row["outcome"])
+        row.update(classes)
+        # A reply cut at the declared max_tokens is the model's failure (spec
+        # §2): that round's candidate never counts as a pass.
+        if trunc and trunc[0]:
+            row["b_verified"] = False
+        if accepted and trunc and trunc[-1]:
+            row["verified"] = False
+            row["false_acceptance"] = False
+        # M3 / M3t: the accepting round when the loop's program is verified.
+        row["first_green_round"] = len(rounds) - 1 if row["verified"] else None
         gen_fail = next((x.get("generator_failure") for x in rounds if x.get("generator_failure")),
                         None)
         row["infra"] = (tr is None or row["outcome"] == "infrastructure-failed"
@@ -520,8 +650,7 @@ def py_feedback(res):
 
 def task_token_budget(task):
     """The intent's `## Budget` `tokens`, else genloop::DEFAULT_TOKEN_BUDGET."""
-    m = re.search(r"^\s*-\s*tokens\s*:\s*(\d+)\s*$", gv.section(task["intent_md"], "budget"), re.M)
-    return int(m.group(1)) if m and int(m.group(1)) > 0 else DEFAULT_TOKEN_BUDGET
+    return gv.budget_tokens(task["intent_md"]) or DEFAULT_TOKEN_BUDGET
 
 
 def reported_tokens(stderr):
@@ -536,6 +665,7 @@ def run_arm_c(a, task, out):
     env = driver_env(a, task, "c", calls_log)
     base = python_prompt(task)
     prompt, rounds, src, accepted, gen_failed = base, [], None, False, None
+    r0, truncated = None, False
     t0 = time.time()
     repairs = MAX_REPAIR_ROUNDS if a.max_rounds is None else a.max_rounds
     budget, used, budget_stop = task_token_budget(task), 0, None
@@ -547,9 +677,11 @@ def run_arm_c(a, task, out):
             break
         if a.generator == "empty":
             text = EMPTY_PY
-        elif a.generator == "micode":
-            r = subprocess.run([MICODE_DRIVER], input=prompt, env=env, capture_output=True,
+        elif a.generator in MODEL_GENERATORS:
+            n_before = len(call_rows(calls_log))
+            r = subprocess.run([driver_for(a)], input=prompt, env=env, capture_output=True,
                                text=True, timeout=CALL_TIMEOUT_MS / 1000 + 60)
+            truncated = any(x.get("truncated") for x in call_rows(calls_log)[n_before:])
             if r.returncode != 0:
                 gen_failed = r.stderr.strip()[-300:]
                 rounds.append({"round": rnd, "generator_failure": gen_failed})
@@ -562,7 +694,14 @@ def run_arm_c(a, task, out):
         res = gv.grade_python(task, src, ("visible",))
         rec = {"round": rnd, "candidate": text, "source": src, "stage": res["stage"],
                "passed": res["passed"], "scope_denied": res["scope_denied"],
-               "examples": res["examples"]}
+               "examples": res["examples"], "truncated": a.generator in MODEL_GENERATORS
+               and truncated, "exception_types": exception_types(res)}
+        if rnd == 0:
+            # M5: arm c's round 0 on visible + hidden, as arm b grades arm a's.
+            r0g = gv.grade_python(task, src)
+            r0 = {"b_verified": r0g["passed"] and not rec["truncated"],
+                  "syntax_error": res["stage"] == "check",
+                  "b_exception_types": exception_types(r0g)}
         if res["passed"]:
             rounds.append(rec)
             accepted = True
@@ -579,19 +718,105 @@ def run_arm_c(a, task, out):
     g = gv.grade_python(task, src) if accepted else None
     row = {"accepted": accepted, "wall_s": wall, "rounds": len(rounds),
            "round_stages": [x.get("stage") or "generator-failed" for x in rounds],
-           "verified": bool(accepted and g["passed"]),
+           "verified": bool(accepted and g["passed"] and not rounds[-1].get("truncated")),
            "grade": {k: v for k, v in (g or {}).items() if k != "examples"} or None,
            "infra": infra_failure(gen_failed),
            "python_scope_denied": any(x.get("scope_denied") for x in rounds) or bool(g and g["scope_denied"]),
-           "token_budget_exhausted": budget_stop is not None}
+           "token_budget_exhausted": budget_stop is not None,
+           "budget_stop": budget_stop is not None,
+           "truncated_rounds": [x["round"] for x in rounds if x.get("truncated")],
+           "exception_types_per_round": [x.get("exception_types", []) for x in rounds],
+           "b_verified": False, "syntax_error": False, "b_exception_types": []}
+    row.update(r0 or {})
     row["false_acceptance"] = bool(accepted and not row["verified"])
+    row["first_green_round"] = len(rounds) - 1 if row["verified"] else None
     return row
+
+
+PY_EXC = re.compile(r"\b([A-Z]\w*(?:Error|Exception|Interrupt|Exit|Warning))\b")
+
+
+def exception_types(res):
+    """Python exception class per failed run that raised (arm c's analogue of
+    the panic kind, AE-2): the last exception name in the traceback tail."""
+    out = []
+    for r in res.get("examples") or []:
+        if not r["passed"] and r["ended"].startswith("raised an exception"):
+            names = PY_EXC.findall(r.get("stderr_tail") or "")
+            out.append(names[-1] if names else "unknown")
+    if res.get("stage") == "check":
+        out.append((res.get("tail") or "SyntaxError").split(":")[0])
+    return out
 
 
 # ---------------------------------------------------------------- run
 
+def http_driver_module():
+    """drivers/http-program.py as a module (its PROVIDERS and provider_config)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("http_program", HTTP_DRIVER)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def http_series(a):
+    """The model series (spec §3): provider, requested model and the sha256 of
+    its full `/v1/models` entry. Refused when the model is not served."""
+    import urllib.request
+    cfg, why = http_driver_module().provider_config(a.provider)
+    if why:
+        raise Refused(why)
+    try:
+        with urllib.request.urlopen(cfg[0] + "/models", timeout=30) as r:
+            doc = json.loads(r.read())
+    except (OSError, ValueError) as e:
+        raise Refused(f"{a.provider} /models is unreachable: {type(e).__name__}: {e}")
+    entry = next((m for m in doc.get("data") or [] if m.get("id") == a.model), None)
+    if entry is None:
+        raise Refused(f"{a.provider} does not serve {a.model!r} "
+                      f"(served: {[m.get('id') for m in doc.get('data') or []]})")
+    entry_sha = gv.sha256_bytes(json.dumps(entry, sort_keys=True).encode())
+    return {"series": f"{a.provider}:{a.model}:{entry_sha[:16]}", "provider": a.provider,
+            "requested": a.model, "models_entry_sha256": entry_sha,
+            "base_url_host": cfg[0].split("//", 1)[-1].split("/", 1)[0]}
+
+
+def prepare_http(a, out):
+    """Resolve the http generator's pins before any call: the price row (an
+    unpriced model is refused), the model series, the run's cache state."""
+    if a.model not in PRICES_PER_MTOK:
+        raise Refused(f"no list price recorded for {a.model}: add it to PRICES_PER_MTOK "
+                      "(ab/run_ab.py) before the first call")
+    s = http_series(a)
+    a.series = s["series"]
+    a.run_state = os.path.join(out, "run-state")
+    if a.replay_seed is None:
+        a.replay_seed = int(time.time())
+    if a.cache_dir:
+        a.cache_dir = os.path.abspath(a.cache_dir)
+    return s
+
+
+def resolve_model(a):
+    """--model default per generator; --provider/--cache-dir are http-only."""
+    providers = http_driver_module().PROVIDERS
+    if a.generator != "http" and (a.provider or a.cache_dir):
+        raise Refused("--provider and --cache-dir belong to --generator http")
+    if a.generator == "http":
+        a.provider = a.provider or "cere"
+        if a.provider not in providers:
+            raise Refused(f"--provider {a.provider!r}: only {sorted(providers)}")
+    if a.model is None:
+        a.model = providers[a.provider]["model"] if a.generator == "http" else DEFAULT_MODEL
+
+
 def cmd_run(a):
-    man, man_sha, tasks = load_set(a.set)
+    if bool(a.set) == bool(a.set_dir):
+        raise Refused("pass exactly one of --set and --set-dir")
+    resolve_model(a)
+    man, man_sha, tasks = load_set(a.set, a.set_dir, a.candidates)
+    set_name = a.set or os.path.basename(os.path.abspath(a.set_dir))
     if a.only:
         want = a.only.split(",")
         unknown = sorted(set(want) - {t["id"] for t in tasks})
@@ -604,10 +829,13 @@ def cmd_run(a):
     if a.generator == "oracle":
         py_ref = [t["id"] for t in tasks if t["reference_lang"] != "axon"]
         if py_ref:
-            raise Refused(f"the oracle generator needs reference.ax: {py_ref} have reference.py")
+            raise Refused(f"the oracle generator needs reference.ax: {py_ref} have none")
     if paid and (a.cap_usd is None or a.reserve_usd is None):
         raise Refused("--generator micode needs --cap-usd and --reserve-usd")
     out = os.path.abspath(a.out)
+    if a.set_dir and (os.path.realpath(out) + os.sep).startswith(os.path.realpath(gv.ROOT) + os.sep):
+        raise Refused(f"--out {out} is inside the public repo: an ae run's transcripts hold "
+                      "candidate programs (spec AE-3 contamination rule 2)")
     rows_path = os.path.join(out, "rows.jsonl")
     if os.path.exists(rows_path) and not a.resume:
         raise Refused(f"{rows_path} exists: pass --resume to finish an interrupted run")
@@ -619,19 +847,26 @@ def cmd_run(a):
                           f"a once run scores against {LEDGER_URL} only")
         prereg_sha = once_gate(a, man_sha, len(tasks))
         once_ledger_precheck(ONCE_LEDGER)
+    series = prepare_http(a, out) if a.generator == "http" else None
     for sub in ("calls", "transcripts"):
         os.makedirs(os.path.join(out, sub), exist_ok=True)
-    driver = MICODE_DRIVER if paid else ORACLE_DRIVER
+    driver = driver_for(a)
+    model_gen = a.generator in MODEL_GENERATORS
     meta = {
-        "set": a.set, "arm": a.arm, "generator": a.generator,
-        "model": a.model if paid else None, "effort": a.effort if paid else None,
+        "set": set_name, "set_dir": os.path.abspath(a.set_dir) if a.set_dir else None,
+        "candidates": bool(a.candidates), "arm": a.arm, "generator": a.generator,
+        "model": a.model if model_gen else None, "effort": a.effort if paid else None,
+        "http": {**series, "temperature": a.temperature, "seed": a.seed,
+                 "max_tokens": a.max_tokens, "cache": bool(a.cache_dir),
+                 "replay_seed": a.replay_seed} if series else None,
         "max_repair_rounds": MAX_REPAIR_ROUNDS if a.max_rounds is None else a.max_rounds,
         "manifest_sha256": man_sha, "corpus_sha256": man["corpus_sha256"],
         "git_head": git_head(),
         "axon_sha256": gv.sha256_file(gv.AXON), "axon_intent_sha256": gv.sha256_file(gv.AXON_INTENT),
         "card_sha256": card_sha256(), "driver_sha256": gv.sha256_file(driver),
         "micode_version": version(["micode", "--version"]) if paid else None,
-        "cost_basis": PRICE_SOURCE + "; OAuth grant, not billed per call" if paid else None,
+        "cost_basis": (PRICE_SOURCE + "; OAuth grant, not billed per call" if paid
+                       else "PRICES_PER_MTOK (ab/run_ab.py): local CERE, $0" if model_gen else None),
         "bwrap": {"version": version([gv.BWRAP, "--version"]), "base": gv.BWRAP_BASE,
                   "tail": gv.BWRAP_TAIL, "python": version([gv.PYTHON, "--version"])}
                  if a.arm == "c" else None,
@@ -651,7 +886,7 @@ def cmd_run(a):
         json.dump(meta, fh, indent=1)
     done = {json.loads(l)["id"] for l in open(rows_path) if l.strip()} if os.path.exists(rows_path) else set()
     todo = [t for t in tasks if t["id"] not in done]
-    print(f"genviab: {a.set} arm {a.arm} {a.generator}: {len(todo)} task(s) to run", file=sys.stderr)
+    print(f"genviab: {set_name} arm {a.arm} {a.generator}: {len(todo)} task(s) to run", file=sys.stderr)
     lock, stop = threading.Lock(), threading.Event()
     in_flight, rl_run, status = [0], [0], {"stopped": None}
 
@@ -660,7 +895,10 @@ def cmd_run(a):
             return
         if paid:
             with lock:
-                s = spent()
+                # results/ holds every genviab run; an --out elsewhere (an ae
+                # drafting run in the private store) adds its own calls.
+                s = spent() + (0.0 if (out + os.sep).startswith(os.path.realpath(RESULTS) + os.sep)
+                               else spent(out))
                 if s + (in_flight[0] + 1) * a.reserve_usd > a.cap_usd:
                     stop.set()
                     status["stopped"] = (f"BUDGET CAP: ${s:.4f} spent + {in_flight[0] + 1} x "
@@ -675,11 +913,14 @@ def cmd_run(a):
                 with lock:
                     in_flight[0] -= 1
         calls = summarize_calls(call_rows(os.path.join(out, "calls", f"{t['id']}.jsonl")))
-        row = {"id": t["id"], "set": a.set, "arm": a.arm, "generator": a.generator,
-               "category": t["category"], "tempting": t["category"] == "tempting", **row, **calls}
+        row = {"id": t["id"], "set": set_name, "arm": a.arm, "generator": a.generator,
+               "category": t.get("category", "transform"),
+               "tempting": t.get("category") == "tempting", **row, **calls}
+        if t.get("set_mode") == "ae":
+            row.update(family=t.get("family"), tier=t.get("tier"))
         # A provider that served another model than the one requested: unscored
-        # (PREREG section 3; no model substitution).
-        row["model_substituted"] = a.generator == "micode" and any(
+        # (PREREG section 3; no model substitution). Every model generator (AE-1).
+        row["model_substituted"] = model_gen and any(
             m != a.model for m in calls["served_models"])
         row["infra"] = row["infra"] or row["model_substituted"]
         with lock:
@@ -700,6 +941,10 @@ def cmd_run(a):
     if status["stopped"]:
         with open(os.path.join(out, "STOPPED"), "a") as fh:
             fh.write(status["stopped"] + "\n")
+    disabled = os.path.join(out, "run-state", "cache-disabled")
+    if os.path.exists(disabled):
+        print("genviab: a cache replay mismatched (D4 violated); the cache was off for the rest "
+              f"of the run: {disabled}", file=sys.stderr)
     print(report([out]))
     return 0
 
@@ -811,11 +1056,19 @@ def main(argv=None):
     ap = argparse.ArgumentParser(usage=__doc__.split("\n\n")[1])
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
-    r.add_argument("--set", choices=("dev", "once"), required=True)
+    r.add_argument("--set", choices=("dev", "once"))
+    r.add_argument("--set-dir")
+    r.add_argument("--candidates", action="store_true")
     r.add_argument("--arm", choices=("a", "c"), required=True)
-    r.add_argument("--generator", choices=("oracle", "empty", "micode"), required=True)
+    r.add_argument("--generator", choices=GENERATORS, required=True)
     r.add_argument("--out", required=True)
-    r.add_argument("--model", default=DEFAULT_MODEL)
+    r.add_argument("--model", default=None)
+    r.add_argument("--provider", default=None)
+    r.add_argument("--temperature", type=float, default=0.7)
+    r.add_argument("--seed", type=int, default=0)
+    r.add_argument("--max-tokens", type=int, default=8192)
+    r.add_argument("--cache-dir", default=None)
+    r.add_argument("--replay-seed", type=int, default=None)
     r.add_argument("--effort", default=None)
     r.add_argument("--only")
     r.add_argument("--parallel", type=int, default=3)
