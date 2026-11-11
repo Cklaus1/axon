@@ -52,6 +52,13 @@ manifests, rejected-ideas.json and once-ledger.jsonl are never touched:
     ANTHROPIC_BASE_URL; the reply comes back verbatim and one row with the
     tokens is logged; a failing call exits 1 and still logs its row; a prompt
     over 128 KiB exits 4 without calling micode.
+(g) ae_draft.py (D12 drafting) against a stub driver and a fake `micode`: outputs
+    come from running reference.py, task.json carries tier/family/uuid4 canary/
+    drafted_by, `## Budget` tokens 120000; a raising, a hash-order-dependent and a
+    model-typed draft are dropped and logged; a zero cap stops before any call; a
+    rerun drafts nothing; the pool passes `build.py --check --candidates`; earn-ax
+    (arm a --candidates) earns reference.ax for a solved candidate and lists an
+    unsolved one in needs-human-ax.txt; `review` writes one line per candidate.
 Exit 0 when every check holds; otherwise the failures are listed, exit 1.
 """
 import datetime
@@ -1657,6 +1664,144 @@ def ae_weekly_screen(d, root, hset, he, gv):
            (w2.stdout[-400:], w2.stderr[-400:]))
 
 
+FAKE_MICODE_AX = r'''#!/usr/bin/env python3
+import json, sys
+prompt = sys.argv[-1]
+ok = ("fn main() -> i64 {\n    match read_file(\"./data/in.txt\") {\n        Ok(text) => {\n"
+      "            match write_file(\"./out/out.txt\", str_to_upper(text)) {\n                Ok(_) => 0,\n"
+      "                Err(_) => 1,\n            }\n        }\n        Err(_) => {\n"
+      "            println(\"missing\")\n            4\n        }\n    }\n}\n")
+reply = ok if "upper-cased" in prompt else "fn main() -> i64 {\n    0\n}\n"
+for e in ({"type": "session_start", "model": "claude-haiku-5-5", "micode_version": "9.9"},
+          {"type": "turn_start"}, {"type": "assistant_delta", "text": reply},
+          {"type": "turn_end", "usage": {"input_tokens": 1000, "output_tokens": 20}}):
+    print(json.dumps(e))
+'''
+
+
+def ae_draft_stages():
+    """(g) ae_draft.py against stubs (no model call). Stage 1 with a stub driver: a synthetic toy family
+    is drafted with outputs computed by running reference.py, a fresh canary and drafted_by haiku-5-5; a
+    raising reference, a hash-order-dependent reference and model-typed outputs are dropped after
+    --max-drafts; a zero cap stops before any call; a second `draft` drafts nothing (resumable); the
+    pool passes `build.py --check --candidates`. Stage 2 (`earn-ax`, genviab arm a --candidates with a
+    fake `micode`): a solved candidate earns reference.ax, an unsolved one is listed in
+    needs-human-ax.txt; `review` writes one line per candidate."""
+    import re
+    print("(g) ae_draft stages 1 and 2")
+    if not have_binaries("g", __import__("gv")):
+        return
+    d = scratch()
+    shutil.copy2(os.path.join(HERE, "ae_draft.py"), d)
+    store_root = tempfile.mkdtemp(prefix="ae-draft-store-")  # an ae store lives outside the public repo
+    store = os.path.join(store_root, "store")
+    os.makedirs(os.path.join(store, "ae-1"))
+    os.makedirs(os.path.join(store, "drafting", "briefs"))
+    fams = [{"id": f"T1-toy-{k}", "tier": "T1", "source": "selftest", "idea": "synthetic echo", "variants": 1}
+            for k in ("good", "raises", "hashorder", "typed", "lower")]
+    with open(os.path.join(store, "ae-1", "families.json"), "w") as fh:
+        json.dump({"families": fams}, fh)
+    for t in ("T1", "T2", "T3", "TS"):
+        with open(os.path.join(store, "drafting", "briefs", f"{t}.md"), "w") as fh:
+            fh.write("synthetic brief\n")
+    stub_dir = os.path.join(d, "stub")
+    os.makedirs(stub_dir)
+    stub = os.path.join(stub_dir, "driver.sh")
+    with open(stub, "w") as fh:
+        fh.write('#!/bin/sh\ncat >/dev/null\n'
+                 'printf \'{"transport":"stub","model":["claude-haiku-5-5"],"requested_model":"claude-haiku-5-5",'
+                 '"task":"%s","arm":"draft","input_tokens":1000,"output_tokens":1000,"cache_read":0,'
+                 '"cache_create":0,"session_errors":[],"retries":[],"error":null}\\n\' "$GENVIAB_TASK" '
+                 '>>"$GENVIAB_MODEL_LOG"\n'
+                 f'cat "{stub_dir}/$GENVIAB_TASK.txt"\n')
+    os.chmod(stub, 0o755)
+    rc, out = py(d, "ae_draft.py", "plan", "--store", store)
+    expect("ae_draft plan writes a plan", rc == 0, out[-300:])
+    plan = json.load(open(os.path.join(store, "drafting", "plan.json")))["candidates"]
+    ids = {c["family"].rsplit("-", 1)[1]: c["id"] for c in plan}
+    intent = ("# Intent\nCopy ./data/in.txt to ./out/out.txt with every ASCII letter upper-cased; if "
+              "./data/in.txt does not exist, write nothing, print `missing` and exit 4.\n\n"
+              "## Inputs\n- ./data/in.txt\n\n## Outputs\n- ./out/out.txt\n\n## Allowed\n- fs_read: ./data/\n"
+              "- fs_write: ./out/\n- net: none\n- exec: none\n- max_label: internal\n\n"
+              "## Budget\n- calls: 1\n- tokens: 5\n- cost_micro: 1\n")
+    ex = {"visible": [{"name": "v", "runs": [{"inputs": {"./data/in.txt": "echo\n"}}]}],
+          "hidden": [{"name": "h1", "runs": [{"inputs": {"./data/in.txt": "Abc\n"}}]},
+                     {"name": "h2", "runs": [{"inputs": {"./data/in.txt": ""}}]},
+                     {"name": "h3", "runs": [{"inputs": {}}]}]}
+    good = ("import os\nimport sys\nif not os.path.exists('./data/in.txt'):\n    print('missing')\n"
+            "    sys.exit(4)\ntext = open('./data/in.txt').read()\n"
+            "open('./out/out.txt', 'w').write(text.upper())\n")
+    refs = {"good": good,
+            "raises": good.replace("text.upper()", "text.upper() + 1"),
+            "hashorder": good.replace("text.upper()", "''.join(sorted(set('abcdefgh'), key=hash)) + text"),
+            "typed": good, "lower": good.replace("text.upper()", "text.lower()")}
+    for k, cid in ids.items():
+        e = json.loads(json.dumps(ex))
+        if k == "typed":
+            e["visible"][0]["runs"][0]["outputs"] = {"./out/out.txt": "ECHO\n"}
+        it = intent.replace("upper-cased", "lower-cased") if k == "lower" else intent
+        with open(os.path.join(stub_dir, f"{cid}.txt"), "w") as fh:
+            fh.write(f"=== intent.md\n{it}=== examples.json\n{json.dumps(e)}\n=== reference.py\n{refs[k]}")
+    rc, out = py(d, "ae_draft.py", "draft", "--store", store, "--cap-usd", "0", "--driver", stub)
+    expect("ae_draft: a zero cap stops before any call", rc == 3
+           and not os.listdir(os.path.join(store, "drafting", "calls")), out[-300:])
+    rc, out = py(d, "ae_draft.py", "draft", "--store", store, "--cap-usd", "1", "--driver", stub, "--parallel", "2")
+    expect("ae_draft draft exits 0", rc == 0, out[-600:])
+    cand = os.path.join(store, "ae-1", "candidates", ids["good"])
+    t = json.load(open(os.path.join(cand, "task.json"))) if os.path.exists(cand) else {}
+    runs = {e["name"]: e["runs"][0] for w in ("visible", "hidden") for e in t.get("examples", {}).get(w, [])}
+    expect("ae_draft: outputs come from running reference.py",
+           runs.get("h1", {}).get("outputs") == {"./out/out.txt": "ABC\n"}
+           and runs.get("h3", {}).get("stdout") == "missing\n" and runs.get("h3", {}).get("exit") == 4, str(runs))
+    expect("ae_draft: task.json carries tier, family, a uuid4 canary, drafted_by",
+           t.get("tier") == "T1" and t.get("family") == "T1-toy-good" and t.get("drafted_by") == "haiku-5-5"
+           and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                            t.get("canary", "")), str({k: t.get(k) for k in ("tier", "family", "canary")}))
+    md = open(os.path.join(cand, "intent.md")).read() if os.path.exists(cand) else ""
+    expect("ae_draft: the intent's budget is tokens 120000", "- tokens: 120000\n" in md, md[-200:])
+    st = {k: json.load(open(os.path.join(store, "drafting", "status", f"{cid}.json")))
+          for k, cid in ids.items() if os.path.exists(os.path.join(store, "drafting", "status", f"{cid}.json"))}
+    for k, why in (("raises", "raised an exception"), ("hashorder", "nondeterministic"),
+                   ("typed", "outputs come from reference.py")):
+        s = st.get(k, {})
+        expect(f"ae_draft: a {k} draft is dropped after 2 drafts and logged",
+               s.get("state") == "dropped" and s.get("drafts") == 2 and why in (s.get("defect") or "")
+               and not os.path.exists(os.path.join(store, "ae-1", "candidates", ids[k])), str(s))
+    log = [json.loads(l) for l in open(os.path.join(store, "drafting", "log.jsonl"))]
+    expect("ae_draft: one log event per candidate with calls, tokens and $",
+           sorted(x["event"] for x in log) == ["drafted", "drafted", "dropped", "dropped", "dropped"]
+           and all(x["calls"] >= 1 and x["output_tokens"] >= 1000 and x["cost_usd"] > 0 for x in log), str(log))
+    rc, out = py(d, "ae_draft.py", "draft", "--store", store, "--cap-usd", "1", "--driver", stub)
+    expect("ae_draft: a second draft call drafts nothing (resumable)",
+           rc == 0 and "draft: 0 candidates" in out, out[-300:])
+    rc, out = py(d, "build.py", "--check", "--candidates", "--set-dir", os.path.join(store, "ae-1", "candidates"))
+    expect("ae_draft: the drafted pool passes build.py --check --candidates", rc == 0, out[-600:])
+    bin_ = os.path.join(d, "bin")
+    os.makedirs(bin_)
+    with open(os.path.join(bin_, "micode"), "w") as fh:
+        fh.write(FAKE_MICODE_AX)
+    os.chmod(os.path.join(bin_, "micode"), 0o755)
+    env = dict(os.environ, PATH=bin_ + os.pathsep + os.environ["PATH"], TMPDIR=d)
+    rc, out = py(d, "ae_draft.py", "earn-ax", "--store", store, "--cap-usd", "1", "--parallel", "2", env=env)
+    expect("ae_draft earn-ax exits 0", rc == 0, out[-800:])
+    ax = os.path.join(cand, "reference.ax")
+    expect("ae_draft: a solved candidate earns reference.ax", os.path.exists(ax), out[-400:])
+    nh = os.path.join(store, "ae-1", "review", "needs-human-ax.txt")
+    nh_ids = [l.split("\t")[0] for l in open(nh) if not l.startswith("#")] if os.path.exists(nh) else []
+    expect("ae_draft: an unsolved candidate goes to needs-human-ax.txt", nh_ids == [ids["lower"]], str(nh_ids))
+    log = [json.loads(l) for l in open(os.path.join(store, "drafting", "log.jsonl"))]
+    expect("ae_draft: earn-ax logs its calls per candidate",
+           sorted(x["event"] for x in log if x["event"].startswith("ax-")) == ["ax-earned", "ax-needs-human"]
+           and all(x["calls"] >= 1 for x in log if x["event"].startswith("ax-")), str(log[-2:]))
+    rc, out = py(d, "ae_draft.py", "review", "--store", store)
+    tsv = open(os.path.join(store, "ae-1", "review", "candidates.tsv")).read().splitlines()[1:] if rc == 0 else []
+    expect("ae_draft review: one line per kept candidate, refs agree on the earned one",
+           sorted(tsv) == sorted([f"{ids['good']}\tT1\tT1-toy-good\tagree\tearned",
+                                  f"{ids['lower']}\tT1\tT1-toy-lower\tpy-only\tneeds-human"]), str(tsv))
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(store_root, ignore_errors=True)
+
+
 def main():
     # AE-2's fixtures wait ~20 s on the step-budget fixture's example timeout; they
     # run beside the rest (own scratch dirs) to keep S23's added time near 60 s.
@@ -1674,6 +1819,7 @@ def main():
     ae_loader()
     http_route()
     ae_runner()
+    ae_draft_stages()
     slow.join()
     if FAILS:
         print(f"{len(FAILS)} failure(s): {FAILS}")
