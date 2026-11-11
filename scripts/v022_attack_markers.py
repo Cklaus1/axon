@@ -4473,6 +4473,7 @@ ATTACK_MARKERS.update({
     'M5263': r'ATTACK: a card change shipped without a MINOR bump',
     'M5264': r'ATTACK: a tag was accepted that is not the released version',
     'M5265': r'ATTACK: a tag was accepted that is not the released version',
+    'M5266': r'ATTACK: a newly refused tracked program shipped without a behaviour change',
     'M5267': r"ATTACK: a released card version's sha was rewritten",
     'M5268': r'ATTACK: the release ledger hides a behaviour change from the compat diff',
 })

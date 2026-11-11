@@ -16139,6 +16139,10 @@ MUTATIONS += [
      'print("1" if has_marker(section) else "0")',
      'print("1")',
      'axon-core', '--no-default-features --test release_ledger', 'the_section_query_reports_a_behaviour_change'),
+    ('M5266', 'RC-5: a tracked program whose rc went 0 -> nonzero is not reported as newly refused', 'scripts/compat_sweep.py',
+     'if o_rc == "0" and n_rc != "0":',
+     'if False and o_rc == "0" and n_rc != "0":',
+     'axon-core', '--no-default-features --test release_ledger', 'a_tracked_program_newly_refused_needs_a_behaviour_change'),
 ]
 
 

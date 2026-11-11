@@ -265,3 +265,81 @@ fn release_ledger_controls_pass() {
         "an unreleased card line or a self-versioned crate was refused:\n{out}{err}"
     );
 }
+
+/// `compat_sweep.py --diff OLD NEW --section-has-behaviour-change FLAG` over two
+/// `compat.tsv` fixtures (release-contract RC-5): (rc, stdout, stderr).
+fn compat_diff(old: &str, new: &str, flag: &str) -> (i32, String, String) {
+    let dir = std::env::temp_dir().join(format!(
+        "axon-compat-diff-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::SeqCst)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let t = Tree(dir);
+    write(&t.0, "old.tsv", old);
+    write(&t.0, "new.tsv", new);
+    let r = repo_root();
+    let o = script(
+        "python3",
+        r.join("scripts/compat_sweep.py"),
+        Bins::NoWorkspaceBinary,
+    )
+    .arg("--diff")
+    .arg(t.0.join("old.tsv"))
+    .arg(t.0.join("new.tsv"))
+    .args(["--section-has-behaviour-change", flag])
+    .current_dir(&r)
+    .env("PYTHONDONTWRITEBYTECODE", "1")
+    .env_remove("PYTHONPATH")
+    .output()
+    .unwrap();
+    (
+        o.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&o.stdout).into_owned(),
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn a_tracked_program_newly_refused_needs_a_behaviour_change() {
+    let old = "a.ax\t0\t-\nb.ax\t0\t-\n";
+    let new = "a.ax\t2\tE0102\nb.ax\t0\t-\n";
+    let (rc, out, err) = compat_diff(old, new, "0");
+    assert_eq!(
+        rc, 1,
+        "ATTACK: a newly refused tracked program shipped without a behaviour change\n{out}{err}"
+    );
+    assert!(
+        out.contains("NEWLY REFUSED") && out.contains("a.ax"),
+        "{out}"
+    );
+    assert!(!out.contains("b.ax"), "an unchanged file was listed: {out}");
+}
+
+#[test]
+fn compat_diff_controls_pass() {
+    // The same refusal, recorded as a behaviour change.
+    let (rc, out, err) = compat_diff("a.ax\t0\t-\n", "a.ax\t2\tE0102\n", "1");
+    assert_eq!(
+        rc, 0,
+        "a recorded behaviour change was refused:\n{out}{err}"
+    );
+    assert!(out.contains("NEWLY REFUSED"), "{out}");
+    // A newly accepted file alone is informational.
+    let (rc, out, err) = compat_diff("a.ax\t2\tE0102\n", "a.ax\t0\t-\n", "0");
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("NEWLY ACCEPTED"), "{out}");
+    // Same rc and first code (only the diagnostic text moved, which the TSV never
+    // holds), a file only in one sweep, and a refusal whose code changed: rc 0.
+    let (rc, out, err) = compat_diff(
+        "a.ax\t2\tE0901\nc.ax\t2\tE0001\nold_only.ax\t0\t-\n",
+        "a.ax\t2\tE0901\nc.ax\t2\tE0102\nnew_only.ax\t2\tE0001\n",
+        "0",
+    );
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(!out.contains("a.ax"), "an unchanged file was listed: {out}");
+    assert!(
+        out.contains("c.ax"),
+        "a changed first code was not listed: {out}"
+    );
+}
