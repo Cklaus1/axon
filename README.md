@@ -295,7 +295,8 @@ builtin coverage); the native LLVM build is on by default and builds in ~3s
 goals to runnable AST, with a goal-safety stdlib (`examples/stdlib/`: Budget,
 Constraint, Principal, Uncertain + composition) and key-free demos
 (`examples/goals/`). See [STATUS.md](STATUS.md) for current state and
-[ROADMAP.md](ROADMAP.md) for forward planning.
+[ROADMAP.md](ROADMAP.md) for forward planning. Releases, versioning (0.x semver) and what
+counts as a breaking change: [spec/stability.md](spec/stability.md).
 
 **Test suite**: 1,667 tests across 52 suites in 19 crates (`cargo test --workspace`).
 One known failure: `wasm_interp_matches_native_on_pure_compute`, a message-text

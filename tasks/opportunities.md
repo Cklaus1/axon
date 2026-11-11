@@ -3553,6 +3553,10 @@ Workflows are `ci.yml`, `ios.yml`, `tee.yml`; none builds a release. The version
 and the language card (`axon card`) is not versioned against one, so syntax drift silently breaks models that write from the card or
 from training data. CI is red on every run (303/303; `tasks/ci-hygiene-spec.md` fixes that). Direction: installable versioned
 releases, an edition policy, a card version a program can declare. Size M [INFERENCE].
+`[BUILT 2026-11-11: tasks/release-contract-spec.md RC-1..RC-5 on rc/l 70f7e900: spec/stability.md (0.x semver, breaking change,
+migration diagnostics), CARD_VERSION + card-versions.txt + axon card --card-version, scripts/release_ledger.py,
+scripts/compat_sweep.py, scripts/release_package.sh and .github/workflows/release.yml. A program-level card/edition declaration
+was declined (NH-3 (a)). Not yet observed: the release-dry run and the first tag, which needs the human's go (NH-4 (a)).]`
 
 ### O-PM-05 - [medium] Operating deployed agents is specced (R46, Draft) but not reviewed or built
 "Ships an agent" has no day-2 surface in code. `governance/specs/R46-in-flight-operations.md` (Draft, 73b6fac8, from PM1-PM4)

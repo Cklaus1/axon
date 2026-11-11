@@ -511,6 +511,10 @@ enum Command {
         /// Print only the lowercase hex sha256 of the card text.
         #[arg(long)]
         sha256: bool,
+        /// Print only the card version (`CARD_VERSION`; one per card text,
+        /// listed in `crates/axon-core/card-versions.txt`).
+        #[arg(long, conflicts_with = "sha256")]
+        card_version: bool,
     },
 
     /// R44 — an accumulating typed session: bind a name in one cell, read it in
@@ -1424,7 +1428,10 @@ fn dispatch(command: Command) {
             show_values,
         } => cmd_replay(journal, diff, show_values),
         Command::Reference { json } => cmd_reference(json),
-        Command::Card { sha256 } => cmd_card(sha256),
+        Command::Card {
+            sha256,
+            card_version,
+        } => cmd_card(sha256, card_version),
         Command::Session {
             protocol,
             show_program,
@@ -5597,9 +5604,14 @@ fn parse_cell_frame(line: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// `axon card [--sha256]` (IG2): the card on stdout, or its sha256 - the value
-/// a transcript records to pin which card a model saw.
-fn cmd_card(sha256: bool) {
+/// `axon card [--sha256 | --card-version]` (IG2, RC-2): the card on stdout,
+/// its sha256 - the value a transcript records to pin which card a model saw -
+/// or its version number.
+fn cmd_card(sha256: bool, card_version: bool) {
+    if card_version {
+        println!("{}", axon_core::card::CARD_VERSION);
+        return;
+    }
     let card = axon_core::card::card();
     if sha256 {
         use sha2::Digest;

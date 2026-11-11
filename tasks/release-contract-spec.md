@@ -1,8 +1,11 @@
 # release-contract - spec (RC-1..RC-6)
 
-**Status: AUTHORIZED 2026-11-11 for RC-1..RC-5 (after Step 1 review: AuditRelease 13, DevloopRelease 7 findings, all accepted).
-Build authorized by the human 2026-11-11; NH-1..NH-4 decided the same day (§8). RC-6 waits on the 10-green streak (NH-1 (a)); no
-tag is published without the human's go (NH-4 (a)).**
+**Status: PARTIAL 2026-11-11 on rc/l a7074c4e (RC-1 98fda905; RC-2 2fb3649c, PCI note a7074c4e; RC-3 0901465b; RC-5 0012dff6;
+RC-4 664f8f1c, 70f7e900; g01 M5260-M5268 killed; `gate.sh --lane` 458 units passed at a7074c4e). RC-6 is not built (NH-1 (a): it waits on the 10-green streak), so O-CI-01 stays open. Not yet
+observed: the `release-dry/<sha8>` run (the integrator's push) and the first tag (NH-4 (a), the human's go).** AUTHORIZED 2026-11-11
+for RC-1..RC-5 (after Step 1 review: AuditRelease 13, DevloopRelease 7 findings, all accepted). Build authorized by the human
+2026-11-11; NH-1..NH-4 decided the same day (§8). RC-6 waits on the 10-green streak (NH-1 (a)); no tag is published without the
+human's go (NH-4 (a)).
 
 Author: `ReleaseContract` (2026-11-11), at main f14bc25f in worktree `specs-next2`. Scope approved by the human 2026-11-11 ("do it",
 item #3: a release and stability contract). Probes: `/var/tmp/r51-tmp/ReleaseContract/`, reference binary
@@ -556,3 +559,41 @@ on `ubuntu-24.04` runners; whether `workflow_dispatch` refuses a workflow absent
 the exact GitHub error code for a refused push; whether a personal-account ruleset can list a bypass role; whether
 `scripts/release_check.sh` prints RELEASE-VERIFIED at a current commit (not run: `scripts/completeness.py` rewrites
 `AXON-COMPLETENESS.md`, `scripts/completeness.py:26`, `:493`).
+
+### Build log (lane `rc/l`, 2026-11-11, base a01db50c)
+
+| item | commit | fail-first on base | after | g01 |
+|---|---|---|---|---|
+| RC-1 | 98fda905 | none (docs) | `doc_snippets` 2 passed | - |
+| RC-2 | 2fb3649c | `card::tests` did not compile (no `card-versions.txt`, no `CARD_VERSION`); `axon_card_prints_its_version_number` FAILED | both pass; `axon card --sha256` = `b70a0b56…eb05c` (unchanged), `--card-version` = `1`, `axon card --version` unchanged | M5260, M5261 killed (2/2, 24 s) |
+| RC-3 | 0901465b | all 8 `release_ledger` tests FAILED (no script) | 8 pass; repo: `release_ledger: PASS (0 releases)`; `gate_lane.py check` OK | M5262-M5265, M5267, M5268 killed (6/6, 54 s) |
+| RC-5 | 0012dff6 | `a_tracked_program_newly_refused_needs_a_behaviour_change`, `compat_diff_controls_pass` FAILED (no script) | 10 pass; sweep with the lane debug binary: 717 files, 626 rc 0, 91 refused, 0.44 s; 6 E0901 | M5266 killed (1/1) |
+| RC-4 | 664f8f1c, 70f7e900 | planted runs below | see below | none (spec) |
+
+RC-4 local run on this host (`/var/tmp/r51-tmp/rc-pkg/`): `scripts/release_package.sh /var/tmp/r51-tmp/rc-pkg/dist` at 664f8f1c,
+rc 0 in 62 s (release build 61 s): `axon 0.1.0 (664f8f1c)`, `static-pie linked`, card sha `b70a0b56…` and card 1, hello rc 0;
+`sha256sum -c SHA256SUMS` OK for the tarball and `compat.tsv`; the tarball holds `axon`, `LICENSE`, `card.md`, `compat.tsv`; its
+`compat.tsv` equals the debug sweep's byte for byte (rc and first code of all 717 files). Planted: `AXON_GIT_SHA=deadbeef
+scripts/release_package.sh <tmp>` rc 1 before building (names `AXON_GIT_SHA`); with `--keep-env` rc 1 after the build: `version
+line: got 'axon 0.1.0 (deadbeef)', want 'axon 0.1.0 (664f8f1c)'`; an outdir inside the checkout rc 1, nothing created.
+`release.yml` was parsed (PyYAML) and every `run:` passed `bash -n`; the notes extractor was run on a fixture CHANGELOG. No
+workflow linter exists here (§9 r4), so the first real observation is the integrator's `release-dry/<sha8>` run.
+
+`[REVISED: build 2026-11-11]` choices the spec left open, each the conservative one:
+- M5260's mutant rewords "non-zero" to "nonzero" in the `main` rule line of `CURATED`. M5265's mutant drops the lock comparison
+  (`if False and locked.get(name) != cargo_version`) rather than "lock not read", because an unread lock reports every inheriting
+  crate and the killer would still see rc 1.
+- `release_ledger.py` treats a MAJOR bump (X changes) as satisfying the MINOR rule and requires MINOR and PATCH 0 for it; it never
+  happens while 0.x. The oldest release's section runs to the end of `CHANGELOG.md` (the pre-release history), so the query
+  answers `1` for it; no compat diff exists for the first release.
+- `compat_sweep.py` records a timeout as rc 124, code `TIMEOUT`; a refusal with no JSON error code as `-`. A refusal whose first
+  code changed is listed `CODE CHANGED` and never fails the diff (rule 2(a) is about programs that checked clean).
+- `release_package.sh` takes the binary path from cargo's `--message-format=json` artifact record, never a `target/` path
+  (`harness_binaries.rs` refuses scripts that guess a profile dir). The archive is reproducible (sorted, owner 0, the commit's time,
+  `gzip -n`). The compat diff runs in the workflow (it needs the previous release's `compat.tsv` over the network), not in the
+  script; in a dry run its flag is the query for the Cargo version, `1` when that heading does not exist yet.
+- `workflow_dispatch` publishes only when `dry_run` is false AND the ref is a tag; any branch is a dry run.
+- The CHANGELOG batch heading is unnumbered (`## Batch: release-contract ...`); the integrator numbers it at merge.
+- RC-2 touches `crates/axon-core/src`, so it needs a PCI theme (`governance/notes/pci-themes/2fb3649c.json`, CLI only, no
+  pass/fail moves) and a regenerated `v022-pci-delta.md` (row list +M5260-M5261); the first `gate.sh --lane` failed at S06
+  (`pci_delta_note`) until that landed.

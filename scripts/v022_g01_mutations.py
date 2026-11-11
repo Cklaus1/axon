@@ -16102,6 +16102,49 @@ MUTATIONS += [
      'axon-core', '--no-default-features --test cli_run', 'tuple_pattern_controls_stay_legal'),
 ]
 
+# release-contract RC-2..RC-5 (ids M5260-M5268, block M5260-M5279; tasks/release-contract-spec.md §4):
+# the card version is pinned to the card text, `axon card --card-version` prints it, the release
+# ledger holds every behaviour/card change to a MINOR bump, and the compat diff reports newly
+# refused tracked programs.
+MUTATIONS += [
+    ('M5260', 'RC-2: a curated card line is reworded with CARD_VERSION unchanged', 'crates/axon-core/src/card.rs',
+     '- `main` returns the process exit code: `0` for success, non-zero for failure. Never call `exit()`.',
+     '- `main` returns the process exit code: `0` for success, nonzero for failure. Never call `exit()`.',
+     'axon-core', '--no-default-features --lib', 'card::tests::the_card_hash_is_pinned_to_its_version'),
+    ('M5261', 'RC-2: `axon card --card-version` prints 0, not CARD_VERSION', 'crates/axon-core/src/main.rs',
+     'println!("{}", axon_core::card::CARD_VERSION);',
+     'println!("{}", 0);',
+     'axon-core', '--no-default-features --test cli_run', 'axon_card_prints_its_version_number'),
+    ('M5262', 'RC-3: a release whose section records a behaviour change is not held to a MINOR bump', 'scripts/release_ledger.py',
+     '        if behaviour_changed or card_changed:',
+     '        if False and behaviour_changed or card_changed:',
+     'axon-core', '--no-default-features --test release_ledger', 'a_behaviour_change_without_a_minor_bump_is_refused'),
+    ('M5263', 'RC-3: card numbers of consecutive releases are never compared', 'scripts/release_ledger.py',
+     'card_changed = card != older_card',
+     'card_changed = False',
+     'axon-core', '--no-default-features --test release_ledger', 'a_card_change_without_a_minor_bump_is_refused'),
+    ('M5264', 'RC-3: --tag is not compared with the newest heading and the Cargo version', 'scripts/release_ledger.py',
+     'if a.tag != vstr(newest) or a.tag != "v%s" % cargo_version:',
+     'if False:',
+     'axon-core', '--no-default-features --test release_ledger', 'a_tag_that_is_not_the_cargo_version_is_refused'),
+    ('M5265', 'RC-3: the inheriting members\' Cargo.lock versions are not compared', 'scripts/release_ledger.py',
+     'if locked.get(name) != cargo_version:',
+     'if False and locked.get(name) != cargo_version:',
+     'axon-core', '--no-default-features --test release_ledger', 'a_stale_lock_version_is_refused'),
+    ('M5267', 'RC-3: a heading <sha8> is not compared with line N of card-versions.txt', 'scripts/release_ledger.py',
+     'elif not shas[card].startswith(sha8):',
+     'elif False and not shas[card].startswith(sha8):',
+     'axon-core', '--no-default-features --test release_ledger', 'a_released_card_line_rewritten_is_refused'),
+    ('M5268', 'RC-3: --section-has-behaviour-change always prints 1', 'scripts/release_ledger.py',
+     'print("1" if has_marker(section) else "0")',
+     'print("1")',
+     'axon-core', '--no-default-features --test release_ledger', 'the_section_query_reports_a_behaviour_change'),
+    ('M5266', 'RC-5: a tracked program whose rc went 0 -> nonzero is not reported as newly refused', 'scripts/compat_sweep.py',
+     'if o_rc == "0" and n_rc != "0":',
+     'if False and o_rc == "0" and n_rc != "0":',
+     'axon-core', '--no-default-features --test release_ledger', 'a_tracked_program_newly_refused_needs_a_behaviour_change'),
+]
+
 
 
 if __name__ == "__main__":

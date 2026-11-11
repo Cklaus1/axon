@@ -692,6 +692,12 @@ stage_spec_ledger() {
   python3 -B scripts/spec_ledger.py || fail "spec ledger (scripts/spec_ledger.py)"
 }
 
+# Release headings bump the version their changes require (release-contract RC-3,
+# spec/stability.md rules 3, 4, 6): offline, stdlib only, well under a second.
+stage_release_ledger() {
+  python3 -B scripts/release_ledger.py || fail "release ledger (scripts/release_ledger.py)"
+}
+
 if lane_runs P; then
 par "VISION.md focus" stage_vision_focus
 par "artifact admission" stage_artifact_admission
@@ -718,6 +724,7 @@ par "gate lane self-test" stage_gate_lane
 par "G01 mutation anchors" stage_g01_anchors
 par "harness skip rules/shapes" stage_harness_skip
 par "spec ledger" stage_spec_ledger
+par "release ledger" stage_release_ledger
 par_join
 fi
 

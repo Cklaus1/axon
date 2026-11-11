@@ -26471,6 +26471,33 @@ fn axon_card_is_generated_deterministic_and_pinned_by_its_sha256() {
     );
 }
 
+/// RC-2: `axon card --card-version` prints the card version, the `N` of the
+/// last line of `card-versions.txt`, and nothing else; it conflicts with
+/// `--sha256` (clap refuses the pair, rc 2).
+#[test]
+fn axon_card_prints_its_version_number() {
+    let file = std::fs::read_to_string(format!("{}/card-versions.txt", env!("CARGO_MANIFEST_DIR")))
+        .unwrap();
+    let last = file.lines().last().expect("card-versions.txt is empty");
+    let n = last.split(' ').next().unwrap();
+    let o = axon().args(["card", "--card-version"]).output().unwrap();
+    assert_eq!(o.status.code(), Some(0), "{o:?}");
+    assert_eq!(
+        String::from_utf8(o.stdout).unwrap(),
+        format!("{n}\n"),
+        "ATTACK: axon card does not print its card version"
+    );
+    let both = axon()
+        .args(["card", "--card-version", "--sha256"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        both.status.code(),
+        Some(2),
+        "`--card-version --sha256` must be refused: {both:?}"
+    );
+}
+
 #[test]
 fn axon_reference_is_in_sync_with_the_binary() {
     // The documentation gate, and it is a TEST rather than a shell script on
