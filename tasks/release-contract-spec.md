@@ -1,6 +1,8 @@
 # release-contract - spec (RC-1..RC-6)
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.**
+**Status: AUTHORIZED 2026-11-11 for RC-1..RC-5 (after Step 1 review: AuditRelease 13, DevloopRelease 7 findings, all accepted).
+Build authorized by the human 2026-11-11; NH-1..NH-4 decided the same day (§8). RC-6 waits on the 10-green streak (NH-1 (a)); no
+tag is published without the human's go (NH-4 (a)).**
 
 Author: `ReleaseContract` (2026-11-11), at main f14bc25f in worktree `specs-next2`. Scope approved by the human 2026-11-11 ("do it",
 item #3: a release and stability contract). Probes: `/var/tmp/r51-tmp/ReleaseContract/`, reference binary
@@ -490,6 +492,7 @@ These change no program's check or run result. NH-1..NH-4 (§8) are the product 
    **Recommendation: (a)**, as soon as the 10-green precondition holds. It keeps the integrator's local-merge workflow, the landed
    sha is the tested sha, and a red run can no longer advance `main`. (c) leaves `main` free to go red between releases, which is
    how 303 red runs accumulated (O-CI-01).
+   `[DECIDED by human 2026-11-11: (a) staging/** first, once the streak reaches 10. RC-6 is not in this build.]`
 2. **NH-2 - Version scheme.** Options:
    - (a) 0.x semver: MINOR for any behaviour change or card change, PATCH otherwise; 1.0 later by decision.
    - (b) CalVer `YYYY.M.N`: the date says how old a binary is, but nothing says whether an upgrade can break a program.
@@ -497,6 +500,7 @@ These change no program's check or run result. NH-1..NH-4 (§8) are the product 
      soundness batches (13 tagged bullets so far).
    **Recommendation: (a).** It is what Cargo and the existing `0.1.0` already express, a model or harness can compare two versions
    and know if programs may break (MINOR differs), and RC-3 can check it mechanically. Expect MINOR to move often while 0.x.
+   `[DECIDED by human 2026-11-11: (a) 0.x semver.]`
 3. **NH-3 - Can a program declare the card/edition it was written against?** Today `@[edition(e2026)]` and `@[edition("2026-11")]`
    on `main` check with W0001 "unknown attribute" and run (p1, p2); attributes attach to items only (`grammar.ebnf:84`, `:102`).
    Options:
@@ -509,6 +513,7 @@ These change no program's check or run result. NH-1..NH-4 (§8) are the product 
    **Recommendation: (a).** There is one card line today, so a declaration with one legal value tests nothing; when a second card
    version removes syntax, D4's diagnostics tell the model what to write, which a version mismatch warning does not. Deferring is
    free: (b) can be added later and old binaries tolerate it.
+   `[DECIDED by human 2026-11-11: (a) no declaration now.]`
 4. **NH-4 - Who tags, how often, and the first release.** Options:
    - (a) The integrator tags at most weekly, on a RELEASE-VERIFIED, CI-green commit after a batch; the first tag `v0.1.0` (or
      `v0.2.0` if a behaviour-change batch lands first) needs the human's explicit go, because it is the first public binary.
@@ -516,6 +521,7 @@ These change no program's check or run result. NH-1..NH-4 (§8) are the product 
    - (c) Tags only on the human's request.
    **Recommendation: (a).** Weekly matches the AE weekly cadence (`authoring-eval-spec.md:577-578` at HEAD), keeps releases cheap,
    and the first publish stays a human decision.
+   `[DECIDED by human 2026-11-11: (a) the integrator tags at most weekly; the first public tag needs the human's explicit go.]`
 
 ## 9. Verification log (f14bc25f; `/var/tmp/r51-tmp/ReleaseContract/`)
 

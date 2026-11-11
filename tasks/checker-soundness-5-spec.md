@@ -1,9 +1,10 @@
 # checker-soundness-5 - spec (CS5-1..CS5-5)
 
-**Status: DRAFT (after Step 1 review: AuditCS5 6, DevloopCS5 7 findings, all accepted). Not authorized for build.**
+**Status: AUTHORIZED 2026-11-11 (after Step 1 review: AuditCS5 6, DevloopCS5 7 findings, all accepted). Build authorized by the
+human 2026-11-11 ("yes, build it"); NH-1 (a), NH-2 (a), NH-3 (a) decided the same day (§8).**
 
 Authorized for specification by the human 2026-11-11 ("do it", item #2: fix "checks clean, then panics at run" gaps). The Step 1
-review (below) is folded in; the build still needs the human's authorization and answers to NH-1..NH-3. Nothing here is implemented.
+review (below) is folded in; build authorized and NH-1..NH-3 answered 2026-11-11. Nothing here is implemented yet.
 
 ### Step 1 review
 
@@ -511,15 +512,18 @@ language-behaviour questions.
    uses that panic, which needs an exemption for `println`/`==`/joins of a numeric binding (a second rule, and the let twins stay
    refused, so the language disagrees with itself); (c) warn instead. **Recommend (a)**: one rule for a name whatever binds it, the
    same class the human accepted for TP-1, and a model learns one behaviour.
+   `[DECIDED by human 2026-11-11: (a) refuse - one rule for a name whatever binds it.]`
 2. **NH-2 - extend CS5-5's E0405 to `while let` and to nested sub-patterns?** `v10` (`while let D::Up = c` on a `C`: the loop never
    runs), `v03` (`Some(D::Up)`), `v07` (`(D::Up, n)`) are the same "can never match" fact and run a dead arm today. Options: (a) yes:
    call the check from `Expr::WhileLet` and walk `Some`/`Ok`/`Err`/tuple sub-patterns (~20 lines, two more refusals classes, still 0
    tracked hits); (b) no: build CS4-5 exactly as decided and log the residual as a new opportunity. **Recommend (a)**: the decided
    reason ("a silent dead arm") holds for each, and the corpus has no multi-enum match.
+   `[DECIDED by human 2026-11-11: (a) yes - E0405 also from while let and nested Some/Ok/Err/tuple sub-patterns.]`
 3. **NH-3 - is CS5-4 (P3) in this batch?** It closes the most common late-resolved shape (`match arr_find(..) { Some((a, b)) => ..}`)
    but adds a solve-time pass whose reach over untyped lambda params is unverified. Options: (a) yes, with D5's kind-only rule and the
    sweep as the stop rule; (b) no, log it and keep O-LF-01's remainder open. **Recommend (a)**: the reproductions use stdlib calls a
    model writes often, the rule refuses nothing the concrete twin does not, and a tracked rc change stops it.
+   `[DECIDED by human 2026-11-11: (a) yes - CS5-4 is in the batch, kind-only, with the sweep as its stop rule.]`
 
 ## 9. Verification log (reference binary `/var/tmp/r51-tmp/sn2-bin/axon`, f14bc25f)
 
