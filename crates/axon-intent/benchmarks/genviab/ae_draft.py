@@ -583,16 +583,18 @@ def cmd_draft(a):
 
 # ---------------------------------------------------------------- stage 2: earn reference.ax
 
-def accepted_source(transcript):
-    """The accepted round's program, as checked, from an arm-a transcript, or None."""
+def accepted_source(out, cid):
+    """The accepted program of a set-dir arm-a run: `<out>/programs/<id>.ax`, else the
+    transcript's last round when it was accepted; None when there is none."""
+    prog = os.path.join(out, "programs", f"{cid}.ax")
+    if os.path.exists(prog):
+        return open(prog).read()
+    transcript = os.path.join(out, "transcripts", f"{cid}.a.json")
     if not os.path.exists(transcript):
         return None
-    tr = json.load(open(transcript))
-    for rnd in reversed(tr.get("rounds", [])):
-        rep = rnd.get("report") or {}
-        if rep.get("stage") == "accepted":
-            return rep.get("source")
-    return None
+    rounds = json.load(open(transcript)).get("rounds") or []
+    rep = (rounds[-1].get("report") or {}) if rounds else {}
+    return rep.get("source") if rep.get("stage") == "accepted" else None
 
 
 def needs_human(st):
@@ -626,17 +628,18 @@ def cmd_earn_ax(a):
     if s + reserve > a.cap_usd:
         print(f"earn-ax: BUDGET CAP: ${s:.4f} spent + ${reserve} reserve > ${a.cap_usd}", file=sys.stderr)
         return 3
-    # genviab's cap is over its own spend root: give it this store's remaining cap on top of that.
+    # genviab's cap check is spent(results/) + spent(--out): give it results/' spend plus this
+    # store's remaining cap (the fresh --out starts at $0).
     root_spent = genviab.spent()
     out = os.path.join(st.ax_runs, datetime.datetime.now().strftime("%Y%m%dT%H%M%S"))
     cmd = [sys.executable, "-B", os.path.join(HERE, "genviab.py"), "run", "--set-dir", st.cands,
-           "--arm", "a", "--generator", "micode", "--model", MODEL, "--out", out,
+           "--candidates", "--arm", "a", "--generator", "micode", "--model", MODEL, "--out", out,
            "--only", ",".join(c["id"] for c in todo), "--parallel", str(a.parallel),
            "--cap-usd", f"{root_spent + a.cap_usd - s:.6f}", "--reserve-usd", f"{reserve:.6f}"]
     print(f"earn-ax: {len(todo)} candidates; ${s:.4f} spent of ${a.cap_usd}; out {out}", flush=True)
     r = subprocess.run(cmd)
-    rows = {row["task"]: row for row in genviab.call_rows(os.path.join(out, "rows.jsonl"))
-            if row.get("task")}
+    rows = {row["id"]: row for row in genviab.call_rows(os.path.join(out, "rows.jsonl"))
+            if row.get("id")}
     counts = {}
     for c in todo:
         cid = c["id"]
@@ -645,7 +648,7 @@ def cmd_earn_ax(a):
         if row is None or row.get("infra"):
             state, why = "infra", "no row" if row is None else "infra row"
         else:
-            src = accepted_source(os.path.join(out, "transcripts", f"{cid}.a.json"))
+            src = accepted_source(out, cid)
             t = gv.load_task(d, require_ax=False)
             g = gv.grade_axon(t, src) if (row.get("verified") and src) else None
             if g and g["passed"]:
