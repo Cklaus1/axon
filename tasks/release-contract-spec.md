@@ -2,8 +2,12 @@
 
 **Status: PARTIAL 2026-11-11 on rc/l f4688f4b (RC-1 98fda905; RC-2 2fb3649c, PCI note a7074c4e; RC-3 0901465b; RC-5 0012dff6;
 RC-4 664f8f1c, 70f7e900; impl audit fixes 35039eee, cdd9b4b5, f4688f4b; g01 M5260-M5274 killed; `gate.sh --lane` 458 units
-passed at f4688f4b). RC-6 is not built (NH-1 (a): it waits on the 10-green streak), so O-CI-01 stays open. Not yet
-observed: the `release-dry/<sha8>` run (the integrator's push) and the first tag (NH-4 (a), the human's go).** AUTHORIZED 2026-11-11
+passed at f4688f4b). Integrated on int/b8 e6cef163 with checker-soundness-5: `gate.sh --strict` rc 0 (8314 passed, 0 failed,
+51m19s). RC-4 acceptance (2) observed: `release-dry/1b6a914e` run 43079167644 and, after the audit's workflow rewrite,
+`release-dry/e6cef163` run 43090455485 both green (precondition lines `SKIPPED (dry run)`, `Publish the release` job skipped);
+each artifact's `SHA256SUMS` verified locally with `sha256sum -c`, binary static-pie, `axon --version` = `axon 0.1.0 (<sha8>)`.
+RC-6 is not built (NH-1 (a): it waits on the 10-green streak), so O-CI-01 stays open. Not yet observed: the first tag
+(NH-4 (a), the human's go).** AUTHORIZED 2026-11-11
 for RC-1..RC-5 (after Step 1 review: AuditRelease 13, DevloopRelease 7 findings, all accepted). Build authorized by the human
 2026-11-11; NH-1..NH-4 decided the same day (§8). RC-6 waits on the 10-green streak (NH-1 (a)); no tag is published without the
 human's go (NH-4 (a)).
