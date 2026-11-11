@@ -3533,6 +3533,8 @@ on the genviab harness, a fixed task set, several models, run per release, with 
 Same metric as PM12 (`AI_Language_Plan.md:2127-2131`, "make it a standing product metric"), never specced. Size M [INFERENCE].
 `[SPECCED 2026-11-10: tasks/authoring-eval-spec.md AE-1..AE-7, DRAFT after Step 1 review (AuditAE 24, DevloopAE 15 findings, all
 accepted). NH-1..NH-6 (model set, paid budget, task mix/authorship, private storage, gating, CERE credential) are needs-human.]`
+`[PARTIAL 2026-11-10: the harness (AE-1..AE-7: CERE route, failure classes, `ae` loader, `ae.py`, weekly screen) is built on
+`ae/h`; stays open until the task set is frozen and the first release row is in `ae/history.jsonl`.]`
 
 ### O-PM-02 - [high] The non-expert journey (VISION success criterion 4) is demonstrated but not measured with a person
 `VISION.md:86-87`: "A non-expert states a goal, reviews and approves the plan, and ships an agent". The parts exist (`axon intent`,
@@ -3674,3 +3676,23 @@ Open questions for the human: whether the target is perceived latency (`axon run
 whether shape 1's "second run is native" behaviour is acceptable given that a run's engine then depends on cache state
 (reproducibility of `axon run` across machines). Recommendation: shape 1 only, as a DRAFT spec with a parity gate
 (`scripts/parity_all.sh` already diffs interpreter vs native on 54 programs) and an opt-in env var before any default flip.
+
+## authoring-eval build, 2026-11-10 (out of scope of `tasks/authoring-eval-spec.md` §1, logged at build)
+
+### O-AE-01 - [low] Opt-in field telemetry from real users' `intent compile` runs
+PM12's literal form. Needs consent, privacy and a collection service; the lab eval (`ae`) answers the ranking question first.
+
+### O-AE-02 - [medium] Authoring tasks that call AI builtins (`extract`, `ai_complete`)
+Grading needs deterministic replay fixtures inside the ceiling sandbox; `gv.intent_env` drops `AXON_AI_MOCK`, so the `ae` set keeps
+the PM11 gallery domains without their AI calls.
+
+### O-AE-03 - [low] An `ae` arm with `spec/axon-for-llms.md` (or other docs) in context
+A prompt-content experiment, not the standing metric; run it as a one-off A/B on the frozen set.
+
+### O-AE-04 - [low] Tool-using agentic authoring (micode with tools, multi-file projects, `mod`)
+A different product surface; genviab's loop is tool-less by design (`drivers/micode-program.sh`).
+
+### O-AE-05 - [low] Paid measurement arms for `ae`
+Haiku 5.5 and an OpenRouter model per release, an Opus 5.5 escalation (`unpaired-time`, Holm across models) and an `openrouter`
+provider in `drivers/http-program.py`. NH-1 decided CERE only (2026-11-10); NH-2 needs separate approval for Opus. Reopen when NH-1
+changes; the pre-decision design stays in the spec's §3 and §6.

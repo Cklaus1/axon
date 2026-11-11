@@ -1,6 +1,6 @@
 # authoring-eval - spec (AE-1..AE-7)
 
-**Status: AUTHORIZED 2026-11-10 (after Step 1 review; human NH-1..NH-6 decisions applied 2026-11-10). Build authorized by the human 2026-11-10 ("go"); `CERE_TOKEN_AE` issuance approved the same day ("yes, add cere token"). Harness: `tasks/build-loop-ae.md`.**
+**Status: PARTIAL (harness AE-1..AE-7 built on `ae/h` at 8916f045: the CERE route, failure classes, the `ae` loader, `ae.py`, the weekly script and units, selftested, timer not installed; open: the task set and pilot (AE-3, set lane), the PREREG freeze, HR-1 human review, the first release runs and two weekly rows; O-PM-01 stays open until the first release row; O-AE-02 stays open, out of scope). AUTHORIZED 2026-11-10 (after Step 1 review; human NH-1..NH-6 decisions applied 2026-11-10). Build authorized by the human 2026-11-10 ("go"); `CERE_TOKEN_AE` issuance approved the same day ("yes, add cere token"). Harness: `tasks/build-loop-ae.md`.**
 
 A standing, per-release, per-model measure of how well models write Axon. The goal is one number per model per release that
 says whether a language or tooling change made Axon easier or harder for models to write, so future work can be ranked by its
