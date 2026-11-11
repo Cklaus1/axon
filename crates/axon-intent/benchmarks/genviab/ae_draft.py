@@ -679,6 +679,52 @@ def summarize_dir(path):
             "cost_usd": round(sum(genviab.call_cost(r) for r in rows), 6)}
 
 
+# Review flags (audit AE-I2/AE-I3): shown to HR-1, never refusals. T3's content band is the spec's tier table
+# ("80-200-line programs", measured on reference.ax: the Axon program a solver writes); an input shorter than
+# PUBLIC_MIN_BYTES once stripped ("3\n", "a,b") is too generic to call a copy of a public one.
+T3_LINES = (80, 200)
+PUBLIC_MIN_BYTES = 16
+
+
+def _inputs(examples):
+    for kind in ("visible", "hidden"):
+        for ex in examples.get(kind, []):
+            for run in ex.get("runs", []):
+                for v in (run.get("inputs") or {}).values():
+                    if isinstance(v, str) and len(v.strip()) >= PUBLIC_MIN_BYTES:
+                        yield v
+
+
+def _input_key(v):
+    return hashlib.sha256(v.strip().encode()).hexdigest()
+
+
+def public_inputs():
+    """{stripped-input sha256: "set/task"} over every example input of the public genviab sets."""
+    out = {}
+    for s in gv.GENVIAB_SETS:
+        for d in gv.task_dirs(os.path.join(HERE, s)):
+            with open(os.path.join(d, "task.json")) as fh:
+                examples = json.load(fh)["examples"]
+            for v in _inputs(examples):
+                out.setdefault(_input_key(v), f"{s}/{os.path.basename(d)}")
+    return out
+
+
+def review_flags(tier, examples, ax_text, public):
+    """Why HR-1 should look at a candidate: a T3 reference.ax outside the line band, an input copied from a public task."""
+    why = []
+    if tier == "T3" and ax_text is not None:
+        n = len(ax_text.splitlines())
+        if not T3_LINES[0] <= n <= T3_LINES[1]:
+            why.append(f"T3 reference.ax is {n} lines, outside the spec's {T3_LINES[0]}-{T3_LINES[1]}")
+    for v in _inputs(examples):
+        if _input_key(v) in public:
+            why.append(f"an example input equals one in public {public[_input_key(v)]}")
+            break
+    return why
+
+
 # ---------------------------------------------------------------- review packet
 
 REVIEW_README = """# ae-1 candidate review (HR-1)
@@ -705,6 +751,11 @@ Counts at generation:
 
 {counts}
 
+Flags at generation ({n_flags}; look, then fix, drop or keep: they are not refusals): a T3 `reference.ax`
+outside the tier table's {t3_lo}-{t3_hi} lines, or an example input ({min_bytes}+ bytes stripped) equal to one in a public
+genviab task (spec AE-3: new text with new data).
+{flags}
+
 `{check_cmd}` at generation: exit {check_rc}, {check_pass} PASS, {check_fail} FAIL.
 {check_fails}
 """
@@ -713,9 +764,10 @@ Counts at generation:
 def cmd_review(a):
     st = Store(a.store)
     plan, _ = load_plan(st)
-    human = needs_human(st)
+    human, public = needs_human(st), public_inputs()
     lines, counts = [], {t: {"planned": 0, "drafted": 0, "dropped": 0, "undrafted": 0, "ax_earned": 0,
                              "needs_human": 0, "agree": 0} for t in TIERS}
+    flags = []
     for c in plan:
         k = counts[c["tier"]]
         k["planned"] += 1
@@ -728,10 +780,14 @@ def cmd_review(a):
         t = gv.load_task(d, require_ax=False)
         py = open(os.path.join(d, "reference.py")).read()
         ax_path = os.path.join(d, "reference.ax")
+        ax_text = open(ax_path).read() if os.path.exists(ax_path) else None
+        with open(os.path.join(d, "task.json")) as fh:
+            examples = json.load(fh)["examples"]
+        flags += [f"{c['id']}: {w}" for w in review_flags(c["tier"], examples, ax_text, public)]
         py_ok = gv.grade_python_reference(t, py)["passed"]
-        if os.path.exists(ax_path):
+        if ax_text is not None:
             k["ax_earned"] += 1
-            ax_ok = gv.grade_axon(t, open(ax_path).read())["passed"]
+            ax_ok = gv.grade_axon(t, ax_text)["passed"]
             agree = "agree" if py_ok and ax_ok else ("py-fails" if not py_ok else "DISAGREE")
             ax = "earned"
         else:
@@ -756,10 +812,12 @@ def cmd_review(a):
     table.append(f"\nDrafting spend: ${st.spent():.4f} nominal ({genviab.PRICE_SOURCE}; OAuth grant).")
     with open(os.path.join(st.review, "README.md"), "w") as fh:
         fh.write(REVIEW_README.format(
-            counts="\n".join(table), check_cmd="build.py --check --candidates --set-dir ae-1/candidates",
+            counts="\n".join(table), n_flags=len(flags), t3_lo=T3_LINES[0], t3_hi=T3_LINES[1],
+            min_bytes=PUBLIC_MIN_BYTES, flags="".join(f"\n    {l}" for l in sorted(flags)),
+            check_cmd="build.py --check --candidates --set-dir ae-1/candidates",
             check_rc=chk.returncode, check_pass=sum(l.startswith("PASS") for l in chk_lines),
             check_fail=len(fails), check_fails="".join(f"\n    {l}" for l in fails)))
-    print(f"build.py --check --candidates: exit {chk.returncode}, {len(fails)} FAIL")
+    print(f"build.py --check --candidates: exit {chk.returncode}, {len(fails)} FAIL; {len(flags)} review flag(s)")
     print("\n".join(table))
     return 0
 

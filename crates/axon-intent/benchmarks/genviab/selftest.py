@@ -1929,6 +1929,32 @@ def ae_draft_stages():
     shutil.rmtree(store_root, ignore_errors=True)
 
 
+def ae_review_flags():
+    """ae_draft.review_flags: what HR-1 is shown. A T3 reference.ax outside 80-200 lines, and an example input
+    equal to a public task's; the bounds themselves, other tiers, short inputs and new data are not flagged."""
+    sys.path.insert(0, HERE)
+    import ae_draft
+    pub_text = "the quick brown fox jumps over the lazy dog\n"
+    public = {ae_draft._input_key(pub_text): "dev/x"}
+    ex = lambda *vals: {"visible": [{"runs": [{"inputs": {f"./in{i}.txt": v for i, v in enumerate(vals)}}]}]}
+    ax = lambda n: "x\n" * n
+    for tier, n, flagged in (("T3", 79, True), ("T3", 80, False), ("T3", 200, False), ("T3", 201, True),
+                             ("T2", 300, False)):
+        why = ae_draft.review_flags(tier, ex("fresh data that no public task holds\n"), ax(n), public)
+        expect(f"review flags: {tier} reference.ax of {n} lines {'is' if flagged else 'is not'} flagged",
+               bool(why) == flagged, str(why))
+    expect("review flags: a T3 candidate without reference.ax has no size flag",
+           ae_draft.review_flags("T3", ex("fresh data that no public task holds\n"), None, public) == [])
+    why = ae_draft.review_flags("T1", ex("new input\n", "  " + pub_text), None, public)
+    expect("review flags: an input equal to a public one (whitespace-stripped) is flagged",
+           why == ["an example input equals one in public dev/x"], str(why))
+    short = "a,b\n"
+    expect("review flags: an input under the byte floor is never a copy",
+           ae_draft.review_flags("T1", ex(short), None, {ae_draft._input_key(short): "dev/y"}) == [])
+    expect("review flags: the public index holds the dev set's inputs",
+           ae_draft.public_inputs().get(ae_draft._input_key(pub_text)) == "dev/a12-long-word-lengths")
+
+
 def main():
     # AE-2's fixtures wait ~20 s on the step-budget fixture's example timeout; they
     # run beside the rest (own scratch dirs) to keep S23's added time near 60 s.
@@ -1944,6 +1970,7 @@ def main():
     forged_grades()
     driver()
     path_lint_literals()
+    ae_review_flags()
     ae_loader()
     http_route()
     ae_runner()
