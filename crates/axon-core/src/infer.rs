@@ -888,6 +888,16 @@ struct CallObligation {
     derives_for: Vec<u32>,
 }
 
+/// CS5-4: a tuple pattern on a subject still unresolved at bind time,
+/// checked by kind in `solve()` once the subject resolves.
+struct DeferredTupleSubject {
+    subject: Type,
+    arity: usize,
+    /// Each `Ident` component: (index, name, the var it is bound to).
+    components: Vec<(usize, String, Type)>,
+    span: crate::span::Span,
+}
+
 /// CS3-2: the kind the calls in a lambda's body require of one of its params.
 #[derive(Clone, PartialEq)]
 enum Derived {
@@ -939,6 +949,9 @@ pub struct InferCtx {
     /// resolves. The noun (CS5 D2) names the binding in the refusal: "tuple
     /// pattern component", "pattern field", "pattern binding", "lambda param".
     tuple_component_obligations: Vec<(Type, Type, String, &'static str, crate::span::Span)>,
+    /// CS5-4: tuple patterns whose subject was still a var at bind time,
+    /// checked by kind in `solve()`; nothing is bound or unified.
+    deferred_tuple_subjects: Vec<DeferredTupleSubject>,
     /// CS2-6: calls whose callee is not a fn name with a signature. Checked
     /// by `solve()` against the callee's resolved fn type.
     call_obligations: Vec<CallObligation>,
@@ -1076,6 +1089,7 @@ impl InferCtx {
             len_obligations: Vec::new(),
             num_obligations: Vec::new(),
             tuple_component_obligations: Vec::new(),
+            deferred_tuple_subjects: Vec::new(),
             call_obligations: Vec::new(),
             struct_fields: HashMap::new(),
             struct_generic_params: HashMap::new(),
@@ -3177,6 +3191,12 @@ impl InferCtx {
                         elems = Some(ts.as_slice()).filter(|ts| ts.len() == pats.len());
                     }
                 }
+                // CS5-4: on a subject still a var, each `Ident` component's
+                // var is recorded so `solve()` can check it by kind once the
+                // subject resolves (a generic fn's return, `arr_find`'s
+                // payload). It is bound exactly as before.
+                let defer = !pats.is_empty() && matches!(subj_ty, Some(Type::Var(_)));
+                let mut components = Vec::new();
                 for (i, pat) in pats.iter().enumerate() {
                     match (pat, elems.map(|ts| &ts[i])) {
                         (Pattern::Ident(name), Some(elem)) => {
@@ -3199,8 +3219,21 @@ impl InferCtx {
                             };
                             self.bind_sub_pattern(pat, elem, &name, "pattern binding", scope);
                         }
+                        (Pattern::Ident(name), None) if defer => {
+                            let var = self.fresh();
+                            scope.bind(name.clone(), var.clone());
+                            components.push((i, name.clone(), var));
+                        }
                         _ => self.bind_pattern_with_subj(pat, scope, None),
                     }
+                }
+                if let (Some(subject), false) = (subj_ty, components.is_empty()) {
+                    self.deferred_tuple_subjects.push(DeferredTupleSubject {
+                        subject: subject.clone(),
+                        arity: pats.len(),
+                        components,
+                        span: self.current_stmt_span,
+                    });
                 }
             }
         }
@@ -3668,6 +3701,44 @@ impl InferCtx {
                     "return of a call through a fn value",
                     &mut subst,
                 );
+            }
+        }
+        // CS5-4: a tuple pattern on a subject unresolved at bind time is
+        // checked by kind now that the subject may be a tuple of the
+        // pattern's arity (D5: another arity, a non-tuple or a subject still
+        // unresolved is skipped; nothing is bound). A numeric element goes to
+        // the TP-1 loop below (used as any number); any other element must
+        // not conflict in kind with the component's use.
+        for d in std::mem::take(&mut self.deferred_tuple_subjects) {
+            let Type::Tuple(elems) = subst.apply(&d.subject) else {
+                continue;
+            };
+            if elems.len() != d.arity {
+                continue;
+            }
+            for (i, name, var) in d.components {
+                let elem = &elems[i];
+                if elem.is_numeric() {
+                    self.tuple_component_obligations.push((
+                        elem.clone(),
+                        var,
+                        name,
+                        "pattern binding",
+                        d.span,
+                    ));
+                } else {
+                    let used = subst.apply(&var);
+                    if kinds_conflict(elem, &used) {
+                        self.errors.push(
+                            InferError::mismatch(
+                                &format!("use of pattern binding `{name}`"),
+                                elem,
+                                &used,
+                            )
+                            .with_span(d.span),
+                        );
+                    }
+                }
             }
         }
         // CS2-3a: a numeric key fn (`arr_max_by`, `arr_min_by`,

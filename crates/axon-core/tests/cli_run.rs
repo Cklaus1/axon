@@ -48757,6 +48757,23 @@ fn typed_lambda_params_are_typed() {
     }
 }
 
+/// CS5-4: a tuple pattern on a subject resolved only by `solve` (a generic
+/// fn's return, `arr_find`'s payload) is checked by kind once the subject
+/// resolves to a tuple of the pattern's arity (D5: nothing is bound, no
+/// arity refusal). Each case checked rc 0 and then panicked at run.
+#[test]
+fn tuple_pattern_on_a_late_resolved_subject_is_checked() {
+    let attack = "ATTACK: a tuple pattern on a late-resolved subject checked clean";
+    let cases = [
+        ("u03", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, \"s\")) { (a, b) => println(to_str(b + 1)) }\n}\n", 3),
+        ("u04", "fn id<T>(x: T) -> T { x }\nfn main() {\n    let t = id((1, \"s\"))\n    match t { (a, b) => println(to_str(b + 1)) }\n}\n", 4),
+        ("b02", "fn main() {\n    let xs = [(1, \"s\")]\n    match arr_find(xs, |p| true) { Some((a, b)) => println(to_str(b + 1)), None => println(\"n\") }\n}\n", 3),
+    ];
+    for (tag, src, line) in cases {
+        cs5_assert_refused(attack, tag, src, "E0102", line);
+    }
+}
+
 /// CS5-1..CS5-4, NH-1 (a): a pattern binding used as another kind is refused
 /// even where the interpreter passes the value through and prints (`println`,
 /// `==`, an arm join); each concrete twin is refused today. A sub-pattern
@@ -48766,7 +48783,8 @@ fn typed_lambda_params_are_typed() {
 /// CS5-2: `g09` (`println` of a `Some(1)` payload), `g04`/`g05` (`Some` on
 /// an `i64`/`str` element, a dead arm). CS5-3: `l15` (`println` of a typed
 /// lambda's int component), `a2` (a 3-tuple pattern on a `(i64, str)` param,
-/// a dead arm).
+/// a dead arm). CS5-4: `u12` (`println` of an int component of `id((1,
+/// "s"))`).
 #[test]
 fn pattern_binding_misuse_that_runs_is_refused() {
     let attack = "ATTACK: a pattern binding used as another kind checked clean";
@@ -48783,6 +48801,7 @@ fn pattern_binding_misuse_that_runs_is_refused() {
         ("g05", "fn main() {\n    match (\"s\", 2) { (Some(a), b) => println(\"s\"), _ => println(\"o\") }\n}\n", 2),
         ("l15", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b) => println(a) }\n    f((1, \"s\"))\n}\n", 3),
         ("a2", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b, c) => 3, _ => 0 }\n    println(to_str(f((1, \"s\"))))\n}\n", 2),
+        ("u12", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, \"s\")) { (a, b) => println(a) }\n}\n", 3),
     ];
     for (tag, src, line) in cases {
         cs5_assert_refused(attack, tag, src, "E0102", line);
@@ -48798,7 +48817,9 @@ fn pattern_binding_misuse_that_runs_is_refused() {
 /// element still unresolved at bind time stays unbound, so one element var
 /// matched as `Some` in one arm and `Ok` in the next runs (`a15`). CS5-3: a
 /// numeric lambda annotation stays a free number (`l02`, `l12`, `l13`, `l16`,
-/// `l19`), an untyped one stays a var (`l25`).
+/// `l19`), an untyped one stays a var (`l25`). CS5-4: a late-resolved
+/// subject's number at any width (`u10`, `u16`); another arity is skipped,
+/// not refused (`u07`, `a26`).
 #[test]
 fn pattern_binding_controls_stay_legal() {
     let attack = "ATTACK: a valid pattern match was refused";
@@ -48842,6 +48863,12 @@ fn pattern_binding_controls_stay_legal() {
         ("l25", "fn main() {\n    let f = |x| x\n    let y: str = f(1)\n    println(y)\n}\n", "1\n"),
         ("l28", "fn main() {\n    let f = |p: (i64, str)| match p { (a, b) => b + to_str(a) }\n    println(f((1, \"s\")))\n}\n", "s1\n"),
         ("l32", "fn main() {\n    let f = |x: i64| to_str(x) + \"!\"\n    println(f(3))\n}\n", "3!\n"),
+        ("u06", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, \"s\")) { (a, b) => println(b + to_str(a)) }\n}\n", "s1\n"),
+        ("u07", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, 2, 3)) { (a, b) => println(\"2\"), _ => println(\"o\") }\n}\n", "o\n"),
+        ("u10", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, 2)) { (a, b) => { let x: u8 = a\n println(to_str(x)) } }\n}\n", "1\n"),
+        ("u15", "fn main() {\n    let xs = [(1, \"s\")]\n    match arr_find(xs, |p| true) { Some((a, b)) => println(b + to_str(a)), None => println(\"n\") }\n}\n", "s1\n"),
+        ("u16", "fn main() {\n    let xs = [(1, \"s\")]\n    match arr_find(xs, |p| true) { Some((a, b)) => { let x: u8 = a\n println(to_str(x)) }, None => println(\"n\") }\n}\n", "1\n"),
+        ("a26", "fn id<T>(x: T) -> T { x }\nfn main() {\n    match id((1, \"s\", 3)) { (a, b) => println(to_str(str_len(a))), _ => println(\"o\") }\n}\n", "o\n"),
     ];
     for (tag, src, out) in cases {
         let (crc, cmsg, rrc, rout, rerr) = sf6_check_and_run(&format!("cs5c_{tag}"), src);

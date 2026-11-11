@@ -4476,6 +4476,8 @@ ATTACK_MARKERS.update({
     'M5244': r'ATTACK: a typed lambda param of the wrong type checked clean',
     # l02/l12 (`|x: u8|` given an int literal) precede l13 in the controls.
     'M5245': r'ATTACK: a valid pattern match was refused \[cs5_l(02|12|13|16|19)\]',
+    'M5246': r'ATTACK: a tuple pattern on a late-resolved subject checked clean',
+    'M5247': r'ATTACK: a valid pattern match was refused \[cs5_a26\]',
     'M4719': r'ATTACK: a pattern of another enum checked clean',
     'M5249': r'ATTACK: a pattern of another enum checked clean',
 })
