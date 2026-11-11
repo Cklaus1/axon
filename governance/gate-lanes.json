@@ -26,7 +26,8 @@
     "gate lane self-test",
     "G01 mutation anchors",
     "harness skip rules/shapes",
-    "spec ledger"
+    "spec ledger",
+    "release ledger"
   ],
   "stages": [
     {"id": "S01", "banner": "managed-run supervision", "class": "always"},
