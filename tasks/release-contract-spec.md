@@ -1,7 +1,8 @@
 # release-contract - spec (RC-1..RC-6)
 
-**Status: PARTIAL 2026-11-11 on rc/l a7074c4e (RC-1 98fda905; RC-2 2fb3649c, PCI note a7074c4e; RC-3 0901465b; RC-5 0012dff6;
-RC-4 664f8f1c, 70f7e900; g01 M5260-M5268 killed; `gate.sh --lane` 458 units passed at a7074c4e). RC-6 is not built (NH-1 (a): it waits on the 10-green streak), so O-CI-01 stays open. Not yet
+**Status: PARTIAL 2026-11-11 on rc/l f4688f4b (RC-1 98fda905; RC-2 2fb3649c, PCI note a7074c4e; RC-3 0901465b; RC-5 0012dff6;
+RC-4 664f8f1c, 70f7e900; impl audit fixes 35039eee, cdd9b4b5, f4688f4b; g01 M5260-M5274 killed; `gate.sh --lane` 458 units
+passed at f4688f4b). RC-6 is not built (NH-1 (a): it waits on the 10-green streak), so O-CI-01 stays open. Not yet
 observed: the `release-dry/<sha8>` run (the integrator's push) and the first tag (NH-4 (a), the human's go).** AUTHORIZED 2026-11-11
 for RC-1..RC-5 (after Step 1 review: AuditRelease 13, DevloopRelease 7 findings, all accepted). Build authorized by the human
 2026-11-11; NH-1..NH-4 decided the same day (§8). RC-6 waits on the 10-green streak (NH-1 (a)); no tag is published without the
