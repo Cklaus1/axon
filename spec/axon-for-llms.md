@@ -5,7 +5,8 @@ first; reach for `spec/language-tour.md` (full tour), `spec/stdlib.md` (a curate
 and `spec/grammar.ebnf` (exact syntax) only when you need more depth. To put the language in a
 prompt, use `axon card` instead: a compact card generated from the compiler (syntax and every
 builtin's signature), the exact text `axon-intent`'s generation loop sends a model;
-`axon card --sha256` prints its digest.
+`axon card --sha256` prints its digest. What a release promises a program written against an
+older Axon (0.x semver, breaking changes, the card version) is in `spec/stability.md`.
 
 Axon is an AI-optimized, statically-typed systems language: no null, no exceptions,
 Hindley-Milner inference, structural typing, capability sandboxing, and first-class
