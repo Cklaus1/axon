@@ -1360,6 +1360,26 @@ impl InferCtx {
         }
     }
 
+    /// CS5-3: `ty` has an enum leaf of one fieldless variant, the shape
+    /// `type Name = str` parses to (an alias the interpreter erases).
+    fn names_alias_enum(&self, ty: &Type) -> bool {
+        let mut found = false;
+        ty.clone().map_leaves(&mut |t| {
+            if let Type::Enum(name) = &t {
+                found |= matches!(
+                    self.enum_variants.get(name).map(Vec::as_slice),
+                    Some([variant]) if self
+                        .enum_variant_fields
+                        .get(name)
+                        .and_then(|fields| fields.get(variant))
+                        .is_none_or(Vec::is_empty)
+                );
+            }
+            t
+        });
+        found
+    }
+
     /// Convert an AST `AxonType` to a semantic `Type`.
     pub fn resolve_ast_type(&self, ast_ty: &AxonType) -> Type {
         // Phase 5: a named refinement is transparent — resolve to its base type.
@@ -2457,12 +2477,16 @@ impl InferCtx {
                 // stays one of the lambda's own vars below; every other leaf
                 // is exact). An unannotated param, or an annotation with an
                 // unresolved part (a type param, an unknown name), stays fresh.
+                // So does one naming an alias (`type Name = str` parses as an
+                // enum whose one fieldless variant is named `str`, which the
+                // interpreter erases; the checker's `lambda_param_type` reads
+                // it the same way, `snd_lambda_alias`).
                 let param_types: Vec<Type> = params
                     .iter()
                     .map(|p| match &p.ty {
                         Some(t) => {
                             let ty = self.resolve_ast_type(t);
-                            if has_unresolved(&ty) {
+                            if has_unresolved(&ty) || self.names_alias_enum(&ty) {
                                 self.fresh()
                             } else {
                                 self.tuple_component_skeleton(&ty, &p.name, "lambda param")

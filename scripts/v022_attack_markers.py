@@ -4478,6 +4478,7 @@ ATTACK_MARKERS.update({
     'M5245': r'ATTACK: a valid pattern match was refused \[cs5_l(02|12|13|16|19)\]',
     'M5246': r'ATTACK: a tuple pattern on a late-resolved subject checked clean',
     'M5247': r'ATTACK: a valid pattern match was refused \[cs5_a26\]',
+    'M5250': r'ATTACK: a valid call through a fn value was refused \[snd_lambda_alias\]',
     'M4719': r'ATTACK: a pattern of another enum checked clean',
     'M5249': r'ATTACK: a pattern of another enum checked clean',
 })
