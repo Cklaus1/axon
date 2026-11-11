@@ -574,12 +574,13 @@ def run_arm_a(a, task, out, bins=None):
                                          row["outcome"])
         row.update(classes)
         # A reply cut at the declared max_tokens is the model's failure (spec
-        # §2): that round's candidate never counts as a pass.
+        # §2): that round's candidate never counts as a pass. An accepted final
+        # cut at the cap is accepted and not verified: M4 counts it (§2 M4).
         if trunc and trunc[0]:
             row["b_verified"] = False
         if accepted and trunc and trunc[-1]:
             row["verified"] = False
-            row["false_acceptance"] = False
+        row["false_acceptance"] = bool(accepted and not row["verified"])
         # M3 / M3t: the accepting round when the loop's program is verified.
         row["first_green_round"] = len(rounds) - 1 if row["verified"] else None
         gen_fail = next((x.get("generator_failure") for x in rounds if x.get("generator_failure")),

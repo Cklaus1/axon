@@ -1337,7 +1337,9 @@ def http_route():
         rc, out, rows, calls, _ = run()
         expect("ae1: finish_reason length at the declared cap is truncated: a failed round, not infra",
                rc == 0 and len(rows) == 1 and rows[0]["truncated_rounds"] == [0]
-               and not rows[0]["b_verified"] and not rows[0]["verified"] and not rows[0]["infra"],
+               and not rows[0]["b_verified"] and not rows[0]["verified"] and not rows[0]["infra"]
+               # F7: an accepted final cut at the cap is accepted and not verified (M4)
+               and rows[0]["accepted"] and rows[0]["false_acceptance"],
                (out[-300:], rows))
         fake.mode = "length-below"
         rc, out, rows, calls, _ = run()
