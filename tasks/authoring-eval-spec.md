@@ -1,6 +1,6 @@
 # authoring-eval - spec (AE-1..AE-7)
 
-**Status: DRAFT (after Step 1 review; human NH-1..NH-6 decisions applied 2026-11-10). Not authorized for build.**
+**Status: AUTHORIZED 2026-11-10 (after Step 1 review; human NH-1..NH-6 decisions applied 2026-11-10). Build authorized by the human 2026-11-10 ("go"); `CERE_TOKEN_AE` issuance approved the same day ("yes, add cere token"). Harness: `tasks/build-loop-ae.md`.**
 
 A standing, per-release, per-model measure of how well models write Axon. The goal is one number per model per release that
 says whether a language or tooling change made Axon easier or harder for models to write, so future work can be ranked by its
