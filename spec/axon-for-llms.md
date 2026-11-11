@@ -85,6 +85,7 @@ fn main() {
     // A variant is always qualified (`Color::Red =>`): a bare `Red =>` binds a new name
     // that matches everything, and is E0409 when Red is a variant of the subject's enum
     // a tuple pattern's components take the element types (numbers at any width): (n, s) on (i64, str) makes s + 1 an error
+    // a struct or variant pattern's fields take the declared field types (numbers at any width)
     let area = match sh {
         Shape::Circle { r }   => 3.14159 * r * r
         Shape::Square { side } => side * side
