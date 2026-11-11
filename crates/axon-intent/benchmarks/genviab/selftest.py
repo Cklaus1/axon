@@ -1369,6 +1369,19 @@ def http_route():
                   for dp, _, fs in os.walk(top) for f in fs
                   if f != "cere.env" and token in open(os.path.join(dp, f), errors="replace").read()]
         expect("ae1: the token never appears in a file under the out dirs", not leaked, leaked)
+        # F6: the replay knobs bind only under GENVIAB_SELFTEST=1 (a subprocess: this
+        # process's environment is shared with the AE-2 fixture thread).
+        probe = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('h', sys.argv[1]); "
+                 "m = importlib.util.module_from_spec(s); s.loader.exec_module(m); "
+                 "print(m.take_replay(sys.argv[2], 'k' * 64))")
+        knobs = dict(os.environ, GENVIAB_REPLAY_MIN="0", GENVIAB_REPLAY_FRACTION="0")
+        knobs.pop("GENVIAB_SELFTEST", None)
+        take = lambda e, st: subprocess.run(
+            [sys.executable, "-B", "-c", probe, os.path.join(d, "drivers", "http-program.py"),
+             os.path.join(root, st)], env=e, capture_output=True, text=True).stdout.strip()
+        prod, st = take(knobs, "f6-a"), take(dict(knobs, GENVIAB_SELFTEST="1"), "f6-b")
+        expect("ae1: GENVIAB_REPLAY_MIN/_FRACTION are ignored outside the selftest (D4 replay stays on)",
+               prod == "True" and st == "False", (prod, st))
     finally:
         fake.close()
         shutil.rmtree(d)

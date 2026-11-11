@@ -31,8 +31,9 @@ Reply cache (D4): GENVIAB_CACHE_DIR (unset: off). Key = sha256 of (prompt
 sha256, GENVIAB_SERIES, temperature, seed, max_tokens, this driver's sha256);
 never a binary sha. A hit returns the stored reply (`cache_hit: true`). A
 seeded sample of hits is re-queried (GENVIAB_REPLAY_SEED; the first
-GENVIAB_REPLAY_MIN = 20 hits of a run, then GENVIAB_REPLAY_FRACTION = 0.02 of
-them by a hash of seed and key; the run counts them in GENVIAB_RUN_STATE); a
+REPLAY_MIN = 20 hits of a run, then REPLAY_FRACTION = 0.02 of them by a hash
+of seed and key; GENVIAB_REPLAY_MIN/_FRACTION override them only under
+GENVIAB_SELFTEST=1; the run counts them in GENVIAB_RUN_STATE); a
 replay whose reply_sha256 differs writes GENVIAB_RUN_STATE/cache-disabled and
 the cache is neither read nor written for the rest of that run.
 GENVIAB_SHARE_DIR (ae.py, `regrade`): replies generated in this run, keyed the
@@ -127,9 +128,12 @@ def store_entry(root, key, entry):
 
 def take_replay(state, key):
     """Should this cache hit be re-queried? The first REPLAY_MIN hits of the run,
-    then a seeded REPLAY_FRACTION of them (counted under a lock in `state`)."""
-    frac = float(E.get("GENVIAB_REPLAY_FRACTION", REPLAY_FRACTION))
-    least = int(E.get("GENVIAB_REPLAY_MIN", REPLAY_MIN))
+    then a seeded REPLAY_FRACTION of them (counted under a lock in `state`).
+    GENVIAB_REPLAY_MIN / GENVIAB_REPLAY_FRACTION are honoured only under
+    GENVIAB_SELFTEST=1: an operator's shell never turns the D4 replay off."""
+    st = E.get("GENVIAB_SELFTEST") == "1"
+    frac = float(E.get("GENVIAB_REPLAY_FRACTION", REPLAY_FRACTION)) if st else REPLAY_FRACTION
+    least = int(E.get("GENVIAB_REPLAY_MIN", REPLAY_MIN)) if st else REPLAY_MIN
     seed = E.get("GENVIAB_REPLAY_SEED", "0")
     sampled = int(sha256(f"{seed}:{key}".encode())[:8], 16) / 0xFFFFFFFF < frac
     if not state:
