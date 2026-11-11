@@ -1485,6 +1485,12 @@ def ae_runner():
             expect("ae6: the row carries python (arm c once per run) and drift_vs_last",
                    o["python"] and o["python"]["ft_pass"] == 1.0 and o["python"]["gap_ft"] == 0.0
                    and em["python"]["ft_pass"] == 0.0 and drift == 0.75, (o["python"], drift))
+            # F3: §2 M5 is arm c - arm a: oracle Python (1.0) against empty Axon (0.0) is +1.
+            rr = lambda run_id, b: [json.loads(l) for l in
+                                    open(os.path.join(runs, run_id, b, "rows.jsonl")) if l.strip()]
+            gap = AE.python_block(rr(o["run_id"], "python"), rr(em["run_id"], "cand"), [], "v", "s")
+            expect("ae6: the Python gap is arm c - arm a (spec §2 M5)",
+                   gap["gap_ft"] == 1.0 and gap["gap_solve3"] == 1.0, gap)
             calls = lambda p: open(p).read().split().count("check") if os.path.exists(p) else 0
             expect("ae4: each binary's rows are graded with that binary (version markers pinned)",
                    o["base"]["git_head"] == "fixture-base" and o["cand"]["git_head"] == "fixture-cand"

@@ -341,6 +341,8 @@ def cache_and_cost(rows):
 
 
 def python_block(py, cand, history, set_version, series):
+    """M5 (spec §2): arm c's FT-pass and Solve@3, and the gap FT-pass(arm c) -
+    FT-pass(arm a, candidate binary); Solve@3's gap the same way round."""
     if not py:
         return None
     s = G.scored_rows(py)
@@ -350,8 +352,8 @@ def python_block(py, cand, history, set_version, series):
     sub = lambda x, y: round(x - y, 6) if x is not None and y is not None else None
     last = [h for h in history if (h.get("set") or {}).get("version") == set_version
             and (h.get("model") or {}).get("series") == series and h.get("python")]
-    return {"ft_pass": ft, "solve3": solve3, "gap_ft": sub(cm.get("ft_pass"), ft),
-            "gap_solve3": sub((cm.get("solve_at") or [None] * 4)[3], solve3),
+    return {"ft_pass": ft, "solve3": solve3, "gap_ft": sub(ft, cm.get("ft_pass")),
+            "gap_solve3": sub(solve3, (cm.get("solve_at") or [None] * 4)[3]),
             "drift_vs_last": sub(ft, last[-1]["python"]["ft_pass"]) if last else None}
 
 
@@ -877,9 +879,10 @@ def report(run_id, runs, history_path, against=None):
     py = row["python"]
     if py:
         family_of = {r["id"]: r.get("family") or r["id"] for r in rows["cand"]}
-        g = signflip(per_task_diffs(rows["python"], rows["cand"], "b_verified"), family_of)
+        # §2 M5: arm c - arm a (per_task_diffs(x, y) is y - x).
+        g = signflip(per_task_diffs(rows["cand"], rows["python"], "b_verified"), family_of)
         out.append(f"- Python (arm c, M5): FT-pass {fmt(py['ft_pass'])}, Solve@3 {fmt(py['solve3'])}; "
-                   f"gap FT (Axon cand - Python) {fmt(py['gap_ft'])}"
+                   f"gap FT (Python - Axon cand) {fmt(py['gap_ft'])}"
                    + (f" [95% CI {g['ci95'][0]:+.3f}, {g['ci95'][1]:+.3f}] over {g['n_tasks']} tasks"
                       if g else "")
                    + f"; gap Solve@3 {fmt(py['gap_solve3'])}; drift_vs_last {fmt(py['drift_vs_last'])}")
