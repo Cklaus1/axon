@@ -411,6 +411,9 @@ enter a future model's training data, and the eval would then measure memory.
   after that: the tier ships at its measured rate and PREREG records it; if T2 or T3 is ≥ 0.85 for Qwen, the set is not frozen
   (no headroom, the O-IG-03 failure). Drafted by Haiku, the set may land too hard for Qwen instead; a tier below its band is
   re-piloted with easier variants by the same knob.
+  `[DECIDED by human 2026-11-24, pilot attempt 2: T1-T3 below band ship at their measured rates with no re-pilot. The misses
+  are axon check failures on tasks Python solves at 0.69-0.90, so the size/steps knob would hide what the eval measures.
+  Recorded in PREREG-ae.md.]`
 - Then a seeded draw takes each tier's n from the survivors, with the seed in PREREG before any pilot call.
 - The pilot re-estimates ρ and ρ_fam and reruns `calib2.py` on its rows; if the release run's power at 4 points (§3) is < 0.8, k rises
   before n does. PREREG records the measured s/trial and calls/trial, and §6 is rewritten from them.

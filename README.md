@@ -1,5 +1,7 @@
 # Axon
 
+**The language where AI-written code can't escape.**
+
 A statically-typed, AI-first systems language that compiles to native code via LLVM 23 —
 where **AI-written code is sandboxed by the compiler**, not by trust.
 

@@ -91,12 +91,16 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
   (top codes E0001, E0102, E0000, E0303, E0403).
   - Every sandbox refusal is `dir_create("./out")` under the grant `./out/`: intended behaviour
     (`tasks/containment-b4-spec.md` CBA-2), scored as an Axon failure.
-- **needs-human (open):** AE-3's remedy, a re-pilot with easier variants by a size/steps knob, does not address
-  check failures.
-  - Options: (a) ship each tier at its measured rate and record why; (b) re-pilot as AE-3 is written; (c) re-band by
-    Solve@3 or by the Python-arm rate (a spec change).
-  - Recommendation: (a).
-  - The A/A run (seeds 3,4,5), the pilot table and the freeze wait on this decision.
+- **Tier decision:** `[DECIDED by human 2026-11-24: (a) - each tier ships at its measured rate; no re-pilot]`.
+  - Why: AE-3's re-pilot knob (size, steps, error paths) tunes task difficulty. The tasks are not too hard: Python solves
+    them at 0.69-0.90.
+  - The misses are Axon-surface failures (`axon check` refusals), which is what the eval exists to measure. Easier
+    variants would hide them.
+  - This waives an AE-3 step. AE-3 (`tasks/authoring-eval-spec.md:409-413`) ships a tier at its measured rate only after
+    one re-pilot with easier variants; the human skipped that re-pilot. The "T2 or T3 ≥ 0.85" no-headroom stop does not
+    apply (T2 0.153, T3 0.055).
+  - Rejected: (b) re-pilot as AE-3 is written; (c) re-band by Solve@3 or by the Python-arm rate.
+  - Next: the A/A run (seeds 3,4,5, same pool, binaries and series), then the pilot table and the freeze.
 
 ## Not in this file
 
