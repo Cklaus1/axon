@@ -18,7 +18,7 @@ use crate::builtins::{BuiltinFn, BUILTINS};
 /// rule 4). It increases by 1 whenever [`card`]'s text changes, and
 /// `crates/axon-core/card-versions.txt` gets one appended line
 /// `<N> <sha256 of the card>`; a test holds the last line to this card.
-pub const CARD_VERSION: u32 = 1;
+pub const CARD_VERSION: u32 = 2;
 
 /// Sections 1 and 2: syntax and program rules. Every ```` ```axon ```` block
 /// is a whole program that `axon check` accepts (tested).
@@ -54,6 +54,8 @@ fn main() -> i64 {
     let total = 0
     for i in 0..3 { total = total + i }        // i = 0, 1, 2
     while total < 10 { total = total + 1 }
+    let xs: [i64] = []
+    if len(xs) > 0 || !(x > 1) { return 1 }
     let p = Point { x: 1, y: 2 }
     // `{expr}` inside a string literal is interpolated; `{{` and `}}` are literal braces.
     println("{label} {to_str(p.x + p.y)} {to_str(add(total, 1))}")
@@ -137,11 +139,33 @@ Rules the checker enforces:
 - `mut` is not a keyword (it is ignored); `&mut` is.
 - A generic fn or a builtin is not a value: wrap it in a lambda, `|n| abs_i64(n)`.
 
+### Habits from other languages
+
+- logic: you may write `a or b`, `a and b`, `not a` -> Axon writes `a || b`, `a && b`, `!a`
+- result: you may write `if r is Err`, `r.is_err()`, `r.unwrap()` -> Axon writes `match r { Ok(v) => .., Err(e) => .. }`
+- option: you may write `o.unwrap_or(d)`, `if o is Some` -> Axon writes `match o { Some(v) => .., None => .. }`
+- empty: you may write `arr_new()`, `Vec::new()` -> Axon writes `let xs: [i64] = []`
+- push: you may write `xs.push(v)` -> Axon writes `xs = arr_push(xs, v)` (a new array)
+- pop: you may write `xs.pop()`, `arr_pop(xs)` -> Axon writes `let last = xs[len(xs) - 1]` then `xs = arr_take(xs, len(xs) - 1)`
+- remove: you may write `arr_remove(xs, i)` -> Axon writes `xs = arr_concat(arr_take(xs, i), arr_drop(xs, i + 1))`
+- copy: you may write `arr_copy(xs)` -> Axon writes `let ys = xs`
+- repeat: you may write `[0; n]` -> Axon writes `arr_repeat(0, n)`
+- suffix: you may write `0i64` -> Axon writes `0`
+- convert: you may write `str(n)`, `int(s)`, `i64(s)` -> Axon writes `to_str(n)`, `parse_int(s)` (a `Result`)
+- record: you may write `{ name: n }` (unnamed) -> Axon writes `type Item = { name: str }` at the top level, then `Item { name: n }`
+- lambda: you may write `fn(a: i64) -> i64 { a + 1 }` as a value -> Axon writes `|a: i64| a + 1`
+- question: you may write `?` in a fn not returning `Result` -> Axon writes `match`, or make the fn return `Result`
+- type: you may write `type T = ...` inside a fn -> Axon writes `type` at the top level only
+- brace: you may write `"{"` for a brace character -> Axon writes `"{{"`
+
 ## 2. Program rules
 
 - `main` returns the process exit code: `0` for success, non-zero for failure. Never call `exit()`.
-- File builtins return `Result`: match every one. On `Err`, report with `eprintln` and return a non-zero code.
+- File builtins return `Result`: match every one, and return a non-zero code on `Err`.
+- Print what the task says to print with `println` (stdout), including error messages it names; `eprintln` only
+  for a message the task does not specify.
 - Write each path with EXACTLY the prefix spelling the task gives: allowed `./out/` means `"./out/result.txt"`.
+  A write prefix ending in `/` already exists: write files into it; never call `dir_create` on it (refused).
 - The capability ceiling is imposed from outside. Declare no `@[contained]` or other capability attribute, and
   touch only what the task allows: no network, no processes, no environment variables unless it says so.
 
@@ -150,6 +174,7 @@ fn main() -> i64 {
     match read_file("./data/input.txt") {
         Ok(text) => {
             let lines = str_split(text, "\n")
+            if len(lines) > 0 && lines[len(lines) - 1] == "" { lines = arr_take(lines, len(lines) - 1) }
             let out = ""
             for i in 0..len(lines) {
                 out = out + str_to_upper(lines[i]) + "\n"
@@ -667,6 +692,180 @@ mod tests {
             missing.is_empty(),
             "ATTACK: a builtin is missing from the card: {missing:?}"
         );
+    }
+
+    /// The keys of the "Habits from other languages" list, in card order. A
+    /// row is `- <key>: you may write <wrong> -> Axon writes <right>`; the list
+    /// runs from its heading to the next heading.
+    fn habit_keys(text: &str) -> Vec<&str> {
+        let mut keys = Vec::new();
+        let mut inside = false;
+        for line in text.lines() {
+            if line.starts_with('#') {
+                inside = line == "### Habits from other languages";
+                continue;
+            }
+            let Some(row) = line.strip_prefix("- ").filter(|_| inside) else {
+                continue;
+            };
+            let (key, rest) = row.split_once(": you may write ").unwrap_or_else(|| {
+                panic!("a habit row is not `- <key>: you may write ..`: {line:?}")
+            });
+            assert!(
+                rest.contains(" -> Axon writes "),
+                "a habit row names no Axon form: {line:?}"
+            );
+            keys.push(key);
+        }
+        keys
+    }
+
+    /// AG-1: (row key, a whole program in the Axon form, whole programs in the
+    /// habit's form). Synthetic programs that name language forms only.
+    const HABIT_FIXTURES: &[(&str, &str, &[&str])] = &[
+        (
+            "logic",
+            "fn main() -> i64 {\n    let a = true\n    let b = false\n    if a || b { println(\"x\") }\n    if a && !b { println(\"y\") }\n    0\n}\n",
+            &[
+                "fn main() -> i64 {\n    let a = true\n    let b = false\n    if a or b { println(\"x\") }\n    0\n}\n",
+                "fn main() -> i64 {\n    let a = true\n    let b = false\n    if a and b { println(\"x\") }\n    0\n}\n",
+                "fn main() -> i64 {\n    let a = true\n    if not a { println(\"x\") }\n    0\n}\n",
+            ],
+        ),
+        (
+            "result",
+            "fn main() -> i64 {\n    let r = parse_int(\"3\")\n    match r {\n        Ok(v) => println(to_str(v))\n        Err(e) => println(e)\n    }\n    0\n}\n",
+            &[
+                "fn main() -> i64 {\n    let r = parse_int(\"3\")\n    if r is Err { println(\"e\") }\n    0\n}\n",
+                "fn main() -> i64 {\n    let r = parse_int(\"3\")\n    if r.is_err() { println(\"e\") }\n    0\n}\n",
+                "fn main() -> i64 {\n    let r = parse_int(\"3\")\n    r.unwrap()\n}\n",
+            ],
+        ),
+        (
+            "option",
+            "fn main() -> i64 {\n    let o = Some(1)\n    match o {\n        Some(v) => println(to_str(v))\n        None => println(\"n\")\n    }\n    0\n}\n",
+            &[
+                "fn main() -> i64 {\n    let o = Some(3)\n    o.unwrap_or(0)\n}\n",
+                "fn main() -> i64 {\n    let o = Some(1)\n    if o is Some(v) { println(\"x\") }\n    0\n}\n",
+            ],
+        ),
+        (
+            "empty",
+            "fn main() -> i64 {\n    let xs: [i64] = []\n    println(to_str(len(xs)))\n    0\n}\n",
+            &[
+                "fn main() -> i64 {\n    let xs: [i64] = arr_new()\n    println(to_str(len(xs)))\n    0\n}\n",
+                "fn main() -> i64 {\n    let xs: [i64] = Vec::new()\n    println(to_str(len(xs)))\n    0\n}\n",
+            ],
+        ),
+        (
+            "push",
+            "fn main() -> i64 {\n    let xs: [i64] = []\n    xs = arr_push(xs, 1)\n    println(to_str(len(xs)))\n    0\n}\n",
+            &["fn main() -> i64 {\n    let xs: [i64] = []\n    xs.push(1)\n    println(to_str(len(xs)))\n    0\n}\n"],
+        ),
+        (
+            "pop",
+            "fn main() -> i64 {\n    let xs = [1, 2, 3]\n    let last = xs[len(xs) - 1]\n    xs = arr_take(xs, len(xs) - 1)\n    println(\"{to_str(last)} {to_str(len(xs))}\")\n    0\n}\n",
+            &[
+                "fn main() -> i64 {\n    let xs = [1, 2, 3]\n    let last = xs.pop()\n    println(to_str(last))\n    0\n}\n",
+                "fn main() -> i64 {\n    let xs = [1, 2, 3]\n    let last = arr_pop(xs)\n    println(to_str(last))\n    0\n}\n",
+            ],
+        ),
+        (
+            "remove",
+            "fn main() -> i64 {\n    let xs = [1, 2, 3]\n    let i = 1\n    xs = arr_concat(arr_take(xs, i), arr_drop(xs, i + 1))\n    println(to_str(len(xs)))\n    0\n}\n",
+            &["fn main() -> i64 {\n    let xs = [1, 2, 3]\n    xs = arr_remove(xs, 1)\n    println(to_str(len(xs)))\n    0\n}\n"],
+        ),
+        (
+            "copy",
+            "fn main() -> i64 {\n    let xs = [1, 2, 3]\n    let ys = xs\n    println(to_str(len(ys)))\n    0\n}\n",
+            &["fn main() -> i64 {\n    let xs = [1, 2, 3]\n    let ys = arr_copy(xs)\n    println(to_str(len(ys)))\n    0\n}\n"],
+        ),
+        (
+            "repeat",
+            "fn main() -> i64 {\n    let n = 3\n    let xs = arr_repeat(0, n)\n    println(to_str(len(xs)))\n    0\n}\n",
+            &["fn main() -> i64 {\n    let n = 3\n    let xs = [0; n]\n    println(to_str(len(xs)))\n    0\n}\n"],
+        ),
+        (
+            "suffix",
+            "fn main() -> i64 {\n    let x = 0\n    x\n}\n",
+            &[
+                "fn main() -> i64 {\n    let x = 0i64\n    x\n}\n",
+                "fn main() -> i64 {\n    println(to_str(0i64))\n    0\n}\n",
+            ],
+        ),
+        (
+            "convert",
+            "fn main() -> i64 {\n    let s = to_str(3)\n    match parse_int(s) {\n        Ok(v) => v\n        Err(_) => 1\n    }\n}\n",
+            &[
+                "fn main() -> i64 {\n    let s = str(3)\n    println(s)\n    0\n}\n",
+                "fn main() -> i64 {\n    int(\"3\")\n}\n",
+                "fn main() -> i64 {\n    i64(\"3\")\n}\n",
+            ],
+        ),
+        (
+            "record",
+            "type Item = { name: str }\nfn main() -> i64 {\n    let n = \"a\"\n    let it = Item { name: n }\n    println(it.name)\n    0\n}\n",
+            &["fn main() -> i64 {\n    let n = \"a\"\n    let it = { name: n }\n    println(it.name)\n    0\n}\n"],
+        ),
+        (
+            "lambda",
+            "fn main() -> i64 {\n    let f = |a: i64| a + 1\n    f(1)\n}\n",
+            &["fn main() -> i64 {\n    let f = fn(a: i64) -> i64 { a + 1 }\n    f(1)\n}\n"],
+        ),
+        (
+            "question",
+            "fn g(s: str) -> i64 {\n    match parse_int(s) {\n        Ok(v) => v\n        Err(_) => 0\n    }\n}\nfn main() -> i64 { g(\"1\") }\n",
+            &[
+                "fn g(s: str) -> i64 {\n    let v = parse_int(s)?\n    v\n}\nfn main() -> i64 { g(\"1\") }\n",
+                "fn g(s: str) -> bool {\n    let v = parse_int(s)?\n    v > 0\n}\nfn main() -> i64 { if g(\"1\") { 1 } else { 0 } }\n",
+                "fn g(s: str) -> Option<i64> {\n    let v = parse_int(s)?\n    Some(v)\n}\nfn main() -> i64 {\n    match g(\"1\") {\n        Some(v) => v\n        None => 0\n    }\n}\n",
+            ],
+        ),
+        (
+            "type",
+            "type T = { a: i64 }\nfn main() -> i64 {\n    let t = T { a: 1 }\n    t.a\n}\n",
+            &["fn main() -> i64 {\n    type T = { a: i64 }\n    let t = T { a: 1 }\n    t.a\n}\n"],
+        ),
+        (
+            "brace",
+            "fn main() -> i64 {\n    println(\"{{\")\n    0\n}\n",
+            &["fn main() -> i64 {\n    println(\"{\")\n    0\n}\n"],
+        ),
+    ];
+
+    fn check_errors(src: &str) -> Vec<String> {
+        crate::check_pipeline(src, "habit.ax")
+            .into_iter()
+            .filter(|d| d.severity == "error")
+            .map(|d| format!("{} {}:{} {}", d.code, d.line, d.col, d.message))
+            .collect()
+    }
+
+    /// AG-1 (CF-3): the card's habit list and this fixture name the same rows,
+    /// every Axon form checks clean and every habit form is refused. A
+    /// language change that makes a row untrue fails here.
+    #[test]
+    fn every_habit_row_is_true_of_the_checker() {
+        let fixture: Vec<&str> = HABIT_FIXTURES.iter().map(|(k, _, _)| *k).collect();
+        assert_eq!(
+            habit_keys(CURATED),
+            fixture,
+            "ATTACK: the card's habit rows are not the fixture's rows"
+        );
+        for (key, good, bads) in HABIT_FIXTURES {
+            let errors = check_errors(good);
+            assert!(
+                errors.is_empty(),
+                "ATTACK: habit row `{key}`: the Axon form is refused: {errors:?}\n{good}"
+            );
+            assert!(!bads.is_empty(), "habit row `{key}` has no habit form");
+            for bad in bads.iter() {
+                assert!(
+                    !check_errors(bad).is_empty(),
+                    "ATTACK: habit row `{key}`: the habit form now checks clean\n{bad}"
+                );
+            }
+        }
     }
 
     #[test]
