@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 99da94d99903500277576bcbbcbdeffe2f9a6504
+generated-at: fedcf06e3d399260e6ca858d7feec14c5b89a07d
 
-`git diff --numstat 31413ca7..99da94d9 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..fedcf06e -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -98,7 +98,7 @@ generated-at: 99da94d99903500277576bcbbcbdeffe2f9a6504
 | `crates/axon-core/src/mono.rs` | 71 | 17 |
 | `crates/axon-core/src/mut_borrow.rs` | 944 | 0 |
 | `crates/axon-core/src/outcome.rs` | 256 | 0 |
-| `crates/axon-core/src/parse_help.rs` | 574 | 2 |
+| `crates/axon-core/src/parse_help.rs` | 615 | 2 |
 | `crates/axon-core/src/parser.rs` | 766 | 64 |
 | `crates/axon-core/src/path_scope.rs` | 467 | 0 |
 | `crates/axon-core/src/replay.rs` | 40 | 17 |
@@ -108,9 +108,9 @@ generated-at: 99da94d99903500277576bcbbcbdeffe2f9a6504
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 74198 | 10147 |
+| total | 74239 | 10147 |
 
-`git log --reverse 31413ca7..99da94d9 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..fedcf06e -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -581,7 +581,8 @@ generated-at: 99da94d99903500277576bcbbcbdeffe2f9a6504
 | c2788200 | AG-1 card 2 | CLI only (card.rs): the language card's text moves to card 2 (CARD_VERSION 2, card-versions.txt line 2): a keyed "Habits from other languages" list, `[]`/`||`/`!` in the section 1 example, the `./out/` and println rules, and the file example dropping the trailing empty piece. A lib test holds every habit row's Axon form to check clean and its habit form to be refused. No checker, interpreter, runtime or sealed-run path is touched, so no program's pass/fail moves. |
 | 277db656 | AG-2 parse-tier habit help | DIAGNOSTICS only (parse_help.rs): eleven parse-tier E0000 errors (`is`, an unnamed `{ k: v }` record, `[x; n]`, a typed literal `0i64`, `fn(..)` as a value, a nested fn item, a lone `{` in a string, `type` in a fn, `type X {`, `**`, `*x`) now carry a help line, each keyed on the observed message plus a source shape. Diagnostic codes, messages, line/col and exit codes are unchanged; the parser, checker and interpreter are not touched, so no program's pass/fail moves. |
 | 99da94d9 | AG-2 test markers | Tests only (parse_help.rs test module): ATTACK markers on three negative assertions for the g01 rows. No behaviour change. |
-| 467 commits | | |
+| 20f2453a | AG-2 habit arms narrowed (impl audit) | DIAGNOSTICS only (parse_help.rs): the `type`-in-a-fn help needs `type <Name>` then `=`, `{` or `<` (a field named `type` gets none), the `**` power help reads the line without a trailing `//` comment, and `return fn(..)` gets the lambda help. Diagnostic codes, messages, line/col and exit codes are unchanged; no program's pass/fail moves. |
+| 468 commits | | |
 <!-- END MECHANICAL -->
 
 
