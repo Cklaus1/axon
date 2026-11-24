@@ -72,6 +72,32 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
 - No number from attempt 1 is used for tiers, ρ, the draw or the A/A SD. Attempt 2 repeats the pilot runs above
   unchanged (same pool, binaries, seeds 0,1,2) on the series current at its start.
 
+## Pilot attempt 2 (recorded 2026-11-24): valid; tiers below band, decision open
+
+- Run `20261111-183515-pilot-k3-a2`, series `cere:Qwen3.8-Flash-Next:796f2f99a2fe5c02:722357d5e54ae8d8` (still served
+  2026-11-24), 5 h 20 min, $0.
+  - Infra 4 / 3123 (all `finish_reason 'repetition'`).
+  - 0 `build_changed` calls; 0 canary hits.
+- Round-0 FT-pass (arm a, scored rows) against the AE-3 bands; Python is arm c:
+
+| tier | band | n | FT-pass | check-fail | sandbox `./out` | Solve@3 | Python FT-pass |
+|---|---|---|---|---|---|---|---|
+| T1 | ≥ 0.85 | 267 | 0.378 | 0.281 | 0.037 | 0.667 | 0.903 |
+| T2 | [0.4, 0.75] | 339 | 0.153 | 0.599 | 0.053 | 0.563 | 0.858 |
+| T3 | [0.15, 0.5] | 256 | 0.055 | 0.715 | 0.043 | 0.289 | 0.690 |
+| TS | any | 177 | 0.203 | 0.503 | 0.079 | 0.616 | 0.915 |
+
+- T1-T3 are all below their bands. Python solves the same tasks at 0.69-0.90, and most Axon misses fail `axon check`
+  (top codes E0001, E0102, E0000, E0303, E0403).
+  - Every sandbox refusal is `dir_create("./out")` under the grant `./out/`: intended behaviour
+    (`tasks/containment-b4-spec.md` CBA-2), scored as an Axon failure.
+- **needs-human (open):** AE-3's remedy, a re-pilot with easier variants by a size/steps knob, does not address
+  check failures.
+  - Options: (a) ship each tier at its measured rate and record why; (b) re-pilot as AE-3 is written; (c) re-band by
+    Solve@3 or by the Python-arm rate (a spec change).
+  - Recommendation: (a).
+  - The A/A run (seeds 3,4,5), the pilot table and the freeze wait on this decision.
+
 ## Not in this file
 
 No task text, example, reference, family idea or canary (spec AE-3 contamination rules); those live only in the private store.
