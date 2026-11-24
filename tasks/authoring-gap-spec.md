@@ -119,6 +119,10 @@ and needs no paid run.
      forms above use existing builtins and were run (§6).
    - `[REVISED: CF-12]` A row stays only if its class also occurs in round-0 failures on the 107 pool tasks outside the
      frozen draw (seed in PREREG). A row whose class occurs only on drawn tasks is dropped and logged.
+   - `[REVISED: build 2026-11-24]` The CF-12 filter was NOT run: the frozen draw does not exist yet. `PREREG-ae.md` is
+     `Status: DRAFT`; the draw takes each tier's first n by `sha256("<seed>:<id>")` from the **survivors** of the
+     post-pilot second human review, which is not recorded, and no committed code implements the draw. All 16 rows are
+     kept. The filter runs at the freeze, before AG-4; a row it drops is a card change (card 3).
 2. Use `[]`, `||` and `!` in the §1 example program. A typed empty array is today shown nowhere.
 3. §2 Program rules: "A write prefix ending in `/` that the task allows (e.g. `./out/`) already exists when the program runs.
    Write files into it; never call `dir_create` on it (refused)." `[REVISED: CF-17; the runner check is done, §0]`
@@ -354,6 +358,11 @@ Reserved M5280-M5299. Each row names exactly one (crate, target, test).
 - `[REVISED: CF]` AuditAG confirmed every AG-1 right form checks with 0 errors and runs, and every wrong form is refused;
   and observed the colliding shapes in CF-5..CF-10.
 - Receipt: `scorecard.py receipt --check` PASS at 52279a84; the digest covers `axon-cortex` only (`scorecard.py:89-99`).
+- `[REVISED: build 2026-11-24]` Build lane: `habits.py` on the pilot run, the pre-AG-2 binary then the lane binary,
+  own help / n: `is` 0 -> 33/33, record 0 -> 34/34, `[x; n]` 0 -> 18/18, suffix 0 -> 12/12, `fn(..)` value 0 -> 7/7,
+  nested `fn` 0 -> 5/5, `"{"` 0 -> 12/12, `type` in fn 0 -> 9/9, `type X {` 0 -> 9/9, `*x` 0 -> 5/5, `**` n = 0;
+  excluded 0 per class (550 refused attempts, 1 now checks clean). The record class is 34, §0's colon count 35: the
+  35th is a `{"params": ..}` dict literal, which keeps the dict row's help (DevloopAG's 1/35).
 
 ## 7. needs-human (excluded from the build)
 
