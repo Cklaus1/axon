@@ -361,9 +361,15 @@ Reserved M5280-M5299. Each row names exactly one (crate, target, test).
 - Receipt: `scorecard.py receipt --check` PASS at 52279a84; the digest covers `axon-cortex` only (`scorecard.py:89-99`).
 - `[REVISED: build 2026-11-24]` Build lane: `habits.py` on the pilot run, the pre-AG-2 binary then the lane binary,
   own help / n: `is` 0 -> 33/33, record 0 -> 34/34, `[x; n]` 0 -> 18/18, suffix 0 -> 12/12, `fn(..)` value 0 -> 7/7,
-  nested `fn` 0 -> 5/5, `"{"` 0 -> 12/12, `type` in fn 0 -> 9/9, `type X {` 0 -> 9/9, `*x` 0 -> 5/5, `**` n = 0;
+  nested `fn` 0 -> 5/5, `"{"` 0 -> 12/12, `type` in fn 0 -> 8/8, `type X {` 0 -> 9/9, `*x` 0 -> 5/5, `**` n = 0;
   excluded 0 per class (550 refused attempts, 1 now checks clean). The record class is 34, §0's colon count 35: the
   35th is a `{"params": ..}` dict literal, which keeps the dict row's help (DevloopAG's 1/35).
+- `[REVISED: impl audit AuditImplAG 2026-11-24]` AG-M1: `ae.py`'s name-in-card test reads only a habit row's right side
+  (card 2's wrong forms `arr_new`, `int`, `unwrap` .. are not names in the card; `ae5` pins it). AG-m1: the `type` arm
+  needs `type <Name>` then `=` / `{` / `<` (a field named `type` gets none; the pilot's 9th `type` row was a
+  `{ type = .. }` field, so `habits.py`'s class is now that shape, n = 8). AG-m2: `**` inside a trailing `//` comment is
+  not code. AG-m3: `return fn(..)` gets the lambda help. No g01 row was added: M5280-M5299 is full; M5284 and M5289
+  were re-anchored to the edited lines.
 
 ## 7. needs-human (excluded from the build)
 
