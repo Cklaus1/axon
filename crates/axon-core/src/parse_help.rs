@@ -1129,7 +1129,8 @@ mod tests {
         let idx = "fn main() -> i64 {\n    let y = xs[0; 1]\n    0\n}\n";
         assert_eq!(
             help_at("unexpected token: Semi, expected RBracket", idx, "; ", 2),
-            None
+            None,
+            "ATTACK: AG-2 `repeat` fired on an index `xs[0; 1]`"
         );
     }
 
@@ -1167,7 +1168,8 @@ mod tests {
                 ")\n",
                 0
             ),
-            None
+            None,
+            "ATTACK: AG-2 `suffix` fired on a name before a type"
         );
     }
 
@@ -1213,7 +1215,11 @@ mod tests {
         // A named fn mid-expression (`1 + fn g`) starts no statement, and a
         // lambda is the other row.
         let mid = "fn main() -> i64 {\n    let x = 1 + fn g() { 0 }\n    0\n}\n";
-        assert_eq!(help_at(msg, mid, "fn g", 0), None);
+        assert_eq!(
+            help_at(msg, mid, "fn g", 0),
+            None,
+            "ATTACK: AG-2 `fn_nested` fired mid-expression"
+        );
         let lambda = "fn main() -> i64 {\n    let f = fn(a: i64) -> i64 { a }\n    0\n}\n";
         assert_ne!(
             help_at(msg, lambda, "fn(", 0).as_deref(),

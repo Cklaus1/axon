@@ -4506,3 +4506,27 @@ ATTACK_MARKERS.update({
     'M5253': r'ATTACK: a tuple pattern on a late-resolved subject checked clean \[c3\]',
 })
 
+# authoring-gap AG-1/AG-2 (ids M5280-M5299)
+ATTACK_MARKERS.update({
+    'M5280': r'ATTACK: AG-2 habit `is` gave no help',
+    'M5281': r'ATTACK: AG-2 habit `record` gave no help',
+    'M5282': r'ATTACK: AG-2 habit `repeat` gave no help',
+    'M5283': r'ATTACK: AG-2 habit `suffix` gave no help',
+    'M5284': r'ATTACK: AG-2 habit `fn_value` gave no help',
+    'M5285': r'ATTACK: AG-2 habit `fn_nested` gave no help',
+    'M5286': r'ATTACK: AG-2 habit `brace` gave no help',
+    'M5287': r'ATTACK: AG-2 habit `type_in_fn` gave no help',
+    'M5288': r'ATTACK: AG-2 habit `type_brace` gave no help',
+    'M5289': r'ATTACK: AG-2 habit `pow` gave no help',
+    'M5290': r'ATTACK: AG-2 habit `deref` gave no help',
+    'M5291': r'ATTACK: AG-2 `record` took the dict row',
+    'M5292': r'ATTACK: AG-2 `record` took the walrus row',
+    'M5293': r'ATTACK: AG-2 `type_brace` fired on `let x \{`',
+    'M5294': r'ATTACK: AG-2 `fn_nested` fired mid-expression',
+    'M5295': r'ATTACK: AG-2 `repeat` fired on an index',
+    'M5296': r'ATTACK: AG-2 `suffix` fired on a name before a type',
+    'M5297': r"ATTACK: the card's habit rows are not the fixture's rows",
+    'M5298': r"ATTACK: the card's habit rows are not the fixture's rows",
+    'M5299': r'ATTACK: the card text changed without a card version bump',
+})
+
