@@ -3712,3 +3712,19 @@ A different product surface; genviab's loop is tool-less by design (`drivers/mic
 Haiku 5.5 and an OpenRouter model per release, an Opus 5.5 escalation (`unpaired-time`, Holm across models) and an `openrouter`
 provider in `drivers/http-program.py`. NH-1 decided CERE only (2026-11-10); NH-2 needs separate approval for Opus. Reopen when NH-1
 changes; the pre-decision design stays in the spec's §3 and §6.
+
+## authoring-gap spec, 2026-11-24 (out of scope of `tasks/authoring-gap-spec.md`, logged at Step 1)
+
+### O-AG-01 - [low] Plain `axon run` maps a `main` return of 2-10 to exit 1
+The card says `main`'s return value is the exit code and "Never call `exit()`". Plain `axon run` of a `main` returning 4
+prints the RESERVED-code notice and exits 1 (by design, `governance/EXIT_CODES.md`). The intent runner keeps the code, so
+grading is unaffected, but a writer testing locally sees a different exit code than the card promises. Found by AG-3.
+
+### O-AG-02 - [low] `let x = 0i64` gets no hint
+It fails at the resolve tier (E0001 "cannot find name `i64`"), which `parse_help` never sees. AG-2 covers only the parse-tier
+forms (`f(0i64)`, `[0i64]`). A resolve-tier foreign-suffix help would close it.
+
+### O-AG-03 - [medium] Builtins the wrong-output audit points at (NHG-3)
+`arr_pop` / an array slice, and `str_lines` (a split without the trailing empty piece). 19 of 30 sampled wrong-output rows
+involve splitting a file into lines. Measure card 2 first (AG-4); propose `str_lines` in its own spec if the trailing-newline
+share stays above 25%.
