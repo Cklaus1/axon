@@ -134,6 +134,198 @@ fn after_variant_paren(src: &str, offset: usize) -> bool {
     !ident.is_empty() && before[..before.len() - ident.len()].ends_with("::")
 }
 
+/// The source from `offset` on. Clamped to a char boundary like [`line_at`].
+fn text_after(src: &str, offset: usize) -> &str {
+    let mut offset = offset.min(src.len());
+    while offset > 0 && !src.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    &src[offset..]
+}
+
+/// The trailing name of `text` (letters, digits, `_`), possibly empty.
+fn trailing_word(text: &str) -> &str {
+    let start = text
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    &text[start..]
+}
+
+/// Whether the `:` at `offset` ends the first key of a `{ key: … }` literal in
+/// expression position: `{` then a name or a string, the `{` itself after
+/// `=`, `(`, `,`, `[`, `{`, `=>` or `return`. A block's `{` follows a
+/// condition, a type or `)`, so `if c { x: 1 }` and a first statement
+/// `total: i64 = 0` in a fn body are not one.
+fn unnamed_record_key(src: &str, offset: usize) -> bool {
+    let before = text_before(src, offset);
+    let key_start = match before.strip_suffix('"') {
+        Some(s) => match s.rfind('"') {
+            Some(i) => i,
+            None => return false,
+        },
+        None => {
+            let key = trailing_word(before);
+            if key.is_empty() || key.starts_with(|c: char| c.is_ascii_digit()) {
+                return false;
+            }
+            before.len() - key.len()
+        }
+    };
+    let Some(lead) = before[..key_start].trim_end().strip_suffix('{') else {
+        return false;
+    };
+    let lead = lead.trim_end();
+    lead.ends_with(['=', '(', ',', '[', '{'])
+        || lead.ends_with("=>")
+        || trailing_word(lead) == "return"
+}
+
+/// Whether the `;` that ends the text before `offset` sits in `[x; …`: the
+/// innermost open `[` holds one expression (no top-level `,`) and opens an
+/// expression, not an index. `xs[0;]` and `[1, 2; 3]` are not one.
+fn in_repeat_array(src: &str, offset: usize) -> bool {
+    let Some(before) = text_before(src, offset).strip_suffix(';') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    for (i, c) in before.char_indices().rev() {
+        match c {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '{' if depth == 0 => return false,
+            '[' if depth == 0 => {
+                let lead = before[..i].trim_end();
+                let word = trailing_word(lead);
+                let index = lead.ends_with([')', ']'])
+                    || !(word.is_empty() || word == "return" || word == "in");
+                return !index;
+            }
+            '(' | '{' | '[' => depth -= 1,
+            ',' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// AG-2: habits from other languages whose parse error named a token and
+/// carried no help. Each row keys on the observed parser message plus a local
+/// source shape (`tests/parse_help_probe.rs::habit_forms_point_at_the_axon_spelling`);
+/// `benchmarks/genviab/habits.py` measures them on a run's round-0 programs.
+fn habit_help(msg: &str, src: &str, offset: usize) -> Option<&'static str> {
+    // `if r is Err` / `while o is None`: `is` lexes as a name after the subject.
+    if msg.starts_with("unexpected token: Ident(\"is\"), expected") {
+        return Some(
+            "`is` is not an Axon operator — test a variant with \
+             `match x { Err(_) => …, _ => … }`",
+        );
+    }
+    // `{ name: n }`: a record literal with no type name. The dict-literal
+    // (`{"`) and walrus (`:=`) rows below share the message and keep it.
+    if msg.contains("unexpected token: Colon, expected expression")
+        && !line_at(src, offset).contains("{\"")
+        && !line_at(src, offset).contains(":=")
+        && unnamed_record_key(src, offset)
+    {
+        return Some(
+            "an unnamed record needs a named type — declare `type T = { k: i64 }` at \
+             the top level, then build `T { k: v }`; a map is \
+             `dict_from_pairs([(\"k\", v)])`",
+        );
+    }
+    // `[0; n]`: Rust's repeat array. The parser consumed the `;`.
+    if msg.contains("unexpected token: Semi, expected RBracket") && in_repeat_array(src, offset) {
+        return Some(
+            "Axon has no `[x; n]` — write `arr_repeat(x, n)`; an empty array is \
+             `let xs: [str] = []`",
+        );
+    }
+    // `0i64`: a typed literal. The parser consumed the suffix, which a digit
+    // precedes. (`let x = 0i64` reaches the resolve tier instead.)
+    if let Some((suffix, _)) = msg
+        .strip_prefix("unexpected token: Ident(\"")
+        .and_then(|rest| rest.split_once("\")"))
+    {
+        let numeric = matches!(
+            suffix,
+            "i8" | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+                | "f32"
+                | "f64"
+        );
+        if numeric
+            && text_before(src, offset)
+                .strip_suffix(suffix)
+                .is_some_and(|b| b.ends_with(|c: char| c.is_ascii_digit()))
+        {
+            return Some(
+                "number literals take no type suffix — write `0`, not `0i64` (and `1.0`, \
+                 not `1.0f64`)",
+            );
+        }
+    }
+    // `fn` where an expression goes: a lambda written `fn(..)` after `=`, `(`
+    // or `,`, or a named fn item that starts a statement inside a fn body.
+    if msg.contains("unexpected token: Fn, expected expression") {
+        let before = text_before(src, offset);
+        let rest = text_after(src, offset);
+        if let Some(after) = rest.strip_prefix("fn") {
+            let after = after.trim_start();
+            if after.starts_with('(') && before.ends_with(['=', '(', ',']) {
+                return Some("a lambda is written `|a: i64| a + 1`, not `fn(..)`");
+            }
+            // First on its line, or right after a `{` / `}`.
+            let gap = &src[before.len()..src.len() - rest.len()];
+            let starts_statement =
+                before.is_empty() || gap.contains('\n') || before.ends_with(['{', '}']);
+            if after.starts_with(|c: char| c.is_alphabetic() || c == '_') && starts_statement {
+                return Some(
+                    "fn items live at the top level, outside any fn — move it out, or bind \
+                     a lambda: `let f = |a: i64| a + 1`",
+                );
+            }
+        }
+    }
+    // `"{"`: a lone brace opens an interpolation slot.
+    if msg == "unclosed `{` in interpolated string" {
+        return Some(
+            "a literal brace in a string is `{{` / `}}` — a single `{` opens an \
+             interpolated expression",
+        );
+    }
+    // `type T = { … }` inside a fn body.
+    if msg.contains("unexpected token: Type, expected expression") {
+        return Some("`type` declarations live at the top level, outside any fn");
+    }
+    // `type X { … }`: the `=` is missing. `let x { 1 }` shares the message.
+    if msg.contains("unexpected token: LBrace, expected Eq")
+        && words(token_line(src, offset)).first() == Some(&"type")
+    {
+        return Some("a record type is `type X = { field: i64 }` — the `=` is required");
+    }
+    // `a ** 2` (power) or `*x` (dereference): a `*` where an operand goes.
+    if msg.contains("unexpected token: Star, expected expression") {
+        return Some(if line_at(src, offset).contains("**") {
+            "Axon has no `**` — multiply (`a * a`), or call `pow_i64(a, n)` (`pow(x, y)` \
+             for `f64`)"
+        } else {
+            "Axon has no `*` dereference — use the value directly; a `&` borrow reads \
+             like the value"
+        });
+    }
+    None
+}
+
 /// CS3-5: forms Axon refuses on purpose, whose parse error named a token and
 /// not the Axon spelling. Each row keys on the observed parser message plus
 /// the line (see `tests/parse_help_probe.rs::refused_forms_point_at_the_axon_spelling`).
@@ -202,6 +394,9 @@ pub fn parse_help(msg: &str, src: &str, offset: usize) -> Option<String> {
     let w = words(line);
 
     if let Some(h) = refused_form_help(msg, src, offset) {
+        return Some(h.to_string());
+    }
+    if let Some(h) = habit_help(msg, src, offset) {
         return Some(h.to_string());
     }
 
@@ -848,6 +1043,254 @@ mod tests {
             );
             assert!(h.contains(op), "must name the Axon spelling `{op}`: {h}");
         }
+    }
+
+    /// AG-2: `parse_help` for `src`, at the byte where `at` starts plus `skip`.
+    fn help_at(msg: &str, src: &str, at: &str, skip: usize) -> Option<String> {
+        parse_help(msg, src, src.find(at).expect("fixture holds `at`") + skip)
+    }
+
+    #[test]
+    fn habit_is_names_match() {
+        for (src, at) in [
+            ("fn main() -> i64 {\n    let r = parse_int(\"1\")\n    if r is Err { return 1 }\n    0\n}\n", "Err"),
+            ("fn main() -> i64 {\n    let o = Some(1)\n    while o is None { }\n    0\n}\n", "None {"),
+        ] {
+            assert_eq!(
+                help_at("unexpected token: Ident(\"is\"), expected LBrace", src, at, 0).as_deref(),
+                Some("`is` is not an Axon operator — test a variant with `match x { Err(_) => …, _ => … }`"),
+                "ATTACK: AG-2 habit `is` gave no help\n{src}"
+            );
+        }
+    }
+
+    const RECORD_HELP: &str =
+        "an unnamed record needs a named type — declare `type T = { k: i64 }` at \
+        the top level, then build `T { k: v }`; a map is `dict_from_pairs([(\"k\", v)])`";
+
+    #[test]
+    fn habit_unnamed_record_names_a_type() {
+        for src in [
+            "fn main() -> i64 {\n    let p = { name: \"x\", n: 1 }\n    0\n}\n",
+            "fn main() -> i64 {\n    xs = arr_push(xs, { id: 1 })\n    0\n}\n",
+            "fn f() -> i64 {\n    return { id: 1 }\n}\n",
+        ] {
+            assert_eq!(
+                help_at("unexpected token: Colon, expected expression", src, ": ", 0).as_deref(),
+                Some(RECORD_HELP),
+                "ATTACK: AG-2 habit `record` gave no help\n{src}"
+            );
+        }
+    }
+
+    #[test]
+    fn habit_record_help_leaves_dict_walrus_and_blocks_alone() {
+        // The dict-literal and walrus arms share the message; a block's
+        // `{` (after a condition) and an annotation are not a record literal.
+        let msg = "unexpected token: Colon, expected expression";
+        let dict = "fn main() {\n    let d = {\"a\": 1}\n}\n";
+        let h = help_at(msg, dict, ": ", 0).unwrap_or_default();
+        assert!(
+            h.contains("dict_from_pairs([(\"a\", 1)"),
+            "ATTACK: AG-2 `record` took the dict row: {h}"
+        );
+        let walrus = "fn main() {\n    let p = { c := 0 }\n}\n";
+        let h = help_at(msg, walrus, ":=", 0).unwrap_or_default();
+        assert!(
+            h.contains("no `:=`"),
+            "ATTACK: AG-2 `record` took the walrus row: {h}"
+        );
+        for src in [
+            "fn main() -> i64 {\n    if true { x: 1 }\n    0\n}\n",
+            "fn main() -> i64 {\n    let x = if true { a: 1 } else { 0 }\n    0\n}\n",
+            "fn main() -> i64 {\n    let m = { 1: \"a\" }\n    0\n}\n",
+        ] {
+            assert_ne!(
+                help_at(msg, src, ": ", 0).as_deref(),
+                Some(RECORD_HELP),
+                "ATTACK: AG-2 `record` fired on a non-record colon\n{src}"
+            );
+        }
+    }
+
+    #[test]
+    fn habit_repeat_array_names_arr_repeat() {
+        for src in [
+            "fn main() -> i64 {\n    let xs = [0; 5]\n    0\n}\n",
+            "fn main() -> i64 {\n    let xs = [[0; 3]; 5]\n    0\n}\n",
+        ] {
+            assert_eq!(
+                help_at("unexpected token: Semi, expected RBracket", src, "; ", 2).as_deref(),
+                Some("Axon has no `[x; n]` — write `arr_repeat(x, n)`; an empty array is `let xs: [str] = []`"),
+                "ATTACK: AG-2 habit `repeat` gave no help\n{src}"
+            );
+        }
+        // An index is not an array literal.
+        let idx = "fn main() -> i64 {\n    let y = xs[0; 1]\n    0\n}\n";
+        assert_eq!(
+            help_at("unexpected token: Semi, expected RBracket", idx, "; ", 2),
+            None
+        );
+    }
+
+    #[test]
+    fn habit_literal_suffix_names_the_bare_literal() {
+        for (msg, src, at) in [
+            (
+                "unexpected token: Ident(\"i64\"), expected RParen",
+                "fn main() -> i64 {\n    f(0i64)\n}\n",
+                ")\n",
+            ),
+            (
+                "unexpected token: Ident(\"i64\"), expected RBracket",
+                "fn main() -> i64 {\n    let xs = [0i64, 1]\n    0\n}\n",
+                ",",
+            ),
+            (
+                "unexpected token: Ident(\"f64\"), expected RParen",
+                "fn main() -> i64 {\n    f(1.5f64)\n}\n",
+                ")\n",
+            ),
+        ] {
+            assert_eq!(
+                help_at(msg, src, at, 0).as_deref(),
+                Some("number literals take no type suffix — write `0`, not `0i64` (and `1.0`, not `1.0f64`)"),
+                "ATTACK: AG-2 habit `suffix` gave no help\n{src}"
+            );
+        }
+        // A type name after a name (`f(x i64)`) is not a suffixed literal.
+        let name = "fn main() -> i64 {\n    f(x i64)\n}\n";
+        assert_eq!(
+            help_at(
+                "unexpected token: Ident(\"i64\"), expected RParen",
+                name,
+                ")\n",
+                0
+            ),
+            None
+        );
+    }
+
+    const LAMBDA_HELP: &str = "a lambda is written `|a: i64| a + 1`, not `fn(..)`";
+    const NESTED_FN_HELP: &str =
+        "fn items live at the top level, outside any fn — move it out, or bind a lambda: `let f = |a: i64| a + 1`";
+
+    #[test]
+    fn habit_fn_value_names_the_lambda() {
+        let msg = "unexpected token: Fn, expected expression";
+        for src in [
+            "fn main() -> i64 {\n    let f = fn(a: i64) -> i64 { a + 1 }\n    0\n}\n",
+            "fn main() -> i64 {\n    ap(fn(a: i64) -> i64 { a }, 1)\n}\n",
+            "fn main() -> i64 {\n    ap(1, fn(a: i64) -> i64 { a })\n}\n",
+        ] {
+            assert_eq!(
+                help_at(msg, src, "fn(", 0).as_deref(),
+                Some(LAMBDA_HELP),
+                "ATTACK: AG-2 habit `fn_value` gave no help\n{src}"
+            );
+        }
+        // A nested named fn is the other row, not this one.
+        let nested = "fn main() -> i64 {\n    fn helper(a: i64) -> i64 { a }\n    0\n}\n";
+        assert_ne!(
+            help_at(msg, nested, "fn helper", 0).as_deref(),
+            Some(LAMBDA_HELP)
+        );
+    }
+
+    #[test]
+    fn habit_nested_fn_names_the_top_level() {
+        let msg = "unexpected token: Fn, expected expression";
+        for src in [
+            "fn main() -> i64 {\n    fn helper(a: i64) -> i64 { a }\n    helper(1)\n}\n",
+            "fn main() -> i64 { fn helper(a: i64) -> i64 { a }\n    helper(1)\n}\n",
+        ] {
+            assert_eq!(
+                help_at(msg, src, "fn helper", 0).as_deref(),
+                Some(NESTED_FN_HELP),
+                "ATTACK: AG-2 habit `fn_nested` gave no help\n{src}"
+            );
+        }
+        // A named fn mid-expression (`1 + fn g`) starts no statement, and a
+        // lambda is the other row.
+        let mid = "fn main() -> i64 {\n    let x = 1 + fn g() { 0 }\n    0\n}\n";
+        assert_eq!(help_at(msg, mid, "fn g", 0), None);
+        let lambda = "fn main() -> i64 {\n    let f = fn(a: i64) -> i64 { a }\n    0\n}\n";
+        assert_ne!(
+            help_at(msg, lambda, "fn(", 0).as_deref(),
+            Some(NESTED_FN_HELP)
+        );
+    }
+
+    #[test]
+    fn habit_lone_brace_names_the_escape() {
+        let src = "fn main() -> i64 {\n    println(\"{\")\n    0\n}\n";
+        assert_eq!(
+            help_at("unclosed `{` in interpolated string", src, "\"{", 0).as_deref(),
+            Some("a literal brace in a string is `{{` / `}}` — a single `{` opens an interpolated expression"),
+            "ATTACK: AG-2 habit `brace` gave no help"
+        );
+    }
+
+    #[test]
+    fn habit_type_in_fn_names_the_top_level() {
+        let src = "fn main() -> i64 {\n    type Row = { n: i64 }\n    0\n}\n";
+        assert_eq!(
+            help_at(
+                "unexpected token: Type, expected expression",
+                src,
+                "type",
+                0
+            )
+            .as_deref(),
+            Some("`type` declarations live at the top level, outside any fn"),
+            "ATTACK: AG-2 habit `type_in_fn` gave no help"
+        );
+    }
+
+    #[test]
+    fn habit_type_without_eq_names_the_eq() {
+        let msg = "unexpected token: LBrace, expected Eq";
+        let src = "type Row { n: i64 }\nfn main() -> i64 { 0 }\n";
+        assert_eq!(
+            help_at(msg, src, "{", 0).as_deref(),
+            Some("a record type is `type X = { field: i64 }` — the `=` is required"),
+            "ATTACK: AG-2 habit `type_brace` gave no help"
+        );
+        // `let x { 1 }` shares the message and is not a type.
+        let let_brace = "fn main() -> i64 {\n    let x { 1 }\n    0\n}\n";
+        assert_eq!(
+            help_at(msg, let_brace, "{ 1", 0),
+            None,
+            "ATTACK: AG-2 `type_brace` fired on `let x {{`"
+        );
+    }
+
+    #[test]
+    fn habit_power_names_pow() {
+        let src = "fn main() -> i64 {\n    let b = a ** 2\n    b\n}\n";
+        assert_eq!(
+            help_at("unexpected token: Star, expected expression", src, "* 2", 0).as_deref(),
+            Some("Axon has no `**` — multiply (`a * a`), or call `pow_i64(a, n)` (`pow(x, y)` for `f64`)"),
+            "ATTACK: AG-2 habit `pow` gave no help"
+        );
+    }
+
+    #[test]
+    fn habit_deref_names_the_value() {
+        let msg = "unexpected token: Star, expected expression";
+        let src = "fn main() -> i64 {\n    let b = *a\n    b\n}\n";
+        assert_eq!(
+            help_at(msg, src, "*a", 0).as_deref(),
+            Some("Axon has no `*` dereference — use the value directly; a `&` borrow reads like the value"),
+            "ATTACK: AG-2 habit `deref` gave no help"
+        );
+        let pow = "fn main() -> i64 {\n    let b = a ** 2\n    b\n}\n";
+        assert!(
+            !help_at(msg, pow, "* 2", 0)
+                .unwrap_or_default()
+                .contains("dereference"),
+            "ATTACK: AG-2 `deref` fired on `a ** 2`"
+        );
     }
 
     #[test]

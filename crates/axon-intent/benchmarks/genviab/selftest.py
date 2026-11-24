@@ -59,6 +59,8 @@ manifests, rejected-ideas.json and once-ledger.jsonl are never touched:
     rerun drafts nothing; the pool passes `build.py --check --candidates`; earn-ax
     (arm a --candidates) earns reference.ax for a solved candidate and lists an
     unsolved one in needs-human-ax.txt; `review` writes one line per candidate.
+(h) habits.py (authoring-gap AG-2): its own `--selftest` on synthetic programs exits 0
+    (with the real axon, every habit class gets its own help line).
 Exit 0 when every check holds; otherwise the failures are listed, exit 1.
 """
 import datetime
@@ -1968,6 +1970,13 @@ def ae_review_flags():
            ae_draft.public_inputs().get(ae_draft._input_key(pub_text)) == "dev/a12-long-word-lengths")
 
 
+def habits_selftest():
+    """habits.py --selftest in its own process; AXON_BIN and GENVIAB_REQUIRE_BINS pass through."""
+    r = subprocess.run([sys.executable, "-B", os.path.join(HERE, "habits.py"), "--selftest"],
+                       capture_output=True, text=True)
+    expect("habits.py --selftest exits 0", r.returncode == 0, (r.stdout + r.stderr)[-2000:])
+
+
 def main():
     # AE-2's fixtures wait ~20 s on the step-budget fixture's example timeout; they
     # run beside the rest (own scratch dirs) to keep S23's added time near 60 s.
@@ -1988,6 +1997,7 @@ def main():
     http_route()
     ae_runner()
     ae_draft_stages()
+    habits_selftest()
     slow.join()
     if FAILS:
         print(f"{len(FAILS)} failure(s): {FAILS}")

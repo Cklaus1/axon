@@ -782,3 +782,101 @@ fn the_refused_form_advice_actually_compiles() {
         assert!(errs.is_empty(), "`{label}` advice must compile: {errs:?}");
     }
 }
+
+/// AG-2 (`tasks/authoring-gap-spec.md`): habits from other languages whose
+/// parse error named a token and carried no help. One probe line per arm,
+/// synthetic programs that name language forms only; before AG-2 each help
+/// was `None`.
+#[test]
+fn habit_forms_point_at_the_axon_spelling() {
+    let attack = "ATTACK: an AG-2 habit's parse error named no Axon spelling";
+    for (tag, src, want) in [
+        ("is", "fn main() -> i64 {\n    let r = parse_int(\"1\")\n    if r is Err { return 1 }\n    0\n}\n", "`is` is not an Axon operator"),
+        ("while_is", "fn main() -> i64 {\n    let o = Some(1)\n    while o is None { }\n    0\n}\n", "`is` is not an Axon operator"),
+        ("record", "fn main() -> i64 {\n    let p = { name: \"x\", n: 1 }\n    0\n}\n", "an unnamed record needs a named type"),
+        ("record_arg", "fn main() -> i64 {\n    let xs = []\n    xs = arr_push(xs, { id: 1 })\n    0\n}\n", "an unnamed record needs a named type"),
+        ("repeat", "fn main() -> i64 {\n    let xs = [0; 5]\n    0\n}\n", "write `arr_repeat(x, n)`"),
+        ("suffix_paren", "fn f(a: i64) -> i64 { a }\nfn main() -> i64 {\n    f(0i64)\n}\n", "number literals take no type suffix"),
+        ("suffix_bracket", "fn main() -> i64 {\n    let xs = [0i64, 1]\n    0\n}\n", "number literals take no type suffix"),
+        ("fn_value", "fn main() -> i64 {\n    let f = fn(a: i64) -> i64 { a + 1 }\n    0\n}\n", "a lambda is written `|a: i64| a + 1`"),
+        ("fn_arg", "fn ap(f: fn(i64) -> i64) -> i64 { f(1) }\nfn main() -> i64 {\n    ap(fn(a: i64) -> i64 { a })\n}\n", "a lambda is written `|a: i64| a + 1`"),
+        ("fn_nested", "fn main() -> i64 {\n    fn helper(a: i64) -> i64 { a }\n    helper(1)\n}\n", "fn items live at the top level"),
+        ("brace", "fn main() -> i64 {\n    println(\"{\")\n    0\n}\n", "a literal brace in a string is `{{`"),
+        ("type_in_fn", "fn main() -> i64 {\n    type Row = { n: i64 }\n    0\n}\n", "`type` declarations live at the top level"),
+        ("type_brace", "type Row { n: i64 }\nfn main() -> i64 { 0 }\n", "a record type is `type X = { field: i64 }`"),
+        ("pow", "fn main() -> i64 {\n    let a = 2\n    let b = a ** 2\n    b\n}\n", "Axon has no `**`"),
+        ("deref", "fn main() -> i64 {\n    let a = 2\n    let b = *a\n    b\n}\n", "Axon has no `*` dereference"),
+    ] {
+        let (code, help) = first_diag(src);
+        assert_eq!(code, "E0000", "{attack} [{tag}]: still a parse error");
+        let help = help.unwrap_or_default();
+        assert!(help.contains(want), "{attack} [{tag}]: help {help:?}");
+    }
+}
+
+/// AG-2's narrowed arms on the shapes that share their message: each keeps
+/// the help it had (the dict and walrus rows) or gets none of the habit's.
+#[test]
+fn habit_rows_leave_colliding_shapes_alone() {
+    for (tag, src, not_want) in [
+        (
+            "let_brace",
+            "fn main() -> i64 {\n    let x { 1 }\n    0\n}\n",
+            "a record type",
+        ),
+        (
+            "nested_fn",
+            "fn main() -> i64 {\n    fn helper(a: i64) -> i64 { a }\n    helper(1)\n}\n",
+            "a lambda is written",
+        ),
+        (
+            "lambda",
+            "fn main() -> i64 {\n    let f = fn(a: i64) -> i64 { a + 1 }\n    0\n}\n",
+            "fn items live",
+        ),
+        (
+            "pow",
+            "fn main() -> i64 {\n    let a = 2\n    let b = a ** 2\n    b\n}\n",
+            "dereference",
+        ),
+        (
+            "dict",
+            "fn main() -> i64 {\n    let d = {\"k\": 1}\n    0\n}\n",
+            "unnamed record",
+        ),
+        (
+            "walrus",
+            "fn main() -> i64 {\n    x := 1\n    0\n}\n",
+            "unnamed record",
+        ),
+        (
+            "block_colon",
+            "fn main() -> i64 {\n    if true { x: 1 }\n    0\n}\n",
+            "unnamed record",
+        ),
+        (
+            "index_semi",
+            "fn main() -> i64 {\n    let xs = [1]\n    let y = xs[0; 1]\n    0\n}\n",
+            "arr_repeat",
+        ),
+    ] {
+        let (code, help) = first_diag(src);
+        assert_eq!(code, "E0000", "[{tag}]: still a parse error");
+        let help = help.unwrap_or_default();
+        assert!(
+            !help.contains(not_want),
+            "ATTACK: an AG-2 habit row fired on a colliding shape [{tag}]: {help:?}"
+        );
+    }
+    let (_, dict) = first_diag("fn main() -> i64 {\n    let d = {\"k\": 1}\n    0\n}\n");
+    assert!(
+        dict.unwrap_or_default()
+            .contains("dict_from_pairs([(\"a\", 1)"),
+        "the dict row keeps its help"
+    );
+    let (_, walrus) = first_diag("fn main() -> i64 {\n    x := 1\n    0\n}\n");
+    assert!(
+        walrus.unwrap_or_default().contains("no `:=`"),
+        "the walrus row keeps its help"
+    );
+}
