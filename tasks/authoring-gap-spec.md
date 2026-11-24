@@ -1,7 +1,8 @@
 # authoring-gap - spec (AG-1..AG-4)
 
-**Status: DRAFT (after Step 1 review). Build authorized by the human 2026-11-24.** Items 1-3 were authorized as "fix, and
-benchmark". Language changes are NOT authorized (§7).
+**Status: PARTIAL 2026-11-24 on `ag/spec` (AG-1 c2788200, AG-2 277db656 + 99da94d9, PCI note 5d5bd59d; AG-3 done
+offline; g01 M5280-M5299 20/20 killed; AG-4 open, not built; the CF-12 filter waits for the freeze).** Build authorized by
+the human 2026-11-24. Items 1-3 were authorized as "fix, and benchmark". Language changes are NOT authorized (§7).
 
 **Step 1 review:**
 - `AuditAG` (conformance): 17 findings, CF-1..CF-17 (0 blockers, 10 major, 7 minor).
