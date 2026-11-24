@@ -1272,8 +1272,8 @@ class FakeCere:
         text = (f"```python\n{AE_PY}```\n" if "Python 3 program" in prompt
                 else f"```axon\n{SYN_AX}```\n")
         if self.mode == "e0001" and "Python 3 program" not in prompt:
-            # `vec_new`: a name no card holds (card 2's habit list names `arr_new`).
-            text = "```axon\nfn main() -> i64 {\n    let v = vec_new()\n    0\n}\n```\n"
+            # `arr_new`: card 2's habit list quotes it as a wrong form; it is still not in the card.
+            text = "```axon\nfn main() -> i64 {\n    let v = arr_new()\n    0\n}\n```\n"
         if self.mode == "changed":
             text += "\n"
         if self.mode == "canary":     # every reply quotes task t2's (synthetic) canary
@@ -1677,9 +1677,16 @@ def ae_runner():
         task_text = gv.goal(open(os.path.join(hset, "t1", "intent.md")).read())
         stanza = out.split("## draft opportunities stanzas", 1)[-1]
         expect("ae5: classes prints the class table, stall rates and a draft stanza without task text",
-               rc == 0 and "| E0001 cannot find name `vec_new`" in out
+               rc == 0 and "| E0001 cannot find name `arr_new`" in out
                and "card/docs" in out and "| E0001 | " in out and "### (draft)" in stanza
                and task_text not in stanza and "t1" not in stanza, out[-1500:])
+        card = AE.card_text(cand)
+        wrong = [n for n in ("arr_new", "arr_pop", "arr_remove", "arr_copy", "int", "unwrap",
+                             "is_err", "unwrap_or", "Vec") if AE.name_in_card(n, card)]
+        right = [n for n in ("arr_push", "to_str", "arr_take", "parse_int", "dict_from_pairs")
+                 if not AE.name_in_card(n, card)]
+        expect("ae5: a habit row's wrong form is not a name in the card; its Axon form and the builtins are",
+               card is not None and not wrong and not right, (wrong, right))
         # F1: a reply quoting another task's canary is flagged (spec AE-3 rule 3).
         cset = os.path.join(root, "ae-can")
         ae_task(cset, "t1", goal_tag=" (one)")

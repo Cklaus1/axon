@@ -704,6 +704,18 @@ def card_text(bins_dir):
         return None
 
 
+# A card habit row (card 2+): `- <key>: you may write <wrong> -> Axon writes <right>`.
+# Its wrong side quotes other languages' names (`arr_new()`, `int(s)`); only the
+# right side is Axon.
+HABIT_ROW = re.compile(r"^- \w+: you may write .*? -> Axon writes (.*)$", re.M)
+
+
+def name_in_card(name, card):
+    """Whether `name` occurs as a word in the card, not counting a habit
+    row's wrong forms (authoring-gap AG-1: card 2 quotes them)."""
+    return bool(re.search(rf"\b{re.escape(name)}\b", HABIT_ROW.sub(r"\1", card)))
+
+
 def class_rules():
     return json.load(open(CLASSES))["rules"]
 
@@ -751,8 +763,7 @@ def tally_run(run_dir, name, rows, card, rules):
                 continue
             msg = j.get("message") or ""
             q = QUOTED.search(msg)
-            in_card = None if card is None or not q else bool(
-                re.search(rf"\b{re.escape(q.group(2))}\b", card))
+            in_card = None if card is None or not q else name_in_card(q.group(2), card)
             cls, area = area_of(rules, code=j["code"], name_in_card=in_card)
             keys[f"{j['code']} {normalise(msg, rep.get('source'))}"] = (cls, area)
         if r.get("b_ccp"):
