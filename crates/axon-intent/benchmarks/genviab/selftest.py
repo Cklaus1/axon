@@ -1272,7 +1272,8 @@ class FakeCere:
         text = (f"```python\n{AE_PY}```\n" if "Python 3 program" in prompt
                 else f"```axon\n{SYN_AX}```\n")
         if self.mode == "e0001" and "Python 3 program" not in prompt:
-            text = "```axon\nfn main() -> i64 {\n    let v = arr_new()\n    0\n}\n```\n"
+            # `vec_new`: a name no card holds (card 2's habit list names `arr_new`).
+            text = "```axon\nfn main() -> i64 {\n    let v = vec_new()\n    0\n}\n```\n"
         if self.mode == "changed":
             text += "\n"
         if self.mode == "canary":     # every reply quotes task t2's (synthetic) canary
@@ -1676,7 +1677,7 @@ def ae_runner():
         task_text = gv.goal(open(os.path.join(hset, "t1", "intent.md")).read())
         stanza = out.split("## draft opportunities stanzas", 1)[-1]
         expect("ae5: classes prints the class table, stall rates and a draft stanza without task text",
-               rc == 0 and "| E0001 cannot find name `arr_new`" in out
+               rc == 0 and "| E0001 cannot find name `vec_new`" in out
                and "card/docs" in out and "| E0001 | " in out and "### (draft)" in stanza
                and task_text not in stanza and "t1" not in stanza, out[-1500:])
         # F1: a reply quoting another task's canary is flagged (spec AE-3 rule 3).
