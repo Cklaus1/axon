@@ -28,7 +28,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 DEFAULT_BIN = os.environ.get("AXON_BIN", os.path.join(ROOT, "target", "debug", "axon"))
 
-FN_VALUE = ("= fn(", "(fn(", ", fn(")
+FN_VALUE = ("= fn(", "(fn(", ", fn(", "return fn(")
 SUFFIX = re.compile(r'^unexpected token: Ident\("(?:[iu](?:8|16|32|64|128|size)|f32|f64)"\), '
                     r"expected (?:RParen|RBracket)")
 
@@ -74,6 +74,17 @@ def _star(msg):
     return msg == "unexpected token: Star, expected expression"
 
 
+def _code(src, off):
+    """The offset's line without a trailing `//` comment (the `**` arm reads only code)."""
+    return line_at(src, off).split("//")[0]
+
+
+def _type_in_fn(msg, src, off):
+    """`type <Name> =` / `{` / `<` at the offset: a declaration, not a field named `type`."""
+    return (msg == "unexpected token: Type, expected expression"
+            and re.match(r"type\s+\w+\s*[={<]", src[off:]) is not None)
+
+
 # (class, the spec's habit, predicate(message, source, byte offset), the arm's help text marker)
 CLASSES = (
     ("is", "`x is Err` / `is Some(..)`", _is, "`is` is not an Axon operator"),
@@ -85,11 +96,11 @@ CLASSES = (
     ("fn_nested", "nested `fn` item", _fn_nested, "fn items live at the top level"),
     ("brace", '`"{"` in a string', lambda m, s, o: m == "unclosed `{` in interpolated string",
      "a literal brace in a string is"),
-    ("type_in_fn", "`type` in a fn body", lambda m, s, o: m == "unexpected token: Type, expected expression",
+    ("type_in_fn", "`type` in a fn body", _type_in_fn,
      "`type` declarations live at the top level"),
     ("type_brace", "`type X { .. }`", _type_brace, "a record type is"),
-    ("pow", "`a ** 2`", lambda m, s, o: _star(m) and "**" in line_at(s, o), "Axon has no `**`"),
-    ("deref", "`*x` deref", lambda m, s, o: _star(m) and "**" not in line_at(s, o),
+    ("pow", "`a ** 2`", lambda m, s, o: _star(m) and "**" in _code(s, o), "Axon has no `**`"),
+    ("deref", "`*x` deref", lambda m, s, o: _star(m) and "**" not in _code(s, o),
      "Axon has no `*` dereference"),
 )
 
@@ -207,18 +218,22 @@ SYN = (
     ("suffix", "fn main() -> i64 {\n    let xs = [0i64, 1]\n    0\n}\n"),
     ("fn_value", "fn main() -> i64 {\n    let f = fn(a: i64) -> i64 { a + 1 }\n    f(1)\n}\n"),
     ("fn_value", "fn main() -> i64 {\n    let ys = arr_map([1], fn(a: i64) -> i64 { a })\n    0\n}\n"),
+    ("fn_value", "fn mk() -> i64 {\n    return fn(a: i64) -> i64 { a }\n}\nfn main() -> i64 { 0 }\n"),
     ("fn_nested", "fn main() -> i64 {\n    fn helper(a: i64) -> i64 { a }\n    helper(1)\n}\n"),
     ("brace", 'fn main() -> i64 {\n    println("{")\n    0\n}\n'),
     ("type_in_fn", "fn main() -> i64 {\n    type T = { a: i64 }\n    0\n}\n"),
     ("type_brace", "type X {\n    a: i64\n}\nfn main() -> i64 { 0 }\n"),
     ("pow", "fn main() -> i64 {\n    let a = 2\n    let b = a ** 2\n    b\n}\n"),
     ("deref", "fn main() -> i64 {\n    let a = 2\n    let b = *a\n    b\n}\n"),
+    ("deref", "fn main() -> i64 {\n    let a = 2\n    let b = *a // **note**\n    b\n}\n"),
 )
 # Colliding shapes (spec AG-2): same parser message, not this habit; none may get a habit's help.
 SYN_NONE = (
     ("record", 'fn main() -> i64 {\n    let d = {"k": 1}\n    0\n}\n'),
     ("record", "fn main() -> i64 {\n    c := 0\n    0\n}\n"),
     ("type_brace", "fn main() -> i64 {\n    let x { 1 }\n    0\n}\n"),
+    ("type_in_fn", "type T = { kind: i64 }\nfn main() -> i64 {\n    let t = T { type: 1 }\n    0\n}\n"),
+    ("type_in_fn", "fn main() -> i64 {\n    let s = {\n        type = 1\n    }\n    0\n}\n"),
 )
 
 

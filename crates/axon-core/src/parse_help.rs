@@ -274,14 +274,17 @@ fn habit_help(msg: &str, src: &str, offset: usize) -> Option<&'static str> {
             );
         }
     }
-    // `fn` where an expression goes: a lambda written `fn(..)` after `=`, `(`
-    // or `,`, or a named fn item that starts a statement inside a fn body.
+    // `fn` where an expression goes: a lambda written `fn(..)` after `=`, `(`,
+    // `,` or `return`, or a named fn item that starts a statement inside a fn body.
     if msg.contains("unexpected token: Fn, expected expression") {
         let before = text_before(src, offset);
         let rest = text_after(src, offset);
         if let Some(after) = rest.strip_prefix("fn") {
             let after = after.trim_start();
-            if after.starts_with('(') && before.ends_with(['=', '(', ',']) {
+            if after.starts_with('(')
+                && (before.ends_with(['=', '(', ','])
+                    || trailing_word(before.trim_end()) == "return")
+            {
                 return Some("a lambda is written `|a: i64| a + 1`, not `fn(..)`");
             }
             // First on its line, or right after a `{` / `}`.
@@ -303,9 +306,21 @@ fn habit_help(msg: &str, src: &str, offset: usize) -> Option<&'static str> {
              interpolated expression",
         );
     }
-    // `type T = { … }` inside a fn body.
+    // `type T = { … }` inside a fn body. A record field named `type`
+    // (`T { type: 1 }`) shares the message: require `type <Name>` then `=`,
+    // `{` or `<`.
     if msg.contains("unexpected token: Type, expected expression") {
-        return Some("`type` declarations live at the top level, outside any fn");
+        let decl = text_after(src, offset)
+            .strip_prefix("type")
+            .filter(|a| a.starts_with(char::is_whitespace))
+            .map(str::trim_start)
+            .is_some_and(|a| {
+                let name = a.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_');
+                name.len() < a.len() && name.trim_start().starts_with(['=', '{', '<'])
+            });
+        if decl {
+            return Some("`type` declarations live at the top level, outside any fn");
+        }
     }
     // `type X { … }`: the `=` is missing. `let x { 1 }` shares the message.
     if msg.contains("unexpected token: LBrace, expected Eq")
@@ -313,9 +328,11 @@ fn habit_help(msg: &str, src: &str, offset: usize) -> Option<&'static str> {
     {
         return Some("a record type is `type X = { field: i64 }` — the `=` is required");
     }
-    // `a ** 2` (power) or `*x` (dereference): a `*` where an operand goes.
+    // `a ** 2` (power) or `*x` (dereference): a `*` where an operand goes. A
+    // trailing `//` comment is not code.
     if msg.contains("unexpected token: Star, expected expression") {
-        return Some(if line_at(src, offset).contains("**") {
+        let code = line_at(src, offset).split("//").next().unwrap_or_default();
+        return Some(if code.contains("**") {
             "Axon has no `**` — multiply (`a * a`), or call `pow_i64(a, n)` (`pow(x, y)` \
              for `f64`)"
         } else {
@@ -1184,6 +1201,7 @@ mod tests {
             "fn main() -> i64 {\n    let f = fn(a: i64) -> i64 { a + 1 }\n    0\n}\n",
             "fn main() -> i64 {\n    ap(fn(a: i64) -> i64 { a }, 1)\n}\n",
             "fn main() -> i64 {\n    ap(1, fn(a: i64) -> i64 { a })\n}\n",
+            "fn mk() -> i64 {\n    return fn(a: i64) -> i64 { a }\n}\n",
         ] {
             assert_eq!(
                 help_at(msg, src, "fn(", 0).as_deref(),
@@ -1251,6 +1269,23 @@ mod tests {
             Some("`type` declarations live at the top level, outside any fn"),
             "ATTACK: AG-2 habit `type_in_fn` gave no help"
         );
+        // A record field named `type` shares the message and is no declaration.
+        for field in [
+            "fn main() -> i64 {\n    let t = T { type: 1 }\n    0\n}\n",
+            "fn main() -> i64 {\n    let t = { type: 1 }\n    0\n}\n",
+            "fn main() -> i64 {\n    let s = {\n        type = 1\n    }\n    0\n}\n",
+        ] {
+            assert_eq!(
+                help_at(
+                    "unexpected token: Type, expected expression",
+                    field,
+                    "type",
+                    0
+                ),
+                None,
+                "ATTACK: AG-2 `type_in_fn` fired on a field named `type`"
+            );
+        }
     }
 
     #[test]
@@ -1296,6 +1331,12 @@ mod tests {
                 .unwrap_or_default()
                 .contains("dereference"),
             "ATTACK: AG-2 `deref` fired on `a ** 2`"
+        );
+        let comment = "fn main() -> i64 {\n    let b = *a // **note**\n    b\n}\n";
+        assert_eq!(
+            help_at(msg, comment, "*a", 0).as_deref(),
+            Some("Axon has no `*` dereference — use the value directly; a `&` borrow reads like the value"),
+            "ATTACK: AG-2 `pow` fired on `**` in a comment"
         );
     }
 
