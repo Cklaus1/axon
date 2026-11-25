@@ -157,6 +157,16 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
 - Series check at freeze: `http_series` returned the pinned series (2026-11-24 22:28 EST).
 - After the freeze this file only gets appended rows.
 
+## AG-4 planned run (appended 2026-11-25, before the run)
+
+- One-off advisory frozen-set A/B (`tasks/authoring-gap-spec.md` AG-4), no trend row: `ae.py run --advisory --label
+  ag-card2 --expect-card-change --seeds 0,1,2,3,4,5 --set-dir <private>/ae-1/frozen`.
+- Base = `52279a84` (card 1, the last `main` before the AG lane): `axon` `817cf0187180fa23`, `axon-intent`
+  `b981f5b26f6e5f1d`, card sha256 `b70a0b560b5b84eb` (the pilot's card).
+- Candidate = `002bf554` (card 3 + AG-2 help rows; strict gate rc 0, 8329 passed / 0 failed): `axon`
+  `80972410a4718b91`, `axon-intent` `29df4f8d69639cc8`, card sha256 `af9665caf24bdd19`.
+- Headline and test as in "Design": paired M1 FT-pass Δ, family-clustered `SignFlip`, two-sided, k = 6.
+
 ## Not in this file
 
 No task text, example, reference, family idea or canary (spec AE-3 contamination rules); those live only in the private store.
