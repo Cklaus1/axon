@@ -1,7 +1,7 @@
 # authoring-gap - spec (AG-1..AG-4)
 
-**Status: PARTIAL 2026-11-24 on `ag/spec` (AG-1 c2788200, AG-2 277db656 + 99da94d9, PCI note 5d5bd59d; AG-3 done
-offline; g01 M5280-M5299 20/20 killed; AG-4 open, not built; the CF-12 filter waits for the freeze).** Build authorized by
+**Status: PARTIAL 2026-11-25 on `ag/spec` (AG-1 c2788200, card 3 after the CF-12 run, AG-2 277db656 + 99da94d9, PCI note
+5d5bd59d; AG-3 done offline; g01 M5280-M5299 20/20 killed; AG-4 open, not built).** Build authorized by
 the human 2026-11-24. Items 1-3 were authorized as "fix, and benchmark". Language changes are NOT authorized (§7).
 
 **Step 1 review:**
@@ -47,7 +47,7 @@ parser stops at the first syntax error, so "sole cause" is an upper bound.
 | unnamed record literal `{ k: v }` | 35 (6%) | 35 | 1/35 (dict-literal help only) | named form shown (`card.rs:57`) |
 | method calls / `unwrap` (E0403) | 33 (6%) | 11 | yes | no |
 | Rust forms `[x; n]`, `0i64` | 30 (5%) | 30 | no | no |
-| `str(x)` / `i64(x)` conversion | 18 (3%) | 11 | no (E0001) | `to_str` shown |
+| `str(x)` / `i64(x)` conversion `[REVISED: CF-12 run 2026-11-25]` misclassified: these are `[str]` used as an empty-array type, counted under invented builtins / `empty`; the real `str(n)` / `int(s)` / `i64(s)` class is 2 | 18 (3%) | 11 | no (E0001) | `to_str` shown |
 | unclosed `{` in an interpolated string | 14 (3%) | 14 | no | yes (`card.rs:58`) |
 | `fn(...) -> T { }` as a lambda value | 12 (2%) | 12 | no | `\|n\| ...` (`card.rs:138`) |
 | `type` inside a fn body; `type X {` without `=` | 18 | - | no | "items live at the top level" (`card.rs:34`) |
@@ -120,10 +120,11 @@ and needs no paid run.
      forms above use existing builtins and were run (§6).
    - `[REVISED: CF-12]` A row stays only if its class also occurs in round-0 failures on the 107 pool tasks outside the
      frozen draw (seed in PREREG). A row whose class occurs only on drawn tasks is dropped and logged.
-   - `[REVISED: build 2026-11-24]` The CF-12 filter was NOT run: the frozen draw does not exist yet. `PREREG-ae.md` is
-     `Status: DRAFT`; the draw takes each tier's first n by `sha256("<seed>:<id>")` from the **survivors** of the
-     post-pilot second human review, which is not recorded, and no committed code implements the draw. All 16 rows are
-     kept. The filter runs at the freeze, before AG-4; a row it drops is a card change (card 3).
+   - `[REVISED: CF-12 run 2026-11-25]` The filter ran over the pilot + A/A round-0 check-refused attempts (1095; 2082
+     round-0 candidates in all). Every habit row's class occurs on pool tasks outside the frozen draw except `convert`
+     (`str(n)` / `int(s)` / `i64(s)`): 2 occurrences in all 2082 candidates, both on drawn tasks (in-draw 1 attempt,
+     outside 0). Rows kept 15, dropped 1 (`convert`), which makes card 3 (`CARD_VERSION = 3`, `card-versions.txt` line 3).
+     §0's "conversion 18" row was misclassified (see its mark).
 2. Use `[]`, `||` and `!` in the §1 example program. A typed empty array is today shown nowhere.
 3. §2 Program rules: "A write prefix ending in `/` that the task allows (e.g. `./out/`) already exists when the program runs.
    Write files into it; never call `dir_create` on it (refused)." `[REVISED: CF-17; the runner check is done, §0]`

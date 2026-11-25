@@ -18,7 +18,7 @@ use crate::builtins::{BuiltinFn, BUILTINS};
 /// rule 4). It increases by 1 whenever [`card`]'s text changes, and
 /// `crates/axon-core/card-versions.txt` gets one appended line
 /// `<N> <sha256 of the card>`; a test holds the last line to this card.
-pub const CARD_VERSION: u32 = 2;
+pub const CARD_VERSION: u32 = 3;
 
 /// Sections 1 and 2: syntax and program rules. Every ```` ```axon ```` block
 /// is a whole program that `axon check` accepts (tested).
@@ -151,7 +151,6 @@ Rules the checker enforces:
 - copy: you may write `arr_copy(xs)` -> Axon writes `let ys = xs`
 - repeat: you may write `[0; n]` -> Axon writes `arr_repeat(0, n)`
 - suffix: you may write `0i64` -> Axon writes `0`
-- convert: you may write `str(n)`, `int(s)`, `i64(s)` -> Axon writes `to_str(n)`, `parse_int(s)` (a `Result`)
 - record: you may write `{ name: n }` (unnamed) -> Axon writes `type Item = { name: str }` at the top level, then `Item { name: n }`
 - lambda: you may write `fn(a: i64) -> i64 { a + 1 }` as a value -> Axon writes `|a: i64| a + 1`
 - question: you may write `?` in a fn not returning `Result` -> Axon writes `match`, or make the fn return `Result`
@@ -791,15 +790,6 @@ mod tests {
             &[
                 "fn main() -> i64 {\n    let x = 0i64\n    x\n}\n",
                 "fn main() -> i64 {\n    println(to_str(0i64))\n    0\n}\n",
-            ],
-        ),
-        (
-            "convert",
-            "fn main() -> i64 {\n    let s = to_str(3)\n    match parse_int(s) {\n        Ok(v) => v\n        Err(_) => 1\n    }\n}\n",
-            &[
-                "fn main() -> i64 {\n    let s = str(3)\n    println(s)\n    0\n}\n",
-                "fn main() -> i64 {\n    int(\"3\")\n}\n",
-                "fn main() -> i64 {\n    i64(\"3\")\n}\n",
             ],
         ),
         (
