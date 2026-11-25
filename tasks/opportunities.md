@@ -3728,3 +3728,11 @@ forms (`f(0i64)`, `[0i64]`). A resolve-tier foreign-suffix help would close it.
 `arr_pop` / an array slice, and `str_lines` (a split without the trailing empty piece). 19 of 30 sampled wrong-output rows
 involve splitting a file into lines. Measure card 2 first (AG-4); propose `str_lines` in its own spec if the trailing-newline
 share stays above 25%.
+
+### O-AG-04 - [low] `gdt_layout_ir_test.sh` failed once in the no-LLVM CI job on a docs-only commit
+CI run 45540617186 (`521f96df`, which changes only `PREREG-ae.md`; its parent `b6df153a` was green):
+`axon_repr_c_gdt_layout_byte_exact` failed with "FAIL: axon build --emit-llvm failed" in "Test the whole workspace as root
+(no LLVM)". [INFERENCE] That job builds without codegen, so the script should have skipped. The script decides skip vs run by
+string-matching the probe build's output (`scripts/gdt_layout_ir_test.sh:36-40`, `|| true`), and it sends the real build's
+stderr to `/dev/null` (:48-49), so the log doesn't show why. Fix: skip on the probe's exit status plus the message, and
+keep the build's stderr in the failure text. Not reproduced locally.
