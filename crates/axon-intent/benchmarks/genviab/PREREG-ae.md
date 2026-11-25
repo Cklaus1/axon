@@ -167,6 +167,33 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
   `80972410a4718b91`, `axon-intent` `29df4f8d69639cc8`, card sha256 `af9665caf24bdd19`.
 - Headline and test as in "Design": paired M1 FT-pass Δ, family-clustered `SignFlip`, two-sided, k = 6.
 
+## AG-4 result (recorded 2026-11-25): valid; IMPROVED (advisory)
+
+- Run `20261125-080201-ag-card2`, 08:02-17:07, $0. Series `…:722357d5e54ae8d8` (checked at start); infra 5 / 4320;
+  0 `build_changed`, 0 `model_substituted`, 0 canary hits. Written to `history.jsonl` as an advisory row (the plan above
+  said "no trend row"; `ae.py --advisory` writes one, flagged advisory).
+  - Note D4: one cache replay mismatched, so the cache was off for the rest of the run. That makes later calls fresh on
+    both arms (the wall time doubled vs the estimate); it does not bias the pairing.
+- **Headline:** M1 FT-pass 0.211 -> 0.408, Δ **+0.197** [95% CI +0.166, +0.229], p (two-sided) < 0.001, 240 tasks /
+  166 families -> `IMPROVED`. Solve@3 Δ +0.148 (0.556 -> 0.704). Turns to green 1.02 -> 0.60.
+
+| tier | n (task-trials) | FT-pass base | FT-pass cand |
+|---|---|---|---|
+| T1 | 360 | 0.417 | 0.669 |
+| T2 | 480 | 0.165 | 0.371 |
+| T3 | 358 | 0.081 | 0.182 |
+| TS | 239 | 0.188 | 0.431 |
+
+- FT-check (round 0 passes `axon check`): 0.46 -> 0.61. Round-0 example runs refused by the sandbox: 329 -> 1
+  (the `dir_create("./out")` rule). Round-0 example runs with wrong output: 1150 -> 770.
+- Check codes that fell most (round 0, base -> cand): E0001 635 -> 280, E0102 436 -> 243, E0000 322 -> 242, E0403
+  226 -> 122. Rows aimed at by card 3: `arr_new` 47 -> 10, `str` name 25 -> 1, `:`-record literal 47 -> 11, `?` outside
+  `Result` 61 -> 37. Unchanged: `_` in a pattern position (65 -> 64). Up: E0301 `str` ordered with `<` (19 -> 28).
+- Soundness: M2s 1/665 -> 0/874. M2 CCP (check-clean programs that panic) 22/665 -> 21/874.
+- Python arm c: FT-pass 0.849, Solve@3 0.910. The gap (Python - Axon card 3) is 0.440 [+0.399, +0.483] on first try and
+  0.205 on Solve@3 (it was about 0.64 / 0.35 with card 1).
+- Per-tier rows are descriptive (per-tier power < 0.8, see the pilot table).
+
 ## Not in this file
 
 No task text, example, reference, family idea or canary (spec AE-3 contamination rules); those live only in the private store.
