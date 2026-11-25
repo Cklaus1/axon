@@ -1,6 +1,6 @@
 # authoring-gap - spec (AG-1..AG-4)
 
-**Status: DONE 2026-11-25 (AG-1 c2788200, card 3 after the CF-12 run, AG-2 277db656 + 99da94d9, PCI note 5d5bd59d; AG-3
+**Status: BUILT 2026-11-25 (AG-1 c2788200, card 3 after the CF-12 run, AG-2 277db656 + 99da94d9, PCI note 5d5bd59d; AG-3
 done offline; g01 M5280-M5299 20/20 killed; merged at 002bf554; AG-4 run `20261125-080201-ag-card2`: FT-pass 0.211 ->
 0.408, Δ +0.197 [+0.166, +0.229], IMPROVED (advisory), recorded in `PREREG-ae.md`).** Build authorized by
 the human 2026-11-24. Items 1-3 were authorized as "fix, and benchmark". Language changes are NOT authorized (§7).
