@@ -1,0 +1,1 @@
+{"theme": "AG-1 card 3 (CF-12)", "text": "CLI only (card.rs): the language card moves to card 3 (CARD_VERSION 3, card-versions.txt line 3). The convert habit row is dropped from \"Habits from other languages\" by the CF-12 contamination filter. No behaviour change: programs, the checker, diagnostics and the interpreter are not touched."}
