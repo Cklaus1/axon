@@ -3728,6 +3728,17 @@ forms (`f(0i64)`, `[0i64]`). A resolve-tier foreign-suffix help would close it.
 `arr_pop` / an array slice, and `str_lines` (a split without the trailing empty piece). 19 of 30 sampled wrong-output rows
 involve splitting a file into lines. Measure card 2 first (AG-4); propose `str_lines` in its own spec if the trailing-newline
 share stays above 25%.
+`[MEASURED 2026-11-25 on AG-4 run 20261125-080201-ag-card2, same filter and seeded 30-draw as the pilot audit
+(`/var/tmp/r51-tmp/wrong-output/ag4/NOTES.md`): trailing newline / empty file wrong is 9/30 = 30% [14.7, 49.4] on card 3
+vs 19/30 = 63% on card 1 (Fisher p = 0.019); stderr misuse 0/30 vs 7/30. Not specced: only 5 of the 9 (17% [5.6, 34.7])
+are "never drops the empty piece after the final newline", which `str_lines` would fix; 3 are a task's "unterminated last
+line is bad" rule and 1 a file holding a single newline, which it would not. Re-measure on card 4 before deciding.]`
+
+### O-AG-05 - [low] A discarded `arr_push(xs, v)` result checks clean and does nothing
+Found by the AG-4 wrong-output audit (one card-1 row): `arr_push(names, "a")` as a statement type-checks with no warning;
+`names` is unchanged because `arr_push` returns a new array. Synthetic repro: `let names: [str] = []`, then
+`arr_push(names, "a")`, then `println(to_str(len(names)))` prints `0`. A warning on a discarded pure-builtin result is a
+checker behaviour change: needs-human. The card already documents the return value (`push` habit row).
 
 ### O-AG-04 - [low] `gdt_layout_ir_test.sh` failed once in the no-LLVM CI job on a docs-only commit
 CI run 45540617186 (`521f96df`, which changes only `PREREG-ae.md`; its parent `b6df153a` was green):

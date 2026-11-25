@@ -16,9 +16,9 @@ script), or if a later commit touches `crates/axon-core/src` (the note is then s
 `python3 tasks/r51-pci-regen.py`).
 
 <!-- BEGIN MECHANICAL (scripts/pci_delta.py) -->
-generated-at: 7a3d3fb21a890fbe59c38984fd5e22d38b0f30ea
+generated-at: 0dfe64a9bb73790411113905c8371344d9d4b558
 
-`git diff --numstat 31413ca7..7a3d3fb2 -- crates/axon-core/src`:
+`git diff --numstat 31413ca7..0dfe64a9 -- crates/axon-core/src`:
 
 | file | added | removed |
 |---|---|---|
@@ -29,7 +29,7 @@ generated-at: 7a3d3fb21a890fbe59c38984fd5e22d38b0f30ea
 | `crates/axon-core/src/builtins.rs` | 430 | 45 |
 | `crates/axon-core/src/cache.rs` | 284 | 40 |
 | `crates/axon-core/src/capabilities.rs` | 1367 | 346 |
-| `crates/axon-core/src/card.rs` | 982 | 0 |
+| `crates/axon-core/src/card.rs` | 988 | 0 |
 | `crates/axon-core/src/ceiling.rs` | 554 | 0 |
 | `crates/axon-core/src/cert_gate.rs` | 5 | 2 |
 | `crates/axon-core/src/checker.rs` | 3159 | 794 |
@@ -108,9 +108,9 @@ generated-at: 7a3d3fb21a890fbe59c38984fd5e22d38b0f30ea
 | `crates/axon-core/src/time_passes.rs` | 189 | 0 |
 | `crates/axon-core/src/token.rs` | 560 | 71 |
 | `crates/axon-core/src/types.rs` | 120 | 2 |
-| total | 74229 | 10147 |
+| total | 74235 | 10147 |
 
-`git log --reverse 31413ca7..7a3d3fb2 -- crates/axon-core/src`:
+`git log --reverse 31413ca7..0dfe64a9 -- crates/axon-core/src`:
 
 | commit | theme | what it does to pass/fail (from its message) |
 |---|---|---|
@@ -583,7 +583,8 @@ generated-at: 7a3d3fb21a890fbe59c38984fd5e22d38b0f30ea
 | 99da94d9 | AG-2 test markers | Tests only (parse_help.rs test module): ATTACK markers on three negative assertions for the g01 rows. No behaviour change. |
 | 20f2453a | AG-2 habit arms narrowed (impl audit) | DIAGNOSTICS only (parse_help.rs): the `type`-in-a-fn help needs `type <Name>` then `=`, `{` or `<` (a field named `type` gets none), the `**` power help reads the line without a trailing `//` comment, and `return fn(..)` gets the lambda help. Diagnostic codes, messages, line/col and exit codes are unchanged; no program's pass/fail moves. |
 | 7a3d3fb2 | AG-1 card 3 (CF-12) | CLI only (card.rs): the language card moves to card 3 (CARD_VERSION 3, card-versions.txt line 3). The convert habit row is dropped from "Habits from other languages" by the CF-12 contamination filter. No behaviour change: programs, the checker, diagnostics and the interpreter are not touched. |
-| 469 commits | | |
+| 0dfe64a9 | AG-5 card 4 | CLI and DIAGNOSTICS text only (card.rs, checker.rs): the language card moves to card 4 (CARD_VERSION 4, card-versions.txt line 4); the result habit row shows the early-exit guard form and a new order row maps a str range test to str_cmp. E0301's help for an ordered array or tuple loses a run of stray spaces (help text only; same code, same refusal). No pass/fail change: programs, the checker's verdicts and the interpreter are not touched. |
+| 470 commits | | |
 <!-- END MECHANICAL -->
 
 
