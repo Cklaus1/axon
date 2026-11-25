@@ -193,6 +193,10 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
 - Python arm c: FT-pass 0.849, Solve@3 0.910. The gap (Python - Axon card 3) is 0.440 [+0.399, +0.483] on first try and
   0.205 on Solve@3 (it was about 0.64 / 0.35 with card 1).
 - Per-tier rows are descriptive (per-tier power < 0.8, see the pilot table).
+- Correction (2026-11-25, after the result was recorded): the "Unchanged" clause of the check-codes bullet misreads the
+  report: `Ident("_")` in its code table is the placeholder for any identifier, not a `_` habit. That row (`expected LBrace`, 65 -> 64) is
+  `x is Err/Ok/Some/None` on 63 of 64 card-3 programs (40 of 65 on card 1, where most of the rest were `not f(..)`). Programs using
+  `is` rose 44 -> 70 of 1440. Card 4 (`tasks/authoring-gap-spec.md` AG-5) targets it; it is not part of this run.
 
 ## Not in this file
 

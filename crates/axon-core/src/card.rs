@@ -18,7 +18,7 @@ use crate::builtins::{BuiltinFn, BUILTINS};
 /// rule 4). It increases by 1 whenever [`card`]'s text changes, and
 /// `crates/axon-core/card-versions.txt` gets one appended line
 /// `<N> <sha256 of the card>`; a test holds the last line to this card.
-pub const CARD_VERSION: u32 = 3;
+pub const CARD_VERSION: u32 = 4;
 
 /// Sections 1 and 2: syntax and program rules. Every ```` ```axon ```` block
 /// is a whole program that `axon check` accepts (tested).
@@ -142,7 +142,7 @@ Rules the checker enforces:
 ### Habits from other languages
 
 - logic: you may write `a or b`, `a and b`, `not a` -> Axon writes `a || b`, `a && b`, `!a`
-- result: you may write `if r is Err`, `r.is_err()`, `r.unwrap()` -> Axon writes `match r { Ok(v) => .., Err(e) => .. }`
+- result: you may write `if r is Err { return 1 }`, `r.unwrap()` -> Axon writes `let v = match r { Ok(v) => v, Err(_) => return 1 }`
 - option: you may write `o.unwrap_or(d)`, `if o is Some` -> Axon writes `match o { Some(v) => .., None => .. }`
 - empty: you may write `arr_new()`, `Vec::new()` -> Axon writes `let xs: [i64] = []`
 - push: you may write `xs.push(v)` -> Axon writes `xs = arr_push(xs, v)` (a new array)
@@ -156,6 +156,7 @@ Rules the checker enforces:
 - question: you may write `?` in a fn not returning `Result` -> Axon writes `match`, or make the fn return `Result`
 - type: you may write `type T = ...` inside a fn -> Axon writes `type` at the top level only
 - brace: you may write `"{"` for a brace character -> Axon writes `"{{"`
+- order: you may write `c >= "a" && c <= "z"` on `str` -> Axon writes `str_cmp(c, "a") >= 0 && str_cmp(c, "z") <= 0`
 
 ## 2. Program rules
 
@@ -733,7 +734,7 @@ mod tests {
         ),
         (
             "result",
-            "fn main() -> i64 {\n    let r = parse_int(\"3\")\n    match r {\n        Ok(v) => println(to_str(v))\n        Err(e) => println(e)\n    }\n    0\n}\n",
+            "fn main() -> i64 {\n    let r = parse_int(\"3\")\n    let v = match r { Ok(v) => v, Err(_) => return 1 }\n    println(to_str(v))\n    0\n}\n",
             &[
                 "fn main() -> i64 {\n    let r = parse_int(\"3\")\n    if r is Err { println(\"e\") }\n    0\n}\n",
                 "fn main() -> i64 {\n    let r = parse_int(\"3\")\n    if r.is_err() { println(\"e\") }\n    0\n}\n",
@@ -820,6 +821,11 @@ mod tests {
             "brace",
             "fn main() -> i64 {\n    println(\"{{\")\n    0\n}\n",
             &["fn main() -> i64 {\n    println(\"{\")\n    0\n}\n"],
+        ),
+        (
+            "order",
+            "fn main() -> i64 {\n    let c = \"q\"\n    if str_cmp(c, \"a\") >= 0 && str_cmp(c, \"z\") <= 0 { println(\"x\") }\n    0\n}\n",
+            &["fn main() -> i64 {\n    let c = \"q\"\n    if c >= \"a\" && c <= \"z\" { println(\"x\") }\n    0\n}\n"],
         ),
     ];
 

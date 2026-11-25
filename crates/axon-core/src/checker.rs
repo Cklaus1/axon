@@ -5525,7 +5525,7 @@ impl CheckCtx {
                             .to_string(),
                     ),
                     Type::Slice(_) | Type::Tuple(_) => Option::Some(
-                        "sequences are not ordered — compare a specific element                                  (`a[0] < b[0]`) or their lengths"
+                        "sequences are not ordered — compare a specific element (`a[0] < b[0]`) or their lengths"
                             .to_string(),
                     ),
                     // Only for a name this checker KNOWS is a struct or

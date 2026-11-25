@@ -309,6 +309,26 @@ out]`:
 - Fresh: about 2.3 h at k = 3, about 4.7 h at k = 6. Uncached: about 5.7 h / 11 h. $0.
 - [INFERENCE] Repair-round prompts replay only where the base binary's diagnostics match a01db50c.
 
+### AG-5 (P2) Card 4: rows for the two residual habits of the AG-4 run `[ADDED 2026-11-25: human "do 2" after AG-4]`
+
+**Evidence** (AG-4 run `20261125-080201-ag-card2`, round 0, 1440 programs per arm; card 1 -> card 3):
+- `is Err/Ok/Some/None`: programs using it 44 -> 70; first-error `is` 40 -> 63. The AG-4 report's row `Ident("_")` is the
+  log's identifier placeholder, not a `_` habit: it is `is` (63/64 on card 3). The parse help already fires on all 63.
+- Ordering a `str` (`<`/`>`/`<=`/`>=`): programs 29 -> 46; first-error E0301 10 -> 17. Nearly all are a one-character range
+  test `c >= "a" && c <= "z"`. The E0301 help already names `str_cmp`.
+- CF-12: both classes also occur on pilot tasks outside the frozen draw (`is`: 12 first errors outside; `str` ordering:
+  2 first errors and 10 programs outside).
+
+**Change:** card-only, so the first try improves; both hints already exist.
+1. `result` row: `if r is Err { return 1 }`, `r.unwrap()` -> the early-exit guard
+   `let v = match r { Ok(v) => v, Err(_) => return 1 }`. Card 3 offered only a two-arm `match` for a guard-shaped habit.
+2. New `order` row: `c >= "a" && c <= "z"` on `str` -> `str_cmp(c, "a") >= 0 && str_cmp(c, "z") <= 0`.
+3. `CARD_VERSION` 4, `card-versions.txt` line 4, CHANGELOG Batch 10. Fixtures in `every_habit_row_is_true_of_the_checker`.
+4. Also: E0301's help for an ordered array/tuple loses a run of stray spaces (text only).
+
+**Acceptance:** card ≤ 33,600 bytes (33,593); the habit fixture test passes with 16 rows; lane and strict gate rc 0.
+Measuring card 4 needs another paired run (card 3 vs card 4, frozen set, $0, about 9 h uncached); not part of AG-5.
+
 ## 3. Sequencing
 
 1. AG-3: done (offline).
