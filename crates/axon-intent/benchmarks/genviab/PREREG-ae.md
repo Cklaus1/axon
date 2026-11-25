@@ -1,41 +1,51 @@
 # PREREG: authoring-eval (`ae`) - pre-registration
 
-**Status: DRAFT (skeleton; the integrator freezes it after the pilot, spec AE-3 "Pilot, then freeze")**
+**Status: FROZEN 2026-11-25 (after the pilot, the A/A run and HR-2; spec AE-3 "Pilot, then freeze")**
 
 `ae.py run` refuses every non-`--pilot` run until the status line reads `**Status: FROZEN ...**` and the pins below are filled.
 The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or served model series differs is refused (spec AE-4).
 
 ## Pins (filled at freeze)
 
-- set version: `<ae-1.0>`
-- A/A null SD: `<headline FT-pass Δ SD of the pilot's A/A run>` (the weekly screen's rerun trigger, |Δ| ≥ 2.5 × this)
-- manifest sha256: `<sha256 of <private>/ae-1/manifest.json>`
-- model series: `<cere:Qwen3.8-Flash-Next:<models-entry sha16>:<server-build sha16>>` (genviab `http_series`)
+- set version: `ae-1.0`
+- A/A null SD: `0.0179` (headline FT-pass Δ, as a fraction; the weekly screen's rerun trigger is |Δ| ≥ 2.5 × this)
+- manifest sha256: `5015c9ff1432548808990e55cd13ac2a214a1f93d5f1dd1334ef6437dfb50008` (`<private>/ae-1/frozen/manifest.json`)
+- model series: `cere:Qwen3.8-Flash-Next:796f2f99a2fe5c02:722357d5e54ae8d8` (genviab `http_series`)
 
 ## Design (canon: tasks/authoring-eval-spec.md §2, §3, D1-D12)
 
-- Measured model: CERE Qwen (`Qwen3.8-Flash-Next`), `--provider cere`, temperature 0.7, `max_tokens` 8192, seeds 0,1,2 (k = 3).
+- Measured model: CERE Qwen (`Qwen3.8-Flash-Next`), `--provider cere`, temperature 0.7, `max_tokens` 8192, seeds 0-5 (k = 6;
+  raised from 3 by AE-3's power rule, see "A/A run" below).
 - Headline: M1 FT-pass (round-0 candidate passes `axon check`, the gates and every visible and hidden example), paired Δ
   candidate - base over tasks, family-clustered sign-flip (`headroom/stats.py` `SignFlip`), 95% CI = `ci(alpha=0.025)`,
   two-sided p. Secondary: Solve@3. Infra rows leave every denominator; > 5% infra writes no trend row.
 - Flags: `REGRESSION-UNCONFIRMED` (CI entirely below 0) until a `--confirm` run on fresh seeds (cache off) also has its CI
   entirely below 0 (`REGRESSION`) or touches 0 (`NOT CONFIRMED`); `IMPROVED`; `NO CHANGE`. The first 3 labelled releases and
   every weekly screen row are `advisory`.
-- Python baseline (arm c): every release and confirm run, k = 3, once per run.
+- Python baseline (arm c): every release and confirm run, on the run's seeds (k = 6; `ae.py` runs arm c once per seed).
 
-## Pilot table (filled at freeze)
+## Pilot table (filled at freeze; the final draw, 6 trials per task: attempt 2 seeds 0-2 + A/A seeds 3-5)
 
-| tier | n | Qwen FT-pass | Qwen Solve@3 | arm c FT-pass | ρ | ρ_fam | A/A null SD | power at 4/8 points |
-|---|---|---|---|---|---|---|---|---|
-| T1 | | | | | | | | |
-| T2 | | | | | | | | |
-| T3 | | | | | | | | |
-| TS | | | | | | | | |
+| tier | n | Qwen FT-pass | Qwen Solve@3 | arm c FT-pass | ρ | A/A Δ / null SD (pts) | power at 4/8 points (k = 6) |
+|---|---|---|---|---|---|---|---|
+| T1 | 60 (40 fam) | 0.414 | 0.711 | 0.908 | 0.18 | +3.89 / 3.97 | 0.20 / 0.63 |
+| T2 | 80 (57 fam) | 0.162 | 0.592 | 0.867 | 0.07 | +3.33 / 3.28 | 0.37 / 0.89 |
+| T3 | 60 (43 fam) | 0.075 | 0.292 | 0.689 | 0.11 | +1.67 / 2.66 | 0.46 / 0.94 |
+| TS | 40 (26 fam) | 0.188 | 0.596 | 0.925 | 0.13 | +2.50 / 4.64 | 0.17 / 0.58 |
+| set | 240 (166 fam) | 0.208 | 0.547 | 0.842 | 0.21 | +2.92 / 1.79 | 0.81 / 1.00 |
+
+- ρ_fam is not reported (see "A/A run"); power clusters by family directly. Per-tier rows are descriptive; only the set
+  row is tested (headline). Per-tier power is below 0.8 and is not claimed.
+- A/A on the set: Δ +2.92 pts, family-clustered `SignFlip` p (two-sided) ≈ 0.11, 95% CI [-0.57, +6.35]: covers 0. Seeds
+  3-5 ran slightly above seeds 0-2 on every tier; a paired A/B uses the same seeds on both arms, so a seed-level shift
+  cancels in Δ.
 
 ## Defect gates and difficulty tuning (spec AE-3)
 
-- Recorded at freeze: tasks dropped for ambiguity (after the second human review), tiers re-piloted and the knob used, tiers
-  shipped outside their band at their measured rate.
+- Recorded at freeze:
+  - dropped for ambiguity after HR-2: none (43 reviewed, 5 intent fixes with outputs unchanged, 38 ok);
+  - tiers re-piloted: none (human decision 2026-11-24, below);
+  - tiers shipped outside their band at their measured rate: T1 (0.414 < 0.85), T2 (0.162 < 0.4), T3 (0.075 < 0.15).
 
 ## Pre-pilot record (appended 2026-11-11, before any pilot call)
 
@@ -133,6 +143,19 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
     (0.81). The pins and the A/A SD are fixed after HR-2, on the final draw.
 - **HR-2:** 43 tasks fail all 6 trials (T1 7, T2 8, T3 23, TS 5; 29 in the planned draw; 3 also fail every Python
   trial, 5 never pass Python's first round). They go to the second human review, for ambiguity only.
+  - `[DECIDED by human 2026-11-25: HR-2 verdicts as recommended - 5 fix, 38 ok, 0 dropped; message-stream fixes say
+    stdout]`. The 5 fixes add one intent sentence each (placeholder words in reasons; every message goes to stdout; the
+    call forms of one mini-language); no expected output changed. `build.py --check --candidates` 347 PASS after them.
+    Private record: `ae-1/review/HR2-all-fail.md` + `hr2-cards/` at private commit `a10d6d1`.
+
+## Freeze (2026-11-25)
+
+- Final draw = the planned draw (HR-2 dropped nothing): 240 tasks (T1 60, T2 80, T3 60, TS 40; 166 families), copied to
+  `<private>/ae-1/frozen/`; `build.py --set-dir <private>/ae-1/frozen` 240 PASS, 0 excluded, corpus `f95c321756fbf3a9`.
+  Runs use `--set-dir <private>/ae-1/frozen` (the `ae-1/` root also holds the pool and review files).
+- k = 6 (seeds 0-5) for every non-pilot run; `--confirm` takes the next 6 unused seeds.
+- Series check at freeze: `http_series` returned the pinned series (2026-11-24 22:28 EST).
+- After the freeze this file only gets appended rows.
 
 ## Not in this file
 
