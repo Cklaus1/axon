@@ -102,6 +102,38 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
   - Rejected: (b) re-pilot as AE-3 is written; (c) re-band by Solve@3 or by the Python-arm rate.
   - Next: the A/A run (seeds 3,4,5, same pool, binaries and series), then the pilot table and the freeze.
 
+## A/A run (recorded 2026-11-25): valid; power below 0.8 at k = 3
+
+- Run `20261124-163634-pilot-aa-k3`, seeds 3,4,5, same pool, binaries (`a01db50c`) and series as attempt 2, 5 h 20 min, $0.
+  - Infra 0 / 3123; every call served by `722357d5e54ae8d8`; 0 canary hits.
+- Over 6 seeds (attempt 2 + A/A, arm a), per tier:
+
+| tier | n tasks | Qwen FT-pass | Qwen Solve@3 | arm c FT-pass | ρ (task) | A/A Δ (pts) | A/A SD (pts) |
+|---|---|---|---|---|---|---|---|
+| T1 | 89 | 0.388 | 0.687 | 0.919 | 0.19 | +1.87 | 2.78 |
+| T2 | 113 | 0.158 | 0.574 | 0.860 | 0.09 | +0.88 | 2.49 |
+| T3 | 86 | 0.064 | 0.283 | 0.711 | 0.09 | +1.94 | 2.09 |
+| TS | 59 | 0.229 | 0.607 | 0.918 | 0.13 | +5.08 | 4.41 |
+| pool | 347 | 0.206 | 0.537 | 0.848 | 0.21 | +2.11 (p 0.15, 95% CI [-0.62, +4.87]) | 1.41 |
+
+- ρ is the within-task correlation of the 6 FT-pass trials (beta-binomial moments). ρ_fam is not reported: with
+  1-2 tasks per family (168 pairs, 11 singletons) the moment estimator is unstable (0.42-0.93 across tiers). The power simulation clusters by
+  family directly instead.
+- A/A Δ = seeds 3,4,5 minus seeds 0,1,2 per task, family-clustered `SignFlip` (179 families). It covers 0: no drift.
+- **Power** (the spec's 4-point rule; simulated on the planned draw before HR-2 drops; per-task rates drawn from the
+  6-trial posterior, additive Δ, family-clustered test, 2000 reps; `calib2.py` itself was never committed):
+
+| k | 3 pts | 4 pts | 5 pts | 8 pts |
+|---|---|---|---|---|
+| 3 | 0.35 | 0.51 | 0.72 | 0.97 |
+| 6 | 0.57 | 0.81 | 0.94 | 1.00 |
+| 9 | 0.75 | 0.93 | 0.99 | 1.00 |
+
+  - Size at Δ = 0: 0.04-0.05. Power at 4 points with k = 3 is 0.51 < 0.8, so per AE-3 k rises before n: **k = 6**
+    (0.81). The pins and the A/A SD are fixed after HR-2, on the final draw.
+- **HR-2:** 43 tasks fail all 6 trials (T1 7, T2 8, T3 23, TS 5; 29 in the planned draw; 3 also fail every Python
+  trial, 5 never pass Python's first round). They go to the second human review, for ambiguity only.
+
 ## Not in this file
 
 No task text, example, reference, family idea or canary (spec AE-3 contamination rules); those live only in the private store.
