@@ -1,6 +1,6 @@
 # generation-levers - DRAFT spec (LV-0..LV-5; `GL-` is the gate-lane spec's)
 
-**Status: DRAFT (after Step 1 review). Not authorized for build.** Two levers on how a model writes Axon, each measured
+**Status: AUTHORIZED 2026-11-26 (NHL-4, human "go"): build LV-0..LV-3; LV-4/LV-5 run after AG-5's result is recorded.** Two levers on how a model writes Axon, each measured
 as its own advisory A/B on the frozen authoring set: grammar-constrained decoding (LV-1, LV-2, LV-4) and a card sliced
 per task (LV-3, LV-5). Neither changes the language, the checker or the interpreter.
 
@@ -389,7 +389,38 @@ Reserved M5300-M5319. Used M5300-M5308. Each row names exactly one (crate, targe
 | NHL-1 | Send the grammar from the product generator (`axon-intent --generator ai:`, `axon-ai`) when the server supports it? | Decide after LV-4. Only if LV-4 is IMPROVED with no rise in length/repetition |
 | NHL-2 | Make `--card-sections auto` the default? | Decide after LV-5. Default stays `full` unless LV-5 shows no drop and omitted-section builtins are rare in cand programs |
 | NHL-3 | If the card-taught subset cannot fit in 16 KiB: raise CERE's `MAX_GRAMMAR_BYTES` (CERE repo, its own spec) or keep the smaller subset? | Keep the smaller subset and list what it excludes: under the grammar the model cannot write an excluded construct at all, so the list is the price |
-| NHL-4 | Authorize the build (LV-0..LV-3) and the two $0 CERE runs (LV-4, LV-5)? | Yes, after AG-5's result is recorded |
+| NHL-4 | Authorize the build (LV-0..LV-3) and the two $0 CERE runs (LV-4, LV-5)? | `[DECIDED by human 2026-11-26: "go" - build now; runs after AG-5's result is recorded, one CERE run at a time]` |
 
 Step 2 classification: GLA-1..GLA-19 and GLD-1..GLD-11 are engineering decisions, now canon above. NHL-1..NHL-4 are
 product/run decisions and stay needs-human; NHL-4 gates the build.
+
+## 8. Build plan (build-loop, 2026-11-26)
+
+**Baseline:** `main` `880ff337`. Last full gate: strict at `b2d22ab3` (8,329 passed, 0 failed, 17 ignored, 50:54). Since
+then only `ae.py`/`selftest.py`/PREREG/spec files changed (genviab selftest rc 0 at `6222c16d`), so that result is the
+baseline; known-failure list: empty.
+
+**Plan options** (active: Fastest at 90 %, the default; not chosen by the user):
+- Fastest: two lanes in parallel, each runs `gate.sh --lane` + its g01 `--only` rows; one strict gate on the
+  integration merge. Build ~4-6 h to merge [INFERENCE]; ~1 in 10 chance a problem slips to the strict gate or audit,
+  costing ~1 h. In words: done by breakfast; out of 10 builds like this, about 1 lets a mistake through to the last
+  check, and fixing it takes about an hour.
+- Most reliable: strict gate per lane and again on the merge: +~1.5 h. In words: done by mid-morning; out of 100
+  builds, maybe 1 lets a mistake through.
+
+**DAG** (critical path: LV-1 -> LV-2 live check -> LV-4; extra proof for LV-1: the xgrammar cross-check and the
+private-corpus acceptance, both 0 disagreements / 100%):
+
+| node | lane | depends on | files |
+|---|---|---|---|
+| LV-0 | A | - | `genviab/ae.py`, `genviab/genviab.py`, `genviab/selftest.py` |
+| LV-2 | A | LV-0 (env plumbing); live check after integration needs LV-1 | `genviab/drivers/http-program.py`, `selftest.py` |
+| LV-3 | A | - | `crates/axon-intent/src/{genloop.rs,cli.rs}` (+ its tests) |
+| LV-1 | B | - | `crates/axon-core/{grammar/axon.gbnf,src/grammar.rs,src/lib.rs,src/main.rs,tests/grammar_conformance.rs}`, `scripts/grammar_xcheck.py` |
+| integrate | main agent | LV-0..LV-3 | g01 rows/markers, `CHANGELOG.md` Batch 11, PCI note, this spec |
+| LV-4 | CERE | integrate, AG-5 done | runs only |
+| LV-5 | CERE | LV-4 | runs only |
+
+Smoke (after integration, temp dir): `axon grammar | wc -c` ≤ 16,384 and `--sha256` stable; a capturing-stub generator
+run of `axon-intent compile` on 5 frozen tasks with `--card-sections full` (prompts byte-equal to base) and `auto`
+(only the expected sections dropped); one live `GENVIAB_EBNF=1` request (LV-2 acceptance).
