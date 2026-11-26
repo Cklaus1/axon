@@ -198,6 +198,21 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
   `x is Err/Ok/Some/None` on 63 of 64 card-3 programs (40 of 65 on card 1, where most of the rest were `not f(..)`). Programs using
   `is` rose 44 -> 70 of 1440. Card 4 (`tasks/authoring-gap-spec.md` AG-5) targets it; it is not part of this run.
 
+## AG-5 planned run (appended 2026-11-25, before the run)
+
+- One-off advisory frozen-set A/B (`tasks/authoring-gap-spec.md` AG-5): `ae.py run --advisory --label ag-card4
+  --expect-card-change --seeds 0,1,2,3,4,5 --set-dir <private>/ae-1/frozen`, starting 08:02 2026-11-26.
+- Base = `002bf554` (card 3, the AG-4 candidate binaries): `axon` `80972410a4718b91`, `axon-intent` `29df4f8d69639cc8`,
+  card sha256 `af9665caf24bdd19`.
+- Candidate = `b2d22ab3` (card 4; strict gate rc 0, 8329 passed / 0 failed): `axon` `81a91979e1be420a`, `axon-intent`
+  `31e42d67d98f17ef`, card sha256 `b17f46c270de5568`.
+- Headline and test as in "Design": paired M1 FT-pass Δ, family-clustered `SignFlip`, two-sided, k = 6.
+- Prediction, written before the run: card 4 aims at about 80 of 1440 round-0 programs (`is` 63 first errors, `str`
+  ordering 17). If all of them then pass `axon check` and half of those pass every example, Δ ≈ +3 points, below the
+  4-point change the design detects with power 0.81. Expected flag: `NO CHANGE`; the class counts (`is`, E0301 `str`)
+  are the evidence that matters. A drop in M1 would be a regression in the card.
+- The same run re-measures O-AG-03 (the trailing-newline share of wrong-output rows) on card 4.
+
 ## Not in this file
 
 No task text, example, reference, family idea or canary (spec AE-3 contamination rules); those live only in the private store.
