@@ -26,7 +26,8 @@ ae/history.jsonl, linked to the private rows by `rows_sha256` only.
 Refused: a PREREG-ae.md that is not FROZEN (unless --pilot: a pilot/dev run,
 no trend row), a manifest sha or model series other than PREREG's pins, a
 --confirm of a run on another set version or series, a start inside the
-01:30-08:00 CERE blackout, a --set-dir/--runs-dir/--cache-dir in the public
+01:30-08:00 CERE blackout (unless --ignore-blackout, a human override recorded
+in the run's meta), a --set-dir/--runs-dir/--cache-dir in the public
 repo, and (--expect-card-change) byte-equal base and candidate cards.
 No trend row (the run's row is kept privately in <run>/row.json): infra > 5%,
 a run cut short by its window (INCOMPLETE: 01:30 or --until), --pilot, a dry
@@ -151,11 +152,12 @@ def prompt_set_sha256(shas):
     return gv.sha256_bytes("\n".join(sorted(shas.values())).encode())
 
 
-def window_end(now, until, cere):
+def window_end(now, until, cere, ignore_blackout=False):
     """When the run must stop dispatching: the next 01:30 for a CERE run (and
-    a refusal inside 01:30-08:00), or --until HH:MM today, whichever is first."""
+    a refusal inside 01:30-08:00), or --until HH:MM today, whichever is first.
+    ignore_blackout drops the CERE bound and refusal; --until still applies."""
     end = None
-    if cere:
+    if cere and not ignore_blackout:
         if BLACKOUT[0] <= now.time() < BLACKOUT[1]:
             raise Refused("CERE runs never start between 01:30 and 08:00 (trainloop, nightly sweep)")
         end = now.replace(hour=1, minute=30, second=0, microsecond=0)
@@ -525,7 +527,7 @@ def cmd_run(a):
             raise Refused(f"--seeds repeats a seed: {seeds}")
     # The blackout guards the real CERE route; the selftest's fake server is loopback.
     end = window_end(datetime.datetime.now(), a.until,
-                     http and os.environ.get(G.SELFTEST_ENV) != "1")
+                     http and os.environ.get(G.SELFTEST_ENV) != "1", a.ignore_blackout)
 
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + re.sub(r"[^A-Za-z0-9._-]+", "-", a.label)
     paths = run_paths(runs, run_id)
@@ -579,6 +581,7 @@ def cmd_run(a):
         "run_id": run_id, "label": a.label, "design": design, "confirms": confirms,
         "started": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "window_end": end.isoformat(timespec="minutes") if end else None,
+        "blackout_ignored": bool(a.ignore_blackout),
         "set_dir": set_dir, "pilot": bool(a.pilot), "advisory": advisory,
         "set": {"version": set_version, "manifest_sha256": man_sha,
                 "n": {t: sum(1 for x in tasks if x.get("tier") == t) for t in TIERS},
@@ -1003,6 +1006,7 @@ def main(argv=None):
     r.add_argument("--prereg", default=PREREG_AE)
     r.add_argument("--parallel", type=int, default=2)
     r.add_argument("--until")
+    r.add_argument("--ignore-blackout", action="store_true")
     for name in ("report", "classes"):
         p = sub.add_parser(name)
         p.add_argument("run_ids", nargs="+" if name == "classes" else 1)

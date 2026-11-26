@@ -201,7 +201,10 @@ The pins are read verbatim (`- key: \`value\``); a run whose manifest sha or ser
 ## AG-5 planned run (appended 2026-11-25, before the run)
 
 - One-off advisory frozen-set A/B (`tasks/authoring-gap-spec.md` AG-5): `ae.py run --advisory --label ag-card4
-  --expect-card-change --seeds 0,1,2,3,4,5 --set-dir <private>/ae-1/frozen`, starting 08:02 2026-11-26.
+  --expect-card-change --seeds 0,1,2,3,4,5 --set-dir <private>/ae-1/frozen`. `[AMENDED 2026-11-25 21:20, before the
+  run: human decision "ignore blackout" - started at once with `--ignore-blackout` (recorded as `blackout_ignored` in
+  the run's meta) instead of 08:02 2026-11-26. Risk stated: a CERE redeploy during the nightly trainloop makes its rows
+  infra (`build_changed`); infra > 5% voids the run.]`
 - Base = `002bf554` (card 3, the AG-4 candidate binaries): `axon` `80972410a4718b91`, `axon-intent` `29df4f8d69639cc8`,
   card sha256 `af9665caf24bdd19`.
 - Candidate = `b2d22ab3` (card 4; strict gate rc 0, 8329 passed / 0 failed): `axon` `81a91979e1be420a`, `axon-intent`

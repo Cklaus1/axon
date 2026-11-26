@@ -1642,6 +1642,10 @@ def ae_runner():
         expect("ae4: a CERE run never starts 01:30-08:00 and stops dispatching at 01:30",
                blackout and AE.window_end(dt.datetime(2026, 11, 10, 22, 0), None, True)
                == dt.datetime(2026, 11, 11, 1, 30))
+        expect("ae4: --ignore-blackout starts inside the blackout and keeps only --until",
+               AE.window_end(dt.datetime(2026, 11, 10, 3, 0), None, True, True) is None
+               and AE.window_end(dt.datetime(2026, 11, 10, 22, 0), "23:00", True, True)
+               == dt.datetime(2026, 11, 10, 23, 0))
         with open(os.path.join(pub, "fixture.txt"), "w") as fh:
             fh.write(f"canary {AE_CANARY}\n")
         subprocess.run(["git", "-C", pub, "add", "fixture.txt"], check=True)
